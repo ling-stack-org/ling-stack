@@ -163,6 +163,8 @@ export function lingThreadSelectSql(whereClause: string): string {
       parent_turn_id,
       forked_from_run_id,
       metadata_json,
+      conversation_mode,
+      conversation_mode_updated_at,
       created_at,
       updated_at,
       pinned_at,

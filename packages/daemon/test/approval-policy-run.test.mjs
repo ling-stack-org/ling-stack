@@ -1041,6 +1041,71 @@ test("write outside allowed paths is denied even when write is allowed", async (
   }
 });
 
+test("plan mode denies file writes without offering a pending approval", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-plan-mode-write-"));
+  const runner = new ApprovalProbeRunner({
+    toolCallId: "tool_plan_write",
+    toolName: "write",
+    input: { path: "docs/plan-mode.txt", content: "blocked" },
+  });
+  const daemon = await startDaemonForTest(runner);
+  try {
+    const { thread } = await createPlanModeThread(daemon.url, cwd);
+    await patchPolicy(daemon.url, cwd, { toolDecisions: { write: "allow" } });
+    const { runId } = await postRunAndCollectEvents(daemon.url, {
+      ...runBody(cwd, "task_plan_mode_write"),
+      threadId: thread.id,
+    });
+    const run = await getJson(`${daemon.url}/runs/${encodeURIComponent(runId)}?cwd=${encodeURIComponent(cwd)}`);
+    const approvals = await listApprovals(daemon.url, cwd, runId);
+    const pending = await listApprovals(daemon.url, cwd, { runId, status: "pending" });
+
+    assert.equal(run.requestSnapshot.effectivePolicySnapshot.conversationMode, "plan");
+    assert.equal(run.requestSnapshot.effectivePolicySnapshot.planModeMutationPolicy, "deny_repo_tracked_mutation");
+    assert.equal(runner.decisions.length, 1);
+    assert.equal(runner.decisions[0].approved, false);
+    assert.match(runner.decisions[0].reason, /Plan Mode denied file mutation/);
+    assert.equal(approvals.length, 1);
+    assert.equal(approvals[0].status, "denied");
+    assert.equal(approvals[0].actionType, "write");
+    assert.deepEqual(pending, []);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("plan mode denies mutating shell commands without offering a pending approval", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-plan-mode-bash-"));
+  const runner = new ApprovalProbeRunner({
+    toolCallId: "tool_plan_bash",
+    toolName: "bash",
+    input: { command: "git commit -m plan-mode-should-not-commit" },
+  });
+  const daemon = await startDaemonForTest(runner);
+  try {
+    const { thread } = await createPlanModeThread(daemon.url, cwd);
+    await patchPolicy(daemon.url, cwd, { toolDecisions: { bash: "allow" } });
+    const { runId } = await postRunAndCollectEvents(daemon.url, {
+      ...runBody(cwd, "task_plan_mode_bash"),
+      threadId: thread.id,
+    });
+    const approvals = await listApprovals(daemon.url, cwd, runId);
+    const pending = await listApprovals(daemon.url, cwd, { runId, status: "pending" });
+
+    assert.equal(runner.decisions.length, 1);
+    assert.equal(runner.decisions[0].approved, false);
+    assert.match(runner.decisions[0].reason, /Plan Mode denied a mutating shell command/);
+    assert.equal(approvals.length, 1);
+    assert.equal(approvals[0].status, "denied");
+    assert.equal(approvals[0].actionType, "git_commit");
+    assert.deepEqual(pending, []);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("patch-shaped write creates approval preview and applies only after approval", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-patch-approval-"));
   await writeFile(resolve(cwd, "src.txt"), "old\nkeep\n", "utf8");
@@ -4249,6 +4314,21 @@ async function mediaJobCount(baseUrl, cwd) {
 
 async function patchPolicy(baseUrl, cwd, body) {
   return await patchJson(`${baseUrl}/approval-policy?cwd=${encodeURIComponent(cwd)}`, body);
+}
+
+async function createPlanModeThread(baseUrl, cwd) {
+  const channel = await postJson(`${baseUrl}/channels?cwd=${encodeURIComponent(cwd)}`, {
+    name: "Plan Mode Test",
+    boundPath: cwd,
+  });
+  const created = await postJson(`${baseUrl}/threads?cwd=${encodeURIComponent(cwd)}`, {
+    kind: "channel_discussion",
+    channelId: channel.channel.id,
+  });
+  await patchJson(`${baseUrl}/threads/${encodeURIComponent(created.thread.id)}/mode?cwd=${encodeURIComponent(cwd)}`, {
+    mode: "plan",
+  });
+  return { channel: channel.channel, thread: created.thread };
 }
 
 async function listApprovals(baseUrl, cwd, filters) {

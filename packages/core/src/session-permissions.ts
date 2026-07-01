@@ -7,6 +7,7 @@ import {
   type ApprovalToolDecisions,
   type RunTool,
 } from "./approval-policy.js";
+import type { ConversationModeKind } from "./run-types.js";
 import type { SkillApprovalProfile } from "./skill-types.js";
 
 const runTools = [...readOnlyRunTools, ...riskyRunTools] as const satisfies readonly RunTool[];
@@ -62,10 +63,36 @@ export interface EffectiveRunPolicyRiskNote {
 
 export interface EffectiveRunPolicySnapshot {
   readonly mode: SessionPermissionMode;
+  readonly conversationMode?: ConversationModeKind;
+  readonly planModeMutationPolicy?: "deny_repo_tracked_mutation";
   readonly toolDecisions: ApprovalToolDecisions;
   readonly allowedWritePaths: readonly string[];
   readonly workspacePolicyUpdatedAt: string;
   readonly riskNotes: readonly EffectiveRunPolicyRiskNote[];
+}
+
+export function applyConversationModeToEffectiveRunPolicySnapshot(
+  snapshot: EffectiveRunPolicySnapshot,
+  conversationMode: ConversationModeKind | undefined,
+): EffectiveRunPolicySnapshot {
+  if (!conversationMode || conversationMode === "default") {
+    return {
+      ...snapshot,
+      conversationMode: conversationMode ?? snapshot.conversationMode,
+    };
+  }
+  return {
+    ...snapshot,
+    conversationMode,
+    planModeMutationPolicy: "deny_repo_tracked_mutation",
+    riskNotes: [
+      ...snapshot.riskNotes,
+      {
+        code: "plan_mode_mutation_policy",
+        message: "Plan Mode is active; repository mutation is denied until the user exits Plan Mode or accepts a plan for implementation.",
+      },
+    ],
+  };
 }
 
 export interface ResolveSessionRunPolicyInput {

@@ -7,18 +7,26 @@ import type {
   ReactNode,
   Ref,
 } from "react";
+import { useId, useState } from "react";
 import {
   AtSign,
+  ChevronDown,
+  ChevronUp,
   CheckCircle2,
   CircleAlert,
   FileText,
   Info,
   ListChecks,
   Loader2,
+  Pause,
+  Pencil,
+  Play,
   Plus,
   RefreshCw,
   Send,
   Square,
+  Target,
+  Trash2,
   X,
 } from "lucide-react";
 import type { ComposerSlashCommandOption } from "@ling-stack/core/composer-slash-intents";
@@ -42,6 +50,7 @@ import {
 import type {
   ChannelAttachment,
   ChannelMention,
+  LingThreadGoal,
   PermissionPreset,
 } from "../../types.js";
 import { InlineApprovalStrip } from "../approvals/InlineApprovalStrip.js";
@@ -86,6 +95,13 @@ interface ChannelComposerProps {
   readonly pendingMessageAssetsVisible: boolean;
   readonly permissionLocked: boolean;
   readonly permissionPreset: PermissionPreset;
+  readonly planModeActive: boolean;
+  readonly planModeBusy: boolean;
+  readonly goal: LingThreadGoal | undefined;
+  readonly goalBusy: boolean;
+  readonly goalLoading: boolean;
+  readonly goalError: string;
+  readonly goalExpanded: boolean;
   readonly channelTeammateIds: ReadonlySet<string>;
   readonly resolvingApprovals: Readonly<Record<string, ApprovalResolution>>;
   readonly runGuidanceError: string;
@@ -118,6 +134,12 @@ interface ChannelComposerProps {
   readonly onInsertMentionTrigger: () => void;
   readonly onOpenApproval: (approvalId: string) => void;
   readonly onPermissionPresetChange: (preset: PermissionPreset) => void;
+  readonly onTogglePlanMode: () => void;
+  readonly onOpenGoalEditor: () => void;
+  readonly onGoalContinue: () => void;
+  readonly onGoalPauseResume: () => void;
+  readonly onGoalClear: () => void;
+  readonly onToggleGoalExpanded: () => void;
   readonly onRemovePendingAttachment: (localId: string) => void;
   readonly onResizePointerCancel: (event: ReactPointerEvent<HTMLButtonElement>) => void;
   readonly onResizePointerDown: (event: ReactPointerEvent<HTMLButtonElement>) => void;
@@ -162,6 +184,12 @@ export function ChannelComposer({
   onInsertMentionTrigger,
   onOpenApproval,
   onPermissionPresetChange,
+  onTogglePlanMode,
+  onOpenGoalEditor,
+  onGoalContinue,
+  onGoalPauseResume,
+  onGoalClear,
+  onToggleGoalExpanded,
   onRemovePendingAttachment,
   onResizePointerCancel,
   onResizePointerDown,
@@ -174,6 +202,13 @@ export function ChannelComposer({
   pendingMessageAssetsVisible,
   permissionLocked,
   permissionPreset,
+  planModeActive,
+  planModeBusy,
+  goal,
+  goalBusy,
+  goalLoading,
+  goalError,
+  goalExpanded,
   channelTeammateIds,
   resolvingApprovals,
   runGuidanceError,
@@ -194,12 +229,17 @@ export function ChannelComposer({
   value,
 }: ChannelComposerProps): JSX.Element {
   const { t } = useI18n();
+  const [addMenuOpen, setAddMenuOpen] = useState(false);
+  const fileInputId = useId();
   const activeMentionIndex = mentionPickerOptions.length > 0
     ? Math.min(mentionActiveIndex, mentionPickerOptions.length - 1)
     : 0;
   const activeSlashIndex = slashCommandPickerOptions.length > 0
     ? Math.min(slashActiveIndex, slashCommandPickerOptions.length - 1)
     : 0;
+  const goalPaused = goal?.status === "paused";
+  const goalContinueDisabled = goalBusy || goalPaused;
+  const goalStatusLabel = goal ? t(`goal.status.${goal.status}`) : "";
 
   return (
     <ConversationComposerShell
@@ -209,8 +249,57 @@ export function ChannelComposer({
       ariaLabel={t("Channel composer")}
       leftToolsAriaLabel={t("Message tools")}
       statusNode={statusNode}
-      guidanceNode={showGuidance ? (
+      guidanceNode={(goal || goalLoading || goalError || showGuidance) ? (
         <>
+          {goal ? (
+            <div className={`goal-floating-panel status-${goal.status}`} role="region" aria-label={t("Goal")}>
+              <div className="goal-floating-main">
+                <Target size={15} />
+                <span className="goal-floating-copy">
+                  <strong>{goal.objective}</strong>
+                  <small>{goalStatusLabel}</small>
+                </span>
+                <div className="goal-floating-actions">
+                  <button className="icon-button compact-icon-button" type="button" onClick={onGoalContinue} disabled={goalContinueDisabled} aria-label={t("Run goal")} title={goalPaused ? t("Resume the goal before continuing.") : t("Run goal")}>
+                    {goalBusy ? <Loader2 className="spin" size={14} /> : <Play size={14} />}
+                  </button>
+                  <button className="icon-button compact-icon-button" type="button" onClick={onGoalPauseResume} disabled={goalBusy} aria-label={goalPaused ? t("Resume goal") : t("Pause goal")} title={goalPaused ? t("Resume goal") : t("Pause goal")}>
+                    {goalPaused ? <RefreshCw size={14} /> : <Pause size={14} />}
+                  </button>
+                  <button className="icon-button compact-icon-button" type="button" onClick={onOpenGoalEditor} disabled={goalBusy} aria-label={t("Edit goal")} title={t("Edit goal")}>
+                    <Pencil size={14} />
+                  </button>
+                  <button className="icon-button compact-icon-button" type="button" onClick={onGoalClear} disabled={goalBusy} aria-label={t("Clear goal")} title={t("Clear goal")}>
+                    <Trash2 size={14} />
+                  </button>
+                  <button className="icon-button compact-icon-button" type="button" onClick={onToggleGoalExpanded} aria-label={goalExpanded ? t("Collapse goal details") : t("Expand goal details")} title={goalExpanded ? t("Collapse goal details") : t("Expand goal details")}>
+                    {goalExpanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                  </button>
+                </div>
+              </div>
+              {goalExpanded ? (
+                <div className="goal-floating-details">
+                  <span>{t("Status")}: {goalStatusLabel}</span>
+                  {goal.tokenBudget !== undefined ? <span>{t("Budget")}: {goal.tokensUsed}/{goal.tokenBudget}</span> : null}
+                  {goal.lastRunId ? <span>{t("Last run")}: {goal.lastRunId}</span> : null}
+                  {goal.blockedReason ? <span>{t("Blocker")}: {goal.blockedReason}</span> : null}
+                </div>
+              ) : null}
+            </div>
+          ) : goalLoading ? (
+            <div className="composer-status-row" aria-live="polite">
+              <Loader2 className="spin" size={13} />
+              <span>{t("Loading goal...")}</span>
+            </div>
+          ) : null}
+          {goalError ? (
+            <div className="inline-error compact-inline-error">
+              <CircleAlert size={14} />
+              {goalError}
+            </div>
+          ) : null}
+          {showGuidance ? (
+            <>
           <ConversationGuidanceStrip
             title={activeRun ? t("Run guidance") : t("Queued guidance")}
             description={activeRun ? t("Type guidance in the message box and press Enter to queue it.") : t("Guidance is queued.")}
@@ -228,6 +317,8 @@ export function ChannelComposer({
               <Loader2 className="spin" size={13} />
               <span>{t("Loading guidance...")}</span>
             </div>
+          ) : null}
+            </>
           ) : null}
         </>
       ) : null}
@@ -345,9 +436,20 @@ export function ChannelComposer({
       ) : null}
       leftToolsNode={(
         <>
-          <label className="icon-button composer-tool-button composer-attach-button" aria-label={t("Attach files")} title={t("Attach files")}>
-            <Plus size={17} />
+          <div className="composer-add-menu">
+            <button
+              className="icon-button composer-tool-button composer-add-button"
+              type="button"
+              aria-label={t("Add")}
+              title={t("Add")}
+              aria-haspopup="menu"
+              aria-expanded={addMenuOpen}
+              onClick={() => setAddMenuOpen((open) => !open)}
+            >
+              <Plus size={17} />
+            </button>
             <input
+              id={fileInputId}
               type="file"
               multiple
               hidden
@@ -359,7 +461,50 @@ export function ChannelComposer({
                 event.target.value = "";
               }}
             />
-          </label>
+            {addMenuOpen ? (
+              <div className="composer-add-popover" role="menu" aria-label={t("Add")}>
+                <label className="composer-add-menu-row" htmlFor={fileInputId} role="menuitem" tabIndex={0} aria-label={t("Attach files")} onClick={() => setAddMenuOpen(false)}>
+                  <FileText size={15} />
+                  <span>
+                    <strong>{t("Attach files")}</strong>
+                    <small>{t("Add files or folders to this message")}</small>
+                  </span>
+                </label>
+                <button
+                  className="composer-add-menu-row"
+                  type="button"
+                  role="menuitem"
+                  disabled={!selectedChannelId || composerBusy || planModeBusy || activeRun}
+                  onClick={() => {
+                    setAddMenuOpen(false);
+                    onTogglePlanMode();
+                  }}
+                >
+                  {planModeBusy ? <Loader2 className="spin" size={15} /> : <ListChecks size={15} />}
+                  <span>
+                    <strong>{planModeActive ? t("Exit Plan Mode") : t("Plan Mode")}</strong>
+                    <small>{planModeActive ? t("Return to implementation mode") : t("Plan first, then implement after review")}</small>
+                  </span>
+                </button>
+                <button
+                  className="composer-add-menu-row"
+                  type="button"
+                  role="menuitem"
+                  disabled={!selectedChannelId || composerBusy}
+                  onClick={() => {
+                    setAddMenuOpen(false);
+                    onOpenGoalEditor();
+                  }}
+                >
+                  <Target size={15} />
+                  <span>
+                    <strong>{t("Goal")}</strong>
+                    <small>{goal ? t("Edit the current goal") : t("Set a thread goal")}</small>
+                  </span>
+                </button>
+              </div>
+            ) : null}
+          </div>
           <button className="icon-button composer-tool-button" type="button" onClick={onInsertMentionTrigger} disabled={!selectedChannelId || composerBusy} aria-label={t("Mention teammate")} title={t("Mention teammate")}>
             <AtSign size={16} />
           </button>
@@ -371,6 +516,30 @@ export function ChannelComposer({
             fullAccessConfirmationMessage={t("Full access can allow broad local file, network, and tool access for the next run. Continue?")}
             onPresetChange={onPermissionPresetChange}
           />
+          <button
+            className={planModeActive ? "conversation-mode-chip active" : "conversation-mode-chip"}
+            type="button"
+            onClick={onTogglePlanMode}
+            disabled={!selectedChannelId || composerBusy || planModeBusy || activeRun}
+            aria-label={t("Plan Mode")}
+            title={planModeActive
+              ? t("Plan Mode is on. Click to exit Plan Mode.")
+              : t("Plan Mode is off. Click to plan before implementing.")}
+          >
+            {planModeBusy ? <Loader2 className="spin" size={15} /> : <ListChecks size={15} />}
+            <span>{t("Plan")}</span>
+          </button>
+          <button
+            className={goal ? "conversation-mode-chip active" : "conversation-mode-chip"}
+            type="button"
+            onClick={onOpenGoalEditor}
+            disabled={!selectedChannelId || composerBusy}
+            aria-label={t("Goal")}
+            title={goal ? t("Goal is active. Click to edit.") : t("Goal is not set. Click to set a goal.")}
+          >
+            {goalLoading ? <Loader2 className="spin" size={15} /> : <Target size={15} />}
+            <span>{t("Goal")}</span>
+          </button>
         </>
       )}
       rightToolsNode={(

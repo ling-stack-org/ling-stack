@@ -27,6 +27,79 @@ test("parses a registered global slash command", () => {
   });
 });
 
+test("parses plan as a session slash command", () => {
+  assert.deepEqual(parseComposerSlashIntent("/plan", { commands, teammateMentions }), {
+    kind: "session_command",
+    commandId: "plan",
+    commandLabel: "Plan Mode",
+    action: "on",
+    args: "",
+    raw: "/plan",
+  });
+  assert.deepEqual(parseComposerSlashIntent("/plan off", { commands, teammateMentions }), {
+    kind: "session_command",
+    commandId: "plan",
+    commandLabel: "Plan Mode",
+    action: "off",
+    args: "off",
+    raw: "/plan off",
+  });
+  assert.deepEqual(parseComposerSlashIntent("/plan status", { commands, teammateMentions }), {
+    kind: "session_command",
+    commandId: "plan",
+    commandLabel: "Plan Mode",
+    action: "status",
+    args: "status",
+    raw: "/plan status",
+  });
+});
+
+test("parses goal as a session slash command", () => {
+  assert.deepEqual(parseComposerSlashIntent("/goal finish PR4", { commands, teammateMentions }), {
+    kind: "session_command",
+    commandId: "goal",
+    commandLabel: "Goal",
+    action: "set",
+    args: "finish PR4",
+    raw: "/goal finish PR4",
+  });
+  assert.deepEqual(parseComposerSlashIntent("/goal", { commands, teammateMentions }), {
+    kind: "session_command",
+    commandId: "goal",
+    commandLabel: "Goal",
+    action: "status",
+    args: "",
+    raw: "/goal",
+  });
+  assert.deepEqual(parseComposerSlashIntent("/goal pause", { commands, teammateMentions }), {
+    kind: "session_command",
+    commandId: "goal",
+    commandLabel: "Goal",
+    action: "pause",
+    args: "pause",
+    raw: "/goal pause",
+  });
+  assert.deepEqual(parseComposerSlashIntent("/goal clear", { commands, teammateMentions }), {
+    kind: "session_command",
+    commandId: "goal",
+    commandLabel: "Goal",
+    action: "clear",
+    args: "clear",
+    raw: "/goal clear",
+  });
+});
+
+test("does not scope plan or goal session commands to teammates", () => {
+  assert.deepEqual(parseComposerSlashIntent("@Engineer /plan", {
+    commands: [{ id: "plan", label: "Plan Mode" }, { id: "goal", label: "Goal" }, ...commands],
+    teammateMentions,
+  }), { kind: "none" });
+  assert.deepEqual(parseComposerSlashIntent("@Engineer /goal finish PR4", {
+    commands: [{ id: "plan", label: "Plan Mode" }, { id: "goal", label: "Goal" }, ...commands],
+    teammateMentions,
+  }), { kind: "none" });
+});
+
 test("parses a registered agent-scoped slash command", () => {
   assert.deepEqual(parseComposerSlashIntent("@Engineer /design-review mobile layout", { commands, teammateMentions }), {
     kind: "agent_command",
@@ -129,6 +202,8 @@ test("builds command options from registry entries with builtin fallback", () =>
       },
     ],
   }), [
+    { id: "plan", label: "Plan Mode" },
+    { id: "goal", label: "Goal" },
     { id: "review", label: "Code Review" },
     { id: "qa", label: "Workspace QA" },
     { id: "custom-audit", label: "Custom Audit" },

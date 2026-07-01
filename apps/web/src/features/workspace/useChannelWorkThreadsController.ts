@@ -7,9 +7,10 @@ import {
   listLingThreads,
   pinLingThread,
   unpinLingThread,
+  updateLingThreadMode,
 } from "../../api.js";
 import { readTaskPrompt, readTaskTitle } from "../../lib/run-evidence.js";
-import type { LingThread, RunSession } from "../../types.js";
+import type { ConversationModeKind, LingThread, RunSession } from "../../types.js";
 
 interface ChannelWorkThreadTreeRow {
   readonly thread: LingThread;
@@ -36,11 +37,14 @@ export interface ChannelWorkThreadsController {
   readonly channelDiscussionRootThread: LingThread | undefined;
   readonly forkingWorkThreadId: string;
   readonly workThreadVisibilityId: string;
+  readonly workThreadConversationModeId: string;
   readonly archiveConfirmWorkThreadId: string;
   readonly setArchiveConfirmWorkThreadId: Dispatch<SetStateAction<string>>;
   readonly forkChannelWorkThread: (thread: LingThread) => Promise<void>;
   readonly forkChannelMainBranch: () => Promise<void>;
+  readonly ensureChannelDiscussionRootThread: () => Promise<LingThread | undefined>;
   readonly mutateChannelWorkThreadVisibility: (thread: LingThread, action: "archive" | "pin" | "unpin") => Promise<void>;
+  readonly updateChannelWorkThreadConversationMode: (threadId: string, mode: ConversationModeKind) => Promise<void>;
 }
 
 export function useChannelWorkThreadsController({
@@ -55,6 +59,7 @@ export function useChannelWorkThreadsController({
   const [channelWorkThreadError, setChannelWorkThreadError] = useState("");
   const [forkingWorkThreadId, setForkingWorkThreadId] = useState("");
   const [workThreadVisibilityId, setWorkThreadVisibilityId] = useState("");
+  const [workThreadConversationModeId, setWorkThreadConversationModeId] = useState("");
   const [archiveConfirmWorkThreadId, setArchiveConfirmWorkThreadId] = useState("");
   const [archivedChannelWorkThreadIds, setArchivedChannelWorkThreadIds] = useState<ReadonlySet<string>>(() => new Set());
   const [channelWorkThreadSearch, setChannelWorkThreadSearch] = useState("");
@@ -202,6 +207,29 @@ export function useChannelWorkThreadsController({
     }
   }
 
+  async function ensureChannelDiscussionRootThread(): Promise<LingThread | undefined> {
+    const workspaceCwd = cwd.trim();
+    if (!workspaceCwd || !selectedChannelId) {
+      return undefined;
+    }
+    if (channelDiscussionRootThread) {
+      return channelDiscussionRootThread;
+    }
+    setChannelWorkThreadError("");
+    try {
+      const response = await createLingThread(workspaceCwd, {
+        kind: "channel_discussion",
+        channelId: selectedChannelId,
+        idempotencyKey: `channel-main:${selectedChannelId}`,
+      });
+      setChannelWorkThreads((current) => mergeLingThreads([response.thread], current));
+      return response.thread;
+    } catch (error) {
+      setChannelWorkThreadError(error instanceof Error ? error.message : String(error));
+      throw error;
+    }
+  }
+
   async function mutateChannelWorkThreadVisibility(thread: LingThread, action: "archive" | "pin" | "unpin"): Promise<void> {
     const workspaceCwd = cwd.trim();
     if (!workspaceCwd || workThreadVisibilityId) {
@@ -244,6 +272,26 @@ export function useChannelWorkThreadsController({
     }
   }
 
+  async function updateChannelWorkThreadConversationMode(threadId: string, mode: ConversationModeKind): Promise<void> {
+    const workspaceCwd = cwd.trim();
+    if (!workspaceCwd || !threadId || workThreadConversationModeId) {
+      return;
+    }
+    setWorkThreadConversationModeId(threadId);
+    setChannelWorkThreadError("");
+    try {
+      const response = await updateLingThreadMode(workspaceCwd, threadId, { mode });
+      setChannelWorkThreads((current) => current.map((thread) => thread.id === threadId
+        ? { ...thread, conversationMode: response.mode, updatedAt: response.mode.updatedAt ?? thread.updatedAt }
+        : thread));
+    } catch (error) {
+      setChannelWorkThreadError(error instanceof Error ? error.message : String(error));
+      throw error;
+    } finally {
+      setWorkThreadConversationModeId("");
+    }
+  }
+
   return {
     activeWorkThreadId,
     setActiveWorkThreadId,
@@ -257,11 +305,14 @@ export function useChannelWorkThreadsController({
     channelDiscussionRootThread,
     forkingWorkThreadId,
     workThreadVisibilityId,
+    workThreadConversationModeId,
     archiveConfirmWorkThreadId,
     setArchiveConfirmWorkThreadId,
     forkChannelWorkThread,
     forkChannelMainBranch,
+    ensureChannelDiscussionRootThread,
     mutateChannelWorkThreadVisibility,
+    updateChannelWorkThreadConversationMode,
   };
 }
 
@@ -288,6 +339,7 @@ function deriveWorkspaceThreadsFromRuns(runs: readonly RunSession[]): readonly L
       status: lingThreadStatusFromWorkspaceRun(latestRun),
       activeRunId: runCanBeStopped(latestRun) ? latestRun.id : undefined,
       lastRunId: latestRun.id,
+      conversationMode: { mode: "default" },
       createdAt: oldestRun.createdAt,
       updatedAt: latestRun.updatedAt || latestRun.createdAt,
     } satisfies LingThread;

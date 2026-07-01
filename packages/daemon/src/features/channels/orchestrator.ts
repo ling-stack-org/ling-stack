@@ -17,6 +17,7 @@ import {
   maybeCreateWorkflowTerminalCoordinatorReply,
   prepareWorkflowStepStart,
 } from "./workflows.js";
+import { getWorkflowPlanModeBlocker } from "./plan-mode-guard.js";
 import { maybeCreateWorkflowFanInEvidence } from "./workflow-fanin.js";
 import { createWorkflowStepOutputArtifact } from "./workflow-step-packets.js";
 import { ensureDeterministicWorkflowSelectorDecision } from "./workflow-selector.js";
@@ -99,6 +100,10 @@ export async function orchestrateChannelWorkflow(input: OrchestrateWorkflowInput
   const workflow = input.store.getChannelWorkflow(input.workflowId);
   if (!workflow) {
     throw new HttpError(404, "workflow_not_found", `Channel workflow not found: ${input.workflowId}`);
+  }
+  const planModeBlocker = getWorkflowPlanModeBlocker(input.store, workflow);
+  if (planModeBlocker) {
+    throw new HttpError(409, "plan_mode_workflow_blocked", planModeBlocker);
   }
   const reconciled = reconcileWorkflowStepRuns(input.store, workflow.id);
   if (reconciled.status === "completed") {

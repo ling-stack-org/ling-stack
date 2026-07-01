@@ -1,14 +1,12 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type ClipboardEvent, type DragEvent, type FormEvent, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode, type UIEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent, type ReactNode, type UIEvent } from "react";
 import {
   ArrowDown,
   ArrowLeft,
   ChevronUp,
   Check,
-  CheckCircle2,
   CircleAlert,
   Clock3,
   Command,
-  Copy,
   FileCheck2,
   FileText,
   FolderOpen,
@@ -41,7 +39,23 @@ import {
 } from "lucide-react";
 import type { ComposerSlashCommandOption } from "@ling-stack/core/composer-slash-intents";
 import type { AiTeammateTemplate } from "@ling-stack/core";
-import { artifactContentUrl, cancelRunIntervention, createRunIntervention, getChannelWorkflowEvidence, getLingThreadEvidence, getLingTrace, listLingThreadTurns, listLingTraces, listRunInterventions, promoteRunIntervention } from "../../api.js";
+import {
+  artifactContentUrl,
+  acceptProposedPlanArtifact,
+  convertProposedPlanToWorkflow,
+  deleteLingThreadGoal,
+  getChannelWorkflowEvidence,
+  getLingThreadEvidence,
+  getLingThreadGoal,
+  getLingTrace,
+  listProposedPlanArtifacts,
+  listLingThreadTurns,
+  listLingTraces,
+  patchLingThreadGoal,
+  putLingThreadGoal,
+  refineProposedPlanArtifact,
+  saveProposedPlanArtifact,
+} from "../../api.js";
 import {
   createChannelWorktree,
   getChannelWorkspaceGitStatus,
@@ -73,7 +87,7 @@ import {
 import { buildConversationWorkCellDetailsFromWorkflowEvidence, buildWorkflowProgressModel, workflowProgressToConversationWorkCell, type WorkflowProgressModel } from "../../lib/workflow-progress.js";
 import { deriveChannelRuns } from "../../lib/channel-artifacts.js";
 import { truncatePreview } from "../../lib/data.js";
-import { formatDateTime, titleFromPrompt } from "../../lib/formatting.js";
+import { formatDateTime } from "../../lib/formatting.js";
 import { attachmentCanPreview, loadPreviewContent } from "../../lib/previews.js";
 import {
   buildRunRepairHint,
@@ -101,25 +115,10 @@ import {
 import { TeammateAvatarView } from "../teammates/TeammateAvatarView.js";
 import {
   StatusBadge,
-  composerWorkspaceFileParts,
-  createAttachmentPreviewUrl,
-  createLocalComposerAssetId,
-  filterSlashCommandPickerOptions,
-  findActiveSlashCommand,
-  insertSlashCommandToken,
-  parseComposerInputParts,
-  parseComposerSlashIntent,
-  revokePendingAttachmentPreview,
-  revokePendingAttachmentPreviews,
-  serializeComposerInputParts,
-  type ComposerSlashIntent,
-  type PendingAssetState,
-  type PendingAttachmentItem,
 } from "../../shared/components/index.js";
 import {
   ConversationStatusStrip,
   type DockPageKind,
-  type ConversationGuidanceItem,
   type ConversationWorkCellDetailsState,
 } from "../../shared/conversation/index.js";
 import {
@@ -192,12 +191,13 @@ import type {
   FoldedExpertsReadModel,
   MemoryObject,
   ProviderPreset,
+  ProposedPlanArtifact,
   ResourceLease,
   RuntimeDiagnosticsResponse,
   RunArtifact,
-  RunIntervention,
   RunSession,
   LingThread,
+  LingThreadGoal,
   LingTurn,
   LingTurnRun,
   PermissionPreset,
@@ -231,14 +231,12 @@ import {
   isLingAgentTeammate,
   type ChannelNotificationLevel,
 } from "./ChannelSettingsPanels.js";
-import { ChannelComposer } from "./ChannelComposer.js";
+import { ChannelComposer, type ChannelComposerInlineFeedback } from "./ChannelComposer.js";
 import { ChannelActivityWorkspace } from "./ChannelActivityWorkspace.js";
 import { useChannelRightDockController } from "./useChannelRightDockController.js";
 import {
   conversationTurnRenderSignature,
   useChannelMessageFeed,
-  type ChannelMessageFeedItem,
-  type PendingChannelSendPreview,
 } from "./ChannelMessageFeed.js";
 import {
   LING_AGENT_AUTHOR_ID,
@@ -249,96 +247,23 @@ import { useChannelRightDockContent } from "./ChannelRightDockContent.js";
 import { useChannelActivityController } from "./useChannelActivityController.js";
 import { useChannelWorkThreadsController } from "./useChannelWorkThreadsController.js";
 import { useChannelComposerDraftController } from "./useChannelComposerDraftController.js";
+import { useChannelComposerActionsController } from "./useChannelComposerActionsController.js";
+import { useChannelThreadReplyController } from "./useChannelThreadReplyController.js";
+import { useChannelComposerInputController } from "./useChannelComposerInputController.js";
+import { useChannelComposerSnapshotController } from "./useChannelComposerSnapshotController.js";
+import { useChannelMessageFeedAssembly } from "./useChannelMessageFeedAssembly.js";
+import { useChannelConversationBlockInteractions } from "./useChannelConversationBlockInteractions.js";
 
 type ChannelSidePanelView = "context" | "settings" | "task";
 type ChannelDrawerRootView = Extract<ChannelSidePanelView, "context">;
-type ComposerSendState = "idle" | "sending" | "failed";
-type ComposerInlineFeedbackTone = "success" | "info" | "error";
 
-interface ComposerInlineFeedback {
-  readonly id: number;
-  readonly tone: ComposerInlineFeedbackTone;
-  readonly message: string;
-}
-
-interface ConversationBlockActionMenuState {
-  readonly blockId: string;
-  readonly label: string;
-  readonly text: string;
-  readonly x: number;
-  readonly y: number;
-  readonly feedback?: string;
-}
-
-interface ConversationBlockLongPressState {
-  readonly pointerId: number;
-  readonly startX: number;
-  readonly startY: number;
-  readonly timeoutId: number;
-  readonly block: HTMLElement;
-}
 type ThreadTurnsLoadState =
   | { readonly status: "not_loaded" }
   | { readonly status: "loading" }
   | { readonly status: "loaded"; readonly turns: readonly LingTurn[]; readonly runLinks: readonly LingTurnRun[] }
   | { readonly status: "error"; readonly errorMessage: string };
 
-interface PendingLinkPreviewItem {
-  readonly localId: string;
-  readonly url: string;
-  readonly state: PendingAssetState;
-  readonly preview?: ChannelLinkPreview;
-  readonly error?: string;
-}
-
-interface ChannelComposerSnapshot {
-  readonly messageDraft: string;
-  readonly pendingAttachments: readonly PendingAttachmentItem<ChannelAttachment>[];
-  readonly pendingLinkPreviews: readonly PendingLinkPreviewItem[];
-  readonly messageMentions: readonly ChannelMention[];
-  readonly sendState: ComposerSendState;
-  readonly sendError: string;
-  readonly activeThreadId: string;
-  readonly threadReplyDraft: string;
-  readonly threadReplyError: string;
-}
-
-interface ActiveMentionPicker {
-  readonly query: string;
-  readonly start: number;
-  readonly end: number;
-}
-
-interface MessageFeedShortcutEvent {
-  readonly defaultPrevented: boolean;
-  readonly key: string;
-  readonly altKey: boolean;
-  readonly metaKey: boolean;
-  readonly ctrlKey: boolean;
-  readonly shiftKey: boolean;
-  readonly target: EventTarget | null;
-  preventDefault(): void;
-}
-
 const channelSidePanelRootViews: readonly ChannelDrawerRootView[] = ["context"];
-const conversationExpandableSelectors = [
-  ".conversation-work-cell-evidence-summary[aria-expanded='false']",
-  ".conversation-work-cell-row-main[aria-expanded='false']",
-  ".conversation-work-cell-agent-span-head[aria-expanded='false']",
-  ".transcript-block-view-head[aria-expanded='false']",
-] as const;
-const conversationExpandableSelector = conversationExpandableSelectors.join(",");
-
-function findConversationExpandable(container: ParentNode | null | undefined): HTMLElement | undefined {
-  for (const selector of conversationExpandableSelectors) {
-    const expandable = container?.querySelector<HTMLElement>(selector);
-    if (expandable) {
-      return expandable;
-    }
-  }
-  return undefined;
-}
-
 function channelSidePanelLabel(view: ChannelSidePanelView): string {
   if (view === "context") {
     return "Context";
@@ -382,54 +307,6 @@ interface ChannelTeamMetricsState {
 interface WorkspaceTranscriptRenderContext {
   readonly detailsState: ConversationWorkCellDetailsState;
   readonly onLoadDetails?: (id: string) => void;
-}
-
-function conversationBlockFromEventTarget(target: EventTarget | null): HTMLElement | undefined {
-  if (!(target instanceof Element)) {
-    return undefined;
-  }
-  return target.closest<HTMLElement>("[data-conversation-focus-block='true']") ?? undefined;
-}
-
-function conversationBlockText(block: HTMLElement): string {
-  return (block.innerText ?? "")
-    .replace(/\n{3,}/gu, "\n\n")
-    .trim();
-}
-
-function conversationBlockLabel(block: HTMLElement, t: Translate): string {
-  const itemKind = block.dataset.feedItemKind;
-  if (itemKind === "turn") {
-    return t("Conversation turn");
-  }
-  if (itemKind === "activity") {
-    return t("Activity block");
-  }
-  if (itemKind === "pending-send") {
-    return t("Pending message");
-  }
-  return t("Conversation block");
-}
-
-function isEditableEventTarget(target: EventTarget | null): boolean {
-  if (!(target instanceof HTMLElement)) {
-    return false;
-  }
-  return Boolean(target.closest("input, textarea, select, [contenteditable='true'], [role='textbox']"));
-}
-
-function isInteractiveEventTarget(target: EventTarget | null): boolean {
-  if (!(target instanceof HTMLElement)) {
-    return false;
-  }
-  return Boolean(target.closest("button, a, input, textarea, select, summary, [role='button'], [role='menuitem'], [contenteditable='true'], [role='textbox']"));
-}
-
-function cssEscape(value: string): string {
-  if (typeof globalThis.CSS?.escape === "function") {
-    return globalThis.CSS.escape(value);
-  }
-  return value.replace(/["\\\]]/gu, "\\$&");
 }
 
 interface BranchConversationActivityScope {
@@ -959,28 +836,24 @@ export function WorkspaceClientView({
     setSendError,
     composerFeedback,
     composerInputMinHeight,
-    setComposerInputMinHeight,
     pendingChannelSendPreview,
     setPendingChannelSendPreview,
     composerInputRef,
-    composerResizeDragRef,
     autoPreviewUrlsRef,
     attachmentPreviewUrlsRef,
+    handleComposerResizePointerDown,
+    handleComposerResizePointerMove,
+    handleComposerResizePointerEnd,
     showComposerFeedback,
   } = useChannelComposerDraftController();
-  const [conversationBlockFeedback, setConversationBlockFeedback] = useState<ComposerInlineFeedback | undefined>();
-  const [conversationBackgroundToast, setConversationBackgroundToast] = useState<ComposerInlineFeedback | undefined>();
-  const [conversationBlockActionMenu, setConversationBlockActionMenu] = useState<ConversationBlockActionMenuState | undefined>();
-  const [runGuidanceInterventions, setRunGuidanceInterventions] = useState<readonly RunIntervention[]>([]);
-  const [runGuidanceLoading, setRunGuidanceLoading] = useState(false);
-  const [runGuidanceSubmitting, setRunGuidanceSubmitting] = useState<RunIntervention["mode"] | "stop" | "">("");
-  const [runGuidanceCancelingId, setRunGuidanceCancelingId] = useState("");
-  const [runGuidancePromotingId, setRunGuidancePromotingId] = useState("");
-  const [runGuidanceError, setRunGuidanceError] = useState("");
-  const [activeThreadId, setActiveThreadId] = useState("");
-  const [threadReplyDraft, setThreadReplyDraft] = useState("");
-  const [threadReplyPending, setThreadReplyPending] = useState(false);
-  const [threadReplyError, setThreadReplyError] = useState("");
+  const [conversationBackgroundToast, setConversationBackgroundToast] = useState<ChannelComposerInlineFeedback | undefined>();
+  const [activeChannelGoal, setActiveChannelGoal] = useState<LingThreadGoal | undefined>();
+  const [channelGoalLoadingThreadId, setChannelGoalLoadingThreadId] = useState("");
+  const [channelGoalBusy, setChannelGoalBusy] = useState(false);
+  const [channelGoalExpanded, setChannelGoalExpanded] = useState(false);
+  const [channelGoalError, setChannelGoalError] = useState("");
+  const [proposedPlanArtifactsById, setProposedPlanArtifactsById] = useState<ReadonlyMap<string, ProposedPlanArtifact>>(new Map());
+  const [proposedPlanActionBusyId, setProposedPlanActionBusyId] = useState("");
   const [pendingChannelTeammateId, setPendingChannelTeammateId] = useState("");
   const [pendingChannelCouncilId, setPendingChannelCouncilId] = useState("");
   const [channelNotificationLevel, setChannelNotificationLevel] = useState<ChannelNotificationLevel>("mentions");
@@ -1001,10 +874,7 @@ export function WorkspaceClientView({
   const [channelTeamMetricsError, setChannelTeamMetricsError] = useState("");
   const [channelTeamMetricsRefreshKey, setChannelTeamMetricsRefreshKey] = useState(0);
   const [channelMessageFeedbackById, setChannelMessageFeedbackById] = useState<Record<string, "up" | "down">>({});
-  const conversationBlockFeedbackTimeoutRef = useRef<number | undefined>();
   const conversationBackgroundToastTimeoutRef = useRef<number | undefined>();
-  const conversationBlockLongPressRef = useRef<ConversationBlockLongPressState | undefined>();
-  const conversationBlockActionMenuRef = useRef<HTMLDivElement | null>(null);
   const channelMoreRef = useRef<HTMLDivElement | null>(null);
   const governanceNotificationsRef = useRef<HTMLDivElement | null>(null);
   const teammateManagerButtonRef = useRef<HTMLButtonElement | null>(null);
@@ -1012,9 +882,7 @@ export function WorkspaceClientView({
   const conversationWorkCellEvidenceLoadsRef = useRef(new Set<string>());
   const conversationThreadTurnLoadsRef = useRef(new Set<string>());
   const conversationThreadTurnRunSignaturesRef = useRef(new Map<string, string>());
-  const previousChannelIdRef = useRef(selectedChannelId);
   const channelWorkspaceExternalPathChannelIdRef = useRef(selectedChannelId);
-  const composerSnapshotsRef = useRef<Record<string, ChannelComposerSnapshot>>({});
   const workspaceSettingsRef = useRef(workspaceSettings);
   const onWorkspaceSettingsPatchRef = useRef(onWorkspaceSettingsPatch);
 
@@ -1107,11 +975,14 @@ export function WorkspaceClientView({
     channelDiscussionRootThread,
     forkingWorkThreadId,
     workThreadVisibilityId,
+    workThreadConversationModeId,
     archiveConfirmWorkThreadId,
     setArchiveConfirmWorkThreadId,
     forkChannelWorkThread,
     forkChannelMainBranch,
+    ensureChannelDiscussionRootThread,
     mutateChannelWorkThreadVisibility,
+    updateChannelWorkThreadConversationMode,
   } = useChannelWorkThreadsController({
     cwd,
     selectedChannelId,
@@ -1373,57 +1244,6 @@ export function WorkspaceClientView({
   const activeConversationRunHasWorkflowStep = Boolean(activeConversationRun?.workflowStepId);
   const activeConversationSourceRunId = activeConversationRun ? activeConversationRun.parentRunId ?? activeConversationRun.id : "";
   const activeConversationTask = activeConversationRun?.taskId ? taskById.get(activeConversationRun.taskId) : undefined;
-  const visibleRunGuidanceInterventions = useMemo(
-    () => runGuidanceInterventions.filter((item) => item.sourceRunId === activeConversationSourceRunId),
-    [activeConversationSourceRunId, runGuidanceInterventions],
-  );
-  const openRunGuidanceInterventions = useMemo(
-    () => visibleRunGuidanceInterventions.filter((item) => item.status === "queued" || item.status === "cancelling_source" || item.status === "starting_continuation"),
-    [visibleRunGuidanceInterventions],
-  );
-  const runGuidanceItems = useMemo<readonly ConversationGuidanceItem[]>(
-    () =>
-      openRunGuidanceInterventions.map((intervention) => {
-        const isQueued = intervention.status === "queued";
-        const rowBusy = runGuidanceCancelingId === intervention.id || runGuidancePromotingId === intervention.id;
-        return {
-          id: intervention.id,
-          instruction: intervention.messagePayload?.body || intervention.instruction,
-          attachments: (intervention.messagePayload?.attachmentIds ?? [])
-            .map((attachmentId) => channelAttachmentById.get(attachmentId))
-            .filter((attachment): attachment is ChannelAttachment => Boolean(attachment))
-            .map((attachment) => ({ id: attachment.id, label: attachment.fileName })),
-          linkPreviews: (intervention.messagePayload?.linkPreviewIds ?? [])
-            .map((previewId) => channelLinkPreviewById.get(previewId))
-            .filter((preview): preview is ChannelLinkPreview => Boolean(preview))
-            .map((preview) => ({ id: preview.id, label: preview.title || preview.url })),
-          fileRefs: (intervention.messagePayload?.fileRefs ?? []).map((fileRef, index) => ({
-            id: `${fileRef.path}:${fileRef.label ?? ""}:${index}`,
-            label: fileRef.label ?? fileRef.path,
-            status: fileRef.materializationStatus,
-          })),
-          statusLabel: channelRunInterventionStatusLabel(intervention.status, t),
-          meta: channelRunInterventionModeLabel(intervention.mode, t),
-          promoteLabel: t("Run this guidance now"),
-          promoteDisabled: rowBusy || Boolean(runGuidanceSubmitting) || !activeConversationRun,
-          promoteLoading: runGuidancePromotingId === intervention.id,
-          onPromote: isQueued && activeConversationRun ? () => void promoteChannelRunGuidance(intervention.id) : undefined,
-          deleteLabel: t("Delete queued guidance"),
-          deleteDisabled: rowBusy,
-          deleteLoading: runGuidanceCancelingId === intervention.id,
-          onDelete: isQueued ? () => void cancelChannelRunGuidance(intervention.id) : undefined,
-          moreLabel: t("More guidance actions"),
-          editLabel: t("Edit message"),
-          editDisabled: rowBusy,
-          onEdit: isQueued ? () => void editChannelRunGuidance(intervention) : undefined,
-          closeQueueLabel: t("Close queue"),
-          closeQueueDisabled: rowBusy,
-          closeQueueLoading: runGuidanceCancelingId === intervention.id,
-          onCloseQueue: isQueued ? () => void cancelChannelRunGuidance(intervention.id) : undefined,
-        };
-      }),
-    [activeConversationRun, channelAttachmentById, channelLinkPreviewById, openRunGuidanceInterventions, runGuidanceCancelingId, runGuidancePromotingId, runGuidanceSubmitting, t],
-  );
   const channelActiveStatusStrip = activeConversationRun && !activeConversationRunHasWorkflowStep ? (
     <ConversationStatusStrip
       className="channel-active-status-strip"
@@ -1493,36 +1313,6 @@ export function WorkspaceClientView({
   ) : null;
 
   useEffect(() => {
-    if (!cwd || !activeConversationSourceRunId) {
-      setRunGuidanceInterventions([]);
-      setRunGuidanceError("");
-      return undefined;
-    }
-    let cancelled = false;
-    setRunGuidanceLoading(true);
-    setRunGuidanceError("");
-    void listRunInterventions(cwd, activeConversationSourceRunId, 100)
-      .then((response) => {
-        if (!cancelled) {
-          setRunGuidanceInterventions(response.interventions);
-        }
-      })
-      .catch((error: unknown) => {
-        if (!cancelled) {
-          setRunGuidanceError(error instanceof Error ? error.message : String(error));
-        }
-      })
-      .finally(() => {
-        if (!cancelled) {
-          setRunGuidanceLoading(false);
-        }
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [activeConversationSourceRunId, cwd]);
-
-  useEffect(() => {
     if (!channelCreateOpen) {
       return;
     }
@@ -1582,39 +1372,6 @@ export function WorkspaceClientView({
       document.removeEventListener("keydown", handleKeyDown);
     };
   }, [governanceNotificationsOpen]);
-
-  useEffect(() => {
-    if (!conversationBlockActionMenu) {
-      return undefined;
-    }
-    const returnBlockId = conversationBlockActionMenu.blockId;
-    globalThis.requestAnimationFrame(() => {
-      conversationBlockActionMenuRef.current?.querySelector<HTMLElement>("[role='menuitem']")?.focus({ preventScroll: true });
-    });
-    function closeActionMenu(): void {
-      setConversationBlockActionMenu(undefined);
-      globalThis.requestAnimationFrame(() => focusConversationBlockById(returnBlockId));
-    }
-    function handlePointerDown(event: PointerEvent): void {
-      const target = event.target;
-      if (target instanceof Element && target.closest(".conversation-block-action-menu")) {
-        return;
-      }
-      closeActionMenu();
-    }
-    function handleKeyDown(event: KeyboardEvent): void {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        closeActionMenu();
-      }
-    }
-    document.addEventListener("pointerdown", handlePointerDown, true);
-    document.addEventListener("keydown", handleKeyDown);
-    return () => {
-      document.removeEventListener("pointerdown", handlePointerDown, true);
-      document.removeEventListener("keydown", handleKeyDown);
-    };
-  }, [conversationBlockActionMenu]);
 
   useEffect(() => {
     if (!teammateManagerOpen) {
@@ -1866,83 +1623,25 @@ export function WorkspaceClientView({
   );
   const latestVisibleActivityItemId =
     renderableActivityItems.length > 0 ? renderableActivityItems[renderableActivityItems.length - 1]?.id ?? "" : "";
-  const conversationFeedBodyItems = useMemo<readonly ChannelMessageFeedItem[]>(
-    () => {
-      const items: Array<ChannelMessageFeedItem & { readonly createdAt: string }> = [
-        ...(!auditActivityVisible
-          ? conversationTurnProjection.turns.map((turn) => ({ id: turn.id, kind: "turn" as const, turn, createdAt: turn.createdAt }))
-          : []),
-        ...renderableActivityItems.map((item) => ({ id: item.id, kind: "activity" as const, item, createdAt: item.createdAt })),
-      ];
-      items.sort((left, right) => {
-        const timeComparison = left.createdAt.localeCompare(right.createdAt);
-        return timeComparison === 0 ? left.id.localeCompare(right.id) : timeComparison;
-      });
-      return items.map(({ createdAt: _createdAt, ...item }) => item);
-    },
-    [auditActivityVisible, conversationTurnProjection.turns, renderableActivityItems],
-  );
-  const messageFeedCanLoadOlder =
-    channelMessagesHasOlder && !activityFiltersActive && conversationFeedBodyItems.length > 0;
-  const pendingChannelSendState = useMemo(() => {
-    if (!pendingChannelSendPreview) {
-      return { acknowledged: false, aiReplyStarted: false };
-    }
-    const acknowledgedMessage = [...channelMessages]
-      .reverse()
-      .find((message) =>
-        message.channelId === pendingChannelSendPreview.channelId &&
-        message.threadId === pendingChannelSendPreview.threadId &&
-        message.kind === "message" &&
-        message.authorType === "local-user" &&
-        message.body === pendingChannelSendPreview.body &&
-        sameStringList(message.attachmentIds, pendingChannelSendPreview.attachmentIds) &&
-        sameStringList(message.linkPreviewIds, pendingChannelSendPreview.linkPreviewIds) &&
-        sameFileRefList(message.fileRefs ?? [], pendingChannelSendPreview.fileRefs)
-      );
-    const replyThreadId = acknowledgedMessage ? acknowledgedMessage.threadId ?? acknowledgedMessage.id : pendingChannelSendPreview.threadId;
-    const previewCreatedAt = Date.parse(pendingChannelSendPreview.createdAt);
-    const aiReplyStarted = channelMessages.some((message) => {
-      if (message.channelId !== pendingChannelSendPreview.channelId || message.kind !== "ai_reply") {
-        return false;
-      }
-      if (replyThreadId && message.threadId !== replyThreadId) {
-        return false;
-      }
-      const messageCreatedAt = Date.parse(message.createdAt);
-      return !Number.isFinite(previewCreatedAt) || !Number.isFinite(messageCreatedAt) || messageCreatedAt >= previewCreatedAt;
-    });
-    return {
-      acknowledged: Boolean(acknowledgedMessage),
-      aiReplyStarted,
-    };
-  }, [channelMessages, pendingChannelSendPreview]);
-  const pendingChannelSendResolved =
-    pendingChannelSendState.acknowledged &&
-    pendingChannelSendState.aiReplyStarted;
-  const pendingChannelSendVisible = Boolean(
-    pendingChannelSendPreview &&
-    !pendingChannelSendResolved &&
-    pendingChannelSendPreview.channelId === selectedChannelId &&
-    pendingChannelSendPreview.threadId === selectedChannelBranchRootThreadId &&
-    !activeWorkThreadId,
-  );
-  const messageFeedItems = useMemo<readonly ChannelMessageFeedItem[]>(
-    () => [
-      ...(messageFeedCanLoadOlder ? [{ id: "older-channel-messages", kind: "older-loader" } satisfies ChannelMessageFeedItem] : []),
-      ...conversationFeedBodyItems,
-      ...(pendingChannelSendVisible && pendingChannelSendPreview
-        ? [{
-          id: `pending-send:${pendingChannelSendPreview.id}`,
-          kind: "pending-send" as const,
-          preview: pendingChannelSendPreview,
-          showSentMessage: !pendingChannelSendState.acknowledged,
-        }]
-        : []),
-    ],
-    [conversationFeedBodyItems, messageFeedCanLoadOlder, pendingChannelSendPreview, pendingChannelSendState.acknowledged, pendingChannelSendVisible],
-  );
-  const messageFeedEmpty = !channelMessagesLoading && !channelProtocolLoading && conversationFeedBodyItems.length === 0 && !pendingChannelSendVisible;
+  const {
+    conversationFeedBodyItems,
+    messageFeedCanLoadOlder,
+    messageFeedEmpty,
+    messageFeedItems,
+  } = useChannelMessageFeedAssembly({
+    activeWorkThreadId,
+    activityFiltersActive,
+    auditActivityVisible,
+    channelMessages,
+    channelMessagesHasOlder,
+    channelMessagesLoading,
+    channelProtocolLoading,
+    conversationTurns: conversationTurnProjection.turns,
+    pendingChannelSendPreview,
+    renderableActivityItems,
+    selectedChannelBranchRootThreadId,
+    selectedChannelId,
+  });
   const messageFeedState = useChannelMessageFeed({
     items: messageFeedItems,
     conversationWorkCellByWorkflowId,
@@ -1959,14 +1658,85 @@ export function WorkspaceClientView({
     onBackgroundToast: showConversationBackgroundToast,
     onLoadOlder: onLoadOlderChannelMessages,
   });
-  const activeThreadRoot = useMemo(
-    () => channelMessages.find((message) => message.id === activeThreadId),
-    [activeThreadId, channelMessages],
+  const {
+    conversationBlockActionMenuNode,
+    conversationBlockFeedbackNode,
+    closeConversationBlockActionMenu,
+    handleMessageFeedContextMenu,
+    handleMessageFeedKeyDown,
+    handleMessageFeedPointerDown,
+    handleMessageFeedPointerEnd,
+    handleMessageFeedPointerMove,
+  } = useChannelConversationBlockInteractions({
+    scrollRef: messageFeedState.scrollRef,
+    t,
+  });
+  const allTeammateOptions = useMemo(
+    () => [
+      ...teammateTemplates.map((template) => ({ id: template.id, label: template.name, kind: "ai-teammate" as const })),
+      ...localTeammates
+        .filter((teammate) => !teammate.disabled)
+        .map((teammate) => ({ id: teammate.id, label: teammate.displayName, kind: "ai-teammate" as const })),
+    ],
+    [localTeammates, teammateTemplates],
   );
-  const activeThreadMessages = useMemo(
-    () => activeThreadId ? channelMessages.filter((message) => message.threadId === activeThreadId) : [],
-    [activeThreadId, channelMessages],
+  const activeLocalTeammates = useMemo(
+    () => localTeammates.filter((teammate) => !teammate.disabled),
+    [localTeammates],
   );
+  const channelTeammateIds = useMemo(
+    () => new Set(channelTeammateMemberships.map((membership) => membership.teammateId)),
+    [channelTeammateMemberships],
+  );
+  const teammateOptions = useMemo(
+    () => [
+      ...allTeammateOptions.filter((option) => channelTeammateIds.has(option.id)),
+      ...allTeammateOptions.filter((option) => !channelTeammateIds.has(option.id)),
+    ],
+    [allTeammateOptions, channelTeammateIds],
+  );
+  const threadReplyController = useChannelThreadReplyController({
+    channelMessages,
+    teammateOptions,
+    onSendMessage,
+  });
+  useChannelComposerSnapshotController({
+    selectedChannelId,
+    messageDraft,
+    setMessageDraft,
+    pendingAttachments,
+    setPendingAttachments,
+    pendingLinkPreviews,
+    setPendingLinkPreviews,
+    messageMentions,
+    setMessageMentions,
+    sendState,
+    setSendState,
+    sendError,
+    setSendError,
+    setMentionPicker,
+    setMentionActiveIndex,
+    threadReplySnapshot: threadReplyController.snapshot,
+    restoreThreadReplySnapshot: threadReplyController.restoreSnapshot,
+    autoPreviewUrlsRef,
+    onChannelSwitch: () => {
+      resetActivityForChannelSwitch();
+      setPendingChannelTeammateId("");
+      setChannelMoreOpen(false);
+      setPendingChannelSendPreview(undefined);
+      setAttentionProgressExpanded(true);
+      setSidePanelView("context");
+      setSidePanelOpen(false);
+      setChannelSettingsPageOpen(false);
+      setChannelEnvironmentPageOpen(false);
+      setEnvironmentCommitDialogOpen(false);
+      setProgressPopoverOpen(false);
+      setSelectedApprovalId("");
+      setCreateTaskOpen(false);
+      setChannelNotificationLevel("mentions");
+      messageFeedState.reset();
+    },
+  });
   const executionProposalsByMessageId = useMemo(() => {
     const proposalsByMessageId = new Map<string, ChannelExecutionProposal[]>();
     for (const proposal of channelExecutionProposals) {
@@ -1983,49 +1753,6 @@ export function WorkspaceClientView({
     return proposalsByMessageId;
   }, [channelExecutionProposals]);
   const channelRunsForFiles = channelRuns;
-
-  function readCurrentComposerSnapshot(): ChannelComposerSnapshot {
-    return {
-      messageDraft,
-      pendingAttachments,
-      pendingLinkPreviews,
-      messageMentions,
-      sendState,
-      sendError,
-      activeThreadId,
-      threadReplyDraft,
-      threadReplyError,
-    };
-  }
-
-  function emptyComposerSnapshot(): ChannelComposerSnapshot {
-    return {
-      messageDraft: "",
-      pendingAttachments: [],
-      pendingLinkPreviews: [],
-      messageMentions: [],
-      sendState: "idle",
-      sendError: "",
-      activeThreadId: "",
-      threadReplyDraft: "",
-      threadReplyError: "",
-    };
-  }
-
-  function applyComposerSnapshot(snapshot: ChannelComposerSnapshot): void {
-    setMessageDraft(snapshot.messageDraft);
-    setPendingAttachments(snapshot.pendingAttachments);
-    setPendingLinkPreviews(snapshot.pendingLinkPreviews);
-    setMessageMentions(snapshot.messageMentions);
-    setSendState(snapshot.sendState);
-    setSendError(snapshot.sendError);
-    setActiveThreadId(snapshot.activeThreadId);
-    setThreadReplyDraft(snapshot.threadReplyDraft);
-    setThreadReplyError(snapshot.threadReplyError);
-    setMentionPicker(undefined);
-    setMentionActiveIndex(0);
-    autoPreviewUrlsRef.current = new Set(snapshot.pendingLinkPreviews.map((item) => item.url));
-  }
 
   const selectedChannelNotificationLevel = workspaceSettings?.channelNotifications?.[selectedChannelId];
   const workspaceSettingsLoaded = workspaceSettings !== undefined;
@@ -2060,8 +1787,8 @@ export function WorkspaceClientView({
     }
     messageFeedState.reset();
     setConversationBackgroundToast(undefined);
-    setConversationBlockActionMenu(undefined);
-  }, [cwd, messageFeedState.reset, selectedChannelId, selectedChannelNotificationLevel, workspaceSettingsLoaded]);
+    closeConversationBlockActionMenu();
+  }, [closeConversationBlockActionMenu, cwd, messageFeedState.reset, selectedChannelId, selectedChannelNotificationLevel, workspaceSettingsLoaded]);
 
   useEffect(() => {
     const channelChanged = channelWorkspaceExternalPathChannelIdRef.current !== selectedChannelId;
@@ -2085,35 +1812,6 @@ export function WorkspaceClientView({
       risks: (channelBrief?.risks ?? []).join("\n"),
     });
   }, [channelBrief]);
-
-  useEffect(() => {
-    const previousChannelId = previousChannelIdRef.current;
-    previousChannelIdRef.current = selectedChannelId;
-    if (!previousChannelId || previousChannelId === selectedChannelId) {
-      return;
-    }
-    composerSnapshotsRef.current[previousChannelId] = readCurrentComposerSnapshot();
-    applyComposerSnapshot(
-      selectedChannelId
-        ? composerSnapshotsRef.current[selectedChannelId] ?? emptyComposerSnapshot()
-        : emptyComposerSnapshot(),
-    );
-    resetActivityForChannelSwitch();
-    setPendingChannelTeammateId("");
-    setChannelMoreOpen(false);
-    setPendingChannelSendPreview(undefined);
-    setAttentionProgressExpanded(true);
-    setSidePanelView("context");
-    setSidePanelOpen(false);
-    setChannelSettingsPageOpen(false);
-    setChannelEnvironmentPageOpen(false);
-    setEnvironmentCommitDialogOpen(false);
-    setProgressPopoverOpen(false);
-    setSelectedApprovalId("");
-    setCreateTaskOpen(false);
-    setChannelNotificationLevel("mentions");
-    messageFeedState.reset();
-  }, [messageFeedState.reset, resetActivityForChannelSwitch, selectedChannelId]);
 
   useEffect(() => {
     const hasPendingReply = channelMessages.some((message) => message.kind === "ai_reply" && message.status === "pending");
@@ -2407,11 +2105,6 @@ export function WorkspaceClientView({
       return;
     }
     revealReviewInConversation();
-  }
-
-  function openThreadForMessage(message: ChannelMessage): void {
-    setActiveThreadId(message.threadId ?? message.id);
-    setThreadReplyError("");
   }
 
   function updateChannelNotificationLevel(level: ChannelNotificationLevel): void {
@@ -2711,51 +2404,63 @@ export function WorkspaceClientView({
     }
   }
 
-  const allTeammateOptions = useMemo(
-    () => [
-      ...teammateTemplates.map((template) => ({ id: template.id, label: template.name, kind: "ai-teammate" as const })),
-      ...localTeammates
-        .filter((teammate) => !teammate.disabled)
-        .map((teammate) => ({ id: teammate.id, label: teammate.displayName, kind: "ai-teammate" as const })),
-    ],
-    [localTeammates, teammateTemplates],
-  );
-  const activeLocalTeammates = useMemo(
-    () => localTeammates.filter((teammate) => !teammate.disabled),
-    [localTeammates],
-  );
-  const channelTeammateIds = useMemo(
-    () => new Set(channelTeammateMemberships.map((membership) => membership.teammateId)),
-    [channelTeammateMemberships],
-  );
-  const teammateOptions = useMemo(
-    () => [
-      ...allTeammateOptions.filter((option) => channelTeammateIds.has(option.id)),
-      ...allTeammateOptions.filter((option) => !channelTeammateIds.has(option.id)),
-    ],
-    [allTeammateOptions, channelTeammateIds],
-  );
-  const mentionPickerOptions = useMemo(
-    () => {
-      if (!mentionPicker) {
-        return [];
-      }
-      const query = mentionPicker.query.trim().toLowerCase();
-      return teammateOptions
-        .filter((option) => {
-          if (!query) {
-            return true;
-          }
-          return option.label.toLowerCase().includes(query) || option.id.toLowerCase().includes(query);
-        })
-        .slice(0, 6);
-    },
-    [mentionPicker, teammateOptions],
-  );
-  const slashCommandPickerOptions = useMemo(
-    () => filterSlashCommandPickerOptions(slashCommands, slashPicker),
-    [slashCommands, slashPicker],
-  );
+  const {
+    mentionPickerOptions,
+    slashCommandPickerOptions,
+    readyLinkPreviewIds,
+    composerInputParts,
+    composerFileRefs,
+    composerSlashIntent,
+    composerSlashCommandActive,
+    composerSlashTargetLabel,
+    composerHasSendableContent,
+    assetOperationPending,
+    pendingMessageAssetsVisible,
+    focusComposerAt,
+    updateMentionPicker,
+    commitMention,
+    commitSlashCommand,
+    insertMentionTrigger,
+    handleComposerTextChange,
+    handleComposerKeyDown,
+    handleComposerPaste,
+    handleComposerDragOver,
+    handleComposerDragLeave,
+    handleComposerDrop,
+    attachFiles,
+    removePendingAttachment,
+  } = useChannelComposerInputController({
+    cwd,
+    selectedChannelId,
+    activeConversationRun,
+    messageDraft,
+    setMessageDraft,
+    pendingAttachments,
+    setPendingAttachments,
+    pendingLinkPreviews,
+    setPendingLinkPreviews,
+    setMessageMentions,
+    mentionPicker,
+    setMentionPicker,
+    mentionActiveIndex,
+    setMentionActiveIndex,
+    slashPicker,
+    setSlashPicker,
+    slashActiveIndex,
+    setSlashActiveIndex,
+    setComposerDragActive,
+    setComposerBusy,
+    setSendState,
+    setSendError,
+    composerInputRef,
+    autoPreviewUrlsRef,
+    attachmentPreviewUrlsRef,
+    teammateOptions,
+    slashCommands,
+    onUploadAttachments,
+    onCreateLinkPreview,
+    t,
+  });
   const localTeammateById = useMemo(
     () => new Map(activeLocalTeammates.map((teammate) => [teammate.id, teammate])),
     [activeLocalTeammates],
@@ -2839,288 +2544,7 @@ export function WorkspaceClientView({
     [channelEffectiveCouncil],
   );
 
-  function updateMentionPicker(value: string, caret: number): void {
-    const activeMention = findActiveMention(value, caret);
-    setMentionPicker(activeMention);
-    setMentionActiveIndex(0);
-    setSlashPicker(activeMention ? undefined : findActiveSlashCommand(value, caret));
-    setSlashActiveIndex(0);
-  }
-
-  function focusComposerAt(caret: number): void {
-    const focus = (): void => {
-      composerInputRef.current?.focusAt(caret);
-    };
-    focus();
-    if (typeof globalThis.requestAnimationFrame === "function") {
-      globalThis.requestAnimationFrame(focus);
-      return;
-    }
-    globalThis.setTimeout(focus, 0);
-  }
-
-  function commitMention(option: ChannelMention): void {
-    const composer = composerInputRef.current;
-    const liveValue = messageDraft;
-    const liveCaret = Math.min(composer?.readSelectionStart() ?? liveValue.length, liveValue.length);
-    const livePicker = findActiveMention(liveValue, liveCaret);
-    const endOfDraftPicker = findActiveMention(liveValue, liveValue.length);
-    const picker = chooseMostSpecificMentionPicker([mentionPicker, livePicker, endOfDraftPicker]);
-    const inserted = insertMentionToken(liveValue, picker, option.label);
-    setMessageDraft(inserted.value);
-    setSendState("idle");
-    setSendError("");
-    setMessageMentions((current) => current.some((mention) => mention.id === option.id) ? current : [...current, option]);
-    setMentionPicker(undefined);
-    setMentionActiveIndex(0);
-    setSlashPicker(undefined);
-    setSlashActiveIndex(0);
-    focusComposerAt(inserted.caret);
-  }
-
-  function commitSlashCommand(option: ComposerSlashCommandOption): void {
-    const composer = composerInputRef.current;
-    const liveValue = messageDraft;
-    const liveCaret = Math.min(composer?.readSelectionStart() ?? liveValue.length, liveValue.length);
-    const picker = slashPicker ?? findActiveSlashCommand(liveValue, liveCaret) ?? findActiveSlashCommand(liveValue, liveValue.length);
-    const inserted = insertSlashCommandToken(liveValue, picker, option.id);
-    setMessageDraft(inserted.value);
-    setSendState("idle");
-    setSendError("");
-    setSlashPicker(undefined);
-    setSlashActiveIndex(0);
-    focusComposerAt(inserted.caret);
-  }
-
-  function insertMentionTrigger(): void {
-    const composer = composerInputRef.current;
-    const start = composer?.readSelectionStart() ?? messageDraft.length;
-    const end = composer?.readSelectionEnd() ?? start;
-    const before = messageDraft.slice(0, start);
-    const after = messageDraft.slice(end);
-    const insert = before.endsWith("@") ? "" : before.length === 0 || /\s$/.test(before) ? "@" : " @";
-    const nextDraft = `${before}${insert}${after}`;
-    const nextCursor = before.length + insert.length;
-    setMessageDraft(nextDraft);
-    updateMentionPicker(nextDraft, nextCursor);
-    globalThis.requestAnimationFrame(() => {
-      composerInputRef.current?.focusAt(nextCursor);
-    });
-  }
-
-  function handleComposerTextChange(value: string, caret: number): void {
-    setMessageDraft(value);
-    setMessageMentions((current) => mergeMentions(
-      current.filter((mention) => mentionTokenExistsInText(value, mention)),
-      findMentionsInText(value, teammateOptions),
-    ));
-    setSendState("idle");
-    setSendError("");
-    updateMentionPicker(value, caret);
-  }
-
-  function handleComposerKeyDown(event: ReactKeyboardEvent<HTMLDivElement>): void {
-    if (mentionPicker && mentionPickerOptions.length > 0) {
-      if (event.key === "ArrowDown") {
-        event.preventDefault();
-        setMentionActiveIndex((current) => (current + 1) % mentionPickerOptions.length);
-        return;
-      }
-      if (event.key === "ArrowUp") {
-        event.preventDefault();
-        setMentionActiveIndex((current) => (current - 1 + mentionPickerOptions.length) % mentionPickerOptions.length);
-        return;
-      }
-      if (event.key === "Enter" || event.key === "Tab") {
-        event.preventDefault();
-        commitMention(mentionPickerOptions[Math.min(mentionActiveIndex, mentionPickerOptions.length - 1)]);
-        return;
-      }
-      if (event.key === "Escape") {
-        event.preventDefault();
-        setMentionPicker(undefined);
-        setMentionActiveIndex(0);
-      }
-      return;
-    }
-    if (slashPicker && slashCommandPickerOptions.length > 0) {
-      if (event.key === "ArrowDown") {
-        event.preventDefault();
-        setSlashActiveIndex((current) => (current + 1) % slashCommandPickerOptions.length);
-        return;
-      }
-      if (event.key === "ArrowUp") {
-        event.preventDefault();
-        setSlashActiveIndex((current) => (current - 1 + slashCommandPickerOptions.length) % slashCommandPickerOptions.length);
-        return;
-      }
-      if (event.key === "Enter" || event.key === "Tab") {
-        event.preventDefault();
-        commitSlashCommand(slashCommandPickerOptions[Math.min(slashActiveIndex, slashCommandPickerOptions.length - 1)]);
-        return;
-      }
-      if (event.key === "Escape") {
-        event.preventDefault();
-        setSlashPicker(undefined);
-        setSlashActiveIndex(0);
-      }
-      return;
-    }
-    if (!mentionPicker && !slashPicker) {
-      if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
-        event.preventDefault();
-        if (activeConversationRun) {
-          if (composerHasSendableContent) {
-            void submitChannelRunGuidanceFromDraft();
-          }
-          return;
-        }
-        void sendMessage();
-        return;
-      }
-      if (event.key === "Escape") {
-        setMentionPicker(undefined);
-        setSlashPicker(undefined);
-      }
-      return;
-    }
-    if (event.key === "Escape") {
-      event.preventDefault();
-      setMentionPicker(undefined);
-      setMentionActiveIndex(0);
-      setSlashPicker(undefined);
-      setSlashActiveIndex(0);
-    }
-  }
-
-  function handleComposerPaste(event: ClipboardEvent<HTMLDivElement>): void {
-    if (event.clipboardData.files.length === 0) {
-      return;
-    }
-    event.preventDefault();
-    void attachFiles(event.clipboardData.files);
-  }
-
-  function handleComposerDragOver(event: DragEvent<HTMLElement>): void {
-    if (!Array.from(event.dataTransfer.types).includes("Files")) {
-      return;
-    }
-    event.preventDefault();
-    event.dataTransfer.dropEffect = "copy";
-    setComposerDragActive(true);
-  }
-
-  function handleComposerDragLeave(event: DragEvent<HTMLElement>): void {
-    if (event.currentTarget.contains(event.relatedTarget as Node | null)) {
-      return;
-    }
-    setComposerDragActive(false);
-  }
-
-  function handleComposerDrop(event: DragEvent<HTMLElement>): void {
-    if (event.dataTransfer.files.length === 0) {
-      setComposerDragActive(false);
-      return;
-    }
-    event.preventDefault();
-    setComposerDragActive(false);
-    void attachFiles(event.dataTransfer.files);
-  }
-
-  async function attachFiles(files: FileList | readonly File[]): Promise<void> {
-    const selectedFiles = Array.from(files).slice(0, 10);
-    if (selectedFiles.length === 0) {
-      return;
-    }
-    const uploadItems = selectedFiles.map((file) => {
-      const previewUrl = createAttachmentPreviewUrl(file);
-      if (previewUrl) {
-        attachmentPreviewUrlsRef.current.add(previewUrl);
-      }
-      return {
-        localId: createLocalComposerAssetId("attachment"),
-        fileName: file.name,
-        sizeBytes: file.size,
-        state: "uploading" as const,
-        previewUrl,
-      };
-    });
-    setPendingAttachments((current) => [...current, ...uploadItems]);
-    setComposerBusy(true);
-    try {
-      const uploaded = await onUploadAttachments(selectedFiles);
-      const uploadedByLocalId = new Map(uploadItems.map((item, index) => [item.localId, uploaded[index]]));
-      setPendingAttachments((current) => current.map((item) => {
-        const attachment = uploadedByLocalId.get(item.localId);
-        if (attachment) {
-          return { ...item, state: "ready", attachment };
-        }
-        if (uploadedByLocalId.has(item.localId)) {
-          return { ...item, state: "failed", error: t("Upload failed") };
-        }
-        return item;
-      }));
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      setPendingAttachments((current) => current.map((item) =>
-        uploadItems.some((upload) => upload.localId === item.localId)
-          ? { ...item, state: "failed", error: message }
-          : item,
-      ));
-    } finally {
-      setComposerBusy(false);
-    }
-  }
-
-  async function addLinkPreview(rawUrl: string): Promise<void> {
-    const url = rawUrl.trim();
-    if (!url) {
-      return;
-    }
-    const localId = createLocalComposerAssetId("link");
-    setPendingLinkPreviews((current) => [
-      ...current.filter((item) => item.url !== url && item.preview?.normalizedUrl !== url && item.preview?.url !== url),
-      { localId, url, state: "uploading" },
-    ]);
-    setComposerBusy(true);
-    try {
-      const preview = await onCreateLinkPreview(url);
-      if (preview) {
-        setPendingLinkPreviews((current) => current.map((item) => item.localId === localId
-          ? {
-              ...item,
-              state: preview.status === "ready" ? "ready" : preview.status === "blocked" ? "blocked" : "failed",
-              preview,
-              error: preview.errorMessage,
-            }
-          : item));
-      } else {
-        setPendingLinkPreviews((current) => current.map((item) => item.localId === localId
-          ? { ...item, state: "failed", error: t("Preview failed") }
-          : item));
-      }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      setPendingLinkPreviews((current) => current.map((item) => item.localId === localId
-        ? { ...item, state: "failed", error: message }
-        : item));
-    } finally {
-      setComposerBusy(false);
-    }
-  }
-
-  function showConversationBlockFeedback(tone: ComposerInlineFeedbackTone, message: string): void {
-    if (conversationBlockFeedbackTimeoutRef.current !== undefined) {
-      globalThis.clearTimeout(conversationBlockFeedbackTimeoutRef.current);
-    }
-    setConversationBlockFeedback({ id: Date.now(), tone, message });
-    conversationBlockFeedbackTimeoutRef.current = globalThis.setTimeout(() => {
-      setConversationBlockFeedback(undefined);
-      conversationBlockFeedbackTimeoutRef.current = undefined;
-    }, 1_600);
-  }
-
-  function showConversationBackgroundToast(feedback: ComposerInlineFeedback): void {
+  function showConversationBackgroundToast(feedback: ChannelComposerInlineFeedback): void {
     if (conversationBackgroundToastTimeoutRef.current !== undefined) {
       globalThis.clearTimeout(conversationBackgroundToastTimeoutRef.current);
     }
@@ -3131,633 +2555,401 @@ export function WorkspaceClientView({
     }, 4_200);
   }
 
-  function messageFeedFocusableBlocks(): HTMLElement[] {
-    const feed = messageFeedState.scrollRef.current;
-    if (!feed) {
-      return [];
-    }
-    return Array.from(feed.querySelectorAll<HTMLElement>("[data-conversation-focus-block='true']"))
-      .filter((element) => element.offsetParent !== null);
-  }
-
-  function focusedConversationBlock(): HTMLElement | undefined {
-    const activeElement = document.activeElement;
-    if (!(activeElement instanceof HTMLElement)) {
-      return undefined;
-    }
-    const block = activeElement.closest<HTMLElement>("[data-conversation-focus-block='true']");
-    return block && messageFeedState.scrollRef.current?.contains(block) ? block : undefined;
-  }
-
-  function focusConversationBlock(block: HTMLElement): void {
-    block.focus({ preventScroll: true });
-    block.scrollIntoView({ block: "nearest" });
-    setConversationBlockActionMenu(undefined);
-  }
-
-  function focusConversationBlockById(blockId: string): void {
-    if (!blockId) {
-      return;
-    }
-    const block = messageFeedState.scrollRef.current?.querySelector<HTMLElement>(`[data-feed-item-id="${cssEscape(blockId)}"]`);
-    if (block) {
-      focusConversationBlock(block);
-    }
-  }
-
-  function focusAdjacentConversationBlock(direction: "previous" | "next"): void {
-    const blocks = messageFeedFocusableBlocks();
-    if (blocks.length === 0) {
-      return;
-    }
-    const current = focusedConversationBlock();
-    const currentIndex = current ? blocks.indexOf(current) : -1;
-    const nextIndex = direction === "next"
-      ? Math.min(blocks.length - 1, currentIndex < 0 ? 0 : currentIndex + 1)
-      : Math.max(0, currentIndex < 0 ? blocks.length - 1 : currentIndex - 1);
-    focusConversationBlock(blocks[nextIndex]);
-  }
-
-  async function copyConversationBlock(block: HTMLElement): Promise<void> {
-    const text = conversationBlockText(block);
-    if (!text) {
-      showConversationBlockFeedback("error", t("Nothing to copy"));
-      return;
-    }
-    if (!globalThis.navigator?.clipboard?.writeText) {
-      showConversationBlockFeedback("error", t("Copy unavailable"));
-      return;
-    }
-    try {
-      await globalThis.navigator.clipboard.writeText(text);
-      showConversationBlockFeedback("success", t("Copied focused block"));
-      const blockId = block.dataset.feedItemId ?? "";
-      setConversationBlockActionMenu((current) => {
-        if (!current || current.blockId !== blockId) {
-          return current;
-        }
-        return { ...current, feedback: t("Copied") };
-      });
-    } catch {
-      showConversationBlockFeedback("error", t("Copy unavailable"));
-    }
-  }
-
-  function handleMessageFeedShortcut(event: MessageFeedShortcutEvent): void {
-    if (event.defaultPrevented || isEditableEventTarget(event.target)) {
-      return;
-    }
-    if (event.key === "Escape" && conversationBlockActionMenu) {
-      event.preventDefault();
-      setConversationBlockActionMenu(undefined);
-      return;
-    }
-    if (event.altKey && !event.metaKey && !event.ctrlKey && !event.shiftKey && (event.key === "ArrowDown" || event.key === "ArrowUp")) {
-      event.preventDefault();
-      focusAdjacentConversationBlock(event.key === "ArrowDown" ? "next" : "previous");
-      return;
-    }
-    if ((event.metaKey || event.ctrlKey) && event.shiftKey && event.key.toLowerCase() === "c") {
-      const block = focusedConversationBlock();
-      if (!block) {
-        return;
-      }
-      event.preventDefault();
-      void copyConversationBlock(block);
-      return;
-    }
-    if (event.key === "Enter" && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey) {
-      const feed = messageFeedState.scrollRef.current;
-      const focusedBlock = focusedConversationBlock();
-      const block = focusedBlock ?? messageFeedFocusableBlocks().find((candidate) => candidate.querySelector(conversationExpandableSelector));
-      const expandable = findConversationExpandable(block) ?? findConversationExpandable(feed);
-      if (!expandable) {
-        return;
-      }
-      event.preventDefault();
-      expandable.click();
-      showConversationBlockFeedback("info", t("Expanded focused block"));
-    }
-  }
-
-  function handleMessageFeedKeyDown(event: ReactKeyboardEvent<HTMLDivElement>): void {
-    handleMessageFeedShortcut(event);
-  }
-
-  function handleMessageFeedPointerDown(event: ReactPointerEvent<HTMLDivElement>): void {
-    if (event.pointerType === "mouse") {
-      return;
-    }
-    const block = conversationBlockFromEventTarget(event.target);
-    if (!block || isInteractiveEventTarget(event.target)) {
-      return;
-    }
-    const timeoutId = globalThis.setTimeout(() => {
-      conversationBlockLongPressRef.current = undefined;
-      openConversationBlockActionMenu(block, event.clientX, event.clientY);
-    }, 560);
-    conversationBlockLongPressRef.current = {
-      pointerId: event.pointerId,
-      startX: event.clientX,
-      startY: event.clientY,
-      timeoutId,
-      block,
-    };
-  }
-
-  function handleMessageFeedPointerMove(event: ReactPointerEvent<HTMLDivElement>): void {
-    const pending = conversationBlockLongPressRef.current;
-    if (!pending || pending.pointerId !== event.pointerId) {
-      return;
-    }
-    if (Math.abs(event.clientX - pending.startX) > 12 || Math.abs(event.clientY - pending.startY) > 12) {
-      cancelConversationBlockLongPress();
-    }
-  }
-
-  function handleMessageFeedPointerEnd(event: ReactPointerEvent<HTMLDivElement>): void {
-    if (conversationBlockLongPressRef.current?.pointerId === event.pointerId) {
-      cancelConversationBlockLongPress();
-    }
-  }
-
-  function handleMessageFeedContextMenu(event: ReactMouseEvent<HTMLDivElement>): void {
-    const block = conversationBlockFromEventTarget(event.target);
-    if (!block || isInteractiveEventTarget(event.target)) {
-      return;
-    }
-    event.preventDefault();
-    openConversationBlockActionMenu(block, event.clientX, event.clientY);
-  }
-
-  function cancelConversationBlockLongPress(): void {
-    const pending = conversationBlockLongPressRef.current;
-    if (!pending) {
-      return;
-    }
-    globalThis.clearTimeout(pending.timeoutId);
-    conversationBlockLongPressRef.current = undefined;
-  }
-
-  function openConversationBlockActionMenu(block: HTMLElement, x: number, y: number): void {
-    focusConversationBlock(block);
-    setConversationBlockActionMenu({
-      blockId: block.dataset.feedItemId ?? "",
-      label: conversationBlockLabel(block, t),
-      text: conversationBlockText(block),
-      x: Math.max(12, Math.min(x, globalThis.innerWidth - 220)),
-      y: Math.max(12, Math.min(y, globalThis.innerHeight - 160)),
-    });
-  }
-
-  function handleComposerResizePointerDown(event: ReactPointerEvent<HTMLButtonElement>): void {
-    if (event.pointerType === "mouse" && event.button !== 0) {
-      return;
-    }
-    event.preventDefault();
-    event.currentTarget.setPointerCapture(event.pointerId);
-    composerResizeDragRef.current = {
-      pointerId: event.pointerId,
-      startY: event.clientY,
-      startHeight: composerInputMinHeight,
-    };
-  }
-
-  function handleComposerResizePointerMove(event: ReactPointerEvent<HTMLButtonElement>): void {
-    const drag = composerResizeDragRef.current;
-    if (!drag || drag.pointerId !== event.pointerId) {
-      return;
-    }
-    event.preventDefault();
-    const nextHeight = Math.max(76, Math.min(180, Math.round(drag.startHeight + drag.startY - event.clientY)));
-    setComposerInputMinHeight(nextHeight);
-  }
-
-  function handleComposerResizePointerEnd(event: ReactPointerEvent<HTMLButtonElement>): void {
-    const drag = composerResizeDragRef.current;
-    if (!drag || drag.pointerId !== event.pointerId) {
-      return;
-    }
-    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-      event.currentTarget.releasePointerCapture(event.pointerId);
-    }
-    composerResizeDragRef.current = undefined;
-  }
-
-  function refreshChannelRunGuidanceSurfaces(): void {
-    onRefreshChannelActivity();
-    onRefreshTasks();
-    onRefreshRuntime();
-    onRefreshRunApprovals();
-  }
-
-  async function refreshChannelRunGuidance(sourceRunId = activeConversationSourceRunId): Promise<void> {
-    if (!cwd || !sourceRunId) {
-      setRunGuidanceInterventions([]);
-      return;
-    }
-    try {
-      const response = await listRunInterventions(cwd, sourceRunId, 100);
-      setRunGuidanceInterventions(response.interventions);
-    } catch (error) {
-      setRunGuidanceError(error instanceof Error ? error.message : String(error));
-    }
-  }
-
-  async function submitChannelRunGuidanceFromDraft(): Promise<boolean> {
-    if (!selectedChannelId || !activeConversationRun || !activeConversationSourceRunId || runGuidanceSubmitting || composerBusy || assetOperationPending) {
-      return false;
-    }
-    const draftSnapshot = messageDraft;
-    const messageMentionsSnapshot = messageMentions;
-    const pendingAttachmentsSnapshot = pendingAttachments;
-    const pendingLinkPreviewsSnapshot = pendingLinkPreviews;
-    const serializedInput = serializeComposerInputParts(composerInputParts);
-    const body = serializedInput.body.trim();
-    const fileRefs = [...composerFileRefs];
-    const guidanceFileRefs = fileRefs.map((fileRef) => ({
-      path: fileRef.path,
-      ...(fileRef.label ? { label: fileRef.label } : {}),
-      rootRelation: "unknown" as const,
-      kind: "unknown" as const,
-      materializationStatus: "not_loaded" as const,
-    }));
-    const attachmentIds = [...serializedInput.attachmentIds];
-    const pendingPreviewRecords = pendingLinkPreviews.flatMap((item) => item.preview ? [item.preview] : []);
-    const newPreviews: ChannelLinkPreview[] = [];
-    if (!body && attachmentIds.length === 0 && readyLinkPreviewIds.length === 0 && fileRefs.length === 0) {
-      return false;
-    }
-    setRunGuidanceSubmitting("queue_followup");
-    setRunGuidanceError("");
-    setComposerBusy(true);
-    try {
-      for (const url of extractUrls(body)) {
-        if (!pendingPreviewRecords.some((preview) => preview.normalizedUrl === url || preview.url === url)) {
-          try {
-            const preview = await onCreateLinkPreview(url);
-            if (preview) {
-              newPreviews.push(preview);
-            }
-          } catch (error) {
-            const message = error instanceof Error ? error.message : String(error);
-            setPendingLinkPreviews((current) => [
-              ...current,
-              { localId: createLocalComposerAssetId("link"), url, state: "failed", error: message },
-            ]);
-          }
-        }
-      }
-      const linkPreviews = [...pendingPreviewRecords, ...newPreviews];
-      const messagePayload = {
-        body,
-        attachmentIds,
-        linkPreviewIds: linkPreviews.map((preview) => preview.id),
-        fileRefs: guidanceFileRefs,
-      };
-      const instruction = summarizeChannelGuidancePayload(messagePayload, t);
-      const response = await createRunIntervention(cwd, activeConversationSourceRunId, {
-        mode: "queue_followup",
-        instruction,
-        messagePayload,
-        idempotencyKey: `web-channel:${activeConversationRun.id}:queue_followup:${Date.now()}:${Math.random().toString(36).slice(2)}`,
-      });
-      setRunGuidanceInterventions((current) => [...current.filter((item) => item.id !== response.intervention.id), response.intervention]
-        .sort((left, right) => left.createdAt.localeCompare(right.createdAt)));
-      setMessageDraft("");
-      setMessageMentions([]);
-      setPendingAttachments([]);
-      setPendingLinkPreviews([]);
-      autoPreviewUrlsRef.current.clear();
-      setMentionPicker(undefined);
-      setMentionActiveIndex(0);
-      setSendState("idle");
-      setSendError("");
-      showComposerFeedback("success", t("Guidance queued"));
-      revokePendingAttachmentPreviews(pendingAttachmentsSnapshot, (previewUrl) => attachmentPreviewUrlsRef.current.delete(previewUrl));
-      refreshChannelRunGuidanceSurfaces();
-      window.setTimeout(() => {
-        void refreshChannelRunGuidance(activeConversationSourceRunId);
-        refreshChannelRunGuidanceSurfaces();
-      }, 250);
-      return true;
-    } catch (error) {
-      setMessageDraft(draftSnapshot);
-      setMessageMentions(messageMentionsSnapshot);
-      setPendingAttachments(pendingAttachmentsSnapshot);
-      setPendingLinkPreviews(pendingLinkPreviewsSnapshot);
-      setRunGuidanceError(error instanceof Error ? error.message : String(error));
-      return false;
-    } finally {
-      setComposerBusy(false);
-      setRunGuidanceSubmitting("");
-    }
-  }
-
-  async function cancelChannelRunGuidance(interventionId: string): Promise<void> {
-    if (runGuidanceCancelingId) {
-      return;
-    }
-    setRunGuidanceCancelingId(interventionId);
-    setRunGuidanceError("");
-    try {
-      const response = await cancelRunIntervention(cwd, interventionId);
-      setRunGuidanceInterventions((current) => current.map((item) => item.id === response.intervention.id ? response.intervention : item));
-      showComposerFeedback("info", t("Queued guidance removed"));
-      refreshChannelRunGuidanceSurfaces();
-    } catch (error) {
-      setRunGuidanceError(error instanceof Error ? error.message : String(error));
-    } finally {
-      setRunGuidanceCancelingId("");
-    }
-  }
-
-  async function promoteChannelRunGuidance(interventionId: string): Promise<void> {
-    if (runGuidancePromotingId) {
-      return;
-    }
-    setRunGuidancePromotingId(interventionId);
-    setRunGuidanceError("");
-    try {
-      const response = await promoteRunIntervention(cwd, interventionId);
-      setRunGuidanceInterventions((current) => current.map((item) => item.id === response.intervention.id ? response.intervention : item));
-      showComposerFeedback("success", t("Queued guidance started"));
-      refreshChannelRunGuidanceSurfaces();
-      window.setTimeout(() => {
-        void refreshChannelRunGuidance(activeConversationSourceRunId);
-        refreshChannelRunGuidanceSurfaces();
-      }, 800);
-    } catch (error) {
-      setRunGuidanceError(error instanceof Error ? error.message : String(error));
-    } finally {
-      setRunGuidancePromotingId("");
-    }
-  }
-
-  async function editChannelRunGuidance(intervention: RunIntervention): Promise<void> {
-    const payload = intervention.messagePayload;
-    const body = payload?.body ?? intervention.instruction;
-    setMessageDraft(body);
-    setPendingAttachments((payload?.attachmentIds ?? [])
-      .map((attachmentId) => channelAttachmentById.get(attachmentId))
-      .filter((attachment): attachment is ChannelAttachment => Boolean(attachment))
-      .map((attachment) => ({
-        localId: createLocalComposerAssetId("attachment"),
-        fileName: attachment.fileName,
-        sizeBytes: attachment.sizeBytes,
-        state: "ready" as const,
-        attachment,
-      })));
-    setPendingLinkPreviews((payload?.linkPreviewIds ?? [])
-      .map((previewId) => channelLinkPreviewById.get(previewId))
-      .filter((preview): preview is ChannelLinkPreview => Boolean(preview))
-      .map((preview) => ({
-        localId: createLocalComposerAssetId("link"),
-        url: preview.url,
-        state: preview.status === "ready" ? "ready" as const : preview.status === "blocked" ? "blocked" as const : "failed" as const,
-        preview,
-        error: preview.errorMessage,
-      })));
-    setSendState("idle");
-    setSendError("");
-    await cancelChannelRunGuidance(intervention.id);
-    focusComposerAt(body.length);
-  }
-
-  async function sendMessage(): Promise<void> {
-    if (!selectedChannelId || composerBusy || assetOperationPending || !composerHasSendableContent) {
-      return;
-    }
-    const retryingFailedSend = sendState === "failed";
-    const draftSnapshot = messageDraft;
-    const messageMentionsSnapshot = messageMentions;
-    const pendingAttachmentsSnapshot = pendingAttachments;
-    const pendingLinkPreviewsSnapshot = pendingLinkPreviews;
-    const serializedInput = serializeComposerInputParts(composerInputParts);
-    const body = serializedInput.body.trim();
-    const slashIntent = parseComposerSlashIntent(body, {
-      teammateMentions: teammateOptions.map((teammate) => ({ id: teammate.id, label: teammate.label })),
-      commands: slashCommands,
-    });
-    const fileRefs = [...composerFileRefs];
-    const pastedUrls = extractUrls(body);
-    const newPreviews: ChannelLinkPreview[] = [];
-    const attachmentIds = [...serializedInput.attachmentIds];
-    const pendingPreviewRecords = pendingLinkPreviews.flatMap((item) => item.preview ? [item.preview] : []);
-    const mentions = mergeMentions(messageMentions, findMentionsInText(body, teammateOptions));
-    const shouldRequestAi = mentions.some((mention) => mention.kind === "ai-teammate");
-    let pendingSendPreviewId = "";
-    messageFeedState.scrollToLatest();
-    setComposerBusy(true);
-    setSendState("sending");
-    setSendError("");
-    try {
-      if (slashIntent.kind === "agent_command" || slashIntent.kind === "multi_agent_command" || slashIntent.kind === "global_command") {
-        const prompt = slashIntent.args.trim() || t("Run /{command} using the current channel context.", { command: slashIntent.commandId });
-        const title = titleFromPrompt(prompt || slashIntent.commandLabel);
-        const slashTaskTargets = slashIntent.kind === "multi_agent_command"
-          ? slashIntent.teammates.map((teammate) => ({ id: teammate.id, label: teammate.label }))
-          : slashIntent.kind === "agent_command"
-            ? [{ id: slashIntent.teammateId, label: slashIntent.teammateLabel }]
-            : [undefined];
-        for (const target of slashTaskTargets) {
-          await onCreateTaskFromSlashCommand({
-            title,
-            prompt,
-            requestedSkillId: slashIntent.commandId,
-            attachmentIds,
-            ...(target ? { assigneeTeammateId: target.id } : {}),
-          });
-        }
-        setMessageDraft("");
-        setMessageMentions([]);
-        revokePendingAttachmentPreviews(pendingAttachmentsSnapshot, (previewUrl) => attachmentPreviewUrlsRef.current.delete(previewUrl));
-        setPendingAttachments([]);
-        setPendingLinkPreviews([]);
-        autoPreviewUrlsRef.current.clear();
-        setSendState("idle");
-        setSendError("");
-        return;
-      }
-      for (const url of pastedUrls) {
-        if (!pendingPreviewRecords.some((preview) => preview.normalizedUrl === url || preview.url === url)) {
-          try {
-            const preview = await onCreateLinkPreview(url);
-            if (preview) {
-              newPreviews.push(preview);
-            }
-          } catch (error) {
-            const message = error instanceof Error ? error.message : String(error);
-            setPendingLinkPreviews((current) => [
-              ...current,
-              { localId: createLocalComposerAssetId("link"), url, state: "failed", error: message },
-            ]);
-          }
-        }
-      }
-      const linkPreviews = [...pendingPreviewRecords, ...newPreviews];
-      const pendingSendPreview = {
-        id: createLocalComposerAssetId("message"),
-        channelId: selectedChannelId,
-        threadId: selectedChannelBranchRootThreadId,
-        body,
-        mentions,
-        attachmentIds,
-        linkPreviewIds: linkPreviews.map((preview) => preview.id),
-        fileRefs,
-        requestAiReply: shouldRequestAi,
-        autoReplyMode: selectedChannel?.autoReplyMode ?? "mentions_only",
-        createdAt: new Date().toISOString(),
-      } satisfies PendingChannelSendPreview;
-      pendingSendPreviewId = pendingSendPreview.id;
-      setPendingChannelSendPreview(pendingSendPreview);
-      setMessageDraft("");
-      setMessageMentions([]);
-      setPendingAttachments([]);
-      setPendingLinkPreviews([]);
-      autoPreviewUrlsRef.current.clear();
-      await onSendMessage({
-        threadId: selectedChannelBranchRootThreadId,
-        body,
-        mentions,
-        attachmentIds,
-        linkPreviewIds: linkPreviews.map((preview) => preview.id),
-        fileRefs,
-        requestAiReply: shouldRequestAi,
-      });
-      revokePendingAttachmentPreviews(pendingAttachmentsSnapshot, (previewUrl) => attachmentPreviewUrlsRef.current.delete(previewUrl));
-      setPendingChannelSendPreview((current) => current?.id === pendingSendPreviewId ? undefined : current);
-      setSendState("idle");
-      setSendError("");
-      if (retryingFailedSend) {
-        showComposerFeedback("success", t("Message sent"));
-      }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      if (pendingSendPreviewId) {
-        setPendingChannelSendPreview((current) => current?.id === pendingSendPreviewId ? undefined : current);
-        setMessageDraft(draftSnapshot);
-        setMessageMentions(messageMentionsSnapshot);
-        setPendingAttachments(pendingAttachmentsSnapshot);
-        setPendingLinkPreviews(pendingLinkPreviewsSnapshot);
-      }
-      setSendState("failed");
-      setSendError(message);
-    } finally {
-      setComposerBusy(false);
-    }
-  }
-
-  async function sendThreadReply(): Promise<void> {
-    const body = threadReplyDraft.trim();
-    if (!activeThreadId || !body || threadReplyPending) {
-      return;
-    }
-    const mentions = findMentionsInText(body, teammateOptions);
-    const shouldRequestAi = mentions.some((mention) => mention.kind === "ai-teammate");
-    setThreadReplyPending(true);
-    setThreadReplyError("");
-    try {
-      await onSendMessage({
-        threadId: activeThreadId,
-        body,
-        mentions,
-        attachmentIds: [],
-        linkPreviewIds: [],
-        fileRefs: [],
-        requestAiReply: shouldRequestAi,
-      });
-      setThreadReplyDraft("");
-    } catch (error) {
-      setThreadReplyError(error instanceof Error ? error.message : String(error));
-    } finally {
-      setThreadReplyPending(false);
-    }
-  }
-
-  function removePendingAttachment(localId: string): void {
-    setPendingAttachments((current) => {
-      const removed = current.find((item) => item.localId === localId);
-      revokePendingAttachmentPreview(removed, (previewUrl) => attachmentPreviewUrlsRef.current.delete(previewUrl));
-      return current.filter((item) => item.localId !== localId);
-    });
-  }
-
-  useEffect(() => {
-    if (!selectedChannelId) {
-      return undefined;
-    }
-    const knownPreviewUrls = new Set(
-      pendingLinkPreviews.flatMap((item) => [
-        item.url,
-        item.preview?.url,
-        item.preview?.normalizedUrl,
-      ]).filter((item): item is string => Boolean(item)),
-    );
-    const nextUrl = extractUrls(messageDraft).find((url) => !knownPreviewUrls.has(url) && !autoPreviewUrlsRef.current.has(url));
-    if (!nextUrl) {
-      return undefined;
-    }
-    const timeoutId = globalThis.setTimeout(() => {
-      autoPreviewUrlsRef.current.add(nextUrl);
-      void addLinkPreview(nextUrl);
-    }, 450);
-    return () => globalThis.clearTimeout(timeoutId);
-  }, [messageDraft, pendingLinkPreviews, selectedChannelId]);
-
   useEffect(() => () => {
-    if (conversationBlockFeedbackTimeoutRef.current !== undefined) {
-      globalThis.clearTimeout(conversationBlockFeedbackTimeoutRef.current);
-    }
     if (conversationBackgroundToastTimeoutRef.current !== undefined) {
       globalThis.clearTimeout(conversationBackgroundToastTimeoutRef.current);
     }
-    if (conversationBlockLongPressRef.current) {
-      globalThis.clearTimeout(conversationBlockLongPressRef.current.timeoutId);
-      conversationBlockLongPressRef.current = undefined;
-    }
   }, []);
 
-  const readyAttachmentIds = pendingAttachments.flatMap((item) => item.attachment ? [item.attachment.id] : []);
-  const readyLinkPreviewIds = pendingLinkPreviews.flatMap((item) => item.preview ? [item.preview.id] : []);
-  const composerInputParts = parseComposerInputParts(messageDraft, {
-    cwd,
-    attachments: readyAttachmentIds.map((attachmentId) => ({ attachmentId })),
-    teammateMentions: teammateOptions.map((teammate) => ({ id: teammate.id, label: teammate.label })),
-    slashCommands,
-    linkPreviews: pendingLinkPreviews.map((item) => ({
-      url: item.url,
-      normalizedUrl: item.preview?.normalizedUrl,
-      title: item.preview?.title,
-      state: item.state,
-      error: item.error ?? item.preview?.errorMessage,
-    })),
-  });
-  const composerFileReferenceParts = composerWorkspaceFileParts(composerInputParts);
-  const composerFileRefs = composerFileReferenceParts.map((part): ChannelMessageFileRef => ({
-    path: part.path,
-    label: part.path,
-    source: "composer",
-    ...(part.line !== undefined ? { line: part.line } : {}),
-  }));
-  const composerSlashIntent = activeConversationRun
-    ? { kind: "none" as const }
-    : parseComposerSlashIntent(messageDraft.trim(), {
-      teammateMentions: teammateOptions.map((teammate) => ({ id: teammate.id, label: teammate.label })),
-      commands: slashCommands,
+  const activeChannelConversationThread = useMemo(
+    () => selectedChannelBranchRootThreadId
+      ? visibleChannelWorkThreads.find((thread) => thread.id === selectedChannelBranchRootThreadId) ?? channelDiscussionRootThread
+      : channelDiscussionRootThread,
+    [channelDiscussionRootThread, selectedChannelBranchRootThreadId, visibleChannelWorkThreads],
+  );
+  const channelPlanModeThreadId = activeChannelConversationThread?.id ?? selectedChannelBranchRootThreadId ?? "";
+  const channelPlanModeActive = activeChannelConversationThread?.conversationMode.mode === "plan";
+  const channelPlanModeBusy = Boolean(channelPlanModeThreadId && workThreadConversationModeId === channelPlanModeThreadId);
+
+  useEffect(() => {
+    const workspaceCwd = cwd.trim();
+    const threadId = channelPlanModeThreadId;
+    if (!workspaceCwd || !threadId) {
+      setActiveChannelGoal(undefined);
+      setChannelGoalError("");
+      setChannelGoalLoadingThreadId("");
+      return;
+    }
+    let cancelled = false;
+    setChannelGoalLoadingThreadId(threadId);
+    setChannelGoalError("");
+    void getLingThreadGoal(workspaceCwd, threadId)
+      .then((response) => {
+        if (cancelled) {
+          return;
+        }
+        setActiveChannelGoal(response.goal ?? undefined);
+      })
+      .catch((error: unknown) => {
+        if (cancelled) {
+          return;
+        }
+        setActiveChannelGoal(undefined);
+        setChannelGoalError(error instanceof Error ? error.message : String(error));
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setChannelGoalLoadingThreadId("");
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [cwd, channelPlanModeThreadId]);
+
+  useEffect(() => {
+    const workspaceCwd = cwd.trim();
+    const threadId = channelPlanModeThreadId;
+    if (!workspaceCwd || !threadId) {
+      setProposedPlanArtifactsById(new Map());
+      return;
+    }
+    let cancelled = false;
+    void listProposedPlanArtifacts(workspaceCwd, threadId, { limit: 100 })
+      .then((response) => {
+        if (cancelled) {
+          return;
+        }
+        setProposedPlanArtifactsById(new Map(response.plans.map((plan) => [plan.id, plan])));
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setProposedPlanArtifactsById(new Map());
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [cwd, channelPlanModeThreadId]);
+
+  async function setChannelPlanMode(active: boolean): Promise<void> {
+    let threadId = channelPlanModeThreadId;
+    if (!threadId && active) {
+      threadId = (await ensureChannelDiscussionRootThread())?.id ?? "";
+    }
+    if (!threadId) {
+      if (!active) {
+        return;
+      }
+      const message = t("Plan Mode needs a saved Ling thread.");
+      showComposerFeedback("error", message);
+      throw new Error(message);
+    }
+    await updateChannelWorkThreadConversationMode(threadId, active ? "plan" : "default");
+  }
+
+  async function ensureChannelGoalThreadId(): Promise<string> {
+    let threadId = channelPlanModeThreadId;
+    if (!threadId) {
+      threadId = (await ensureChannelDiscussionRootThread())?.id ?? "";
+    }
+    if (!threadId) {
+      const message = t("Goal needs a saved Ling thread.");
+      showComposerFeedback("error", message);
+      throw new Error(message);
+    }
+    return threadId;
+  }
+
+  async function setChannelGoalObjective(objective: string, replaceExisting = true): Promise<void> {
+    const workspaceCwd = cwd.trim();
+    if (!workspaceCwd) {
+      throw new Error(t("Workspace cwd is required."));
+    }
+    const threadId = await ensureChannelGoalThreadId();
+    setChannelGoalBusy(true);
+    setChannelGoalError("");
+    try {
+      const response = await putLingThreadGoal(workspaceCwd, threadId, { objective, replaceExisting });
+      setActiveChannelGoal(response.goal ?? undefined);
+      setChannelGoalExpanded(false);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setChannelGoalError(message);
+      throw error;
+    } finally {
+      setChannelGoalBusy(false);
+    }
+  }
+
+  async function patchChannelGoal(input: { readonly status?: LingThreadGoal["status"]; readonly objective?: string; readonly blockedReason?: string | null }): Promise<void> {
+    const workspaceCwd = cwd.trim();
+    const threadId = await ensureChannelGoalThreadId();
+    setChannelGoalBusy(true);
+    setChannelGoalError("");
+    try {
+      const response = await patchLingThreadGoal(workspaceCwd, threadId, input);
+      setActiveChannelGoal(response.goal ?? undefined);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setChannelGoalError(message);
+      throw error;
+    } finally {
+      setChannelGoalBusy(false);
+    }
+  }
+
+  async function clearChannelGoal(): Promise<void> {
+    const workspaceCwd = cwd.trim();
+    const threadId = await ensureChannelGoalThreadId();
+    setChannelGoalBusy(true);
+    setChannelGoalError("");
+    try {
+      await deleteLingThreadGoal(workspaceCwd, threadId);
+      setActiveChannelGoal(undefined);
+      setChannelGoalExpanded(false);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setChannelGoalError(message);
+      throw error;
+    } finally {
+      setChannelGoalBusy(false);
+    }
+  }
+
+  function openChannelGoalEditor(): void {
+    const draft = activeChannelGoal ? `/goal edit ${activeChannelGoal.objective}` : "/goal ";
+    setMessageDraft(draft);
+    focusComposerAt(draft.length);
+  }
+
+  function continueChannelGoal(): void {
+    if (!activeChannelGoal || channelGoalBusy) {
+      return;
+    }
+    if (activeChannelGoal.status === "paused") {
+      showComposerFeedback("error", t("Resume the goal before continuing."));
+      return;
+    }
+    if (channelPlanModeActive) {
+      showComposerFeedback("error", t("Exit Plan Mode before continuing a goal."));
+      return;
+    }
+    void (async () => {
+      setChannelGoalBusy(true);
+      setChannelGoalError("");
+      try {
+        const threadId = await ensureChannelGoalThreadId();
+        const body = t("Continue working toward goal: {objective}", { objective: activeChannelGoal.objective });
+        await onSendMessage({
+          threadId,
+          body,
+          mentions: [],
+          attachmentIds: [],
+          linkPreviewIds: [],
+          fileRefs: [],
+          requestAiReply: true,
+        });
+        showComposerFeedback("success", t("Goal continuation queued"));
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        setChannelGoalError(message);
+        showComposerFeedback("error", message);
+      } finally {
+        setChannelGoalBusy(false);
+      }
+    })();
+  }
+
+  function pauseOrResumeChannelGoal(): void {
+    if (!activeChannelGoal || channelGoalBusy) {
+      return;
+    }
+    const paused = activeChannelGoal.status === "paused";
+    void patchChannelGoal(paused ? { status: "active", blockedReason: null } : { status: "paused" })
+      .then(() => {
+        showComposerFeedback("success", paused ? t("Goal resumed") : t("Goal paused"));
+      })
+      .catch((error: unknown) => {
+        showComposerFeedback("error", error instanceof Error ? error.message : String(error));
+      });
+  }
+
+  function clearChannelGoalFromPanel(): void {
+    void clearChannelGoal()
+      .then(() => {
+        showComposerFeedback("success", t("Goal cleared"));
+      })
+      .catch((error: unknown) => {
+        showComposerFeedback("error", error instanceof Error ? error.message : String(error));
+      });
+  }
+
+  function handleAcceptProposedPlan(plan: ProposedPlanArtifact): void {
+    void runProposedPlanAction(plan, "accept");
+  }
+
+  function handleRefineProposedPlan(plan: ProposedPlanArtifact): void {
+    void runProposedPlanAction(plan, "refine");
+  }
+
+  function handleSaveProposedPlan(plan: ProposedPlanArtifact): void {
+    void runProposedPlanAction(plan, "save");
+  }
+
+  function handleConvertProposedPlan(plan: ProposedPlanArtifact): void {
+    void runProposedPlanAction(plan, "convert");
+  }
+
+  function rememberProposedPlanArtifact(plan: ProposedPlanArtifact): void {
+    setProposedPlanArtifactsById((current) => {
+      const next = new Map(current);
+      next.set(plan.id, plan);
+      return next;
     });
-  const composerSlashCommandActive = composerSlashIntent.kind !== "none";
-  const composerSlashTargetLabel = composerSlashCommandActive ? composerSlashCommandTargetLabel(composerSlashIntent, t) : "";
-  const composerHasSendableContent = messageDraft.trim().length > 0 || readyAttachmentIds.length > 0 || readyLinkPreviewIds.length > 0 || composerFileRefs.length > 0;
-  const assetOperationPending = pendingAttachments.some((item) => item.state === "uploading") || pendingLinkPreviews.some((item) => item.state === "uploading");
-  const pendingMessageAssetsVisible = pendingAttachments.length > 0;
+  }
+
+  async function runProposedPlanAction(plan: ProposedPlanArtifact, action: "accept" | "refine" | "save" | "convert"): Promise<void> {
+    if (proposedPlanActionBusyId) {
+      return;
+    }
+    setProposedPlanActionBusyId(plan.id);
+    try {
+      const threadId = await ensureChannelGoalThreadId();
+      if (action === "accept" && channelPlanModeActive) {
+        await setChannelPlanMode(false);
+      }
+      if (action === "refine" && !channelPlanModeActive) {
+        await setChannelPlanMode(true);
+      }
+      const actionRequest = { plan: proposedPlanActionPayload(plan) };
+      if (action === "save") {
+        const result = await saveProposedPlanArtifact(cwd, threadId, plan.id, actionRequest);
+        rememberProposedPlanArtifact(result.plan);
+        showComposerFeedback("success", t("Plan saved"));
+        return;
+      }
+      if (action === "convert") {
+        const result = await convertProposedPlanToWorkflow(cwd, threadId, plan.id, actionRequest);
+        rememberProposedPlanArtifact(result.plan);
+        onRefreshChannelActivity();
+        showComposerFeedback("success", t("Workflow draft created"));
+        return;
+      }
+      const body = action === "accept"
+        ? `${t("Implement accepted plan: {title}", { title: plan.title })}\n\n${plan.bodyMarkdown}`
+        : `${t("Refine this plan before implementation: {title}", { title: plan.title })}\n\n${plan.bodyMarkdown}`;
+      if (action === "accept") {
+        const result = await acceptProposedPlanArtifact(cwd, threadId, plan.id, actionRequest);
+        rememberProposedPlanArtifact(result.plan);
+        onRefreshTasks();
+      } else {
+        const result = await refineProposedPlanArtifact(cwd, threadId, plan.id, actionRequest);
+        rememberProposedPlanArtifact(result.plan);
+      }
+      await onSendMessage({
+        threadId,
+        body,
+        mentions: [],
+        attachmentIds: [],
+        linkPreviewIds: [],
+        fileRefs: [],
+        requestAiReply: action === "refine",
+      });
+      showComposerFeedback("success", action === "accept" ? t("Implementation task queued") : t("Plan refinement queued"));
+    } catch (error) {
+      showComposerFeedback("error", error instanceof Error ? error.message : String(error));
+    } finally {
+      setProposedPlanActionBusyId("");
+    }
+  }
+
+  function proposedPlanActionPayload(plan: ProposedPlanArtifact) {
+    return {
+      id: plan.id,
+      sourceTurnId: plan.sourceTurnId ?? null,
+      sourceMessageId: plan.sourceMessageId ?? null,
+      sourceRunId: plan.sourceRunId ?? null,
+      title: plan.title,
+      bodyMarkdown: plan.bodyMarkdown,
+      status: plan.status,
+    };
+  }
+
+  const {
+    runGuidanceLoading,
+    runGuidanceSubmitting,
+    runGuidanceError,
+    runGuidanceItems,
+    openRunGuidanceInterventions,
+    submitChannelRunGuidanceFromDraft,
+    sendMessage,
+    handleChannelComposerSubmit,
+    dismissSendError,
+  } = useChannelComposerActionsController({
+    cwd,
+    selectedChannelId,
+    selectedChannelBranchRootThreadId,
+    selectedChannel,
+    activeConversationRun,
+    activeConversationSourceRunId,
+    isCancellingRun,
+    composerHasSendableContent,
+    assetOperationPending,
+    messageDraft,
+    setMessageDraft,
+    messageMentions,
+    setMessageMentions,
+    pendingAttachments,
+    setPendingAttachments,
+    pendingLinkPreviews,
+    setPendingLinkPreviews,
+    composerInputParts,
+    composerFileRefs,
+    readyLinkPreviewIds,
+    composerBusy,
+    setComposerBusy,
+    sendState,
+    setSendState,
+    setSendError,
+    setMentionPicker,
+    setMentionActiveIndex,
+    setPendingChannelSendPreview,
+    autoPreviewUrlsRef,
+    attachmentPreviewUrlsRef,
+    teammateOptions,
+    slashCommands,
+    channelAttachmentById,
+    channelLinkPreviewById,
+    planModeActive: channelPlanModeActive,
+    activeGoal: activeChannelGoal,
+    messageFeedScrollToLatest: messageFeedState.scrollToLatest,
+    focusComposerAt,
+    showComposerFeedback,
+    onCreateLinkPreview,
+    onCreateTaskFromSlashCommand,
+    onSetPlanMode: setChannelPlanMode,
+    onSetGoalObjective: setChannelGoalObjective,
+    onPatchGoal: patchChannelGoal,
+    onClearGoal: clearChannelGoal,
+    onSendMessage,
+    onCancelActiveRun,
+    onRefreshChannelActivity,
+    onRefreshTasks,
+    onRefreshRuntime,
+    onRefreshRunApprovals,
+    t,
+  });
   const channelComposerSubmitDisabled = activeConversationRun
     ? !selectedChannelId || isCancellingRun || Boolean(runGuidanceSubmitting) || (composerHasSendableContent && (composerBusy || assetOperationPending))
     : !selectedChannelId || composerBusy || assetOperationPending || !composerHasSendableContent;
+  const composerSessionCommandActive = composerSlashIntent.kind === "session_command";
   const channelComposerSubmitLabel = activeConversationRun
     ? composerHasSendableContent
       ? runGuidanceSubmitting === "queue_followup" ? t("Queueing guidance...") : t("Queue guidance")
       : isCancellingRun ? t("Stopping run...") : t("Stop run")
+    : composerSessionCommandActive
+      ? sendState === "sending" ? t("Applying command...") : t("Apply command")
     : composerSlashCommandActive
       ? sendState === "sending" ? t("Creating task...") : t("Create task")
       : sendState === "sending" ? t("Sending...") : t("Send");
@@ -3796,6 +2988,7 @@ export function WorkspaceClientView({
     localUserDisplayName,
     memoryById,
     orchestratingWorkflowId,
+    proposedPlanArtifactsById,
     runningWorkflowStepId,
     runById,
     selectedChannelBranchRootThreadId,
@@ -3811,14 +3004,18 @@ export function WorkspaceClientView({
     onCancelWorkflow,
     onConfirmExecutionProposal,
     onCreateTaskFromContextSummary,
+    onAcceptProposedPlan: handleAcceptProposedPlan,
+    onConvertProposedPlan: handleConvertProposedPlan,
     onLoadConversationWorkCellDetails: loadConversationWorkCellDetails,
     onLoadWorkflowWorkCellDetails: loadWorkflowWorkCellDetails,
     onOpenApprovalDetail: openApprovalDetail,
     onOpenContextSummaryInConversationDetail: openContextSummaryInConversationDetail,
     onOpenRun: openRunInPanel,
-    onOpenThreadForMessage: openThreadForMessage,
+    onOpenThreadForMessage: threadReplyController.openThreadForMessage,
     onOrchestrateWorkflow,
     onRejectDecision,
+    onRefineProposedPlan: handleRefineProposedPlan,
+    onSaveProposedPlan: handleSaveProposedPlan,
     onRetryWorkflowStep,
     onRevealReviewInConversation: revealReviewInConversation,
     onRevealRunFromActivity: revealRunFromActivity,
@@ -3831,6 +3028,7 @@ export function WorkspaceClientView({
     onUpdateHandoffStatus,
     readRunTitle,
     resolveExpertTeammate: (agentId) => channelExpertTeammateByKey.get(normalizeChannelExpertTeammateKey(agentId)),
+    planActionBusyId: proposedPlanActionBusyId,
     workflowWorkCellDetailsCacheKey,
   });
 
@@ -3852,18 +3050,6 @@ export function WorkspaceClientView({
     }));
   }
 
-  function handleChannelComposerSubmit(): void {
-    if (activeConversationRun) {
-      if (composerHasSendableContent) {
-        void submitChannelRunGuidanceFromDraft();
-        return;
-      }
-      onCancelActiveRun(activeConversationRun);
-      return;
-    }
-    void sendMessage();
-  }
-
   const channelComposerPermissionPreset = permissionPreset ?? inferPermissionPreset(permissionMode);
   const channelComposerPermissionLocked = Boolean(activeConversationRun) || sendState === "sending" || composerBusy || Boolean(runGuidanceSubmitting) || isCancellingRun;
   const channelComposer = (
@@ -3878,7 +3064,7 @@ export function WorkspaceClientView({
       composerShortcutTitle={composerShortcutTitle}
       composerSlashCommandActive={composerSlashCommandActive}
       composerSlashTargetLabel={composerSlashTargetLabel}
-      executableSlashCommandId={composerSlashCommandActive ? composerSlashIntent.commandId : undefined}
+      executableSlashCommandId={composerSlashIntent.kind !== "none" ? composerSlashIntent.commandId : undefined}
       dropZoneClassName={composerDragActive ? "active" : undefined}
       inputParts={composerInputParts}
       inputRef={composerInputRef}
@@ -3891,6 +3077,13 @@ export function WorkspaceClientView({
       pendingMessageAssetsVisible={pendingMessageAssetsVisible}
       permissionLocked={channelComposerPermissionLocked}
       permissionPreset={channelComposerPermissionPreset}
+      planModeActive={channelPlanModeActive}
+      planModeBusy={channelPlanModeBusy}
+      goal={activeChannelGoal}
+      goalBusy={channelGoalBusy}
+      goalLoading={Boolean(channelGoalLoadingThreadId)}
+      goalError={channelGoalError}
+      goalExpanded={channelGoalExpanded}
       channelTeammateIds={channelTeammateIds}
       resolvingApprovals={resolvingApprovals}
       runGuidanceError={runGuidanceError}
@@ -3912,20 +3105,34 @@ export function WorkspaceClientView({
       onAttachFiles={attachFiles}
       onCommitMention={commitMention}
       onCommitSlashCommand={commitSlashCommand}
-      onDismissSendError={() => {
-        setSendState("idle");
-        setSendError("");
-      }}
+      onDismissSendError={dismissSendError}
       onDragOver={handleComposerDragOver}
       onDragLeave={handleComposerDragLeave}
       onDrop={handleComposerDrop}
       onInputChange={handleComposerTextChange}
-      onInputKeyDown={handleComposerKeyDown}
+      onInputKeyDown={(event) => handleComposerKeyDown(event, {
+        submitChannelRunGuidanceFromDraft,
+        sendMessage,
+      })}
       onInputPaste={handleComposerPaste}
       onInputSelect={updateMentionPicker}
       onInsertMentionTrigger={insertMentionTrigger}
       onOpenApproval={(approvalId) => openApprovalDetail(approvals.find((approval) => approval.id === approvalId))}
       onPermissionPresetChange={(preset) => onPermissionModeChange(permissionModeForPreset(preset))}
+      onTogglePlanMode={() => {
+        void setChannelPlanMode(!channelPlanModeActive)
+          .then(() => {
+            showComposerFeedback("success", channelPlanModeActive ? t("Plan Mode disabled") : t("Plan Mode enabled"));
+          })
+          .catch((error: unknown) => {
+            showComposerFeedback("error", error instanceof Error ? error.message : String(error));
+          });
+      }}
+      onOpenGoalEditor={openChannelGoalEditor}
+      onGoalContinue={continueChannelGoal}
+      onGoalPauseResume={pauseOrResumeChannelGoal}
+      onGoalClear={clearChannelGoalFromPanel}
+      onToggleGoalExpanded={() => setChannelGoalExpanded((expanded) => !expanded)}
       onRemovePendingAttachment={removePendingAttachment}
       onResizePointerCancel={handleComposerResizePointerEnd}
       onResizePointerDown={handleComposerResizePointerDown}
@@ -4974,12 +4181,7 @@ export function WorkspaceClientView({
                     <small>{t("Jump to latest")}</small>
                   </button>
                 ) : null}
-                {conversationBlockFeedback ? (
-                  <div key={conversationBlockFeedback.id} className={`conversation-block-feedback ${conversationBlockFeedback.tone}`} role="status" aria-live="polite">
-                    {conversationBlockFeedback.tone === "success" ? <CheckCircle2 size={13} /> : conversationBlockFeedback.tone === "error" ? <CircleAlert size={13} /> : <Info size={13} />}
-                    <span>{conversationBlockFeedback.message}</span>
-                  </div>
-                ) : null}
+                {conversationBlockFeedbackNode}
                 {messageFeedState.latestButtonVisible ? (
                   <button
                     className="message-feed-latest-button"
@@ -4993,63 +4195,22 @@ export function WorkspaceClientView({
               </>
             ),
           }}
-          conversationBlockActionMenuNode={conversationBlockActionMenu ? (
-            <div
-              ref={conversationBlockActionMenuRef}
-              className="conversation-block-action-menu"
-              role="menu"
-              aria-label={t("Conversation block actions")}
-              style={{ left: conversationBlockActionMenu.x, top: conversationBlockActionMenu.y }}
-            >
-              <strong>{conversationBlockActionMenu.label}</strong>
-              {conversationBlockActionMenu.feedback ? <small role="status" aria-live="polite">{conversationBlockActionMenu.feedback}</small> : null}
-              <button
-                type="button"
-                role="menuitem"
-                onClick={() => {
-                  const block = messageFeedState.scrollRef.current?.querySelector<HTMLElement>(`[data-feed-item-id="${cssEscape(conversationBlockActionMenu.blockId)}"]`);
-                  if (block) {
-                    void copyConversationBlock(block);
-                  }
-                }}
-              >
-                <Copy size={13} />
-                {t("Copy block")}
-              </button>
-              <button
-                type="button"
-                role="menuitem"
-                onClick={() => {
-                  focusConversationBlockById(conversationBlockActionMenu.blockId);
-                }}
-              >
-                <Search size={13} />
-                {t("Focus block")}
-              </button>
-            </div>
-          ) : undefined}
+          conversationBlockActionMenuNode={conversationBlockActionMenuNode}
           conversationDetailOverlayNode={conversationDetailOverlayNode}
           composerNode={channelComposer}
-          threadReply={activeThreadRoot ? {
+          threadReply={threadReplyController.activeThreadRoot ? {
             cwd,
-            rootMessage: activeThreadRoot,
-            replies: activeThreadMessages,
+            rootMessage: threadReplyController.activeThreadRoot,
+            replies: threadReplyController.activeThreadMessages,
             teammates: teammateOptions,
             memoryById,
             usedMemoryEvents,
-            draft: threadReplyDraft,
-            pending: threadReplyPending,
-            error: threadReplyError,
-            onDraftChange: (value) => {
-              setThreadReplyDraft(value);
-              setThreadReplyError("");
-            },
-            onSend: () => void sendThreadReply(),
-            onClose: () => {
-              setActiveThreadId("");
-              setThreadReplyDraft("");
-              setThreadReplyError("");
-            },
+            draft: threadReplyController.draft,
+            pending: threadReplyController.pending,
+            error: threadReplyController.error,
+            onDraftChange: threadReplyController.changeDraft,
+            onSend: () => void threadReplyController.sendReply(),
+            onClose: threadReplyController.closeThread,
             messageAuthorLabel: (message, threadTeammates) =>
               messageAuthorLabel(message, threadTeammates, t("Deleted teammate"), t("You"), allLocalTeammateById),
           } : undefined}
@@ -5136,24 +4297,6 @@ export function WorkspaceClientView({
   );
 }
 
-function uniqueStrings(values: readonly string[]): readonly string[] {
-  return [...new Set(values)];
-}
-
-function sameStringList(left: readonly string[], right: readonly string[]): boolean {
-  return left.length === right.length && left.every((value, index) => value === right[index]);
-}
-
-function sameFileRefList(left: readonly ChannelMessageFileRef[], right: readonly ChannelMessageFileRef[]): boolean {
-  return left.length === right.length && left.every((value, index) => {
-    const other = right[index];
-    return Boolean(other) &&
-      value.path === other.path &&
-      value.source === other.source &&
-      value.line === other.line;
-  });
-}
-
 function formatAge(value: string | undefined): string {
   if (!value) {
     return "-";
@@ -5179,35 +4322,6 @@ function formatAge(value: string | undefined): string {
 
 function workflowIdFromWorkCellThreadId(value: string): string {
   return value.startsWith("workflow:") ? value.slice("workflow:".length) : value;
-}
-
-function channelRunInterventionStatusLabel(
-  status: RunIntervention["status"],
-  t: (key: string, values?: Record<string, string | number>) => string,
-): string {
-  if (status === "cancelling_source") {
-    return t("Stopping source");
-  }
-  if (status === "starting_continuation") {
-    return t("Starting continuation");
-  }
-  if (status === "started") {
-    return t("Started");
-  }
-  if (status === "cancelled") {
-    return t("Cancelled");
-  }
-  if (status === "failed") {
-    return t("Failed");
-  }
-  return t("Queued");
-}
-
-function channelRunInterventionModeLabel(
-  mode: RunIntervention["mode"],
-  t: (key: string, values?: Record<string, string | number>) => string,
-): string {
-  return mode === "interrupt_redirect" ? t("Stop and redirect") : t("Queue guidance");
 }
 
 function runCanBeStopped(run: RunSession): boolean {
@@ -5265,38 +4379,6 @@ function teammateLabel(
     return teammate.displayName;
   }
   return teammates.find((teammate) => teammate.id === teammateId)?.label ?? fallback;
-}
-
-function findMentionsInText(body: string, teammates: readonly ChannelMention[]): readonly ChannelMention[] {
-  return teammates.filter((teammate) => mentionTokenExistsInText(body, teammate));
-}
-
-function mergeMentions(
-  current: readonly ChannelMention[],
-  detected: readonly ChannelMention[],
-): readonly ChannelMention[] {
-  const seen = new Set<string>();
-  return [...current, ...detected].filter((mention) => {
-    if (seen.has(mention.id)) {
-      return false;
-    }
-    seen.add(mention.id);
-    return true;
-  });
-}
-
-function mentionTokenExistsInText(body: string, mention: ChannelMention): boolean {
-  return mentionAliases(mention).some((token) => {
-    const escaped = escapeRegExp(token.trim());
-    if (!escaped) {
-      return false;
-    }
-    return new RegExp(`(^|\\s)@${escaped}(?=$|\\s|[.,!?;:，。！？；：)])`, "i").test(body);
-  });
-}
-
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function readSavedChannelNotificationLevel(cwd: string, channelId: string): ChannelNotificationLevel | undefined {
@@ -5364,96 +4446,6 @@ function splitLines(value: string): string[] {
     .split(/\r?\n/)
     .map((item) => item.trim())
     .filter(Boolean);
-}
-
-function extractUrls(value: string): string[] {
-  const matches = value.match(/https?:\/\/[^\s)]+/g) ?? [];
-  return [...new Set(matches.map((item) => item.replace(/[.,;!?]+$/, "")))];
-}
-
-function summarizeChannelGuidancePayload(
-  payload: {
-    readonly body: string;
-    readonly attachmentIds: readonly string[];
-    readonly linkPreviewIds: readonly string[];
-    readonly fileRefs?: readonly ChannelMessageFileRef[];
-  },
-  t: Translate,
-): string {
-  if (payload.body.trim()) {
-    return payload.body.trim();
-  }
-  if (payload.fileRefs?.length) {
-    return t("Queued guidance with {count} file reference(s)", { count: payload.fileRefs.length });
-  }
-  if (payload.attachmentIds.length > 0 && payload.linkPreviewIds.length > 0) {
-    return t("Queued guidance with {attachmentCount} attachment(s) and {linkCount} link(s)", {
-      attachmentCount: payload.attachmentIds.length,
-      linkCount: payload.linkPreviewIds.length,
-    });
-  }
-  if (payload.attachmentIds.length > 0) {
-    return t("Queued guidance with {count} attachment(s)", { count: payload.attachmentIds.length });
-  }
-  if (payload.linkPreviewIds.length > 0) {
-    return t("Queued guidance with {count} link(s)", { count: payload.linkPreviewIds.length });
-  }
-  return t("Queued guidance");
-}
-
-function findActiveMention(value: string, caret: number): ActiveMentionPicker | undefined {
-  const beforeCaret = value.slice(0, caret);
-  const match = /(^|\s)@([^\s@]{0,40})$/.exec(beforeCaret);
-  if (!match) {
-    return undefined;
-  }
-  const query = match[2] ?? "";
-  return {
-    query,
-    start: caret - query.length - 1,
-    end: caret,
-  };
-}
-
-function insertMentionToken(value: string, picker: ActiveMentionPicker | undefined, label: string): { readonly value: string; readonly caret: number } {
-  const start = Math.max(0, Math.min(picker?.start ?? value.length, value.length));
-  const end = Math.max(start, Math.min(picker?.end ?? value.length, value.length));
-  const prefix = value.slice(0, start);
-  const suffix = value.slice(end).replace(/^\s+/, "");
-  const mention = `@${label}`;
-  return {
-    value: `${prefix}${mention}${suffix ? ` ${suffix}` : " "}`,
-    caret: prefix.length + mention.length + 1,
-  };
-}
-
-function composerSlashCommandTargetLabel(intent: Exclude<ComposerSlashIntent, { readonly kind: "none" }>, t: Translate): string {
-  if (intent.kind === "multi_agent_command") {
-    return intent.teammates.map((teammate) => `@${teammate.label}`).join(" ");
-  }
-  if (intent.kind === "agent_command") {
-    return `@${intent.teammateLabel}`;
-  }
-  return t("Channel");
-}
-
-function normalizeComposerToken(value: string): string {
-  return value.toLowerCase().replace(/[^a-z0-9_.-]+/g, "-").replace(/^-+|-+$/g, "");
-}
-
-function mentionAliases(mention: Pick<ChannelMention, "id" | "label">): readonly string[] {
-  return uniqueStrings([
-    mention.label.trim(),
-    mention.id.trim(),
-    normalizeComposerToken(mention.label),
-    normalizeComposerToken(mention.id),
-  ]).filter(Boolean);
-}
-
-function chooseMostSpecificMentionPicker(candidates: readonly (ActiveMentionPicker | undefined)[]): ActiveMentionPicker | undefined {
-  return candidates
-    .filter((candidate): candidate is ActiveMentionPicker => Boolean(candidate))
-    .sort((left, right) => (right.end - right.start) - (left.end - left.start))[0];
 }
 
 function formatBytes(value: number): string {

@@ -126,6 +126,14 @@ export function parseLingThreadRoute(
   | { readonly kind: "detail"; readonly threadId: string }
   | { readonly kind: "turns"; readonly threadId: string }
   | { readonly kind: "evidence"; readonly threadId: string }
+  | { readonly kind: "mode"; readonly threadId: string }
+  | { readonly kind: "goal"; readonly threadId: string }
+  | {
+      readonly kind: "proposed-plans";
+      readonly threadId: string;
+      readonly planId?: string;
+      readonly action?: "accept" | "refine" | "save" | "convert-workflow";
+    }
   | { readonly kind: "resume"; readonly threadId: string }
   | { readonly kind: "resume-preview"; readonly threadId: string }
   | { readonly kind: "fork"; readonly threadId: string }
@@ -141,6 +149,31 @@ export function parseLingThreadRoute(
   }
   if (segments.length === 3 && segments[0] === "threads" && segments[2] === "evidence") {
     return { kind: "evidence", threadId: segments[1] };
+  }
+  if (segments.length === 3 && segments[0] === "threads" && segments[2] === "mode") {
+    return { kind: "mode", threadId: segments[1] };
+  }
+  if (segments.length === 3 && segments[0] === "threads" && segments[2] === "goal") {
+    return { kind: "goal", threadId: segments[1] };
+  }
+  if (segments.length === 3 && segments[0] === "threads" && segments[2] === "proposed-plans") {
+    return { kind: "proposed-plans", threadId: segments[1] };
+  }
+  if (segments.length === 4 && segments[0] === "threads" && segments[2] === "proposed-plans") {
+    return { kind: "proposed-plans", threadId: segments[1], planId: segments[3] };
+  }
+  if (
+    segments.length === 5 &&
+    segments[0] === "threads" &&
+    segments[2] === "proposed-plans" &&
+    (
+      segments[4] === "accept" ||
+      segments[4] === "refine" ||
+      segments[4] === "save" ||
+      segments[4] === "convert-workflow"
+    )
+  ) {
+    return { kind: "proposed-plans", threadId: segments[1], planId: segments[3], action: segments[4] };
   }
   if (segments.length === 3 && segments[0] === "threads" && segments[2] === "turns") {
     return { kind: "turns", threadId: segments[1] };

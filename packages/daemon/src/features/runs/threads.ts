@@ -1,8 +1,11 @@
 import type {
+  GoalEvidenceRef,
   LingTurn,
   LingTurnKind,
   LingTurnRunRole,
   LingThread,
+  LingThreadGoal,
+  LingThreadGoalStatus,
   RunEventEnvelope,
   RunEventType,
   RunSession,
@@ -205,7 +208,7 @@ export function updateLingThreadForTerminalRunStatus(
   if (!thread) {
     return undefined;
   }
-  return store.updateLingThread(
+  const updatedThread = store.updateLingThread(
     run.threadId,
     {
       status,
@@ -214,6 +217,168 @@ export function updateLingThreadForTerminalRunStatus(
     },
     now,
   );
+  syncLingThreadGoalForTerminalRun(store, run, now);
+  return updatedThread;
+}
+
+function syncLingThreadGoalForTerminalRun(store: RunStore, run: RunSession, now: string): LingThreadGoal | undefined {
+  if (!run.threadId) {
+    return undefined;
+  }
+  const goal = store.getLingThreadGoal(run.threadId);
+  if (!goal) {
+    return undefined;
+  }
+  const hasRunEvidence = goal.completionEvidenceRefs.some((ref) => ref.kind === "run" && ref.id === run.id);
+  const additionalTimeSeconds = hasRunEvidence ? 0 : elapsedRunSeconds(run, now);
+  const additionalTokens = hasRunEvidence ? 0 : readRunTokenUsage(store, run.id);
+  const nextTokensUsed = goal.tokensUsed + additionalTokens;
+  const nextEvidenceRefs = appendGoalEvidenceRefs(goal.completionEvidenceRefs, goalEvidenceRefsForRun(store, run));
+  const nextStatus = nextGoalStatusForRunAccounting(goal, run, nextTokensUsed);
+  return store.updateLingThreadGoal(
+    goal.id,
+    {
+      status: nextStatus,
+      tokensUsed: nextTokensUsed,
+      timeUsedSeconds: goal.timeUsedSeconds + additionalTimeSeconds,
+      lastRunId: run.id,
+      blockedReason: nextGoalBlockedReason(goal, nextStatus),
+      completionEvidenceRefs: nextEvidenceRefs,
+    },
+    now,
+  );
+}
+
+function nextGoalStatusForRunAccounting(goal: LingThreadGoal, run: RunSession, tokensUsed: number): LingThreadGoalStatus {
+  if (goal.status === "paused" || goal.status === "complete" || goal.status === "cleared" || goal.status === "replaced") {
+    return goal.status;
+  }
+  if (goal.status === "usage_limited") {
+    return "usage_limited";
+  }
+  if (run.status === "failed" && isProviderUsageLimitedRun(run)) {
+    return "usage_limited";
+  }
+  if (goal.tokenBudget !== undefined && tokensUsed >= goal.tokenBudget) {
+    return "budget_limited";
+  }
+  return goal.status;
+}
+
+function nextGoalBlockedReason(goal: LingThreadGoal, nextStatus: LingThreadGoalStatus): string | undefined {
+  if (nextStatus === "usage_limited" && goal.status !== "usage_limited") {
+    return "Provider quota or rate limit reached.";
+  }
+  if (nextStatus === "budget_limited" && goal.status !== "budget_limited") {
+    return "Token budget reached.";
+  }
+  return goal.blockedReason;
+}
+
+function isProviderUsageLimitedRun(run: RunSession): boolean {
+  const normalized = [
+    run.errorMessage,
+    readProviderErrorCode(run.requestSnapshot),
+    readProviderErrorCode(run.providerSnapshot),
+  ].filter((value): value is string => Boolean(value)).join(" ").toLowerCase();
+  return Boolean(normalized) && [
+    "rate_limited",
+    "rate limited",
+    "rate limit",
+    "quota_exceeded",
+    "quota exceeded",
+    "insufficient_quota",
+    "too many requests",
+    "http 429",
+    "status 429",
+  ].some((needle) => normalized.includes(needle));
+}
+
+function readProviderErrorCode(value: unknown): string | undefined {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+  return readOptionalString(value.errorCode) ?? readOptionalString(value.code);
+}
+
+function readOptionalString(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function elapsedRunSeconds(run: RunSession, fallbackEndedAt: string): number {
+  const start = Date.parse(run.startedAt ?? run.createdAt);
+  const end = Date.parse(run.endedAt ?? fallbackEndedAt);
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) {
+    return 0;
+  }
+  return Math.ceil((end - start) / 1000);
+}
+
+function readRunTokenUsage(store: RunStore, runId: string): number {
+  return Math.max(0, ...store.listEvents(runId, { limit: 1000 }).map((event) => readEventTokenUsage(event.data)));
+}
+
+function readEventTokenUsage(value: unknown): number {
+  if (!isRecord(value)) {
+    return 0;
+  }
+  return readTokenTotal(value.usage) ??
+    readTokenTotal(value.tokenUsage) ??
+    readTokenTotal(value.token_usage) ??
+    readTokenTotal(value.responseUsage) ??
+    readTokenTotal(value.response_usage) ??
+    0;
+}
+
+function readTokenTotal(value: unknown): number | undefined {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+  const direct = readPositiveInteger(value.totalTokens) ??
+    readPositiveInteger(value.total_tokens) ??
+    readPositiveInteger(value.total);
+  if (direct !== undefined) {
+    return direct;
+  }
+  const input = readPositiveInteger(value.inputTokens) ??
+    readPositiveInteger(value.input_tokens) ??
+    readPositiveInteger(value.promptTokens) ??
+    readPositiveInteger(value.prompt_tokens);
+  const output = readPositiveInteger(value.outputTokens) ??
+    readPositiveInteger(value.output_tokens) ??
+    readPositiveInteger(value.completionTokens) ??
+    readPositiveInteger(value.completion_tokens);
+  return input !== undefined || output !== undefined ? (input ?? 0) + (output ?? 0) : undefined;
+}
+
+function readPositiveInteger(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : undefined;
+}
+
+function goalEvidenceRefsForRun(store: RunStore, run: RunSession): readonly GoalEvidenceRef[] {
+  const refs: GoalEvidenceRef[] = [{ kind: "run", id: run.id }];
+  const turn = store.getLingTurnForRun(run.id);
+  if (turn) {
+    refs.push({ kind: "turn", id: turn.id });
+  }
+  return refs;
+}
+
+function appendGoalEvidenceRefs(existing: readonly GoalEvidenceRef[], next: readonly GoalEvidenceRef[]): readonly GoalEvidenceRef[] {
+  const seen = new Set(existing.map((ref) => `${ref.kind}:${ref.id}`));
+  const merged = [...existing];
+  for (const ref of next) {
+    const key = `${ref.kind}:${ref.id}`;
+    if (!seen.has(key)) {
+      seen.add(key);
+      merged.push(ref);
+    }
+  }
+  return merged;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function findParentLingThread(store: RunStore, parentRunId: string | undefined): LingThread | undefined {

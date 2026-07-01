@@ -1,5 +1,11 @@
 # Multi-Agent Slash Commands
 
+Related docs:
+
+- [Conversation Composer Unification](conversation-composer-unification.md)
+- [Conversation Plan And Goal Modes](conversation-plan-and-goal-modes.md)
+- [Ling Agent Session Control Plane](ling-agent-session.md)
+
 ## Purpose
 
 Ling should support Codex-like slash commands in the channel composer without turning commands into prompt folklore. The command parser is a local control-plane boundary: it recognizes a small grammar, resolves known commands against a registry, and dispatches structured actions. The model may see the resulting task prompt later, but it does not decide whether `/review` is a command.

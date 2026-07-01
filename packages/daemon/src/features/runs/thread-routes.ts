@@ -1,14 +1,19 @@
 import { createHash, randomUUID } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import {
+  conversationModeKinds,
   lingThreadKinds,
   permissionPresets,
   sessionPermissionModes,
+  type ConversationModeKind,
+  type GoalEvidenceRef,
   type ApprovalRequest,
   type CreateLingTurnInput,
+  type CreateProposedPlanArtifactInput,
   type LingApprovalCheckpoint,
   type LingThread,
   type LingThreadArchivedFilter,
+  type LingThreadGoalStatus,
   type LingThreadKind,
   type LingThreadStatus,
   type LingTurn,
@@ -16,12 +21,16 @@ import {
   type LingTurnKind,
   type PermissionConfirmation,
   type PermissionPreset,
+  type ProposedPlanArtifact,
+  type ProposedPlanArtifactStatus,
   type RunEventEnvelope,
   type RunSession,
   type RunStore,
   type RunTool,
   type SessionPermissionMode,
   type SkillApprovalProfile,
+  type UpdateLingThreadGoalInput,
+  type UpdateProposedPlanArtifactInput,
 } from "@ling-stack/core";
 import type { PiRunnerProviderConfig } from "@ling-stack/runner-pi";
 import { HttpError } from "../../errors.js";
@@ -37,6 +46,14 @@ export type LingThreadRoute =
   | { readonly kind: "detail"; readonly threadId: string }
   | { readonly kind: "turns"; readonly threadId: string }
   | { readonly kind: "evidence"; readonly threadId: string }
+  | { readonly kind: "mode"; readonly threadId: string }
+  | { readonly kind: "goal"; readonly threadId: string }
+  | {
+      readonly kind: "proposed-plans";
+      readonly threadId: string;
+      readonly planId?: string;
+      readonly action?: "accept" | "refine" | "save" | "convert-workflow";
+    }
   | { readonly kind: "resume"; readonly threadId: string }
   | { readonly kind: "resume-preview"; readonly threadId: string }
   | { readonly kind: "fork"; readonly threadId: string }
@@ -185,6 +202,15 @@ export function handleLingThreadItem(
   if (route.kind === "archive" || route.kind === "unarchive" || route.kind === "pin" || route.kind === "unpin") {
     return handleLingThreadVisibilityMutation(request, response, url, storeRegistry, route);
   }
+  if (route.kind === "mode") {
+    return handleLingThreadMode(request, response, url, storeRegistry, route.threadId, options);
+  }
+  if (route.kind === "goal") {
+    return handleLingThreadGoal(request, response, url, storeRegistry, route.threadId);
+  }
+  if (route.kind === "proposed-plans") {
+    return handleLingThreadProposedPlans(request, response, url, storeRegistry, route.threadId, route.planId, route.action, options);
+  }
   if (route.kind === "turns") {
     return handleLingThreadTurns(request, response, url, storeRegistry, route.threadId, options);
   }
@@ -212,6 +238,219 @@ export function handleLingThreadItem(
   }
 
   writeJson(response, 200, { cwd, thread });
+}
+
+async function handleLingThreadMode(
+  request: IncomingMessage,
+  response: ServerResponse,
+  url: URL,
+  storeRegistry: RunStoreRegistry,
+  threadId: string,
+  options?: HandleLingThreadRouteOptions,
+): Promise<void> {
+  if (request.method !== "GET" && request.method !== "PATCH") {
+    writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for thread mode` });
+    return;
+  }
+  const cwd = url.searchParams.get("cwd");
+  if (!cwd) {
+    writeJson(response, 400, { error: "bad_request", message: "cwd query parameter is required" });
+    return;
+  }
+  try {
+    const store = storeRegistry.getStore(cwd);
+    const thread = store.getLingThread(threadId);
+    if (!thread) {
+      writeJson(response, 404, { error: "thread_not_found", message: `Ling thread not found: ${threadId}` });
+      return;
+    }
+    if (request.method === "PATCH") {
+      const body = await readOptionalJsonBody(request, options?.maxBodyBytes ?? 1024 * 1024);
+      const mode = store.updateLingThreadConversationMode(threadId, parseUpdateConversationModeBody(body), new Date().toISOString());
+      if (!mode) {
+        writeJson(response, 404, { error: "thread_not_found", message: `Ling thread not found: ${threadId}` });
+        return;
+      }
+      writeJson(response, 200, { cwd, threadId, mode });
+      return;
+    }
+    writeJson(response, 200, { cwd, threadId, mode: thread.conversationMode });
+  } catch (error) {
+    writeLingThreadRouteError(response, error);
+  }
+}
+
+async function handleLingThreadGoal(
+  request: IncomingMessage,
+  response: ServerResponse,
+  url: URL,
+  storeRegistry: RunStoreRegistry,
+  threadId: string,
+): Promise<void> {
+  const supportedMethods = new Set(["GET", "PUT", "PATCH", "DELETE"]);
+  if (!request.method || !supportedMethods.has(request.method)) {
+    writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for thread goal` });
+    return;
+  }
+  const cwd = url.searchParams.get("cwd");
+  if (!cwd) {
+    writeJson(response, 400, { error: "bad_request", message: "cwd query parameter is required" });
+    return;
+  }
+  try {
+    const store = storeRegistry.getStore(cwd);
+    const thread = store.getLingThread(threadId);
+    if (!thread) {
+      writeJson(response, 404, { error: "thread_not_found", message: `Ling thread not found: ${threadId}` });
+      return;
+    }
+    if (request.method === "GET") {
+      writeJson(response, 200, { cwd, threadId, goal: store.getLingThreadGoal(threadId) ?? null });
+      return;
+    }
+    if (request.method === "PUT") {
+      const body = await readOptionalJsonBody(request, 1024 * 1024);
+      const input = parsePutLingThreadGoalBody(body);
+      const existing = store.getLingThreadGoal(threadId);
+      if (existing && !input.replaceExisting) {
+        writeJson(response, 409, {
+          error: "goal_replace_required",
+          message: "An unfinished goal already exists for this thread. Pass replaceExisting=true to replace it.",
+          goal: existing,
+        });
+        return;
+      }
+      const now = new Date().toISOString();
+      const goal = existing
+        ? store.replaceLingThreadGoal({ threadId, objective: input.objective, tokenBudget: input.tokenBudget ?? undefined }, now)
+        : store.createLingThreadGoal({ threadId, objective: input.objective, tokenBudget: input.tokenBudget ?? undefined }, now);
+      writeJson(response, existing ? 200 : 201, { cwd, threadId, goal });
+      return;
+    }
+    if (request.method === "PATCH") {
+      const existing = store.getLingThreadGoal(threadId);
+      if (!existing) {
+        writeJson(response, 404, { error: "goal_not_found", message: `No active goal found for thread: ${threadId}` });
+        return;
+      }
+      const body = await readOptionalJsonBody(request, 1024 * 1024);
+      const patch = parsePatchLingThreadGoalBody(body);
+      const goal = store.updateLingThreadGoal(existing.id, patch, new Date().toISOString());
+      writeJson(response, 200, { cwd, threadId, goal: goal ?? null });
+      return;
+    }
+    const goal = store.clearLingThreadGoal(threadId, new Date().toISOString());
+    writeJson(response, 200, { cwd, threadId, goal: goal ?? null });
+  } catch (error) {
+    writeLingThreadRouteError(response, error);
+  }
+}
+
+async function handleLingThreadProposedPlans(
+  request: IncomingMessage,
+  response: ServerResponse,
+  url: URL,
+  storeRegistry: RunStoreRegistry,
+  threadId: string,
+  planId: string | undefined,
+  action: "accept" | "refine" | "save" | "convert-workflow" | undefined,
+  options?: HandleLingThreadRouteOptions,
+): Promise<void> {
+  const cwd = url.searchParams.get("cwd");
+  if (!cwd) {
+    writeJson(response, 400, { error: "bad_request", message: "cwd query parameter is required" });
+    return;
+  }
+  try {
+    const store = storeRegistry.getStore(cwd);
+    const thread = store.getLingThread(threadId);
+    if (!thread) {
+      writeJson(response, 404, { error: "thread_not_found", message: `Ling thread not found: ${threadId}` });
+      return;
+    }
+    const maxBodyBytes = options?.maxBodyBytes ?? 1024 * 1024;
+    if (action) {
+      if (!planId) {
+        writeJson(response, 404, { error: "proposed_plan_not_found", message: "Proposed plan id is required." });
+        return;
+      }
+      if (request.method !== "POST") {
+        writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for proposed plan actions` });
+        return;
+      }
+      const body = await readOptionalJsonBody(request, maxBodyBytes);
+      const actionInput = parseProposedPlanActionBody(body);
+      const plan = upsertProposedPlanForAction(store, threadId, planId, actionInput.plan, new Date().toISOString());
+      const result = applyProposedPlanAction(store, thread, plan, action, actionInput, new Date().toISOString());
+      writeJson(response, 200, {
+        cwd,
+        threadId,
+        plan: result.plan,
+        taskId: result.taskId,
+        workflowId: result.workflowId,
+        workflowStepId: result.workflowStepId,
+        runId: result.runId,
+      });
+      return;
+    }
+
+    if (!planId) {
+      if (request.method === "GET") {
+        writeJson(response, 200, {
+          cwd,
+          threadId,
+          plans: store.listProposedPlanArtifacts({
+            threadId,
+            limit: readOptionalIntegerQuery(url, "limit", 1),
+          }),
+        });
+        return;
+      }
+      if (request.method === "POST") {
+        const body = await readOptionalJsonBody(request, maxBodyBytes);
+        const plan = store.upsertProposedPlanArtifact(parsePutProposedPlanArtifactBody(body, threadId), new Date().toISOString());
+        writeJson(response, 201, { cwd, threadId, plan });
+        return;
+      }
+      writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for proposed plans` });
+      return;
+    }
+
+    if (request.method === "GET") {
+      const plan = store.getProposedPlanArtifact(planId);
+      if (!plan || plan.threadId !== threadId) {
+        writeJson(response, 404, { error: "proposed_plan_not_found", message: `Proposed plan not found: ${planId}` });
+        return;
+      }
+      writeJson(response, 200, { cwd, threadId, plan });
+      return;
+    }
+    if (request.method === "PUT") {
+      const body = await readOptionalJsonBody(request, maxBodyBytes);
+      const existing = store.getProposedPlanArtifact(planId);
+      if (existing && existing.threadId !== threadId) {
+        writeJson(response, 404, { error: "proposed_plan_not_found", message: `Proposed plan not found: ${planId}` });
+        return;
+      }
+      const plan = store.upsertProposedPlanArtifact({ ...parsePutProposedPlanArtifactBody(body, threadId), id: planId }, new Date().toISOString());
+      writeJson(response, existing ? 200 : 201, { cwd, threadId, plan });
+      return;
+    }
+    if (request.method === "PATCH") {
+      const existing = store.getProposedPlanArtifact(planId);
+      if (!existing || existing.threadId !== threadId) {
+        writeJson(response, 404, { error: "proposed_plan_not_found", message: `Proposed plan not found: ${planId}` });
+        return;
+      }
+      const body = await readOptionalJsonBody(request, maxBodyBytes);
+      const plan = store.updateProposedPlanArtifact(planId, parsePatchProposedPlanArtifactBody(body), new Date().toISOString());
+      writeJson(response, 200, { cwd, threadId, plan: plan ?? existing });
+      return;
+    }
+    writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for proposed plan items` });
+  } catch (error) {
+    writeLingThreadRouteError(response, error);
+  }
 }
 
 async function handleLingThreadTurns(
@@ -1613,6 +1852,367 @@ function parseCreateLingThreadBody(value: unknown): {
     objective: readOptionalString(value, "objective")?.trim(),
   };
 }
+
+function parseUpdateConversationModeBody(value: unknown): { readonly mode: ConversationModeKind } {
+  if (!isRecord(value)) {
+    throw new HttpError(400, "bad_request", "Thread mode request must be a JSON object.");
+  }
+  const mode = readString(value, "mode").trim();
+  if (!conversationModeKinds.includes(mode as ConversationModeKind)) {
+    throw new HttpError(400, "bad_conversation_mode", `mode must be one of: ${conversationModeKinds.join(", ")}`);
+  }
+  return { mode: mode as ConversationModeKind };
+}
+
+function parsePutLingThreadGoalBody(value: unknown): {
+  readonly objective: string;
+  readonly tokenBudget?: number | null;
+  readonly replaceExisting: boolean;
+} {
+  if (!isRecord(value)) {
+    throw new HttpError(400, "bad_request", "Thread goal request must be a JSON object.");
+  }
+  const objective = readString(value, "objective").trim();
+  if (!objective) {
+    throw new HttpError(400, "goal_objective_required", "Goal objective is required.");
+  }
+  return {
+    objective,
+    tokenBudget: readOptionalGoalNumber(value, "tokenBudget", true),
+    replaceExisting: readOptionalBoolean(value, "replaceExisting") ?? false,
+  };
+}
+
+function parsePatchLingThreadGoalBody(value: unknown): UpdateLingThreadGoalInput {
+  if (!isRecord(value)) {
+    throw new HttpError(400, "bad_request", "Thread goal patch request must be a JSON object.");
+  }
+  const objective = readOptionalString(value, "objective")?.trim();
+  if (objective !== undefined && !objective) {
+    throw new HttpError(400, "goal_objective_required", "Goal objective cannot be empty.");
+  }
+  const status = readOptionalString(value, "status")?.trim();
+  if (status && !lingThreadGoalStatuses.includes(status as LingThreadGoalStatus)) {
+    throw new HttpError(400, "bad_goal_status", `status must be one of: ${lingThreadGoalStatuses.join(", ")}`);
+  }
+  return {
+    objective,
+    status: status as LingThreadGoalStatus | undefined,
+    tokenBudget: readOptionalGoalNumber(value, "tokenBudget", true),
+    tokensUsed: readOptionalGoalNumber(value, "tokensUsed", false) ?? undefined,
+    timeUsedSeconds: readOptionalGoalNumber(value, "timeUsedSeconds", false) ?? undefined,
+    lastRunId: readNullableStringField(value, "lastRunId"),
+    blockedReason: readNullableStringField(value, "blockedReason"),
+    completionEvidenceRefs: readOptionalGoalEvidenceRefs(value, "completionEvidenceRefs"),
+  };
+}
+
+const lingThreadGoalStatuses = [
+  "active",
+  "paused",
+  "blocked",
+  "usage_limited",
+  "budget_limited",
+  "complete",
+  "cleared",
+  "replaced",
+] as const satisfies readonly LingThreadGoalStatus[];
+
+const proposedPlanArtifactStatuses = [
+  "draft",
+  "accepted",
+  "superseded",
+  "archived",
+] as const satisfies readonly ProposedPlanArtifactStatus[];
+
+interface ProposedPlanActionInput {
+  readonly plan?: CreateProposedPlanArtifactInput;
+  readonly createdBy?: string;
+  readonly toParticipantId?: string;
+  readonly toParticipantLabel?: string;
+}
+
+function parsePutProposedPlanArtifactBody(value: unknown, threadId: string): CreateProposedPlanArtifactInput {
+  if (!isRecord(value)) {
+    throw new HttpError(400, "bad_request", "Proposed plan request must be a JSON object.");
+  }
+  const title = readString(value, "title").trim();
+  const bodyMarkdown = readString(value, "bodyMarkdown").trim();
+  if (!title) {
+    throw new HttpError(400, "proposed_plan_title_required", "Proposed plan title is required.");
+  }
+  if (!bodyMarkdown) {
+    throw new HttpError(400, "proposed_plan_body_required", "Proposed plan bodyMarkdown is required.");
+  }
+  return {
+    id: readOptionalString(value, "id")?.trim(),
+    threadId,
+    sourceTurnId: readNullableStringField(value, "sourceTurnId") ?? undefined,
+    sourceMessageId: readNullableStringField(value, "sourceMessageId") ?? undefined,
+    sourceRunId: readNullableStringField(value, "sourceRunId") ?? undefined,
+    title,
+    bodyMarkdown,
+    status: readOptionalProposedPlanStatus(value),
+  };
+}
+
+function parsePatchProposedPlanArtifactBody(value: unknown): UpdateProposedPlanArtifactInput {
+  if (!isRecord(value)) {
+    throw new HttpError(400, "bad_request", "Proposed plan patch request must be a JSON object.");
+  }
+  const title = readOptionalString(value, "title")?.trim();
+  const bodyMarkdown = readOptionalString(value, "bodyMarkdown")?.trim();
+  if (title !== undefined && !title) {
+    throw new HttpError(400, "proposed_plan_title_required", "Proposed plan title cannot be empty.");
+  }
+  if (bodyMarkdown !== undefined && !bodyMarkdown) {
+    throw new HttpError(400, "proposed_plan_body_required", "Proposed plan bodyMarkdown cannot be empty.");
+  }
+  return {
+    sourceTurnId: readNullableStringField(value, "sourceTurnId"),
+    sourceMessageId: readNullableStringField(value, "sourceMessageId"),
+    sourceRunId: readNullableStringField(value, "sourceRunId"),
+    title,
+    bodyMarkdown,
+    status: readOptionalProposedPlanStatus(value),
+    savedAt: readNullableStringField(value, "savedAt"),
+    acceptedAt: readNullableStringField(value, "acceptedAt"),
+    convertedAt: readNullableStringField(value, "convertedAt"),
+    acceptedTaskId: readNullableStringField(value, "acceptedTaskId"),
+    acceptedWorkflowId: readNullableStringField(value, "acceptedWorkflowId"),
+    acceptedWorkflowStepId: readNullableStringField(value, "acceptedWorkflowStepId"),
+    acceptedRunId: readNullableStringField(value, "acceptedRunId"),
+  };
+}
+
+function parseProposedPlanActionBody(value: unknown): ProposedPlanActionInput {
+  if (value === undefined || value === null) {
+    return {};
+  }
+  if (!isRecord(value)) {
+    throw new HttpError(400, "bad_request", "Proposed plan action request must be a JSON object.");
+  }
+  const plan = isRecord(value.plan) ? parsePutProposedPlanArtifactBody(value.plan, readThreadIdForActionPlan(value.plan)) : undefined;
+  return {
+    plan,
+    createdBy: readOptionalString(value, "createdBy")?.trim() || undefined,
+    toParticipantId: readOptionalString(value, "toParticipantId")?.trim() || undefined,
+    toParticipantLabel: readOptionalString(value, "toParticipantLabel")?.trim() || undefined,
+  };
+}
+
+function readThreadIdForActionPlan(value: Record<string, unknown>): string {
+  const threadId = readOptionalString(value, "threadId")?.trim();
+  return threadId || "__route_thread__";
+}
+
+function readOptionalProposedPlanStatus(record: Record<string, unknown>): ProposedPlanArtifactStatus | undefined {
+  const status = readOptionalString(record, "status")?.trim();
+  if (!status) {
+    return undefined;
+  }
+  if (!proposedPlanArtifactStatuses.includes(status as ProposedPlanArtifactStatus)) {
+    throw new HttpError(400, "bad_proposed_plan_status", `status must be one of: ${proposedPlanArtifactStatuses.join(", ")}`);
+  }
+  return status as ProposedPlanArtifactStatus;
+}
+
+function upsertProposedPlanForAction(
+  store: RunStore,
+  threadId: string,
+  planId: string,
+  input: CreateProposedPlanArtifactInput | undefined,
+  now: string,
+): ProposedPlanArtifact {
+  const existing = store.getProposedPlanArtifact(planId);
+  if (existing && existing.threadId !== threadId) {
+    throw new HttpError(404, "proposed_plan_not_found", `Proposed plan not found: ${planId}`);
+  }
+  if (input) {
+    return store.upsertProposedPlanArtifact({ ...input, id: planId, threadId }, now);
+  }
+  if (!existing) {
+    throw new HttpError(404, "proposed_plan_not_found", `Proposed plan not found: ${planId}`);
+  }
+  return existing;
+}
+
+function applyProposedPlanAction(
+  store: RunStore,
+  thread: LingThread,
+  plan: ProposedPlanArtifact,
+  action: "accept" | "refine" | "save" | "convert-workflow",
+  input: ProposedPlanActionInput,
+  now: string,
+): {
+  readonly plan: ProposedPlanArtifact;
+  readonly taskId?: string;
+  readonly workflowId?: string;
+  readonly workflowStepId?: string;
+  readonly runId?: string;
+} {
+  if (action === "save") {
+    return { plan: requireUpdatedProposedPlan(store, plan.id, { savedAt: now }, now) };
+  }
+  if (action === "refine") {
+    return { plan: requireUpdatedProposedPlan(store, plan.id, { status: "draft" }, now) };
+  }
+  if (action === "accept") {
+    if (!thread.channelId) {
+      throw new HttpError(409, "proposed_plan_channel_required", "Accepting a proposed plan requires a channel thread.");
+    }
+    if (plan.acceptedTaskId) {
+      return { plan, taskId: plan.acceptedTaskId, runId: plan.acceptedRunId };
+    }
+    const task = store.createTask(
+      {
+        channelId: thread.channelId,
+        title: `Implement accepted plan: ${plan.title}`,
+        prompt: [
+          `Implement accepted plan: ${plan.title}`,
+          "",
+          plan.bodyMarkdown,
+          "",
+          `Source proposed plan: ${plan.id}`,
+          plan.sourceMessageId ? `Source message: ${plan.sourceMessageId}` : "",
+        ].filter(Boolean).join("\n"),
+        requestedSkillId: "plan-acceptance",
+      },
+      now,
+    );
+    return {
+      plan: requireUpdatedProposedPlan(store, plan.id, {
+        status: "accepted",
+        acceptedAt: now,
+        acceptedTaskId: task.id,
+      }, now),
+      taskId: task.id,
+    };
+  }
+  if (!thread.channelId) {
+    throw new HttpError(409, "proposed_plan_channel_required", "Converting a proposed plan requires a channel thread.");
+  }
+  if (plan.acceptedWorkflowId) {
+    return {
+      plan,
+      workflowId: plan.acceptedWorkflowId,
+      workflowStepId: plan.acceptedWorkflowStepId,
+      runId: plan.acceptedRunId,
+    };
+  }
+  const createdBy = input.createdBy || "local-user";
+  const workflow = store.createChannelWorkflow(
+    {
+      channelId: thread.channelId,
+      title: plan.title,
+      objective: plan.bodyMarkdown,
+      status: "draft",
+      createdBy,
+      metadata: {
+        sourceMessageId: plan.sourceMessageId,
+      },
+    },
+    now,
+  );
+  const workflowStep = store.createChannelWorkflowStep(
+    {
+      workflowId: workflow.id,
+      title: `Implement ${plan.title}`,
+      prompt: [
+        plan.bodyMarkdown,
+        "",
+        `Source proposed plan: ${plan.id}`,
+        plan.sourceMessageId ? `Source message: ${plan.sourceMessageId}` : "",
+      ].filter(Boolean).join("\n"),
+      toParticipantId: input.toParticipantId || "local-user",
+      toParticipantLabel: input.toParticipantLabel || "Local user",
+      status: "queued",
+      metadata: {
+        sourceMessageId: plan.sourceMessageId,
+      },
+    },
+    now,
+  );
+  return {
+    plan: requireUpdatedProposedPlan(store, plan.id, {
+      status: "accepted",
+      acceptedAt: plan.acceptedAt ?? now,
+      convertedAt: now,
+      acceptedWorkflowId: workflow.id,
+      acceptedWorkflowStepId: workflowStep.id,
+    }, now),
+    workflowId: workflow.id,
+    workflowStepId: workflowStep.id,
+  };
+}
+
+function requireUpdatedProposedPlan(
+  store: RunStore,
+  planId: string,
+  input: UpdateProposedPlanArtifactInput,
+  now: string,
+): ProposedPlanArtifact {
+  const plan = store.updateProposedPlanArtifact(planId, input, now);
+  if (!plan) {
+    throw new HttpError(404, "proposed_plan_not_found", `Proposed plan not found: ${planId}`);
+  }
+  return plan;
+}
+
+function readOptionalGoalNumber(
+  record: Record<string, unknown>,
+  key: string,
+  nullable: boolean,
+): number | null | undefined {
+  const value = record[key];
+  if (value === undefined) {
+    return undefined;
+  }
+  if (value === null && nullable) {
+    return null;
+  }
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0 || !Number.isInteger(value)) {
+    throw new HttpError(400, "bad_goal_number", `${key} must be a non-negative integer${nullable ? " or null" : ""}.`);
+  }
+  return value;
+}
+
+function readNullableStringField(record: Record<string, unknown>, key: string): string | null | undefined {
+  const value = record[key];
+  if (value === undefined) {
+    return undefined;
+  }
+  if (value === null) {
+    return null;
+  }
+  if (typeof value !== "string") {
+    throw new HttpError(400, "bad_goal_field", `${key} must be a string or null.`);
+  }
+  return value.trim() || null;
+}
+
+function readOptionalGoalEvidenceRefs(record: Record<string, unknown>, key: string): readonly GoalEvidenceRef[] | undefined {
+  const value = record[key];
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!Array.isArray(value)) {
+    throw new HttpError(400, "bad_goal_evidence", `${key} must be an array.`);
+  }
+  return value.map((item) => {
+    if (!isRecord(item)) {
+      throw new HttpError(400, "bad_goal_evidence", "Goal evidence refs must be objects.");
+    }
+    const kind = readString(item, "kind").trim();
+    const id = readString(item, "id").trim();
+    if (!goalEvidenceKinds.includes(kind as GoalEvidenceRef["kind"]) || !id) {
+      throw new HttpError(400, "bad_goal_evidence", "Goal evidence refs must include a supported kind and non-empty id.");
+    }
+    return { kind: kind as GoalEvidenceRef["kind"], id };
+  });
+}
+
+const goalEvidenceKinds = ["run", "turn", "artifact", "approval", "workflow"] as const;
 
 function findActiveChannelDiscussionRootThread(store: RunStore, channelId: string): LingThread | undefined {
   return store

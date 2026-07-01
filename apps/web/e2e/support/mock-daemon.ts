@@ -9,7 +9,7 @@ import {
 } from "@ling-stack/core";
 import { gstackDefaultSkillPack } from "@ling-stack/core/builtin-skill-packs";
 import type { MemoryObject } from "@ling-stack/core";
-import type { LingApprovalCheckpoint, LingTraceDetailResponse, LingTraceSpan, LingTraceStatus, RunnerListItem, StartupStatusResponse, UserProfile, WorkflowHandoffIntent, WorkspaceGitStatus, WorkspaceRuntimeSettings } from "@ling-stack/contracts";
+import type { LingApprovalCheckpoint, LingThreadGoal, LingTraceDetailResponse, LingTraceSpan, LingTraceStatus, ProposedPlanArtifact, RunnerListItem, StartupStatusResponse, UserProfile, WorkflowHandoffIntent, WorkspaceGitStatus, WorkspaceRuntimeSettings } from "@ling-stack/contracts";
 
 export const cwd = "/tmp/ling-stack-workspace";
 export const defaultRuntimePolicy = {
@@ -148,6 +148,8 @@ export interface MockState {
   artifactsByRun: Record<string, MockArtifact[]>;
   artifactsByMediaJob: Record<string, MockArtifact[]>;
   threads: MockLingThread[];
+  goals: LingThreadGoal[];
+  proposedPlans: ProposedPlanArtifact[];
   turns: MockLingTurn[];
   turnRunLinks: MockLingTurnRun[];
   failThreadTurnsForThreadIds: string[];
@@ -180,6 +182,10 @@ export interface MockLingThread {
   parentThreadId?: string;
   parentTurnId?: string;
   forkedFromRunId?: string;
+  conversationMode?: {
+    mode: "default" | "plan";
+    updatedAt?: string;
+  };
   createdAt: string;
   updatedAt: string;
   metadata?: unknown;
@@ -1200,6 +1206,8 @@ export function createBaseState(options: { approvalStatus: "pending" | "expired"
     artifactsByRun: {},
     artifactsByMediaJob: {},
     threads: [],
+    goals: [],
+    proposedPlans: [],
     turns: [],
     turnRunLinks: [],
     failThreadTurnsForThreadIds: [],
@@ -1319,8 +1327,16 @@ export function deriveMockThreadFromRuns(state: MockState, threadId: string): Mo
     status: isMockRunActive(latestRun) ? latestRun.status : latestRun.status === "succeeded" ? "succeeded" : latestRun.status === "cancelled" ? "cancelled" : "failed",
     activeRunId: isMockRunActive(latestRun) ? latestRun.id : undefined,
     lastRunId: latestRun.id,
+    conversationMode: { mode: "default" },
     createdAt: oldestRun.createdAt,
     updatedAt: latestRun.updatedAt,
+  };
+}
+
+function mockThreadReadModel(thread: MockLingThread): MockLingThread {
+  return {
+    ...thread,
+    conversationMode: thread.conversationMode ?? { mode: "default" },
   };
 }
 
@@ -1362,7 +1378,7 @@ export function buildMockThreadEvidence(state: MockState, thread: MockLingThread
   );
   return {
     cwd,
-    thread,
+    thread: mockThreadReadModel(thread),
     generatedAt: "2026-05-25T00:39:00.000Z",
     runs: evidenceRuns,
     actions,
@@ -4511,6 +4527,7 @@ function createMockChannelBranchThread(
     title: branchName,
     objective: `Conversation branch "${branchName}" for ${channelName}.`,
     status: "open",
+    conversationMode: { mode: "default" },
     createdAt: typeof branch.createdAt === "string" ? branch.createdAt : "2026-05-25T00:17:00.000Z",
     updatedAt: typeof branch.updatedAt === "string" ? branch.updatedAt : "2026-05-25T00:17:00.000Z",
     archivedAt,
@@ -10211,7 +10228,7 @@ export async function handleDaemonRoute(
       thread.status !== "archived"
     );
     if (existing) {
-      await route.fulfill({ status: 200, json: { cwd, thread: existing } });
+      await route.fulfill({ status: 200, json: { cwd, thread: mockThreadReadModel(existing) } });
       return;
     }
     const now = "2026-05-25T00:40:00.000Z";
@@ -10228,11 +10245,12 @@ export async function handleDaemonRoute(
       title,
       objective,
       status: "open",
+      conversationMode: { mode: "default" },
       createdAt: now,
       updatedAt: now,
     };
     state.threads.unshift(thread);
-    await route.fulfill({ status: 201, json: { cwd, thread } });
+    await route.fulfill({ status: 201, json: { cwd, thread: mockThreadReadModel(thread) } });
     return;
   }
   if (request.method() === "GET" && path === "/threads") {
@@ -10266,7 +10284,8 @@ export async function handleDaemonRoute(
       );
     const search = searchQuery.value ? searchMockLingThreads(state, filteredThreads, searchQuery.value) : undefined;
     const threads = (search?.threads ?? filteredThreads)
-      .slice(0, Number.isFinite(limit) && limit > 0 ? limit : 50);
+      .slice(0, Number.isFinite(limit) && limit > 0 ? limit : 50)
+      .map(mockThreadReadModel);
     await route.fulfill({
       json: {
         cwd,
@@ -10275,6 +10294,70 @@ export async function handleDaemonRoute(
       },
     });
     return;
+  }
+
+  const proposedPlanRouteMatch = /^\/threads\/([^/]+)\/proposed-plans(?:\/([^/]+)(?:\/([^/]+))?)?$/.exec(path);
+  if (proposedPlanRouteMatch) {
+    const threadId = decodeURIComponent(proposedPlanRouteMatch[1]);
+    const planId = proposedPlanRouteMatch[2] ? decodeURIComponent(proposedPlanRouteMatch[2]) : undefined;
+    const action = proposedPlanRouteMatch[3] ? decodeURIComponent(proposedPlanRouteMatch[3]) : undefined;
+    const thread = state.threads.find((item) => item.id === threadId) ?? deriveMockThreadFromRuns(state, threadId);
+    if (!thread) {
+      await route.fulfill({ status: 404, json: { error: "thread_not_found" } });
+      return;
+    }
+    if (!planId) {
+      if (request.method() === "GET") {
+        const plans = state.proposedPlans.filter((plan) => plan.threadId === threadId);
+        await route.fulfill({ json: { cwd, threadId, plans } });
+        return;
+      }
+      if (request.method() === "POST") {
+        const body = readMockPostData(request);
+        const plan = upsertMockProposedPlan(state, threadId, undefined, body);
+        await route.fulfill({ status: 201, json: { cwd, threadId, plan } });
+        return;
+      }
+    }
+    if (planId && !action) {
+      if (request.method() === "GET") {
+        const plan = state.proposedPlans.find((item) => item.id === planId && item.threadId === threadId);
+        if (!plan) {
+          await route.fulfill({ status: 404, json: { error: "proposed_plan_not_found" } });
+          return;
+        }
+        await route.fulfill({ json: { cwd, threadId, plan } });
+        return;
+      }
+      if (request.method() === "PUT") {
+        const plan = upsertMockProposedPlan(state, threadId, planId, readMockPostData(request));
+        await route.fulfill({ json: { cwd, threadId, plan } });
+        return;
+      }
+      if (request.method() === "PATCH") {
+        const existing = state.proposedPlans.find((item) => item.id === planId && item.threadId === threadId);
+        if (!existing) {
+          await route.fulfill({ status: 404, json: { error: "proposed_plan_not_found" } });
+          return;
+        }
+        const plan = patchMockProposedPlan(state, existing, readMockPostData(request));
+        await route.fulfill({ json: { cwd, threadId, plan } });
+        return;
+      }
+    }
+    if (planId && action && request.method() === "POST") {
+      const body = readMockPostData(request);
+      const planInput = isRecord(body.plan) ? body.plan : undefined;
+      const existing = state.proposedPlans.find((item) => item.id === planId && item.threadId === threadId);
+      if (!existing && !planInput) {
+        await route.fulfill({ status: 404, json: { error: "proposed_plan_not_found" } });
+        return;
+      }
+      const plan = planInput ? upsertMockProposedPlan(state, threadId, planId, planInput) : existing!;
+      const result = applyMockProposedPlanAction(state, thread, plan, action, body);
+      await route.fulfill({ json: { cwd, threadId, ...result } });
+      return;
+    }
   }
 
   const threadRouteMatch = /^\/threads\/([^/]+)(?:\/([^/]+))?$/.exec(path);
@@ -10287,8 +10370,115 @@ export async function handleDaemonRoute(
       return;
     }
     if (request.method() === "GET" && !action) {
-      await route.fulfill({ json: { cwd, thread } });
+      await route.fulfill({ json: { cwd, thread: mockThreadReadModel(thread) } });
       return;
+    }
+    if (action === "mode") {
+      if (request.method() === "GET") {
+        await route.fulfill({ json: { cwd, threadId, mode: mockThreadReadModel(thread).conversationMode } });
+        return;
+      }
+      if (request.method() === "PATCH") {
+        let body: Record<string, unknown> = {};
+        try {
+          body = request.postDataJSON() as Record<string, unknown>;
+        } catch {
+          body = {};
+        }
+        const mode = body.mode === "plan" ? "plan" : body.mode === "default" ? "default" : undefined;
+        if (!mode) {
+          await route.fulfill({ status: 400, json: { error: "bad_conversation_mode", message: "mode must be one of: default, plan" } });
+          return;
+        }
+        const nextThread = {
+          ...mockThreadReadModel(thread),
+          conversationMode: { mode, updatedAt: "2026-05-25T00:43:00.000Z" },
+          updatedAt: "2026-05-25T00:43:00.000Z",
+        } satisfies MockLingThread;
+        upsertMockThread(state, nextThread);
+        await route.fulfill({ json: { cwd, threadId, mode: nextThread.conversationMode } });
+        return;
+      }
+    }
+    if (action === "goal") {
+      const activeGoal = () => state.goals.find((goal) => goal.threadId === threadId && mockActiveGoalStatuses.includes(goal.status));
+      if (request.method() === "GET") {
+        await route.fulfill({ json: { cwd, threadId, goal: activeGoal() ?? null } });
+        return;
+      }
+      if (request.method() === "PUT") {
+        const body = readMockPostData(request);
+        const objective = typeof body.objective === "string" ? body.objective.trim() : "";
+        if (!objective) {
+          await route.fulfill({ status: 400, json: { error: "goal_objective_required" } });
+          return;
+        }
+        const existing = activeGoal();
+        if (existing && body.replaceExisting !== true) {
+          await route.fulfill({ status: 409, json: { error: "goal_replace_required", goal: existing } });
+          return;
+        }
+        const now = "2026-05-25T00:44:00.000Z";
+        const id = `goal_${state.goals.length + 1}`;
+        if (existing) {
+          state.goals = state.goals.map((goal) => goal.id === existing.id
+            ? { ...goal, status: "replaced", replacedByGoalId: id, updatedAt: now }
+            : goal);
+        }
+        const goal: LingThreadGoal = {
+          id,
+          workspaceId: "workspace_default",
+          threadId,
+          objective,
+          status: "active",
+          tokenBudget: typeof body.tokenBudget === "number" ? body.tokenBudget : undefined,
+          tokensUsed: 0,
+          timeUsedSeconds: 0,
+          createdAt: now,
+          updatedAt: now,
+          completionEvidenceRefs: [],
+        };
+        state.goals.unshift(goal);
+        await route.fulfill({ status: existing ? 200 : 201, json: { cwd, threadId, goal } });
+        return;
+      }
+      if (request.method() === "PATCH") {
+        const existing = activeGoal();
+        if (!existing) {
+          await route.fulfill({ status: 404, json: { error: "goal_not_found" } });
+          return;
+        }
+        const body = readMockPostData(request);
+        const status = typeof body.status === "string" ? body.status : existing.status;
+        const now = "2026-05-25T00:45:00.000Z";
+        const goal = {
+          ...existing,
+          objective: typeof body.objective === "string" && body.objective.trim() ? body.objective.trim() : existing.objective,
+          status,
+          tokenBudget: body.tokenBudget === null ? undefined : typeof body.tokenBudget === "number" ? body.tokenBudget : existing.tokenBudget,
+          updatedAt: now,
+          completedAt: status === "complete" ? now : existing.completedAt,
+          clearedAt: status === "cleared" ? now : existing.clearedAt,
+          lastRunId: body.lastRunId === null ? undefined : typeof body.lastRunId === "string" ? body.lastRunId : existing.lastRunId,
+          blockedReason: body.blockedReason === null ? undefined : typeof body.blockedReason === "string" ? body.blockedReason : existing.blockedReason,
+          completionEvidenceRefs: Array.isArray(body.completionEvidenceRefs) ? body.completionEvidenceRefs as LingThreadGoal["completionEvidenceRefs"] : existing.completionEvidenceRefs,
+        } satisfies LingThreadGoal;
+        state.goals = state.goals.map((item) => item.id === goal.id ? goal : item);
+        await route.fulfill({ json: { cwd, threadId, goal } });
+        return;
+      }
+      if (request.method() === "DELETE") {
+        const existing = activeGoal();
+        if (!existing) {
+          await route.fulfill({ json: { cwd, threadId, goal: null } });
+          return;
+        }
+        const now = "2026-05-25T00:46:00.000Z";
+        const goal = { ...existing, status: "cleared", clearedAt: now, updatedAt: now } satisfies LingThreadGoal;
+        state.goals = state.goals.map((item) => item.id === goal.id ? goal : item);
+        await route.fulfill({ json: { cwd, threadId, goal } });
+        return;
+      }
     }
     if (request.method() === "GET" && action === "evidence") {
       await route.fulfill({ json: buildMockThreadEvidence(state, thread) });
@@ -10366,6 +10556,7 @@ export async function handleDaemonRoute(
             ? body.objective.trim()
             : `Forked from ${anchor.sourceTurn?.title || thread.title} (${thread.id}) to explore a separate work branch.`,
           status: "open",
+          conversationMode: { mode: "default" },
           parentThreadId: thread.id,
           parentTurnId: anchor.sourceTurn?.id,
           forkedFromRunId: anchor.sourceRun?.id,
@@ -10513,6 +10704,7 @@ export async function handleDaemonRoute(
         title,
         objective,
         status: "open",
+        conversationMode: { mode: "default" },
         parentThreadId: thread.id,
         parentTurnId: anchor.sourceTurn?.id,
         forkedFromRunId: anchor.sourceRun?.id,
@@ -12354,6 +12546,188 @@ function incrementCountMap(value: unknown, key: string): void {
     return;
   }
   value[key] = Number(value[key] ?? 0) + 1;
+}
+
+const mockActiveGoalStatuses: readonly string[] = ["active", "paused", "blocked", "usage_limited", "budget_limited"];
+
+function upsertMockProposedPlan(
+  state: MockState,
+  threadId: string,
+  forcedPlanId: string | undefined,
+  body: Record<string, unknown>,
+): ProposedPlanArtifact {
+  const now = "2026-05-25T00:47:00.000Z";
+  const id = forcedPlanId || (typeof body.id === "string" && body.id.trim() ? body.id.trim() : `proposed_plan_${state.proposedPlans.length + 1}`);
+  const existing = state.proposedPlans.find((plan) => plan.id === id);
+  const plan: ProposedPlanArtifact = {
+    id,
+    workspaceId: "workspace_default",
+    threadId,
+    sourceTurnId: readOptionalMockString(body, "sourceTurnId") ?? existing?.sourceTurnId,
+    sourceMessageId: readOptionalMockString(body, "sourceMessageId") ?? existing?.sourceMessageId,
+    sourceRunId: readOptionalMockString(body, "sourceRunId") ?? existing?.sourceRunId,
+    title: readOptionalMockString(body, "title") ?? existing?.title ?? "Proposed plan",
+    bodyMarkdown: readOptionalMockString(body, "bodyMarkdown") ?? existing?.bodyMarkdown ?? "Plan body",
+    status: readMockProposedPlanStatus(body.status) ?? existing?.status ?? "draft",
+    savedAt: existing?.savedAt,
+    acceptedAt: existing?.acceptedAt,
+    convertedAt: existing?.convertedAt,
+    acceptedTaskId: existing?.acceptedTaskId,
+    acceptedWorkflowId: existing?.acceptedWorkflowId,
+    acceptedWorkflowStepId: existing?.acceptedWorkflowStepId,
+    acceptedRunId: existing?.acceptedRunId,
+    createdAt: existing?.createdAt ?? now,
+    updatedAt: now,
+  };
+  state.proposedPlans = existing
+    ? state.proposedPlans.map((item) => item.id === id ? plan : item)
+    : [plan, ...state.proposedPlans];
+  return plan;
+}
+
+function patchMockProposedPlan(
+  state: MockState,
+  existing: ProposedPlanArtifact,
+  body: Record<string, unknown>,
+): ProposedPlanArtifact {
+  const now = "2026-05-25T00:48:00.000Z";
+  const plan: ProposedPlanArtifact = {
+    ...existing,
+    sourceTurnId: readNullableMockString(body, "sourceTurnId", existing.sourceTurnId),
+    sourceMessageId: readNullableMockString(body, "sourceMessageId", existing.sourceMessageId),
+    sourceRunId: readNullableMockString(body, "sourceRunId", existing.sourceRunId),
+    title: readOptionalMockString(body, "title") ?? existing.title,
+    bodyMarkdown: readOptionalMockString(body, "bodyMarkdown") ?? existing.bodyMarkdown,
+    status: readMockProposedPlanStatus(body.status) ?? existing.status,
+    savedAt: readNullableMockString(body, "savedAt", existing.savedAt),
+    acceptedAt: readNullableMockString(body, "acceptedAt", existing.acceptedAt),
+    convertedAt: readNullableMockString(body, "convertedAt", existing.convertedAt),
+    acceptedTaskId: readNullableMockString(body, "acceptedTaskId", existing.acceptedTaskId),
+    acceptedWorkflowId: readNullableMockString(body, "acceptedWorkflowId", existing.acceptedWorkflowId),
+    acceptedWorkflowStepId: readNullableMockString(body, "acceptedWorkflowStepId", existing.acceptedWorkflowStepId),
+    acceptedRunId: readNullableMockString(body, "acceptedRunId", existing.acceptedRunId),
+    updatedAt: now,
+  };
+  state.proposedPlans = state.proposedPlans.map((item) => item.id === plan.id ? plan : item);
+  return plan;
+}
+
+function applyMockProposedPlanAction(
+  state: MockState,
+  thread: MockLingThread,
+  plan: ProposedPlanArtifact,
+  action: string,
+  body: Record<string, unknown>,
+): { readonly plan: ProposedPlanArtifact; readonly taskId?: string; readonly workflowId?: string; readonly workflowStepId?: string } {
+  const now = "2026-05-25T00:49:00.000Z";
+  if (action === "save") {
+    return { plan: patchMockProposedPlan(state, plan, { savedAt: now }) };
+  }
+  if (action === "refine") {
+    return { plan: patchMockProposedPlan(state, plan, { status: "draft" }) };
+  }
+  if (action === "accept") {
+    if (plan.acceptedTaskId) {
+      return { plan, taskId: plan.acceptedTaskId };
+    }
+    const taskId = `task_proposed_plan_${state.tasks.length + 1}`;
+    state.tasks.unshift({
+      id: taskId,
+      workspaceId: "workspace_default",
+      channelId: thread.channelId ?? "channel_engineering",
+      title: `Implement accepted plan: ${plan.title}`,
+      prompt: `${plan.bodyMarkdown}\n\nSource proposed plan: ${plan.id}`,
+      status: "todo",
+      requestedSkillId: "plan-acceptance",
+      attachmentIds: [],
+      createdAt: now,
+      updatedAt: now,
+    });
+    return {
+      plan: patchMockProposedPlan(state, plan, {
+        status: "accepted",
+        acceptedAt: now,
+        acceptedTaskId: taskId,
+      }),
+      taskId,
+    };
+  }
+  if (action === "convert-workflow") {
+    if (plan.acceptedWorkflowId) {
+      return { plan, workflowId: plan.acceptedWorkflowId, workflowStepId: plan.acceptedWorkflowStepId };
+    }
+    const workflowId = `workflow_proposed_plan_${state.channelWorkflows.length + 1}`;
+    const workflowStepId = `workflow_step_proposed_plan_${state.channelWorkflowSteps.length + 1}`;
+    const channelId = thread.channelId ?? "channel_engineering";
+    state.channelWorkflows.unshift({
+      id: workflowId,
+      workspaceId: "workspace_default",
+      channelId,
+      title: plan.title,
+      objective: plan.bodyMarkdown,
+      status: "draft",
+      createdBy: readOptionalMockString(body, "createdBy") ?? "local-user",
+      metadata: { sourceMessageId: plan.sourceMessageId },
+      createdAt: now,
+      updatedAt: now,
+    });
+    state.channelWorkflowSteps.unshift({
+      id: workflowStepId,
+      workspaceId: "workspace_default",
+      channelId,
+      workflowId,
+      position: 1,
+      title: `Implement ${plan.title}`,
+      prompt: `${plan.bodyMarkdown}\n\nSource proposed plan: ${plan.id}`,
+      toParticipantId: readOptionalMockString(body, "toParticipantId") ?? "local-user",
+      toParticipantLabel: readOptionalMockString(body, "toParticipantLabel") ?? "Local user",
+      status: "queued",
+      metadata: { sourceMessageId: plan.sourceMessageId },
+      createdAt: now,
+      updatedAt: now,
+    });
+    return {
+      plan: patchMockProposedPlan(state, plan, {
+        status: "accepted",
+        acceptedAt: plan.acceptedAt ?? now,
+        convertedAt: now,
+        acceptedWorkflowId: workflowId,
+        acceptedWorkflowStepId: workflowStepId,
+      }),
+      workflowId,
+      workflowStepId,
+    };
+  }
+  return { plan };
+}
+
+function readOptionalMockString(record: Record<string, unknown>, key: string): string | undefined {
+  const value = record[key];
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function readNullableMockString(record: Record<string, unknown>, key: string, fallback: string | undefined): string | undefined {
+  if (!(key in record)) {
+    return fallback;
+  }
+  const value = record[key];
+  if (value === null) {
+    return undefined;
+  }
+  return typeof value === "string" && value.trim() ? value.trim() : fallback;
+}
+
+function readMockProposedPlanStatus(value: unknown): ProposedPlanArtifact["status"] | undefined {
+  return value === "draft" || value === "accepted" || value === "superseded" || value === "archived" ? value : undefined;
+}
+
+function readMockPostData(request: Request): Record<string, unknown> {
+  try {
+    const value = request.postDataJSON();
+    return isRecord(value) ? value : {};
+  } catch {
+    return {};
+  }
 }
 
 export function isRecord(value: unknown): value is Record<string, unknown> {

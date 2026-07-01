@@ -1576,20 +1576,44 @@ Current extraction state:
 - Extracted composer module: `ChannelComposer.tsx`, covering the controlled composer
   shell, pending attachment preview strip, mention/slash pickers, active-run guidance,
   inline approvals, permission menu, and send/error controls. `WorkspaceClientView.tsx`
-  still owns draft snapshots, file refs, upload/send actions, and active run state.
+  wires composer controllers while keeping the surrounding channel/workspace state.
 - Extracted composer draft controller hook: `useChannelComposerDraftController.ts`,
   covering draft/assets/mention/slash picker state, composer busy/send state, pending
-  send preview state, composer refs, attachment preview URL cleanup, and composer feedback
-  timeout lifecycle. `WorkspaceClientView.tsx` still owns `sendMessage`, run guidance
-  actions, pending-send resolution, and channel-switch snapshot orchestration.
+  send preview state, composer refs, composer resize pointer handling, attachment preview
+  URL cleanup, and composer feedback timeout lifecycle.
+- Extracted composer action controller hook: `useChannelComposerActionsController.ts`,
+  covering normal message sends, slash-command task creation, queued run guidance,
+  guidance cancel/promote/edit actions, and composer submit routing.
+- Extracted composer input controller hook: `useChannelComposerInputController.ts`,
+  covering mention/slash picker matching, composer key handling, paste/drop attachment
+  capture, upload state transitions, automatic link-preview capture, composer input
+  tokenization, file-ref derivation, and sendability/asset-pending flags.
+- Extracted composer snapshot controller hook: `useChannelComposerSnapshotController.ts`,
+  covering per-channel draft/assets/topic-reply snapshots, empty snapshot restore, and
+  composer-specific restore cleanup during channel switches. `WorkspaceClientView.tsx`
+  still owns non-composer channel-switch resets such as popovers, settings pages, side
+  panels, pending-send preview, and activity filters.
+- Extracted thread reply controller hook: `useChannelThreadReplyController.ts`,
+  covering active topic selection, reply draft/pending/error state, reply sends, topic
+  close behavior, and channel-switch snapshot restore data. `channelMentionText.ts`
+  centralizes `@teammate` text matching used by composer draft updates, message sends,
+  and topic replies.
 - Extracted message feed module: `ChannelMessageFeed.tsx`, covering feed item types,
   retain/signature helpers, the `useChannelMessageFeed` virtualizer/scroll hook,
-  pending-send / `Thinking...` continuity, older-message loading, anchor retention, and
-  jump-to-latest controls. Feed resets are scoped to channel changes and selected-channel
-  notification state, not parent workspace-settings object identity, so refreshes do not
-  clear older-message position, background attention toast, or jump-to-latest visibility.
-  `WorkspaceClientView.tsx` still owns channel item assembly and activity/workflow/task
-  render actions.
+  pending-send item rendering / `Thinking...` display, older-message loading, anchor
+  retention, and jump-to-latest controls. Feed resets are scoped to channel changes and
+  selected-channel notification state, not parent workspace-settings object identity, so
+  refreshes do not clear older-message position, background attention toast, or
+  jump-to-latest visibility.
+- Extracted conversation block interaction hook: `useChannelConversationBlockInteractions.tsx`,
+  covering focused block shortcuts, copy/focus action menu rendering, keyboard expansion,
+  touch long-press, context-menu handling, and block-level feedback toast cleanup. The
+  parent workspace shell now only passes the message-feed scroll ref and mounts the
+  returned nodes/handlers.
+- Extracted feed assembly hook: `useChannelMessageFeedAssembly.ts`, covering sorted
+  conversation/activity feed items, older-message loader eligibility, pending-send
+  acknowledgement/reply-start resolution, pending row insertion, and empty-state
+  calculation. `WorkspaceClientView.tsx` still owns activity/workflow/task render actions.
 - Extracted right dock controller hook: `useChannelRightDockController.ts`, covering
   open/close mount timing, layout animation variables, width clamping, resize pointer
   handlers, main-width observation, and right-dock page requests.

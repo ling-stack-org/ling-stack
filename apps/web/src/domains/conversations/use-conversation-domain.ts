@@ -360,6 +360,7 @@ function messagesThreadFallback(messages: readonly ConversationTranscriptMessage
     title: "Conversation",
     objective: "Conversation",
     status: "running",
+    conversationMode: { mode: "default" },
     createdAt: now,
     updatedAt: now,
   };

@@ -1,6 +1,6 @@
 import type { SQLOutputValue } from "node:sqlite";
-import { runContinuationReasons, type LingThread, type LingThreadKind, type LingThreadMetadata, type LingThreadStatus, type LingTurn, type LingTurnKind, type LingTurnRun, type LingTurnRunRole, type LingTurnStatus, type RunContinuationReason, type RunEventEnvelope, type RunEventType, type RunSession, type RunStatus } from "../../run-types.js";
-import { omitUndefined, parseJson, readNullableString, readNumber, readString } from "./helpers.js";
+import { conversationModeKinds, runContinuationReasons, type ConversationModeKind, type ConversationModeState, type GoalEvidenceRef, type LingThread, type LingThreadGoal, type LingThreadGoalStatus, type LingThreadKind, type LingThreadMetadata, type LingThreadStatus, type LingTurn, type LingTurnKind, type LingTurnRun, type LingTurnRunRole, type LingTurnStatus, type ProposedPlanArtifact, type ProposedPlanArtifactStatus, type RunContinuationReason, type RunEventEnvelope, type RunEventType, type RunSession, type RunStatus } from "../../run-types.js";
+import { omitUndefined, parseJson, readNullableNumber, readNullableString, readNumber, readString } from "./helpers.js";
 
 export function mapLingThread(row: Record<string, SQLOutputValue>): LingThread {
   return omitUndefined({
@@ -22,11 +22,81 @@ export function mapLingThread(row: Record<string, SQLOutputValue>): LingThread {
     parentTurnId: readNullableString(row, "parent_turn_id"),
     forkedFromRunId: readNullableString(row, "forked_from_run_id"),
     metadata: parseOptionalLingThreadMetadata(readNullableString(row, "metadata_json")),
+    conversationMode: readConversationModeState(row),
     createdAt: readString(row, "created_at"),
     updatedAt: readString(row, "updated_at"),
     pinnedAt: readNullableString(row, "pinned_at"),
     archivedAt: readNullableString(row, "archived_at"),
     archivedReason: readNullableString(row, "archived_reason"),
+  });
+}
+
+export function mapLingThreadGoal(row: Record<string, SQLOutputValue>): LingThreadGoal {
+  return omitUndefined({
+    id: readString(row, "id"),
+    workspaceId: readString(row, "workspace_id"),
+    threadId: readString(row, "thread_id"),
+    objective: readString(row, "objective"),
+    status: readString(row, "status") as LingThreadGoalStatus,
+    tokenBudget: readNullableNumber(row, "token_budget"),
+    tokensUsed: readNumber(row, "tokens_used"),
+    timeUsedSeconds: readNumber(row, "time_used_seconds"),
+    createdAt: readString(row, "created_at"),
+    updatedAt: readString(row, "updated_at"),
+    completedAt: readNullableString(row, "completed_at"),
+    clearedAt: readNullableString(row, "cleared_at"),
+    replacedByGoalId: readNullableString(row, "replaced_by_goal_id"),
+    lastRunId: readNullableString(row, "last_run_id"),
+    blockedReason: readNullableString(row, "blocked_reason"),
+    completionEvidenceRefs: parseGoalEvidenceRefs(readString(row, "completion_evidence_refs_json")),
+  });
+}
+
+export function mapProposedPlanArtifact(row: Record<string, SQLOutputValue>): ProposedPlanArtifact {
+  return omitUndefined({
+    id: readString(row, "id"),
+    workspaceId: readString(row, "workspace_id"),
+    threadId: readString(row, "thread_id"),
+    sourceTurnId: readNullableString(row, "source_turn_id"),
+    sourceMessageId: readNullableString(row, "source_message_id"),
+    sourceRunId: readNullableString(row, "source_run_id"),
+    title: readString(row, "title"),
+    bodyMarkdown: readString(row, "body_markdown"),
+    status: readString(row, "status") as ProposedPlanArtifactStatus,
+    savedAt: readNullableString(row, "saved_at"),
+    acceptedAt: readNullableString(row, "accepted_at"),
+    convertedAt: readNullableString(row, "converted_at"),
+    acceptedTaskId: readNullableString(row, "accepted_task_id"),
+    acceptedWorkflowId: readNullableString(row, "accepted_workflow_id"),
+    acceptedWorkflowStepId: readNullableString(row, "accepted_workflow_step_id"),
+    acceptedRunId: readNullableString(row, "accepted_run_id"),
+    createdAt: readString(row, "created_at"),
+    updatedAt: readString(row, "updated_at"),
+  });
+}
+
+function readConversationModeState(row: Record<string, SQLOutputValue>): ConversationModeState {
+  return omitUndefined({
+    mode: normalizeConversationMode(readNullableString(row, "conversation_mode")),
+    updatedAt: readNullableString(row, "conversation_mode_updated_at"),
+  });
+}
+
+function normalizeConversationMode(value: string | undefined): ConversationModeKind {
+  return conversationModeKinds.includes(value as ConversationModeKind) ? value as ConversationModeKind : "default";
+}
+
+function parseGoalEvidenceRefs(value: string): readonly GoalEvidenceRef[] {
+  const parsed = parseJson(value);
+  if (!Array.isArray(parsed)) {
+    return [];
+  }
+  return parsed.filter((item): item is GoalEvidenceRef => {
+    if (typeof item !== "object" || item === null || Array.isArray(item)) {
+      return false;
+    }
+    const record = item as Record<string, unknown>;
+    return typeof record.kind === "string" && typeof record.id === "string";
   });
 }
 

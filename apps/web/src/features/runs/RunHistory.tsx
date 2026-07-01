@@ -2165,6 +2165,7 @@ function deriveThreadsFromRuns(runs: readonly RunSession[]): readonly LingThread
         status: threadStatusFromRun(latestRun),
         activeRunId: runCanBeStopped(latestRun) ? latestRun.id : undefined,
         lastRunId: latestRun.id,
+        conversationMode: { mode: "default" },
         createdAt: oldestRun.createdAt,
         updatedAt: latestRun.updatedAt || latestRun.createdAt,
       } satisfies LingThread;
