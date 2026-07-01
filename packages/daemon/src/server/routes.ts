@@ -128,11 +128,12 @@ export function parseLingThreadRoute(
   | { readonly kind: "evidence"; readonly threadId: string }
   | { readonly kind: "mode"; readonly threadId: string }
   | { readonly kind: "goal"; readonly threadId: string }
+  | { readonly kind: "goal-complete"; readonly threadId: string }
   | {
       readonly kind: "proposed-plans";
       readonly threadId: string;
       readonly planId?: string;
-      readonly action?: "accept" | "refine" | "save" | "convert-workflow";
+      readonly action?: "accept" | "refine" | "save" | "convert-workflow" | "archive";
     }
   | { readonly kind: "resume"; readonly threadId: string }
   | { readonly kind: "resume-preview"; readonly threadId: string }
@@ -156,6 +157,9 @@ export function parseLingThreadRoute(
   if (segments.length === 3 && segments[0] === "threads" && segments[2] === "goal") {
     return { kind: "goal", threadId: segments[1] };
   }
+  if (segments.length === 4 && segments[0] === "threads" && segments[2] === "goal" && segments[3] === "complete") {
+    return { kind: "goal-complete", threadId: segments[1] };
+  }
   if (segments.length === 3 && segments[0] === "threads" && segments[2] === "proposed-plans") {
     return { kind: "proposed-plans", threadId: segments[1] };
   }
@@ -170,7 +174,8 @@ export function parseLingThreadRoute(
       segments[4] === "accept" ||
       segments[4] === "refine" ||
       segments[4] === "save" ||
-      segments[4] === "convert-workflow"
+      segments[4] === "convert-workflow" ||
+      segments[4] === "archive"
     )
   ) {
     return { kind: "proposed-plans", threadId: segments[1], planId: segments[3], action: segments[4] };
@@ -312,7 +317,7 @@ export function parseChannelRoute(
   pathname: string,
 ): {
   readonly channelId: string;
-  readonly action?: "brief" | "messages" | "messages-stream" | "message-route-decisions" | "intent-decisions" | "proposals" | "attachments" | "link-previews" | "decisions" | "handoffs" | "context-summaries" | "workflows" | "collaboration-cards" | "team-experts" | "team-metrics" | "team-authority-ledger" | "team-patterns" | "team-snapshots" | "team-evaluations" | "workspace" | "protocol" | "playbooks" | "branches" | "council-policy" | "effective-council";
+  readonly action?: "brief" | "messages" | "messages-stream" | "message-route-decisions" | "intent-decisions" | "proposals" | "attachments" | "link-previews" | "decisions" | "handoffs" | "context-summaries" | "workflows" | "collaboration-cards" | "team-experts" | "team-metrics" | "team-authority-ledger" | "team-patterns" | "team-snapshots" | "team-evaluations" | "workspace" | "protocol" | "playbooks" | "branches" | "council-policy" | "effective-council" | "proposed-plans";
   readonly branchId?: string;
   readonly protocolAction?: "revert" | "drafts" | "apply-draft" | "candidates" | "review-candidate" | "candidate-from-cluster" | "canvas";
   readonly protocolDraftId?: string;
@@ -334,6 +339,9 @@ export function parseChannelRoute(
   }
   if (segments.length === 3 && segments[0] === "channels" && segments[2] === "branches") {
     return { channelId: segments[1], action: "branches" };
+  }
+  if (segments.length === 3 && segments[0] === "channels" && segments[2] === "proposed-plans") {
+    return { channelId: segments[1], action: "proposed-plans" };
   }
   if (segments.length === 4 && segments[0] === "channels" && segments[2] === "messages" && segments[3] === "stream") {
     return { channelId: segments[1], action: "messages-stream" };

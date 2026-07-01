@@ -1,5 +1,5 @@
 import type { SQLOutputValue } from "node:sqlite";
-import { conversationModeKinds, runContinuationReasons, type ConversationModeKind, type ConversationModeState, type GoalEvidenceRef, type LingThread, type LingThreadGoal, type LingThreadGoalStatus, type LingThreadKind, type LingThreadMetadata, type LingThreadStatus, type LingTurn, type LingTurnKind, type LingTurnRun, type LingTurnRunRole, type LingTurnStatus, type ProposedPlanArtifact, type ProposedPlanArtifactStatus, type RunContinuationReason, type RunEventEnvelope, type RunEventType, type RunSession, type RunStatus } from "../../run-types.js";
+import { conversationModeKinds, runContinuationReasons, type ConversationModeKind, type ConversationModeState, type GoalEvidenceRef, type GoalUsageSource, type LingThread, type LingThreadGoal, type LingThreadGoalCompletionActor, type LingThreadGoalStatus, type LingThreadKind, type LingThreadMetadata, type LingThreadStatus, type LingTurn, type LingTurnKind, type LingTurnRun, type LingTurnRunRole, type LingTurnStatus, type ProposedPlanArtifact, type ProposedPlanArtifactStatus, type RunContinuationReason, type RunEventEnvelope, type RunEventType, type RunSession, type RunStatus } from "../../run-types.js";
 import { omitUndefined, parseJson, readNullableNumber, readNullableString, readNumber, readString } from "./helpers.js";
 
 export function mapLingThread(row: Record<string, SQLOutputValue>): LingThread {
@@ -49,6 +49,15 @@ export function mapLingThreadGoal(row: Record<string, SQLOutputValue>): LingThre
     lastRunId: readNullableString(row, "last_run_id"),
     blockedReason: readNullableString(row, "blocked_reason"),
     completionEvidenceRefs: parseGoalEvidenceRefs(readString(row, "completion_evidence_refs_json")),
+    completedBy: readNullableString(row, "completed_by") as LingThreadGoalCompletionActor | undefined,
+    completedReason: readNullableString(row, "completed_reason"),
+    completionVerificationSummary: readNullableString(row, "completion_verification_summary"),
+    usageSource: readNullableString(row, "usage_source") as GoalUsageSource | undefined,
+    continuationChainId: readNullableString(row, "continuation_chain_id"),
+    continuationDepth: readNumber(row, "continuation_depth"),
+    noEvidenceContinuationCount: readNumber(row, "no_evidence_continuation_count"),
+    lastBlockerFingerprint: readNullableString(row, "last_blocker_fingerprint"),
+    sameBlockerCount: readNumber(row, "same_blocker_count"),
   });
 }
 
@@ -57,15 +66,25 @@ export function mapProposedPlanArtifact(row: Record<string, SQLOutputValue>): Pr
     id: readString(row, "id"),
     workspaceId: readString(row, "workspace_id"),
     threadId: readString(row, "thread_id"),
+    channelId: readNullableString(row, "channel_id"),
+    goalId: readNullableString(row, "goal_id"),
+    sourceAgentId: readNullableString(row, "source_agent_id"),
+    ownerAgentId: readNullableString(row, "owner_agent_id"),
     sourceTurnId: readNullableString(row, "source_turn_id"),
     sourceMessageId: readNullableString(row, "source_message_id"),
     sourceRunId: readNullableString(row, "source_run_id"),
+    parentPlanId: readNullableString(row, "parent_plan_id"),
+    supersededByPlanId: readNullableString(row, "superseded_by_plan_id"),
+    planGroupId: readNullableString(row, "plan_group_id"),
+    version: readNullableNumber(row, "version"),
     title: readString(row, "title"),
     bodyMarkdown: readString(row, "body_markdown"),
     status: readString(row, "status") as ProposedPlanArtifactStatus,
     savedAt: readNullableString(row, "saved_at"),
     acceptedAt: readNullableString(row, "accepted_at"),
     convertedAt: readNullableString(row, "converted_at"),
+    archivedAt: readNullableString(row, "archived_at"),
+    archivedReason: readNullableString(row, "archived_reason"),
     acceptedTaskId: readNullableString(row, "accepted_task_id"),
     acceptedWorkflowId: readNullableString(row, "accepted_workflow_id"),
     acceptedWorkflowStepId: readNullableString(row, "accepted_workflow_step_id"),

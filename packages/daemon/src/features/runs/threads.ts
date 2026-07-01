@@ -1,5 +1,6 @@
 import type {
   GoalEvidenceRef,
+  GoalUsageSource,
   LingTurn,
   LingTurnKind,
   LingTurnRunRole,
@@ -231,10 +232,16 @@ function syncLingThreadGoalForTerminalRun(store: RunStore, run: RunSession, now:
   }
   const hasRunEvidence = goal.completionEvidenceRefs.some((ref) => ref.kind === "run" && ref.id === run.id);
   const additionalTimeSeconds = hasRunEvidence ? 0 : elapsedRunSeconds(run, now);
-  const additionalTokens = hasRunEvidence ? 0 : readRunTokenUsage(store, run.id);
+  const usage = hasRunEvidence ? { tokens: 0, source: goal.usageSource } : readRunTokenUsage(store, run);
+  const additionalTokens = usage.tokens;
   const nextTokensUsed = goal.tokensUsed + additionalTokens;
   const nextEvidenceRefs = appendGoalEvidenceRefs(goal.completionEvidenceRefs, goalEvidenceRefsForRun(store, run));
-  const nextStatus = nextGoalStatusForRunAccounting(goal, run, nextTokensUsed);
+  const blocker = run.status === "failed" && !isProviderUsageLimitedRun(run) ? goalBlockerForRun(run) : undefined;
+  const nextSameBlockerCount = blocker
+    ? goal.lastBlockerFingerprint === blocker.fingerprint ? goal.sameBlockerCount + 1 : 1
+    : goal.sameBlockerCount;
+  const nextStatus = nextGoalStatusForRunAccounting(goal, run, nextTokensUsed, nextSameBlockerCount, blocker);
+  const resetContinuationChain = run.continuationReason !== "queue_followup";
   return store.updateLingThreadGoal(
     goal.id,
     {
@@ -242,14 +249,26 @@ function syncLingThreadGoalForTerminalRun(store: RunStore, run: RunSession, now:
       tokensUsed: nextTokensUsed,
       timeUsedSeconds: goal.timeUsedSeconds + additionalTimeSeconds,
       lastRunId: run.id,
-      blockedReason: nextGoalBlockedReason(goal, nextStatus),
+      blockedReason: nextGoalBlockedReason(goal, nextStatus, blocker),
       completionEvidenceRefs: nextEvidenceRefs,
+      usageSource: mergeGoalUsageSource(goal.usageSource, usage.source),
+      continuationChainId: resetContinuationChain ? null : goal.continuationChainId,
+      continuationDepth: resetContinuationChain ? 0 : goal.continuationDepth,
+      noEvidenceContinuationCount: resetContinuationChain ? 0 : goal.noEvidenceContinuationCount,
+      lastBlockerFingerprint: blocker?.fingerprint ?? goal.lastBlockerFingerprint,
+      sameBlockerCount: blocker ? nextSameBlockerCount : goal.sameBlockerCount,
     },
     now,
   );
 }
 
-function nextGoalStatusForRunAccounting(goal: LingThreadGoal, run: RunSession, tokensUsed: number): LingThreadGoalStatus {
+function nextGoalStatusForRunAccounting(
+  goal: LingThreadGoal,
+  run: RunSession,
+  tokensUsed: number,
+  sameBlockerCount: number,
+  blocker: GoalBlocker | undefined,
+): LingThreadGoalStatus {
   if (goal.status === "paused" || goal.status === "complete" || goal.status === "cleared" || goal.status === "replaced") {
     return goal.status;
   }
@@ -262,17 +281,36 @@ function nextGoalStatusForRunAccounting(goal: LingThreadGoal, run: RunSession, t
   if (goal.tokenBudget !== undefined && tokensUsed >= goal.tokenBudget) {
     return "budget_limited";
   }
+  if (blocker && sameBlockerCount >= 3) {
+    return "blocked";
+  }
   return goal.status;
 }
 
-function nextGoalBlockedReason(goal: LingThreadGoal, nextStatus: LingThreadGoalStatus): string | undefined {
+function nextGoalBlockedReason(goal: LingThreadGoal, nextStatus: LingThreadGoalStatus, blocker?: GoalBlocker): string | undefined {
   if (nextStatus === "usage_limited" && goal.status !== "usage_limited") {
     return "Provider quota or rate limit reached.";
   }
   if (nextStatus === "budget_limited" && goal.status !== "budget_limited") {
     return "Token budget reached.";
   }
+  if (nextStatus === "blocked" && blocker) {
+    return blocker.reason;
+  }
   return goal.blockedReason;
+}
+
+interface GoalBlocker {
+  readonly fingerprint: string;
+  readonly reason: string;
+}
+
+function goalBlockerForRun(run: RunSession): GoalBlocker {
+  const reason = run.errorMessage?.trim() || "Run failed while working toward the goal.";
+  return {
+    fingerprint: reason.toLowerCase().replace(/\s+/g, " ").slice(0, 256),
+    reason,
+  };
 }
 
 function isProviderUsageLimitedRun(run: RunSession): boolean {
@@ -314,20 +352,32 @@ function elapsedRunSeconds(run: RunSession, fallbackEndedAt: string): number {
   return Math.ceil((end - start) / 1000);
 }
 
-function readRunTokenUsage(store: RunStore, runId: string): number {
-  return Math.max(0, ...store.listEvents(runId, { limit: 1000 }).map((event) => readEventTokenUsage(event.data)));
+function readRunTokenUsage(store: RunStore, run: RunSession): { readonly tokens: number; readonly source: GoalUsageSource } {
+  const events = store.listEvents(run.id, { limit: 1000 });
+  const providerTokenTotals = events
+    .map((event) => readEventTokenUsage(event.data))
+    .filter((value): value is number => value !== undefined);
+  if (providerTokenTotals.length > 0) {
+    return {
+      tokens: Math.max(0, ...providerTokenTotals),
+      source: "provider",
+    };
+  }
+  return {
+    tokens: estimateRunTokenUsage(run, events),
+    source: "estimated",
+  };
 }
 
-function readEventTokenUsage(value: unknown): number {
+function readEventTokenUsage(value: unknown): number | undefined {
   if (!isRecord(value)) {
-    return 0;
+    return undefined;
   }
   return readTokenTotal(value.usage) ??
     readTokenTotal(value.tokenUsage) ??
     readTokenTotal(value.token_usage) ??
     readTokenTotal(value.responseUsage) ??
-    readTokenTotal(value.response_usage) ??
-    0;
+    readTokenTotal(value.response_usage);
 }
 
 function readTokenTotal(value: unknown): number | undefined {
@@ -353,6 +403,48 @@ function readTokenTotal(value: unknown): number | undefined {
 
 function readPositiveInteger(value: unknown): number | undefined {
   return typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : undefined;
+}
+
+function estimateRunTokenUsage(run: RunSession, events: readonly RunEventEnvelope[]): number {
+  const text = [
+    collectEstimateText(run.taskSnapshot),
+    collectEstimateText(run.requestSnapshot),
+    ...events.map((event) => collectEstimateText(event.data)),
+  ].filter(Boolean).join("\n");
+  if (!text) {
+    return 1;
+  }
+  return Math.max(1, Math.ceil(text.length / 4));
+}
+
+function collectEstimateText(value: unknown): string {
+  if (typeof value === "string") {
+    return value;
+  }
+  if (typeof value === "number" || typeof value === "boolean") {
+    return String(value);
+  }
+  if (Array.isArray(value)) {
+    return value.map(collectEstimateText).filter(Boolean).join("\n");
+  }
+  if (!isRecord(value)) {
+    return "";
+  }
+  return Object.entries(value)
+    .filter(([key]) => !key.toLowerCase().includes("secret") && !key.toLowerCase().includes("token"))
+    .map(([, entry]) => collectEstimateText(entry))
+    .filter(Boolean)
+    .join("\n");
+}
+
+function mergeGoalUsageSource(existing: GoalUsageSource | undefined, next: GoalUsageSource | undefined): GoalUsageSource | undefined {
+  if (!next) {
+    return existing;
+  }
+  if (!existing || existing === next) {
+    return next;
+  }
+  return "mixed";
 }
 
 function goalEvidenceRefsForRun(store: RunStore, run: RunSession): readonly GoalEvidenceRef[] {

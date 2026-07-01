@@ -87,6 +87,14 @@ test("parses goal as a session slash command", () => {
     args: "clear",
     raw: "/goal clear",
   });
+  assert.deepEqual(parseComposerSlashIntent("/goal complete shipped and verified", { commands, teammateMentions }), {
+    kind: "session_command",
+    commandId: "goal",
+    commandLabel: "Goal",
+    action: "complete",
+    args: "complete shipped and verified",
+    raw: "/goal complete shipped and verified",
+  });
 });
 
 test("does not scope plan or goal session commands to teammates", () => {

@@ -20,6 +20,10 @@ import {
 } from "./support/test-helpers";
 
 async function expectComposerValue(composer: Locator, value: string): Promise<void> {
+  if (value.length === 0) {
+    await expect.poll(async () => (await composer.getAttribute("data-value"))?.trim() ?? "").toBe("");
+    return;
+  }
   await expect.poll(() => composer.getAttribute("data-value")).toBe(value);
 }
 
@@ -3137,7 +3141,16 @@ test("channel composer manages goal lifecycle from the floating panel", async ({
   await composer.getByRole("button", { name: "Add" }).click();
   await page.getByRole("menu", { name: "Add" }).getByRole("menuitem", { name: /Goal/ }).click();
   await expectComposerValue(composerInput, "/goal ");
-  await composerInput.fill("/goal Finish PR4 with a visible goal panel");
+  await composerInput.evaluate((node) => {
+    const range = document.createRange();
+    range.selectNodeContents(node);
+    range.collapse(false);
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+  });
+  await page.keyboard.insertText("Finish PR4 with a visible goal panel");
+  await expectComposerValue(composerInput, "/goal Finish PR4 with a visible goal panel");
   await composer.getByRole("button", { name: "Apply command" }).click();
 
   const goalPanel = composer.locator(".goal-floating-panel");
@@ -3177,6 +3190,8 @@ test("channel composer manages goal lifecycle from the floating panel", async ({
 
   await goalPanel.getByRole("button", { name: "Edit goal" }).click();
   await expectComposerValue(composerInput, "/goal edit Finish PR4 with a visible goal panel");
+  await composerInput.fill("");
+  await expectComposerValue(composerInput, "");
   await composerInput.fill("/goal edit Finish PR4, PR5, and local QA");
   await composer.getByRole("button", { name: "Apply command" }).click();
   await expect.poll(() => activeGoal()?.objective).toBe("Finish PR4, PR5, and local QA");
@@ -3195,12 +3210,26 @@ test("channel feed renders proposed_plan blocks as proposed plan cards", async (
   state.runs = [];
   state.tasks = [];
   state.approvals = [];
+  state.threads = [
+    {
+      id: "thread_channel_main_channel_engineering",
+      workspaceId: "workspace_default",
+      kind: "channel_discussion",
+      channelId: "channel_engineering",
+      title: "Main branch",
+      objective: "Main conversation branch for Engineering.",
+      status: "open",
+      conversationMode: { mode: "default" },
+      createdAt: "2026-05-25T00:40:00.000Z",
+      updatedAt: "2026-05-25T00:40:00.000Z",
+    },
+  ];
   state.channelMessages = [
     {
       id: "msg_user_proposed_plan_example",
       workspaceId: "workspace_default",
       channelId: "channel_engineering",
-      threadId: "thread_channel_main_engineering",
+      threadId: "thread_channel_main_channel_engineering",
       kind: "message",
       intent: "discuss",
       authorType: "local-user",
@@ -3217,7 +3246,7 @@ test("channel feed renders proposed_plan blocks as proposed plan cards", async (
       id: "msg_proposed_plan",
       workspaceId: "workspace_default",
       channelId: "channel_engineering",
-      threadId: "thread_channel_main_engineering",
+      threadId: "thread_channel_main_channel_engineering",
       kind: "ai_reply",
       intent: "discuss",
       authorType: "ai-teammate",
@@ -3273,9 +3302,34 @@ test("channel feed renders proposed_plan blocks as proposed plan cards", async (
   await expect.poll(() => state.proposedPlans.find((item) => item.id === "proposed_plan_msg_proposed_plan")?.savedAt ?? "").not.toBe("");
 
   await plan.getByRole("button", { name: "Convert to workflow" }).click();
+  await expect.poll(() => state.proposedPlans.find((item) => item.id === "proposed_plan_msg_proposed_plan")?.acceptedWorkflowId ?? "").toBe("");
+  const preview = page.getByRole("dialog", { name: "Workflow conversion preview" });
+  await expect(preview).toBeVisible();
+  await expect(preview).toContainText("Saving creates a draft workflow only.");
+  await preview.getByRole("button", { name: "Edit draft" }).click();
+  await preview.getByLabel("Draft title").fill("PR1 + PR2 workflow draft");
+  await preview.getByLabel("Draft workflow steps").fill("Confirm contracts\nWire Plan Mode controls");
+  await preview.getByRole("button", { name: "Save draft workflow" }).click();
   await expect.poll(() => state.proposedPlans.find((item) => item.id === "proposed_plan_msg_proposed_plan")?.acceptedWorkflowId ?? "").not.toBe("");
-  await expect.poll(() => state.channelWorkflows.find((workflow) => isRecord(workflow) && workflow.title === "PR1 + PR2 implementation")?.status).toBe("draft");
+  await expect.poll(() => state.channelWorkflows.find((workflow) => isRecord(workflow) && workflow.title === "PR1 + PR2 workflow draft")?.status).toBe("draft");
   await expect.poll(() => state.channelWorkflowSteps.find((step) => isRecord(step) && step.prompt.includes("Source proposed plan: proposed_plan_msg_proposed_plan"))?.status).toBe("queued");
+  await expect.poll(() => state.channelWorkflowSteps.find((step) => isRecord(step) && step.prompt.includes("Wire Plan Mode controls"))?.status).toBe("queued");
+  await expect(page.getByRole("dialog", { name: "Workflow conversion preview" })).toHaveCount(0);
+
+  await page.getByRole("button", { name: "Show details" }).click();
+  const dock = page.locator(".channel-side-panel.right-dock");
+  await dock.getByRole("button", { name: /Plans/ }).click();
+  await expect(dock).toContainText("Plan history");
+  await expect(dock).toContainText("PR1 + PR2 implementation");
+  await dock.getByRole("button", { name: "PR1 + PR2 implementation" }).click();
+  await expect(dock).toContainText("Source message");
+  await dock.getByRole("button", { name: "Archive" }).click();
+  await expect.poll(() => state.proposedPlans.find((item) => item.id === "proposed_plan_msg_proposed_plan")?.status).toBe("archived");
+  await dock.getByRole("button", { name: "Back" }).click();
+  await expect(dock).not.toContainText("PR1 + PR2 implementation");
+  await dock.getByLabel("Plan status").selectOption("archived");
+  await expect(dock).toContainText("PR1 + PR2 implementation");
+  await page.getByRole("button", { name: "Hide details" }).click();
 
   await plan.getByRole("button", { name: "Refine plan" }).click();
   await expect.poll(planMode).toBe("plan");

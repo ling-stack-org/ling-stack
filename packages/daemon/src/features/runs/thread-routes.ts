@@ -7,6 +7,7 @@ import {
   sessionPermissionModes,
   type ConversationModeKind,
   type GoalEvidenceRef,
+  type GoalUsageSource,
   type ApprovalRequest,
   type CreateLingTurnInput,
   type CreateProposedPlanArtifactInput,
@@ -14,6 +15,7 @@ import {
   type LingThread,
   type LingThreadArchivedFilter,
   type LingThreadGoalStatus,
+  type LingThreadGoalCompletionActor,
   type LingThreadKind,
   type LingThreadStatus,
   type LingTurn,
@@ -48,11 +50,12 @@ export type LingThreadRoute =
   | { readonly kind: "evidence"; readonly threadId: string }
   | { readonly kind: "mode"; readonly threadId: string }
   | { readonly kind: "goal"; readonly threadId: string }
+  | { readonly kind: "goal-complete"; readonly threadId: string }
   | {
       readonly kind: "proposed-plans";
       readonly threadId: string;
       readonly planId?: string;
-      readonly action?: "accept" | "refine" | "save" | "convert-workflow";
+      readonly action?: "accept" | "refine" | "save" | "convert-workflow" | "archive";
     }
   | { readonly kind: "resume"; readonly threadId: string }
   | { readonly kind: "resume-preview"; readonly threadId: string }
@@ -208,6 +211,9 @@ export function handleLingThreadItem(
   if (route.kind === "goal") {
     return handleLingThreadGoal(request, response, url, storeRegistry, route.threadId);
   }
+  if (route.kind === "goal-complete") {
+    return handleLingThreadGoalComplete(request, response, url, storeRegistry, route.threadId);
+  }
   if (route.kind === "proposed-plans") {
     return handleLingThreadProposedPlans(request, response, url, storeRegistry, route.threadId, route.planId, route.action, options);
   }
@@ -346,6 +352,59 @@ async function handleLingThreadGoal(
   }
 }
 
+async function handleLingThreadGoalComplete(
+  request: IncomingMessage,
+  response: ServerResponse,
+  url: URL,
+  storeRegistry: RunStoreRegistry,
+  threadId: string,
+): Promise<void> {
+  if (request.method !== "POST") {
+    writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for goal completion` });
+    return;
+  }
+  const cwd = url.searchParams.get("cwd");
+  if (!cwd) {
+    writeJson(response, 400, { error: "bad_request", message: "cwd query parameter is required" });
+    return;
+  }
+  try {
+    const store = storeRegistry.getStore(cwd);
+    const thread = store.getLingThread(threadId);
+    if (!thread) {
+      writeJson(response, 404, { error: "thread_not_found", message: `Ling thread not found: ${threadId}` });
+      return;
+    }
+    const existing = store.getLingThreadGoal(threadId);
+    if (!existing) {
+      writeJson(response, 404, { error: "goal_not_found", message: `No active goal found for thread: ${threadId}` });
+      return;
+    }
+    const body = await readOptionalJsonBody(request, 1024 * 1024);
+    const input = parseCompleteLingThreadGoalBody(body);
+    const goal = store.updateLingThreadGoal(
+      existing.id,
+      {
+        status: "complete",
+        completedBy: input.actor,
+        completedReason: input.reason,
+        completionVerificationSummary: input.completionVerificationSummary,
+        completionEvidenceRefs: mergeGoalEvidenceRefs(existing.completionEvidenceRefs, input.evidenceRefs),
+        blockedReason: null,
+        continuationChainId: null,
+        continuationDepth: 0,
+        noEvidenceContinuationCount: 0,
+        lastBlockerFingerprint: null,
+        sameBlockerCount: 0,
+      },
+      new Date().toISOString(),
+    );
+    writeJson(response, 200, { cwd, threadId, goal: goal ?? null });
+  } catch (error) {
+    writeLingThreadRouteError(response, error);
+  }
+}
+
 async function handleLingThreadProposedPlans(
   request: IncomingMessage,
   response: ServerResponse,
@@ -353,7 +412,7 @@ async function handleLingThreadProposedPlans(
   storeRegistry: RunStoreRegistry,
   threadId: string,
   planId: string | undefined,
-  action: "accept" | "refine" | "save" | "convert-workflow" | undefined,
+  action: "accept" | "refine" | "save" | "convert-workflow" | "archive" | undefined,
   options?: HandleLingThreadRouteOptions,
 ): Promise<void> {
   const cwd = url.searchParams.get("cwd");
@@ -432,6 +491,7 @@ async function handleLingThreadProposedPlans(
         writeJson(response, 404, { error: "proposed_plan_not_found", message: `Proposed plan not found: ${planId}` });
         return;
       }
+      assertProposedPlanDirectMutationAllowed(existing);
       const plan = store.upsertProposedPlanArtifact({ ...parsePutProposedPlanArtifactBody(body, threadId), id: planId }, new Date().toISOString());
       writeJson(response, existing ? 200 : 201, { cwd, threadId, plan });
       return;
@@ -443,7 +503,9 @@ async function handleLingThreadProposedPlans(
         return;
       }
       const body = await readOptionalJsonBody(request, maxBodyBytes);
-      const plan = store.updateProposedPlanArtifact(planId, parsePatchProposedPlanArtifactBody(body), new Date().toISOString());
+      const patch = parsePatchProposedPlanArtifactBody(body);
+      assertProposedPlanDirectMutationAllowed(existing, patch);
+      const plan = store.updateProposedPlanArtifact(planId, patch, new Date().toISOString());
       writeJson(response, 200, { cwd, threadId, plan: plan ?? existing });
       return;
     }
@@ -1885,6 +1947,9 @@ function parsePatchLingThreadGoalBody(value: unknown): UpdateLingThreadGoalInput
   if (status && !lingThreadGoalStatuses.includes(status as LingThreadGoalStatus)) {
     throw new HttpError(400, "bad_goal_status", `status must be one of: ${lingThreadGoalStatuses.join(", ")}`);
   }
+  if (status === "complete") {
+    throw new HttpError(400, "goal_complete_action_required", "Use POST /threads/:threadId/goal/complete to complete a goal with evidence.");
+  }
   return {
     objective,
     status: status as LingThreadGoalStatus | undefined,
@@ -1894,6 +1959,40 @@ function parsePatchLingThreadGoalBody(value: unknown): UpdateLingThreadGoalInput
     lastRunId: readNullableStringField(value, "lastRunId"),
     blockedReason: readNullableStringField(value, "blockedReason"),
     completionEvidenceRefs: readOptionalGoalEvidenceRefs(value, "completionEvidenceRefs"),
+    usageSource: readOptionalGoalUsageSource(value, "usageSource"),
+  };
+}
+
+function parseCompleteLingThreadGoalBody(value: unknown): {
+  readonly actor: LingThreadGoalCompletionActor;
+  readonly reason?: string;
+  readonly evidenceRefs: readonly GoalEvidenceRef[];
+  readonly completionVerificationSummary?: string;
+} {
+  if (value === undefined || value === null) {
+    return {
+      actor: "local-user",
+      evidenceRefs: [],
+    };
+  }
+  if (!isRecord(value)) {
+    throw new HttpError(400, "bad_request", "Goal completion request must be a JSON object.");
+  }
+  const actor = readOptionalGoalCompletionActor(value, "actor") ?? "local-user";
+  const reason = readOptionalString(value, "reason")?.trim() || undefined;
+  const evidenceRefs = readOptionalGoalEvidenceRefs(value, "evidenceRefs") ?? [];
+  const completionVerificationSummary = readOptionalString(value, "completionVerificationSummary")?.trim() || undefined;
+  if (actor === "ling-agent" && evidenceRefs.length === 0) {
+    throw new HttpError(400, "goal_completion_evidence_required", "Ling Agent completion requires evidence refs.");
+  }
+  if (actor === "ling-agent" && !completionVerificationSummary) {
+    throw new HttpError(400, "goal_completion_summary_required", "Ling Agent completion requires a verification summary.");
+  }
+  return {
+    actor,
+    reason,
+    evidenceRefs,
+    completionVerificationSummary,
   };
 }
 
@@ -1915,11 +2014,24 @@ const proposedPlanArtifactStatuses = [
   "archived",
 ] as const satisfies readonly ProposedPlanArtifactStatus[];
 
+const lingThreadGoalCompletionActors = [
+  "local-user",
+  "ling-agent",
+] as const satisfies readonly LingThreadGoalCompletionActor[];
+
+const goalUsageSources = [
+  "provider",
+  "estimated",
+  "mixed",
+] as const satisfies readonly GoalUsageSource[];
+
 interface ProposedPlanActionInput {
   readonly plan?: CreateProposedPlanArtifactInput;
   readonly createdBy?: string;
   readonly toParticipantId?: string;
   readonly toParticipantLabel?: string;
+  readonly workflowTitle?: string;
+  readonly workflowSteps?: readonly string[];
 }
 
 function parsePutProposedPlanArtifactBody(value: unknown, threadId: string): CreateProposedPlanArtifactInput {
@@ -1937,12 +2049,22 @@ function parsePutProposedPlanArtifactBody(value: unknown, threadId: string): Cre
   return {
     id: readOptionalString(value, "id")?.trim(),
     threadId,
+    channelId: readNullableStringField(value, "channelId") ?? undefined,
+    goalId: readNullableStringField(value, "goalId") ?? undefined,
+    sourceAgentId: readNullableStringField(value, "sourceAgentId") ?? undefined,
+    ownerAgentId: readNullableStringField(value, "ownerAgentId") ?? undefined,
     sourceTurnId: readNullableStringField(value, "sourceTurnId") ?? undefined,
     sourceMessageId: readNullableStringField(value, "sourceMessageId") ?? undefined,
     sourceRunId: readNullableStringField(value, "sourceRunId") ?? undefined,
+    parentPlanId: readNullableStringField(value, "parentPlanId") ?? undefined,
+    supersededByPlanId: readNullableStringField(value, "supersededByPlanId") ?? undefined,
+    planGroupId: readNullableStringField(value, "planGroupId") ?? undefined,
+    version: readOptionalPlanVersion(value, "version") ?? undefined,
     title,
     bodyMarkdown,
     status: readOptionalProposedPlanStatus(value),
+    archivedAt: readNullableStringField(value, "archivedAt") ?? undefined,
+    archivedReason: readNullableStringField(value, "archivedReason") ?? undefined,
   };
 }
 
@@ -1959,15 +2081,25 @@ function parsePatchProposedPlanArtifactBody(value: unknown): UpdateProposedPlanA
     throw new HttpError(400, "proposed_plan_body_required", "Proposed plan bodyMarkdown cannot be empty.");
   }
   return {
+    channelId: readNullableStringField(value, "channelId"),
+    goalId: readNullableStringField(value, "goalId"),
+    sourceAgentId: readNullableStringField(value, "sourceAgentId"),
+    ownerAgentId: readNullableStringField(value, "ownerAgentId"),
     sourceTurnId: readNullableStringField(value, "sourceTurnId"),
     sourceMessageId: readNullableStringField(value, "sourceMessageId"),
     sourceRunId: readNullableStringField(value, "sourceRunId"),
+    parentPlanId: readNullableStringField(value, "parentPlanId"),
+    supersededByPlanId: readNullableStringField(value, "supersededByPlanId"),
+    planGroupId: readNullableStringField(value, "planGroupId"),
+    version: readOptionalPlanVersion(value, "version"),
     title,
     bodyMarkdown,
     status: readOptionalProposedPlanStatus(value),
     savedAt: readNullableStringField(value, "savedAt"),
     acceptedAt: readNullableStringField(value, "acceptedAt"),
     convertedAt: readNullableStringField(value, "convertedAt"),
+    archivedAt: readNullableStringField(value, "archivedAt"),
+    archivedReason: readNullableStringField(value, "archivedReason"),
     acceptedTaskId: readNullableStringField(value, "acceptedTaskId"),
     acceptedWorkflowId: readNullableStringField(value, "acceptedWorkflowId"),
     acceptedWorkflowStepId: readNullableStringField(value, "acceptedWorkflowStepId"),
@@ -1988,6 +2120,8 @@ function parseProposedPlanActionBody(value: unknown): ProposedPlanActionInput {
     createdBy: readOptionalString(value, "createdBy")?.trim() || undefined,
     toParticipantId: readOptionalString(value, "toParticipantId")?.trim() || undefined,
     toParticipantLabel: readOptionalString(value, "toParticipantLabel")?.trim() || undefined,
+    workflowTitle: readOptionalString(value, "workflowTitle")?.trim() || undefined,
+    workflowSteps: readOptionalWorkflowSteps(value, "workflowSteps"),
   };
 }
 
@@ -2027,11 +2161,31 @@ function upsertProposedPlanForAction(
   return existing;
 }
 
+function assertProposedPlanDirectMutationAllowed(
+  existing: ProposedPlanArtifact | undefined,
+  input?: UpdateProposedPlanArtifactInput,
+): void {
+  if (!existing || existing.status !== "accepted") {
+    return;
+  }
+  const mutatesAcceptedContent = input === undefined ||
+    input.title !== undefined ||
+    input.bodyMarkdown !== undefined ||
+    (input.status !== undefined && input.status !== "accepted");
+  if (mutatesAcceptedContent) {
+    throw new HttpError(
+      409,
+      "accepted_plan_immutable",
+      "Accepted proposed plans are immutable. Create a refined plan version instead of overwriting the accepted record.",
+    );
+  }
+}
+
 function applyProposedPlanAction(
   store: RunStore,
   thread: LingThread,
   plan: ProposedPlanArtifact,
-  action: "accept" | "refine" | "save" | "convert-workflow",
+  action: "accept" | "refine" | "save" | "convert-workflow" | "archive",
   input: ProposedPlanActionInput,
   now: string,
 ): {
@@ -2043,6 +2197,9 @@ function applyProposedPlanAction(
 } {
   if (action === "save") {
     return { plan: requireUpdatedProposedPlan(store, plan.id, { savedAt: now }, now) };
+  }
+  if (action === "archive") {
+    return { plan: requireUpdatedProposedPlan(store, plan.id, { status: "archived", archivedAt: now }, now) };
   }
   if (action === "refine") {
     return { plan: requireUpdatedProposedPlan(store, plan.id, { status: "draft" }, now) };
@@ -2091,11 +2248,13 @@ function applyProposedPlanAction(
     };
   }
   const createdBy = input.createdBy || "local-user";
+  const workflowTitle = input.workflowTitle || plan.title;
+  const workflowSteps = input.workflowSteps && input.workflowSteps.length > 0 ? input.workflowSteps : [plan.bodyMarkdown];
   const workflow = store.createChannelWorkflow(
     {
       channelId: thread.channelId,
-      title: plan.title,
-      objective: plan.bodyMarkdown,
+      title: workflowTitle,
+      objective: workflowSteps.join("\n"),
       status: "draft",
       createdBy,
       metadata: {
@@ -2107,9 +2266,9 @@ function applyProposedPlanAction(
   const workflowStep = store.createChannelWorkflowStep(
     {
       workflowId: workflow.id,
-      title: `Implement ${plan.title}`,
+      title: workflowSteps.length > 1 ? workflowSteps[0] : `Implement ${workflowTitle}`,
       prompt: [
-        plan.bodyMarkdown,
+        workflowSteps.join("\n"),
         "",
         `Source proposed plan: ${plan.id}`,
         plan.sourceMessageId ? `Source message: ${plan.sourceMessageId}` : "",
@@ -2200,6 +2359,64 @@ function readOptionalGoalEvidenceRefs(record: Record<string, unknown>, key: stri
     }
     return { kind: kind as GoalEvidenceRef["kind"], id };
   });
+}
+
+function readOptionalWorkflowSteps(record: Record<string, unknown>, key: string): readonly string[] | undefined {
+  const value = record[key];
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!Array.isArray(value)) {
+    throw new HttpError(400, "bad_workflow_steps", `${key} must be an array.`);
+  }
+  const steps = value
+    .map((item) => typeof item === "string" ? item.trim() : "")
+    .filter(Boolean)
+    .slice(0, 50);
+  return steps.length > 0 ? steps : undefined;
+}
+
+function mergeGoalEvidenceRefs(
+  existing: readonly GoalEvidenceRef[],
+  next: readonly GoalEvidenceRef[],
+): readonly GoalEvidenceRef[] {
+  const seen = new Set(existing.map((ref) => `${ref.kind}:${ref.id}`));
+  const merged = [...existing];
+  for (const ref of next) {
+    const key = `${ref.kind}:${ref.id}`;
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    merged.push(ref);
+  }
+  return merged;
+}
+
+function readOptionalGoalCompletionActor(record: Record<string, unknown>, key: string): LingThreadGoalCompletionActor | undefined {
+  const value = readOptionalString(record, key)?.trim();
+  if (!value) {
+    return undefined;
+  }
+  if (!lingThreadGoalCompletionActors.includes(value as LingThreadGoalCompletionActor)) {
+    throw new HttpError(400, "bad_goal_completion_actor", `${key} must be one of: ${lingThreadGoalCompletionActors.join(", ")}`);
+  }
+  return value as LingThreadGoalCompletionActor;
+}
+
+function readOptionalGoalUsageSource(record: Record<string, unknown>, key: string): GoalUsageSource | undefined {
+  const value = readOptionalString(record, key)?.trim();
+  if (!value) {
+    return undefined;
+  }
+  if (!goalUsageSources.includes(value as GoalUsageSource)) {
+    throw new HttpError(400, "bad_goal_usage_source", `${key} must be one of: ${goalUsageSources.join(", ")}`);
+  }
+  return value as GoalUsageSource;
+}
+
+function readOptionalPlanVersion(record: Record<string, unknown>, key: string): number | null | undefined {
+  return readOptionalGoalNumber(record, key, true);
 }
 
 const goalEvidenceKinds = ["run", "turn", "artifact", "approval", "workflow"] as const;

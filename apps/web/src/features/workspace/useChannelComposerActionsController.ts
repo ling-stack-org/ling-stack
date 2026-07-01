@@ -83,6 +83,7 @@ interface ChannelComposerActionsInput {
   readonly onSetPlanMode: (active: boolean) => Promise<void>;
   readonly onSetGoalObjective: (objective: string, replaceExisting?: boolean) => Promise<void>;
   readonly onPatchGoal: (input: { readonly status?: LingThreadGoal["status"]; readonly objective?: string; readonly blockedReason?: string | null }) => Promise<void>;
+  readonly onCompleteGoal: (reason?: string) => Promise<void>;
   readonly onClearGoal: () => Promise<void>;
   readonly onSendMessage: (input: {
     readonly threadId?: string;
@@ -139,6 +140,7 @@ export function useChannelComposerActionsController({
   onSetPlanMode,
   onSetGoalObjective,
   onPatchGoal,
+  onCompleteGoal,
   onClearGoal,
   onRefreshChannelActivity,
   onRefreshRunApprovals,
@@ -529,6 +531,10 @@ export function useChannelComposerActionsController({
           } else if (slashIntent.action === "clear") {
             await onClearGoal();
             showComposerFeedback("success", t("Goal cleared"));
+          } else if (slashIntent.action === "complete") {
+            const reason = slashIntent.args.replace(/^complete\b/i, "").trim();
+            await onCompleteGoal(reason);
+            showComposerFeedback("success", t("Goal completed"));
           } else {
             const objective = slashIntent.action === "edit"
               ? slashIntent.args.replace(/^edit\b/i, "").trim()

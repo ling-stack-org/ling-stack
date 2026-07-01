@@ -306,13 +306,13 @@ class RpcConnection {
     if (!store) {
       return;
     }
-    maybeQueueGoalContinuation({
+    const goalContinuation = maybeQueueGoalContinuation({
       terminalRun,
       store,
       activeRuns: this.context.activeRuns,
     });
     await maybeStartNextRunInterventionContinuation({
-      sourceRunId,
+      sourceRunId: goalContinuation?.sourceRunId ?? sourceRunId,
       store,
       runnerRegistry: this.context.runnerRegistry,
       storeRegistry: this.context.storeRegistry,
