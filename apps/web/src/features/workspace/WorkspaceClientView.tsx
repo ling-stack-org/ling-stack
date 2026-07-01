@@ -3680,9 +3680,15 @@ export function WorkspaceClientView({
   ) : null;
   const channelHasProgressPopoverContent = attentionProgressRows.length > 0 || channelEnvironmentSummary.popoverRows.length > 0;
   const progressPopoverVisible = progressPopoverOpen && !teammateManagerOpen && !channelUtilityPageOpen && channelHasProgressPopoverContent;
+  const progressPopoverPlacementAvailable =
+    !teammateManagerOpen &&
+    !channelUtilityPageOpen &&
+    channelHasProgressPopoverContent &&
+    (!channelRightDockVisible || progressPopoverCanUseMainLayout);
   const progressPopoverCanRender =
     progressPopoverVisible && (!channelRightDockVisible || progressPopoverCanUseMainLayout);
-  const progressPopoverInMainLayout = progressPopoverCanRender && channelRightDockVisible && progressPopoverCanUseMainLayout;
+  const progressPopoverShouldRender = progressPopoverRendered && progressPopoverPlacementAvailable;
+  const progressPopoverInMainLayout = progressPopoverShouldRender && progressPopoverCanUseMainLayout;
   const progressPopoverMotionClass = progressPopoverExpanded ? "is-popover-expanded" : "is-popover-collapsed";
   useEffect(() => {
     if (progressPopoverCanRender) {
@@ -3999,7 +4005,7 @@ export function WorkspaceClientView({
             </>
           )}
         </div>
-        {progressPopoverRendered && progressPopoverCanRender && !progressPopoverInMainLayout ? (
+        {progressPopoverShouldRender && !progressPopoverInMainLayout ? (
           <div className={`channel-progress-popover ${progressPopoverMotionClass}`}>
             {progressPopoverNode}
           </div>

@@ -6244,6 +6244,10 @@ code,
   grid-template-columns: minmax(0, 1fr) var(--channel-side-panel-layout-handle-width) var(--channel-right-dock-layout-width);
 }
 
+.task-workbench-main.with-channel-progress-panel {
+  grid-template-columns: minmax(0, 1fr) var(--channel-progress-panel-layout-width);
+}
+
 .task-workbench-main.with-channel-side-panel.with-channel-progress-panel {
   grid-template-columns:
     minmax(0, 1fr)
@@ -11482,30 +11486,6 @@ code,
 
 .activity-chat-main > .channel-composer {
   width: 100%;
-}
-
-@media (min-width: 1280px) {
-  .task-workbench-window.with-channel-progress-popover {
-    --channel-conversation-width: 960px;
-    --channel-progress-popover-width: min(340px, calc(100vw - 420px));
-    --channel-progress-popover-right: 80px;
-  }
-
-  .task-workbench-window.with-channel-progress-popover .activity-chat-layout {
-    transform: translate3d(32px, 0, 0);
-    transition: none;
-  }
-
-  .task-workbench-window.with-channel-progress-popover .activity-chat-main > .channel-composer {
-    transform: translate3d(0, 0, 0);
-    transition: none;
-  }
-
-  .task-workbench-window.with-channel-progress-popover .channel-progress-popover {
-    transition:
-      opacity var(--channel-right-dock-motion-duration) var(--channel-right-dock-motion-ease),
-      visibility 0s linear 0s;
-  }
 }
 
 .thread-reply-panel {

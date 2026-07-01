@@ -55,11 +55,11 @@ export function resolveChannelWorkspaceLayoutDecision({
   rightDockVisible,
   rightDockWidth,
 }: ChannelWorkspaceLayoutDecisionInput): ChannelWorkspaceLayoutDecision {
+  const effectiveRightDockWidth = rightDockVisible ? rightDockWidth : 0;
+  const effectiveResizeHandleWidth = rightDockVisible ? channelRightDockResizeHandleWidth : 0;
   const progressPopoverCanFitMainLayout =
-    mainWidth - rightDockWidth - channelRightDockResizeHandleWidth - channelProgressPanelTrackWidth >= channelConversationTargetWidth;
-  const progressPopoverCanUseMainLayout =
-    rightDockVisible &&
-    progressPopoverCanFitMainLayout;
+    mainWidth - effectiveRightDockWidth - effectiveResizeHandleWidth - channelProgressPanelTrackWidth >= channelConversationTargetWidth;
+  const progressPopoverCanUseMainLayout = progressPopoverCanFitMainLayout;
 
   return {
     progressPopoverCanFitMainLayout,
