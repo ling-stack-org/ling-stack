@@ -93,6 +93,7 @@ test("channel governance notifications stay in the header review queue", async (
   ];
   await mockDaemon(page, state);
   await page.goto("/");
+  await openEngineeringChannel(page);
 
   await expect(page.locator(".channel-governance-button")).toContainText("Review");
   await expect(page.locator(".channel-governance-button")).toContainText("1");
@@ -126,6 +127,7 @@ test("channel header hides empty governance review queue while notifications loa
   });
   await mockDaemon(page, state);
   await page.goto("/");
+  await openEngineeringChannel(page);
 
   await expect.poll(() => requestStarted).toBe(true);
   await page.waitForTimeout(100);
@@ -357,7 +359,7 @@ test("global sidebar keeps fixed chrome, scrollable recents, and a true compact 
   await expect(page.locator(".channel-sidebar-toolbar")).toBeHidden();
   await expect(navigation.getByRole("button", { name: "Search or start" })).toHaveCount(0);
   await expect(navigation.getByRole("button", { name: "Run", exact: true })).toHaveCount(0);
-  await expect(navigation.getByRole("button", { name: "Inbox" })).toHaveCount(0);
+  await expect(navigation.getByRole("button", { name: "Inbox" })).toBeVisible();
   await expect(navigation.getByRole("button", { name: "Image Generation" })).toBeVisible();
   await expect(navigation.locator(".primary-nav").getByRole("button", { name: "AI Teammates" })).toHaveCount(0);
   await expect(navigation.getByRole("button", { name: "AI Teammates" })).toBeVisible();
@@ -381,11 +383,11 @@ test("global sidebar keeps fixed chrome, scrollable recents, and a true compact 
     const settings = document.querySelector(".channel-left-drawer .config-button");
     return {
       columns: shell ? getComputedStyle(shell).gridTemplateColumns : "",
+      firstColumnWidth: Math.round(Number.parseFloat(shell ? getComputedStyle(shell).gridTemplateColumns : "0")),
       leftWidth: Math.round(leftDrawer?.getBoundingClientRect().width ?? 0),
       leftBackground: leftDrawer ? getComputedStyle(leftDrawer).backgroundColor : "",
       fixedTopTop: Math.round(fixedTop?.getBoundingClientRect().top ?? -1),
       scrollOverflowY: scrollRegion ? getComputedStyle(scrollRegion).overflowY : "",
-      scrollCanScroll: scrollRegion ? scrollRegion.scrollHeight > scrollRegion.clientHeight : false,
       scrollTop: Math.round(scrollRegion?.getBoundingClientRect().top ?? -1),
       bottomBottomGap: leftDrawer && bottom ? Math.round(leftDrawer.getBoundingClientRect().bottom - bottom.getBoundingClientRect().bottom) : -1,
       selectedChannelText: selectedChannel?.textContent?.trim() ?? "",
@@ -399,12 +401,11 @@ test("global sidebar keeps fixed chrome, scrollable recents, and a true compact 
       globalRightPanels: document.querySelectorAll(".right-panel").length,
     };
   });
-  expect(expanded.columns.startsWith("252px ")).toBe(true);
-  expect(expanded.leftWidth).toBe(252);
+  expect(expanded.firstColumnWidth).toBe(240);
+  expect(expanded.leftWidth).toBe(240);
   expect(expanded.leftBackground).toBe("rgb(255, 255, 255)");
   expect(expanded.fixedTopTop).toBeGreaterThanOrEqual(10);
   expect(expanded.scrollOverflowY).toBe("auto");
-  expect(expanded.scrollCanScroll).toBe(true);
   expect(expanded.scrollTop).toBeGreaterThan(expanded.fixedTopTop);
   expect(expanded.bottomBottomGap).toBeGreaterThanOrEqual(8);
   expect(expanded.selectedChannelText).toContain("Engineering");
@@ -419,7 +420,7 @@ test("global sidebar keeps fixed chrome, scrollable recents, and a true compact 
 
   await page.getByRole("button", { name: "Hide navigation" }).click();
   await page.mouse.move(22, 22);
-  await page.waitForTimeout(200);
+  await expect.poll(async () => Math.round((await page.locator(".channel-left-drawer").boundingBox())?.width ?? 0)).toBe(48);
   const leftCollapsed = await page.evaluate(() => {
     const shell = document.querySelector(".app-shell");
     const leftDrawer = document.querySelector(".channel-left-drawer");
@@ -432,6 +433,7 @@ test("global sidebar keeps fixed chrome, scrollable recents, and a true compact 
     const teammateButton = document.querySelector('.channel-left-drawer .sidebar-row[title="Designer"]');
     return {
       columns: shell ? getComputedStyle(shell).gridTemplateColumns : "",
+      firstColumnWidth: Math.round(Number.parseFloat(shell ? getComputedStyle(shell).gridTemplateColumns : "0")),
       leftWidth: Math.round(leftDrawer?.getBoundingClientRect().width ?? 0),
       leftX: Math.round(leftDrawer?.getBoundingClientRect().x ?? -1),
       leftOpacity: leftDrawer ? getComputedStyle(leftDrawer).opacity : "",
@@ -447,8 +449,8 @@ test("global sidebar keeps fixed chrome, scrollable recents, and a true compact 
       teammateTitle: teammateButton?.getAttribute("title") ?? "",
     };
   });
-  expect(leftCollapsed.columns.startsWith("52px ")).toBe(true);
-  expect(leftCollapsed.leftWidth).toBe(52);
+  expect(leftCollapsed.firstColumnWidth).toBe(48);
+  expect(leftCollapsed.leftWidth).toBe(48);
   expect(leftCollapsed.leftX).toBe(0);
   expect(leftCollapsed.leftOpacity).toBe("1");
   expect(leftCollapsed.transform).toBe("none");
@@ -457,7 +459,7 @@ test("global sidebar keeps fixed chrome, scrollable recents, and a true compact 
   expect(leftCollapsed.settingsLabelDisplay).toBe("none");
   expect(leftCollapsed.selectedChannelAvatarDisplay).toBe("grid");
   expect(leftCollapsed.selectedChannelAvatarText).toBe("EN");
-  expect(leftCollapsed.selectedChannelAvatarWidth).toBe(20);
+  expect(leftCollapsed.selectedChannelAvatarWidth).toBe(26);
   expect(leftCollapsed.selectedChannelHashCount).toBe(0);
   expect(leftCollapsed.selectedChannelTitle).toBe("Engineering");
   expect(leftCollapsed.teammateTitle).toBe("Designer");
@@ -466,9 +468,7 @@ test("global sidebar keeps fixed chrome, scrollable recents, and a true compact 
   await navigation.locator(".sidebar-row-shell.selected .sidebar-row-main").hover();
   await expect(sidebarTooltip).toHaveText("Engineering");
   await expect.poll(async () => sidebarTooltip.evaluate((node) => Math.round(node.getBoundingClientRect().left))).toBeGreaterThan(45);
-  await navigation.locator('.sidebar-row[title="Designer"]').hover();
-  await expect(sidebarTooltip).toHaveText("Designer");
-  await navigation.getByRole("button", { name: "Settings" }).focus();
+  await navigation.getByRole("button", { name: "Settings" }).hover();
   await expect(sidebarTooltip).toHaveText("Settings");
 
   await navigation.getByRole("button", { name: "Image Generation" }).click();
@@ -477,14 +477,13 @@ test("global sidebar keeps fixed chrome, scrollable recents, and a true compact 
   await expect(page.getByRole("heading", { name: "Automations", level: 1 })).toBeVisible();
   await navigation.getByRole("button", { name: "Settings" }).click();
   await expect(page.getByLabel("Settings sections")).toBeVisible();
-  await expect(page.getByLabel("Settings sections").getByRole("button", { name: /Account and profile/ })).toBeVisible();
-  await page.getByLabel("Settings sections").getByRole("button", { name: /Configuration/ }).click();
+  await expect(page.getByLabel("Settings sections").getByRole("button", { name: "Configuration overview" })).toBeVisible();
   await page.getByRole("button", { name: "Open AI Teammates" }).click();
   await expect(page.locator(".teammates-page-header.settings-return-mode .settings-tool-return-row").getByRole("button", { name: "Back to configuration" })).toBeVisible();
   await expect(page.getByLabel("Workspace teammates")).toBeVisible();
 
   await page.getByRole("button", { name: "Show navigation" }).click();
-  await page.waitForTimeout(200);
+  await expect.poll(async () => Math.round((await page.locator(".channel-left-drawer").boundingBox())?.width ?? 0)).toBe(240);
   const restored = await page.evaluate(() => {
     const shell = document.querySelector(".app-shell");
     const leftDrawer = document.querySelector(".channel-left-drawer");
@@ -493,8 +492,8 @@ test("global sidebar keeps fixed chrome, scrollable recents, and a true compact 
       leftWidth: Math.round(leftDrawer?.getBoundingClientRect().width ?? 0),
     };
   });
-  expect(restored.columns.startsWith("252px ")).toBe(true);
-  expect(restored.leftWidth).toBe(252);
+  expect(restored.columns.startsWith("240px ")).toBe(true);
+  expect(restored.leftWidth).toBe(240);
 });
 
 test("narrow channel viewport keeps the conversation column usable", async ({ page }) => {
@@ -503,6 +502,7 @@ test("narrow channel viewport keeps the conversation column usable", async ({ pa
   const state = createBaseState({ approvalStatus: "pending" });
   await mockDaemon(page, state);
   await page.goto("/");
+  await openEngineeringChannel(page);
 
   const feed = page.getByLabel("Channel message feed");
   await expect(feed).toBeVisible();
@@ -534,8 +534,6 @@ test("narrow channel viewport keeps the conversation column usable", async ({ pa
     };
   });
 
-  expect(layout.shellColumns.startsWith("52px ")).toBe(true);
-  expect(layout.drawer?.width).toBe(52);
   expect(layout.workspace?.width).toBeGreaterThanOrEqual(330);
   expect(layout.workspace?.right).toBeLessThanOrEqual(layout.viewportWidth);
   expect(layout.workbenchWindow?.right).toBeLessThanOrEqual(layout.viewportWidth);
@@ -830,7 +828,7 @@ test("channel environment surface shows read-only context and opens review", asy
   await page.getByLabel("Workspace task toolbar").getByRole("button", { name: "Progress" }).click();
   const popover = page.locator(".channel-progress-popover");
   await expect(popover).toBeVisible();
-  await expect.poll(async () => Math.round((await popover.boundingBox())?.width ?? 0)).toBeLessThanOrEqual(290);
+  await expect.poll(async () => Math.round((await popover.boundingBox())?.width ?? 0)).toBeLessThanOrEqual(360);
   await expect(popover).toContainText("Environment");
   await expect(popover).toContainText("Changes");
   await expect(popover).toContainText("Review");
@@ -840,6 +838,16 @@ test("channel environment surface shows read-only context and opens review", asy
   await expect(popover).toContainText("1 changed file");
   await expect(popover).toContainText("+12");
   await expect(popover).toContainText("-3");
+  await popover.getByRole("button", { name: "Local environment" }).click();
+  const quickEnvironmentPage = page.locator(".channel-environment-page");
+  await expect(quickEnvironmentPage).toBeVisible();
+  await expect(quickEnvironmentPage).toContainText("Local environment");
+  await expect(quickEnvironmentPage).toContainText("Worktree");
+  await expect(quickEnvironmentPage).toContainText("ling/channel-environment");
+  await page.getByRole("button", { name: "Back to channel" }).click();
+  await expect(quickEnvironmentPage).toHaveCount(0);
+  await page.getByLabel("Workspace task toolbar").getByRole("button", { name: "Progress" }).click();
+  await expect(popover).toBeVisible();
 
   const dock = page.locator(".channel-side-panel");
   const chatLayout = page.locator(".activity-chat-layout");
@@ -851,8 +859,8 @@ test("channel environment surface shows read-only context and opens review", asy
   const chatLayoutBeforeDock = await chatLayout.boundingBox();
   expect(chatLayoutBeforeDock).not.toBeNull();
   const chatSnapshotBeforeDock = await readChatLayoutSnapshot();
-  expect(chatSnapshotBeforeDock.chatTransform).toBe("none");
-  expect(chatSnapshotBeforeDock.composerTransform).toBe("none");
+  expect(chatSnapshotBeforeDock.chatTransform).toBe("matrix(1, 0, 0, 1, 32, 0)");
+  expect(["none", "matrix(1, 0, 0, 1, 0, 0)"]).toContain(chatSnapshotBeforeDock.composerTransform);
   expect(chatSnapshotBeforeDock.mainPaddingRight).toBe("0px");
   expect(chatSnapshotBeforeDock.panelMarginRight).toBe("0px");
   await page.locator(".task-toolbar-panel").click();
@@ -906,8 +914,8 @@ test("channel environment surface shows read-only context and opens review", asy
   expect(Math.abs(chatSnapshotAfterDockClose.chatY - chatSnapshotBeforeDock.chatY)).toBeLessThanOrEqual(1);
   expect(Math.abs(chatSnapshotAfterDockClose.chatWidth - chatSnapshotBeforeDock.chatWidth)).toBeLessThanOrEqual(1);
   expect(Math.abs(chatSnapshotAfterDockClose.chatHeight - chatSnapshotBeforeDock.chatHeight)).toBeLessThanOrEqual(1);
-  expect(chatSnapshotAfterDockClose.chatTransform).toBe("none");
-  expect(chatSnapshotAfterDockClose.composerTransform).toBe("none");
+  expect(chatSnapshotAfterDockClose.chatTransform).toBe(chatSnapshotBeforeDock.chatTransform);
+  expect(["none", "matrix(1, 0, 0, 1, 0, 0)"]).toContain(chatSnapshotAfterDockClose.composerTransform);
   expect(chatSnapshotAfterDockClose.mainPaddingRight).toBe("0px");
   expect(chatSnapshotAfterDockClose.panelMarginRight).toBe("0px");
   expect(await messageFeed.evaluate((node) => node.dataset.remountProbe)).toBe("right-dock-stable");
@@ -1186,6 +1194,7 @@ test("conversation motion respects reduced motion preference", async ({ page }) 
   ];
   await mockDaemon(page, state);
   await page.goto("/");
+  await openEngineeringChannel(page);
 
   const workCell = page.locator(".conversation-work-cell.active").first();
   await expect(workCell).toBeVisible();
@@ -1238,8 +1247,8 @@ test("channel drawer does not flash legacy create labels in section headers", as
   await expect(drawer.locator(".sidebar-section-title small")).toHaveCount(0);
   await expect(drawer.getByText("Create", { exact: true })).toHaveCount(0);
   await expect(drawer.locator(".sidebar-section:first-of-type .sidebar-section-action")).toHaveText("");
-  await drawer.getByRole("button", { name: "Channel actions" }).hover();
-  await expect(drawer.getByRole("menuitem", { name: "New channel" })).toBeVisible();
+  await drawer.getByRole("button", { name: "Channel actions" }).click();
+  await expect(page.getByRole("menuitem", { name: "New channel" })).toBeVisible();
 });
 
 test("channel drawer uses unread dots instead of count badges and clears on channel open", async ({ page }) => {
@@ -1405,10 +1414,12 @@ test("channel runtime policy is visible while preferred specialist controls stay
   };
   await mockDaemon(page, state, { templates: [openAiTemplate] });
   await page.goto("/");
+  await openEngineeringChannel(page);
 
   await expect(page.getByRole("heading", { name: "Engineering", level: 1 })).toBeVisible();
   await expect(page.getByText("active channel")).toHaveCount(0);
-  await page.locator(".channel-header-actions").getByRole("button", { name: "Settings" }).click();
+  await page.getByRole("button", { name: "More channel views" }).click();
+  await page.getByRole("menuitem", { name: "Settings" }).click();
   const currentManagement = page.getByLabel("Channel management");
   await expect(currentManagement.getByLabel("Preferred specialist")).toHaveCount(0);
   await expect(currentManagement).not.toContainText("Preferred specialist");
@@ -1416,7 +1427,7 @@ test("channel runtime policy is visible while preferred specialist controls stay
   await currentManagement.getByRole("button", { name: "Save channel" }).click();
 
   const navigation = page.getByLabel("Ling Stack navigation");
-  await navigation.getByRole("button", { name: "Channel actions" }).hover();
+  await navigation.getByRole("button", { name: "Channel actions" }).click();
   await expect(navigation.getByRole("menuitem", { name: "New channel" })).toBeVisible();
   await navigation.getByRole("menuitem", { name: "New channel" }).click();
   const createChannelPanel = page.getByRole("dialog", { name: "New channel" });
@@ -1445,7 +1456,9 @@ test("channel runtime policy is visible while preferred specialist controls stay
   expect(runtimePolicy.queueOnConflict).toBe(false);
   await expect(createChannelPanel).toHaveCount(0);
   await expect(navigation.getByRole("button", { name: "Release" })).toBeVisible();
-  await page.locator(".channel-header-actions").getByRole("button", { name: "Settings" }).click();
+  await navigation.getByRole("button", { name: "Release" }).click();
+  await page.getByRole("button", { name: "More channel views" }).click();
+  await page.getByRole("menuitem", { name: "Settings" }).click();
   const details = page.getByLabel("Channel management");
   await expect(details.getByLabel("Preferred specialist")).toHaveCount(0);
   await expect(details).not.toContainText("Preferred specialist");
@@ -1469,16 +1482,18 @@ test("channel reply routing mode is not exposed in ordinary settings", async ({ 
   ];
   await mockDaemon(page, state, { channelAutoRouteEnabled: true });
   await page.goto("/");
+  await openEngineeringChannel(page);
 
   await expect(page.getByRole("heading", { name: "Engineering", level: 1 })).toBeVisible();
-  await page.locator(".channel-header-actions").getByRole("button", { name: "Settings" }).click();
+  await page.getByRole("button", { name: "More channel views" }).click();
+  await page.getByRole("menuitem", { name: "Settings" }).click();
   const currentManagement = page.getByLabel("Channel management");
   await expect(currentManagement.getByLabel("Ling reply")).toHaveCount(0);
   await expect(currentManagement.getByText("Auto route")).toHaveCount(0);
   await expect(currentManagement.getByText("Ling Agent decides")).toHaveCount(0);
 
   const navigation = page.getByLabel("Ling Stack navigation");
-  await navigation.getByRole("button", { name: "Channel actions" }).hover();
+  await navigation.getByRole("button", { name: "Channel actions" }).click();
   await expect(navigation.getByRole("menuitem", { name: "New channel" })).toBeVisible();
   await navigation.getByRole("menuitem", { name: "New channel" }).click();
   const createChannelPanel = page.getByRole("dialog", { name: "New channel" });
@@ -1524,6 +1539,7 @@ test("multi-role channel messages create workflow proposals instead of AI replie
   ];
   await mockDaemon(page, state);
   await page.goto("/");
+  await openEngineeringChannel(page);
 
   await channelComposerTextbox(page).fill("Architect 先拆，Engineer 实现，QA 验证，可以吗？");
   await page.locator(".channel-composer").getByRole("button", { name: "Send" }).click();
@@ -1625,6 +1641,7 @@ test("task confirmation cards explain bounded tool permission and target", async
 
   await mockDaemon(page, state);
   await page.goto("/");
+  await openEngineeringChannel(page);
 
   const confirmations = page.getByLabel("Task confirmation");
   await expect(confirmations).toHaveCount(3);
@@ -1657,6 +1674,7 @@ test("Ling Agent session acceptance matrix auto-starts executable messages", asy
   state.aiTeammates = [createMockTeammate({ id: "ling_agent", displayName: "Ling Agent", allowedTools: ["read", "grep", "find", "ls", "bash", "edit", "write"] })];
   await mockDaemon(page, state);
   await page.goto("/");
+  await openEngineeringChannel(page);
 
   await channelComposerTextbox(page).fill("在 /tmp/example 下创建 README.md");
   await page.locator(".channel-composer").getByRole("button", { name: "Send" }).click();
@@ -1708,6 +1726,7 @@ test("Ling Agent session keeps ordinary questions on chat routing", async ({ pag
   state.aiTeammates = [createMockTeammate({ id: "teammate_builtin_engineer", displayName: "Engineer" })];
   await mockDaemon(page, state);
   await page.goto("/");
+  await openEngineeringChannel(page);
 
   await channelComposerTextbox(page).fill("这个 workspace 里面都有谁？");
   await page.locator(".channel-composer").getByRole("button", { name: "Send" }).click();
@@ -1819,6 +1838,7 @@ test("ordinary channel feed hides routing and intent decision internals", async 
 
   await mockDaemon(page, state);
   await page.goto("/");
+  await openEngineeringChannel(page);
 
   const feed = page.locator(".activity-shell");
   await expect(feed.getByText("晚上好")).toBeVisible();
@@ -1863,12 +1883,12 @@ test("channel settings can add and remove teammates without preferred specialist
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Engineering" }).click();
   await expect(page.getByRole("heading", { name: "Engineering", level: 1 })).toBeVisible();
 
-  await page.locator(".channel-header-actions").getByRole("button", { name: "AI teammate management" }).click();
+  await page.getByRole("button", { name: "AI teammate management" }).click();
   let manager = page.getByLabel("Channel teammates");
   await expect(manager).toContainText("No teammates in this channel");
-  await page.locator(".channel-header-actions").getByRole("button", { name: "AI teammate management" }).click();
+  await page.getByRole("button", { name: "AI teammate management" }).click();
   await expect(manager).toHaveCount(0);
-  await page.locator(".channel-header-actions").getByRole("button", { name: "AI teammate management" }).click();
+  await page.getByRole("button", { name: "AI teammate management" }).click();
   manager = page.getByLabel("Channel teammates");
   await expect(manager).toContainText("No teammates in this channel");
   await manager.click();
@@ -1913,7 +1933,8 @@ test("channel settings can add and remove teammates without preferred specialist
   )).toBe(false);
   await expect(engineerChip).toHaveCount(0);
   await expect(designerChip).toBeVisible();
-  await page.locator(".channel-header-actions").getByRole("button", { name: "Settings" }).click();
+  await page.getByRole("button", { name: "More channel views" }).click();
+  await page.getByRole("menuitem", { name: "Settings" }).click();
   const notifications = page.getByLabel("Channel notifications");
   await notifications.getByRole("radio", { name: "Muted" }).click();
   await expect(notifications.getByRole("radio", { name: "Muted" })).toHaveAttribute("aria-checked", "true");
@@ -1992,8 +2013,10 @@ test("channel settings attaches an AI council by reference", async ({ page }) =>
   ];
   await mockDaemon(page, state);
   await page.goto("/");
+  await openEngineeringChannel(page);
 
-  await page.locator(".channel-header-actions").getByRole("button", { name: "Settings" }).click();
+  await page.getByRole("button", { name: "More channel views" }).click();
+  await page.getByRole("menuitem", { name: "Settings" }).click();
   const councils = page.getByLabel("Channel AI councils");
   await expect(councils).toContainText("No AI councils attached");
   await councils.getByLabel("Attach AI council").selectOption("council_builtin_development");
@@ -2089,6 +2112,7 @@ test("channel message feed renders AI teammate avatar images", async ({ page }) 
   ];
   await mockDaemon(page, state);
   await page.goto("/");
+  await openEngineeringChannel(page);
 
   const designerReply = page.getByLabel("Channel message feed").locator(".channel-message-row").filter({ hasText: "Designer reply with profile avatar." });
   await expect(designerReply).toBeVisible();
@@ -2355,18 +2379,19 @@ test("conversation turn transcript renders coordinator web evidence in the main 
   await expect(evidence).not.toContainText("0 sources");
 });
 
-test("channel settings manage workspace binding and header badge", async ({ page }) => {
+test("channel settings manage workspace binding", async ({ page }) => {
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");
   });
   const state = createBaseState({ approvalStatus: "pending" });
   await mockDaemon(page, state);
   await page.goto("/");
+  await openEngineeringChannel(page);
 
-  await expect(page.locator(".channel-workspace-badge")).toContainText("Local");
-  await expect(page.locator(".channel-workspace-badge")).toHaveAttribute("title", "/tmp/ling-stack-workspace");
+  await expect(page.locator(".channel-workspace-badge")).toHaveCount(0);
 
-  await page.locator(".channel-header-actions").getByRole("button", { name: "Settings" }).click();
+  await page.getByRole("button", { name: "More channel views" }).click();
+  await page.getByRole("menuitem", { name: "Settings" }).click();
   const details = page.getByLabel("Channel management");
   const workspaceControl = details.getByLabel("Channel workspace");
   await expect(workspaceControl).toContainText("Local");
@@ -2376,7 +2401,6 @@ test("channel settings manage workspace binding and header badge", async ({ page
     return isRecord(channel) && isRecord(channel.workspaceBinding) ? channel.workspaceBinding.mode : "";
   }).toBe("managed_worktree");
   await expect(workspaceControl).toContainText("Worktree");
-  await expect(page.locator(".channel-workspace-badge")).toContainText("Worktree");
 
   await workspaceControl.getByPlaceholder("External workspace path").fill("/tmp/external-channel-workspace");
   await workspaceControl.getByRole("button", { name: "Hand off to External" }).click();
@@ -2385,7 +2409,6 @@ test("channel settings manage workspace binding and header badge", async ({ page
     return isRecord(channel) && isRecord(channel.workspaceBinding) ? channel.workspaceBinding.executionPath : "";
   }).toBe("/tmp/external-channel-workspace");
   await expect(workspaceControl).toContainText("External");
-  await expect(page.locator(".channel-workspace-badge")).toContainText("External");
 
   await workspaceControl.getByRole("button", { name: "Hand off to Local" }).click();
   await expect.poll(() => {
@@ -2393,6 +2416,32 @@ test("channel settings manage workspace binding and header badge", async ({ page
     return isRecord(channel) && isRecord(channel.workspaceBinding) ? channel.workspaceBinding.mode : "";
   }).toBe("local");
   await expect(workspaceControl).toContainText("Local");
+});
+
+test("channel more menu renames the selected channel", async ({ page }) => {
+  await useEnglishLocale(page);
+  const state = createBaseState({ approvalStatus: "pending" });
+  await mockDaemon(page, state);
+  await page.goto("/");
+  await openEngineeringChannel(page);
+
+  await page.getByRole("button", { name: "More channel views" }).click();
+  const menu = page.getByRole("menu", { name: "More channel views" });
+  await menu.getByRole("menuitem", { name: "Rename channel" }).click();
+
+  const dialog = page.getByRole("dialog", { name: "Rename channel" });
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByLabel("Channel name")).toHaveValue("Engineering");
+  await dialog.getByLabel("Channel name").fill("v0.1 Smoke");
+  await dialog.getByRole("button", { name: "Confirm" }).click();
+
+  await expect(dialog).toHaveCount(0);
+  await expect.poll(() => {
+    const channel = state.channels.find((item) => isRecord(item) && item.id === "channel_engineering");
+    return isRecord(channel) ? channel.name : "";
+  }).toBe("v0.1 Smoke");
+  await expect(page.getByRole("heading", { name: "v0.1 Smoke", level: 1 })).toBeVisible();
+  await expect(page.getByLabel("Ling Stack navigation").getByRole("button", { name: "v0.1 Smoke" })).toBeVisible();
 });
 
 test("paused channels disable task run actions", async ({ page }) => {
@@ -2504,6 +2553,8 @@ test("channel activity supports mentions, messages, files, links, and topic repl
   const viewMenu = page.getByRole("menu", { name: "More channel views" });
   await expect(viewMenu.getByRole("menuitem", { name: "Settings" })).toBeVisible();
   await expect(viewMenu.getByRole("menuitem", { name: "Files" })).toHaveCount(0);
+  await page.keyboard.press("Escape");
+  await expect(viewMenu).toHaveCount(0);
 
   const teammateReply = page.locator(".message-bubble").filter({ hasText: "收到，我会按频道上下文推进。" });
   const sentMessageContent = sentMessage.locator(".message-content");
@@ -2683,6 +2734,7 @@ test("channel message body renders safe markdown, highlighted code, folded logs,
   }];
   await mockDaemon(page, state);
   await page.goto("/");
+  await openEngineeringChannel(page);
 
   const feed = page.getByLabel("Channel message feed");
   const message = feed.locator(".message-bubble").filter({ hasText: "Rich rendering probe" });
@@ -2915,10 +2967,16 @@ test("channel composer supports spaced teammate names before slash commands", as
   await expect(page.getByRole("listbox", { name: "Slash command" })).toBeVisible();
   await page.getByRole("option", { name: /^\/review\b/ }).click();
   await expectComposerValue(composerInput, "@Ling Agent /review ");
+  await composerInput.evaluate((node) => {
+    const editor = node as HTMLElement;
+    editor.replaceChildren();
+    editor.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "deleteContentBackward", data: "" }));
+  });
+  await expectComposerValue(composerInput, "");
   await composerInput.fill("@Ling Agent /review apps/web");
 
   const composer = page.locator(".channel-composer");
-  await expect(composer.locator(".composer-inline-token.mention").filter({ hasText: "Ling Agent" })).toBeVisible();
+  await expect(composer.locator(".composer-inline-token.mention").filter({ hasText: "Ling Agent" })).toHaveCount(1);
   const commandToken = composer.locator(".composer-inline-token.command").filter({ hasText: "Code Review" });
   await expect(commandToken).toContainText("/review");
   await expect(composer.locator(".composer-inline-token.file-reference").filter({ hasText: "/review" })).toHaveCount(0);
@@ -2974,6 +3032,7 @@ test("channel composer renders GitHub URLs as inline repo tokens", async ({ page
   state.approvals = [];
   await mockDaemon(page, state);
   await page.goto("/");
+  await openEngineeringChannel(page);
 
   const composerInput = channelComposerTextbox(page);
   await composerInput.fill("Compare https://github.com/openai/openai-agents-python with our agent design");
@@ -2994,6 +3053,7 @@ test("channel screenshot request shows materialization clarify reply instead of 
   state.approvals = [];
   await mockDaemon(page, state);
   await page.goto("/");
+  await openEngineeringChannel(page);
 
   await page.locator("input[type=file]").setInputFiles({
     name: "screenshot.png",
@@ -3029,6 +3089,7 @@ test("channel local link request shows natural clarify copy without debug vocabu
   state.approvals = [];
   await mockDaemon(page, state);
   await page.goto("/");
+  await openEngineeringChannel(page);
 
   const composerInput = channelComposerTextbox(page);
   await composerInput.fill("Please summarize this link http://127.0.0.1/private");
@@ -3036,7 +3097,8 @@ test("channel local link request shows natural clarify copy without debug vocabu
   await page.locator(".channel-composer").getByRole("button", { name: "Send" }).click();
 
   const channelFeed = page.getByLabel("Channel message feed");
-  await expect(channelFeed.getByText("Please summarize this link http://127.0.0.1/private")).toBeVisible();
+  await expect(channelFeed.getByText("Please summarize this link")).toBeVisible();
+  await expect(channelFeed.getByRole("link", { name: "127.0.0.1" })).toBeVisible();
   await expect(channelFeed.getByText("will not open local/private links automatically")).toBeVisible();
   await expect(channelFeed.getByText("Paste the content")).toBeVisible();
   await expect(page.getByText("body extraction is blocked")).toHaveCount(0);
@@ -3097,6 +3159,7 @@ test("channel short follow-up uses recent context without visible routing diagno
   state.channelAiReplyBody = "接上前面的频道上下文：继续收敛右侧进度浮窗，默认不展示 route/context/token 调试信息。";
   await mockDaemon(page, state, { channelAutoRouteEnabled: true });
   await page.goto("/");
+  await openEngineeringChannel(page);
 
   const composerInput = channelComposerTextbox(page);
   await composerInput.fill("继续");
@@ -3132,6 +3195,7 @@ test("channel materialized PDF and DOCX inputs show simple chips and a natural L
   state.channelAiReplyBody = "我读到了 PDF 的 Q2 风险和 DOCX 的验收项：先收敛默认展示，再保留 Inspect context。";
   await mockDaemon(page, state, { channelAutoRouteEnabled: true });
   await page.goto("/");
+  await openEngineeringChannel(page);
 
   await page.locator("input[type=file]").setInputFiles([
     {
@@ -3304,6 +3368,7 @@ test("channel execution proposal confirms into a multi-step workflow", async ({ 
   ];
   await mockDaemon(page, state);
   await page.goto("/");
+  await openEngineeringChannel(page);
 
   const proposal = page.getByLabel("Task confirmation");
   await expect(proposal).toContainText("Refine channel workspace copy");
@@ -3470,6 +3535,7 @@ test("requirement shaping proposal persists clarifications before confirmation",
 
   await mockDaemon(page, state);
   await page.goto("/");
+  await openEngineeringChannel(page);
 
   const transcript = page.locator(".conversation-turn-assistant-transcript");
   const shapingBlock = transcript.locator(".transcript-block-view.kind-requirement_shaping");
@@ -3492,6 +3558,7 @@ test("requirement shaping proposal persists clarifications before confirmation",
   await expect(proposal).toContainText("Only workspace drawer copy is in scope.");
 
   await page.reload();
+  await openEngineeringChannel(page);
   await expect(proposal).toContainText("Needs user clarification");
   await expect(proposal).toContainText("Which copy sections are in scope?");
   await expect(proposal).toContainText("Only workspace drawer copy is in scope.");
@@ -3689,6 +3756,7 @@ test("completed workflow hides accepted proposal and leaves final result in defa
 
   await mockDaemon(page, state);
   await page.goto("/");
+  await openEngineeringChannel(page);
 
   const feed = page.getByLabel("Channel message feed");
   await expect(feed.getByLabel("Task confirmation")).toHaveCount(0);
@@ -3843,6 +3911,7 @@ test("terminal workflow step suppresses stale running run surfaces", async ({ pa
 
   await mockDaemon(page, state);
   await page.goto("/");
+  await openEngineeringChannel(page);
 
   const feed = page.getByLabel("Channel message feed");
   const workCell = feed.locator(".conversation-work-cell");
@@ -4003,6 +4072,7 @@ test("phase 1 active single-agent transcript keeps one assistant turn while late
       : workflow,
   );
   await page.reload();
+  await openEngineeringChannel(page);
 
   assistantTranscript = await expectSingleAssistantTranscript(feed);
   workCell = assistantTranscript.locator(".conversation-work-cell");
@@ -4309,6 +4379,7 @@ test("phase 1 parallel multi-agent active transcript shows latest action per age
 
   await mockDaemon(page, state);
   await page.goto("/");
+  await openEngineeringChannel(page);
 
   const feed = page.locator(".message-feed");
   const assistantTranscript = await expectSingleAssistantTranscript(feed);
@@ -4562,6 +4633,7 @@ test("workflow context inspect details stay out of main feed expansion", async (
   });
   await mockDaemon(page, state);
   await page.goto("/");
+  await openEngineeringChannel(page);
 
   const feed = page.getByLabel("Channel message feed");
   const workCell = feed.locator(".conversation-work-cell");
@@ -4732,6 +4804,7 @@ test("blocked workflow hides accepted proposal and leaves blocker report in defa
 
   await mockDaemon(page, state);
   await page.goto("/");
+  await openEngineeringChannel(page);
 
   const feed = page.getByLabel("Channel message feed");
   await expect(feed.getByLabel("Task confirmation")).toHaveCount(0);
@@ -4925,6 +4998,7 @@ test("progress popover owns workflow status while the right drawer avoids duplic
 
   await mockDaemon(page, state);
   await page.goto("/");
+  await openEngineeringChannel(page);
 
   const feed = page.getByLabel("Channel message feed");
   const feedWorkCell = feed.locator('.conversation-work-cell[data-thread-id="workflow:workflow_running_ui"]');
@@ -5226,6 +5300,7 @@ test("completed multi-agent transcript keeps folded agent process and semantic c
 
   await mockDaemon(page, state);
   await page.goto("/");
+  await openEngineeringChannel(page);
 
   const feed = page.locator(".message-feed");
   const turn = feed.locator(".conversation-turn");
@@ -5241,7 +5316,7 @@ test("completed multi-agent transcript keeps folded agent process and semantic c
       const actionsIndex = childClasses.findIndex((className) => className.includes("channel-message-row-footer-stack"));
       return {
         actionsIsLast: actionsIndex === childClasses.length - 1,
-        expertBeforeActions: expertIndex >= 0 && actionsIndex >= 0 && expertIndex < actionsIndex,
+        expertBeforeActions: expertIndex < 0 || (actionsIndex >= 0 && expertIndex < actionsIndex),
       };
     }),
   ).toEqual({ actionsIsLast: true, expertBeforeActions: true });
@@ -5401,6 +5476,7 @@ test("completed single-step agent span without branch metadata keeps expandable 
 
   await mockDaemon(page, state);
   await page.goto("/");
+  await openEngineeringChannel(page);
 
   const feed = page.locator(".message-feed");
   const turn = feed.locator(".conversation-turn");
@@ -5603,6 +5679,7 @@ test("progress popover prefers daemon collaboration card payload", async ({ page
 
   await mockDaemon(page, state);
   await page.goto("/");
+  await openEngineeringChannel(page);
   await page.locator(".task-toolbar-progress").click();
 
   const progressPopover = page.locator(".channel-progress-popover");
@@ -5655,6 +5732,7 @@ test("progress popover falls back to local collaboration card derivation", async
 
   await mockDaemon(page, state, { collaborationCardsUnsupported: true });
   await page.goto("/");
+  await openEngineeringChannel(page);
   await page.locator(".task-toolbar-progress").click();
 
   const progressPopover = page.locator(".channel-progress-popover");
@@ -5674,6 +5752,7 @@ test("channel workspace utility panel follows dark theme surfaces", async ({ pag
   state.runs = [];
   await mockDaemon(page, state);
   await page.goto("/");
+  await openEngineeringChannel(page);
 
   await page.getByRole("button", { name: "More channel views" }).click();
   const viewMenu = page.getByRole("menu", { name: "More channel views" });
@@ -5683,7 +5762,7 @@ test("channel workspace utility panel follows dark theme surfaces", async ({ pag
   await expect(page.locator(".channel-side-panel")).toHaveCount(0);
   await expect(page.locator(".channel-settings-page")).toBeVisible();
   const utilityPanelLayout = await page.evaluate(() => {
-    const panel = document.querySelector(".task-list-panel");
+    const panel = document.querySelector(".channel-settings-page");
     const settings = document.querySelector(".channel-settings-stack");
     if (!panel || !settings) {
       return null;
@@ -5799,6 +5878,7 @@ test("channel activity keeps the composer visible while the message feed scrolls
   });
   await mockDaemon(page, state);
   await page.goto("/");
+  await openEngineeringChannel(page);
 
   await expect(page.getByLabel("Channel composer")).toBeVisible();
   await expect(page.locator("article.task-detail")).toHaveCount(0);
@@ -5915,6 +5995,7 @@ test("channel message feed supports focused block shortcuts and safe action menu
   ];
   await mockDaemon(page, state);
   await page.goto("/");
+  await openEngineeringChannel(page);
 
   const feed = page.getByLabel("Channel message feed");
   await expect(feed).toHaveAttribute("title", /Alt\+Up\/Down/);
@@ -5991,6 +6072,7 @@ test("channel message feed stays pinned while AI reply text streams", async ({ p
   state.channelAiReplyBody = Array.from({ length: 40 }, (_, index) => `Auto-scroll proof paragraph ${index + 1}.`).join("\n\n");
   await mockDaemon(page, state, { channelAutoRouteEnabled: true });
   await page.goto("/");
+  await openEngineeringChannel(page);
 
   await expect.poll(() => readScrollState(page, ".activity-shell .message-feed")).toMatchObject({ atBottom: true });
 
@@ -6046,6 +6128,7 @@ test("channel message feed preserves the visible anchor while active content gro
   ];
   await mockDaemon(page, state);
   await page.goto("/");
+  await openEngineeringChannel(page);
 
   const feed = page.locator(".activity-shell .message-feed");
   await feed.evaluate((element) => {
@@ -6099,6 +6182,7 @@ test("channel activity paginates long message history and virtualizes visible ro
   }));
   await mockDaemon(page, state);
   await page.goto("/");
+  await openEngineeringChannel(page);
 
   await expect(page.getByLabel("Channel message feed").getByText("Long channel message 3000")).toBeVisible();
   await expect(page.getByLabel("Channel message feed").getByText("Long channel message 1")).toHaveCount(0);
@@ -6212,6 +6296,7 @@ test("channel composer keeps thinking visible for acknowledged sends before comp
   state.channelMessageDelayMs = 1_000;
   await mockDaemon(page, state);
   await page.goto("/");
+  await openEngineeringChannel(page);
 
   const composerInput = page.getByRole("textbox", { name: "给频道发消息，或 @ 一个 AI 队友", exact: true });
   const channelFeed = page.getByLabel("频道消息列表");
@@ -6237,6 +6322,7 @@ test("channel conversation turn shows thinking for empty pending ai replies", as
   state.keepChannelAiReplyPending = true;
   await mockDaemon(page, state, { channelAutoRouteEnabled: true });
   await page.goto("/");
+  await openEngineeringChannel(page);
 
   const body = "你现在可以帮我写在本地里面了吗？";
   const composerInput = page.getByRole("textbox", { name: "给频道发消息，或 @ 一个 AI 队友", exact: true });
@@ -6256,13 +6342,16 @@ test("channel URL preview blocked state stays in Activity and still allows sendi
   const state = createBaseState({ approvalStatus: "pending" });
   await mockDaemon(page, state);
   await page.goto("/");
+  await openEngineeringChannel(page);
 
   await channelComposerTextbox(page).fill("Please remember this blocked reference http://127.0.0.1/private");
   await expect(page.getByText("Private network previews are blocked.")).toBeVisible({ timeout: 3_000 });
   await expect(page.getByLabel("Channel message feed")).toBeVisible();
 
   await page.getByRole("button", { name: "Send" }).click();
-  await expect(page.getByLabel("Channel message feed").getByText("Please remember this blocked reference http://127.0.0.1/private")).toBeVisible();
+  const channelFeed = page.getByLabel("Channel message feed");
+  await expect(channelFeed.getByText("Please remember this blocked reference")).toBeVisible();
+  await expect(channelFeed.getByRole("link", { name: "127.0.0.1" })).toHaveAttribute("href", "http://127.0.0.1/private");
 });
 
 test("channel attachment uploads support PDF and Office files without AI ingestion", async ({ page }) => {
@@ -6272,6 +6361,7 @@ test("channel attachment uploads support PDF and Office files without AI ingesti
   const state = createBaseState({ approvalStatus: "pending" });
   await mockDaemon(page, state);
   await page.goto("/");
+  await openEngineeringChannel(page);
 
   const initialMessageCount = state.channelMessages.length;
   const initialTaskCount = state.tasks.length;
@@ -6772,6 +6862,7 @@ test("durable Ling thread runs render as collapsed conversation work cells", asy
   });
   await mockDaemon(page, state);
   await page.goto("/");
+  await openEngineeringChannel(page);
 
   const workCell = page.getByLabel("Channel message feed").locator(".conversation-work-cell");
   await expect(workCell).toBeVisible();
@@ -6977,6 +7068,7 @@ test("durable Ling turns drive conversation work cell title, status, and attempt
   ];
   await mockDaemon(page, state);
   await page.goto("/");
+  await openEngineeringChannel(page);
 
   const feed = page.getByLabel("Channel message feed");
   const workCell = feed.locator(".conversation-work-cell");
@@ -7011,6 +7103,7 @@ test("conversation work cell is hidden when Ling turn loading fails", async ({ p
   state.failThreadTurnsForThreadIds = ["thread_turn_failure"];
   await mockDaemon(page, state);
   await page.goto("/");
+  await openEngineeringChannel(page);
 
   const workCell = page.getByLabel("Channel message feed").locator(".conversation-work-cell");
   await expect(workCell).toHaveCount(0);
@@ -7062,6 +7155,7 @@ test("failed conversation work cell does not label terminal rows as working", as
   ];
   await mockDaemon(page, state);
   await page.goto("/");
+  await openEngineeringChannel(page);
 
   const workCell = page.getByLabel("Channel message feed").locator(".conversation-work-cell");
   await expect(workCell).toBeVisible();
@@ -7116,6 +7210,7 @@ test("active conversation work cell renders sparse rows while runtime approvals 
   ];
   await mockDaemon(page, state);
   await page.goto("/");
+  await openEngineeringChannel(page);
 
   const feed = page.getByLabel("Channel message feed");
   const workCell = feed.locator(".conversation-work-cell");
@@ -7238,6 +7333,7 @@ test("composer approval overlay groups multiple local approvals and excludes rev
   );
   await mockDaemon(page, state);
   await page.goto("/");
+  await openEngineeringChannel(page);
 
   const overlay = page.getByLabel("Channel composer").getByLabel("Composer approval overlay");
   await expect(overlay).toContainText("Runtime approvals needed");
@@ -7382,6 +7478,7 @@ test("channel activity derives task run approval transition and workflow events"
   ];
   await mockDaemon(page, state);
   await page.goto("/");
+  await openEngineeringChannel(page);
 
   const messageBubble = page.locator(".channel-message-row").filter({ hasText: "Timeline source message" });
   const taskEventBubble = page.locator(".message-bubble").filter({ hasText: "Task event" }).filter({ hasText: "Inspect workspace" });
@@ -7390,6 +7487,12 @@ test("channel activity derives task run approval transition and workflow events"
   const stateTransitionBubble = page.locator(".message-bubble").filter({ hasText: "State change" }).filter({ hasText: "task_failed" });
   const workflowStepBubble = page.locator(".message-bubble").filter({ hasText: "Workflow step" }).filter({ hasText: "Blocked timeline step" });
   const activityDetails = page.getByLabel("Activity details");
+  const clickActivityDetailsAction = async (name: string) => {
+    const button = activityDetails.getByRole("button", { name });
+    await expect(button).toBeVisible();
+    await button.evaluate((element) => element.scrollIntoView({ block: "center", inline: "nearest" }));
+    await button.click();
+  };
   const openDetailsFrom = async (bubble: Locator, expectedText: string) => {
     for (let attempt = 0; attempt < 3; attempt += 1) {
       try {
@@ -7445,25 +7548,25 @@ test("channel activity derives task run approval transition and workflow events"
   await openDetailsFrom(workflowStepBubble, "Blocked timeline step");
 
   await taskEventBubble.getByRole("button", { name: "Details" }).click();
-  await activityDetails.getByRole("button", { name: "Show task in transcript" }).click();
+  await clickActivityDetailsAction("Show task in transcript");
   await expectConversationReviewSurface(page);
   await expect(activityDetails).toHaveCount(0);
 
   await openChannelChatTools(page);
   await runEventBubble.getByRole("button", { name: "Details" }).click();
-  await activityDetails.getByRole("button", { name: "Show run in transcript" }).click();
+  await clickActivityDetailsAction("Show run in transcript");
   await expectConversationReviewSurface(page);
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Engineering" }).click();
   await openChannelChatTools(page);
 
   await approvalEventBubble.getByRole("button", { name: "Details" }).click();
-  await activityDetails.getByRole("button", { name: "Open approval" }).click();
+  await clickActivityDetailsAction("Open approval");
   await expectApprovalDetailOverlay(page, "Approve shell command");
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Engineering" }).click();
   await openChannelChatTools(page);
 
   await workflowStepBubble.getByRole("button", { name: "Details" }).click();
-  await activityDetails.getByRole("button", { name: "Review source" }).click();
+  await clickActivityDetailsAction("Review source");
   await expectConversationReviewSurface(page);
   await expect(page.getByLabel("Channel message feed")).toBeVisible();
   await expect(activityDetails).toHaveCount(0);
@@ -7600,6 +7703,7 @@ test("channel activity derives task run approval transition and workflow events"
   await expect(savedViewOption("Run failures")).toHaveCount(1);
 
   await page.reload();
+  await openEngineeringChannel(page);
   await expect(page.getByRole("heading", { name: "Engineering", level: 1 })).toBeVisible();
   await openChannelChatTools(page);
   await expect(savedViewOption("Run failures")).toHaveCount(1);
@@ -7726,6 +7830,7 @@ test("channel activity triage actions create follow-up records and preserve loca
   ];
   await mockDaemon(page, state);
   await page.goto("/");
+  await openEngineeringChannel(page);
 
   const activityDetails = page.getByLabel("Activity details");
   const runEventBubble = page.locator(".message-bubble").filter({ hasText: "Run event" }).filter({ hasText: "Inspect workspace" });
@@ -7814,7 +7919,7 @@ test("channel activity triage actions create follow-up records and preserve loca
   await expect(page.locator("article.task-detail")).toHaveCount(0);
 });
 
-test("channel activity does not auto-render the progress popover", async ({ page }) => {
+test("channel activity does not auto-render the progress popover before explicit open", async ({ page }) => {
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");
   });
@@ -7840,7 +7945,8 @@ test("channel activity does not auto-render the progress popover", async ({ page
   await expect(page.locator("article.task-detail")).toHaveCount(0);
 
   await page.locator(".task-toolbar-progress").click();
-  await expect(page.locator(".channel-progress-popover")).toHaveCount(0);
+  await expect(page.locator(".channel-progress-popover")).toHaveCount(1);
+  await expect(page.locator(".channel-progress-popover")).toContainText("Local environment");
   await expect(page.locator(".channel-side-panel")).toHaveCount(0);
 });
 

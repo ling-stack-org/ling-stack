@@ -181,7 +181,7 @@ share the same icon color and 18px glyph size. The attention queue icon should n
 an overlaid numeric badge; progress and attention counts belong in the popover or detail
 surfaces.
 The left navigation is also a shared app drawer in the accepted channel chat direction:
-expanded at 272px, collapsed to a 48px toolbar rail, and recoverable by hover/focus. It
+expanded at 240px, collapsed to a 48px toolbar rail, and recoverable by hover/focus. It
 does not switch back to the older global sidebar styling when the user opens model
 workbench, runs, inbox, media jobs, AI teammates, or settings; those pages change the
 center surface while preserving the same drawer geometry, row treatment, notification
@@ -1527,6 +1527,103 @@ apps/web/src/features/channels/
 
 Migration can be incremental. Do not block MVP on moving every component.
 
+### WorkspaceClientView Refactor Sequence
+
+`WorkspaceClientView.tsx` is the channel workspace assembly point. It should stay as the
+container that binds AppShell data/actions to channel UI surfaces, but it should stop
+owning every leaf component and every domain-specific helper.
+
+Refactor in staged slices:
+
+1. Extract low-risk leaf surfaces first: environment page/dialogs, rename dialog,
+   governance popovers, runtime diagnostics, task detail panels, thread replies, and
+   activity filters. These components are mostly props-driven and do not own feed
+   scroll state.
+2. Extract medium-risk read/display surfaces before the chat core: workflow/proposal
+   cards, protocol editor, inspector, routing evidence, and route-intent inspect. These
+   surfaces can own local edit/loading state, but they must not change channel feed
+   assembly, pending send, scroll anchoring, or composer snapshots.
+3. Extract `ChannelComposer` after these surrounding surfaces. Keep draft snapshots, attachments,
+   file refs, mentions, slash commands, and active-run guidance behind a narrow
+   composer contract.
+4. Extract `ChannelMessageFeed` and a `useChannelMessageFeed` hook last. This slice owns
+   pending-send visibility, `Thinking...` continuity, virtualizer sizing, older-message
+   loading, anchor retention, and jump-to-latest behavior; it needs focused e2e coverage.
+5. Move pure projection helpers into `channel-*` modules only when their inputs/outputs
+   are stable enough to test without rendering the whole workspace.
+
+Current extraction state:
+
+- Extracted leaf modules: `ChannelEnvironmentPage.tsx`, `ChannelRenameDialog.tsx`,
+  `ChannelGovernanceNotificationsPopover.tsx`, `RuntimeDiagnosticsPanel.tsx`,
+  `ThreadReplyPanel.tsx`, `ChannelActivityPanels.tsx`, `ChannelActivityToolsPanel.tsx`,
+  `ChannelWorkThreadTree.tsx`, and `ChannelTaskPanels.tsx`.
+- Extracted workflow/proposal module: `ChannelWorkflowProposalCards.tsx`, covering
+  `WorkflowQueueCard`, `WorkflowStepCard`, `WorkflowStepContextEvidencePanel`,
+  `WorkflowFinalSummary`, `ChannelExecutionProposalCard`, and
+  `RequirementShapingSummary`.
+- Extracted inspector/protocol module: `ChannelInspectorPanels.tsx`, covering
+  `ChannelInspector`, `ChannelProtocolEditor`, routing evidence, and route-intent
+  inspect details.
+- Extracted detail/progress modules: `ChannelDetailOverlays.tsx`, covering
+  `ConversationDetailOverlay`, `ChannelSourceDetailPanel`, and
+  `ChannelApprovalDetailPanel`; and `ChannelProgressPanels.tsx`, covering
+  `ProgressPopover`, `ChannelEnvironmentPopoverSection`, and context source group icons.
+- Extracted settings/management module: `ChannelSettingsPanels.tsx`, covering
+  channel notifications, AI council attachment/preference controls, channel teammate
+  management, current channel/provider/runtime/workspace settings, and the shared channel
+  workspace display helpers.
+- Extracted composer module: `ChannelComposer.tsx`, covering the controlled composer
+  shell, pending attachment preview strip, mention/slash pickers, active-run guidance,
+  inline approvals, permission menu, and send/error controls. `WorkspaceClientView.tsx`
+  still owns draft snapshots, file refs, upload/send actions, and active run state.
+- Extracted composer draft controller hook: `useChannelComposerDraftController.ts`,
+  covering draft/assets/mention/slash picker state, composer busy/send state, pending
+  send preview state, composer refs, attachment preview URL cleanup, and composer feedback
+  timeout lifecycle. `WorkspaceClientView.tsx` still owns `sendMessage`, run guidance
+  actions, pending-send resolution, and channel-switch snapshot orchestration.
+- Extracted message feed module: `ChannelMessageFeed.tsx`, covering feed item types,
+  retain/signature helpers, the `useChannelMessageFeed` virtualizer/scroll hook,
+  pending-send / `Thinking...` continuity, older-message loading, anchor retention, and
+  jump-to-latest controls. Feed resets are scoped to channel changes and selected-channel
+  notification state, not parent workspace-settings object identity, so refreshes do not
+  clear older-message position, background attention toast, or jump-to-latest visibility.
+  `WorkspaceClientView.tsx` still owns channel item assembly and activity/workflow/task
+  render actions.
+- Extracted right dock controller hook: `useChannelRightDockController.ts`, covering
+  open/close mount timing, layout animation variables, width clamping, resize pointer
+  handlers, main-width observation, and right-dock page requests.
+- Extracted right dock content hook: `ChannelRightDockContent.tsx`, covering
+  right-dock message/file/evidence/review projections, channel-scoped approval filtering,
+  and the dock Activity tab composition. `WorkspaceClientView.tsx` still owns
+  `WorkspaceRightDock` rendering and side-panel view state.
+- Extracted activity controller hook: `useChannelActivityController.ts`, covering
+  channel activity item projection, audit filter/search state, saved-view persistence and
+  migration, filter counts, custom saved-view actions, and activity drilldown selection.
+  `ChannelActivityWorkspace.tsx` now owns the Activity tab shell composition for activity
+  tools, branch tree, message feed, thread replies, and the drilldown drawer.
+  `WorkspaceClientView.tsx` still owns feed visibility rules, activity row rendering,
+  target-opening side effects, and the concrete prop wiring for child surfaces. Saved-view
+  initialization is scoped to selected-channel settings so parent error rerenders do not
+  reset the drilldown drawer; the selected drilldown is also retained across transient
+  activity refreshes so triage failure/retry state stays local to the drawer.
+- Extracted work-thread controller hook: `useChannelWorkThreadsController.ts`, covering
+  channel branch loading, fallback branch derivation from runs, branch search/tree
+  projection, active branch reset, and fork/archive/pin mutations. `WorkspaceClientView.tsx`
+  still consumes the active work-thread id for activity/feed filtering and still owns
+  thread reply draft/send state.
+- Extracted environment summary hook: `ChannelEnvironmentSummary.tsx`, covering
+  local workspace/git/review/source/output summary assembly and progress popover row
+  generation. `WorkspaceClientView.tsx` still owns environment page visibility and
+  commit/review open handlers.
+- Extracted progress summary hook: `ChannelProgressSummary.tsx`, covering workflow/task/run
+  attention rows, pending approval row generation, and active progress source summary
+  selection. `WorkspaceClientView.tsx` still owns progress popover open/render animation
+  state.
+
+Do not run a single broad "clean up the file" rewrite. Each slice must preserve existing
+ARIA labels, test selectors, pending-state behavior, and channel routing semantics.
+
 Minimum first slice:
 
 - keep `WorkspaceClientView` as the container,
@@ -1535,8 +1632,8 @@ Minimum first slice:
 - add `defaultTeammateId` form support,
 - add a files tab with derived rows.
 
-The first chat-capable slice should also extract `ChannelComposer` so Discuss and Task
-modes do not get tangled with task creation logic.
+The first chat-capable slice extracts `ChannelComposer` so Discuss and Task modes do not
+get tangled with task creation logic.
 
 The first attachment-capable slice should keep attachment upload isolated behind
 `channel-attachments.ts` so binary handling, previews, and future extraction do not leak

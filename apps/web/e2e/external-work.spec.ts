@@ -9,6 +9,12 @@ import {
   openChannelChatTools,
 } from "./support/test-helpers";
 
+test.beforeEach(async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.locale", "en-US");
+  });
+});
+
 test("external action approval card requires explicit execute after approval", async ({ page }) => {
   const state = createBaseState({ approvalStatus: "expired" });
   const { action } = addExternalActionApproval(state);

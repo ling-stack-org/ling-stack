@@ -1,10 +1,20 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 import { mockDaemon } from "./support/mock-daemon";
 import {
   createBaseState,
   createMockTeammate,
   isRecord,
 } from "./support/mock-state";
+
+async function openCouncilWorkspace(page: Page): Promise<void> {
+  const navigation = page.getByLabel("Ling Stack navigation");
+  await navigation.getByRole("button", { name: "Teammate actions" }).click();
+  await navigation.getByRole("menuitem", { name: "New teammate" }).click();
+  await page.getByRole("dialog", { name: "Create AI teammate" }).getByRole("button", { name: "Cancel" }).last().click();
+  await expect(page.getByRole("heading", { name: "AI Teammates", level: 1 })).toBeVisible();
+  await page.getByRole("tab", { name: "AI Councils" }).click();
+  await page.getByRole("button", { name: "Open Council Workspace" }).click();
+}
 
 test("Council Workspace shows council health, members, and channel entry points", async ({ page }) => {
   await page.addInitScript(() => {
@@ -43,7 +53,7 @@ test("Council Workspace shows council health, members, and channel entry points"
   await page.goto("/");
 
   const navigation = page.getByLabel("Ling Stack navigation");
-  await navigation.getByRole("button", { name: "AI Councils" }).click();
+  await openCouncilWorkspace(page);
   await expect(page.getByRole("heading", { name: "Council Workspace", level: 1 })).toBeVisible();
   await expect(page.getByLabel("Council overview")).toContainText("1 council(s)");
   await expect(page.locator(".council-workspace-list")).toContainText("Development Council");
@@ -157,7 +167,8 @@ test("Council Workspace shows council health, members, and channel entry points"
   await page.getByRole("button", { name: "Open AI Teammates" }).click();
   await expect(page.getByRole("heading", { name: "AI Teammates", level: 1 })).toBeVisible();
 
-  await navigation.getByRole("button", { name: "AI Councils" }).click();
+  await page.getByRole("tab", { name: "AI Councils" }).click();
+  await page.getByRole("button", { name: "Open Council Workspace" }).click();
   await page.getByLabel("Channel usage").getByRole("button", { name: "Open channel" }).click();
   await expect(navigation.locator(".sidebar-row-shell.selected")).toContainText("Engineering");
   expect(state.teammateChannelMemberships).toHaveLength(originalChannelMembershipCount);

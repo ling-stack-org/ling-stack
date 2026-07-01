@@ -45,7 +45,7 @@ test("language switcher toggles Chinese and English UI labels", async ({ page })
   await expect(page.getByLabel("动态关注筛选").getByRole("button", { name: /需要关注/ })).toBeVisible();
   await expect.poll(() => state.workspaceSettings.locale).toBe("zh-CN");
   await page.locator(".task-toolbar-progress").click();
-  await expect(page.locator(".channel-progress-popover")).toHaveCount(0);
+  await expect(page.locator(".channel-progress-popover")).toBeVisible();
   await expect(page.locator(".channel-side-panel")).toHaveCount(0);
   await page.locator(".task-toolbar-panel").click();
   await expect(page.locator(".channel-side-panel")).toHaveAttribute("aria-label", "Channel workspace dock");
@@ -72,7 +72,7 @@ test("language switcher toggles Chinese and English UI labels", async ({ page })
   await expect(page.getByLabel("Activity categories").getByRole("button", { name: /Messages/ })).toBeVisible();
   await expect(page.getByLabel("Activity attention filters").getByRole("button", { name: /Needs attention/ })).toBeVisible();
   await page.locator(".task-toolbar-progress").click();
-  await expect(page.locator(".channel-progress-popover")).toHaveCount(0);
+  await expect(page.locator(".channel-progress-popover")).toBeVisible();
   await expect(page.locator(".channel-side-panel")).toHaveCount(0);
   await page.locator(".task-toolbar-panel").click();
   await expect(page.locator(".channel-side-panel")).toHaveAttribute("aria-label", "Channel workspace dock");

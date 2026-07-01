@@ -61,7 +61,7 @@ type SidebarTooltipBindings = {
   readonly onMouseEnter: (event: ReactMouseEvent<HTMLElement>) => void;
   readonly onMouseLeave: () => void;
   readonly onFocus: (event: ReactFocusEvent<HTMLElement>) => void;
-  readonly onBlur: () => void;
+  readonly onBlur: (event: ReactFocusEvent<HTMLElement>) => void;
 };
 
 export function SidebarNavigation({
@@ -162,7 +162,10 @@ export function SidebarNavigation({
     });
   }
 
-  function hideSidebarTooltip(): void {
+  function hideSidebarTooltip(event?: ReactFocusEvent<HTMLElement>): void {
+    if (event?.relatedTarget instanceof HTMLElement && event.relatedTarget.closest("[data-sidebar-tooltip]")) {
+      return;
+    }
     setSidebarTooltip(null);
   }
 
@@ -172,7 +175,7 @@ export function SidebarNavigation({
       onMouseEnter: (event) => showSidebarTooltip(label, event.currentTarget),
       onMouseLeave: hideSidebarTooltip,
       onFocus: (event) => showSidebarTooltip(label, event.currentTarget),
-      onBlur: hideSidebarTooltip,
+      onBlur: (event) => hideSidebarTooltip(event),
     };
   }
 
@@ -248,7 +251,7 @@ export function SidebarNavigation({
         </nav>
       </div>
 
-      <div className="sidebar-scroll-region" aria-label={t("Recent")} onScroll={hideSidebarTooltip}>
+      <div className="sidebar-scroll-region" aria-label={t("Recent")} onScroll={() => hideSidebarTooltip()}>
       <SidebarSection
         sectionId="channels"
         title={t("Channels")}

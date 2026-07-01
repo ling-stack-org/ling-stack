@@ -1,14 +1,7 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ClipboardEvent, type DragEvent, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode, type UIEvent } from "react";
-import { useVirtualizer } from "@tanstack/react-virtual";
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type ClipboardEvent, type DragEvent, type FormEvent, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode, type UIEvent } from "react";
 import {
-  Activity,
-  Archive,
   ArrowDown,
   ArrowLeft,
-  AtSign,
-  Bell,
-  BellOff,
-  ChevronDown,
   ChevronUp,
   Check,
   CheckCircle2,
@@ -16,7 +9,6 @@ import {
   Clock3,
   Command,
   Copy,
-  Database,
   FileCheck2,
   FileText,
   FolderOpen,
@@ -25,37 +17,31 @@ import {
   History,
   Image as ImageIcon,
   Info,
-  Link2,
   ListChecks,
   Loader2,
   MessageSquare,
   MoreHorizontal,
   PanelRightClose,
   PanelRightOpen,
-  Pin,
-  PinOff,
+  PencilLine,
   Play,
   Plus,
   RefreshCw,
   Reply,
   Search,
-  Send,
   ShieldCheck,
   SlidersHorizontal,
   Square,
   SquareTerminal,
-  Trash2,
   ThumbsDown,
   ThumbsUp,
   UserPlus,
-  UsersRound,
   Workflow,
   X,
 } from "lucide-react";
-import { LingDaemonError } from "@ling-stack/api-client";
 import type { ComposerSlashCommandOption } from "@ling-stack/core/composer-slash-intents";
 import type { AiTeammateTemplate } from "@ling-stack/core";
-import { archiveLingThread, artifactContentUrl, cancelRunIntervention, createLingThread, createRunIntervention, forkLingThread, getChannelWorkflowEvidence, getLingThreadEvidence, getLingTrace, listLingThreads, listLingThreadTurns, listLingTraces, listRunInterventions, pinLingThread, promoteRunIntervention, unpinLingThread } from "../../api.js";
+import { artifactContentUrl, cancelRunIntervention, createRunIntervention, getChannelWorkflowEvidence, getLingThreadEvidence, getLingTrace, listLingThreadTurns, listLingTraces, listRunInterventions, promoteRunIntervention } from "../../api.js";
 import {
   createChannelWorktree,
   getChannelWorkspaceGitStatus,
@@ -68,72 +54,34 @@ import {
 import { useI18n, type Translate } from "../../i18n.js";
 import { effectiveApprovalStatus } from "../../lib/approvals.js";
 import { buildInlineApprovalViews } from "../../lib/inline-approvals.js";
-import { buildChannelActivityItems, type ChannelActivityAttention, type ChannelActivityItem } from "../../lib/channel-activity.js";
+import type { ChannelActivityItem } from "../../lib/channel-activity.js";
 import {
-  buildChannelActivityDrilldownItem,
-  type ChannelActivityDrilldownItem,
   type ChannelActivityDrilldownTarget,
 } from "../../lib/channel-activity-drilldown.js";
 import {
-  buildChannelActivityTriageActions,
-  buildChannelActivityTriageDraft,
-  channelActivityTriageDraftIsValid,
-  channelActivityTriageResultLabel,
-  type ChannelActivityTriageAction,
-  type ChannelActivityTriageActionKind,
   type ChannelActivityTriageDraft,
   type ChannelActivityTriageResult,
 } from "../../lib/channel-activity-triage.js";
-import {
-  aiCouncilBoundaryLabels,
-  aiCouncilCapacityLabel,
-  aiCouncilHealthLabels,
-  aiCouncilRoutingModeLabel,
-} from "../../lib/ai-councils.js";
-import { buildConversationWorkCellDetailsFromThreadEvidence, buildConversationWorkCellViewModel, groupRunsByThreadId, type ConversationAgentActivitySpan, type ConversationWorkCellViewModel } from "../../lib/conversation-work-cell.js";
-import { buildConversationTurnProjection, type ConversationTranscriptBlock, type ConversationTurnViewModel } from "../../lib/conversation-turn-projector.js";
-import { buildCollaborationProgressProjection, type CollaborationProgressProjectionIcon, type CollaborationProgressProjectionItem, type CollaborationProgressProjectionTone } from "../../lib/collaboration-progress-projection.js";
+import { buildConversationWorkCellDetailsFromThreadEvidence, buildConversationWorkCellViewModel, groupRunsByThreadId, type ConversationWorkCellViewModel } from "../../lib/conversation-work-cell.js";
+import { buildConversationTurnProjection } from "../../lib/conversation-turn-projector.js";
 import { buildCollaborationTaskCardModel, type CollaborationTaskCardModel } from "../../lib/collaboration-task-card.js";
 import {
   buildConversationContextSourceSummaryFromChannelSummary,
-  buildConversationContextSourceSummaryFromInspect,
-  buildConversationContextSourceSummaryFromPacket,
-  conversationContextSourceSummaryLabel,
   type ConversationContextSourceGroup,
-  type ConversationContextSourceRefLike,
   type ConversationContextSourceSummary,
 } from "../../lib/conversation-context-sources.js";
 import { buildConversationWorkCellDetailsFromWorkflowEvidence, buildWorkflowProgressModel, workflowProgressToConversationWorkCell, type WorkflowProgressModel } from "../../lib/workflow-progress.js";
-import {
-  allChannelActivitySavedViewId,
-  applyActivityViewFilter,
-  builtinChannelActivitySavedViews,
-  clearCustomChannelActivitySavedViews,
-  createCustomChannelActivitySavedView,
-  maxCustomChannelActivitySavedViews,
-  parseCustomChannelActivitySavedViewsValue,
-  readCustomChannelActivitySavedViews,
-  sanitizeSavedViewName,
-  type ChannelActivitySavedView,
-  type ChannelActivityViewAttentionFilter,
-  type ChannelActivityViewCategoryFilter,
-  type ChannelActivityViewFilter,
-} from "../../lib/channel-activity-views.js";
 import { deriveChannelRuns } from "../../lib/channel-artifacts.js";
 import { truncatePreview } from "../../lib/data.js";
 import { formatDateTime, titleFromPrompt } from "../../lib/formatting.js";
 import { attachmentCanPreview, loadPreviewContent } from "../../lib/previews.js";
 import {
   buildRunRepairHint,
-  displayLinkedRunStatus,
   readRunWorkspaceCwd,
-  readTaskPrompt,
-  readTaskTitle,
 } from "../../lib/run-evidence.js";
 import { defaultTools, riskyTools } from "../../lib/tools.js";
 import {
   buildLocalEffectivePolicyPreview,
-  conversationPermissionPresetMenuOptions,
   formatToolDecisionGroups,
   inferPermissionPreset,
   permissionModeForPreset,
@@ -150,90 +98,63 @@ import {
   providerPreflightReady,
   providerRunPreflightBlocker,
 } from "../../lib/providers.js";
-import { CiTriageAuditPanel } from "../external-work/CiTriageAuditPanel.js";
 import { TeammateAvatarView } from "../teammates/TeammateAvatarView.js";
 import {
-  ArtifactRow,
-  AvatarInitial,
-  MetaRow,
-  RunRepairHintBanner,
   StatusBadge,
-  TokenizedComposerInput,
-  UsedMemorySummary,
-  UserProfileAvatar,
   composerWorkspaceFileParts,
   createAttachmentPreviewUrl,
   createLocalComposerAssetId,
   filterSlashCommandPickerOptions,
-  filterUsedMemoryEventsByResponse,
   findActiveSlashCommand,
   insertSlashCommandToken,
   parseComposerInputParts,
   parseComposerSlashIntent,
-  pendingAssetLabel,
-  revokeObjectUrl,
   revokePendingAttachmentPreview,
   revokePendingAttachmentPreviews,
   serializeComposerInputParts,
-  type ActiveSlashCommandPicker,
   type ComposerSlashIntent,
-  type TokenizedComposerInputHandle,
   type PendingAssetState,
   type PendingAttachmentItem,
 } from "../../shared/components/index.js";
 import {
-  ComposerPermissionMenu,
-  ConversationComposerShell,
-  ConversationAttachmentStrip,
-  ConversationGuidanceStrip,
   ConversationStatusStrip,
-  ConversationVirtualFeed,
-  ConversationViewProvider,
-  ConversationWorkCell,
-  FileRefChip,
-  MessageBodyRenderer,
-  MessageBubble,
-  MessageActionBar,
-  MessageEvidencePanel,
-  MessageRow,
-  TranscriptBlockView,
-  createTranscriptBlockRendererRegistry,
-  renderTranscriptBlockFromRegistry,
-  transcriptBlockViewKey,
   type DockPageKind,
   type ConversationGuidanceItem,
-  type ConversationViewRetainKeys,
   type ConversationWorkCellDetailsState,
 } from "../../shared/conversation/index.js";
 import {
   WorkspaceRightDock,
-  mergeDockFileItems,
-  mergeEvidenceGroups,
-  projectApprovalsToEvidenceGroup,
-  projectApprovalsToReviewItems,
-  projectArtifactsToFileItems,
-  projectChannelAttachmentsToFileItems,
-  projectFileRefsToFileItems,
-  projectFilesToEvidenceGroup,
-  projectFilesToReviewItems,
-  projectMessagesToReviewItems,
-  projectRunsToEvidenceGroup,
-  projectRunsToReviewItems,
-  projectWebEvidenceToEvidenceGroup,
-  type RightDockMessageProjectionInput,
-  type WorkspaceRightDockPageRequest,
 } from "./right-dock/index.js";
+import { channelRightDockTransitionMs } from "./layout/channel-workspace-layout.js";
 import {
-  channelRightDockMinWidth,
-  channelRightDockMinChatWidth,
-  channelRightDockResizeHandleWidth,
-  channelRightDockTransitionMs,
-  channelRightDockUnmountDelayMs,
-  clampChannelRightDockWidth,
-  easeChannelDockMotion,
-  resolveChannelWorkspaceLayoutDecision,
-  resolveChannelWorkspaceLayoutTargets,
-} from "./layout/channel-workspace-layout.js";
+  ChannelEnvironmentCommitDialog,
+} from "./ChannelEnvironmentPage.js";
+import {
+  ChannelEnvironmentPage,
+  useChannelEnvironmentSummary,
+  type ChannelGitStatusLoadState,
+} from "./ChannelEnvironmentSummary.js";
+import { ChannelRenameDialog } from "./ChannelRenameDialog.js";
+import { ChannelGovernanceNotificationsPopover } from "./ChannelGovernanceNotificationsPopover.js";
+import {
+  NewTaskPanel,
+  TaskDetailPanel,
+} from "./ChannelTaskPanels.js";
+import {
+  ChannelApprovalDetailPanel,
+  ChannelSourceDetailPanel,
+  ConversationDetailOverlay,
+  type ConversationDetailOverlayState,
+  type SelectedSourceDetailState,
+} from "./ChannelDetailOverlays.js";
+import {
+  ProgressPopover,
+} from "./ChannelProgressPanels.js";
+import { useChannelProgressSummary } from "./ChannelProgressSummary.js";
+import {
+  ChannelInspector,
+  type ChannelInspectorMode,
+} from "./ChannelInspectorPanels.js";
 import type {
   ApprovalRequest,
   ApprovalPolicy,
@@ -261,13 +182,11 @@ import type {
   UpdateChannelExecutionProposalRequest,
   ChannelWorkflow,
   ChannelWorkflowStep,
-  ChannelWorkflowStepContextPacket,
   ChannelWorkflowStepStartMode,
   ChannelWorkspaceBinding,
   ChannelWorkspaceMode,
   ExecutionAction,
   GovernanceNotification,
-  WorkflowContextInspectSummary,
   ExternalWorkActionView,
   ExternalWorkCiTriageView,
   FoldedExpertsReadModel,
@@ -293,28 +212,46 @@ import type {
   UpdateChannelBriefRequest,
   UpdateChannelCouncilPolicyRequest,
   UsedMemoryEvent,
-  WorkflowEvidenceDiagnostic,
   WorkItemView,
   WorkUnit,
   WorkspaceSettings,
-  WorkspaceGitStatus,
   UpdateWorkspaceSettingsRequest,
   UserProfile,
 } from "../../types.js";
 import { ApprovalCard } from "../approvals/ApprovalCard.js";
 import { InlineApprovalStrip } from "../approvals/InlineApprovalStrip.js";
-import { ChannelWorkBoard } from "../work-board/ChannelWorkBoard.js";
 import type { ApprovalResolution } from "../approvals/types.js";
-import { approvalProfileText } from "../teammates/helpers.js";
 import type { LocalTeammateDraft } from "../teammates/index.js";
-import { ChannelTeamExpertsSummary } from "./ChannelTeamExpertsSummary.js";
 import { ChannelTeamMetricsPanel } from "./ChannelTeamMetricsPanel.js";
 import { ChannelRuntimePolicyFields, ProviderPresetOptions } from "./WorkspaceControls.js";
+import {
+  ChannelTeammateManagerPanel,
+  ChannelSettingsPanels,
+  channelWorkspaceModeIcon,
+  isLingAgentTeammate,
+  type ChannelNotificationLevel,
+} from "./ChannelSettingsPanels.js";
+import { ChannelComposer } from "./ChannelComposer.js";
+import { ChannelActivityWorkspace } from "./ChannelActivityWorkspace.js";
+import { useChannelRightDockController } from "./useChannelRightDockController.js";
+import {
+  conversationTurnRenderSignature,
+  useChannelMessageFeed,
+  type ChannelMessageFeedItem,
+  type PendingChannelSendPreview,
+} from "./ChannelMessageFeed.js";
+import {
+  LING_AGENT_AUTHOR_ID,
+  createChannelMessageRenderers,
+  messageAuthorLabel,
+} from "./ChannelMessageRenderers.js";
+import { useChannelRightDockContent } from "./ChannelRightDockContent.js";
+import { useChannelActivityController } from "./useChannelActivityController.js";
+import { useChannelWorkThreadsController } from "./useChannelWorkThreadsController.js";
+import { useChannelComposerDraftController } from "./useChannelComposerDraftController.js";
 
 type ChannelSidePanelView = "context" | "settings" | "task";
 type ChannelDrawerRootView = Extract<ChannelSidePanelView, "context">;
-type ActivityCategoryFilter = ChannelActivityViewCategoryFilter;
-type ActivityAttentionFilter = ChannelActivityViewAttentionFilter;
 type ComposerSendState = "idle" | "sending" | "failed";
 type ComposerInlineFeedbackTone = "success" | "info" | "error";
 
@@ -340,152 +277,11 @@ interface ConversationBlockLongPressState {
   readonly timeoutId: number;
   readonly block: HTMLElement;
 }
-type ChannelNotificationLevel = "all" | "mentions" | "muted";
-type AttentionProgressTone = "success" | "running" | "waiting" | "blocked" | "failed" | "neutral";
-type ChannelEnvironmentRowTone = AttentionProgressTone | "info";
-type ChannelProposalStepDraft = {
-  readonly teammateId: string;
-  readonly action: ChannelExecutionProposal["collaborationSteps"][number]["action"];
-  readonly summary: string;
-  readonly sources?: ChannelExecutionProposal["collaborationSteps"][number]["sources"];
-};
-type ChannelProposalEditDraft = {
-  readonly title: string;
-  readonly prompt: string;
-  readonly assigneeTeammateId: string;
-  readonly acceptanceCriteriaText: string;
-  readonly shapingSummaryText: string;
-  readonly shapingOpenQuestionsText: string;
-  readonly shapingClarificationsText: string;
-  readonly collaborationSteps: readonly ChannelProposalStepDraft[];
-};
-type RequirementShapingRow = {
-  readonly id: string;
-  readonly label: string;
-  readonly value: string;
-  readonly tone?: "neutral" | "attention" | "success";
-};
-const proposalStepActions: readonly ChannelProposalStepDraft["action"][] = ["coordinated", "consulted", "reviewed", "flagged_risk"];
-
-function setChannelRightDockLayoutVariables(
-  elements: readonly (HTMLElement | null)[],
-  dockWidth: number,
-  handleWidth: number,
-): void {
-  for (const element of elements) {
-    if (!element) {
-      continue;
-    }
-    element.style.setProperty("--channel-right-dock-layout-width", `${dockWidth}px`);
-    element.style.setProperty("--channel-side-panel-layout-handle-width", `${handleWidth}px`);
-  }
-}
-
-function readChannelLayoutVariable(element: HTMLElement | null, name: string, fallback: number): number {
-  if (!element) {
-    return fallback;
-  }
-  const value = Number.parseFloat(globalThis.getComputedStyle(element).getPropertyValue(name));
-  return Number.isFinite(value) ? value : fallback;
-}
-
 type ThreadTurnsLoadState =
   | { readonly status: "not_loaded" }
   | { readonly status: "loading" }
   | { readonly status: "loaded"; readonly turns: readonly LingTurn[]; readonly runLinks: readonly LingTurnRun[] }
   | { readonly status: "error"; readonly errorMessage: string };
-
-interface AttentionProgressRow {
-  readonly id: string;
-  readonly icon: ReactNode;
-  readonly tone: AttentionProgressTone;
-  readonly primary: string;
-  readonly secondary?: string;
-  readonly onOpen?: () => void;
-}
-
-interface ChannelEnvironmentWorkspace {
-  readonly mode: ChannelWorkspaceMode;
-  readonly modeLabel: string;
-  readonly status: ChannelWorkspaceBinding["status"];
-  readonly path: string;
-  readonly shortPath: string;
-  readonly errorMessage?: string;
-}
-
-type ChannelGitStatusLoadState =
-  | { readonly status: "idle" }
-  | { readonly status: "loading"; readonly requestKey: string }
-  | { readonly status: "loaded"; readonly requestKey: string; readonly statusValue: WorkspaceGitStatus }
-  | { readonly status: "error"; readonly requestKey: string; readonly errorMessage: string };
-
-interface ChannelEnvironmentGitChanges {
-  readonly changedFileCount: number;
-  readonly stagedFileCount: number;
-  readonly unstagedFileCount: number;
-  readonly untrackedFileCount: number;
-  readonly conflictedFileCount: number;
-  readonly additions?: number;
-  readonly deletions?: number;
-  readonly label: string;
-}
-
-interface ChannelEnvironmentReviewSummary {
-  readonly reviewItemCount: number;
-  readonly actionItemCount: number;
-  readonly label: string;
-}
-
-interface ChannelEnvironmentGitStatus {
-  readonly branchName: string;
-  readonly baseBranch?: string;
-}
-
-interface ChannelEnvironmentEvidenceSummary {
-  readonly count: number;
-  readonly label: string;
-}
-
-interface ChannelEnvironmentOutputSummary {
-  readonly count: number;
-  readonly label: string;
-}
-
-interface ChannelEnvironmentPopoverRow {
-  readonly id: "changes" | "review" | "local" | "git-branch" | "commit-push";
-  readonly icon: ReactNode;
-  readonly label: string;
-  readonly value?: string;
-  readonly stats?: { readonly additions: number; readonly deletions: number };
-  readonly tone: ChannelEnvironmentRowTone;
-  readonly onOpen?: () => void;
-  readonly disabled?: boolean;
-  readonly disabledReason?: string;
-}
-
-interface ChannelEnvironmentSummary {
-  readonly workspace?: ChannelEnvironmentWorkspace;
-  readonly gitStatusLoadState: ChannelGitStatusLoadState;
-  readonly changes?: ChannelEnvironmentGitChanges;
-  readonly review?: ChannelEnvironmentReviewSummary;
-  readonly git?: ChannelEnvironmentGitStatus;
-  readonly browser?: ChannelEnvironmentEvidenceSummary;
-  readonly sources?: ChannelEnvironmentEvidenceSummary;
-  readonly output?: ChannelEnvironmentOutputSummary;
-  readonly commitAction?: {
-    readonly disabledReason: string;
-  };
-  readonly popoverRows: readonly ChannelEnvironmentPopoverRow[];
-}
-
-interface SelectedSourceDetailState {
-  readonly summary: ConversationContextSourceSummary;
-  readonly groupId?: string;
-}
-
-type ConversationDetailOverlayState =
-  | { readonly kind: "approval" }
-  | { readonly kind: "sources" };
 
 interface PendingLinkPreviewItem {
   readonly localId: string;
@@ -525,9 +321,6 @@ interface MessageFeedShortcutEvent {
 }
 
 const channelSidePanelRootViews: readonly ChannelDrawerRootView[] = ["context"];
-const activityCategoryFilters: readonly ActivityCategoryFilter[] = ["all", "message", "work", "approval", "protocol", "runtime"];
-const activityAttentionFilters: readonly Exclude<ActivityAttentionFilter, "all">[] = ["needs_attention", "blocked", "failed", "pending"];
-const channelNotificationLevels: readonly ChannelNotificationLevel[] = ["all", "mentions", "muted"];
 const conversationExpandableSelectors = [
   ".conversation-work-cell-evidence-summary[aria-expanded='false']",
   ".conversation-work-cell-row-main[aria-expanded='false']",
@@ -570,26 +363,6 @@ function channelActivityVisibleInDefaultChat(item: ChannelActivityItem): boolean
   return item.kind === "message" || item.kind === "summary";
 }
 
-type MessageFeedItem =
-  | { readonly id: "older-channel-messages"; readonly kind: "older-loader" }
-  | { readonly id: string; readonly kind: "turn"; readonly turn: ConversationTurnViewModel }
-  | { readonly id: string; readonly kind: "activity"; readonly item: ChannelActivityItem }
-  | { readonly id: string; readonly kind: "pending-send"; readonly preview: PendingChannelSendPreview; readonly showSentMessage: boolean };
-
-interface PendingChannelSendPreview {
-  readonly id: string;
-  readonly channelId: string;
-  readonly threadId?: string;
-  readonly body: string;
-  readonly mentions: readonly ChannelMention[];
-  readonly attachmentIds: readonly string[];
-  readonly linkPreviewIds: readonly string[];
-  readonly fileRefs: readonly ChannelMessageFileRef[];
-  readonly requestAiReply: boolean;
-  readonly autoReplyMode: Channel["autoReplyMode"];
-  readonly createdAt: string;
-}
-
 interface ChannelTeamExpertsState {
   readonly channelId: string;
   readonly turnId: string;
@@ -606,147 +379,9 @@ interface ChannelTeamMetricsState {
   readonly metrics: ChannelTeamMetricsProjection;
 }
 
-interface MessageFeedAnchorSnapshot {
-  readonly itemId: string;
-  readonly offsetTop: number;
-}
-
 interface WorkspaceTranscriptRenderContext {
   readonly detailsState: ConversationWorkCellDetailsState;
   readonly onLoadDetails?: (id: string) => void;
-}
-
-function messageFeedItemRenderSignature(item: MessageFeedItem | undefined): string {
-  if (!item) {
-    return "";
-  }
-  if (item.kind === "older-loader") {
-    return item.id;
-  }
-  if (item.kind === "pending-send") {
-    return [
-      item.id,
-      item.showSentMessage ? "with-message" : "status-only",
-      item.preview.body,
-      item.preview.createdAt,
-      item.preview.requestAiReply ? "reply" : "no-reply",
-      item.preview.attachmentIds.join(","),
-      item.preview.linkPreviewIds.join(","),
-      item.preview.fileRefs.map((fileRef) => `${fileRef.path}:${fileRef.source ?? ""}:${fileRef.line ?? ""}`).join(","),
-    ].join("|");
-  }
-  if (item.kind === "turn") {
-    return conversationTurnRenderSignature(item.turn);
-  }
-  return channelActivityItemRenderSignature(item.item);
-}
-
-function buildMessageFeedViewRetainKeys(input: {
-  readonly items: readonly MessageFeedItem[];
-  readonly conversationWorkCellByWorkflowId: ReadonlyMap<string, ConversationWorkCellViewModel>;
-  readonly conversationWorkCellByThreadId: ReadonlyMap<string, ConversationWorkCellViewModel>;
-}): ConversationViewRetainKeys {
-  const blockIds = new Set<string>();
-  const spanIds = new Set<string>();
-  const actionIds = new Set<string>();
-  const collectWorkCell = (workCell: ConversationWorkCellViewModel | undefined): void => {
-    if (!workCell) {
-      return;
-    }
-    blockIds.add(operationShellViewKey(workCell.id));
-    blockIds.add(operationDetailsViewKey(workCell.id));
-    actionIds.add(operationCopyActionViewKey(workCell.id));
-    for (const span of workCell.agentSpans) {
-      spanIds.add(span.id);
-    }
-  };
-
-  for (const item of input.items) {
-    if (item.kind === "turn") {
-      for (const block of item.turn.blocks) {
-        if (block.kind === "operation") {
-          collectWorkCell(block.operationCell);
-        } else if (block.kind !== "coordinator_message") {
-          blockIds.add(transcriptBlockViewKey(block.id));
-        }
-      }
-      continue;
-    }
-    if (item.kind !== "activity") {
-      continue;
-    }
-    if (item.item.kind === "workflow") {
-      collectWorkCell(input.conversationWorkCellByWorkflowId.get(item.item.record.id));
-      continue;
-    }
-    if (item.item.kind === "run" && item.item.record.threadId) {
-      const workCell = input.conversationWorkCellByThreadId.get(item.item.record.threadId);
-      if (workCell?.anchorRunId === item.item.record.id) {
-        collectWorkCell(workCell);
-      }
-    }
-  }
-
-  return { blockIds, spanIds, actionIds };
-}
-
-function operationDetailsViewKey(operationId: string): string {
-  return `operation-details:${operationId}`;
-}
-
-function operationShellViewKey(operationId: string): string {
-  return `operation-shell:${operationId}`;
-}
-
-function operationCopyActionViewKey(operationId: string): string {
-  return `operation-copy:${operationId}`;
-}
-
-function messageFeedItemCanAnchor(item: MessageFeedItem | undefined): item is Extract<MessageFeedItem, { readonly kind: "activity" | "turn" }> {
-  return item?.kind === "activity" || item?.kind === "turn";
-}
-
-function messageFeedItemIsPending(item: MessageFeedItem | undefined): boolean {
-  if (!item) {
-    return false;
-  }
-  if (item.kind === "activity") {
-    return item.item.kind === "message" && item.item.record.status === "pending";
-  }
-  if (item.kind === "turn") {
-    return turnHasPendingMessage(item.turn) || item.turn.operationCell?.mode === "active";
-  }
-  if (item.kind === "pending-send") {
-    return true;
-  }
-  return false;
-}
-
-function messageFeedItemBackgroundToast(item: MessageFeedItem | undefined, t: Translate): ComposerInlineFeedback | undefined {
-  if (!item || item.kind === "older-loader" || item.kind === "pending-send") {
-    return undefined;
-  }
-  const status = item.kind === "turn"
-    ? item.turn.operationCell?.status ?? readRecordStatus(item.turn.blocks.at(-1))
-    : readRecordStatus(item.item.record);
-  if (!status) {
-    return undefined;
-  }
-  if (["failed", "cancelled", "blocked"].includes(status)) {
-    return { id: Date.now(), tone: "error", message: t("Background work needs attention") };
-  }
-  if (["succeeded", "done", "completed", "approved", "skipped"].includes(status)) {
-    return { id: Date.now(), tone: "success", message: t("Background work completed") };
-  }
-  return undefined;
-}
-
-function readRecordStatus(value: unknown): string | undefined {
-  if (!value || typeof value !== "object" || !("status" in value)) {
-    return undefined;
-  }
-  const status = (value as { readonly status?: unknown }).status;
-  return typeof status === "string" ? status : undefined;
 }
 
 function conversationBlockFromEventTarget(target: EventTarget | null): HTMLElement | undefined {
@@ -795,74 +430,6 @@ function cssEscape(value: string): string {
     return globalThis.CSS.escape(value);
   }
   return value.replace(/["\\\]]/gu, "\\$&");
-}
-
-function turnHasPendingMessage(turn: ConversationTurnViewModel): boolean {
-  return turn.sourceMessage.status === "pending" ||
-    turn.coordinatorStartMessages.some((message) => message.status === "pending") ||
-    turn.coordinatorTerminalMessages.some((message) => message.status === "pending") ||
-    turn.blocks.some((block) => block.status === "queued" || block.status === "running" || block.status === "waiting_for_approval");
-}
-
-function conversationTurnRenderSignature(turn: ConversationTurnViewModel): string {
-  return [
-    turn.id,
-    turn.updatedAt,
-    turn.sourceMessage.status,
-    turn.sourceMessage.updatedAt,
-    turn.sourceMessage.body,
-    ...turn.coordinatorStartMessages.map((message) => `${message.id}:${message.status}:${message.updatedAt}:${message.body}`),
-    turn.operationCell ? `${turn.operationCell.id}:${turn.operationCell.status}:${turn.operationCell.updatedAt}:${turn.operationCell.summary}` : "",
-    ...turn.blocks.map((block) => [
-      block.id,
-      block.kind,
-      block.status ?? "",
-      block.revision ?? "",
-      block.updatedAt ?? "",
-      block.display.map((line) => `${line.id}:${line.text}:${line.meta ?? ""}`).join("~"),
-    ].join(":")),
-    ...turn.coordinatorTerminalMessages.map((message) => `${message.id}:${message.status}:${message.updatedAt}:${message.body}`),
-  ].join("|");
-}
-
-function channelActivityItemRenderSignature(item: ChannelActivityItem): string {
-  const base = `${item.id}|${item.kind}|${item.createdAt}|${item.attention}`;
-  if (item.kind === "message") {
-    return [
-      base,
-      item.record.status,
-      item.record.updatedAt,
-      item.record.body,
-      item.record.attachmentIds.join(","),
-      item.record.linkPreviewIds.join(","),
-      (item.record.fileRefs ?? []).map((fileRef) => `${fileRef.path}:${fileRef.source ?? ""}:${fileRef.line ?? ""}`).join(","),
-    ].join("|");
-  }
-  if (item.kind === "workflow") {
-    return [base, item.record.status, item.record.updatedAt, item.record.title, item.record.objective].join("|");
-  }
-  if (item.kind === "workflow-step") {
-    return [base, item.record.status, item.record.updatedAt, item.record.title, item.record.resultSummary ?? ""].join("|");
-  }
-  if (item.kind === "task") {
-    return [base, item.record.status, item.record.updatedAt, item.record.title].join("|");
-  }
-  if (item.kind === "run") {
-    return [base, item.record.status, item.record.updatedAt, item.record.endedAt ?? "", item.record.errorMessage ?? ""].join("|");
-  }
-  if (item.kind === "approval") {
-    return [base, item.record.status, item.record.resolvedAt ?? "", item.record.decisionReason ?? ""].join("|");
-  }
-  if (item.kind === "summary") {
-    return [base, item.record.updatedAt, item.record.summary].join("|");
-  }
-  if (item.kind === "state-transition") {
-    return [base, item.record.fromStatus, item.record.toStatus, item.record.reason ?? ""].join("|");
-  }
-  if (item.kind === "decision") {
-    return [base, item.record.status, item.record.updatedAt, item.record.title, item.record.decision].join("|");
-  }
-  return [base, item.record.status, item.record.updatedAt].join("|");
 }
 
 interface BranchConversationActivityScope {
@@ -1183,7 +750,7 @@ export function WorkspaceClientView({
   readonly onOpenTeammates: () => void;
   readonly onRefreshChannels: () => void;
   readonly onCreateChannel: () => void;
-  readonly onSaveChannel: () => void;
+  readonly onSaveChannel: (formOverride?: ChannelFormState) => void | Promise<void>;
   readonly onCreateTask: () => void;
   readonly onCreateTaskFromSlashCommand: (input: {
     readonly title: string;
@@ -1278,23 +845,13 @@ export function WorkspaceClientView({
   const [environmentCommitMessage, setEnvironmentCommitMessage] = useState("");
   const [environmentIncludeUnstaged, setEnvironmentIncludeUnstaged] = useState(true);
   const [channelGitStatusState, setChannelGitStatusState] = useState<ChannelGitStatusLoadState>({ status: "idle" });
-  const [rightDockPageRequest, setRightDockPageRequest] = useState<WorkspaceRightDockPageRequest>();
-  const [channelRightDockWidth, setChannelRightDockWidth] = useState(channelRightDockMinWidth);
-  const [channelRightDockResizing, setChannelRightDockResizing] = useState(false);
-  const [channelRightDockRendered, setChannelRightDockRendered] = useState(() => Boolean(selectedTaskId));
-  const [channelRightDockExpanded, setChannelRightDockExpanded] = useState(() => Boolean(selectedTaskId));
-  const [channelRightDockClosing, setChannelRightDockClosing] = useState(false);
-  const [taskWorkbenchMainWidth, setTaskWorkbenchMainWidth] = useState(0);
-  const channelRightDockOpenFrameRef = useRef<number | undefined>();
-  const channelRightDockUnmountTimeoutRef = useRef<number | undefined>();
-  const channelRightDockLayoutAnimationRef = useRef<number | undefined>();
-  const channelRightDockLayoutWidthRef = useRef(selectedTaskId ? channelRightDockMinWidth : 0);
-  const channelRightDockLayoutHandleWidthRef = useRef(selectedTaskId ? channelRightDockResizeHandleWidth : 0);
-  const channelRightDockMotionUntilRef = useRef(0);
   const [selectedApprovalId, setSelectedApprovalId] = useState("");
   const [conversationWorkCellDetailsByKey, setConversationWorkCellDetailsByKey] = useState<Readonly<Record<string, ConversationWorkCellDetailsState>>>({});
   const [conversationThreadTurnsByKey, setConversationThreadTurnsByKey] = useState<Readonly<Record<string, ThreadTurnsLoadState>>>({});
   const [channelMoreOpen, setChannelMoreOpen] = useState(false);
+  const [channelRenameOpen, setChannelRenameOpen] = useState(false);
+  const [channelRenameName, setChannelRenameName] = useState("");
+  const [channelRenameSaving, setChannelRenameSaving] = useState(false);
   const [progressPopoverOpen, setProgressPopoverOpen] = useState(false);
   const [progressPopoverRendered, setProgressPopoverRendered] = useState(false);
   const [progressPopoverExpanded, setProgressPopoverExpanded] = useState(false);
@@ -1303,151 +860,22 @@ export function WorkspaceClientView({
   const [attentionProgressExpanded, setAttentionProgressExpanded] = useState(true);
   const [conversationDetailOverlay, setConversationDetailOverlay] = useState<ConversationDetailOverlayState | undefined>();
   const [selectedSourceDetail, setSelectedSourceDetail] = useState<SelectedSourceDetailState | undefined>();
-  const [activityToolsOpen, setActivityToolsOpen] = useState(false);
-  const [activitySearch, setActivitySearch] = useState("");
-  const [activityCategoryFilter, setActivityCategoryFilter] = useState<ActivityCategoryFilter>("all");
-  const [activityAttentionFilter, setActivityAttentionFilter] = useState<ActivityAttentionFilter>("all");
-  const [activitySavedViews, setActivitySavedViews] = useState<readonly ChannelActivitySavedView[]>([]);
-  const [activeActivityViewId, setActiveActivityViewId] = useState(allChannelActivitySavedViewId);
-  const [activityFiltersExpanded, setActivityFiltersExpanded] = useState(false);
-  const [attentionQueueExpanded, setAttentionQueueExpanded] = useState(false);
-  const [activityDrilldownItemId, setActivityDrilldownItemId] = useState("");
   const channelUtilityPageOpen = channelSettingsPageOpen || channelEnvironmentPageOpen;
   const channelRightDockIntentOpen = !channelUtilityPageOpen && sidePanelOpen;
-  const channelRightDockVisible = channelRightDockIntentOpen || channelRightDockRendered || channelRightDockClosing;
-  const { progressPopoverCanUseMainLayout } = resolveChannelWorkspaceLayoutDecision({
-    mainWidth: taskWorkbenchMainWidth,
-    rightDockVisible: channelRightDockVisible,
-    rightDockWidth: channelRightDockWidth,
+  const channelRightDock = useChannelRightDockController({
+    initialOpen: Boolean(selectedTaskId),
+    intentOpen: channelRightDockIntentOpen,
+    resizeObserverKey: selectedChannelId,
   });
-
-  useEffect(() => {
-    channelRightDockMotionUntilRef.current = Date.now() + channelRightDockUnmountDelayMs;
-    const pendingUnmountId = channelRightDockUnmountTimeoutRef.current;
-    if (pendingUnmountId !== undefined) {
-      globalThis.clearTimeout(pendingUnmountId);
-      channelRightDockUnmountTimeoutRef.current = undefined;
-    }
-
-    if (channelRightDockIntentOpen) {
-      setChannelRightDockClosing(false);
-      if (!channelRightDockRendered) {
-        setChannelRightDockExpanded(false);
-        setChannelRightDockRendered(true);
-        return undefined;
-      }
-
-      const firstFrameId = globalThis.requestAnimationFrame(() => {
-        const secondFrameId = globalThis.requestAnimationFrame(() => {
-          channelRightDockOpenFrameRef.current = undefined;
-          setChannelRightDockExpanded(true);
-        });
-        channelRightDockOpenFrameRef.current = secondFrameId;
-      });
-      channelRightDockOpenFrameRef.current = firstFrameId;
-      return () => {
-        const frameId = channelRightDockOpenFrameRef.current;
-        if (frameId !== undefined) {
-          globalThis.cancelAnimationFrame(frameId);
-          channelRightDockOpenFrameRef.current = undefined;
-        }
-      };
-    }
-
-    const frameId = channelRightDockOpenFrameRef.current;
-    if (frameId !== undefined) {
-      globalThis.cancelAnimationFrame(frameId);
-      channelRightDockOpenFrameRef.current = undefined;
-    }
-    setChannelRightDockExpanded(false);
-    if (!channelRightDockRendered) {
-      return undefined;
-    }
-    const timeoutId = globalThis.setTimeout(() => {
-      channelRightDockUnmountTimeoutRef.current = undefined;
-      setChannelRightDockRendered(false);
-      setChannelRightDockClosing(false);
-    }, channelRightDockUnmountDelayMs);
-    channelRightDockUnmountTimeoutRef.current = timeoutId;
-    return () => {
-      globalThis.clearTimeout(timeoutId);
-      if (channelRightDockUnmountTimeoutRef.current === timeoutId) {
-        channelRightDockUnmountTimeoutRef.current = undefined;
-      }
-    };
-  }, [channelRightDockIntentOpen, channelRightDockRendered]);
-
-  useLayoutEffect(() => {
-    const {
-      dockWidth: targetDockWidth,
-      handleWidth: targetHandleWidth,
-    } = resolveChannelWorkspaceLayoutTargets({
-      rightDockExpanded: channelRightDockExpanded,
-      rightDockWidth: channelRightDockWidth,
-    });
-    const layoutElements = [taskWorkbenchWindowRef.current, taskWorkbenchMainRef.current];
-
-    const runningFrameId = channelRightDockLayoutAnimationRef.current;
-    if (runningFrameId !== undefined) {
-      globalThis.cancelAnimationFrame(runningFrameId);
-      channelRightDockLayoutAnimationRef.current = undefined;
-    }
-
-    if (channelRightDockResizing) {
-      channelRightDockLayoutWidthRef.current = targetDockWidth;
-      channelRightDockLayoutHandleWidthRef.current = targetHandleWidth;
-      setChannelRightDockLayoutVariables(layoutElements, targetDockWidth, targetHandleWidth);
-      return undefined;
-    }
-
-    const layoutSourceElement = taskWorkbenchMainRef.current ?? taskWorkbenchWindowRef.current;
-    const startDockWidth = readChannelLayoutVariable(
-      layoutSourceElement,
-      "--channel-right-dock-layout-width",
-      channelRightDockLayoutWidthRef.current,
-    );
-    const startHandleWidth = readChannelLayoutVariable(
-      layoutSourceElement,
-      "--channel-side-panel-layout-handle-width",
-      channelRightDockLayoutHandleWidthRef.current,
-    );
-    const dockDelta = targetDockWidth - startDockWidth;
-    const handleDelta = targetHandleWidth - startHandleWidth;
-
-    if (Math.abs(dockDelta) < 0.5 && Math.abs(handleDelta) < 0.5) {
-      channelRightDockLayoutWidthRef.current = targetDockWidth;
-      channelRightDockLayoutHandleWidthRef.current = targetHandleWidth;
-      setChannelRightDockLayoutVariables(layoutElements, targetDockWidth, targetHandleWidth);
-      return undefined;
-    }
-
-    setChannelRightDockLayoutVariables(layoutElements, startDockWidth, startHandleWidth);
-    const startedAt = globalThis.performance.now();
-    const tick = (now: number): void => {
-      const progress = Math.min(1, (now - startedAt) / channelRightDockTransitionMs);
-      const eased = easeChannelDockMotion(progress);
-      const nextDockWidth = startDockWidth + dockDelta * eased;
-      const nextHandleWidth = startHandleWidth + handleDelta * eased;
-      channelRightDockLayoutWidthRef.current = nextDockWidth;
-      channelRightDockLayoutHandleWidthRef.current = nextHandleWidth;
-      setChannelRightDockLayoutVariables(layoutElements, nextDockWidth, nextHandleWidth);
-
-      if (progress < 1) {
-        channelRightDockLayoutAnimationRef.current = globalThis.requestAnimationFrame(tick);
-      } else {
-        channelRightDockLayoutAnimationRef.current = undefined;
-      }
-    };
-
-    channelRightDockLayoutAnimationRef.current = globalThis.requestAnimationFrame(tick);
-    return () => {
-      const frameId = channelRightDockLayoutAnimationRef.current;
-      if (frameId !== undefined) {
-        globalThis.cancelAnimationFrame(frameId);
-        channelRightDockLayoutAnimationRef.current = undefined;
-      }
-    };
-  }, [channelRightDockExpanded, channelRightDockResizing, channelRightDockWidth]);
+  const channelRightDockVisible = channelRightDock.visible;
+  const channelRightDockExpanded = channelRightDock.expanded;
+  const channelRightDockResizing = channelRightDock.resizing;
+  const rightDockPageRequest = channelRightDock.pageRequest;
+  const channelRightDockMotionUntilRef = channelRightDock.motionUntilRef;
+  const taskWorkbenchWindowRef = channelRightDock.windowRef;
+  const taskWorkbenchMainRef = channelRightDock.mainRef;
+  const progressPopoverCanFitMainLayout = channelRightDock.progressPopoverCanFitMainLayout;
+  const progressPopoverCanUseMainLayout = channelRightDock.progressPopoverCanUseMainLayout;
 
   useEffect(() => {
     const channelId = selectedChannelId ?? "";
@@ -1504,41 +932,52 @@ export function WorkspaceClientView({
     openQuestions: "",
     risks: "",
   });
-  const [messageDraft, setMessageDraft] = useState("");
-  const [pendingAttachments, setPendingAttachments] = useState<readonly PendingAttachmentItem<ChannelAttachment>[]>([]);
-  const [pendingLinkPreviews, setPendingLinkPreviews] = useState<readonly PendingLinkPreviewItem[]>([]);
-  const [messageMentions, setMessageMentions] = useState<readonly ChannelMention[]>([]);
-  const [mentionPicker, setMentionPicker] = useState<ActiveMentionPicker | undefined>();
-  const [mentionActiveIndex, setMentionActiveIndex] = useState(0);
-  const [slashPicker, setSlashPicker] = useState<ActiveSlashCommandPicker | undefined>();
-  const [slashActiveIndex, setSlashActiveIndex] = useState(0);
-  const [composerDragActive, setComposerDragActive] = useState(false);
-  const [composerBusy, setComposerBusy] = useState(false);
-  const [sendState, setSendState] = useState<ComposerSendState>("idle");
-  const [sendError, setSendError] = useState("");
-  const [composerFeedback, setComposerFeedback] = useState<ComposerInlineFeedback | undefined>();
+  const {
+    messageDraft,
+    setMessageDraft,
+    pendingAttachments,
+    setPendingAttachments,
+    pendingLinkPreviews,
+    setPendingLinkPreviews,
+    messageMentions,
+    setMessageMentions,
+    mentionPicker,
+    setMentionPicker,
+    mentionActiveIndex,
+    setMentionActiveIndex,
+    slashPicker,
+    setSlashPicker,
+    slashActiveIndex,
+    setSlashActiveIndex,
+    composerDragActive,
+    setComposerDragActive,
+    composerBusy,
+    setComposerBusy,
+    sendState,
+    setSendState,
+    sendError,
+    setSendError,
+    composerFeedback,
+    composerInputMinHeight,
+    setComposerInputMinHeight,
+    pendingChannelSendPreview,
+    setPendingChannelSendPreview,
+    composerInputRef,
+    composerResizeDragRef,
+    autoPreviewUrlsRef,
+    attachmentPreviewUrlsRef,
+    showComposerFeedback,
+  } = useChannelComposerDraftController();
   const [conversationBlockFeedback, setConversationBlockFeedback] = useState<ComposerInlineFeedback | undefined>();
   const [conversationBackgroundToast, setConversationBackgroundToast] = useState<ComposerInlineFeedback | undefined>();
   const [conversationBlockActionMenu, setConversationBlockActionMenu] = useState<ConversationBlockActionMenuState | undefined>();
-  const [composerInputMinHeight, setComposerInputMinHeight] = useState(76);
   const [runGuidanceInterventions, setRunGuidanceInterventions] = useState<readonly RunIntervention[]>([]);
   const [runGuidanceLoading, setRunGuidanceLoading] = useState(false);
   const [runGuidanceSubmitting, setRunGuidanceSubmitting] = useState<RunIntervention["mode"] | "stop" | "">("");
   const [runGuidanceCancelingId, setRunGuidanceCancelingId] = useState("");
   const [runGuidancePromotingId, setRunGuidancePromotingId] = useState("");
   const [runGuidanceError, setRunGuidanceError] = useState("");
-  const [pendingChannelSendPreview, setPendingChannelSendPreview] = useState<PendingChannelSendPreview | undefined>();
   const [activeThreadId, setActiveThreadId] = useState("");
-  const [activeWorkThreadId, setActiveWorkThreadId] = useState("");
-  const [channelWorkThreads, setChannelWorkThreads] = useState<readonly LingThread[]>([]);
-  const [channelWorkThreadsLoading, setChannelWorkThreadsLoading] = useState(false);
-  const [channelWorkThreadsFallbackFromRuns, setChannelWorkThreadsFallbackFromRuns] = useState(false);
-  const [channelWorkThreadError, setChannelWorkThreadError] = useState("");
-  const [forkingWorkThreadId, setForkingWorkThreadId] = useState("");
-  const [workThreadVisibilityId, setWorkThreadVisibilityId] = useState("");
-  const [archiveConfirmWorkThreadId, setArchiveConfirmWorkThreadId] = useState("");
-  const [archivedChannelWorkThreadIds, setArchivedChannelWorkThreadIds] = useState<ReadonlySet<string>>(() => new Set());
-  const [channelWorkThreadSearch, setChannelWorkThreadSearch] = useState("");
   const [threadReplyDraft, setThreadReplyDraft] = useState("");
   const [threadReplyPending, setThreadReplyPending] = useState(false);
   const [threadReplyError, setThreadReplyError] = useState("");
@@ -1562,25 +1001,10 @@ export function WorkspaceClientView({
   const [channelTeamMetricsError, setChannelTeamMetricsError] = useState("");
   const [channelTeamMetricsRefreshKey, setChannelTeamMetricsRefreshKey] = useState(0);
   const [channelMessageFeedbackById, setChannelMessageFeedbackById] = useState<Record<string, "up" | "down">>({});
-  const [messageFeedLatestButtonVisible, setMessageFeedLatestButtonVisible] = useState(false);
-  const composerInputRef = useRef<TokenizedComposerInputHandle | null>(null);
-  const taskWorkbenchMainRef = useRef<HTMLDivElement | null>(null);
-  const taskWorkbenchWindowRef = useRef<HTMLDivElement | null>(null);
-  const messageFeedRef = useRef<HTMLDivElement | null>(null);
-  const messageFeedPinnedToLatestRef = useRef(true);
-  const messageFeedAutoFollowUntilRef = useRef(0);
-  const messageFeedUserScrollIntentRef = useRef(false);
-  const messageFeedVisibleAnchorRef = useRef<MessageFeedAnchorSnapshot | undefined>();
-  const composerFeedbackTimeoutRef = useRef<number | undefined>();
   const conversationBlockFeedbackTimeoutRef = useRef<number | undefined>();
   const conversationBackgroundToastTimeoutRef = useRef<number | undefined>();
-  const conversationBackgroundToastLatestItemRef = useRef("");
   const conversationBlockLongPressRef = useRef<ConversationBlockLongPressState | undefined>();
   const conversationBlockActionMenuRef = useRef<HTMLDivElement | null>(null);
-  const composerResizeDragRef = useRef<{ readonly pointerId: number; readonly startY: number; readonly startHeight: number } | undefined>();
-  const channelRightDockResizeDragRef = useRef<{ readonly pointerId: number; readonly containerRight: number; readonly containerWidth: number; readonly viewportWidth: number } | undefined>();
-  const messageFeedOlderLoadArmedRef = useRef(true);
-  const messageFeedOlderLoadSnapshotRef = useRef<{ readonly anchorId: string; readonly anchorOffset: number } | undefined>();
   const channelMoreRef = useRef<HTMLDivElement | null>(null);
   const governanceNotificationsRef = useRef<HTMLDivElement | null>(null);
   const teammateManagerButtonRef = useRef<HTMLButtonElement | null>(null);
@@ -1588,73 +1012,20 @@ export function WorkspaceClientView({
   const conversationWorkCellEvidenceLoadsRef = useRef(new Set<string>());
   const conversationThreadTurnLoadsRef = useRef(new Set<string>());
   const conversationThreadTurnRunSignaturesRef = useRef(new Map<string, string>());
-  const autoPreviewUrlsRef = useRef(new Set<string>());
-  const attachmentPreviewUrlsRef = useRef(new Set<string>());
   const previousChannelIdRef = useRef(selectedChannelId);
+  const channelWorkspaceExternalPathChannelIdRef = useRef(selectedChannelId);
   const composerSnapshotsRef = useRef<Record<string, ChannelComposerSnapshot>>({});
+  const workspaceSettingsRef = useRef(workspaceSettings);
+  const onWorkspaceSettingsPatchRef = useRef(onWorkspaceSettingsPatch);
 
   useEffect(() => {
-    const element = taskWorkbenchMainRef.current;
-    if (!element) {
-      return;
-    }
-    const updateWidth = (): void => {
-      const nextWidth = Math.round(element.getBoundingClientRect().width);
-      setTaskWorkbenchMainWidth((current) => current === nextWidth ? current : nextWidth);
-    };
-    updateWidth();
-    if (typeof ResizeObserver === "undefined") {
-      globalThis.addEventListener("resize", updateWidth);
-      return () => {
-        globalThis.removeEventListener("resize", updateWidth);
-      };
-    }
-    const observer = new ResizeObserver(updateWidth);
-    observer.observe(element);
-    return () => {
-      observer.disconnect();
-    };
-  }, [selectedChannelId]);
+    workspaceSettingsRef.current = workspaceSettings;
+  }, [workspaceSettings]);
 
   useEffect(() => {
-    if (taskWorkbenchMainWidth <= 0) {
-      return;
-    }
-    const viewportWidth = globalThis.innerWidth || taskWorkbenchMainWidth;
-    setChannelRightDockWidth((current) => {
-      const nextWidth = clampChannelRightDockWidth(current, taskWorkbenchMainWidth, viewportWidth);
-      return nextWidth === current ? current : nextWidth;
-    });
-  }, [taskWorkbenchMainWidth]);
+    onWorkspaceSettingsPatchRef.current = onWorkspaceSettingsPatch;
+  }, [onWorkspaceSettingsPatch]);
 
-  useEffect(() => {
-    function handleGlobalChannelRightDockResizeMove(event: PointerEvent): void {
-      const drag = channelRightDockResizeDragRef.current;
-      if (!drag || drag.pointerId !== event.pointerId) {
-        return;
-      }
-      event.preventDefault();
-      setChannelRightDockWidth(clampChannelRightDockWidth(drag.containerRight - event.clientX, drag.containerWidth, drag.viewportWidth));
-    }
-
-    function handleGlobalChannelRightDockResizeEnd(event: PointerEvent): void {
-      const drag = channelRightDockResizeDragRef.current;
-      if (!drag || drag.pointerId !== event.pointerId) {
-        return;
-      }
-      channelRightDockResizeDragRef.current = undefined;
-      setChannelRightDockResizing(false);
-    }
-
-    globalThis.addEventListener("pointermove", handleGlobalChannelRightDockResizeMove, { passive: false });
-    globalThis.addEventListener("pointerup", handleGlobalChannelRightDockResizeEnd);
-    globalThis.addEventListener("pointercancel", handleGlobalChannelRightDockResizeEnd);
-    return () => {
-      globalThis.removeEventListener("pointermove", handleGlobalChannelRightDockResizeMove);
-      globalThis.removeEventListener("pointerup", handleGlobalChannelRightDockResizeEnd);
-      globalThis.removeEventListener("pointercancel", handleGlobalChannelRightDockResizeEnd);
-    };
-  }, []);
   const activeRun = activeRunId ? runById.get(activeRunId) : undefined;
   const taskById = useMemo(() => new Map(tasks.map((task) => [task.id, task])), [tasks]);
   const taskChannelById = useMemo(() => new Map(tasks.map((task) => [task.id, task.channelId])), [tasks]);
@@ -1723,53 +1094,29 @@ export function WorkspaceClientView({
       cancelled = true;
     };
   }, [channelCollaborationCardRefreshSignature, cwd, selectedChannelId]);
-  const derivedChannelWorkThreads = useMemo(
-    () => deriveWorkspaceThreadsFromRuns(channelRuns),
-    [channelRuns],
-  );
-  const channelWorkThreadCandidates = useMemo(
-    () => mergeLingThreads(channelWorkThreads, channelWorkThreadsFallbackFromRuns ? derivedChannelWorkThreads : [])
-      .filter((thread) => !thread.channelId || thread.channelId === selectedChannelId)
-      .filter((thread) => !archivedChannelWorkThreadIds.has(thread.id) && thread.status !== "archived" && !thread.archivedAt)
-      .sort((left, right) =>
-        Number(Boolean(right.pinnedAt)) - Number(Boolean(left.pinnedAt)) ||
-        (right.pinnedAt ?? "").localeCompare(left.pinnedAt ?? "") ||
-        right.updatedAt.localeCompare(left.updatedAt) ||
-        left.id.localeCompare(right.id)
-      ),
-    [archivedChannelWorkThreadIds, channelWorkThreads, channelWorkThreadsFallbackFromRuns, derivedChannelWorkThreads, selectedChannelId],
-  );
-  const visibleChannelWorkThreads = useMemo(
-    () => filterChannelBranchThreads(channelWorkThreadCandidates, activeWorkThreadId),
-    [activeWorkThreadId, channelWorkThreadCandidates],
-  );
-  const searchedChannelWorkThreads = useMemo(() => {
-    const query = channelWorkThreadSearch.trim().replace(/\s+/g, " ").toLowerCase();
-    if (query.length < 2) {
-      return visibleChannelWorkThreads;
-    }
-    return visibleChannelWorkThreads.filter((thread) =>
-      [
-        thread.title,
-        thread.objective,
-        thread.id,
-        thread.taskId,
-        thread.lastRunId,
-        thread.parentThreadId,
-      ].some((value) => value?.toLowerCase().includes(query))
-    );
-  }, [channelWorkThreadSearch, visibleChannelWorkThreads]);
-  const channelWorkThreadTreeRows = useMemo(
-    () => buildChannelWorkThreadTree(searchedChannelWorkThreads),
-    [searchedChannelWorkThreads],
-  );
-  const channelWorkThreadSearchActive = channelWorkThreadSearch.trim().replace(/\s+/g, " ").length >= 2;
-  const activeWorkThread = activeWorkThreadId
-    ? visibleChannelWorkThreads.find((thread) => thread.id === activeWorkThreadId)
-    : undefined;
-  const channelDiscussionRootThread = visibleChannelWorkThreads.find((thread) =>
-    isChannelDiscussionRootThread(thread, selectedChannelId)
-  );
+  const {
+    activeWorkThreadId,
+    setActiveWorkThreadId,
+    visibleChannelWorkThreads,
+    channelWorkThreadTreeRows,
+    channelWorkThreadsLoading,
+    channelWorkThreadError,
+    channelWorkThreadSearch,
+    setChannelWorkThreadSearch,
+    channelWorkThreadSearchActive,
+    channelDiscussionRootThread,
+    forkingWorkThreadId,
+    workThreadVisibilityId,
+    archiveConfirmWorkThreadId,
+    setArchiveConfirmWorkThreadId,
+    forkChannelWorkThread,
+    forkChannelMainBranch,
+    mutateChannelWorkThreadVisibility,
+  } = useChannelWorkThreadsController({
+    cwd,
+    selectedChannelId,
+    channelRuns,
+  });
   const channelWorkThreadTreeVisible = false;
   const channelRunsByThreadId = useMemo(() => groupRunsByThreadId(channelRuns), [channelRuns]);
   const visibleConversationThreadIds = useMemo(() => [...channelRunsByThreadId.keys()], [channelRunsByThreadId]);
@@ -1882,55 +1229,54 @@ export function WorkspaceClientView({
     [channelWorkflowSteps, selectedChannelId],
   );
   const latestRun = channelRuns[0];
-  useEffect(() => {
-    setActiveWorkThreadId("");
-    setChannelWorkThreadSearch("");
-  }, [selectedChannelId]);
-  useEffect(() => {
-    const workspaceCwd = cwd.trim();
-    if (!workspaceCwd || !selectedChannelId) {
-      setChannelWorkThreads([]);
-      setChannelWorkThreadsFallbackFromRuns(false);
-      setChannelWorkThreadError("");
-      return;
-    }
-    let cancelled = false;
-    setChannelWorkThreadsLoading(true);
-    setChannelWorkThreadError("");
-    void listLingThreads(workspaceCwd, { channelId: selectedChannelId, limit: 100 })
-      .then((response) => {
-        if (!cancelled) {
-          setChannelWorkThreads(response.threads);
-          const responseThreadIds = new Set(response.threads.map((thread) => thread.id));
-          setArchivedChannelWorkThreadIds((current) => new Set([...current].filter((threadId) => !responseThreadIds.has(threadId))));
-          setChannelWorkThreadsFallbackFromRuns(false);
-        }
-      })
-      .catch((caught: unknown) => {
-        if (!cancelled) {
-          if (caught instanceof LingDaemonError && caught.status === 404) {
-            setChannelWorkThreads([]);
-            setChannelWorkThreadsFallbackFromRuns(true);
-            setChannelWorkThreadError("");
-            return;
-          }
-          setChannelWorkThreadError(caught instanceof Error ? caught.message : String(caught));
-        }
-      })
-      .finally(() => {
-        if (!cancelled) {
-          setChannelWorkThreadsLoading(false);
-        }
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [cwd, selectedChannelId, runs]);
-  useEffect(() => {
-    if (activeWorkThreadId && !visibleChannelWorkThreads.some((thread) => thread.id === activeWorkThreadId)) {
-      setActiveWorkThreadId("");
-    }
-  }, [activeWorkThreadId, visibleChannelWorkThreads]);
+  const {
+    activityToolsOpen,
+    setActivityToolsOpen,
+    activitySearch,
+    setActivitySearch,
+    activityCategoryFilter,
+    setActivityCategoryFilter,
+    activityAttentionFilter,
+    setActivityAttentionFilter,
+    activeActivityViewId,
+    activityFiltersExpanded,
+    setActivityFiltersExpanded,
+    setActivityDrilldownItemId,
+    activityItems,
+    filteredActivityItems,
+    allActivitySavedViews,
+    savedViewCounts,
+    selectedActivitySavedView,
+    activityCategoryCounts,
+    activityAttentionCounts,
+    activityFiltersActive,
+    auditActivityVisible,
+    activityDrilldown,
+    customViewLimitReached,
+    applyActivityView,
+    saveActivityView,
+    renameActivityView,
+    deleteActivityView,
+    clearActivityFilters,
+    resetActivityForChannelSwitch,
+  } = useChannelActivityController({
+    cwd,
+    selectedChannelId,
+    channelMessages,
+    tasks,
+    runs,
+    approvals,
+    channelStateTransitions,
+    channelDecisions,
+    channelHandoffs,
+    channelContextSummaries,
+    channelWorkflows,
+    channelWorkflowSteps,
+    latestRun,
+    workspaceSettings,
+    onWorkspaceSettingsPatch,
+    t,
+  });
   useEffect(() => {
     const workspaceCwd = cwd.trim();
     const visibleKeys = new Set(visibleConversationThreadIds.map((threadId) => threadTurnsCacheKey(threadId)));
@@ -2302,91 +1648,6 @@ export function WorkspaceClientView({
     };
   }, [teammateManagerOpen]);
 
-  const activityItems = useMemo(
-    () => buildChannelActivityItems({
-      channelId: selectedChannelId,
-      messages: channelMessages,
-      tasks,
-      runs,
-      approvals,
-      stateTransitions: channelStateTransitions,
-      decisions: channelDecisions,
-      handoffs: channelHandoffs,
-      summaries: channelContextSummaries,
-      workflows: channelWorkflows,
-      workflowSteps: channelWorkflowSteps,
-      extraRun: latestRun,
-    }),
-    [
-      approvals,
-      channelContextSummaries,
-      channelDecisions,
-      channelHandoffs,
-      channelMessages,
-      channelStateTransitions,
-      channelWorkflowSteps,
-      channelWorkflows,
-      latestRun,
-      runs,
-      selectedChannelId,
-      tasks,
-    ],
-  );
-  const searchedActivityItems = useMemo(() => {
-    const query = activitySearch.trim().toLowerCase();
-    if (!query) {
-      return activityItems;
-    }
-    return activityItems.filter((item) => item.searchText.includes(query));
-  }, [activityItems, activitySearch]);
-  const currentActivityViewFilter = useMemo(
-    () => ({
-      categoryFilter: activityCategoryFilter,
-      attentionFilter: activityAttentionFilter,
-      search: activitySearch,
-    }) satisfies ChannelActivityViewFilter,
-    [activityAttentionFilter, activityCategoryFilter, activitySearch],
-  );
-  const filteredActivityItems = useMemo(
-    () => applyActivityViewFilter(activityItems, currentActivityViewFilter),
-    [activityItems, currentActivityViewFilter],
-  );
-  const allActivitySavedViews = useMemo(
-    () => [...builtinChannelActivitySavedViews, ...activitySavedViews],
-    [activitySavedViews],
-  );
-  const savedViewCounts = useMemo(
-    () =>
-      Object.fromEntries(
-        allActivitySavedViews.map((view) => [view.id, applyActivityViewFilter(activityItems, view.filter).length]),
-      ) as Record<string, number>,
-    [activityItems, allActivitySavedViews],
-  );
-  const selectedActivitySavedView = allActivitySavedViews.find((view) => view.id === activeActivityViewId);
-  const activityCategoryCounts = useMemo(
-    () =>
-      Object.fromEntries(
-        activityCategoryFilters.map((filter) => [
-          filter,
-          filter === "all"
-            ? searchedActivityItems.length
-            : searchedActivityItems.filter((item) => item.category === filter).length,
-        ]),
-      ) as Record<ActivityCategoryFilter, number>,
-    [searchedActivityItems],
-  );
-  const activityAttentionCounts = useMemo(
-    () =>
-      ({
-        needs_attention: searchedActivityItems.filter((item) => item.attention !== "none").length,
-        blocked: searchedActivityItems.filter((item) => item.attention === "blocked").length,
-        failed: searchedActivityItems.filter((item) => item.attention === "failed").length,
-        pending: searchedActivityItems.filter((item) => item.attention === "pending").length,
-      }) satisfies Record<Exclude<ActivityAttentionFilter, "all">, number>,
-    [searchedActivityItems],
-  );
-  const activityFiltersActive = activitySearch.trim().length > 0 || activityCategoryFilter !== "all" || activityAttentionFilter !== "all";
-  const auditActivityVisible = activityToolsOpen || activityFiltersActive;
   const conversationTurnProjection = useMemo(
     () => buildConversationTurnProjection({
       channelId: selectedChannelId,
@@ -2605,9 +1866,9 @@ export function WorkspaceClientView({
   );
   const latestVisibleActivityItemId =
     renderableActivityItems.length > 0 ? renderableActivityItems[renderableActivityItems.length - 1]?.id ?? "" : "";
-  const conversationFeedBodyItems = useMemo<readonly MessageFeedItem[]>(
+  const conversationFeedBodyItems = useMemo<readonly ChannelMessageFeedItem[]>(
     () => {
-      const items: Array<MessageFeedItem & { readonly createdAt: string }> = [
+      const items: Array<ChannelMessageFeedItem & { readonly createdAt: string }> = [
         ...(!auditActivityVisible
           ? conversationTurnProjection.turns.map((turn) => ({ id: turn.id, kind: "turn" as const, turn, createdAt: turn.createdAt }))
           : []),
@@ -2666,9 +1927,9 @@ export function WorkspaceClientView({
     pendingChannelSendPreview.threadId === selectedChannelBranchRootThreadId &&
     !activeWorkThreadId,
   );
-  const messageFeedItems = useMemo<readonly MessageFeedItem[]>(
+  const messageFeedItems = useMemo<readonly ChannelMessageFeedItem[]>(
     () => [
-      ...(messageFeedCanLoadOlder ? [{ id: "older-channel-messages", kind: "older-loader" } satisfies MessageFeedItem] : []),
+      ...(messageFeedCanLoadOlder ? [{ id: "older-channel-messages", kind: "older-loader" } satisfies ChannelMessageFeedItem] : []),
       ...conversationFeedBodyItems,
       ...(pendingChannelSendVisible && pendingChannelSendPreview
         ? [{
@@ -2681,147 +1942,23 @@ export function WorkspaceClientView({
     ],
     [conversationFeedBodyItems, messageFeedCanLoadOlder, pendingChannelSendPreview, pendingChannelSendState.acknowledged, pendingChannelSendVisible],
   );
-  const messageFeedViewRetainKeys = useMemo(
-    () => buildMessageFeedViewRetainKeys({
-      items: messageFeedItems,
-      conversationWorkCellByWorkflowId,
-      conversationWorkCellByThreadId,
-    }),
-    [conversationWorkCellByThreadId, conversationWorkCellByWorkflowId, messageFeedItems],
-  );
   const messageFeedEmpty = !channelMessagesLoading && !channelProtocolLoading && conversationFeedBodyItems.length === 0 && !pendingChannelSendVisible;
-  const messageFeedVirtualizer = useVirtualizer({
-    count: messageFeedItems.length,
-    getScrollElement: () => messageFeedRef.current,
-    estimateSize: (index) => messageFeedItems[index]?.kind === "older-loader" ? 48 : 128,
-    overscan: 10,
-    getItemKey: (index) => messageFeedItems[index]?.id ?? index,
+  const messageFeedState = useChannelMessageFeed({
+    items: messageFeedItems,
+    conversationWorkCellByWorkflowId,
+    conversationWorkCellByThreadId,
+    canLoadOlder: messageFeedCanLoadOlder,
+    loading: channelMessagesLoading,
+    loadingOlder: channelMessagesLoadingOlder,
+    protocolLoading: channelProtocolLoading,
+    tailDependencyKey: latestVisibleActivityItemId,
+    latestVisibleItemId: latestVisibleActivityItemId,
+    renderableItemCount: renderableActivityItems.length,
+    restoreBlockedUntilRef: channelRightDockMotionUntilRef,
+    t,
+    onBackgroundToast: showConversationBackgroundToast,
+    onLoadOlder: onLoadOlderChannelMessages,
   });
-  const messageFeedVirtualRows = messageFeedVirtualizer.getVirtualItems();
-  const messageFeedTotalSize = messageFeedVirtualizer.getTotalSize();
-  const messageFeedTailRenderSignature = useMemo(
-    () => messageFeedItemRenderSignature(messageFeedItems.at(-1)),
-    [messageFeedItems],
-  );
-  const messageFeedRenderSignature = useMemo(
-    () => messageFeedItems.map((item) => messageFeedItemRenderSignature(item)).join("\n"),
-    [messageFeedItems],
-  );
-  useEffect(() => {
-    const latestItem = messageFeedItems.at(-1);
-    const latestItemId = latestItem?.id ?? "";
-    const previousLatestItemId = conversationBackgroundToastLatestItemRef.current;
-    conversationBackgroundToastLatestItemRef.current = latestItemId;
-    if (!latestItem || !previousLatestItemId || previousLatestItemId === latestItemId || messageFeedPinnedToLatestRef.current) {
-      return;
-    }
-    const toast = messageFeedItemBackgroundToast(latestItem, t);
-    if (toast) {
-      showConversationBackgroundToast(toast);
-    }
-  }, [messageFeedTailRenderSignature, messageFeedItems, t]);
-  const firstMessageFeedVirtualIndex = messageFeedVirtualRows[0]?.index ?? -1;
-  useEffect(() => {
-    if (
-      firstMessageFeedVirtualIndex !== 0 ||
-      !messageFeedCanLoadOlder ||
-      channelMessagesLoading ||
-      channelMessagesLoadingOlder ||
-      channelProtocolLoading ||
-      messageFeedPinnedToLatestRef.current ||
-      !messageFeedOlderLoadArmedRef.current ||
-      messageFeedOlderLoadSnapshotRef.current
-    ) {
-      return;
-    }
-    const feed = messageFeedRef.current;
-    if (feed) {
-      const anchorRow = messageFeedVirtualRows.find((virtualRow) => messageFeedItemCanAnchor(messageFeedItems[virtualRow.index]));
-      const anchorItem = anchorRow ? messageFeedItems[anchorRow.index] : undefined;
-      if (anchorRow && messageFeedItemCanAnchor(anchorItem)) {
-        messageFeedOlderLoadSnapshotRef.current = {
-          anchorId: anchorItem.id,
-          anchorOffset: anchorRow.start - feed.scrollTop,
-        };
-      } else {
-        const fallbackAnchor = messageFeedItems.find(messageFeedItemCanAnchor);
-        if (fallbackAnchor) {
-          messageFeedOlderLoadSnapshotRef.current = {
-            anchorId: fallbackAnchor.id,
-            anchorOffset: 48,
-          };
-        }
-      }
-    }
-    messageFeedOlderLoadArmedRef.current = false;
-    void onLoadOlderChannelMessages();
-  }, [
-    channelMessagesLoading,
-    channelMessagesLoadingOlder,
-    channelProtocolLoading,
-    firstMessageFeedVirtualIndex,
-    messageFeedCanLoadOlder,
-    messageFeedItems,
-    onLoadOlderChannelMessages,
-  ]);
-  useEffect(() => {
-    if (channelMessagesLoadingOlder) {
-      return;
-    }
-    const snapshot = messageFeedOlderLoadSnapshotRef.current;
-    const feed = messageFeedRef.current;
-    if (!snapshot || !feed) {
-      return;
-    }
-    const anchorIndex = messageFeedItems.findIndex((item) => item.id === snapshot.anchorId);
-    if (anchorIndex < 0) {
-      messageFeedOlderLoadSnapshotRef.current = undefined;
-      return;
-    }
-    messageFeedVirtualizer.scrollToIndex(anchorIndex, { align: "start" });
-    const frameIds: number[] = [];
-    const finishRestore = (): void => {
-      messageFeedOlderLoadSnapshotRef.current = undefined;
-      messageFeedPinnedToLatestRef.current = false;
-      setMessageFeedLatestButtonVisible(feed.scrollHeight > feed.clientHeight);
-    };
-    const scheduleRestore = (attempt: number): void => {
-      messageFeedVirtualizer.scrollToIndex(anchorIndex, { align: "start" });
-      const frameId = globalThis.requestAnimationFrame(() => {
-        const anchorElement = Array.from(feed.querySelectorAll<HTMLElement>("[data-feed-item-id]"))
-          .find((element) => element.dataset.feedItemId === snapshot.anchorId);
-        if (anchorElement) {
-          const feedTop = feed.getBoundingClientRect().top;
-          const anchorTop = anchorElement.getBoundingClientRect().top;
-          feed.scrollTop += anchorTop - feedTop - snapshot.anchorOffset;
-          finishRestore();
-          return;
-        }
-        if (attempt < 8) {
-          scheduleRestore(attempt + 1);
-          return;
-        }
-        finishRestore();
-      });
-      frameIds.push(frameId);
-    };
-    scheduleRestore(0);
-    return () => {
-      frameIds.forEach((frameId) => globalThis.cancelAnimationFrame(frameId));
-    };
-  }, [channelMessagesLoadingOlder, messageFeedItems, messageFeedVirtualizer]);
-  const activityDrilldown = useMemo(() => {
-    const item = activityItems.find((candidate) => candidate.id === activityDrilldownItemId);
-    return item
-      ? buildChannelActivityDrilldownItem({
-        item,
-        workflows: channelWorkflows,
-        workflowSteps: channelWorkflowSteps,
-        contextSummaries: channelContextSummaries,
-        tasks,
-      })
-      : undefined;
-  }, [activityDrilldownItemId, activityItems, channelContextSummaries, channelWorkflowSteps, channelWorkflows, tasks]);
   const activeThreadRoot = useMemo(
     () => channelMessages.find((message) => message.id === activeThreadId),
     [activeThreadId, channelMessages],
@@ -2890,153 +2027,54 @@ export function WorkspaceClientView({
     autoPreviewUrlsRef.current = new Set(snapshot.pendingLinkPreviews.map((item) => item.url));
   }
 
+  const selectedChannelNotificationLevel = workspaceSettings?.channelNotifications?.[selectedChannelId];
+  const workspaceSettingsLoaded = workspaceSettings !== undefined;
+
   useEffect(() => {
-    const selectedChannelActivityViews = workspaceSettings?.channelActivityViews?.[selectedChannelId];
-    const selectedChannelNotificationLevel = workspaceSettings?.channelNotifications?.[selectedChannelId];
-    const settingsViews = parseCustomChannelActivitySavedViewsValue(selectedChannelActivityViews);
-    const legacyViews = readCustomChannelActivitySavedViews(cwd, selectedChannelId);
     const legacyNotificationLevel = readSavedChannelNotificationLevel(cwd, selectedChannelId);
-    const workspaceSettingsLoaded = workspaceSettings !== undefined;
     const hasSelectedChannel = selectedChannelId.trim().length > 0;
-    const shouldMigrateViews =
-      workspaceSettingsLoaded &&
-      hasSelectedChannel &&
-      selectedChannelActivityViews === undefined &&
-      legacyViews.length > 0;
     const shouldMigrateNotification =
       workspaceSettingsLoaded &&
       hasSelectedChannel &&
       !isChannelNotificationLevel(selectedChannelNotificationLevel) &&
       legacyNotificationLevel !== undefined;
+    const currentWorkspaceSettings = workspaceSettingsRef.current;
 
-    setActivitySavedViews(settingsViews.length > 0 ? settingsViews : shouldMigrateViews || !workspaceSettingsLoaded ? legacyViews : []);
-    applyActivityView(builtinChannelActivitySavedViews[0]);
-    setActivityFiltersExpanded(false);
-    setAttentionQueueExpanded(false);
-    setActivityDrilldownItemId("");
     setPendingChannelTeammateId("");
     setChannelNotificationLevel(
       isChannelNotificationLevel(selectedChannelNotificationLevel)
         ? selectedChannelNotificationLevel
         : legacyNotificationLevel ?? "mentions",
     );
-    if (shouldMigrateViews || shouldMigrateNotification) {
-      onWorkspaceSettingsPatch({
-        channelActivityViews: shouldMigrateViews
-          ? {
-            ...(workspaceSettings.channelActivityViews ?? {}),
-            [selectedChannelId]: serializeCustomActivitySavedViews(legacyViews),
-          }
-          : workspaceSettings.channelActivityViews,
-        channelNotifications: shouldMigrateNotification
-          ? {
-            ...(workspaceSettings.channelNotifications ?? {}),
-            [selectedChannelId]: legacyNotificationLevel ?? "mentions",
-          }
-          : workspaceSettings.channelNotifications,
+    if (shouldMigrateNotification && currentWorkspaceSettings) {
+      onWorkspaceSettingsPatchRef.current({
+        channelNotifications: {
+          ...(currentWorkspaceSettings.channelNotifications ?? {}),
+          [selectedChannelId]: legacyNotificationLevel ?? "mentions",
+        },
       });
     } else if (workspaceSettingsLoaded && hasSelectedChannel) {
-      if (selectedChannelActivityViews !== undefined) {
-        clearCustomChannelActivitySavedViews(cwd, selectedChannelId);
-      }
       if (isChannelNotificationLevel(selectedChannelNotificationLevel)) {
         clearSavedChannelNotificationLevel(cwd, selectedChannelId);
       }
     }
-    messageFeedPinnedToLatestRef.current = true;
-    messageFeedUserScrollIntentRef.current = false;
-    conversationBackgroundToastLatestItemRef.current = "";
+    messageFeedState.reset();
     setConversationBackgroundToast(undefined);
     setConversationBlockActionMenu(undefined);
-    messageFeedOlderLoadArmedRef.current = true;
-    messageFeedOlderLoadSnapshotRef.current = undefined;
-    setMessageFeedLatestButtonVisible(false);
-  }, [cwd, selectedChannelId, workspaceSettings, workspaceSettings?.channelActivityViews?.[selectedChannelId], workspaceSettings?.channelNotifications?.[selectedChannelId]]);
+  }, [cwd, messageFeedState.reset, selectedChannelId, selectedChannelNotificationLevel, workspaceSettingsLoaded]);
 
   useEffect(() => {
-    setChannelWorkspaceExternalPath(
-      selectedChannelWorkspace?.mode === "external_path" && selectedChannelWorkspace.executionPath
-        ? selectedChannelWorkspace.executionPath
-        : "",
-    );
+    const channelChanged = channelWorkspaceExternalPathChannelIdRef.current !== selectedChannelId;
+    channelWorkspaceExternalPathChannelIdRef.current = selectedChannelId;
+    if (selectedChannelWorkspace?.mode === "external_path" && selectedChannelWorkspace.executionPath) {
+      setChannelWorkspaceExternalPath(selectedChannelWorkspace.executionPath);
+    } else if (channelChanged) {
+      setChannelWorkspaceExternalPath("");
+    }
     setChannelWorkspaceNotice("");
     setChannelWorkspaceError("");
     setChannelWorkspaceBusyAction("");
   }, [selectedChannelId, selectedChannelWorkspace?.mode, selectedChannelWorkspace?.executionPath]);
-
-  useEffect(() => {
-    if (channelMessagesLoading || channelProtocolLoading || !messageFeedPinnedToLatestRef.current) {
-      return undefined;
-    }
-    const feed = messageFeedRef.current;
-    if (!feed) {
-      return undefined;
-    }
-    const frameIds: number[] = [];
-    const scrollToLatest = (attempt: number): void => {
-      messageFeedAutoFollowUntilRef.current = Date.now() + 1_000;
-      messageFeedUserScrollIntentRef.current = false;
-      if (messageFeedItems.length > 0) {
-        messageFeedVirtualizer.scrollToIndex(messageFeedItems.length - 1, { align: "end" });
-      }
-      feed.scrollTop = feed.scrollHeight;
-      messageFeedPinnedToLatestRef.current = true;
-      setMessageFeedLatestButtonVisible(false);
-      if (attempt < 4) {
-        const frameId = globalThis.requestAnimationFrame(() => scrollToLatest(attempt + 1));
-        frameIds.push(frameId);
-      }
-    };
-    const frameId = globalThis.requestAnimationFrame(() => scrollToLatest(0));
-    frameIds.push(frameId);
-    return () => {
-      frameIds.forEach((scheduledFrameId) => globalThis.cancelAnimationFrame(scheduledFrameId));
-    };
-  }, [
-    channelMessagesLoading,
-    channelProtocolLoading,
-    latestVisibleActivityItemId,
-    messageFeedTailRenderSignature,
-    messageFeedItems.length,
-    renderableActivityItems.length,
-    selectedChannelId,
-  ]);
-
-  useEffect(() => {
-    if (
-      channelMessagesLoading ||
-      channelProtocolLoading ||
-      messageFeedPinnedToLatestRef.current ||
-      messageFeedOlderLoadSnapshotRef.current
-    ) {
-      return undefined;
-    }
-    if (Date.now() < channelRightDockMotionUntilRef.current) {
-      return undefined;
-    }
-    const frameId = globalThis.requestAnimationFrame(() => {
-      restoreMessageFeedVisibleAnchor();
-    });
-    return () => globalThis.cancelAnimationFrame(frameId);
-  }, [
-    channelMessagesLoading,
-    channelProtocolLoading,
-    messageFeedRenderSignature,
-    messageFeedTotalSize,
-  ]);
-
-  useEffect(() => {
-    if (!activityDrilldownItemId) {
-      return undefined;
-    }
-    function handleKeyDown(event: KeyboardEvent): void {
-      if (event.key === "Escape") {
-        setActivityDrilldownItemId("");
-      }
-    }
-    globalThis.addEventListener("keydown", handleKeyDown);
-    return () => globalThis.removeEventListener("keydown", handleKeyDown);
-  }, [activityDrilldownItemId]);
 
   useEffect(() => {
     setBriefDraft({
@@ -3060,16 +2098,9 @@ export function WorkspaceClientView({
         ? composerSnapshotsRef.current[selectedChannelId] ?? emptyComposerSnapshot()
         : emptyComposerSnapshot(),
     );
-    setActivitySearch("");
-    setActivityCategoryFilter("all");
-    setActivityAttentionFilter("all");
-    setActiveActivityViewId(allChannelActivitySavedViewId);
-    setActivityFiltersExpanded(false);
-    setAttentionQueueExpanded(false);
-    setActivityDrilldownItemId("");
+    resetActivityForChannelSwitch();
     setPendingChannelTeammateId("");
     setChannelMoreOpen(false);
-    setActivityToolsOpen(false);
     setPendingChannelSendPreview(undefined);
     setAttentionProgressExpanded(true);
     setSidePanelView("context");
@@ -3081,12 +2112,8 @@ export function WorkspaceClientView({
     setSelectedApprovalId("");
     setCreateTaskOpen(false);
     setChannelNotificationLevel("mentions");
-    messageFeedPinnedToLatestRef.current = true;
-    messageFeedUserScrollIntentRef.current = false;
-    messageFeedOlderLoadArmedRef.current = true;
-    messageFeedOlderLoadSnapshotRef.current = undefined;
-    setMessageFeedLatestButtonVisible(false);
-  }, [selectedChannelId]);
+    messageFeedState.reset();
+  }, [messageFeedState.reset, resetActivityForChannelSwitch, selectedChannelId]);
 
   useEffect(() => {
     const hasPendingReply = channelMessages.some((message) => message.kind === "ai_reply" && message.status === "pending");
@@ -3123,116 +2150,6 @@ export function WorkspaceClientView({
     setEnvironmentCommitDialogOpen(false);
     setProgressPopoverOpen(false);
     onSelectTask(taskId);
-  }
-
-  function handleMessageFeedScroll(_event: UIEvent<HTMLDivElement>): void {
-    const feed = messageFeedRef.current;
-    if (!feed) {
-      return;
-    }
-    const maxScrollTop = feed.scrollHeight - feed.clientHeight;
-    const pinnedToLatest = maxScrollTop <= 0 || maxScrollTop - feed.scrollTop <= 24;
-    const latestItem = messageFeedItems.at(-1);
-    const latestItemPending = messageFeedItemIsPending(latestItem);
-    const preserveAutoFollow =
-      !pinnedToLatest &&
-      !messageFeedUserScrollIntentRef.current &&
-      messageFeedPinnedToLatestRef.current &&
-      (Date.now() < messageFeedAutoFollowUntilRef.current || latestItemPending);
-    if (feed.scrollTop > 80) {
-      messageFeedOlderLoadArmedRef.current = true;
-    }
-    if (preserveAutoFollow) {
-      messageFeedPinnedToLatestRef.current = true;
-      setMessageFeedLatestButtonVisible(false);
-      return;
-    }
-    messageFeedPinnedToLatestRef.current = pinnedToLatest;
-    if (!pinnedToLatest) {
-      rememberMessageFeedVisibleAnchor();
-    } else {
-      messageFeedVisibleAnchorRef.current = undefined;
-    }
-    setMessageFeedLatestButtonVisible((visible) => {
-      const nextVisible = !pinnedToLatest && maxScrollTop > 0;
-      return visible === nextVisible ? visible : nextVisible;
-    });
-  }
-
-  function cancelMessageFeedAutoFollow(): void {
-    messageFeedAutoFollowUntilRef.current = 0;
-    messageFeedUserScrollIntentRef.current = true;
-    rememberMessageFeedVisibleAnchor();
-  }
-
-  function scrollMessageFeedToLatest(): void {
-    const feed = messageFeedRef.current;
-    if (!feed) {
-      return;
-    }
-    messageFeedAutoFollowUntilRef.current = Date.now() + 1_000;
-    messageFeedUserScrollIntentRef.current = false;
-    if (messageFeedItems.length > 0) {
-      messageFeedVirtualizer.scrollToIndex(messageFeedItems.length - 1, { align: "end" });
-    }
-    feed.scrollTop = feed.scrollHeight;
-    messageFeedPinnedToLatestRef.current = true;
-    messageFeedVisibleAnchorRef.current = undefined;
-    setMessageFeedLatestButtonVisible(false);
-  }
-
-  function readMessageFeedVisibleAnchor(): MessageFeedAnchorSnapshot | undefined {
-    const feed = messageFeedRef.current;
-    if (!feed) {
-      return undefined;
-    }
-    const feedRect = feed.getBoundingClientRect();
-    const candidateRows = Array.from(feed.querySelectorAll<HTMLElement>("[data-feed-item-id]"))
-      .filter((element) => element.dataset.feedItemKind !== "older-loader");
-    for (const row of candidateRows) {
-      const itemId = row.dataset.feedItemId;
-      if (!itemId) {
-        continue;
-      }
-      const rowRect = row.getBoundingClientRect();
-      if (rowRect.bottom <= feedRect.top + 12 || rowRect.top >= feedRect.bottom - 12) {
-        continue;
-      }
-      return {
-        itemId,
-        offsetTop: rowRect.top - feedRect.top,
-      };
-    }
-    return undefined;
-  }
-
-  function rememberMessageFeedVisibleAnchor(): void {
-    const anchor = readMessageFeedVisibleAnchor();
-    if (anchor) {
-      messageFeedVisibleAnchorRef.current = anchor;
-    }
-  }
-
-  function restoreMessageFeedVisibleAnchor(): void {
-    const feed = messageFeedRef.current;
-    const anchor = messageFeedVisibleAnchorRef.current;
-    if (!feed || !anchor) {
-      rememberMessageFeedVisibleAnchor();
-      return;
-    }
-    const row = Array.from(feed.querySelectorAll<HTMLElement>("[data-feed-item-id]"))
-      .find((element) => element.dataset.feedItemId === anchor.itemId);
-    if (!row) {
-      rememberMessageFeedVisibleAnchor();
-      return;
-    }
-    const feedTop = feed.getBoundingClientRect().top;
-    const rowTop = row.getBoundingClientRect().top;
-    const delta = rowTop - feedTop - anchor.offsetTop;
-    if (Math.abs(delta) > 1) {
-      feed.scrollTop += delta;
-    }
-    rememberMessageFeedVisibleAnchor();
   }
 
   function openTaskFromActivity(taskId: string): void {
@@ -3283,7 +2200,6 @@ export function WorkspaceClientView({
     setEnvironmentCommitDialogOpen(false);
     setProgressPopoverOpen(channelHasProgressPopoverContent);
     setAttentionProgressExpanded(true);
-    setAttentionQueueExpanded(true);
     setCreateTaskOpen(false);
   }
 
@@ -3465,94 +2381,6 @@ export function WorkspaceClientView({
       .finally(() => {
         conversationWorkCellEvidenceLoadsRef.current.delete(cacheKey);
       });
-  }
-
-  async function forkChannelWorkThread(thread: LingThread): Promise<void> {
-    const workspaceCwd = cwd.trim();
-    if (!workspaceCwd || forkingWorkThreadId) {
-      return;
-    }
-    setForkingWorkThreadId(thread.id);
-    setChannelWorkThreadError("");
-    try {
-      const response = await forkLingThread(workspaceCwd, thread.id, {
-        idempotencyKey: `channel-fork:${thread.id}:${thread.lastRunId ?? ""}:${thread.updatedAt}`,
-      });
-      setChannelWorkThreads((current) => mergeLingThreads([response.childThread, response.sourceThread], current));
-      setActiveWorkThreadId(response.childThread.id);
-    } catch (error) {
-      setChannelWorkThreadError(error instanceof Error ? error.message : String(error));
-    } finally {
-      setForkingWorkThreadId("");
-    }
-  }
-
-  async function forkChannelMainBranch(): Promise<void> {
-    const workspaceCwd = cwd.trim();
-    if (!workspaceCwd || !selectedChannelId || forkingWorkThreadId) {
-      return;
-    }
-    const pendingMainThreadId = `channel-main:${selectedChannelId}`;
-    setForkingWorkThreadId(pendingMainThreadId);
-    setChannelWorkThreadError("");
-    try {
-      const rootThread = channelDiscussionRootThread ?? (await createLingThread(workspaceCwd, {
-        kind: "channel_discussion",
-        channelId: selectedChannelId,
-        idempotencyKey: pendingMainThreadId,
-      })).thread;
-      const response = await forkLingThread(workspaceCwd, rootThread.id, {
-        idempotencyKey: `channel-fork:${rootThread.id}:${rootThread.updatedAt}`,
-      });
-      setChannelWorkThreads((current) => mergeLingThreads([response.childThread, response.sourceThread, rootThread], current));
-      setActiveWorkThreadId(response.childThread.id);
-    } catch (error) {
-      setChannelWorkThreadError(error instanceof Error ? error.message : String(error));
-    } finally {
-      setForkingWorkThreadId("");
-    }
-  }
-
-  async function mutateChannelWorkThreadVisibility(thread: LingThread, action: "archive" | "pin" | "unpin"): Promise<void> {
-    const workspaceCwd = cwd.trim();
-    if (!workspaceCwd || workThreadVisibilityId) {
-      return;
-    }
-    setWorkThreadVisibilityId(thread.id);
-    setChannelWorkThreadError("");
-    if (action === "archive") {
-      setArchivedChannelWorkThreadIds((current) => new Set(current).add(thread.id));
-      setChannelWorkThreads((current) => current.filter((item) => item.id !== thread.id));
-      setArchiveConfirmWorkThreadId("");
-    }
-    try {
-      const idempotencyKey = `channel-work-thread-${action}:${thread.id}`;
-      const response = action === "archive"
-        ? await archiveLingThread(workspaceCwd, thread.id, { idempotencyKey })
-        : action === "pin"
-          ? await pinLingThread(workspaceCwd, thread.id, { idempotencyKey })
-          : await unpinLingThread(workspaceCwd, thread.id, { idempotencyKey });
-      setChannelWorkThreads((current) =>
-        action === "archive"
-          ? current.filter((item) => item.id !== response.thread.id)
-          : [response.thread, ...current.filter((item) => item.id !== response.thread.id)]
-      );
-      if (action === "archive") {
-        setArchivedChannelWorkThreadIds((current) => new Set(current).add(response.thread.id));
-      }
-    } catch (error) {
-      if (action === "archive") {
-        setArchivedChannelWorkThreadIds((current) => {
-          const next = new Set(current);
-          next.delete(thread.id);
-          return next;
-        });
-        setChannelWorkThreads((current) => [thread, ...current.filter((item) => item.id !== thread.id)]);
-      }
-      setChannelWorkThreadError(error instanceof Error ? error.message : String(error));
-    } finally {
-      setWorkThreadVisibilityId("");
-    }
   }
 
   function openActivityDrilldownTarget(target: ChannelActivityDrilldownTarget): void {
@@ -3741,67 +2569,6 @@ export function WorkspaceClientView({
       defaultResponderTeammateId: "",
       defaultTeammateId: "",
     });
-  }
-
-  function applyActivityView(view: ChannelActivitySavedView): void {
-    setActiveActivityViewId(view.id);
-    setActivitySearch(view.filter.search);
-    setActivityCategoryFilter(view.filter.categoryFilter);
-    setActivityAttentionFilter(view.filter.attentionFilter);
-  }
-
-  function persistActivitySavedViews(nextViews: readonly ChannelActivitySavedView[]): void {
-    const cappedViews = nextViews.slice(0, maxCustomChannelActivitySavedViews);
-    setActivitySavedViews(cappedViews);
-    clearCustomChannelActivitySavedViews(cwd, selectedChannelId);
-    onWorkspaceSettingsPatch({
-      channelActivityViews: {
-        ...(workspaceSettings?.channelActivityViews ?? {}),
-        [selectedChannelId]: serializeCustomActivitySavedViews(cappedViews),
-      },
-    });
-  }
-
-  function saveActivityView(): void {
-    if (activitySavedViews.length >= maxCustomChannelActivitySavedViews) {
-      globalThis.alert?.(t("Custom saved views are limited to 8."));
-      return;
-    }
-    const name = globalThis.prompt?.(t("Saved view name"), t("Custom view"));
-    if (name === undefined || name === null) {
-      return;
-    }
-    const view = createCustomChannelActivitySavedView(name, currentActivityViewFilter);
-    persistActivitySavedViews([...activitySavedViews, view]);
-    applyActivityView(view);
-  }
-
-  function renameActivityView(): void {
-    if (!selectedActivitySavedView || selectedActivitySavedView.builtin) {
-      return;
-    }
-    const name = globalThis.prompt?.(t("Rename saved view"), selectedActivitySavedView.name);
-    if (name === undefined || name === null) {
-      return;
-    }
-    const nextViews = activitySavedViews.map((view) =>
-      view.id === selectedActivitySavedView.id
-        ? { ...view, name: sanitizeSavedViewName(name), updatedAt: new Date().toISOString() }
-        : view,
-    );
-    persistActivitySavedViews(nextViews);
-  }
-
-  function deleteActivityView(): void {
-    if (!selectedActivitySavedView || selectedActivitySavedView.builtin) {
-      return;
-    }
-    if (!globalThis.confirm?.(t("Delete saved view?"))) {
-      return;
-    }
-    const nextViews = activitySavedViews.filter((view) => view.id !== selectedActivitySavedView.id);
-    persistActivitySavedViews(nextViews);
-    applyActivityView(builtinChannelActivitySavedViews[0]);
   }
 
   function createTask(): void {
@@ -4342,17 +3109,6 @@ export function WorkspaceClientView({
     }
   }
 
-  function showComposerFeedback(tone: ComposerInlineFeedbackTone, message: string): void {
-    if (composerFeedbackTimeoutRef.current !== undefined) {
-      globalThis.clearTimeout(composerFeedbackTimeoutRef.current);
-    }
-    setComposerFeedback({ id: Date.now(), tone, message });
-    composerFeedbackTimeoutRef.current = globalThis.setTimeout(() => {
-      setComposerFeedback(undefined);
-      composerFeedbackTimeoutRef.current = undefined;
-    }, 2_200);
-  }
-
   function showConversationBlockFeedback(tone: ComposerInlineFeedbackTone, message: string): void {
     if (conversationBlockFeedbackTimeoutRef.current !== undefined) {
       globalThis.clearTimeout(conversationBlockFeedbackTimeoutRef.current);
@@ -4376,7 +3132,7 @@ export function WorkspaceClientView({
   }
 
   function messageFeedFocusableBlocks(): HTMLElement[] {
-    const feed = messageFeedRef.current;
+    const feed = messageFeedState.scrollRef.current;
     if (!feed) {
       return [];
     }
@@ -4390,7 +3146,7 @@ export function WorkspaceClientView({
       return undefined;
     }
     const block = activeElement.closest<HTMLElement>("[data-conversation-focus-block='true']");
-    return block && messageFeedRef.current?.contains(block) ? block : undefined;
+    return block && messageFeedState.scrollRef.current?.contains(block) ? block : undefined;
   }
 
   function focusConversationBlock(block: HTMLElement): void {
@@ -4403,7 +3159,7 @@ export function WorkspaceClientView({
     if (!blockId) {
       return;
     }
-    const block = messageFeedRef.current?.querySelector<HTMLElement>(`[data-feed-item-id="${cssEscape(blockId)}"]`);
+    const block = messageFeedState.scrollRef.current?.querySelector<HTMLElement>(`[data-feed-item-id="${cssEscape(blockId)}"]`);
     if (block) {
       focusConversationBlock(block);
     }
@@ -4471,7 +3227,7 @@ export function WorkspaceClientView({
       return;
     }
     if (event.key === "Enter" && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey) {
-      const feed = messageFeedRef.current;
+      const feed = messageFeedState.scrollRef.current;
       const focusedBlock = focusedConversationBlock();
       const block = focusedBlock ?? messageFeedFocusableBlocks().find((candidate) => candidate.querySelector(conversationExpandableSelector));
       const expandable = findConversationExpandable(block) ?? findConversationExpandable(feed);
@@ -4586,46 +3342,6 @@ export function WorkspaceClientView({
       event.currentTarget.releasePointerCapture(event.pointerId);
     }
     composerResizeDragRef.current = undefined;
-  }
-
-  function handleChannelRightDockResizePointerDown(event: ReactPointerEvent<HTMLButtonElement>): void {
-    if (event.pointerType === "mouse" && event.button !== 0) {
-      return;
-    }
-    event.preventDefault();
-    const rect = taskWorkbenchMainRef.current?.getBoundingClientRect();
-    const fallbackWidth = globalThis.innerWidth || channelRightDockMinWidth + channelRightDockMinChatWidth;
-    const viewportWidth = globalThis.innerWidth || rect?.right || fallbackWidth;
-    channelRightDockResizeDragRef.current = {
-      pointerId: event.pointerId,
-      containerRight: rect?.right ?? fallbackWidth,
-      containerWidth: rect?.width ?? fallbackWidth,
-      viewportWidth,
-    };
-    event.currentTarget.setPointerCapture(event.pointerId);
-    setChannelRightDockResizing(true);
-    setChannelRightDockWidth(clampChannelRightDockWidth((rect?.right ?? fallbackWidth) - event.clientX, rect?.width ?? fallbackWidth, viewportWidth));
-  }
-
-  function handleChannelRightDockResizePointerMove(event: ReactPointerEvent<HTMLButtonElement>): void {
-    const drag = channelRightDockResizeDragRef.current;
-    if (!drag || drag.pointerId !== event.pointerId) {
-      return;
-    }
-    event.preventDefault();
-    setChannelRightDockWidth(clampChannelRightDockWidth(drag.containerRight - event.clientX, drag.containerWidth, drag.viewportWidth));
-  }
-
-  function handleChannelRightDockResizePointerEnd(event: ReactPointerEvent<HTMLButtonElement>): void {
-    const drag = channelRightDockResizeDragRef.current;
-    if (!drag || drag.pointerId !== event.pointerId) {
-      return;
-    }
-    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-      event.currentTarget.releasePointerCapture(event.pointerId);
-    }
-    channelRightDockResizeDragRef.current = undefined;
-    setChannelRightDockResizing(false);
   }
 
   function refreshChannelRunGuidanceSurfaces(): void {
@@ -4831,10 +3547,7 @@ export function WorkspaceClientView({
     const mentions = mergeMentions(messageMentions, findMentionsInText(body, teammateOptions));
     const shouldRequestAi = mentions.some((mention) => mention.kind === "ai-teammate");
     let pendingSendPreviewId = "";
-    messageFeedPinnedToLatestRef.current = true;
-    messageFeedAutoFollowUntilRef.current = Date.now() + 3_000;
-    messageFeedUserScrollIntentRef.current = false;
-    setMessageFeedLatestButtonVisible(false);
+    messageFeedState.scrollToLatest();
     setComposerBusy(true);
     setSendState("sending");
     setSendError("");
@@ -4993,16 +3706,6 @@ export function WorkspaceClientView({
   }, [messageDraft, pendingLinkPreviews, selectedChannelId]);
 
   useEffect(() => () => {
-    for (const previewUrl of attachmentPreviewUrlsRef.current) {
-      revokeObjectUrl(previewUrl);
-    }
-    attachmentPreviewUrlsRef.current.clear();
-  }, []);
-
-  useEffect(() => () => {
-    if (composerFeedbackTimeoutRef.current !== undefined) {
-      globalThis.clearTimeout(composerFeedbackTimeoutRef.current);
-    }
     if (conversationBlockFeedbackTimeoutRef.current !== undefined) {
       globalThis.clearTimeout(conversationBlockFeedbackTimeoutRef.current);
     }
@@ -5068,178 +3771,68 @@ export function WorkspaceClientView({
     "--composer-input-min-height": `${composerInputMinHeight}px`,
   } as CSSProperties;
   const localUserDisplayName = userProfile?.displayName.trim() || t("You");
-
-  function renderChannelMessageAvatar(message: ChannelMessage): ReactNode {
-    if (message.authorType === "ai-teammate") {
-      const teammate = allLocalTeammateById.get(message.authorId ?? "");
-      return teammate
-        ? <TeammateAvatarView teammate={teammate} cwd={cwd} compact />
-        : message.authorId === LING_AGENT_AUTHOR_ID
-          ? <AvatarInitial label="L" tone="violet" />
-          : <AvatarInitial label="A" tone="teal" />;
-    }
-    if (message.authorType === "system") {
-      return <AvatarInitial label="S" tone="violet" />;
-    }
-    return <UserProfileAvatar profile={userProfile} fallbackLabel={localUserDisplayName} />;
-  }
-
-  function renderConversationAgentAvatar(span: ConversationAgentActivitySpan): ReactNode {
-    const participantId = span.participantId?.trim();
-    const teammate = (participantId ? allLocalTeammateById.get(participantId) : undefined) ??
-      allLocalTeammateByName.get(span.label.trim().toLowerCase());
-    return teammate ? <TeammateAvatarView teammate={teammate} cwd={cwd} compact /> : undefined;
-  }
-
-  const conversationTranscriptBlockRenderers = createTranscriptBlockRendererRegistry<
-    ConversationTurnViewModel,
-    ConversationTranscriptBlock,
-    WorkspaceTranscriptRenderContext
-  >({
-    coordinator_message: renderCoordinatorMessageTranscriptBlock,
-    operation: renderOperationTranscriptBlock,
-    agent_activity: renderGenericTranscriptBlock,
-    approval: renderGenericTranscriptBlock,
-    artifact_strip: renderGenericTranscriptBlock,
-    source_summary: renderGenericTranscriptBlock,
-    workflow_packet_summary: renderGenericTranscriptBlock,
-    requirement_shaping: renderGenericTranscriptBlock,
-    decision_needed: renderGenericTranscriptBlock,
-    final_result: renderGenericTranscriptBlock,
-    raw_debug_ref: renderGenericTranscriptBlock,
+  const messageRenderers = createChannelMessageRenderers({
+    activeRunId,
+    allLocalTeammateById,
+    allLocalTeammateByName,
+    approvals,
+    attachmentContentUrl,
+    auditActivityVisible,
+    channelArtifactsByRun,
+    channelAttachmentById,
+    channelMessageFeedbackById,
+    channelMessagesLoadingOlder,
+    channelTeamExpertsByTurn,
+    channelTeamExpertsExpandedByTurn,
+    channelWorkflowSteps,
+    channelWorkflows,
+    conversationWorkCellByThreadId,
+    conversationWorkCellByWorkflowId,
+    conversationWorkCellDetailsByKey,
+    cwd,
+    executionProposalsByMessageId,
+    formatBytes,
+    latestStatus,
+    localUserDisplayName,
+    memoryById,
+    orchestratingWorkflowId,
+    runningWorkflowStepId,
+    runById,
+    selectedChannelBranchRootThreadId,
+    selectedChannelId,
+    teammateOptions,
+    t,
+    usedMemoryEvents,
+    userProfile,
+    workflowProgressByWorkflowId,
+    activityActionRow,
+    conversationWorkCellDetailsCacheKey,
+    onCancelExecutionProposal,
+    onCancelWorkflow,
+    onConfirmExecutionProposal,
+    onCreateTaskFromContextSummary,
+    onLoadConversationWorkCellDetails: loadConversationWorkCellDetails,
+    onLoadWorkflowWorkCellDetails: loadWorkflowWorkCellDetails,
+    onOpenApprovalDetail: openApprovalDetail,
+    onOpenContextSummaryInConversationDetail: openContextSummaryInConversationDetail,
+    onOpenRun: openRunInPanel,
+    onOpenThreadForMessage: openThreadForMessage,
+    onOrchestrateWorkflow,
+    onRejectDecision,
+    onRetryWorkflowStep,
+    onRevealReviewInConversation: revealReviewInConversation,
+    onRevealRunFromActivity: revealRunFromActivity,
+    onRevealTaskFromActivity: revealTaskFromActivity,
+    onStartWorkflowFromHandoff,
+    onSupersedeDecision,
+    onToggleChannelMessageFeedback: toggleChannelMessageFeedback,
+    onToggleChannelTeamExpertsExpanded: toggleChannelTeamExpertsExpanded,
+    onUpdateExecutionProposal,
+    onUpdateHandoffStatus,
+    readRunTitle,
+    resolveExpertTeammate: (agentId) => channelExpertTeammateByKey.get(normalizeChannelExpertTeammateKey(agentId)),
+    workflowWorkCellDetailsCacheKey,
   });
-
-  function renderConversationTurnItem(turn: ConversationTurnViewModel): ReactNode {
-    const operationCell = turn.operationCell;
-    const operationRef = turn.operationRef;
-    let detailsState: ConversationWorkCellDetailsState = { status: "not_loaded" };
-    let onLoadDetails: ((id: string) => void) | undefined;
-    if (operationCell && operationRef?.kind === "workflow") {
-      detailsState = conversationWorkCellDetailsByKey[workflowWorkCellDetailsCacheKey(operationRef.workflowId)] ?? { status: "not_loaded" };
-      onLoadDetails = loadWorkflowWorkCellDetails;
-    } else if (operationCell && operationRef?.kind === "run_thread") {
-      detailsState = conversationWorkCellDetailsByKey[conversationWorkCellDetailsCacheKey(operationRef.threadId)] ?? { status: "not_loaded" };
-      onLoadDetails = loadConversationWorkCellDetails;
-    }
-
-    return (
-      <div className="conversation-turn" data-conversation-turn-id={turn.id}>
-        {renderMessageFeedActivityItem(channelMessageToActivityItem(turn.sourceMessage))}
-        {renderConversationTurnAssistantTranscript(turn, detailsState, onLoadDetails)}
-      </div>
-    );
-  }
-
-  function renderConversationTurnAssistantTranscript(
-    turn: ConversationTurnViewModel,
-    detailsState: ConversationWorkCellDetailsState,
-    onLoadDetails: ((id: string) => void) | undefined,
-  ): ReactNode {
-    if (turn.blocks.length === 0) {
-      return null;
-    }
-
-    const anchorMessage = turn.blocks.find((block) => block.kind === "coordinator_message")?.message;
-    const authorName = anchorMessage
-      ? messageAuthorLabel(anchorMessage, teammateOptions, t("Deleted teammate"), localUserDisplayName, allLocalTeammateById)
-      : t("Ling Agent");
-    const createdAt = anchorMessage?.createdAt ?? turn.createdAt;
-    const copyText = conversationTurnAssistantCopyText(turn);
-    const transcriptContext: WorkspaceTranscriptRenderContext = { detailsState, onLoadDetails };
-    const teamExpertsState = channelTeamExpertsByTurn[turn.sourceMessage.id];
-    const teamExperts = teamExpertsState?.channelId === selectedChannelId && teamExpertsState.turnId === turn.sourceMessage.id
-      ? teamExpertsState.experts
-      : undefined;
-    const teamExpertsExpanded = channelTeamExpertsExpandedByTurn[turn.sourceMessage.id] ?? false;
-
-    return (
-      <MessageRow
-        className={[
-          "channel-message-row conversation-turn-assistant-row",
-          teamExperts ? "has-team-experts" : "",
-        ].filter(Boolean).join(" ")}
-        authorType="ai-teammate"
-        avatar={anchorMessage ? renderChannelMessageAvatar(anchorMessage) : <AvatarInitial label="L" tone="violet" />}
-        authorName={authorName}
-        createdAtLabel={formatDateTime(createdAt)}
-        bodyNode={(
-          <div className="conversation-turn-assistant-transcript">
-            {turn.blocks.map((block) => renderTranscriptBlockFromRegistry(conversationTranscriptBlockRenderers, {
-              turn,
-              block,
-              context: transcriptContext,
-            }))}
-            {teamExperts ? (
-              <ChannelTeamExpertsSummary
-                experts={teamExperts}
-                expanded={teamExpertsExpanded}
-                onToggleExpanded={() => setChannelTeamExpertsExpandedByTurn((current) => ({
-                  ...current,
-                  [turn.sourceMessage.id]: !(current[turn.sourceMessage.id] ?? false),
-                }))}
-                cwd={cwd}
-                resolveExpertTeammate={(agentId) => channelExpertTeammateByKey.get(normalizeChannelExpertTeammateKey(agentId))}
-                labels={{
-                  experts: t("Teammates"),
-                  active: t("active"),
-                  done: t("done"),
-                  delayed: t("delayed"),
-                  unavailable: t("unavailable"),
-                }}
-              />
-            ) : null}
-            {renderChannelAiMessageActions(turn.sourceMessage, copyText)}
-          </div>
-        )}
-      />
-    );
-  }
-
-  function renderChannelAiMessageActions(message: ChannelMessage, copyText: string): ReactNode {
-    const feedback = channelMessageFeedbackById[message.id];
-    const surface = selectedChannelBranchRootThreadId ? "channel_branch" : "channel_root";
-    return (
-      <div className="channel-message-row-footer-stack">
-        <MessageActionBar
-          surface={surface}
-          className="channel-message-ai-actions"
-          copiedLabel={t("Copied")}
-          actions={[
-            {
-              id: "copy",
-              kind: "copy",
-              label: t("Copy message"),
-              icon: <Copy size={14} />,
-              copyText,
-            },
-            {
-              id: "like",
-              kind: "like",
-              label: t("Like response"),
-              icon: <ThumbsUp size={14} />,
-              selected: feedback === "up",
-              onClick: () => toggleChannelMessageFeedback(message.id, "up"),
-            },
-            {
-              id: "dislike",
-              kind: "dislike",
-              label: t("Dislike response"),
-              icon: <ThumbsDown size={14} />,
-              selected: feedback === "down",
-              onClick: () => toggleChannelMessageFeedback(message.id, "down"),
-            },
-            {
-              id: "reply",
-              kind: "reply_topic",
-              label: t("Reply in topic"),
-              icon: <Reply size={14} />,
-              onClick: () => openThreadForMessage(message),
-            },
-          ]}
-        />
-      </div>
-    );
-  }
 
   function toggleChannelMessageFeedback(messageId: string, feedback: "up" | "down"): void {
     setChannelMessageFeedbackById((current) => {
@@ -5252,1110 +3845,121 @@ export function WorkspaceClientView({
     });
   }
 
-  function renderCoordinatorMessageTranscriptBlock({
-    turn,
-    block,
-  }: {
-    readonly turn: ConversationTurnViewModel;
-    readonly block: Extract<ConversationTranscriptBlock, { readonly kind: "coordinator_message" }>;
-    readonly context: WorkspaceTranscriptRenderContext;
-  }): ReactNode {
-    const pendingCoordinatorMessage = block.message.status === "pending";
-    const body = conversationCoordinatorDisplayBody(turn, block.message, block.phase, t).trim();
-    const evidenceNode = (block.memoryCitationEvents.length > 0 || block.message.webEvidence) ? (
-      <MessageEvidencePanel
-        memoryContent={block.memoryCitationEvents.length > 0 ? (
-          <UsedMemorySummary
-            variant="footer"
-            events={block.memoryCitationEvents}
-            memoryById={memoryById}
-          />
-        ) : undefined}
-        memorySummary={block.memoryCitationEvents.length > 0 ? t("Used memory") : undefined}
-        webEvidence={block.message.webEvidence}
-      />
-    ) : null;
-    if (!body) {
-      return evidenceNode ? <div className="conversation-turn-assistant-copy" key={block.id}>{evidenceNode}</div> : null;
-    }
-    return (
-      <div
-        className={[
-          block.phase === "terminal" ? "conversation-turn-assistant-copy terminal" : "conversation-turn-assistant-copy",
-          pendingCoordinatorMessage ? "message-body-with-spinner" : "",
-        ].filter(Boolean).join(" ")}
-        key={block.id}
-      >
-        {pendingCoordinatorMessage ? <Loader2 className="message-pending-spinner spin" size={13} /> : null}
-        <MessageBodyRenderer text={body} cwd={cwd} compact streaming={pendingCoordinatorMessage} />
-        {evidenceNode}
-      </div>
-    );
+  function toggleChannelTeamExpertsExpanded(turnId: string): void {
+    setChannelTeamExpertsExpandedByTurn((current) => ({
+      ...current,
+      [turnId]: !(current[turnId] ?? false),
+    }));
   }
 
-  function renderOperationTranscriptBlock({
-    block,
-    context,
-  }: {
-    readonly turn: ConversationTurnViewModel;
-    readonly block: Extract<ConversationTranscriptBlock, { readonly kind: "operation" }>;
-    readonly context: WorkspaceTranscriptRenderContext;
-  }): ReactNode {
-    return (
-      <div className="conversation-turn-operation" key={block.id}>
-        <ConversationWorkCell
-          model={block.operationCell}
-          cwd={cwd}
-          detailsState={context.detailsState}
-          onOpenRun={block.operationCell.anchorRunId.startsWith("workflow:") ? undefined : openRunInPanel}
-          onLoadDetails={context.onLoadDetails}
-          loadPreview={loadPreviewContent}
-          renderAgentAvatar={renderConversationAgentAvatar}
-        />
-      </div>
-    );
-  }
-
-  function renderGenericTranscriptBlock({
-    block,
-  }: {
-    readonly turn: ConversationTurnViewModel;
-    readonly block: Exclude<ConversationTranscriptBlock, { readonly kind: "coordinator_message" | "operation" }>;
-    readonly context: WorkspaceTranscriptRenderContext;
-  }): ReactNode {
-    return (
-      <TranscriptBlockView
-        key={block.id}
-        block={block}
-        cwd={cwd}
-      />
-    );
-  }
-
-  function conversationTurnAssistantCopyText(turn: ConversationTurnViewModel): string {
-    return turn.blocks
-      .flatMap((block) => {
-        if (block.kind === "coordinator_message") {
-          const body = conversationCoordinatorDisplayBody(turn, block.message, block.phase, t).trim();
-          return body ? [body] : [];
-        }
-        if (block.kind === "operation") {
-          return [block.operationCell.title];
-        }
-        return block.display.map((line) => line.text);
-      })
-      .join("\n\n")
-      .trim();
-  }
-
-  function channelMessageToActivityItem(message: ChannelMessage): ChannelActivityItem {
-    return {
-      id: `message:${message.id}`,
-      kind: "message",
-      createdAt: message.createdAt,
-      record: message,
-      category: "message",
-      attention: message.status === "blocked" ? "blocked" : message.status === "failed" ? "failed" : message.status === "pending" ? "pending" : "none",
-      searchText: message.body.toLowerCase(),
-    };
-  }
-
-  function renderMessageFeedActivityItem(item: ChannelActivityItem): ReactNode {
-    if (item.kind === "message") {
-      const message = item.record;
-      const plainChatMessage = message.kind === "message" || message.kind === "ai_reply";
-      const pendingAiReply = message.kind === "ai_reply" && message.status === "pending";
-      const pendingAiReplyBody = pendingAiReply && !message.body.trim() ? t("Thinking...") : message.body;
-      const executionProposals = (executionProposalsByMessageId.get(message.id) ?? [])
-        .filter((proposal) => auditActivityVisible || !proposalShouldHideInDefaultFeed(proposal, channelWorkflows));
-      const messageUsedMemoryEvents = filterUsedMemoryEventsByResponse(usedMemoryEvents, message.id);
-      const usedMemorySummary = messageUsedMemoryEvents.length > 0 ? (
-        <UsedMemorySummary compact events={messageUsedMemoryEvents} memoryById={memoryById} />
-      ) : undefined;
-      const messageFileRefs = message.fileRefs ?? [];
-      const nonChatAction = message.linkedTaskId
-        ? activityActionRow(item.id, <code>{message.linkedTaskId}</code>)
-        : activityActionRow(item.id);
-      if (plainChatMessage) {
-        return (
-          <div className="message-group">
-            <MessageRow
-              className={message.status === "blocked" ? "channel-message-row blocked" : "channel-message-row"}
-              authorType={message.authorType}
-              avatar={renderChannelMessageAvatar(message)}
-              authorName={messageAuthorLabel(message, teammateOptions, t("Deleted teammate"), localUserDisplayName, allLocalTeammateById)}
-              createdAtLabel={formatDateTime(message.createdAt)}
-              bodyNode={(
-                <div className={pendingAiReply ? "message-body-shell message-body-with-spinner" : "message-body-shell"}>
-                  {pendingAiReply ? <Loader2 className="message-pending-spinner spin" size={13} /> : null}
-                  <MessageBodyRenderer text={pendingAiReplyBody} cwd={cwd} compact streaming={pendingAiReply} />
-                </div>
-              )}
-              attachmentsNode={renderChannelMessageAssets(message.attachmentIds, messageFileRefs, message.channelId)}
-              evidenceNode={(messageUsedMemoryEvents.length > 0 || message.webEvidence) ? (
-                <MessageEvidencePanel
-                  memoryContent={usedMemorySummary}
-                  memorySummary={messageUsedMemoryEvents.length > 0 ? t("Used memory") : undefined}
-                  webEvidence={message.webEvidence}
-                />
-              ) : null}
-              actionsNode={message.authorType === "ai-teammate" ? renderChannelAiMessageActions(message, message.body) : null}
-            />
-            {executionProposals.map((proposal) => (
-              <ChannelExecutionProposalCard
-                key={proposal.id}
-                proposal={proposal}
-                assigneeLabel={teammateLabel(proposal.assigneeTeammateId, teammateOptions, t("Deleted teammate"))}
-                teammates={teammateOptions}
-                linkedRun={proposal.linkedRunId ? runById.get(proposal.linkedRunId) : undefined}
-                linkedWorkflow={proposal.linkedWorkflowId ? channelWorkflows.find((workflow) => workflow.id === proposal.linkedWorkflowId) : undefined}
-                activeRunId={activeRunId}
-                latestStatus={latestStatus}
-                onConfirm={() => onConfirmExecutionProposal(proposal)}
-                onCancel={() => onCancelExecutionProposal(proposal)}
-                onUpdate={onUpdateExecutionProposal}
-                onOpenRun={openRunInPanel}
-              />
-            ))}
-          </div>
-        );
+  function handleChannelComposerSubmit(): void {
+    if (activeConversationRun) {
+      if (composerHasSendableContent) {
+        void submitChannelRunGuidanceFromDraft();
+        return;
       }
-      return (
-        <div className="message-group">
-          <MessageBubble
-            tone={message.status === "blocked" ? "chat-blocked" : plainChatMessage ? "chat" : "system"}
-            side={plainChatMessage && message.authorType === "local-user" ? "end" : "start"}
-            avatar={renderChannelMessageAvatar(message)}
-            author={messageAuthorLabel(message, teammateOptions, t("Deleted teammate"), localUserDisplayName, allLocalTeammateById)}
-            tag={message.kind === "task_link" ? "Task" : undefined}
-            time={formatDateTime(message.createdAt)}
-            body={pendingAiReplyBody}
-            pending={pendingAiReply}
-            metaAction={plainChatMessage ? (
-              <button className="message-reply-button" type="button" onClick={() => openThreadForMessage(message)} aria-label={t("Reply in topic")} data-tooltip={t("Reply in topic")}>
-                <Reply size={11} />
-              </button>
-            ) : undefined}
-            action={plainChatMessage ? usedMemorySummary : nonChatAction}
-          />
-          {executionProposals.map((proposal) => (
-            <ChannelExecutionProposalCard
-              key={proposal.id}
-              proposal={proposal}
-              assigneeLabel={teammateLabel(proposal.assigneeTeammateId, teammateOptions, t("Deleted teammate"))}
-              teammates={teammateOptions}
-              linkedRun={proposal.linkedRunId ? runById.get(proposal.linkedRunId) : undefined}
-              linkedWorkflow={proposal.linkedWorkflowId ? channelWorkflows.find((workflow) => workflow.id === proposal.linkedWorkflowId) : undefined}
-              activeRunId={activeRunId}
-              latestStatus={latestStatus}
-              onConfirm={() => onConfirmExecutionProposal(proposal)}
-              onCancel={() => onCancelExecutionProposal(proposal)}
-              onUpdate={onUpdateExecutionProposal}
-              onOpenRun={openRunInPanel}
-            />
-          ))}
-        </div>
-      );
+      onCancelActiveRun(activeConversationRun);
+      return;
     }
-    if (item.kind === "decision") {
-      const decision = item.record;
-      return (
-        <MessageBubble
-          tone="protocol"
-          avatar={<AvatarInitial label="D" tone="violet" />}
-          author={t("Decision log")}
-          tag={decision.status}
-          time={formatDateTime(decision.createdAt)}
-          body={`${decision.title}: ${decision.decision}`}
-          action={
-            activityActionRow(item.id, <>
-              <button className="secondary-button compact-button" type="button" onClick={() => onSupersedeDecision(decision)}>
-                <FileCheck2 size={14} />
-                {t("Supersede")}
-              </button>
-              <button className="secondary-button compact-button" type="button" onClick={() => onRejectDecision(decision)}>
-                <CircleAlert size={14} />
-                {t("Reject")}
-              </button>
-              <button className="secondary-button compact-button" type="button" onClick={revealReviewInConversation}>
-                <CheckCircle2 size={14} />
-                {t("Review source")}
-              </button>
-            </>)
-          }
-        />
-      );
-    }
-    if (item.kind === "handoff") {
-      const handoff = item.record;
-      const handoffWorkflow = channelWorkflows.find((workflow) => workflow.sourceHandoffId === handoff.id);
-      return (
-        <MessageBubble
-          tone="protocol"
-          avatar={<AvatarInitial label="H" tone="teal" />}
-          author={t("Handoff")}
-          tag={handoff.status}
-          time={formatDateTime(handoff.createdAt)}
-          body={`${handoff.fromParticipantLabel} -> ${handoff.toParticipantLabel}: ${handoff.reason}`}
-          action={
-            activityActionRow(item.id, <>
-              <button className="secondary-button compact-button" type="button" onClick={() => onStartWorkflowFromHandoff(handoff)} disabled={Boolean(handoffWorkflow)}>
-                <Play size={14} />
-                {handoffWorkflow ? t("Workflow started") : t("Start workflow")}
-              </button>
-              <button className="secondary-button compact-button" type="button" onClick={() => onUpdateHandoffStatus(handoff, "accepted")}>
-                {t("Accept")}
-              </button>
-              <button className="secondary-button compact-button" type="button" onClick={() => onUpdateHandoffStatus(handoff, "completed")}>
-                {t("Complete")}
-              </button>
-              <button className="secondary-button compact-button" type="button" onClick={revealReviewInConversation}>
-                <CheckCircle2 size={14} />
-                {t("Review source")}
-              </button>
-            </>)
-          }
-        />
-      );
-    }
-    if (item.kind === "workflow") {
-      const workflow = item.record;
-      const steps = channelWorkflowSteps.filter((step) => step.workflowId === workflow.id);
-      const progressModel = workflowProgressByWorkflowId.get(workflow.id);
-      if (progressModel && !auditActivityVisible) {
-        const workCell = conversationWorkCellByWorkflowId.get(workflow.id);
-        if (!workCell) {
-          return null;
-        }
-        const detailsKey = workflowWorkCellDetailsCacheKey(workflow.id);
-        return (
-          <ConversationWorkCell
-            model={workCell}
-            cwd={cwd}
-            detailsState={conversationWorkCellDetailsByKey[detailsKey] ?? { status: "not_loaded" }}
-            onOpenRun={workCell.anchorRunId.startsWith("workflow:") ? undefined : openRunInPanel}
-            onLoadDetails={loadWorkflowWorkCellDetails}
-            loadPreview={loadPreviewContent}
-            renderAgentAvatar={renderConversationAgentAvatar}
-          />
-        );
-      }
-      return (
-        <MessageBubble
-          tone="runtime"
-          avatar={<AvatarInitial label="W" tone="violet" />}
-          author={t("Workflow")}
-          tag={workflow.status}
-          time={formatDateTime(workflow.updatedAt)}
-          body={`${workflow.title}: ${workflow.objective}`}
-          action={
-            activityActionRow(item.id, <>
-              <small>{t("{count} steps", { count: steps.length })}</small>
-              {workflow.status === "succeeded" ? (
-                <WorkflowFinalSummary
-                  workflow={workflow}
-                  steps={steps}
-                  artifactsByRun={channelArtifactsByRun}
-                />
-              ) : null}
-              <button
-                className="secondary-button compact-button"
-                type="button"
-                onClick={() => onOrchestrateWorkflow(workflow)}
-                disabled={orchestratingWorkflowId === workflow.id || !workflowCanAdvance(workflow.status)}
-              >
-                {orchestratingWorkflowId === workflow.id ? <Loader2 className="spin" size={14} /> : <Play size={14} />}
-                {t("Advance")}
-              </button>
-              <button
-                className="secondary-button compact-button"
-                type="button"
-                onClick={() => onCancelWorkflow(workflow)}
-                disabled={orchestratingWorkflowId === workflow.id || !workflowCanCancel(workflow.status)}
-              >
-                <Square size={14} />
-                {t("Cancel")}
-              </button>
-              <button className="secondary-button compact-button" type="button" onClick={revealReviewInConversation}>
-                <CheckCircle2 size={14} />
-                {t("Review source")}
-              </button>
-            </>)
-          }
-        />
-      );
-    }
-    if (item.kind === "workflow-step") {
-      const step = item.record;
-      return (
-        <MessageBubble
-          tone="runtime"
-          avatar={<AvatarInitial label="S" tone="teal" />}
-          author={t("Workflow step")}
-          tag={step.status}
-          time={formatDateTime(step.updatedAt)}
-          body={`${step.title}: ${step.prompt}`}
-          action={
-            step.blocker ? (
-              activityActionRow(item.id, <>
-                <div className="provider-run-notice compact">
-                  <CircleAlert size={14} />
-                  <span>{step.blocker}</span>
-                </div>
-                <button className="secondary-button compact-button" type="button" onClick={() => onRetryWorkflowStep(step)} disabled={runningWorkflowStepId === step.id || step.status !== "blocked"}>
-                  {runningWorkflowStepId === step.id ? <Loader2 className="spin" size={14} /> : <RefreshCw size={14} />}
-                  {t("Retry")}
-                </button>
-                <button className="secondary-button compact-button" type="button" onClick={revealReviewInConversation}>
-                  <CheckCircle2 size={14} />
-                  {t("Review source")}
-                </button>
-              </>)
-            ) : step.taskId ? (
-              activityActionRow(item.id, <>
-                <span>{t("Task linked")}</span>
-                <button className="secondary-button compact-button" type="button" onClick={revealReviewInConversation}>
-                  <CheckCircle2 size={14} />
-                  {t("Review source")}
-                </button>
-              </>)
-            ) : (
-              activityActionRow(item.id, (
-                <button className="secondary-button compact-button" type="button" onClick={revealReviewInConversation}>
-                  <CheckCircle2 size={14} />
-                  {t("Review source")}
-                </button>
-              ))
-            )
-          }
-        />
-      );
-    }
-    if (item.kind === "task") {
-      const task = item.record;
-      return (
-        <MessageBubble
-          tone="work"
-          avatar={<AvatarInitial label="T" tone="orange" />}
-          author={t("Task event")}
-          tag={task.status}
-          time={formatDateTime(task.updatedAt)}
-          body={t("Task {title} is {status}.", { title: task.title, status: task.status })}
-          action={
-            activityActionRow(item.id, (
-              <button className="secondary-button compact-button" type="button" onClick={() => revealTaskFromActivity(task.id)}>
-                <SquareTerminal size={14} />
-                {t("Show in transcript")}
-              </button>
-            ))
-          }
-        />
-      );
-    }
-    if (item.kind === "run") {
-      const run = item.record;
-      const workCell = run.threadId ? conversationWorkCellByThreadId.get(run.threadId) : undefined;
-      if (workCell) {
-        if (workCell.anchorRunId !== run.id) {
-          return null;
-        }
-        return (
-          <ConversationWorkCell
-            model={workCell}
-            cwd={cwd}
-            detailsState={conversationWorkCellDetailsByKey[conversationWorkCellDetailsCacheKey(workCell.threadId)] ?? { status: "not_loaded" }}
-            onOpenRun={openRunInPanel}
-            onLoadDetails={loadConversationWorkCellDetails}
-            loadPreview={loadPreviewContent}
-            renderAgentAvatar={renderConversationAgentAvatar}
-          />
-        );
-      }
-      const taskTitle = item.task?.title ?? readRunTitle(run);
-      return (
-        <MessageBubble
-          tone="work"
-          avatar={<AvatarInitial label="R" tone="violet" />}
-          author={t("Run event")}
-          tag={run.status}
-          time={formatDateTime(run.endedAt ?? run.startedAt ?? run.updatedAt)}
-          body={t("Run for {title} is {status}.", { title: taskTitle, status: run.status })}
-          action={
-            activityActionRow(item.id, (
-              <button className="secondary-button compact-button" type="button" onClick={() => revealRunFromActivity(run.id)}>
-                <History size={14} />
-                {t("Show in transcript")}
-              </button>
-            ))
-          }
-        />
-      );
-    }
-    if (item.kind === "approval") {
-      const approval = item.record;
-      const approvalStatus = effectiveApprovalStatus(approval);
-      return (
-        <MessageBubble
-          tone="approval"
-          avatar={<AvatarInitial label="A" tone="teal" />}
-          author={t("Approval event")}
-          tag={approvalStatus}
-          time={formatDateTime(approval.resolvedAt ?? approval.createdAt)}
-          body={t("{title} is {status}.", { title: approval.title, status: approvalStatus })}
-          action={
-            activityActionRow(item.id, (
-              <button className="secondary-button compact-button" type="button" onClick={() => openApprovalDetail(approval)}>
-                <CheckCircle2 size={14} />
-                {t("Open approval")}
-              </button>
-            ))
-          }
-        />
-      );
-    }
-    if (item.kind === "state-transition") {
-      const transition = item.record;
-      return (
-        <MessageBubble
-          tone="runtime"
-          avatar={<AvatarInitial label="S" tone="violet" />}
-          author={t("State change")}
-          tag={transition.entityType}
-          time={formatDateTime(transition.createdAt)}
-          body={t("{entityType} {entityId}: {fromStatus} -> {toStatus} via {event}.", {
-            entityType: transition.entityType,
-            entityId: transition.entityId,
-            fromStatus: transition.fromStatus,
-            toStatus: transition.toStatus,
-            event: transition.event,
-          })}
-          action={
-            activityActionRow(item.id, (
-              <button
-                className="secondary-button compact-button"
-                type="button"
-                onClick={() => {
-                  if (transition.entityType === "task") {
-                    revealTaskFromActivity(transition.entityId);
-                  } else if (transition.entityType === "run") {
-                    revealRunFromActivity(transition.entityId);
-                  } else if (transition.entityType === "approval") {
-                    openApprovalDetail(approvals.find((approval) => approval.id === transition.entityId));
-                  } else {
-                    revealReviewInConversation();
-                  }
-                }}
-              >
-                {transition.entityType === "task" ? <SquareTerminal size={14} /> : transition.entityType === "run" ? <History size={14} /> : <Workflow size={14} />}
-                {t("Open event")}
-              </button>
-            ))
-          }
-        />
-      );
-    }
-    const summary = item.record;
-    return (
-      <MessageBubble
-        tone="protocol"
-        avatar={<AvatarInitial label="C" tone="orange" />}
-        author={t("Context summary")}
-        tag={summary.targetType}
-        time={formatDateTime(summary.updatedAt)}
-        body={summary.summary}
-        action={
-          activityActionRow(item.id, <>
-            <button className="secondary-button compact-button" type="button" onClick={() => onCreateTaskFromContextSummary(summary)}>
-              <Plus size={14} />
-              {t("Create task")}
-            </button>
-            <button className="secondary-button compact-button" type="button" onClick={() => openContextSummaryInConversationDetail(summary)}>
-              <CheckCircle2 size={14} />
-              {t("Review source")}
-            </button>
-          </>)
-        }
-      />
-    );
-  }
-
-  function renderMessageFeedItem(feedItem: MessageFeedItem | undefined): ReactNode {
-    if (!feedItem) {
-      return null;
-    }
-    if (feedItem.kind === "older-loader") {
-      return (
-        <div className="message-feed-loader-row" role="status">
-          {channelMessagesLoadingOlder ? <Loader2 className="spin" size={14} /> : <ChevronUp size={14} />}
-          <span>{channelMessagesLoadingOlder ? t("Loading earlier messages...") : t("Scroll up to load earlier messages")}</span>
-        </div>
-      );
-    }
-    if (feedItem.kind === "pending-send") {
-      return renderPendingChannelSendPreview(feedItem.preview, feedItem.showSentMessage);
-    }
-    if (feedItem.kind === "turn") {
-      return renderConversationTurnItem(feedItem.turn);
-    }
-    return renderMessageFeedActivityItem(feedItem.item);
-  }
-
-  function renderPendingChannelSendPreview(preview: PendingChannelSendPreview, showSentMessage: boolean): ReactNode {
-    return (
-      <div className="message-group channel-pending-send-group">
-        {showSentMessage ? (
-          <MessageRow
-            className="channel-message-row pending-send"
-            authorType="local-user"
-            avatar={<UserProfileAvatar profile={userProfile} fallbackLabel={localUserDisplayName} />}
-            authorName={localUserDisplayName}
-            createdAtLabel={formatDateTime(preview.createdAt)}
-            bodyNode={(
-              <div className="message-body-shell">
-                <MessageBodyRenderer text={preview.body} cwd={cwd} compact />
-              </div>
-            )}
-            attachmentsNode={renderChannelMessageAssets(preview.attachmentIds, preview.fileRefs, preview.channelId)}
-          />
-        ) : null}
-        <div className="channel-send-thinking-row" role="status" aria-live="polite">
-          <Loader2 className="message-pending-spinner spin" size={13} />
-          <span>{t("Thinking...")}</span>
-        </div>
-      </div>
-    );
-  }
-
-  function renderChannelMessageAssets(
-    attachmentIds: readonly string[],
-    fileRefs: readonly ChannelMessageFileRef[] = [],
-    channelId: string = selectedChannelId,
-  ): ReactNode {
-    const attachments = attachmentIds
-      .map((id) => channelAttachmentById.get(id))
-      .filter((attachment): attachment is ChannelAttachment => Boolean(attachment));
-    if (attachments.length === 0 && fileRefs.length === 0) {
-      return null;
-    }
-    return (
-      <>
-        <ConversationAttachmentStrip
-          loadPreview={loadPreviewContent}
-          attachments={attachments.map((attachment) => ({
-            id: attachment.id,
-            label: attachment.fileName,
-            meta: formatBytes(attachment.sizeBytes),
-            href: attachmentContentUrl(attachment),
-            target: "_blank",
-            rel: "noreferrer",
-            icon: attachment.kind === "image" ? <ImageIcon size={13} /> : <FileText size={13} />,
-            previewRequest: attachmentCanPreview(attachment) ? {
-              source: "attachment",
-              cwd,
-              attachmentId: attachment.id,
-              scope: "channel",
-              channelId,
-            } : undefined,
-          }))}
-        />
-        {fileRefs.length > 0 ? (
-          <div className="conversation-attachment-strip channel-file-ref-strip" aria-label={t("Workspace file references")}>
-            {fileRefs.map((fileRef, index) => (
-              <FileRefChip
-                key={`${fileRef.path}:${fileRef.line ?? ""}:${index}`}
-                icon={<FileText size={13} />}
-                label={fileRef.label ?? fileRef.path}
-                meta={fileRef.line !== undefined ? `:${fileRef.line}` : undefined}
-              />
-            ))}
-          </div>
-        ) : null}
-      </>
-    );
+    void sendMessage();
   }
 
   const channelComposerPermissionPreset = permissionPreset ?? inferPermissionPreset(permissionMode);
   const channelComposerPermissionLocked = Boolean(activeConversationRun) || sendState === "sending" || composerBusy || Boolean(runGuidanceSubmitting) || isCancellingRun;
   const channelComposer = (
-    <ConversationComposerShell
-      surface="channel"
-      density="docked"
-      className="channel-composer"
-      ariaLabel={t("Channel composer")}
-      leftToolsAriaLabel={t("Message tools")}
+    <ChannelComposer
       statusNode={channelActiveStatusStrip}
-      guidanceNode={activeConversationRun || openRunGuidanceInterventions.length > 0 ? (
-        <>
-          <ConversationGuidanceStrip
-            title={activeConversationRun ? t("Run guidance") : t("Queued guidance")}
-            description={activeConversationRun ? t("Type guidance in the message box and press Enter to queue it.") : t("Guidance is queued.")}
-            submitting={runGuidanceSubmitting}
-            items={runGuidanceItems}
-          />
-          {runGuidanceError ? (
-            <div className="inline-error compact-inline-error">
-              <CircleAlert size={14} />
-              {runGuidanceError}
-            </div>
-          ) : null}
-          {runGuidanceLoading ? (
-            <div className="composer-status-row" aria-live="polite">
-              <Loader2 className="spin" size={13} />
-              <span>{t("Loading guidance...")}</span>
-            </div>
-          ) : null}
-        </>
-      ) : null}
-      approvalNode={(
-        <InlineApprovalStrip
-        approvals={inlineApprovalViews}
-        resolvingApprovals={resolvingApprovals}
-        onResolve={onResolveApproval}
-        onOpenApproval={(approvalId) => openApprovalDetail(approvals.find((approval) => approval.id === approvalId))}
-      />
-      )}
+      activeRun={Boolean(activeConversationRun)}
+      composerBusy={composerBusy}
+      composerDragActive={composerDragActive}
+      composerDropZoneStyle={composerDropZoneStyle}
+      composerFeedback={composerFeedback}
+      composerHasSendableContent={composerHasSendableContent}
+      composerShortcutTitle={composerShortcutTitle}
+      composerSlashCommandActive={composerSlashCommandActive}
+      composerSlashTargetLabel={composerSlashTargetLabel}
+      executableSlashCommandId={composerSlashCommandActive ? composerSlashIntent.commandId : undefined}
       dropZoneClassName={composerDragActive ? "active" : undefined}
-      dropZoneStyle={composerDropZoneStyle}
+      inputParts={composerInputParts}
+      inputRef={composerInputRef}
+      inlineApprovalViews={inlineApprovalViews}
+      isCancellingRun={isCancellingRun}
+      mentionActiveIndex={mentionActiveIndex}
+      mentionPicker={mentionPicker}
+      mentionPickerOptions={mentionPickerOptions}
+      pendingAttachments={pendingAttachments}
+      pendingMessageAssetsVisible={pendingMessageAssetsVisible}
+      permissionLocked={channelComposerPermissionLocked}
+      permissionPreset={channelComposerPermissionPreset}
+      channelTeammateIds={channelTeammateIds}
+      resolvingApprovals={resolvingApprovals}
+      runGuidanceError={runGuidanceError}
+      runGuidanceItems={runGuidanceItems}
+      runGuidanceLoading={runGuidanceLoading}
+      runGuidanceSubmitting={runGuidanceSubmitting}
+      selectedChannelId={selectedChannelId}
+      sendError={sendError}
+      sendState={sendState}
+      showGuidance={Boolean(activeConversationRun) || openRunGuidanceInterventions.length > 0}
+      slashActiveIndex={slashActiveIndex}
+      slashCommandPickerOptions={slashCommandPickerOptions}
+      slashPicker={slashPicker}
+      submitDisabled={channelComposerSubmitDisabled}
+      submitLabel={channelComposerSubmitLabel}
+      submitTitle={channelComposerSubmitTitle}
+      value={messageDraft}
+      formatBytes={formatBytes}
+      onAttachFiles={attachFiles}
+      onCommitMention={commitMention}
+      onCommitSlashCommand={commitSlashCommand}
+      onDismissSendError={() => {
+        setSendState("idle");
+        setSendError("");
+      }}
       onDragOver={handleComposerDragOver}
       onDragLeave={handleComposerDragLeave}
       onDrop={handleComposerDrop}
-      resizeHandleNode={(
-        <button
-          className="composer-resize-handle"
-          type="button"
-          aria-label={t("Resize composer")}
-          title={t("Resize composer")}
-          onPointerDown={handleComposerResizePointerDown}
-          onPointerMove={handleComposerResizePointerMove}
-          onPointerUp={handleComposerResizePointerEnd}
-          onPointerCancel={handleComposerResizePointerEnd}
-        >
-          <span aria-hidden="true" />
-        </button>
-      )}
-      previewNode={pendingMessageAssetsVisible ? (
-          <div className="pending-assets composer-preview-strip" aria-label={t("Pending message assets")}>
-            {pendingAttachments.map((item) => (
-              <div key={item.localId} className={`composer-preview-card ${item.previewUrl ? "image" : "file"} ${item.state}`}>
-                {item.previewUrl ? (
-                  <img className="composer-preview-thumbnail" src={item.previewUrl} alt={item.fileName} />
-                ) : (
-                  <span className="composer-preview-file-icon" aria-hidden="true">
-                    <FileText size={17} />
-                  </span>
-                )}
-                <span className="composer-preview-body">
-                  <strong title={item.fileName}>{item.fileName}</strong>
-                  <small>{item.error ?? `${t(pendingAssetLabel(item.state))} · ${formatBytes(item.attachment?.sizeBytes ?? item.sizeBytes)}`}</small>
-                </span>
-                {item.state === "uploading" ? <Loader2 className="composer-preview-state-icon spin" size={13} /> : null}
-                <button className="composer-preview-remove" type="button" onClick={() => removePendingAttachment(item.localId)} aria-label={t("Remove pending attachment")}>
-                  <X size={13} />
-                </button>
-              </div>
-            ))}
-          </div>
-        ) : null}
-      inputNode={(
-        <TokenizedComposerInput
-          ref={composerInputRef}
-          value={messageDraft}
-          parts={composerInputParts}
-          onChange={handleComposerTextChange}
-          onKeyDown={handleComposerKeyDown}
-          onPaste={handleComposerPaste}
-          onSelect={updateMentionPicker}
-          placeholder={t("Message this channel or @ an AI teammate")}
-          ariaLabel={t("Message this channel or @ an AI teammate")}
-          title={composerShortcutTitle}
-          executableSlashCommandId={composerSlashCommandActive ? composerSlashIntent.commandId : undefined}
-          executableSlashTargetLabel={composerSlashTargetLabel}
-        />
-      )}
-      mentionPickerNode={mentionPicker ? (
-          <div className="mention-picker-popover" role="listbox" aria-label={t("Mention teammate")}>
-            {mentionPickerOptions.length > 0 ? mentionPickerOptions.map((option, index) => (
-              <button
-                key={option.id}
-                type="button"
-                role="option"
-                aria-selected={index === Math.min(mentionActiveIndex, mentionPickerOptions.length - 1)}
-                className={index === Math.min(mentionActiveIndex, mentionPickerOptions.length - 1) ? "mention-suggestion active" : "mention-suggestion"}
-                onMouseDown={(event) => event.preventDefault()}
-                onClick={() => commitMention(option)}
-              >
-                <span>@{option.label}</span>
-                {channelTeammateIds.has(option.id) ? <small>{t("Channel teammate")}</small> : <small>{t("Workspace teammate")}</small>}
-              </button>
-            )) : (
-              <span className="mention-suggestion empty">{t("No matching teammates")}</span>
-            )}
-          </div>
-        ) : null}
-      slashPickerNode={!mentionPicker && slashPicker ? (
-          <div className="mention-picker-popover command-picker-popover" role="listbox" aria-label={t("Slash command")}>
-            {slashCommandPickerOptions.length > 0 ? slashCommandPickerOptions.map((option, index) => (
-              <button
-                key={option.id}
-                type="button"
-                role="option"
-                aria-selected={index === Math.min(slashActiveIndex, slashCommandPickerOptions.length - 1)}
-                className={index === Math.min(slashActiveIndex, slashCommandPickerOptions.length - 1) ? "mention-suggestion command active" : "mention-suggestion command"}
-                onMouseDown={(event) => event.preventDefault()}
-                onClick={() => commitSlashCommand(option)}
-              >
-                <span>/{option.id}</span>
-                <small>{option.label}</small>
-              </button>
-            )) : (
-              <span className="mention-suggestion empty">{t("No matching commands")}</span>
-            )}
-          </div>
-        ) : null}
-      dropHintNode={composerDragActive ? (
-          <div className="composer-drop-hint">
-            <FileText size={16} />
-            <span>{t("Drop files to attach")}</span>
-          </div>
-        ) : null}
-      leftToolsNode={(
-        <>
-          <label className="icon-button composer-tool-button composer-attach-button" aria-label={t("Attach files")} title={t("Attach files")}>
-            <Plus size={17} />
-            <input
-              type="file"
-              multiple
-              hidden
-              accept=".png,.jpg,.jpeg,.webp,.gif,.pdf,.docx,.xlsx,.pptx,.txt,.md,.csv,.json,.log"
-              onChange={(event) => {
-                if (event.target.files) {
-                  void attachFiles(event.target.files);
-                }
-                event.target.value = "";
-              }}
-            />
-          </label>
-          <button className="icon-button composer-tool-button" type="button" onClick={insertMentionTrigger} disabled={!selectedChannelId || composerBusy} aria-label={t("Mention teammate")} title={t("Mention teammate")}>
-            <AtSign size={16} />
-          </button>
-          <ComposerPermissionMenu
-            preset={channelComposerPermissionPreset}
-            options={conversationPermissionPresetMenuOptions(t)}
-            disabled={channelComposerPermissionLocked}
-            disabledReason={t("Permission is locked while this channel run or message is active.")}
-            fullAccessConfirmationMessage={t("Full access can allow broad local file, network, and tool access for the next run. Continue?")}
-            onPresetChange={(preset) => onPermissionModeChange(permissionModeForPreset(preset))}
-          />
-        </>
-      )}
-      rightToolsNode={(
-        <button
-          className="primary-button composer-send-button"
-          type="button"
-          onClick={() => {
-            if (activeConversationRun) {
-              if (composerHasSendableContent) {
-                void submitChannelRunGuidanceFromDraft();
-                return;
-              }
-              onCancelActiveRun(activeConversationRun);
-              return;
-            }
-            void sendMessage();
-          }}
-          disabled={channelComposerSubmitDisabled}
-          aria-label={channelComposerSubmitLabel}
-          title={channelComposerSubmitTitle}
-        >
-          {activeConversationRun
-            ? composerHasSendableContent
-              ? runGuidanceSubmitting === "queue_followup" ? <Loader2 className="spin" size={15} /> : <Send size={15} />
-              : isCancellingRun ? <Loader2 className="spin" size={15} /> : <Square size={15} />
-            : sendState === "sending" ? <Loader2 className="spin" size={15} /> : composerSlashCommandActive ? <ListChecks size={15} /> : <Send size={15} />}
-        </button>
-      )}
-      feedbackNode={(
-        <>
-          {composerFeedback ? (
-            <div key={composerFeedback.id} className={`composer-status-row ${composerFeedback.tone}`} role="status" aria-live="polite">
-              {composerFeedback.tone === "success"
-                ? <CheckCircle2 size={14} />
-                : composerFeedback.tone === "error"
-                  ? <CircleAlert size={14} />
-                  : <Info size={14} />}
-              <span>{composerFeedback.message}</span>
-            </div>
-          ) : null}
-          {sendState === "failed" ? (
-            <div className="composer-status-list" aria-live="polite">
-              <div className="composer-status-row failed">
-                <CircleAlert size={14} />
-                <span>{t("Message failed")}{sendError ? `: ${sendError}` : ""}</span>
-                <button className="secondary-button compact-button" type="button" onClick={() => {
-                  void sendMessage();
-                }}>
-                  <RefreshCw size={13} />
-                  {t("Retry")}
-                </button>
-                <button className="secondary-button compact-button" type="button" onClick={() => {
-                  setSendState("idle");
-                  setSendError("");
-                }}>
-                  {t("Dismiss")}
-                </button>
-              </div>
-            </div>
-          ) : null}
-        </>
-      )}
+      onInputChange={handleComposerTextChange}
+      onInputKeyDown={handleComposerKeyDown}
+      onInputPaste={handleComposerPaste}
+      onInputSelect={updateMentionPicker}
+      onInsertMentionTrigger={insertMentionTrigger}
+      onOpenApproval={(approvalId) => openApprovalDetail(approvals.find((approval) => approval.id === approvalId))}
+      onPermissionPresetChange={(preset) => onPermissionModeChange(permissionModeForPreset(preset))}
+      onRemovePendingAttachment={removePendingAttachment}
+      onResizePointerCancel={handleComposerResizePointerEnd}
+      onResizePointerDown={handleComposerResizePointerDown}
+      onResizePointerMove={handleComposerResizePointerMove}
+      onResizePointerUp={handleComposerResizePointerEnd}
+      onResolveApproval={onResolveApproval}
+      onRetrySend={() => {
+        void sendMessage();
+      }}
+      onSubmit={handleChannelComposerSubmit}
     />
   );
 
-  const channelTeammateManager = (
-    <section className="channel-settings-card channel-teammate-manager" aria-label={t("Channel teammates")}>
-      <div className="channel-settings-section-head">
-        <div>
-          <strong>{t("Current channel teammates")}</strong>
-          <small>
-            {channelTeammateMembershipsLoading
-              ? t("Loading teammates...")
-              : t("{count} teammates collaborate in this channel. Manage add and remove teammates here.", { count: channelTeammates.length })}
-          </small>
-        </div>
-      </div>
-      {channelTeammates.length === 0 ? (
-        <div className="client-empty-state channel-teammate-empty">
-          <MessageSquare size={18} />
-          <span>{localTeammates.length === 0 ? t("Create a workspace teammate before assigning channel members.") : t("No teammates in this channel")}</span>
-        </div>
-      ) : (
-        <div className="channel-teammate-list" role="list">
-          {channelTeammates.map(({ teammate }) => {
-            const saving = channelTeammateSavingId === teammate.id;
-            return (
-              <article key={teammate.id} className="channel-teammate-chip" role="listitem">
-                <div
-                  className="channel-teammate-chip-main"
-                >
-                  <TeammateAvatarView teammate={teammate} cwd={cwd} compact />
-                  <strong>{teammate.displayName}</strong>
-                </div>
-                <button className="channel-teammate-remove-button" type="button" aria-label={t("Remove from channel")} title={t("Remove from channel")} onClick={() => void onRemoveChannelTeammate(teammate.id)} disabled={saving}>
-                  {saving ? <Loader2 className="spin" size={13} /> : <X size={13} />}
-                </button>
-              </article>
-            );
-          })}
-        </div>
-      )}
-      <div className="channel-teammate-add-row">
-        <label className="channel-teammate-select">
-          <select
-            aria-label={t("Add teammate")}
-            value={pendingChannelTeammateId}
-            disabled={!selectedChannelId || availableChannelTeammates.length === 0 || Boolean(channelTeammateSavingId)}
-            onChange={(event) => setPendingChannelTeammateId(event.target.value)}
-          >
-            <option value="">{availableChannelTeammates.length > 0 ? t("Select teammate to add") : t("No teammates available")}</option>
-            {availableChannelTeammates.map((teammate) => (
-              <option key={teammate.id} value={teammate.id}>{teammate.displayName}</option>
-            ))}
-          </select>
-        </label>
-        <button className="primary-button compact-button" type="button" onClick={addSelectedChannelTeammate} disabled={!pendingChannelTeammateId || Boolean(channelTeammateSavingId)}>
-          {channelTeammateSavingId === pendingChannelTeammateId ? <Loader2 className="spin" size={14} /> : <UserPlus size={14} />}
-          {t("Add")}
-        </button>
-        <button className="secondary-button compact-button" type="button" onClick={onOpenTeammates}>
-          <Plus size={14} />
-          {t("Open AI Teammates")}
-        </button>
-      </div>
-    </section>
-  );
-
-  const channelCouncilPanel = (
-    <section className="channel-settings-card channel-council-panel" aria-label={t("Channel AI councils")}>
-      <div className="channel-settings-section-head">
-        <span>
-          <UsersRound size={15} />
-          <strong>{t("AI Councils")}</strong>
-        </span>
-        <small>
-          {channelCouncilLoading || aiCouncilsLoading
-            ? t("Loading councils...")
-            : t("{count} council(s) attached", { count: attachedAiCouncils.length })}
-        </small>
-      </div>
-      {attachedAiCouncils.length === 0 ? (
-        <div className="client-empty-state channel-teammate-empty channel-council-empty">
-          <UsersRound size={18} />
-          <span>{aiCouncils.length === 0 ? t("No AI councils available") : t("No AI councils attached")}</span>
-        </div>
-      ) : (
-        <div className="channel-council-list" role="list">
-          {attachedAiCouncils.map((council) => {
-            const preferred = channelCouncilPolicy?.preferredCouncilId === council.id;
-            const memberCount = channelEffectiveCouncil?.councils
-              .find((item) => item.council.id === council.id)
-              ?.members.filter((item) => item.enabled && item.teammate && !isLingAgentTeammate(item.teammate)).length ?? 0;
-            const capacityLabel = aiCouncilCapacityLabel(council, t);
-            const healthLabels = aiCouncilHealthLabels(aiCouncilHealthReport, council.id, t);
-            return (
-              <article key={council.id} className={preferred ? "channel-council-card preferred" : "channel-council-card"} role="listitem">
-                <div className="channel-council-card-main">
-                  <span className="channel-council-icon" aria-hidden="true">
-                    <UsersRound size={16} />
-                  </span>
-                  <span>
-                    <strong>{council.displayName}</strong>
-                    <small>{t("{count} projected specialist(s)", { count: memberCount })}</small>
-                  </span>
-                </div>
-                <div className="context-packet muted" aria-label={t("Council boundaries")}>
-                  <span>{aiCouncilRoutingModeLabel(council.routingPolicy.defaultMode, t)}</span>
-                  {capacityLabel ? <span>{capacityLabel}</span> : null}
-                  {aiCouncilBoundaryLabels(council, t).map((label) => (
-                    <span key={label}>{label}</span>
-                  ))}
-                </div>
-                {healthLabels.length > 0 ? (
-                  <div className="context-packet muted" aria-label={t("Council health")}>
-                    {healthLabels.map((label) => (
-                      <span key={label}>{label}</span>
-                    ))}
-                  </div>
-                ) : null}
-                <div className="channel-council-actions">
-                  <button className="secondary-button compact-button" type="button" onClick={() => setPreferredChannelCouncil(council.id)} disabled={preferred || channelCouncilSaving}>
-                    {preferred ? <Check size={13} /> : <Pin size={13} />}
-                    {preferred ? t("Preferred") : t("Prefer")}
-                  </button>
-                  <button className="icon-button compact-icon-button" type="button" aria-label={t("Detach council")} title={t("Detach council")} onClick={() => removeChannelCouncil(council.id)} disabled={channelCouncilSaving}>
-                    {channelCouncilSaving ? <Loader2 className="spin" size={13} /> : <X size={13} />}
-                  </button>
-                </div>
-              </article>
-            );
-          })}
-        </div>
-      )}
-      <div className="channel-teammate-add-row channel-council-add-row">
-        <label className="channel-teammate-select">
-          <select
-            aria-label={t("Attach AI council")}
-            value={pendingChannelCouncilId}
-            disabled={!selectedChannelId || availableAiCouncils.length === 0 || channelCouncilSaving}
-            onChange={(event) => setPendingChannelCouncilId(event.target.value)}
-          >
-            <option value="">{availableAiCouncils.length > 0 ? t("Select AI council") : t("No councils available")}</option>
-            {availableAiCouncils.map((council) => (
-              <option key={council.id} value={council.id}>{council.displayName}</option>
-            ))}
-          </select>
-        </label>
-        <button className="primary-button compact-button" type="button" onClick={addSelectedChannelCouncil} disabled={!pendingChannelCouncilId || channelCouncilSaving}>
-          {channelCouncilSaving ? <Loader2 className="spin" size={14} /> : <Plus size={14} />}
-          {t("Attach")}
-        </button>
-        <button className="secondary-button compact-button" type="button" onClick={() => {
-          onRefreshAiCouncils();
-          onRefreshChannelCouncil();
-        }} disabled={aiCouncilsLoading || channelCouncilLoading}>
-          {aiCouncilsLoading || channelCouncilLoading ? <Loader2 className="spin" size={14} /> : <RefreshCw size={14} />}
-          {t("Refresh")}
-        </button>
-      </div>
-      {projectedCouncilSpecialists.length > 0 ? (
-        <div className="channel-council-projection" aria-label={t("Projected council specialists")}>
-          <strong>{t("Projected specialists")}</strong>
-          <div className="channel-council-specialist-list" role="list">
-            {projectedCouncilSpecialists.map((specialist) => {
-              const councilSource = specialist.sources.find((source) => source.kind === "council");
-              const sourceDetails = [councilSource?.councilDisplayName ?? t("AI council"), councilSource?.label ?? councilSource?.slotKey].filter(Boolean).join(" · ");
-              return (
-                <article key={specialist.teammateId} className="channel-council-specialist" role="listitem">
-                  <TeammateAvatarView teammate={specialist.teammate} cwd={cwd} compact />
-                  <span>
-                    <strong>{specialist.teammate.displayName}</strong>
-                    <small>{sourceDetails}</small>
-                  </span>
-                </article>
-              );
-            })}
-          </div>
-        </div>
-      ) : null}
-    </section>
-  );
-
-  const channelNotificationPanel = (
-    <section className="channel-settings-card channel-notification-panel" aria-label={t("Channel notifications")}>
-      <div className="channel-settings-section-head">
-        <span>
-          {channelNotificationLevel === "muted" ? <BellOff size={15} /> : <Bell size={15} />}
-          <strong>{t("Notifications")}</strong>
-        </span>
-        <small>{t(channelNotificationLevelLabel(channelNotificationLevel))}</small>
-      </div>
-      <div className="channel-notification-options" role="radiogroup" aria-label={t("Channel notifications")}>
-        {channelNotificationLevels.map((level) => (
-          <button
-            key={level}
-            className={channelNotificationLevel === level ? "channel-notification-option active" : "channel-notification-option"}
-            type="button"
-            role="radio"
-            aria-checked={channelNotificationLevel === level}
-            onClick={() => updateChannelNotificationLevel(level)}
-          >
-            <span>
-              {level === "muted" ? <BellOff size={14} /> : <Bell size={14} />}
-              <strong>{t(channelNotificationLevelLabel(level))}</strong>
-            </span>
-            <small>{t(channelNotificationLevelDescription(level))}</small>
-          </button>
-        ))}
-      </div>
-    </section>
-  );
-
   const channelHasChatContent = channelMessages.length > 0 || channelContextSummaries.length > 0;
-  const workflowAttentionProgressRows: readonly AttentionProgressRow[] = buildWorkflowAttentionProgressRows({
-    items: buildCollaborationProgressProjection({
-      cards: [...collaborationTaskCardByWorkflowId.values()],
-      t,
-      limit: 6,
-      scope: "active",
-    }),
+  const collaborationTaskCards = useMemo(
+    () => [...collaborationTaskCardByWorkflowId.values()],
+    [collaborationTaskCardByWorkflowId],
+  );
+  const channelProgressSummary = useChannelProgressSummary({
+    collaborationCards: collaborationTaskCards,
+    selectedTask,
+    latestRun,
+    pendingApprovalCount,
+    selectedApproval,
+    contextSummaries: channelContextSummaries,
+    workflowSteps: channelWorkflowSteps,
+    runningWorkflowStepId,
+    t,
+    onOpenTask: selectTask,
+    onOpenRun: openRunInPanel,
+    onOpenApproval: openApprovalDetail,
   });
-  const attentionProgressRowCandidates: readonly (AttentionProgressRow | undefined)[] = [
-    ...workflowAttentionProgressRows,
-    selectedTask && taskIsActiveProgressPopoverTask(selectedTask) ? {
-      id: "current-task",
-      icon: <SquareTerminal size={18} />,
-      tone: selectedTask.status === "blocked" ? "blocked" : selectedTask.status === "failed" ? "failed" : selectedTask.status === "done" ? "success" : selectedTask.status === "running" ? "running" : "neutral",
-      primary: selectedTask.title,
-      secondary: `${t("Current task")} · ${t(selectedTask.status)}`,
-      onOpen: () => selectTask(selectedTask.id),
-    } : undefined,
-    latestRun && runIsActiveProgressPopoverRun(latestRun) ? {
-      id: "latest-run",
-      icon: runProgressIcon(latestRun.status),
-      tone: runProgressTone(latestRun.status),
-      primary: `${t("Latest run")} · ${t(latestRun.status)}`,
-      secondary: readRunTitle(latestRun),
-      onOpen: () => openRunInPanel(latestRun.id),
-    } : undefined,
-    pendingApprovalCount > 0 ? {
-      id: "pending-approval",
-      icon: <ShieldCheck size={18} />,
-      tone: "waiting",
-      primary: t("Approval needed"),
-      secondary: t("{count} pending approvals", { count: pendingApprovalCount }),
-      onOpen: () => openApprovalDetail(selectedApproval),
-    } : undefined,
-  ];
-  const attentionProgressRows: readonly AttentionProgressRow[] = attentionProgressRowCandidates.filter((row): row is AttentionProgressRow => row !== undefined);
+  const attentionProgressRows = channelProgressSummary.attentionRows;
+  const activeProgressSourceSummary = channelProgressSummary.activeSourceSummary;
   const actionableGovernanceNotifications = useMemo(
     () => channelGovernanceNotifications
       .filter((notification) => notification.status !== "dismissed" && notification.status !== "resolved")
@@ -6369,16 +3973,6 @@ export function WorkspaceClientView({
       setGovernanceNotificationsOpen(false);
     }
   }, [governanceNotificationCount]);
-  const activeProgressSourceSummary = useMemo(
-    () => buildActiveProgressSourceSummary({
-      contextSummaries: channelContextSummaries,
-      workflowSteps: channelWorkflowSteps,
-      selectedTask,
-      runningWorkflowStepId,
-      t,
-    }),
-    [channelContextSummaries, channelWorkflowSteps, runningWorkflowStepId, selectedTask, t],
-  );
   function refreshChannelSettingsPage(): void {
     onRefreshChannels();
     onRefreshAiCouncils();
@@ -6435,6 +4029,52 @@ export function WorkspaceClientView({
     setEnvironmentCommitDialogOpen(false);
   }
 
+  function openChannelRenameDialog(): void {
+    if (!selectedChannel) {
+      return;
+    }
+    setChannelRenameName(selectedChannel.name);
+    setChannelRenameOpen(true);
+    setChannelMoreOpen(false);
+    setEnvironmentCommitDialogOpen(false);
+    setConversationDetailOverlay(undefined);
+    setProgressPopoverOpen(false);
+    setActivityToolsOpen(false);
+    setWorkspaceSettingsOpen(false);
+    setTeammateManagerOpen(false);
+    onChannelCreateOpenChange(false);
+  }
+
+  function closeChannelRenameDialog(): void {
+    if (channelRenameSaving) {
+      return;
+    }
+    setChannelRenameOpen(false);
+  }
+
+  async function submitChannelRename(event: FormEvent<HTMLFormElement>): Promise<void> {
+    event.preventDefault();
+    const nextName = channelRenameName.trim();
+    if (!selectedChannelId || !nextName || nextName === selectedChannel?.name || channelRenameSaving) {
+      return;
+    }
+
+    const nextForm = {
+      ...channelEditForm,
+      name: nextName,
+    };
+    setChannelRenameSaving(true);
+    onChannelEditFormChange(nextForm);
+    try {
+      await onSaveChannel(nextForm);
+      setChannelRenameOpen(false);
+    } catch {
+      // saveChannelEdit already publishes the user-facing error message.
+    } finally {
+      setChannelRenameSaving(false);
+    }
+  }
+
   function openRightDockPage(page: DockPageKind): void {
     setSidePanelView("context");
     setSidePanelOpen(true);
@@ -6445,12 +4085,12 @@ export function WorkspaceClientView({
     setEnvironmentCommitDialogOpen(false);
     setChannelMoreOpen(false);
     setActivityToolsOpen(false);
+    if (!progressPopoverCanFitMainLayout) {
+      setProgressPopoverOpen(false);
+    }
     setWorkspaceSettingsOpen(false);
     setTeammateManagerOpen(false);
-    setRightDockPageRequest((current) => ({
-      page,
-      nonce: (current?.nonce ?? 0) + 1,
-    }));
+    channelRightDock.requestPage(page);
   }
 
   function openSidePanelView(view: ChannelSidePanelView): void {
@@ -6467,6 +4107,9 @@ export function WorkspaceClientView({
     setProgressPopoverOpen(false);
     setChannelMoreOpen(false);
     setActivityToolsOpen(false);
+    if (!progressPopoverCanFitMainLayout) {
+      setProgressPopoverOpen(false);
+    }
     setWorkspaceSettingsOpen(false);
     setTeammateManagerOpen(false);
     if (view === "context") {
@@ -6479,14 +4122,7 @@ export function WorkspaceClientView({
   }
 
   function closeChannelRightDock(): void {
-    const pendingUnmountId = channelRightDockUnmountTimeoutRef.current;
-    if (pendingUnmountId !== undefined) {
-      globalThis.clearTimeout(pendingUnmountId);
-      channelRightDockUnmountTimeoutRef.current = undefined;
-    }
-    setChannelRightDockClosing(true);
-    setChannelRightDockRendered(true);
-    setChannelRightDockExpanded(false);
+    channelRightDock.close();
     setSidePanelOpen(false);
     setCreateTaskOpen(false);
   }
@@ -6520,118 +4156,6 @@ export function WorkspaceClientView({
     setWorkspaceSettingsOpen(false);
     setTeammateManagerOpen(false);
   }
-
-  const channelManagementPanel = (
-    <section className="channel-settings-card channel-management-panel" aria-label={t("Channel management")}>
-      <div className="channel-settings-section-head">
-        <span>
-          <SlidersHorizontal size={15} />
-          <strong>{t("Current channel")}</strong>
-        </span>
-        <small>{t("Provider, path, and runtime")}</small>
-      </div>
-      <div className="channel-options-grid">
-        <label className="field wide">
-          <span>{t("Run provider")}</span>
-          <select value={channelEditForm.defaultProviderPresetId} onChange={(event) => onChannelEditFormChange({ ...channelEditForm, defaultProviderPresetId: event.target.value })} disabled={providersLoading || providers.length === 0 || !selectedChannelId}>
-            <option value="">{t("Select provider preset")}</option>
-            <ProviderPresetOptions runnableProviders={taskReadyProviders} blockedProviders={setupChatProviders} />
-          </select>
-        </label>
-        <label className="field wide">
-          <span>{t("Name")}</span>
-          <input value={channelEditForm.name} onChange={(event) => onChannelEditFormChange({ ...channelEditForm, name: event.target.value })} disabled={!selectedChannelId} />
-        </label>
-        <label className="field wide">
-          <span>{t("Execution path")}</span>
-          <input value={channelEditForm.boundPath} onChange={(event) => onChannelEditFormChange({ ...channelEditForm, boundPath: event.target.value })} disabled={!selectedChannelId} />
-        </label>
-        {selectedChannelWorkspace ? (
-          <section className="channel-workspace-control field wide" aria-label={t("Channel workspace")}>
-            <div className="channel-workspace-control-head">
-              <span>
-                {channelWorkspaceModeIcon(selectedChannelWorkspace.mode, 15)}
-                <strong>{t("Workspace")}</strong>
-              </span>
-              <StatusBadge status={selectedChannelWorkspace.status === "ready" ? "done" : selectedChannelWorkspace.status === "missing" ? "blocked" : "todo"} />
-            </div>
-            <div className="channel-workspace-summary">
-              <strong>{t(channelWorkspaceModeLabel(selectedChannelWorkspace.mode))}</strong>
-              <small title={selectedChannelExecutionPath}>{shortWorkspacePath(selectedChannelExecutionPath, cwd)}</small>
-              {selectedChannelWorkspace.errorMessage ? <small className="danger-text">{selectedChannelWorkspace.errorMessage}</small> : null}
-            </div>
-            <div className="channel-workspace-actions">
-              <button className="secondary-button compact-button" type="button" onClick={onCreateManagedChannelWorktree} disabled={!selectedChannelId || Boolean(channelWorkspaceBusyAction)}>
-                {channelWorkspaceBusyAction === "create-worktree" ? <Loader2 className="spin" size={14} /> : <GitBranch size={14} />}
-                {t("Create worktree")}
-              </button>
-              <button className="secondary-button compact-button" type="button" onClick={onRefreshChannelWorkspace} disabled={!selectedChannelId || Boolean(channelWorkspaceBusyAction)}>
-                {channelWorkspaceBusyAction === "refresh" ? <Loader2 className="spin" size={14} /> : <RefreshCw size={14} />}
-                {t("Refresh status")}
-              </button>
-              <button className="secondary-button compact-button" type="button" onClick={onOpenChannelWorkspacePath} disabled={!selectedChannelExecutionPath}>
-                <FolderOpen size={14} />
-                {t("Open path")}
-              </button>
-            </div>
-            <div className="channel-workspace-actions">
-              <button className="secondary-button compact-button" type="button" onClick={() => onHandoffChannelWorkspace("local")} disabled={!selectedChannelId || Boolean(channelWorkspaceBusyAction) || selectedChannelWorkspace.mode === "local"}>
-                {channelWorkspaceBusyAction === "handoff-local" ? <Loader2 className="spin" size={14} /> : <Command size={14} />}
-                {t("Hand off to Local")}
-              </button>
-              <button className="secondary-button compact-button" type="button" onClick={() => onHandoffChannelWorkspace("managed_worktree")} disabled={!selectedChannelId || Boolean(channelWorkspaceBusyAction) || !selectedChannelWorkspace.worktreePath}>
-                {channelWorkspaceBusyAction === "handoff-managed_worktree" ? <Loader2 className="spin" size={14} /> : <GitBranch size={14} />}
-                {t("Hand off to Worktree")}
-              </button>
-            </div>
-            <div className="channel-workspace-external-row">
-              <input
-                value={channelWorkspaceExternalPath}
-                onChange={(event) => setChannelWorkspaceExternalPath(event.target.value)}
-                placeholder={t("External workspace path")}
-                disabled={!selectedChannelId || Boolean(channelWorkspaceBusyAction)}
-              />
-              <button className="secondary-button compact-button" type="button" onClick={() => onHandoffChannelWorkspace("external_path")} disabled={!selectedChannelId || Boolean(channelWorkspaceBusyAction) || !channelWorkspaceExternalPath.trim()}>
-                {channelWorkspaceBusyAction === "handoff-external_path" ? <Loader2 className="spin" size={14} /> : <FolderOpen size={14} />}
-                {t("Hand off to External")}
-              </button>
-            </div>
-            {channelWorkspaceNotice ? <div className="inline-success compact">{channelWorkspaceNotice}</div> : null}
-            {channelWorkspaceError ? (
-              <div className="inline-error compact">
-                <CircleAlert size={14} />
-                {channelWorkspaceError}
-              </div>
-            ) : null}
-          </section>
-        ) : null}
-        <label className="field wide">
-          <span>{t("AI response language")}</span>
-          <select
-            value={channelEditForm.responseLanguage}
-            onChange={(event) => onChannelEditFormChange({ ...channelEditForm, responseLanguage: event.target.value as ChannelFormState["responseLanguage"] })}
-            disabled={!selectedChannelId}
-          >
-            <option value="workspace">{t("Workspace default")}</option>
-            <option value="follow_user">{t("Follow user message")}</option>
-            <option value="zh-CN">{t("Chinese")}</option>
-            <option value="en-US">{t("English")}</option>
-          </select>
-        </label>
-        <ChannelRuntimePolicyFields form={channelEditForm} onChange={onChannelEditFormChange} />
-        <div className="channel-option-actions">
-          <button className="secondary-button compact-button" type="button" onClick={onRefreshChannels} disabled={channelsLoading}>
-            {channelsLoading ? <Loader2 className="spin" size={14} /> : <RefreshCw size={14} />}
-            {t("Refresh channels")}
-          </button>
-          <button className="primary-button compact-button" type="button" onClick={onSaveChannel} disabled={!selectedChannelId}>
-            <FileCheck2 size={14} />
-            {t("Save channel")}
-          </button>
-        </div>
-      </div>
-    </section>
-  );
 
   const sidePanelTitle = createTaskOpen && sidePanelView === "task"
       ? t("New task")
@@ -6668,13 +4192,60 @@ export function WorkspaceClientView({
     </section>
   ) : null;
   const channelSettingsContent = (
-    <div className="channel-settings-stack">
-      {channelNotificationPanel}
-      {channelCouncilPanel}
-      {channelTeammateManager}
-      {channelTeamMetricsPanel}
-      {channelManagementPanel}
-    </div>
+    <ChannelSettingsPanels
+      cwd={cwd}
+      selectedChannelId={selectedChannelId}
+      channelNotificationLevel={channelNotificationLevel}
+      onUpdateChannelNotificationLevel={updateChannelNotificationLevel}
+      channelTeammateMembershipsLoading={channelTeammateMembershipsLoading}
+      channelTeammates={channelTeammates}
+      localTeammates={localTeammates}
+      availableChannelTeammates={availableChannelTeammates}
+      pendingChannelTeammateId={pendingChannelTeammateId}
+      channelTeammateSavingId={channelTeammateSavingId}
+      onPendingChannelTeammateIdChange={setPendingChannelTeammateId}
+      onAddSelectedChannelTeammate={addSelectedChannelTeammate}
+      onRemoveChannelTeammate={onRemoveChannelTeammate}
+      onOpenTeammates={onOpenTeammates}
+      aiCouncils={aiCouncils}
+      aiCouncilsLoading={aiCouncilsLoading}
+      aiCouncilHealthReport={aiCouncilHealthReport}
+      channelCouncilPolicy={channelCouncilPolicy}
+      channelEffectiveCouncil={channelEffectiveCouncil}
+      channelCouncilLoading={channelCouncilLoading}
+      channelCouncilSaving={channelCouncilSaving}
+      attachedAiCouncils={attachedAiCouncils}
+      availableAiCouncils={availableAiCouncils}
+      projectedCouncilSpecialists={projectedCouncilSpecialists}
+      pendingChannelCouncilId={pendingChannelCouncilId}
+      onPendingChannelCouncilIdChange={setPendingChannelCouncilId}
+      onAddSelectedChannelCouncil={addSelectedChannelCouncil}
+      onRemoveChannelCouncil={removeChannelCouncil}
+      onSetPreferredChannelCouncil={setPreferredChannelCouncil}
+      onRefreshAiCouncils={onRefreshAiCouncils}
+      onRefreshChannelCouncil={onRefreshChannelCouncil}
+      channelTeamMetricsPanel={channelTeamMetricsPanel}
+      channelEditForm={channelEditForm}
+      onChannelEditFormChange={onChannelEditFormChange}
+      providersLoading={providersLoading}
+      providers={providers}
+      taskReadyProviders={taskReadyProviders}
+      setupChatProviders={setupChatProviders}
+      selectedChannelWorkspace={selectedChannelWorkspace}
+      selectedChannelExecutionPath={selectedChannelExecutionPath}
+      channelWorkspaceBusyAction={channelWorkspaceBusyAction}
+      channelWorkspaceExternalPath={channelWorkspaceExternalPath}
+      channelWorkspaceNotice={channelWorkspaceNotice}
+      channelWorkspaceError={channelWorkspaceError}
+      onChannelWorkspaceExternalPathChange={setChannelWorkspaceExternalPath}
+      onCreateManagedChannelWorktree={onCreateManagedChannelWorktree}
+      onRefreshChannelWorkspace={onRefreshChannelWorkspace}
+      onOpenChannelWorkspacePath={onOpenChannelWorkspacePath}
+      onHandoffChannelWorkspace={onHandoffChannelWorkspace}
+      channelsLoading={channelsLoading}
+      onRefreshChannels={onRefreshChannels}
+      onSaveChannel={() => void onSaveChannel()}
+    />
   );
   const channelContextDockContent = (
     <div className="channel-protocol-tab-content">
@@ -6733,201 +4304,40 @@ export function WorkspaceClientView({
       {taskDetailContent}
     </section>
   );
-  const channelApprovals = useMemo(() => {
-    return approvals.filter((approval) => {
-      const approvalChannelId = approval.channelId
-        ?? (approval.runId ? runById.get(approval.runId)?.channelId : undefined)
-        ?? (approval.taskId ? taskChannelById.get(approval.taskId) : undefined);
-      return approvalChannelId === selectedChannelId;
-    });
-  }, [approvals, runById, selectedChannelId, taskChannelById]);
-  const channelDockMessages = useMemo<readonly RightDockMessageProjectionInput[]>(
-    () => channelMessages.map((message) => ({
-      id: message.id,
-      title: message.kind === "ai_reply" ? t("AI reply") : message.authorType === "local-user" ? t("User message") : t("Channel message"),
-      body: message.body,
-      status: message.status,
-      errorMessage: message.errorMessage,
-      runId: message.linkedRunId,
-      createdAt: message.createdAt,
-      updatedAt: message.updatedAt,
-      webEvidence: message.webEvidence,
-      fileRefs: message.fileRefs,
-    })),
-    [channelMessages, t],
-  );
-  const channelDockFileItems = useMemo(
-    () => mergeDockFileItems(
-      projectChannelAttachmentsToFileItems(channelAttachments, t),
-      projectFileRefsToFileItems(channelMessages.flatMap((message) => message.fileRefs ?? [])),
-      projectArtifactsToFileItems(channelArtifactsByRun),
-    ),
-    [channelArtifactsByRun, channelAttachments, channelMessages, t],
-  );
-  const channelDockEvidenceGroups = useMemo(
-    () => mergeEvidenceGroups(
-      projectRunsToEvidenceGroup(channelRuns, t),
-      projectApprovalsToEvidenceGroup(channelApprovals, t),
-      projectWebEvidenceToEvidenceGroup(channelDockMessages, t),
-      projectFilesToEvidenceGroup(channelDockFileItems, t),
-    ),
-    [channelApprovals, channelDockFileItems, channelDockMessages, channelRuns, t],
-  );
-  const channelDockReviewItems = useMemo(
-    () => [
-      ...projectApprovalsToReviewItems(channelApprovals, t),
-      ...projectRunsToReviewItems(channelRuns, t),
-      ...projectMessagesToReviewItems(channelDockMessages, t),
-      ...projectFilesToReviewItems(channelDockFileItems, t),
-    ],
-    [channelApprovals, channelDockFileItems, channelDockMessages, channelRuns, t],
-  );
-  const channelEnvironmentSummary = useMemo<ChannelEnvironmentSummary>(() => {
-    const workspace = selectedChannelWorkspace ? {
-      mode: selectedChannelWorkspace.mode,
-      modeLabel: t(channelWorkspaceModeLabel(selectedChannelWorkspace.mode)),
-      status: selectedChannelWorkspace.status,
-      path: selectedChannelExecutionPath,
-      shortPath: shortWorkspacePath(selectedChannelExecutionPath, cwd),
-      errorMessage: selectedChannelWorkspace.errorMessage,
-    } satisfies ChannelEnvironmentWorkspace : undefined;
-    const loadedGitStatus = channelGitStatusState.status === "loaded" ? channelGitStatusState.statusValue : undefined;
-    const changes = loadedGitStatus && (loadedGitStatus.state === "dirty" || loadedGitStatus.changedFileCount > 0)
-      ? {
-        changedFileCount: loadedGitStatus.changedFileCount,
-        stagedFileCount: loadedGitStatus.stagedFileCount,
-        unstagedFileCount: loadedGitStatus.unstagedFileCount,
-        untrackedFileCount: loadedGitStatus.untrackedFileCount,
-        conflictedFileCount: loadedGitStatus.conflictedFileCount,
-        additions: loadedGitStatus.additions,
-        deletions: loadedGitStatus.deletions,
-        label: environmentChangesLabel(loadedGitStatus.changedFileCount, t),
-      } satisfies ChannelEnvironmentGitChanges
-      : undefined;
-    const review = channelDockReviewItems.length > 0 ? {
-      reviewItemCount: channelDockReviewItems.length,
-      actionItemCount: channelDockReviewItems.length,
-      label: environmentReviewLabel(channelDockReviewItems.length, t),
-    } satisfies ChannelEnvironmentReviewSummary : undefined;
-    const branchName = loadedGitStatus?.branchName?.trim() || selectedChannelWorkspace?.branchName?.trim();
-    const git = branchName ? {
-      branchName,
-      baseBranch: loadedGitStatus?.upstream ?? selectedChannelWorkspace?.baseBranch,
-    } satisfies ChannelEnvironmentGitStatus : undefined;
-    const browserCount = channelDockEvidenceGroups
-      .filter((group) => group.id === "browser")
-      .reduce((count, group) => count + group.items.length, 0);
-    const browser = browserCount > 0 ? {
-      count: browserCount,
-      label: browserCount === 1 ? t("1 browser item") : t("{count} browser items", { count: browserCount }),
-    } satisfies ChannelEnvironmentEvidenceSummary : undefined;
-    const evidenceSourceCount = channelDockEvidenceGroups
-      .filter((group) => group.id === "source")
-      .reduce((count, group) => count + group.items.length, 0);
-    const sourceCount = activeProgressSourceSummary?.sourceCount ?? evidenceSourceCount;
-    const sources = sourceCount > 0 ? {
-      count: sourceCount,
-      label: activeProgressSourceSummary
-        ? conversationContextSourceSummaryLabel(activeProgressSourceSummary, t)
-        : sourceCount === 1 ? t("1 source") : t("{count} sources", { count: sourceCount }),
-    } satisfies ChannelEnvironmentEvidenceSummary : undefined;
-    const outputCount = channelDockFileItems.filter((item) =>
-      item.kind === "artifact" ||
-      item.kind === "change" ||
-      item.status === "generated" ||
-      item.status === "changed"
-    ).length;
-    const output = {
-      count: outputCount,
-      label: outputCount === 0 ? t("No artifacts") : outputCount === 1 ? t("1 artifact") : t("{count} artifacts", { count: outputCount }),
-    } satisfies ChannelEnvironmentOutputSummary;
-    const commitAction = changes ? {
-      disabledReason: t("Commit and push require a daemon Git action and approval policy. This first version is read-only."),
-    } : undefined;
-    const changeDiffStats = changes && environmentChangesHaveDiffStats(changes)
-      ? { additions: changes.additions ?? 0, deletions: changes.deletions ?? 0 }
-      : undefined;
-    const popoverRows: ChannelEnvironmentPopoverRow[] = [];
-    if (changes) {
-      popoverRows.push({
-        id: "changes",
-        icon: <ListChecks size={18} />,
-        label: t("Changes"),
-        value: changeDiffStats ? `+${changeDiffStats.additions} -${changeDiffStats.deletions}` : changes.label,
-        stats: changeDiffStats,
-        tone: changes.conflictedFileCount > 0 ? "blocked" : "neutral",
-      });
-    }
-    if (review) {
-      popoverRows.push({
-        id: "review",
-        icon: <ListChecks size={18} />,
-        label: t("Review"),
-        value: review.label,
-        tone: "waiting",
-        onOpen: () => openRightDockPage("review"),
-      });
-    }
-    if (workspace) {
-      popoverRows.push({
-        id: "local",
-        icon: channelWorkspaceModeIcon(workspace.mode, 18),
-        label: t("Local environment"),
-        value: workspace.shortPath || workspace.path || workspace.modeLabel,
-        tone: workspace.status === "ready" ? "success" : workspace.status === "missing" || workspace.status === "blocked" ? "blocked" : "neutral",
-      });
-    }
-    if (git) {
-      popoverRows.push({
-        id: "git-branch",
-        icon: <GitBranch size={18} />,
-        label: t("Working branch"),
-        value: git.branchName,
-        tone: "info",
-      });
-    }
-    if (commitAction) {
-      popoverRows.push({
-        id: "commit-push",
-        icon: <SquareTerminal size={18} />,
-        label: t("Commit or push"),
-        value: t("Read-only shell"),
-        tone: "neutral",
-        onOpen: openEnvironmentCommitDialog,
-        disabledReason: commitAction.disabledReason,
-      });
-    }
-    return {
-      workspace,
-      gitStatusLoadState: channelGitStatusState,
-      changes,
-      review,
-      git,
-      browser,
-      sources,
-      output,
-      commitAction,
-      popoverRows,
-    };
-  }, [
-    activeProgressSourceSummary,
-    channelGitStatusState,
-    channelDockEvidenceGroups,
-    channelDockFileItems,
-    channelDockReviewItems,
-    cwd,
-    selectedChannelExecutionPath,
-    selectedChannelWorkspace,
+  const channelRightDockContent = useChannelRightDockContent({
+    selectedChannelId,
+    approvals,
+    runById,
+    taskChannelById,
+    channelRuns,
+    channelMessages,
+    channelAttachments,
+    channelArtifactsByRun,
+    attentionProgressRows,
+    teamAttentionCount: channelTeamMetricsState?.channelId === selectedChannelId ? channelTeamMetricsState.metrics.attention.activeAgentCount : 0,
+    teamMetricsPanel: channelTeamMetricsPanel,
+    contextDockContent: channelContextDockContent,
     t,
-  ]);
-  const channelDockActivityCount = attentionProgressRows.length
-    + (channelTeamMetricsState?.channelId === selectedChannelId ? channelTeamMetricsState.metrics.attention.activeAgentCount : 0);
-  const channelDockActivityNode = (
-    <div className="right-dock-activity-stack">
-      {channelTeamMetricsPanel}
-      {channelContextDockContent}
-    </div>
-  );
+  });
+  const channelDockReviewItems = channelRightDockContent.reviewItems;
+  const channelDockEvidenceGroups = channelRightDockContent.evidenceGroups;
+  const channelDockFileItems = channelRightDockContent.fileItems;
+  const channelEnvironmentSummary = useChannelEnvironmentSummary({
+    cwd,
+    workspace: selectedChannelWorkspace,
+    executionPath: selectedChannelExecutionPath,
+    gitStatusState: channelGitStatusState,
+    reviewItems: channelDockReviewItems,
+    evidenceGroups: channelDockEvidenceGroups,
+    fileItems: channelDockFileItems,
+    activeSourceSummary: activeProgressSourceSummary,
+    t,
+    onOpenReview: () => openRightDockPage("review"),
+    onOpenEnvironment: openChannelEnvironmentPage,
+    onOpenCommit: openEnvironmentCommitDialog,
+  });
+  const channelDockActivityCount = channelRightDockContent.activityCount;
+  const channelDockActivityNode = channelRightDockContent.activityNode;
   const channelDockForcedDetail = sidePanelView === "task" ? {
     id: "channel-task-detail",
     title: sidePanelTitle,
@@ -7013,15 +4423,8 @@ export function WorkspaceClientView({
       onOpenSourceGroup={openSourceGroupInConversationDetail}
     />
   );
-  const taskWorkbenchWindowStyle = {
-    "--channel-right-dock-width": `${channelRightDockWidth}px`,
-    "--channel-right-dock-layout-width": `${channelRightDockLayoutWidthRef.current}px`,
-    "--channel-side-panel-layout-handle-width": `${channelRightDockLayoutHandleWidthRef.current}px`,
-  } as CSSProperties;
-  const taskWorkbenchMainStyle = {
-    "--channel-right-dock-layout-width": `${channelRightDockLayoutWidthRef.current}px`,
-    "--channel-side-panel-layout-handle-width": `${channelRightDockLayoutHandleWidthRef.current}px`,
-  } as CSSProperties;
+  const taskWorkbenchWindowStyle = channelRightDock.windowStyle;
+  const taskWorkbenchMainStyle = channelRightDock.mainStyle;
 
   function toggleChannelTeammateManager(): void {
     const nextOpen = !teammateManagerOpen;
@@ -7045,6 +4448,7 @@ export function WorkspaceClientView({
         "client-window task-workbench-window",
         channelRightDockVisible ? "with-channel-side-panel" : "",
         channelRightDockVisible ? (channelRightDockExpanded ? "channel-right-dock-expanded" : "channel-right-dock-collapsed") : "",
+        progressPopoverCanRender && !progressPopoverInMainLayout ? "with-channel-progress-popover" : "",
       ].filter(Boolean).join(" ")}
       style={taskWorkbenchWindowStyle}
       aria-label={t("Workspace")}
@@ -7083,18 +4487,6 @@ export function WorkspaceClientView({
             <div className="channel-title-line">
               <span className="channel-title-icon" aria-hidden="true">#</span>
               <h1>{selectedChannel?.name ?? "Engineering"}</h1>
-              {selectedChannelWorkspace ? (
-                <button
-                  className={`channel-workspace-badge ${selectedChannelWorkspace.mode} ${selectedChannelWorkspace.status}`}
-                  type="button"
-                  onClick={openChannelSettingsPage}
-                  title={selectedChannelExecutionPath}
-                >
-                  {channelWorkspaceModeIcon(selectedChannelWorkspace.mode, 13)}
-                  <span>{t(channelWorkspaceModeLabel(selectedChannelWorkspace.mode))}</span>
-                  <small>{shortWorkspacePath(selectedChannelExecutionPath, cwd)}</small>
-                </button>
-              ) : null}
               <div className="channel-more-wrap" ref={channelMoreRef}>
                 <button
                   className={channelMoreOpen ? "icon-button channel-more-button active" : "icon-button channel-more-button"}
@@ -7116,6 +4508,16 @@ export function WorkspaceClientView({
                     >
                       <SlidersHorizontal size={15} />
                       <span>{t("Settings")}</span>
+                    </button>
+                    <button
+                      className="channel-more-item"
+                      type="button"
+                      role="menuitem"
+                      onClick={openChannelRenameDialog}
+                      disabled={!selectedChannelId}
+                    >
+                      <PencilLine size={15} />
+                      <span>{t("Rename channel")}</span>
                     </button>
                     <button
                       className={channelEnvironmentPageOpen ? "channel-more-item active" : "channel-more-item"}
@@ -7293,8 +4695,32 @@ export function WorkspaceClientView({
 
       {teammateManagerOpen ? (
         <section ref={teammateManagerPanelRef} className="workbench-settings-panel channel-teammate-dock" aria-label={t("AI teammate management")}>
-          {channelTeammateManager}
+          <ChannelTeammateManagerPanel
+            cwd={cwd}
+            selectedChannelId={selectedChannelId}
+            channelTeammateMembershipsLoading={channelTeammateMembershipsLoading}
+            channelTeammates={channelTeammates}
+            localTeammates={localTeammates}
+            availableChannelTeammates={availableChannelTeammates}
+            pendingChannelTeammateId={pendingChannelTeammateId}
+            channelTeammateSavingId={channelTeammateSavingId}
+            onPendingChannelTeammateIdChange={setPendingChannelTeammateId}
+            onAddSelectedChannelTeammate={addSelectedChannelTeammate}
+            onRemoveChannelTeammate={onRemoveChannelTeammate}
+            onOpenTeammates={onOpenTeammates}
+          />
         </section>
+      ) : null}
+
+      {channelRenameOpen ? (
+        <ChannelRenameDialog
+          value={channelRenameName}
+          currentName={selectedChannel?.name ?? ""}
+          saving={channelRenameSaving}
+          onValueChange={setChannelRenameName}
+          onSubmit={(event) => void submitChannelRename(event)}
+          onClose={closeChannelRenameDialog}
+        />
       ) : null}
 
       {channelCreateOpen ? (
@@ -7428,386 +4854,215 @@ export function WorkspaceClientView({
           />
         ) : (
           <>
-        <section className="panel task-list-panel activity-tab-panel channel-chat-panel" aria-label={t("Channel activity")}>
-          <div className="activity-shell">
-	              <div className={activeThreadRoot ? "activity-chat-layout with-thread" : "activity-chat-layout"}>
-	                <div className="activity-chat-main">
-                  {auditActivityVisible ? (
-                    <div className="channel-activity-tools">
-                      <ActivityFilterToolbar
-                        search={activitySearch}
-                        categoryFilter={activityCategoryFilter}
-                        attentionFilter={activityAttentionFilter}
-                        savedViews={allActivitySavedViews}
-                        activeSavedViewId={activeActivityViewId}
-                        filtersExpanded={activityFiltersExpanded}
-                        savedViewCounts={savedViewCounts}
-                        selectedSavedView={selectedActivitySavedView}
-                        categoryCounts={activityCategoryCounts}
-                        attentionCounts={activityAttentionCounts}
-                        clearDisabled={!activityFiltersActive}
-                        customViewLimitReached={activitySavedViews.length >= maxCustomChannelActivitySavedViews}
-                        onSavedViewSelect={applyActivityView}
-                        onSaveView={saveActivityView}
-                        onRenameView={renameActivityView}
-                        onDeleteView={deleteActivityView}
-                        onFiltersExpandedChange={setActivityFiltersExpanded}
-                        onSearchChange={setActivitySearch}
-                        onCategoryFilterChange={setActivityCategoryFilter}
-                        onAttentionFilterChange={setActivityAttentionFilter}
-                        onClear={() => {
-                          setActivitySearch("");
-                          setActivityCategoryFilter("all");
-                          setActivityAttentionFilter("all");
-                          setActiveActivityViewId(allChannelActivitySavedViewId);
-                        }}
-                      />
-                      <ChannelWorkBoard
-                        channel={selectedChannel}
-                        tasks={tasks}
-                        runs={runs}
-                        approvals={approvals}
-                        workflowSteps={channelWorkflowSteps}
-                        externalActionDetails={externalActionDetails}
-                        externalWorkCiTriage={externalWorkCiTriage}
-                        artifactsByRun={channelArtifactsByRun}
-                        durableWorkItems={durableWorkItems}
-                        loading={tasksLoading || approvalsLoading || channelActivityTransitionsLoading || durableWorkItemsLoading}
-                        onOpenTask={openTaskFromActivity}
-                        onOpenRun={openRunInPanel}
-                        onOpenApproval={(approvalId) => openApprovalDetail(approvals.find((approval) => approval.id === approvalId))}
-                        onClaimWorkItem={onClaimWorkItem}
-                        onHeartbeatWorkItem={onHeartbeatWorkItem}
-                        onReleaseWorkItem={onReleaseWorkItem}
-                        onCompleteWorkItem={onCompleteWorkItem}
-                        onFailWorkItem={onFailWorkItem}
-                        busyWorkItemId={busyWorkItemId}
-                      />
-                      <CiTriageAuditPanel
-                        records={externalWorkCiTriage}
-                        loading={externalWorkCiTriageLoading}
-                        compact
-                        maxRecords={3}
-                        cwd={cwd}
-                        onRefresh={onRefreshExternalWorkCiTriage}
-                        onSelectTask={openTaskFromActivity}
-                        onOpenRun={openRunInPanel}
-                      />
-                    </div>
-                  ) : null}
-	                  {selectedChannelId && channelWorkThreadTreeVisible ? (
-	                    <div className="channel-work-thread-tree" aria-label={t("Channel branches")}>
-                      <div className="channel-work-thread-tree-head">
-                        <span>
-                          <GitBranch size={14} />
-                          {t("Conversation branches")}
-                        </span>
-                        {channelWorkThreadsLoading ? (
-                          <small><Loader2 className="spin" size={12} /> {t("Loading")}</small>
-                        ) : null}
-                      </div>
-                      {visibleChannelWorkThreads.length > 0 || channelWorkThreadSearchActive ? (
-                        <label className="activity-search-field channel-work-thread-search-field">
-                          <Search size={14} />
-                          <input
-                            type="search"
-                            value={channelWorkThreadSearch}
-                            onChange={(event) => setChannelWorkThreadSearch(event.target.value)}
-                            placeholder={t("Search branches")}
-                            aria-label={t("Search branches")}
-                          />
-                        </label>
-                      ) : null}
-                      {channelWorkThreadError ? (
-                        <div className="inline-error compact">
-                          <CircleAlert size={14} />
-                          {channelWorkThreadError}
-                        </div>
-                      ) : null}
-                      <div className="channel-work-thread-row-list">
-                        {!channelDiscussionRootThread && !channelWorkThreadSearchActive ? (
-                          <div className={!activeWorkThreadId ? "channel-work-thread-row-shell selected" : "channel-work-thread-row-shell"}>
-                            <button
-                              className="channel-work-thread-row"
-                              type="button"
-                              onClick={() => setActiveWorkThreadId("")}
-                            >
-                              <span className="sidebar-hash" aria-hidden="true">#</span>
-                              <span className="channel-work-thread-row-main">
-                                <strong>{t("Main branch")}</strong>
-                                <small>{t("Default channel branch")}</small>
-                              </span>
-                            </button>
-                            <button
-                              className="icon-button"
-                              type="button"
-                              aria-label={t("Fork branch")}
-                              title={t("Fork branch")}
-                              disabled={forkingWorkThreadId === `channel-main:${selectedChannelId}`}
-                              onClick={() => void forkChannelMainBranch()}
-                            >
-                              {forkingWorkThreadId === `channel-main:${selectedChannelId}` ? <Loader2 className="spin" size={14} /> : <GitBranch size={14} />}
-                            </button>
-                          </div>
-                        ) : null}
-                        {visibleChannelWorkThreads.length > 0 || channelWorkThreadSearchActive ? (
-                          <button
-                            className={!activeWorkThreadId ? "channel-work-thread-row selected" : "channel-work-thread-row"}
-                            type="button"
-                            onClick={() => setActiveWorkThreadId("")}
-                          >
-                            <span className="sidebar-hash" aria-hidden="true">#</span>
-                            <span className="channel-work-thread-row-main">
-                              <strong>{t("All branches")}</strong>
-                              <small>{t("{count} branches", { count: visibleChannelWorkThreads.length })}</small>
-                            </span>
-                          </button>
-                        ) : null}
-                        {channelWorkThreadTreeRows.map(({ thread, depth, parentHidden }) => (
-                          <div
-                            key={thread.id}
-                            className={activeWorkThreadId === thread.id ? "channel-work-thread-row-shell selected" : "channel-work-thread-row-shell"}
-                            style={{ paddingLeft: `${8 + depth * 18}px` }}
-                          >
-                            <button
-                              className="channel-work-thread-row"
-                              type="button"
-                              onClick={() => setActiveWorkThreadId(thread.id)}
-                            >
-                              <span className={`status-dot ${thread.status}`} />
-                              <span className="channel-work-thread-row-main">
-                                <strong>{thread.title}</strong>
-                                <small>
-                                  {thread.parentThreadId ? `${t("Fork branch")} · ` : ""}
-                                  {parentHidden ? `${t("Parent hidden")} · ` : ""}
-                                  {thread.pinnedAt ? `${t("Pinned")} · ` : ""}
-                                  {thread.archivedAt || thread.status === "archived" ? `${t("Archived")} · ` : ""}
-                                  {thread.lastRunId ?? thread.id}
-                                </small>
-                              </span>
-                            </button>
-                            <button
-                              className="icon-button"
-                              type="button"
-                              aria-label={thread.pinnedAt ? t("Unpin") : t("Pin")}
-                              title={thread.pinnedAt ? t("Unpin") : t("Pin")}
-                              disabled={workThreadVisibilityId === thread.id}
-                              onClick={() => void mutateChannelWorkThreadVisibility(thread, thread.pinnedAt ? "unpin" : "pin")}
-                            >
-                              {workThreadVisibilityId === thread.id ? <Loader2 className="spin" size={14} /> : thread.pinnedAt ? <PinOff size={14} /> : <Pin size={14} />}
-                            </button>
-                            <button
-                              className="icon-button"
-                              type="button"
-                              aria-label={t("Fork branch")}
-                              title={t("Fork branch")}
-                              disabled={forkingWorkThreadId === thread.id || thread.status === "archived" || Boolean(thread.archivedAt)}
-                              onClick={() => void forkChannelWorkThread(thread)}
-                            >
-                              {forkingWorkThreadId === thread.id ? <Loader2 className="spin" size={14} /> : <GitBranch size={14} />}
-                            </button>
-                            {archiveConfirmWorkThreadId === thread.id ? (
-                              <>
-                                <button
-                                  className="secondary-button compact-button danger"
-                                  type="button"
-                                  disabled={workThreadVisibilityId === thread.id}
-                                  onClick={() => void mutateChannelWorkThreadVisibility(thread, "archive")}
-                                >
-                                  {workThreadVisibilityId === thread.id ? <Loader2 className="spin" size={14} /> : <Archive size={14} />}
-                                  {t("Confirm")}
-                                </button>
-                                <button
-                                  className="secondary-button compact-button"
-                                  type="button"
-                                  disabled={workThreadVisibilityId === thread.id}
-                                  onClick={() => setArchiveConfirmWorkThreadId("")}
-                                >
-                                  {t("Cancel")}
-                                </button>
-                              </>
-                            ) : (
-                              <button
-                                className="icon-button"
-                                type="button"
-                                aria-label={t("Archive")}
-                                title={t("Archive")}
-                                disabled={workThreadVisibilityId === thread.id || thread.status === "archived" || Boolean(thread.archivedAt)}
-                                onClick={() => setArchiveConfirmWorkThreadId(thread.id)}
-                              >
-                                <Archive size={14} />
-                              </button>
-                            )}
-                          </div>
-                        ))}
-                        {channelWorkThreadSearchActive && channelWorkThreadTreeRows.length === 0 ? (
-                          <div className="empty-state compact-empty">
-                            <Search />
-                            <span>{t("No active branches match")}</span>
-                          </div>
-                        ) : null}
-	                      </div>
-                    </div>
-                  ) : null}
-                  <ConversationViewProvider surfaceId={`channel:${selectedChannel?.id ?? "none"}:${activeWorkThreadId || "root"}`}>
-                    <ConversationVirtualFeed
-                      scrollRef={messageFeedRef}
-                      ariaLabel={t("Channel message feed")}
-                      loading={channelMessagesLoading || channelProtocolLoading}
-                      empty={messageFeedEmpty}
-                      loadingLabel={t("Loading messages...")}
-                      emptyIcon={activeWorkThreadId ? <GitBranch /> : activityFiltersActive ? <Search /> : <MessageSquare />}
-                      emptyLabel={
-                        activeWorkThreadId
-                          ? t("No work recorded in this branch yet")
-                          : activityFiltersActive
-                          ? t("No activity matches these filters")
-                          : selectedChannel
-                            ? t("No channel messages yet")
-                            : t("Create a default channel to start the workspace loop.")
-                      }
-                      totalSize={messageFeedTotalSize}
-                      virtualRows={messageFeedVirtualRows}
-                      items={messageFeedItems}
-                      getItemId={(feedItem) => feedItem.id}
-                      getItemKind={(feedItem) => feedItem.kind}
-                      renderItem={(feedItem) => renderMessageFeedItem(feedItem)}
-                      measureElement={messageFeedVirtualizer.measureElement}
-                      viewStateRetainKeys={messageFeedViewRetainKeys}
-                      onScroll={handleMessageFeedScroll}
-                      onUserScrollIntent={cancelMessageFeedAutoFollow}
-                      onKeyDown={handleMessageFeedKeyDown}
-                      onPointerDown={handleMessageFeedPointerDown}
-                      onPointerMove={handleMessageFeedPointerMove}
-                      onPointerUp={handleMessageFeedPointerEnd}
-                      onPointerCancel={handleMessageFeedPointerEnd}
-                      onContextMenu={handleMessageFeedContextMenu}
-                      statusNode={
-                        <>
-                          {channelActivityTransitionsLoading ? (
-                            <div className="activity-feed-status" role="status">
-                              <Loader2 className="spin" size={14} />
-                              <span>{t("Loading activity events...")}</span>
-                            </div>
-                          ) : null}
-                          {channelActivityTransitionError ? (
-                            <div className="activity-feed-status warning" role="status">
-                              <CircleAlert size={14} />
-                              <span>{t("Some activity changes could not be loaded")}</span>
-                            </div>
-                          ) : null}
-                        </>
-                      }
-                      latestButtonNode={
-                        <>
-                          {conversationBackgroundToast ? (
-                            <button
-                              key={conversationBackgroundToast.id}
-                              className={`conversation-background-toast ${conversationBackgroundToast.tone}`}
-                              type="button"
-                              onClick={scrollMessageFeedToLatest}
-                              aria-label={`${conversationBackgroundToast.message}. ${t("Jump to latest")}`}
-                            >
-                              <span role="status" aria-live="polite">{conversationBackgroundToast.message}</span>
-                              <small>{t("Jump to latest")}</small>
-                            </button>
-                          ) : null}
-                          {conversationBlockFeedback ? (
-                            <div key={conversationBlockFeedback.id} className={`conversation-block-feedback ${conversationBlockFeedback.tone}`} role="status" aria-live="polite">
-                              {conversationBlockFeedback.tone === "success" ? <CheckCircle2 size={13} /> : conversationBlockFeedback.tone === "error" ? <CircleAlert size={13} /> : <Info size={13} />}
-                              <span>{conversationBlockFeedback.message}</span>
-                            </div>
-                          ) : null}
-                          {messageFeedLatestButtonVisible ? (
-                            <button
-                              className="message-feed-latest-button"
-                              type="button"
-                              onClick={scrollMessageFeedToLatest}
-                              aria-label={t("Jump to latest message")}
-                            >
-                              <ArrowDown size={22} />
-                            </button>
-                          ) : null}
-                        </>
-                      }
-                    />
-                  </ConversationViewProvider>
-                  {conversationBlockActionMenu ? (
-                    <div
-                      ref={conversationBlockActionMenuRef}
-                      className="conversation-block-action-menu"
-                      role="menu"
-                      aria-label={t("Conversation block actions")}
-                      style={{ left: conversationBlockActionMenu.x, top: conversationBlockActionMenu.y }}
-                    >
-                      <strong>{conversationBlockActionMenu.label}</strong>
-                      {conversationBlockActionMenu.feedback ? <small role="status" aria-live="polite">{conversationBlockActionMenu.feedback}</small> : null}
-                      <button
-                        type="button"
-                        role="menuitem"
-                        onClick={() => {
-                          const block = messageFeedRef.current?.querySelector<HTMLElement>(`[data-feed-item-id="${cssEscape(conversationBlockActionMenu.blockId)}"]`);
-                          if (block) {
-                            void copyConversationBlock(block);
-                          }
-                        }}
-                      >
-                        <Copy size={13} />
-                        {t("Copy block")}
-                      </button>
-                      <button
-                        type="button"
-                        role="menuitem"
-                        onClick={() => {
-                          focusConversationBlockById(conversationBlockActionMenu.blockId);
-                        }}
-                      >
-                        <Search size={13} />
-                        {t("Focus block")}
-                      </button>
-                    </div>
-                  ) : null}
-                  {conversationDetailOverlayNode}
-                  {channelComposer}
-                </div>
-                {activeThreadRoot ? (
-                  <ThreadReplyPanel
-                    cwd={cwd}
-                    rootMessage={activeThreadRoot}
-                    replies={activeThreadMessages}
-                    teammates={teammateOptions}
-                    teammateById={allLocalTeammateById}
-                    memoryById={memoryById}
-                    usedMemoryEvents={usedMemoryEvents}
-                    draft={threadReplyDraft}
-                    pending={threadReplyPending}
-                    error={threadReplyError}
-                    onDraftChange={(value) => {
-                      setThreadReplyDraft(value);
-                      setThreadReplyError("");
-                    }}
-                    onSend={() => void sendThreadReply()}
-                    onClose={() => {
-                      setActiveThreadId("");
-                      setThreadReplyDraft("");
-                      setThreadReplyError("");
-                    }}
-                  />
+        <ChannelActivityWorkspace
+          activityTools={auditActivityVisible ? {
+            search: activitySearch,
+            categoryFilter: activityCategoryFilter,
+            attentionFilter: activityAttentionFilter,
+            savedViews: allActivitySavedViews,
+            activeSavedViewId: activeActivityViewId,
+            filtersExpanded: activityFiltersExpanded,
+            savedViewCounts,
+            selectedSavedView: selectedActivitySavedView,
+            categoryCounts: activityCategoryCounts,
+            attentionCounts: activityAttentionCounts,
+            filtersActive: activityFiltersActive,
+            customViewLimitReached,
+            onSavedViewSelect: applyActivityView,
+            onSaveView: saveActivityView,
+            onRenameView: renameActivityView,
+            onDeleteView: deleteActivityView,
+            onFiltersExpandedChange: setActivityFiltersExpanded,
+            onSearchChange: setActivitySearch,
+            onCategoryFilterChange: setActivityCategoryFilter,
+            onAttentionFilterChange: setActivityAttentionFilter,
+            onClearFilters: clearActivityFilters,
+            channel: selectedChannel,
+            tasks,
+            runs,
+            approvals,
+            workflowSteps: channelWorkflowSteps,
+            externalActionDetails,
+            externalWorkCiTriage,
+            artifactsByRun: channelArtifactsByRun,
+            durableWorkItems,
+            workBoardLoading: tasksLoading || approvalsLoading || channelActivityTransitionsLoading || durableWorkItemsLoading,
+            onOpenTask: openTaskFromActivity,
+            onOpenRun: openRunInPanel,
+            onOpenApproval: (approvalId) => openApprovalDetail(approvals.find((approval) => approval.id === approvalId)),
+            onClaimWorkItem,
+            onHeartbeatWorkItem,
+            onReleaseWorkItem,
+            onCompleteWorkItem,
+            onFailWorkItem,
+            busyWorkItemId,
+            ciTriageLoading: externalWorkCiTriageLoading,
+            cwd,
+            onRefreshCiTriage: onRefreshExternalWorkCiTriage,
+          } : undefined}
+          workThreadTree={selectedChannelId && channelWorkThreadTreeVisible ? {
+            selectedChannelId,
+            activeWorkThreadId,
+            visibleThreads: visibleChannelWorkThreads,
+            rows: channelWorkThreadTreeRows,
+            loading: channelWorkThreadsLoading,
+            error: channelWorkThreadError,
+            search: channelWorkThreadSearch,
+            searchActive: channelWorkThreadSearchActive,
+            rootThread: channelDiscussionRootThread,
+            forkingWorkThreadId,
+            workThreadVisibilityId,
+            archiveConfirmWorkThreadId,
+            onSearchChange: setChannelWorkThreadSearch,
+            onSelectThread: setActiveWorkThreadId,
+            onForkMainBranch: () => void forkChannelMainBranch(),
+            onForkThread: (thread) => void forkChannelWorkThread(thread),
+            onSetArchiveConfirmWorkThreadId: setArchiveConfirmWorkThreadId,
+            onMutateThreadVisibility: (thread, action) => void mutateChannelWorkThreadVisibility(thread, action),
+          } : undefined}
+          messageFeed={{
+            surfaceId: `channel:${selectedChannel?.id ?? "none"}:${activeWorkThreadId || "root"}`,
+            state: messageFeedState,
+            ariaLabel: t("Channel message feed"),
+            loading: channelMessagesLoading || channelProtocolLoading,
+            empty: messageFeedEmpty,
+            loadingLabel: t("Loading messages..."),
+            emptyIcon: activeWorkThreadId ? <GitBranch /> : activityFiltersActive ? <Search /> : <MessageSquare />,
+            emptyLabel: activeWorkThreadId
+              ? t("No work recorded in this branch yet")
+              : activityFiltersActive
+                ? t("No activity matches these filters")
+                : selectedChannel
+                  ? t("No channel messages yet")
+                  : t("Create a default channel to start the workspace loop."),
+            title: t("Alt+Up/Down focuses adjacent blocks. Ctrl+Shift+C copies the focused block."),
+            items: messageFeedItems,
+            renderItem: messageRenderers.renderMessageFeedItem,
+            onKeyDown: handleMessageFeedKeyDown,
+            onPointerDown: handleMessageFeedPointerDown,
+            onPointerMove: handleMessageFeedPointerMove,
+            onPointerUp: handleMessageFeedPointerEnd,
+            onPointerCancel: handleMessageFeedPointerEnd,
+            onContextMenu: handleMessageFeedContextMenu,
+            statusNode: (
+              <>
+                {channelActivityTransitionsLoading ? (
+                  <div className="activity-feed-status" role="status">
+                    <Loader2 className="spin" size={14} />
+                    <span>{t("Loading activity events...")}</span>
+                  </div>
                 ) : null}
-              </div>
-              {activityDrilldown ? (
-                <ActivityDrilldownDrawer
-                  drilldown={activityDrilldown}
-                  defaultTeammateId={selectedChannel?.defaultTeammateId}
-                  activeDecisionIds={channelDecisions.filter((decision) => decision.status === "active").map((decision) => decision.id)}
-                  onClose={() => setActivityDrilldownItemId("")}
-                  onOpenTarget={openActivityDrilldownTarget}
-                  onRunTriageAction={onRunActivityTriageAction}
-                  onOpenTriageResult={openActivityTriageResult}
-                />
-              ) : null}
+                {channelActivityTransitionError ? (
+                  <div className="activity-feed-status warning" role="status">
+                    <CircleAlert size={14} />
+                    <span>{t("Some activity changes could not be loaded")}</span>
+                  </div>
+                ) : null}
+              </>
+            ),
+            latestButtonNode: (
+              <>
+                {conversationBackgroundToast ? (
+                  <button
+                    key={conversationBackgroundToast.id}
+                    className={`conversation-background-toast ${conversationBackgroundToast.tone}`}
+                    type="button"
+                    onClick={messageFeedState.scrollToLatest}
+                    aria-label={`${conversationBackgroundToast.message}. ${t("Jump to latest")}`}
+                  >
+                    <span role="status" aria-live="polite">{conversationBackgroundToast.message}</span>
+                    <small>{t("Jump to latest")}</small>
+                  </button>
+                ) : null}
+                {conversationBlockFeedback ? (
+                  <div key={conversationBlockFeedback.id} className={`conversation-block-feedback ${conversationBlockFeedback.tone}`} role="status" aria-live="polite">
+                    {conversationBlockFeedback.tone === "success" ? <CheckCircle2 size={13} /> : conversationBlockFeedback.tone === "error" ? <CircleAlert size={13} /> : <Info size={13} />}
+                    <span>{conversationBlockFeedback.message}</span>
+                  </div>
+                ) : null}
+                {messageFeedState.latestButtonVisible ? (
+                  <button
+                    className="message-feed-latest-button"
+                    type="button"
+                    onClick={messageFeedState.scrollToLatest}
+                    aria-label={t("Jump to latest message")}
+                  >
+                    <ArrowDown size={22} />
+                  </button>
+                ) : null}
+              </>
+            ),
+          }}
+          conversationBlockActionMenuNode={conversationBlockActionMenu ? (
+            <div
+              ref={conversationBlockActionMenuRef}
+              className="conversation-block-action-menu"
+              role="menu"
+              aria-label={t("Conversation block actions")}
+              style={{ left: conversationBlockActionMenu.x, top: conversationBlockActionMenu.y }}
+            >
+              <strong>{conversationBlockActionMenu.label}</strong>
+              {conversationBlockActionMenu.feedback ? <small role="status" aria-live="polite">{conversationBlockActionMenu.feedback}</small> : null}
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  const block = messageFeedState.scrollRef.current?.querySelector<HTMLElement>(`[data-feed-item-id="${cssEscape(conversationBlockActionMenu.blockId)}"]`);
+                  if (block) {
+                    void copyConversationBlock(block);
+                  }
+                }}
+              >
+                <Copy size={13} />
+                {t("Copy block")}
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  focusConversationBlockById(conversationBlockActionMenu.blockId);
+                }}
+              >
+                <Search size={13} />
+                {t("Focus block")}
+              </button>
             </div>
-	        </section>
+          ) : undefined}
+          conversationDetailOverlayNode={conversationDetailOverlayNode}
+          composerNode={channelComposer}
+          threadReply={activeThreadRoot ? {
+            cwd,
+            rootMessage: activeThreadRoot,
+            replies: activeThreadMessages,
+            teammates: teammateOptions,
+            memoryById,
+            usedMemoryEvents,
+            draft: threadReplyDraft,
+            pending: threadReplyPending,
+            error: threadReplyError,
+            onDraftChange: (value) => {
+              setThreadReplyDraft(value);
+              setThreadReplyError("");
+            },
+            onSend: () => void sendThreadReply(),
+            onClose: () => {
+              setActiveThreadId("");
+              setThreadReplyDraft("");
+              setThreadReplyError("");
+            },
+            messageAuthorLabel: (message, threadTeammates) =>
+              messageAuthorLabel(message, threadTeammates, t("Deleted teammate"), t("You"), allLocalTeammateById),
+          } : undefined}
+          drilldown={activityDrilldown ? {
+            drilldown: activityDrilldown,
+            defaultTeammateId: selectedChannel?.defaultTeammateId,
+            activeDecisionIds: channelDecisions.filter((decision) => decision.status === "active").map((decision) => decision.id),
+            onClose: () => setActivityDrilldownItemId(""),
+            onOpenTarget: openActivityDrilldownTarget,
+            onRunTriageAction: onRunActivityTriageAction,
+            onOpenTriageResult: openActivityTriageResult,
+          } : undefined}
+        />
         {progressPopoverInMainLayout ? (
           <aside className={`channel-progress-popover channel-progress-panel ${progressPopoverMotionClass}`} aria-label={t("Progress")}>
             {progressPopoverNode}
@@ -7822,11 +5077,11 @@ export function WorkspaceClientView({
             aria-label={t("Resize workspace dock")}
             title={t("Drag to resize workspace dock")}
             tabIndex={channelRightDockExpanded ? 0 : -1}
-            onPointerDown={handleChannelRightDockResizePointerDown}
-            onPointerMove={handleChannelRightDockResizePointerMove}
-            onPointerUp={handleChannelRightDockResizePointerEnd}
-            onPointerCancel={handleChannelRightDockResizePointerEnd}
-            onLostPointerCapture={handleChannelRightDockResizePointerEnd}
+            onPointerDown={channelRightDock.handleResizePointerDown}
+            onPointerMove={channelRightDock.handleResizePointerMove}
+            onPointerUp={channelRightDock.handleResizePointerEnd}
+            onPointerCancel={channelRightDock.handleResizePointerEnd}
+            onLostPointerCapture={channelRightDock.handleResizePointerEnd}
           />
         ) : null}
         {channelRightDockVisible ? (
@@ -7850,9 +5105,7 @@ export function WorkspaceClientView({
               activityCount={channelDockActivityCount}
               forcedDetail={channelDockForcedDetail}
               pageRequest={rightDockPageRequest}
-              onPageRequestConsumed={(nonce) => {
-                setRightDockPageRequest((current) => current?.nonce === nonce ? undefined : current);
-              }}
+              onPageRequestConsumed={channelRightDock.consumePageRequest}
               actions={(
                 <>
                   {sidePanelView !== "settings" ? (
@@ -7883,1258 +5136,8 @@ export function WorkspaceClientView({
   );
 }
 
-function ChannelGovernanceNotificationsPopover({
-  notifications,
-  loading,
-  actionId,
-  onRefresh,
-  onMarkSeen,
-  onDismiss,
-}: {
-  readonly notifications: readonly GovernanceNotification[];
-  readonly loading: boolean;
-  readonly actionId: string;
-  readonly onRefresh: () => void;
-  readonly onMarkSeen: (notificationId: string) => void;
-  readonly onDismiss: (notificationId: string) => void;
-}): JSX.Element {
-  const { t } = useI18n();
-
-  return (
-    <section className="channel-governance-popover" role="dialog" aria-label={t("Governance notifications")}>
-      <div className="channel-governance-head">
-        <span>
-          <ShieldCheck size={15} />
-          <strong>{t("Review queue")}</strong>
-        </span>
-        <button className="icon-button" type="button" onClick={onRefresh} disabled={loading} aria-label={t("Refresh")} title={t("Refresh")}>
-          {loading ? <Loader2 className="spin" size={14} /> : <RefreshCw size={14} />}
-        </button>
-      </div>
-      {notifications.length === 0 ? (
-        <div className="client-empty-state compact-empty channel-governance-empty">
-          {loading ? <Loader2 className="spin" /> : <ShieldCheck />}
-          <span>{loading ? t("Loading review queue...") : t("No review items")}</span>
-        </div>
-      ) : (
-        <div className="channel-governance-list">
-          {notifications.map((notification) => {
-            const busy = actionId === notification.id;
-            return (
-              <article
-                key={notification.id}
-                className={`channel-governance-item ${notification.severity} ${notification.status}`}
-              >
-                <div className="channel-governance-item-head">
-                  <span className={`channel-governance-icon ${notification.severity}`}>
-                    {governanceNotificationIcon(notification)}
-                  </span>
-                  <div>
-                    <strong>{notification.title}</strong>
-                    <small>
-                      {t(governanceNotificationKindLabel(notification.kind))}
-                      {" · "}
-                      {t(governanceNotificationRouteLabel(notification.targetRoute.page))}
-                      {" · "}
-                      {formatDateTime(notification.updatedAt)}
-                    </small>
-                  </div>
-                </div>
-                <p>{notification.summary}</p>
-                <div className="channel-governance-actions">
-                  {notification.status === "unread" ? (
-                    <button className="secondary-button compact-button" type="button" onClick={() => onMarkSeen(notification.id)} disabled={busy}>
-                      {busy ? <Loader2 className="spin" size={13} /> : <Check size={13} />}
-                      {t("Seen")}
-                    </button>
-                  ) : null}
-                  <button className="secondary-button compact-button" type="button" onClick={() => onDismiss(notification.id)} disabled={busy}>
-                    {busy ? <Loader2 className="spin" size={13} /> : <X size={13} />}
-                    {t("Dismiss")}
-                  </button>
-                </div>
-              </article>
-            );
-          })}
-        </div>
-      )}
-    </section>
-  );
-}
-
-function governanceNotificationIcon(notification: GovernanceNotification): JSX.Element {
-  if (notification.severity === "critical" || notification.severity === "action_required") {
-    return <CircleAlert size={15} />;
-  }
-  if (notification.severity === "warning") {
-    return <Info size={15} />;
-  }
-  return <ShieldCheck size={15} />;
-}
-
-function governanceNotificationKindLabel(kind: GovernanceNotification["kind"]): string {
-  if (kind === "memory_candidate") {
-    return "Memory review";
-  }
-  if (kind === "memory_health_finding") {
-    return "Memory health";
-  }
-  if (kind === "skill_candidate") {
-    return "Skill review";
-  }
-  if (kind === "procedure_cluster") {
-    return "Procedure review";
-  }
-  if (kind === "channel_protocol_candidate") {
-    return "Protocol review";
-  }
-  if (kind === "channel_playbook_candidate") {
-    return "Playbook review";
-  }
-  return "Workflow review";
-}
-
-function governanceNotificationRouteLabel(page: GovernanceNotification["targetRoute"]["page"]): string {
-  if (page === "memory_promotion_inbox") {
-    return "Memory inbox";
-  }
-  if (page === "memory_health") {
-    return "Memory health";
-  }
-  if (page === "skill_candidate") {
-    return "Skill candidate";
-  }
-  if (page === "procedure_cluster") {
-    return "Procedure cluster";
-  }
-  if (page === "channel_protocol_candidate") {
-    return "Channel protocol";
-  }
-  return "Channel playbook";
-}
-
-type ChannelInspectorMode = "protocol" | "brief" | "routing" | "decisions" | "handoffs" | "runtime";
-
-function ConversationDetailOverlay({
-  title,
-  icon,
-  children,
-  onClose,
-}: {
-  readonly title: string;
-  readonly icon: ReactNode;
-  readonly children: ReactNode;
-  readonly onClose: () => void;
-}): JSX.Element {
-  const { t } = useI18n();
-  return (
-    <section className="conversation-detail-overlay" aria-label={title}>
-      <header className="conversation-detail-overlay-head">
-        <span>
-          {icon}
-          <strong>{title}</strong>
-        </span>
-        <button className="icon-button" type="button" onClick={onClose} aria-label={t("Close preview")} title={t("Close preview")}>
-          <X size={14} />
-        </button>
-      </header>
-      <div className="conversation-detail-overlay-body">
-        {children}
-      </div>
-    </section>
-  );
-}
-
-function ChannelSourceDetailPanel({
-  detail,
-  messages,
-  decisions,
-}: {
-  readonly detail?: SelectedSourceDetailState;
-  readonly messages: readonly ChannelMessage[];
-  readonly decisions: readonly ChannelDecision[];
-}): JSX.Element {
-  const { t } = useI18n();
-  if (!detail) {
-    return (
-      <section className="context-source-detail-panel" aria-label={t("Context sources")}>
-        <div className="context-source-detail-empty">
-          <FileCheck2 size={15} />
-          <span>{t("Context source details are not available.")}</span>
-        </div>
-      </section>
-    );
-  }
-  const selectedGroups = detail.groupId
-    ? detail.summary.groups.filter((group) => group.id === detail.groupId)
-    : detail.summary.groups;
-  const groups = selectedGroups.length > 0 ? selectedGroups : detail.summary.groups;
-
-  return (
-    <section className="context-source-detail-panel" aria-label={t("Context sources")}>
-      <div className="context-source-detail-head">
-        <span>
-          <FileCheck2 size={15} />
-          <strong>{t("Sources used")}</strong>
-        </span>
-        <small>{conversationContextSourceSummaryLabel(detail.summary, t)}</small>
-      </div>
-      {groups.length > 0 ? (
-        <div className="context-source-detail-groups">
-          {groups.map((group) => (
-            <section key={group.id} className="context-source-detail-group" aria-label={group.label}>
-              <div className="context-source-detail-group-head">
-                <span className="attention-row-icon neutral">{conversationContextSourceGroupIcon(group.type)}</span>
-                <span>
-                  <strong>{group.label}</strong>
-                  <small>{group.count === 1 ? t("1 item") : t("{count} items", { count: group.count })}</small>
-                </span>
-              </div>
-              <ul className="context-source-ref-list">
-                {group.refs.map((ref, index) => {
-                  const display = contextSourceRefDisplay(ref, messages, decisions, t);
-                  return (
-                    <li key={`${ref.type}:${ref.id}:${index}`}>
-                      <span>{display.primary}</span>
-                      <small>{display.secondary}</small>
-                    </li>
-                  );
-                })}
-              </ul>
-            </section>
-          ))}
-        </div>
-      ) : (
-        <div className="context-source-detail-empty">
-          <FileText size={15} />
-          <span>{detail.summary.unavailableReason ?? t("No user-facing sources were recorded.")}</span>
-        </div>
-      )}
-      {detail.summary.droppedCount > 0 || detail.summary.compactionCount > 0 ? (
-        <div className="context-source-detail-foot">
-          {detail.summary.droppedCount > 0 ? <span>{t("{count} items omitted from model context", { count: detail.summary.droppedCount })}</span> : null}
-          {detail.summary.compactionCount > 0 ? <span>{t("{count} compacted context summaries", { count: detail.summary.compactionCount })}</span> : null}
-        </div>
-      ) : null}
-    </section>
-  );
-}
-
-function contextSourceRefDisplay(
-  ref: ConversationContextSourceRefLike,
-  messages: readonly ChannelMessage[],
-  decisions: readonly ChannelDecision[],
-  t: Translate,
-): { readonly primary: string; readonly secondary: string } {
-  const type = ref.type.trim().toLowerCase();
-  if (type === "message" || type === "channel_message" || type === "private_message") {
-    const message = messages.find((item) => item.id === ref.id);
-    return {
-      primary: t("Message {id}", { id: ref.id }),
-      secondary: message ? `${contextSourceMessageAuthorLabel(message.authorType, t)} · ${formatDateTime(message.createdAt)}` : t("Source ref"),
-    };
-  }
-  if (type === "decision" || type === "channel_decision") {
-    const decision = decisions.find((item) => item.id === ref.id);
-    return {
-      primary: decision?.title ?? t("Decision {id}", { id: ref.id }),
-      secondary: decision ? `${contextSourceDecisionStatusLabel(decision.status, t)} · ${ref.id}` : t("Source ref"),
-    };
-  }
-  const label = ref.label?.trim();
-  return {
-    primary: label || ref.id,
-    secondary: `${t("source {sourceKind}", { sourceKind: ref.type })} · ${ref.id}`,
-  };
-}
-
-function contextSourceMessageAuthorLabel(authorType: ChannelMessage["authorType"], t: Translate): string {
-  if (authorType === "local-user") {
-    return t("Local user");
-  }
-  if (authorType === "ai-teammate") {
-    return t("AI teammate");
-  }
-  if (authorType === "system") {
-    return t("System");
-  }
-  return authorType;
-}
-
-function contextSourceDecisionStatusLabel(status: ChannelDecision["status"], t: Translate): string {
-  const normalized = String(status);
-  if (normalized === "accepted" || normalized === "active") {
-    return t("Accepted");
-  }
-  if (normalized === "rejected") {
-    return t("Rejected");
-  }
-  if (normalized === "superseded") {
-    return t("Superseded");
-  }
-  return normalized;
-}
-
-function ChannelInspector({
-  cwd,
-  mode,
-  onModeChange,
-  channel,
-  protocol,
-  teammates,
-  autoRouteEnabled,
-  brief,
-  briefDraft,
-  onBriefDraftChange,
-  onSaveBrief,
-  onSaveProtocol,
-  onRevertProtocol,
-  routeDecisions,
-  intentDecisions,
-  decisions,
-  handoffs,
-  contextSummaries,
-  workflows,
-  workflowSteps,
-  artifactsByRun,
-  runtimeDiagnostics,
-  workUnits,
-  attachments,
-  linkPreviews,
-  runningWorkflowStepId,
-  orchestratingWorkflowId,
-  loading,
-  runtimeLoading,
-  runtimeActionWorkUnitId,
-  selectedTask,
-  onSupersedeDecision,
-  onRejectDecision,
-  onUpdateHandoffStatus,
-  onStartWorkflowFromHandoff,
-  onStartTemplateWorkflow,
-  onOrchestrateWorkflow,
-  onCancelWorkflow,
-  onStartWorkflowStep,
-  onRetryWorkflowStep,
-  onUpdateWorkflowStepStatus,
-  onCreateTaskFromContextSummary,
-  onRefreshRuntime,
-  onCancelWorkUnit,
-  onRetryWorkUnit,
-  onReconcileWorkUnit,
-}: {
-  readonly cwd: string;
-  readonly mode: ChannelInspectorMode;
-  readonly onModeChange: (mode: ChannelInspectorMode) => void;
-  readonly channel: Channel | undefined;
-  readonly protocol: ChannelCollaborationProtocolResponse | undefined;
-  readonly teammates: readonly ChannelMention[];
-  readonly autoRouteEnabled: boolean;
-  readonly brief: ChannelBrief | undefined;
-  readonly briefDraft: {
-    readonly objective: string;
-    readonly scope: string;
-    readonly acceptanceCriteria: string;
-    readonly openQuestions: string;
-    readonly risks: string;
-  };
-  readonly onBriefDraftChange: (draft: {
-    readonly objective: string;
-    readonly scope: string;
-    readonly acceptanceCriteria: string;
-    readonly openQuestions: string;
-    readonly risks: string;
-  }) => void;
-  readonly onSaveBrief: () => void;
-  readonly onSaveProtocol: (input: UpdateChannelCollaborationProtocolRequest) => Promise<ChannelCollaborationProtocolResponse | undefined>;
-  readonly onRevertProtocol: () => Promise<ChannelCollaborationProtocolResponse | undefined>;
-  readonly routeDecisions: readonly ChannelMessageRouteDecision[];
-  readonly intentDecisions: readonly ChannelIntentDecision[];
-  readonly decisions: readonly ChannelDecision[];
-  readonly handoffs: readonly ChannelHandoff[];
-  readonly contextSummaries: readonly ChannelContextSummary[];
-  readonly workflows: readonly ChannelWorkflow[];
-  readonly workflowSteps: readonly ChannelWorkflowStep[];
-  readonly artifactsByRun: Readonly<Record<string, readonly RunArtifact[]>>;
-  readonly runtimeDiagnostics: RuntimeDiagnosticsResponse | undefined;
-  readonly workUnits: readonly WorkUnit[];
-  readonly attachments: readonly ChannelAttachment[];
-  readonly linkPreviews: readonly ChannelLinkPreview[];
-  readonly runningWorkflowStepId: string;
-  readonly orchestratingWorkflowId: string;
-  readonly loading: boolean;
-  readonly runtimeLoading: boolean;
-  readonly runtimeActionWorkUnitId: string;
-  readonly selectedTask: Task | undefined;
-  readonly onSupersedeDecision: (decision: ChannelDecision) => void;
-  readonly onRejectDecision: (decision: ChannelDecision) => void;
-  readonly onUpdateHandoffStatus: (handoff: ChannelHandoff, status: ChannelHandoffStatus) => void;
-  readonly onStartWorkflowFromHandoff: (handoff: ChannelHandoff) => void;
-  readonly onStartTemplateWorkflow: () => void;
-  readonly onOrchestrateWorkflow: (workflow: ChannelWorkflow) => void;
-  readonly onCancelWorkflow: (workflow: ChannelWorkflow) => void;
-  readonly onStartWorkflowStep: (step: ChannelWorkflowStep, mode: ChannelWorkflowStepStartMode) => void;
-  readonly onRetryWorkflowStep: (step: ChannelWorkflowStep) => void;
-  readonly onUpdateWorkflowStepStatus: (step: ChannelWorkflowStep, status: "skipped" | "cancelled") => void;
-  readonly onCreateTaskFromContextSummary: (summary: ChannelContextSummary) => void;
-  readonly onRefreshRuntime: () => void;
-  readonly onCancelWorkUnit: (workUnitId: string) => void;
-  readonly onRetryWorkUnit: (workUnitId: string) => void;
-  readonly onReconcileWorkUnit: (workUnitId: string) => void;
-}): JSX.Element {
-  const { t } = useI18n();
-  const activeDecisions = decisions.filter((decision) => decision.status === "active");
-  const taskSummaries = selectedTask ? contextSummaries.filter((summary) => summary.targetType === "task" && summary.targetId === selectedTask.id) : [];
-  const activeWorkflows = workflows.filter((workflow) => workflow.status !== "succeeded" && workflow.status !== "cancelled" && workflow.status !== "failed");
-  const [openRoutingDecisionId, setOpenRoutingDecisionId] = useState("");
-  const recentRoutingEvidence = useMemo(
-    () => buildRecentRoutingEvidence(routeDecisions, intentDecisions),
-    [intentDecisions, routeDecisions],
-  );
-  return (
-    <section className="channel-inspector" aria-label={t("Channel inspector")}>
-      <div className="channel-inspector-tabs" role="tablist" aria-label={t("Channel inspector modes")}>
-        {(["protocol", "brief", "routing", "decisions", "handoffs", "runtime"] as const).map((item) => (
-          <button key={item} type="button" className={mode === item ? "active" : ""} onClick={() => onModeChange(item)}>
-            {item === "protocol" ? t("Protocol") : item === "brief" ? t("Brief") : item === "routing" ? t("Routing") : item === "decisions" ? t("Decisions") : item === "handoffs" ? t("Handoffs") : t("Runtime")}
-          </button>
-        ))}
-      </div>
-      {(mode === "runtime" ? runtimeLoading : loading) ? (
-        <div className="client-empty-state compact">
-          <Loader2 className="spin" />
-          <span>{mode === "runtime" ? t("Loading runtime...") : t("Loading protocol...")}</span>
-        </div>
-      ) : null}
-      {mode === "protocol" ? (
-        <ChannelProtocolEditor
-          channel={channel}
-          protocol={protocol}
-          autoRouteEnabled={autoRouteEnabled}
-          onSave={onSaveProtocol}
-          onRevert={onRevertProtocol}
-        />
-      ) : null}
-      {mode === "brief" ? (
-        <div className="brief-editor">
-          <label className="field wide">
-            <span>{t("Objective")}</span>
-            <textarea rows={2} value={briefDraft.objective} onChange={(event) => onBriefDraftChange({ ...briefDraft, objective: event.target.value })} />
-          </label>
-          <label className="field wide">
-            <span>{t("Scope")}</span>
-            <textarea rows={2} value={briefDraft.scope} onChange={(event) => onBriefDraftChange({ ...briefDraft, scope: event.target.value })} />
-          </label>
-          <label className="field wide">
-            <span>{t("Acceptance criteria")}</span>
-            <textarea rows={3} value={briefDraft.acceptanceCriteria} onChange={(event) => onBriefDraftChange({ ...briefDraft, acceptanceCriteria: event.target.value })} />
-          </label>
-          <label className="field wide">
-            <span>{t("Open questions")}</span>
-            <textarea rows={2} value={briefDraft.openQuestions} onChange={(event) => onBriefDraftChange({ ...briefDraft, openQuestions: event.target.value })} />
-          </label>
-          <label className="field wide">
-            <span>{t("Risks")}</span>
-            <textarea rows={2} value={briefDraft.risks} onChange={(event) => onBriefDraftChange({ ...briefDraft, risks: event.target.value })} />
-          </label>
-          <button className="primary-button compact-button" type="button" onClick={onSaveBrief}>
-            <FileCheck2 size={14} />
-            {t("Save brief")}
-          </button>
-        </div>
-      ) : null}
-      {mode === "routing" ? (
-        <RoutingEvidenceIndex
-          items={recentRoutingEvidence}
-          teammates={teammates}
-          openDecisionId={openRoutingDecisionId}
-          onToggle={setOpenRoutingDecisionId}
-        />
-      ) : null}
-      {mode === "decisions" ? (
-        <ProtocolList
-          emptyLabel={t("No decisions recorded")}
-          items={decisions}
-          renderItem={(decision) => (
-            <div className="protocol-row" key={decision.id}>
-              <span>
-                <strong>{decision.title}</strong>
-                <small>{decision.status} · {decision.decision}</small>
-              </span>
-              <div className="activity-action-row">
-                <button className="secondary-button compact-button" type="button" onClick={() => onSupersedeDecision(decision)}>{t("Supersede")}</button>
-                <button className="secondary-button compact-button" type="button" onClick={() => onRejectDecision(decision)}>{t("Reject")}</button>
-              </div>
-            </div>
-          )}
-        />
-      ) : null}
-      {mode === "handoffs" ? (
-        <ProtocolList
-          emptyLabel={t("No handoffs")}
-          items={handoffs}
-          renderItem={(handoff) => (
-            <div className="protocol-row" key={handoff.id}>
-              <span>
-                <strong>{handoff.fromParticipantLabel} {"->"} {handoff.toParticipantLabel}</strong>
-                <small>{handoff.status} · {handoff.reason}</small>
-              </span>
-              <div className="activity-action-row">
-                <button
-                  className="secondary-button compact-button"
-                  type="button"
-                  onClick={() => onStartWorkflowFromHandoff(handoff)}
-                  disabled={workflows.some((workflow) => workflow.sourceHandoffId === handoff.id)}
-                >
-                  {workflows.some((workflow) => workflow.sourceHandoffId === handoff.id) ? t("Workflow started") : t("Start workflow")}
-                </button>
-                <button className="secondary-button compact-button" type="button" onClick={() => onUpdateHandoffStatus(handoff, "accepted")}>{t("Accept")}</button>
-                <button className="secondary-button compact-button" type="button" onClick={() => onUpdateHandoffStatus(handoff, "completed")}>{t("Complete")}</button>
-              </div>
-            </div>
-          )}
-        />
-      ) : null}
-      {mode === "runtime" ? (
-        <div className="runtime-protocol">
-          <RuntimeDiagnosticsPanel
-            diagnostics={runtimeDiagnostics}
-            workUnits={workUnits}
-            loading={runtimeLoading}
-            actionWorkUnitId={runtimeActionWorkUnitId}
-            onRefresh={onRefreshRuntime}
-            onCancelWorkUnit={onCancelWorkUnit}
-            onRetryWorkUnit={onRetryWorkUnit}
-            onReconcileWorkUnit={onReconcileWorkUnit}
-          />
-          <div className="task-strip-head">
-            <span><Workflow size={15} /><strong>{t("Workflow queue")}</strong></span>
-            <span className="button-row compact">
-              <small>{activeWorkflows.length}</small>
-              <button className="secondary-button compact-button" type="button" onClick={onStartTemplateWorkflow} disabled={Boolean(orchestratingWorkflowId)}>
-                {orchestratingWorkflowId === "new:autoplan-lite" ? <Loader2 className="spin" size={13} /> : <Play size={13} />}
-                {t("Start autoplan")}
-              </button>
-            </span>
-          </div>
-          <ProtocolList
-            emptyLabel={t("No active workflows")}
-            items={activeWorkflows}
-            renderItem={(workflow) => (
-              <WorkflowQueueCard
-                key={workflow.id}
-                cwd={cwd}
-                workflow={workflow}
-                steps={workflowSteps.filter((step) => step.workflowId === workflow.id)}
-                artifactsByRun={artifactsByRun}
-                brief={brief}
-                decisions={activeDecisions}
-                handoff={handoffs.find((handoff) => handoff.id === workflow.sourceHandoffId)}
-                contextSummaries={contextSummaries}
-                attachments={attachments}
-                linkPreviews={linkPreviews}
-                runningWorkflowStepId={runningWorkflowStepId}
-                orchestrating={orchestratingWorkflowId === workflow.id}
-                onOrchestrateWorkflow={onOrchestrateWorkflow}
-                onCancelWorkflow={onCancelWorkflow}
-                onStartWorkflowStep={onStartWorkflowStep}
-                onRetryWorkflowStep={onRetryWorkflowStep}
-                onUpdateWorkflowStepStatus={onUpdateWorkflowStepStatus}
-              />
-            )}
-          />
-          <div className="task-strip-head">
-            <span><FileCheck2 size={15} /><strong>{t("Active decisions")}</strong></span>
-            <small>{activeDecisions.length}</small>
-          </div>
-          <ProtocolList
-            emptyLabel={t("No active decisions")}
-            items={activeDecisions}
-            renderItem={(decision) => (
-              <div className="protocol-row compact" key={decision.id}>
-                <strong>{decision.title}</strong>
-                <small>{decision.decision}</small>
-              </div>
-            )}
-          />
-          <div className="task-strip-head">
-            <span><FileText size={15} /><strong>{t("Task context")}</strong></span>
-            <small>{taskSummaries.length}</small>
-          </div>
-          <ProtocolList
-            emptyLabel={t("No context summary for this task")}
-            items={taskSummaries}
-            renderItem={(summary) => (
-              <div className="protocol-row compact" key={summary.id}>
-                <strong>{summary.targetId}</strong>
-                <small>{summary.summary}</small>
-                <button className="secondary-button compact-button" type="button" onClick={() => onCreateTaskFromContextSummary(summary)}>{t("Create task")}</button>
-              </div>
-            )}
-          />
-        </div>
-      ) : null}
-    </section>
-  );
-}
-
-type RoutingEvidenceItem =
-  | {
-      readonly kind: "route";
-      readonly id: string;
-      readonly createdAt: string;
-      readonly decision: ChannelMessageRouteDecision;
-    }
-  | {
-      readonly kind: "intent";
-      readonly id: string;
-      readonly createdAt: string;
-      readonly decision: ChannelIntentDecision;
-    };
-
-function RoutingEvidenceIndex({
-  items,
-  teammates,
-  openDecisionId,
-  onToggle,
-}: {
-  readonly items: readonly RoutingEvidenceItem[];
-  readonly teammates: readonly ChannelMention[];
-  readonly openDecisionId: string;
-  readonly onToggle: (id: string) => void;
-}): JSX.Element {
-  const { t } = useI18n();
-  return (
-    <div className="routing-evidence-index">
-      <div className="task-strip-head">
-        <span><Info size={15} /><strong>{t("Routing evidence")}</strong></span>
-        <small>{t("{count} decisions", { count: items.length })}</small>
-      </div>
-      <ProtocolList
-        emptyLabel={t("No routing evidence recorded")}
-        items={items}
-        renderItem={(item) => {
-          const open = openDecisionId === item.id;
-          const label = item.kind === "route"
-            ? channelRouteDecisionSummaryLabel(item.decision, t)
-            : channelIntentDecisionSummaryLabel(item.decision, t);
-          return (
-            <div className="protocol-row routing-evidence-row" key={item.id}>
-              <span>
-                <strong>{label}</strong>
-                <small>{item.kind === "route" ? t("Reply route") : t("Intent selector")} · {formatDateTime(item.createdAt)}</small>
-              </span>
-              <button
-                className="secondary-button compact-button"
-                type="button"
-                aria-expanded={open}
-                onClick={() => onToggle(open ? "" : item.id)}
-              >
-                {open ? t("Hide details") : t("Inspect")}
-              </button>
-              {open ? (
-                <div className="routing-evidence-detail">
-                  {item.kind === "route" ? (
-                    <ChannelRouteInspectContent decision={item.decision} teammates={teammates} t={t} />
-                  ) : (
-                    <ChannelIntentInspectContent decision={item.decision} teammates={teammates} t={t} />
-                  )}
-                </div>
-              ) : null}
-            </div>
-          );
-        }}
-      />
-    </div>
-  );
-}
-
-function buildRecentRoutingEvidence(
-  routeDecisions: readonly ChannelMessageRouteDecision[],
-  intentDecisions: readonly ChannelIntentDecision[],
-): readonly RoutingEvidenceItem[] {
-  return [
-    ...routeDecisions.map((decision) => ({
-      kind: "route" as const,
-      id: `route:${decision.id}`,
-      createdAt: decision.createdAt,
-      decision,
-    })),
-    ...intentDecisions.map((decision) => ({
-      kind: "intent" as const,
-      id: `intent:${decision.id}`,
-      createdAt: decision.createdAt,
-      decision,
-    })),
-  ]
-    .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
-    .slice(0, 20);
-}
-
-interface ChannelProtocolDraft {
-  readonly responseLanguage: NonNullable<Channel["responseLanguage"]>;
-  readonly autoReplyMode: Channel["autoReplyMode"];
-}
-
-function ChannelProtocolEditor({
-  channel,
-  protocol,
-  autoRouteEnabled,
-  onSave,
-  onRevert,
-}: {
-  readonly channel: Channel | undefined;
-  readonly protocol: ChannelCollaborationProtocolResponse | undefined;
-  readonly autoRouteEnabled: boolean;
-  readonly onSave: (input: UpdateChannelCollaborationProtocolRequest) => Promise<ChannelCollaborationProtocolResponse | undefined>;
-  readonly onRevert: () => Promise<ChannelCollaborationProtocolResponse | undefined>;
-}): JSX.Element {
-  const { t } = useI18n();
-  const [draft, setDraft] = useState<ChannelProtocolDraft>(() => protocolDraftFromState(channel, protocol));
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState("");
-  const [notice, setNotice] = useState("");
-  const baseDraft = useMemo(() => protocolDraftFromState(channel, protocol), [channel, protocol]);
-  const changed =
-    draft.responseLanguage !== baseDraft.responseLanguage ||
-    draft.autoReplyMode !== baseDraft.autoReplyMode;
-
-  useEffect(() => {
-    setDraft(baseDraft);
-    setError("");
-    setNotice("");
-  }, [baseDraft]);
-
-  async function save(): Promise<void> {
-    const patch: {
-      responseLanguage?: UpdateChannelCollaborationProtocolRequest["responseLanguage"];
-      autoReplyMode?: UpdateChannelCollaborationProtocolRequest["autoReplyMode"];
-    } = {};
-    if (draft.responseLanguage !== baseDraft.responseLanguage) {
-      patch.responseLanguage = draft.responseLanguage;
-    }
-    if (draft.autoReplyMode !== baseDraft.autoReplyMode) {
-      patch.autoReplyMode = draft.autoReplyMode;
-    }
-    if (Object.keys(patch).length === 0) {
-      setNotice(t("No protocol changes"));
-      return;
-    }
-    setSaving(true);
-    setError("");
-    setNotice("");
-    try {
-      await onSave(patch);
-      setNotice(t("Protocol updated"));
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : String(caught));
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  async function revert(): Promise<void> {
-    if (!window.confirm(t("Reset channel protocol?"))) {
-      return;
-    }
-    setSaving(true);
-    setError("");
-    setNotice("");
-    try {
-      await onRevert();
-      setNotice(t("Protocol reset"));
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : String(caught));
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  return (
-    <div className="channel-protocol-editor">
-      <div className="task-strip-head">
-        <span><ShieldCheck size={15} /><strong>{t("Channel protocol")}</strong></span>
-        <small>{protocol ? t("Updated {time}", { time: formatDateTime(protocol.protocol.updatedAt) }) : t("Not loaded")}</small>
-      </div>
-      {protocol ? (
-        <div className="protocol-list">
-          <div className="protocol-row compact">
-            <span>
-              <strong>{t("Effective response language")}</strong>
-              <small>{responseLanguageLabel(protocol.protocol.responseLanguage, t)} · {protocolSourceLabel(protocol.sources.responseLanguage.source, t)}</small>
-            </span>
-          </div>
-          <label className="field wide">
-            <span>{t("AI response language")}</span>
-            <select
-              value={draft.responseLanguage}
-              onChange={(event) => setDraft({ ...draft, responseLanguage: event.target.value as ChannelProtocolDraft["responseLanguage"] })}
-              disabled={!channel || saving}
-            >
-              <option value="workspace">{t("Workspace default")}</option>
-              <option value="follow_user">{t("Follow user")}</option>
-              <option value="zh-CN">{t("Chinese")}</option>
-              <option value="en-US">{t("English")}</option>
-            </select>
-          </label>
-          <div className="task-strip-head">
-            <span><Info size={15} /><strong>{t("Read-only protocol defaults")}</strong></span>
-          </div>
-          <ProtocolList
-            emptyLabel={t("No read-only protocol fields")}
-            items={[
-              { id: "defaultWorkflowPreference", label: t("Workflow preference"), value: protocol.protocol.defaultWorkflowPreference, source: protocol.sources.defaultWorkflowPreference.source },
-              { id: "visibleMultiReplyMaxParticipants", label: t("Visible multi-reply cap"), value: String(protocol.protocol.visibleMultiReplyMaxParticipants), source: protocol.sources.visibleMultiReplyMaxParticipants.source },
-              { id: "privacyRules", label: t("Privacy rules"), value: protocol.protocol.privacyRules.length > 0 ? protocol.protocol.privacyRules.join("; ") : t("Default only"), source: protocol.sources.privacyRules.source },
-              { id: "reviewRules", label: t("Review rules"), value: protocol.protocol.reviewRules.length > 0 ? protocol.protocol.reviewRules.join("; ") : t("Default only"), source: protocol.sources.reviewRules.source },
-            ]}
-            renderItem={(item) => (
-              <div className="protocol-row compact" key={item.id}>
-                <span>
-                  <strong>{item.label}</strong>
-                  <small>{item.value} · {protocolSourceLabel(item.source, t)} · {t("Not editable yet")}</small>
-                </span>
-              </div>
-            )}
-          />
-          {changed ? (
-            <div className="provider-run-notice neutral">
-              <Info size={16} />
-              <span>{t("Review protocol changes before saving.")}</span>
-            </div>
-          ) : null}
-          {error ? (
-            <div className="inline-error compact">
-              <CircleAlert size={14} />
-              {error}
-            </div>
-          ) : null}
-          {notice ? <div className="inline-success compact">{notice}</div> : null}
-          <div className="activity-action-row">
-            <button className="primary-button compact-button" type="button" onClick={() => void save()} disabled={!channel || saving || !changed}>
-              {saving ? <Loader2 className="spin" size={14} /> : <Check size={14} />}
-              {t("Save protocol")}
-            </button>
-            <button className="secondary-button compact-button" type="button" onClick={() => setDraft(baseDraft)} disabled={saving || !changed}>{t("Cancel")}</button>
-            <button className="secondary-button compact-button danger" type="button" onClick={() => void revert()} disabled={!channel || saving}>{t("Reset")}</button>
-          </div>
-        </div>
-      ) : (
-        <div className="client-empty-state compact">
-          <Loader2 className="spin" />
-          <span>{t("Loading protocol...")}</span>
-        </div>
-      )}
-    </div>
-  );
-}
-
-function protocolDraftFromState(
-  channel: Channel | undefined,
-  protocol: ChannelCollaborationProtocolResponse | undefined,
-): ChannelProtocolDraft {
-  return {
-    responseLanguage: protocol?.sources.responseLanguage.channelValue ?? channel?.responseLanguage ?? "workspace",
-    autoReplyMode: channel?.autoReplyMode ?? protocol?.protocol.autoReplyMode ?? "mentions_only",
-  };
-}
-
-function protocolSourceLabel(source: ChannelCollaborationProtocolResponse["sources"]["responseLanguage"]["source"], t: Translate): string {
-  if (source === "channel_setting") {
-    return t("Channel setting");
-  }
-  if (source === "workspace_setting") {
-    return t("Workspace setting");
-  }
-  if (source === "current_message") {
-    return t("Current message");
-  }
-  if (source === "teammate_instruction") {
-    return t("Teammate instruction");
-  }
-  return t("Default");
-}
-
-function responseLanguageLabel(value: NonNullable<Channel["responseLanguage"]>, t: Translate): string {
-  if (value === "workspace") {
-    return t("Workspace default");
-  }
-  if (value === "follow_user") {
-    return t("Follow user");
-  }
-  if (value === "zh-CN") {
-    return t("Chinese");
-  }
-  if (value === "en-US") {
-    return t("English");
-  }
-  return t("Follow user");
-}
-
-function RuntimeDiagnosticsPanel({
-  diagnostics,
-  workUnits,
-  loading,
-  actionWorkUnitId,
-  onRefresh,
-  onCancelWorkUnit,
-  onRetryWorkUnit,
-  onReconcileWorkUnit,
-}: {
-  readonly diagnostics: RuntimeDiagnosticsResponse | undefined;
-  readonly workUnits: readonly WorkUnit[];
-  readonly loading: boolean;
-  readonly actionWorkUnitId: string;
-  readonly onRefresh: () => void;
-  readonly onCancelWorkUnit: (workUnitId: string) => void;
-  readonly onRetryWorkUnit: (workUnitId: string) => void;
-  readonly onReconcileWorkUnit: (workUnitId: string) => void;
-}): JSX.Element {
-  const { t } = useI18n();
-  const active = diagnostics?.active ?? workUnits.filter(isActiveWorkUnit);
-  const queued = diagnostics?.queued ?? workUnits.filter((unit) => unit.status === "queued");
-  const stuck = diagnostics?.stuck ?? [];
-  const stale = diagnostics?.stale ?? workUnits.filter((unit) => unit.status === "stale");
-  const leases = diagnostics?.leases ?? [];
-  const semaphoreSlots = diagnostics?.semaphoreSlots ?? [];
-  const visibleUnits = uniqueWorkUnits([...stuck, ...active, ...queued, ...stale, ...workUnits]).slice(0, 8);
-
-  return (
-    <section className="runtime-diagnostics-panel" aria-label={t("Runtime diagnostics")}>
-      <div className="task-strip-head">
-        <span><Activity size={15} /><strong>{t("Runtime supervisor")}</strong></span>
-        <button className="secondary-button compact-button" type="button" onClick={onRefresh} disabled={loading}>
-          {loading ? <Loader2 className="spin" size={14} /> : <RefreshCw size={14} />}
-          {t("Refresh")}
-        </button>
-      </div>
-
-      {diagnostics ? (
-        <div className="run-evidence-grid runtime-supervisor-meta">
-          <MetaRow label={t("Runtime")} value={diagnostics.runtime.runtimeInstanceId} compact />
-          <MetaRow label={t("PID")} value={String(diagnostics.runtime.pid)} compact />
-          <MetaRow label={t("Status")} value={diagnostics.runtime.status} compact />
-          <MetaRow label={t("Started")} value={formatDateTime(diagnostics.runtime.startedAt)} compact />
-        </div>
-      ) : (
-        <div className="provider-run-notice compact">
-          <CircleAlert size={14} />
-          <span>{t("Runtime diagnostics are unavailable.")}</span>
-        </div>
-      )}
-
-      <div className="runtime-kpi-grid">
-        <div>
-          <span>{t("Active")}</span>
-          <strong>{active.length}</strong>
-        </div>
-        <div>
-          <span>{t("Queued")}</span>
-          <strong>{queued.length}</strong>
-        </div>
-        <div>
-          <span>{t("Stuck")}</span>
-          <strong>{stuck.length}</strong>
-        </div>
-        <div>
-          <span>{t("Stale")}</span>
-          <strong>{stale.length}</strong>
-        </div>
-      </div>
-
-      <div className="task-strip-head">
-        <span><Workflow size={15} /><strong>{t("Work units")}</strong></span>
-        <small>{visibleUnits.length}</small>
-      </div>
-      <ProtocolList
-        emptyLabel={t("No work units recorded")}
-        items={visibleUnits}
-        renderItem={(unit) => (
-          <WorkUnitDiagnosticsRow
-            key={unit.id}
-            workUnit={unit}
-            busy={actionWorkUnitId === unit.id}
-            onCancel={onCancelWorkUnit}
-            onRetry={onRetryWorkUnit}
-            onReconcile={onReconcileWorkUnit}
-          />
-        )}
-      />
-
-      <div className="task-strip-head">
-        <span><ShieldCheck size={15} /><strong>{t("Held leases")}</strong></span>
-        <small>{leases.length}</small>
-      </div>
-      <ProtocolList
-        emptyLabel={t("No held leases")}
-        items={leases.slice(0, 6)}
-        renderItem={(lease) => (
-          <div className="protocol-row compact runtime-resource-row" key={lease.id}>
-            <span>
-              <strong>{lease.resourceType}: {truncatePreview(lease.resourceKey, 42)}</strong>
-              <small>{lease.workUnitId ?? lease.ownerId} · {t("renewed")} {formatAge(lease.lastRenewedAt ?? lease.acquiredAt)}</small>
-            </span>
-            <StatusBadge status={lease.status} />
-          </div>
-        )}
-      />
-
-      <div className="task-strip-head">
-        <span><SlidersHorizontal size={15} /><strong>{t("Semaphores")}</strong></span>
-        <small>{semaphoreSlots.length}</small>
-      </div>
-      <ProtocolList
-        emptyLabel={t("No semaphore slots")}
-        items={semaphoreSlots.slice(0, 6)}
-        renderItem={(slot) => (
-          <div className="protocol-row compact runtime-resource-row" key={slot.id}>
-            <span>
-              <strong>{slot.resourceType}: {truncatePreview(slot.resourceKey, 42)}</strong>
-              <small>{slot.workUnitId} · {t("renewed")} {formatAge(slot.lastRenewedAt)}</small>
-            </span>
-            <StatusBadge status={slot.status} />
-          </div>
-        )}
-      />
-    </section>
-  );
-}
-
-function WorkUnitDiagnosticsRow({
-  workUnit,
-  busy,
-  onCancel,
-  onRetry,
-  onReconcile,
-}: {
-  readonly workUnit: WorkUnit;
-  readonly busy: boolean;
-  readonly onCancel: (workUnitId: string) => void;
-  readonly onRetry: (workUnitId: string) => void;
-  readonly onReconcile: (workUnitId: string) => void;
-}): JSX.Element {
-  const { t } = useI18n();
-  const canCancel = ["queued", "claimed", "running", "waiting_for_approval"].includes(workUnit.status);
-  const canRetry = workUnit.status === "failed" || workUnit.status === "stale";
-  const canReconcile = ["claimed", "running", "waiting_for_approval", "cancelling", "stale"].includes(workUnit.status);
-  return (
-    <div className="protocol-row runtime-work-unit-row">
-      <span>
-        <strong>{workUnit.kind} · {workUnit.id}</strong>
-        <small>
-          {workUnit.ownerType}:{workUnit.ownerId}
-          {workUnit.linkedRunId ? ` · run:${workUnit.linkedRunId}` : ""}
-        </small>
-        <small>
-          {t("Last event")} {formatAge(workUnit.lastEventAt)}
-          {" · "}
-          {t("Last heartbeat")} {formatAge(workUnit.lastHeartbeatAt)}
-        </small>
-        {workUnit.errorMessage ? <small className="error-text">{workUnit.errorMessage}</small> : null}
-      </span>
-      <StatusBadge status={workUnit.status} />
-      <div className="activity-action-row">
-        {canCancel ? (
-          <button className="secondary-button compact-button" type="button" onClick={() => onCancel(workUnit.id)} disabled={busy}>
-            {busy ? <Loader2 className="spin" size={13} /> : <X size={13} />}
-            {t("Cancel")}
-          </button>
-        ) : null}
-        {canRetry ? (
-          <button className="secondary-button compact-button" type="button" onClick={() => onRetry(workUnit.id)} disabled={busy}>
-            {busy ? <Loader2 className="spin" size={13} /> : <RefreshCw size={13} />}
-            {t("Retry")}
-          </button>
-        ) : null}
-        {canReconcile ? (
-          <button className="secondary-button compact-button" type="button" onClick={() => onReconcile(workUnit.id)} disabled={busy}>
-            {busy ? <Loader2 className="spin" size={13} /> : <FileCheck2 size={13} />}
-            {t("Reconcile")}
-          </button>
-        ) : null}
-      </div>
-    </div>
-  );
-}
-
-function isActiveWorkUnit(workUnit: WorkUnit): boolean {
-  return ["claimed", "running", "waiting_for_approval", "cancelling"].includes(workUnit.status);
-}
-
-function uniqueWorkUnits(workUnits: readonly WorkUnit[]): readonly WorkUnit[] {
-  const byId = new Map<string, WorkUnit>();
-  for (const unit of workUnits) {
-    byId.set(unit.id, unit);
-  }
-  return [...byId.values()].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
-}
-
 function uniqueStrings(values: readonly string[]): readonly string[] {
   return [...new Set(values)];
-}
-
-function conversationCoordinatorDisplayBody(
-  turn: ConversationTurnViewModel,
-  message: ChannelMessage,
-  phase: "start" | "terminal",
-  t: Translate,
-): string {
-  if (message.status === "pending" && !message.body.trim()) {
-    return t("Thinking...");
-  }
-  if (!turn.operationCell || !shouldSanitizeGeneratedCoordinatorBody(message.body)) {
-    return message.body;
-  }
-  if (phase === "terminal" && isGeneratedWorkflowCoordinatorBody(message.body)) {
-    const fallback = conversationCoordinatorTerminalFallback(turn, t);
-    return isDuplicateCoordinatorDisplayBody(turn, fallback) ? "" : fallback;
-  }
-  const cleaned = cleanGeneratedWorkflowText(message.body);
-  if (cleaned) {
-    return isDuplicateCoordinatorDisplayBody(turn, cleaned) ? "" : cleaned;
-  }
-  const fallback = phase === "terminal"
-    ? conversationCoordinatorTerminalFallback(turn, t)
-    : conversationCoordinatorStartFallback(turn, t);
-  return isDuplicateCoordinatorDisplayBody(turn, fallback) ? "" : fallback;
-}
-
-function shouldSanitizeGeneratedCoordinatorBody(body: string): boolean {
-  const text = body.trim();
-  if (!text) {
-    return false;
-  }
-  if (/^(确认需求|完成|已完成)\s*[:：]/u.test(text) || /^(Confirm requirement|Completed)\s*:/iu.test(text)) {
-    return true;
-  }
-  if (/Smoke ID\s*:/iu.test(text) || /开始\s*workflow\s*[:：]/iu.test(text)) {
-    return true;
-  }
-  if (/(Confirmed proposal|Overall scope|Assigned teammate|Step action|Acceptance criteria)\s*:/u.test(text)) {
-    return true;
-  }
-  return false;
-}
-
-function isGeneratedWorkflowCoordinatorBody(body: string): boolean {
-  return /Smoke ID\s*:/iu.test(body) || /开始\s*workflow\s*[:：]/iu.test(body);
-}
-
-function conversationCoordinatorStartFallback(turn: ConversationTurnViewModel, t: Translate): string {
-  const task = conversationTurnTaskText(turn);
-  const agents = conversationTurnAgentLabels(turn);
-  const delegation = agents.length > 0
-    ? ` ${t("This task is assigned to {agents}.", { agents: formatAgentLabelList(agents) })}`
-    : "";
-  return `${ensureSentenceEnding(task)}${delegation}`.trim();
-}
-
-function conversationCoordinatorTerminalFallback(turn: ConversationTurnViewModel, t: Translate): string {
-  const operationCell = turn.operationCell;
-  const result = conversationTurnResultText(turn);
-  const agents = conversationTurnAgentLabels(turn);
-  const teammateSuffix = agents.length > 0
-    ? ` ${t("Teammates: {agents}.", { agents: formatAgentLabelList(agents) })}`
-    : "";
-  if (operationCell?.status === "blocked") {
-    return t("Blocked: {reason}.", { reason: result });
-  }
-  if (operationCell?.status === "failed") {
-    return t("Failed: {summary}.", { summary: result });
-  }
-  if (operationCell?.status === "cancelled" || operationCell?.status === "superseded") {
-    return t("Cancelled: {summary}.", { summary: result });
-  }
-  return `${ensureSentenceEnding(result)}${teammateSuffix ? ` ${teammateSuffix}` : ""}`.trim();
-}
-
-function conversationTurnTaskText(turn: ConversationTurnViewModel): string {
-  return cleanGeneratedWorkflowText(turn.operationCell?.title) ??
-    cleanGeneratedWorkflowText(turn.operationCell?.summary) ??
-    cleanGeneratedWorkflowText(turn.sourceMessage.body) ??
-    "current task";
-}
-
-function conversationTurnResultText(turn: ConversationTurnViewModel): string {
-  return cleanGeneratedWorkflowText(turn.operationCell?.summary) ??
-    cleanGeneratedWorkflowText(turn.operationCell?.title) ??
-    cleanGeneratedWorkflowText(turn.sourceMessage.body) ??
-    "current task";
-}
-
-function conversationTurnAgentLabels(turn: ConversationTurnViewModel): readonly string[] {
-  return uniqueStrings(
-    (turn.operationCell?.agentSpans ?? [])
-      .filter((span) => span.kind !== "overflow")
-      .map((span) => span.label.trim())
-      .filter(Boolean),
-  );
-}
-
-function formatAgentLabelList(labels: readonly string[]): string {
-  return labels.join("、");
-}
-
-function ensureSentenceEnding(value: string): string {
-  const text = value.trim();
-  if (!text) {
-    return "";
-  }
-  return /[。.!?！？]$/u.test(text) ? text : `${text}.`;
-}
-
-function isDuplicateCoordinatorDisplayBody(turn: ConversationTurnViewModel, value: string): boolean {
-  const normalizedValue = normalizeCoordinatorDisplayComparison(value);
-  if (!normalizedValue) {
-    return true;
-  }
-  const operationCell = turn.operationCell;
-  const candidates = [
-    turn.sourceMessage.body,
-    operationCell?.title,
-    operationCell?.summary,
-    ...(operationCell?.operationRows ?? []).map((row) => row.title),
-  ];
-  return candidates.some((candidate) => normalizeCoordinatorDisplayComparison(candidate) === normalizedValue);
-}
-
-function normalizeCoordinatorDisplayComparison(value: string | undefined): string {
-  const cleaned = stripGeneratedWorkflowNoise(value)
-    .toLowerCase()
-    .replace(/[。.!?！？]+$/gu, "")
-    .replace(/\s+/gu, " ")
-    .trim();
-  return cleaned;
-}
-
-function cleanGeneratedWorkflowText(value: string | undefined): string | undefined {
-  const cleaned = stripGeneratedWorkflowNoise(value);
-  if (!cleaned) {
-    return undefined;
-  }
-  return truncatePreview(cleaned, 120);
-}
-
-function stripGeneratedWorkflowNoise(value: string | undefined): string {
-  if (!value) {
-    return "";
-  }
-  let text = value.trim();
-  text = text
-    .replace(/^确认需求\s*[:：]\s*/u, "")
-    .replace(/^(完成|已完成)\s*[:：]\s*/u, "")
-    .replace(/^Confirm requirement\s*:\s*/iu, "")
-    .replace(/^Completed\s*:\s*/iu, "")
-    .replace(/^["“「']+|["”」']+$/gu, "")
-    .replace(/^[“「"]?开始\s*workflow\s*[:：]\s*/iu, "")
-    .replace(/^\s*workflow\s*[:：]\s*/iu, "")
-    .replace(/\s*Smoke ID\s*:\s*[\w.-]+[。.]?/giu, "")
-    .replace(/\s*开始处理[。.]?$/u, "")
-    .replace(/[」”"]+[。.]?$/u, "")
-    .replace(/\s+/gu, " ")
-    .trim();
-  text = text.replace(/[。.]$/u, "").trim();
-  return text;
 }
 
 function sameStringList(left: readonly string[], right: readonly string[]): boolean {
@@ -9174,888 +5177,6 @@ function formatAge(value: string | undefined): string {
   return `${Math.floor(hours / 24)}d`;
 }
 
-function ProtocolList<T>({
-  emptyLabel,
-  items,
-  renderItem,
-}: {
-  readonly emptyLabel: string;
-  readonly items: readonly T[];
-  readonly renderItem: (item: T) => JSX.Element;
-}): JSX.Element {
-  if (items.length === 0) {
-    return (
-      <div className="client-empty-state compact">
-        <FileText />
-        <span>{emptyLabel}</span>
-      </div>
-    );
-  }
-  return <div className="protocol-list">{items.map(renderItem)}</div>;
-}
-
-function WorkflowQueueCard({
-  cwd,
-  workflow,
-  steps,
-  artifactsByRun,
-  brief,
-  decisions,
-  handoff,
-  contextSummaries,
-  attachments,
-  linkPreviews,
-  runningWorkflowStepId,
-  orchestrating,
-  onOrchestrateWorkflow,
-  onCancelWorkflow,
-  onStartWorkflowStep,
-  onRetryWorkflowStep,
-  onUpdateWorkflowStepStatus,
-}: {
-  readonly cwd: string;
-  readonly workflow: ChannelWorkflow;
-  readonly steps: readonly ChannelWorkflowStep[];
-  readonly artifactsByRun: Readonly<Record<string, readonly RunArtifact[]>>;
-  readonly brief: ChannelBrief | undefined;
-  readonly decisions: readonly ChannelDecision[];
-  readonly handoff: ChannelHandoff | undefined;
-  readonly contextSummaries: readonly ChannelContextSummary[];
-  readonly attachments: readonly ChannelAttachment[];
-  readonly linkPreviews: readonly ChannelLinkPreview[];
-  readonly runningWorkflowStepId: string;
-  readonly orchestrating: boolean;
-  readonly onOrchestrateWorkflow: (workflow: ChannelWorkflow) => void;
-  readonly onCancelWorkflow: (workflow: ChannelWorkflow) => void;
-  readonly onStartWorkflowStep: (step: ChannelWorkflowStep, mode: ChannelWorkflowStepStartMode) => void;
-  readonly onRetryWorkflowStep: (step: ChannelWorkflowStep) => void;
-  readonly onUpdateWorkflowStepStatus: (step: ChannelWorkflowStep, status: "skipped" | "cancelled") => void;
-}): JSX.Element {
-  const { t } = useI18n();
-  const orderedSteps = [...steps].sort((left, right) => left.position - right.position);
-  const workflowContextSummaries = contextSummaries.filter((summary) => orderedSteps.some((step) => step.contextSummaryId === summary.id));
-  const canAdvance = workflowCanAdvance(workflow.status);
-  return (
-    <div className="protocol-row workflow-queue-card">
-      <div className="workflow-queue-head">
-        <span>
-          <strong>{workflow.title}</strong>
-          <small>{workflow.status} · {workflow.objective}</small>
-        </span>
-        <span className="workflow-queue-actions">
-          <StatusBadge status={workflow.status} />
-          <button className="secondary-button compact-button" type="button" onClick={() => onOrchestrateWorkflow(workflow)} disabled={!canAdvance || orchestrating}>
-            {orchestrating ? <Loader2 className="spin" size={13} /> : <Play size={13} />}
-            {t("Advance")}
-          </button>
-          <button className="secondary-button compact-button" type="button" onClick={() => onCancelWorkflow(workflow)} disabled={!workflowCanCancel(workflow.status) || orchestrating}>
-            <Square size={13} />
-            {t("Cancel")}
-          </button>
-        </span>
-      </div>
-      <div className="context-packet">
-        {brief?.objective ? <span>{t("Brief")}: {brief.objective}</span> : null}
-        {handoff ? <span>{t("Source handoff")}: {handoff.fromParticipantLabel} {"->"} {handoff.toParticipantLabel}</span> : null}
-        <span>{t("Active decisions")}: {decisions.length}</span>
-        <span>{t("Context summaries")}: {workflowContextSummaries.length}</span>
-        <span>{t("Attachments")}: {attachments.length}</span>
-        <span>{t("Links")}: {linkPreviews.length}</span>
-      </div>
-      <div className="workflow-step-list">
-        {orderedSteps.length === 0 ? (
-          <div className="client-empty-state compact">
-            <Workflow />
-            <span>{t("No workflow steps")}</span>
-          </div>
-        ) : (
-          orderedSteps.map((step) => (
-            <WorkflowStepCard
-              key={step.id}
-              cwd={cwd}
-              step={step}
-              running={runningWorkflowStepId === step.id}
-              contextSummary={contextSummaries.find((summary) => summary.id === step.contextSummaryId)}
-              artifactsByRun={artifactsByRun}
-              onStartWorkflowStep={onStartWorkflowStep}
-              onRetryWorkflowStep={onRetryWorkflowStep}
-              onUpdateWorkflowStepStatus={onUpdateWorkflowStepStatus}
-            />
-          ))
-        )}
-      </div>
-    </div>
-  );
-}
-
-function WorkflowStepCard({
-  cwd,
-  step,
-  running,
-  contextSummary,
-  artifactsByRun,
-  onStartWorkflowStep,
-  onRetryWorkflowStep,
-  onUpdateWorkflowStepStatus,
-}: {
-  readonly cwd: string;
-  readonly step: ChannelWorkflowStep;
-  readonly running: boolean;
-  readonly contextSummary: ChannelContextSummary | undefined;
-  readonly artifactsByRun: Readonly<Record<string, readonly RunArtifact[]>>;
-  readonly onStartWorkflowStep: (step: ChannelWorkflowStep, mode: ChannelWorkflowStepStartMode) => void;
-  readonly onRetryWorkflowStep: (step: ChannelWorkflowStep) => void;
-  readonly onUpdateWorkflowStepStatus: (step: ChannelWorkflowStep, status: "skipped" | "cancelled") => void;
-}): JSX.Element {
-  const { t } = useI18n();
-  const terminal = isWorkflowStepTerminal(step.status);
-  const canStart = step.status === "queued" || step.status === "blocked";
-  const canSkip = step.status === "queued";
-  const metadata = step.metadata;
-  const runArtifacts = step.runId ? artifactsByRun[step.runId] ?? [] : [];
-  const runArtifactsById = new Map(runArtifacts.map((artifact) => [artifact.id, artifact] as const));
-  const additionalOutputArtifactIds = uniqueStrings((metadata?.outputArtifactIds ?? []).filter((artifactId) => artifactId !== metadata?.outputArtifactId));
-  const packetArtifactIds = uniqueStrings([
-    metadata?.contextArtifactId,
-    metadata?.outputArtifactId,
-    ...additionalOutputArtifactIds,
-  ].filter((artifactId): artifactId is string => Boolean(artifactId)));
-  const workflowSourceLabel = metadata ? workflowStepSourceLabel(metadata, t) : "";
-  const gates = metadata?.gates ?? [];
-  return (
-    <article className="workflow-step-card compact">
-      <div className="workflow-step-head">
-        <span>
-          <strong>{step.position}. {step.title}</strong>
-          <small>{step.toParticipantLabel} · {step.prompt}</small>
-        </span>
-        <StatusBadge status={step.status} />
-      </div>
-      {contextSummary ? (
-        <div className="context-packet muted">
-          <span>{t("Context summary")}: {contextSummary.summary}</span>
-        </div>
-      ) : null}
-      {step.blocker ? (
-        <div className="provider-run-notice compact">
-          <CircleAlert size={14} />
-          <span>{step.blocker}</span>
-        </div>
-      ) : null}
-      {metadata ? (
-        <div className="context-packet muted">
-          {metadata.templateStepId ? <span>{t("Template")}: {metadata.templateStepId}</span> : null}
-          {metadata.skillId ? <span>{t("Skill")}: {metadata.skillId}</span> : null}
-          {metadata.requestedRunnerId ? <span>{t("Runner")}: {metadata.requestedRunnerId}</span> : null}
-          {metadata.providerPresetId ? <span>{t("Provider")}: {metadata.providerPresetId}</span> : null}
-          {workflowSourceLabel ? <span>{t("Source")}: {workflowSourceLabel}</span> : null}
-          {metadata.dependsOnStepIds?.length ? <span>{t("Depends")}: {metadata.dependsOnStepIds.length}</span> : null}
-          {metadata.preStepApprovalId ? <span>{t("Pre-step approval")}: {metadata.preStepApprovalId}</span> : null}
-        </div>
-      ) : null}
-      {packetArtifactIds.length > 0 || runArtifacts.length > 0 ? (
-        <div className="context-packet muted" aria-label={t("Packet artifacts")}>
-          {metadata?.contextArtifactId ? (
-            <WorkflowArtifactChip
-              label={t("Context source artifact")}
-              artifactId={metadata.contextArtifactId}
-              artifact={runArtifactsById.get(metadata.contextArtifactId)}
-              cwd={cwd}
-            />
-          ) : null}
-          {metadata?.outputArtifactId ? (
-            <WorkflowArtifactChip
-              label={t("Output packet")}
-              artifactId={metadata.outputArtifactId}
-              artifact={runArtifactsById.get(metadata.outputArtifactId)}
-              cwd={cwd}
-            />
-          ) : null}
-          {additionalOutputArtifactIds.map((artifactId) => (
-            <WorkflowArtifactChip
-              key={artifactId}
-              label={t("Artifact")}
-              artifactId={artifactId}
-              artifact={runArtifactsById.get(artifactId)}
-              cwd={cwd}
-            />
-          ))}
-          {runArtifacts.length > packetArtifactIds.length ? <span>{t("{count} artifacts", { count: runArtifacts.length })}</span> : null}
-        </div>
-      ) : null}
-      {metadata?.contextArtifactId ? (
-        <WorkflowStepContextEvidencePanel cwd={cwd} step={step} />
-      ) : null}
-      {metadata?.policy ? (
-        <div className="context-packet muted" aria-label={t("Workflow policy")}>
-          <span>{t("Workflow policy")}</span>
-          <span>{t("Run failed")}: {workflowStepFailurePolicyLabel(metadata.policy.onRunFailed, t)}</span>
-          <span>{t("Run cancelled")}: {workflowStepFailurePolicyLabel(metadata.policy.onRunCancelled, t)}</span>
-          <span>{t("Approval denied")}: {workflowStepFailurePolicyLabel(metadata.policy.onApprovalDenied, t)}</span>
-          <span>{metadata.policy.retryable ? t("Retryable") : t("Not retryable")}</span>
-          {metadata.policy.maxRetries !== undefined ? <span>{t("Max retries")}: {metadata.policy.maxRetries}</span> : null}
-        </div>
-      ) : null}
-      {gates.length > 0 || metadata?.activeGateStage || metadata?.postStepApprovalId ? (
-        <div className="context-packet muted" aria-label={t("Workflow gates")}>
-          {gates.map((gate) => (
-            <span key={`${gate.stage}:${gate.title}`}>
-              {workflowGateStageLabel(gate.stage, t)}: {gate.title} · {approvalProfileText(gate.approvalProfile, t)}
-            </span>
-          ))}
-          {metadata?.activeGateStage ? <span>{t("Active gate")}: {workflowGateStageLabel(metadata.activeGateStage, t)}</span> : null}
-          {metadata?.postStepApprovalId ? <span>{t("Post-step approval")}: {metadata.postStepApprovalId}</span> : null}
-        </div>
-      ) : null}
-      {step.taskId || step.runId || step.resultSummary ? (
-        <div className="context-packet muted">
-          {step.taskId ? <span>{t("Task linked")}</span> : null}
-          {step.runId ? <span>{t("Run linked")}</span> : null}
-          {step.resultSummary ? <span>{step.resultSummary}</span> : null}
-        </div>
-      ) : null}
-      <div className="activity-action-row">
-        <button className="secondary-button compact-button" type="button" onClick={() => onStartWorkflowStep(step, "create_task")} disabled={!canStart || running}>
-          {running ? <Loader2 className="spin" size={14} /> : <Plus size={14} />}
-          {t("Start step")}
-        </button>
-        <button className="secondary-button compact-button" type="button" onClick={() => onStartWorkflowStep(step, "create_and_run_task")} disabled={!canStart || running}>
-          {running ? <Loader2 className="spin" size={14} /> : <Play size={14} />}
-          {t("Start + run")}
-        </button>
-        <button className="secondary-button compact-button" type="button" onClick={() => onRetryWorkflowStep(step)} disabled={step.status !== "blocked" || running}>
-          {running ? <Loader2 className="spin" size={14} /> : <RefreshCw size={14} />}
-          {t("Retry")}
-        </button>
-        <button className="secondary-button compact-button" type="button" onClick={() => onUpdateWorkflowStepStatus(step, "skipped")} disabled={!canSkip || running}>
-          {t("Skip")}
-        </button>
-        <button className="secondary-button compact-button" type="button" onClick={() => onUpdateWorkflowStepStatus(step, "cancelled")} disabled={terminal || running}>
-          {t("Cancel")}
-        </button>
-      </div>
-    </article>
-  );
-}
-
-function WorkflowArtifactChip({
-  label,
-  artifactId,
-  artifact,
-  cwd,
-}: {
-  readonly label: string;
-  readonly artifactId: string;
-  readonly artifact: RunArtifact | undefined;
-  readonly cwd: string;
-}): JSX.Element {
-  const { t } = useI18n();
-  const chipTitle = artifact?.title || artifact?.path || artifactId;
-  const text = `${label}: ${truncatePreview(chipTitle, 42)}`;
-  if (!artifact) {
-    return <code title={artifactId}>{text}</code>;
-  }
-  return (
-    <a className="workflow-artifact-chip" href={artifactContentUrl(artifact.id, cwd)} target="_blank" rel="noreferrer" title={`${t("Open artifact")}: ${chipTitle}`}>
-      {text}
-    </a>
-  );
-}
-
-type WorkflowStepContextEvidenceState =
-  | { readonly status: "idle" }
-  | { readonly status: "loading" }
-  | {
-    readonly status: "loaded";
-    readonly inspect?: WorkflowContextInspectSummary;
-    readonly packet?: ChannelWorkflowStepContextPacket;
-    readonly diagnostics: readonly WorkflowEvidenceDiagnostic[];
-  }
-  | { readonly status: "error"; readonly errorMessage: string };
-
-type WorkflowContextPackSnapshot = NonNullable<ChannelWorkflowStepContextPacket["contextPack"]>;
-type WorkflowContextPackSectionSnapshot = WorkflowContextPackSnapshot["sections"][number];
-
-function WorkflowStepContextEvidencePanel({
-  cwd,
-  step,
-}: {
-  readonly cwd: string;
-  readonly step: ChannelWorkflowStep;
-}): JSX.Element | null {
-  const { t } = useI18n();
-  const contextArtifactId = step.metadata?.contextArtifactId;
-  const [open, setOpen] = useState(false);
-  const [state, setState] = useState<WorkflowStepContextEvidenceState>({ status: "idle" });
-
-  if (!contextArtifactId) {
-    return null;
-  }
-
-  function toggleOpen(): void {
-    const nextOpen = !open;
-    setOpen(nextOpen);
-    if (nextOpen && (state.status === "idle" || state.status === "error")) {
-      void loadContextEvidence();
-    }
-  }
-
-  async function loadContextEvidence(): Promise<void> {
-    setState({ status: "loading" });
-    try {
-      const evidence = await getChannelWorkflowEvidence(cwd.trim(), step.workflowId);
-      const evidenceStep = evidence.steps.find((item) => item.step.id === step.id);
-      setState({
-        status: "loaded",
-        inspect: evidenceStep?.contextInspect,
-        packet: evidenceStep?.contextPacket,
-        diagnostics: evidenceStep?.diagnostics ?? [],
-      });
-    } catch (caught) {
-      const message = caught instanceof Error ? caught.message : String(caught);
-      setState({ status: "error", errorMessage: message || t("Context evidence failed to load.") });
-    }
-  }
-
-  return (
-    <section className="workflow-context-evidence-panel" aria-label={t("Context sources")}>
-      <button className="secondary-button compact-button" type="button" onClick={toggleOpen} aria-expanded={open}>
-        {open ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
-        <FileText size={13} />
-        {t("Context sources")}
-      </button>
-      {open ? (
-        <WorkflowStepContextEvidenceBody
-          artifactId={contextArtifactId}
-          state={state}
-          onRetry={loadContextEvidence}
-        />
-      ) : null}
-    </section>
-  );
-}
-
-function WorkflowStepContextEvidenceBody({
-  artifactId,
-  state,
-  onRetry,
-}: {
-  readonly artifactId: string;
-  readonly state: WorkflowStepContextEvidenceState;
-  readonly onRetry: () => Promise<void>;
-}): JSX.Element {
-  const { t } = useI18n();
-  if (state.status === "idle" || state.status === "loading") {
-    return (
-      <div className="workflow-context-evidence-body">
-        <div className="workflow-context-evidence-state">
-          <Loader2 className="spin" size={13} />
-          <span>{t("Loading context evidence...")}</span>
-        </div>
-      </div>
-    );
-  }
-  if (state.status === "error") {
-    return (
-      <div className="workflow-context-evidence-body">
-        <div className="workflow-context-evidence-state failed">
-          <CircleAlert size={13} />
-          <span>{t("Artifact load failed")}: {artifactId}</span>
-          <small>{state.errorMessage}</small>
-          <button className="secondary-button compact-button" type="button" onClick={() => void onRetry()}>
-            <RefreshCw size={13} />
-            {t("Retry details")}
-          </button>
-        </div>
-      </div>
-    );
-  }
-  if (!state.packet) {
-    if (state.inspect) {
-      return <WorkflowContextInspectEvidence inspect={state.inspect} artifactId={artifactId} />;
-    }
-    const diagnostic = state.diagnostics.find((item) => item.kind === "bad_packet" || item.kind === "missing_context_packet");
-    return (
-      <div className="workflow-context-evidence-body">
-        <div className="workflow-context-evidence-state">
-          <FileText size={13} />
-          <span>{diagnostic?.message ?? t("No persisted context snapshot for this step.")}</span>
-          <small>{artifactId}</small>
-        </div>
-      </div>
-    );
-  }
-  if (state.inspect) {
-    return <WorkflowContextInspectEvidence inspect={state.inspect} artifactId={artifactId} fallbackPacket={state.packet} />;
-  }
-  if (!state.packet.contextPack) {
-    return (
-      <div className="workflow-context-evidence-body">
-        <div className="workflow-context-evidence-state">
-          <FileText size={13} />
-          <span>{t("Context source details are not available.")}</span>
-          <small>{artifactId}</small>
-        </div>
-      </div>
-    );
-  }
-  return <WorkflowContextPackEvidence packet={state.packet} artifactId={artifactId} />;
-}
-
-function WorkflowContextInspectEvidence({
-  inspect,
-  artifactId,
-  fallbackPacket,
-}: {
-  readonly inspect: WorkflowContextInspectSummary;
-  readonly artifactId: string;
-  readonly fallbackPacket?: ChannelWorkflowStepContextPacket;
-}): JSX.Element {
-  const { t } = useI18n();
-  if (inspect.availability !== "available") {
-    if (fallbackPacket?.contextPack) {
-      return <WorkflowContextPackEvidence packet={fallbackPacket} artifactId={artifactId} />;
-    }
-    return (
-      <div className="workflow-context-evidence-body">
-        <div className="workflow-context-evidence-state">
-          <FileText size={13} />
-          <span>{workflowContextInspectAvailabilityLabel(inspect.availability, t)}</span>
-          <small>{inspect.contextArtifactId ?? artifactId}</small>
-        </div>
-      </div>
-    );
-  }
-  const summary = buildConversationContextSourceSummaryFromInspect(inspect, t);
-
-  return (
-    <div className="workflow-context-evidence-body">
-      <WorkflowContextSourceSummaryView summary={summary} />
-      <WorkflowContextDeveloperDiagnostics>
-        <WorkflowContextInspectBudgetDiagnostics inspect={inspect} t={t} />
-      </WorkflowContextDeveloperDiagnostics>
-    </div>
-  );
-}
-
-function WorkflowContextPackEvidence({
-  packet,
-  artifactId,
-}: {
-  readonly packet: ChannelWorkflowStepContextPacket;
-  readonly artifactId: string;
-}): JSX.Element {
-  const { t } = useI18n();
-  const pack = packet.contextPack;
-  if (!pack) {
-    return (
-      <div className="workflow-context-evidence-body">
-        <div className="workflow-context-evidence-state">
-          <FileText size={13} />
-          <span>{t("Context source details are not available.")}</span>
-          <small>{artifactId}</small>
-        </div>
-      </div>
-    );
-  }
-  const summary = buildConversationContextSourceSummaryFromPacket(packet, t);
-  return (
-    <div className="workflow-context-evidence-body">
-      <WorkflowContextSourceSummaryView summary={summary} />
-      <WorkflowContextDeveloperDiagnostics>
-        <WorkflowContextBudgetDiagnostics pack={pack} t={t} />
-      </WorkflowContextDeveloperDiagnostics>
-    </div>
-  );
-}
-
-function WorkflowContextSourceSummaryView({
-  summary,
-}: {
-  readonly summary: ConversationContextSourceSummary;
-}): JSX.Element {
-  const { t } = useI18n();
-  return (
-    <div className="workflow-context-source-summary" aria-label={t("Context source summary")}>
-      <div className="workflow-context-source-head">
-        <strong>{t("Sources used")}</strong>
-        <small>{conversationContextSourceSummaryLabel(summary, t)}</small>
-      </div>
-      {summary.groups.length > 0 ? (
-        <ul className="workflow-context-source-list">
-          {summary.groups.map((group) => (
-            <li key={group.id}>
-              <span>{group.label}</span>
-              <small>
-                {group.count === 1 ? t("1 item") : t("{count} items", { count: group.count })}
-                {group.examples.length > 0 ? ` · ${group.examples.join(", ")}` : ""}
-              </small>
-            </li>
-          ))}
-        </ul>
-      ) : (
-        <small className="workflow-context-source-empty">{summary.unavailableReason ?? t("No user-facing sources were recorded.")}</small>
-      )}
-      {summary.droppedCount > 0 || summary.compactionCount > 0 ? (
-        <div className="workflow-context-source-foot">
-          {summary.droppedCount > 0 ? <span>{t("{count} items omitted from model context", { count: summary.droppedCount })}</span> : null}
-          {summary.compactionCount > 0 ? <span>{t("{count} compacted context summaries", { count: summary.compactionCount })}</span> : null}
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
-function WorkflowContextDeveloperDiagnostics({
-  children,
-}: {
-  readonly children: ReactNode;
-}): JSX.Element {
-  const { t } = useI18n();
-  return (
-    <details className="workflow-context-developer-diagnostics">
-      <summary>
-        <span>{t("Developer diagnostics")}</span>
-      </summary>
-      {children}
-    </details>
-  );
-}
-
-function WorkflowContextBudgetDiagnostics({
-  pack,
-  t,
-}: {
-  readonly pack: WorkflowContextPackSnapshot;
-  readonly t: Translate;
-}): JSX.Element {
-  const sectionEstimateCount = pack.sections.filter((section) => typeof section.estimatedTokens === "number").length;
-  return (
-    <details className="workflow-context-budget-diagnostics">
-      <summary>
-        <span>{t("Budget diagnostics")}</span>
-        <small>{t("Developer diagnostics")}</small>
-      </summary>
-      <WorkflowContextEvidenceSection
-        title={t("Token budget")}
-        summary={workflowContextBudgetUsageLabel(pack, t)}
-      >
-        <dl className="workflow-context-diagnostics-grid">
-          <div>
-            <dt>{t("Budget mode")}</dt>
-            <dd>{pack.budget.mode || t("Not recorded")}</dd>
-          </div>
-          <div>
-            <dt>{t("Capability source")}</dt>
-            <dd>{pack.budget.capabilitySource || t("Not recorded")}</dd>
-          </div>
-          <div>
-            <dt>{t("Capability confidence")}</dt>
-            <dd>{pack.budget.capabilityConfidence || t("Not recorded")}</dd>
-          </div>
-          <div>
-            <dt>{t("Tokenizer")}</dt>
-            <dd>{pack.budget.tokenizer || t("Not recorded")}</dd>
-          </div>
-          <div>
-            <dt>{t("Context window")}</dt>
-            <dd>{formatWorkflowTokenCount(pack.budget.contextWindowTokens, t)}</dd>
-          </div>
-          <div>
-            <dt>{t("Reserved output")}</dt>
-            <dd>{formatWorkflowTokenCount(pack.budget.reservedOutputTokens, t)}</dd>
-          </div>
-          <div>
-            <dt>{t("Runtime overhead")}</dt>
-            <dd>{formatWorkflowTokenCount(pack.budget.reservedRuntimeOverheadTokens, t)}</dd>
-          </div>
-          <div>
-            <dt>{t("Input budget")}</dt>
-            <dd>{formatWorkflowTokenCount(pack.budget.inputBudgetTokens, t)}</dd>
-          </div>
-          <div>
-            <dt>{t("Estimated input")}</dt>
-            <dd>{formatWorkflowTokenCount(pack.estimatedInputTokens, t)}</dd>
-          </div>
-          <div>
-            <dt>{t("Over budget")}</dt>
-            <dd>{pack.overBudget ? t("Yes") : t("No")}</dd>
-          </div>
-        </dl>
-      </WorkflowContextEvidenceSection>
-
-      <WorkflowContextEvidenceSection
-        title={t("Section token estimates")}
-        summary={t("{count} sections", { count: sectionEstimateCount })}
-      >
-        {pack.sections.length > 0 ? (
-          <ul>
-            {pack.sections.map((section) => (
-              <li key={section.id}>
-                <strong>{section.id}</strong>
-                <small>{workflowContextSectionDiagnosticMeta(section, t)}</small>
-              </li>
-            ))}
-          </ul>
-        ) : <small>{t("No kept sections recorded.")}</small>}
-      </WorkflowContextEvidenceSection>
-
-      <WorkflowContextEvidenceSection
-        title={t("Dropped section ids")}
-        summary={t("{count} sections", { count: pack.droppedSectionIds.length })}
-      >
-        {pack.droppedSectionIds.length > 0 ? (
-          <div className="workflow-context-chip-list">
-            {pack.droppedSectionIds.map((sectionId) => <code key={sectionId}>{sectionId}</code>)}
-          </div>
-        ) : <small>{t("No sections dropped.")}</small>}
-      </WorkflowContextEvidenceSection>
-
-      <WorkflowContextEvidenceSection
-        title={t("Compaction ids")}
-        summary={t("{count} compactions", { count: pack.compactionIds.length })}
-      >
-        {pack.compactionIds.length > 0 ? (
-          <div className="workflow-context-chip-list">
-            {pack.compactionIds.map((compactionId) => <code key={compactionId}>{compactionId}</code>)}
-          </div>
-        ) : <small>{t("No compactions recorded.")}</small>}
-      </WorkflowContextEvidenceSection>
-    </details>
-  );
-}
-
-function WorkflowContextInspectBudgetDiagnostics({
-  inspect,
-  t,
-}: {
-  readonly inspect: WorkflowContextInspectSummary;
-  readonly t: Translate;
-}): JSX.Element {
-  const sectionEstimateCount = inspect.sections.filter((section) => typeof section.estimatedTokens === "number").length;
-  return (
-    <details className="workflow-context-budget-diagnostics">
-      <summary>
-        <span>{t("Budget diagnostics")}</span>
-        <small>{t("Developer diagnostics")}</small>
-      </summary>
-      <WorkflowContextEvidenceSection
-        title={t("Token budget")}
-        summary={inspect.budget ? workflowContextInspectBudgetUsageLabel(inspect, t) : t("Not recorded")}
-      >
-        {inspect.budget ? (
-          <dl className="workflow-context-diagnostics-grid">
-            <div>
-              <dt>{t("Budget mode")}</dt>
-              <dd>{inspect.budget.mode || t("Not recorded")}</dd>
-            </div>
-            <div>
-              <dt>{t("Capability source")}</dt>
-              <dd>{inspect.budget.capabilitySource || t("Not recorded")}</dd>
-            </div>
-            <div>
-              <dt>{t("Capability confidence")}</dt>
-              <dd>{inspect.budget.capabilityConfidence || t("Not recorded")}</dd>
-            </div>
-            <div>
-              <dt>{t("Tokenizer")}</dt>
-              <dd>{inspect.budget.tokenizer || t("Not recorded")}</dd>
-            </div>
-            <div>
-              <dt>{t("Input budget")}</dt>
-              <dd>{formatWorkflowTokenCount(inspect.budget.inputBudgetTokens, t)}</dd>
-            </div>
-            <div>
-              <dt>{t("Estimated input")}</dt>
-              <dd>{formatWorkflowTokenCount(inspect.budget.estimatedInputTokens, t)}</dd>
-            </div>
-            <div>
-              <dt>{t("Over budget")}</dt>
-              <dd>{inspect.budget.overBudget ? t("Yes") : t("No")}</dd>
-            </div>
-          </dl>
-        ) : <small>{t("Not recorded")}</small>}
-      </WorkflowContextEvidenceSection>
-
-      <WorkflowContextEvidenceSection
-        title={t("Section token estimates")}
-        summary={t("{count} sections", { count: sectionEstimateCount })}
-      >
-        {inspect.sections.length > 0 ? (
-          <ul>
-            {inspect.sections.map((section) => (
-              <li key={section.id}>
-                <strong>{section.id}</strong>
-                <small>{workflowContextInspectSectionDiagnosticMeta(section, t)}</small>
-              </li>
-            ))}
-          </ul>
-        ) : <small>{t("No kept sections recorded.")}</small>}
-      </WorkflowContextEvidenceSection>
-
-      <WorkflowContextEvidenceSection
-        title={t("Dropped section ids")}
-        summary={t("{count} sections", { count: inspect.droppedSectionCount })}
-      >
-        {inspect.droppedSectionIds.length > 0 ? (
-          <div className="workflow-context-chip-list">
-            {inspect.droppedSectionIds.map((sectionId) => <code key={sectionId}>{sectionId}</code>)}
-          </div>
-        ) : <small>{t("No sections dropped.")}</small>}
-      </WorkflowContextEvidenceSection>
-
-      <WorkflowContextEvidenceSection
-        title={t("Compaction ids")}
-        summary={t("{count} compactions", { count: inspect.compactionCount })}
-      >
-        {inspect.compactionIds.length > 0 ? (
-          <div className="workflow-context-chip-list">
-            {inspect.compactionIds.map((compactionId) => <code key={compactionId}>{compactionId}</code>)}
-          </div>
-        ) : <small>{t("No compactions recorded.")}</small>}
-      </WorkflowContextEvidenceSection>
-    </details>
-  );
-}
-
-function WorkflowContextEvidenceSection({
-  title,
-  summary,
-  children,
-}: {
-  readonly title: string;
-  readonly summary: string;
-  readonly children: ReactNode;
-}): JSX.Element {
-  return (
-    <section className="workflow-context-evidence-section">
-      <header>
-        <strong>{title}</strong>
-        <small>{summary}</small>
-      </header>
-      {children}
-    </section>
-  );
-}
-
-function workflowContextSectionDiagnosticMeta(section: WorkflowContextPackSectionSnapshot, t: Translate): string {
-  return [
-    section.role,
-    section.priority,
-    formatWorkflowTokenCount(section.estimatedTokens, t),
-    t("{count} refs", { count: section.sourceRefIds?.length ?? 0 }),
-  ].join(" · ");
-}
-
-function workflowContextInspectSectionDiagnosticMeta(section: WorkflowContextInspectSummary["sections"][number], t: Translate): string {
-  return [
-    section.role,
-    section.priority,
-    formatWorkflowTokenCount(section.estimatedTokens, t),
-    t("{count} refs", { count: section.sourceRefIds.length }),
-  ].join(" · ");
-}
-
-function workflowContextBudgetUsageLabel(pack: WorkflowContextPackSnapshot, t: Translate): string {
-  const estimated = pack.estimatedInputTokens;
-  const budget = pack.budget.inputBudgetTokens;
-  if (!Number.isFinite(estimated) || !Number.isFinite(budget) || budget <= 0) {
-    return t("Not recorded");
-  }
-  return `${formatWorkflowTokenCount(estimated, t)} / ${formatWorkflowTokenCount(budget, t)} (${Math.round((estimated / budget) * 100)}%)`;
-}
-
-function workflowContextInspectBudgetUsageLabel(inspect: WorkflowContextInspectSummary, t: Translate): string {
-  const estimated = inspect.budget?.estimatedInputTokens;
-  const budget = inspect.budget?.inputBudgetTokens;
-  if (typeof estimated !== "number" || typeof budget !== "number" || !Number.isFinite(estimated) || !Number.isFinite(budget) || budget <= 0) {
-    return t("Not recorded");
-  }
-  return `${formatWorkflowTokenCount(estimated, t)} / ${formatWorkflowTokenCount(budget, t)} (${Math.round((estimated / budget) * 100)}%)`;
-}
-
-function formatWorkflowTokenCount(value: number | undefined, t: Translate): string {
-  return typeof value === "number" && Number.isFinite(value) ? t("{count} tokens", { count: value }) : t("Not recorded");
-}
-
-function workflowContextInspectAvailabilityLabel(
-  availability: WorkflowContextInspectSummary["availability"],
-  t: Translate,
-): string {
-  if (availability === "missing_context_artifact") {
-    return t("No persisted context snapshot for this step.");
-  }
-  if (availability === "unreadable_context_packet") {
-    return t("Context source details could not be read.");
-  }
-  if (availability === "missing_context_pack") {
-    return t("Context source details are not available.");
-  }
-  return t("Context source details are available.");
-}
-
-function workflowStepFailurePolicyLabel(policy: string, t: Translate): string {
-  if (policy === "block_for_user") {
-    return t("Block for user");
-  }
-  if (policy === "fail_workflow") {
-    return t("Fail workflow");
-  }
-  if (policy === "cancel_workflow") {
-    return t("Cancel workflow");
-  }
-  if (policy === "skip_if_optional") {
-    return t("Skip if optional");
-  }
-  return policy;
-}
-
-function workflowGateStageLabel(stage: "pre" | "post", t: Translate): string {
-  return stage === "pre" ? t("Pre-step gate") : t("Post-step gate");
-}
-
-function WorkflowFinalSummary({
-  workflow,
-  steps,
-  artifactsByRun,
-}: {
-  readonly workflow: ChannelWorkflow;
-  readonly steps: readonly ChannelWorkflowStep[];
-  readonly artifactsByRun: Readonly<Record<string, readonly RunArtifact[]>>;
-}): JSX.Element {
-  const { t } = useI18n();
-  const orderedSteps = [...steps].sort((left, right) => left.position - right.position);
-  const completedSteps = orderedSteps.filter((step) => step.status === "succeeded" || step.status === "skipped");
-  const runIds = uniqueStrings(orderedSteps.map((step) => step.runId).filter((id): id is string => Boolean(id)));
-  const artifacts = runIds.flatMap((runId) => artifactsByRun[runId] ?? []);
-  const changedFiles = uniqueStrings(artifacts.map((artifact) => artifact.path).filter(Boolean));
-  const summaries = orderedSteps
-    .filter((step) => step.resultSummary)
-    .map((step) => `${step.title}: ${step.resultSummary}`);
-
-  return (
-    <div className="workflow-final-summary" aria-label={t("Workflow summary")}>
-      <strong>{t("Workflow summary")}</strong>
-      <div className="context-packet muted">
-        <span>{workflow.title}</span>
-        <span>{t("{count} steps", { count: completedSteps.length })}</span>
-        <span>{t("{count} runs", { count: runIds.length })}</span>
-        <span>{t("{count} artifacts", { count: artifacts.length })}</span>
-      </div>
-      {summaries.length > 0 ? (
-        <div className="context-packet muted">
-          {summaries.slice(0, 4).map((summary) => <span key={summary}>{summary}</span>)}
-        </div>
-      ) : null}
-      {changedFiles.length > 0 ? (
-        <div className="context-packet muted">
-          <span>{t("Changed files")}: {changedFiles.slice(0, 4).join(", ")}{changedFiles.length > 4 ? ` +${changedFiles.length - 4}` : ""}</span>
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
 function workflowIdFromWorkCellThreadId(value: string): string {
   return value.startsWith("workflow:") ? value.slice("workflow:".length) : value;
 }
@@ -10089,553 +5210,8 @@ function channelRunInterventionModeLabel(
   return mode === "interrupt_redirect" ? t("Stop and redirect") : t("Queue guidance");
 }
 
-function ChannelApprovalDetailPanel({
-  approval,
-  resolvingDecision,
-  onResolve,
-  onOpenTask,
-  onOpenRun,
-}: {
-  readonly approval: ApprovalRequest | undefined;
-  readonly resolvingDecision: ApprovalResolution | undefined;
-  readonly onResolve: (approvalId: string, decision: ApprovalResolution, reason?: string) => void;
-  readonly onOpenTask: (taskId: string) => void;
-  readonly onOpenRun: (runId: string) => void;
-}): JSX.Element {
-  const { t } = useI18n();
-  const [decisionReason, setDecisionReason] = useState("");
-  const [confirmDecision, setConfirmDecision] = useState<ApprovalResolution | undefined>();
-
-  useEffect(() => {
-    setDecisionReason("");
-    setConfirmDecision(undefined);
-  }, [approval?.id]);
-
-  if (!approval) {
-    return (
-      <section className="channel-approval-detail-panel empty" aria-label={t("Approval details")}>
-        <div className="client-empty-state">
-          <ShieldCheck />
-          <span>{t("No pending approval")}</span>
-        </div>
-      </section>
-    );
-  }
-
-  const currentApproval = approval;
-  const effectiveStatus = effectiveApprovalStatus(currentApproval);
-  const isResolving = Boolean(resolvingDecision);
-  const requiresReason = currentApproval.risk === "high" || currentApproval.risk === "critical";
-  const trimmedReason = decisionReason.trim();
-
-  function submitDecision(decision: ApprovalResolution): void {
-    if (isResolving || effectiveStatus !== "pending") {
-      return;
-    }
-    if (decision === "approve" && requiresReason && (confirmDecision !== "approve" || !trimmedReason)) {
-      setConfirmDecision("approve");
-      return;
-    }
-    setConfirmDecision(undefined);
-    onResolve(currentApproval.id, decision, trimmedReason || undefined);
-  }
-
-  return (
-    <section className="channel-approval-detail-panel" aria-label={t("Approval details")}>
-      <div className="channel-approval-hero">
-        <span>
-          <ShieldCheck size={17} />
-          <strong>{t("Approval request")}</strong>
-        </span>
-        <h3>{currentApproval.title}</h3>
-        <p>{currentApproval.description}</p>
-        <div className="channel-approval-badges">
-          <span className={`approval-state ${effectiveStatus}`}>{effectiveStatus}</span>
-          <span className={`approval-risk ${currentApproval.risk}`}>{currentApproval.risk}</span>
-          <span>{currentApproval.actionType}</span>
-        </div>
-      </div>
-
-      <div className="channel-approval-links">
-        {currentApproval.taskId ? (
-          <button className="secondary-button compact-button" type="button" onClick={() => onOpenTask(currentApproval.taskId ?? "")}>
-            <SquareTerminal size={14} />
-            {t("Open linked task")}
-          </button>
-        ) : null}
-        {currentApproval.runId ? (
-          <button className="secondary-button compact-button" type="button" onClick={() => onOpenRun(currentApproval.runId ?? "")}>
-            <Activity size={14} />
-            {t("Open linked run")}
-          </button>
-        ) : null}
-      </div>
-
-      {currentApproval.decisionReason ? (
-        <div className="channel-approval-note">
-          <strong>{t("Decision reason")}</strong>
-          <p>{currentApproval.decisionReason}</p>
-        </div>
-      ) : null}
-
-      {effectiveStatus === "pending" ? (
-        <div className="channel-approval-decision-panel">
-          <label className="approval-reason-field">
-            <span>{t("Decision reason")}</span>
-            <textarea
-              value={decisionReason}
-              rows={3}
-              placeholder={requiresReason ? t("Required before approving high-risk requests") : t("Optional note for the audit log")}
-              disabled={isResolving}
-              onChange={(event) => setDecisionReason(event.target.value)}
-            />
-          </label>
-          {confirmDecision === "approve" && requiresReason && !trimmedReason ? (
-            <p className="approval-reason-error">{t("High-risk approvals need a decision reason.")}</p>
-          ) : null}
-          <div className="channel-approval-actions">
-            <button className="primary-button compact-button" type="button" onClick={() => submitDecision("approve")} disabled={isResolving}>
-              {resolvingDecision === "approve" ? <Loader2 className="spin" size={14} /> : <Check size={14} />}
-              {resolvingDecision === "approve" ? t("Approving") : confirmDecision === "approve" ? t("Confirm approve") : t("Approve")}
-            </button>
-            <button className="secondary-button compact-button" type="button" onClick={() => submitDecision("deny")} disabled={isResolving}>
-              {resolvingDecision === "deny" ? <Loader2 className="spin" size={14} /> : <X size={14} />}
-              {resolvingDecision === "deny" ? t("Denying") : t("Deny")}
-            </button>
-          </div>
-        </div>
-      ) : null}
-    </section>
-  );
-}
-
-function NewTaskPanel({
-  taskForm,
-  selectedChannel,
-  effectiveProviderId,
-  taskReadyProviders,
-  setupChatProviders,
-  mediaProviders,
-  providersLoading,
-  onProviderSelect,
-  onTaskFormChange,
-  onCreateTask,
-  onCancel,
-}: {
-  readonly taskForm: TaskFormState;
-  readonly selectedChannel: Channel | undefined;
-  readonly effectiveProviderId: string;
-  readonly taskReadyProviders: readonly ProviderPreset[];
-  readonly setupChatProviders: readonly ProviderPreset[];
-  readonly mediaProviders: readonly ProviderPreset[];
-  readonly providersLoading: boolean;
-  readonly onProviderSelect: (providerId: string) => void;
-  readonly onTaskFormChange: (form: TaskFormState) => void;
-  readonly onCreateTask: () => void;
-  readonly onCancel: () => void;
-}): JSX.Element {
-  const { t } = useI18n();
-  return (
-    <div className="task-create-panel">
-      <div className="panel-title split">
-        <span>
-          <Plus size={17} />
-          <h2>{t("New task")}</h2>
-        </span>
-        <button className="secondary-button compact-button" type="button" onClick={onCancel}>
-          {t("Cancel")}
-        </button>
-      </div>
-      <label className="field wide">
-        <span>{t("Run provider")}</span>
-        <select value={effectiveProviderId} onChange={(event) => onProviderSelect(event.target.value)} disabled={providersLoading}>
-          <option value="">{t("Select provider preset")}</option>
-          <ProviderPresetOptions runnableProviders={taskReadyProviders} blockedProviders={setupChatProviders} />
-        </select>
-      </label>
-      <label className="field wide">
-        <span>{t("Title")}</span>
-        <input value={taskForm.title} onChange={(event) => onTaskFormChange({ ...taskForm, title: event.target.value })} />
-      </label>
-      <label className="field wide">
-        <span>{t("Prompt")}</span>
-        <textarea value={taskForm.prompt} rows={7} onChange={(event) => onTaskFormChange({ ...taskForm, prompt: event.target.value })} />
-      </label>
-      {mediaProviders.length > 0 ? (
-        <div className="provider-run-notice neutral client-provider-notice">
-          <Database size={16} />
-          <span>{t("Generation-only models cannot run coding tasks.")}</span>
-        </div>
-      ) : null}
-      <div className="composer-footer">
-        <div className="tool-token-list" aria-label={t("Tool calls")}>
-          {(selectedChannel?.allowedTools ?? defaultTools).map((tool) => (
-            <span key={tool} className={riskyTools.includes(tool) ? "tool-token risky" : "tool-token"}>{tool}</span>
-          ))}
-        </div>
-        <button className="primary-button" type="button" onClick={onCreateTask} disabled={!selectedChannel || !taskForm.prompt.trim()}>
-          <Send size={15} />
-          {t("Create task")}
-        </button>
-      </div>
-    </div>
-  );
-}
-
-function TaskDetailPanel({
-  cwd,
-  task,
-  channels,
-  attachments,
-  runById,
-  activeRunId,
-  latestStatus,
-  pendingApprovalCount,
-  approvals,
-  approvalsLoading,
-  resolvingApprovals,
-  effectiveProvider,
-  providerBlocker,
-  isRunning,
-  activeTaskRunAction,
-  taskActionPending,
-  activeLeaseCount,
-  isCancellingRun,
-  approvalPolicy,
-  permissionMode,
-  permissionPreset,
-  decisions,
-  contextSummaries,
-  workflows,
-  workflowSteps,
-  onCreateHandoffFromTask,
-  onOpenHandoffs,
-  onCreateTaskFromContextSummary,
-  onCheckThenRunTask,
-  onRunTask,
-  onPermissionModeChange,
-  onCancelActiveRun,
-  onOpenRun,
-  onOpenApprovals,
-  onRefreshRunApprovals,
-  onResolveApproval,
-  onOpenProviders,
-  attachmentContentUrl,
-}: {
-  readonly cwd: string;
-  readonly task: Task;
-  readonly channels: readonly Channel[];
-  readonly attachments: readonly ChannelAttachment[];
-  readonly runById: ReadonlyMap<string, RunSession>;
-  readonly activeRunId: string;
-  readonly latestStatus: string;
-  readonly pendingApprovalCount: number;
-  readonly approvals: readonly ApprovalRequest[];
-  readonly approvalsLoading: boolean;
-  readonly resolvingApprovals: Readonly<Record<string, ApprovalResolution>>;
-  readonly effectiveProvider: ProviderPreset | undefined;
-  readonly providerBlocker: string | undefined;
-  readonly isRunning: boolean;
-  readonly activeTaskRunAction: TaskRunActionState | undefined;
-  readonly taskActionPending: boolean;
-  readonly activeLeaseCount: number;
-  readonly isCancellingRun: boolean;
-  readonly approvalPolicy: ApprovalPolicy | undefined;
-  readonly permissionMode: SessionPermissionMode;
-  readonly permissionPreset?: PermissionPreset;
-  readonly decisions: readonly ChannelDecision[];
-  readonly contextSummaries: readonly ChannelContextSummary[];
-  readonly workflows: readonly ChannelWorkflow[];
-  readonly workflowSteps: readonly ChannelWorkflowStep[];
-  readonly onCreateHandoffFromTask: (task: Task) => Promise<ChannelHandoff | undefined>;
-  readonly onOpenHandoffs: () => void;
-  readonly onCreateTaskFromContextSummary: (summary: ChannelContextSummary) => void;
-  readonly onCheckThenRunTask: (task: Task) => void;
-  readonly onRunTask: (task: Task) => void;
-  readonly onPermissionModeChange: (mode: SessionPermissionMode) => void;
-  readonly onCancelActiveRun: (run?: RunSession) => void;
-  readonly onOpenRun: (runId: string) => void;
-  readonly onOpenApprovals: (runId?: string) => void;
-  readonly onRefreshRunApprovals: () => void;
-  readonly onResolveApproval: (approvalId: string, decision: ApprovalResolution, reason?: string) => void;
-  readonly onOpenProviders: (run?: RunSession) => void;
-  readonly attachmentContentUrl: (attachment: ChannelAttachment) => string;
-}): JSX.Element {
-  const { t } = useI18n();
-  const linkedRun = task.currentRunId ? runById.get(task.currentRunId) : undefined;
-  const linkedRunStatus = task.currentRunId ? displayLinkedRunStatus(task.currentRunId, linkedRun, activeRunId, latestStatus) : "";
-  const linkedRunSucceeded = linkedRunStatus === "succeeded";
-  const repairHint = buildRunRepairHint(linkedRun, pendingApprovalCount, linkedRunStatus, "", t);
-  const taskChannel = channels.find((channel) => channel.id === task.channelId);
-  const taskAttachments = (task.attachmentIds ?? [])
-    .map((attachmentId) => attachments.find((attachment) => attachment.id === attachmentId))
-    .filter((attachment): attachment is ChannelAttachment => Boolean(attachment));
-  const resolvedPermissionPreset = permissionPreset ?? inferPermissionPreset(permissionMode);
-  const effectivePolicyPreview = buildLocalEffectivePolicyPreview({
-    policy: approvalPolicy,
-    mode: permissionMode,
-    channelBoundPath: taskChannel?.boundPath,
-  });
-  const policyPreviewRows = [
-    ...summarizeEffectivePolicySnapshot(effectivePolicyPreview, t),
-    ...formatToolDecisionGroups(effectivePolicyPreview, t),
-  ];
-  const taskChannelPaused = taskChannel?.status !== undefined && taskChannel.status !== "active";
-  const blockedByLease = activeLeaseCount > 0 && (!linkedRun || linkedRun.status !== "running");
-  const checkRunLoading = activeTaskRunAction?.taskId === task.id && activeTaskRunAction.action === "check";
-  const runLoading = activeTaskRunAction?.taskId === task.id && activeTaskRunAction.action === "run";
-  const taskActionsDisabled = isRunning || taskActionPending;
-  const linkedRunCancellable = Boolean(linkedRun && runCanBeStopped(linkedRun));
-  const stopLinkedRun = (): void => {
-    if (linkedRun) {
-      onCancelActiveRun(linkedRun);
-    }
-  };
-  const taskSummaries = contextSummaries.filter((summary) => summary.targetType === "task" && summary.targetId === task.id);
-  const activeDecisions = decisions.filter((decision) => decision.status === "active");
-  const sourceWorkflowStep = workflowSteps.find((step) => step.taskId === task.id);
-  const sourceWorkflow = sourceWorkflowStep ? workflows.find((workflow) => workflow.id === sourceWorkflowStep.workflowId) : undefined;
-  const timelineRunId = activeRunId || task.currentRunId || "";
-  const pendingRunApprovals = approvals.filter((approval) => {
-    if (effectiveApprovalStatus(approval) !== "pending") {
-      return false;
-    }
-    return timelineRunId ? approval.runId === timelineRunId : approval.taskId === task.id;
-  });
-  const [handoffState, setHandoffState] = useState<{ readonly status: "idle" | "saving" | "saved" | "failed"; readonly message: string }>({
-    status: "idle",
-    message: "",
-  });
-
-  useEffect(() => {
-    setHandoffState({ status: "idle", message: "" });
-  }, [task.id]);
-
-  async function handleCreateHandoff(): Promise<void> {
-    if (handoffState.status === "saving") {
-      return;
-    }
-    setHandoffState({ status: "saving", message: "" });
-    try {
-      const handoff = await onCreateHandoffFromTask(task);
-      if (!handoff) {
-        setHandoffState({ status: "failed", message: t("Create handoff failed") });
-        return;
-      }
-      setHandoffState({ status: "saved", message: t("Handoff created") });
-      onOpenHandoffs();
-    } catch (error) {
-      setHandoffState({ status: "failed", message: error instanceof Error ? error.message : String(error) });
-    }
-  }
-
-  return (
-    <article className="client-task-card task-detail selected" aria-label={t("Task detail")}>
-      <div className="task-detail-head">
-        <span className={`task-status ${task.status}`}>{t(task.status)}</span>
-      </div>
-      <div className="task-detail-copy">
-        <h2>{task.title}</h2>
-        <p>{task.prompt}</p>
-      </div>
-      <div className="task-detail-meta">
-        <span>
-          <Hash size={13} />
-          {taskChannel?.name ?? task.channelId}
-        </span>
-        <span>
-          <Command size={13} />
-          {effectiveProvider?.displayName ?? t("No model selected")}
-        </span>
-        <span>
-          <Clock3 size={13} />
-          {formatDateTime(task.updatedAt)}
-        </span>
-        {task.requestedSkillId ? (
-          <span>
-            <SquareTerminal size={13} />
-            {t("Requested skill")}: {task.requestedSkillId}
-          </span>
-        ) : null}
-      </div>
-      {taskAttachments.length > 0 ? (
-        <ConversationAttachmentStrip
-          loadPreview={loadPreviewContent}
-          attachments={taskAttachments.map((attachment) => ({
-            id: attachment.id,
-            label: attachment.fileName,
-            meta: formatBytes(attachment.sizeBytes),
-            href: attachmentContentUrl(attachment),
-            target: "_blank",
-            rel: "noreferrer",
-            icon: attachment.kind === "image" ? <ImageIcon size={13} /> : <FileText size={13} />,
-            previewRequest: attachmentCanPreview(attachment) ? {
-              source: "attachment",
-              cwd,
-              attachmentId: attachment.id,
-              scope: "channel",
-              channelId: task.channelId,
-            } : undefined,
-          }))}
-        />
-      ) : null}
-      {task.currentRunId ? (
-        <div className={linkedRunSucceeded ? "task-run-link compact succeeded" : "task-run-link compact"}>
-          <StatusBadge status={linkedRunStatus} />
-          <span className="task-run-summary">
-            {linkedRunSucceeded ? <strong>{t("Task complete")}</strong> : null}
-            <span>{t("Run linked")}</span>
-          </span>
-          <button className={linkedRunSucceeded ? "primary-button compact-button" : "secondary-button compact-button"} type="button" onClick={() => onOpenRun(task.currentRunId ?? "")}>
-            {linkedRunSucceeded ? <CheckCircle2 size={14} /> : <History size={14} />}
-            {linkedRunSucceeded ? t("View result") : t("Open run")}
-          </button>
-          {linkedRunCancellable ? (
-            <button className="secondary-button danger compact-button" type="button" onClick={stopLinkedRun} disabled={isCancellingRun}>
-              {isCancellingRun ? <Loader2 className="spin" size={14} /> : <Square size={13} />}
-              {isCancellingRun ? t("Stopping") : t("Stop")}
-            </button>
-          ) : null}
-        </div>
-      ) : null}
-      {task.currentRunId && repairHint ? (
-        <RunRepairHintBanner
-          hint={repairHint}
-          runId={task.currentRunId}
-          compact
-          onOpenProviders={() => onOpenProviders(linkedRun)}
-          onOpenApprovals={onOpenApprovals}
-          onOpenRun={onOpenRun}
-        />
-      ) : null}
-      {providerBlocker ? (
-        <div className="provider-run-notice">
-          <CircleAlert size={16} />
-          <span>{providerBlocker}</span>
-        </div>
-      ) : null}
-      {taskChannelPaused || blockedByLease ? (
-        <div className="task-run-link compact">
-          <StatusBadge status={taskChannelPaused ? (taskChannel?.status ?? "blocked") : "blocked"} />
-          <span>{taskChannelPaused ? t("Channel is not active") : t("Active resource lock")}</span>
-        </div>
-      ) : null}
-      {activeDecisions.length > 0 || taskSummaries.length > 0 ? (
-        <div className="task-context-strip">
-          {activeDecisions.slice(0, 3).map((decision) => (
-            <span key={decision.id} className="glass-chip ok">
-              <FileCheck2 size={13} />
-              {decision.title}
-            </span>
-          ))}
-          {taskSummaries.map((summary) => (
-            <button key={summary.id} className="secondary-button compact-button" type="button" onClick={() => onCreateTaskFromContextSummary(summary)}>
-              <FileText size={13} />
-              {t("Context summary")}
-            </button>
-          ))}
-        </div>
-      ) : null}
-      {sourceWorkflowStep ? (
-        <div className="task-run-link compact">
-          <StatusBadge status={sourceWorkflowStep.status} />
-          <span>
-            {t("Source workflow")}: {sourceWorkflow?.title ?? sourceWorkflowStep.workflowId} / {sourceWorkflowStep.title}
-          </span>
-        </div>
-      ) : null}
-      <div className="session-permission-control" aria-label={t("Permission mode")}>
-        <div className="session-permission-head">
-          <span>
-            <ShieldCheck size={14} />
-            {t("Permission preset")}
-          </span>
-          <strong>{sessionPermissionModeLabel(permissionMode, t)}</strong>
-        </div>
-        <div className="permission-preset-segment" role="group" aria-label={t("Permission preset")}>
-          {permissionPresetOptions.map((preset) => (
-            <button
-              key={preset}
-              className={resolvedPermissionPreset === preset ? "permission-preset-option active" : "permission-preset-option"}
-              type="button"
-              onClick={() => onPermissionModeChange(permissionModeForPreset(preset))}
-              disabled={isRunning || taskActionPending}
-              aria-pressed={resolvedPermissionPreset === preset}
-            >
-              <span>{permissionPresetLabel(preset, t)}</span>
-            </button>
-          ))}
-        </div>
-        <small>{permissionPresetDescription(resolvedPermissionPreset, t)}</small>
-        <details className="permission-preview-disclosure">
-          <summary>{t("Preview permissions")}</summary>
-          <div className="permission-preview-list">
-            {policyPreviewRows.map((row) => (
-              <span key={row}>{row}</span>
-            ))}
-            <span>{sessionPermissionModeDescription(permissionMode, t)}</span>
-          </div>
-        </details>
-      </div>
-      <div className="task-actions">
-        <button className="secondary-button compact-button" type="button" onClick={() => void handleCreateHandoff()} disabled={handoffState.status === "saving"}>
-          {handoffState.status === "saving" ? <Loader2 className="spin" size={14} /> : <Workflow size={14} />}
-          {handoffState.status === "saving" ? t("Creating") : t("Create handoff")}
-        </button>
-        <button className="secondary-button compact-button" type="button" onClick={() => onCheckThenRunTask(task)} disabled={taskActionsDisabled || !effectiveProvider || !canUseProviderForRun(effectiveProvider)}>
-          {checkRunLoading ? <Loader2 className="spin" size={14} /> : <CheckCircle2 size={14} />}
-          {t("Check & run")}
-        </button>
-        <button className="primary-button compact-button" type="button" onClick={() => onRunTask(task)} disabled={taskActionsDisabled || Boolean(providerBlocker) || taskChannelPaused}>
-          {runLoading ? <Loader2 className="spin" size={14} /> : <Play size={14} />}
-          {t("Run")}
-        </button>
-      </div>
-      {handoffState.status === "saved" || handoffState.status === "failed" ? (
-        <div className={handoffState.status === "saved" ? "provider-run-notice ok" : "provider-run-notice"}>
-          {handoffState.status === "saved" ? <CheckCircle2 size={16} /> : <CircleAlert size={16} />}
-          <span>{handoffState.message}</span>
-        </div>
-      ) : null}
-      {pendingRunApprovals.length > 0 ? (
-        <div className="inline-approval-panel task-approval-panel" aria-live="polite">
-          <div className="inline-approval-head">
-            <span>
-              <ShieldCheck size={16} />
-              {t("Pending approval")}
-            </span>
-            <button className="secondary-button compact-button" type="button" onClick={onRefreshRunApprovals} disabled={approvalsLoading}>
-              {approvalsLoading ? <Loader2 className="spin" size={14} /> : <RefreshCw size={14} />}
-              {t("Refresh")}
-            </button>
-          </div>
-          <div className="inline-approval-list">
-            {pendingRunApprovals.map((approval) => (
-              <ApprovalCard
-                key={approval.id}
-                approval={approval}
-                compact
-                resolvingDecision={resolvingApprovals[approval.id]}
-                onResolve={onResolveApproval}
-              />
-            ))}
-          </div>
-        </div>
-      ) : null}
-    </article>
-  );
-}
-
 function runCanBeStopped(run: RunSession): boolean {
   return run.status === "queued" || run.status === "running" || run.status === "waiting_for_approval";
-}
-
-function runIsActiveProgressPopoverRun(run: RunSession): boolean {
-  return run.status === "queued" || run.status === "running" || run.status === "waiting_for_approval";
-}
-
-function taskIsActiveProgressPopoverTask(task: Task): boolean {
-  return task.status === "claimed" || task.status === "running" || task.status === "blocked";
 }
 
 function runCanBeStoppedInComposer(
@@ -10655,2036 +5231,6 @@ function runCanBeStoppedInComposer(
 function workflowStepIsTerminal(step: ChannelWorkflowStep): boolean {
   return step.status === "succeeded" || step.status === "failed" || step.status === "skipped" || step.status === "cancelled";
 }
-
-function ChannelExecutionProposalCard({
-  proposal,
-  assigneeLabel,
-  teammates,
-  linkedRun,
-  linkedWorkflow,
-  activeRunId,
-  latestStatus,
-  onConfirm,
-  onCancel,
-  onUpdate,
-  onOpenRun,
-}: {
-  readonly proposal: ChannelExecutionProposal;
-  readonly assigneeLabel: string;
-  readonly teammates: readonly ChannelMention[];
-  readonly linkedRun: RunSession | undefined;
-  readonly linkedWorkflow: ChannelWorkflow | undefined;
-  readonly activeRunId: string;
-  readonly latestStatus: string;
-  readonly onConfirm: () => void;
-  readonly onCancel: () => void;
-  readonly onUpdate: (
-    proposal: ChannelExecutionProposal,
-    input: UpdateChannelExecutionProposalRequest,
-  ) => Promise<ChannelExecutionProposal | undefined>;
-  readonly onOpenRun: (runId: string) => void;
-}): JSX.Element {
-  const { t } = useI18n();
-  const [editing, setEditing] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [editError, setEditError] = useState("");
-  const [draft, setDraft] = useState<ChannelProposalEditDraft>(() => proposalToEditDraft(proposal));
-  const canStart = proposal.status === "draft" || proposal.status === "blocked" || proposal.status === "run_failed";
-  const canEdit = canStart && !proposal.linkedWorkflowId;
-  const linkedRunStatus = proposal.linkedRunId
-    ? displayLinkedRunStatus(proposal.linkedRunId, linkedRun, activeRunId, latestStatus)
-    : "";
-  const linkedWorkflowStatus = proposal.linkedWorkflowId
-    ? (linkedWorkflow?.status ?? "workflow")
-    : "";
-  const collaborationSummary = proposalCollaborationSummary(proposal, teammates, t);
-  const permissionSummary = buildProposalPermissionSummary({ proposal, assigneeLabel, t });
-  const shapingRows = buildRequirementShapingRows({ proposal, assigneeLabel, t });
-  const isRequirementShaping = proposal.status === "draft" && !editing;
-  const statusIcon = proposal.status === "accepted"
-    ? <CheckCircle2 size={14} />
-    : proposal.status === "blocked" || proposal.status === "run_failed"
-      ? <CircleAlert size={14} />
-      : <Play size={14} />;
-  const draftValid = proposalDraftIsValid(draft);
-
-  useEffect(() => {
-    if (!editing) {
-      setDraft(proposalToEditDraft(proposal));
-      setEditError("");
-    }
-  }, [editing, proposal]);
-
-  async function saveEdit(): Promise<void> {
-    if (!draftValid || saving) {
-      return;
-    }
-    setSaving(true);
-    setEditError("");
-    try {
-      const updated = await onUpdate(proposal, proposalDraftToUpdateInput(proposal, draft));
-      if (updated) {
-        setEditing(false);
-      }
-    } catch (error) {
-      setEditError(error instanceof Error ? error.message : String(error));
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  function updateStep(index: number, patch: Partial<ChannelProposalStepDraft>): void {
-    setDraft((current) => ({
-      ...current,
-      collaborationSteps: current.collaborationSteps.map((step, stepIndex) =>
-        stepIndex === index
-          ? {
-              ...step,
-              ...patch,
-              ...(patch.teammateId && patch.teammateId !== step.teammateId ? { sources: undefined } : {}),
-            }
-          : step
-      ),
-    }));
-  }
-
-  function removeStep(index: number): void {
-    setDraft((current) => ({
-      ...current,
-      collaborationSteps: current.collaborationSteps.filter((_, stepIndex) => stepIndex !== index),
-    }));
-  }
-
-  function addStep(): void {
-    setDraft((current) => ({
-      ...current,
-      collaborationSteps: [
-        ...current.collaborationSteps,
-        {
-          teammateId: current.assigneeTeammateId || teammates[0]?.id || proposal.assigneeTeammateId,
-          action: "coordinated",
-          summary: "",
-        },
-      ],
-    }));
-  }
-
-  return (
-    <div className={`channel-execution-proposal ${proposal.status} ${isRequirementShaping ? "requirement-shaping-card" : ""}`} aria-label={t("Task confirmation")}>
-      <div className="channel-proposal-head">
-        <span>
-          {statusIcon}
-          <strong>{proposal.title}</strong>
-        </span>
-        <small>{t(executionProposalStatusLabel(proposal.status))}</small>
-      </div>
-      {editing ? (
-        <div className="channel-proposal-edit-form">
-          <label>
-            <span>{t("Title")}</span>
-            <input value={draft.title} onChange={(event) => setDraft({ ...draft, title: event.currentTarget.value })} />
-          </label>
-          <label>
-            <span>{t("Scope")}</span>
-            <textarea rows={4} value={draft.prompt} onChange={(event) => setDraft({ ...draft, prompt: event.currentTarget.value })} />
-          </label>
-          <label>
-            <span>{t("Assignee")}</span>
-            <select value={draft.assigneeTeammateId} onChange={(event) => setDraft({ ...draft, assigneeTeammateId: event.currentTarget.value })}>
-              {teammates.map((teammate) => (
-                <option key={teammate.id} value={teammate.id}>{teammate.label}</option>
-              ))}
-              {teammates.some((teammate) => teammate.id === draft.assigneeTeammateId) ? null : (
-                <option value={draft.assigneeTeammateId}>{teammateLabel(draft.assigneeTeammateId, teammates, t("Deleted teammate"))}</option>
-              )}
-            </select>
-          </label>
-          <label>
-            <span>{t("Acceptance criteria")}</span>
-            <textarea rows={3} value={draft.acceptanceCriteriaText} onChange={(event) => setDraft({ ...draft, acceptanceCriteriaText: event.currentTarget.value })} />
-          </label>
-          <label>
-            <span>{t("Requirement summary")}</span>
-            <textarea rows={3} value={draft.shapingSummaryText} onChange={(event) => setDraft({ ...draft, shapingSummaryText: event.currentTarget.value })} />
-          </label>
-          <label>
-            <span>{t("Open questions")}</span>
-            <textarea rows={3} value={draft.shapingOpenQuestionsText} onChange={(event) => setDraft({ ...draft, shapingOpenQuestionsText: event.currentTarget.value })} />
-          </label>
-          <label>
-            <span>{t("User clarifications")}</span>
-            <textarea rows={3} value={draft.shapingClarificationsText} onChange={(event) => setDraft({ ...draft, shapingClarificationsText: event.currentTarget.value })} />
-          </label>
-          <div className="channel-proposal-edit-steps">
-            <div className="channel-proposal-edit-steps-head">
-              <strong>{t("Steps")}</strong>
-              <button className="secondary-button compact-button" type="button" onClick={addStep}>
-                <Plus size={14} />
-                {t("Add step")}
-              </button>
-            </div>
-            {draft.collaborationSteps.map((step, index) => (
-              <div className="channel-proposal-edit-step" key={`${index}-${step.teammateId}-${step.action}`}>
-                <select value={step.teammateId} onChange={(event) => updateStep(index, { teammateId: event.currentTarget.value })}>
-                  {teammates.map((teammate) => (
-                    <option key={teammate.id} value={teammate.id}>{teammate.label}</option>
-                  ))}
-                  {teammates.some((teammate) => teammate.id === step.teammateId) ? null : (
-                    <option value={step.teammateId}>{teammateLabel(step.teammateId, teammates, t("Deleted teammate"))}</option>
-                  )}
-                </select>
-                <select value={step.action} onChange={(event) => updateStep(index, { action: event.currentTarget.value as ChannelProposalStepDraft["action"] })}>
-                  {proposalStepActions.map((action) => (
-                    <option key={action} value={action}>{t(proposalStepActionLabel(action))}</option>
-                  ))}
-                </select>
-                <textarea rows={2} value={step.summary} onChange={(event) => updateStep(index, { summary: event.currentTarget.value })} />
-                <button className="secondary-button danger compact-button" type="button" onClick={() => removeStep(index)} disabled={draft.collaborationSteps.length <= 1}>
-                  <Trash2 size={14} />
-                  {t("Remove")}
-                </button>
-              </div>
-            ))}
-          </div>
-          {editError ? (
-            <div className="channel-proposal-error">
-              <CircleAlert size={14} />
-              <span>{editError}</span>
-            </div>
-          ) : null}
-        </div>
-      ) : isRequirementShaping ? (
-        <RequirementShapingSummary
-          rows={shapingRows}
-          shaping={proposal.shaping}
-          collaborationSteps={proposal.collaborationSteps}
-          teammates={teammates}
-        />
-      ) : (
-        <p>{proposal.prompt}</p>
-      )}
-      <div className="channel-proposal-meta">
-        <span>{t("Assignee")}: <strong>{assigneeLabel}</strong></span>
-        {proposal.requiredTools.length > 0 ? <span>{t("Required tools")}: {proposal.requiredTools.join(", ")}</span> : null}
-        {linkedWorkflowStatus ? <StatusBadge status={linkedWorkflowStatus} /> : null}
-        {linkedRunStatus ? <StatusBadge status={linkedRunStatus} /> : null}
-      </div>
-      {!editing && canStart ? (
-        <section className="channel-proposal-permission" aria-label={t("Task permission confirmation")}>
-          <div className="channel-proposal-permission-head">
-            <ShieldCheck size={14} />
-            <strong>{t("Task permission confirmation")}</strong>
-          </div>
-          <p>{permissionSummary.sentence}</p>
-          <div className="channel-proposal-permission-grid">
-            <span>
-              <small>{t("Required tool")}</small>
-              <strong>{permissionSummary.toolLabel}</strong>
-            </span>
-            <span>
-              <small>{t("Target")}</small>
-              <strong>{permissionSummary.targetLabel}</strong>
-            </span>
-            <span>
-              <small>{t("Executor")}</small>
-              <strong>{permissionSummary.executorLabel}</strong>
-            </span>
-          </div>
-          <small>{t("Starting this task does not approve future runtime actions. Ling may still ask before file changes, commands, MCP tools, or external actions.")}</small>
-        </section>
-      ) : null}
-      {proposal.acceptanceCriteria.length > 0 ? (
-        <div className="channel-proposal-criteria">
-          <strong>{t("Acceptance criteria")}</strong>
-          <ul>
-            {proposal.acceptanceCriteria.slice(0, 4).map((criterion) => (
-              <li key={criterion}>{criterion}</li>
-            ))}
-          </ul>
-        </div>
-      ) : null}
-      {proposal.riskSummary ? (
-        <div className="channel-proposal-risk">
-          <CircleAlert size={14} />
-          <span>{proposal.riskSummary}</span>
-        </div>
-      ) : null}
-      {proposal.errorMessage ? (
-        <div className="channel-proposal-error">
-          <CircleAlert size={14} />
-          <span>{proposal.errorMessage}</span>
-        </div>
-      ) : null}
-      {proposal.collaborationSteps.length > 0 ? (
-        <details className="channel-proposal-collaboration">
-          <summary>
-            <span className="channel-proposal-collaboration-summary">
-              <History size={14} />
-              <strong>{t("Collaboration {count} records", { count: proposal.collaborationSteps.length })}</strong>
-              {collaborationSummary ? (
-                <>
-                  <span aria-hidden="true">·</span>
-                  <small>{collaborationSummary}</small>
-                </>
-              ) : null}
-            </span>
-          </summary>
-          <ol>
-            {proposal.collaborationSteps.map((step, index) => {
-              const sourceLabel = proposalStepSourceLabel(step, t);
-              return (
-                <li key={`${step.teammateId}-${step.action}-${index}`}>
-                  <strong>{teammateLabel(step.teammateId, teammates, t("Deleted teammate"))}</strong>
-                  <span className="channel-proposal-step-meta">
-                    <small>{t(proposalStepActionLabel(step.action))}</small>
-                    {sourceLabel ? (
-                      <small className="channel-proposal-step-source">{sourceLabel}</small>
-                    ) : null}
-                  </span>
-                  <span className="channel-proposal-step-summary">{step.summary}</span>
-                </li>
-              );
-            })}
-          </ol>
-        </details>
-      ) : null}
-      <div className="channel-proposal-actions">
-        {editing ? (
-          <>
-            <button className="primary-button compact-button" type="button" onClick={() => void saveEdit()} disabled={saving || !draftValid}>
-              {saving ? <Loader2 className="spin" size={14} /> : <Check size={14} />}
-              {t("Save")}
-            </button>
-            <button className="secondary-button compact-button" type="button" onClick={() => setEditing(false)} disabled={saving}>
-              <X size={14} />
-              {t("Cancel")}
-            </button>
-          </>
-        ) : canStart ? (
-          <button className="primary-button compact-button" type="button" onClick={onConfirm}>
-            <Play size={14} />
-            {t("Authorize and start task")}
-          </button>
-        ) : null}
-        {!editing && canEdit ? (
-          <button className="secondary-button compact-button" type="button" onClick={() => setEditing(true)}>
-            <SlidersHorizontal size={14} />
-            {t("Edit")}
-          </button>
-        ) : null}
-        {proposal.linkedRunId ? (
-          <button className="secondary-button compact-button" type="button" onClick={() => onOpenRun(proposal.linkedRunId ?? "")}>
-            <SquareTerminal size={14} />
-            {t("Open run")}
-          </button>
-        ) : null}
-        {proposal.status === "draft" ? (
-          <button className="secondary-button compact-button" type="button" onClick={onCancel}>
-            <X size={14} />
-            {t("Cancel proposal")}
-          </button>
-        ) : null}
-      </div>
-    </div>
-  );
-}
-
-function RequirementShapingSummary({
-  rows,
-  shaping,
-  collaborationSteps,
-  teammates,
-}: {
-  readonly rows: readonly RequirementShapingRow[];
-  readonly shaping: ChannelExecutionProposal["shaping"];
-  readonly collaborationSteps: ChannelExecutionProposal["collaborationSteps"];
-  readonly teammates: readonly ChannelMention[];
-}): JSX.Element {
-  const { t } = useI18n();
-  const visibleSteps = collaborationSteps.slice(0, 4);
-  const openQuestions = shaping?.openQuestions.slice(0, 4) ?? [];
-  const clarifications = shaping?.clarifications.slice(0, 4) ?? [];
-  return (
-    <section className="requirement-shaping-summary" aria-label={t("Requirement shaping")}>
-      <header>
-        <span>
-          <ListChecks size={15} />
-          <strong>{t("Ling is shaping the task")}</strong>
-        </span>
-        <small>{t(requirementShapingStatusLabel(shaping?.status ?? "ready_for_confirmation"))}</small>
-      </header>
-      <div className="requirement-shaping-grid">
-        {rows.map((row) => (
-          <span key={row.id} className={row.tone ?? "neutral"}>
-            <small>{row.label}</small>
-            <strong>{row.value}</strong>
-          </span>
-        ))}
-      </div>
-      {openQuestions.length > 0 || clarifications.length > 0 ? (
-        <div className="requirement-shaping-notes">
-          {openQuestions.length > 0 ? (
-            <section aria-label={t("Open questions")}>
-              <small>{t("Open questions")}</small>
-              <ul>
-                {openQuestions.map((question) => (
-                  <li key={question}>{question}</li>
-                ))}
-              </ul>
-            </section>
-          ) : null}
-          {clarifications.length > 0 ? (
-            <section aria-label={t("User clarifications")}>
-              <small>{t("User clarifications")}</small>
-              <ul>
-                {clarifications.map((clarification) => (
-                  <li key={clarification.id}>{clarification.body}</li>
-                ))}
-              </ul>
-            </section>
-          ) : null}
-        </div>
-      ) : null}
-      {visibleSteps.length > 0 ? (
-        <div className="requirement-shaping-participants" aria-label={t("Shaping participants")}>
-          {visibleSteps.map((step, index) => (
-            <span key={`${step.teammateId}-${step.action}-${index}`}>
-              <small>{teammateLabel(step.teammateId, teammates, t("Deleted teammate"))} · {t(proposalStepActionLabel(step.action))}</small>
-              <strong>{step.summary}</strong>
-            </span>
-          ))}
-        </div>
-      ) : null}
-    </section>
-  );
-}
-
-function ThreadReplyPanel({
-  cwd,
-  rootMessage,
-  replies,
-  teammates,
-  teammateById,
-  memoryById,
-  usedMemoryEvents,
-  draft,
-  pending,
-  error,
-  onDraftChange,
-  onSend,
-  onClose,
-}: {
-  readonly cwd: string;
-  readonly rootMessage: ChannelMessage;
-  readonly replies: readonly ChannelMessage[];
-  readonly teammates: readonly ChannelMention[];
-  readonly teammateById: ReadonlyMap<string, { readonly displayName: string }>;
-  readonly memoryById: ReadonlyMap<string, MemoryObject>;
-  readonly usedMemoryEvents: readonly UsedMemoryEvent[];
-  readonly draft: string;
-  readonly pending: boolean;
-  readonly error: string;
-  readonly onDraftChange: (value: string) => void;
-  readonly onSend: () => void;
-  readonly onClose: () => void;
-}): JSX.Element {
-  const { t } = useI18n();
-  const canSend = draft.trim().length > 0 && !pending;
-  const rootMessageIsOwn = rootMessage.authorType === "local-user";
-  return (
-    <aside className="thread-reply-panel" aria-label={t("Topic replies")}>
-      <div className="thread-reply-head">
-        <span>
-          <Reply size={15} />
-          <strong>{t("Topic replies")}</strong>
-        </span>
-        <button className="icon-button" type="button" onClick={onClose} aria-label={t("Close topic")}>
-          <X size={14} />
-        </button>
-      </div>
-      <div className="thread-root-message">
-        {rootMessageIsOwn ? null : (
-          <small>{t("Topic started by {author}", { author: messageAuthorLabel(rootMessage, teammates, t("Deleted teammate"), t("You"), teammateById) })}</small>
-        )}
-        <MessageBodyRenderer text={rootMessage.body} cwd={cwd} compact />
-        <UsedMemorySummary
-          compact
-          events={filterUsedMemoryEventsByResponse(usedMemoryEvents, rootMessage.id)}
-          memoryById={memoryById}
-        />
-      </div>
-      <div className="thread-reply-list" aria-label={t("Replies")}>
-        {replies.length === 0 ? (
-          <div className="thread-empty-state">{t("No replies yet")}</div>
-        ) : replies.map((reply) => {
-          const replyIsOwn = reply.authorType === "local-user";
-          return (
-            <article key={reply.id} className={replyIsOwn ? "thread-reply-item thread-reply-own" : "thread-reply-item"}>
-              {replyIsOwn ? null : (
-                <div className="thread-reply-meta">
-                  <strong>{messageAuthorLabel(reply, teammates, t("Deleted teammate"), t("You"), teammateById)}</strong>
-                  {reply.kind === "ai_reply" ? <small>AI</small> : null}
-                </div>
-              )}
-              <MessageBodyRenderer text={reply.body} cwd={cwd} compact />
-              <UsedMemorySummary
-                compact
-                events={filterUsedMemoryEventsByResponse(usedMemoryEvents, reply.id)}
-                memoryById={memoryById}
-              />
-            </article>
-          );
-        })}
-      </div>
-      <div className="thread-reply-composer">
-        <textarea
-          value={draft}
-          rows={3}
-          onChange={(event) => onDraftChange(event.currentTarget.value)}
-          onKeyDown={(event) => {
-            if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
-              event.preventDefault();
-              onSend();
-            }
-          }}
-          placeholder={t("Reply in this topic")}
-          aria-label={t("Topic reply input")}
-        />
-        {error ? (
-          <div className="composer-status-row failed" role="alert">
-            <CircleAlert size={14} />
-            <span>{t("Message failed")}: {error}</span>
-          </div>
-        ) : null}
-        <button className="primary-button compact-button" type="button" onClick={onSend} disabled={!canSend}>
-          {pending ? <Loader2 className="spin" size={14} /> : <Send size={14} />}
-          {pending ? t("Sending...") : t("Send reply")}
-        </button>
-      </div>
-    </aside>
-  );
-}
-
-function ActivityFilterToolbar({
-  search,
-  categoryFilter,
-  attentionFilter,
-  savedViews,
-  activeSavedViewId,
-  filtersExpanded,
-  savedViewCounts,
-  selectedSavedView,
-  categoryCounts,
-  attentionCounts,
-  clearDisabled,
-  customViewLimitReached,
-  onSavedViewSelect,
-  onSaveView,
-  onRenameView,
-  onDeleteView,
-  onFiltersExpandedChange,
-  onSearchChange,
-  onCategoryFilterChange,
-  onAttentionFilterChange,
-  onClear,
-}: {
-  readonly search: string;
-  readonly categoryFilter: ActivityCategoryFilter;
-  readonly attentionFilter: ActivityAttentionFilter;
-  readonly savedViews: readonly ChannelActivitySavedView[];
-  readonly activeSavedViewId: string;
-  readonly filtersExpanded: boolean;
-  readonly savedViewCounts: Readonly<Record<string, number>>;
-  readonly selectedSavedView: ChannelActivitySavedView | undefined;
-  readonly categoryCounts: Readonly<Record<ActivityCategoryFilter, number>>;
-  readonly attentionCounts: Readonly<Record<Exclude<ActivityAttentionFilter, "all">, number>>;
-  readonly clearDisabled: boolean;
-  readonly customViewLimitReached: boolean;
-  readonly onSavedViewSelect: (view: ChannelActivitySavedView) => void;
-  readonly onSaveView: () => void;
-  readonly onRenameView: () => void;
-  readonly onDeleteView: () => void;
-  readonly onFiltersExpandedChange: (expanded: boolean) => void;
-  readonly onSearchChange: (value: string) => void;
-  readonly onCategoryFilterChange: (filter: ActivityCategoryFilter) => void;
-  readonly onAttentionFilterChange: (filter: ActivityAttentionFilter) => void;
-  readonly onClear: () => void;
-}): JSX.Element {
-  const { t } = useI18n();
-  const selectedCustomView = selectedSavedView && !selectedSavedView.builtin;
-  const filterSummaryParts = [
-    categoryFilter !== "all" ? t(activityCategoryFilterLabel(categoryFilter)) : "",
-    attentionFilter !== "all" ? t(activityAttentionFilterLabel(attentionFilter)) : "",
-  ].filter(Boolean);
-  const filterSummary = filterSummaryParts.length > 0 ? filterSummaryParts.join(" · ") : t("All activity");
-  return (
-    <div className="activity-filter-toolbar" aria-label={t("Channel event filters")}>
-      <div className="activity-view-control" aria-label={t("Saved views")}>
-        <label className="activity-view-select">
-          <span>{t("View")}</span>
-          <select
-            aria-label={t("Saved views")}
-            value={activeSavedViewId}
-            onChange={(event) => {
-              const view = savedViews.find((candidate) => candidate.id === event.target.value);
-              if (view) {
-                onSavedViewSelect(view);
-              }
-            }}
-          >
-            {savedViews.map((view) => (
-              <option key={view.id} value={view.id}>
-                {savedViewLabel(view, t)} ({savedViewCounts[view.id] ?? 0})
-              </option>
-            ))}
-          </select>
-        </label>
-      </div>
-      <label className="activity-search-field">
-        <Search size={14} />
-        <input
-          aria-label={t("Search activity")}
-          placeholder={t("Search activity")}
-          value={search}
-          onChange={(event) => onSearchChange(event.target.value)}
-        />
-      </label>
-      <button
-        className={filtersExpanded ? "activity-filter-toggle active" : "activity-filter-toggle"}
-        type="button"
-        aria-expanded={filtersExpanded}
-        aria-label={t("Filter channel events")}
-        onClick={() => onFiltersExpandedChange(!filtersExpanded)}
-      >
-        <SlidersHorizontal size={14} />
-        <span>{t("Filters")}</span>
-        <small>{filterSummary}</small>
-      </button>
-      <button className="secondary-button compact-button activity-clear-filter" type="button" onClick={onClear} disabled={clearDisabled}>
-        <X size={13} />
-        {t("Clear")}
-      </button>
-      {filtersExpanded ? (
-        <div className="activity-filter-panel" aria-label={t("Channel event filters")}>
-          <div className="activity-saved-view-actions" aria-label={t("Saved view actions")}>
-            <button className="secondary-button compact-button" type="button" onClick={onSaveView} disabled={customViewLimitReached}>
-              <Plus size={13} />
-              {t("Save view")}
-            </button>
-            <button className="secondary-button compact-button" type="button" onClick={onRenameView} disabled={!selectedCustomView}>
-              <FileText size={13} />
-              {t("Rename")}
-            </button>
-            <button className="secondary-button compact-button" type="button" onClick={onDeleteView} disabled={!selectedCustomView}>
-              <Trash2 size={13} />
-              {t("Delete view")}
-            </button>
-          </div>
-          <div className="activity-filter-group activity-category-filters" aria-label={t("Activity categories")}>
-            {activityCategoryFilters.map((filter) => (
-              <button
-                key={filter}
-                type="button"
-                className={categoryFilter === filter ? "activity-filter-chip active" : "activity-filter-chip"}
-                aria-pressed={categoryFilter === filter}
-                onClick={() => onCategoryFilterChange(filter)}
-              >
-                <span>{t(activityCategoryFilterLabel(filter))}</span>
-                <small>{categoryCounts[filter]}</small>
-              </button>
-            ))}
-          </div>
-          <div className="activity-filter-group activity-attention-filters" aria-label={t("Activity attention filters")}>
-            {activityAttentionFilters.map((filter) => (
-              <button
-                key={filter}
-                type="button"
-                className={attentionFilter === filter ? "activity-filter-chip active attention" : "activity-filter-chip attention"}
-                aria-pressed={attentionFilter === filter}
-                onClick={() => onAttentionFilterChange(attentionFilter === filter ? "all" : filter)}
-              >
-                <span>{t(activityAttentionFilterLabel(filter))}</span>
-                <small>{attentionCounts[filter]}</small>
-              </button>
-            ))}
-          </div>
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
-function buildActiveProgressSourceSummary({
-  contextSummaries,
-  workflowSteps,
-  selectedTask,
-  runningWorkflowStepId,
-  t,
-}: {
-  readonly contextSummaries: readonly ChannelContextSummary[];
-  readonly workflowSteps: readonly ChannelWorkflowStep[];
-  readonly selectedTask?: Task;
-  readonly runningWorkflowStepId: string;
-  readonly t: Translate;
-}): ConversationContextSourceSummary | undefined {
-  const activeStep = [
-    workflowSteps.find((step) => step.id === runningWorkflowStepId),
-    ...workflowSteps
-      .filter((step) => workflowStepHasActiveContext(step))
-      .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt)),
-  ].find((step): step is ChannelWorkflowStep => Boolean(step?.contextSummaryId));
-  const activeSummary = activeStep?.contextSummaryId
-    ? contextSummaries.find((summary) => summary.id === activeStep.contextSummaryId)
-    : undefined;
-  if (activeSummary) {
-    return buildConversationContextSourceSummaryFromChannelSummary(activeSummary, t);
-  }
-
-  if (selectedTask && taskIsActiveProgressPopoverTask(selectedTask)) {
-    const taskSummary = contextSummaries
-      .filter((summary) => summary.targetType === "task" && summary.targetId === selectedTask.id)
-      .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))[0];
-    return taskSummary ? buildConversationContextSourceSummaryFromChannelSummary(taskSummary, t) : undefined;
-  }
-
-  return undefined;
-}
-
-function workflowStepHasActiveContext(step: ChannelWorkflowStep): boolean {
-  return Boolean(step.contextSummaryId) && (
-    step.status === "claimed" ||
-    step.status === "running" ||
-    step.status === "waiting_for_approval" ||
-    step.status === "blocked"
-  );
-}
-
-function conversationContextSourceGroupIcon(type: string): ReactNode {
-  if (type === "message" || type === "channel_message" || type === "private_message") {
-    return <MessageSquare size={18} />;
-  }
-  if (type === "decision" || type === "channel_decision") {
-    return <FileCheck2 size={18} />;
-  }
-  if (type === "file" || type === "workspace_file" || type === "attachment") {
-    return <FileText size={18} />;
-  }
-  if (type === "artifact" || type === "run_artifact") {
-    return <Archive size={18} />;
-  }
-  if (type === "memory" || type === "project_memory") {
-    return <Database size={18} />;
-  }
-  if (type === "web" || type === "url" || type === "page") {
-    return <Link2 size={18} />;
-  }
-  if (type === "teammate" || type === "agent") {
-    return <UserPlus size={18} />;
-  }
-  if (type === "run" || type === "run_session" || type === "task" || type === "channel_task") {
-    return <SquareTerminal size={18} />;
-  }
-  return <FileText size={18} />;
-}
-
-function ProgressPopover({
-  expanded,
-  onExpandedChange,
-  progressRows,
-  environmentSummary,
-  sourceSummary,
-  onOpenSourceGroup,
-}: {
-  readonly expanded: boolean;
-  readonly onExpandedChange: (expanded: boolean) => void;
-  readonly progressRows: readonly AttentionProgressRow[];
-  readonly environmentSummary?: ChannelEnvironmentSummary;
-  readonly sourceSummary?: ConversationContextSourceSummary;
-  readonly onOpenSourceGroup?: (group: ConversationContextSourceGroup, summary: ConversationContextSourceSummary) => void;
-}): JSX.Element | null {
-  const { t } = useI18n();
-  const environmentRows = environmentSummary?.popoverRows ?? [];
-  if (progressRows.length === 0 && environmentRows.length === 0 && (!sourceSummary || sourceSummary.sourceCount === 0)) {
-    return null;
-  }
-  const sourceGroups = sourceSummary?.groups ?? [];
-  return (
-    <section className="attention-queue compact" aria-label={t("Progress")}>
-      {environmentRows.length > 0 ? (
-        <ChannelEnvironmentPopoverSection summary={environmentSummary!} />
-      ) : null}
-      {sourceSummary && sourceSummary.sourceCount > 0 ? (
-        <div className="attention-context-section" aria-label={t("Context source summary")}>
-          <div className="attention-section-head">
-            <strong>{t("Sources used")}</strong>
-            <small>{conversationContextSourceSummaryLabel(sourceSummary, t)}</small>
-          </div>
-          <div className="attention-context-list">
-            {sourceGroups.slice(0, 4).map((group) => (
-              <button
-                key={group.id}
-                className="attention-context-row interactive"
-                type="button"
-                onClick={() => onOpenSourceGroup?.(group, sourceSummary)}
-                aria-label={t("Open {label} sources", { label: group.label })}
-              >
-                <span className="attention-row-icon neutral">{conversationContextSourceGroupIcon(group.type)}</span>
-                <span className="attention-context-copy">
-                  <strong>{group.label}</strong>
-                  <small>
-                    {group.count === 1 ? t("1 item") : t("{count} items", { count: group.count })}
-                    {group.examples.length > 0 ? ` · ${group.examples.join(", ")}` : ""}
-                  </small>
-                </span>
-              </button>
-            ))}
-          </div>
-          {sourceSummary.droppedCount > 0 || sourceSummary.compactionCount > 0 ? (
-            <div className="attention-context-foot">
-              {sourceSummary.droppedCount > 0 ? <span>{t("{count} items omitted from model context", { count: sourceSummary.droppedCount })}</span> : null}
-              {sourceSummary.compactionCount > 0 ? <span>{t("{count} compacted context summaries", { count: sourceSummary.compactionCount })}</span> : null}
-            </div>
-          ) : null}
-        </div>
-      ) : null}
-      {progressRows.length > 0 ? (
-        <div className="attention-progress-preview">
-          <div className="attention-section-head attention-progress-head">
-            <strong>{t("Progress")}</strong>
-            <button
-              className="icon-button attention-progress-toggle"
-              type="button"
-              aria-expanded={expanded}
-              onClick={() => onExpandedChange(!expanded)}
-              aria-label={expanded ? t("Collapse") : t("Expand")}
-              title={expanded ? t("Collapse") : t("Expand")}
-            >
-              {expanded ? <ChevronUp size={15} /> : <ChevronDown size={15} />}
-            </button>
-          </div>
-          {expanded ? (
-            <div className="attention-progress-list" aria-label={t("Progress rows")}>
-              {progressRows.slice(0, 6).map((row) => {
-                const content = (
-                  <>
-                    <span className={`attention-row-icon ${row.tone}`}>{row.icon}</span>
-                    <span className="attention-progress-copy">
-                      <strong>{row.primary}</strong>
-                      {row.secondary ? <small>{row.secondary}</small> : null}
-                    </span>
-                  </>
-                );
-                return row.onOpen ? (
-                  <button key={row.id} className={`attention-progress-row ${row.tone} interactive`} type="button" onClick={row.onOpen}>
-                    {content}
-                  </button>
-                ) : (
-                  <div key={row.id} className={`attention-progress-row ${row.tone}`}>
-                    {content}
-                  </div>
-                );
-              })}
-            </div>
-          ) : null}
-        </div>
-      ) : null}
-    </section>
-  );
-}
-
-function ChannelEnvironmentPopoverSection({
-  summary,
-}: {
-  readonly summary: ChannelEnvironmentSummary;
-}): JSX.Element {
-  const { t } = useI18n();
-  return (
-    <div className="attention-environment-section" aria-label={t("Environment")}>
-      <div className="attention-section-head">
-        <strong>{t("Environment")}</strong>
-        <small>{summary.changes?.label ?? summary.review?.label ?? summary.workspace?.modeLabel}</small>
-      </div>
-      <div className="attention-environment-list">
-        {summary.popoverRows.map((row) => {
-          const content = (
-            <>
-              <span className={`attention-row-icon ${row.tone}`}>{row.icon}</span>
-              <span className="attention-environment-copy">
-                <strong>{row.label}</strong>
-                {row.stats ? (
-                  <ChannelEnvironmentDiffStat additions={row.stats.additions} deletions={row.stats.deletions} />
-                ) : row.value ? (
-                  <small title={row.value}>{row.value}</small>
-                ) : null}
-              </span>
-            </>
-          );
-          return row.onOpen ? (
-            <button
-              key={row.id}
-              className={`attention-environment-row ${row.tone} interactive`}
-              type="button"
-              onClick={row.onOpen}
-              aria-label={row.disabledReason ? `${row.label}. ${row.disabledReason}` : row.label}
-              title={row.disabledReason ?? row.value}
-            >
-              {content}
-            </button>
-          ) : (
-            <div key={row.id} className={`attention-environment-row ${row.tone}`} title={row.disabledReason ?? row.value}>
-              {content}
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
-function ChannelEnvironmentPage({
-  summary,
-  channelName,
-  onOpenReview,
-  onOpenCommit,
-}: {
-  readonly summary: ChannelEnvironmentSummary;
-  readonly channelName?: string;
-  readonly onOpenReview: () => void;
-  readonly onOpenCommit: () => void;
-}): JSX.Element {
-  const { t } = useI18n();
-  return (
-    <section className="channel-environment-page" aria-label={t("Environment")}>
-      <div className="channel-environment-stack">
-        <section className="channel-environment-section local" aria-label={t("Local environment")}>
-          <header>
-            <span>
-              <Command size={15} />
-              <strong>{t("Local environment")}</strong>
-            </span>
-            <small>{channelName ? `#${channelName}` : t("Current channel")}</small>
-          </header>
-          {summary.workspace ? (
-            <div className="channel-environment-row">
-              <span className={`channel-environment-row-icon ${summary.workspace.status}`}>
-                <FolderOpen size={16} />
-              </span>
-              <span className="channel-environment-row-copy">
-                <strong>{summary.workspace.modeLabel}</strong>
-                <small title={summary.workspace.path}>{summary.workspace.path || t("No workspace path")}</small>
-                {summary.workspace.errorMessage ? <small className="danger-text">{summary.workspace.errorMessage}</small> : null}
-              </span>
-            </div>
-          ) : (
-            <div className="channel-environment-empty">{t("No local workspace is bound to this channel.")}</div>
-          )}
-        </section>
-
-        <section className="channel-environment-section changes" aria-label={t("Changes")}>
-          <header>
-            <span>
-              <ListChecks size={15} />
-              <strong>{t("Changes")}</strong>
-            </span>
-            {summary.changes
-              ? environmentChangesHaveDiffStats(summary.changes)
-                ? <ChannelEnvironmentDiffStat additions={summary.changes.additions ?? 0} deletions={summary.changes.deletions ?? 0} />
-                : <small>{summary.changes.label}</small>
-              : <small>{environmentGitStatusLabel(summary.gitStatusLoadState, t)}</small>}
-          </header>
-          {summary.changes ? (
-            <div className="channel-environment-row">
-              <span className="channel-environment-row-icon waiting">
-                <ListChecks size={16} />
-              </span>
-              <span className="channel-environment-row-copy">
-                <strong>{summary.changes.label}</strong>
-                <small>{environmentChangesDetail(summary.changes, t)}</small>
-              </span>
-            </div>
-          ) : (
-            <div className="channel-environment-empty">{environmentGitStatusEmptyMessage(summary.gitStatusLoadState, t)}</div>
-          )}
-        </section>
-
-        <section className="channel-environment-section review" aria-label={t("Review")}>
-          <header>
-            <span>
-              <ListChecks size={15} />
-              <strong>{t("Review")}</strong>
-            </span>
-            <small>{summary.review?.label ?? t("No review items")}</small>
-          </header>
-          {summary.review ? (
-            <div className="channel-environment-row interactive">
-              <span className="channel-environment-row-icon waiting">
-                <ListChecks size={16} />
-              </span>
-              <span className="channel-environment-row-copy">
-                <strong>{summary.review.label}</strong>
-                <small>{t("Open the Review page to inspect runtime issues, evidence gaps, and approval gates.")}</small>
-              </span>
-              <button className="secondary-button compact-button" type="button" onClick={onOpenReview}>
-                <ListChecks size={14} />
-                {t("View review")}
-              </button>
-            </div>
-          ) : (
-            <div className="channel-environment-empty">{t("No review items")}</div>
-          )}
-        </section>
-
-        <section className="channel-environment-section git" aria-label={t("Working branch")}>
-          <header>
-            <span>
-              <GitBranch size={15} />
-              <strong>{t("Working branch")}</strong>
-            </span>
-            <small>{summary.git?.branchName ?? t("Unavailable")}</small>
-          </header>
-          {summary.git ? (
-            <div className="channel-environment-row">
-              <span className="channel-environment-row-icon info">
-                <GitBranch size={16} />
-              </span>
-              <span className="channel-environment-row-copy">
-                <strong>{summary.git.branchName}</strong>
-                <small>{summary.git.baseBranch ? t("Base branch: {branch}", { branch: summary.git.baseBranch }) : t("Git branch from channel workspace binding.")}</small>
-              </span>
-            </div>
-          ) : (
-            <div className="channel-environment-empty">{t("Working branch unavailable")}</div>
-          )}
-        </section>
-
-        <section className="channel-environment-section commit" aria-label={t("Commit or push")}>
-          <header>
-            <span>
-              <SquareTerminal size={15} />
-              <strong>{t("Commit or push")}</strong>
-            </span>
-            <small>{t("Read-only shell")}</small>
-          </header>
-          <div className="channel-environment-row interactive">
-            <span className="channel-environment-row-icon neutral">
-              <SquareTerminal size={16} />
-            </span>
-            <span className="channel-environment-row-copy">
-              <strong>{t("Commit shell is disabled")}</strong>
-              <small>{summary.commitAction?.disabledReason ?? t("Commit and push require a daemon Git action and approval policy. This first version is read-only.")}</small>
-            </span>
-            <button className="secondary-button compact-button" type="button" onClick={onOpenCommit}>
-              {t("Open")}
-            </button>
-          </div>
-        </section>
-
-        <section className="channel-environment-section browser" aria-label={t("Browser")}>
-          <header>
-            <span>
-              <Search size={15} />
-              <strong>{t("Browser")}</strong>
-            </span>
-            <small>{summary.browser?.label ?? t("No browser evidence")}</small>
-          </header>
-          <div className="channel-environment-empty">{summary.browser?.label ?? t("No browser evidence")}</div>
-        </section>
-
-        <section className="channel-environment-section sources" aria-label={t("Sources")}>
-          <header>
-            <span>
-              <FileCheck2 size={15} />
-              <strong>{t("Sources")}</strong>
-            </span>
-            <small>{summary.sources?.label ?? t("No sources")}</small>
-          </header>
-          <div className="channel-environment-empty">{summary.sources?.label ?? t("No sources")}</div>
-        </section>
-
-        <section className="channel-environment-section output" aria-label={t("Output")}>
-          <header>
-            <span>
-              <Archive size={15} />
-              <strong>{t("Output")}</strong>
-            </span>
-            <small>{summary.output?.label ?? t("No artifacts")}</small>
-          </header>
-          <div className="channel-environment-empty">{summary.output?.label ?? t("No artifacts")}</div>
-        </section>
-      </div>
-    </section>
-  );
-}
-
-function ChannelEnvironmentCommitDialog({
-  message,
-  includeUnstaged,
-  disabledReason,
-  onMessageChange,
-  onIncludeUnstagedChange,
-  onClose,
-}: {
-  readonly message: string;
-  readonly includeUnstaged: boolean;
-  readonly disabledReason: string;
-  readonly onMessageChange: (message: string) => void;
-  readonly onIncludeUnstagedChange: (include: boolean) => void;
-  readonly onClose: () => void;
-}): JSX.Element {
-  const { t } = useI18n();
-  useEffect(() => {
-    function onKeyDown(event: KeyboardEvent): void {
-      if (event.key === "Escape") {
-        onClose();
-      }
-    }
-    globalThis.addEventListener("keydown", onKeyDown);
-    return () => globalThis.removeEventListener("keydown", onKeyDown);
-  }, [onClose]);
-  return (
-    <div
-      className="environment-commit-dialog-backdrop"
-      role="presentation"
-      onMouseDown={(event) => {
-        if (event.target === event.currentTarget) {
-          onClose();
-        }
-      }}
-    >
-      <section className="environment-commit-dialog" role="dialog" aria-modal="true" aria-label={t("Commit or push")}>
-        <header className="environment-commit-dialog-head">
-          <span>
-            <SquareTerminal size={16} />
-            <strong>{t("Commit or push")}</strong>
-          </span>
-          <button className="icon-button" type="button" onClick={onClose} aria-label={t("Close")} title={t("Close")}>
-            <X size={14} />
-          </button>
-        </header>
-        <label className="field">
-          <span>{t("Commit message")}</span>
-          <textarea
-            className="environment-commit-message"
-            value={message}
-            onChange={(event) => onMessageChange(event.target.value)}
-            placeholder={t("Describe the change")}
-          />
-        </label>
-        <label className="checkbox-row environment-include-unstaged">
-          <input
-            type="checkbox"
-            checked={includeUnstaged}
-            onChange={(event) => onIncludeUnstagedChange(event.target.checked)}
-          />
-          <span>{t("Include unstaged changes")}</span>
-        </label>
-        <p>{disabledReason}</p>
-        <div className="environment-commit-actions">
-          <button className="secondary-button compact-button" type="button" disabled title={disabledReason}>{t("Commit")}</button>
-          <button className="secondary-button compact-button" type="button" disabled title={disabledReason}>{t("Commit and push")}</button>
-          <button className="secondary-button compact-button" type="button" disabled title={disabledReason}>{t("Push")}</button>
-          <button className="secondary-button compact-button" type="button" onClick={onClose}>{t("Cancel")}</button>
-        </div>
-      </section>
-    </div>
-  );
-}
-
-function ChannelEnvironmentDiffStat({
-  additions,
-  deletions,
-}: {
-  readonly additions: number;
-  readonly deletions: number;
-}): JSX.Element {
-  return (
-    <span className="channel-environment-diff-stat" aria-label={`+${additions} -${deletions}`}>
-      <span className="add">+{additions}</span>
-      <span className="del">-{deletions}</span>
-    </span>
-  );
-}
-
-function environmentChangesHaveDiffStats(changes: ChannelEnvironmentGitChanges): boolean {
-  return typeof changes.additions === "number" && typeof changes.deletions === "number" && (changes.additions !== 0 || changes.deletions !== 0);
-}
-
-function environmentChangesLabel(changedFileCount: number, t: Translate): string {
-  if (changedFileCount === 1) {
-    return t("1 changed file");
-  }
-  return t("{count} changed files", { count: changedFileCount });
-}
-
-function environmentChangesDetail(changes: ChannelEnvironmentGitChanges, t: Translate): string {
-  const parts = [
-    changes.stagedFileCount > 0 ? t("{count} staged", { count: changes.stagedFileCount }) : "",
-    changes.unstagedFileCount > 0 ? t("{count} unstaged", { count: changes.unstagedFileCount }) : "",
-    changes.untrackedFileCount > 0 ? t("{count} untracked", { count: changes.untrackedFileCount }) : "",
-    changes.conflictedFileCount > 0 ? t("{count} conflicted", { count: changes.conflictedFileCount }) : "",
-  ].filter(Boolean);
-  return parts.length > 0 ? parts.join(" · ") : t("Git working tree has local changes.");
-}
-
-function environmentReviewLabel(reviewItemCount: number, t: Translate): string {
-  if (reviewItemCount === 1) {
-    return t("1 review item");
-  }
-  return t("{count} review items", { count: reviewItemCount });
-}
-
-function environmentGitStatusLabel(state: ChannelGitStatusLoadState, t: Translate): string {
-  if (state.status === "loading") {
-    return t("Loading Git status");
-  }
-  if (state.status === "error") {
-    return t("Git status unavailable");
-  }
-  if (state.status !== "loaded") {
-    return t("Git status unavailable");
-  }
-  switch (state.statusValue.state) {
-    case "clean":
-      return t("No code changes");
-    case "not_git_repo":
-      return t("Not a Git repository");
-    case "unavailable":
-      return t("Git status unavailable");
-    case "error":
-      return t("Git status failed");
-    case "dirty":
-      return environmentChangesLabel(state.statusValue.changedFileCount, t);
-    default:
-      return t("Git status unavailable");
-  }
-}
-
-function environmentGitStatusEmptyMessage(state: ChannelGitStatusLoadState, t: Translate): string {
-  if (state.status === "loading") {
-    return t("Loading Git status");
-  }
-  if (state.status === "error") {
-    return t("Git status unavailable");
-  }
-  if (state.status !== "loaded") {
-    return t("Git status unavailable");
-  }
-  switch (state.statusValue.state) {
-    case "clean":
-      return t("No code changes");
-    case "not_git_repo":
-      return t("Not a Git repository");
-    case "unavailable":
-      return state.statusValue.unavailableReason ?? t("Git status unavailable");
-    case "error":
-      return state.statusValue.errorMessage ?? t("Git status failed");
-    case "dirty":
-      return environmentChangesLabel(state.statusValue.changedFileCount, t);
-    default:
-      return t("Git status unavailable");
-  }
-}
-
-function ActivityDrilldownDrawer({
-  drilldown,
-  defaultTeammateId,
-  activeDecisionIds,
-  onClose,
-  onOpenTarget,
-  onRunTriageAction,
-  onOpenTriageResult,
-}: {
-  readonly drilldown: ChannelActivityDrilldownItem;
-  readonly defaultTeammateId?: string;
-  readonly activeDecisionIds: readonly string[];
-  readonly onClose: () => void;
-  readonly onOpenTarget: (target: ChannelActivityDrilldownTarget) => void;
-  readonly onRunTriageAction: (draft: ChannelActivityTriageDraft) => Promise<ChannelActivityTriageResult>;
-  readonly onOpenTriageResult: (result: ChannelActivityTriageResult) => void;
-}): JSX.Element {
-  const { t } = useI18n();
-  const triageActions = useMemo(() => buildChannelActivityTriageActions(drilldown), [drilldown]);
-  const [selectedTriageActionId, setSelectedTriageActionId] = useState<ChannelActivityTriageActionKind | "">("");
-  const [triageDraft, setTriageDraft] = useState<ChannelActivityTriageDraft | undefined>();
-  const [triagePending, setTriagePending] = useState(false);
-  const [triageError, setTriageError] = useState("");
-  const [triageResult, setTriageResult] = useState<ChannelActivityTriageResult | undefined>();
-  const selectedTriageAction = triageActions.find((action) => action.id === selectedTriageActionId);
-
-  useEffect(() => {
-    setSelectedTriageActionId("");
-    setTriageDraft(undefined);
-    setTriagePending(false);
-    setTriageError("");
-    setTriageResult(undefined);
-  }, [drilldown.id]);
-
-  function selectTriageAction(action: ChannelActivityTriageAction): void {
-    setSelectedTriageActionId(action.id);
-    setTriageDraft(buildChannelActivityTriageDraft({
-      drilldown,
-      actionKind: action.id,
-      defaultTeammateId,
-      activeDecisionIds,
-    }));
-    setTriageError("");
-    setTriageResult(undefined);
-  }
-
-  function updateTriageDraft(field: string, value: string): void {
-    setTriageDraft((current) => current ? { ...current, [field]: value } as ChannelActivityTriageDraft : current);
-  }
-
-  async function submitTriageAction(): Promise<void> {
-    if (!triageDraft || !channelActivityTriageDraftIsValid(triageDraft)) {
-      return;
-    }
-    setTriagePending(true);
-    setTriageError("");
-    try {
-      const result = await onRunTriageAction(triageDraft);
-      setTriageResult(result);
-    } catch (error) {
-      setTriageError(error instanceof Error ? error.message : String(error));
-    } finally {
-      setTriagePending(false);
-    }
-  }
-
-  return (
-    <aside className="activity-drilldown-drawer" aria-label={t("Activity details")}>
-      <div className="activity-drilldown-header">
-        <span>
-          <Info size={16} />
-          <strong>{t("Activity details")}</strong>
-        </span>
-        <button className="icon-button" type="button" onClick={onClose} aria-label={t("Close details")}>
-          <X size={15} />
-        </button>
-      </div>
-      <div className="activity-drilldown-title">
-        <small>{t(activityKindLabel(drilldown.kind))}</small>
-        <h3>{t(drilldown.source.title)}</h3>
-        <p>{t(drilldown.source.subtitle)}</p>
-      </div>
-      <section className="activity-drilldown-section">
-        <h4>{t("Source summary")}</h4>
-        <p>{drilldown.source.summary}</p>
-      </section>
-      <section className="activity-drilldown-section">
-        <h4>{t("Actions")}</h4>
-        {drilldown.targets.length === 0 ? (
-          <p className="muted-text">{t("No direct target")}</p>
-        ) : (
-          <div className="activity-drilldown-actions">
-            {drilldown.targets.map((target, index) => (
-              <button
-                key={`${target.kind}:${index}`}
-                className="secondary-button compact-button"
-                type="button"
-                onClick={() => onOpenTarget(target)}
-              >
-                {drilldownTargetIcon(target)}
-                {t(drilldownTargetLabel(target))}
-              </button>
-            ))}
-          </div>
-        )}
-      </section>
-      <details className="activity-drilldown-disclosure">
-        <summary>
-          <span>{t("Source metadata")}</span>
-        </summary>
-        <div className="activity-drilldown-badges" aria-label={t("Activity detail metadata")}>
-          <span>{t("Category")}: {t(activityCategoryFilterLabel(drilldown.category))}</span>
-          <span>{t("Attention")}: {t(activityAttentionLabel(drilldown.attention))}</span>
-          <span>{t("Time")}: {formatDateTime(drilldown.createdAt)}</span>
-          {drilldown.source.status ? <span>{t("Status")}: {drilldown.source.status}</span> : null}
-        </div>
-        <div className="activity-drilldown-field-grid">
-          <MetaRow label={t("Source ID")} value={drilldown.source.sourceId} />
-          <MetaRow label={t("Event type")} value={t(activityKindLabel(drilldown.kind))} />
-          {drilldown.source.metadata.map((field) => (
-            <MetaRow key={`${field.label}:${field.value}`} label={t(field.label)} value={field.value} />
-          ))}
-        </div>
-      </details>
-      <details className="activity-drilldown-disclosure">
-        <summary>
-          <span>{t("Related objects")}</span>
-        </summary>
-        {drilldown.source.relatedObjects.length === 0 ? (
-          <p className="muted-text">{t("No related objects")}</p>
-        ) : (
-          <div className="activity-drilldown-related">
-            {drilldown.source.relatedObjects.map((field) => (
-              <span key={`${field.label}:${field.value}`}>
-                <small>{t(field.label)}</small>
-                {field.value}
-              </span>
-            ))}
-          </div>
-        )}
-      </details>
-      <details className="activity-drilldown-disclosure activity-triage-section" aria-label={t("Triage actions")}>
-        <summary>
-          <span>{t("Triage actions")}</span>
-          {triageActions.length > 0 ? <small>{triageActions.length}</small> : null}
-        </summary>
-        {triageActions.length === 0 ? (
-          <p className="muted-text">{t("No triage actions available")}</p>
-        ) : (
-          <>
-            <div className="activity-triage-action-picker" role="tablist" aria-label={t("Triage action picker")}>
-              {triageActions.map((action) => (
-                <button
-                  key={action.id}
-                  className={selectedTriageActionId === action.id ? "active" : ""}
-                  type="button"
-                  onClick={() => selectTriageAction(action)}
-                >
-                  {triageActionIcon(action.id)}
-                  <span>{t(action.label)}</span>
-                </button>
-              ))}
-            </div>
-            {selectedTriageAction ? (
-              <p className="activity-triage-description">{t(selectedTriageAction.description)}</p>
-            ) : (
-              <p className="activity-triage-description">{t("Choose a triage action to continue.")}</p>
-            )}
-            {triageDraft ? (
-              <ActivityTriageDraftForm
-                draft={triageDraft}
-                disabled={triagePending}
-                onChange={updateTriageDraft}
-              />
-            ) : null}
-            {triageError ? (
-              <div className="activity-triage-error" role="alert">
-                <CircleAlert size={14} />
-                <span>{t("Triage action failed")}: {triageError}</span>
-                <button className="secondary-button compact-button" type="button" onClick={() => void submitTriageAction()}>
-                  {t("Retry")}
-                </button>
-                <button className="secondary-button compact-button" type="button" onClick={() => setTriageError("")}>
-                  {t("Dismiss")}
-                </button>
-              </div>
-            ) : null}
-            {triageResult ? (
-              <div className="activity-triage-result" role="status">
-                <CheckCircle2 size={14} />
-                <span>{t("Triage action created")}: {channelActivityTriageResultLabel(triageResult)}</span>
-                <button className="secondary-button compact-button" type="button" onClick={() => onOpenTriageResult(triageResult)}>
-                  {t(activityTriageResultTargetLabel(triageResult))}
-                </button>
-              </div>
-            ) : null}
-            {triageDraft ? (
-              <button
-                className="primary-button compact-button activity-triage-submit"
-                type="button"
-                onClick={() => void submitTriageAction()}
-                disabled={triagePending || !channelActivityTriageDraftIsValid(triageDraft)}
-              >
-                {triagePending ? <Loader2 className="spin" size={14} /> : <Plus size={14} />}
-                {triagePending ? t("Creating...") : t("Run triage action")}
-              </button>
-            ) : null}
-          </>
-        )}
-      </details>
-    </aside>
-  );
-}
-
-function ActivityTriageDraftForm({
-  draft,
-  disabled,
-  onChange,
-}: {
-  readonly draft: ChannelActivityTriageDraft;
-  readonly disabled: boolean;
-  readonly onChange: (field: string, value: string) => void;
-}): JSX.Element {
-  const { t } = useI18n();
-  if (draft.actionKind === "follow_up_task") {
-    return (
-      <div className="activity-triage-form">
-        <label className="field wide">
-          <span>{t("Triage title")}</span>
-          <input value={draft.title} disabled={disabled} onChange={(event) => onChange("title", event.target.value)} />
-        </label>
-        <label className="field wide">
-          <span>{t("Triage prompt")}</span>
-          <textarea rows={5} value={draft.prompt} disabled={disabled} onChange={(event) => onChange("prompt", event.target.value)} />
-        </label>
-      </div>
-    );
-  }
-  if (draft.actionKind === "handoff") {
-    return (
-      <div className="activity-triage-form">
-        <label className="field wide">
-          <span>{t("Reason")}</span>
-          <input value={draft.reason} disabled={disabled} onChange={(event) => onChange("reason", event.target.value)} />
-        </label>
-        <div className="activity-triage-two-up">
-          <label className="field">
-            <span>{t("To participant")}</span>
-            <input value={draft.toParticipantId} disabled={disabled} onChange={(event) => onChange("toParticipantId", event.target.value)} />
-          </label>
-          <label className="field">
-            <span>{t("Participant label")}</span>
-            <input value={draft.toParticipantLabel} disabled={disabled} onChange={(event) => onChange("toParticipantLabel", event.target.value)} />
-          </label>
-        </div>
-        <label className="field wide">
-          <span>{t("Required input")}</span>
-          <textarea rows={5} value={draft.requiredInput} disabled={disabled} onChange={(event) => onChange("requiredInput", event.target.value)} />
-        </label>
-        <label className="field wide">
-          <span>{t("Expected output")}</span>
-          <textarea rows={3} value={draft.expectedOutput} disabled={disabled} onChange={(event) => onChange("expectedOutput", event.target.value)} />
-        </label>
-      </div>
-    );
-  }
-  if (draft.actionKind === "decision") {
-    return (
-      <div className="activity-triage-form">
-        <label className="field wide">
-          <span>{t("Triage title")}</span>
-          <input value={draft.title} disabled={disabled} onChange={(event) => onChange("title", event.target.value)} />
-        </label>
-        <label className="field wide">
-          <span>{t("Decision text")}</span>
-          <textarea rows={4} value={draft.decision} disabled={disabled} onChange={(event) => onChange("decision", event.target.value)} />
-        </label>
-        <label className="field wide">
-          <span>{t("Rationale")}</span>
-          <textarea rows={3} value={draft.rationale} disabled={disabled} onChange={(event) => onChange("rationale", event.target.value)} />
-        </label>
-      </div>
-    );
-  }
-  return (
-    <div className="activity-triage-form">
-      <label className="field wide">
-        <span>{t("Summary")}</span>
-        <textarea rows={5} value={draft.summary} disabled={disabled} onChange={(event) => onChange("summary", event.target.value)} />
-      </label>
-      <label className="field wide">
-        <span>{t("Acceptance criteria")}</span>
-        <textarea rows={3} value={draft.acceptanceCriteria} disabled={disabled} onChange={(event) => onChange("acceptanceCriteria", event.target.value)} />
-      </label>
-      <label className="field wide">
-        <span>{t("Open questions")}</span>
-        <textarea rows={3} value={draft.openQuestions} disabled={disabled} onChange={(event) => onChange("openQuestions", event.target.value)} />
-      </label>
-    </div>
-  );
-}
-
-function activityAttentionDisplayLabel(attention: Exclude<ChannelActivityAttention, "none">): string {
-  if (attention === "blocked") {
-    return "Blocked";
-  }
-  if (attention === "failed") {
-    return "Failed";
-  }
-  return "Pending";
-}
-
-function activityKindLabel(kind: ChannelActivityDrilldownItem["kind"]): string {
-  if (kind === "message") {
-    return "Message";
-  }
-  if (kind === "decision") {
-    return "Decision log";
-  }
-  if (kind === "handoff") {
-    return "Handoff";
-  }
-  if (kind === "summary") {
-    return "Context summary";
-  }
-  if (kind === "workflow") {
-    return "Workflow";
-  }
-  if (kind === "workflow-step") {
-    return "Workflow step";
-  }
-  if (kind === "task") {
-    return "Task event";
-  }
-  if (kind === "run") {
-    return "Run event";
-  }
-  if (kind === "approval") {
-    return "Approval event";
-  }
-  return "State change";
-}
-
-function activityAttentionLabel(attention: ChannelActivityAttention): string {
-  if (attention === "none") {
-    return "None";
-  }
-  return activityAttentionDisplayLabel(attention);
-}
-
-function drilldownTargetLabel(target: ChannelActivityDrilldownTarget): string {
-  if (target.kind === "task") {
-    return "Show task in transcript";
-  }
-  if (target.kind === "run") {
-    return "Show run in transcript";
-  }
-  if (target.kind === "approval") {
-    return "Open approval";
-  }
-  return "Review source";
-}
-
-function drilldownTargetIcon(target: ChannelActivityDrilldownTarget): JSX.Element {
-  if (target.kind === "task") {
-    return <SquareTerminal size={14} />;
-  }
-  if (target.kind === "run") {
-    return <History size={14} />;
-  }
-  if (target.kind === "approval") {
-    return <CheckCircle2 size={14} />;
-  }
-  return <Workflow size={14} />;
-}
-
-function triageActionIcon(action: ChannelActivityTriageActionKind): JSX.Element {
-  if (action === "follow_up_task") {
-    return <SquareTerminal size={14} />;
-  }
-  if (action === "handoff") {
-    return <Workflow size={14} />;
-  }
-  if (action === "decision") {
-    return <FileCheck2 size={14} />;
-  }
-  return <FileText size={14} />;
-}
-
-function activityTriageResultTargetLabel(result: ChannelActivityTriageResult): string {
-  return result.kind === "task" ? "Show created task in transcript" : "Review created source";
-}
-
-function activityCategoryFilterLabel(filter: ActivityCategoryFilter): string {
-  if (filter === "message") {
-    return "Messages";
-  }
-  if (filter === "work") {
-    return "Work";
-  }
-  if (filter === "approval") {
-    return "Approvals";
-  }
-  if (filter === "protocol") {
-    return "Protocol";
-  }
-  if (filter === "runtime") {
-    return "Runtime";
-  }
-  return "All";
-}
-
-function activityAttentionFilterLabel(filter: ActivityAttentionFilter): string {
-  if (filter === "all") {
-    return "All";
-  }
-  if (filter === "needs_attention") {
-    return "Needs attention";
-  }
-  if (filter === "blocked") {
-    return "Blocked";
-  }
-  if (filter === "failed") {
-    return "Failed";
-  }
-  return "Pending";
-}
-
-function savedViewLabel(view: ChannelActivitySavedView, t: (key: string) => string): string {
-  return view.builtin ? t(view.name) : view.name;
-}
-
-function isWorkflowStepTerminal(status: ChannelWorkflowStep["status"]): boolean {
-  return status === "succeeded" || status === "failed" || status === "skipped" || status === "cancelled";
-}
-
-function workflowCanAdvance(status: ChannelWorkflow["status"]): boolean {
-  return status === "ready" || status === "running" || status === "waiting_for_approval" || status === "blocked";
-}
-
-function workflowCanCancel(status: ChannelWorkflow["status"]): boolean {
-  return status === "draft" || status === "ready" || status === "running" || status === "waiting_for_approval" || status === "blocked";
-}
-
-function ChannelRouteInspectContent({
-  decision,
-  teammates,
-  t,
-}: {
-  readonly decision: ChannelMessageRouteDecision;
-  readonly teammates: readonly ChannelMention[];
-  readonly t: Translate;
-}): JSX.Element {
-  const contextPack = decision.contextPack;
-  return (
-    <>
-      <p>{channelRouteDecisionUserReason(decision, t)}</p>
-      <dl className="channel-route-inspect-grid">
-        <div>
-          <dt>{t("Outcome")}</dt>
-          <dd>{channelRouteDecisionOutcomeLabel(decision, t)}</dd>
-        </div>
-        <div>
-          <dt>{t("Route mode")}</dt>
-          <dd>{channelRouteDecisionModeLabel(decision, t) || decision.mode}</dd>
-        </div>
-        <div>
-          <dt>{t("Selected teammate")}</dt>
-          <dd>{formatSelectedTeammate(decision.selectedTeammateId, teammates, t)}</dd>
-        </div>
-        <div>
-          <dt>{t("Provider preset")}</dt>
-          <dd>{decision.selectedProviderPresetId || contextPack?.providerPresetId || t("Not recorded")}</dd>
-        </div>
-        <div>
-          <dt>{t("Model")}</dt>
-          <dd>{contextPack?.modelId || t("Not recorded")}</dd>
-        </div>
-        <div>
-          <dt>{t("Created by")}</dt>
-          <dd>{channelRouteDecisionCreatedByLabel(decision, t)}</dd>
-        </div>
-        <div>
-          <dt>{t("Source message")}</dt>
-          <dd>{decision.sourceMessageId}</dd>
-        </div>
-        <div>
-          <dt>{t("Reply message")}</dt>
-          <dd>{decision.replyMessageId || t("None")}</dd>
-        </div>
-        {decision.errorMessage ? (
-          <div>
-            <dt>{t("Error")}</dt>
-            <dd>{decision.errorMessage}</dd>
-          </div>
-        ) : null}
-      </dl>
-      {decision.alternativesConsidered.length > 0 ? (
-        <div className="channel-route-inspect-section">
-          <span>{t("Alternatives considered")}</span>
-          <ul>
-            {decision.alternativesConsidered.map((alternative, index) => (
-              <li key={`${alternative.teammateId ?? alternative.label}:${index}`}>
-                <strong>
-                  {alternative.teammateId
-                    ? `${teammateLabel(alternative.teammateId, teammates, t("Deleted teammate"))} (${alternative.teammateId})`
-                    : alternative.label}
-                </strong>
-                <small>{alternative.reason}</small>
-              </li>
-            ))}
-          </ul>
-        </div>
-      ) : null}
-      {contextPack ? (
-        <div className="channel-route-inspect-section">
-          <span>{t("Context source metadata")}</span>
-          <dl className="channel-route-inspect-grid">
-            <div>
-              <dt>{t("Sources")}</dt>
-              <dd>{formatRouteSourceRefCounts(contextPack.sourceRefCounts) || t("None")}</dd>
-            </div>
-            <div>
-              <dt>{t("Compactions")}</dt>
-              <dd>{contextPack.compactionIds.length > 0 ? t("{count} compacted context summaries", { count: contextPack.compactionIds.length }) : t("None")}</dd>
-            </div>
-          </dl>
-        </div>
-      ) : (
-        <p>{t("No inspectable context source metadata was recorded for this route decision.")}</p>
-      )}
-    </>
-  );
-}
-
-function ChannelIntentInspectContent({
-  decision,
-  teammates,
-  t,
-}: {
-  readonly decision: ChannelIntentDecision;
-  readonly teammates: readonly ChannelMention[];
-  readonly t: Translate;
-}): JSX.Element {
-  const replyMessageIds = uniqueStrings([decision.replyMessageId, ...(decision.replyMessageIds ?? [])].filter((id): id is string => Boolean(id)));
-  return (
-    <>
-      <p>{channelIntentDecisionUserReason(decision, t)}</p>
-      <dl className="channel-route-inspect-grid">
-        <div>
-          <dt>{t("Outcome")}</dt>
-          <dd>{channelIntentDecisionOutcomeLabel(decision, t)}</dd>
-        </div>
-        <div>
-          <dt>{t("Intent action")}</dt>
-          <dd>{channelIntentDecisionActionLabel(decision.action, t)}</dd>
-        </div>
-        <div>
-          <dt>{t("Selected teammate")}</dt>
-          <dd>{formatIntentDecisionTeammates(decision, teammates, t)}</dd>
-        </div>
-        <div>
-          <dt>{t("Created by")}</dt>
-          <dd>{channelIntentDecisionCreatedByLabel(decision, t)}</dd>
-        </div>
-        <div>
-          <dt>{t("Source message")}</dt>
-          <dd>{decision.sourceMessageId}</dd>
-        </div>
-        <div>
-          <dt>{t("Reply messages")}</dt>
-          <dd>{formatOptionalIdList(replyMessageIds, t)}</dd>
-        </div>
-        <div>
-          <dt>{t("Proposal")}</dt>
-          <dd>{decision.proposalId || t("None")}</dd>
-        </div>
-        <div>
-          <dt>{t("Workflow")}</dt>
-          <dd>{decision.workflowId || t("None")}</dd>
-        </div>
-        {decision.errorMessage ? (
-          <div>
-            <dt>{t("Error")}</dt>
-            <dd>{decision.errorMessage}</dd>
-          </div>
-        ) : null}
-      </dl>
-    </>
-  );
-}
-
-function channelRouteDecisionSummaryLabel(decision: ChannelMessageRouteDecision, t: Translate): string {
-  if (decision.status === "failed") {
-    return t("Auto reply failed");
-  }
-  if (decision.status === "accepted") {
-    return channelRouteDecisionModeLabel(decision, t) || t("Reply created");
-  }
-  return t("Not auto-replied");
-}
-
-function channelRouteDecisionModeLabel(decision: ChannelMessageRouteDecision, t: Translate): string {
-  if (decision.mode === "default_teammate") {
-    return t("Default teammate");
-  }
-  if (decision.mode === "auto_route") {
-    return t("Auto routed");
-  }
-  return "";
-}
-
-function channelRouteDecisionInspectTitle(decision: ChannelMessageRouteDecision, t: Translate): string {
-  if (decision.status === "failed") {
-    return t("Auto reply failed");
-  }
-  if (decision.status === "suppressed") {
-    return t("Not auto-replied");
-  }
-  if (decision.mode === "default_teammate") {
-    return t("The channel default teammate answered this message.");
-  }
-  if (decision.mode === "auto_route") {
-    return t("Ling selected this teammate for the reply.");
-  }
-  return t("Reply created");
-}
-
-function channelRouteDecisionOutcomeLabel(decision: ChannelMessageRouteDecision, t: Translate): string {
-  if (decision.status === "accepted") {
-    return t("Reply created");
-  }
-  if (decision.status === "failed") {
-    return t("Failed closed");
-  }
-  return t("Suppressed");
-}
-
-function channelRouteDecisionCreatedByLabel(decision: ChannelMessageRouteDecision, t: Translate): string {
-  switch (decision.createdBy) {
-    case "explicit_mention":
-      return t("Explicit mention");
-    case "deterministic":
-      return t("Deterministic rule");
-    case "model":
-      return t("Model selector");
-  }
-}
-
-function formatRouteSourceRefCounts(counts: Readonly<Record<string, number>> | undefined): string {
-  if (!counts) {
-    return "";
-  }
-  return Object.entries(counts)
-    .filter(([, count]) => count > 0)
-    .map(([type, count]) => `${type}: ${count}`)
-    .join(", ");
-}
-
-function channelIntentDecisionSummaryLabel(decision: ChannelIntentDecision, t: Translate): string {
-  if (decision.status === "failed") {
-    return t("Intent failed");
-  }
-  return channelIntentDecisionActionLabel(decision.action, t);
-}
-
-function channelIntentDecisionInspectTitle(decision: ChannelIntentDecision, t: Translate): string {
-  if (decision.status === "failed") {
-    return t("Intent failed");
-  }
-  return t("Why Ling handled this message this way");
-}
-
-function channelIntentDecisionOutcomeLabel(decision: ChannelIntentDecision, t: Translate): string {
-  if (decision.status === "accepted") {
-    return t("Accepted");
-  }
-  if (decision.status === "failed") {
-    return t("Failed closed");
-  }
-  return t("Suppressed");
-}
-
-function channelIntentDecisionActionLabel(action: ChannelIntentDecision["action"], t: Translate): string {
-  switch (action) {
-    case "no_reply":
-      return t("No reply");
-    case "single_reply":
-      return t("Single reply");
-    case "visible_multi_reply":
-      return t("Visible multi-reply");
-    case "clarify":
-      return t("Clarify");
-    case "workflow_proposal":
-      return t("Workflow proposal");
-    case "direct_workflow":
-      return t("Direct workflow proposal");
-  }
-}
-
-function channelIntentDecisionCreatedByLabel(decision: ChannelIntentDecision, t: Translate): string {
-  return decision.createdBy === "model" ? t("Model selector") : t("Deterministic rule");
-}
-
-function channelIntentDecisionUserReason(decision: ChannelIntentDecision, t: Translate): string {
-  if (decision.errorMessage) {
-    return t("Ling could not safely handle this channel intent.");
-  }
-  return decision.reason || channelIntentDecisionActionLabel(decision.action, t);
-}
-
-function formatSelectedTeammate(teammateId: string | undefined, teammates: readonly ChannelMention[], t: Translate): string {
-  if (!teammateId) {
-    return t("None");
-  }
-  return `${teammateLabel(teammateId, teammates, t("Deleted teammate"))} (${teammateId})`;
-}
-
-function formatIntentDecisionTeammates(
-  decision: ChannelIntentDecision,
-  teammates: readonly ChannelMention[],
-  t: Translate,
-): string {
-  const ids = uniqueStrings([decision.selectedTeammateId, ...(decision.selectedTeammateIds ?? [])].filter((id): id is string => Boolean(id)));
-  if (ids.length === 0) {
-    return t("None");
-  }
-  return ids.map((id) => `${teammateLabel(id, teammates, t("Deleted teammate"))} (${id})`).join(", ");
-}
-
-function formatOptionalIdList(ids: readonly string[], t: Translate): string {
-  return ids.length > 0 ? ids.join(", ") : t("None");
-}
-
-function channelRouteDecisionUserReason(decision: ChannelMessageRouteDecision, t: Translate): string {
-  const errorText = decision.errorMessage?.trim();
-  if (decision.status === "accepted") {
-    return decision.reason || channelRouteDecisionInspectTitle(decision, t);
-  }
-  if (decision.status === "failed") {
-    if (errorText?.includes("strict JSON object") || errorText?.includes("JSON object") || errorText?.includes("schema")) {
-      return t("The route selector returned invalid output, so Ling did not create an automatic reply.");
-    }
-    if (errorText?.includes("unknown teammate")) {
-      return t("The route selector chose a teammate that is not available in this channel.");
-    }
-    if (errorText?.includes("No runnable provider")) {
-      return t("No runnable provider is available for the selected teammate.");
-    }
-    return t("Ling could not safely create an automatic reply.");
-  }
-
-  switch (decision.reason) {
-    case "Message is not reply-worthy.":
-      return t("This message looks like a note or acknowledgement, not a request for an AI reply.");
-    case "Repeated short greeting was suppressed.":
-      return t("A similar short greeting was already answered recently.");
-    case "Message is empty.":
-      return t("The message has no content for an AI teammate to answer.");
-    case "Topic replies are outside the first auto-reply scope.":
-      return t("Automatic replies currently run for root channel messages and channel branches, not topic replies.");
-    case "Thread replies are outside the first auto-reply scope.":
-      return t("Automatic replies currently run for root channel messages and channel branches.");
-    case "Channel is not active.":
-      return t("This channel is not active, so Ling did not create an automatic reply.");
-    case "No active teammate candidate has a runnable provider.":
-    case "Channel default teammate is missing, inactive, or not runnable.":
-      return t("No runnable teammate is available to answer this message.");
-    case "Channel auto_route feature flag is disabled.":
-      return t("Automatic routing is not enabled for this workspace.");
-    case "Route model confidence was below threshold.":
-      return t("Ling was not confident enough to choose one teammate automatically.");
-    case "An AI reply already exists for this source message.":
-      return t("This message already has an AI reply.");
-    default:
-      return t("Ling decided not to create an automatic reply for this message.");
-  }
-}
-
-function messageAuthorLabel(
-  message: ChannelMessage,
-  teammates: readonly ChannelMention[],
-  deletedTeammateLabel = "Deleted teammate",
-  localUserLabel = "You",
-  teammateById?: ReadonlyMap<string, { readonly displayName: string }>,
-): string {
-  if (message.authorType === "system") {
-    return "Ling Stack";
-  }
-  if (message.authorType === "ai-teammate") {
-    if (message.authorId === LING_AGENT_AUTHOR_ID) {
-      return teammateLabel(message.authorId, teammates, LING_AGENT_AUTHOR_LABEL, teammateById);
-    }
-    return teammateLabel(message.authorId, teammates, deletedTeammateLabel, teammateById);
-  }
-  return localUserLabel;
-}
-
-const LING_AGENT_AUTHOR_ID = "ling_agent";
-const LING_AGENT_AUTHOR_LABEL = "Ling Agent";
 
 function indexChannelExpertTeammate(map: Map<string, LocalTeammateDraft>, teammate: LocalTeammateDraft): void {
   const aliases = [
@@ -12721,346 +5267,6 @@ function teammateLabel(
   return teammates.find((teammate) => teammate.id === teammateId)?.label ?? fallback;
 }
 
-function proposalToEditDraft(proposal: ChannelExecutionProposal): ChannelProposalEditDraft {
-  const collaborationSteps = proposal.collaborationSteps.length > 0
-    ? proposal.collaborationSteps
-    : [{ teammateId: proposal.assigneeTeammateId, action: "coordinated", summary: "Complete the confirmed execution proposal." } satisfies ChannelProposalStepDraft];
-  return {
-    title: proposal.title,
-    prompt: proposal.prompt,
-    assigneeTeammateId: proposal.assigneeTeammateId,
-    acceptanceCriteriaText: proposal.acceptanceCriteria.join("\n"),
-    shapingSummaryText: proposal.shaping?.summary ?? "",
-    shapingOpenQuestionsText: proposal.shaping?.openQuestions.join("\n") ?? "",
-    shapingClarificationsText: proposal.shaping?.clarifications.map((clarification) => clarification.body).join("\n") ?? "",
-    collaborationSteps,
-  };
-}
-
-function proposalDraftIsValid(draft: ChannelProposalEditDraft): boolean {
-  return draft.title.trim().length > 0 &&
-    draft.prompt.trim().length > 0 &&
-    draft.assigneeTeammateId.trim().length > 0 &&
-    parseProposalLines(draft.acceptanceCriteriaText).length > 0 &&
-    draft.collaborationSteps.length > 0 &&
-    draft.collaborationSteps.every((step) => step.teammateId.trim().length > 0 && step.summary.trim().length > 0);
-}
-
-function proposalDraftToUpdateInput(proposal: ChannelExecutionProposal, draft: ChannelProposalEditDraft): UpdateChannelExecutionProposalRequest {
-  return {
-    title: draft.title.trim(),
-    prompt: draft.prompt.trim(),
-    assigneeTeammateId: draft.assigneeTeammateId.trim(),
-    acceptanceCriteria: parseProposalLines(draft.acceptanceCriteriaText),
-    collaborationSteps: draft.collaborationSteps.map((step) => ({
-      teammateId: step.teammateId.trim(),
-      action: step.action,
-      summary: step.summary.trim(),
-      ...(step.sources && step.sources.length > 0 ? { sources: step.sources } : {}),
-    })),
-    shaping: proposalShapingFromEditDraft(proposal, draft),
-  };
-}
-
-function buildRequirementShapingRows(input: {
-  readonly proposal: ChannelExecutionProposal;
-  readonly assigneeLabel: string;
-  readonly t: Translate;
-}): readonly RequirementShapingRow[] {
-  const participantCount = Math.max(1, input.proposal.collaborationSteps.length);
-  const firstCriterion = input.proposal.acceptanceCriteria[0];
-  const openQuestionCount = input.proposal.shaping?.openQuestions.length ?? 0;
-  const clarificationCount = input.proposal.shaping?.clarifications.length ?? 0;
-  const shapingSummary = input.proposal.shaping?.summary;
-  return [
-    {
-      id: "goal",
-      label: input.t("Goal"),
-      value: truncatePreview(shapingSummary || input.proposal.prompt, 180),
-    },
-    {
-      id: "acceptance",
-      label: input.t("Acceptance"),
-      value: firstCriterion
-        ? truncatePreview(firstCriterion, 150)
-        : input.t("Acceptance checks will be clarified before execution."),
-      tone: firstCriterion ? "success" : "attention",
-    },
-    {
-      id: "participants",
-      label: input.t("Participants"),
-      value: input.t("{count} teammate(s), led by {teammate}", {
-        count: participantCount,
-        teammate: input.assigneeLabel,
-      }),
-    },
-    {
-      id: "risk",
-      label: input.t("Boundary"),
-      value: input.proposal.riskSummary
-        ? truncatePreview(input.proposal.riskSummary, 150)
-        : input.t("No additional boundary surfaced yet."),
-      tone: input.proposal.riskSummary ? "attention" : "neutral",
-    },
-    {
-      id: "questions",
-      label: input.t("Open questions"),
-      value: openQuestionCount > 0
-        ? input.t("{count} open question(s)", { count: openQuestionCount })
-        : clarificationCount > 0
-          ? input.t("{count} clarification(s) recorded", { count: clarificationCount })
-          : input.t("No open questions recorded."),
-      tone: openQuestionCount > 0 ? "attention" : clarificationCount > 0 ? "success" : "neutral",
-    },
-    {
-      id: "next",
-      label: input.t("Next action"),
-      value: input.t("Authorize when the scope looks right, or edit the card first."),
-    },
-  ];
-}
-
-function proposalShapingFromEditDraft(
-  proposal: ChannelExecutionProposal,
-  draft: ChannelProposalEditDraft,
-): NonNullable<UpdateChannelExecutionProposalRequest["shaping"]> {
-  const openQuestions = parseProposalLines(draft.shapingOpenQuestionsText);
-  const clarificationBodies = parseProposalLines(draft.shapingClarificationsText);
-  const existingClarifications = proposal.shaping?.clarifications ?? [];
-  const now = new Date().toISOString();
-  return {
-    status: openQuestions.length > 0 ? "needs_user_clarification" : "ready_for_confirmation",
-    summary: draft.shapingSummaryText.trim() || draft.title.trim(),
-    openQuestions,
-    clarifications: clarificationBodies.map((body, index) => {
-      const existing = existingClarifications[index];
-      if (existing?.body === body) {
-        return existing;
-      }
-      return {
-        id: `clarification_${proposal.id}_${index + 1}`,
-        authorType: "local-user",
-        body,
-        sourceMessageId: proposal.sourceMessageId,
-        createdAt: now,
-      };
-    }),
-    sourceRefs: proposal.shaping?.sourceRefs.length
-      ? proposal.shaping.sourceRefs
-      : [{ type: "message", id: proposal.sourceMessageId }],
-    updatedAt: now,
-  };
-}
-
-function parseProposalLines(value: string): readonly string[] {
-  return value
-    .split("\n")
-    .map((line) => line.trim())
-    .filter(Boolean);
-}
-
-interface ProposalPermissionSummary {
-  readonly sentence: string;
-  readonly toolLabel: string;
-  readonly targetLabel: string;
-  readonly executorLabel: string;
-}
-
-function buildProposalPermissionSummary(input: {
-  readonly proposal: ChannelExecutionProposal;
-  readonly assigneeLabel: string;
-  readonly t: Translate;
-}): ProposalPermissionSummary {
-  const { proposal, t } = input;
-  const primaryTool = proposalPermissionPrimaryTool(proposal.requiredTools);
-  const targetLabel = extractProposalPermissionTarget(proposal, primaryTool) ?? t("declared task scope");
-  const toolLabel = proposal.requiredTools.length > 0 ? proposal.requiredTools.join(", ") : t("workspace tools");
-  const sentence = proposalPermissionSentence({
-    tool: primaryTool,
-    targetLabel,
-    t,
-  });
-  return {
-    sentence,
-    toolLabel,
-    targetLabel,
-    executorLabel: input.assigneeLabel,
-  };
-}
-
-function proposalPermissionPrimaryTool(
-  tools: readonly ChannelExecutionProposal["requiredTools"][number][],
-): ChannelExecutionProposal["requiredTools"][number] | undefined {
-  if (tools.includes("write")) {
-    return "write";
-  }
-  if (tools.includes("edit")) {
-    return "edit";
-  }
-  if (tools.includes("bash")) {
-    return "bash";
-  }
-  return tools[0];
-}
-
-function proposalPermissionSentence(input: {
-  readonly tool?: ChannelExecutionProposal["requiredTools"][number];
-  readonly targetLabel: string;
-  readonly t: Translate;
-}): string {
-  if (input.tool === "write") {
-    return input.t("Need write permission to create {target} for this task.", { target: input.targetLabel });
-  }
-  if (input.tool === "edit") {
-    return input.t("Need edit permission to update {target} for this task.", { target: input.targetLabel });
-  }
-  if (input.tool === "bash") {
-    return input.t("Need bash permission to run {target} for this task.", { target: input.targetLabel });
-  }
-  if (input.tool) {
-    return input.t("Need {tool} permission for {target} in this task.", { tool: input.tool, target: input.targetLabel });
-  }
-  return input.t("Confirm this bounded task scope before Ling starts.");
-}
-
-function extractProposalPermissionTarget(
-  proposal: ChannelExecutionProposal,
-  primaryTool?: ChannelExecutionProposal["requiredTools"][number],
-): string | undefined {
-  const sources = [proposal.riskSummary, proposal.prompt, proposal.title].filter((value): value is string => Boolean(value?.trim()));
-  if (primaryTool === "bash") {
-    const command = sources.map(extractProposalCommandTarget).find((value): value is string => Boolean(value));
-    if (command) {
-      return command;
-    }
-  }
-  const path = sources.map(extractProposalPathTarget).find((value): value is string => Boolean(value));
-  if (path) {
-    return path;
-  }
-  return primaryTool === "bash" ? trimPermissionTarget(proposal.title.replace(/^run\s+/iu, "")) : undefined;
-}
-
-function extractProposalCommandTarget(value: string): string | undefined {
-  const explicitCommand = /Command requested by user:\s*([^\n]+)/iu.exec(value)?.[1];
-  if (explicitCommand) {
-    return trimPermissionTarget(explicitCommand);
-  }
-  const riskCommand = /(?:run|运行)\s+(.+?)(?:[；;\n]|$)/iu.exec(value)?.[1];
-  if (riskCommand) {
-    return trimPermissionTarget(riskCommand);
-  }
-  return undefined;
-}
-
-function extractProposalPathTarget(value: string): string | undefined {
-  const matches = value.match(/(?:\/[^\s`"'，。；;:)]+|(?:\.{1,2}\/)?[A-Za-z0-9_.@-]+(?:\/[A-Za-z0-9_.@-]+)*\.[A-Za-z0-9]{1,8})/gu) ?? [];
-  return matches
-    .map(trimPermissionTarget)
-    .find((candidate) => Boolean(candidate && !candidate.startsWith("http://") && !candidate.startsWith("https://")));
-}
-
-function trimPermissionTarget(value: string): string | undefined {
-  const trimmed = value.trim().replace(/^[`"']+/u, "").replace(/[`"',，。；;:)]+$/u, "").replace(/\.$/u, "");
-  return trimmed ? truncatePreview(trimmed, 180) : undefined;
-}
-
-function executionProposalStatusLabel(status: ChannelExecutionProposal["status"]): string {
-  if (status === "draft") {
-    return "Ready for confirmation";
-  }
-  if (status === "accepted") {
-    return "Accepted";
-  }
-  if (status === "blocked") {
-    return "Proposal blocked";
-  }
-  if (status === "run_failed") {
-    return "Run failed";
-  }
-  if (status === "superseded") {
-    return "Superseded";
-  }
-  return "Cancelled";
-}
-
-function requirementShapingStatusLabel(status: NonNullable<ChannelExecutionProposal["shaping"]>["status"]): string {
-  if (status === "collecting_context") {
-    return "Collecting context";
-  }
-  if (status === "collecting_teammate_input") {
-    return "Collecting teammate input";
-  }
-  if (status === "needs_user_clarification") {
-    return "Needs user clarification";
-  }
-  if (status === "converted_to_task") {
-    return "Converted to task";
-  }
-  if (status === "dismissed") {
-    return "Dismissed";
-  }
-  return "Ready for confirmation";
-}
-
-function proposalStepActionLabel(action: ChannelExecutionProposal["collaborationSteps"][number]["action"]): string {
-  if (action === "coordinated") {
-    return "Coordinated";
-  }
-  if (action === "consulted") {
-    return "Consulted";
-  }
-  if (action === "reviewed") {
-    return "Reviewed";
-  }
-  return "Flagged risk";
-}
-
-function proposalStepSourceLabel(
-  step: ChannelExecutionProposal["collaborationSteps"][number],
-  t: Translate,
-): string {
-  const councilSource = step.sources?.find((source) => source.kind === "council");
-  if (councilSource) {
-    return t("From {source}", { source: councilSource.councilDisplayName ?? t("AI council") });
-  }
-  const directSource = step.sources?.find((source) => source.kind === "direct");
-  if (directSource?.isDefault) {
-    return t("Default channel teammate");
-  }
-  return directSource ? t("Direct channel teammate") : "";
-}
-
-function workflowStepSourceLabel(
-  metadata: NonNullable<ChannelWorkflowStep["metadata"]>,
-  t: Translate,
-): string {
-  const councilSource = metadata.proposalStepSources?.find((source) => source.kind === "council");
-  if (councilSource) {
-    return t("From {source}", { source: councilSource.councilDisplayName ?? t("AI council") });
-  }
-  const directSource = metadata.proposalStepSources?.find((source) => source.kind === "direct");
-  if (directSource?.isDefault) {
-    return t("Default channel teammate");
-  }
-  return directSource ? t("Direct channel teammate") : "";
-}
-
-function proposalCollaborationSummary(
-  proposal: ChannelExecutionProposal,
-  teammates: readonly ChannelMention[],
-  t: Translate,
-): string {
-  return proposal.collaborationSteps
-    .slice(0, 2)
-    .map((step) => {
-      const teammate = teammateLabel(step.teammateId, teammates, t("Deleted teammate"));
-      const summary = step.summary.trim() || t(proposalStepActionLabel(step.action));
-      return `${teammate} ${summary}`;
-    })
-    .join(" · ");
-}
-
 function findMentionsInText(body: string, teammates: readonly ChannelMention[]): readonly ChannelMention[] {
   return teammates.filter((teammate) => mentionTokenExistsInText(body, teammate));
 }
@@ -13093,26 +5299,6 @@ function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-function channelNotificationLevelLabel(level: ChannelNotificationLevel): string {
-  if (level === "all") {
-    return "All activity";
-  }
-  if (level === "muted") {
-    return "Muted";
-  }
-  return "Mentions and approvals";
-}
-
-function channelNotificationLevelDescription(level: ChannelNotificationLevel): string {
-  if (level === "all") {
-    return "Notify for messages, tasks, runs, files, and approvals.";
-  }
-  if (level === "muted") {
-    return "Only critical approval blockers can surface.";
-  }
-  return "Notify for @mentions, approval requests, and blockers.";
-}
-
 function readSavedChannelNotificationLevel(cwd: string, channelId: string): ChannelNotificationLevel | undefined {
   try {
     const value = globalThis.localStorage?.getItem(channelNotificationStorageKey(cwd, channelId));
@@ -13138,20 +5324,6 @@ function isChannelNotificationLevel(value: string | null | undefined): value is 
   return value === "all" || value === "mentions" || value === "muted";
 }
 
-function serializeCustomActivitySavedViews(views: readonly ChannelActivitySavedView[]): readonly Record<string, unknown>[] {
-  return views
-    .filter((view) => !view.builtin)
-    .slice(0, maxCustomChannelActivitySavedViews)
-    .map((view) => ({
-      id: view.id,
-      name: view.name,
-      filter: view.filter,
-      builtin: false,
-      createdAt: view.createdAt,
-      updatedAt: view.updatedAt,
-    }));
-}
-
 function resolveChannelWorkspaceBinding(channel: Channel, cwd: string): ChannelWorkspaceBinding {
   return channel.workspaceBinding ?? {
     mode: "local",
@@ -13171,45 +5343,6 @@ function resolveChannelWorkspaceExecutionPath(binding: ChannelWorkspaceBinding, 
   return binding.executionPath || channel.boundPath || cwd;
 }
 
-function channelWorkspaceModeLabel(mode: ChannelWorkspaceMode): string {
-  if (mode === "managed_worktree") {
-    return "Worktree";
-  }
-  if (mode === "external_path") {
-    return "External";
-  }
-  return "Local";
-}
-
-function channelWorkspaceModeIcon(mode: ChannelWorkspaceMode, size: number): JSX.Element {
-  if (mode === "managed_worktree") {
-    return <GitBranch size={size} />;
-  }
-  if (mode === "external_path") {
-    return <FolderOpen size={size} />;
-  }
-  return <Command size={size} />;
-}
-
-function shortWorkspacePath(path: string, cwd: string): string {
-  const trimmed = path.trim();
-  if (!trimmed) {
-    return "";
-  }
-  const workspace = cwd.trim().replace(/\/$/, "");
-  if (workspace && trimmed === workspace) {
-    return ".";
-  }
-  if (workspace && trimmed.startsWith(`${workspace}/`)) {
-    return `.${trimmed.slice(workspace.length)}`;
-  }
-  const parts = trimmed.split("/").filter(Boolean);
-  if (parts.length <= 3) {
-    return trimmed;
-  }
-  return `.../${parts.slice(-3).join("/")}`;
-}
-
 function readRunTitle(run: RunSession): string {
   if (typeof run.taskSnapshot === "object" && run.taskSnapshot !== null && "title" in run.taskSnapshot) {
     const title = (run.taskSnapshot as { readonly title?: unknown }).title;
@@ -13220,226 +5353,10 @@ function readRunTitle(run: RunSession): string {
   return run.taskId;
 }
 
-function runProgressTone(status: RunSession["status"]): AttentionProgressTone {
-  if (status === "succeeded") {
-    return "success";
-  }
-  if (status === "running" || status === "queued") {
-    return "running";
-  }
-  if (status === "waiting_for_approval") {
-    return "waiting";
-  }
-  if (status === "failed") {
-    return "failed";
-  }
-  return "neutral";
-}
-
-function runProgressIcon(status: RunSession["status"]): JSX.Element {
-  if (status === "succeeded") {
-    return <CheckCircle2 size={18} />;
-  }
-  if (status === "running") {
-    return <Loader2 className="spin" size={18} />;
-  }
-  if (status === "waiting_for_approval") {
-    return <ShieldCheck size={18} />;
-  }
-  if (status === "failed") {
-    return <CircleAlert size={18} />;
-  }
-  if (status === "cancelled") {
-    return <X size={18} />;
-  }
-  return <Clock3 size={18} />;
-}
-
-function buildWorkflowAttentionProgressRows(input: {
-  readonly items: readonly CollaborationProgressProjectionItem[];
-  readonly onOpen?: () => void;
-}): readonly AttentionProgressRow[] {
-  return input.items.map((item) => ({
-    id: item.id,
-    icon: collaborationProgressIcon(item.icon),
-    tone: collaborationProgressTone(item.tone),
-    primary: item.primary,
-    secondary: item.secondary,
-    onOpen: input.onOpen,
-  }));
-}
-
-function collaborationProgressTone(tone: CollaborationProgressProjectionTone): AttentionProgressTone {
-  return tone;
-}
-
-function collaborationProgressIcon(icon: CollaborationProgressProjectionIcon): JSX.Element {
-  if (icon === "blocked" || icon === "failed") {
-    return <CircleAlert size={18} />;
-  }
-  if (icon === "waiting") {
-    return <ShieldCheck size={18} />;
-  }
-  if (icon === "success") {
-    return <CheckCircle2 size={18} />;
-  }
-  if (icon === "running") {
-    return <Loader2 className="spin" size={18} />;
-  }
-  return <Workflow size={18} />;
-}
-
-function deriveWorkspaceThreadsFromRuns(runs: readonly RunSession[]): readonly LingThread[] {
-  const runsByThreadId = new Map<string, RunSession[]>();
-  for (const run of runs) {
-    if (!run.threadId) {
-      continue;
-    }
-    runsByThreadId.set(run.threadId, [...(runsByThreadId.get(run.threadId) ?? []), run]);
-  }
-  return [...runsByThreadId.entries()].map(([threadId, threadRuns]) => {
-    const latestRun = [...threadRuns].sort((left, right) => compareRunActivity(right, left))[0];
-    const oldestRun = [...threadRuns].sort((left, right) => left.createdAt.localeCompare(right.createdAt))[0];
-    return {
-      id: threadId,
-      workspaceId: "workspace_default",
-      kind: "task",
-      channelId: latestRun.channelId,
-      taskId: latestRun.taskId,
-      teammateId: latestRun.teammateId,
-      title: readTaskTitle(latestRun.taskSnapshot) || latestRun.taskId,
-      objective: readTaskPrompt(latestRun.taskSnapshot) || readTaskTitle(latestRun.taskSnapshot) || latestRun.taskId,
-      status: lingThreadStatusFromWorkspaceRun(latestRun),
-      activeRunId: runCanBeStopped(latestRun) ? latestRun.id : undefined,
-      lastRunId: latestRun.id,
-      createdAt: oldestRun.createdAt,
-      updatedAt: latestRun.updatedAt || latestRun.createdAt,
-    } satisfies LingThread;
-  });
-}
-
-function mergeLingThreads(...groups: readonly (readonly LingThread[])[]): readonly LingThread[] {
-  const byId = new Map<string, LingThread>();
-  for (const group of groups) {
-    for (const thread of group) {
-      const existing = byId.get(thread.id);
-      if (!existing || thread.updatedAt >= existing.updatedAt) {
-        byId.set(thread.id, { ...existing, ...thread });
-      }
-    }
-  }
-  return [...byId.values()];
-}
-
-function isChannelDiscussionRootThread(thread: LingThread, channelId: string | undefined): boolean {
-  return thread.kind === "channel_discussion" &&
-    Boolean(channelId) &&
-    thread.channelId === channelId &&
-    !thread.parentThreadId &&
-    !thread.taskId &&
-    !thread.teammateId &&
-    !thread.workflowId &&
-    !thread.workflowStepId &&
-    !thread.externalWorkId;
-}
-
-function filterChannelBranchThreads(threads: readonly LingThread[], activeThreadId: string): readonly LingThread[] {
-  const lineageParentThreadIds = new Set<string>();
-  for (const thread of threads) {
-    if (thread.parentThreadId) {
-      lineageParentThreadIds.add(thread.parentThreadId);
-    }
-  }
-  return threads.filter((thread) =>
-    thread.kind === "channel_discussion" ||
-    thread.kind === "task" ||
-    Boolean(thread.parentThreadId) ||
-    lineageParentThreadIds.has(thread.id) ||
-    Boolean(thread.pinnedAt) ||
-    (Boolean(activeThreadId) && thread.id === activeThreadId)
-  );
-}
-
-function proposalShouldHideInDefaultFeed(proposal: ChannelExecutionProposal, workflows: readonly ChannelWorkflow[]): boolean {
-  if (proposal.status === "accepted" && proposal.linkedWorkflowId) {
-    return true;
-  }
-  return proposalHasTerminalWorkflow(proposal, workflows);
-}
-
-function proposalHasTerminalWorkflow(proposal: ChannelExecutionProposal, workflows: readonly ChannelWorkflow[]): boolean {
-  if (!proposal.linkedWorkflowId) {
-    return false;
-  }
-  const workflow = workflows.find((candidate) => candidate.id === proposal.linkedWorkflowId);
-  return Boolean(workflow && workflowIsTerminal(workflow.status));
-}
-
-function workflowIsTerminal(status: ChannelWorkflow["status"]): boolean {
-  return status === "succeeded" || status === "blocked" || status === "failed" || status === "cancelled";
-}
-
-function buildChannelWorkThreadTree(threads: readonly LingThread[]): ReadonlyArray<{
-  readonly thread: LingThread;
-  readonly depth: number;
-  readonly parentHidden: boolean;
-}> {
-  const threadById = new Map(threads.map((thread) => [thread.id, thread]));
-  const childIdsByParent = new Map<string, string[]>();
-  for (const thread of threads) {
-    if (!thread.parentThreadId) {
-      continue;
-    }
-    childIdsByParent.set(thread.parentThreadId, [...(childIdsByParent.get(thread.parentThreadId) ?? []), thread.id]);
-  }
-  const roots = threads
-    .filter((thread) => !thread.parentThreadId || !threadById.has(thread.parentThreadId))
-    .map((thread) => thread.id);
-  const rows: Array<{ readonly thread: LingThread; readonly depth: number; readonly parentHidden: boolean }> = [];
-  const visited = new Set<string>();
-  const sortIds = (ids: readonly string[]): string[] =>
-    [...new Set(ids)].sort((leftId, rightId) =>
-      Number(Boolean(threadById.get(rightId)?.pinnedAt)) - Number(Boolean(threadById.get(leftId)?.pinnedAt)) ||
-      (threadById.get(rightId)?.pinnedAt ?? "").localeCompare(threadById.get(leftId)?.pinnedAt ?? "") ||
-      (threadById.get(rightId)?.updatedAt ?? "").localeCompare(threadById.get(leftId)?.updatedAt ?? "") ||
-      leftId.localeCompare(rightId));
-  const visit = (threadId: string, depth: number, parentHidden: boolean): void => {
-    if (visited.has(threadId)) {
-      return;
-    }
-    const thread = threadById.get(threadId);
-    if (!thread) {
-      return;
-    }
-    visited.add(threadId);
-    rows.push({ thread, depth, parentHidden });
-    for (const childId of sortIds(childIdsByParent.get(threadId) ?? [])) {
-      visit(childId, Math.min(depth + 1, 6), false);
-    }
-  };
-  for (const rootId of sortIds(roots)) {
-    const root = threadById.get(rootId);
-    visit(rootId, 0, Boolean(root?.parentThreadId && !threadById.has(root.parentThreadId)));
-  }
-  for (const thread of threads) {
-    if (!visited.has(thread.id)) {
-      rows.push({ thread, depth: 0, parentHidden: Boolean(thread.parentThreadId) });
-    }
-  }
-  return rows;
-}
-
 function compareRunActivity(left: RunSession, right: RunSession): number {
   const leftTime = left.updatedAt || left.endedAt || left.startedAt || left.createdAt;
   const rightTime = right.updatedAt || right.endedAt || right.startedAt || right.createdAt;
   return leftTime.localeCompare(rightTime);
-}
-
-function lingThreadStatusFromWorkspaceRun(run: RunSession): LingThread["status"] {
-  if (run.status === "queued") {
-    return "open";
-  }
-  return run.status;
 }
 
 function splitLines(value: string): string[] {
@@ -13537,10 +5454,6 @@ function chooseMostSpecificMentionPicker(candidates: readonly (ActiveMentionPick
   return candidates
     .filter((candidate): candidate is ActiveMentionPicker => Boolean(candidate))
     .sort((left, right) => (right.end - right.start) - (left.end - left.start))[0];
-}
-
-function isLingAgentTeammate(teammate: { readonly id: string; readonly systemRole?: string }): boolean {
-  return teammate.id === LING_AGENT_AUTHOR_ID || teammate.systemRole === "ling_agent";
 }
 
 function formatBytes(value: number): string {
