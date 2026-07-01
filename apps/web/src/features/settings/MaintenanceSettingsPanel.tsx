@@ -60,8 +60,13 @@ export function MaintenanceSettingsPanel({
           {
             id: "archived",
             label: "Archived items",
-            description: "Restore or permanently delete archived channels and branches.",
-            badge: String(archivedState.archivedChannels.length + archivedState.archivedBranches.length),
+            description: "Restore archived conversations, teammates, channels, and branches.",
+            badge: String(
+              archivedState.archivedConversations.length +
+              archivedState.archivedTeammates.length +
+              archivedState.archivedChannels.length +
+              archivedState.archivedBranches.length
+            ),
           },
           {
             id: "diagnostics",

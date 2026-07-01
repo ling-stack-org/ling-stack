@@ -468,16 +468,43 @@ test("daemon archive pin and archived filters", async () => {
     });
     assert.equal(unpinned.thread.pinnedAt, undefined);
 
+    const idleOpenThread = store.createLingThread(
+      {
+        kind: "task",
+        channelId,
+        title: "Idle open branch",
+        objective: "Archive should not be blocked by an open turn with no run.",
+      },
+      "2026-06-08T00:31:00.000Z",
+    );
+    store.createLingTurn(
+      {
+        threadId: idleOpenThread.id,
+        kind: "manual_followup",
+        status: "open",
+        title: "Unscheduled turn",
+        userInstruction: "This turn never started a run.",
+        createdByActor: "local-user",
+      },
+      "2026-06-08T00:31:30.000Z",
+    );
+    const idleOpenArchive = await postJson(`${daemon.url}/threads/${encodeURIComponent(idleOpenThread.id)}/archive?cwd=${encodeURIComponent(cwd)}`, {
+      idempotencyKey: "archive-idle-open-thread",
+    });
+    assert.equal(idleOpenArchive.thread.id, idleOpenThread.id);
+    assert.ok(idleOpenArchive.thread.archivedAt);
+
     const activeThread = store.createLingThread(
       {
         kind: "task",
+        taskId: "task-active-archive-block",
         channelId,
         title: "Active branch",
         objective: "Archive should be blocked while a turn is active.",
       },
       "2026-06-08T00:32:00.000Z",
     );
-    store.createLingTurn(
+    const activeTurn = store.createLingTurn(
       {
         threadId: activeThread.id,
         kind: "manual_followup",
@@ -488,6 +515,20 @@ test("daemon archive pin and archived filters", async () => {
       },
       "2026-06-08T00:32:30.000Z",
     );
+    store.createRun({
+      id: "run_active_archive_block",
+      cwd,
+      taskId: "task-active-archive-block",
+      channelId,
+      providerName: "Test provider",
+      providerModel: "test-model",
+      taskSnapshot: {},
+      providerSnapshot: {},
+      requestSnapshot: {},
+      threadId: activeThread.id,
+      turnId: activeTurn.id,
+      createdAt: "2026-06-08T00:32:45.000Z",
+    });
     const activeArchive = await postJsonAllowError(`${daemon.url}/threads/${encodeURIComponent(activeThread.id)}/archive?cwd=${encodeURIComponent(cwd)}`, {
       idempotencyKey: "archive-active-thread",
     });

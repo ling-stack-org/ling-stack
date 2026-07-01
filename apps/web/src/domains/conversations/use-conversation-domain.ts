@@ -1,5 +1,5 @@
 import { useCallback, useState } from "react";
-import { getConversation, listLingThreads, streamConversation } from "../../api.js";
+import { archiveLingThread, getConversation, listLingThreads, streamConversation } from "../../api.js";
 import { readSseResponse } from "../../sse.js";
 import type {
   ConversationDetailResponse,
@@ -39,6 +39,7 @@ export interface ConversationStreamHandlers {
 
 export function useConversationDomain(input: {
   readonly cwd: string;
+  readonly translate: (key: string, values?: Record<string, string | number>) => string;
   readonly setErrorMessage: (message: string) => void;
 }): {
   readonly state: {
@@ -47,11 +48,14 @@ export function useConversationDomain(input: {
     readonly selectedConversationThreadId: string;
     readonly selectedConversationDetail?: ConversationDetailResponse;
     readonly conversationStreamBusy: boolean;
+    readonly conversationArchiveError: string;
   };
   readonly actions: {
     readonly refreshConversationThreads: (cwd?: string) => Promise<void>;
     readonly openNewConversation: () => void;
     readonly selectConversationThread: (threadId: string, cwd?: string) => Promise<void>;
+    readonly archiveConversationThread: (threadId: string, cwd?: string) => Promise<void>;
+    readonly archiveAllConversationThreads: (cwd?: string) => Promise<void>;
     readonly sendConversationMessage: (message: ConversationSendInput, handlers?: ConversationStreamHandlers) => Promise<void>;
   };
 } {
@@ -60,6 +64,7 @@ export function useConversationDomain(input: {
   const [selectedConversationThreadId, setSelectedConversationThreadId] = useState("");
   const [selectedConversationDetail, setSelectedConversationDetail] = useState<ConversationDetailResponse | undefined>();
   const [conversationStreamBusy, setConversationStreamBusy] = useState(false);
+  const [conversationArchiveError, setConversationArchiveError] = useState("");
 
   const refreshConversationThreads = useCallback(async (cwd = input.cwd): Promise<void> => {
     const workspaceCwd = cwd.trim();
@@ -102,6 +107,92 @@ export function useConversationDomain(input: {
       setConversationsLoading(false);
     }
   }, [input, openNewConversation]);
+
+  const archiveConversationThread = useCallback(async (threadId: string, cwd = input.cwd): Promise<void> => {
+    const workspaceCwd = cwd.trim();
+    if (!workspaceCwd || !threadId) {
+      return;
+    }
+    setConversationsLoading(true);
+    try {
+      input.setErrorMessage("");
+      setConversationArchiveError("");
+      await archiveLingThread(workspaceCwd, threadId, {
+        reason: "sidebar_conversation_archived",
+        idempotencyKey: `sidebar-conversation-archive:${threadId}`,
+      });
+      setConversationThreads((current) => current.filter((thread) => thread.id !== threadId));
+      if (selectedConversationThreadId === threadId) {
+        openNewConversation();
+      }
+      await refreshConversationThreads(workspaceCwd);
+    } catch (error) {
+      const message = formatConversationArchiveError(error, input.translate);
+      setConversationArchiveError(message);
+      input.setErrorMessage(message);
+    } finally {
+      setConversationsLoading(false);
+    }
+  }, [input, openNewConversation, refreshConversationThreads, selectedConversationThreadId]);
+
+  const archiveAllConversationThreads = useCallback(async (cwd = input.cwd): Promise<void> => {
+    const workspaceCwd = cwd.trim();
+    const visibleThreads = conversationThreads.filter((thread) => !thread.archivedAt && thread.status !== "archived");
+    if (!workspaceCwd || visibleThreads.length === 0) {
+      setConversationArchiveError(input.translate("No conversations to archive"));
+      return;
+    }
+    const confirmed = globalThis.confirm(input.translate("Archive all conversations? You can restore archived conversations from Settings."));
+    if (!confirmed) {
+      return;
+    }
+    setConversationsLoading(true);
+    try {
+      input.setErrorMessage("");
+      setConversationArchiveError("");
+      const results = await Promise.allSettled(
+        visibleThreads.map((thread) => archiveLingThread(workspaceCwd, thread.id, {
+          reason: "sidebar_all_conversations_archived",
+          idempotencyKey: `sidebar-conversation-archive-all:${thread.id}`,
+        })),
+      );
+      const archivedIds = new Set<string>();
+      const failures: unknown[] = [];
+      results.forEach((result, index) => {
+        if (result.status === "fulfilled") {
+          archivedIds.add(visibleThreads[index]?.id ?? "");
+          return;
+        }
+        failures.push(result.reason);
+      });
+      if (archivedIds.size > 0) {
+        setConversationThreads((current) => current.filter((thread) => !archivedIds.has(thread.id)));
+        if (selectedConversationThreadId && archivedIds.has(selectedConversationThreadId)) {
+          openNewConversation();
+        }
+      }
+      await refreshConversationThreads(workspaceCwd);
+      if (failures.length > 0) {
+        const activeFailures = failures.filter((failure) => {
+          const message = failure instanceof Error ? failure.message : String(failure);
+          return message.includes("active_thread_archive_blocked") || message.includes("Cannot archive thread with active");
+        }).length;
+        const message = activeFailures === failures.length
+          ? input.translate("{count} conversations still have active work and cannot be archived yet.", { count: failures.length })
+          : input.translate("Archive conversation failed: {message}", {
+            message: failures.map((failure) => failure instanceof Error ? failure.message : String(failure)).join("; "),
+          });
+        setConversationArchiveError(message);
+        input.setErrorMessage(message);
+      }
+    } catch (error) {
+      const message = formatConversationArchiveError(error, input.translate);
+      setConversationArchiveError(message);
+      input.setErrorMessage(message);
+    } finally {
+      setConversationsLoading(false);
+    }
+  }, [conversationThreads, input, openNewConversation, refreshConversationThreads, selectedConversationThreadId]);
 
   const sendConversationMessage = useCallback(async (
     message: ConversationSendInput,
@@ -204,14 +295,31 @@ export function useConversationDomain(input: {
       selectedConversationThreadId,
       selectedConversationDetail,
       conversationStreamBusy,
+      conversationArchiveError,
     },
     actions: {
       refreshConversationThreads,
       openNewConversation,
       selectConversationThread,
+      archiveConversationThread,
+      archiveAllConversationThreads,
       sendConversationMessage,
     },
   };
+}
+
+function formatConversationArchiveError(
+  error: unknown,
+  translate: (key: string, values?: Record<string, string | number>) => string,
+): string {
+  const rawMessage = error instanceof Error ? error.message : String(error);
+  if (rawMessage.includes("active_thread_archive_blocked") || rawMessage.includes("Cannot archive thread with active")) {
+    return translate("This conversation still has active work and cannot be archived yet.");
+  }
+  if (rawMessage.includes("thread_not_found")) {
+    return translate("This conversation no longer exists. Refresh and try again.");
+  }
+  return translate("Archive conversation failed: {message}", { message: rawMessage });
 }
 
 function mergeConversationMessages(

@@ -1,8 +1,8 @@
 import type { ReactNode } from "react";
-import { Archive, CircleAlert, Loader2, RefreshCw, Trash2 } from "lucide-react";
+import { Archive, Bot, CircleAlert, Loader2, MessageSquare, RefreshCw, Trash2 } from "lucide-react";
 import { useI18n } from "../../i18n.js";
 import { formatDateTime } from "../../lib/formatting.js";
-import type { Channel, ChannelBranch } from "../../types.js";
+import type { AiTeammate, Channel, ChannelBranch, LingThread } from "../../types.js";
 import type { ArchivedSettingsControllerActions, ArchivedSettingsControllerState } from "./useArchivedSettingsController.js";
 
 export function ArchivedSettingsPanel({
@@ -19,7 +19,7 @@ export function ArchivedSettingsPanel({
       <div className="panel-title split">
         <span>
           <Archive size={18} />
-          <h2 id="archived-items-settings-title">{t("Archived channels and branches")}</h2>
+          <h2 id="archived-items-settings-title">{t("Archived items")}</h2>
         </span>
         <button className="secondary-button compact-button" type="button" onClick={() => void actions.refresh()} disabled={state.isLoading}>
           {state.isLoading ? <Loader2 className="spin" size={15} /> : <RefreshCw size={15} />}
@@ -35,8 +35,38 @@ export function ArchivedSettingsPanel({
       ) : null}
 
       <div className="archived-items-copy">
-        {t("Restore returns an item to the channel drawer. Delete is permanent and requires confirmation.")}
+        {t("Restore returns archived items to the sidebar. Channel and branch delete is permanent and requires confirmation.")}
       </div>
+
+      <ArchivedItemGroup
+        title={t("Conversations")}
+        countLabel={t("{count} archived", { count: state.archivedConversations.length })}
+        emptyLabel={state.isLoading ? t("Loading archived conversations...") : t("No archived conversations")}
+      >
+        {state.archivedConversations.map((thread) => (
+          <ArchivedConversationRow
+            key={thread.id}
+            thread={thread}
+            actionId={state.actionId}
+            onRestore={() => void actions.restoreConversation(thread.id)}
+          />
+        ))}
+      </ArchivedItemGroup>
+
+      <ArchivedItemGroup
+        title={t("AI Teammates")}
+        countLabel={t("{count} archived", { count: state.archivedTeammates.length })}
+        emptyLabel={state.isLoading ? t("Loading archived teammates...") : t("No archived teammates")}
+      >
+        {state.archivedTeammates.map((teammate) => (
+          <ArchivedTeammateRow
+            key={teammate.id}
+            teammate={teammate}
+            actionId={state.actionId}
+            onRestore={() => void actions.restoreTeammate(teammate.id)}
+          />
+        ))}
+      </ArchivedItemGroup>
 
       <ArchivedItemGroup
         title={t("Channels")}
@@ -79,6 +109,64 @@ export function ArchivedSettingsPanel({
         ))}
       </ArchivedItemGroup>
     </section>
+  );
+}
+
+function ArchivedConversationRow({
+  thread,
+  actionId,
+  onRestore,
+}: {
+  readonly thread: LingThread;
+  readonly actionId: string;
+  readonly onRestore: () => void;
+}): JSX.Element {
+  const { t } = useI18n();
+  return (
+    <div className="archived-item-row">
+      <div className="archived-item-main">
+        <strong>
+          <MessageSquare size={14} />
+          {thread.title || t("Conversation")}
+        </strong>
+        <small>{t("Archived")} · {formatDateTime(thread.archivedAt ?? thread.updatedAt)}</small>
+      </div>
+      <div className="archived-item-actions">
+        <button className="secondary-button compact-button" type="button" onClick={onRestore} disabled={actionId !== ""}>
+          {actionId === `conversation:${thread.id}:restore` ? <Loader2 className="spin" size={14} /> : <RefreshCw size={14} />}
+          {t("Restore")}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function ArchivedTeammateRow({
+  teammate,
+  actionId,
+  onRestore,
+}: {
+  readonly teammate: AiTeammate;
+  readonly actionId: string;
+  readonly onRestore: () => void;
+}): JSX.Element {
+  const { t } = useI18n();
+  return (
+    <div className="archived-item-row">
+      <div className="archived-item-main">
+        <strong>
+          <Bot size={14} />
+          {teammate.displayName}
+        </strong>
+        <small>{t("Archived")} · {formatDateTime(teammate.updatedAt)}</small>
+      </div>
+      <div className="archived-item-actions">
+        <button className="secondary-button compact-button" type="button" onClick={onRestore} disabled={actionId !== ""}>
+          {actionId === `teammate:${teammate.id}:restore` ? <Loader2 className="spin" size={14} /> : <RefreshCw size={14} />}
+          {t("Restore")}
+        </button>
+      </div>
+    </div>
   );
 }
 

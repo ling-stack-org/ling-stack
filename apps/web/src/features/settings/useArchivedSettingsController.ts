@@ -7,13 +7,16 @@ import {
   patchChannel,
   updateChannelBranch,
 } from "../../api/channels.js";
-import type { Channel, ChannelBranch } from "../../types.js";
+import { listAiTeammates, listLingThreads, unarchiveLingThread, updateAiTeammate } from "../../api.js";
+import type { AiTeammate, Channel, ChannelBranch, LingThread } from "../../types.js";
 
 export interface ArchivedSettingsControllerState {
   readonly archivedChannels: readonly Channel[];
   readonly archiveParentChannels: readonly Channel[];
   readonly archiveParentChannelById: ReadonlyMap<string, Channel>;
   readonly archivedBranches: readonly ChannelBranch[];
+  readonly archivedConversations: readonly LingThread[];
+  readonly archivedTeammates: readonly AiTeammate[];
   readonly isLoading: boolean;
   readonly errorMessage: string;
   readonly actionId: string;
@@ -25,6 +28,8 @@ export interface ArchivedSettingsControllerActions {
   readonly deleteChannel: (channel: Channel) => Promise<void>;
   readonly restoreBranch: (branch: ChannelBranch) => Promise<void>;
   readonly deleteBranch: (branch: ChannelBranch) => Promise<void>;
+  readonly restoreConversation: (threadId: string) => Promise<void>;
+  readonly restoreTeammate: (teammateId: string) => Promise<void>;
 }
 
 export function useArchivedSettingsController({
@@ -42,6 +47,8 @@ export function useArchivedSettingsController({
   const [archivedChannels, setArchivedChannels] = useState<readonly Channel[]>([]);
   const [archiveParentChannels, setArchiveParentChannels] = useState<readonly Channel[]>([]);
   const [archivedBranches, setArchivedBranches] = useState<readonly ChannelBranch[]>([]);
+  const [archivedConversations, setArchivedConversations] = useState<readonly LingThread[]>([]);
+  const [archivedTeammates, setArchivedTeammates] = useState<readonly AiTeammate[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
   const [actionId, setActionId] = useState("");
@@ -51,14 +58,18 @@ export function useArchivedSettingsController({
       setArchivedChannels([]);
       setArchiveParentChannels([]);
       setArchivedBranches([]);
+      setArchivedConversations([]);
+      setArchivedTeammates([]);
       return;
     }
     setIsLoading(true);
     setErrorMessage("");
     try {
-      const [activeChannelsResponse, archivedChannelsResponse] = await Promise.all([
+      const [activeChannelsResponse, archivedChannelsResponse, archivedConversationResponse, teammateResponse] = await Promise.all([
         listChannels(cwd, { archived: false, limit: 500 }),
         listChannels(cwd, { archived: true, limit: 500 }),
+        listLingThreads(cwd, { kind: "conversation", archived: "only", limit: 500 }),
+        listAiTeammates(cwd),
       ]);
       const parentChannels = [...activeChannelsResponse.channels, ...archivedChannelsResponse.channels];
       const branchResponses = await Promise.all(
@@ -70,6 +81,12 @@ export function useArchivedSettingsController({
       setArchivedChannels(archivedChannelsResponse.channels);
       setArchiveParentChannels(parentChannels);
       setArchivedBranches(branchResponses.flatMap((response) => response.branches));
+      setArchivedConversations([...archivedConversationResponse.threads].sort(sortByUpdatedAtDesc));
+      setArchivedTeammates(
+        teammateResponse.teammates
+          .filter((teammate) => teammate.hidden && teammate.status !== "disabled")
+          .sort(sortByUpdatedAtDesc),
+      );
     } catch (caught) {
       setErrorMessage(caught instanceof Error ? caught.message : String(caught));
     } finally {
@@ -136,12 +153,32 @@ export function useArchivedSettingsController({
     });
   }, [cwd, onChanged, refresh, runAction]);
 
+  const restoreConversation = useCallback(async (threadId: string) => {
+    await runAction(`conversation:${threadId}:restore`, async () => {
+      await unarchiveLingThread(cwd, threadId, {
+        idempotencyKey: `settings-conversation-restore:${threadId}`,
+      });
+      await refresh();
+      await onChanged?.();
+    });
+  }, [cwd, onChanged, refresh, runAction]);
+
+  const restoreTeammate = useCallback(async (teammateId: string) => {
+    await runAction(`teammate:${teammateId}:restore`, async () => {
+      await updateAiTeammate(cwd, teammateId, { hidden: false });
+      await refresh();
+      await onChanged?.();
+    });
+  }, [cwd, onChanged, refresh, runAction]);
+
   return {
     state: {
       archivedChannels,
       archiveParentChannels,
       archiveParentChannelById,
       archivedBranches,
+      archivedConversations,
+      archivedTeammates,
       isLoading,
       errorMessage,
       actionId,
@@ -152,6 +189,12 @@ export function useArchivedSettingsController({
       deleteChannel: removeChannel,
       restoreBranch,
       deleteBranch: removeBranch,
+      restoreConversation,
+      restoreTeammate,
     },
   };
+}
+
+function sortByUpdatedAtDesc<T extends { readonly updatedAt: string }>(left: T, right: T): number {
+  return right.updatedAt.localeCompare(left.updatedAt);
 }

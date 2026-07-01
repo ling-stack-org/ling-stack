@@ -1,6 +1,7 @@
 import {
   Bot,
   Box,
+  Brain,
   Hand,
   Kanban,
   Shield,
@@ -18,11 +19,12 @@ import type { PermissionPreset, SessionPermissionMode } from "../../types.js";
 export interface WorkspaceToolCounts {
   readonly readyProviderCount: number;
   readonly visibleTeammateCount: number;
+  readonly activeCouncilCount: number;
   readonly openWorkItemCount: number;
 }
 
 interface WorkspaceToolItem {
-  readonly id: "providers" | "teammates" | "work-board" | "approval";
+  readonly id: "providers" | "teammates" | "councils" | "work-board" | "approval";
   readonly title: string;
   readonly description: string;
   readonly chipLabel: string;
@@ -37,6 +39,7 @@ export function SettingsWorkspaceToolsPanel({
   defaultPermissionPreset,
   onOpenProviders,
   onOpenTeammates,
+  onOpenCouncils,
   onOpenWorkBoard,
   onOpenApprovalPolicy,
 }: {
@@ -45,6 +48,7 @@ export function SettingsWorkspaceToolsPanel({
   readonly defaultPermissionPreset: PermissionPreset | undefined;
   readonly onOpenProviders: () => void;
   readonly onOpenTeammates: () => void;
+  readonly onOpenCouncils: () => void;
   readonly onOpenWorkBoard: () => void;
   readonly onOpenApprovalPolicy: () => void;
 }): JSX.Element {
@@ -69,6 +73,15 @@ export function SettingsWorkspaceToolsPanel({
       actionLabel: t("Open AI Teammates"),
       icon: Bot,
       onOpen: onOpenTeammates,
+    },
+    {
+      id: "councils",
+      title: t("AI Councils"),
+      description: t("Manage council workspaces"),
+      chipLabel: t("{count} council(s)", { count: counts.activeCouncilCount }),
+      actionLabel: t("Open Council Workspace"),
+      icon: Brain,
+      onOpen: onOpenCouncils,
     },
     {
       id: "work-board",

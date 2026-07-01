@@ -308,6 +308,11 @@
   gap: 8px;
 }
 
+.settings-content-stack .provider-sheet-header.panel-title {
+  padding: 20px 24px 14px;
+  border-bottom: 0;
+}
+
 .settings-content-stack .panel-title.split,
 .settings-plugin-manager-head,
 .settings-skill-library-head {
@@ -2706,8 +2711,16 @@
 }
 
 .archived-item-main strong {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
   color: var(--text-strong);
   font-size: 14px;
+}
+
+.archived-item-main strong svg {
+  flex: 0 0 auto;
 }
 
 .archived-item-main small {
