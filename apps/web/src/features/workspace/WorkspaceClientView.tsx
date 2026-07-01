@@ -221,7 +221,6 @@ import { useChannelRightDockController } from "./useChannelRightDockController.j
 import {
   conversationTurnRenderSignature,
   useChannelMessageFeed,
-  type ChannelMessageFeedItem,
 } from "./ChannelMessageFeed.js";
 import {
   LING_AGENT_AUTHOR_ID,
@@ -236,6 +235,7 @@ import { useChannelComposerActionsController } from "./useChannelComposerActions
 import { useChannelThreadReplyController } from "./useChannelThreadReplyController.js";
 import { useChannelComposerInputController } from "./useChannelComposerInputController.js";
 import { useChannelComposerSnapshotController } from "./useChannelComposerSnapshotController.js";
+import { useChannelMessageFeedAssembly } from "./useChannelMessageFeedAssembly.js";
 
 type ChannelSidePanelView = "context" | "settings" | "task";
 type ChannelDrawerRootView = Extract<ChannelSidePanelView, "context">;
@@ -1726,83 +1726,25 @@ export function WorkspaceClientView({
   );
   const latestVisibleActivityItemId =
     renderableActivityItems.length > 0 ? renderableActivityItems[renderableActivityItems.length - 1]?.id ?? "" : "";
-  const conversationFeedBodyItems = useMemo<readonly ChannelMessageFeedItem[]>(
-    () => {
-      const items: Array<ChannelMessageFeedItem & { readonly createdAt: string }> = [
-        ...(!auditActivityVisible
-          ? conversationTurnProjection.turns.map((turn) => ({ id: turn.id, kind: "turn" as const, turn, createdAt: turn.createdAt }))
-          : []),
-        ...renderableActivityItems.map((item) => ({ id: item.id, kind: "activity" as const, item, createdAt: item.createdAt })),
-      ];
-      items.sort((left, right) => {
-        const timeComparison = left.createdAt.localeCompare(right.createdAt);
-        return timeComparison === 0 ? left.id.localeCompare(right.id) : timeComparison;
-      });
-      return items.map(({ createdAt: _createdAt, ...item }) => item);
-    },
-    [auditActivityVisible, conversationTurnProjection.turns, renderableActivityItems],
-  );
-  const messageFeedCanLoadOlder =
-    channelMessagesHasOlder && !activityFiltersActive && conversationFeedBodyItems.length > 0;
-  const pendingChannelSendState = useMemo(() => {
-    if (!pendingChannelSendPreview) {
-      return { acknowledged: false, aiReplyStarted: false };
-    }
-    const acknowledgedMessage = [...channelMessages]
-      .reverse()
-      .find((message) =>
-        message.channelId === pendingChannelSendPreview.channelId &&
-        message.threadId === pendingChannelSendPreview.threadId &&
-        message.kind === "message" &&
-        message.authorType === "local-user" &&
-        message.body === pendingChannelSendPreview.body &&
-        sameStringList(message.attachmentIds, pendingChannelSendPreview.attachmentIds) &&
-        sameStringList(message.linkPreviewIds, pendingChannelSendPreview.linkPreviewIds) &&
-        sameFileRefList(message.fileRefs ?? [], pendingChannelSendPreview.fileRefs)
-      );
-    const replyThreadId = acknowledgedMessage ? acknowledgedMessage.threadId ?? acknowledgedMessage.id : pendingChannelSendPreview.threadId;
-    const previewCreatedAt = Date.parse(pendingChannelSendPreview.createdAt);
-    const aiReplyStarted = channelMessages.some((message) => {
-      if (message.channelId !== pendingChannelSendPreview.channelId || message.kind !== "ai_reply") {
-        return false;
-      }
-      if (replyThreadId && message.threadId !== replyThreadId) {
-        return false;
-      }
-      const messageCreatedAt = Date.parse(message.createdAt);
-      return !Number.isFinite(previewCreatedAt) || !Number.isFinite(messageCreatedAt) || messageCreatedAt >= previewCreatedAt;
-    });
-    return {
-      acknowledged: Boolean(acknowledgedMessage),
-      aiReplyStarted,
-    };
-  }, [channelMessages, pendingChannelSendPreview]);
-  const pendingChannelSendResolved =
-    pendingChannelSendState.acknowledged &&
-    pendingChannelSendState.aiReplyStarted;
-  const pendingChannelSendVisible = Boolean(
-    pendingChannelSendPreview &&
-    !pendingChannelSendResolved &&
-    pendingChannelSendPreview.channelId === selectedChannelId &&
-    pendingChannelSendPreview.threadId === selectedChannelBranchRootThreadId &&
-    !activeWorkThreadId,
-  );
-  const messageFeedItems = useMemo<readonly ChannelMessageFeedItem[]>(
-    () => [
-      ...(messageFeedCanLoadOlder ? [{ id: "older-channel-messages", kind: "older-loader" } satisfies ChannelMessageFeedItem] : []),
-      ...conversationFeedBodyItems,
-      ...(pendingChannelSendVisible && pendingChannelSendPreview
-        ? [{
-          id: `pending-send:${pendingChannelSendPreview.id}`,
-          kind: "pending-send" as const,
-          preview: pendingChannelSendPreview,
-          showSentMessage: !pendingChannelSendState.acknowledged,
-        }]
-        : []),
-    ],
-    [conversationFeedBodyItems, messageFeedCanLoadOlder, pendingChannelSendPreview, pendingChannelSendState.acknowledged, pendingChannelSendVisible],
-  );
-  const messageFeedEmpty = !channelMessagesLoading && !channelProtocolLoading && conversationFeedBodyItems.length === 0 && !pendingChannelSendVisible;
+  const {
+    conversationFeedBodyItems,
+    messageFeedCanLoadOlder,
+    messageFeedEmpty,
+    messageFeedItems,
+  } = useChannelMessageFeedAssembly({
+    activeWorkThreadId,
+    activityFiltersActive,
+    auditActivityVisible,
+    channelMessages,
+    channelMessagesHasOlder,
+    channelMessagesLoading,
+    channelProtocolLoading,
+    conversationTurns: conversationTurnProjection.turns,
+    pendingChannelSendPreview,
+    renderableActivityItems,
+    selectedChannelBranchRootThreadId,
+    selectedChannelId,
+  });
   const messageFeedState = useChannelMessageFeed({
     items: messageFeedItems,
     conversationWorkCellByWorkflowId,
@@ -4361,20 +4303,6 @@ export function WorkspaceClientView({
       </div>
     </div>
   );
-}
-
-function sameStringList(left: readonly string[], right: readonly string[]): boolean {
-  return left.length === right.length && left.every((value, index) => value === right[index]);
-}
-
-function sameFileRefList(left: readonly ChannelMessageFileRef[], right: readonly ChannelMessageFileRef[]): boolean {
-  return left.length === right.length && left.every((value, index) => {
-    const other = right[index];
-    return Boolean(other) &&
-      value.path === other.path &&
-      value.source === other.source &&
-      value.line === other.line;
-  });
 }
 
 function formatAge(value: string | undefined): string {

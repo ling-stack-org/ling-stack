@@ -1600,12 +1600,15 @@ Current extraction state:
   and topic replies.
 - Extracted message feed module: `ChannelMessageFeed.tsx`, covering feed item types,
   retain/signature helpers, the `useChannelMessageFeed` virtualizer/scroll hook,
-  pending-send / `Thinking...` continuity, older-message loading, anchor retention, and
-  jump-to-latest controls. Feed resets are scoped to channel changes and selected-channel
-  notification state, not parent workspace-settings object identity, so refreshes do not
-  clear older-message position, background attention toast, or jump-to-latest visibility.
-  `WorkspaceClientView.tsx` still owns channel item assembly and activity/workflow/task
-  render actions.
+  pending-send item rendering / `Thinking...` display, older-message loading, anchor
+  retention, and jump-to-latest controls. Feed resets are scoped to channel changes and
+  selected-channel notification state, not parent workspace-settings object identity, so
+  refreshes do not clear older-message position, background attention toast, or
+  jump-to-latest visibility.
+- Extracted feed assembly hook: `useChannelMessageFeedAssembly.ts`, covering sorted
+  conversation/activity feed items, older-message loader eligibility, pending-send
+  acknowledgement/reply-start resolution, pending row insertion, and empty-state
+  calculation. `WorkspaceClientView.tsx` still owns activity/workflow/task render actions.
 - Extracted right dock controller hook: `useChannelRightDockController.ts`, covering
   open/close mount timing, layout animation variables, width clamping, resize pointer
   handlers, main-width observation, and right-dock page requests.
