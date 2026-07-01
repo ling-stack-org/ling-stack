@@ -75,6 +75,7 @@ export function SidebarNavigation({
   channelNotifications = {},
   teammateNotifications = {},
   recentConversations = [],
+  recentConversationActionError = "",
   selectedRecentConversationId = "",
   onOpenView,
   onOpenConversationHome,
@@ -83,6 +84,9 @@ export function SidebarNavigation({
   onCreateChannelBranch,
   onArchiveChannel,
   onArchiveChannelBranch,
+  onArchiveTeammate,
+  onArchiveRecentConversation,
+  onArchiveAllRecentConversations,
   onSelectChannel,
   onSelectChannelBranch,
   onSelectTeammate,
@@ -101,6 +105,7 @@ export function SidebarNavigation({
   readonly channelNotifications?: Readonly<Record<string, SidebarNotification>>;
   readonly teammateNotifications?: Readonly<Record<string, SidebarNotification>>;
   readonly recentConversations?: readonly SidebarRecentConversation[];
+  readonly recentConversationActionError?: string;
   readonly selectedRecentConversationId?: string;
   readonly onOpenView: (view: ViewId) => void;
   readonly onOpenConversationHome: () => void;
@@ -109,6 +114,9 @@ export function SidebarNavigation({
   readonly onCreateChannelBranch?: (channelId: string, name: string) => void | Promise<void>;
   readonly onArchiveChannel?: (channelId: string) => void | Promise<void>;
   readonly onArchiveChannelBranch?: (channelId: string, branchId: string) => void | Promise<void>;
+  readonly onArchiveTeammate?: (teammateId: string) => void | Promise<void>;
+  readonly onArchiveRecentConversation?: (conversation: SidebarRecentConversation) => void | Promise<void>;
+  readonly onArchiveAllRecentConversations?: () => void | Promise<void>;
   readonly onSelectChannel: (channelId: string) => void;
   readonly onSelectChannelBranch?: (channelId: string, branchId: string) => void;
   readonly onSelectTeammate: (teammateId: string) => void;
@@ -120,7 +128,7 @@ export function SidebarNavigation({
   const { t } = useI18n();
   const [branchDraftChannelId, setBranchDraftChannelId] = useState("");
   const [branchDraftName, setBranchDraftName] = useState("");
-  const [openSectionMenu, setOpenSectionMenu] = useState<"channels" | "teammates" | "">("");
+  const [openSectionMenu, setOpenSectionMenu] = useState<SidebarSectionId | "">("");
   const [collapsedSections, setCollapsedSections] = useState<Record<SidebarSectionId, boolean>>({
     channels: false,
     teammates: false,
@@ -432,19 +440,39 @@ export function SidebarNavigation({
           </button>
         ) : (
           visibleTeammates.map((teammate) => (
-            <button
+            <div
               key={teammate.id}
-              className={activeSidebarTarget === teammateSidebarTarget(teammate.id) ? "sidebar-row selected" : "sidebar-row"}
-              type="button"
-              aria-label={teammate.displayName}
-              title={teammate.displayName}
-              {...tooltipProps(teammate.displayName)}
-              onClick={() => onSelectTeammate(teammate.id)}
+              className={activeSidebarTarget === teammateSidebarTarget(teammate.id) ? "sidebar-row-shell selected" : "sidebar-row-shell"}
             >
-              <TeammateAvatarView teammate={teammate} cwd={cwd} compact />
-              <span>{teammate.displayName}</span>
-              {renderSidebarNotification(teammateNotifications[teammate.id])}
-            </button>
+              <button
+                className="sidebar-row-main"
+                type="button"
+                aria-label={teammate.displayName}
+                title={teammate.displayName}
+                {...tooltipProps(teammate.displayName)}
+                onClick={() => onSelectTeammate(teammate.id)}
+              >
+                <TeammateAvatarView teammate={teammate} cwd={cwd} compact />
+                <span>{teammate.displayName}</span>
+                {renderSidebarNotification(teammateNotifications[teammate.id])}
+              </button>
+              {onArchiveTeammate ? (
+                <span className="sidebar-row-tools">
+                  <button
+                    className="sidebar-mini-action danger"
+                    type="button"
+                    aria-label={t("Archive teammate")}
+                    title={t("Archive teammate")}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      void onArchiveTeammate(teammate.id);
+                    }}
+                  >
+                    <Archive size={13} />
+                  </button>
+                </span>
+              ) : null}
+            </div>
           ))
         )}
       </SidebarSection>
@@ -456,6 +484,20 @@ export function SidebarNavigation({
         railCollapsed={collapsedTooltipsEnabled}
         railCollapsedPreview={renderRecentRailPreview(recentConversations)}
         onToggleCollapsed={toggleSection}
+        menuLabel={t("Recent conversation actions")}
+        menuOpen={openSectionMenu === "recent"}
+        onMenuOpenChange={(open) => setOpenSectionMenu(open ? "recent" : "")}
+        menuItems={[
+          {
+            id: "archive-all-conversations",
+            label: t("Archive all conversations"),
+            icon: <Archive size={14} />,
+            danger: true,
+            disabled: !onArchiveAllRecentConversations || recentConversations.length === 0,
+            disabledLabel: t("No conversations to archive"),
+            onSelect: () => onArchiveAllRecentConversations?.(),
+          },
+        ]}
       >
         {recentConversations.length === 0 ? (
           <button
@@ -471,23 +513,48 @@ export function SidebarNavigation({
           </button>
         ) : (
           recentConversations.map((conversation, index) => (
-            <button
+            <div
               key={conversation.id}
-              className={conversation.id === selectedRecentConversationId ? "sidebar-row sidebar-recent-row selected" : "sidebar-row sidebar-recent-row"}
-              type="button"
-              aria-label={t("Open recent conversation {index}", { index: index + 1 })}
-              title={conversation.label}
-              {...tooltipProps(conversation.label)}
-              onClick={() => onSelectRecentConversation(conversation)}
+              className={conversation.id === selectedRecentConversationId ? "sidebar-row-shell sidebar-recent-row-shell selected" : "sidebar-row-shell sidebar-recent-row-shell"}
             >
-              <MessageSquare size={14} />
-              <span className="sidebar-recent-copy">
-                <strong>{conversation.label}</strong>
-                <small>{conversation.meta}</small>
-              </span>
-            </button>
+              <button
+                className="sidebar-row-main sidebar-recent-row"
+                type="button"
+                aria-label={t("Open recent conversation {index}", { index: index + 1 })}
+                title={conversation.label}
+                {...tooltipProps(conversation.label)}
+                onClick={() => onSelectRecentConversation(conversation)}
+              >
+                <MessageSquare size={14} />
+                <span className="sidebar-recent-copy">
+                  <strong>{conversation.label}</strong>
+                  <small>{conversation.meta}</small>
+                </span>
+              </button>
+              {onArchiveRecentConversation ? (
+                <span className="sidebar-row-tools">
+                  <button
+                    className="sidebar-mini-action danger"
+                    type="button"
+                    aria-label={t("Archive conversation")}
+                    title={t("Archive conversation")}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      void onArchiveRecentConversation(conversation);
+                    }}
+                  >
+                    <Archive size={13} />
+                  </button>
+                </span>
+              ) : null}
+            </div>
           ))
         )}
+        {recentConversationActionError ? (
+          <div className="sidebar-section-inline-error" role="alert">
+            {recentConversationActionError}
+          </div>
+        ) : null}
       </SidebarSection>
       </div>
 

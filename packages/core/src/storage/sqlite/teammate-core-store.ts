@@ -126,6 +126,10 @@ export class SqliteTeammateCoreStore {
     if (!options.includeHidden) {
       clauses.push("hidden = 0");
     }
+    if (options.providerPresetId) {
+      clauses.push("provider_preset_id = ?");
+      params.push(options.providerPresetId);
+    }
     const limit = Math.min(Math.max(options.limit ?? 100, 1), 500);
     params.push(limit);
     return this.context.database

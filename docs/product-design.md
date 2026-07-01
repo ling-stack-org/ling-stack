@@ -22,7 +22,7 @@ Model Workbench owns that loop:
 - show whether a provider is usable for coding tasks: enabled, key-ready, check-ready, chat-capable, and not media-only,
 - keep media providers visible but outside the normal coding task provider picker.
 
-Seedream `image_generate` remains a recorded media baseline with approval and artifact paths. Jimeng, Seedance, billing, desktop packaging, and keychain storage are deliberately downstream of the Model Workbench mainline.
+Media jobs now have connected live paths for OpenAI Images and Seedream `image_generate`, Seedream URL/data-URL `image_edit`, and Seedance final video download. Jimeng live generation, billing, desktop packaging polish, and broader media-provider coverage remain downstream of the Model Workbench mainline.
 
 ## Target Users
 

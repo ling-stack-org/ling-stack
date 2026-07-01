@@ -5,14 +5,18 @@ import {
   type ProviderCheckResult,
   type ProviderPreset,
   type ProviderStoreFacet,
-  type ResolvedSecret,
   type SecretResolver,
 } from "@ling-stack/core";
 import { executeMediaJob as executeMediaAdapterJob } from "@ling-stack/providers";
 import { readLimitedResponseText } from "../../shared/http.js";
 import { validateUrl } from "../../shared/validation.js";
 import { createMediaAdapterForProvider } from "../media/provider.js";
-import { providerSecretStatus, resolveProviderSecret } from "./secrets.js";
+import { providerSecretStatus } from "./secrets.js";
+import {
+  ProviderSecretMaterializationError,
+  applyProviderAuthHeaders,
+  materializeProviderSecrets,
+} from "./secret-materializer.js";
 
 const PROVIDER_CHECK_TIMEOUT_MS = 10_000;
 
@@ -167,9 +171,15 @@ async function probeChatProvider(
   secretResolver: SecretResolver,
 ): Promise<ProviderCheckResult> {
   try {
+    const materialized = materializeProviderSecrets({
+      store,
+      preset,
+      secretResolver,
+      baseHeaders: { "Content-Type": "application/json" },
+    });
     const response = await fetch(buildProviderCheckUrl(preset), {
       method: "POST",
-      headers: buildProviderCheckHeaders(store, preset, secretResolver),
+      headers: applyProviderAuthHeaders(materialized.headers, preset, materialized.apiKeySecret.value),
       body: JSON.stringify(buildProviderCheckBody(preset)),
       signal: AbortSignal.timeout(PROVIDER_CHECK_TIMEOUT_MS),
     });
@@ -185,6 +195,14 @@ async function probeChatProvider(
 
     return await providerCheckHttpFailure(response, checkedAt);
   } catch (error) {
+    if (error instanceof ProviderSecretMaterializationError) {
+      return {
+        ok: false,
+        code: error.code,
+        message: error.message,
+        checkedAt,
+      };
+    }
     return {
       ok: false,
       code: "network_failed",
@@ -256,27 +274,6 @@ async function probeLiveSeedreamProvider(
     message: "生成真实图片成功",
     checkedAt,
   };
-}
-
-function buildProviderCheckHeaders(store: ProviderStoreFacet, preset: ProviderPreset, secretResolver: SecretResolver): Record<string, string> {
-  const secret: ResolvedSecret = preset.apiKeyRef ? resolveProviderSecret(store, preset, secretResolver) : { configured: false };
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-    ...preset.headers,
-  };
-
-  if (preset.api === "anthropic-messages") {
-    if (secret.value) {
-      headers["x-api-key"] = secret.value;
-    }
-    headers["anthropic-version"] = headers["anthropic-version"] ?? "2023-06-01";
-    return headers;
-  }
-
-  if (preset.authHeader !== false && secret.value) {
-    headers.Authorization = `Bearer ${secret.value}`;
-  }
-  return headers;
 }
 
 function buildProviderCheckBody(preset: ProviderPreset): Record<string, unknown> {

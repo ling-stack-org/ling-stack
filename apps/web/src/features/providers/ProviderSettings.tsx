@@ -37,6 +37,7 @@ import {
   providerCheckStatusLabel,
   providerFormToTemplate,
   providerFormWithSelectedModel,
+  providerGenerationRuntimeSummary,
   providerLastCheckClass,
   providerLastCheckLabel,
   providerLastCheckTitle,
@@ -46,6 +47,9 @@ import {
   providerEffectiveBaseUrl,
   providerRunBlockerLabel,
   providerRunPreflightBlocker,
+  providerSecretHeaderSummary,
+  providerSecretStatusClass,
+  providerSecretStatusLabel,
   sortProvidersForWorkbench,
 } from "../../lib/providers.js";
 import { readRunProviderPresetId } from "../../lib/run-evidence.js";
@@ -593,6 +597,8 @@ export function ProviderSettings({
                         ? t("Real generation is not connected yet.")
                       : "";
                   const providerMainActionIsCheck = !providerMissingApiKey && !providerReady && canUseProviderForRun(provider);
+                  const generationRuntimeSummary = providerGenerationRuntimeSummary(provider, t);
+                  const secretHeaderSummary = providerSecretHeaderSummary(provider, t);
                   return (
                     <Fragment key={provider.id}>
                       <tr className={provider.id === selectedProviderId ? "provider-row selected" : "provider-row"}>
@@ -610,6 +616,11 @@ export function ProviderSettings({
                             <span>{t("Capabilities")}: {providerCapabilityChipLabels(provider, t).join(" / ")}</span>
                             <span>{provider.lastCheck ? t("last check {time}", { time: formatDateTime(provider.lastCheck.checkedAt) }) : t("not checked")}</span>
                           </div>
+                          {generationRuntimeSummary ? (
+                            <div className="provider-meta-line provider-generation-status-line">
+                              <span>{generationRuntimeSummary}</span>
+                            </div>
+                          ) : null}
                         </td>
                         <td>
                           <div className="provider-meta-line mono provider-endpoint-cell">
@@ -617,13 +628,10 @@ export function ProviderSettings({
                           </div>
                         </td>
                         <td>
-                          {providerMissingApiKey ? (
-                            <span className="provider-state key-missing">{t("API key missing")}</span>
-                          ) : (
-                            <span className={providerNeedsSecret(provider) ? "provider-state key-ok" : "provider-state check-unknown"}>
-                              {providerNeedsSecret(provider) ? t("key ready") : t("no key required")}
-                            </span>
-                          )}
+                          <span className="provider-key-status-stack">
+                            <span className={providerSecretStatusClass(provider)}>{providerSecretStatusLabel(provider, t)}</span>
+                            {secretHeaderSummary ? <small>{secretHeaderSummary}</small> : null}
+                          </span>
                         </td>
                         <td>
                           <span className={providerLastCheckClass(provider)} title={providerLastCheckTitle(provider, t)}>
@@ -886,6 +894,24 @@ export function ProviderSettings({
             </div>
           </div>
         </div>
+
+        <details className="provider-secret-headers-detail">
+          <summary>
+            <span>{t("Secret headers")}</span>
+            <small>{t("Optional header refs")}</small>
+          </summary>
+          <label className="field wide provider-secret-headers-field">
+            <span>{t("Header secret refs")}</span>
+            <textarea
+              rows={3}
+              spellCheck={false}
+              value={form.secretHeaderRefsText}
+              placeholder={"X-Api-Token: env:PROVIDER_TOKEN"}
+              onChange={(event) => onFormChange({ ...form, secretHeaderRefsText: event.target.value })}
+            />
+            <small>{t("One per line. Store env: or keychain: refs only, not secret values.")}</small>
+          </label>
+        </details>
 
         <div className="field-row provider-number-row">
           {form.api === "media-job" ? (

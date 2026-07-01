@@ -8,7 +8,7 @@ import type {
 import { isRecord } from "./utils.js";
 import { executeOpenAIImageGeneration } from "./vendors/openai-images.js";
 import { executeSeedanceVideoTask } from "./vendors/seedance.js";
-import { executeSeedreamImageGeneration } from "./vendors/seedream.js";
+import { executeSeedreamImageEdit, executeSeedreamImageGeneration } from "./vendors/seedream.js";
 
 export function createDisabledMediaVendorTransport(): MediaVendorTransport {
   return {
@@ -70,11 +70,14 @@ export function createLiveMediaVendorTransport(options: LiveMediaVendorTransport
           errorMessage: `Live media vendor transport does not support ${request.vendor.kind} ${request.requestPlan.operation}.`,
         };
       }
+      if (request.requestPlan.operation === "image_edit") {
+        return await executeSeedreamImageEdit(request, options);
+      }
       if (request.requestPlan.operation !== "image_generate") {
         return {
           status: "failed",
           errorCode: "unsupported_capability",
-          errorMessage: "Seedream live media transport currently supports image_generate only.",
+          errorMessage: "Seedream live media transport currently supports image_generate and URL-based image_edit only.",
         };
       }
       return await executeSeedreamImageGeneration(request, options);

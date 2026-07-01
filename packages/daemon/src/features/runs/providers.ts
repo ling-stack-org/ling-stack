@@ -3,12 +3,15 @@ import {
   type ProviderPreset,
   type ProviderStoreFacet,
   type ProviderTransport,
-  type ResolvedSecret,
   type SecretResolver,
   providerThinkingModesToLevelMap,
 } from "@ling-stack/core";
 import { HttpError } from "../../errors.js";
-import { providerSecretStatus, resolveProviderSecret } from "../providers/secrets.js";
+import { providerSecretStatus } from "../providers/secrets.js";
+import {
+  ProviderSecretMaterializationError,
+  materializeProviderSecrets,
+} from "../providers/secret-materializer.js";
 import { removeUndefined } from "../../shared/validation.js";
 import type { RunRequest } from "./schemas.js";
 
@@ -37,12 +40,12 @@ export function resolveProviderForRun(
       throw new HttpError(400, "unsupported_capability", "Provider preset must include chat capability for coding runs");
     }
     assertProviderRunPreflight(store, preset, runRequest.skipProviderPreflight === true, secretResolver);
-    const secret: ResolvedSecret = preset.apiKeyRef ? resolveProviderSecret(store, preset, secretResolver) : { configured: false };
+    const materialized = materializeProviderSecretsForRun(store, preset, secretResolver);
     return removeUndefined({
       provider: preset.providerId,
       model: preset.model,
       displayName: preset.displayName,
-      apiKey: secret.value,
+      apiKey: materialized.apiKeySecret.value,
       baseUrl: preset.baseUrl,
       api: preset.api as PiRunnerProviderConfig["api"],
       providerTransport: resolveEffectiveProviderTransport(
@@ -50,7 +53,7 @@ export function resolveProviderForRun(
         preset.providerTransport,
         options.providerWebSocketFallbackEnabled === true,
       ),
-      headers: preset.headers,
+      headers: materialized.headers,
       authHeader: preset.authHeader,
       reasoning: preset.reasoning,
       thinkingLevelMap: providerThinkingModesToLevelMap(preset.thinkingModes),
@@ -134,4 +137,19 @@ function providerSecretPreflightBlocker(store: ProviderStoreFacet, preset: Provi
     }
   }
   return undefined;
+}
+
+function materializeProviderSecretsForRun(
+  store: ProviderStoreFacet,
+  preset: ProviderPreset,
+  secretResolver: SecretResolver,
+): ReturnType<typeof materializeProviderSecrets> {
+  try {
+    return materializeProviderSecrets({ store, preset, secretResolver });
+  } catch (error) {
+    if (error instanceof ProviderSecretMaterializationError) {
+      throw new HttpError(400, "provider_preflight_failed", `${preset.displayName}: ${error.message}`);
+    }
+    throw error;
+  }
 }

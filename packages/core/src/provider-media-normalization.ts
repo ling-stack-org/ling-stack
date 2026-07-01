@@ -192,7 +192,8 @@ function isSupportedLiveMediaAdapter(
     return operation === "image_generate" && (provider.kind === "openai" || provider.kind === "openai-compatible");
   }
   if (familyId === "volcengine-seedream") {
-    return operation === "image_generate" && (provider.kind === "seedream" || provider.providerId === "seedream");
+    return (operation === "image_generate" || operation === "image_edit") &&
+      (provider.kind === "seedream" || provider.providerId === "seedream");
   }
   if (familyId === "volcengine-seedance") {
     return operation === "video_generate" && (provider.kind === "seedance" || provider.providerId === "seedance");

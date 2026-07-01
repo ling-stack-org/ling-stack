@@ -1101,6 +1101,7 @@ export interface ListRunsOptions {
   readonly teammateId?: string;
   readonly workflowStepId?: string;
   readonly threadId?: string;
+  readonly providerPresetId?: string;
   readonly limit?: number;
 }
 

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { type ReactNode, useState } from "react";
 import { ArrowLeft } from "lucide-react";
 import type { RuntimeSettingsFormState } from "../../domains/settings/use-settings-domain.js";
 import type { McpBusyAction } from "../../domains/mcp/use-mcp-domain.js";
@@ -171,7 +171,10 @@ export function SettingsPage({
   onProfileChange,
   onOpenProviders,
   onOpenTeammates,
+  onOpenCouncils,
   onOpenWorkBoard,
+  workspaceToolDetail,
+  onCloseWorkspaceTool,
   onBackToApplication,
 }: {
   readonly cwd: string;
@@ -258,13 +261,17 @@ export function SettingsPage({
   readonly onProfileChange?: (profile: UserProfile) => void;
   readonly onOpenProviders: () => void;
   readonly onOpenTeammates: () => void;
+  readonly onOpenCouncils: () => void;
   readonly onOpenWorkBoard: () => void;
+  readonly workspaceToolDetail?: ReactNode;
+  readonly onCloseWorkspaceTool?: () => void;
   readonly onBackToApplication?: () => void;
 }): JSX.Element {
   const { t } = useI18n();
   const [activeSection, setActiveSection] = useState<SettingsSectionId>("overview");
   const activeSectionGroup = settingsSectionGroups.find((group) => group.items.some((item) => item.id === activeSection));
   const activeSectionItem = activeSectionGroup?.items.find((item) => item.id === activeSection) ?? settingsSectionGroups[0]?.items[0];
+  const workspaceToolDetailOpen = activeSection === "overview" && workspaceToolDetail !== undefined && workspaceToolDetail !== null;
   const archivedController = useArchivedSettingsController({
     cwd,
     enabled: activeSection === "maintenance",
@@ -288,7 +295,10 @@ export function SettingsPage({
                 key={item.id}
                 className={activeSection === item.id ? "settings-section-item active" : "settings-section-item"}
                 type="button"
-                onClick={() => setActiveSection(item.id)}
+                onClick={() => {
+                  setActiveSection(item.id);
+                  onCloseWorkspaceTool?.();
+                }}
                 title={t(item.description)}
                 aria-current={activeSection === item.id ? "page" : undefined}
               >
@@ -300,7 +310,7 @@ export function SettingsPage({
       </nav>
 
       <div className="settings-content-stack">
-        {activeSectionItem ? (
+        {activeSectionItem && !workspaceToolDetailOpen ? (
           <header className="settings-section-head settings-page-section-head">
             <span>{t(activeSectionGroup?.heading ?? "Settings")}</span>
             <h2>{t(activeSectionItem.label)}</h2>
@@ -308,13 +318,16 @@ export function SettingsPage({
           </header>
         ) : null}
 
-        {activeSection === "overview" ? (
+        {workspaceToolDetailOpen ? workspaceToolDetail : null}
+
+        {activeSection === "overview" && !workspaceToolDetailOpen ? (
           <SettingsWorkspaceToolsPanel
             counts={workspaceToolCounts}
             defaultPermissionMode={workspaceDefaultPermissionMode}
             defaultPermissionPreset={workspaceDefaultPermissionPreset}
             onOpenProviders={onOpenProviders}
             onOpenTeammates={onOpenTeammates}
+            onOpenCouncils={onOpenCouncils}
             onOpenWorkBoard={onOpenWorkBoard}
             onOpenApprovalPolicy={() => setActiveSection("execution-permissions")}
           />

@@ -51,6 +51,7 @@ export interface ProviderFormState {
   readonly apiKey: string;
   readonly apiKeyRef: string;
   readonly clearApiKey: boolean;
+  readonly secretHeaderRefsText: string;
   readonly capabilitiesText: string;
   readonly inputText: string;
   readonly enabled: boolean;
@@ -68,6 +69,7 @@ export interface ProviderModelListFormState {
   readonly baseUrl: string;
   readonly apiKey: string;
   readonly apiKeyRef: string;
+  readonly secretHeaderRefsText: string;
   readonly authHeader: boolean;
 }
 

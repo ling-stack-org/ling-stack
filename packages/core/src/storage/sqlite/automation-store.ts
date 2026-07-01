@@ -153,6 +153,10 @@ export class SqliteAutomationStore {
       clauses.push("channel_id = ?");
       params.push(options.channelId);
     }
+    if (options.providerPresetId) {
+      clauses.push("json_extract(execution_policy_json, '$.providerPresetId') = ?");
+      params.push(options.providerPresetId);
+    }
     if (options.scheduledOnly) {
       clauses.push("json_extract(trigger_json, '$.type') = 'schedule'");
     }
