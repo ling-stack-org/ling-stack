@@ -13,6 +13,7 @@ import type {
   LingThreadModeResponse,
   LingThreadModeUpdateRequest,
   LingThreadGoalPatchRequest,
+  LingThreadGoalCompleteRequest,
   LingThreadGoalPutRequest,
   LingThreadGoalResponse,
   LingThreadMutationResponse,
@@ -101,6 +102,10 @@ export async function patchLingThreadGoal(cwd: string, threadId: string, input: 
   return daemonClient.patchLingThreadGoal(cwd, threadId, input);
 }
 
+export async function completeLingThreadGoal(cwd: string, threadId: string, input: LingThreadGoalCompleteRequest = {}): Promise<LingThreadGoalResponse> {
+  return daemonClient.completeLingThreadGoal(cwd, threadId, input);
+}
+
 export async function deleteLingThreadGoal(cwd: string, threadId: string): Promise<LingThreadGoalResponse> {
   return daemonClient.deleteLingThreadGoal(cwd, threadId);
 }
@@ -111,6 +116,14 @@ export async function listProposedPlanArtifacts(
   options: { readonly limit?: number } = {},
 ): Promise<ProposedPlanArtifactListResponse> {
   return daemonClient.listProposedPlanArtifacts(cwd, threadId, options);
+}
+
+export async function listChannelProposedPlanArtifacts(
+  cwd: string,
+  channelId: string,
+  options: { readonly scope?: "channel" | "thread"; readonly threadId?: string; readonly goalId?: string; readonly agentId?: string; readonly status?: string; readonly limit?: number } = {},
+): Promise<ProposedPlanArtifactListResponse> {
+  return daemonClient.listChannelProposedPlanArtifacts(cwd, channelId, options);
 }
 
 export async function putProposedPlanArtifact(
@@ -156,6 +169,15 @@ export async function refineProposedPlanArtifact(
   input: ProposedPlanActionRequest = {},
 ): Promise<ProposedPlanActionResponse> {
   return daemonClient.refineProposedPlanArtifact(cwd, threadId, planId, input);
+}
+
+export async function archiveProposedPlanArtifact(
+  cwd: string,
+  threadId: string,
+  planId: string,
+  input: ProposedPlanActionRequest = {},
+): Promise<ProposedPlanActionResponse> {
+  return daemonClient.archiveProposedPlanArtifact(cwd, threadId, planId, input);
 }
 
 export async function convertProposedPlanToWorkflow(

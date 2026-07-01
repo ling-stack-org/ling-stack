@@ -9840,6 +9840,43 @@ export async function handleDaemonRoute(
     await route.fulfill({ json: { ok: true } });
     return;
   }
+  const channelProposedPlansMatch = /^\/channels\/([^/]+)\/proposed-plans$/.exec(path);
+  if (channelProposedPlansMatch && request.method() === "GET") {
+    const channelId = decodeURIComponent(channelProposedPlansMatch[1]);
+    const scope = url.searchParams.get("scope") ?? "channel";
+    const threadId = url.searchParams.get("threadId") ?? undefined;
+    const goalId = url.searchParams.get("goalId") ?? undefined;
+    const agentId = url.searchParams.get("agentId") ?? undefined;
+    const status = url.searchParams.get("status") ?? undefined;
+    const limit = Number(url.searchParams.get("limit") ?? "100");
+    const threadIdsInChannel = new Set(state.threads
+      .filter((thread) => thread.channelId === channelId)
+      .map((thread) => thread.id));
+    const plans = state.proposedPlans
+      .filter((plan) => {
+        const planChannelId = plan.channelId ?? state.threads.find((thread) => thread.id === plan.threadId)?.channelId;
+        if (planChannelId !== channelId && !threadIdsInChannel.has(plan.threadId)) {
+          return false;
+        }
+        if (scope === "thread" && threadId && plan.threadId !== threadId) {
+          return false;
+        }
+        if (goalId && plan.goalId !== goalId) {
+          return false;
+        }
+        if (agentId && plan.ownerAgentId !== agentId && plan.sourceAgentId !== agentId) {
+          return false;
+        }
+        if (status && plan.status !== status) {
+          return false;
+        }
+        return true;
+      })
+      .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt) || right.id.localeCompare(left.id))
+      .slice(0, Number.isFinite(limit) && limit > 0 ? limit : 100);
+    await route.fulfill({ json: { cwd, channelId, plans } });
+    return;
+  }
   const channelMatch = /^\/channels\/([^/]+)$/.exec(path);
   if (channelMatch && request.method() === "PATCH") {
     const channelId = decodeURIComponent(channelMatch[1]);
@@ -10330,7 +10367,13 @@ export async function handleDaemonRoute(
         return;
       }
       if (request.method() === "PUT") {
-        const plan = upsertMockProposedPlan(state, threadId, planId, readMockPostData(request));
+        const existing = state.proposedPlans.find((item) => item.id === planId && item.threadId === threadId);
+        const body = readMockPostData(request);
+        if (mockAcceptedPlanDirectMutationBlocked(existing, body)) {
+          await route.fulfill({ status: 409, json: { error: "accepted_plan_immutable" } });
+          return;
+        }
+        const plan = upsertMockProposedPlan(state, threadId, planId, body);
         await route.fulfill({ json: { cwd, threadId, plan } });
         return;
       }
@@ -10340,7 +10383,12 @@ export async function handleDaemonRoute(
           await route.fulfill({ status: 404, json: { error: "proposed_plan_not_found" } });
           return;
         }
-        const plan = patchMockProposedPlan(state, existing, readMockPostData(request));
+        const body = readMockPostData(request);
+        if (mockAcceptedPlanDirectMutationBlocked(existing, body)) {
+          await route.fulfill({ status: 409, json: { error: "accepted_plan_immutable" } });
+          return;
+        }
+        const plan = patchMockProposedPlan(state, existing, body);
         await route.fulfill({ json: { cwd, threadId, plan } });
         return;
       }
@@ -10358,6 +10406,38 @@ export async function handleDaemonRoute(
       await route.fulfill({ json: { cwd, threadId, ...result } });
       return;
     }
+  }
+
+  const goalCompleteRouteMatch = /^\/threads\/([^/]+)\/goal\/complete$/.exec(path);
+  if (goalCompleteRouteMatch && request.method() === "POST") {
+    const threadId = decodeURIComponent(goalCompleteRouteMatch[1]);
+    const existing = state.goals.find((goal) => goal.threadId === threadId && mockActiveGoalStatuses.includes(goal.status));
+    if (!existing) {
+      await route.fulfill({ status: 404, json: { error: "goal_not_found" } });
+      return;
+    }
+    const body = readMockPostData(request);
+    const actor = body.actor === "ling-agent" ? "ling-agent" : "local-user";
+    const evidenceRefs = Array.isArray(body.evidenceRefs) ? body.evidenceRefs as LingThreadGoal["completionEvidenceRefs"] : [];
+    const summary = readOptionalMockString(body, "completionVerificationSummary");
+    if (actor === "ling-agent" && (evidenceRefs.length === 0 || !summary)) {
+      await route.fulfill({ status: 400, json: { error: "goal_completion_evidence_required" } });
+      return;
+    }
+    const now = "2026-05-25T00:50:00.000Z";
+    const goal = {
+      ...existing,
+      status: "complete",
+      completedAt: now,
+      updatedAt: now,
+      completedBy: actor,
+      completedReason: readOptionalMockString(body, "reason"),
+      completionVerificationSummary: summary,
+      completionEvidenceRefs: evidenceRefs,
+    } satisfies LingThreadGoal;
+    state.goals = state.goals.map((item) => item.id === goal.id ? goal : item);
+    await route.fulfill({ json: { cwd, threadId, goal } });
+    return;
   }
 
   const threadRouteMatch = /^\/threads\/([^/]+)(?:\/([^/]+))?$/.exec(path);
@@ -10450,6 +10530,10 @@ export async function handleDaemonRoute(
         }
         const body = readMockPostData(request);
         const status = typeof body.status === "string" ? body.status : existing.status;
+        if (status === "complete") {
+          await route.fulfill({ status: 400, json: { error: "goal_complete_action_required" } });
+          return;
+        }
         const now = "2026-05-25T00:45:00.000Z";
         const goal = {
           ...existing,
@@ -12559,19 +12643,31 @@ function upsertMockProposedPlan(
   const now = "2026-05-25T00:47:00.000Z";
   const id = forcedPlanId || (typeof body.id === "string" && body.id.trim() ? body.id.trim() : `proposed_plan_${state.proposedPlans.length + 1}`);
   const existing = state.proposedPlans.find((plan) => plan.id === id);
+  const thread = state.threads.find((item) => item.id === threadId);
+  const activeGoal = state.goals.find((goal) => goal.threadId === threadId && mockActiveGoalStatuses.includes(goal.status));
   const plan: ProposedPlanArtifact = {
     id,
     workspaceId: "workspace_default",
     threadId,
+    channelId: readNullableMockString(body, "channelId", existing?.channelId) ?? thread?.channelId,
+    goalId: readNullableMockString(body, "goalId", existing?.goalId) ?? activeGoal?.id,
+    sourceAgentId: readNullableMockString(body, "sourceAgentId", existing?.sourceAgentId),
+    ownerAgentId: readNullableMockString(body, "ownerAgentId", existing?.ownerAgentId),
     sourceTurnId: readOptionalMockString(body, "sourceTurnId") ?? existing?.sourceTurnId,
     sourceMessageId: readOptionalMockString(body, "sourceMessageId") ?? existing?.sourceMessageId,
     sourceRunId: readOptionalMockString(body, "sourceRunId") ?? existing?.sourceRunId,
+    parentPlanId: readNullableMockString(body, "parentPlanId", existing?.parentPlanId),
+    supersededByPlanId: readNullableMockString(body, "supersededByPlanId", existing?.supersededByPlanId),
+    planGroupId: readNullableMockString(body, "planGroupId", existing?.planGroupId) ?? id,
+    version: typeof body.version === "number" && Number.isFinite(body.version) ? body.version : existing?.version ?? 1,
     title: readOptionalMockString(body, "title") ?? existing?.title ?? "Proposed plan",
     bodyMarkdown: readOptionalMockString(body, "bodyMarkdown") ?? existing?.bodyMarkdown ?? "Plan body",
     status: readMockProposedPlanStatus(body.status) ?? existing?.status ?? "draft",
     savedAt: existing?.savedAt,
     acceptedAt: existing?.acceptedAt,
     convertedAt: existing?.convertedAt,
+    archivedAt: existing?.archivedAt,
+    archivedReason: existing?.archivedReason,
     acceptedTaskId: existing?.acceptedTaskId,
     acceptedWorkflowId: existing?.acceptedWorkflowId,
     acceptedWorkflowStepId: existing?.acceptedWorkflowStepId,
@@ -12593,15 +12689,25 @@ function patchMockProposedPlan(
   const now = "2026-05-25T00:48:00.000Z";
   const plan: ProposedPlanArtifact = {
     ...existing,
+    channelId: readNullableMockString(body, "channelId", existing.channelId),
+    goalId: readNullableMockString(body, "goalId", existing.goalId),
+    sourceAgentId: readNullableMockString(body, "sourceAgentId", existing.sourceAgentId),
+    ownerAgentId: readNullableMockString(body, "ownerAgentId", existing.ownerAgentId),
     sourceTurnId: readNullableMockString(body, "sourceTurnId", existing.sourceTurnId),
     sourceMessageId: readNullableMockString(body, "sourceMessageId", existing.sourceMessageId),
     sourceRunId: readNullableMockString(body, "sourceRunId", existing.sourceRunId),
+    parentPlanId: readNullableMockString(body, "parentPlanId", existing.parentPlanId),
+    supersededByPlanId: readNullableMockString(body, "supersededByPlanId", existing.supersededByPlanId),
+    planGroupId: readNullableMockString(body, "planGroupId", existing.planGroupId),
+    version: typeof body.version === "number" && Number.isFinite(body.version) ? body.version : existing.version,
     title: readOptionalMockString(body, "title") ?? existing.title,
     bodyMarkdown: readOptionalMockString(body, "bodyMarkdown") ?? existing.bodyMarkdown,
     status: readMockProposedPlanStatus(body.status) ?? existing.status,
     savedAt: readNullableMockString(body, "savedAt", existing.savedAt),
     acceptedAt: readNullableMockString(body, "acceptedAt", existing.acceptedAt),
     convertedAt: readNullableMockString(body, "convertedAt", existing.convertedAt),
+    archivedAt: readNullableMockString(body, "archivedAt", existing.archivedAt),
+    archivedReason: readNullableMockString(body, "archivedReason", existing.archivedReason),
     acceptedTaskId: readNullableMockString(body, "acceptedTaskId", existing.acceptedTaskId),
     acceptedWorkflowId: readNullableMockString(body, "acceptedWorkflowId", existing.acceptedWorkflowId),
     acceptedWorkflowStepId: readNullableMockString(body, "acceptedWorkflowStepId", existing.acceptedWorkflowStepId),
@@ -12622,6 +12728,9 @@ function applyMockProposedPlanAction(
   const now = "2026-05-25T00:49:00.000Z";
   if (action === "save") {
     return { plan: patchMockProposedPlan(state, plan, { savedAt: now }) };
+  }
+  if (action === "archive") {
+    return { plan: patchMockProposedPlan(state, plan, { status: "archived", archivedAt: now, archivedReason: readOptionalMockString(body, "reason") }) };
   }
   if (action === "refine") {
     return { plan: patchMockProposedPlan(state, plan, { status: "draft" }) };
@@ -12659,12 +12768,14 @@ function applyMockProposedPlanAction(
     const workflowId = `workflow_proposed_plan_${state.channelWorkflows.length + 1}`;
     const workflowStepId = `workflow_step_proposed_plan_${state.channelWorkflowSteps.length + 1}`;
     const channelId = thread.channelId ?? "channel_engineering";
+    const workflowTitle = readOptionalMockString(body, "workflowTitle") ?? plan.title;
+    const workflowSteps = readOptionalMockStringArray(body, "workflowSteps") ?? [plan.bodyMarkdown];
     state.channelWorkflows.unshift({
       id: workflowId,
       workspaceId: "workspace_default",
       channelId,
-      title: plan.title,
-      objective: plan.bodyMarkdown,
+      title: workflowTitle,
+      objective: workflowSteps.join("\n"),
       status: "draft",
       createdBy: readOptionalMockString(body, "createdBy") ?? "local-user",
       metadata: { sourceMessageId: plan.sourceMessageId },
@@ -12677,8 +12788,8 @@ function applyMockProposedPlanAction(
       channelId,
       workflowId,
       position: 1,
-      title: `Implement ${plan.title}`,
-      prompt: `${plan.bodyMarkdown}\n\nSource proposed plan: ${plan.id}`,
+      title: workflowSteps.length > 1 ? workflowSteps[0] : `Implement ${workflowTitle}`,
+      prompt: `${workflowSteps.join("\n")}\n\nSource proposed plan: ${plan.id}`,
       toParticipantId: readOptionalMockString(body, "toParticipantId") ?? "local-user",
       toParticipantLabel: readOptionalMockString(body, "toParticipantLabel") ?? "Local user",
       status: "queued",
@@ -12701,6 +12812,19 @@ function applyMockProposedPlanAction(
   return { plan };
 }
 
+function mockAcceptedPlanDirectMutationBlocked(existing: ProposedPlanArtifact | undefined, body: Record<string, unknown>): boolean {
+  if (!existing || existing.status !== "accepted") {
+    return false;
+  }
+  if ("title" in body || "bodyMarkdown" in body) {
+    return true;
+  }
+  if ("status" in body && body.status !== "accepted") {
+    return true;
+  }
+  return false;
+}
+
 function readOptionalMockString(record: Record<string, unknown>, key: string): string | undefined {
   const value = record[key];
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
@@ -12715,6 +12839,17 @@ function readNullableMockString(record: Record<string, unknown>, key: string, fa
     return undefined;
   }
   return typeof value === "string" && value.trim() ? value.trim() : fallback;
+}
+
+function readOptionalMockStringArray(record: Record<string, unknown>, key: string): readonly string[] | undefined {
+  const value = record[key];
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+  const items = value
+    .map((item) => typeof item === "string" ? item.trim() : "")
+    .filter(Boolean);
+  return items.length > 0 ? items : undefined;
 }
 
 function readMockProposedPlanStatus(value: unknown): ProposedPlanArtifact["status"] | undefined {

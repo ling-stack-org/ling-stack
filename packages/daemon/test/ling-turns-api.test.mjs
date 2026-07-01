@@ -723,6 +723,33 @@ test("daemon API exposes thread conversation mode and goal lifecycle", async () 
     assert.equal(replacedGoal.goal.status, "active");
     assert.notEqual(replacedGoal.goal.id, createdGoal.goal.id);
 
+    const directComplete = await patchJsonAllowError(`${daemon.url}/threads/${encodeURIComponent(threadId)}/goal?cwd=${encodeURIComponent(cwd)}`, {
+      status: "complete",
+    });
+    assert.equal(directComplete.status, 400);
+    assert.equal(directComplete.body.error, "goal_complete_action_required");
+
+    const lingAgentCompleteWithoutEvidence = await postJsonAllowError(`${daemon.url}/threads/${encodeURIComponent(threadId)}/goal/complete?cwd=${encodeURIComponent(cwd)}`, {
+      actor: "ling-agent",
+      completionVerificationSummary: "All requirements are done.",
+    });
+    assert.equal(lingAgentCompleteWithoutEvidence.status, 400);
+    assert.equal(lingAgentCompleteWithoutEvidence.body.error, "goal_completion_evidence_required");
+
+    const completedGoal = await postJson(`${daemon.url}/threads/${encodeURIComponent(threadId)}/goal/complete?cwd=${encodeURIComponent(cwd)}`, {
+      reason: "Verified by user.",
+      evidenceRefs: [{ kind: "turn", id: "turn_goal_complete" }],
+    });
+    assert.equal(completedGoal.goal.status, "complete");
+    assert.equal(completedGoal.goal.completedBy, "local-user");
+    assert.equal(completedGoal.goal.completedReason, "Verified by user.");
+    assert.equal(completedGoal.goal.completionEvidenceRefs.some((ref) => ref.kind === "turn" && ref.id === "turn_goal_complete"), true);
+
+    await putJson(`${daemon.url}/threads/${encodeURIComponent(threadId)}/goal?cwd=${encodeURIComponent(cwd)}`, {
+      objective: "Clearable replacement goal.",
+      replaceExisting: true,
+    });
+
     const clearedGoal = await deleteJson(`${daemon.url}/threads/${encodeURIComponent(threadId)}/goal?cwd=${encodeURIComponent(cwd)}`);
     assert.equal(clearedGoal.goal.status, "cleared");
     assert.equal(typeof clearedGoal.goal.clearedAt, "string");
@@ -762,6 +789,28 @@ test("daemon API persists proposed plans and links accepted tasks and workflow d
 
     const listed = await getJson(`${daemon.url}/threads/${encodeURIComponent(threadId)}/proposed-plans?cwd=${encodeURIComponent(cwd)}`);
     assert.deepEqual(listed.plans.map((plan) => plan.id), [planId]);
+    assert.equal(listed.plans[0].channelId, channel.channel.id);
+
+    const store = stores.get(cwd);
+    assert.ok(store);
+    const siblingThread = store.createLingThread(
+      {
+        kind: "channel_discussion",
+        channelId: channel.channel.id,
+        parentThreadId: threadId,
+        title: "Sibling plan thread",
+        objective: "Verify channel aggregate plan history.",
+        status: "open",
+      },
+      "2026-07-01T00:00:00.000Z",
+    );
+    const siblingPlanId = "proposed_plan_sibling";
+    await putJson(`${daemon.url}/threads/${encodeURIComponent(siblingThread.id)}/proposed-plans/${encodeURIComponent(siblingPlanId)}?cwd=${encodeURIComponent(cwd)}`, {
+      title: "Sibling plan",
+      bodyMarkdown: "1. Aggregate across channel threads",
+    });
+    const channelPlans = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.channel.id)}/proposed-plans?cwd=${encodeURIComponent(cwd)}&limit=10`);
+    assert.deepEqual(new Set(channelPlans.plans.map((plan) => plan.id)), new Set([planId, siblingPlanId]));
 
     const saved = await postJson(`${planUrl.replace(/\?.*$/u, "")}/save?cwd=${encodeURIComponent(cwd)}`, {
       plan: {
@@ -781,8 +830,6 @@ test("daemon API persists proposed plans and links accepted tasks and workflow d
     assert.equal(accepted.plan.status, "accepted");
     assert.equal(accepted.plan.acceptedTaskId, accepted.taskId);
     assert.equal(typeof accepted.plan.acceptedAt, "string");
-    const store = stores.get(cwd);
-    assert.ok(store);
     const task = store.getTask(accepted.taskId);
     assert.ok(task);
     assert.equal(task.channelId, channel.channel.id);
@@ -792,10 +839,19 @@ test("daemon API persists proposed plans and links accepted tasks and workflow d
     const repeatedAccept = await postJson(`${planUrl.replace(/\?.*$/u, "")}/accept?cwd=${encodeURIComponent(cwd)}`, {});
     assert.equal(repeatedAccept.taskId, accepted.taskId);
 
+    const overwriteAccepted = await putJsonAllowError(planUrl, {
+      title: "Overwrite accepted plan",
+      bodyMarkdown: "This should not replace accepted content.",
+    });
+    assert.equal(overwriteAccepted.status, 409);
+    assert.equal(overwriteAccepted.body.error, "accepted_plan_immutable");
+
     const converted = await postJson(`${planUrl.replace(/\?.*$/u, "")}/convert-workflow?cwd=${encodeURIComponent(cwd)}`, {
       createdBy: "local-user",
       toParticipantId: "teammate_plan",
       toParticipantLabel: "Planner",
+      workflowTitle: "Edited workflow draft",
+      workflowSteps: ["Confirm contracts", "Wire Plan Mode controls"],
     });
     assert.equal(converted.plan.acceptedWorkflowId, converted.workflowId);
     assert.equal(converted.plan.acceptedWorkflowStepId, converted.workflowStepId);
@@ -804,12 +860,20 @@ test("daemon API persists proposed plans and links accepted tasks and workflow d
     assert.ok(workflow);
     assert.equal(workflow.status, "draft");
     assert.equal(workflow.channelId, channel.channel.id);
+    assert.equal(workflow.title, "Edited workflow draft");
+    assert.equal(workflow.objective, "Confirm contracts\nWire Plan Mode controls");
     const step = store.getChannelWorkflowStep(converted.workflowStepId);
     assert.ok(step);
     assert.equal(step.workflowId, workflow.id);
     assert.equal(step.status, "queued");
     assert.equal(step.toParticipantId, "teammate_plan");
+    assert.equal(step.title, "Confirm contracts");
+    assert.match(step.prompt, /Wire Plan Mode controls/);
     assert.match(step.prompt, /Source proposed plan: proposed_plan_api_lifecycle/);
+
+    const archived = await postJson(`${planUrl.replace(/\?.*$/u, "")}/archive?cwd=${encodeURIComponent(cwd)}`, {});
+    assert.equal(archived.plan.status, "archived");
+    assert.equal(typeof archived.plan.archivedAt, "string");
   } finally {
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });
@@ -861,6 +925,40 @@ test("daemon updates active goal accounting when a linked run reaches terminal s
   }
 });
 
+test("daemon uses estimated goal token accounting when provider usage is missing", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-goal-estimated-usage-"));
+  const stores = new Map();
+  const daemon = await startDaemonForTest(new SuccessfulRunner(), stores);
+  try {
+    const channel = await createChannel(daemon.url, cwd);
+    const created = await postJson(`${daemon.url}/threads?cwd=${encodeURIComponent(cwd)}`, {
+      kind: "channel_discussion",
+      channelId: channel.channel.id,
+    });
+    const threadId = created.thread.id;
+    await putJson(`${daemon.url}/threads/${encodeURIComponent(threadId)}/goal?cwd=${encodeURIComponent(cwd)}`, {
+      objective: "Exercise estimated goal accounting.",
+      tokenBudget: 1,
+    });
+
+    const result = await postRunAndCollectEvents(daemon.url, {
+      ...runBody(cwd, "task_goal_estimated_accounting"),
+      threadId,
+    });
+    const store = stores.get(cwd);
+    assert.ok(store);
+    const goal = store.getLingThreadGoal(threadId);
+    assert.ok(goal);
+    assert.equal(goal.lastRunId, result.runId);
+    assert.equal(goal.usageSource, "estimated");
+    assert.equal(goal.tokensUsed >= 1, true);
+    assert.equal(goal.status, "budget_limited");
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("daemon marks active goal usage_limited when provider quota stops a run", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-goal-usage-limited-"));
   const stores = new Map();
@@ -900,7 +998,63 @@ test("daemon marks active goal usage_limited when provider quota stops a run", a
   }
 });
 
-test("daemon queues and starts one visible automatic goal continuation after a successful goal run", async () => {
+test("daemon marks goal blocked only after three matching blockers", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-goal-same-blocker-"));
+  const store = createSqliteRunStore(cwd);
+  try {
+    const now = "2026-07-01T00:00:00.000Z";
+    const thread = store.createLingThread(
+      {
+        kind: "channel_discussion",
+        channelId: "channel_goal_same_blocker",
+        title: "Same blocker goal",
+        objective: "Verify blocker threshold.",
+        status: "open",
+      },
+      now,
+    );
+    store.createLingThreadGoal(
+      {
+        threadId: thread.id,
+        objective: "Block only after repeated same blocker.",
+        tokenBudget: 1000,
+      },
+      now,
+    );
+    for (const index of [1, 2, 3]) {
+      const run = store.createRun({
+        id: `run_goal_same_blocker_${index}`,
+        cwd,
+        taskId: `task_goal_same_blocker_${index}`,
+        channelId: thread.channelId,
+        threadId: thread.id,
+        providerName: "test-provider",
+        providerModel: "test-model",
+        taskSnapshot: {
+          id: `task_goal_same_blocker_${index}`,
+          title: "Same blocker run",
+          prompt: "Fail with same blocker.",
+          channelId: thread.channelId,
+        },
+        providerSnapshot: { provider: "test-provider", model: "test-model" },
+        requestSnapshot: { cwd, tools: ["read"] },
+        createdAt: `2026-07-01T00:0${index}:00.000Z`,
+      });
+      store.markRunStarted(run.id, `2026-07-01T00:0${index}:10.000Z`);
+      store.markRunFailed(run.id, `2026-07-01T00:0${index}:20.000Z`, "Missing required approval from reviewer");
+      syncLingThreadForTerminalRun(store, run.id, `2026-07-01T00:0${index}:20.000Z`);
+      const goal = store.getLingThreadGoal(thread.id);
+      assert.ok(goal);
+      assert.equal(goal.sameBlockerCount, index);
+      assert.equal(goal.status, index < 3 ? "active" : "blocked");
+    }
+  } finally {
+    store.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("daemon queues visible guarded automatic goal continuations", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-goal-continuation-"));
   const stores = new Map();
   const runner = new UsageRunner({ inputTokens: 1, outputTokens: 1 });
@@ -923,7 +1077,7 @@ test("daemon queues and starts one visible automatic goal continuation after a s
     });
     const store = stores.get(cwd);
     assert.ok(store);
-    await waitFor(() => runner.calls.length === 2);
+    await waitFor(() => runner.calls.length === 3);
 
     const interventions = store.listRunInterventions({ sourceRunId: result.runId });
     assert.equal(interventions.length, 1);
@@ -938,12 +1092,24 @@ test("daemon queues and starts one visible automatic goal continuation after a s
     assert.equal(continuationRun.parentRunId, result.runId);
     assert.equal(continuationRun.continuationReason, "queue_followup");
 
+    const secondInterventions = store.listRunInterventions({ sourceRunId: continuationRun.id });
+    assert.equal(secondInterventions.length, 1);
+    assert.equal(secondInterventions[0].status, "started");
+    assert.ok(secondInterventions[0].continuationRunId);
+    const secondContinuationRun = store.getRun(secondInterventions[0].continuationRunId);
+    assert.ok(secondContinuationRun);
+    assert.equal(secondContinuationRun.parentRunId, continuationRun.id);
+    await waitFor(() => store.getLingThreadGoal(threadId)?.lastRunId === secondContinuationRun.id);
+    assert.deepEqual(store.listRunInterventions({ sourceRunId: secondContinuationRun.id }), []);
+
     const goal = store.getLingThreadGoal(threadId);
     assert.ok(goal);
     assert.equal(goal.status, "active");
-    assert.equal(goal.tokensUsed, 4);
-    assert.equal(goal.lastRunId, continuationRun.id);
-    assert.equal(goal.completionEvidenceRefs.filter((ref) => ref.kind === "run").length, 2);
+    assert.equal(goal.tokensUsed, 6);
+    assert.equal(goal.lastRunId, secondContinuationRun.id);
+    assert.equal(goal.continuationDepth, 2);
+    assert.equal(goal.noEvidenceContinuationCount, 2);
+    assert.equal(goal.completionEvidenceRefs.filter((ref) => ref.kind === "run").length, 3);
   } finally {
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });

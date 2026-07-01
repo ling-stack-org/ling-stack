@@ -12,6 +12,7 @@ Related docs:
 - [Runner Adapters](runner-adapters.md)
 - [Runtime Control Plane Detailed Design](runtime-control-plane-detailed-design.md)
 - [Channel Context Processing Layer Implementation Plan](channel-context-processing-layer-implementation-plan.md)
+- [Conversation Plan History And Goal Completion Detailed Design](conversation-plan-history-and-goal-completion-detailed-design.md)
 
 ## Summary
 
@@ -101,6 +102,46 @@ Deferred from this first execution slice:
 - right-dock proposed-plan history and richer plan browsing;
 - multi-hop autonomous Goal Mode scheduling beyond the current single-hop continuation
   guard.
+
+The follow-up implementation on this branch covers PR6 plus the conservative PR7
+guardrails:
+
+- right-dock proposed-plan history now supports thread and channel scopes with status
+  filtering, source jump, and detail fallback.
+- channel proposed-plan aggregation is a read model; canonical mutation still resolves
+  back to the source thread plan artifact.
+- goal completion uses `POST /threads/:threadId/goal/complete`; direct PATCH to
+  `complete` is rejected so completion stores actor, reason, summary, and evidence.
+- token accounting prefers provider usage and falls back to a labeled local estimate.
+- `Convert to workflow` opens a preview/edit dialog and saves a draft workflow without
+  starting execution.
+- guarded automatic Goal continuation may chain up to three visible follow-ups, stops
+  after repeated no-evidence turns, and marks `blocked` only after the same blocker is
+  observed across three goal turns.
+
+Follow-up decisions, 2026-07-01:
+
+- proposed-plan data ownership is thread-scoped. The canonical artifact belongs to the
+  source thread, source turn/message, and optional active goal. Channel-level plan
+  history is an aggregation read model for team visibility, not the source of truth.
+- channel aggregation is required for multi-agent work. Ling Agent and teammate agents
+  may read the channel plan index, but teammate agents should propose refinements instead
+  of overwriting canonical source-thread plans.
+- Ling Agent may mark a goal `complete` only after a requirement-by-requirement evidence
+  audit proves the objective is achieved. User completion may force complete with an
+  explicit reason. System statuses such as `budget_limited` and `usage_limited` remain
+  system-owned.
+- goal accounting should use provider-reported token usage when present and local
+  estimated usage as a fallback when providers omit usage. Estimated usage is acceptable
+  for budget control but must be marked as estimated, not treated as billing truth.
+- right-dock plan history should open the source message when available and also show a
+  focused plan detail panel. If the source message is unavailable, the detail panel is the
+  fallback.
+- channel `Convert to workflow` should open a preview/confirmation drawer before saving a
+  draft graph. Saving the draft must not start execution.
+- multi-hop Goal scheduling must stay conservative: at most three automatic continuations
+  in a chain, stop after repeated no-evidence progress, and mark `blocked` only after the
+  same blocker repeats for three goal turns.
 
 ## Codex Reference Semantics
 
@@ -836,10 +877,11 @@ Recommended order:
 PR1 -> PR2 -> PR3 -> PR4 -> PR5
 ```
 
-The 2026-07-01 implementation followed this order. PR5 ships durable proposed-plan
+The first 2026-07-01 implementation followed this order. PR5 ships durable proposed-plan
 storage/actions, task acceptance, draft workflow conversion, manual continuation,
 single-hop automatic goal continuation through visible run interventions, and goal
-accounting.
+accounting. The follow-up implementation ships PR6 and the conservative PR7 guardrails
+described above.
 
 ## Testing Strategy
 
@@ -886,24 +928,23 @@ End-to-end tests:
 - active goal survives thread reload;
 - paused goal does not auto-continue;
 - active goal plus Plan Mode does not auto-continue until Plan exits.
-- successful active goal run queues and starts at most one visible automatic
-  continuation;
+- successful active goal run queues and starts visible automatic continuations within the
+  configured chain guard;
 - goal accounting is idempotent for repeated terminal sync of the same run.
 - provider quota or rate-limit failures move the active goal to `usage_limited`.
 
 ## Open Decisions
 
-No blocking product decision remains for the shipped first slice. These follow-up choices
-remain for proposed-plan browsing and broader goal automation:
+No blocking product decision remains for the shipped first slice or the implemented
+Plan History / Goal Completion / guarded continuation follow-up. The decisions above are specified in
+[Conversation Plan History And Goal Completion Detailed Design](conversation-plan-history-and-goal-completion-detailed-design.md).
 
-- whether channel-only `Convert to workflow` should create a draft graph immediately or
-  open a preview/confirmation drawer first;
-- whether goal accounting uses provider-reported tokens only or also local estimated usage
-  when providers omit usage;
-- whether `/goal complete` should exist before completion evidence refs are mandatory;
-- whether automatic goal continuation should broaden beyond the current single-hop
-  intervention guard and, if so, what loop/blocked-count thresholds own it.
+Remaining scope is later tuning, not product ambiguity:
 
-Deferring these does not block manual Plan/Goal usage, the durable proposed-plan artifact
-lifecycle, or the shipped single-hop automatic continuation. It does block claiming
-right-dock plan history or multi-hop autonomous Goal Mode scheduling.
+- tune the continuation depth and no-evidence thresholds against real usage;
+- add richer teammate/owner inference inside workflow conversion previews;
+- add deeper plan lineage browsing when multiple agents produce long refinement chains.
+
+These are non-blocking follow-ups. The shipped behavior already includes right-dock plan
+history, explicit `/goal complete`, estimated-token budget fallback, workflow conversion
+preview, and guarded visible Goal continuation chains.

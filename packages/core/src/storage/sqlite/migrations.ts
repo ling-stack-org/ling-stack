@@ -186,7 +186,9 @@ const LING_THREAD_GOALS_MIGRATION_VERSION = 87;
 const LING_THREAD_GOALS_MIGRATION_NAME = "create_ling_thread_goals";
 const LING_THREAD_PROPOSED_PLANS_MIGRATION_VERSION = 88;
 const LING_THREAD_PROPOSED_PLANS_MIGRATION_NAME = "create_ling_thread_proposed_plans";
-const PROVIDER_SECRET_HEADER_REFS_MIGRATION_VERSION = 89;
+const PLAN_GOAL_HISTORY_MIGRATION_VERSION = 89;
+const PLAN_GOAL_HISTORY_MIGRATION_NAME = "extend_plan_goal_history";
+const PROVIDER_SECRET_HEADER_REFS_MIGRATION_VERSION = 90;
 const PROVIDER_SECRET_HEADER_REFS_MIGRATION_NAME = "add_provider_secret_header_refs";
 
 export function configureSqliteRunStoreDatabase(database: DatabaseSync): void {
@@ -3229,7 +3231,16 @@ export function applySqliteRunStoreMigrations(context: SqliteRunStoreMigrationCo
           replaced_by_goal_id TEXT,
           last_run_id TEXT,
           blocked_reason TEXT,
-          completion_evidence_refs_json TEXT NOT NULL DEFAULT '[]'
+          completion_evidence_refs_json TEXT NOT NULL DEFAULT '[]',
+          completed_by TEXT,
+          completed_reason TEXT,
+          completion_verification_summary TEXT,
+          usage_source TEXT,
+          continuation_chain_id TEXT,
+          continuation_depth INTEGER NOT NULL DEFAULT 0,
+          no_evidence_continuation_count INTEGER NOT NULL DEFAULT 0,
+          last_blocker_fingerprint TEXT,
+          same_blocker_count INTEGER NOT NULL DEFAULT 0
         );
         CREATE INDEX IF NOT EXISTS idx_ling_thread_goals_thread_status_updated
           ON ling_thread_goals(thread_id, status, updated_at);
@@ -3248,15 +3259,25 @@ export function applySqliteRunStoreMigrations(context: SqliteRunStoreMigrationCo
           id TEXT PRIMARY KEY,
           workspace_id TEXT NOT NULL,
           thread_id TEXT NOT NULL,
+          channel_id TEXT,
+          goal_id TEXT,
+          source_agent_id TEXT,
+          owner_agent_id TEXT,
           source_turn_id TEXT,
           source_message_id TEXT,
           source_run_id TEXT,
+          parent_plan_id TEXT,
+          superseded_by_plan_id TEXT,
+          plan_group_id TEXT,
+          version INTEGER,
           title TEXT NOT NULL,
           body_markdown TEXT NOT NULL,
           status TEXT NOT NULL,
           saved_at TEXT,
           accepted_at TEXT,
           converted_at TEXT,
+          archived_at TEXT,
+          archived_reason TEXT,
           accepted_task_id TEXT,
           accepted_workflow_id TEXT,
           accepted_workflow_step_id TEXT,
@@ -3266,6 +3287,14 @@ export function applySqliteRunStoreMigrations(context: SqliteRunStoreMigrationCo
         );
         CREATE INDEX IF NOT EXISTS idx_ling_thread_proposed_plans_thread_status_updated
           ON ling_thread_proposed_plans(thread_id, status, updated_at);
+        CREATE INDEX IF NOT EXISTS idx_ling_thread_proposed_plans_channel
+          ON ling_thread_proposed_plans(workspace_id, channel_id, updated_at);
+        CREATE INDEX IF NOT EXISTS idx_ling_thread_proposed_plans_goal
+          ON ling_thread_proposed_plans(workspace_id, goal_id, updated_at);
+        CREATE INDEX IF NOT EXISTS idx_ling_thread_proposed_plans_parent
+          ON ling_thread_proposed_plans(parent_plan_id);
+        CREATE INDEX IF NOT EXISTS idx_ling_thread_proposed_plans_superseded
+          ON ling_thread_proposed_plans(superseded_by_plan_id);
         CREATE INDEX IF NOT EXISTS idx_ling_thread_proposed_plans_source_message
           ON ling_thread_proposed_plans(source_message_id);
         CREATE INDEX IF NOT EXISTS idx_ling_thread_proposed_plans_acceptance_refs
@@ -3273,6 +3302,97 @@ export function applySqliteRunStoreMigrations(context: SqliteRunStoreMigrationCo
       `);
       if (!hasLingThreadProposedPlansMigration) {
         context.recordMigration(LING_THREAD_PROPOSED_PLANS_MIGRATION_VERSION, LING_THREAD_PROPOSED_PLANS_MIGRATION_NAME);
+      }
+    }
+
+    const hasPlanGoalHistoryMigration = context.hasMigration(PLAN_GOAL_HISTORY_MIGRATION_VERSION);
+    if (
+      !hasPlanGoalHistoryMigration ||
+      !context.hasColumn("ling_thread_goals", "completed_by") ||
+      !context.hasColumn("ling_thread_proposed_plans", "channel_id")
+    ) {
+      if (context.hasTable("ling_thread_goals")) {
+        if (!context.hasColumn("ling_thread_goals", "completed_by")) {
+          database.exec("ALTER TABLE ling_thread_goals ADD COLUMN completed_by TEXT;");
+        }
+        if (!context.hasColumn("ling_thread_goals", "completed_reason")) {
+          database.exec("ALTER TABLE ling_thread_goals ADD COLUMN completed_reason TEXT;");
+        }
+        if (!context.hasColumn("ling_thread_goals", "completion_verification_summary")) {
+          database.exec("ALTER TABLE ling_thread_goals ADD COLUMN completion_verification_summary TEXT;");
+        }
+        if (!context.hasColumn("ling_thread_goals", "usage_source")) {
+          database.exec("ALTER TABLE ling_thread_goals ADD COLUMN usage_source TEXT;");
+        }
+        if (!context.hasColumn("ling_thread_goals", "continuation_chain_id")) {
+          database.exec("ALTER TABLE ling_thread_goals ADD COLUMN continuation_chain_id TEXT;");
+        }
+        if (!context.hasColumn("ling_thread_goals", "continuation_depth")) {
+          database.exec("ALTER TABLE ling_thread_goals ADD COLUMN continuation_depth INTEGER NOT NULL DEFAULT 0;");
+        }
+        if (!context.hasColumn("ling_thread_goals", "no_evidence_continuation_count")) {
+          database.exec("ALTER TABLE ling_thread_goals ADD COLUMN no_evidence_continuation_count INTEGER NOT NULL DEFAULT 0;");
+        }
+        if (!context.hasColumn("ling_thread_goals", "last_blocker_fingerprint")) {
+          database.exec("ALTER TABLE ling_thread_goals ADD COLUMN last_blocker_fingerprint TEXT;");
+        }
+        if (!context.hasColumn("ling_thread_goals", "same_blocker_count")) {
+          database.exec("ALTER TABLE ling_thread_goals ADD COLUMN same_blocker_count INTEGER NOT NULL DEFAULT 0;");
+        }
+      }
+
+      if (context.hasTable("ling_thread_proposed_plans")) {
+        if (!context.hasColumn("ling_thread_proposed_plans", "channel_id")) {
+          database.exec("ALTER TABLE ling_thread_proposed_plans ADD COLUMN channel_id TEXT;");
+        }
+        if (!context.hasColumn("ling_thread_proposed_plans", "goal_id")) {
+          database.exec("ALTER TABLE ling_thread_proposed_plans ADD COLUMN goal_id TEXT;");
+        }
+        if (!context.hasColumn("ling_thread_proposed_plans", "source_agent_id")) {
+          database.exec("ALTER TABLE ling_thread_proposed_plans ADD COLUMN source_agent_id TEXT;");
+        }
+        if (!context.hasColumn("ling_thread_proposed_plans", "owner_agent_id")) {
+          database.exec("ALTER TABLE ling_thread_proposed_plans ADD COLUMN owner_agent_id TEXT;");
+        }
+        if (!context.hasColumn("ling_thread_proposed_plans", "parent_plan_id")) {
+          database.exec("ALTER TABLE ling_thread_proposed_plans ADD COLUMN parent_plan_id TEXT;");
+        }
+        if (!context.hasColumn("ling_thread_proposed_plans", "superseded_by_plan_id")) {
+          database.exec("ALTER TABLE ling_thread_proposed_plans ADD COLUMN superseded_by_plan_id TEXT;");
+        }
+        if (!context.hasColumn("ling_thread_proposed_plans", "plan_group_id")) {
+          database.exec("ALTER TABLE ling_thread_proposed_plans ADD COLUMN plan_group_id TEXT;");
+        }
+        if (!context.hasColumn("ling_thread_proposed_plans", "version")) {
+          database.exec("ALTER TABLE ling_thread_proposed_plans ADD COLUMN version INTEGER;");
+        }
+        if (!context.hasColumn("ling_thread_proposed_plans", "archived_at")) {
+          database.exec("ALTER TABLE ling_thread_proposed_plans ADD COLUMN archived_at TEXT;");
+        }
+        if (!context.hasColumn("ling_thread_proposed_plans", "archived_reason")) {
+          database.exec("ALTER TABLE ling_thread_proposed_plans ADD COLUMN archived_reason TEXT;");
+        }
+        database.exec(`
+          UPDATE ling_thread_proposed_plans
+          SET channel_id = (
+            SELECT ling_threads.channel_id
+            FROM ling_threads
+            WHERE ling_threads.workspace_id = ling_thread_proposed_plans.workspace_id
+              AND ling_threads.id = ling_thread_proposed_plans.thread_id
+          )
+          WHERE channel_id IS NULL;
+          CREATE INDEX IF NOT EXISTS idx_ling_thread_proposed_plans_channel
+            ON ling_thread_proposed_plans(workspace_id, channel_id, updated_at);
+          CREATE INDEX IF NOT EXISTS idx_ling_thread_proposed_plans_goal
+            ON ling_thread_proposed_plans(workspace_id, goal_id, updated_at);
+          CREATE INDEX IF NOT EXISTS idx_ling_thread_proposed_plans_parent
+            ON ling_thread_proposed_plans(parent_plan_id);
+          CREATE INDEX IF NOT EXISTS idx_ling_thread_proposed_plans_superseded
+            ON ling_thread_proposed_plans(superseded_by_plan_id);
+        `);
+      }
+      if (!hasPlanGoalHistoryMigration) {
+        context.recordMigration(PLAN_GOAL_HISTORY_MIGRATION_VERSION, PLAN_GOAL_HISTORY_MIGRATION_NAME);
       }
     }
 

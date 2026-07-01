@@ -73,6 +73,7 @@ import {
   handleChannelItem,
   handleChannelIntentDecisionsCollection,
   handleChannelMessageRouteDecisionsCollection,
+  handleChannelProposedPlans,
   handleChannelsCollection,
 } from "../features/channels/routes.js";
 import { assertChannelWorkspaceReady, handleChannelWorkspace } from "../features/channels/workspace.js";
@@ -329,13 +330,13 @@ export async function routeRequest(
     if (!store) {
       return;
     }
-    maybeQueueGoalContinuation({
+    const goalContinuation = maybeQueueGoalContinuation({
       terminalRun,
       store,
       activeRuns,
     });
     await maybeStartNextRunInterventionContinuation({
-      sourceRunId,
+      sourceRunId: goalContinuation?.sourceRunId ?? sourceRunId,
       store,
       runnerRegistry,
       storeRegistry,
@@ -1553,6 +1554,10 @@ export async function routeRequest(
         return;
       }
       await handleChannelBranchesCollection(request, response, config, storeRegistry, channelRoute.channelId);
+      return;
+    }
+    if (channelRoute.action === "proposed-plans") {
+      await handleChannelProposedPlans(request, response, config, storeRegistry, channelRoute.channelId);
       return;
     }
     if (channelRoute.action === "messages") {

@@ -16,6 +16,7 @@ import type {
   LingThreadModeResponse,
   LingThreadModeUpdateRequest,
   LingThreadGoalPatchRequest,
+  LingThreadGoalCompleteRequest,
   LingThreadGoalPutRequest,
   LingThreadMutationResponse,
   LingThreadPinRequest,
@@ -131,12 +132,28 @@ export const runEndpoints = {
       return this._patch(`/threads/${encodeURIComponent(threadId)}/goal`, { cwd }, input);
     },
 
+  async completeLingThreadGoal(this: LingDaemonEndpointContext, cwd: string, threadId: string, input: LingThreadGoalCompleteRequest = {}): Promise<LingThreadGoalResponse> {
+      return this._post(`/threads/${encodeURIComponent(threadId)}/goal/complete`, { cwd }, input);
+    },
+
   async deleteLingThreadGoal(this: LingDaemonEndpointContext, cwd: string, threadId: string): Promise<LingThreadGoalResponse> {
       return this._delete(`/threads/${encodeURIComponent(threadId)}/goal`, { cwd });
     },
 
   async listProposedPlanArtifacts(this: LingDaemonEndpointContext, cwd: string, threadId: string, options: { readonly limit?: number } = {}): Promise<ProposedPlanArtifactListResponse> {
       return this._get(`/threads/${encodeURIComponent(threadId)}/proposed-plans`, { cwd, limit: options.limit });
+    },
+
+  async listChannelProposedPlanArtifacts(this: LingDaemonEndpointContext, cwd: string, channelId: string, options: { readonly scope?: "channel" | "thread"; readonly threadId?: string; readonly goalId?: string; readonly agentId?: string; readonly status?: string; readonly limit?: number } = {}): Promise<ProposedPlanArtifactListResponse> {
+      return this._get(`/channels/${encodeURIComponent(channelId)}/proposed-plans`, {
+        cwd,
+        scope: options.scope,
+        threadId: options.threadId,
+        goalId: options.goalId,
+        agentId: options.agentId,
+        status: options.status,
+        limit: options.limit,
+      });
     },
 
   async putProposedPlanArtifact(this: LingDaemonEndpointContext, cwd: string, threadId: string, planId: string, input: ProposedPlanArtifactPutRequest): Promise<ProposedPlanArtifactResponse> {
@@ -157,6 +174,10 @@ export const runEndpoints = {
 
   async refineProposedPlanArtifact(this: LingDaemonEndpointContext, cwd: string, threadId: string, planId: string, input: ProposedPlanActionRequest = {}): Promise<ProposedPlanActionResponse> {
       return this._post(`/threads/${encodeURIComponent(threadId)}/proposed-plans/${encodeURIComponent(planId)}/refine`, { cwd }, input);
+    },
+
+  async archiveProposedPlanArtifact(this: LingDaemonEndpointContext, cwd: string, threadId: string, planId: string, input: ProposedPlanActionRequest = {}): Promise<ProposedPlanActionResponse> {
+      return this._post(`/threads/${encodeURIComponent(threadId)}/proposed-plans/${encodeURIComponent(planId)}/archive`, { cwd }, input);
     },
 
   async convertProposedPlanToWorkflow(this: LingDaemonEndpointContext, cwd: string, threadId: string, planId: string, input: ProposedPlanActionRequest = {}): Promise<ProposedPlanActionResponse> {

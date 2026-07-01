@@ -12,7 +12,7 @@ export type ComposerSlashIntent =
       readonly kind: "session_command";
       readonly commandId: "goal";
       readonly commandLabel: "Goal";
-      readonly action: "set" | "status" | "pause" | "resume" | "clear" | "edit";
+      readonly action: "set" | "status" | "pause" | "resume" | "clear" | "edit" | "complete";
       readonly args: string;
       readonly raw: string;
     }
@@ -195,6 +195,8 @@ function readSessionCommand(text: string): Extract<ComposerSlashIntent, { readon
             ? "resume"
             : firstArg === "clear" || firstArg === "delete"
               ? "clear"
+              : firstArg === "complete" || firstArg === "done"
+                ? "complete"
               : firstArg === "edit"
                 ? "edit"
                 : "set",

@@ -368,7 +368,15 @@ export async function maybeStartNextRunInterventionContinuation(input: {
         },
         afterRunTerminal: async (terminalRun) => {
           const sourceRunId = terminalRun.parentRunId ?? terminalRun.id;
-          await maybeStartNextRunInterventionContinuation({ ...input, sourceRunId });
+          const goalContinuation = maybeQueueGoalContinuation({
+            terminalRun,
+            store: input.store,
+            activeRuns: input.activeRuns,
+          });
+          await maybeStartNextRunInterventionContinuation({
+            ...input,
+            sourceRunId: goalContinuation?.sourceRunId ?? sourceRunId,
+          });
         },
       },
     );
@@ -408,7 +416,11 @@ export function maybeQueueGoalContinuation(input: {
   readonly activeRuns: ActiveRunRegistry;
 }): RunIntervention | undefined {
   const run = input.terminalRun;
-  if (run.status !== "succeeded" || run.parentRunId || run.continuationReason || !run.threadId) {
+  const isAutomaticContinuationRun = run.continuationReason === "queue_followup";
+  if (run.status !== "succeeded" || !run.threadId) {
+    return undefined;
+  }
+  if ((run.parentRunId || run.continuationReason) && !isAutomaticContinuationRun) {
     return undefined;
   }
   const thread = input.store.getLingThread(run.threadId);
@@ -429,13 +441,42 @@ export function maybeQueueGoalContinuation(input: {
   if (input.store.listApprovalRequests({ runId: run.id, status: "pending", limit: 1 }).length > 0) {
     return undefined;
   }
-  if (input.store.listRunInterventions({ sourceRunId: run.id, limit: 1 }).length > 0) {
+  const rootRunId = run.parentRunId ?? run.id;
+  if (hasPendingRunIntervention(input.store, run.id)) {
+    return undefined;
+  }
+  if (goal.continuationDepth >= MAX_GOAL_CONTINUATION_DEPTH) {
+    return undefined;
+  }
+  const currentRunHasEvidence = hasMeaningfulGoalProgressEvidence(input.store, run.id);
+  const nextNoEvidenceContinuationCount = isAutomaticContinuationRun && !currentRunHasEvidence
+    ? goal.noEvidenceContinuationCount + 1
+    : 0;
+  if (nextNoEvidenceContinuationCount >= MAX_GOAL_NO_EVIDENCE_CONTINUATIONS) {
+    input.store.updateLingThreadGoal(
+      goal.id,
+      {
+        noEvidenceContinuationCount: nextNoEvidenceContinuationCount,
+      },
+      new Date().toISOString(),
+    );
     return undefined;
   }
 
   const now = new Date().toISOString();
   const sourceWorkUnit = run.workUnitId ? input.store.getWorkUnit(run.workUnitId) : undefined;
   const instruction = renderGoalContinuationInstruction(goal.objective);
+  const chainId = goal.continuationChainId ?? `goal_chain_${goal.id}_${rootRunId}`;
+  const nextDepth = goal.continuationDepth + 1;
+  input.store.updateLingThreadGoal(
+    goal.id,
+    {
+      continuationChainId: chainId,
+      continuationDepth: nextDepth,
+      noEvidenceContinuationCount: nextNoEvidenceContinuationCount,
+    },
+    now,
+  );
   const intervention = input.store.createRunIntervention(
     {
       sourceRunId: run.id,
@@ -449,7 +490,7 @@ export function maybeQueueGoalContinuation(input: {
         linkPreviewIds: [],
       },
       requestedBy: "system",
-      idempotencyKey: `goal_auto_continue:${goal.id}:${run.id}`,
+      idempotencyKey: `goal_auto_continue:${goal.id}:${run.id}:${nextDepth}`,
     },
     now,
   );
@@ -459,14 +500,33 @@ export function maybeQueueGoalContinuation(input: {
     status: intervention.status,
     reason: "goal_auto_continue",
     goalId: goal.id,
+    continuationChainId: chainId,
+    continuationDepth: nextDepth,
   });
   streamRunEventIfPossible(input.store, input.activeRuns, run.id, "run_followup_queued", {
     interventionId: intervention.id,
     instruction: intervention.instruction,
     reason: "goal_auto_continue",
     goalId: goal.id,
+    continuationChainId: chainId,
+    continuationDepth: nextDepth,
   });
   return intervention;
+}
+
+const MAX_GOAL_CONTINUATION_DEPTH = 3;
+const MAX_GOAL_NO_EVIDENCE_CONTINUATIONS = 2;
+
+function hasPendingRunIntervention(store: RunStore, sourceRunId: string): boolean {
+  return ["queued", "cancelling_source", "starting_continuation"].
+    some((status) => store.listRunInterventions({ sourceRunId, status: status as RunIntervention["status"], limit: 1 }).length > 0);
+}
+
+function hasMeaningfulGoalProgressEvidence(store: RunStore, runId: string): boolean {
+  if (store.listArtifacts(runId).length > 0) {
+    return true;
+  }
+  return store.listApprovalRequests({ runId, limit: 1 }).length > 0;
 }
 
 function renderGoalContinuationInstruction(objective: string): string {

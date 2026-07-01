@@ -1,20 +1,30 @@
 import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from "react";
 import {
   Activity,
+  Archive,
   Code2,
+  FileCheck2,
   FileText,
   Globe2,
+  History,
   ListChecks,
+  LocateFixed,
+  Play,
+  RefreshCw,
+  Save,
   Search,
   ShieldCheck,
   SquareTerminal,
+  Workflow,
 } from "lucide-react";
 import { previewArtifactContent } from "../../../api.js";
 import { useI18n } from "../../../i18n.js";
+import type { ProposedPlanArtifact } from "../../../types.js";
 import {
   createDockPageEntry,
   EvidencePage,
   FilesPage,
+  MessageBodyRenderer,
   popDockPage,
   pushDockPage,
   resetDockStack,
@@ -59,6 +69,11 @@ export interface WorkspaceRightDockProps {
   readonly reviewItems: readonly DockReviewItem[];
   readonly evidenceGroups: readonly DockEvidenceGroupView[];
   readonly fileItems: readonly DockFileItem[];
+  readonly proposedPlans?: readonly ProposedPlanArtifact[];
+  readonly proposedPlansLoading?: boolean;
+  readonly proposedPlansError?: string;
+  readonly currentPlanThreadId?: string;
+  readonly planActionBusyId?: string;
   readonly includeActivity?: boolean;
   readonly activityNode?: ReactNode;
   readonly activityCount?: number;
@@ -68,6 +83,12 @@ export interface WorkspaceRightDockProps {
   readonly onPageRequestConsumed?: (nonce: number) => void;
   readonly onClose?: () => void;
   readonly onCollapsedChange?: (collapsed: boolean) => void;
+  readonly onOpenPlanSource?: (plan: ProposedPlanArtifact) => void;
+  readonly onSavePlan?: (plan: ProposedPlanArtifact) => void;
+  readonly onRefinePlan?: (plan: ProposedPlanArtifact) => void;
+  readonly onAcceptPlan?: (plan: ProposedPlanArtifact) => void;
+  readonly onConvertPlan?: (plan: ProposedPlanArtifact) => void;
+  readonly onArchivePlan?: (plan: ProposedPlanArtifact) => void;
 }
 
 export function WorkspaceRightDock({
@@ -82,6 +103,11 @@ export function WorkspaceRightDock({
   reviewItems,
   evidenceGroups,
   fileItems,
+  proposedPlans = [],
+  proposedPlansLoading = false,
+  proposedPlansError = "",
+  currentPlanThreadId,
+  planActionBusyId = "",
   includeActivity = false,
   activityNode,
   activityCount = 0,
@@ -91,10 +117,18 @@ export function WorkspaceRightDock({
   onPageRequestConsumed,
   onClose,
   onCollapsedChange,
+  onOpenPlanSource,
+  onSavePlan,
+  onRefinePlan,
+  onAcceptPlan,
+  onConvertPlan,
+  onArchivePlan,
 }: WorkspaceRightDockProps): JSX.Element | null {
   const { t } = useI18n();
   const [stack, setStack] = useState<readonly DockPageStackEntry[]>([]);
   const [reviewFilter, setReviewFilter] = useState<DockReviewFilter>("all");
+  const [planScope, setPlanScope] = useState<"thread" | "channel">("thread");
+  const [planStatusFilter, setPlanStatusFilter] = useState<"current" | "all" | ProposedPlanArtifact["status"]>("current");
   const [artifactPreviewByReviewId, setArtifactPreviewByReviewId] = useState<Readonly<Record<string, DockReviewItem["codePreview"]>>>({});
   const browserGroups = useMemo(
     () => evidenceGroups.filter((group) => group.id === "browser"),
@@ -107,6 +141,7 @@ export function WorkspaceRightDock({
   const browserEvidenceCount = browserGroups.reduce((count, group) => count + group.items.length, 0);
   const terminalEvidenceCount = terminalGroups.reduce((count, group) => count + group.items.length, 0);
   const evidenceCount = evidenceGroups.reduce((count, group) => count + group.items.length, 0);
+  const visiblePlanCount = proposedPlans.filter((plan) => plan.status !== "archived").length;
   const enrichedReviewItems = useMemo(() => reviewItems.map((item) => {
     const preview = artifactPreviewByReviewId[item.id];
     if (!preview) {
@@ -155,11 +190,41 @@ export function WorkspaceRightDock({
         />
       ));
     }
+    for (const plan of proposedPlans) {
+      map.set(`plan:${plan.id}`, (
+        <DockProposedPlanDetail
+          plan={plan}
+          cwd={cwd}
+          busy={planActionBusyId === plan.id}
+          onOpenSource={onOpenPlanSource}
+          onSave={onSavePlan}
+          onRefine={onRefinePlan}
+          onAccept={onAcceptPlan}
+          onConvert={onConvertPlan}
+          onArchive={onArchivePlan}
+        />
+      ));
+    }
     if (forcedDetail) {
       map.set(forcedDetail.id, forcedDetail.node);
     }
     return map;
-  }, [cwd, enrichedReviewItems, evidenceGroups, fileItems, forcedDetail, t]);
+  }, [
+    cwd,
+    enrichedReviewItems,
+    evidenceGroups,
+    fileItems,
+    forcedDetail,
+    onAcceptPlan,
+    onArchivePlan,
+    onConvertPlan,
+    onOpenPlanSource,
+    onRefinePlan,
+    onSavePlan,
+    planActionBusyId,
+    proposedPlans,
+    t,
+  ]);
   const effectiveStack = forcedDetail
     ? [createDockPageEntry({
       page: "detail",
@@ -276,6 +341,36 @@ export function WorkspaceRightDock({
           detailPresentation="accordion"
           renderItemDetail={(item) => <DockReviewItemDetail item={item} cwd={cwd} compact />}
           onFilterChange={setReviewFilter}
+        />
+      ),
+    },
+    {
+      id: "plans",
+      label: t("Plans"),
+      icon: <History size={16} />,
+      launcherItem: {
+        description: t("Thread and channel proposed-plan history"),
+        count: visiblePlanCount,
+        statusLabel: proposedPlansLoading
+          ? t("Loading")
+          : visiblePlanCount > 0
+            ? t("{count} plans", { count: visiblePlanCount })
+            : t("No plans"),
+        severity: proposedPlansError ? "warning" : visiblePlanCount > 0 ? "info" : "neutral",
+      },
+      render: () => (
+        <PlanHistoryPage
+          plans={proposedPlans}
+          currentThreadId={currentPlanThreadId}
+          loading={proposedPlansLoading}
+          error={proposedPlansError}
+          scope={planScope}
+          statusFilter={planStatusFilter}
+          busyPlanId={planActionBusyId}
+          onScopeChange={setPlanScope}
+          onStatusFilterChange={setPlanStatusFilter}
+          onOpenPlan={(plan) => pushDetail(`plan:${plan.id}`, plan.title, proposedPlanSubtitle(plan, t))}
+          onOpenSource={onOpenPlanSource}
         />
       ),
     },
@@ -437,11 +532,20 @@ export function WorkspaceRightDock({
     fileItems,
     includeActivity,
     enrichedReviewItems,
+    currentPlanThreadId,
+    onOpenPlanSource,
+    planActionBusyId,
+    planScope,
+    planStatusFilter,
+    proposedPlans,
+    proposedPlansError,
+    proposedPlansLoading,
     reviewActionCount,
     reviewFilter,
     t,
     terminalEvidenceCount,
     terminalGroups,
+    visiblePlanCount,
   ]);
 
   useEffect(() => {
@@ -490,6 +594,298 @@ export function WorkspaceRightDock({
       }}
     />
   );
+}
+
+type PlanStatusFilter = "current" | "all" | ProposedPlanArtifact["status"];
+
+function PlanHistoryPage({
+  plans,
+  currentThreadId,
+  loading,
+  error,
+  scope,
+  statusFilter,
+  busyPlanId,
+  onScopeChange,
+  onStatusFilterChange,
+  onOpenPlan,
+  onOpenSource,
+}: {
+  readonly plans: readonly ProposedPlanArtifact[];
+  readonly currentThreadId?: string;
+  readonly loading: boolean;
+  readonly error: string;
+  readonly scope: "thread" | "channel";
+  readonly statusFilter: PlanStatusFilter;
+  readonly busyPlanId: string;
+  readonly onScopeChange: (scope: "thread" | "channel") => void;
+  readonly onStatusFilterChange: (filter: PlanStatusFilter) => void;
+  readonly onOpenPlan: (plan: ProposedPlanArtifact) => void;
+  readonly onOpenSource?: (plan: ProposedPlanArtifact) => void;
+}): JSX.Element {
+  const { t } = useI18n();
+  const [agentFilter, setAgentFilter] = useState("all");
+  const [goalFilter, setGoalFilter] = useState("all");
+  const scopedPlans = useMemo(() => {
+    const items = plans.filter((plan) => {
+      if (scope === "thread" && currentThreadId && plan.threadId !== currentThreadId) {
+        return false;
+      }
+      if (scope === "thread" && !currentThreadId) {
+        return false;
+      }
+      if (statusFilter === "current" && plan.status !== "draft" && plan.status !== "accepted") {
+        return false;
+      }
+      if (statusFilter !== "current" && statusFilter !== "all" && plan.status !== statusFilter) {
+        return false;
+      }
+      const agentId = plan.ownerAgentId ?? plan.sourceAgentId ?? "";
+      if (agentFilter !== "all" && agentId !== agentFilter) {
+        return false;
+      }
+      if (goalFilter !== "all" && (plan.goalId ?? "") !== goalFilter) {
+        return false;
+      }
+      return true;
+    });
+    return [...items].sort((left, right) =>
+      right.updatedAt.localeCompare(left.updatedAt) ||
+      right.createdAt.localeCompare(left.createdAt) ||
+      right.id.localeCompare(left.id)
+    );
+  }, [agentFilter, currentThreadId, goalFilter, plans, scope, statusFilter]);
+  const agentOptions = useMemo(() => uniquePlanFilterOptions(plans, (plan) => plan.ownerAgentId ?? plan.sourceAgentId), [plans]);
+  const goalOptions = useMemo(() => uniquePlanFilterOptions(plans, (plan) => plan.goalId), [plans]);
+
+  return (
+    <div className="right-dock-plans-page">
+      <div className="right-dock-page-header">
+        <div className="right-dock-page-header-row">
+          <History size={15} />
+          <span className="right-dock-page-title">
+            <strong>{t("Plan history")}</strong>
+            <small>{scope === "thread" ? t("This thread") : t("This channel")}</small>
+          </span>
+          <span className="right-dock-row-state tone-info">{scopedPlans.length}</span>
+        </div>
+        <div className="right-dock-page-filters">
+          <div className="right-dock-filter-row" aria-label={t("Plan scope")}>
+            <button className={scope === "thread" ? "right-dock-filter active" : "right-dock-filter"} type="button" onClick={() => onScopeChange("thread")}>
+              {t("This thread")}
+            </button>
+            <button className={scope === "channel" ? "right-dock-filter active" : "right-dock-filter"} type="button" onClick={() => onScopeChange("channel")}>
+              {t("This channel")}
+            </button>
+          </div>
+          <div className="right-dock-plan-select-row">
+            <label>
+              <span>{t("Status")}</span>
+              <select value={statusFilter} onChange={(event) => onStatusFilterChange(event.target.value as PlanStatusFilter)} aria-label={t("Plan status")}>
+                <option value="current">{t("Current")}</option>
+                <option value="all">{t("All")}</option>
+                <option value="draft">{t("Draft")}</option>
+                <option value="accepted">{t("Accepted")}</option>
+                <option value="superseded">{t("Superseded")}</option>
+                <option value="archived">{t("Archived")}</option>
+              </select>
+            </label>
+            <label>
+              <span>{t("Agent")}</span>
+              <select value={agentFilter} onChange={(event) => setAgentFilter(event.target.value)} aria-label={t("Plan agent")}>
+                <option value="all">{t("All")}</option>
+                {agentOptions.map((agentId) => <option key={agentId} value={agentId}>{agentId}</option>)}
+              </select>
+            </label>
+            <label>
+              <span>{t("Goal")}</span>
+              <select value={goalFilter} onChange={(event) => setGoalFilter(event.target.value)} aria-label={t("Plan goal")}>
+                <option value="all">{t("All")}</option>
+                {goalOptions.map((goalId) => <option key={goalId} value={goalId}>{goalId}</option>)}
+              </select>
+            </label>
+          </div>
+        </div>
+      </div>
+      {loading ? (
+        <ToolPlaceholderPage title={t("Loading plans")} description={t("Plan history is loading.")} />
+      ) : error ? (
+        <ToolPlaceholderPage title={t("Plan history unavailable")} description={error} />
+      ) : scopedPlans.length === 0 ? (
+        <ToolPlaceholderPage title={t("No plans")} description={t("Draft, accepted, superseded, and archived plans will appear here.")} />
+      ) : (
+        <div className="right-dock-section right-dock-plan-list">
+          {scopedPlans.map((plan) => (
+            <div key={plan.id} className={busyPlanId === plan.id ? "right-dock-plan-row busy" : "right-dock-plan-row"}>
+              <button className="right-dock-row right-dock-plan-main" type="button" onClick={() => onOpenPlan(plan)}>
+                <span className={`right-dock-row-dot ${planStatusTone(plan.status)}`} />
+                <span className="right-dock-row-copy">
+                  <strong>{plan.title}</strong>
+                  <small>{proposedPlanSubtitle(plan, t)}</small>
+                </span>
+                <span className={`right-dock-row-state ${planStatusTone(plan.status)}`}>{proposedPlanStatusLabel(plan.status, t)}</span>
+              </button>
+              <button className="right-dock-icon-button right-dock-plan-source-button" type="button" onClick={() => onOpenSource?.(plan)} disabled={!plan.sourceMessageId} aria-label={t("Open source")} title={plan.sourceMessageId ? t("Open source") : t("Source unavailable")}>
+                <LocateFixed size={14} />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function DockProposedPlanDetail({
+  plan,
+  cwd,
+  busy,
+  onOpenSource,
+  onSave,
+  onRefine,
+  onAccept,
+  onConvert,
+  onArchive,
+}: {
+  readonly plan: ProposedPlanArtifact;
+  readonly cwd?: string;
+  readonly busy: boolean;
+  readonly onOpenSource?: (plan: ProposedPlanArtifact) => void;
+  readonly onSave?: (plan: ProposedPlanArtifact) => void;
+  readonly onRefine?: (plan: ProposedPlanArtifact) => void;
+  readonly onAccept?: (plan: ProposedPlanArtifact) => void;
+  readonly onConvert?: (plan: ProposedPlanArtifact) => void;
+  readonly onArchive?: (plan: ProposedPlanArtifact) => void;
+}): JSX.Element {
+  const { t } = useI18n();
+  const archived = plan.status === "archived";
+  const accepted = plan.status === "accepted";
+
+  return (
+    <article className="right-dock-plan-detail">
+      <header className="right-dock-review-detail-hero">
+        <span className="right-dock-review-kicker"><FileCheck2 size={14} /> {t("Proposed plan")}</span>
+        <h3>{plan.title}</h3>
+        <div className="right-dock-review-badges">
+          <span className={`status-${plan.status}`}>{proposedPlanStatusLabel(plan.status, t)}</span>
+          <span>{planVersionLabel(plan, t)}</span>
+          {plan.goalId ? <span>{t("Goal")}: {plan.goalId}</span> : null}
+        </div>
+      </header>
+      <div className="right-dock-plan-action-row">
+        <button className="secondary-button compact-button" type="button" onClick={() => onOpenSource?.(plan)} disabled={!plan.sourceMessageId || busy}>
+          <LocateFixed size={14} />
+          {t("Open source")}
+        </button>
+        <button className="secondary-button compact-button" type="button" onClick={() => onSave?.(plan)} disabled={archived || busy}>
+          <Save size={14} />
+          {t("Save")}
+        </button>
+        <button className="secondary-button compact-button" type="button" onClick={() => onRefine?.(plan)} disabled={archived || busy}>
+          <RefreshCw size={14} />
+          {t("Refine")}
+        </button>
+        <button className="secondary-button compact-button" type="button" onClick={() => onConvert?.(plan)} disabled={archived || busy}>
+          <Workflow size={14} />
+          {t("Convert")}
+        </button>
+        <button className="primary-button compact-button" type="button" onClick={() => onAccept?.(plan)} disabled={archived || accepted || busy}>
+          <Play size={14} />
+          {t("Implement")}
+        </button>
+        <button className="secondary-button compact-button danger" type="button" onClick={() => onArchive?.(plan)} disabled={archived || busy}>
+          <Archive size={14} />
+          {t("Archive")}
+        </button>
+      </div>
+      <dl className="right-dock-detail-list">
+        <div>
+          <dt>{t("Thread")}</dt>
+          <dd>{plan.threadId}</dd>
+        </div>
+        {plan.sourceMessageId ? (
+          <div>
+            <dt>{t("Source message")}</dt>
+            <dd>{plan.sourceMessageId}</dd>
+          </div>
+        ) : null}
+        <div>
+          <dt>{t("Updated")}</dt>
+          <dd>{formatCompactPlanDate(plan.updatedAt)}</dd>
+        </div>
+        {plan.acceptedWorkflowId ? (
+          <div>
+            <dt>{t("Workflow")}</dt>
+            <dd>{plan.acceptedWorkflowId}</dd>
+          </div>
+        ) : null}
+      </dl>
+      <section className="right-dock-plan-markdown" aria-label={t("Plan body")}>
+        <MessageBodyRenderer text={plan.bodyMarkdown} cwd={cwd} compact />
+      </section>
+    </article>
+  );
+}
+
+function uniquePlanFilterOptions(
+  plans: readonly ProposedPlanArtifact[],
+  readValue: (plan: ProposedPlanArtifact) => string | undefined,
+): readonly string[] {
+  return [...new Set(plans.map(readValue).filter((value): value is string => Boolean(value)))].sort((left, right) => left.localeCompare(right));
+}
+
+function proposedPlanSubtitle(plan: ProposedPlanArtifact, t: (key: string, values?: Record<string, string | number>) => string): string {
+  const parts = [
+    plan.goalId ? t("Goal") : plan.channelId ? t("Channel") : t("Thread"),
+    plan.ownerAgentId ?? plan.sourceAgentId,
+    planVersionLabel(plan, t),
+    formatCompactPlanDate(plan.updatedAt),
+  ].filter(Boolean);
+  return parts.join(" · ");
+}
+
+function proposedPlanStatusLabel(status: ProposedPlanArtifact["status"], t: (key: string) => string): string {
+  switch (status) {
+    case "accepted":
+      return t("Accepted");
+    case "superseded":
+      return t("Superseded");
+    case "archived":
+      return t("Archived");
+    case "draft":
+    default:
+      return t("Draft");
+  }
+}
+
+function planStatusTone(status: ProposedPlanArtifact["status"]): "tone-info" | "tone-warning" | "tone-danger" | "tone-muted" {
+  if (status === "accepted") {
+    return "tone-info";
+  }
+  if (status === "superseded") {
+    return "tone-warning";
+  }
+  if (status === "archived") {
+    return "tone-muted";
+  }
+  return "tone-info";
+}
+
+function planVersionLabel(plan: ProposedPlanArtifact, t: (key: string, values?: Record<string, string | number>) => string): string {
+  return plan.version && plan.version > 0 ? t("v{version}", { version: plan.version }) : t("v1");
+}
+
+function formatCompactPlanDate(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+  return date.toLocaleString(undefined, {
+    month: "short",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
 }
 
 function DockReviewItemDetail({
