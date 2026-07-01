@@ -1580,8 +1580,12 @@ Current extraction state:
 - Extracted composer draft controller hook: `useChannelComposerDraftController.ts`,
   covering draft/assets/mention/slash picker state, composer busy/send state, pending
   send preview state, composer refs, attachment preview URL cleanup, and composer feedback
-  timeout lifecycle. `WorkspaceClientView.tsx` still owns `sendMessage`, run guidance
-  actions, pending-send resolution, and channel-switch snapshot orchestration.
+  timeout lifecycle.
+- Extracted composer action controller hook: `useChannelComposerActionsController.ts`,
+  covering normal message sends, slash-command task creation, queued run guidance,
+  guidance cancel/promote/edit actions, and composer submit routing. `WorkspaceClientView.tsx`
+  still owns composer input parsing, upload/drop/paste/link-preview capture, pending-send
+  resolution, feed scroll/virtualizer state, and channel-switch snapshot orchestration.
 - Extracted message feed module: `ChannelMessageFeed.tsx`, covering feed item types,
   retain/signature helpers, the `useChannelMessageFeed` virtualizer/scroll hook,
   pending-send / `Thinking...` continuity, older-message loading, anchor retention, and
