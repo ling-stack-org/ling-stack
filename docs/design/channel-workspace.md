@@ -1586,6 +1586,11 @@ Current extraction state:
   guidance cancel/promote/edit actions, and composer submit routing. `WorkspaceClientView.tsx`
   still owns composer input parsing, upload/drop/paste/link-preview capture, pending-send
   resolution, feed scroll/virtualizer state, and channel-switch snapshot orchestration.
+- Extracted thread reply controller hook: `useChannelThreadReplyController.ts`,
+  covering active topic selection, reply draft/pending/error state, reply sends, topic
+  close behavior, and channel-switch snapshot restore data. `channelMentionText.ts`
+  centralizes `@teammate` text matching used by composer draft updates, message sends,
+  and topic replies.
 - Extracted message feed module: `ChannelMessageFeed.tsx`, covering feed item types,
   retain/signature helpers, the `useChannelMessageFeed` virtualizer/scroll hook,
   pending-send / `Thinking...` continuity, older-message loading, anchor retention, and

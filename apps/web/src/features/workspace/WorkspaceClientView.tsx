@@ -244,6 +244,8 @@ import { useChannelActivityController } from "./useChannelActivityController.js"
 import { useChannelWorkThreadsController } from "./useChannelWorkThreadsController.js";
 import { useChannelComposerDraftController, type PendingLinkPreviewItem } from "./useChannelComposerDraftController.js";
 import { useChannelComposerActionsController } from "./useChannelComposerActionsController.js";
+import { findMentionsInText, mentionTokenExistsInText, mergeMentions } from "./channelMentionText.js";
+import { useChannelThreadReplyController, type ChannelThreadReplySnapshot } from "./useChannelThreadReplyController.js";
 
 type ChannelSidePanelView = "context" | "settings" | "task";
 type ChannelDrawerRootView = Extract<ChannelSidePanelView, "context">;
@@ -277,9 +279,7 @@ interface ChannelComposerSnapshot {
   readonly messageMentions: readonly ChannelMention[];
   readonly sendState: ChannelComposerSendState;
   readonly sendError: string;
-  readonly activeThreadId: string;
-  readonly threadReplyDraft: string;
-  readonly threadReplyError: string;
+  readonly threadReply: ChannelThreadReplySnapshot;
 }
 
 interface MessageFeedShortcutEvent {
@@ -944,10 +944,6 @@ export function WorkspaceClientView({
   const [conversationBlockFeedback, setConversationBlockFeedback] = useState<ChannelComposerInlineFeedback | undefined>();
   const [conversationBackgroundToast, setConversationBackgroundToast] = useState<ChannelComposerInlineFeedback | undefined>();
   const [conversationBlockActionMenu, setConversationBlockActionMenu] = useState<ConversationBlockActionMenuState | undefined>();
-  const [activeThreadId, setActiveThreadId] = useState("");
-  const [threadReplyDraft, setThreadReplyDraft] = useState("");
-  const [threadReplyPending, setThreadReplyPending] = useState(false);
-  const [threadReplyError, setThreadReplyError] = useState("");
   const [pendingChannelTeammateId, setPendingChannelTeammateId] = useState("");
   const [pendingChannelCouncilId, setPendingChannelCouncilId] = useState("");
   const [channelNotificationLevel, setChannelNotificationLevel] = useState<ChannelNotificationLevel>("mentions");
@@ -1845,14 +1841,35 @@ export function WorkspaceClientView({
     onBackgroundToast: showConversationBackgroundToast,
     onLoadOlder: onLoadOlderChannelMessages,
   });
-  const activeThreadRoot = useMemo(
-    () => channelMessages.find((message) => message.id === activeThreadId),
-    [activeThreadId, channelMessages],
+  const allTeammateOptions = useMemo(
+    () => [
+      ...teammateTemplates.map((template) => ({ id: template.id, label: template.name, kind: "ai-teammate" as const })),
+      ...localTeammates
+        .filter((teammate) => !teammate.disabled)
+        .map((teammate) => ({ id: teammate.id, label: teammate.displayName, kind: "ai-teammate" as const })),
+    ],
+    [localTeammates, teammateTemplates],
   );
-  const activeThreadMessages = useMemo(
-    () => activeThreadId ? channelMessages.filter((message) => message.threadId === activeThreadId) : [],
-    [activeThreadId, channelMessages],
+  const activeLocalTeammates = useMemo(
+    () => localTeammates.filter((teammate) => !teammate.disabled),
+    [localTeammates],
   );
+  const channelTeammateIds = useMemo(
+    () => new Set(channelTeammateMemberships.map((membership) => membership.teammateId)),
+    [channelTeammateMemberships],
+  );
+  const teammateOptions = useMemo(
+    () => [
+      ...allTeammateOptions.filter((option) => channelTeammateIds.has(option.id)),
+      ...allTeammateOptions.filter((option) => !channelTeammateIds.has(option.id)),
+    ],
+    [allTeammateOptions, channelTeammateIds],
+  );
+  const threadReplyController = useChannelThreadReplyController({
+    channelMessages,
+    teammateOptions,
+    onSendMessage,
+  });
   const executionProposalsByMessageId = useMemo(() => {
     const proposalsByMessageId = new Map<string, ChannelExecutionProposal[]>();
     for (const proposal of channelExecutionProposals) {
@@ -1878,9 +1895,7 @@ export function WorkspaceClientView({
       messageMentions,
       sendState,
       sendError,
-      activeThreadId,
-      threadReplyDraft,
-      threadReplyError,
+      threadReply: threadReplyController.snapshot,
     };
   }
 
@@ -1892,9 +1907,11 @@ export function WorkspaceClientView({
       messageMentions: [],
       sendState: "idle",
       sendError: "",
-      activeThreadId: "",
-      threadReplyDraft: "",
-      threadReplyError: "",
+      threadReply: {
+        activeThreadId: "",
+        draft: "",
+        error: "",
+      },
     };
   }
 
@@ -1905,9 +1922,7 @@ export function WorkspaceClientView({
     setMessageMentions(snapshot.messageMentions);
     setSendState(snapshot.sendState);
     setSendError(snapshot.sendError);
-    setActiveThreadId(snapshot.activeThreadId);
-    setThreadReplyDraft(snapshot.threadReplyDraft);
-    setThreadReplyError(snapshot.threadReplyError);
+    threadReplyController.restoreSnapshot(snapshot.threadReply);
     setMentionPicker(undefined);
     setMentionActiveIndex(0);
     autoPreviewUrlsRef.current = new Set(snapshot.pendingLinkPreviews.map((item) => item.url));
@@ -2295,11 +2310,6 @@ export function WorkspaceClientView({
     revealReviewInConversation();
   }
 
-  function openThreadForMessage(message: ChannelMessage): void {
-    setActiveThreadId(message.threadId ?? message.id);
-    setThreadReplyError("");
-  }
-
   function updateChannelNotificationLevel(level: ChannelNotificationLevel): void {
     setChannelNotificationLevel(level);
     clearSavedChannelNotificationLevel(cwd, selectedChannelId);
@@ -2597,30 +2607,6 @@ export function WorkspaceClientView({
     }
   }
 
-  const allTeammateOptions = useMemo(
-    () => [
-      ...teammateTemplates.map((template) => ({ id: template.id, label: template.name, kind: "ai-teammate" as const })),
-      ...localTeammates
-        .filter((teammate) => !teammate.disabled)
-        .map((teammate) => ({ id: teammate.id, label: teammate.displayName, kind: "ai-teammate" as const })),
-    ],
-    [localTeammates, teammateTemplates],
-  );
-  const activeLocalTeammates = useMemo(
-    () => localTeammates.filter((teammate) => !teammate.disabled),
-    [localTeammates],
-  );
-  const channelTeammateIds = useMemo(
-    () => new Set(channelTeammateMemberships.map((membership) => membership.teammateId)),
-    [channelTeammateMemberships],
-  );
-  const teammateOptions = useMemo(
-    () => [
-      ...allTeammateOptions.filter((option) => channelTeammateIds.has(option.id)),
-      ...allTeammateOptions.filter((option) => !channelTeammateIds.has(option.id)),
-    ],
-    [allTeammateOptions, channelTeammateIds],
-  );
   const mentionPickerOptions = useMemo(
     () => {
       if (!mentionPicker) {
@@ -3230,33 +3216,6 @@ export function WorkspaceClientView({
     composerResizeDragRef.current = undefined;
   }
 
-  async function sendThreadReply(): Promise<void> {
-    const body = threadReplyDraft.trim();
-    if (!activeThreadId || !body || threadReplyPending) {
-      return;
-    }
-    const mentions = findMentionsInText(body, teammateOptions);
-    const shouldRequestAi = mentions.some((mention) => mention.kind === "ai-teammate");
-    setThreadReplyPending(true);
-    setThreadReplyError("");
-    try {
-      await onSendMessage({
-        threadId: activeThreadId,
-        body,
-        mentions,
-        attachmentIds: [],
-        linkPreviewIds: [],
-        fileRefs: [],
-        requestAiReply: shouldRequestAi,
-      });
-      setThreadReplyDraft("");
-    } catch (error) {
-      setThreadReplyError(error instanceof Error ? error.message : String(error));
-    } finally {
-      setThreadReplyPending(false);
-    }
-  }
-
   function removePendingAttachment(localId: string): void {
     setPendingAttachments((current) => {
       const removed = current.find((item) => item.localId === localId);
@@ -3456,7 +3415,7 @@ export function WorkspaceClientView({
     onOpenApprovalDetail: openApprovalDetail,
     onOpenContextSummaryInConversationDetail: openContextSummaryInConversationDetail,
     onOpenRun: openRunInPanel,
-    onOpenThreadForMessage: openThreadForMessage,
+    onOpenThreadForMessage: threadReplyController.openThreadForMessage,
     onOrchestrateWorkflow,
     onRejectDecision,
     onRetryWorkflowStep,
@@ -4654,26 +4613,19 @@ export function WorkspaceClientView({
           ) : undefined}
           conversationDetailOverlayNode={conversationDetailOverlayNode}
           composerNode={channelComposer}
-          threadReply={activeThreadRoot ? {
+          threadReply={threadReplyController.activeThreadRoot ? {
             cwd,
-            rootMessage: activeThreadRoot,
-            replies: activeThreadMessages,
+            rootMessage: threadReplyController.activeThreadRoot,
+            replies: threadReplyController.activeThreadMessages,
             teammates: teammateOptions,
             memoryById,
             usedMemoryEvents,
-            draft: threadReplyDraft,
-            pending: threadReplyPending,
-            error: threadReplyError,
-            onDraftChange: (value) => {
-              setThreadReplyDraft(value);
-              setThreadReplyError("");
-            },
-            onSend: () => void sendThreadReply(),
-            onClose: () => {
-              setActiveThreadId("");
-              setThreadReplyDraft("");
-              setThreadReplyError("");
-            },
+            draft: threadReplyController.draft,
+            pending: threadReplyController.pending,
+            error: threadReplyController.error,
+            onDraftChange: threadReplyController.changeDraft,
+            onSend: () => void threadReplyController.sendReply(),
+            onClose: threadReplyController.closeThread,
             messageAuthorLabel: (message, threadTeammates) =>
               messageAuthorLabel(message, threadTeammates, t("Deleted teammate"), t("You"), allLocalTeammateById),
           } : undefined}
@@ -4758,10 +4710,6 @@ export function WorkspaceClientView({
       </div>
     </div>
   );
-}
-
-function uniqueStrings(values: readonly string[]): readonly string[] {
-  return [...new Set(values)];
 }
 
 function sameStringList(left: readonly string[], right: readonly string[]): boolean {
@@ -4860,38 +4808,6 @@ function teammateLabel(
     return teammate.displayName;
   }
   return teammates.find((teammate) => teammate.id === teammateId)?.label ?? fallback;
-}
-
-function findMentionsInText(body: string, teammates: readonly ChannelMention[]): readonly ChannelMention[] {
-  return teammates.filter((teammate) => mentionTokenExistsInText(body, teammate));
-}
-
-function mergeMentions(
-  current: readonly ChannelMention[],
-  detected: readonly ChannelMention[],
-): readonly ChannelMention[] {
-  const seen = new Set<string>();
-  return [...current, ...detected].filter((mention) => {
-    if (seen.has(mention.id)) {
-      return false;
-    }
-    seen.add(mention.id);
-    return true;
-  });
-}
-
-function mentionTokenExistsInText(body: string, mention: ChannelMention): boolean {
-  return mentionAliases(mention).some((token) => {
-    const escaped = escapeRegExp(token.trim());
-    if (!escaped) {
-      return false;
-    }
-    return new RegExp(`(^|\\s)@${escaped}(?=$|\\s|[.,!?;:，。！？；：)])`, "i").test(body);
-  });
-}
-
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function readSavedChannelNotificationLevel(cwd: string, channelId: string): ChannelNotificationLevel | undefined {
@@ -5000,19 +4916,6 @@ function composerSlashCommandTargetLabel(intent: Exclude<ComposerSlashIntent, { 
     return `@${intent.teammateLabel}`;
   }
   return t("Channel");
-}
-
-function normalizeComposerToken(value: string): string {
-  return value.toLowerCase().replace(/[^a-z0-9_.-]+/g, "-").replace(/^-+|-+$/g, "");
-}
-
-function mentionAliases(mention: Pick<ChannelMention, "id" | "label">): readonly string[] {
-  return uniqueStrings([
-    mention.label.trim(),
-    mention.id.trim(),
-    normalizeComposerToken(mention.label),
-    normalizeComposerToken(mention.id),
-  ]).filter(Boolean);
 }
 
 function chooseMostSpecificMentionPicker(candidates: readonly (ActiveMentionPicker | undefined)[]): ActiveMentionPicker | undefined {

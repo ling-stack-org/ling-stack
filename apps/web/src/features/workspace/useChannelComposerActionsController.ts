@@ -29,6 +29,7 @@ import type {
 import type { ChannelComposerSendState } from "./ChannelComposer.js";
 import type { PendingChannelSendPreview } from "./ChannelMessageFeed.js";
 import type { PendingLinkPreviewItem } from "./useChannelComposerDraftController.js";
+import { findMentionsInText, mergeMentions } from "./channelMentionText.js";
 
 interface ChannelComposerActionsInput {
   readonly cwd: string;
@@ -678,55 +679,6 @@ function channelRunInterventionModeLabel(
   t: Translate,
 ): string {
   return mode === "interrupt_redirect" ? t("Stop and redirect") : t("Queue guidance");
-}
-
-function findMentionsInText(body: string, teammates: readonly ChannelMention[]): readonly ChannelMention[] {
-  return teammates.filter((teammate) => mentionTokenExistsInText(body, teammate));
-}
-
-function mergeMentions(
-  current: readonly ChannelMention[],
-  detected: readonly ChannelMention[],
-): readonly ChannelMention[] {
-  const seen = new Set<string>();
-  return [...current, ...detected].filter((mention) => {
-    if (seen.has(mention.id)) {
-      return false;
-    }
-    seen.add(mention.id);
-    return true;
-  });
-}
-
-function mentionTokenExistsInText(body: string, mention: ChannelMention): boolean {
-  return mentionAliases(mention).some((token) => {
-    const escaped = escapeRegExp(token.trim());
-    if (!escaped) {
-      return false;
-    }
-    return new RegExp(`(^|\\s)@${escaped}(?=$|\\s|[.,!?;:，。！？；：)])`, "i").test(body);
-  });
-}
-
-function mentionAliases(mention: Pick<ChannelMention, "id" | "label">): readonly string[] {
-  return uniqueStrings([
-    mention.label.trim(),
-    mention.id.trim(),
-    normalizeComposerToken(mention.label),
-    normalizeComposerToken(mention.id),
-  ]).filter(Boolean);
-}
-
-function normalizeComposerToken(value: string): string {
-  return value.toLowerCase().replace(/[^a-z0-9_.-]+/g, "-").replace(/^-+|-+$/g, "");
-}
-
-function uniqueStrings(items: readonly string[]): readonly string[] {
-  return [...new Set(items)];
-}
-
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function extractUrls(value: string): string[] {
