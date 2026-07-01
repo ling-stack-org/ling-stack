@@ -12766,10 +12766,10 @@ function applyMockProposedPlanAction(
       return { plan, workflowId: plan.acceptedWorkflowId, workflowStepId: plan.acceptedWorkflowStepId };
     }
     const workflowId = `workflow_proposed_plan_${state.channelWorkflows.length + 1}`;
-    const workflowStepId = `workflow_step_proposed_plan_${state.channelWorkflowSteps.length + 1}`;
     const channelId = thread.channelId ?? "channel_engineering";
     const workflowTitle = readOptionalMockString(body, "workflowTitle") ?? plan.title;
-    const workflowSteps = readOptionalMockStringArray(body, "workflowSteps") ?? [plan.bodyMarkdown];
+    const workflowStepPreviews = readOptionalMockWorkflowStepPreviews(body, "workflowStepPreviews");
+    const workflowSteps = readOptionalMockStringArray(body, "workflowSteps") ?? workflowStepPreviews?.map((preview) => preview.title) ?? [plan.bodyMarkdown];
     state.channelWorkflows.unshift({
       id: workflowId,
       workspaceId: "workspace_default",
@@ -12782,31 +12782,36 @@ function applyMockProposedPlanAction(
       createdAt: now,
       updatedAt: now,
     });
-    state.channelWorkflowSteps.unshift({
-      id: workflowStepId,
-      workspaceId: "workspace_default",
-      channelId,
-      workflowId,
-      position: 1,
-      title: workflowSteps.length > 1 ? workflowSteps[0] : `Implement ${workflowTitle}`,
-      prompt: `${workflowSteps.join("\n")}\n\nSource proposed plan: ${plan.id}`,
-      toParticipantId: readOptionalMockString(body, "toParticipantId") ?? "local-user",
-      toParticipantLabel: readOptionalMockString(body, "toParticipantLabel") ?? "Local user",
-      status: "queued",
-      metadata: { sourceMessageId: plan.sourceMessageId },
-      createdAt: now,
-      updatedAt: now,
+    const workflowStepRecords = workflowSteps.map((step, index) => {
+      const preview = workflowStepPreviews?.[index];
+      return {
+        id: `workflow_step_proposed_plan_${state.channelWorkflowSteps.length + index + 1}`,
+        workspaceId: "workspace_default",
+        channelId,
+        workflowId,
+        position: index + 1,
+        title: workflowSteps.length > 1 ? step : `Implement ${workflowTitle}`,
+        prompt: `${step}\n\nSource proposed plan: ${plan.id}`,
+        toParticipantId: preview?.ownerId ?? readOptionalMockString(body, "toParticipantId") ?? "local-user",
+        toParticipantLabel: preview?.ownerLabel ?? readOptionalMockString(body, "toParticipantLabel") ?? "Unassigned",
+        status: "queued",
+        metadata: { sourceMessageId: plan.sourceMessageId },
+        createdAt: now,
+        updatedAt: now,
+      };
     });
+    state.channelWorkflowSteps.unshift(...workflowStepRecords);
+    const firstWorkflowStep = workflowStepRecords[0];
     return {
       plan: patchMockProposedPlan(state, plan, {
         status: "accepted",
         acceptedAt: plan.acceptedAt ?? now,
         convertedAt: now,
         acceptedWorkflowId: workflowId,
-        acceptedWorkflowStepId: workflowStepId,
+        acceptedWorkflowStepId: firstWorkflowStep?.id,
       }),
       workflowId,
-      workflowStepId,
+      workflowStepId: firstWorkflowStep?.id,
     };
   }
   return { plan };
@@ -12850,6 +12855,33 @@ function readOptionalMockStringArray(record: Record<string, unknown>, key: strin
     .map((item) => typeof item === "string" ? item.trim() : "")
     .filter(Boolean);
   return items.length > 0 ? items : undefined;
+}
+
+function readOptionalMockWorkflowStepPreviews(
+  record: Record<string, unknown>,
+  key: string,
+): readonly { readonly title: string; readonly ownerId?: string; readonly ownerLabel?: string }[] | undefined {
+  const value = record[key];
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+  const previews = value
+    .map((item) => {
+      if (!isRecord(item)) {
+        return undefined;
+      }
+      const title = readOptionalMockString(item, "title");
+      if (!title) {
+        return undefined;
+      }
+      return {
+        title,
+        ownerId: readOptionalMockString(item, "ownerId"),
+        ownerLabel: readOptionalMockString(item, "ownerLabel"),
+      };
+    })
+    .filter((item): item is { readonly title: string; readonly ownerId?: string; readonly ownerLabel?: string } => Boolean(item));
+  return previews.length > 0 ? previews : undefined;
 }
 
 function readMockProposedPlanStatus(value: unknown): ProposedPlanArtifact["status"] | undefined {
