@@ -367,6 +367,13 @@
   border-radius: var(--radius-md);
 }
 
+.channel-left-drawer .sidebar-row-main > .teammate-avatar-image.compact,
+.channel-left-drawer .sidebar-row-main > .avatar-initial {
+  justify-self: center;
+  width: 22px;
+  height: 22px;
+}
+
 .channel-left-drawer .sidebar-row-tools {
   display: inline-flex;
   align-items: center;
