@@ -11,7 +11,7 @@ export interface WorkflowConversionDraft {
   readonly workflowSteps?: readonly string[];
 }
 
-export interface WorkflowConversionPreviewDialogProps {
+export interface WorkflowConversionPreviewDrawerProps {
   readonly plan: ProposedPlanArtifact;
   readonly cwd: string;
   readonly busy: boolean;
@@ -19,13 +19,15 @@ export interface WorkflowConversionPreviewDialogProps {
   readonly onClose: () => void;
 }
 
-export function WorkflowConversionPreviewDialog({
+export type WorkflowConversionPreviewDialogProps = WorkflowConversionPreviewDrawerProps;
+
+export function WorkflowConversionPreviewDrawer({
   plan,
   cwd,
   busy,
   onConfirm,
   onClose,
-}: WorkflowConversionPreviewDialogProps): JSX.Element {
+}: WorkflowConversionPreviewDrawerProps): JSX.Element {
   const { t } = useI18n();
   const steps = deriveWorkflowPreviewSteps(plan.bodyMarkdown);
   const [editing, setEditing] = useState(false);
@@ -107,6 +109,8 @@ export function WorkflowConversionPreviewDialog({
     </div>
   );
 }
+
+export const WorkflowConversionPreviewDialog = WorkflowConversionPreviewDrawer;
 
 function parseWorkflowDraftSteps(value: string): readonly string[] {
   return value

@@ -50,8 +50,6 @@ import {
   getLingThreadEvidence,
   getLingThreadGoal,
   getLingTrace,
-  listChannelProposedPlanArtifacts,
-  listProposedPlanArtifacts,
   listLingThreadTurns,
   listLingTraces,
   patchLingThreadGoal,
@@ -137,7 +135,7 @@ import {
   type ChannelGitStatusLoadState,
 } from "./ChannelEnvironmentSummary.js";
 import { ChannelRenameDialog } from "./ChannelRenameDialog.js";
-import { WorkflowConversionPreviewDialog, type WorkflowConversionDraft } from "./WorkflowConversionPreviewDialog.js";
+import { WorkflowConversionPreviewDrawer, type WorkflowConversionDraft } from "./WorkflowConversionPreviewDialog.js";
 import { ChannelGovernanceNotificationsPopover } from "./ChannelGovernanceNotificationsPopover.js";
 import {
   NewTaskPanel,
@@ -154,6 +152,7 @@ import {
   ProgressPopover,
 } from "./ChannelProgressPanels.js";
 import { useChannelProgressSummary } from "./ChannelProgressSummary.js";
+import { useChannelPlanHistory } from "./useChannelPlanHistory.js";
 import {
   ChannelInspector,
   type ChannelInspectorMode,
@@ -856,11 +855,7 @@ export function WorkspaceClientView({
   const [channelGoalBusy, setChannelGoalBusy] = useState(false);
   const [channelGoalExpanded, setChannelGoalExpanded] = useState(false);
   const [channelGoalError, setChannelGoalError] = useState("");
-  const [proposedPlanArtifactsById, setProposedPlanArtifactsById] = useState<ReadonlyMap<string, ProposedPlanArtifact>>(new Map());
   const [proposedPlanActionBusyId, setProposedPlanActionBusyId] = useState("");
-  const [proposedPlanHistoryLoading, setProposedPlanHistoryLoading] = useState(false);
-  const [proposedPlanHistoryError, setProposedPlanHistoryError] = useState("");
-  const [proposedPlanHistoryRefreshKey, setProposedPlanHistoryRefreshKey] = useState(0);
   const [workflowConversionPreviewPlan, setWorkflowConversionPreviewPlan] = useState<ProposedPlanArtifact | undefined>();
   const [pendingChannelTeammateId, setPendingChannelTeammateId] = useState("");
   const [pendingChannelCouncilId, setPendingChannelCouncilId] = useState("");
@@ -2615,52 +2610,18 @@ export function WorkspaceClientView({
     };
   }, [cwd, channelPlanModeThreadId]);
 
-  useEffect(() => {
-    const workspaceCwd = cwd.trim();
-    const threadId = channelPlanModeThreadId;
-    if (!workspaceCwd || (!threadId && !selectedChannelId)) {
-      setProposedPlanArtifactsById(new Map());
-      setProposedPlanHistoryLoading(false);
-      setProposedPlanHistoryError("");
-      return;
-    }
-    let cancelled = false;
-    setProposedPlanHistoryLoading(true);
-    setProposedPlanHistoryError("");
-    const loadPlans = selectedChannelId
-      ? listChannelProposedPlanArtifacts(workspaceCwd, selectedChannelId, { scope: "channel", limit: 200 })
-      : listProposedPlanArtifacts(workspaceCwd, threadId, { limit: 100 });
-    void loadPlans
-      .then((response) => {
-        if (cancelled) {
-          return;
-        }
-        setProposedPlanArtifactsById(new Map(response.plans.map((plan) => [plan.id, plan])));
-      })
-      .catch((error: unknown) => {
-        if (!cancelled) {
-          setProposedPlanArtifactsById(new Map());
-          setProposedPlanHistoryError(error instanceof Error ? error.message : String(error));
-        }
-      })
-      .finally(() => {
-        if (!cancelled) {
-          setProposedPlanHistoryLoading(false);
-        }
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [cwd, channelPlanModeThreadId, proposedPlanHistoryRefreshKey, selectedChannelId]);
-
-  const proposedPlanArtifacts = useMemo(
-    () => [...proposedPlanArtifactsById.values()].sort((left, right) =>
-      right.updatedAt.localeCompare(left.updatedAt) ||
-      right.createdAt.localeCompare(left.createdAt) ||
-      right.id.localeCompare(left.id)
-    ),
-    [proposedPlanArtifactsById],
-  );
+  const {
+    proposedPlanArtifacts,
+    proposedPlanArtifactsById,
+    proposedPlanHistoryLoading,
+    proposedPlanHistoryError,
+    refreshProposedPlanHistory,
+    rememberProposedPlanArtifact,
+  } = useChannelPlanHistory({
+    cwd,
+    threadId: channelPlanModeThreadId,
+    channelId: selectedChannelId,
+  });
 
   async function setChannelPlanMode(active: boolean): Promise<void> {
     let threadId = channelPlanModeThreadId;
@@ -2865,18 +2826,6 @@ export function WorkspaceClientView({
 
   function handleArchiveProposedPlan(plan: ProposedPlanArtifact): void {
     void runProposedPlanAction(plan, "archive");
-  }
-
-  function refreshProposedPlanHistory(): void {
-    setProposedPlanHistoryRefreshKey((key) => key + 1);
-  }
-
-  function rememberProposedPlanArtifact(plan: ProposedPlanArtifact): void {
-    setProposedPlanArtifactsById((current) => {
-      const next = new Map(current);
-      next.set(plan.id, plan);
-      return next;
-    });
   }
 
   async function runProposedPlanAction(plan: ProposedPlanArtifact, action: "accept" | "refine" | "save" | "convert" | "archive", actionInput: WorkflowConversionDraft = {}): Promise<void> {
@@ -4149,7 +4098,7 @@ export function WorkspaceClientView({
       ) : null}
 
       {workflowConversionPreviewPlan ? (
-        <WorkflowConversionPreviewDialog
+        <WorkflowConversionPreviewDrawer
           plan={workflowConversionPreviewPlan}
           cwd={cwd.trim()}
           busy={proposedPlanActionBusyId === workflowConversionPreviewPlan.id}
