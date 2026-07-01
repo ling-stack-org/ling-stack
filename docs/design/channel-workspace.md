@@ -1583,9 +1583,13 @@ Current extraction state:
   timeout lifecycle.
 - Extracted composer action controller hook: `useChannelComposerActionsController.ts`,
   covering normal message sends, slash-command task creation, queued run guidance,
-  guidance cancel/promote/edit actions, and composer submit routing. `WorkspaceClientView.tsx`
-  still owns composer input parsing, upload/drop/paste/link-preview capture, pending-send
-  resolution, feed scroll/virtualizer state, and channel-switch snapshot orchestration.
+  guidance cancel/promote/edit actions, and composer submit routing.
+- Extracted composer input controller hook: `useChannelComposerInputController.ts`,
+  covering mention/slash picker matching, composer key handling, paste/drop attachment
+  capture, upload state transitions, automatic link-preview capture, composer input
+  tokenization, file-ref derivation, and sendability/asset-pending flags.
+  `WorkspaceClientView.tsx` still owns pending-send resolution, feed scroll/virtualizer
+  state, channel-switch snapshot orchestration, and the optional composer resize handle.
 - Extracted thread reply controller hook: `useChannelThreadReplyController.ts`,
   covering active topic selection, reply draft/pending/error state, reply sends, topic
   close behavior, and channel-switch snapshot restore data. `channelMentionText.ts`

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type ClipboardEvent, type DragEvent, type FormEvent, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode, type UIEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode, type UIEvent } from "react";
 import {
   ArrowDown,
   ArrowLeft,
@@ -101,16 +101,6 @@ import {
 import { TeammateAvatarView } from "../teammates/TeammateAvatarView.js";
 import {
   StatusBadge,
-  composerWorkspaceFileParts,
-  createAttachmentPreviewUrl,
-  createLocalComposerAssetId,
-  filterSlashCommandPickerOptions,
-  findActiveSlashCommand,
-  insertSlashCommandToken,
-  parseComposerInputParts,
-  parseComposerSlashIntent,
-  revokePendingAttachmentPreview,
-  type ComposerSlashIntent,
   type PendingAttachmentItem,
 } from "../../shared/components/index.js";
 import {
@@ -226,7 +216,7 @@ import {
   isLingAgentTeammate,
   type ChannelNotificationLevel,
 } from "./ChannelSettingsPanels.js";
-import { ChannelComposer, type ActiveMentionPicker, type ChannelComposerInlineFeedback, type ChannelComposerInlineFeedbackTone, type ChannelComposerSendState } from "./ChannelComposer.js";
+import { ChannelComposer, type ChannelComposerInlineFeedback, type ChannelComposerInlineFeedbackTone, type ChannelComposerSendState } from "./ChannelComposer.js";
 import { ChannelActivityWorkspace } from "./ChannelActivityWorkspace.js";
 import { useChannelRightDockController } from "./useChannelRightDockController.js";
 import {
@@ -244,8 +234,8 @@ import { useChannelActivityController } from "./useChannelActivityController.js"
 import { useChannelWorkThreadsController } from "./useChannelWorkThreadsController.js";
 import { useChannelComposerDraftController, type PendingLinkPreviewItem } from "./useChannelComposerDraftController.js";
 import { useChannelComposerActionsController } from "./useChannelComposerActionsController.js";
-import { findMentionsInText, mentionTokenExistsInText, mergeMentions } from "./channelMentionText.js";
 import { useChannelThreadReplyController, type ChannelThreadReplySnapshot } from "./useChannelThreadReplyController.js";
+import { useChannelComposerInputController } from "./useChannelComposerInputController.js";
 
 type ChannelSidePanelView = "context" | "settings" | "task";
 type ChannelDrawerRootView = Extract<ChannelSidePanelView, "context">;
@@ -2607,27 +2597,63 @@ export function WorkspaceClientView({
     }
   }
 
-  const mentionPickerOptions = useMemo(
-    () => {
-      if (!mentionPicker) {
-        return [];
-      }
-      const query = mentionPicker.query.trim().toLowerCase();
-      return teammateOptions
-        .filter((option) => {
-          if (!query) {
-            return true;
-          }
-          return option.label.toLowerCase().includes(query) || option.id.toLowerCase().includes(query);
-        })
-        .slice(0, 6);
-    },
-    [mentionPicker, teammateOptions],
-  );
-  const slashCommandPickerOptions = useMemo(
-    () => filterSlashCommandPickerOptions(slashCommands, slashPicker),
-    [slashCommands, slashPicker],
-  );
+  const {
+    mentionPickerOptions,
+    slashCommandPickerOptions,
+    readyLinkPreviewIds,
+    composerInputParts,
+    composerFileRefs,
+    composerSlashIntent,
+    composerSlashCommandActive,
+    composerSlashTargetLabel,
+    composerHasSendableContent,
+    assetOperationPending,
+    pendingMessageAssetsVisible,
+    focusComposerAt,
+    updateMentionPicker,
+    commitMention,
+    commitSlashCommand,
+    insertMentionTrigger,
+    handleComposerTextChange,
+    handleComposerKeyDown,
+    handleComposerPaste,
+    handleComposerDragOver,
+    handleComposerDragLeave,
+    handleComposerDrop,
+    attachFiles,
+    removePendingAttachment,
+  } = useChannelComposerInputController({
+    cwd,
+    selectedChannelId,
+    activeConversationRun,
+    messageDraft,
+    setMessageDraft,
+    pendingAttachments,
+    setPendingAttachments,
+    pendingLinkPreviews,
+    setPendingLinkPreviews,
+    setMessageMentions,
+    mentionPicker,
+    setMentionPicker,
+    mentionActiveIndex,
+    setMentionActiveIndex,
+    slashPicker,
+    setSlashPicker,
+    slashActiveIndex,
+    setSlashActiveIndex,
+    setComposerDragActive,
+    setComposerBusy,
+    setSendState,
+    setSendError,
+    composerInputRef,
+    autoPreviewUrlsRef,
+    attachmentPreviewUrlsRef,
+    teammateOptions,
+    slashCommands,
+    onUploadAttachments,
+    onCreateLinkPreview,
+    t,
+  });
   const localTeammateById = useMemo(
     () => new Map(activeLocalTeammates.map((teammate) => [teammate.id, teammate])),
     [activeLocalTeammates],
@@ -2710,276 +2736,6 @@ export function WorkspaceClientView({
     ),
     [channelEffectiveCouncil],
   );
-
-  function updateMentionPicker(value: string, caret: number): void {
-    const activeMention = findActiveMention(value, caret);
-    setMentionPicker(activeMention);
-    setMentionActiveIndex(0);
-    setSlashPicker(activeMention ? undefined : findActiveSlashCommand(value, caret));
-    setSlashActiveIndex(0);
-  }
-
-  function focusComposerAt(caret: number): void {
-    const focus = (): void => {
-      composerInputRef.current?.focusAt(caret);
-    };
-    focus();
-    if (typeof globalThis.requestAnimationFrame === "function") {
-      globalThis.requestAnimationFrame(focus);
-      return;
-    }
-    globalThis.setTimeout(focus, 0);
-  }
-
-  function commitMention(option: ChannelMention): void {
-    const composer = composerInputRef.current;
-    const liveValue = messageDraft;
-    const liveCaret = Math.min(composer?.readSelectionStart() ?? liveValue.length, liveValue.length);
-    const livePicker = findActiveMention(liveValue, liveCaret);
-    const endOfDraftPicker = findActiveMention(liveValue, liveValue.length);
-    const picker = chooseMostSpecificMentionPicker([mentionPicker, livePicker, endOfDraftPicker]);
-    const inserted = insertMentionToken(liveValue, picker, option.label);
-    setMessageDraft(inserted.value);
-    setSendState("idle");
-    setSendError("");
-    setMessageMentions((current) => current.some((mention) => mention.id === option.id) ? current : [...current, option]);
-    setMentionPicker(undefined);
-    setMentionActiveIndex(0);
-    setSlashPicker(undefined);
-    setSlashActiveIndex(0);
-    focusComposerAt(inserted.caret);
-  }
-
-  function commitSlashCommand(option: ComposerSlashCommandOption): void {
-    const composer = composerInputRef.current;
-    const liveValue = messageDraft;
-    const liveCaret = Math.min(composer?.readSelectionStart() ?? liveValue.length, liveValue.length);
-    const picker = slashPicker ?? findActiveSlashCommand(liveValue, liveCaret) ?? findActiveSlashCommand(liveValue, liveValue.length);
-    const inserted = insertSlashCommandToken(liveValue, picker, option.id);
-    setMessageDraft(inserted.value);
-    setSendState("idle");
-    setSendError("");
-    setSlashPicker(undefined);
-    setSlashActiveIndex(0);
-    focusComposerAt(inserted.caret);
-  }
-
-  function insertMentionTrigger(): void {
-    const composer = composerInputRef.current;
-    const start = composer?.readSelectionStart() ?? messageDraft.length;
-    const end = composer?.readSelectionEnd() ?? start;
-    const before = messageDraft.slice(0, start);
-    const after = messageDraft.slice(end);
-    const insert = before.endsWith("@") ? "" : before.length === 0 || /\s$/.test(before) ? "@" : " @";
-    const nextDraft = `${before}${insert}${after}`;
-    const nextCursor = before.length + insert.length;
-    setMessageDraft(nextDraft);
-    updateMentionPicker(nextDraft, nextCursor);
-    globalThis.requestAnimationFrame(() => {
-      composerInputRef.current?.focusAt(nextCursor);
-    });
-  }
-
-  function handleComposerTextChange(value: string, caret: number): void {
-    setMessageDraft(value);
-    setMessageMentions((current) => mergeMentions(
-      current.filter((mention) => mentionTokenExistsInText(value, mention)),
-      findMentionsInText(value, teammateOptions),
-    ));
-    setSendState("idle");
-    setSendError("");
-    updateMentionPicker(value, caret);
-  }
-
-  function handleComposerKeyDown(event: ReactKeyboardEvent<HTMLDivElement>): void {
-    if (mentionPicker && mentionPickerOptions.length > 0) {
-      if (event.key === "ArrowDown") {
-        event.preventDefault();
-        setMentionActiveIndex((current) => (current + 1) % mentionPickerOptions.length);
-        return;
-      }
-      if (event.key === "ArrowUp") {
-        event.preventDefault();
-        setMentionActiveIndex((current) => (current - 1 + mentionPickerOptions.length) % mentionPickerOptions.length);
-        return;
-      }
-      if (event.key === "Enter" || event.key === "Tab") {
-        event.preventDefault();
-        commitMention(mentionPickerOptions[Math.min(mentionActiveIndex, mentionPickerOptions.length - 1)]);
-        return;
-      }
-      if (event.key === "Escape") {
-        event.preventDefault();
-        setMentionPicker(undefined);
-        setMentionActiveIndex(0);
-      }
-      return;
-    }
-    if (slashPicker && slashCommandPickerOptions.length > 0) {
-      if (event.key === "ArrowDown") {
-        event.preventDefault();
-        setSlashActiveIndex((current) => (current + 1) % slashCommandPickerOptions.length);
-        return;
-      }
-      if (event.key === "ArrowUp") {
-        event.preventDefault();
-        setSlashActiveIndex((current) => (current - 1 + slashCommandPickerOptions.length) % slashCommandPickerOptions.length);
-        return;
-      }
-      if (event.key === "Enter" || event.key === "Tab") {
-        event.preventDefault();
-        commitSlashCommand(slashCommandPickerOptions[Math.min(slashActiveIndex, slashCommandPickerOptions.length - 1)]);
-        return;
-      }
-      if (event.key === "Escape") {
-        event.preventDefault();
-        setSlashPicker(undefined);
-        setSlashActiveIndex(0);
-      }
-      return;
-    }
-    if (!mentionPicker && !slashPicker) {
-      if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
-        event.preventDefault();
-        if (activeConversationRun) {
-          if (composerHasSendableContent) {
-            void submitChannelRunGuidanceFromDraft();
-          }
-          return;
-        }
-        void sendMessage();
-        return;
-      }
-      if (event.key === "Escape") {
-        setMentionPicker(undefined);
-        setSlashPicker(undefined);
-      }
-      return;
-    }
-    if (event.key === "Escape") {
-      event.preventDefault();
-      setMentionPicker(undefined);
-      setMentionActiveIndex(0);
-      setSlashPicker(undefined);
-      setSlashActiveIndex(0);
-    }
-  }
-
-  function handleComposerPaste(event: ClipboardEvent<HTMLDivElement>): void {
-    if (event.clipboardData.files.length === 0) {
-      return;
-    }
-    event.preventDefault();
-    void attachFiles(event.clipboardData.files);
-  }
-
-  function handleComposerDragOver(event: DragEvent<HTMLElement>): void {
-    if (!Array.from(event.dataTransfer.types).includes("Files")) {
-      return;
-    }
-    event.preventDefault();
-    event.dataTransfer.dropEffect = "copy";
-    setComposerDragActive(true);
-  }
-
-  function handleComposerDragLeave(event: DragEvent<HTMLElement>): void {
-    if (event.currentTarget.contains(event.relatedTarget as Node | null)) {
-      return;
-    }
-    setComposerDragActive(false);
-  }
-
-  function handleComposerDrop(event: DragEvent<HTMLElement>): void {
-    if (event.dataTransfer.files.length === 0) {
-      setComposerDragActive(false);
-      return;
-    }
-    event.preventDefault();
-    setComposerDragActive(false);
-    void attachFiles(event.dataTransfer.files);
-  }
-
-  async function attachFiles(files: FileList | readonly File[]): Promise<void> {
-    const selectedFiles = Array.from(files).slice(0, 10);
-    if (selectedFiles.length === 0) {
-      return;
-    }
-    const uploadItems = selectedFiles.map((file) => {
-      const previewUrl = createAttachmentPreviewUrl(file);
-      if (previewUrl) {
-        attachmentPreviewUrlsRef.current.add(previewUrl);
-      }
-      return {
-        localId: createLocalComposerAssetId("attachment"),
-        fileName: file.name,
-        sizeBytes: file.size,
-        state: "uploading" as const,
-        previewUrl,
-      };
-    });
-    setPendingAttachments((current) => [...current, ...uploadItems]);
-    setComposerBusy(true);
-    try {
-      const uploaded = await onUploadAttachments(selectedFiles);
-      const uploadedByLocalId = new Map(uploadItems.map((item, index) => [item.localId, uploaded[index]]));
-      setPendingAttachments((current) => current.map((item) => {
-        const attachment = uploadedByLocalId.get(item.localId);
-        if (attachment) {
-          return { ...item, state: "ready", attachment };
-        }
-        if (uploadedByLocalId.has(item.localId)) {
-          return { ...item, state: "failed", error: t("Upload failed") };
-        }
-        return item;
-      }));
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      setPendingAttachments((current) => current.map((item) =>
-        uploadItems.some((upload) => upload.localId === item.localId)
-          ? { ...item, state: "failed", error: message }
-          : item,
-      ));
-    } finally {
-      setComposerBusy(false);
-    }
-  }
-
-  async function addLinkPreview(rawUrl: string): Promise<void> {
-    const url = rawUrl.trim();
-    if (!url) {
-      return;
-    }
-    const localId = createLocalComposerAssetId("link");
-    setPendingLinkPreviews((current) => [
-      ...current.filter((item) => item.url !== url && item.preview?.normalizedUrl !== url && item.preview?.url !== url),
-      { localId, url, state: "uploading" },
-    ]);
-    setComposerBusy(true);
-    try {
-      const preview = await onCreateLinkPreview(url);
-      if (preview) {
-        setPendingLinkPreviews((current) => current.map((item) => item.localId === localId
-          ? {
-              ...item,
-              state: preview.status === "ready" ? "ready" : preview.status === "blocked" ? "blocked" : "failed",
-              preview,
-              error: preview.errorMessage,
-            }
-          : item));
-      } else {
-        setPendingLinkPreviews((current) => current.map((item) => item.localId === localId
-          ? { ...item, state: "failed", error: t("Preview failed") }
-          : item));
-      }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      setPendingLinkPreviews((current) => current.map((item) => item.localId === localId
-        ? { ...item, state: "failed", error: message }
-        : item));
-    } finally {
-      setComposerBusy(false);
-    }
-  }
 
   function showConversationBlockFeedback(tone: ChannelComposerInlineFeedbackTone, message: string): void {
     if (conversationBlockFeedbackTimeoutRef.current !== undefined) {
@@ -3216,36 +2972,6 @@ export function WorkspaceClientView({
     composerResizeDragRef.current = undefined;
   }
 
-  function removePendingAttachment(localId: string): void {
-    setPendingAttachments((current) => {
-      const removed = current.find((item) => item.localId === localId);
-      revokePendingAttachmentPreview(removed, (previewUrl) => attachmentPreviewUrlsRef.current.delete(previewUrl));
-      return current.filter((item) => item.localId !== localId);
-    });
-  }
-
-  useEffect(() => {
-    if (!selectedChannelId) {
-      return undefined;
-    }
-    const knownPreviewUrls = new Set(
-      pendingLinkPreviews.flatMap((item) => [
-        item.url,
-        item.preview?.url,
-        item.preview?.normalizedUrl,
-      ]).filter((item): item is string => Boolean(item)),
-    );
-    const nextUrl = extractUrls(messageDraft).find((url) => !knownPreviewUrls.has(url) && !autoPreviewUrlsRef.current.has(url));
-    if (!nextUrl) {
-      return undefined;
-    }
-    const timeoutId = globalThis.setTimeout(() => {
-      autoPreviewUrlsRef.current.add(nextUrl);
-      void addLinkPreview(nextUrl);
-    }, 450);
-    return () => globalThis.clearTimeout(timeoutId);
-  }, [messageDraft, pendingLinkPreviews, selectedChannelId]);
-
   useEffect(() => () => {
     if (conversationBlockFeedbackTimeoutRef.current !== undefined) {
       globalThis.clearTimeout(conversationBlockFeedbackTimeoutRef.current);
@@ -3259,39 +2985,6 @@ export function WorkspaceClientView({
     }
   }, []);
 
-  const readyAttachmentIds = pendingAttachments.flatMap((item) => item.attachment ? [item.attachment.id] : []);
-  const readyLinkPreviewIds = pendingLinkPreviews.flatMap((item) => item.preview ? [item.preview.id] : []);
-  const composerInputParts = parseComposerInputParts(messageDraft, {
-    cwd,
-    attachments: readyAttachmentIds.map((attachmentId) => ({ attachmentId })),
-    teammateMentions: teammateOptions.map((teammate) => ({ id: teammate.id, label: teammate.label })),
-    slashCommands,
-    linkPreviews: pendingLinkPreviews.map((item) => ({
-      url: item.url,
-      normalizedUrl: item.preview?.normalizedUrl,
-      title: item.preview?.title,
-      state: item.state,
-      error: item.error ?? item.preview?.errorMessage,
-    })),
-  });
-  const composerFileReferenceParts = composerWorkspaceFileParts(composerInputParts);
-  const composerFileRefs = composerFileReferenceParts.map((part): ChannelMessageFileRef => ({
-    path: part.path,
-    label: part.path,
-    source: "composer",
-    ...(part.line !== undefined ? { line: part.line } : {}),
-  }));
-  const composerSlashIntent = activeConversationRun
-    ? { kind: "none" as const }
-    : parseComposerSlashIntent(messageDraft.trim(), {
-      teammateMentions: teammateOptions.map((teammate) => ({ id: teammate.id, label: teammate.label })),
-      commands: slashCommands,
-    });
-  const composerSlashCommandActive = composerSlashIntent.kind !== "none";
-  const composerSlashTargetLabel = composerSlashCommandActive ? composerSlashCommandTargetLabel(composerSlashIntent, t) : "";
-  const composerHasSendableContent = messageDraft.trim().length > 0 || readyAttachmentIds.length > 0 || readyLinkPreviewIds.length > 0 || composerFileRefs.length > 0;
-  const assetOperationPending = pendingAttachments.some((item) => item.state === "uploading") || pendingLinkPreviews.some((item) => item.state === "uploading");
-  const pendingMessageAssetsVisible = pendingAttachments.length > 0;
   const {
     runGuidanceLoading,
     runGuidanceSubmitting,
@@ -3465,7 +3158,7 @@ export function WorkspaceClientView({
       composerShortcutTitle={composerShortcutTitle}
       composerSlashCommandActive={composerSlashCommandActive}
       composerSlashTargetLabel={composerSlashTargetLabel}
-      executableSlashCommandId={composerSlashCommandActive ? composerSlashIntent.commandId : undefined}
+      executableSlashCommandId={composerSlashIntent.kind !== "none" ? composerSlashIntent.commandId : undefined}
       dropZoneClassName={composerDragActive ? "active" : undefined}
       inputParts={composerInputParts}
       inputRef={composerInputRef}
@@ -3504,7 +3197,10 @@ export function WorkspaceClientView({
       onDragLeave={handleComposerDragLeave}
       onDrop={handleComposerDrop}
       onInputChange={handleComposerTextChange}
-      onInputKeyDown={handleComposerKeyDown}
+      onInputKeyDown={(event) => handleComposerKeyDown(event, {
+        submitChannelRunGuidanceFromDraft,
+        sendMessage,
+      })}
       onInputPaste={handleComposerPaste}
       onInputSelect={updateMentionPicker}
       onInsertMentionTrigger={insertMentionTrigger}
@@ -4875,53 +4571,6 @@ function splitLines(value: string): string[] {
     .split(/\r?\n/)
     .map((item) => item.trim())
     .filter(Boolean);
-}
-
-function extractUrls(value: string): string[] {
-  const matches = value.match(/https?:\/\/[^\s)]+/g) ?? [];
-  return [...new Set(matches.map((item) => item.replace(/[.,;!?]+$/, "")))];
-}
-
-function findActiveMention(value: string, caret: number): ActiveMentionPicker | undefined {
-  const beforeCaret = value.slice(0, caret);
-  const match = /(^|\s)@([^\s@]{0,40})$/.exec(beforeCaret);
-  if (!match) {
-    return undefined;
-  }
-  const query = match[2] ?? "";
-  return {
-    query,
-    start: caret - query.length - 1,
-    end: caret,
-  };
-}
-
-function insertMentionToken(value: string, picker: ActiveMentionPicker | undefined, label: string): { readonly value: string; readonly caret: number } {
-  const start = Math.max(0, Math.min(picker?.start ?? value.length, value.length));
-  const end = Math.max(start, Math.min(picker?.end ?? value.length, value.length));
-  const prefix = value.slice(0, start);
-  const suffix = value.slice(end).replace(/^\s+/, "");
-  const mention = `@${label}`;
-  return {
-    value: `${prefix}${mention}${suffix ? ` ${suffix}` : " "}`,
-    caret: prefix.length + mention.length + 1,
-  };
-}
-
-function composerSlashCommandTargetLabel(intent: Exclude<ComposerSlashIntent, { readonly kind: "none" }>, t: Translate): string {
-  if (intent.kind === "multi_agent_command") {
-    return intent.teammates.map((teammate) => `@${teammate.label}`).join(" ");
-  }
-  if (intent.kind === "agent_command") {
-    return `@${intent.teammateLabel}`;
-  }
-  return t("Channel");
-}
-
-function chooseMostSpecificMentionPicker(candidates: readonly (ActiveMentionPicker | undefined)[]): ActiveMentionPicker | undefined {
-  return candidates
-    .filter((candidate): candidate is ActiveMentionPicker => Boolean(candidate))
-    .sort((left, right) => (right.end - right.start) - (left.end - left.start))[0];
 }
 
 function formatBytes(value: number): string {
