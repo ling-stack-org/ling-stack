@@ -1,6 +1,8 @@
 import { useMemo, useState } from "react";
 import {
   Archive,
+  ChevronDown,
+  ChevronRight,
   FileCheck2,
   History,
   LocateFixed,
@@ -15,6 +17,10 @@ import {
   MessageBodyRenderer,
   ToolPlaceholderPage,
 } from "../../../shared/conversation/index.js";
+import {
+  buildPlanLineageGroups,
+  visiblePlanLineageVersions,
+} from "./plan-lineage.js";
 
 export type PlanStatusFilter = "current" | "all" | ProposedPlanArtifact["status"];
 
@@ -48,6 +54,7 @@ export function PlanHistoryPage({
   const { t } = useI18n();
   const [agentFilter, setAgentFilter] = useState("all");
   const [goalFilter, setGoalFilter] = useState("all");
+  const [expandedLineageGroups, setExpandedLineageGroups] = useState<ReadonlySet<string>>(new Set());
   const scopedPlans = useMemo(() => {
     const items = plans.filter((plan) => {
       if (scope === "thread" && currentThreadId && plan.threadId !== currentThreadId) {
@@ -56,10 +63,13 @@ export function PlanHistoryPage({
       if (scope === "thread" && !currentThreadId) {
         return false;
       }
-      if (statusFilter === "current" && plan.status !== "draft" && plan.status !== "accepted") {
+      if (statusFilter === "archived") {
+        if (plan.status !== "archived") {
+          return false;
+        }
+      } else if (plan.status === "archived") {
         return false;
-      }
-      if (statusFilter !== "current" && statusFilter !== "all" && plan.status !== statusFilter) {
+      } else if (statusFilter !== "current" && statusFilter !== "all" && plan.status !== statusFilter) {
         return false;
       }
       const agentId = plan.ownerAgentId ?? plan.sourceAgentId ?? "";
@@ -71,14 +81,23 @@ export function PlanHistoryPage({
       }
       return true;
     });
-    return [...items].sort((left, right) =>
-      right.updatedAt.localeCompare(left.updatedAt) ||
-      right.createdAt.localeCompare(left.createdAt) ||
-      right.id.localeCompare(left.id)
-    );
+    return items;
   }, [agentFilter, currentThreadId, goalFilter, plans, scope, statusFilter]);
+  const lineageGroups = useMemo(() => buildPlanLineageGroups(scopedPlans), [scopedPlans]);
   const agentOptions = useMemo(() => uniquePlanFilterOptions(plans, (plan) => plan.ownerAgentId ?? plan.sourceAgentId), [plans]);
   const goalOptions = useMemo(() => uniquePlanFilterOptions(plans, (plan) => plan.goalId), [plans]);
+
+  function toggleLineageGroup(groupId: string): void {
+    setExpandedLineageGroups((current) => {
+      const next = new Set(current);
+      if (next.has(groupId)) {
+        next.delete(groupId);
+      } else {
+        next.add(groupId);
+      }
+      return next;
+    });
+  }
 
   return (
     <div className="right-dock-plans-page">
@@ -133,25 +152,59 @@ export function PlanHistoryPage({
         <ToolPlaceholderPage title={t("Loading plans")} description={t("Plan history is loading.")} />
       ) : error ? (
         <ToolPlaceholderPage title={t("Plan history unavailable")} description={error} />
-      ) : scopedPlans.length === 0 ? (
+      ) : lineageGroups.length === 0 ? (
         <ToolPlaceholderPage title={t("No plans")} description={t("Draft, accepted, superseded, and archived plans will appear here.")} />
       ) : (
-        <div className="right-dock-section right-dock-plan-list">
-          {scopedPlans.map((plan) => (
-            <div key={plan.id} className={busyPlanId === plan.id ? "right-dock-plan-row busy" : "right-dock-plan-row"}>
-              <button className="right-dock-row right-dock-plan-main" type="button" onClick={() => onOpenPlan(plan)}>
-                <span className={`right-dock-row-dot ${planStatusTone(plan.status)}`} />
-                <span className="right-dock-row-copy">
-                  <strong>{plan.title}</strong>
-                  <small>{proposedPlanSubtitle(plan, t)}</small>
-                </span>
-                <span className={`right-dock-row-state ${planStatusTone(plan.status)}`}>{proposedPlanStatusLabel(plan.status, t)}</span>
-              </button>
-              <button className="right-dock-icon-button right-dock-plan-source-button" type="button" onClick={() => onOpenSource?.(plan)} disabled={!plan.sourceMessageId} aria-label={t("Open source")} title={plan.sourceMessageId ? t("Open source") : t("Source unavailable")}>
-                <LocateFixed size={14} />
-              </button>
-            </div>
-          ))}
+        <div className="right-dock-section right-dock-plan-lineage-list">
+          {lineageGroups.map((group) => {
+            const expanded = expandedLineageGroups.has(group.id) || statusFilter === "superseded" || statusFilter === "archived";
+            const visibleVersions = visiblePlanLineageVersions(group, expanded);
+            const visibleIds = new Set(visibleVersions.map((plan) => plan.id));
+            const foldedSupersededCount = group.versions.filter((plan) => plan.status === "superseded" && !visibleIds.has(plan.id)).length;
+            return (
+              <section key={group.id} className="right-dock-plan-lineage-group" aria-label={t("Plan lineage group")}>
+                <header className="right-dock-plan-lineage-head">
+                  <span className="right-dock-plan-lineage-title">
+                    <strong>{group.latestPlan.title}</strong>
+                    <small>{group.goalId ? t("Goal: {goal}", { goal: group.goalId }) : t("No goal")} · {group.planGroupId} · {t("{count} versions", { count: group.versionCount })}</small>
+                  </span>
+                  {foldedSupersededCount > 0 ? (
+                    <button className="right-dock-icon-button" type="button" onClick={() => toggleLineageGroup(group.id)} aria-label={expanded ? t("Collapse versions") : t("Expand versions")} title={expanded ? t("Collapse versions") : t("Expand versions")}>
+                      {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                    </button>
+                  ) : null}
+                </header>
+                <div className="right-dock-plan-list">
+                  {visibleVersions.map((plan) => (
+                    <div key={plan.id} className={busyPlanId === plan.id ? "right-dock-plan-row busy" : "right-dock-plan-row"}>
+                      <button className="right-dock-row right-dock-plan-main" type="button" onClick={() => onOpenPlan(plan)}>
+                        <span className={`right-dock-row-dot ${planStatusTone(plan.status)}`} />
+                        <span className="right-dock-row-copy">
+                          <strong>{plan.title}</strong>
+                          <small>{proposedPlanSubtitle(plan, t)}</small>
+                        </span>
+                        <span className={`right-dock-row-state ${planStatusTone(plan.status)}`}>{proposedPlanStatusLabel(plan.status, t)}</span>
+                      </button>
+                      <button
+                        className="right-dock-icon-button right-dock-plan-source-button"
+                        type="button"
+                        onClick={() => plan.sourceMessageId ? onOpenSource?.(plan) : onOpenPlan(plan)}
+                        aria-label={plan.sourceMessageId ? t("Open source") : t("Open plan detail")}
+                        title={plan.sourceMessageId ? t("Open source") : t("Source unavailable")}
+                      >
+                        <LocateFixed size={14} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+                {foldedSupersededCount > 0 ? (
+                  <button className="right-dock-plan-lineage-fold" type="button" onClick={() => toggleLineageGroup(group.id)}>
+                    {expanded ? t("Hide superseded versions") : t("{count} superseded versions hidden", { count: foldedSupersededCount })}
+                  </button>
+                ) : null}
+              </section>
+            );
+          })}
         </div>
       )}
     </div>

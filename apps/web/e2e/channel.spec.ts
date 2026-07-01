@@ -1,6 +1,7 @@
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, test, type Locator, type Page } from "@playwright/test";
+import type { ProposedPlanArtifact } from "@ling-stack/contracts";
 import { mockDaemon } from "./support/mock-daemon";
 import {
   createBaseState,
@@ -29,6 +30,24 @@ async function expectComposerValue(composer: Locator, value: string): Promise<vo
 
 function channelComposerTextbox(scope: Page | Locator): Locator {
   return scope.getByRole("textbox", { name: "Message this channel or @ an AI teammate", exact: true });
+}
+
+function createLineagePlan(overrides: Partial<ProposedPlanArtifact>): ProposedPlanArtifact {
+  return {
+    id: "plan_lineage",
+    workspaceId: "workspace_default",
+    threadId: "thread_channel_main_channel_engineering",
+    channelId: "channel_engineering",
+    goalId: "goal_ship_plan_modes",
+    planGroupId: "plan_group_ship_plan_modes",
+    version: 1,
+    title: "Plan lineage",
+    bodyMarkdown: "Plan body",
+    status: "draft",
+    createdAt: "2026-05-25T00:40:00.000Z",
+    updatedAt: "2026-05-25T00:40:00.000Z",
+    ...overrides,
+  };
 }
 
 async function useEnglishLocale(page: Page): Promise<void> {
@@ -3466,6 +3485,145 @@ test("workflow conversion preview infers owners without mutating until save", as
   await expect.poll(() => state.channelWorkflowSteps.find((step) => isRecord(step) && step.title.includes("Run test verification"))?.toParticipantLabel).toBe("Unassigned");
   await expect.poll(() => state.channelWorkflowSteps.find((step) => isRecord(step) && step.title.includes("Summarize launch notes"))?.toParticipantId).toBe("teammate_builtin_docs");
   await expect(page.getByRole("dialog", { name: "Workflow conversion preview" })).toHaveCount(0);
+});
+
+test("plan history groups lineage versions across thread and channel scopes", async ({ page }) => {
+  await useEnglishLocale(page);
+  const state = createBaseState({ approvalStatus: "pending" });
+  state.runs = [];
+  state.tasks = [];
+  state.approvals = [];
+  state.threads = [
+    {
+      id: "thread_channel_main_channel_engineering",
+      workspaceId: "workspace_default",
+      kind: "channel_discussion",
+      channelId: "channel_engineering",
+      title: "Main branch",
+      objective: "Main conversation branch for Engineering.",
+      status: "open",
+      conversationMode: { mode: "default" },
+      createdAt: "2026-05-25T00:40:00.000Z",
+      updatedAt: "2026-05-25T00:40:00.000Z",
+    },
+    {
+      id: "thread_channel_plan_sibling",
+      workspaceId: "workspace_default",
+      kind: "channel_discussion",
+      channelId: "channel_engineering",
+      parentThreadId: "thread_channel_main_channel_engineering",
+      title: "Plan sibling",
+      objective: "Sibling thread for accepted plan version.",
+      status: "open",
+      conversationMode: { mode: "default" },
+      createdAt: "2026-05-25T00:40:10.000Z",
+      updatedAt: "2026-05-25T00:40:10.000Z",
+    },
+  ];
+  state.channelMessages = [
+    {
+      id: "msg_lineage_v3",
+      workspaceId: "workspace_default",
+      channelId: "channel_engineering",
+      threadId: "thread_channel_plan_sibling",
+      kind: "ai_reply",
+      intent: "discuss",
+      authorType: "ai-teammate",
+      authorId: "ling_agent",
+      body: "Accepted lineage source message.",
+      mentions: [],
+      attachmentIds: [],
+      linkPreviewIds: [],
+      fileRefs: [],
+      status: "ready",
+      createdAt: "2026-05-25T00:42:00.000Z",
+      updatedAt: "2026-05-25T00:42:00.000Z",
+    },
+  ];
+  state.proposedPlans = [
+    createLineagePlan({
+      id: "plan_lineage_v4",
+      threadId: "thread_channel_main_channel_engineering",
+      title: "Plan v4 latest",
+      bodyMarkdown: "Latest draft body",
+      status: "draft",
+      version: 4,
+      updatedAt: "2026-05-25T00:46:00.000Z",
+    }),
+    createLineagePlan({
+      id: "plan_lineage_v3",
+      threadId: "thread_channel_plan_sibling",
+      title: "Plan v3 accepted",
+      bodyMarkdown: "Accepted body",
+      status: "accepted",
+      version: 3,
+      sourceMessageId: "msg_lineage_v3",
+      updatedAt: "2026-05-25T00:45:00.000Z",
+    }),
+    createLineagePlan({
+      id: "plan_lineage_v2",
+      threadId: "thread_channel_main_channel_engineering",
+      title: "Plan v2 superseded",
+      bodyMarkdown: "Second body",
+      status: "superseded",
+      version: 2,
+      supersededByPlanId: "plan_lineage_v3",
+      updatedAt: "2026-05-25T00:44:00.000Z",
+    }),
+    createLineagePlan({
+      id: "plan_lineage_v1",
+      threadId: "thread_channel_main_channel_engineering",
+      title: "Plan v1 superseded",
+      bodyMarkdown: "First body",
+      status: "superseded",
+      version: 1,
+      supersededByPlanId: "plan_lineage_v2",
+      updatedAt: "2026-05-25T00:43:00.000Z",
+    }),
+    createLineagePlan({
+      id: "plan_lineage_archived",
+      threadId: "thread_channel_main_channel_engineering",
+      planGroupId: "plan_group_archived",
+      title: "Archived lineage version",
+      bodyMarkdown: "Archived body",
+      status: "archived",
+      version: 1,
+      archivedAt: "2026-05-25T00:47:00.000Z",
+      updatedAt: "2026-05-25T00:47:00.000Z",
+    }),
+  ];
+  await mockDaemon(page, state);
+  await page.goto("/");
+  await openEngineeringChannel(page);
+
+  await page.getByRole("button", { name: "Show details" }).click();
+  const dock = page.locator(".channel-side-panel.right-dock");
+  await dock.getByRole("button", { name: /Plans/ }).click();
+  await expect(dock).toContainText("Plan history");
+  await expect(dock).toContainText("Plan v4 latest");
+  await expect(dock).not.toContainText("Plan v3 accepted");
+  await expect(dock).not.toContainText("Plan v2 superseded");
+  await expect(dock).toContainText("2 superseded versions hidden");
+
+  await dock.getByRole("button", { name: "Expand versions" }).click();
+  await expect(dock).toContainText("Plan v2 superseded");
+  await expect(dock).toContainText("Plan v1 superseded");
+
+  await dock.getByRole("button", { name: "This channel" }).click();
+  await expect(dock).toContainText("Plan v3 accepted");
+  const acceptedRow = dock.locator(".right-dock-plan-row").filter({ hasText: "Plan v3 accepted" });
+  await acceptedRow.getByRole("button", { name: "Open source" }).click();
+  await expect(page.locator('[data-feed-item-id="message:msg_lineage_v3"]')).toHaveClass(/conversation-work-cell-locate-pulse/);
+
+  const latestRow = dock.locator(".right-dock-plan-row").filter({ hasText: "Plan v4 latest" });
+  await latestRow.getByRole("button", { name: "Open plan detail" }).click();
+  await expect(dock.locator(".right-dock-plan-detail")).toContainText("Plan v4 latest");
+  await expect(dock.locator(".right-dock-plan-detail")).toContainText("Latest draft body");
+  await dock.getByRole("button", { name: "Back" }).click();
+
+  await dock.getByLabel("Plan status").selectOption("archived");
+  await expect(dock).toContainText("Archived lineage version");
+  await expect(dock).not.toContainText("Plan v4 latest");
 });
 
 test("channel composer supports spaced teammate names before slash commands", async ({ page }) => {
