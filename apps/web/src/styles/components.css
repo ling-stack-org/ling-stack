@@ -7622,6 +7622,89 @@ code,
   line-height: 18px;
 }
 
+.workflow-preview-owner-note {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.workflow-preview-owner-list {
+  padding-left: 0 !important;
+  list-style: none;
+}
+
+.workflow-preview-owner-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(144px, 0.45fr) auto;
+  gap: 8px;
+  align-items: center;
+  min-width: 0;
+  padding: 8px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  background: var(--surface-muted);
+}
+
+.workflow-preview-owner-row small {
+  grid-column: 1 / -1;
+  color: var(--text-muted);
+}
+
+.workflow-preview-owner-title {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-weight: 700;
+}
+
+.workflow-preview-owner-select {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.workflow-preview-owner-select span {
+  color: var(--text-muted);
+  font-size: 10px;
+  font-weight: 760;
+  text-transform: uppercase;
+}
+
+.workflow-preview-owner-select select {
+  min-width: 0;
+  width: 100%;
+  height: 30px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+}
+
+.workflow-preview-confidence {
+  justify-self: end;
+  padding: 3px 7px;
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 760;
+  white-space: nowrap;
+}
+
+.workflow-preview-confidence.confidence-high {
+  color: var(--success);
+}
+
+.workflow-preview-confidence.confidence-medium {
+  color: var(--accent);
+}
+
+.workflow-preview-confidence.confidence-low,
+.workflow-preview-confidence.confidence-none {
+  color: var(--text-muted);
+}
+
 .workflow-preview-plan-body {
   max-height: 240px;
   min-width: 0;

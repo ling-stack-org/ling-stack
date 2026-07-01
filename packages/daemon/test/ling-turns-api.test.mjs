@@ -848,10 +848,12 @@ test("daemon API persists proposed plans and links accepted tasks and workflow d
 
     const converted = await postJson(`${planUrl.replace(/\?.*$/u, "")}/convert-workflow?cwd=${encodeURIComponent(cwd)}`, {
       createdBy: "local-user",
-      toParticipantId: "teammate_plan",
-      toParticipantLabel: "Planner",
       workflowTitle: "Edited workflow draft",
       workflowSteps: ["Confirm contracts", "Wire Plan Mode controls"],
+      workflowStepPreviews: [
+        { title: "Confirm contracts", ownerId: "teammate_plan", ownerLabel: "Planner" },
+        { title: "Wire Plan Mode controls", ownerId: "teammate_web", ownerLabel: "Web" },
+      ],
     });
     assert.equal(converted.plan.acceptedWorkflowId, converted.workflowId);
     assert.equal(converted.plan.acceptedWorkflowStepId, converted.workflowStepId);
@@ -862,14 +864,20 @@ test("daemon API persists proposed plans and links accepted tasks and workflow d
     assert.equal(workflow.channelId, channel.channel.id);
     assert.equal(workflow.title, "Edited workflow draft");
     assert.equal(workflow.objective, "Confirm contracts\nWire Plan Mode controls");
+    const workflowSteps = store.listChannelWorkflowSteps({ workflowId: workflow.id, limit: 10 });
+    assert.equal(workflowSteps.length, 2);
     const step = store.getChannelWorkflowStep(converted.workflowStepId);
     assert.ok(step);
     assert.equal(step.workflowId, workflow.id);
     assert.equal(step.status, "queued");
     assert.equal(step.toParticipantId, "teammate_plan");
     assert.equal(step.title, "Confirm contracts");
-    assert.match(step.prompt, /Wire Plan Mode controls/);
     assert.match(step.prompt, /Source proposed plan: proposed_plan_api_lifecycle/);
+    const secondStep = workflowSteps.find((item) => item.title === "Wire Plan Mode controls");
+    assert.ok(secondStep);
+    assert.equal(secondStep.toParticipantId, "teammate_web");
+    assert.equal(secondStep.toParticipantLabel, "Web");
+    assert.match(secondStep.prompt, /Wire Plan Mode controls/);
 
     const archived = await postJson(`${planUrl.replace(/\?.*$/u, "")}/archive?cwd=${encodeURIComponent(cwd)}`, {});
     assert.equal(archived.plan.status, "archived");

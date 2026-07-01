@@ -2486,6 +2486,41 @@ export function WorkspaceClientView({
     },
     [channelTeammateMemberships, localTeammateById],
   );
+  const workflowOwnerInferenceTeammates = useMemo(
+    () => {
+      const channelTeammateIdSet = new Set(channelTeammates.map(({ teammate }) => teammate.id));
+      return [
+        ...channelTeammates.map(({ teammate }) => ({
+          id: teammate.id,
+          displayName: teammate.displayName,
+          roleKey: teammate.roleKey,
+          description: teammate.description,
+          channelMember: true,
+        })),
+        ...activeLocalTeammates
+          .filter((teammate) => !channelTeammateIdSet.has(teammate.id))
+          .map((teammate) => ({
+            id: teammate.id,
+            displayName: teammate.displayName,
+            roleKey: teammate.roleKey,
+            description: teammate.description,
+            channelMember: false,
+          })),
+      ];
+    },
+    [activeLocalTeammates, channelTeammates],
+  );
+  const workflowOwnerInferenceHistorySteps = useMemo(
+    () => channelWorkflowSteps
+      .filter((step) => !selectedChannelId || step.channelId === selectedChannelId)
+      .map((step) => ({
+        title: step.title,
+        prompt: step.prompt,
+        toParticipantId: step.toParticipantId,
+        toParticipantLabel: step.toParticipantLabel,
+      })),
+    [channelWorkflowSteps, selectedChannelId],
+  );
   const visibleChannelHeaderTeammates = useMemo(
     () => channelTeammates.filter(({ teammate }) => !teammate.hidden),
     [channelTeammates],
@@ -4103,6 +4138,8 @@ export function WorkspaceClientView({
           plan={workflowConversionPreviewPlan}
           cwd={cwd.trim()}
           busy={proposedPlanActionBusyId === workflowConversionPreviewPlan.id}
+          teammates={workflowOwnerInferenceTeammates}
+          historicalWorkflowSteps={workflowOwnerInferenceHistorySteps}
           onConfirm={confirmWorkflowConversionPreview}
           onClose={closeWorkflowConversionPreview}
         />

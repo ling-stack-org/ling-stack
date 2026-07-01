@@ -3372,6 +3372,102 @@ test("channel feed renders proposed_plan blocks as proposed plan cards", async (
   await expect(feed.getByText("Implement accepted plan: PR1 + PR2 implementation")).toBeVisible();
 });
 
+test("workflow conversion preview infers owners without mutating until save", async ({ page }) => {
+  await useEnglishLocale(page);
+  const state = createBaseState({ approvalStatus: "pending" });
+  state.runs = [];
+  state.tasks = [];
+  state.approvals = [];
+  state.aiTeammates = [
+    createMockTeammate({ id: "teammate_builtin_engineer", displayName: "Ling Engineer", roleKey: "engineer" }),
+    createMockTeammate({ id: "teammate_builtin_docs", displayName: "Docs Lead", roleKey: "docs", description: "Owns documentation updates." }),
+    createMockTeammate({ id: "teammate_builtin_qa", displayName: "Ling QA", roleKey: "qa" }),
+    createMockTeammate({ id: "teammate_builtin_quality", displayName: "Quality Partner", roleKey: "qa" }),
+  ];
+  state.teammateChannelMemberships = state.aiTeammates.map((teammate) => ({
+    teammateId: String(teammate.id),
+    channelId: "channel_engineering",
+    isDefault: false,
+    createdAt: "2026-05-25T00:39:00.000Z",
+    updatedAt: "2026-05-25T00:39:00.000Z",
+  }));
+  state.threads = [
+    {
+      id: "thread_channel_main_channel_engineering",
+      workspaceId: "workspace_default",
+      kind: "channel_discussion",
+      channelId: "channel_engineering",
+      title: "Main branch",
+      objective: "Main conversation branch for Engineering.",
+      status: "open",
+      conversationMode: { mode: "default" },
+      createdAt: "2026-05-25T00:40:00.000Z",
+      updatedAt: "2026-05-25T00:40:00.000Z",
+    },
+  ];
+  state.channelMessages = [
+    {
+      id: "msg_owner_preview_plan",
+      workspaceId: "workspace_default",
+      channelId: "channel_engineering",
+      threadId: "thread_channel_main_channel_engineering",
+      kind: "ai_reply",
+      intent: "discuss",
+      authorType: "ai-teammate",
+      authorId: "ling_agent",
+      body: [
+        "<proposed_plan title=\"Owner preview workflow\">",
+        "1. Owner: Ling Engineer; implement daemon contract.",
+        "2. Update docs/design/conversation-plan-and-goal-modes.md.",
+        "3. Run test verification.",
+        "4. Summarize launch notes.",
+        "</proposed_plan>",
+      ].join("\n"),
+      mentions: [],
+      attachmentIds: [],
+      linkPreviewIds: [],
+      fileRefs: [],
+      status: "ready",
+      createdAt: "2026-05-25T00:41:00.000Z",
+      updatedAt: "2026-05-25T00:41:00.000Z",
+    },
+  ];
+  await mockDaemon(page, state);
+  await page.goto("/");
+  await openEngineeringChannel(page);
+
+  const plan = page.getByLabel("Proposed plan");
+  await plan.getByRole("button", { name: "Convert to workflow" }).click();
+  const preview = page.getByRole("dialog", { name: "Workflow conversion preview" });
+  await expect(preview).toBeVisible();
+  await expect(preview.getByLabel("Owner for step 1")).toHaveValue("teammate_builtin_engineer");
+  await expect(preview.getByLabel("Owner for step 2")).toHaveValue("teammate_builtin_docs");
+  await expect(preview.getByLabel("Owner for step 3")).toHaveValue("");
+  await expect(preview.getByLabel("Owner for step 4")).toHaveValue("");
+  await expect(preview).toContainText("Explicit owner \"Ling Engineer\" in the plan.");
+  await expect(preview).toContainText("docs/ matched documentation ownership.");
+  await expect(preview).toContainText("Owner signal was ambiguous across teammates.");
+  await expect(preview).toContainText("No owner signal found.");
+
+  await preview.getByRole("button", { name: "Cancel" }).click();
+  await expect(page.getByRole("dialog", { name: "Workflow conversion preview" })).toHaveCount(0);
+  await expect.poll(() => state.channelWorkflows.length).toBe(0);
+  await expect.poll(() => state.channelWorkflowSteps.length).toBe(0);
+
+  await plan.getByRole("button", { name: "Convert to workflow" }).click();
+  const reopened = page.getByRole("dialog", { name: "Workflow conversion preview" });
+  await reopened.getByLabel("Owner for step 4").selectOption("teammate_builtin_docs");
+  await reopened.getByRole("button", { name: "Save draft workflow" }).click();
+
+  await expect.poll(() => state.channelWorkflows.find((workflow) => isRecord(workflow) && workflow.title === "Owner preview workflow")?.status).toBe("draft");
+  await expect.poll(() => state.channelWorkflowSteps.filter((step) => isRecord(step) && step.workflowId === state.channelWorkflows[0]?.id).length).toBe(4);
+  await expect.poll(() => state.channelWorkflowSteps.find((step) => isRecord(step) && step.title.includes("implement daemon contract"))?.toParticipantId).toBe("teammate_builtin_engineer");
+  await expect.poll(() => state.channelWorkflowSteps.find((step) => isRecord(step) && step.title.includes("docs/design"))?.toParticipantId).toBe("teammate_builtin_docs");
+  await expect.poll(() => state.channelWorkflowSteps.find((step) => isRecord(step) && step.title.includes("Run test verification"))?.toParticipantLabel).toBe("Unassigned");
+  await expect.poll(() => state.channelWorkflowSteps.find((step) => isRecord(step) && step.title.includes("Summarize launch notes"))?.toParticipantId).toBe("teammate_builtin_docs");
+  await expect(page.getByRole("dialog", { name: "Workflow conversion preview" })).toHaveCount(0);
+});
+
 test("channel composer supports spaced teammate names before slash commands", async ({ page }) => {
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");

@@ -236,6 +236,16 @@ export interface ProposedPlanActionRequest {
   readonly toParticipantLabel?: string;
   readonly workflowTitle?: string;
   readonly workflowSteps?: readonly string[];
+  readonly workflowStepPreviews?: readonly ProposedPlanWorkflowStepPreview[];
+}
+
+export interface ProposedPlanWorkflowStepPreview {
+  readonly title: string;
+  readonly ownerId?: string;
+  readonly ownerLabel?: string;
+  readonly ownerConfidence?: "high" | "medium" | "low" | "none";
+  readonly ownerReason?: string;
+  readonly sourceSignals?: readonly string[];
 }
 
 export interface LingThread {
