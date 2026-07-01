@@ -7502,6 +7502,67 @@ code,
   gap: 0;
 }
 
+.right-dock-plan-lineage-list {
+  gap: 10px;
+}
+
+.right-dock-plan-lineage-group {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  padding: 8px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.right-dock-plan-lineage-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px;
+  align-items: center;
+  min-width: 0;
+}
+
+.right-dock-plan-lineage-title {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.right-dock-plan-lineage-title strong,
+.right-dock-plan-lineage-title small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.right-dock-plan-lineage-title strong {
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 760;
+}
+
+.right-dock-plan-lineage-title small {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.right-dock-plan-lineage-fold {
+  justify-self: start;
+  border: 0;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 680;
+  cursor: pointer;
+}
+
+.right-dock-plan-lineage-fold:hover {
+  color: var(--text);
+}
+
 .right-dock-plan-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
