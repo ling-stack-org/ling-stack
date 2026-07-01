@@ -1,6 +1,22 @@
 export type ComposerSlashIntent =
   | { readonly kind: "none" }
   | {
+      readonly kind: "session_command";
+      readonly commandId: "plan";
+      readonly commandLabel: "Plan Mode";
+      readonly action: "on" | "off" | "status";
+      readonly args: string;
+      readonly raw: string;
+    }
+  | {
+      readonly kind: "session_command";
+      readonly commandId: "goal";
+      readonly commandLabel: "Goal";
+      readonly action: "set" | "status" | "pause" | "resume" | "clear" | "edit";
+      readonly args: string;
+      readonly raw: string;
+    }
+  | {
       readonly kind: "global_command";
       readonly commandId: string;
       readonly commandLabel: string;
@@ -62,16 +78,26 @@ export interface ParseComposerSlashIntentOptions {
 }
 
 const slashCommandPattern = /^\/([A-Za-z0-9][A-Za-z0-9_.-]*)(?=\s|$)/;
+const sessionCommandOptions = [
+  { id: "plan", label: "Plan Mode" },
+  { id: "goal", label: "Goal" },
+] as const satisfies readonly ComposerSlashCommandOption[];
 
 export function buildComposerSlashCommandOptions(input: BuildComposerSlashCommandOptionsInput = {}): readonly ComposerSlashCommandOption[] {
   const fallbackSkills = input.fallbackSkills ?? [];
   if (input.registryEntries === undefined) {
-    return uniqueCommandOptions(fallbackSkills.map((skill) => ({ id: skill.id, label: skill.name || skill.id })));
+    return uniqueCommandOptions([
+      ...sessionCommandOptions,
+      ...fallbackSkills.map((skill) => ({ id: skill.id, label: skill.name || skill.id })),
+    ]);
   }
 
   const registryById = new Map(input.registryEntries.map((entry) => [entry.id, entry]));
-  const commands: ComposerSlashCommandOption[] = [];
+  const commands: ComposerSlashCommandOption[] = [...sessionCommandOptions];
   const addedIds = new Set<string>();
+  for (const command of sessionCommandOptions) {
+    addedIds.add(command.id);
+  }
 
   for (const skill of fallbackSkills) {
     const registryEntry = registryById.get(skill.id);
@@ -95,11 +121,19 @@ export function parseComposerSlashIntent(text: string, options: ParseComposerSla
     return { kind: "none" };
   }
 
+  const sessionCommand = readSessionCommand(trimmed);
+  if (sessionCommand) {
+    return sessionCommand;
+  }
+
   const mentionRead = readLeadingMentions(trimmed, options.teammateMentions ?? []);
   if (mentionRead) {
     const commandText = mentionRead.remaining.trimStart();
     const command = readRegisteredCommand(commandText, options.commands ?? []);
     if (!command) {
+      return { kind: "none" };
+    }
+    if (isSessionCommandOption(command.option)) {
       return { kind: "none" };
     }
     if (mentionRead.teammates.length > 1) {
@@ -134,6 +168,51 @@ export function parseComposerSlashIntent(text: string, options: ParseComposerSla
     commandLabel: command.option.label,
     args: command.args,
     raw: trimmed,
+  };
+}
+
+function readSessionCommand(text: string): Extract<ComposerSlashIntent, { readonly kind: "session_command" }> | undefined {
+  const match = slashCommandPattern.exec(text);
+  if (!match) {
+    return undefined;
+  }
+  const commandToken = normalizeLabel(match[1] ?? "");
+  if (commandToken !== "plan" && commandToken !== "goal") {
+    return undefined;
+  }
+  const args = text.slice(match[0].length).trimStart();
+  const firstArg = normalizeLabel(args.split(/\s+/, 1)[0] ?? "");
+  if (commandToken === "goal") {
+    return {
+      kind: "session_command",
+      commandId: "goal",
+      commandLabel: "Goal",
+      action: firstArg === "status" || !args
+        ? "status"
+        : firstArg === "pause"
+          ? "pause"
+          : firstArg === "resume"
+            ? "resume"
+            : firstArg === "clear" || firstArg === "delete"
+              ? "clear"
+              : firstArg === "edit"
+                ? "edit"
+                : "set",
+      args,
+      raw: text,
+    };
+  }
+  return {
+    kind: "session_command",
+    commandId: "plan",
+    commandLabel: "Plan Mode",
+    action: firstArg === "off" || firstArg === "exit" || firstArg === "disable"
+      ? "off"
+      : firstArg === "status"
+        ? "status"
+        : "on",
+    args,
+    raw: text,
   };
 }
 
@@ -226,6 +305,10 @@ function registryEntryIsCommandVisible(entry: ComposerSlashRegistryEntry): boole
 function commandMatches(command: ComposerSlashCommandOption, token: string): boolean {
   const normalizedToken = normalizeLabel(token);
   return normalizeLabel(command.id) === normalizedToken || normalizeLabel(command.label) === normalizedToken;
+}
+
+function isSessionCommandOption(command: ComposerSlashCommandOption): boolean {
+  return sessionCommandOptions.some((option) => option.id === command.id);
 }
 
 function normalizeLabel(value: string): string {

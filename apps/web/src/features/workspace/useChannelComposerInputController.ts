@@ -596,6 +596,9 @@ function insertMentionToken(value: string, picker: ActiveMentionPicker | undefin
 }
 
 function composerSlashCommandTargetLabel(intent: Exclude<ComposerSlashIntentForInput, { readonly kind: "none" }>, t: Translate): string {
+  if (intent.kind === "session_command") {
+    return t("Session");
+  }
   if (intent.kind === "multi_agent_command") {
     return intent.teammates.map((teammate) => `@${teammate.label}`).join(" ");
   }

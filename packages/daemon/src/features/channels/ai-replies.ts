@@ -256,14 +256,20 @@ async function completeAiChannelReply(input: {
       ts: new Date().toISOString(),
     });
     let discussionPrompt = prependChannelWebContext(renderContextPack(discussionContextPack), webContext);
+    const conversationMode = input.sourceMessage.threadId
+      ? input.store.getLingThreadConversationMode(input.sourceMessage.threadId)
+      : undefined;
+    const planModeActive = conversationMode?.mode === "plan";
+    const proposalBlocksAllowed = input.proposalMode !== "disabled" && !planModeActive;
     const systemPrompt = [
       "You are an AI teammate inside a Ling Stack channel.",
       "Reply concisely and only to the current channel discussion.",
       responseLanguageInstruction(responseLanguage),
+      planModeActive ? renderPlanModeInstruction() : undefined,
       "Use only attachment/link metadata and preview/extraction text that is explicitly included in the turn envelope. Do not claim to inspect unavailable attachment bodies or web page bodies.",
       "If Ling web context is included, you may use only those web_search/open_url results and must keep cited source URLs visible in the reply.",
       "Do not perform tool use or side effects.",
-      ...(input.proposalMode === "disabled"
+      ...(!proposalBlocksAllowed
         ? [
             "Do not include hidden proposal blocks. Do not create or suggest tasks, runs, workflows, branches, approvals, or side effects.",
           ]
@@ -433,7 +439,7 @@ async function completeAiChannelReply(input: {
     if (isChannelReplyPromptLeak(rawReplyText)) {
       throw new Error(PROMPT_LEAK_ERROR_MESSAGE);
     }
-    const extractedProposal = input.proposalMode === "disabled"
+    const extractedProposal = !proposalBlocksAllowed
       ? undefined
       : extractChannelExecutionProposal(rawReplyText, input.canonicalTeammateId, isRunTool);
     const fallbackReplyText = input.stream ? visibleReplyText(rawReplyText) : rawReplyText;
@@ -476,6 +482,7 @@ async function completeAiChannelReply(input: {
         new Date().toISOString(),
       );
     }
+    recordProposedPlanArtifactFromReply(input.store, reply, rawReplyText);
     return reply;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -500,6 +507,48 @@ async function completeAiChannelReply(input: {
 
 const PROMPT_LEAK_PENDING_BODY = "AI teammate response was blocked because the runner echoed internal channel context.";
 const PROMPT_LEAK_ERROR_MESSAGE = "Runner echoed internal channel context instead of an assistant reply.";
+const proposedPlanPattern = /<proposed_plan(?:\s+title=(?:"([^"]+)"|'([^']+)'))?\s*>([\s\S]*?)<\/proposed_plan>/i;
+
+function recordProposedPlanArtifactFromReply(store: RunStore, reply: ChannelMessage, rawReplyText: string): void {
+  if (!reply.threadId) {
+    return;
+  }
+  const match = proposedPlanPattern.exec(rawReplyText);
+  if (!match) {
+    return;
+  }
+  const bodyMarkdown = (match[3] ?? "").trim();
+  if (!bodyMarkdown) {
+    return;
+  }
+  const title = (match[1] ?? match[2] ?? readFirstMarkdownHeading(bodyMarkdown) ?? "Proposed plan").trim();
+  store.upsertProposedPlanArtifact(
+    {
+      id: `proposed_plan_${reply.id}`,
+      threadId: reply.threadId,
+      sourceMessageId: reply.id,
+      sourceRunId: reply.linkedRunId,
+      title,
+      bodyMarkdown,
+      status: "draft",
+    },
+    new Date().toISOString(),
+  );
+}
+
+function readFirstMarkdownHeading(markdown: string): string | undefined {
+  return markdown.split(/\n/u).map((line) => /^#{1,3}\s+(.+)$/.exec(line.trim())?.[1]?.trim()).find(Boolean);
+}
+
+function renderPlanModeInstruction(): string {
+  return [
+    "Session mode: Plan Mode is active for this thread.",
+    "Treat this turn as planning only: inspect, reason, ask clarifying questions, and produce an implementation-ready plan.",
+    "Do not claim to implement, edit files, run migrations, create branches, start workflows, or perform side effects.",
+    "When you provide the final plan, wrap it in exactly one <proposed_plan title=\"...\">...</proposed_plan> block.",
+    "Plan Mode is not a permission preset and does not grant tool authority.",
+  ].join("\n");
+}
 
 function isChannelReplyPromptLeak(raw: string): boolean {
   const text = raw.trim();

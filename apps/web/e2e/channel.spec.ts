@@ -2483,7 +2483,10 @@ test("channel activity supports mentions, messages, files, links, and topic repl
   await expect(page.locator(".channel-composer").getByText("Discuss")).toHaveCount(0);
   await expect(page.locator(".channel-composer").getByText("@ teammates, drop files, or paste links")).toHaveCount(0);
   const composerInput = channelComposerTextbox(page);
-  await expect(page.getByLabel("Message tools").getByLabel("Attach files")).toBeVisible();
+  await expect(page.getByLabel("Message tools").getByRole("button", { name: "Add" })).toBeVisible();
+  await page.getByLabel("Message tools").getByRole("button", { name: "Add" }).click();
+  await expect(page.getByRole("menu", { name: "Add" }).getByRole("menuitem", { name: /Attach files/ })).toBeVisible();
+  await page.getByLabel("Message tools").getByRole("button", { name: "Add" }).click();
   await expect(page.getByLabel("Message tools").getByRole("button", { name: "Mention teammate" })).toBeVisible();
   await expect(page.locator(".channel-composer").getByRole("button", { name: "Send" })).toBeVisible();
   await page.getByLabel("Message tools").getByRole("button", { name: "Mention teammate" }).click();
@@ -3048,6 +3051,243 @@ test("channel composer does not render multi-agent slash command tokens as file 
   await expect(composer.locator(".composer-inline-token.file-reference").filter({ hasText: "/review" })).toHaveCount(0);
   await expect(composer.locator(".composer-inline-token.file-reference").filter({ hasText: "apps/web" })).toHaveCount(1);
   await expect(page.locator(".channel-composer").getByRole("button", { name: "Create task" })).toBeEnabled();
+});
+
+test("channel composer applies plan mode session commands without creating slash tasks", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.locale", "en-US");
+  });
+  const state = createBaseState({ approvalStatus: "pending" });
+  state.runs = [];
+  state.tasks = [];
+  state.approvals = [];
+  state.threads = [];
+  await mockDaemon(page, state);
+  await page.goto("/");
+  await openEngineeringChannel(page);
+
+  const channelRoots = (): readonly typeof state.threads[number][] =>
+    state.threads.filter((thread) =>
+      thread.kind === "channel_discussion" &&
+      thread.channelId === "channel_engineering" &&
+      !thread.parentThreadId
+    );
+  const planMode = (): string | undefined =>
+    channelRoots()[0]?.conversationMode?.mode;
+
+  const composer = page.locator(".channel-composer");
+  const planButton = composer.getByRole("button", { name: "Plan Mode" });
+  await expect(planButton).toBeVisible();
+  await expect.poll(() => channelRoots().length).toBe(0);
+
+  await composer.getByRole("button", { name: "Add" }).click();
+  await page.getByRole("menu", { name: "Add" }).getByRole("menuitem", { name: "Plan Mode" }).click();
+  await expect.poll(() => channelRoots().length).toBe(1);
+  await expect.poll(planMode).toBe("plan");
+  await expect(planButton).toHaveClass(/active/);
+  await expect.poll(() => state.tasks).toHaveLength(0);
+  await composer.getByRole("button", { name: "Add" }).click();
+  await expect(page.getByRole("menu", { name: "Add" }).getByRole("menuitem", { name: "Exit Plan Mode" })).toBeVisible();
+  await composer.getByRole("button", { name: "Add" }).click();
+
+  const composerInput = channelComposerTextbox(page);
+  await composerInput.fill("/review apps/web");
+  await composer.getByRole("button", { name: "Create task" }).click();
+  await expect(composer).toContainText("Exit Plan Mode before creating implementation tasks.");
+  await expect.poll(() => state.tasks).toHaveLength(0);
+
+  await composerInput.fill("/plan off");
+  await composer.getByRole("button", { name: "Apply command" }).click();
+  await expect.poll(planMode).toBe("default");
+  await expect.poll(() => state.tasks).toHaveLength(0);
+  await expectComposerValue(composerInput, "");
+
+  await composerInput.fill("/plan status");
+  await composer.getByRole("button", { name: "Apply command" }).click();
+  await expect(composer).toContainText("Plan Mode is off");
+  await expect.poll(planMode).toBe("default");
+  await expect.poll(() => state.tasks).toHaveLength(0);
+});
+
+test("channel composer manages goal lifecycle from the floating panel", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.locale", "en-US");
+  });
+  const state = createBaseState({ approvalStatus: "pending" });
+  state.runs = [];
+  state.tasks = [];
+  state.approvals = [];
+  state.threads = [];
+  await mockDaemon(page, state);
+  await page.goto("/");
+  await openEngineeringChannel(page);
+
+  const channelRoots = (): readonly typeof state.threads[number][] =>
+    state.threads.filter((thread) =>
+      thread.kind === "channel_discussion" &&
+      thread.channelId === "channel_engineering" &&
+      !thread.parentThreadId
+    );
+  const planMode = (): string | undefined =>
+    channelRoots()[0]?.conversationMode?.mode;
+  const activeGoal = () => state.goals.find((goal) => goal.threadId === channelRoots()[0]?.id && ["active", "paused", "blocked", "usage_limited", "budget_limited"].includes(goal.status));
+
+  const composer = page.locator(".channel-composer");
+  const composerInput = channelComposerTextbox(page);
+  await composer.getByRole("button", { name: "Add" }).click();
+  await page.getByRole("menu", { name: "Add" }).getByRole("menuitem", { name: /Goal/ }).click();
+  await expectComposerValue(composerInput, "/goal ");
+  await composerInput.fill("/goal Finish PR4 with a visible goal panel");
+  await composer.getByRole("button", { name: "Apply command" }).click();
+
+  const goalPanel = composer.locator(".goal-floating-panel");
+  await expect.poll(() => activeGoal()?.objective).toBe("Finish PR4 with a visible goal panel");
+  await expect(goalPanel).toBeVisible();
+  await expect(goalPanel).toContainText("Finish PR4 with a visible goal panel");
+  await expect(goalPanel).toContainText("Active");
+  await expect(composer.getByRole("button", { name: "Goal", exact: true })).toHaveClass(/active/);
+
+  await goalPanel.getByRole("button", { name: "Expand goal details" }).click();
+  await expect(goalPanel).toContainText("Status: Active");
+  await goalPanel.getByRole("button", { name: "Collapse goal details" }).click();
+
+  await goalPanel.getByRole("button", { name: "Run goal" }).click();
+  await expect.poll(() => String(state.lastChannelMessageRequest?.body ?? "")).toBe("Continue working toward goal: Finish PR4 with a visible goal panel");
+  await expect(page.getByLabel("Channel message feed").getByText("Continue working toward goal: Finish PR4 with a visible goal panel")).toBeVisible();
+
+  await composer.getByRole("button", { name: "Add" }).click();
+  await page.getByRole("menu", { name: "Add" }).getByRole("menuitem", { name: "Plan Mode" }).click();
+  await expect.poll(planMode).toBe("plan");
+  const previousGoalContinuation = state.lastChannelMessageRequest;
+  await goalPanel.getByRole("button", { name: "Run goal" }).click();
+  await expect(composer).toContainText("Exit Plan Mode before continuing a goal.");
+  await expect.poll(() => state.lastChannelMessageRequest).toBe(previousGoalContinuation);
+
+  await composerInput.fill("/plan off");
+  await composer.getByRole("button", { name: "Apply command" }).click();
+  await expect.poll(planMode).toBe("default");
+
+  await goalPanel.getByRole("button", { name: "Pause goal" }).click();
+  await expect.poll(() => activeGoal()?.status).toBe("paused");
+  await expect(goalPanel).toContainText("Paused");
+  await expect(goalPanel.getByRole("button", { name: "Run goal" })).toBeDisabled();
+  await goalPanel.getByRole("button", { name: "Resume goal" }).click();
+  await expect.poll(() => activeGoal()?.status).toBe("active");
+  await expect(goalPanel.getByRole("button", { name: "Run goal" })).toBeEnabled();
+
+  await goalPanel.getByRole("button", { name: "Edit goal" }).click();
+  await expectComposerValue(composerInput, "/goal edit Finish PR4 with a visible goal panel");
+  await composerInput.fill("/goal edit Finish PR4, PR5, and local QA");
+  await composer.getByRole("button", { name: "Apply command" }).click();
+  await expect.poll(() => activeGoal()?.objective).toBe("Finish PR4, PR5, and local QA");
+  await expect(goalPanel).toContainText("Finish PR4, PR5, and local QA");
+
+  await goalPanel.getByRole("button", { name: "Clear goal" }).click();
+  await expect.poll(() => activeGoal()).toBeUndefined();
+  await expect(goalPanel).toHaveCount(0);
+});
+
+test("channel feed renders proposed_plan blocks as proposed plan cards", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.locale", "en-US");
+  });
+  const state = createBaseState({ approvalStatus: "pending" });
+  state.runs = [];
+  state.tasks = [];
+  state.approvals = [];
+  state.channelMessages = [
+    {
+      id: "msg_user_proposed_plan_example",
+      workspaceId: "workspace_default",
+      channelId: "channel_engineering",
+      threadId: "thread_channel_main_engineering",
+      kind: "message",
+      intent: "discuss",
+      authorType: "local-user",
+      body: "Use `<proposed_plan title=\"Do not render\">not a card</proposed_plan>` as literal syntax.",
+      mentions: [],
+      attachmentIds: [],
+      linkPreviewIds: [],
+      fileRefs: [],
+      status: "ready",
+      createdAt: "2026-05-25T00:40:30.000Z",
+      updatedAt: "2026-05-25T00:40:30.000Z",
+    },
+    {
+      id: "msg_proposed_plan",
+      workspaceId: "workspace_default",
+      channelId: "channel_engineering",
+      threadId: "thread_channel_main_engineering",
+      kind: "ai_reply",
+      intent: "discuss",
+      authorType: "ai-teammate",
+      authorId: "ling_agent",
+      body: [
+        "I drafted the first slice.",
+        "",
+        "<proposed_plan title=\"PR1 + PR2 implementation\">",
+        "1. Add Plan/Goal contracts and read routes.",
+        "2. Render Plan Mode controls in the composer.",
+        "3. Verify `/plan` does not create a task.",
+        "</proposed_plan>",
+        "",
+        "Review before implementation.",
+      ].join("\n"),
+      mentions: [],
+      attachmentIds: [],
+      linkPreviewIds: [],
+      fileRefs: [],
+      status: "ready",
+      createdAt: "2026-05-25T00:41:00.000Z",
+      updatedAt: "2026-05-25T00:41:00.000Z",
+    },
+  ];
+  await mockDaemon(page, state);
+  await page.goto("/");
+  await openEngineeringChannel(page);
+
+  const channelRoots = (): readonly typeof state.threads[number][] =>
+    state.threads.filter((thread) =>
+      thread.kind === "channel_discussion" &&
+      thread.channelId === "channel_engineering" &&
+      !thread.parentThreadId
+    );
+  const planMode = (): string | undefined =>
+    channelRoots()[0]?.conversationMode?.mode;
+
+  const feed = page.getByLabel("Channel message feed");
+  await expect(feed.getByText("I drafted the first slice.")).toBeVisible();
+  const plan = feed.getByLabel("Proposed plan");
+  await expect(plan).toHaveCount(1);
+  await expect(plan).toContainText("PR1 + PR2 implementation");
+  await expect(plan).toContainText("Add Plan/Goal contracts and read routes.");
+  await expect(plan.getByRole("button", { name: "Save" })).toBeVisible();
+  await expect(plan.getByRole("button", { name: "Convert to workflow" })).toBeVisible();
+  await expect(plan.getByRole("button", { name: "Refine plan" })).toBeVisible();
+  await expect(plan.getByRole("button", { name: "Implement" })).toBeVisible();
+  await expect(plan).not.toContainText("Do not render");
+  await expect(feed.getByText("<proposed_plan title=\"Do not render\">")).toBeVisible();
+  await expect(feed.getByText("<proposed_plan title=\"PR1 + PR2 implementation\">")).toHaveCount(0);
+
+  await plan.getByRole("button", { name: "Save" }).click();
+  await expect.poll(() => state.proposedPlans.find((item) => item.id === "proposed_plan_msg_proposed_plan")?.savedAt ?? "").not.toBe("");
+
+  await plan.getByRole("button", { name: "Convert to workflow" }).click();
+  await expect.poll(() => state.proposedPlans.find((item) => item.id === "proposed_plan_msg_proposed_plan")?.acceptedWorkflowId ?? "").not.toBe("");
+  await expect.poll(() => state.channelWorkflows.find((workflow) => isRecord(workflow) && workflow.title === "PR1 + PR2 implementation")?.status).toBe("draft");
+  await expect.poll(() => state.channelWorkflowSteps.find((step) => isRecord(step) && step.prompt.includes("Source proposed plan: proposed_plan_msg_proposed_plan"))?.status).toBe("queued");
+
+  await plan.getByRole("button", { name: "Refine plan" }).click();
+  await expect.poll(planMode).toBe("plan");
+  await expect.poll(() => String(state.lastChannelMessageRequest?.body ?? "")).toContain("Refine this plan before implementation: PR1 + PR2 implementation");
+  await expect(feed.getByText("Refine this plan before implementation: PR1 + PR2 implementation")).toBeVisible();
+
+  await plan.getByRole("button", { name: "Implement" }).click();
+  await expect.poll(planMode).toBe("default");
+  await expect.poll(() => String(state.lastChannelMessageRequest?.body ?? "")).toContain("Implement accepted plan: PR1 + PR2 implementation");
+  await expect.poll(() => state.tasks.find((task) => task.title === "Implement accepted plan: PR1 + PR2 implementation")?.requestedSkillId).toBe("plan-acceptance");
+  await expect.poll(() => state.tasks.find((task) => task.title === "Implement accepted plan: PR1 + PR2 implementation")?.prompt ?? "").toContain("Source proposed plan: proposed_plan_msg_proposed_plan");
+  await expect(feed.getByText("Implement accepted plan: PR1 + PR2 implementation")).toBeVisible();
 });
 
 test("channel composer supports spaced teammate names before slash commands", async ({ page }) => {

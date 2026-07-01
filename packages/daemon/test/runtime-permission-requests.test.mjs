@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { test } from "node:test";
 import { createDaemonServer } from "../dist/index.js";
+import { ensureGitRepoForChannelPost } from "./git-test-helpers.mjs";
 
 test("runtime permission requests resolve through durable approvals and return continuation grants", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-runtime-permission-"));
@@ -83,6 +84,40 @@ test("runtime permission requests cannot override workspace deny", async () => {
     assert.equal(approvals.approvals.length, 1);
     assert.equal(approvals.approvals[0].status, "denied");
     assert.equal(approvals.approvals[0].actionType, "runtime_permission_request");
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("plan mode denies runtime permission expansion to mutation tools", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-runtime-permission-plan-mode-"));
+  const runner = new PermissionProbeRunner({
+    toolCallId: "tool_permission_plan_write",
+    requestKind: "core_tool",
+    reason: "Need write to implement the accepted change.",
+    requestedScope: { kind: "core_tool", tools: ["write"] },
+  });
+  const daemon = await startDaemonForTest(runner);
+  try {
+    const { thread } = await createPlanModeThread(daemon.url, cwd);
+    const { events, runId } = await postRunAndCollectEvents(daemon.url, {
+      ...runBody(cwd, "task_permission_plan_write"),
+      threadId: thread.id,
+      tools: ["read", "grep", "find", "ls"],
+      runtimeToolFeatures: { requestPermissions: true },
+    });
+
+    assert.equal(runner.decisions.length, 1);
+    assert.equal(runner.decisions[0].approved, false);
+    assert.match(runner.decisions[0].reason, /Plan Mode denied expanding runtime permissions/);
+    assert.equal(events.some((event) => event.event === "approval_denied"), true);
+
+    const approvals = await getJson(`${daemon.url}/approvals?cwd=${encodeURIComponent(cwd)}&runId=${encodeURIComponent(runId)}`);
+    assert.equal(approvals.approvals.length, 1);
+    assert.equal(approvals.approvals[0].status, "denied");
+    assert.equal(approvals.approvals[0].actionType, "runtime_permission_request");
+    assert.deepEqual(approvals.approvals[0].payload.requestedScope.tools, ["write"]);
   } finally {
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });
@@ -196,6 +231,7 @@ async function getJson(url) {
 }
 
 async function postJson(url, body) {
+  await ensureGitRepoForChannelPost(url, body);
   const response = await fetch(url, {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -206,6 +242,21 @@ async function postJson(url, body) {
     assert.fail(JSON.stringify(json));
   }
   return json;
+}
+
+async function createPlanModeThread(baseUrl, cwd) {
+  const channel = await postJson(`${baseUrl}/channels?cwd=${encodeURIComponent(cwd)}`, {
+    name: "Plan Mode Permission Test",
+    boundPath: cwd,
+  });
+  const created = await postJson(`${baseUrl}/threads?cwd=${encodeURIComponent(cwd)}`, {
+    kind: "channel_discussion",
+    channelId: channel.channel.id,
+  });
+  await patchJson(`${baseUrl}/threads/${encodeURIComponent(created.thread.id)}/mode?cwd=${encodeURIComponent(cwd)}`, {
+    mode: "plan",
+  });
+  return { channel: channel.channel, thread: created.thread };
 }
 
 async function patchJson(url, body) {

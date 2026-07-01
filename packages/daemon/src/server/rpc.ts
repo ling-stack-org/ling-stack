@@ -22,7 +22,7 @@ import {
 } from "../features/control-plane/processors.js";
 import { executeRunRequest, type RunExecutionSink } from "../features/runs/orchestrator.js";
 import { parseRunRequest } from "../features/runs/schemas.js";
-import { maybeStartNextRunInterventionContinuation } from "../features/runs/interventions.js";
+import { maybeQueueGoalContinuation, maybeStartNextRunInterventionContinuation } from "../features/runs/interventions.js";
 
 type JsonRpcId = string | number | null;
 
@@ -306,6 +306,11 @@ class RpcConnection {
     if (!store) {
       return;
     }
+    maybeQueueGoalContinuation({
+      terminalRun,
+      store,
+      activeRuns: this.context.activeRuns,
+    });
     await maybeStartNextRunInterventionContinuation({
       sourceRunId,
       store,

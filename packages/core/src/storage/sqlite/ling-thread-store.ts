@@ -1,15 +1,27 @@
 import type { SQLOutputValue } from "node:sqlite";
 import {
+  createProposedPlanArtifactId,
+  createLingThreadGoalId,
   createLingThreadId,
+  type CreateLingThreadGoalInput,
+  type ConversationModeState,
   type CreateLingThreadInput,
+  type CreateProposedPlanArtifactInput,
   type LingThread,
+  type LingThreadGoal,
+  type LingThreadGoalStatus,
   type LingThreadKind,
+  type ListProposedPlanArtifactsOptions,
+  type ProposedPlanArtifact,
   type ListLingThreadsOptions,
+  type UpdateLingThreadGoalInput,
+  type UpdateLingThreadConversationModeInput,
   type UpdateLingThreadInput,
+  type UpdateProposedPlanArtifactInput,
 } from "../../run-types.js";
 import { DEFAULT_WORKSPACE_ID } from "../../workspace-types.js";
-import { nullableUpdate } from "./helpers.js";
-import { mapLingThread } from "./run-mappers.js";
+import { nullableUpdate, stringifyJson } from "./helpers.js";
+import { mapLingThread, mapLingThreadGoal, mapProposedPlanArtifact } from "./run-mappers.js";
 import { lingThreadSelectSql } from "./select-sql.js";
 import type { SqliteStoreContext } from "./store-context.js";
 
@@ -46,12 +58,14 @@ export class SqliteLingThreadStore {
           parent_turn_id,
           forked_from_run_id,
           metadata_json,
+          conversation_mode,
+          conversation_mode_updated_at,
           created_at,
           updated_at,
           pinned_at,
           archived_at,
           archived_reason
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `)
       .run(
         id,
@@ -72,6 +86,8 @@ export class SqliteLingThreadStore {
         input.parentTurnId ?? null,
         input.forkedFromRunId ?? null,
         null,
+        input.conversationMode?.mode ?? "default",
+        input.conversationMode?.updatedAt ?? null,
         now,
         now,
         input.pinnedAt ?? null,
@@ -201,6 +217,375 @@ export class SqliteLingThreadStore {
     this.ports.rebuildLingThreadMetadata(threadId, now);
     return this.getLingThread(threadId);
   }
+
+  getLingThreadConversationMode(threadId: string): ConversationModeState | undefined {
+    return this.getLingThread(threadId)?.conversationMode;
+  }
+
+  updateLingThreadConversationMode(
+    threadId: string,
+    input: UpdateLingThreadConversationModeInput,
+    now: string,
+  ): ConversationModeState | undefined {
+    const existing = this.getLingThread(threadId);
+    if (!existing) {
+      return undefined;
+    }
+    this.context.database
+      .prepare(`
+        UPDATE ling_threads
+        SET conversation_mode = ?,
+            conversation_mode_updated_at = ?,
+            updated_at = ?
+        WHERE id = ?
+      `)
+      .run(input.mode, now, now, threadId);
+    return this.getLingThreadConversationMode(threadId);
+  }
+
+  getLingThreadGoal(threadId: string): LingThreadGoal | undefined {
+    const row = this.context.database
+      .prepare(`
+        SELECT *
+        FROM ling_thread_goals
+        WHERE workspace_id = ?
+          AND thread_id = ?
+          AND status IN (${activeGoalStatusPlaceholders()})
+        ORDER BY updated_at DESC, created_at DESC
+        LIMIT 1
+      `)
+      .get(DEFAULT_WORKSPACE_ID, threadId, ...activeLingThreadGoalStatuses);
+    return row ? mapLingThreadGoal(row as Record<string, SQLOutputValue>) : undefined;
+  }
+
+  createLingThreadGoal(input: CreateLingThreadGoalInput, now: string): LingThreadGoal {
+    const id = input.id ?? createLingThreadGoalId();
+    this.context.database
+      .prepare(`
+        INSERT INTO ling_thread_goals (
+          id,
+          workspace_id,
+          thread_id,
+          objective,
+          status,
+          token_budget,
+          tokens_used,
+          time_used_seconds,
+          created_at,
+          updated_at,
+          completed_at,
+          cleared_at,
+          replaced_by_goal_id,
+          last_run_id,
+          blocked_reason,
+          completion_evidence_refs_json
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `)
+      .run(
+        id,
+        DEFAULT_WORKSPACE_ID,
+        input.threadId,
+        input.objective,
+        input.status ?? "active",
+        input.tokenBudget ?? null,
+        0,
+        0,
+        now,
+        now,
+        null,
+        null,
+        null,
+        null,
+        null,
+        "[]",
+      );
+    const goal = this.getLingThreadGoalById(id);
+    if (!goal) {
+      throw new Error(`Failed to create Ling thread goal: ${id}`);
+    }
+    return goal;
+  }
+
+  replaceLingThreadGoal(input: CreateLingThreadGoalInput, now: string): LingThreadGoal {
+    const id = input.id ?? createLingThreadGoalId();
+    this.context.database.exec("BEGIN IMMEDIATE");
+    try {
+      const existing = this.getLingThreadGoal(input.threadId);
+      if (existing) {
+        this.context.database
+          .prepare(`
+            UPDATE ling_thread_goals
+            SET status = 'replaced',
+                replaced_by_goal_id = ?,
+                updated_at = ?
+            WHERE id = ?
+          `)
+          .run(id, now, existing.id);
+      }
+      this.context.database
+        .prepare(`
+          INSERT INTO ling_thread_goals (
+            id,
+            workspace_id,
+            thread_id,
+            objective,
+            status,
+            token_budget,
+            tokens_used,
+            time_used_seconds,
+            created_at,
+            updated_at,
+            completed_at,
+            cleared_at,
+            replaced_by_goal_id,
+            last_run_id,
+            blocked_reason,
+            completion_evidence_refs_json
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `)
+        .run(
+          id,
+          DEFAULT_WORKSPACE_ID,
+          input.threadId,
+          input.objective,
+          input.status ?? "active",
+          input.tokenBudget ?? null,
+          0,
+          0,
+          now,
+          now,
+          null,
+          null,
+          null,
+          null,
+          null,
+          "[]",
+        );
+      this.context.database.exec("COMMIT");
+    } catch (error) {
+      this.context.database.exec("ROLLBACK");
+      throw error;
+    }
+    const goal = this.getLingThreadGoalById(id);
+    if (!goal) {
+      throw new Error(`Failed to replace Ling thread goal: ${id}`);
+    }
+    return goal;
+  }
+
+  updateLingThreadGoal(goalId: string, input: UpdateLingThreadGoalInput, now: string): LingThreadGoal | undefined {
+    const existing = this.getLingThreadGoalById(goalId);
+    if (!existing) {
+      return undefined;
+    }
+    const nextStatus = input.status ?? existing.status;
+    const completedAt = nextStatus === "complete" ? existing.completedAt ?? now : existing.completedAt;
+    const clearedAt = nextStatus === "cleared" ? existing.clearedAt ?? now : existing.clearedAt;
+    this.context.database
+      .prepare(`
+        UPDATE ling_thread_goals
+        SET objective = ?,
+            status = ?,
+            token_budget = ?,
+            tokens_used = ?,
+            time_used_seconds = ?,
+            updated_at = ?,
+            completed_at = ?,
+            cleared_at = ?,
+            last_run_id = ?,
+            blocked_reason = ?,
+            completion_evidence_refs_json = ?
+        WHERE id = ?
+      `)
+      .run(
+        input.objective ?? existing.objective,
+        nextStatus,
+        nullableUpdate(input.tokenBudget, existing.tokenBudget) ?? null,
+        input.tokensUsed ?? existing.tokensUsed,
+        input.timeUsedSeconds ?? existing.timeUsedSeconds,
+        now,
+        completedAt ?? null,
+        clearedAt ?? null,
+        nullableUpdate(input.lastRunId, existing.lastRunId) ?? null,
+        nullableUpdate(input.blockedReason, existing.blockedReason) ?? null,
+        stringifyJson(input.completionEvidenceRefs ?? existing.completionEvidenceRefs),
+        goalId,
+      );
+    return this.getLingThreadGoalById(goalId);
+  }
+
+  clearLingThreadGoal(threadId: string, now: string): LingThreadGoal | undefined {
+    const existing = this.getLingThreadGoal(threadId);
+    if (!existing) {
+      return undefined;
+    }
+    return this.updateLingThreadGoal(existing.id, { status: "cleared" }, now);
+  }
+
+  getProposedPlanArtifact(planId: string): ProposedPlanArtifact | undefined {
+    const row = this.context.database
+      .prepare("SELECT * FROM ling_thread_proposed_plans WHERE workspace_id = ? AND id = ?")
+      .get(DEFAULT_WORKSPACE_ID, planId);
+    return row ? mapProposedPlanArtifact(row as Record<string, SQLOutputValue>) : undefined;
+  }
+
+  listProposedPlanArtifacts(options: ListProposedPlanArtifactsOptions): ProposedPlanArtifact[] {
+    const limit = Math.min(Math.max(options.limit ?? 50, 1), 200);
+    return this.context.database
+      .prepare(`
+        SELECT *
+        FROM ling_thread_proposed_plans
+        WHERE workspace_id = ?
+          AND thread_id = ?
+        ORDER BY updated_at DESC, created_at DESC
+        LIMIT ?
+      `)
+      .all(DEFAULT_WORKSPACE_ID, options.threadId, limit)
+      .map((row) => mapProposedPlanArtifact(row as Record<string, SQLOutputValue>));
+  }
+
+  upsertProposedPlanArtifact(input: CreateProposedPlanArtifactInput, now: string): ProposedPlanArtifact {
+    const id = input.id ?? createProposedPlanArtifactId();
+    const existing = this.getProposedPlanArtifact(id);
+    if (existing) {
+      const updated = this.updateProposedPlanArtifact(
+        id,
+        {
+          sourceTurnId: input.sourceTurnId ?? existing.sourceTurnId,
+          sourceMessageId: input.sourceMessageId ?? existing.sourceMessageId,
+          sourceRunId: input.sourceRunId ?? existing.sourceRunId,
+          title: input.title,
+          bodyMarkdown: input.bodyMarkdown,
+          status: input.status ?? existing.status,
+          savedAt: input.savedAt ?? existing.savedAt,
+          acceptedAt: input.acceptedAt ?? existing.acceptedAt,
+          convertedAt: input.convertedAt ?? existing.convertedAt,
+          acceptedTaskId: input.acceptedTaskId ?? existing.acceptedTaskId,
+          acceptedWorkflowId: input.acceptedWorkflowId ?? existing.acceptedWorkflowId,
+          acceptedWorkflowStepId: input.acceptedWorkflowStepId ?? existing.acceptedWorkflowStepId,
+          acceptedRunId: input.acceptedRunId ?? existing.acceptedRunId,
+        },
+        now,
+      );
+      if (!updated) {
+        throw new Error(`Failed to update proposed plan artifact: ${id}`);
+      }
+      return updated;
+    }
+    this.context.database
+      .prepare(`
+        INSERT INTO ling_thread_proposed_plans (
+          id,
+          workspace_id,
+          thread_id,
+          source_turn_id,
+          source_message_id,
+          source_run_id,
+          title,
+          body_markdown,
+          status,
+          saved_at,
+          accepted_at,
+          converted_at,
+          accepted_task_id,
+          accepted_workflow_id,
+          accepted_workflow_step_id,
+          accepted_run_id,
+          created_at,
+          updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `)
+      .run(
+        id,
+        DEFAULT_WORKSPACE_ID,
+        input.threadId,
+        input.sourceTurnId ?? null,
+        input.sourceMessageId ?? null,
+        input.sourceRunId ?? null,
+        input.title,
+        input.bodyMarkdown,
+        input.status ?? "draft",
+        input.savedAt ?? null,
+        input.acceptedAt ?? null,
+        input.convertedAt ?? null,
+        input.acceptedTaskId ?? null,
+        input.acceptedWorkflowId ?? null,
+        input.acceptedWorkflowStepId ?? null,
+        input.acceptedRunId ?? null,
+        now,
+        now,
+      );
+    const plan = this.getProposedPlanArtifact(id);
+    if (!plan) {
+      throw new Error(`Failed to create proposed plan artifact: ${id}`);
+    }
+    return plan;
+  }
+
+  updateProposedPlanArtifact(planId: string, input: UpdateProposedPlanArtifactInput, now: string): ProposedPlanArtifact | undefined {
+    const existing = this.getProposedPlanArtifact(planId);
+    if (!existing) {
+      return undefined;
+    }
+    this.context.database
+      .prepare(`
+        UPDATE ling_thread_proposed_plans
+        SET source_turn_id = ?,
+            source_message_id = ?,
+            source_run_id = ?,
+            title = ?,
+            body_markdown = ?,
+            status = ?,
+            saved_at = ?,
+            accepted_at = ?,
+            converted_at = ?,
+            accepted_task_id = ?,
+            accepted_workflow_id = ?,
+            accepted_workflow_step_id = ?,
+            accepted_run_id = ?,
+            updated_at = ?
+        WHERE workspace_id = ?
+          AND id = ?
+      `)
+      .run(
+        nullableUpdate(input.sourceTurnId, existing.sourceTurnId) ?? null,
+        nullableUpdate(input.sourceMessageId, existing.sourceMessageId) ?? null,
+        nullableUpdate(input.sourceRunId, existing.sourceRunId) ?? null,
+        input.title ?? existing.title,
+        input.bodyMarkdown ?? existing.bodyMarkdown,
+        input.status ?? existing.status,
+        nullableUpdate(input.savedAt, existing.savedAt) ?? null,
+        nullableUpdate(input.acceptedAt, existing.acceptedAt) ?? null,
+        nullableUpdate(input.convertedAt, existing.convertedAt) ?? null,
+        nullableUpdate(input.acceptedTaskId, existing.acceptedTaskId) ?? null,
+        nullableUpdate(input.acceptedWorkflowId, existing.acceptedWorkflowId) ?? null,
+        nullableUpdate(input.acceptedWorkflowStepId, existing.acceptedWorkflowStepId) ?? null,
+        nullableUpdate(input.acceptedRunId, existing.acceptedRunId) ?? null,
+        now,
+        DEFAULT_WORKSPACE_ID,
+        planId,
+      );
+    return this.getProposedPlanArtifact(planId);
+  }
+
+  private getLingThreadGoalById(goalId: string): LingThreadGoal | undefined {
+    const row = this.context.database
+      .prepare("SELECT * FROM ling_thread_goals WHERE workspace_id = ? AND id = ?")
+      .get(DEFAULT_WORKSPACE_ID, goalId);
+    return row ? mapLingThreadGoal(row as Record<string, SQLOutputValue>) : undefined;
+  }
+}
+
+const activeLingThreadGoalStatuses = [
+  "active",
+  "paused",
+  "blocked",
+  "usage_limited",
+  "budget_limited",
+] as const satisfies readonly LingThreadGoalStatus[];
+
+function activeGoalStatusPlaceholders(): string {
+  return activeLingThreadGoalStatuses.map(() => "?").join(", ");
 }
 
 function appendNullableOwnerClause(clauses: string[], params: string[], column: string, value: string | undefined): void {

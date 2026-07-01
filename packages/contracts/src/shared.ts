@@ -1,4 +1,5 @@
 import type { ApprovalToolDecision } from "./approvals.js";
+import type { ConversationModeKind } from "./threads.js";
 
 export type RunStatus = "queued" | "running" | "waiting_for_approval" | "succeeded" | "failed" | "cancelled";
 
@@ -33,6 +34,8 @@ export interface EffectiveRunPolicyRiskNote {
 
 export interface EffectiveRunPolicySnapshot {
   readonly mode: SessionPermissionMode;
+  readonly conversationMode?: ConversationModeKind;
+  readonly planModeMutationPolicy?: "deny_repo_tracked_mutation";
   readonly toolDecisions: Record<RunTool, ApprovalToolDecision>;
   readonly allowedWritePaths: readonly string[];
   readonly workspacePolicyUpdatedAt?: string;

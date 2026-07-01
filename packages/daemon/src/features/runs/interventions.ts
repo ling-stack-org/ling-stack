@@ -336,40 +336,57 @@ export async function maybeStartNextRunInterventionContinuation(input: {
     interventionId: starting.id,
     mode: starting.mode,
   });
-  const continuationRequest = buildRunInterventionContinuationRequest(sourceRun, starting);
-  const continuationRunId = await executeRunRequest(
-    continuationRequest,
-    createDetachedRunExecutionSink(),
-    input.runnerRegistry,
-    input.storeRegistry,
-    input.activeRuns,
-    input.runtimeSupervisor,
-    input.secretResolver,
-    input.mcpBroker,
-    {
-      controlPlaneEvents: input.controlPlaneEvents,
-      startupState: input.startupState,
-      onRunReady: (runId) => {
-        const run = input.store.getRun(runId);
-        input.store.updateRunInterventionStatus({
-          interventionId: starting.id,
-          status: "started",
-          continuationRunId: runId,
-          continuationWorkUnitId: run?.workUnitId ?? null,
-          now: new Date().toISOString(),
-        });
-        streamRunEventIfPossible(input.store, input.activeRuns, input.sourceRunId, "run_continuation_started", {
-          interventionId: starting.id,
-          continuationRunId: runId,
-          continuationWorkUnitId: run?.workUnitId,
-        });
+  let continuationRunId: string | undefined;
+  try {
+    const continuationRequest = buildRunInterventionContinuationRequest(sourceRun, starting);
+    continuationRunId = await executeRunRequest(
+      continuationRequest,
+      createDetachedRunExecutionSink(),
+      input.runnerRegistry,
+      input.storeRegistry,
+      input.activeRuns,
+      input.runtimeSupervisor,
+      input.secretResolver,
+      input.mcpBroker,
+      {
+        controlPlaneEvents: input.controlPlaneEvents,
+        startupState: input.startupState,
+        onRunReady: (runId) => {
+          const run = input.store.getRun(runId);
+          input.store.updateRunInterventionStatus({
+            interventionId: starting.id,
+            status: "started",
+            continuationRunId: runId,
+            continuationWorkUnitId: run?.workUnitId ?? null,
+            now: new Date().toISOString(),
+          });
+          streamRunEventIfPossible(input.store, input.activeRuns, input.sourceRunId, "run_continuation_started", {
+            interventionId: starting.id,
+            continuationRunId: runId,
+            continuationWorkUnitId: run?.workUnitId,
+          });
+        },
+        afterRunTerminal: async (terminalRun) => {
+          const sourceRunId = terminalRun.parentRunId ?? terminalRun.id;
+          await maybeStartNextRunInterventionContinuation({ ...input, sourceRunId });
+        },
       },
-      afterRunTerminal: async (terminalRun) => {
-        const sourceRunId = terminalRun.parentRunId ?? terminalRun.id;
-        await maybeStartNextRunInterventionContinuation({ ...input, sourceRunId });
-      },
-    },
-  );
+    );
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    input.store.updateRunInterventionStatus({
+      interventionId: starting.id,
+      status: "failed",
+      completedAt: new Date().toISOString(),
+      failureReason: message,
+      now: new Date().toISOString(),
+    });
+    streamRunEventIfPossible(input.store, input.activeRuns, input.sourceRunId, "run_intervention_failed", {
+      interventionId: starting.id,
+      message,
+    });
+    return;
+  }
   if (!continuationRunId) {
     input.store.updateRunInterventionStatus({
       interventionId: starting.id,
@@ -383,6 +400,81 @@ export async function maybeStartNextRunInterventionContinuation(input: {
       message: "Continuation run failed to start.",
     });
   }
+}
+
+export function maybeQueueGoalContinuation(input: {
+  readonly terminalRun: RunSession;
+  readonly store: RunStore;
+  readonly activeRuns: ActiveRunRegistry;
+}): RunIntervention | undefined {
+  const run = input.terminalRun;
+  if (run.status !== "succeeded" || run.parentRunId || run.continuationReason || !run.threadId) {
+    return undefined;
+  }
+  const thread = input.store.getLingThread(run.threadId);
+  if (!thread || thread.status === "archived" || thread.lastRunId !== run.id) {
+    return undefined;
+  }
+  const mode = input.store.getLingThreadConversationMode(thread.id);
+  if (mode?.mode === "plan") {
+    return undefined;
+  }
+  const goal = input.store.getLingThreadGoal(thread.id);
+  if (!goal || goal.status !== "active") {
+    return undefined;
+  }
+  if (goal.tokenBudget !== undefined && goal.tokensUsed >= goal.tokenBudget) {
+    return undefined;
+  }
+  if (input.store.listApprovalRequests({ runId: run.id, status: "pending", limit: 1 }).length > 0) {
+    return undefined;
+  }
+  if (input.store.listRunInterventions({ sourceRunId: run.id, limit: 1 }).length > 0) {
+    return undefined;
+  }
+
+  const now = new Date().toISOString();
+  const sourceWorkUnit = run.workUnitId ? input.store.getWorkUnit(run.workUnitId) : undefined;
+  const instruction = renderGoalContinuationInstruction(goal.objective);
+  const intervention = input.store.createRunIntervention(
+    {
+      sourceRunId: run.id,
+      sourceWorkUnitId: run.workUnitId,
+      sourceAttemptId: sourceWorkUnit?.activeAttemptId ?? (run.workUnitId ? input.store.listWorkUnitAttempts(run.workUnitId).at(-1)?.id : undefined),
+      mode: "queue_followup",
+      instruction,
+      messagePayload: {
+        body: instruction,
+        attachmentIds: [],
+        linkPreviewIds: [],
+      },
+      requestedBy: "system",
+      idempotencyKey: `goal_auto_continue:${goal.id}:${run.id}`,
+    },
+    now,
+  );
+  streamRunEventIfPossible(input.store, input.activeRuns, run.id, "run_intervention_created", {
+    interventionId: intervention.id,
+    mode: intervention.mode,
+    status: intervention.status,
+    reason: "goal_auto_continue",
+    goalId: goal.id,
+  });
+  streamRunEventIfPossible(input.store, input.activeRuns, run.id, "run_followup_queued", {
+    interventionId: intervention.id,
+    instruction: intervention.instruction,
+    reason: "goal_auto_continue",
+    goalId: goal.id,
+  });
+  return intervention;
+}
+
+function renderGoalContinuationInstruction(objective: string): string {
+  return [
+    `Continue working toward active goal: ${objective.trim()}`,
+    "",
+    "Stop and report visibly if the goal appears complete, blocked, needs user input, or requires additional approval.",
+  ].join("\n");
 }
 
 function parseRunInterventionCreateRequest(value: unknown): {

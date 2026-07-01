@@ -46,6 +46,7 @@ docs:
 - [Ling Skill Import v1](ling-skill-import-v1.md)
 - [Runtime Supervisor](runtime-supervisor.md)
 - [Runtime Control Plane Detailed Design](runtime-control-plane-detailed-design.md)
+- [Conversation Plan And Goal Modes](conversation-plan-and-goal-modes.md)
 - [Runner Registry](runner-registry.md)
 - [Runner Adapters](runner-adapters.md)
 - [Two-Layer Configuration](two-layer-configuration.md)

@@ -375,6 +375,14 @@ export function createLingThreadId(): string {
   return `thread_${randomUUID()}`;
 }
 
+export function createLingThreadGoalId(): string {
+  return `goal_${randomUUID()}`;
+}
+
+export function createProposedPlanArtifactId(): string {
+  return `proposed_plan_${randomUUID()}`;
+}
+
 export function createLingTurnId(): string {
   return `turn_${randomUUID()}`;
 }
@@ -528,6 +536,10 @@ export const lingThreadKinds = [
 export type LingThreadKind = (typeof lingThreadKinds)[number];
 export type LingThreadStatus = "open" | "running" | "waiting_for_approval" | "blocked" | "succeeded" | "failed" | "cancelled" | "archived";
 export type LingThreadArchivedFilter = "exclude" | "include" | "only";
+export const conversationModeKinds = ["default", "plan"] as const;
+export type ConversationModeKind = (typeof conversationModeKinds)[number];
+export type LingThreadGoalStatus = "active" | "paused" | "blocked" | "usage_limited" | "budget_limited" | "complete" | "cleared" | "replaced";
+export type ProposedPlanArtifactStatus = "draft" | "accepted" | "superseded" | "archived";
 export type LingThreadSearchField =
   | "thread_title"
   | "thread_objective"
@@ -553,6 +565,116 @@ export interface LingThreadMetadata {
   readonly rebuiltAt: string;
 }
 
+export interface ConversationModeState {
+  readonly mode: ConversationModeKind;
+  readonly updatedAt?: string;
+}
+
+export type GoalEvidenceRef =
+  | { readonly kind: "run"; readonly id: string }
+  | { readonly kind: "turn"; readonly id: string }
+  | { readonly kind: "artifact"; readonly id: string }
+  | { readonly kind: "approval"; readonly id: string }
+  | { readonly kind: "workflow"; readonly id: string };
+
+export interface LingThreadGoal {
+  readonly id: string;
+  readonly workspaceId: string;
+  readonly threadId: string;
+  readonly objective: string;
+  readonly status: LingThreadGoalStatus;
+  readonly tokenBudget?: number;
+  readonly tokensUsed: number;
+  readonly timeUsedSeconds: number;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+  readonly completedAt?: string;
+  readonly clearedAt?: string;
+  readonly replacedByGoalId?: string;
+  readonly lastRunId?: string;
+  readonly blockedReason?: string;
+  readonly completionEvidenceRefs: readonly GoalEvidenceRef[];
+}
+
+export interface CreateLingThreadGoalInput {
+  readonly id?: string;
+  readonly threadId: string;
+  readonly objective: string;
+  readonly status?: LingThreadGoalStatus;
+  readonly tokenBudget?: number;
+}
+
+export interface UpdateLingThreadGoalInput {
+  readonly objective?: string;
+  readonly status?: LingThreadGoalStatus;
+  readonly tokenBudget?: number | null;
+  readonly tokensUsed?: number;
+  readonly timeUsedSeconds?: number;
+  readonly lastRunId?: string | null;
+  readonly blockedReason?: string | null;
+  readonly completionEvidenceRefs?: readonly GoalEvidenceRef[];
+}
+
+export interface ProposedPlanArtifact {
+  readonly id: string;
+  readonly workspaceId: string;
+  readonly threadId: string;
+  readonly sourceTurnId?: string;
+  readonly sourceMessageId?: string;
+  readonly sourceRunId?: string;
+  readonly title: string;
+  readonly bodyMarkdown: string;
+  readonly status: ProposedPlanArtifactStatus;
+  readonly savedAt?: string;
+  readonly acceptedAt?: string;
+  readonly convertedAt?: string;
+  readonly acceptedTaskId?: string;
+  readonly acceptedWorkflowId?: string;
+  readonly acceptedWorkflowStepId?: string;
+  readonly acceptedRunId?: string;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+export interface CreateProposedPlanArtifactInput {
+  readonly id?: string;
+  readonly threadId: string;
+  readonly sourceTurnId?: string;
+  readonly sourceMessageId?: string;
+  readonly sourceRunId?: string;
+  readonly title: string;
+  readonly bodyMarkdown: string;
+  readonly status?: ProposedPlanArtifactStatus;
+  readonly savedAt?: string;
+  readonly acceptedAt?: string;
+  readonly convertedAt?: string;
+  readonly acceptedTaskId?: string;
+  readonly acceptedWorkflowId?: string;
+  readonly acceptedWorkflowStepId?: string;
+  readonly acceptedRunId?: string;
+}
+
+export interface UpdateProposedPlanArtifactInput {
+  readonly sourceTurnId?: string | null;
+  readonly sourceMessageId?: string | null;
+  readonly sourceRunId?: string | null;
+  readonly title?: string;
+  readonly bodyMarkdown?: string;
+  readonly status?: ProposedPlanArtifactStatus;
+  readonly savedAt?: string | null;
+  readonly acceptedAt?: string | null;
+  readonly convertedAt?: string | null;
+  readonly acceptedTaskId?: string | null;
+  readonly acceptedWorkflowId?: string | null;
+  readonly acceptedWorkflowStepId?: string | null;
+  readonly acceptedRunId?: string | null;
+}
+
+export interface ListProposedPlanArtifactsOptions {
+  readonly threadId: string;
+  readonly limit?: number;
+}
+
 export interface LingThread {
   readonly id: string;
   readonly workspaceId: string;
@@ -572,6 +694,7 @@ export interface LingThread {
   readonly parentTurnId?: string;
   readonly forkedFromRunId?: string;
   readonly metadata?: LingThreadMetadata;
+  readonly conversationMode: ConversationModeState;
   readonly createdAt: string;
   readonly updatedAt: string;
   readonly pinnedAt?: string;
@@ -596,6 +719,7 @@ export interface CreateLingThreadInput {
   readonly parentThreadId?: string;
   readonly parentTurnId?: string;
   readonly forkedFromRunId?: string;
+  readonly conversationMode?: ConversationModeState;
   readonly pinnedAt?: string;
   readonly archivedAt?: string;
   readonly archivedReason?: string;
@@ -610,6 +734,10 @@ export interface UpdateLingThreadInput {
   readonly pinnedAt?: string | null;
   readonly archivedAt?: string | null;
   readonly archivedReason?: string | null;
+}
+
+export interface UpdateLingThreadConversationModeInput {
+  readonly mode: ConversationModeKind;
 }
 
 export interface ListLingThreadsOptions {
@@ -973,6 +1101,17 @@ export interface RunStore {
   listLingThreads(options?: ListLingThreadsOptions): LingThread[];
   searchLingThreads(options: ListLingThreadsOptions & { readonly q: string }): SearchLingThreadsResult;
   updateLingThread(threadId: string, input: UpdateLingThreadInput, now: string): LingThread | undefined;
+  getLingThreadConversationMode(threadId: string): ConversationModeState | undefined;
+  updateLingThreadConversationMode(threadId: string, input: UpdateLingThreadConversationModeInput, now: string): ConversationModeState | undefined;
+  getLingThreadGoal(threadId: string): LingThreadGoal | undefined;
+  createLingThreadGoal(input: CreateLingThreadGoalInput, now: string): LingThreadGoal;
+  replaceLingThreadGoal(input: CreateLingThreadGoalInput, now: string): LingThreadGoal;
+  updateLingThreadGoal(goalId: string, input: UpdateLingThreadGoalInput, now: string): LingThreadGoal | undefined;
+  clearLingThreadGoal(threadId: string, now: string): LingThreadGoal | undefined;
+  getProposedPlanArtifact(planId: string): ProposedPlanArtifact | undefined;
+  listProposedPlanArtifacts(options: ListProposedPlanArtifactsOptions): ProposedPlanArtifact[];
+  upsertProposedPlanArtifact(input: CreateProposedPlanArtifactInput, now: string): ProposedPlanArtifact;
+  updateProposedPlanArtifact(planId: string, input: UpdateProposedPlanArtifactInput, now: string): ProposedPlanArtifact | undefined;
   rebuildLingThreadMetadata(threadId: string, now: string): LingThread | undefined;
   rebuildLingThreadMetadataForRun(runId: string, now: string): LingThread | undefined;
   createLingTurn(input: CreateLingTurnInput, now: string): LingTurn;

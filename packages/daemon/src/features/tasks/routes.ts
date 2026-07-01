@@ -4,6 +4,7 @@ import type { ResolvedDaemonConfig } from "../../config.js";
 import type { RunStoreRegistry } from "../../runtime/store-registry.js";
 import { readJsonBody, readOptionalIntegerQuery } from "../../shared/request.js";
 import { writeJson } from "../../shared/response.js";
+import { getChannelPlanModeBlocker } from "../channels/plan-mode-guard.js";
 import { validateChannelMessageReferences } from "../channels/protocol.js";
 import { parseCreateTaskInput, parseTaskRunRequest, parseTaskUpdateInput, readOptionalTaskStatusQuery, type TaskRunRequest } from "./schemas.js";
 
@@ -163,6 +164,11 @@ export async function handleTaskRun(
     const channel = store.getChannel(task.channelId);
     if (!channel) {
       writeJson(response, 404, { error: "channel_not_found", message: `Channel not found: ${task.channelId}` });
+      return;
+    }
+    const planModeBlocker = getChannelPlanModeBlocker(store, channel.id);
+    if (planModeBlocker) {
+      writeJson(response, 409, { error: "plan_mode_task_run_blocked", message: planModeBlocker });
       return;
     }
     await startTaskRun({ workspaceCwd, task, channel, runRequest, response });

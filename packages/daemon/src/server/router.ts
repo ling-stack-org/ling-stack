@@ -165,6 +165,7 @@ import {
   handleRunInterventionItem,
   handleRunInterventionPromote,
   handleRunInterventions,
+  maybeQueueGoalContinuation,
   maybeStartNextRunInterventionContinuation,
 } from "../features/runs/interventions.js";
 import {
@@ -328,6 +329,11 @@ export async function routeRequest(
     if (!store) {
       return;
     }
+    maybeQueueGoalContinuation({
+      terminalRun,
+      store,
+      activeRuns,
+    });
     await maybeStartNextRunInterventionContinuation({
       sourceRunId,
       store,
