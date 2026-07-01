@@ -60,6 +60,7 @@ export interface TeammatesActions {
   readonly upsertAiTeammate: (teammate: AiTeammate) => void;
   readonly toggleAiTeammatePinned: (teammateId: string) => Promise<void>;
   readonly toggleAiTeammateHidden: (teammateId: string) => Promise<void>;
+  readonly archiveAiTeammate: (teammateId: string) => Promise<void>;
   readonly archiveAllVisibleTeammateChats: () => Promise<void>;
   readonly addChannelTeammate: (channelId: string, teammateId: string) => Promise<void>;
   readonly removeChannelTeammate: (channelId: string, teammateId: string) => Promise<void>;
@@ -225,6 +226,15 @@ export function useTeammatesDomain(input: {
     if (teammate) {
       await updateAiTeammateSettings(teammateId, { hidden: !teammate.hidden });
     }
+  }
+
+  async function archiveAiTeammate(teammateId: string): Promise<void> {
+    const teammate = aiTeammates.find((item) => item.id === teammateId);
+    if (!teammate || teammate.hidden || teammate.status === "disabled") {
+      return;
+    }
+    await updateAiTeammateSettings(teammateId, { hidden: true });
+    input.closeTeammateIfActive(teammateId);
   }
 
   async function archiveAllVisibleTeammateChats(): Promise<void> {
@@ -417,6 +427,7 @@ export function useTeammatesDomain(input: {
       upsertAiTeammate: upsertAiTeammateAction,
       toggleAiTeammatePinned,
       toggleAiTeammateHidden,
+      archiveAiTeammate,
       archiveAllVisibleTeammateChats,
       addChannelTeammate,
       removeChannelTeammate,

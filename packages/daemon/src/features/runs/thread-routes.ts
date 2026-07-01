@@ -734,7 +734,7 @@ function assertLingThreadCanArchive(store: RunStore, thread: LingThread): void {
   }
   const activeTurn = store
     .listLingTurns({ threadId: thread.id, limit: 500 })
-    .find((turn) => isLingTurnActiveForResume(turn, turn.activeRunId ? store.getRun(turn.activeRunId) : undefined));
+    .find((turn) => isLingTurnBlockingArchive(turn, turn.activeRunId ? store.getRun(turn.activeRunId) : undefined));
   if (activeTurn) {
     throw new HttpError(409, "active_thread_archive_blocked", `Cannot archive thread with active turn: ${activeTurn.id}`);
   }
@@ -1812,6 +1812,16 @@ function isLingTurnActiveForResume(turn: LingTurn, activeRun: RunSession | undef
     return true;
   }
   return turn.status === "open" || turn.status === "running" || turn.status === "waiting_for_approval" || turn.status === "blocked";
+}
+
+function isLingTurnBlockingArchive(turn: LingTurn, activeRun: RunSession | undefined): boolean {
+  if (activeRun && !isTerminalRunStatus(activeRun.status)) {
+    return true;
+  }
+  if (turn.status === "running" || turn.status === "waiting_for_approval" || turn.status === "blocked") {
+    return true;
+  }
+  return turn.status === "open" && Boolean(turn.activeRunId || turn.lastRunId);
 }
 
 function isLingTurnTerminalForFork(turn: LingTurn, activeRun: RunSession | undefined): boolean {

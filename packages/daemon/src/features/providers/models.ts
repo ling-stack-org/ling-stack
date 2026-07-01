@@ -16,14 +16,17 @@ import {
   type ProviderThinkingSupport,
   type ProviderThinkingMode,
   type ProviderStoreFacet,
-  type ResolvedSecret,
   type SecretResolver,
 } from "@ling-stack/core";
 import { HttpError } from "../../errors.js";
 import { readLimitedResponseText } from "../../shared/http.js";
 import { redactTextWithSecrets } from "../../shared/redaction.js";
 import { isRecord, removeUndefined, validateUrl } from "../../shared/validation.js";
-import { resolveProviderSecret } from "./secrets.js";
+import {
+  ProviderSecretMaterializationError,
+  applyProviderAuthHeaders,
+  materializeProviderSecrets,
+} from "./secret-materializer.js";
 
 const PROVIDER_CHECK_TIMEOUT_MS = 10_000;
 const providerModelInputTypes = ["text", "image"] as const;
@@ -43,8 +46,8 @@ export async function listProviderModels(
   if (!["openai-completions", "openai-responses", "anthropic-messages"].includes(preset.api)) {
     throw new HttpError(400, "unsupported_capability", `Model discovery is not implemented for ${preset.api}.`);
   }
-  const secret = resolveProviderModelListSecret(store, preset, input, secretResolver);
-  if ((preset.api === "anthropic-messages" || preset.authHeader !== false) && !secret.configured) {
+  const materialized = materializeProviderModelListSecrets(store, preset, input, secretResolver);
+  if ((preset.api === "anthropic-messages" || preset.authHeader !== false) && !materialized.apiKeySecret.configured) {
     throw new HttpError(400, "secret_missing", "API key missing. Add an API key before fetching models.");
   }
 
@@ -52,14 +55,14 @@ export async function listProviderModels(
   try {
     const response = await fetch(source, {
       method: "GET",
-      headers: buildProviderModelsHeaders(preset, secret),
+      headers: applyProviderAuthHeaders(materialized.headers, preset, materialized.apiKeySecret.value),
       signal: AbortSignal.timeout(PROVIDER_CHECK_TIMEOUT_MS),
     });
     if (!response.ok) {
       throw new HttpError(
         response.status === 401 || response.status === 403 ? 401 : 400,
         response.status === 401 || response.status === 403 ? "auth_failed" : "provider_error",
-        await providerModelListFailureMessage(response, secret.value),
+        await providerModelListFailureMessage(response, materialized.redactionValues),
       );
     }
     const body = await response.json() as unknown;
@@ -74,7 +77,7 @@ export async function listProviderModels(
     throw new HttpError(
       400,
       "network_failed",
-      `Provider model discovery failed: ${redactTextWithSecrets(error instanceof Error ? error.message : String(error), [secret.value])}`,
+      `Provider model discovery failed: ${redactTextWithSecrets(error instanceof Error ? error.message : String(error), materialized.redactionValues)}`,
     );
   }
 }
@@ -87,11 +90,11 @@ async function listMediaProviderModels(
 ): Promise<ProviderModelListResponse> {
   const mediaKind = providerMediaKind(preset);
   const builtin = builtinMediaModelCandidates(mediaKind);
-  const secret = resolveProviderModelListSecret(store, preset, input, secretResolver);
-  if (preset.authHeader === false && !secret.configured) {
+  const materialized = materializeProviderModelListSecrets(store, preset, input, secretResolver);
+  if (preset.authHeader === false && !materialized.apiKeySecret.configured) {
     return { source: "builtin:generation-models", models: builtin };
   }
-  if ((preset.authHeader !== false || preset.apiKeyRef) && !secret.configured) {
+  if ((preset.authHeader !== false || preset.apiKeyRef) && !materialized.apiKeySecret.configured) {
     throw new HttpError(400, "secret_missing", "API key missing. Add an API key before fetching models.");
   }
 
@@ -99,7 +102,7 @@ async function listMediaProviderModels(
   try {
     const response = await fetch(source, {
       method: "GET",
-      headers: buildProviderModelsHeaders(preset, secret),
+      headers: applyProviderAuthHeaders(materialized.headers, preset, materialized.apiKeySecret.value),
       signal: AbortSignal.timeout(PROVIDER_CHECK_TIMEOUT_MS),
     });
     if (!response.ok) {
@@ -109,7 +112,7 @@ async function listMediaProviderModels(
       throw new HttpError(
         response.status === 401 || response.status === 403 ? 401 : 400,
         response.status === 401 || response.status === 403 ? "auth_failed" : "provider_error",
-        await providerModelListFailureMessage(response, secret.value),
+        await providerModelListFailureMessage(response, materialized.redactionValues),
       );
     }
     const body = await response.json() as unknown;
@@ -128,7 +131,7 @@ async function listMediaProviderModels(
     throw new HttpError(
       400,
       "network_failed",
-      `Provider model discovery failed: ${redactTextWithSecrets(error instanceof Error ? error.message : String(error), [secret.value])}`,
+      `Provider model discovery failed: ${redactTextWithSecrets(error instanceof Error ? error.message : String(error), materialized.redactionValues)}`,
     );
   }
 }
@@ -145,6 +148,7 @@ function providerModelListInputToPreset(input: ProviderModelListRequest): Provid
     baseUrl: input.baseUrl,
     apiKeyRef: input.apiKey ? "__request_api_key__" : input.apiKeyRef,
     headers: input.headers ?? {},
+    secretHeaderRefs: input.secretHeaderRefs ?? {},
     authHeader: input.authHeader ?? true,
     reasoning: false,
     thinkingModes: [],
@@ -157,25 +161,25 @@ function providerModelListInputToPreset(input: ProviderModelListRequest): Provid
   };
 }
 
-function resolveProviderModelListSecret(
+function materializeProviderModelListSecrets(
   store: ProviderStoreFacet,
   preset: ProviderPreset,
   input: ProviderModelListRequest,
   secretResolver: SecretResolver,
-): ResolvedSecret {
-  if (input.apiKey) {
-    return {
-      ref: "__request_api_key__",
-      configured: true,
-      value: input.apiKey,
-      status: {
-        ref: "__request_api_key__",
-        kind: "local",
-        configured: true,
-      },
-    };
+): ReturnType<typeof materializeProviderSecrets> {
+  try {
+    return materializeProviderSecrets({
+      store,
+      preset,
+      secretResolver,
+      apiKeyOverride: input.apiKey,
+    });
+  } catch (error) {
+    if (error instanceof ProviderSecretMaterializationError) {
+      throw new HttpError(400, error.code, error.message);
+    }
+    throw error;
   }
-  return preset.apiKeyRef ? resolveProviderSecret(store, preset, secretResolver) : { configured: false };
 }
 
 function buildProviderModelsUrl(preset: ProviderPreset): string {
@@ -186,23 +190,8 @@ function normalizeProviderBaseUrl(preset: ProviderPreset): string {
   return normalizeProviderBaseUrlForAdapter(preset);
 }
 
-function buildProviderModelsHeaders(preset: ProviderPreset, secret: ResolvedSecret): Record<string, string> {
-  const headers: Record<string, string> = { ...preset.headers };
-  if (preset.api === "anthropic-messages") {
-    if (secret.value) {
-      headers["x-api-key"] = secret.value;
-    }
-    headers["anthropic-version"] = headers["anthropic-version"] ?? "2023-06-01";
-    return headers;
-  }
-  if (preset.authHeader !== false && secret.value) {
-    headers.Authorization = `Bearer ${secret.value}`;
-  }
-  return headers;
-}
-
-async function providerModelListFailureMessage(response: Response, secret?: string): Promise<string> {
-  const bodyText = redactTextWithSecrets(await readLimitedResponseText(response, 800), [secret]);
+async function providerModelListFailureMessage(response: Response, redactionValues: readonly string[]): Promise<string> {
+  const bodyText = redactTextWithSecrets(await readLimitedResponseText(response, 800), redactionValues);
   return `Provider returned HTTP ${response.status}${bodyText ? `: ${bodyText}` : "."}`;
 }
 

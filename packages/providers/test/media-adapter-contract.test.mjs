@@ -400,6 +400,101 @@ test("live media vendor transport calls Seedream image generation through the Op
   assert.deepEqual(capturedRequests[1].init.headers, {});
 });
 
+test("live media vendor transport calls Seedream image edit with source image URLs", async () => {
+  const capturedRequests = [];
+  const imageBytes = Uint8Array.from([137, 80, 78, 71, 13, 10, 26, 10]);
+  const registry = createDefaultMediaAdapterRegistry({
+    mediaVendorTransport: createLiveMediaVendorTransport({
+      baseUrl: "https://media.example.invalid",
+      apiKeyRef: "env:SEEDREAM_API_KEY",
+      apiKeyConfigured: true,
+      apiKey: "test-key",
+      httpClient: async (url, init) => {
+        capturedRequests.push({ url, init });
+        if (init.method === "GET") {
+          return binaryResponse(200, "OK", imageBytes, { "content-type": "image/png" });
+        }
+        return jsonResponse(200, {
+          data: [
+            {
+              url: "https://media.example.invalid/edited/image-1.png",
+            },
+          ],
+          debug: {
+            echoedSecret: "test-key",
+          },
+        });
+      },
+    }),
+  });
+  const resolution = resolveMediaAdapter(registry, provider);
+
+  assert.equal(resolution.ok, true);
+  assert.ok(resolution.adapter);
+  const result = await executeMediaJob(resolution.adapter, {
+    jobId: "media_job_live_seedream_edit",
+    provider,
+    operation: "image_edit",
+    prompt: "Replace the background.",
+    input: {
+      imageUrl: "https://cdn.example.invalid/source.png",
+      maskUrl: "https://cdn.example.invalid/mask.png",
+      size: "2K",
+      watermark: false,
+    },
+    requestedAt: "2026-05-23T00:00:00.000Z",
+  });
+
+  assert.equal(result.status, "succeeded");
+  assert.equal(result.errorCode, undefined);
+  assert.equal(result.artifacts.length, 3);
+  assert.match(result.artifacts[1].content ?? "", /live_seedream_image_edit/);
+  assert.doesNotMatch(result.artifacts[1].content ?? "", /test-key/);
+  assert.equal(result.artifacts[2].type, "image");
+  assert.deepEqual(result.artifacts[2].contentBytes, imageBytes);
+  assert.equal(capturedRequests.length, 2);
+  assert.equal(capturedRequests[0].url, "https://media.example.invalid/images/generations");
+  assert.deepEqual(JSON.parse(capturedRequests[0].init.body ?? "{}"), {
+    model: "seedream",
+    prompt: "Replace the background.",
+    image: "https://cdn.example.invalid/source.png",
+    mask: "https://cdn.example.invalid/mask.png",
+    response_format: "url",
+    size: "2K",
+    watermark: false,
+  });
+});
+
+test("live media vendor transport rejects Seedream image edit without supported image input", async () => {
+  const resolution = resolveMediaAdapter(createDefaultMediaAdapterRegistry({
+    mediaVendorTransport: createLiveMediaVendorTransport({
+      baseUrl: "https://media.example.invalid",
+      apiKeyRef: "env:SEEDREAM_API_KEY",
+      apiKeyConfigured: true,
+      apiKey: "test-key",
+      httpClient: async () => {
+        assert.fail("Seedream image_edit without image input must not call HTTP");
+      },
+    }),
+  }), provider);
+
+  assert.equal(resolution.ok, true);
+  assert.ok(resolution.adapter);
+  const result = await executeMediaJob(resolution.adapter, {
+    jobId: "media_job_live_seedream_edit_missing_image",
+    provider,
+    operation: "image_edit",
+    prompt: "Replace the background.",
+    input: {},
+    requestedAt: "2026-05-23T00:00:00.000Z",
+  });
+
+  assert.equal(result.status, "failed");
+  assert.equal(result.errorCode, "invalid_request");
+  assert.match(result.errorMessage ?? "", /source image URL/);
+  assert.deepEqual(result.artifacts, []);
+});
+
 test("live media vendor transport calls OpenAI Images and stores b64 artifacts", async () => {
   const capturedRequests = [];
   const imageBytes = Uint8Array.from([137, 80, 78, 71, 13, 10, 26, 10]);
@@ -469,6 +564,185 @@ test("live media vendor transport calls OpenAI Images and stores b64 artifacts",
     seed: 42,
     watermark: false,
   });
+});
+
+test("live media vendor transport polls Seedance task status and downloads final video", async () => {
+  const capturedRequests = [];
+  const videoBytes = Uint8Array.from([0, 0, 0, 24, 102, 116, 121, 112, 109, 112, 52, 50]);
+  let statusPollCount = 0;
+  const seedanceProvider = {
+    ...provider,
+    id: "provider_seedance",
+    kind: "seedance",
+    displayName: "Seedance Video",
+    providerId: "seedance",
+    model: "seedance",
+    capabilities: ["video_generate"],
+  };
+  const registry = createDefaultMediaAdapterRegistry({
+    mediaVendorTransport: createLiveMediaVendorTransport({
+      baseUrl: "https://media.example.invalid",
+      apiKeyRef: "env:SEEDANCE_API_KEY",
+      apiKeyConfigured: true,
+      apiKey: "test-key",
+      pollIntervalMs: 0,
+      maxPollAttempts: 3,
+      httpClient: async (url, init) => {
+        capturedRequests.push({ url, init });
+        if (url.endsWith("/contents/generations/tasks") && init.method === "POST") {
+          return jsonResponse(200, { id: "task_123", debug: { echoedSecret: "test-key" } });
+        }
+        if (url.endsWith("/contents/generations/tasks/task_123") && init.method === "GET") {
+          statusPollCount += 1;
+          if (statusPollCount === 1) {
+            return jsonResponse(200, { id: "task_123", status: "running" });
+          }
+          return jsonResponse(200, {
+            id: "task_123",
+            status: "succeeded",
+            content: {
+              video_url: "https://media.example.invalid/generated/video-1.mp4",
+            },
+            debug: {
+              echoedSecret: "test-key",
+            },
+          });
+        }
+        if (url === "https://media.example.invalid/generated/video-1.mp4" && init.method === "GET") {
+          return binaryResponse(200, "OK", videoBytes, { "content-type": "video/mp4" });
+        }
+        throw new Error(`Unexpected request: ${init.method} ${url}`);
+      },
+    }),
+  });
+  const resolution = resolveMediaAdapter(registry, seedanceProvider);
+
+  assert.equal(resolution.ok, true);
+  assert.ok(resolution.adapter);
+  const result = await executeMediaJob(resolution.adapter, {
+    jobId: "media_job_live_seedance",
+    provider: seedanceProvider,
+    operation: "video_generate",
+    prompt: "Create a product walkthrough.",
+    input: { ratio: "16:9", duration: 5, watermark: false },
+    requestedAt: "2026-05-23T00:00:00.000Z",
+  });
+
+  assert.equal(result.status, "succeeded");
+  assert.equal(result.errorCode, undefined);
+  assert.equal(result.artifacts.length, 3);
+  assert.match(result.artifacts[0].content ?? "", /Transport: live/);
+  assert.equal(result.artifacts[1].type, "json");
+  assert.match(result.artifacts[1].content ?? "", /live_seedance_video_generate_final/);
+  assert.doesNotMatch(result.artifacts[1].content ?? "", /test-key/);
+  assert.equal(result.artifacts[2].type, "video");
+  assert.equal(result.artifacts[2].contentType, "video/mp4");
+  assert.deepEqual(result.artifacts[2].contentBytes, videoBytes);
+  assert.equal(statusPollCount, 2);
+  assert.equal(capturedRequests[0].url, "https://media.example.invalid/contents/generations/tasks");
+  assert.equal(capturedRequests[0].init.headers.authorization, "Bearer test-key");
+  assert.deepEqual(JSON.parse(capturedRequests[0].init.body ?? "{}"), {
+    model: "seedance",
+    content: [{ type: "text", text: "Create a product walkthrough." }],
+    ratio: "16:9",
+    duration: 5,
+    watermark: false,
+  });
+  assert.equal(capturedRequests.at(-1).url, "https://media.example.invalid/generated/video-1.mp4");
+  assert.deepEqual(capturedRequests.at(-1).init.headers, {});
+});
+
+test("live media vendor transport rejects Seedance success without final video", async () => {
+  const seedanceProvider = {
+    ...provider,
+    id: "provider_seedance",
+    kind: "seedance",
+    displayName: "Seedance Video",
+    providerId: "seedance",
+    model: "seedance",
+    capabilities: ["video_generate"],
+  };
+  const resolution = resolveMediaAdapter(createDefaultMediaAdapterRegistry({
+    mediaVendorTransport: createLiveMediaVendorTransport({
+      baseUrl: "https://media.example.invalid",
+      apiKeyRef: "env:SEEDANCE_API_KEY",
+      apiKeyConfigured: true,
+      apiKey: "test-key",
+      pollIntervalMs: 0,
+      maxPollAttempts: 1,
+      httpClient: async (url, init) => {
+        if (url.endsWith("/contents/generations/tasks") && init.method === "POST") {
+          return jsonResponse(200, { id: "task_123" });
+        }
+        if (url.endsWith("/contents/generations/tasks/task_123") && init.method === "GET") {
+          return jsonResponse(200, { id: "task_123", status: "succeeded" });
+        }
+        throw new Error(`Unexpected request: ${init.method} ${url}`);
+      },
+    }),
+  }), seedanceProvider);
+
+  assert.equal(resolution.ok, true);
+  assert.ok(resolution.adapter);
+  const result = await executeMediaJob(resolution.adapter, {
+    jobId: "media_job_live_seedance_no_video",
+    provider: seedanceProvider,
+    operation: "video_generate",
+    prompt: "Create a product walkthrough.",
+    input: {},
+    requestedAt: "2026-05-23T00:00:00.000Z",
+  });
+
+  assert.equal(result.status, "failed");
+  assert.equal(result.errorCode, "invalid_request");
+  assert.match(result.errorMessage ?? "", /final video URL|recognizable status/);
+  assert.deepEqual(result.artifacts, []);
+});
+
+test("live media vendor transport fails Seedance terminal failure status", async () => {
+  const seedanceProvider = {
+    ...provider,
+    id: "provider_seedance",
+    kind: "seedance",
+    displayName: "Seedance Video",
+    providerId: "seedance",
+    model: "seedance",
+    capabilities: ["video_generate"],
+  };
+  const resolution = resolveMediaAdapter(createDefaultMediaAdapterRegistry({
+    mediaVendorTransport: createLiveMediaVendorTransport({
+      baseUrl: "https://media.example.invalid",
+      apiKeyRef: "env:SEEDANCE_API_KEY",
+      apiKeyConfigured: true,
+      apiKey: "test-key",
+      pollIntervalMs: 0,
+      maxPollAttempts: 1,
+      httpClient: async (url, init) => {
+        if (url.endsWith("/contents/generations/tasks") && init.method === "POST") {
+          return jsonResponse(200, { id: "task_123" });
+        }
+        if (url.endsWith("/contents/generations/tasks/task_123") && init.method === "GET") {
+          return jsonResponse(200, { id: "task_123", status: "failed" });
+        }
+        throw new Error(`Unexpected request: ${init.method} ${url}`);
+      },
+    }),
+  }), seedanceProvider);
+
+  assert.equal(resolution.ok, true);
+  assert.ok(resolution.adapter);
+  const result = await executeMediaJob(resolution.adapter, {
+    jobId: "media_job_live_seedance_failed_status",
+    provider: seedanceProvider,
+    operation: "video_generate",
+    prompt: "Create a product walkthrough.",
+    input: {},
+    requestedAt: "2026-05-23T00:00:00.000Z",
+  });
+
+  assert.equal(result.status, "failed");
+  assert.equal(result.errorCode, "provider_internal_error");
+  assert.match(result.errorMessage ?? "", /failed before returning a video URL/);
 });
 
 test("live media vendor transport reports a clear timeout error", async () => {

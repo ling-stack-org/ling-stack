@@ -46,6 +46,7 @@ test("sidebar selection is exclusive and conversation sections stay below primar
   expect(commandButtonWidth).toBeGreaterThan(140);
   expect(commandButtonWidth).toBeLessThan(320);
   await expect(primaryNav.getByRole("button")).toHaveText(["Inbox", "Image Generation", "Automations"]);
+  await expect(primaryNav.getByRole("button", { name: "AI Councils" })).toHaveCount(0);
   await expect(navigation.getByRole("button", { name: "Workspace" })).toHaveCount(0);
   await expect(navigation.getByRole("button", { name: "Tasks" })).toHaveCount(0);
   await expect(primaryNav.getByRole("button", { name: "AI Teammates" })).toHaveCount(0);
@@ -68,9 +69,9 @@ test("sidebar selection is exclusive and conversation sections stay below primar
   await expect(page.locator(".channel-left-drawer .primary-nav")).toHaveCSS("border-bottom-width", "0px");
   await expect.poll(() => readSidebarSelection(page)).toEqual({ activeNav: [], selectedRows: ["Engineering"] });
 
-  await navigation.locator('.sidebar-row:has(.avatar-initial):has-text("Designer")').click();
+  await navigation.getByRole("button", { name: "Designer", exact: true }).click();
   await expect.poll(() => readSidebarSelection(page)).toEqual({ activeNav: [], selectedRows: ["Designer"] });
-  const selectedTeammateRow = page.locator(".channel-left-drawer .sidebar-row.selected");
+  const selectedTeammateRow = page.locator('.channel-left-drawer .sidebar-row-shell.selected:has-text("Designer")');
   await expect(selectedTeammateRow).toHaveCSS("background-color", "rgb(245, 245, 245)");
   expect(await selectedTeammateRow.evaluate((row) => getComputedStyle(row, "::before").content)).toBe("none");
   await expect(page.getByRole("heading", { name: "Designer", level: 1 })).toBeVisible();
@@ -94,9 +95,9 @@ test("sidebar sections collapse locally and keep group action menus", async ({ p
   await expect(navigation.getByRole("button", { name: "Engineering" })).toBeVisible();
 
   await navigation.getByRole("button", { name: "AI Teammates" }).click();
-  await expect(navigation.locator('.sidebar-row:has(.avatar-initial):has-text("Designer")')).toHaveCount(0);
+  await expect(navigation.getByRole("button", { name: "Designer", exact: true })).toHaveCount(0);
   await navigation.getByRole("button", { name: "AI Teammates" }).click();
-  await expect(navigation.locator('.sidebar-row:has(.avatar-initial):has-text("Designer")')).toBeVisible();
+  await expect(navigation.getByRole("button", { name: "Designer", exact: true })).toBeVisible();
 
   await navigation.getByRole("button", { name: "Recent conversations", exact: true }).click();
   await expect(recentConversationRow).toHaveCount(0);
@@ -107,6 +108,72 @@ test("sidebar sections collapse locally and keep group action menus", async ({ p
   await expect(page.getByRole("menuitem", { name: "New channel" })).toBeVisible();
   await navigation.getByRole("button", { name: "Teammate actions" }).click();
   await expect(page.getByRole("menuitem", { name: "New teammate" })).toBeVisible();
+  await navigation.getByRole("button", { name: "Recent conversation actions" }).click();
+  const archiveAllConversations = page.getByRole("menuitem", { name: "Archive all conversations" });
+  await expect(archiveAllConversations).toBeVisible();
+  await expect(archiveAllConversations).toBeDisabled();
+});
+
+test("sidebar archive hides conversations and teammates without deleting data", async ({ page }) => {
+  await useEnglishLocale(page);
+  const state = createBaseState({ approvalStatus: "expired" });
+  state.providers = [createChatProvider({ id: "provider_local", displayName: "Local Relay", model: "gpt-5.5" })];
+  state.aiTeammates = [createMockTeammate({ id: "teammate_sidebar_designer", displayName: "Designer" })];
+  await mockDaemon(page, state);
+  await page.goto("/");
+
+  const navigation = page.getByLabel("Ling Stack navigation");
+  const channelShell = navigation.locator(".sidebar-channel-group").filter({ hasText: "Engineering" }).locator(".sidebar-row-shell").first();
+  await channelShell.hover();
+  const channelArchiveButton = channelShell.getByRole("button", { name: "Archive channel" });
+  await expect(channelArchiveButton).toBeVisible();
+  await channelArchiveButton.click();
+  await expect(navigation.getByRole("button", { name: "Engineering" })).toHaveCount(0);
+
+  await navigation.getByRole("button", { name: "New conversation" }).click();
+  const home = page.getByLabel("Conversation home");
+  await home.getByRole("textbox", { name: "Conversation message" }).fill("Archive me");
+  await home.getByRole("button", { name: "Send" }).click();
+
+  const recentShell = navigation.locator(".sidebar-recent-row-shell").filter({ hasText: "Archive me" }).first();
+  await expect(recentShell).toBeVisible();
+  await navigation.getByRole("button", { name: "Recent conversation actions" }).click();
+  const archiveAllConversations = page.getByRole("menuitem", { name: "Archive all conversations" });
+  await expect(archiveAllConversations).toBeVisible();
+  await expect(archiveAllConversations).toBeEnabled();
+  await page.keyboard.press("Escape");
+  await recentShell.hover();
+  const conversationArchiveButton = recentShell.getByRole("button", { name: "Archive conversation" });
+  await expect(conversationArchiveButton).toBeVisible();
+  await conversationArchiveButton.click();
+  await expect(navigation.locator(".sidebar-recent-row").filter({ hasText: "Archive me" })).toHaveCount(0);
+  await expect.poll(() => state.threads.some((thread) => thread.kind === "conversation" && thread.title === "Archive me" && Boolean(thread.archivedAt))).toBe(true);
+
+  const teammateShell = navigation.locator(".sidebar-row-shell").filter({ hasText: "Designer" }).first();
+  await teammateShell.hover();
+  const teammateArchiveButton = teammateShell.getByRole("button", { name: "Archive teammate" });
+  await expect(teammateArchiveButton).toBeVisible();
+  await teammateArchiveButton.click();
+  await expect(navigation.getByRole("button", { name: "Designer", exact: true })).toHaveCount(0);
+  await expect.poll(() => state.aiTeammates.find((teammate) => teammate.id === "teammate_sidebar_designer")?.hidden).toBe(true);
+
+  await navigation.getByRole("button", { name: "Settings" }).click();
+  await page.getByLabel("Settings sections").getByRole("button", { name: /Data and maintenance/ }).click();
+  await expect(page.getByRole("heading", { name: "Archived items" })).toBeVisible();
+
+  const conversationGroup = page.locator(".archived-item-group").filter({ hasText: "Conversations" });
+  const teammateGroup = page.locator(".archived-item-group").filter({ hasText: "AI Teammates" });
+  await expect(conversationGroup).toContainText("Archive me");
+  await expect(teammateGroup).toContainText("Designer");
+
+  await conversationGroup.getByRole("button", { name: "Restore" }).click();
+  await expect.poll(() => state.threads.find((thread) => thread.kind === "conversation" && thread.title === "Archive me")?.archivedAt ?? "").toBe("");
+
+  await teammateGroup.getByRole("button", { name: "Restore" }).click();
+  await expect.poll(() => state.aiTeammates.find((teammate) => teammate.id === "teammate_sidebar_designer")?.hidden).toBe(false);
+  await page.getByRole("button", { name: "Back to app" }).click();
+  await expect(navigation.locator(".sidebar-recent-row").filter({ hasText: "Archive me" })).toBeVisible();
+  await expect(navigation.getByRole("button", { name: "Designer", exact: true })).toBeVisible();
 });
 
 test("recent conversations only show records created from the conversation home", async ({ page }) => {
@@ -158,7 +225,7 @@ test("recent conversations only show records created from the conversation home"
   const recentRow = navigation.locator(".sidebar-recent-row").first();
   await expect(recentRow).toBeVisible();
   await expect(recentRow).toContainText("Plan launch");
-  await expect(recentRow).toHaveClass(/selected/);
+  await expect(navigation.locator(".sidebar-recent-row-shell").first()).toHaveClass(/selected/);
   await expect(navigation.getByRole("button", { name: "Engineering" })).toBeVisible();
   await expect(navigation.locator('.sidebar-recent-row:has-text("Engineering")')).toHaveCount(0);
   await expect(navigation.locator('.sidebar-recent-row:has-text("Designer")')).toHaveCount(0);
@@ -267,6 +334,14 @@ test("sidebar text entries route to context-aware inspectors", async ({ page }) 
   await expect(page.getByRole("button", { name: "Open Model Workbench" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Open AI Teammates" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Open Work Board" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Open Council Workspace" })).toBeVisible();
+  await page.getByRole("button", { name: "Open Council Workspace" }).click();
+  await expect(page.getByLabel("Settings sections")).toBeVisible();
+  await expect(page.getByLabel("Ling Stack navigation")).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "Council Workspace", level: 1 })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Back to configuration" })).toBeVisible();
+  await page.getByRole("button", { name: "Back to configuration" }).click();
+  await expect(page.getByRole("button", { name: "Open Council Workspace" })).toBeVisible();
   await expect(page.getByLabel("Settings sections").getByRole("button", { name: /Personal and interface/ })).toBeVisible();
   await page.getByLabel("Settings sections").getByRole("button", { name: /Personal and interface/ }).click();
   await expect(page.getByRole("heading", { name: "Ling User", level: 1 })).toBeVisible();
@@ -277,6 +352,8 @@ test("sidebar text entries route to context-aware inspectors", async ({ page }) 
   await page.getByRole("button", { name: "Open AI Teammates" }).click();
   await expect(page.locator(".teammates-page-header.settings-return-mode .settings-tool-return-row").getByRole("button", { name: "Back to configuration" })).toBeVisible();
   await expect(page.getByLabel("Workspace teammates")).toBeVisible();
+  await page.getByRole("button", { name: "Back to configuration" }).click();
+  await page.getByRole("button", { name: "Back to app" }).click();
 
   await navigation.getByRole("button", { name: "Image Generation" }).click();
   await expect(page.getByRole("heading", { name: "Generation tasks", level: 1 })).toBeVisible();
@@ -409,6 +486,8 @@ test("conversation home model picker uses the model workbench default without ch
   const geminiRow = page.locator(".provider-row").filter({ hasText: "Gemini Pro" });
   await geminiRow.getByRole("button", { name: "Set default" }).click();
   await expect(geminiRow.getByRole("button", { name: "Clear default" })).toBeVisible();
+  await page.getByRole("button", { name: "Back to configuration" }).click();
+  await page.getByRole("button", { name: "Back to app" }).click();
 
   await navigation.getByRole("button", { name: "New conversation" }).click();
   const home = page.getByLabel("Conversation home");
@@ -490,26 +569,32 @@ test("settings workspace tools provide a clear return path from nested tool page
 
   const navigation = page.getByLabel("Ling Stack navigation");
   await navigation.getByRole("button", { name: "Settings" }).click();
+  const settingsSections = page.getByLabel("Settings sections");
   await expect(page.getByRole("button", { name: "Open Model Workbench" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Open AI Teammates" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Open Work Board" })).toBeVisible();
 
   await page.getByRole("button", { name: "Open Model Workbench" }).click();
+  await expect(settingsSections).toBeVisible();
+  await expect(page.getByLabel("Ling Stack navigation")).toHaveCount(0);
   await expect(page.locator(".provider-workbench-header.settings-return-mode .settings-tool-return-row").getByRole("button", { name: "Back to configuration" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Model Workbench", level: 1 })).toHaveCount(0);
   await page.getByRole("button", { name: "Back to configuration" }).click();
   await expect(page.getByRole("button", { name: "Open Model Workbench" })).toBeVisible();
+  await expect(settingsSections).toBeVisible();
 
   await page.getByRole("button", { name: "Open AI Teammates" }).click();
+  await expect(settingsSections).toBeVisible();
+  await expect(page.getByLabel("Ling Stack navigation")).toHaveCount(0);
   await expect(page.locator(".teammates-page-header.settings-return-mode .settings-tool-return-row").getByRole("button", { name: "Back to configuration" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "AI Teammates", level: 1 })).toHaveCount(0);
-  await page.getByLabel("Workspace teammates").locator(".teammate-draft-row").filter({ hasText: "Designer" }).getByRole("button", { name: "Open" }).click();
-  await expect(page.getByRole("heading", { name: "Designer", level: 1 })).toBeVisible();
-  await expect(page.locator(".teammate-chat-header.has-toolbar-start .settings-tool-return-row").getByRole("button", { name: "Back to configuration" })).toBeVisible();
   await page.getByRole("button", { name: "Back to configuration" }).click();
   await expect(page.getByRole("button", { name: "Open AI Teammates" })).toBeVisible();
+  await expect(settingsSections).toBeVisible();
 
   await page.getByRole("button", { name: "Open Work Board" }).click();
+  await expect(settingsSections).toBeVisible();
+  await expect(page.getByLabel("Ling Stack navigation")).toHaveCount(0);
   await expect(page.locator(".work-board-settings-toolbar .settings-tool-return-row").getByRole("button", { name: "Back to configuration" })).toBeVisible();
   await expect(page.locator(".work-board-page").getByRole("heading", { name: "Needs action" })).toHaveCount(0);
   await page.locator(".work-board-page").getByRole("button", { name: "Back to configuration" }).click();

@@ -3826,6 +3826,7 @@ export function WorkspaceClientView({
                         setActivityFiltersExpanded(false);
                         setChannelMoreOpen(false);
                         setSidePanelOpen(false);
+                        setProgressPopoverOpen(false);
                         setChannelSettingsPageOpen(false);
                         setChannelEnvironmentPageOpen(false);
                         setEnvironmentCommitDialogOpen(false);

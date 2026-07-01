@@ -154,6 +154,10 @@ export class SqliteRunSessionStore {
       clauses.push("thread_id = ?");
       params.push(options.threadId);
     }
+    if (options.providerPresetId) {
+      clauses.push("provider_preset_id = ?");
+      params.push(options.providerPresetId);
+    }
     const whereClause = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
     params.push(limit);
     return this.context.database

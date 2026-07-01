@@ -22,6 +22,7 @@ interface ProviderWebSearchCompat {
 export interface WebSearchRequest {
   readonly providerPreset: ProviderPreset;
   readonly apiKey: string;
+  readonly redactionValues?: readonly string[];
   readonly query: string;
   readonly fetch?: typeof globalThis.fetch;
   readonly timeoutMs?: number;
@@ -34,6 +35,7 @@ export interface OpenAiWebSearchRequest {
   readonly query: string;
   readonly headers?: Record<string, string>;
   readonly authHeader?: boolean;
+  readonly redactionValues?: readonly string[];
   readonly fetch?: typeof globalThis.fetch;
   readonly timeoutMs?: number;
 }
@@ -46,6 +48,7 @@ export interface GoogleInteractionsWebSearchRequest {
   readonly model: string;
   readonly query: string;
   readonly headers?: Record<string, string>;
+  readonly redactionValues?: readonly string[];
   readonly fetch?: typeof globalThis.fetch;
   readonly timeoutMs?: number;
 }
@@ -97,6 +100,7 @@ export const openAiResponsesWebSearchAdapter: ProviderWebSearchAdapter = {
       query: input.query,
       headers: input.providerPreset.headers,
       authHeader: input.providerPreset.authHeader,
+      redactionValues: input.redactionValues ?? [input.apiKey],
       fetch: input.fetch,
       timeoutMs: input.timeoutMs,
     });
@@ -126,6 +130,7 @@ export const openAiChatCompletionsWebSearchAdapter: ProviderWebSearchAdapter = {
       query: input.query,
       headers: input.providerPreset.headers,
       authHeader: input.providerPreset.authHeader,
+      redactionValues: input.redactionValues ?? [input.apiKey],
       fetch: input.fetch,
       timeoutMs: input.timeoutMs,
     });
@@ -154,6 +159,7 @@ export const googleInteractionsWebSearchAdapter: ProviderWebSearchAdapter = {
       model: input.providerPreset.model,
       query: input.query,
       headers: input.providerPreset.headers,
+      redactionValues: input.redactionValues ?? [input.apiKey],
       fetch: input.fetch,
       timeoutMs: input.timeoutMs,
     });
@@ -211,7 +217,7 @@ export async function runOpenAiWebSearch(input: OpenAiWebSearchRequest): Promise
   });
 
   if (!response.ok) {
-    throw new Error(`Responses API returned HTTP ${response.status}${await safeReadErrorBody(response)}`);
+    throw new Error(`Responses API returned HTTP ${response.status}${await safeReadErrorBody(response, input.redactionValues)}`);
   }
 
   const payload = await response.json() as unknown;
@@ -245,7 +251,7 @@ export async function runOpenAiChatCompletionsWebSearch(input: OpenAiChatComplet
   });
 
   if (!response.ok) {
-    throw new Error(`Chat Completions API returned HTTP ${response.status}${await safeReadErrorBody(response)}`);
+    throw new Error(`Chat Completions API returned HTTP ${response.status}${await safeReadErrorBody(response, input.redactionValues)}`);
   }
 
   const payload = await response.json() as unknown;
@@ -277,7 +283,7 @@ export async function runGoogleInteractionsWebSearch(input: GoogleInteractionsWe
   });
 
   if (!response.ok) {
-    throw new Error(`Gemini API returned HTTP ${response.status}${await safeReadErrorBody(response)}`);
+    throw new Error(`Gemini API returned HTTP ${response.status}${await safeReadErrorBody(response, input.redactionValues)}`);
   }
 
   const payload = await response.json() as unknown;
@@ -782,11 +788,11 @@ function uniqueSources(sources: readonly WebSource[]): WebSource[] {
   return unique;
 }
 
-async function safeReadErrorBody(response: Response): Promise<string> {
+async function safeReadErrorBody(response: Response, redactionValues: readonly string[] = []): Promise<string> {
   try {
     const text = await response.text();
     const trimmed = text.trim();
-    return trimmed ? `: ${redactSecretLike(trimmed).slice(0, 500)}` : "";
+    return trimmed ? `: ${redactSecretValues(redactSecretLike(trimmed), redactionValues).slice(0, 500)}` : "";
   } catch {
     return "";
   }
@@ -794,6 +800,15 @@ async function safeReadErrorBody(response: Response): Promise<string> {
 
 function redactSecretLike(value: string): string {
   return value.replace(/\bsk-[A-Za-z0-9_.*-]{6,}\b/gu, "[redacted]");
+}
+
+function redactSecretValues(value: string, redactionValues: readonly string[]): string {
+  return redactionValues.reduce((current, secret) => {
+    if (!secret) {
+      return current;
+    }
+    return current.split(secret).join("[redacted]");
+  }, value);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

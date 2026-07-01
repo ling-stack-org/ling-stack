@@ -763,14 +763,27 @@ export async function readSidebarSelection(page: Page): Promise<{ readonly activ
     const navLabel = (element: Element): string => element.querySelector("span")?.textContent?.trim() ?? "";
     const rowLabel = (element: Element): string =>
       element.querySelector("span:not(.avatar-initial):not(.sidebar-channel-avatar):not(.sidebar-hash):not(.channel-mention):not(.channel-unread)")?.textContent?.trim() ?? "";
-    const channelRowLabel = (element: Element): string =>
-      element.querySelector(".sidebar-row-main span:not(.sidebar-channel-avatar):not(.sidebar-hash):not(.channel-mention):not(.channel-unread)")?.textContent?.trim() ?? "";
+    const shellRowLabel = (element: Element): string => {
+      const main = element.querySelector(".sidebar-row-main");
+      const directSpan = [...(main?.children ?? [])].find((child) => {
+        if (child.tagName !== "SPAN") {
+          return false;
+        }
+        return !child.classList.contains("avatar-initial") &&
+          !child.classList.contains("teammate-avatar-image") &&
+          !child.classList.contains("sidebar-channel-avatar") &&
+          !child.classList.contains("sidebar-hash") &&
+          !child.classList.contains("channel-mention") &&
+          !child.classList.contains("channel-unread");
+      });
+      return directSpan?.textContent?.trim() ?? "";
+    };
 
     return {
       activeNav: [...document.querySelectorAll(".nav-item.active")].map(navLabel),
       selectedRows: [
         ...[...document.querySelectorAll(".sidebar-row.selected")].map(rowLabel),
-        ...[...document.querySelectorAll(".sidebar-channel-group > .sidebar-row-shell.selected")].map(channelRowLabel),
+        ...[...document.querySelectorAll(".sidebar-row-shell.selected")].map(shellRowLabel),
       ].filter(Boolean),
     };
   });
@@ -2030,8 +2043,19 @@ function getMockThreadArchiveBlocker(state: MockState, thread: MockLingThread): 
       return `Cannot archive thread with active work: ${thread.id}`;
     }
   }
-  const activeTurn = state.turns.find((turn) => turn.threadId === thread.id && isMockTurnActiveForResume(state, turn));
+  const activeTurn = state.turns.find((turn) => turn.threadId === thread.id && isMockTurnBlockingArchive(state, turn));
   return activeTurn ? `Cannot archive thread with active turn: ${activeTurn.id}` : undefined;
+}
+
+function isMockTurnBlockingArchive(state: MockState, turn: MockLingTurn): boolean {
+  const activeRun = turn.activeRunId ? state.runs.find((run) => run.id === turn.activeRunId) : undefined;
+  if (activeRun && isMockRunActive(activeRun)) {
+    return true;
+  }
+  if (turn.status === "running" || turn.status === "waiting_for_approval" || turn.status === "blocked") {
+    return true;
+  }
+  return turn.status === "open" && Boolean(turn.activeRunId || turn.lastRunId);
 }
 
 function upsertMockThread(state: MockState, thread: MockLingThread): MockLingThread {

@@ -29,6 +29,7 @@ export async function executeOpenAIImageGeneration(
     const response = await httpClient(endpoint, {
       method: "POST",
       headers: {
+        ...options.headers,
         authorization: `Bearer ${options.apiKey}`,
         "content-type": "application/json",
       },
@@ -36,7 +37,7 @@ export async function executeOpenAIImageGeneration(
       signal: abortController.signal,
     });
     if (!response.ok) {
-      return await normalizeOpenAIImagesHttpFailure(response, options.apiKey);
+      return await normalizeOpenAIImagesHttpFailure(response, mediaVendorRedactionValues(options));
     }
 
     const json = await response.json();
@@ -65,7 +66,7 @@ export async function executeOpenAIImageGeneration(
             imageCount: imageArtifacts.length,
             request: payload,
             response: json,
-          }, [options.apiKey]), null, 2),
+          }, mediaVendorRedactionValues(options)), null, 2),
         },
         ...imageArtifacts,
       ],
@@ -75,7 +76,7 @@ export async function executeOpenAIImageGeneration(
       return {
         status: "failed",
         errorCode: error.code,
-        errorMessage: redactSecretText(error.message, [options.apiKey]),
+        errorMessage: redactSecretText(error.message, mediaVendorRedactionValues(options)),
       };
     }
     const isTimeout = error instanceof Error && error.name === "AbortError";
@@ -85,7 +86,7 @@ export async function executeOpenAIImageGeneration(
     return {
       status: "failed",
       errorCode: isTimeout ? "timeout" : "network_error",
-      errorMessage: redactSecretText(message, [options.apiKey]),
+      errorMessage: redactSecretText(message, mediaVendorRedactionValues(options)),
     };
   } finally {
     clearTimeout(timeout);
@@ -223,9 +224,16 @@ function base64ToBytes(value: string): Uint8Array {
   return bytes;
 }
 
-async function normalizeOpenAIImagesHttpFailure(response: MediaVendorHttpResponse, apiKey: string | undefined): Promise<MediaVendorTransportResult> {
+function mediaVendorRedactionValues(options: LiveMediaVendorTransportOptions): readonly string[] {
+  return [
+    options.apiKey,
+    ...(options.redactionValues ?? []),
+  ].filter((value): value is string => typeof value === "string" && value.length > 0);
+}
+
+async function normalizeOpenAIImagesHttpFailure(response: MediaVendorHttpResponse, redactionValues: readonly string[]): Promise<MediaVendorTransportResult> {
   const body = await readHttpResponseBody(response);
-  const redactedBody = redactSecretText(body, [apiKey]);
+  const redactedBody = redactSecretText(body, redactionValues);
   return {
     status: "failed",
     errorCode: mapMediaVendorHttpStatus(response.status),

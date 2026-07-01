@@ -43,10 +43,16 @@ Implemented in v0.1:
 - run events, run snapshots, provider snapshots, and generated artifacts redact resolved secret values.
 - provider API keys can currently use `local:<providerId>` for workspace-local
   compatibility; this must not be expanded beyond provider setup.
+- provider API keys can be saved/deleted through
+  `POST /providers/:id/secrets/configure` and
+  `DELETE /providers/:id/secrets/keychain`, which accept only `keychain:` refs and never
+  return raw values.
+- provider presets store `secretHeaderRefs`; provider check, model discovery, import,
+  run startup, image vision, web search, and media transport resolve those refs only
+  inside trusted daemon runtime calls.
 
 Not implemented in v0.1:
 
-- generic provider Keychain write/delete UI,
 - generic renderer APIs that set or delete arbitrary secrets,
 - external plugin access to raw secret values.
 
@@ -207,6 +213,17 @@ to `WORKFLOW.md`. If `WORKFLOW.md` is missing or invalid, Web Settings first use
 local-only workflow bootstrap endpoint to create or repair the file without handling any
 token value.
 
+Provider API-key setup endpoints are similarly narrow:
+
+```http
+POST /providers/:id/secrets/configure?cwd=/path/to/project
+DELETE /providers/:id/secrets/keychain?cwd=/path/to/project
+```
+
+They accept only provider API-key material for a specific provider preset, persist only a
+`keychain:` ref on the preset, and never expose a generic arbitrary-secret write/read
+surface.
+
 ## Desktop Boundary
 
 Trusted host code owns OS keychain writes and deletes. In the local daemon, the macOS
@@ -285,6 +302,8 @@ Required tests:
 - unavailable keychain resolver reports `secret_store_unavailable`,
 - provider create/update accepts `env:` and `keychain:`,
 - provider create/update rejects raw keys and unknown schemes,
+- provider Keychain configure/delete stores only refs and never returns values,
+- provider secret headers resolve through `custom_header` purpose and redact values,
 - MCP create/update accepts secret refs and rejects raw secret payloads,
 - MCP check/sync/tool calls resolve refs only inside trusted daemon paths,
 - `/secrets/status` never returns a value,
@@ -294,7 +313,7 @@ Required tests:
 ## Assumptions
 
 - `env:` remains the default for development.
-- OS keychain write/delete is implemented for external-work token setup; generic provider
-  secret editing can still be added later.
+- OS keychain write/delete is implemented for external-work token setup and provider
+  API-key setup; generic arbitrary-secret editing is still not exposed.
 - No cloud secret sync exists in v0.1.
 - Plugins and skills never receive raw secret values directly.

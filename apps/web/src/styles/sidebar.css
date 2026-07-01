@@ -361,8 +361,30 @@
 }
 
 .channel-left-drawer .sidebar-row-shell {
+  display: grid;
+  align-items: center;
   min-height: 32px;
   border-radius: var(--radius-md);
+}
+
+.channel-left-drawer .sidebar-row-tools {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    opacity 120ms ease,
+    color 120ms ease;
+}
+
+.channel-left-drawer .sidebar-row-shell:hover > .sidebar-row-tools,
+.channel-left-drawer .sidebar-row-shell:focus-within > .sidebar-row-tools,
+.channel-left-drawer .sidebar-branch-row-shell:hover > .sidebar-row-tools,
+.channel-left-drawer .sidebar-branch-row-shell:focus-within > .sidebar-row-tools {
+  opacity: 1;
+  pointer-events: auto;
 }
 
 .channel-left-drawer .sidebar-row:hover,
@@ -396,6 +418,11 @@
   color: var(--text-strong);
 }
 
+.channel-left-drawer .sidebar-row-shell:focus-within:not(:hover) > .sidebar-row-tools {
+  opacity: 1;
+  pointer-events: auto;
+}
+
 .channel-left-drawer .sidebar-mini-action,
 .channel-left-drawer .sidebar-mini-action:hover {
   background: transparent;
@@ -408,6 +435,11 @@
   min-height: 38px;
   padding-top: 4px;
   padding-bottom: 4px;
+}
+
+.channel-left-drawer .sidebar-recent-row-shell {
+  align-items: stretch;
+  min-height: 38px;
 }
 
 .channel-left-drawer .sidebar-recent-row > svg {
@@ -437,7 +469,8 @@
 
 .channel-left-drawer .sidebar-recent-row:hover .sidebar-recent-copy strong,
 .channel-left-drawer .sidebar-recent-row:focus-visible .sidebar-recent-copy strong,
-.channel-left-drawer .sidebar-recent-row.selected .sidebar-recent-copy strong {
+.channel-left-drawer .sidebar-recent-row.selected .sidebar-recent-copy strong,
+.channel-left-drawer .sidebar-recent-row-shell.selected .sidebar-recent-copy strong {
   color: var(--text-strong);
 }
 
@@ -456,6 +489,18 @@
   font-size: 10px;
   font-weight: 520;
   line-height: 13px;
+}
+
+.channel-left-drawer .sidebar-section-inline-error {
+  margin: 4px 2px 0;
+  padding: 7px 8px;
+  border: 1px solid color-mix(in srgb, var(--danger, #dc2626) 22%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--danger, #dc2626) 8%, var(--surface, #ffffff));
+  color: var(--danger, #b91c1c);
+  font-size: 11px;
+  font-weight: 560;
+  line-height: 15px;
 }
 
 .channel-left-drawer .sidebar-channel-avatar {
@@ -880,6 +925,7 @@
 .app-shell.channel-sidebar-collapsed .channel-left-drawer .sidebar-row span:not(.avatar-initial):not(.channel-mention):not(.channel-unread),
 .app-shell.channel-sidebar-collapsed .channel-left-drawer .sidebar-row-main span:not(.sidebar-channel-avatar):not(.channel-mention):not(.channel-unread),
 .app-shell.channel-sidebar-collapsed .channel-left-drawer .sidebar-recent-copy,
+.app-shell.channel-sidebar-collapsed .channel-left-drawer .sidebar-section-inline-error,
 .app-shell.channel-sidebar-collapsed .channel-left-drawer .config-button-label,
 .app-shell.channel-sidebar-collapsed .channel-left-drawer .sidebar-inbox-alert span:not(.status-dot) {
   display: none;
@@ -1454,6 +1500,7 @@
   .app-shell.channel-drawer-shell .channel-left-drawer .sidebar-row span:not(.avatar-initial):not(.channel-mention):not(.channel-unread),
   .app-shell.channel-drawer-shell .channel-left-drawer .sidebar-row-main span:not(.sidebar-channel-avatar):not(.channel-mention):not(.channel-unread),
   .app-shell.channel-drawer-shell .channel-left-drawer .sidebar-recent-copy,
+  .app-shell.channel-drawer-shell .channel-left-drawer .sidebar-section-inline-error,
   .app-shell.channel-drawer-shell .channel-left-drawer .config-button-label,
   .app-shell.channel-drawer-shell .channel-left-drawer .sidebar-inbox-alert span:not(.status-dot) {
     display: none;
@@ -1750,6 +1797,10 @@
   .app-shell.channel-drawer-shell:not(.channel-sidebar-collapsed) .channel-left-drawer .sidebar-branch-list,
   .app-shell.channel-drawer-shell:not(.channel-sidebar-collapsed) .channel-left-drawer .sidebar-branch-create-form {
     display: revert;
+  }
+
+  .app-shell.channel-drawer-shell:not(.channel-sidebar-collapsed) .channel-left-drawer .sidebar-row-tools {
+    display: inline-flex;
   }
 
   .app-shell.channel-drawer-shell:not(.channel-sidebar-collapsed) .channel-left-drawer .sidebar-hash,

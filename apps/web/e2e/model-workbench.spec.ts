@@ -30,6 +30,8 @@ async function openModelWorkbench(page: Page): Promise<void> {
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: /^(Settings|设置)$/ }).click();
   await page.getByLabel(/^(Settings sections|设置分组)$/).getByRole("button", { name: /^(Configuration|配置)/ }).click();
   await page.getByRole("button", { name: /^(Open Model Workbench|打开模型工作台)$/ }).click();
+  await expect(page.getByLabel(/^(Settings sections|设置分组)$/)).toBeVisible();
+  await expect(page.getByLabel("Ling Stack navigation")).toHaveCount(0);
 }
 
 async function expectProviderModelDiscoveryLayout(page: Page): Promise<void> {
@@ -110,7 +112,7 @@ test("model workbench Chinese mode localizes setup copy and uses an add model sh
   await expect(page.locator(".provider-row")).toHaveCount(1);
   await expect(page.locator(".provider-table-footer")).toContainText("1 个模型");
   const workbenchBounds = await page.locator(".provider-workbench").evaluate((workbench) => {
-    const workspaceElement = workbench.closest(".workspace");
+    const workspaceElement = workbench.closest(".settings-content-stack") ?? workbench.closest(".workspace");
     const workspace = workspaceElement?.getBoundingClientRect();
     const rect = workbench.getBoundingClientRect();
     const style = workspaceElement ? getComputedStyle(workspaceElement) : undefined;
@@ -210,7 +212,8 @@ test("model workbench Chinese mode localizes setup copy and uses an add model sh
       : undefined;
   });
   expect(shellHeights).toBeDefined();
-  expect(shellHeights?.shellHeight ?? 0).toBeGreaterThan((shellHeights?.workbenchHeight ?? 0) * 0.45);
+  expect(shellHeights?.shellHeight ?? 0).toBeGreaterThan(64);
+  expect(shellHeights?.shellHeight ?? 0).toBeLessThanOrEqual(shellHeights?.workbenchHeight ?? 0);
 
   await page.getByRole("button", { name: "添加模型" }).first().click();
   const editor = page.getByRole("dialog", { name: "新建预设" });

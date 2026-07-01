@@ -270,6 +270,7 @@ export interface ListAutomationDefinitionsOptions {
   readonly status?: AutomationStatus;
   readonly kind?: AutomationKind;
   readonly channelId?: string;
+  readonly providerPresetId?: string;
   readonly includeArchived?: boolean;
   readonly scheduledOnly?: boolean;
   readonly limit?: number;

@@ -5,7 +5,6 @@ import {
   type CreateMediaJobInput,
   type ProviderPreset,
   type ProviderStoreFacet,
-  type ResolvedSecret,
   type SecretResolver,
 } from "@ling-stack/core";
 import {
@@ -15,7 +14,7 @@ import {
   resolveMediaVendorTransportGateConfig,
 } from "@ling-stack/providers";
 import { HttpError } from "../../errors.js";
-import { resolveProviderSecret } from "../providers/secrets.js";
+import { materializeProviderSecrets } from "../providers/secret-materializer.js";
 
 export function assertMediaJobProvider(store: ProviderStoreFacet, input: CreateMediaJobInput, secretResolver?: SecretResolver): ProviderPreset {
   void secretResolver;
@@ -43,14 +42,16 @@ export function createMediaAdapterForProvider(store: ProviderStoreFacet, provide
   if (!gate.ok) {
     throw new HttpError(400, gate.errorCode ?? "invalid_request", gate.errorMessage ?? "Invalid media vendor transport configuration.");
   }
-  const secret: ResolvedSecret = normalizedProvider.apiKeyRef ? resolveProviderSecret(store, normalizedProvider, secretResolver) : { configured: false };
+  const materialized = materializeProviderSecrets({ store, preset: normalizedProvider, secretResolver });
   const registry = createDefaultMediaAdapterRegistry({
     mediaVendorTransport: gate.config?.mode === "live"
       ? createLiveMediaVendorTransport({
         baseUrl: normalizedProvider.baseUrl ? normalizeProviderBaseUrlForAdapter(normalizedProvider) : undefined,
         apiKeyRef: normalizedProvider.apiKeyRef,
-        apiKeyConfigured: secret.configured,
-        apiKey: secret.value,
+        apiKeyConfigured: materialized.apiKeySecret.configured,
+        apiKey: materialized.apiKeySecret.value,
+        headers: materialized.headers,
+        redactionValues: materialized.redactionValues,
       })
       : undefined,
   });
@@ -88,7 +89,7 @@ function mediaRuntimeHttpError(reason: ReturnType<typeof resolveMediaProviderRun
     return new HttpError(400, "live_media_transport_required", "当前没有可真实生成的模型，请先在模型工作台配置具备图片或视频能力的模型。");
   }
   if (reason === "unsupported_live_adapter") {
-    return new HttpError(400, "unsupported_capability", "当前只支持 OpenAI Images 图片生成、Seedream 图片生成和 Seedance 视频生成的真实执行，其他生成模型暂未接入真实生成。");
+    return new HttpError(400, "unsupported_capability", "当前只支持 OpenAI Images 图片生成、Seedream 图片生成/URL 编辑和 Seedance 最终视频生成的真实执行，其他生成模型暂未接入真实生成。");
   }
   return new HttpError(400, "unsupported_capability", "Generation tasks require a generation-capable provider preset");
 }

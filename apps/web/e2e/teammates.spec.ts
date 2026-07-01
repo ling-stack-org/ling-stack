@@ -180,7 +180,7 @@ test("AI teammates page creates a durable teammate and opens its private workspa
   await page.getByRole("button", { name: "Create teammate" }).click();
 
   await expect(page.getByRole("heading", { name: "Ling Engineer", level: 1 })).toBeVisible();
-  await expect(page.getByLabel("Ling Stack navigation").locator(".sidebar-row.selected")).toContainText("Ling Engineer");
+  await expect(page.getByLabel("Ling Stack navigation").locator(".sidebar-row-shell.selected")).toContainText("Ling Engineer");
   await expect(page.getByLabel("Private chat", { exact: true })).toBeVisible();
   await expect.poll(() => state.aiTeammates.some((item) => isRecord(item) && item.displayName === "Ling Engineer")).toBe(true);
   await expect.poll(() => state.teammateChannelMemberships.some((item) => isRecord(item) && item.teammateId === "teammate_created_1" && item.channelId === "channel_engineering")).toBe(true);
@@ -366,8 +366,13 @@ test("AI teammates page links council management to Council Workspace", async ({
   expect(state.teammateChannelMemberships).toHaveLength(originalChannelMembershipCount);
 
   await councils.getByRole("button", { name: "Open Council Workspace" }).click();
+  await expect(page.getByLabel("Settings sections")).toBeVisible();
+  await expect(page.getByLabel("Ling Stack navigation")).toHaveCount(0);
   await expect(page.getByRole("heading", { name: "Council Workspace", level: 1 })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Back to configuration" })).toBeVisible();
   await expect(page.getByLabel("Council members")).toContainText("Ling Engineer");
+  await page.getByRole("button", { name: "Back to app" }).click();
+  await expect(page.getByRole("heading", { name: "AI Teammates", level: 1 })).toBeVisible();
   expect(state.aiCouncilMembers).toHaveLength(1);
   expect(state.teammateChannelMemberships).toHaveLength(originalChannelMembershipCount);
 });
@@ -889,11 +894,13 @@ test("AI teammate private workspace sends blocked chat replies and persists sett
     return isRecord(teammate) ? teammate.avatarImageAttachmentId : undefined;
   }).toBe("tpatt_2");
   await expect(page.getByLabel("Avatar").locator(".teammate-avatar-image")).toBeVisible();
-  await expect(page.getByLabel("Ling Stack navigation").locator(".sidebar-row.selected .teammate-avatar-image")).toBeVisible();
+  await expect(page.getByLabel("Ling Stack navigation").locator(".sidebar-row-shell.selected .teammate-avatar-image")).toBeVisible();
 
   await openAiTeammatesFromSettings(page);
   const rosterRowWithAvatar = page.locator(".teammate-draft-row").filter({ hasText: "Imported QA Persona" });
   await expect(rosterRowWithAvatar.locator(".teammate-avatar-image")).toBeVisible();
+  await page.getByRole("button", { name: "Back to app" }).click();
+  await expect(page.getByLabel("Ling Stack navigation")).toBeVisible();
 
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Design" }).click();
   await openChannelTeammateManager(page);
@@ -910,7 +917,7 @@ test("AI teammate private workspace sends blocked chat replies and persists sett
     return isRecord(teammate) ? teammate.avatarImageAttachmentId : "missing";
   }).toBeUndefined();
   await expect(page.getByLabel("Avatar").locator(".teammate-avatar-image")).toHaveCount(0);
-  await expect(page.getByLabel("Ling Stack navigation").locator(".sidebar-row.selected .teammate-avatar-image")).toHaveCount(0);
+  await expect(page.getByLabel("Ling Stack navigation").locator(".sidebar-row-shell.selected .teammate-avatar-image")).toHaveCount(0);
 
   await page.getByLabel("Settings sections").getByRole("button", { name: "Danger zone" }).click();
   await page.getByPlaceholder("Reason").fill("owner request");
@@ -1344,7 +1351,7 @@ test("AI teammate private chat exposes direct reply guidance and stop controls",
     const message = state.teammateDirectMessages.find((item) => isRecord(item) && item.id === "tdmsg_pending_reply");
     return isRecord(message) ? message.status : undefined;
   }).toBe("cancelled");
-  await expect(resumedInput).toHaveAttribute("data-value", "");
+  await expect(page.locator(".teammate-direct-composer").getByRole("button", { name: "停止回复" })).toHaveCount(0);
   await expect(page.getByLabel("Private message feed").getByText("回复已停止").first()).toBeVisible();
 });
 

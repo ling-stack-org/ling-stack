@@ -345,7 +345,7 @@ function resolveConversationThread(store: RunStore, input: ConversationStreamReq
     if (!thread || thread.kind !== "conversation") {
       throw new HttpError(404, "conversation_not_found", `Conversation not found: ${input.threadId}`);
     }
-    if (thread.status === "archived") {
+    if (thread.status === "archived" || thread.archivedAt) {
       throw new HttpError(409, "conversation_archived", `Conversation is archived: ${thread.id}`);
     }
     return thread;

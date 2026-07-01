@@ -4,13 +4,15 @@ import {
   type Channel,
   type ProviderPreset,
   type ProviderStoreFacet,
-  type ResolvedSecret,
   type SecretResolver,
 } from "@ling-stack/core";
 import { readLimitedResponseText } from "../../../shared/http.js";
 import { redactTextWithSecrets } from "../../../shared/redaction.js";
 import { isRecord } from "../../../shared/validation.js";
-import { resolveProviderSecret } from "../../providers/secrets.js";
+import {
+  applyProviderAuthHeaders,
+  materializeProviderSecrets,
+} from "../../providers/secret-materializer.js";
 import type { LingImageVisionSummarizer } from "./registry.js";
 
 const SUPPORTED_VISION_APIS = new Set<ProviderPreset["api"]>([
@@ -52,22 +54,25 @@ export function createProviderBackedImageVisionSummarizer(
     if (bytes.byteLength > request.maxBytes) {
       throw new Error(`Image attachment is too large for provider vision summary (${bytes.byteLength} bytes).`);
     }
-    const secret: ResolvedSecret = provider.apiKeyRef
-      ? resolveProviderSecret(input.store, provider, input.secretResolver)
-      : { configured: false };
-    if (providerNeedsSecret(provider) && !secret.configured) {
-      throw new Error(secret.status?.message ?? "Provider API key is missing for image vision summary.");
+    const materialized = materializeProviderSecrets({
+      store: input.store,
+      preset: provider,
+      secretResolver: input.secretResolver,
+      baseHeaders: { "Content-Type": "application/json" },
+    });
+    if (providerNeedsSecret(provider) && !materialized.apiKeySecret.configured) {
+      throw new Error(materialized.apiKeySecret.status?.message ?? "Provider API key is missing for image vision summary.");
     }
     const dataUrl = `data:${contentType};base64,${Buffer.from(bytes).toString("base64")}`;
     const fetchImpl = input.fetch ?? globalThis.fetch;
     const response = await fetchImpl(buildProviderVisionUrl(provider), {
       method: "POST",
-      headers: buildProviderVisionHeaders(provider, secret),
+      headers: applyProviderAuthHeaders(materialized.headers, provider, materialized.apiKeySecret.value),
       body: JSON.stringify(buildProviderVisionBody(provider, dataUrl)),
       signal: AbortSignal.timeout(IMAGE_VISION_TIMEOUT_MS),
     });
     if (!response.ok) {
-      throw new Error(await providerVisionHttpFailureMessage(response, secret.value));
+      throw new Error(await providerVisionHttpFailureMessage(response, materialized.redactionValues));
     }
     const body = await response.json() as unknown;
     const contentText = extractProviderVisionText(provider, body).trim();
@@ -128,24 +133,6 @@ function buildProviderVisionUrl(provider: ProviderPreset): string {
     return `${baseUrl}/responses`;
   }
   return `${baseUrl}/chat/completions`;
-}
-
-function buildProviderVisionHeaders(provider: ProviderPreset, secret: ResolvedSecret): Record<string, string> {
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-    ...provider.headers,
-  };
-  if (provider.api === "anthropic-messages") {
-    if (secret.value) {
-      headers["x-api-key"] = secret.value;
-    }
-    headers["anthropic-version"] = headers["anthropic-version"] ?? "2023-06-01";
-    return headers;
-  }
-  if (provider.authHeader !== false && secret.value) {
-    headers.Authorization = `Bearer ${secret.value}`;
-  }
-  return headers;
 }
 
 function buildProviderVisionBody(provider: ProviderPreset, imageDataUrl: string): Record<string, unknown> {
@@ -244,7 +231,7 @@ function extractText(value: unknown): string {
   return [directText, nested].filter(Boolean).join("\n");
 }
 
-async function providerVisionHttpFailureMessage(response: Response, secret?: string): Promise<string> {
-  const bodyText = redactTextWithSecrets(await readLimitedResponseText(response, 800), [secret]);
+async function providerVisionHttpFailureMessage(response: Response, redactionValues: readonly string[]): Promise<string> {
+  const bodyText = redactTextWithSecrets(await readLimitedResponseText(response, 800), redactionValues);
   return `Image vision provider returned HTTP ${response.status}${bodyText ? `: ${bodyText}` : "."}`;
 }

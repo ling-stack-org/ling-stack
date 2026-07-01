@@ -30,8 +30,10 @@ export function providerDraftInputToPreset(input: ProviderPresetInput, apiKey: s
     baseUrl: input.baseUrl,
     apiKeyRef: apiKey ? draftProviderSecretRef : input.apiKeyRef,
     headers: input.headers ?? {},
+    secretHeaderRefs: input.secretHeaderRefs ?? {},
     authHeader: input.authHeader,
     reasoning: input.reasoning,
+    thinkingModes: input.thinkingModes,
     input: input.input ?? ["text"],
     contextWindow: input.contextWindow,
     maxTokens: input.maxTokens,
@@ -137,10 +139,12 @@ export function readLocalProviderSecretProviderId(ref: string): string {
 export function toPublicProviderPreset(store: ProviderStoreFacet, preset: ProviderPreset, secretResolver: SecretResolver): PublicProviderPreset {
   const normalizedPreset = normalizeProviderPresetForMediaRuntime(preset);
   const apiKeyStatus = normalizedPreset.apiKeyRef ? providerSecretStatus(store, normalizedPreset, secretResolver) : undefined;
+  const secretHeaderStatuses = providerSecretHeaderStatuses(normalizedPreset, secretResolver);
   return {
     ...normalizedPreset,
     apiKeyConfigured: apiKeyStatus?.configured ?? false,
     apiKeyStatus,
+    secretHeaderStatuses,
   };
 }
 
@@ -177,4 +181,15 @@ function isValidLocalProviderSecretRef(value: string): boolean {
   }
   const providerId = readLocalProviderSecretProviderId(value);
   return providerId.trim() === providerId && providerId.length > 0 && !/\s/.test(providerId);
+}
+
+function providerSecretHeaderStatuses(
+  preset: Pick<ProviderPreset, "secretHeaderRefs">,
+  secretResolver: SecretResolver,
+): Record<string, SecretStatus> {
+  const statuses: Record<string, SecretStatus> = {};
+  for (const [headerName, ref] of Object.entries(preset.secretHeaderRefs ?? {})) {
+    statuses[headerName] = secretResolver.status(ref, "custom_header");
+  }
+  return statuses;
 }

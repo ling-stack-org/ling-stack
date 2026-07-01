@@ -296,17 +296,26 @@ test("settings workspace tools use compact rows and live counts", async ({ page 
 
   const workspaceTools = page.locator(".settings-workspace-tools");
   await expect(page.getByRole("heading", { name: "Configuration overview" })).toBeVisible();
-  await expect(workspaceTools.locator(".settings-tool-row")).toHaveCount(4);
+  await expect(workspaceTools.locator(".settings-tool-row")).toHaveCount(5);
   await expect(workspaceTools.locator(".settings-tool-row.selected")).toHaveCount(0);
   await expect(workspaceTools.locator(".settings-global-approval-card")).toHaveCount(0);
   await expect(workspaceTools).toContainText("1 available model");
   await expect(workspaceTools).toContainText("2 teammates");
+  await expect(workspaceTools).toContainText("1 council(s)");
   await expect(workspaceTools).toContainText("1 pending work items");
   await expect(workspaceTools).toContainText("Default: Smart authorization");
   await expect(workspaceTools).not.toContainText("Global approval default");
   await expect(workspaceTools.getByRole("button", { name: "Open Model Workbench" })).toBeVisible();
   await expect(workspaceTools.getByRole("button", { name: "Open AI Teammates" })).toBeVisible();
+  await expect(workspaceTools.getByRole("button", { name: "Open Council Workspace" })).toBeVisible();
   await expect(workspaceTools.getByRole("button", { name: "Open Work Board" })).toBeVisible();
+  await workspaceTools.getByRole("button", { name: "Open Council Workspace" }).click();
+  await expect(settingsSections).toBeVisible();
+  await expect(page.getByLabel("Ling Stack navigation")).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "Council Workspace", level: 1 })).toBeVisible();
+  await expect(page.locator(".council-workspace-page.settings-return-mode .settings-tool-return-row").getByRole("button", { name: "Back to configuration" })).toBeVisible();
+  await page.getByRole("button", { name: "Back to configuration" }).click();
+  await expect(workspaceTools.locator(".settings-tool-row")).toHaveCount(5);
   await workspaceTools.getByRole("button", { name: "Open advanced policy" }).click();
   await expect(settingsSections.getByRole("button", { name: /Execution and permissions/ })).toHaveClass(/active/);
   await expect(page.locator(".settings-global-approval-card")).toHaveCount(1);

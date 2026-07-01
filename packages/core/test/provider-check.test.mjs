@@ -236,7 +236,20 @@ test("media provider normalization centralizes live runtime eligibility", () => 
   const seedreamState = resolveMediaProviderRuntimeState(seedream, "image_generate");
   assert.deepEqual(normalizeMediaProviderCompat(seedream).mediaVendorTransport, { mode: "live" });
   assert.equal(seedreamState.canRun, true);
-  assert.equal(resolveMediaProviderRuntimeState(seedream, "image_edit").reason, "unsupported_live_adapter");
+  assert.equal(resolveMediaProviderRuntimeState(seedream, "image_edit").canRun, true);
+
+  const jimeng = {
+    ...baseProvider,
+    kind: "jimeng",
+    providerId: "jimeng",
+    model: "jimeng-image",
+    capabilities: ["image_generate", "image_edit"],
+  };
+  assert.equal(resolveMediaProviderRuntimeState(jimeng, "image_generate").reason, "live_transport_required");
+  assert.equal(
+    resolveMediaProviderRuntimeState({ ...jimeng, compat: { mediaVendorTransport: { mode: "live" } } }, "image_generate").reason,
+    "unsupported_live_adapter",
+  );
 
   const seedance = {
     ...baseProvider,
@@ -421,6 +434,65 @@ test("sqlite store persists provider secrets separately and deletes them with pr
     store.setProviderSecret(provider.id, "local-secret-value-final", "2026-05-27T00:02:00.000Z");
     assert.equal(store.deleteProviderPreset(provider.id), true);
     assert.equal(store.getProviderSecret(provider.id), undefined);
+  } finally {
+    store.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("sqlite store persists provider secret header refs with empty defaults", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-core-provider-secret-headers-"));
+  let store = createSqliteRunStore(cwd);
+  let providerId = "";
+  try {
+    const provider = store.createProviderPreset(
+      {
+        kind: "openai-compatible",
+        displayName: "Secret Header Relay",
+        providerId: "secret-header-relay",
+        model: "gpt-test",
+        api: "openai-completions",
+        baseUrl: "https://relay.example.com/v1",
+        apiKeyRef: "env:RELAY_API_KEY",
+        headers: { "x-static": "static" },
+        secretHeaderRefs: { "x-tenant-token": "env:TENANT_TOKEN" },
+        capabilities: ["chat"],
+      },
+      "2026-06-30T00:00:00.000Z",
+    );
+    providerId = provider.id;
+    assert.deepEqual(provider.secretHeaderRefs, { "x-tenant-token": "env:TENANT_TOKEN" });
+
+    const updated = store.updateProviderPreset(
+      provider.id,
+      { secretHeaderRefs: { "x-tenant-token": "keychain:TENANT_TOKEN" } },
+      "2026-06-30T00:01:00.000Z",
+    );
+    assert.deepEqual(updated?.secretHeaderRefs, { "x-tenant-token": "keychain:TENANT_TOKEN" });
+
+    const defaulted = store.createProviderPreset(
+      {
+        kind: "openai-compatible",
+        displayName: "Default Secret Headers",
+        providerId: "default-secret-headers",
+        model: "gpt-test",
+        api: "openai-completions",
+        baseUrl: "https://relay.example.com/v1",
+        apiKeyRef: "env:RELAY_API_KEY",
+        capabilities: ["chat"],
+      },
+      "2026-06-30T00:02:00.000Z",
+    );
+    assert.deepEqual(defaulted.secretHeaderRefs, {});
+  } finally {
+    store.close();
+  }
+
+  store = createSqliteRunStore(cwd);
+  try {
+    const persisted = store.getProviderPreset(providerId);
+    assert.deepEqual(persisted?.headers, { "x-static": "static" });
+    assert.deepEqual(persisted?.secretHeaderRefs, { "x-tenant-token": "keychain:TENANT_TOKEN" });
   } finally {
     store.close();
     await rm(cwd, { recursive: true, force: true });

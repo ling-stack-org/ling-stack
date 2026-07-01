@@ -188,6 +188,8 @@ const LING_THREAD_PROPOSED_PLANS_MIGRATION_VERSION = 88;
 const LING_THREAD_PROPOSED_PLANS_MIGRATION_NAME = "create_ling_thread_proposed_plans";
 const PLAN_GOAL_HISTORY_MIGRATION_VERSION = 89;
 const PLAN_GOAL_HISTORY_MIGRATION_NAME = "extend_plan_goal_history";
+const PROVIDER_SECRET_HEADER_REFS_MIGRATION_VERSION = 90;
+const PROVIDER_SECRET_HEADER_REFS_MIGRATION_NAME = "add_provider_secret_header_refs";
 
 export function configureSqliteRunStoreDatabase(database: DatabaseSync): void {
   database.exec(`
@@ -273,6 +275,7 @@ export function applySqliteRunStoreMigrations(context: SqliteRunStoreMigrationCo
           base_url TEXT,
           api_key_ref TEXT,
           headers_json TEXT NOT NULL,
+          secret_header_refs_json TEXT NOT NULL DEFAULT '{}',
           auth_header INTEGER,
           reasoning INTEGER,
           thinking_modes_json TEXT NOT NULL DEFAULT '[]',
@@ -3107,6 +3110,19 @@ export function applySqliteRunStoreMigrations(context: SqliteRunStoreMigrationCo
       `);
       if (!hasConversationAttachmentsMigration) {
         context.recordMigration(CONVERSATION_ATTACHMENTS_MIGRATION_VERSION, CONVERSATION_ATTACHMENTS_MIGRATION_NAME);
+      }
+    }
+
+    const hasProviderSecretHeaderRefsMigration = context.hasMigration(PROVIDER_SECRET_HEADER_REFS_MIGRATION_VERSION);
+    if (
+      !hasProviderSecretHeaderRefsMigration ||
+      (context.hasTable("provider_presets") && !context.hasColumn("provider_presets", "secret_header_refs_json"))
+    ) {
+      if (context.hasTable("provider_presets") && !context.hasColumn("provider_presets", "secret_header_refs_json")) {
+        database.exec("ALTER TABLE provider_presets ADD COLUMN secret_header_refs_json TEXT NOT NULL DEFAULT '{}';");
+      }
+      if (!hasProviderSecretHeaderRefsMigration) {
+        context.recordMigration(PROVIDER_SECRET_HEADER_REFS_MIGRATION_VERSION, PROVIDER_SECRET_HEADER_REFS_MIGRATION_NAME);
       }
     }
 
