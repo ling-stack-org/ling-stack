@@ -947,4 +947,5 @@ Remaining scope is later tuning, not product ambiguity:
 
 These are non-blocking follow-ups. The shipped behavior already includes right-dock plan
 history, explicit `/goal complete`, estimated-token budget fallback, workflow conversion
-preview, and guarded visible Goal continuation chains.
+preview, and guarded visible Goal continuation chains. Follow-up design details live in
+[Conversation Plan History And Goal Completion Detailed Design](conversation-plan-history-and-goal-completion-detailed-design.md#follow-up-tuning-detailed-design).

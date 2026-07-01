@@ -65,6 +65,8 @@ export interface ChannelComposerInlineFeedback {
   readonly message: string;
 }
 
+const GOAL_CONTINUATION_MAX_DEPTH = 3;
+
 export interface ActiveMentionPicker {
   readonly query: string;
   readonly start: number;
@@ -287,7 +289,9 @@ export function ChannelComposer({
                   <span>{t("Status")}: {goalStatusLabel}</span>
                   {goal.tokenBudget !== undefined ? <span>{t("Budget")}: {goal.tokensUsed}/{goal.tokenBudget}</span> : null}
                   {goal.usageSource ? <span>{t("Source")}: {goal.usageSource}</span> : null}
-                  {goal.continuationDepth > 0 ? <span>{t("Continuation")}: {goal.continuationDepth}</span> : null}
+                  {goal.continuationDepth > 0 ? <span>{t("Continuation")}: {goal.continuationDepth} / {GOAL_CONTINUATION_MAX_DEPTH}</span> : null}
+                  {goal.lastContinuationStopReason ? <span>{t("Last auto-stop")}: {goalContinuationStopReasonLabel(goal.lastContinuationStopReason, t)}</span> : null}
+                  {goal.lastContinuationEvidenceDelta ? <span>{t("Evidence delta")}: {goalContinuationEvidenceDeltaLabel(goal.lastContinuationEvidenceDelta, t)}</span> : null}
                   {goal.lastRunId ? <span>{t("Last run")}: {goal.lastRunId}</span> : null}
                   {goal.blockedReason ? <span>{t("Blocker")}: {goal.blockedReason}</span> : null}
                 </div>
@@ -596,4 +600,42 @@ export function ChannelComposer({
       )}
     />
   );
+}
+
+function goalContinuationStopReasonLabel(reason: LingThreadGoal["lastContinuationStopReason"], t: (key: string) => string): string {
+  switch (reason) {
+    case "max_depth":
+      return t("Max continuation depth");
+    case "no_evidence_threshold":
+      return t("No new evidence");
+    case "same_blocker_threshold":
+      return t("Same blocker repeated");
+    case "plan_mode_active":
+      return t("Plan Mode active");
+    case "pending_approval":
+      return t("Pending approval");
+    case "active_run_exists":
+      return t("Active run exists");
+    case "latest_run_not_terminal":
+      return t("Latest run not terminal");
+    case "goal_not_active":
+      return t("Goal not active");
+    case "budget_limited":
+      return t("Budget limited");
+    case "usage_limited":
+      return t("Usage limited");
+    case "manual_stop":
+      return t("Manual stop");
+    case "unknown":
+    default:
+      return t("Unknown");
+  }
+}
+
+function goalContinuationEvidenceDeltaLabel(delta: NonNullable<LingThreadGoal["lastContinuationEvidenceDelta"]>, t: (key: string, values?: Record<string, string | number>) => string): string {
+  return t("{refs} refs, {files} files, {artifacts} artifacts", {
+    refs: delta.newEvidenceRefs,
+    files: delta.changedFiles,
+    artifacts: delta.artifacts,
+  });
 }

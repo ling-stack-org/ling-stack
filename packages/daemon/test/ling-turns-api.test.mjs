@@ -991,6 +991,8 @@ test("daemon marks active goal usage_limited when provider quota stops a run", a
     assert.equal(goal.status, "usage_limited");
     assert.equal(goal.blockedReason, "Provider quota or rate limit reached.");
     assert.equal(goal.lastRunId, result.runId);
+    assert.equal(goal.lastContinuationStopReason, "usage_limited");
+    assert.equal(goal.lastContinuationEvidenceDelta.statusChanged, true);
     assert.deepEqual(store.listRunInterventions({ sourceRunId: result.runId }), []);
   } finally {
     await daemon.close();
@@ -1047,7 +1049,83 @@ test("daemon marks goal blocked only after three matching blockers", async () =>
       assert.ok(goal);
       assert.equal(goal.sameBlockerCount, index);
       assert.equal(goal.status, index < 3 ? "active" : "blocked");
+      if (index === 3) {
+        assert.equal(goal.lastContinuationStopReason, "same_blocker_threshold");
+        assert.equal(goal.lastContinuationEvidenceDelta.statusChanged, true);
+      }
     }
+  } finally {
+    store.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("daemon manual goal runs reset automatic continuation chain metadata", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-goal-manual-reset-"));
+  const store = createSqliteRunStore(cwd);
+  try {
+    const now = "2026-07-01T00:00:00.000Z";
+    const thread = store.createLingThread(
+      {
+        kind: "channel_discussion",
+        channelId: "channel_goal_manual_reset",
+        title: "Manual reset goal",
+        objective: "Verify manual continuation reset.",
+        status: "open",
+      },
+      now,
+    );
+    const createdGoal = store.createLingThreadGoal(
+      {
+        threadId: thread.id,
+        objective: "Reset automatic continuation state on manual run.",
+        tokenBudget: 1000,
+      },
+      now,
+    );
+    store.updateLingThreadGoal(createdGoal.id, {
+      continuationChainId: "goal_chain_existing",
+      continuationDepth: 2,
+      noEvidenceContinuationCount: 1,
+      lastContinuationStopReason: "no_evidence_threshold",
+      lastContinuationStoppedAt: "2026-07-01T00:00:30.000Z",
+      lastContinuationEvidenceDelta: {
+        newEvidenceRefs: 0,
+        changedFiles: 0,
+        acceptedPlans: 0,
+        artifacts: 0,
+        statusChanged: false,
+      },
+    }, "2026-07-01T00:00:30.000Z");
+    const run = store.createRun({
+      id: "run_goal_manual_reset",
+      cwd,
+      taskId: "task_goal_manual_reset",
+      channelId: thread.channelId,
+      threadId: thread.id,
+      providerName: "test-provider",
+      providerModel: "test-model",
+      taskSnapshot: {
+        id: "task_goal_manual_reset",
+        title: "Manual reset run",
+        prompt: "Manual run should reset automatic chain metadata.",
+        channelId: thread.channelId,
+      },
+      providerSnapshot: { provider: "test-provider", model: "test-model" },
+      requestSnapshot: { cwd, tools: ["read"] },
+      createdAt: "2026-07-01T00:01:00.000Z",
+    });
+    store.markRunStarted(run.id, "2026-07-01T00:01:10.000Z");
+    store.markRunSucceeded(run.id, "2026-07-01T00:01:20.000Z");
+    syncLingThreadForTerminalRun(store, run.id, "2026-07-01T00:01:20.000Z");
+    const goal = store.getLingThreadGoal(thread.id);
+    assert.ok(goal);
+    assert.equal(goal.continuationChainId, undefined);
+    assert.equal(goal.continuationDepth, 0);
+    assert.equal(goal.noEvidenceContinuationCount, 0);
+    assert.equal(goal.lastContinuationStopReason, undefined);
+    assert.equal(goal.lastContinuationStoppedAt, undefined);
+    assert.equal(goal.lastContinuationEvidenceDelta, undefined);
   } finally {
     store.close();
     await rm(cwd, { recursive: true, force: true });
@@ -1109,6 +1187,15 @@ test("daemon queues visible guarded automatic goal continuations", async () => {
     assert.equal(goal.lastRunId, secondContinuationRun.id);
     assert.equal(goal.continuationDepth, 2);
     assert.equal(goal.noEvidenceContinuationCount, 2);
+    assert.equal(goal.lastContinuationStopReason, "no_evidence_threshold");
+    assert.equal(typeof goal.lastContinuationStoppedAt, "string");
+    assert.deepEqual(goal.lastContinuationEvidenceDelta, {
+      newEvidenceRefs: 0,
+      changedFiles: 0,
+      acceptedPlans: 0,
+      artifacts: 0,
+      statusChanged: false,
+    });
     assert.equal(goal.completionEvidenceRefs.filter((ref) => ref.kind === "run").length, 3);
   } finally {
     await daemon.close();
@@ -1126,6 +1213,7 @@ test("daemon goal continuation gates block hidden follow-ups", async () => {
       activeRuns: inactiveRunRegistry,
     }), undefined);
     assert.deepEqual(planMode.store.listRunInterventions({ sourceRunId: planMode.run.id }), []);
+    assert.equal(planMode.store.getLingThreadGoal(planMode.thread.id)?.lastContinuationStopReason, "plan_mode_active");
   } finally {
     planMode.store.close();
     await rm(planMode.cwd, { recursive: true, force: true });
@@ -1149,9 +1237,30 @@ test("daemon goal continuation gates block hidden follow-ups", async () => {
       activeRuns: inactiveRunRegistry,
     }), undefined);
     assert.deepEqual(pendingApproval.store.listRunInterventions({ sourceRunId: pendingApproval.run.id }), []);
+    assert.equal(pendingApproval.store.getLingThreadGoal(pendingApproval.thread.id)?.lastContinuationStopReason, "pending_approval");
   } finally {
     pendingApproval.store.close();
     await rm(pendingApproval.cwd, { recursive: true, force: true });
+  }
+
+  const maxDepth = await createGoalContinuationGateFixture("max-depth");
+  try {
+    const goal = maxDepth.store.getLingThreadGoal(maxDepth.thread.id);
+    assert.ok(goal);
+    maxDepth.store.updateLingThreadGoal(goal.id, {
+      continuationDepth: 3,
+      continuationChainId: "goal_chain_max_depth",
+    }, "2026-07-01T00:04:00.000Z");
+    assert.equal(maybeQueueGoalContinuation({
+      terminalRun: maxDepth.run,
+      store: maxDepth.store,
+      activeRuns: inactiveRunRegistry,
+    }), undefined);
+    assert.deepEqual(maxDepth.store.listRunInterventions({ sourceRunId: maxDepth.run.id }), []);
+    assert.equal(maxDepth.store.getLingThreadGoal(maxDepth.thread.id)?.lastContinuationStopReason, "max_depth");
+  } finally {
+    maxDepth.store.close();
+    await rm(maxDepth.cwd, { recursive: true, force: true });
   }
 
   const budgetLimited = await createGoalContinuationGateFixture("budget-limited", { tokenBudget: 1, usage: { inputTokens: 1, outputTokens: 0 } });
@@ -1165,6 +1274,7 @@ test("daemon goal continuation gates block hidden follow-ups", async () => {
       activeRuns: inactiveRunRegistry,
     }), undefined);
     assert.deepEqual(budgetLimited.store.listRunInterventions({ sourceRunId: budgetLimited.run.id }), []);
+    assert.equal(budgetLimited.store.getLingThreadGoal(budgetLimited.thread.id)?.lastContinuationStopReason, "budget_limited");
   } finally {
     budgetLimited.store.close();
     await rm(budgetLimited.cwd, { recursive: true, force: true });

@@ -396,6 +396,9 @@ async function handleLingThreadGoalComplete(
         noEvidenceContinuationCount: 0,
         lastBlockerFingerprint: null,
         sameBlockerCount: 0,
+        lastContinuationStopReason: null,
+        lastContinuationStoppedAt: null,
+        lastContinuationEvidenceDelta: null,
       },
       new Date().toISOString(),
     );

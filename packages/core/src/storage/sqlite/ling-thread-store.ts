@@ -287,8 +287,11 @@ export class SqliteLingThreadStore {
           continuation_depth,
           no_evidence_continuation_count,
           last_blocker_fingerprint,
-          same_blocker_count
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          same_blocker_count,
+          last_continuation_stop_reason,
+          last_continuation_stopped_at,
+          last_continuation_evidence_delta_json
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `)
       .run(
         id,
@@ -316,6 +319,9 @@ export class SqliteLingThreadStore {
         0,
         null,
         0,
+        null,
+        null,
+        null,
       );
     const goal = this.getLingThreadGoalById(id);
     if (!goal) {
@@ -367,8 +373,11 @@ export class SqliteLingThreadStore {
             continuation_depth,
             no_evidence_continuation_count,
             last_blocker_fingerprint,
-            same_blocker_count
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            same_blocker_count,
+            last_continuation_stop_reason,
+            last_continuation_stopped_at,
+            last_continuation_evidence_delta_json
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `)
         .run(
           id,
@@ -396,6 +405,9 @@ export class SqliteLingThreadStore {
           0,
           null,
           0,
+          null,
+          null,
+          null,
         );
       this.context.database.exec("COMMIT");
     } catch (error) {
@@ -439,7 +451,10 @@ export class SqliteLingThreadStore {
             continuation_depth = ?,
             no_evidence_continuation_count = ?,
             last_blocker_fingerprint = ?,
-            same_blocker_count = ?
+            same_blocker_count = ?,
+            last_continuation_stop_reason = ?,
+            last_continuation_stopped_at = ?,
+            last_continuation_evidence_delta_json = ?
         WHERE id = ?
       `)
       .run(
@@ -463,6 +478,9 @@ export class SqliteLingThreadStore {
         input.noEvidenceContinuationCount ?? existing.noEvidenceContinuationCount,
         nullableUpdate(input.lastBlockerFingerprint, existing.lastBlockerFingerprint) ?? null,
         input.sameBlockerCount ?? existing.sameBlockerCount,
+        nullableUpdate(input.lastContinuationStopReason, existing.lastContinuationStopReason) ?? null,
+        nullableUpdate(input.lastContinuationStoppedAt, existing.lastContinuationStoppedAt) ?? null,
+        stringifyNullableJson(nullableUpdate(input.lastContinuationEvidenceDelta, existing.lastContinuationEvidenceDelta)),
         goalId,
       );
     return this.getLingThreadGoalById(goalId);
@@ -729,6 +747,10 @@ const activeLingThreadGoalStatuses = [
 
 function activeGoalStatusPlaceholders(): string {
   return activeLingThreadGoalStatuses.map(() => "?").join(", ");
+}
+
+function stringifyNullableJson(value: unknown | undefined): string | null {
+  return value === undefined ? null : stringifyJson(value);
 }
 
 function appendNullableOwnerClause(clauses: string[], params: string[], column: string, value: string | undefined): void {

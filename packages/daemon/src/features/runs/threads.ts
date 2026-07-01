@@ -1,4 +1,6 @@
 import type {
+  GoalContinuationEvidenceDelta,
+  GoalContinuationStopReason,
   GoalEvidenceRef,
   GoalUsageSource,
   LingTurn,
@@ -235,13 +237,16 @@ function syncLingThreadGoalForTerminalRun(store: RunStore, run: RunSession, now:
   const usage = hasRunEvidence ? { tokens: 0, source: goal.usageSource } : readRunTokenUsage(store, run);
   const additionalTokens = usage.tokens;
   const nextTokensUsed = goal.tokensUsed + additionalTokens;
-  const nextEvidenceRefs = appendGoalEvidenceRefs(goal.completionEvidenceRefs, goalEvidenceRefsForRun(store, run));
+  const runEvidenceRefs = goalEvidenceRefsForRun(store, run);
+  const nextEvidenceRefs = appendGoalEvidenceRefs(goal.completionEvidenceRefs, runEvidenceRefs);
   const blocker = run.status === "failed" && !isProviderUsageLimitedRun(run) ? goalBlockerForRun(run) : undefined;
   const nextSameBlockerCount = blocker
     ? goal.lastBlockerFingerprint === blocker.fingerprint ? goal.sameBlockerCount + 1 : 1
     : goal.sameBlockerCount;
   const nextStatus = nextGoalStatusForRunAccounting(goal, run, nextTokensUsed, nextSameBlockerCount, blocker);
   const resetContinuationChain = run.continuationReason !== "queue_followup";
+  const continuationStopReason = goalContinuationStopReasonForTerminalRun(goal, run, nextStatus, nextSameBlockerCount, blocker);
+  const continuationEvidenceDelta = goalContinuationEvidenceDelta(store, goal, run, nextEvidenceRefs, nextStatus);
   return store.updateLingThreadGoal(
     goal.id,
     {
@@ -257,6 +262,9 @@ function syncLingThreadGoalForTerminalRun(store: RunStore, run: RunSession, now:
       noEvidenceContinuationCount: resetContinuationChain ? 0 : goal.noEvidenceContinuationCount,
       lastBlockerFingerprint: blocker?.fingerprint ?? goal.lastBlockerFingerprint,
       sameBlockerCount: blocker ? nextSameBlockerCount : goal.sameBlockerCount,
+      lastContinuationStopReason: continuationStopReason ?? (resetContinuationChain ? null : goal.lastContinuationStopReason),
+      lastContinuationStoppedAt: continuationStopReason ? now : resetContinuationChain ? null : goal.lastContinuationStoppedAt,
+      lastContinuationEvidenceDelta: continuationStopReason ? continuationEvidenceDelta : resetContinuationChain ? null : goal.lastContinuationEvidenceDelta,
     },
     now,
   );
@@ -298,6 +306,41 @@ function nextGoalBlockedReason(goal: LingThreadGoal, nextStatus: LingThreadGoalS
     return blocker.reason;
   }
   return goal.blockedReason;
+}
+
+function goalContinuationStopReasonForTerminalRun(
+  goal: LingThreadGoal,
+  run: RunSession,
+  nextStatus: LingThreadGoalStatus,
+  sameBlockerCount: number,
+  blocker: GoalBlocker | undefined,
+): GoalContinuationStopReason | undefined {
+  if (nextStatus === "usage_limited" && goal.status !== "usage_limited") {
+    return "usage_limited";
+  }
+  if (nextStatus === "budget_limited" && goal.status !== "budget_limited") {
+    return "budget_limited";
+  }
+  if (blocker && sameBlockerCount >= 3) {
+    return "same_blocker_threshold";
+  }
+  return undefined;
+}
+
+function goalContinuationEvidenceDelta(
+  store: RunStore,
+  goal: LingThreadGoal,
+  run: RunSession,
+  nextEvidenceRefs: readonly GoalEvidenceRef[],
+  nextStatus: LingThreadGoalStatus,
+): GoalContinuationEvidenceDelta {
+  return {
+    newEvidenceRefs: nextEvidenceRefs.length - goal.completionEvidenceRefs.length,
+    changedFiles: 0,
+    acceptedPlans: 0,
+    artifacts: store.listArtifacts(run.id).length,
+    statusChanged: nextStatus !== goal.status,
+  };
 }
 
 interface GoalBlocker {

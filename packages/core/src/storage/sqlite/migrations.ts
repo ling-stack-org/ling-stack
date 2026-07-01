@@ -190,6 +190,8 @@ const PLAN_GOAL_HISTORY_MIGRATION_VERSION = 89;
 const PLAN_GOAL_HISTORY_MIGRATION_NAME = "extend_plan_goal_history";
 const PROVIDER_SECRET_HEADER_REFS_MIGRATION_VERSION = 90;
 const PROVIDER_SECRET_HEADER_REFS_MIGRATION_NAME = "add_provider_secret_header_refs";
+const GOAL_CONTINUATION_OBSERVABILITY_MIGRATION_VERSION = 91;
+const GOAL_CONTINUATION_OBSERVABILITY_MIGRATION_NAME = "add_goal_continuation_observability";
 
 export function configureSqliteRunStoreDatabase(database: DatabaseSync): void {
   database.exec(`
@@ -3240,7 +3242,10 @@ export function applySqliteRunStoreMigrations(context: SqliteRunStoreMigrationCo
           continuation_depth INTEGER NOT NULL DEFAULT 0,
           no_evidence_continuation_count INTEGER NOT NULL DEFAULT 0,
           last_blocker_fingerprint TEXT,
-          same_blocker_count INTEGER NOT NULL DEFAULT 0
+          same_blocker_count INTEGER NOT NULL DEFAULT 0,
+          last_continuation_stop_reason TEXT,
+          last_continuation_stopped_at TEXT,
+          last_continuation_evidence_delta_json TEXT
         );
         CREATE INDEX IF NOT EXISTS idx_ling_thread_goals_thread_status_updated
           ON ling_thread_goals(thread_id, status, updated_at);
@@ -3393,6 +3398,29 @@ export function applySqliteRunStoreMigrations(context: SqliteRunStoreMigrationCo
       }
       if (!hasPlanGoalHistoryMigration) {
         context.recordMigration(PLAN_GOAL_HISTORY_MIGRATION_VERSION, PLAN_GOAL_HISTORY_MIGRATION_NAME);
+      }
+    }
+
+    const hasGoalContinuationObservabilityMigration = context.hasMigration(GOAL_CONTINUATION_OBSERVABILITY_MIGRATION_VERSION);
+    if (
+      !hasGoalContinuationObservabilityMigration ||
+      !context.hasColumn("ling_thread_goals", "last_continuation_stop_reason") ||
+      !context.hasColumn("ling_thread_goals", "last_continuation_stopped_at") ||
+      !context.hasColumn("ling_thread_goals", "last_continuation_evidence_delta_json")
+    ) {
+      if (context.hasTable("ling_thread_goals")) {
+        if (!context.hasColumn("ling_thread_goals", "last_continuation_stop_reason")) {
+          database.exec("ALTER TABLE ling_thread_goals ADD COLUMN last_continuation_stop_reason TEXT;");
+        }
+        if (!context.hasColumn("ling_thread_goals", "last_continuation_stopped_at")) {
+          database.exec("ALTER TABLE ling_thread_goals ADD COLUMN last_continuation_stopped_at TEXT;");
+        }
+        if (!context.hasColumn("ling_thread_goals", "last_continuation_evidence_delta_json")) {
+          database.exec("ALTER TABLE ling_thread_goals ADD COLUMN last_continuation_evidence_delta_json TEXT;");
+        }
+      }
+      if (!hasGoalContinuationObservabilityMigration) {
+        context.recordMigration(GOAL_CONTINUATION_OBSERVABILITY_MIGRATION_VERSION, GOAL_CONTINUATION_OBSERVABILITY_MIGRATION_NAME);
       }
     }
 
