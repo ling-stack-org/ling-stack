@@ -2622,6 +2622,107 @@ test("channel activity supports mentions, messages, files, links, and topic repl
   await expect(topicPanel).toContainText("Thread follow-up from the topic panel");
 });
 
+test("channel composer snapshots restore draft assets and topic replies across channel switches", async ({ page }) => {
+  await useEnglishLocale(page);
+  const state = createBaseState({ approvalStatus: "pending" });
+  state.linkPreviewDelayMs = 50;
+  state.channels = [
+    ...state.channels,
+    {
+      id: "channel_design",
+      workspaceId: "workspace_default",
+      name: "Design",
+      status: "active",
+      boundPath: cwd,
+      defaultTeammateId: "designer",
+      autoReplyMode: "mentions_only",
+      allowedTools: ["read", "grep", "find", "ls"],
+      runtimePolicy: defaultRuntimePolicy,
+      createdAt: "2026-05-22T00:00:00.000Z",
+      updatedAt: "2026-05-22T00:00:00.000Z",
+    },
+  ];
+  state.channelMessages = [
+    {
+      id: "msg_snapshot_root",
+      workspaceId: "workspace_default",
+      channelId: "channel_engineering",
+      kind: "message",
+      intent: "discuss",
+      authorType: "local-user",
+      authorId: "tian",
+      body: "Snapshot source message",
+      mentions: [],
+      attachmentIds: [],
+      linkPreviewIds: [],
+      fileRefs: [],
+      status: "ready",
+      createdAt: "2026-05-25T00:20:00.000Z",
+      updatedAt: "2026-05-25T00:20:00.000Z",
+    },
+    {
+      id: "msg_snapshot_reply",
+      workspaceId: "workspace_default",
+      channelId: "channel_engineering",
+      threadId: "msg_snapshot_root",
+      kind: "ai_reply",
+      intent: "discuss",
+      authorType: "ai-teammate",
+      authorId: "ling_agent",
+      body: "Snapshot reply ready.",
+      mentions: [],
+      attachmentIds: [],
+      linkPreviewIds: [],
+      fileRefs: [],
+      status: "ready",
+      createdAt: "2026-05-25T00:20:01.000Z",
+      updatedAt: "2026-05-25T00:20:01.000Z",
+    },
+  ];
+  await mockDaemon(page, state);
+  await page.goto("/");
+  await openEngineeringChannel(page);
+
+  const navigation = page.getByLabel("Ling Stack navigation");
+  const composerInput = channelComposerTextbox(page);
+  await composerInput.fill("Engineering snapshot draft https://example.com");
+  await expect(page.getByText("Example Domain").first()).toBeVisible({ timeout: 3_000 });
+  const dataTransfer = await page.evaluateHandle(() => {
+    const transfer = new DataTransfer();
+    transfer.items.add(new File(["snapshot brief"], "snapshot.txt", { type: "text/plain" }));
+    return transfer;
+  });
+  await page.locator(".composer-drop-zone").dispatchEvent("drop", { dataTransfer });
+  await dataTransfer.dispose();
+  await expect(page.getByLabel("Pending message assets")).toContainText("snapshot.txt");
+
+  const teammateReply = page.locator(".message-bubble").filter({ hasText: "Snapshot reply ready." });
+  await teammateReply.hover();
+  await teammateReply.getByRole("button", { name: "Reply in topic" }).click();
+  const topicPanel = page.getByLabel("Topic replies");
+  await expect(topicPanel).toBeVisible();
+  await topicPanel.getByLabel("Topic reply input").fill("Engineering topic reply draft");
+
+  await navigation.getByRole("button", { name: "Design" }).click();
+  await expect(page.getByRole("heading", { name: "Design", level: 1 })).toBeVisible();
+  await expectComposerValue(composerInput, "");
+  await expect(page.getByLabel("Pending message assets")).toHaveCount(0);
+  await expect(page.getByLabel("Topic replies")).toHaveCount(0);
+  await composerInput.fill("Design snapshot draft");
+
+  await navigation.getByRole("button", { name: "Engineering" }).click();
+  await expect(page.getByRole("heading", { name: "Engineering", level: 1 })).toBeVisible();
+  await expectComposerValue(composerInput, "Engineering snapshot draft https://example.com");
+  await expect(page.getByLabel("Pending message assets")).toContainText("snapshot.txt");
+  await expect(page.getByText("Example Domain").first()).toBeVisible();
+  await expect(topicPanel).toBeVisible();
+  await expect(topicPanel.getByLabel("Topic reply input")).toHaveValue("Engineering topic reply draft");
+
+  await navigation.getByRole("button", { name: "Design" }).click();
+  await expect(page.getByRole("heading", { name: "Design", level: 1 })).toBeVisible();
+  await expectComposerValue(composerInput, "Design snapshot draft");
+});
+
 test("channel message body renders safe markdown, highlighted code, folded logs, and structured diffs", async ({ page }) => {
   await useEnglishLocale(page);
   await page.addInitScript(() => {

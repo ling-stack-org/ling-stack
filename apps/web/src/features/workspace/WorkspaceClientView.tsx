@@ -101,7 +101,6 @@ import {
 import { TeammateAvatarView } from "../teammates/TeammateAvatarView.js";
 import {
   StatusBadge,
-  type PendingAttachmentItem,
 } from "../../shared/components/index.js";
 import {
   ConversationStatusStrip,
@@ -216,7 +215,7 @@ import {
   isLingAgentTeammate,
   type ChannelNotificationLevel,
 } from "./ChannelSettingsPanels.js";
-import { ChannelComposer, type ChannelComposerInlineFeedback, type ChannelComposerInlineFeedbackTone, type ChannelComposerSendState } from "./ChannelComposer.js";
+import { ChannelComposer, type ChannelComposerInlineFeedback, type ChannelComposerInlineFeedbackTone } from "./ChannelComposer.js";
 import { ChannelActivityWorkspace } from "./ChannelActivityWorkspace.js";
 import { useChannelRightDockController } from "./useChannelRightDockController.js";
 import {
@@ -232,10 +231,11 @@ import {
 import { useChannelRightDockContent } from "./ChannelRightDockContent.js";
 import { useChannelActivityController } from "./useChannelActivityController.js";
 import { useChannelWorkThreadsController } from "./useChannelWorkThreadsController.js";
-import { useChannelComposerDraftController, type PendingLinkPreviewItem } from "./useChannelComposerDraftController.js";
+import { useChannelComposerDraftController } from "./useChannelComposerDraftController.js";
 import { useChannelComposerActionsController } from "./useChannelComposerActionsController.js";
-import { useChannelThreadReplyController, type ChannelThreadReplySnapshot } from "./useChannelThreadReplyController.js";
+import { useChannelThreadReplyController } from "./useChannelThreadReplyController.js";
 import { useChannelComposerInputController } from "./useChannelComposerInputController.js";
+import { useChannelComposerSnapshotController } from "./useChannelComposerSnapshotController.js";
 
 type ChannelSidePanelView = "context" | "settings" | "task";
 type ChannelDrawerRootView = Extract<ChannelSidePanelView, "context">;
@@ -261,16 +261,6 @@ type ThreadTurnsLoadState =
   | { readonly status: "loading" }
   | { readonly status: "loaded"; readonly turns: readonly LingTurn[]; readonly runLinks: readonly LingTurnRun[] }
   | { readonly status: "error"; readonly errorMessage: string };
-
-interface ChannelComposerSnapshot {
-  readonly messageDraft: string;
-  readonly pendingAttachments: readonly PendingAttachmentItem<ChannelAttachment>[];
-  readonly pendingLinkPreviews: readonly PendingLinkPreviewItem[];
-  readonly messageMentions: readonly ChannelMention[];
-  readonly sendState: ChannelComposerSendState;
-  readonly sendError: string;
-  readonly threadReply: ChannelThreadReplySnapshot;
-}
 
 interface MessageFeedShortcutEvent {
   readonly defaultPrevented: boolean;
@@ -965,9 +955,7 @@ export function WorkspaceClientView({
   const conversationWorkCellEvidenceLoadsRef = useRef(new Set<string>());
   const conversationThreadTurnLoadsRef = useRef(new Set<string>());
   const conversationThreadTurnRunSignaturesRef = useRef(new Map<string, string>());
-  const previousChannelIdRef = useRef(selectedChannelId);
   const channelWorkspaceExternalPathChannelIdRef = useRef(selectedChannelId);
-  const composerSnapshotsRef = useRef<Record<string, ChannelComposerSnapshot>>({});
   const workspaceSettingsRef = useRef(workspaceSettings);
   const onWorkspaceSettingsPatchRef = useRef(onWorkspaceSettingsPatch);
 
@@ -1860,6 +1848,43 @@ export function WorkspaceClientView({
     teammateOptions,
     onSendMessage,
   });
+  useChannelComposerSnapshotController({
+    selectedChannelId,
+    messageDraft,
+    setMessageDraft,
+    pendingAttachments,
+    setPendingAttachments,
+    pendingLinkPreviews,
+    setPendingLinkPreviews,
+    messageMentions,
+    setMessageMentions,
+    sendState,
+    setSendState,
+    sendError,
+    setSendError,
+    setMentionPicker,
+    setMentionActiveIndex,
+    threadReplySnapshot: threadReplyController.snapshot,
+    restoreThreadReplySnapshot: threadReplyController.restoreSnapshot,
+    autoPreviewUrlsRef,
+    onChannelSwitch: () => {
+      resetActivityForChannelSwitch();
+      setPendingChannelTeammateId("");
+      setChannelMoreOpen(false);
+      setPendingChannelSendPreview(undefined);
+      setAttentionProgressExpanded(true);
+      setSidePanelView("context");
+      setSidePanelOpen(false);
+      setChannelSettingsPageOpen(false);
+      setChannelEnvironmentPageOpen(false);
+      setEnvironmentCommitDialogOpen(false);
+      setProgressPopoverOpen(false);
+      setSelectedApprovalId("");
+      setCreateTaskOpen(false);
+      setChannelNotificationLevel("mentions");
+      messageFeedState.reset();
+    },
+  });
   const executionProposalsByMessageId = useMemo(() => {
     const proposalsByMessageId = new Map<string, ChannelExecutionProposal[]>();
     for (const proposal of channelExecutionProposals) {
@@ -1876,47 +1901,6 @@ export function WorkspaceClientView({
     return proposalsByMessageId;
   }, [channelExecutionProposals]);
   const channelRunsForFiles = channelRuns;
-
-  function readCurrentComposerSnapshot(): ChannelComposerSnapshot {
-    return {
-      messageDraft,
-      pendingAttachments,
-      pendingLinkPreviews,
-      messageMentions,
-      sendState,
-      sendError,
-      threadReply: threadReplyController.snapshot,
-    };
-  }
-
-  function emptyComposerSnapshot(): ChannelComposerSnapshot {
-    return {
-      messageDraft: "",
-      pendingAttachments: [],
-      pendingLinkPreviews: [],
-      messageMentions: [],
-      sendState: "idle",
-      sendError: "",
-      threadReply: {
-        activeThreadId: "",
-        draft: "",
-        error: "",
-      },
-    };
-  }
-
-  function applyComposerSnapshot(snapshot: ChannelComposerSnapshot): void {
-    setMessageDraft(snapshot.messageDraft);
-    setPendingAttachments(snapshot.pendingAttachments);
-    setPendingLinkPreviews(snapshot.pendingLinkPreviews);
-    setMessageMentions(snapshot.messageMentions);
-    setSendState(snapshot.sendState);
-    setSendError(snapshot.sendError);
-    threadReplyController.restoreSnapshot(snapshot.threadReply);
-    setMentionPicker(undefined);
-    setMentionActiveIndex(0);
-    autoPreviewUrlsRef.current = new Set(snapshot.pendingLinkPreviews.map((item) => item.url));
-  }
 
   const selectedChannelNotificationLevel = workspaceSettings?.channelNotifications?.[selectedChannelId];
   const workspaceSettingsLoaded = workspaceSettings !== undefined;
@@ -1976,35 +1960,6 @@ export function WorkspaceClientView({
       risks: (channelBrief?.risks ?? []).join("\n"),
     });
   }, [channelBrief]);
-
-  useEffect(() => {
-    const previousChannelId = previousChannelIdRef.current;
-    previousChannelIdRef.current = selectedChannelId;
-    if (!previousChannelId || previousChannelId === selectedChannelId) {
-      return;
-    }
-    composerSnapshotsRef.current[previousChannelId] = readCurrentComposerSnapshot();
-    applyComposerSnapshot(
-      selectedChannelId
-        ? composerSnapshotsRef.current[selectedChannelId] ?? emptyComposerSnapshot()
-        : emptyComposerSnapshot(),
-    );
-    resetActivityForChannelSwitch();
-    setPendingChannelTeammateId("");
-    setChannelMoreOpen(false);
-    setPendingChannelSendPreview(undefined);
-    setAttentionProgressExpanded(true);
-    setSidePanelView("context");
-    setSidePanelOpen(false);
-    setChannelSettingsPageOpen(false);
-    setChannelEnvironmentPageOpen(false);
-    setEnvironmentCommitDialogOpen(false);
-    setProgressPopoverOpen(false);
-    setSelectedApprovalId("");
-    setCreateTaskOpen(false);
-    setChannelNotificationLevel("mentions");
-    messageFeedState.reset();
-  }, [messageFeedState.reset, resetActivityForChannelSwitch, selectedChannelId]);
 
   useEffect(() => {
     const hasPendingReply = channelMessages.some((message) => message.kind === "ai_reply" && message.status === "pending");
