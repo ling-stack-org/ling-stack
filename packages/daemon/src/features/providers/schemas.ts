@@ -4,6 +4,7 @@ import {
   providerKinds,
   providerThinkingModes,
   providerTransports,
+  isSupportedSecretRef,
   type ProviderApi,
   type ProviderCapability,
   type ProviderKind,
@@ -49,9 +50,12 @@ export function parseProviderPresetCreateRequest(value: unknown): ProviderPreset
   if (!isRecord(value)) {
     throw new Error("Provider preset request must be a JSON object");
   }
+  const apiKey = readOptionalApiKey(value);
+  const presetInput = parseProviderPresetInput(value);
+  validateProviderSecretHeaderShape({ ...presetInput, hasApiKey: Boolean(apiKey) });
   return {
-    presetInput: parseProviderPresetInput(value),
-    apiKey: readOptionalApiKey(value),
+    presetInput,
+    apiKey,
   };
 }
 
@@ -64,8 +68,10 @@ export function parseProviderPresetUpdateRequest(value: unknown): ProviderPreset
   if (apiKey && clearApiKey) {
     throw new Error("apiKey and clearApiKey cannot both be provided");
   }
+  const updateInput = parseProviderPresetUpdateInput(value);
+  validateProviderSecretHeaderShape({ ...updateInput, hasApiKey: Boolean(apiKey) });
   return {
-    updateInput: parseProviderPresetUpdateInput(value),
+    updateInput,
     apiKey,
     clearApiKey,
   };
@@ -75,7 +81,7 @@ export function parseProviderModelListRequest(value: unknown): ProviderModelList
   if (!isRecord(value)) {
     throw new Error("Provider model list request must be a JSON object");
   }
-  return {
+  const request: ProviderModelListRequest = {
     kind: readProviderKind(value, "kind"),
     providerId: readString(value, "providerId"),
     api: readProviderApi(value, "api"),
@@ -84,8 +90,11 @@ export function parseProviderModelListRequest(value: unknown): ProviderModelList
     apiKeyRef: readOptionalApiKeyRef(value),
     apiKey: readOptionalApiKey(value),
     headers: readOptionalStringRecord(value, "headers"),
+    secretHeaderRefs: readOptionalSecretHeaderRefs(value, "secretHeaderRefs"),
     authHeader: readOptionalBoolean(value, "authHeader"),
   };
+  validateProviderSecretHeaderShape({ ...request, hasApiKey: Boolean(request.apiKey) });
+  return request;
 }
 
 export function parseProviderModelImportRequest(value: unknown): ProviderModelImportRequest {
@@ -106,6 +115,7 @@ export function parseProviderModelImportRequest(value: unknown): ProviderModelIm
     apiKeyRef: readOptionalApiKeyRef(value),
     apiKey: readOptionalApiKey(value),
     headers: readOptionalStringRecord(value, "headers"),
+    secretHeaderRefs: readOptionalSecretHeaderRefs(value, "secretHeaderRefs"),
     authHeader: readOptionalBoolean(value, "authHeader"),
     reasoning: readOptionalBoolean(value, "reasoning"),
     thinkingModes: readProviderThinkingModes(value, "thinkingModes"),
@@ -126,6 +136,10 @@ export function parseProviderModelImportRequest(value: unknown): ProviderModelIm
       api: model.api ?? request.api,
       baseUrl: request.baseUrl,
       apiKeyRef: request.apiKeyRef,
+      secretHeaderRefs: request.secretHeaderRefs,
+      headers: request.headers,
+      authHeader: request.authHeader,
+      hasApiKey: Boolean(request.apiKey),
       capabilities: model.capabilities ?? request.capabilities,
     });
   }
@@ -151,6 +165,9 @@ export function validateProviderPresetUpdate(existing: ProviderPreset, input: Pr
     api: input.api ?? existing.api,
     baseUrl: input.baseUrl === null ? undefined : input.baseUrl ?? existing.baseUrl,
     apiKeyRef: input.apiKeyRef === null ? undefined : input.apiKeyRef ?? existing.apiKeyRef,
+    headers: input.headers ?? existing.headers,
+    secretHeaderRefs: input.secretHeaderRefs ?? existing.secretHeaderRefs,
+    authHeader: input.authHeader === null ? undefined : input.authHeader ?? existing.authHeader,
     capabilities: input.capabilities ?? existing.capabilities,
   });
 }
@@ -169,6 +186,7 @@ function parseProviderPresetInput(value: unknown): ProviderPresetInput {
     baseUrl: readOptionalString(value, "baseUrl"),
     apiKeyRef: readOptionalApiKeyRef(value),
     headers: readOptionalStringRecord(value, "headers"),
+    secretHeaderRefs: readOptionalSecretHeaderRefs(value, "secretHeaderRefs"),
     authHeader: readOptionalBoolean(value, "authHeader"),
     reasoning: readOptionalBoolean(value, "reasoning"),
     thinkingModes: readProviderThinkingModes(value, "thinkingModes"),
@@ -196,6 +214,7 @@ function parseProviderPresetUpdateInput(value: unknown): ProviderPresetUpdateInp
     baseUrl: readNullableString(value, "baseUrl"),
     apiKeyRef: readNullableApiKeyRef(value),
     headers: readOptionalStringRecord(value, "headers"),
+    secretHeaderRefs: readOptionalSecretHeaderRefs(value, "secretHeaderRefs"),
     authHeader: readNullableBoolean(value, "authHeader"),
     reasoning: readNullableBoolean(value, "reasoning"),
     thinkingModes: value.thinkingModes === undefined ? undefined : readProviderThinkingModes(value, "thinkingModes"),
@@ -223,6 +242,10 @@ function validateProviderPresetShape(input: {
   readonly api?: ProviderApi;
   readonly baseUrl?: string | null;
   readonly apiKeyRef?: string | null;
+  readonly hasApiKey?: boolean;
+  readonly headers?: Record<string, string>;
+  readonly secretHeaderRefs?: Record<string, string>;
+  readonly authHeader?: boolean | null;
   readonly capabilities?: readonly ProviderCapability[];
 }): void {
   if (!input.displayName?.trim()) {
@@ -246,6 +269,7 @@ function validateProviderPresetShape(input: {
   if (input.apiKeyRef && !isSupportedProviderApiKeyRef(input.apiKeyRef)) {
     throw new Error("apiKeyRef must use env:NAME or keychain:NAME");
   }
+  validateProviderSecretHeaderShape(input);
   if (!input.capabilities || input.capabilities.length === 0) {
     throw new Error("capabilities must contain at least one capability");
   }
@@ -261,6 +285,35 @@ function validateProviderPresetShape(input: {
   if (!input.capabilities.includes("chat")) {
     throw new Error("coding provider presets must include chat capability");
   }
+}
+
+function validateProviderSecretHeaderShape(input: {
+  readonly headers?: Record<string, string>;
+  readonly secretHeaderRefs?: Record<string, string>;
+  readonly apiKeyRef?: string | null;
+  readonly hasApiKey?: boolean;
+  readonly authHeader?: boolean | null;
+}): void {
+  const staticHeaderNames = new Set(Object.keys(input.headers ?? {}).map(normalizeHeaderName));
+  for (const [headerName, ref] of Object.entries(input.secretHeaderRefs ?? {})) {
+    const normalizedHeaderName = normalizeHeaderName(headerName);
+    if (!normalizedHeaderName) {
+      throw new Error("secretHeaderRefs header names must be non-empty");
+    }
+    if (staticHeaderNames.has(normalizedHeaderName)) {
+      throw new Error(`Header ${headerName} cannot be configured as both a static and secret header`);
+    }
+    if (!isSupportedSecretRef(ref)) {
+      throw new Error("secretHeaderRefs values must use env:NAME or keychain:NAME");
+    }
+    if (normalizedHeaderName === "authorization" && input.authHeader !== false && (input.apiKeyRef || input.hasApiKey)) {
+      throw new Error("Authorization secret header requires authHeader=false when API key auth is configured");
+    }
+  }
+}
+
+function normalizeHeaderName(value: string): string {
+  return value.trim().toLowerCase();
 }
 
 function parseProviderImportModel(value: unknown, index: number): ProviderModelOption {
@@ -320,6 +373,27 @@ function readNullableApiKeyRef(record: Record<string, unknown>): string | null |
     throw new Error("apiKeyRef must use env:NAME or keychain:NAME");
   }
   return value;
+}
+
+function readOptionalSecretHeaderRefs(record: Record<string, unknown>, key: string): Record<string, string> | undefined {
+  const value = readOptionalStringRecord(record, key);
+  if (value === undefined) {
+    return undefined;
+  }
+  const entries = Object.entries(value)
+    .map(([headerName, ref]) => [headerName.trim(), ref.trim()] as const)
+    .filter(([headerName, ref]) => headerName.length > 0 || ref.length > 0);
+  const result: Record<string, string> = {};
+  for (const [headerName, ref] of entries) {
+    if (!headerName) {
+      throw new Error("secretHeaderRefs header names must be non-empty");
+    }
+    if (!ref) {
+      throw new Error("secretHeaderRefs values must be non-empty");
+    }
+    result[headerName] = ref;
+  }
+  return result;
 }
 
 function readProviderKind(record: Record<string, unknown>, key: string): ProviderKind {

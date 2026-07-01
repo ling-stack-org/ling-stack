@@ -177,6 +177,10 @@ export class SqliteRuntimeWorkUnitStore {
       clauses.push("teammate_id = ?");
       params.push(options.teammateId);
     }
+    if (options.providerPresetId) {
+      clauses.push("provider_preset_id = ?");
+      params.push(options.providerPresetId);
+    }
     if (options.linkedRunId) {
       clauses.push("linked_run_id = ?");
       params.push(options.linkedRunId);

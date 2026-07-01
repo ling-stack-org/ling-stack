@@ -93,8 +93,9 @@ the model is intrinsically a generator.
 Known generation families may be detected before Ling can execute them.
 
 - OpenAI Images: connected for `image_generate` through OpenAI-compatible Images.
-- Seedream: connected for `image_generate`.
-- Seedance: connected for `video_generate`.
+- Seedream: connected for `image_generate` and URL/data-URL based `image_edit`.
+- Seedance: connected for `video_generate`; success requires final task polling and a
+  downloaded video artifact, not only a task id.
 - Jimeng, Flux, Qwen Image, Stability, Ideogram, Google image families, and xAI Grok
   Imagine may be recognized as generation models but are not runnable until a matching
   live adapter is connected.

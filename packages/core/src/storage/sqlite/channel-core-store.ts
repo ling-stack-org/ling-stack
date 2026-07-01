@@ -106,6 +106,10 @@ export class SqliteChannelCoreStore {
     } else {
       whereParts.push("status <> 'archived'");
     }
+    if (options.defaultProviderPresetId) {
+      whereParts.push("default_provider_preset_id = ?");
+      params.push(options.defaultProviderPresetId);
+    }
     return this.context.database
       .prepare(`${channelSelectSql(`WHERE ${whereParts.join(" AND ")}`)} ORDER BY created_at DESC LIMIT ?`)
       .all(...params, limit)

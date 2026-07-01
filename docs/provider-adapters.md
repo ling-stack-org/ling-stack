@@ -170,11 +170,11 @@ Current implementation:
 - `createDefaultMediaAdapterRegistry()` maps `jimeng`, `seedream`, and `seedance` provider kinds to vendor adapter factory stubs,
 - static vendor stubs expose vendor-specific operation capabilities and emit a redacted `static_vendor_request_plan`,
 - `MediaVendorTransport` is present as a disabled-by-default seam; tests can inject fake transports, and provider preset `compat.mediaVendorTransport.mode = "live"` enables live transport readiness,
-- live transport currently supports only Seedream `image_generate` through the OpenAI-compatible `/images/generations` endpoint, records redacted JSON metadata artifacts, and downloads returned HTTP(S) image URLs into local image artifact candidates,
+- live transport currently supports OpenAI Images and Seedream `image_generate`, Seedream URL/data-URL `image_edit`, and Seedance `video_generate` with final task polling plus video download; connected adapters record redacted JSON metadata artifacts and download returned HTTP(S) media URLs into local artifact candidates,
 - unknown media providers fall back to the static adapter by default, while tests can disable that fallback to assert missing-adapter errors,
 - it produces redacted Markdown artifact candidates for success,
 - it exposes deterministic failure/error paths for contract tests,
-- it does not call Jimeng, Seedance, Seedream operations beyond `image_generate`, billing, or approval services.
+- it does not call Jimeng, local-file image edit materialization paths, billing, or approval services.
 
 ## Initial Adapter List
 
@@ -288,7 +288,7 @@ Target capabilities:
 - `image_edit`
 - `video_generate`
 
-These should be modeled as async media jobs, not synchronous chat completions. Seedream `image_generate` is the first live HTTP adapter behind `compat.mediaVendorTransport.mode = "live"` and can store returned image URL bytes as local artifacts. All other Jimeng, Seedream, and Seedance live operations remain deferred.
+These should be modeled as async media jobs, not synchronous chat completions. Connected live adapters behind `compat.mediaVendorTransport.mode = "live"` currently cover OpenAI Images and Seedream `image_generate`, Seedream URL/data-URL `image_edit`, and Seedance `video_generate` after final task polling and video download. Jimeng remains fail-closed until its Visual API signing/auth contract is modeled, and local-file or stored-artifact edit materialization remains deferred.
 
 ## Contract Tests
 

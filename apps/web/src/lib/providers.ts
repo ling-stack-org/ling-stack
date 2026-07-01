@@ -32,6 +32,7 @@ type ProviderCapabilityPresetInput = Pick<ProviderPreset, "id" | "api" | "kind" 
 type GenerationOperation = "image_generate" | "image_edit" | "video_generate";
 
 const generationCapabilities = new Set<GenerationOperation>(["image_generate", "image_edit", "video_generate"]);
+const generationOperations: readonly GenerationOperation[] = ["image_generate", "image_edit", "video_generate"];
 
 export const defaultProviderForm: ProviderFormState = {
   kind: "openai-compatible",
@@ -44,6 +45,7 @@ export const defaultProviderForm: ProviderFormState = {
   apiKey: "",
   apiKeyRef: "",
   clearApiKey: false,
+  secretHeaderRefsText: "",
   capabilitiesText: "chat,tool_call,reasoning",
   inputText: "text",
 	  enabled: true,
@@ -65,6 +67,7 @@ export const customOpenAICompatibleForm: ProviderFormState = {
   apiKey: "",
   apiKeyRef: "",
   clearApiKey: false,
+  secretHeaderRefsText: "",
 	  capabilitiesText: "chat,tool_call",
 	  inputText: "text",
 	  enabled: true,
@@ -172,6 +175,7 @@ export function providerToForm(provider: ProviderPreset, templates: readonly Pro
     apiKey: "",
     apiKeyRef: provider.apiKeyRef?.startsWith("local:") ? "" : provider.apiKeyRef ?? "",
     clearApiKey: false,
+    secretHeaderRefsText: formatSecretHeaderRefs(provider.secretHeaderRefs),
     capabilitiesText: provider.capabilities.join(", "),
     inputText: provider.input.join(", "),
 	    enabled: provider.enabled,
@@ -221,6 +225,7 @@ export function providerTemplateToForm(template: ProviderTemplate, t?: ProviderT
     apiKey: "",
     apiKeyRef: "",
     clearApiKey: false,
+    secretHeaderRefsText: formatSecretHeaderRefs(template.secretHeaderRefs ?? {}),
     capabilitiesText: template.capabilities.join(", "),
     inputText: (template.input ?? ["text"]).join(", "),
 	    enabled: template.capabilities.includes("chat") && template.api !== "media-job" ? true : template.enabled ?? false,
@@ -243,8 +248,9 @@ export function providerFormToTemplate(form: ProviderFormState): ProviderTemplat
     api: form.api,
     providerTransport: form.providerTransport || undefined,
     baseUrl: form.baseUrl,
-	    apiKeyRef: form.apiKeyRef,
-	    authHeader: form.authHeader,
+    apiKeyRef: form.apiKeyRef,
+    secretHeaderRefs: formatSecretHeaderRefsInput(form.secretHeaderRefsText),
+    authHeader: form.authHeader,
 	    reasoning: form.reasoning,
 	    thinkingModes: form.thinkingModes,
 	    input: splitProviderCsv(form.inputText) as ProviderTemplate["input"],
@@ -254,6 +260,29 @@ export function providerFormToTemplate(form: ProviderFormState): ProviderTemplat
     capabilities: splitProviderCsv(form.capabilitiesText) as ProviderTemplate["capabilities"],
     enabled: form.enabled,
   };
+}
+
+function formatSecretHeaderRefs(refs: Record<string, string> | undefined): string {
+  return Object.entries(refs ?? {})
+    .map(([headerName, ref]) => `${headerName}: ${ref}`)
+    .join("\n");
+}
+
+function formatSecretHeaderRefsInput(value: string): Record<string, string> | undefined {
+  const refs = Object.fromEntries(
+    value
+      .split(/\r?\n/u)
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0 && !line.startsWith("#"))
+      .map((line) => {
+        const separator = line.includes(":") ? line.indexOf(":") : line.indexOf("=");
+        if (separator <= 0) {
+          return [line, ""] as const;
+        }
+        return [line.slice(0, separator).trim(), line.slice(separator + 1).trim()] as const;
+      }),
+  );
+  return Object.keys(refs).length > 0 ? refs : undefined;
 }
 
 export function providerFormWithSelectedModel(
@@ -398,6 +427,77 @@ export function canUseMediaProviderForOperation(
 }
 
 export const canUseGenerationProviderForOperation = canUseMediaProviderForOperation;
+
+export function providerSecretStatusLabel(provider: ProviderPreset, t?: ProviderTranslate): string {
+  if (!providerNeedsSecret(provider)) {
+    return translateProviderText(t, "no key required");
+  }
+  if (!provider.apiKeyConfigured) {
+    if (provider.apiKeyRef?.startsWith("keychain:")) {
+      return translateProviderText(t, "keychain secret missing");
+    }
+    return translateProviderText(t, "API key missing");
+  }
+  if (provider.apiKeyRef?.startsWith("keychain:")) {
+    return translateProviderText(t, "keychain ready");
+  }
+  if (provider.apiKeyRef?.startsWith("env:")) {
+    return translateProviderText(t, "env key ready");
+  }
+  return translateProviderText(t, "key ready");
+}
+
+export function providerSecretStatusClass(provider: ProviderPreset): string {
+  if (!providerNeedsSecret(provider)) {
+    return "provider-state check-unknown";
+  }
+  return provider.apiKeyConfigured ? "provider-state key-ok" : "provider-state key-missing";
+}
+
+export function providerSecretHeaderSummary(provider: ProviderPreset, t?: ProviderTranslate): string | undefined {
+  const entries = Object.entries(provider.secretHeaderRefs ?? {});
+  if (entries.length === 0) {
+    return undefined;
+  }
+  const configuredCount = entries.length;
+  const keychainCount = entries.filter(([, ref]) => ref.startsWith("keychain:")).length;
+  const envCount = entries.filter(([, ref]) => ref.startsWith("env:")).length;
+  return translateProviderText(t, "{count} secret headers configured · env {envCount} · keychain {keychainCount}", {
+    count: configuredCount,
+    envCount,
+    keychainCount,
+  });
+}
+
+export function providerGenerationRuntimeSummary(provider: ProviderPreset, t?: ProviderTranslate): string | undefined {
+  if (!providerHasGenerationCapability(provider)) {
+    return undefined;
+  }
+  const operations = generationOperations.filter((operation) => canUseGenerationProviderForOperation(provider, operation));
+  if (operations.length === 0) {
+    const state = resolveGenerationProviderRuntimeState(provider);
+    if (state.reason === "secret_missing") {
+      return translateProviderText(t, "Real generation: API key missing");
+    }
+    if (state.reason === "base_url_missing") {
+      return translateProviderText(t, "Real generation: Base URL missing");
+    }
+    return translateProviderText(t, "Real generation is not connected yet.");
+  }
+  return translateProviderText(t, "Real generation: {operations}", {
+    operations: operations.map((operation) => providerGenerationOperationLabel(operation, t)).join(" / "),
+  });
+}
+
+function providerGenerationOperationLabel(operation: GenerationOperation, t?: ProviderTranslate): string {
+  if (operation === "image_generate") {
+    return translateProviderText(t, "image generate");
+  }
+  if (operation === "image_edit") {
+    return translateProviderText(t, "URL image edit");
+  }
+  return translateProviderText(t, "final video");
+}
 
 export function providerModelRouteLabel(
   provider: ProviderPreset,

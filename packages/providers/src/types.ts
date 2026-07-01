@@ -198,8 +198,12 @@ export interface LiveMediaVendorTransportOptions {
   readonly apiKeyRef?: string;
   readonly apiKeyConfigured: boolean;
   readonly apiKey?: string;
+  readonly headers?: Record<string, string>;
+  readonly redactionValues?: readonly string[];
   readonly httpClient?: MediaVendorHttpClient;
   readonly timeoutMs?: number;
+  readonly pollIntervalMs?: number;
+  readonly maxPollAttempts?: number;
 }
 
 export interface MediaVendorHttpRequestInit {

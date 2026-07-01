@@ -11,16 +11,22 @@ import {
   type RunStore,
   enrichProviderModelOption,
   normalizeMediaProviderCompat,
+  parseSecretRef,
 } from "@ling-stack/core";
+import type { ExternalSecretStore } from "../../context.js";
 import type { ResolvedDaemonConfig } from "../../config.js";
 import { HttpError } from "../../errors.js";
 import type { ControlPlaneEventHub } from "../control-plane/events.js";
 import { appendControlPlaneEvent } from "../control-plane/events.js";
 import type { RunStoreRegistry } from "../../runtime/store-registry.js";
-import { readJsonBody } from "../../shared/request.js";
+import { readJsonBody, readOptionalJsonBody } from "../../shared/request.js";
 import { writeJson } from "../../shared/response.js";
 import { listProviderModels } from "./models.js";
 import { checkProviderPreset } from "./preflight.js";
+import {
+  formatProviderDeleteBlockedMessage,
+  inspectProviderReferences,
+} from "./reference-inspector.js";
 import {
   parseProviderModelListRequest,
   parseProviderModelImportRequest,
@@ -160,6 +166,7 @@ export async function handleProviderModelImport(
           baseUrl: input.baseUrl ?? null,
           apiKeyRef: input.apiKey ? localProviderSecretRef(existing.id) : input.apiKeyRef,
           headers: input.headers ?? existing.headers,
+          secretHeaderRefs: input.secretHeaderRefs ?? existing.secretHeaderRefs,
           authHeader: input.authHeader ?? existing.authHeader,
 	          reasoning: modelReasoning,
           thinkingModes: modelThinkingModes,
@@ -203,6 +210,7 @@ export async function handleProviderModelImport(
         baseUrl: input.baseUrl,
         apiKeyRef: input.apiKey ? undefined : input.apiKeyRef,
         headers: input.headers,
+        secretHeaderRefs: input.secretHeaderRefs,
         authHeader: input.authHeader,
         reasoning: modelReasoning,
         thinkingModes: modelThinkingModes,
@@ -398,6 +406,85 @@ function readOptionalSecretPurposeQuery(url: URL): SecretPurpose | null | undefi
   return value as SecretPurpose;
 }
 
+function parseProviderKeychainSecretConfigureRequest(value: unknown): {
+  readonly secretRef: string;
+  readonly apiKey: string;
+  readonly clearLocalSecret?: boolean;
+} {
+  if (!isRecord(value)) {
+    throw new Error("provider secret configure request must be a JSON object");
+  }
+  const secretRef = readRequiredString(value, "secretRef");
+  const apiKey = readRequiredString(value, "apiKey");
+  const clearLocalSecret = readOptionalBooleanValue(value, "clearLocalSecret");
+  return { secretRef, apiKey, clearLocalSecret };
+}
+
+function parseProviderKeychainSecretDeleteRequest(value: unknown | undefined): {
+  readonly secretRef?: string;
+} {
+  if (value === undefined) {
+    return {};
+  }
+  if (!isRecord(value)) {
+    throw new Error("provider secret delete request must be a JSON object");
+  }
+  const secretRef = readOptionalStringValue(value, "secretRef");
+  return secretRef ? { secretRef } : {};
+}
+
+function assertKeychainSecretRef(secretRef: string): void {
+  const parsed = parseSecretRef(secretRef);
+  if (parsed.kind !== "keychain") {
+    throw new Error("Provider keychain secret setup only supports keychain: refs.");
+  }
+}
+
+function providerSecretStatusHttpStatus(errorCode: string | undefined): number {
+  if (errorCode === "secret_store_unavailable") {
+    return 501;
+  }
+  if (errorCode === "secret_access_denied") {
+    return 403;
+  }
+  return 400;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function readRequiredString(record: Record<string, unknown>, key: string): string {
+  const value = record[key];
+  if (typeof value !== "string" || value.trim().length === 0) {
+    throw new Error(`${key} must be a non-empty string`);
+  }
+  return value.trim();
+}
+
+function readOptionalStringValue(record: Record<string, unknown>, key: string): string | undefined {
+  const value = record[key];
+  if (value === undefined) {
+    return undefined;
+  }
+  if (typeof value !== "string") {
+    throw new Error(`${key} must be a string`);
+  }
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function readOptionalBooleanValue(record: Record<string, unknown>, key: string): boolean | undefined {
+  const value = record[key];
+  if (value === undefined) {
+    return undefined;
+  }
+  if (typeof value !== "boolean") {
+    throw new Error(`${key} must be a boolean`);
+  }
+  return value;
+}
+
 export async function handleProviderDraftCheck(
   request: IncomingMessage,
   response: ServerResponse,
@@ -443,8 +530,12 @@ export async function handleProviderItem(
   config: ResolvedDaemonConfig,
   storeRegistry: RunStoreRegistry,
   secretResolver: SecretResolver,
+  externalSecretStore: ExternalSecretStore,
   controlPlaneEvents: ControlPlaneEventHub,
-  route: { readonly providerId: string; readonly action?: "check" | "secret" },
+  route: {
+    readonly providerId: string;
+    readonly action?: "check" | "secret" | "configure-keychain-secret" | "delete-keychain-secret";
+  },
 ): Promise<void> {
   const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
   const cwd = url.searchParams.get("cwd");
@@ -483,6 +574,78 @@ export async function handleProviderItem(
 
   if (request.method === "GET" && route.action === "secret") {
     writeJson(response, 200, toProviderSecretResponse(store, preset));
+    return;
+  }
+
+  if (request.method === "POST" && route.action === "configure-keychain-secret") {
+    try {
+      const body = await readJsonBody(request, config.maxBodyBytes);
+      const input = parseProviderKeychainSecretConfigureRequest(body);
+      assertKeychainSecretRef(input.secretRef);
+      const status = externalSecretStore.setSecret(input.secretRef, input.apiKey, "provider_api_key");
+      if (!status.configured) {
+        writeJson(response, providerSecretStatusHttpStatus(status.errorCode), {
+          error: status.errorCode ?? "provider_secret_store_unavailable",
+          message: status.message ?? `Could not save provider secret: ${input.secretRef}`,
+          status,
+        });
+        return;
+      }
+      const now = new Date().toISOString();
+      const updated = store.updateProviderPreset(route.providerId, { apiKeyRef: input.secretRef }, now) ?? preset;
+      if (input.clearLocalSecret !== false) {
+        store.deleteProviderSecret(route.providerId);
+      }
+      appendProviderUpdatedEvent(store, controlPlaneEvents, cwd, updated, now);
+      writeJson(response, 200, {
+        provider: toPublicProviderPreset(store, updated, secretResolver),
+        secretRef: input.secretRef,
+        status,
+      });
+    } catch (error) {
+      writeJson(response, 400, {
+        error: "bad_request",
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
+    return;
+  }
+
+  if (request.method === "DELETE" && route.action === "delete-keychain-secret") {
+    try {
+      const body = await readOptionalJsonBody(request, config.maxBodyBytes);
+      const input = parseProviderKeychainSecretDeleteRequest(body);
+      const secretRef = input.secretRef ?? preset.apiKeyRef;
+      if (!secretRef) {
+        writeJson(response, 400, { error: "bad_request", message: "Provider does not have a keychain secret ref." });
+        return;
+      }
+      assertKeychainSecretRef(secretRef);
+      const status = externalSecretStore.deleteSecret(secretRef, "provider_api_key");
+      if (status.errorCode === "secret_access_denied" || status.errorCode === "secret_store_unavailable" || status.errorCode === "invalid_secret_ref") {
+        writeJson(response, providerSecretStatusHttpStatus(status.errorCode), {
+          error: status.errorCode,
+          message: status.message ?? `Could not delete provider secret: ${secretRef}`,
+          status,
+        });
+        return;
+      }
+      const now = new Date().toISOString();
+      const updated = preset.apiKeyRef === secretRef
+        ? store.updateProviderPreset(route.providerId, { apiKeyRef: null }, now) ?? preset
+        : preset;
+      appendProviderUpdatedEvent(store, controlPlaneEvents, cwd, updated, now);
+      writeJson(response, 200, {
+        provider: toPublicProviderPreset(store, updated, secretResolver),
+        secretRef,
+        status,
+      });
+    } catch (error) {
+      writeJson(response, 400, {
+        error: "bad_request",
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
     return;
   }
 
@@ -529,6 +692,15 @@ export async function handleProviderItem(
   }
 
   if (request.method === "DELETE") {
+    const inspection = inspectProviderReferences(store, route.providerId);
+    if (!inspection.canDelete) {
+      writeJson(response, 409, {
+        error: "provider_delete_blocked",
+        message: formatProviderDeleteBlockedMessage(inspection),
+        blockers: inspection.blockers,
+      });
+      return;
+    }
     const now = new Date().toISOString();
     store.deleteProviderSecret(route.providerId);
     store.deleteProviderPreset(route.providerId);

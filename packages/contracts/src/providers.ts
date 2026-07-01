@@ -68,6 +68,8 @@ export interface ProviderPreset {
   readonly apiKeyConfigured: boolean;
   readonly apiKeyStatus?: SecretStatus;
   readonly headers: Record<string, string>;
+  readonly secretHeaderRefs: Record<string, string>;
+  readonly secretHeaderStatuses?: Record<string, SecretStatus>;
   readonly authHeader?: boolean;
   readonly reasoning?: boolean;
   readonly thinkingModes?: readonly ProviderThinkingMode[];
@@ -98,6 +100,22 @@ export interface ProviderSecretResponse {
   readonly configured: boolean;
 }
 
+export interface ProviderKeychainSecretConfigureRequest {
+  readonly secretRef: string;
+  readonly apiKey: string;
+  readonly clearLocalSecret?: boolean;
+}
+
+export interface ProviderKeychainSecretDeleteRequest {
+  readonly secretRef?: string;
+}
+
+export interface ProviderKeychainSecretResponse {
+  readonly provider: ProviderPreset;
+  readonly secretRef: string;
+  readonly status: SecretStatus;
+}
+
 export interface ProviderTemplate {
   readonly templateId: string;
   readonly description: string;
@@ -110,6 +128,7 @@ export interface ProviderTemplate {
   readonly baseUrl?: string;
   readonly apiKeyRef?: string;
   readonly headers?: Record<string, string>;
+  readonly secretHeaderRefs?: Record<string, string>;
   readonly authHeader?: boolean;
   readonly reasoning?: boolean;
   readonly thinkingModes?: readonly ProviderThinkingMode[];
@@ -152,6 +171,7 @@ export interface ProviderModelImportRequest {
   readonly apiKeyRef?: string;
   readonly apiKey?: string;
   readonly headers?: Record<string, string>;
+  readonly secretHeaderRefs?: Record<string, string>;
   readonly authHeader?: boolean;
   readonly reasoning?: boolean;
   readonly thinkingModes?: readonly ProviderThinkingMode[];
@@ -180,6 +200,7 @@ export interface ProviderModelListRequest {
   readonly apiKeyRef?: string;
   readonly apiKey?: string;
   readonly headers?: Record<string, string>;
+  readonly secretHeaderRefs?: Record<string, string>;
   readonly authHeader?: boolean;
 }
 
@@ -209,6 +230,7 @@ export interface ProviderMutationRequest {
   readonly apiKey?: string;
   readonly clearApiKey?: boolean;
   readonly headers?: Record<string, string>;
+  readonly secretHeaderRefs?: Record<string, string>;
   readonly authHeader?: boolean;
   readonly reasoning?: boolean;
   readonly thinkingModes?: readonly ProviderThinkingMode[];

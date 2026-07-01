@@ -418,6 +418,7 @@ export interface ChannelBranchUpdateInput {
 
 export interface ListChannelsOptions {
   readonly archived?: boolean;
+  readonly defaultProviderPresetId?: string;
   readonly limit?: number;
 }
 
@@ -661,6 +662,7 @@ export interface ListAiTeammatesOptions {
   readonly status?: AiTeammateStatus;
   readonly includeHidden?: boolean;
   readonly includeDisabled?: boolean;
+  readonly providerPresetId?: string;
   readonly limit?: number;
 }
 

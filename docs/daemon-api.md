@@ -3096,7 +3096,7 @@ GET /runs/:id/artifacts?cwd=/path/to/project
 
 Passing `cwd` is recommended after daemon restart. Artifact paths are local paths under `.ling-stack/artifacts` and are served only through the artifact content endpoint.
 
-During run execution the daemon records `artifact_created` events for extracted Pi tool evidence. v0.1 extraction covers text, log, Markdown, diff output, and generated file path metadata. Media job artifacts use the same artifact API; Seedream `image_generate` can now store returned image URL bytes as local image artifacts, while video and other media byte outputs remain deferred.
+During run execution the daemon records `artifact_created` events for extracted Pi tool evidence. v0.1 extraction covers text, log, Markdown, diff output, and generated file path metadata. Media job artifacts use the same artifact API; live media adapters can store returned image and video bytes as local artifacts. Current connected media paths include OpenAI Images and Seedream `image_generate`, Seedream URL/data-URL `image_edit`, and Seedance `video_generate` after final task polling and video download.
 
 Response:
 
@@ -3247,7 +3247,7 @@ Response:
 POST /media-jobs/:id/run?cwd=/path/to/project
 ```
 
-The current execution interface uses the media adapter contract, provider-kind registry, and Generation Runtime Resolver. A live-ready provider preset must have a supported operation, `compat.mediaVendorTransport.mode = "live"` after normalization, `baseUrl`, `apiKeyRef`, and a configured secret. Live transport currently supports OpenAI Images and Seedream `image_generate`, with Seedance video support gated by the connected adapter registry. Image adapters record JSON metadata artifacts and download returned HTTP(S) image URLs into local image artifacts under `.ling-stack/artifacts` without sending the provider authorization header to those image URLs. Jimeng, billing, video bytes without an adapter, and unsupported media operations remain out of scope.
+The current execution interface uses the media adapter contract, provider-kind registry, and Generation Runtime Resolver. A live-ready provider preset must have a supported operation, `compat.mediaVendorTransport.mode = "live"` after normalization, `baseUrl`, `apiKeyRef`, and a configured secret. Live transport currently supports OpenAI Images `image_generate`, Seedream `image_generate`, Seedream URL-based `image_edit`, and Seedance `video_generate` with final task polling plus video download. Image and video adapters record compact JSON metadata artifacts and download returned HTTP(S) media URLs into local artifacts under `.ling-stack/artifacts` without sending the provider authorization header to those media URLs. Jimeng, billing, local-file image edit materialization, and unsupported media operations remain out of scope.
 
 Live-ready jobs execute directly when `POST /media-jobs/:id/run` is called. The daemon does not create `media_cost` approvals for new media jobs. Legacy jobs or historical approvals that already reference `media_cost` remain readable through the approval APIs, but they are not required for new generation execution.
 
@@ -3387,6 +3387,7 @@ Response:
         "configured": true
       },
       "headers": {},
+      "secretHeaderRefs": {},
       "input": ["text"],
       "compat": {},
       "capabilities": ["chat", "tool_call", "reasoning"],
@@ -3427,6 +3428,253 @@ Content-Type: application/json
 ```
 
 Raw `apiKey` is not accepted for persistent provider presets. `apiKeyRef` accepts only supported secret refs such as `env:LOCAL_RELAY_API_KEY` or `keychain:provider_local`.
+
+### Configure Provider Keychain Secret
+
+```http
+POST /providers/:id/secrets/configure?cwd=/path/to/project
+Content-Type: application/json
+```
+
+This endpoint lets a trusted local daemon save a provider API key into the configured
+Keychain store and update the provider preset to reference that key. It accepts only
+`keychain:` refs. It never returns the raw secret value.
+
+Request:
+
+```json
+{
+  "secretRef": "keychain:provider_local_relay",
+  "apiKey": "sk-...",
+  "clearLocalSecret": true
+}
+```
+
+Response:
+
+```json
+{
+  "provider": {
+    "id": "provider_...",
+    "apiKeyRef": "keychain:provider_local_relay",
+    "apiKeyConfigured": true
+  },
+  "secretRef": "keychain:provider_local_relay",
+  "status": {
+    "ref": "keychain:provider_local_relay",
+    "kind": "keychain",
+    "configured": true
+  }
+}
+```
+
+If the current runtime has no Keychain store, the daemon returns `501` with
+`secret_store_unavailable` status metadata. Existing workspace-local provider secrets are
+cleared by default after a successful Keychain save unless `clearLocalSecret` is `false`.
+
+### Delete Provider Keychain Secret
+
+```http
+DELETE /providers/:id/secrets/keychain?cwd=/path/to/project
+Content-Type: application/json
+```
+
+Request body is optional:
+
+```json
+{
+  "secretRef": "keychain:provider_local_relay"
+}
+```
+
+The daemon deletes the Keychain item and clears the provider `apiKeyRef` only when the
+provider currently points at the same ref. It does not delete the provider preset.
+
+Response shape matches the configure endpoint.
+
+### List Provider Models
+
+```http
+POST /provider-models?cwd=/path/to/project
+Content-Type: application/json
+```
+
+The model discovery endpoint asks the configured provider route for available models
+and enriches the result with Ling capability metadata. It is used by Model Workbench
+before creating provider presets.
+
+Request:
+
+```json
+{
+  "kind": "openai-compatible",
+  "providerId": "local-relay",
+  "api": "openai-completions",
+  "providerTransport": "auto",
+  "baseUrl": "http://127.0.0.1:8317/v1",
+  "apiKeyRef": "env:LOCAL_RELAY_API_KEY",
+  "headers": {},
+  "secretHeaderRefs": {},
+  "authHeader": true
+}
+```
+
+Fields:
+
+- `kind`, `providerId`, and `api` describe the provider route to inspect.
+- `providerTransport` is optional and only applies to APIs that support a transport
+  choice.
+- `baseUrl` is required for OpenAI-compatible and media routes that need a remote
+  endpoint.
+- `apiKeyRef` is the preferred secret input. A transient `apiKey` may be accepted by
+  setup flows for discovery only; the value is never returned.
+- `headers` are static non-secret headers.
+- `secretHeaderRefs` maps HTTP header names to `env:` or `keychain:` refs. The daemon
+  resolves them only inside trusted runtime calls, rejects duplicate static/secret
+  header names, and redacts resolved values from snapshots and artifacts.
+- `authHeader` controls whether the daemon sends the resolved API key as the standard
+  authorization header for compatible providers.
+
+Response:
+
+```json
+{
+  "source": "openai-compatible:/models",
+  "models": [
+    {
+      "id": "gpt-5.5",
+      "displayName": "gpt-5.5",
+      "ownedBy": "openai",
+      "api": "openai-responses",
+      "input": ["text", "image"],
+      "capabilities": ["chat", "tool_call", "reasoning", "vision"],
+      "thinkingModes": ["off", "low", "medium", "high"],
+      "thinkingSupport": {
+        "levels": ["off", "low", "medium", "high"]
+      },
+      "contextWindow": 128000,
+      "maxTokens": 16384,
+      "supportedParameters": ["reasoning.effort"],
+      "capabilitySource": "model_catalog",
+      "capabilityConfidence": "known"
+    }
+  ]
+}
+```
+
+Capability metadata follows a conservative rule:
+
+1. Reliable upstream model metadata wins when present.
+2. Ling's model catalog fills known model-family gaps.
+3. Unknown models stay conservative and are not promoted to generation or reasoning
+   models only because their id looks similar.
+
+Common failures:
+
+- `secret_missing`
+- `auth_failed`
+- `network_failed`
+- `provider_error`
+- `unsupported_capability`
+- `bad_request`
+
+Secret values are never returned in success or error bodies.
+
+### Import Provider Models
+
+```http
+POST /providers/import-models?cwd=/path/to/project
+Content-Type: application/json
+```
+
+The import endpoint creates or updates one provider preset per selected model from a
+model discovery result. It deduplicates by provider id, protocol, normalized Base URL,
+and model id.
+
+Request:
+
+```json
+{
+  "kind": "openai-compatible",
+  "displayName": "Local Relay",
+  "providerId": "local-relay",
+  "api": "openai-completions",
+  "providerTransport": "auto",
+  "baseUrl": "http://127.0.0.1:8317/v1",
+  "apiKeyRef": "env:LOCAL_RELAY_API_KEY",
+  "headers": {},
+  "secretHeaderRefs": {},
+  "authHeader": true,
+  "capabilities": ["chat"],
+  "input": ["text"],
+  "enabled": true,
+  "models": [
+    {
+      "id": "gpt-5.5",
+      "displayName": "gpt-5.5",
+      "api": "openai-responses",
+      "input": ["text", "image"],
+      "capabilities": ["chat", "tool_call", "reasoning", "vision"],
+      "thinkingModes": ["off", "low", "medium", "high"],
+      "contextWindow": 128000,
+      "maxTokens": 16384
+    }
+  ]
+}
+```
+
+Response:
+
+```json
+{
+  "providers": [
+    {
+      "id": "provider_...",
+      "kind": "openai-compatible",
+      "displayName": "Local Relay · gpt-5.5",
+      "providerId": "local-relay",
+      "model": "gpt-5.5",
+      "api": "openai-responses",
+      "baseUrl": "http://127.0.0.1:8317/v1",
+      "apiKeyRef": "env:LOCAL_RELAY_API_KEY",
+      "apiKeyConfigured": true,
+      "headers": {},
+      "secretHeaderRefs": {},
+      "input": ["text", "image"],
+      "capabilities": ["chat", "tool_call", "reasoning", "vision"],
+      "thinkingModes": ["off", "low", "medium", "high"],
+      "reasoning": true,
+      "compat": {
+        "modelMetadata": {
+          "capabilitySource": "model_catalog",
+          "capabilityConfidence": "known"
+        }
+      },
+      "enabled": true,
+      "createdAt": "2026-05-20T00:00:00.000Z",
+      "updatedAt": "2026-05-20T00:00:00.000Z"
+    }
+  ],
+  "createdCount": 1,
+  "updatedCount": 0,
+  "warnings": []
+}
+```
+
+Import behavior:
+
+- Model-level `api`, `input`, `capabilities`, `thinkingModes`, `contextWindow`, and
+  `maxTokens` override the shared request defaults for that imported preset.
+- `reasoning` is derived from `thinkingModes`: any mode other than `off` adds the
+  `reasoning` capability.
+- Discovery metadata is persisted under provider compatibility metadata so later UI
+  and runtime checks can explain where capability decisions came from.
+- Media models are normalized through the generation runtime resolver during import.
+- Imported non-media providers may run provider check after save; failures return
+  warnings or provider `lastCheck` state rather than exposing secret values.
+- A raw `apiKey` in the import request is a setup compatibility path that stores a
+  local provider secret and returns only a ref/status. Prefer `apiKeyRef` for durable
+  configuration.
 
 ### Get, Update, Delete
 

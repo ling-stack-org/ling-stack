@@ -14,6 +14,7 @@ export function providerFormToPayload(form: ProviderFormState): ProviderMutation
     apiKeyRef: form.apiKeyRef || undefined,
     apiKey: form.apiKey.trim() || undefined,
     clearApiKey: form.clearApiKey || undefined,
+    secretHeaderRefs: parseSecretHeaderRefsText(form.secretHeaderRefsText),
     capabilities: splitCsv(form.capabilitiesText),
     input: splitCsv(form.inputText),
 	    enabled: form.enabled,
@@ -24,6 +25,24 @@ export function providerFormToPayload(form: ProviderFormState): ProviderMutation
     maxTokens: form.maxTokens ? Number(form.maxTokens) : undefined,
     compat: providerFormCompat(form),
   };
+}
+
+export function parseSecretHeaderRefsText(value: string): Record<string, string> | undefined {
+  const entries = value
+    .split(/\r?\n/u)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0 && !line.startsWith("#"))
+    .map((line) => {
+      const separator = line.includes(":") ? line.indexOf(":") : line.indexOf("=");
+      if (separator <= 0) {
+        return [line, ""] as const;
+      }
+      return [line.slice(0, separator).trim(), line.slice(separator + 1).trim()] as const;
+    });
+  if (entries.length === 0) {
+    return undefined;
+  }
+  return Object.fromEntries(entries);
 }
 
 export function providerFormCompat(form: ProviderFormState): Record<string, unknown> | undefined {

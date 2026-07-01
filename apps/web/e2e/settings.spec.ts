@@ -35,7 +35,7 @@ test("language switcher toggles Chinese and English UI labels", async ({ page })
   await page.getByRole("button", { name: "返回应用" }).click();
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Engineering" }).click();
   await expect(page.getByRole("heading", { name: "Engineering", level: 1 })).toBeVisible();
-  await expect(page.getByLabel("Ling Stack navigation").getByRole("button", { name: "收件箱" })).toHaveCount(0);
+  await expect(page.getByLabel("Ling Stack navigation").getByRole("button", { name: "收件箱" })).toBeVisible();
   await expect(page.getByLabel("频道动态")).toBeVisible();
   await openChannelChatTools(page);
   await expect(page.getByPlaceholder("搜索动态")).toBeVisible();

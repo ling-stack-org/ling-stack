@@ -1960,7 +1960,7 @@ export async function routeRequest(
 
   const providerRoute = parseProviderRoute(url.pathname);
   if (providerRoute) {
-    await handleProviderItem(request, response, config, storeRegistry, secretResolver, controlPlaneEvents, providerRoute);
+    await handleProviderItem(request, response, config, storeRegistry, secretResolver, externalSecretStore, controlPlaneEvents, providerRoute);
     return;
   }
 

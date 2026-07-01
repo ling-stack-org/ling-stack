@@ -67,6 +67,7 @@ export interface ProviderPreset {
   readonly baseUrl?: string;
   readonly apiKeyRef?: string;
   readonly headers: Record<string, string>;
+  readonly secretHeaderRefs: Record<string, string>;
   readonly authHeader?: boolean;
   readonly reasoning?: boolean;
   readonly thinkingModes?: readonly ProviderThinkingMode[];
@@ -91,6 +92,7 @@ export interface ProviderPresetInput {
   readonly baseUrl?: string;
   readonly apiKeyRef?: string;
   readonly headers?: Record<string, string>;
+  readonly secretHeaderRefs?: Record<string, string>;
   readonly authHeader?: boolean;
   readonly reasoning?: boolean;
   readonly thinkingModes?: readonly ProviderThinkingMode[];
@@ -112,6 +114,7 @@ export interface ProviderPresetUpdateInput {
   readonly baseUrl?: string | null;
   readonly apiKeyRef?: string | null;
   readonly headers?: Record<string, string>;
+  readonly secretHeaderRefs?: Record<string, string>;
   readonly authHeader?: boolean | null;
   readonly reasoning?: boolean | null;
   readonly thinkingModes?: readonly ProviderThinkingMode[];
@@ -126,6 +129,7 @@ export interface ProviderPresetUpdateInput {
 export interface PublicProviderPreset extends ProviderPreset {
   readonly apiKeyConfigured: boolean;
   readonly apiKeyStatus?: SecretStatus;
+  readonly secretHeaderStatuses?: Record<string, SecretStatus>;
 }
 
 export interface ProviderCheckResult {
@@ -162,6 +166,7 @@ export interface ProviderModelImportRequest {
   readonly apiKeyRef?: string;
   readonly apiKey?: string;
   readonly headers?: Record<string, string>;
+  readonly secretHeaderRefs?: Record<string, string>;
   readonly authHeader?: boolean;
   readonly reasoning?: boolean;
   readonly thinkingModes?: readonly ProviderThinkingMode[];
@@ -190,6 +195,7 @@ export interface ProviderModelListRequest {
   readonly apiKeyRef?: string;
   readonly apiKey?: string;
   readonly headers?: Record<string, string>;
+  readonly secretHeaderRefs?: Record<string, string>;
   readonly authHeader?: boolean;
 }
 

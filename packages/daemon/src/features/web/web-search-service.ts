@@ -8,6 +8,10 @@ import {
   readLocalProviderSecretProviderId,
 } from "../providers/secrets.js";
 import {
+  ProviderSecretMaterializationError,
+  materializeProviderSecretHeaders,
+} from "../providers/secret-materializer.js";
+import {
   resolveProviderWebSearchAdapter,
   type ProviderWebSearchAdapter,
   type WebSearchResult,
@@ -41,6 +45,7 @@ interface ProviderWebSearchConfig {
   readonly adapter: ProviderWebSearchAdapter;
   readonly providerPreset: ProviderPreset;
   readonly apiKey: string;
+  readonly redactionValues: readonly string[];
 }
 
 interface ProviderWebSearchConfigResolution {
@@ -63,6 +68,7 @@ export async function runProviderWebSearch(input: ProviderWebSearchServiceInput)
       const result = await config.adapter.search({
         providerPreset: config.providerPreset,
         apiKey: config.apiKey,
+        redactionValues: config.redactionValues,
         query: input.query,
         fetch: input.fetch,
         timeoutMs: input.timeoutMs ?? providerWebSearchTimeoutMs(config.providerPreset),
@@ -118,10 +124,30 @@ function resolveProviderWebSearchConfigs(input: {
       missingKeyNames.push(provider.displayName);
       continue;
     }
+    let secretHeaders: ReturnType<typeof materializeProviderSecretHeaders>;
+    try {
+      secretHeaders = materializeProviderSecretHeaders(provider, input.secretResolver);
+    } catch (error) {
+      if (error instanceof ProviderSecretMaterializationError) {
+        missingKeyNames.push(provider.displayName);
+        continue;
+      }
+      throw error;
+    }
     configs.push({
       adapter,
-      providerPreset: provider,
+      providerPreset: {
+        ...provider,
+        headers: {
+          ...provider.headers,
+          ...secretHeaders.headers,
+        },
+      },
       apiKey: providerSecret.value,
+      redactionValues: [
+        providerSecret.value,
+        ...secretHeaders.values,
+      ].filter((value): value is string => typeof value === "string" && value.length > 0),
     });
   }
 

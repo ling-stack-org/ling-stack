@@ -32,6 +32,9 @@ import type {
   PluginSourceListResponse,
   ProviderCheckResult,
   ProviderDraftCheckRequest,
+  ProviderKeychainSecretConfigureRequest,
+  ProviderKeychainSecretDeleteRequest,
+  ProviderKeychainSecretResponse,
   ProviderListResponse,
   ProviderModelImportRequest,
   ProviderModelImportResponse,
@@ -64,6 +67,24 @@ export const adminEndpoints = {
 
   async getProviderSecret(this: LingDaemonEndpointContext, cwd: string, providerId: string): Promise<ProviderSecretResponse> {
       return this._get(`/providers/${encodeURIComponent(providerId)}/secret`, { cwd });
+    },
+
+  async configureProviderKeychainSecret(
+    this: LingDaemonEndpointContext,
+    cwd: string,
+    providerId: string,
+    input: ProviderKeychainSecretConfigureRequest,
+  ): Promise<ProviderKeychainSecretResponse> {
+      return this._post(`/providers/${encodeURIComponent(providerId)}/secrets/configure`, { cwd }, input);
+    },
+
+  async deleteProviderKeychainSecret(
+    this: LingDaemonEndpointContext,
+    cwd: string,
+    providerId: string,
+    input: ProviderKeychainSecretDeleteRequest = {},
+  ): Promise<ProviderKeychainSecretResponse> {
+      return this._requestJson("DELETE", `/providers/${encodeURIComponent(providerId)}/secrets/keychain`, { cwd }, input);
     },
 
   async deleteProvider(this: LingDaemonEndpointContext, cwd: string, providerId: string): Promise<void> {

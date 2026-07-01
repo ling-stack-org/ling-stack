@@ -655,7 +655,10 @@ export function parseTaskRoute(pathname: string): { readonly taskId: string; rea
   return undefined;
 }
 
-export function parseProviderRoute(pathname: string): { readonly providerId: string; readonly action?: "check" | "secret" } | undefined {
+export function parseProviderRoute(pathname: string): {
+  readonly providerId: string;
+  readonly action?: "check" | "secret" | "configure-keychain-secret" | "delete-keychain-secret";
+} | undefined {
   const segments = pathname.split("/").filter(Boolean).map(decodeURIComponent);
   if (segments.length === 2 && segments[0] === "providers") {
     return { providerId: segments[1] };
@@ -665,6 +668,12 @@ export function parseProviderRoute(pathname: string): { readonly providerId: str
   }
   if (segments.length === 3 && segments[0] === "providers" && segments[2] === "secret") {
     return { providerId: segments[1], action: "secret" };
+  }
+  if (segments.length === 4 && segments[0] === "providers" && segments[2] === "secrets" && segments[3] === "configure") {
+    return { providerId: segments[1], action: "configure-keychain-secret" };
+  }
+  if (segments.length === 4 && segments[0] === "providers" && segments[2] === "secrets" && segments[3] === "keychain") {
+    return { providerId: segments[1], action: "delete-keychain-secret" };
   }
   return undefined;
 }

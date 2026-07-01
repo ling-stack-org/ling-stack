@@ -21,6 +21,54 @@ export async function executeSeedreamImageGeneration(
 ): Promise<MediaVendorTransportResult> {
   const endpoint = `${options.baseUrl?.replace(/\/+$/, "")}/images/generations`;
   const payload = buildSeedreamImageGenerationPayload(request.requestPlan);
+  return await executeSeedreamImageRequest({
+    request,
+    options,
+    endpoint,
+    payload,
+    mode: "live_seedream_image_generate",
+    title: "Seedream image_generate response",
+    responsePathHint: "seedream-image-response.json",
+    missingImageMessage: "Seedream image generation response did not include image URL data.",
+  });
+}
+
+export async function executeSeedreamImageEdit(
+  request: MediaVendorTransportRequest,
+  options: LiveMediaVendorTransportOptions,
+): Promise<MediaVendorTransportResult> {
+  const endpoint = `${options.baseUrl?.replace(/\/+$/, "")}/images/generations`;
+  const payloadResolution = buildSeedreamImageEditPayload(request.requestPlan);
+  if (!payloadResolution.ok) {
+    return {
+      status: "failed",
+      errorCode: "invalid_request",
+      errorMessage: payloadResolution.errorMessage,
+    };
+  }
+  return await executeSeedreamImageRequest({
+    request,
+    options,
+    endpoint,
+    payload: payloadResolution.payload,
+    mode: "live_seedream_image_edit",
+    title: "Seedream image_edit response",
+    responsePathHint: "seedream-image-edit-response.json",
+    missingImageMessage: "Seedream image edit response did not include image URL data.",
+  });
+}
+
+async function executeSeedreamImageRequest(input: {
+  readonly request: MediaVendorTransportRequest;
+  readonly options: LiveMediaVendorTransportOptions;
+  readonly endpoint: string;
+  readonly payload: Record<string, unknown>;
+  readonly mode: "live_seedream_image_generate" | "live_seedream_image_edit";
+  readonly title: string;
+  readonly responsePathHint: string;
+  readonly missingImageMessage: string;
+}): Promise<MediaVendorTransportResult> {
+  const { endpoint, options, payload, request } = input;
   const httpClient = options.httpClient ?? defaultMediaVendorHttpClient;
   const abortController = new AbortController();
   const timeoutMs = options.timeoutMs ?? DEFAULT_LIVE_MEDIA_VENDOR_TIMEOUT_MS;
@@ -29,6 +77,7 @@ export async function executeSeedreamImageGeneration(
     const response = await httpClient(endpoint, {
       method: "POST",
       headers: {
+        ...options.headers,
         authorization: `Bearer ${options.apiKey}`,
         "content-type": "application/json",
       },
@@ -36,7 +85,7 @@ export async function executeSeedreamImageGeneration(
       signal: abortController.signal,
     });
     if (!response.ok) {
-      return await normalizeSeedreamHttpFailure(response, options.apiKey);
+      return await normalizeSeedreamHttpFailure(response, mediaVendorRedactionValues(options));
     }
 
     const json = await response.json();
@@ -45,7 +94,7 @@ export async function executeSeedreamImageGeneration(
       return {
         status: "failed",
         errorCode: "invalid_request",
-        errorMessage: "Seedream image generation response did not include image URL data.",
+        errorMessage: input.missingImageMessage,
       };
     }
     const imageArtifacts = await downloadSeedreamImageArtifacts(imageUrls, httpClient, abortController.signal);
@@ -55,18 +104,18 @@ export async function executeSeedreamImageGeneration(
       artifacts: [
         {
           type: "json",
-          title: "Seedream image_generate response",
+          title: input.title,
           contentType: "application/json; charset=utf-8",
-          pathHint: "seedream-image-response.json",
+          pathHint: input.responsePathHint,
           content: JSON.stringify(redactSecrets({
-            mode: "live_seedream_image_generate",
+            mode: input.mode,
             vendor: request.vendor.kind,
             operation: request.requestPlan.operation,
             endpoint,
             imageCount: imageUrls.length,
             request: payload,
             response: json,
-          }, [options.apiKey]), null, 2),
+          }, mediaVendorRedactionValues(options)), null, 2),
         },
         ...imageArtifacts,
       ],
@@ -76,7 +125,7 @@ export async function executeSeedreamImageGeneration(
       return {
         status: "failed",
         errorCode: error.code,
-        errorMessage: redactSecretText(error.message, [options.apiKey]),
+        errorMessage: redactSecretText(error.message, mediaVendorRedactionValues(options)),
       };
     }
     const isTimeout = error instanceof Error && error.name === "AbortError";
@@ -86,7 +135,7 @@ export async function executeSeedreamImageGeneration(
     return {
       status: "failed",
       errorCode: isTimeout ? "timeout" : "network_error",
-      errorMessage: redactSecretText(message, [options.apiKey]),
+      errorMessage: redactSecretText(message, mediaVendorRedactionValues(options)),
     };
   } finally {
     clearTimeout(timeout);
@@ -104,6 +153,82 @@ function buildSeedreamImageGenerationPayload(plan: MediaVendorRequestPlan): Reco
     watermark: typeof input.watermark === "boolean" ? input.watermark : undefined,
     seed: typeof input.seed === "number" ? input.seed : undefined,
   });
+}
+
+function buildSeedreamImageEditPayload(plan: MediaVendorRequestPlan): (
+  | { readonly ok: true; readonly payload: Record<string, unknown> }
+  | { readonly ok: false; readonly errorMessage: string }
+) {
+  const input = isRecord(plan.payload.input) ? plan.payload.input : {};
+  const imageInputs = readSeedreamImageInputs(input);
+  if (imageInputs.length === 0) {
+    return {
+      ok: false,
+      errorMessage: "Seedream image_edit requires at least one source image URL.",
+    };
+  }
+  const invalidImage = imageInputs.find((item) => !isSupportedSeedreamImageInput(item));
+  if (invalidImage) {
+    return {
+      ok: false,
+      errorMessage: "Seedream image_edit source images must be http(s) URLs or data:image base64 URLs.",
+    };
+  }
+  const mask = readOptionalString(input.maskUrl ?? input.mask_url ?? input.mask);
+  if (mask && !isSupportedSeedreamImageInput(mask)) {
+    return {
+      ok: false,
+      errorMessage: "Seedream image_edit mask image must be an http(s) URL or data:image base64 URL.",
+    };
+  }
+
+  return {
+    ok: true,
+    payload: removeUndefined({
+      model: plan.provider.model,
+      prompt: plan.payload.prompt,
+      image: imageInputs.length === 1 ? imageInputs[0] : imageInputs,
+      mask,
+      response_format: typeof input.response_format === "string" ? input.response_format : "url",
+      size: typeof input.size === "string" ? input.size : undefined,
+      n: typeof input.n === "number" ? input.n : undefined,
+      watermark: typeof input.watermark === "boolean" ? input.watermark : undefined,
+      seed: typeof input.seed === "number" ? input.seed : undefined,
+    }),
+  };
+}
+
+function readSeedreamImageInputs(input: Record<string, unknown>): string[] {
+  const values: string[] = [];
+  for (const key of ["imageUrl", "image_url", "image"]) {
+    const value = readOptionalString(input[key]);
+    if (value) {
+      values.push(value);
+    }
+  }
+  for (const key of ["imageUrls", "image_urls", "images"]) {
+    const value = input[key];
+    if (Array.isArray(value)) {
+      values.push(...value.map((item) => readOptionalString(item)).filter((item): item is string => Boolean(item)));
+    }
+  }
+  return [...new Set(values)];
+}
+
+function readOptionalString(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function isSupportedSeedreamImageInput(value: string): boolean {
+  if (/^data:image\/[a-z0-9.+-]+;base64,/i.test(value)) {
+    return true;
+  }
+  try {
+    const url = new URL(value);
+    return url.protocol === "http:" || url.protocol === "https:";
+  } catch {
+    return false;
+  }
 }
 
 async function downloadSeedreamImageArtifacts(
@@ -186,9 +311,16 @@ function imageExtensionForContentType(contentType: string): string {
   return "png";
 }
 
-async function normalizeSeedreamHttpFailure(response: MediaVendorHttpResponse, apiKey: string | undefined): Promise<MediaVendorTransportResult> {
+function mediaVendorRedactionValues(options: LiveMediaVendorTransportOptions): readonly string[] {
+  return [
+    options.apiKey,
+    ...(options.redactionValues ?? []),
+  ].filter((value): value is string => typeof value === "string" && value.length > 0);
+}
+
+async function normalizeSeedreamHttpFailure(response: MediaVendorHttpResponse, redactionValues: readonly string[]): Promise<MediaVendorTransportResult> {
   const body = await readHttpResponseBody(response);
-  const redactedBody = redactSecretText(body, [apiKey]);
+  const redactedBody = redactSecretText(body, redactionValues);
   return {
     status: "failed",
     errorCode: mapMediaVendorHttpStatus(response.status),
