@@ -1576,7 +1576,7 @@ Current extraction state:
 - Extracted composer module: `ChannelComposer.tsx`, covering the controlled composer
   shell, pending attachment preview strip, mention/slash pickers, active-run guidance,
   inline approvals, permission menu, and send/error controls. `WorkspaceClientView.tsx`
-  still owns draft snapshots, file refs, upload/send actions, and active run state.
+  wires composer controllers while keeping the surrounding channel/workspace state.
 - Extracted composer draft controller hook: `useChannelComposerDraftController.ts`,
   covering draft/assets/mention/slash picker state, composer busy/send state, pending
   send preview state, composer refs, attachment preview URL cleanup, and composer feedback
@@ -1588,8 +1588,11 @@ Current extraction state:
   covering mention/slash picker matching, composer key handling, paste/drop attachment
   capture, upload state transitions, automatic link-preview capture, composer input
   tokenization, file-ref derivation, and sendability/asset-pending flags.
-  `WorkspaceClientView.tsx` still owns pending-send resolution, feed scroll/virtualizer
-  state, channel-switch snapshot orchestration, and the optional composer resize handle.
+- Extracted composer snapshot controller hook: `useChannelComposerSnapshotController.ts`,
+  covering per-channel draft/assets/topic-reply snapshots, empty snapshot restore, and
+  composer-specific restore cleanup during channel switches. `WorkspaceClientView.tsx`
+  still owns non-composer channel-switch resets such as popovers, settings pages, side
+  panels, pending-send preview, and activity filters.
 - Extracted thread reply controller hook: `useChannelThreadReplyController.ts`,
   covering active topic selection, reply draft/pending/error state, reply sends, topic
   close behavior, and channel-switch snapshot restore data. `channelMentionText.ts`
