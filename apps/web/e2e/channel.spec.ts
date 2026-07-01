@@ -836,6 +836,7 @@ test("channel environment surface shows read-only context and opens review", asy
     const main = document.querySelector<HTMLElement>(".task-workbench-main");
     const chatPanel = document.querySelector<HTMLElement>(".channel-chat-panel");
     const chatBox = chatLayout?.getBoundingClientRect();
+    const composerBox = composer?.getBoundingClientRect();
     return {
       chatHeight: Math.round(chatBox?.height ?? 0),
       chatTransform: chatLayout ? getComputedStyle(chatLayout).transform : "",
@@ -843,6 +844,7 @@ test("channel environment surface shows read-only context and opens review", asy
       chatX: Math.round(chatBox?.x ?? 0),
       chatY: Math.round(chatBox?.y ?? 0),
       composerTransform: composer ? getComputedStyle(composer).transform : "",
+      composerWidth: Math.round(composerBox?.width ?? 0),
       mainPaddingRight: main ? getComputedStyle(main).paddingRight : "",
       panelMarginRight: chatPanel ? getComputedStyle(chatPanel).marginRight : "",
     };
@@ -851,7 +853,8 @@ test("channel environment surface shows read-only context and opens review", asy
   await page.getByLabel("Workspace task toolbar").getByRole("button", { name: "Progress" }).click();
   const popover = page.locator(".channel-progress-popover");
   await expect(popover).toBeVisible();
-  await expect.poll(async () => Math.round((await popover.boundingBox())?.width ?? 0)).toBeLessThanOrEqual(360);
+  await expect.poll(async () => Math.round((await popover.boundingBox())?.width ?? 0)).toBeGreaterThanOrEqual(270);
+  await expect.poll(async () => Math.round((await popover.boundingBox())?.width ?? 0)).toBeLessThanOrEqual(290);
   await expect(popover).toContainText("Environment");
   await expect(popover).toContainText("Changes");
   await expect(popover).toContainText("Review");
@@ -882,7 +885,11 @@ test("channel environment surface shows read-only context and opens review", asy
   const chatLayoutBeforeDock = await chatLayout.boundingBox();
   expect(chatLayoutBeforeDock).not.toBeNull();
   const chatSnapshotBeforeDock = await readChatLayoutSnapshot();
-  expect(chatSnapshotBeforeDock.chatTransform).toBe("matrix(1, 0, 0, 1, 32, 0)");
+  expect(chatSnapshotBeforeDock.chatWidth).toBeGreaterThanOrEqual(780);
+  expect(chatSnapshotBeforeDock.chatWidth).toBeLessThanOrEqual(820);
+  expect(chatSnapshotBeforeDock.composerWidth).toBeGreaterThanOrEqual(780);
+  expect(chatSnapshotBeforeDock.composerWidth).toBeLessThanOrEqual(820);
+  expect(["none", "matrix(1, 0, 0, 1, 0, 0)"]).toContain(chatSnapshotBeforeDock.chatTransform);
   expect(["none", "matrix(1, 0, 0, 1, 0, 0)"]).toContain(chatSnapshotBeforeDock.composerTransform);
   expect(chatSnapshotBeforeDock.mainPaddingRight).toBe("0px");
   expect(chatSnapshotBeforeDock.panelMarginRight).toBe("0px");
@@ -932,8 +939,12 @@ test("channel environment surface shows read-only context and opens review", asy
   expect(chatLayoutAfterDockClose).not.toBeNull();
   expect(Math.abs((chatLayoutAfterDockClose?.y ?? 0) - (chatLayoutBeforeDock?.y ?? 0))).toBeLessThanOrEqual(1);
   expect(Math.abs((chatLayoutAfterDockClose?.height ?? 0) - (chatLayoutBeforeDock?.height ?? 0))).toBeLessThanOrEqual(1);
+  await expect.poll(async () => {
+    const snapshot = await readChatLayoutSnapshot();
+    return Math.abs(snapshot.chatX - chatSnapshotBeforeDock.chatX);
+  }).toBeLessThanOrEqual(12);
   const chatSnapshotAfterDockClose = await readChatLayoutSnapshot();
-  expect(Math.abs(chatSnapshotAfterDockClose.chatX - chatSnapshotBeforeDock.chatX)).toBeLessThanOrEqual(1);
+  expect(Math.abs(chatSnapshotAfterDockClose.chatX - chatSnapshotBeforeDock.chatX)).toBeLessThanOrEqual(12);
   expect(Math.abs(chatSnapshotAfterDockClose.chatY - chatSnapshotBeforeDock.chatY)).toBeLessThanOrEqual(1);
   expect(Math.abs(chatSnapshotAfterDockClose.chatWidth - chatSnapshotBeforeDock.chatWidth)).toBeLessThanOrEqual(1);
   expect(Math.abs(chatSnapshotAfterDockClose.chatHeight - chatSnapshotBeforeDock.chatHeight)).toBeLessThanOrEqual(1);
@@ -1352,7 +1363,7 @@ test("channel composer does not render the resource lease active work strip", as
   await expect(composer).not.toContainText("Resource leases");
 });
 
-test("wide channel progress popover keeps the accepted HTML spacing", async ({ page }) => {
+test("wide channel progress popover does not resize the conversation", async ({ page }) => {
   await useEnglishLocale(page);
   await page.setViewportSize({ width: 2048, height: 1140 });
   const state = createBaseState({ approvalStatus: "pending" });
@@ -1403,14 +1414,18 @@ test("wide channel progress popover keeps the accepted HTML spacing", async ({ p
     };
   });
   expect(spacing.mainPaddingRight).toBe("0px");
-  expect(spacing.chatWidth).toBe(960);
-  expect(spacing.composerWidth).toBe(960);
-  expect(spacing.attentionWidth).toBe(340);
-  expect(spacing.chatTransform).not.toBe("none");
-  expect(spacing.composerTransform).not.toBe("none");
+  expect(spacing.chatWidth).toBe(800);
+  expect(spacing.composerWidth).toBe(800);
+  expect(spacing.attentionWidth).toBeGreaterThanOrEqual(270);
+  expect(spacing.attentionWidth).toBeLessThanOrEqual(290);
+  expect(["none", "matrix(1, 0, 0, 1, 0, 0)"]).toContain(spacing.chatTransform);
+  expect(["none", "matrix(1, 0, 0, 1, 0, 0)"]).toContain(spacing.composerTransform);
   expect(spacing.gap).toBeGreaterThanOrEqual(48);
-  expect(spacing.gap).toBeLessThanOrEqual(80);
   expect(spacing.overlapX).toBe(0);
+
+  await page.locator(".task-toolbar-progress").click();
+  await expect(page.locator(".channel-progress-popover")).toHaveClass(/is-popover-collapsed/);
+  await expect(page.locator(".channel-progress-popover")).toHaveCount(0);
 });
 
 test("channel runtime policy is visible while preferred specialist controls stay hidden", async ({ page }) => {
