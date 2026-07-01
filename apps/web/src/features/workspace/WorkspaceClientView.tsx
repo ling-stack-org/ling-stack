@@ -1,14 +1,12 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode, type UIEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent, type ReactNode, type UIEvent } from "react";
 import {
   ArrowDown,
   ArrowLeft,
   ChevronUp,
   Check,
-  CheckCircle2,
   CircleAlert,
   Clock3,
   Command,
-  Copy,
   FileCheck2,
   FileText,
   FolderOpen,
@@ -215,7 +213,7 @@ import {
   isLingAgentTeammate,
   type ChannelNotificationLevel,
 } from "./ChannelSettingsPanels.js";
-import { ChannelComposer, type ChannelComposerInlineFeedback, type ChannelComposerInlineFeedbackTone } from "./ChannelComposer.js";
+import { ChannelComposer, type ChannelComposerInlineFeedback } from "./ChannelComposer.js";
 import { ChannelActivityWorkspace } from "./ChannelActivityWorkspace.js";
 import { useChannelRightDockController } from "./useChannelRightDockController.js";
 import {
@@ -236,62 +234,18 @@ import { useChannelThreadReplyController } from "./useChannelThreadReplyControll
 import { useChannelComposerInputController } from "./useChannelComposerInputController.js";
 import { useChannelComposerSnapshotController } from "./useChannelComposerSnapshotController.js";
 import { useChannelMessageFeedAssembly } from "./useChannelMessageFeedAssembly.js";
+import { useChannelConversationBlockInteractions } from "./useChannelConversationBlockInteractions.js";
 
 type ChannelSidePanelView = "context" | "settings" | "task";
 type ChannelDrawerRootView = Extract<ChannelSidePanelView, "context">;
 
-interface ConversationBlockActionMenuState {
-  readonly blockId: string;
-  readonly label: string;
-  readonly text: string;
-  readonly x: number;
-  readonly y: number;
-  readonly feedback?: string;
-}
-
-interface ConversationBlockLongPressState {
-  readonly pointerId: number;
-  readonly startX: number;
-  readonly startY: number;
-  readonly timeoutId: number;
-  readonly block: HTMLElement;
-}
 type ThreadTurnsLoadState =
   | { readonly status: "not_loaded" }
   | { readonly status: "loading" }
   | { readonly status: "loaded"; readonly turns: readonly LingTurn[]; readonly runLinks: readonly LingTurnRun[] }
   | { readonly status: "error"; readonly errorMessage: string };
 
-interface MessageFeedShortcutEvent {
-  readonly defaultPrevented: boolean;
-  readonly key: string;
-  readonly altKey: boolean;
-  readonly metaKey: boolean;
-  readonly ctrlKey: boolean;
-  readonly shiftKey: boolean;
-  readonly target: EventTarget | null;
-  preventDefault(): void;
-}
-
 const channelSidePanelRootViews: readonly ChannelDrawerRootView[] = ["context"];
-const conversationExpandableSelectors = [
-  ".conversation-work-cell-evidence-summary[aria-expanded='false']",
-  ".conversation-work-cell-row-main[aria-expanded='false']",
-  ".conversation-work-cell-agent-span-head[aria-expanded='false']",
-  ".transcript-block-view-head[aria-expanded='false']",
-] as const;
-const conversationExpandableSelector = conversationExpandableSelectors.join(",");
-
-function findConversationExpandable(container: ParentNode | null | undefined): HTMLElement | undefined {
-  for (const selector of conversationExpandableSelectors) {
-    const expandable = container?.querySelector<HTMLElement>(selector);
-    if (expandable) {
-      return expandable;
-    }
-  }
-  return undefined;
-}
-
 function channelSidePanelLabel(view: ChannelSidePanelView): string {
   if (view === "context") {
     return "Context";
@@ -335,54 +289,6 @@ interface ChannelTeamMetricsState {
 interface WorkspaceTranscriptRenderContext {
   readonly detailsState: ConversationWorkCellDetailsState;
   readonly onLoadDetails?: (id: string) => void;
-}
-
-function conversationBlockFromEventTarget(target: EventTarget | null): HTMLElement | undefined {
-  if (!(target instanceof Element)) {
-    return undefined;
-  }
-  return target.closest<HTMLElement>("[data-conversation-focus-block='true']") ?? undefined;
-}
-
-function conversationBlockText(block: HTMLElement): string {
-  return (block.innerText ?? "")
-    .replace(/\n{3,}/gu, "\n\n")
-    .trim();
-}
-
-function conversationBlockLabel(block: HTMLElement, t: Translate): string {
-  const itemKind = block.dataset.feedItemKind;
-  if (itemKind === "turn") {
-    return t("Conversation turn");
-  }
-  if (itemKind === "activity") {
-    return t("Activity block");
-  }
-  if (itemKind === "pending-send") {
-    return t("Pending message");
-  }
-  return t("Conversation block");
-}
-
-function isEditableEventTarget(target: EventTarget | null): boolean {
-  if (!(target instanceof HTMLElement)) {
-    return false;
-  }
-  return Boolean(target.closest("input, textarea, select, [contenteditable='true'], [role='textbox']"));
-}
-
-function isInteractiveEventTarget(target: EventTarget | null): boolean {
-  if (!(target instanceof HTMLElement)) {
-    return false;
-  }
-  return Boolean(target.closest("button, a, input, textarea, select, summary, [role='button'], [role='menuitem'], [contenteditable='true'], [role='textbox']"));
-}
-
-function cssEscape(value: string): string {
-  if (typeof globalThis.CSS?.escape === "function") {
-    return globalThis.CSS.escape(value);
-  }
-  return value.replace(/["\\\]]/gu, "\\$&");
 }
 
 interface BranchConversationActivityScope {
@@ -912,18 +818,17 @@ export function WorkspaceClientView({
     setSendError,
     composerFeedback,
     composerInputMinHeight,
-    setComposerInputMinHeight,
     pendingChannelSendPreview,
     setPendingChannelSendPreview,
     composerInputRef,
-    composerResizeDragRef,
     autoPreviewUrlsRef,
     attachmentPreviewUrlsRef,
+    handleComposerResizePointerDown,
+    handleComposerResizePointerMove,
+    handleComposerResizePointerEnd,
     showComposerFeedback,
   } = useChannelComposerDraftController();
-  const [conversationBlockFeedback, setConversationBlockFeedback] = useState<ChannelComposerInlineFeedback | undefined>();
   const [conversationBackgroundToast, setConversationBackgroundToast] = useState<ChannelComposerInlineFeedback | undefined>();
-  const [conversationBlockActionMenu, setConversationBlockActionMenu] = useState<ConversationBlockActionMenuState | undefined>();
   const [pendingChannelTeammateId, setPendingChannelTeammateId] = useState("");
   const [pendingChannelCouncilId, setPendingChannelCouncilId] = useState("");
   const [channelNotificationLevel, setChannelNotificationLevel] = useState<ChannelNotificationLevel>("mentions");
@@ -944,10 +849,7 @@ export function WorkspaceClientView({
   const [channelTeamMetricsError, setChannelTeamMetricsError] = useState("");
   const [channelTeamMetricsRefreshKey, setChannelTeamMetricsRefreshKey] = useState(0);
   const [channelMessageFeedbackById, setChannelMessageFeedbackById] = useState<Record<string, "up" | "down">>({});
-  const conversationBlockFeedbackTimeoutRef = useRef<number | undefined>();
   const conversationBackgroundToastTimeoutRef = useRef<number | undefined>();
-  const conversationBlockLongPressRef = useRef<ConversationBlockLongPressState | undefined>();
-  const conversationBlockActionMenuRef = useRef<HTMLDivElement | null>(null);
   const channelMoreRef = useRef<HTMLDivElement | null>(null);
   const governanceNotificationsRef = useRef<HTMLDivElement | null>(null);
   const teammateManagerButtonRef = useRef<HTMLButtonElement | null>(null);
@@ -1444,39 +1346,6 @@ export function WorkspaceClientView({
   }, [governanceNotificationsOpen]);
 
   useEffect(() => {
-    if (!conversationBlockActionMenu) {
-      return undefined;
-    }
-    const returnBlockId = conversationBlockActionMenu.blockId;
-    globalThis.requestAnimationFrame(() => {
-      conversationBlockActionMenuRef.current?.querySelector<HTMLElement>("[role='menuitem']")?.focus({ preventScroll: true });
-    });
-    function closeActionMenu(): void {
-      setConversationBlockActionMenu(undefined);
-      globalThis.requestAnimationFrame(() => focusConversationBlockById(returnBlockId));
-    }
-    function handlePointerDown(event: PointerEvent): void {
-      const target = event.target;
-      if (target instanceof Element && target.closest(".conversation-block-action-menu")) {
-        return;
-      }
-      closeActionMenu();
-    }
-    function handleKeyDown(event: KeyboardEvent): void {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        closeActionMenu();
-      }
-    }
-    document.addEventListener("pointerdown", handlePointerDown, true);
-    document.addEventListener("keydown", handleKeyDown);
-    return () => {
-      document.removeEventListener("pointerdown", handlePointerDown, true);
-      document.removeEventListener("keydown", handleKeyDown);
-    };
-  }, [conversationBlockActionMenu]);
-
-  useEffect(() => {
     if (!teammateManagerOpen) {
       return undefined;
     }
@@ -1761,6 +1630,19 @@ export function WorkspaceClientView({
     onBackgroundToast: showConversationBackgroundToast,
     onLoadOlder: onLoadOlderChannelMessages,
   });
+  const {
+    conversationBlockActionMenuNode,
+    conversationBlockFeedbackNode,
+    closeConversationBlockActionMenu,
+    handleMessageFeedContextMenu,
+    handleMessageFeedKeyDown,
+    handleMessageFeedPointerDown,
+    handleMessageFeedPointerEnd,
+    handleMessageFeedPointerMove,
+  } = useChannelConversationBlockInteractions({
+    scrollRef: messageFeedState.scrollRef,
+    t,
+  });
   const allTeammateOptions = useMemo(
     () => [
       ...teammateTemplates.map((template) => ({ id: template.id, label: template.name, kind: "ai-teammate" as const })),
@@ -1877,8 +1759,8 @@ export function WorkspaceClientView({
     }
     messageFeedState.reset();
     setConversationBackgroundToast(undefined);
-    setConversationBlockActionMenu(undefined);
-  }, [cwd, messageFeedState.reset, selectedChannelId, selectedChannelNotificationLevel, workspaceSettingsLoaded]);
+    closeConversationBlockActionMenu();
+  }, [closeConversationBlockActionMenu, cwd, messageFeedState.reset, selectedChannelId, selectedChannelNotificationLevel, workspaceSettingsLoaded]);
 
   useEffect(() => {
     const channelChanged = channelWorkspaceExternalPathChannelIdRef.current !== selectedChannelId;
@@ -2634,17 +2516,6 @@ export function WorkspaceClientView({
     [channelEffectiveCouncil],
   );
 
-  function showConversationBlockFeedback(tone: ChannelComposerInlineFeedbackTone, message: string): void {
-    if (conversationBlockFeedbackTimeoutRef.current !== undefined) {
-      globalThis.clearTimeout(conversationBlockFeedbackTimeoutRef.current);
-    }
-    setConversationBlockFeedback({ id: Date.now(), tone, message });
-    conversationBlockFeedbackTimeoutRef.current = globalThis.setTimeout(() => {
-      setConversationBlockFeedback(undefined);
-      conversationBlockFeedbackTimeoutRef.current = undefined;
-    }, 1_600);
-  }
-
   function showConversationBackgroundToast(feedback: ChannelComposerInlineFeedback): void {
     if (conversationBackgroundToastTimeoutRef.current !== undefined) {
       globalThis.clearTimeout(conversationBackgroundToastTimeoutRef.current);
@@ -2656,229 +2527,9 @@ export function WorkspaceClientView({
     }, 4_200);
   }
 
-  function messageFeedFocusableBlocks(): HTMLElement[] {
-    const feed = messageFeedState.scrollRef.current;
-    if (!feed) {
-      return [];
-    }
-    return Array.from(feed.querySelectorAll<HTMLElement>("[data-conversation-focus-block='true']"))
-      .filter((element) => element.offsetParent !== null);
-  }
-
-  function focusedConversationBlock(): HTMLElement | undefined {
-    const activeElement = document.activeElement;
-    if (!(activeElement instanceof HTMLElement)) {
-      return undefined;
-    }
-    const block = activeElement.closest<HTMLElement>("[data-conversation-focus-block='true']");
-    return block && messageFeedState.scrollRef.current?.contains(block) ? block : undefined;
-  }
-
-  function focusConversationBlock(block: HTMLElement): void {
-    block.focus({ preventScroll: true });
-    block.scrollIntoView({ block: "nearest" });
-    setConversationBlockActionMenu(undefined);
-  }
-
-  function focusConversationBlockById(blockId: string): void {
-    if (!blockId) {
-      return;
-    }
-    const block = messageFeedState.scrollRef.current?.querySelector<HTMLElement>(`[data-feed-item-id="${cssEscape(blockId)}"]`);
-    if (block) {
-      focusConversationBlock(block);
-    }
-  }
-
-  function focusAdjacentConversationBlock(direction: "previous" | "next"): void {
-    const blocks = messageFeedFocusableBlocks();
-    if (blocks.length === 0) {
-      return;
-    }
-    const current = focusedConversationBlock();
-    const currentIndex = current ? blocks.indexOf(current) : -1;
-    const nextIndex = direction === "next"
-      ? Math.min(blocks.length - 1, currentIndex < 0 ? 0 : currentIndex + 1)
-      : Math.max(0, currentIndex < 0 ? blocks.length - 1 : currentIndex - 1);
-    focusConversationBlock(blocks[nextIndex]);
-  }
-
-  async function copyConversationBlock(block: HTMLElement): Promise<void> {
-    const text = conversationBlockText(block);
-    if (!text) {
-      showConversationBlockFeedback("error", t("Nothing to copy"));
-      return;
-    }
-    if (!globalThis.navigator?.clipboard?.writeText) {
-      showConversationBlockFeedback("error", t("Copy unavailable"));
-      return;
-    }
-    try {
-      await globalThis.navigator.clipboard.writeText(text);
-      showConversationBlockFeedback("success", t("Copied focused block"));
-      const blockId = block.dataset.feedItemId ?? "";
-      setConversationBlockActionMenu((current) => {
-        if (!current || current.blockId !== blockId) {
-          return current;
-        }
-        return { ...current, feedback: t("Copied") };
-      });
-    } catch {
-      showConversationBlockFeedback("error", t("Copy unavailable"));
-    }
-  }
-
-  function handleMessageFeedShortcut(event: MessageFeedShortcutEvent): void {
-    if (event.defaultPrevented || isEditableEventTarget(event.target)) {
-      return;
-    }
-    if (event.key === "Escape" && conversationBlockActionMenu) {
-      event.preventDefault();
-      setConversationBlockActionMenu(undefined);
-      return;
-    }
-    if (event.altKey && !event.metaKey && !event.ctrlKey && !event.shiftKey && (event.key === "ArrowDown" || event.key === "ArrowUp")) {
-      event.preventDefault();
-      focusAdjacentConversationBlock(event.key === "ArrowDown" ? "next" : "previous");
-      return;
-    }
-    if ((event.metaKey || event.ctrlKey) && event.shiftKey && event.key.toLowerCase() === "c") {
-      const block = focusedConversationBlock();
-      if (!block) {
-        return;
-      }
-      event.preventDefault();
-      void copyConversationBlock(block);
-      return;
-    }
-    if (event.key === "Enter" && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey) {
-      const feed = messageFeedState.scrollRef.current;
-      const focusedBlock = focusedConversationBlock();
-      const block = focusedBlock ?? messageFeedFocusableBlocks().find((candidate) => candidate.querySelector(conversationExpandableSelector));
-      const expandable = findConversationExpandable(block) ?? findConversationExpandable(feed);
-      if (!expandable) {
-        return;
-      }
-      event.preventDefault();
-      expandable.click();
-      showConversationBlockFeedback("info", t("Expanded focused block"));
-    }
-  }
-
-  function handleMessageFeedKeyDown(event: ReactKeyboardEvent<HTMLDivElement>): void {
-    handleMessageFeedShortcut(event);
-  }
-
-  function handleMessageFeedPointerDown(event: ReactPointerEvent<HTMLDivElement>): void {
-    if (event.pointerType === "mouse") {
-      return;
-    }
-    const block = conversationBlockFromEventTarget(event.target);
-    if (!block || isInteractiveEventTarget(event.target)) {
-      return;
-    }
-    const timeoutId = globalThis.setTimeout(() => {
-      conversationBlockLongPressRef.current = undefined;
-      openConversationBlockActionMenu(block, event.clientX, event.clientY);
-    }, 560);
-    conversationBlockLongPressRef.current = {
-      pointerId: event.pointerId,
-      startX: event.clientX,
-      startY: event.clientY,
-      timeoutId,
-      block,
-    };
-  }
-
-  function handleMessageFeedPointerMove(event: ReactPointerEvent<HTMLDivElement>): void {
-    const pending = conversationBlockLongPressRef.current;
-    if (!pending || pending.pointerId !== event.pointerId) {
-      return;
-    }
-    if (Math.abs(event.clientX - pending.startX) > 12 || Math.abs(event.clientY - pending.startY) > 12) {
-      cancelConversationBlockLongPress();
-    }
-  }
-
-  function handleMessageFeedPointerEnd(event: ReactPointerEvent<HTMLDivElement>): void {
-    if (conversationBlockLongPressRef.current?.pointerId === event.pointerId) {
-      cancelConversationBlockLongPress();
-    }
-  }
-
-  function handleMessageFeedContextMenu(event: ReactMouseEvent<HTMLDivElement>): void {
-    const block = conversationBlockFromEventTarget(event.target);
-    if (!block || isInteractiveEventTarget(event.target)) {
-      return;
-    }
-    event.preventDefault();
-    openConversationBlockActionMenu(block, event.clientX, event.clientY);
-  }
-
-  function cancelConversationBlockLongPress(): void {
-    const pending = conversationBlockLongPressRef.current;
-    if (!pending) {
-      return;
-    }
-    globalThis.clearTimeout(pending.timeoutId);
-    conversationBlockLongPressRef.current = undefined;
-  }
-
-  function openConversationBlockActionMenu(block: HTMLElement, x: number, y: number): void {
-    focusConversationBlock(block);
-    setConversationBlockActionMenu({
-      blockId: block.dataset.feedItemId ?? "",
-      label: conversationBlockLabel(block, t),
-      text: conversationBlockText(block),
-      x: Math.max(12, Math.min(x, globalThis.innerWidth - 220)),
-      y: Math.max(12, Math.min(y, globalThis.innerHeight - 160)),
-    });
-  }
-
-  function handleComposerResizePointerDown(event: ReactPointerEvent<HTMLButtonElement>): void {
-    if (event.pointerType === "mouse" && event.button !== 0) {
-      return;
-    }
-    event.preventDefault();
-    event.currentTarget.setPointerCapture(event.pointerId);
-    composerResizeDragRef.current = {
-      pointerId: event.pointerId,
-      startY: event.clientY,
-      startHeight: composerInputMinHeight,
-    };
-  }
-
-  function handleComposerResizePointerMove(event: ReactPointerEvent<HTMLButtonElement>): void {
-    const drag = composerResizeDragRef.current;
-    if (!drag || drag.pointerId !== event.pointerId) {
-      return;
-    }
-    event.preventDefault();
-    const nextHeight = Math.max(76, Math.min(180, Math.round(drag.startHeight + drag.startY - event.clientY)));
-    setComposerInputMinHeight(nextHeight);
-  }
-
-  function handleComposerResizePointerEnd(event: ReactPointerEvent<HTMLButtonElement>): void {
-    const drag = composerResizeDragRef.current;
-    if (!drag || drag.pointerId !== event.pointerId) {
-      return;
-    }
-    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-      event.currentTarget.releasePointerCapture(event.pointerId);
-    }
-    composerResizeDragRef.current = undefined;
-  }
-
   useEffect(() => () => {
-    if (conversationBlockFeedbackTimeoutRef.current !== undefined) {
-      globalThis.clearTimeout(conversationBlockFeedbackTimeoutRef.current);
-    }
     if (conversationBackgroundToastTimeoutRef.current !== undefined) {
       globalThis.clearTimeout(conversationBackgroundToastTimeoutRef.current);
-    }
-    if (conversationBlockLongPressRef.current) {
-      globalThis.clearTimeout(conversationBlockLongPressRef.current.timeoutId);
-      conversationBlockLongPressRef.current = undefined;
     }
   }, []);
 
@@ -4150,12 +3801,7 @@ export function WorkspaceClientView({
                     <small>{t("Jump to latest")}</small>
                   </button>
                 ) : null}
-                {conversationBlockFeedback ? (
-                  <div key={conversationBlockFeedback.id} className={`conversation-block-feedback ${conversationBlockFeedback.tone}`} role="status" aria-live="polite">
-                    {conversationBlockFeedback.tone === "success" ? <CheckCircle2 size={13} /> : conversationBlockFeedback.tone === "error" ? <CircleAlert size={13} /> : <Info size={13} />}
-                    <span>{conversationBlockFeedback.message}</span>
-                  </div>
-                ) : null}
+                {conversationBlockFeedbackNode}
                 {messageFeedState.latestButtonVisible ? (
                   <button
                     className="message-feed-latest-button"
@@ -4169,41 +3815,7 @@ export function WorkspaceClientView({
               </>
             ),
           }}
-          conversationBlockActionMenuNode={conversationBlockActionMenu ? (
-            <div
-              ref={conversationBlockActionMenuRef}
-              className="conversation-block-action-menu"
-              role="menu"
-              aria-label={t("Conversation block actions")}
-              style={{ left: conversationBlockActionMenu.x, top: conversationBlockActionMenu.y }}
-            >
-              <strong>{conversationBlockActionMenu.label}</strong>
-              {conversationBlockActionMenu.feedback ? <small role="status" aria-live="polite">{conversationBlockActionMenu.feedback}</small> : null}
-              <button
-                type="button"
-                role="menuitem"
-                onClick={() => {
-                  const block = messageFeedState.scrollRef.current?.querySelector<HTMLElement>(`[data-feed-item-id="${cssEscape(conversationBlockActionMenu.blockId)}"]`);
-                  if (block) {
-                    void copyConversationBlock(block);
-                  }
-                }}
-              >
-                <Copy size={13} />
-                {t("Copy block")}
-              </button>
-              <button
-                type="button"
-                role="menuitem"
-                onClick={() => {
-                  focusConversationBlockById(conversationBlockActionMenu.blockId);
-                }}
-              >
-                <Search size={13} />
-                {t("Focus block")}
-              </button>
-            </div>
-          ) : undefined}
+          conversationBlockActionMenuNode={conversationBlockActionMenuNode}
           conversationDetailOverlayNode={conversationDetailOverlayNode}
           composerNode={channelComposer}
           threadReply={threadReplyController.activeThreadRoot ? {

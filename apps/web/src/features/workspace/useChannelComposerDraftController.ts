@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type Dispatch, type MutableRefObject, type SetStateAction } from "react";
+import { useCallback, useEffect, useRef, useState, type Dispatch, type MutableRefObject, type PointerEvent as ReactPointerEvent, type SetStateAction } from "react";
 import type {
   ActiveSlashCommandPicker,
   PendingAttachmentItem,
@@ -49,13 +49,14 @@ export interface ChannelComposerDraftController {
   readonly composerFeedback: ChannelComposerInlineFeedback | undefined;
   readonly setComposerFeedback: Dispatch<SetStateAction<ChannelComposerInlineFeedback | undefined>>;
   readonly composerInputMinHeight: number;
-  readonly setComposerInputMinHeight: Dispatch<SetStateAction<number>>;
   readonly pendingChannelSendPreview: PendingChannelSendPreview | undefined;
   readonly setPendingChannelSendPreview: Dispatch<SetStateAction<PendingChannelSendPreview | undefined>>;
   readonly composerInputRef: MutableRefObject<TokenizedComposerInputHandle | null>;
-  readonly composerResizeDragRef: MutableRefObject<{ readonly pointerId: number; readonly startY: number; readonly startHeight: number } | undefined>;
   readonly autoPreviewUrlsRef: MutableRefObject<Set<string>>;
   readonly attachmentPreviewUrlsRef: MutableRefObject<Set<string>>;
+  readonly handleComposerResizePointerDown: (event: ReactPointerEvent<HTMLButtonElement>) => void;
+  readonly handleComposerResizePointerMove: (event: ReactPointerEvent<HTMLButtonElement>) => void;
+  readonly handleComposerResizePointerEnd: (event: ReactPointerEvent<HTMLButtonElement>) => void;
   readonly showComposerFeedback: (tone: ChannelComposerInlineFeedbackTone, message: string) => void;
 }
 
@@ -90,6 +91,40 @@ export function useChannelComposerDraftController(): ChannelComposerDraftControl
       setComposerFeedback(undefined);
       composerFeedbackTimeoutRef.current = undefined;
     }, 2_200);
+  }, []);
+
+  const handleComposerResizePointerDown = useCallback((event: ReactPointerEvent<HTMLButtonElement>): void => {
+    if (event.pointerType === "mouse" && event.button !== 0) {
+      return;
+    }
+    event.preventDefault();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    composerResizeDragRef.current = {
+      pointerId: event.pointerId,
+      startY: event.clientY,
+      startHeight: composerInputMinHeight,
+    };
+  }, [composerInputMinHeight]);
+
+  const handleComposerResizePointerMove = useCallback((event: ReactPointerEvent<HTMLButtonElement>): void => {
+    const drag = composerResizeDragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) {
+      return;
+    }
+    event.preventDefault();
+    const nextHeight = Math.max(76, Math.min(180, Math.round(drag.startHeight + drag.startY - event.clientY)));
+    setComposerInputMinHeight(nextHeight);
+  }, []);
+
+  const handleComposerResizePointerEnd = useCallback((event: ReactPointerEvent<HTMLButtonElement>): void => {
+    const drag = composerResizeDragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) {
+      return;
+    }
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+    composerResizeDragRef.current = undefined;
   }, []);
 
   useEffect(() => () => {
@@ -130,13 +165,14 @@ export function useChannelComposerDraftController(): ChannelComposerDraftControl
     composerFeedback,
     setComposerFeedback,
     composerInputMinHeight,
-    setComposerInputMinHeight,
     pendingChannelSendPreview,
     setPendingChannelSendPreview,
     composerInputRef,
-    composerResizeDragRef,
     autoPreviewUrlsRef,
     attachmentPreviewUrlsRef,
+    handleComposerResizePointerDown,
+    handleComposerResizePointerMove,
+    handleComposerResizePointerEnd,
     showComposerFeedback,
   };
 }
