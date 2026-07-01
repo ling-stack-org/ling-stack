@@ -1,5 +1,5 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { createChannelBranchId, createChannelId, type Channel, type ChannelBranch, type RunStore } from "@ling-stack/core";
+import { createChannelBranchId, createChannelId, type Channel, type ChannelBranch, type ProposedPlanArtifactStatus, type RunStore } from "@ling-stack/core";
 import type { ResolvedDaemonConfig } from "../../config.js";
 import type { RunStoreRegistry } from "../../runtime/store-registry.js";
 import { readJsonBody, readOptionalIntegerQuery } from "../../shared/request.js";
@@ -164,6 +164,59 @@ export async function handleChannelItem(
     }
 
     writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for channels` });
+  } catch (error) {
+    writeJson(response, 400, {
+      error: "bad_request",
+      message: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
+export async function handleChannelProposedPlans(
+  request: IncomingMessage,
+  response: ServerResponse,
+  config: ResolvedDaemonConfig,
+  storeRegistry: RunStoreRegistry,
+  channelId: string,
+): Promise<void> {
+  const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
+  const cwd = url.searchParams.get("cwd");
+  if (!cwd) {
+    writeJson(response, 400, { error: "bad_request", message: "cwd query parameter is required" });
+    return;
+  }
+  if (request.method !== "GET") {
+    writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for channel proposed plans` });
+    return;
+  }
+
+  try {
+    const store = storeRegistry.getStore(cwd);
+    const channel = store.getChannel(channelId);
+    if (!channel) {
+      writeJson(response, 404, { error: "channel_not_found", message: `Channel not found: ${channelId}` });
+      return;
+    }
+    const scope = url.searchParams.get("scope") ?? "channel";
+    const threadId = url.searchParams.get("threadId") ?? undefined;
+    if (scope === "thread" && !threadId) {
+      writeJson(response, 400, { error: "thread_id_required", message: "threadId is required when scope=thread." });
+      return;
+    }
+    const plans = store.listProposedPlanArtifacts({
+      channelId,
+      threadId: scope === "thread" ? threadId : undefined,
+      goalId: url.searchParams.get("goalId") ?? undefined,
+      agentId: url.searchParams.get("agentId") ?? undefined,
+      statuses: readOptionalProposedPlanStatusListQuery(url),
+      limit: readOptionalIntegerQuery(url, "limit", 1),
+    });
+    writeJson(response, 200, {
+      cwd,
+      channelId,
+      threadId: scope === "thread" ? threadId : undefined,
+      plans,
+    });
   } catch (error) {
     writeJson(response, 400, {
       error: "bad_request",
@@ -377,6 +430,30 @@ function readOptionalArchivedQuery(url: URL): boolean | undefined {
   }
   throw new Error("archived must be true or false");
 }
+
+function readOptionalProposedPlanStatusListQuery(url: URL): readonly ProposedPlanArtifactStatus[] | undefined {
+  const value = url.searchParams.get("status");
+  if (!value) {
+    return undefined;
+  }
+  const statuses = value.split(",").map((entry) => entry.trim()).filter(Boolean);
+  if (statuses.length === 0) {
+    return undefined;
+  }
+  for (const status of statuses) {
+    if (!proposedPlanArtifactStatuses.includes(status as ProposedPlanArtifactStatus)) {
+      throw new Error(`status must be one of: ${proposedPlanArtifactStatuses.join(", ")}`);
+    }
+  }
+  return statuses as ProposedPlanArtifactStatus[];
+}
+
+const proposedPlanArtifactStatuses = [
+  "draft",
+  "accepted",
+  "superseded",
+  "archived",
+] as const satisfies readonly ProposedPlanArtifactStatus[];
 
 function ensureChannelBranchRootThread(
   store: RunStore,

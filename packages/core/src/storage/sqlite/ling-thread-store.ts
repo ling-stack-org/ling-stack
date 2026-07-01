@@ -278,8 +278,17 @@ export class SqliteLingThreadStore {
           replaced_by_goal_id,
           last_run_id,
           blocked_reason,
-          completion_evidence_refs_json
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          completion_evidence_refs_json,
+          completed_by,
+          completed_reason,
+          completion_verification_summary,
+          usage_source,
+          continuation_chain_id,
+          continuation_depth,
+          no_evidence_continuation_count,
+          last_blocker_fingerprint,
+          same_blocker_count
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `)
       .run(
         id,
@@ -298,6 +307,15 @@ export class SqliteLingThreadStore {
         null,
         null,
         "[]",
+        null,
+        null,
+        null,
+        null,
+        null,
+        0,
+        0,
+        null,
+        0,
       );
     const goal = this.getLingThreadGoalById(id);
     if (!goal) {
@@ -340,8 +358,17 @@ export class SqliteLingThreadStore {
             replaced_by_goal_id,
             last_run_id,
             blocked_reason,
-            completion_evidence_refs_json
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            completion_evidence_refs_json,
+            completed_by,
+            completed_reason,
+            completion_verification_summary,
+            usage_source,
+            continuation_chain_id,
+            continuation_depth,
+            no_evidence_continuation_count,
+            last_blocker_fingerprint,
+            same_blocker_count
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `)
         .run(
           id,
@@ -360,6 +387,15 @@ export class SqliteLingThreadStore {
           null,
           null,
           "[]",
+          null,
+          null,
+          null,
+          null,
+          null,
+          0,
+          0,
+          null,
+          0,
         );
       this.context.database.exec("COMMIT");
     } catch (error) {
@@ -394,7 +430,16 @@ export class SqliteLingThreadStore {
             cleared_at = ?,
             last_run_id = ?,
             blocked_reason = ?,
-            completion_evidence_refs_json = ?
+            completion_evidence_refs_json = ?,
+            completed_by = ?,
+            completed_reason = ?,
+            completion_verification_summary = ?,
+            usage_source = ?,
+            continuation_chain_id = ?,
+            continuation_depth = ?,
+            no_evidence_continuation_count = ?,
+            last_blocker_fingerprint = ?,
+            same_blocker_count = ?
         WHERE id = ?
       `)
       .run(
@@ -409,6 +454,15 @@ export class SqliteLingThreadStore {
         nullableUpdate(input.lastRunId, existing.lastRunId) ?? null,
         nullableUpdate(input.blockedReason, existing.blockedReason) ?? null,
         stringifyJson(input.completionEvidenceRefs ?? existing.completionEvidenceRefs),
+        nullableUpdate(input.completedBy, existing.completedBy) ?? null,
+        nullableUpdate(input.completedReason, existing.completedReason) ?? null,
+        nullableUpdate(input.completionVerificationSummary, existing.completionVerificationSummary) ?? null,
+        nullableUpdate(input.usageSource, existing.usageSource) ?? null,
+        nullableUpdate(input.continuationChainId, existing.continuationChainId) ?? null,
+        input.continuationDepth ?? existing.continuationDepth,
+        input.noEvidenceContinuationCount ?? existing.noEvidenceContinuationCount,
+        nullableUpdate(input.lastBlockerFingerprint, existing.lastBlockerFingerprint) ?? null,
+        input.sameBlockerCount ?? existing.sameBlockerCount,
         goalId,
       );
     return this.getLingThreadGoalById(goalId);
@@ -431,35 +485,71 @@ export class SqliteLingThreadStore {
 
   listProposedPlanArtifacts(options: ListProposedPlanArtifactsOptions): ProposedPlanArtifact[] {
     const limit = Math.min(Math.max(options.limit ?? 50, 1), 200);
+    const clauses = ["plans.workspace_id = ?"];
+    const params: (string | number)[] = [DEFAULT_WORKSPACE_ID];
+    if (options.threadId) {
+      clauses.push("plans.thread_id = ?");
+      params.push(options.threadId);
+    }
+    if (options.channelId) {
+      clauses.push("(plans.channel_id = ? OR threads.channel_id = ?)");
+      params.push(options.channelId, options.channelId);
+    }
+    if (options.goalId) {
+      clauses.push("plans.goal_id = ?");
+      params.push(options.goalId);
+    }
+    if (options.agentId) {
+      clauses.push("(plans.source_agent_id = ? OR plans.owner_agent_id = ?)");
+      params.push(options.agentId, options.agentId);
+    }
+    if (options.statuses && options.statuses.length > 0) {
+      clauses.push(`plans.status IN (${options.statuses.map(() => "?").join(", ")})`);
+      params.push(...options.statuses);
+    }
+    params.push(limit);
     return this.context.database
       .prepare(`
-        SELECT *
-        FROM ling_thread_proposed_plans
-        WHERE workspace_id = ?
-          AND thread_id = ?
-        ORDER BY updated_at DESC, created_at DESC
+        SELECT plans.*
+        FROM ling_thread_proposed_plans plans
+        LEFT JOIN ling_threads threads
+          ON threads.workspace_id = plans.workspace_id
+         AND threads.id = plans.thread_id
+        WHERE ${clauses.join(" AND ")}
+        ORDER BY plans.updated_at DESC, plans.created_at DESC
         LIMIT ?
       `)
-      .all(DEFAULT_WORKSPACE_ID, options.threadId, limit)
+      .all(...params)
       .map((row) => mapProposedPlanArtifact(row as Record<string, SQLOutputValue>));
   }
 
   upsertProposedPlanArtifact(input: CreateProposedPlanArtifactInput, now: string): ProposedPlanArtifact {
     const id = input.id ?? createProposedPlanArtifactId();
     const existing = this.getProposedPlanArtifact(id);
+    const planContext = this.resolveProposedPlanContext(input.threadId, input.channelId, input.goalId);
     if (existing) {
       const updated = this.updateProposedPlanArtifact(
         id,
         {
+          channelId: input.channelId ?? existing.channelId ?? planContext.channelId,
+          goalId: input.goalId ?? existing.goalId ?? planContext.goalId,
+          sourceAgentId: input.sourceAgentId ?? existing.sourceAgentId,
+          ownerAgentId: input.ownerAgentId ?? existing.ownerAgentId,
           sourceTurnId: input.sourceTurnId ?? existing.sourceTurnId,
           sourceMessageId: input.sourceMessageId ?? existing.sourceMessageId,
           sourceRunId: input.sourceRunId ?? existing.sourceRunId,
+          parentPlanId: input.parentPlanId ?? existing.parentPlanId,
+          supersededByPlanId: input.supersededByPlanId ?? existing.supersededByPlanId,
+          planGroupId: input.planGroupId ?? existing.planGroupId ?? existing.id,
+          version: input.version ?? existing.version ?? 1,
           title: input.title,
           bodyMarkdown: input.bodyMarkdown,
           status: input.status ?? existing.status,
           savedAt: input.savedAt ?? existing.savedAt,
           acceptedAt: input.acceptedAt ?? existing.acceptedAt,
           convertedAt: input.convertedAt ?? existing.convertedAt,
+          archivedAt: input.archivedAt ?? existing.archivedAt,
+          archivedReason: input.archivedReason ?? existing.archivedReason,
           acceptedTaskId: input.acceptedTaskId ?? existing.acceptedTaskId,
           acceptedWorkflowId: input.acceptedWorkflowId ?? existing.acceptedWorkflowId,
           acceptedWorkflowStepId: input.acceptedWorkflowStepId ?? existing.acceptedWorkflowStepId,
@@ -478,36 +568,56 @@ export class SqliteLingThreadStore {
           id,
           workspace_id,
           thread_id,
+          channel_id,
+          goal_id,
+          source_agent_id,
+          owner_agent_id,
           source_turn_id,
           source_message_id,
           source_run_id,
+          parent_plan_id,
+          superseded_by_plan_id,
+          plan_group_id,
+          version,
           title,
           body_markdown,
           status,
           saved_at,
           accepted_at,
           converted_at,
+          archived_at,
+          archived_reason,
           accepted_task_id,
           accepted_workflow_id,
           accepted_workflow_step_id,
           accepted_run_id,
           created_at,
           updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `)
       .run(
         id,
         DEFAULT_WORKSPACE_ID,
         input.threadId,
+        input.channelId ?? planContext.channelId ?? null,
+        input.goalId ?? planContext.goalId ?? null,
+        input.sourceAgentId ?? null,
+        input.ownerAgentId ?? null,
         input.sourceTurnId ?? null,
         input.sourceMessageId ?? null,
         input.sourceRunId ?? null,
+        input.parentPlanId ?? null,
+        input.supersededByPlanId ?? null,
+        input.planGroupId ?? id,
+        input.version ?? 1,
         input.title,
         input.bodyMarkdown,
         input.status ?? "draft",
         input.savedAt ?? null,
         input.acceptedAt ?? null,
         input.convertedAt ?? null,
+        input.archivedAt ?? null,
+        input.archivedReason ?? null,
         input.acceptedTaskId ?? null,
         input.acceptedWorkflowId ?? null,
         input.acceptedWorkflowStepId ?? null,
@@ -530,15 +640,25 @@ export class SqliteLingThreadStore {
     this.context.database
       .prepare(`
         UPDATE ling_thread_proposed_plans
-        SET source_turn_id = ?,
+        SET channel_id = ?,
+            goal_id = ?,
+            source_agent_id = ?,
+            owner_agent_id = ?,
+            source_turn_id = ?,
             source_message_id = ?,
             source_run_id = ?,
+            parent_plan_id = ?,
+            superseded_by_plan_id = ?,
+            plan_group_id = ?,
+            version = ?,
             title = ?,
             body_markdown = ?,
             status = ?,
             saved_at = ?,
             accepted_at = ?,
             converted_at = ?,
+            archived_at = ?,
+            archived_reason = ?,
             accepted_task_id = ?,
             accepted_workflow_id = ?,
             accepted_workflow_step_id = ?,
@@ -548,15 +668,25 @@ export class SqliteLingThreadStore {
           AND id = ?
       `)
       .run(
+        nullableUpdate(input.channelId, existing.channelId) ?? null,
+        nullableUpdate(input.goalId, existing.goalId) ?? null,
+        nullableUpdate(input.sourceAgentId, existing.sourceAgentId) ?? null,
+        nullableUpdate(input.ownerAgentId, existing.ownerAgentId) ?? null,
         nullableUpdate(input.sourceTurnId, existing.sourceTurnId) ?? null,
         nullableUpdate(input.sourceMessageId, existing.sourceMessageId) ?? null,
         nullableUpdate(input.sourceRunId, existing.sourceRunId) ?? null,
+        nullableUpdate(input.parentPlanId, existing.parentPlanId) ?? null,
+        nullableUpdate(input.supersededByPlanId, existing.supersededByPlanId) ?? null,
+        nullableUpdate(input.planGroupId, existing.planGroupId) ?? null,
+        nullableUpdate(input.version, existing.version) ?? null,
         input.title ?? existing.title,
         input.bodyMarkdown ?? existing.bodyMarkdown,
         input.status ?? existing.status,
         nullableUpdate(input.savedAt, existing.savedAt) ?? null,
         nullableUpdate(input.acceptedAt, existing.acceptedAt) ?? null,
         nullableUpdate(input.convertedAt, existing.convertedAt) ?? null,
+        nullableUpdate(input.archivedAt, existing.archivedAt) ?? null,
+        nullableUpdate(input.archivedReason, existing.archivedReason) ?? null,
         nullableUpdate(input.acceptedTaskId, existing.acceptedTaskId) ?? null,
         nullableUpdate(input.acceptedWorkflowId, existing.acceptedWorkflowId) ?? null,
         nullableUpdate(input.acceptedWorkflowStepId, existing.acceptedWorkflowStepId) ?? null,
@@ -566,6 +696,19 @@ export class SqliteLingThreadStore {
         planId,
       );
     return this.getProposedPlanArtifact(planId);
+  }
+
+  private resolveProposedPlanContext(
+    threadId: string,
+    channelId: string | undefined,
+    goalId: string | undefined,
+  ): { readonly channelId?: string; readonly goalId?: string } {
+    const thread = channelId ? undefined : this.getLingThread(threadId);
+    const goal = goalId ? undefined : this.getLingThreadGoal(threadId);
+    return {
+      channelId: channelId ?? thread?.channelId,
+      goalId: goalId ?? goal?.id,
+    };
   }
 
   private getLingThreadGoalById(goalId: string): LingThreadGoal | undefined {

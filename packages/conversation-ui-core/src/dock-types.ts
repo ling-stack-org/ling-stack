@@ -7,6 +7,7 @@ export type DockSurfaceKind =
 export type DockPageKind =
   | "launcher"
   | "review"
+  | "plans"
   | "evidence"
   | "files"
   | "activity"

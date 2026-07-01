@@ -42,12 +42,15 @@ import type { AiTeammateTemplate } from "@ling-stack/core";
 import {
   artifactContentUrl,
   acceptProposedPlanArtifact,
+  archiveProposedPlanArtifact,
+  completeLingThreadGoal,
   convertProposedPlanToWorkflow,
   deleteLingThreadGoal,
   getChannelWorkflowEvidence,
   getLingThreadEvidence,
   getLingThreadGoal,
   getLingTrace,
+  listChannelProposedPlanArtifacts,
   listProposedPlanArtifacts,
   listLingThreadTurns,
   listLingTraces,
@@ -134,6 +137,7 @@ import {
   type ChannelGitStatusLoadState,
 } from "./ChannelEnvironmentSummary.js";
 import { ChannelRenameDialog } from "./ChannelRenameDialog.js";
+import { WorkflowConversionPreviewDialog, type WorkflowConversionDraft } from "./WorkflowConversionPreviewDialog.js";
 import { ChannelGovernanceNotificationsPopover } from "./ChannelGovernanceNotificationsPopover.js";
 import {
   NewTaskPanel,
@@ -854,6 +858,10 @@ export function WorkspaceClientView({
   const [channelGoalError, setChannelGoalError] = useState("");
   const [proposedPlanArtifactsById, setProposedPlanArtifactsById] = useState<ReadonlyMap<string, ProposedPlanArtifact>>(new Map());
   const [proposedPlanActionBusyId, setProposedPlanActionBusyId] = useState("");
+  const [proposedPlanHistoryLoading, setProposedPlanHistoryLoading] = useState(false);
+  const [proposedPlanHistoryError, setProposedPlanHistoryError] = useState("");
+  const [proposedPlanHistoryRefreshKey, setProposedPlanHistoryRefreshKey] = useState(0);
+  const [workflowConversionPreviewPlan, setWorkflowConversionPreviewPlan] = useState<ProposedPlanArtifact | undefined>();
   const [pendingChannelTeammateId, setPendingChannelTeammateId] = useState("");
   const [pendingChannelCouncilId, setPendingChannelCouncilId] = useState("");
   const [channelNotificationLevel, setChannelNotificationLevel] = useState<ChannelNotificationLevel>("mentions");
@@ -2610,27 +2618,49 @@ export function WorkspaceClientView({
   useEffect(() => {
     const workspaceCwd = cwd.trim();
     const threadId = channelPlanModeThreadId;
-    if (!workspaceCwd || !threadId) {
+    if (!workspaceCwd || (!threadId && !selectedChannelId)) {
       setProposedPlanArtifactsById(new Map());
+      setProposedPlanHistoryLoading(false);
+      setProposedPlanHistoryError("");
       return;
     }
     let cancelled = false;
-    void listProposedPlanArtifacts(workspaceCwd, threadId, { limit: 100 })
+    setProposedPlanHistoryLoading(true);
+    setProposedPlanHistoryError("");
+    const loadPlans = selectedChannelId
+      ? listChannelProposedPlanArtifacts(workspaceCwd, selectedChannelId, { scope: "channel", limit: 200 })
+      : listProposedPlanArtifacts(workspaceCwd, threadId, { limit: 100 });
+    void loadPlans
       .then((response) => {
         if (cancelled) {
           return;
         }
         setProposedPlanArtifactsById(new Map(response.plans.map((plan) => [plan.id, plan])));
       })
-      .catch(() => {
+      .catch((error: unknown) => {
         if (!cancelled) {
           setProposedPlanArtifactsById(new Map());
+          setProposedPlanHistoryError(error instanceof Error ? error.message : String(error));
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setProposedPlanHistoryLoading(false);
         }
       });
     return () => {
       cancelled = true;
     };
-  }, [cwd, channelPlanModeThreadId]);
+  }, [cwd, channelPlanModeThreadId, proposedPlanHistoryRefreshKey, selectedChannelId]);
+
+  const proposedPlanArtifacts = useMemo(
+    () => [...proposedPlanArtifactsById.values()].sort((left, right) =>
+      right.updatedAt.localeCompare(left.updatedAt) ||
+      right.createdAt.localeCompare(left.createdAt) ||
+      right.id.localeCompare(left.id)
+    ),
+    [proposedPlanArtifactsById],
+  );
 
   async function setChannelPlanMode(active: boolean): Promise<void> {
     let threadId = channelPlanModeThreadId;
@@ -2717,6 +2747,28 @@ export function WorkspaceClientView({
     }
   }
 
+  async function completeChannelGoal(reason?: string): Promise<void> {
+    const workspaceCwd = cwd.trim();
+    const threadId = await ensureChannelGoalThreadId();
+    setChannelGoalBusy(true);
+    setChannelGoalError("");
+    try {
+      const response = await completeLingThreadGoal(workspaceCwd, threadId, {
+        actor: "local-user",
+        reason: reason?.trim() || undefined,
+        evidenceRefs: activeChannelGoal?.lastRunId ? [{ kind: "run", id: activeChannelGoal.lastRunId }] : undefined,
+      });
+      setActiveChannelGoal(response.goal ?? undefined);
+      setChannelGoalExpanded(false);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setChannelGoalError(message);
+      throw error;
+    } finally {
+      setChannelGoalBusy(false);
+    }
+  }
+
   function openChannelGoalEditor(): void {
     const draft = activeChannelGoal ? `/goal edit ${activeChannelGoal.objective}` : "/goal ";
     setMessageDraft(draft);
@@ -2785,6 +2837,16 @@ export function WorkspaceClientView({
       });
   }
 
+  function completeChannelGoalFromPanel(): void {
+    void completeChannelGoal()
+      .then(() => {
+        showComposerFeedback("success", t("Goal completed"));
+      })
+      .catch((error: unknown) => {
+        showComposerFeedback("error", error instanceof Error ? error.message : String(error));
+      });
+  }
+
   function handleAcceptProposedPlan(plan: ProposedPlanArtifact): void {
     void runProposedPlanAction(plan, "accept");
   }
@@ -2798,7 +2860,15 @@ export function WorkspaceClientView({
   }
 
   function handleConvertProposedPlan(plan: ProposedPlanArtifact): void {
-    void runProposedPlanAction(plan, "convert");
+    setWorkflowConversionPreviewPlan(plan);
+  }
+
+  function handleArchiveProposedPlan(plan: ProposedPlanArtifact): void {
+    void runProposedPlanAction(plan, "archive");
+  }
+
+  function refreshProposedPlanHistory(): void {
+    setProposedPlanHistoryRefreshKey((key) => key + 1);
   }
 
   function rememberProposedPlanArtifact(plan: ProposedPlanArtifact): void {
@@ -2809,30 +2879,39 @@ export function WorkspaceClientView({
     });
   }
 
-  async function runProposedPlanAction(plan: ProposedPlanArtifact, action: "accept" | "refine" | "save" | "convert"): Promise<void> {
+  async function runProposedPlanAction(plan: ProposedPlanArtifact, action: "accept" | "refine" | "save" | "convert" | "archive", actionInput: WorkflowConversionDraft = {}): Promise<void> {
     if (proposedPlanActionBusyId) {
       return;
     }
     setProposedPlanActionBusyId(plan.id);
     try {
-      const threadId = await ensureChannelGoalThreadId();
+      const threadId = plan.threadId || await ensureChannelGoalThreadId();
       if (action === "accept" && channelPlanModeActive) {
         await setChannelPlanMode(false);
       }
       if (action === "refine" && !channelPlanModeActive) {
         await setChannelPlanMode(true);
       }
-      const actionRequest = { plan: proposedPlanActionPayload(plan) };
+      const actionRequest = { plan: proposedPlanActionPayload(plan), ...actionInput };
       if (action === "save") {
         const result = await saveProposedPlanArtifact(cwd, threadId, plan.id, actionRequest);
         rememberProposedPlanArtifact(result.plan);
+        refreshProposedPlanHistory();
         showComposerFeedback("success", t("Plan saved"));
+        return;
+      }
+      if (action === "archive") {
+        const result = await archiveProposedPlanArtifact(cwd, threadId, plan.id, actionRequest);
+        rememberProposedPlanArtifact(result.plan);
+        refreshProposedPlanHistory();
+        showComposerFeedback("success", t("Plan archived"));
         return;
       }
       if (action === "convert") {
         const result = await convertProposedPlanToWorkflow(cwd, threadId, plan.id, actionRequest);
         rememberProposedPlanArtifact(result.plan);
         onRefreshChannelActivity();
+        refreshProposedPlanHistory();
         showComposerFeedback("success", t("Workflow draft created"));
         return;
       }
@@ -2843,9 +2922,11 @@ export function WorkspaceClientView({
         const result = await acceptProposedPlanArtifact(cwd, threadId, plan.id, actionRequest);
         rememberProposedPlanArtifact(result.plan);
         onRefreshTasks();
+        refreshProposedPlanHistory();
       } else {
         const result = await refineProposedPlanArtifact(cwd, threadId, plan.id, actionRequest);
         rememberProposedPlanArtifact(result.plan);
+        refreshProposedPlanHistory();
       }
       await onSendMessage({
         threadId,
@@ -2867,13 +2948,52 @@ export function WorkspaceClientView({
   function proposedPlanActionPayload(plan: ProposedPlanArtifact) {
     return {
       id: plan.id,
+      threadId: plan.threadId,
+      channelId: plan.channelId ?? null,
+      goalId: plan.goalId ?? null,
+      sourceAgentId: plan.sourceAgentId ?? null,
+      ownerAgentId: plan.ownerAgentId ?? null,
       sourceTurnId: plan.sourceTurnId ?? null,
       sourceMessageId: plan.sourceMessageId ?? null,
       sourceRunId: plan.sourceRunId ?? null,
+      parentPlanId: plan.parentPlanId ?? null,
+      supersededByPlanId: plan.supersededByPlanId ?? null,
+      planGroupId: plan.planGroupId ?? null,
+      version: plan.version ?? null,
       title: plan.title,
       bodyMarkdown: plan.bodyMarkdown,
       status: plan.status,
     };
+  }
+
+  function openProposedPlanSource(plan: ProposedPlanArtifact): void {
+    if (!plan.sourceMessageId) {
+      showComposerFeedback("info", t("Source unavailable"));
+      return;
+    }
+    const targetFeedItemId = `message:${plan.sourceMessageId}`;
+    const target = Array.from(document.querySelectorAll<HTMLElement>(".message-feed-virtual-row"))
+      .find((element) => element.dataset.feedItemId === targetFeedItemId);
+    if (!target) {
+      showComposerFeedback("info", t("Source message is not loaded."));
+      return;
+    }
+    target.scrollIntoView({ block: "center", behavior: "smooth" });
+    target.classList.add("conversation-work-cell-locate-pulse");
+    globalThis.setTimeout(() => target.classList.remove("conversation-work-cell-locate-pulse"), 1400);
+  }
+
+  function closeWorkflowConversionPreview(): void {
+    if (!proposedPlanActionBusyId) {
+      setWorkflowConversionPreviewPlan(undefined);
+    }
+  }
+
+  function confirmWorkflowConversionPreview(plan: ProposedPlanArtifact, draft?: WorkflowConversionDraft): void {
+    void runProposedPlanAction(plan, "convert", draft)
+      .then(() => {
+        setWorkflowConversionPreviewPlan(undefined);
+      });
   }
 
   const {
@@ -2931,6 +3051,7 @@ export function WorkspaceClientView({
     onSetPlanMode: setChannelPlanMode,
     onSetGoalObjective: setChannelGoalObjective,
     onPatchGoal: patchChannelGoal,
+    onCompleteGoal: completeChannelGoal,
     onClearGoal: clearChannelGoal,
     onSendMessage,
     onCancelActiveRun,
@@ -3131,6 +3252,7 @@ export function WorkspaceClientView({
       onOpenGoalEditor={openChannelGoalEditor}
       onGoalContinue={continueChannelGoal}
       onGoalPauseResume={pauseOrResumeChannelGoal}
+      onGoalComplete={completeChannelGoalFromPanel}
       onGoalClear={clearChannelGoalFromPanel}
       onToggleGoalExpanded={() => setChannelGoalExpanded((expanded) => !expanded)}
       onRemovePendingAttachment={removePendingAttachment}
@@ -4026,6 +4148,16 @@ export function WorkspaceClientView({
         />
       ) : null}
 
+      {workflowConversionPreviewPlan ? (
+        <WorkflowConversionPreviewDialog
+          plan={workflowConversionPreviewPlan}
+          cwd={cwd.trim()}
+          busy={proposedPlanActionBusyId === workflowConversionPreviewPlan.id}
+          onConfirm={confirmWorkflowConversionPreview}
+          onClose={closeWorkflowConversionPreview}
+        />
+      ) : null}
+
       {errorMessage ? (
         <div className="inline-error">
           <CircleAlert size={17} />
@@ -4260,12 +4392,23 @@ export function WorkspaceClientView({
               reviewItems={channelDockReviewItems}
               evidenceGroups={channelDockEvidenceGroups}
               fileItems={channelDockFileItems}
+              proposedPlans={proposedPlanArtifacts}
+              proposedPlansLoading={proposedPlanHistoryLoading}
+              proposedPlansError={proposedPlanHistoryError}
+              currentPlanThreadId={channelPlanModeThreadId}
+              planActionBusyId={proposedPlanActionBusyId}
               includeActivity
               activityNode={channelDockActivityNode}
               activityCount={channelDockActivityCount}
               forcedDetail={channelDockForcedDetail}
               pageRequest={rightDockPageRequest}
               onPageRequestConsumed={channelRightDock.consumePageRequest}
+              onOpenPlanSource={openProposedPlanSource}
+              onSavePlan={handleSaveProposedPlan}
+              onRefinePlan={handleRefineProposedPlan}
+              onAcceptPlan={handleAcceptProposedPlan}
+              onConvertPlan={handleConvertProposedPlan}
+              onArchivePlan={handleArchiveProposedPlan}
               actions={(
                 <>
                   {sidePanelView !== "settings" ? (

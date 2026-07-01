@@ -539,6 +539,8 @@ export type LingThreadArchivedFilter = "exclude" | "include" | "only";
 export const conversationModeKinds = ["default", "plan"] as const;
 export type ConversationModeKind = (typeof conversationModeKinds)[number];
 export type LingThreadGoalStatus = "active" | "paused" | "blocked" | "usage_limited" | "budget_limited" | "complete" | "cleared" | "replaced";
+export type LingThreadGoalCompletionActor = "local-user" | "ling-agent";
+export type GoalUsageSource = "provider" | "estimated" | "mixed";
 export type ProposedPlanArtifactStatus = "draft" | "accepted" | "superseded" | "archived";
 export type LingThreadSearchField =
   | "thread_title"
@@ -594,6 +596,15 @@ export interface LingThreadGoal {
   readonly lastRunId?: string;
   readonly blockedReason?: string;
   readonly completionEvidenceRefs: readonly GoalEvidenceRef[];
+  readonly completedBy?: LingThreadGoalCompletionActor;
+  readonly completedReason?: string;
+  readonly completionVerificationSummary?: string;
+  readonly usageSource?: GoalUsageSource;
+  readonly continuationChainId?: string;
+  readonly continuationDepth: number;
+  readonly noEvidenceContinuationCount: number;
+  readonly lastBlockerFingerprint?: string;
+  readonly sameBlockerCount: number;
 }
 
 export interface CreateLingThreadGoalInput {
@@ -613,21 +624,40 @@ export interface UpdateLingThreadGoalInput {
   readonly lastRunId?: string | null;
   readonly blockedReason?: string | null;
   readonly completionEvidenceRefs?: readonly GoalEvidenceRef[];
+  readonly completedBy?: LingThreadGoalCompletionActor | null;
+  readonly completedReason?: string | null;
+  readonly completionVerificationSummary?: string | null;
+  readonly usageSource?: GoalUsageSource | null;
+  readonly continuationChainId?: string | null;
+  readonly continuationDepth?: number;
+  readonly noEvidenceContinuationCount?: number;
+  readonly lastBlockerFingerprint?: string | null;
+  readonly sameBlockerCount?: number;
 }
 
 export interface ProposedPlanArtifact {
   readonly id: string;
   readonly workspaceId: string;
   readonly threadId: string;
+  readonly channelId?: string;
+  readonly goalId?: string;
+  readonly sourceAgentId?: string;
+  readonly ownerAgentId?: string;
   readonly sourceTurnId?: string;
   readonly sourceMessageId?: string;
   readonly sourceRunId?: string;
+  readonly parentPlanId?: string;
+  readonly supersededByPlanId?: string;
+  readonly planGroupId?: string;
+  readonly version?: number;
   readonly title: string;
   readonly bodyMarkdown: string;
   readonly status: ProposedPlanArtifactStatus;
   readonly savedAt?: string;
   readonly acceptedAt?: string;
   readonly convertedAt?: string;
+  readonly archivedAt?: string;
+  readonly archivedReason?: string;
   readonly acceptedTaskId?: string;
   readonly acceptedWorkflowId?: string;
   readonly acceptedWorkflowStepId?: string;
@@ -639,15 +669,25 @@ export interface ProposedPlanArtifact {
 export interface CreateProposedPlanArtifactInput {
   readonly id?: string;
   readonly threadId: string;
+  readonly channelId?: string;
+  readonly goalId?: string;
+  readonly sourceAgentId?: string;
+  readonly ownerAgentId?: string;
   readonly sourceTurnId?: string;
   readonly sourceMessageId?: string;
   readonly sourceRunId?: string;
+  readonly parentPlanId?: string;
+  readonly supersededByPlanId?: string;
+  readonly planGroupId?: string;
+  readonly version?: number;
   readonly title: string;
   readonly bodyMarkdown: string;
   readonly status?: ProposedPlanArtifactStatus;
   readonly savedAt?: string;
   readonly acceptedAt?: string;
   readonly convertedAt?: string;
+  readonly archivedAt?: string;
+  readonly archivedReason?: string;
   readonly acceptedTaskId?: string;
   readonly acceptedWorkflowId?: string;
   readonly acceptedWorkflowStepId?: string;
@@ -655,15 +695,25 @@ export interface CreateProposedPlanArtifactInput {
 }
 
 export interface UpdateProposedPlanArtifactInput {
+  readonly channelId?: string | null;
+  readonly goalId?: string | null;
+  readonly sourceAgentId?: string | null;
+  readonly ownerAgentId?: string | null;
   readonly sourceTurnId?: string | null;
   readonly sourceMessageId?: string | null;
   readonly sourceRunId?: string | null;
+  readonly parentPlanId?: string | null;
+  readonly supersededByPlanId?: string | null;
+  readonly planGroupId?: string | null;
+  readonly version?: number | null;
   readonly title?: string;
   readonly bodyMarkdown?: string;
   readonly status?: ProposedPlanArtifactStatus;
   readonly savedAt?: string | null;
   readonly acceptedAt?: string | null;
   readonly convertedAt?: string | null;
+  readonly archivedAt?: string | null;
+  readonly archivedReason?: string | null;
   readonly acceptedTaskId?: string | null;
   readonly acceptedWorkflowId?: string | null;
   readonly acceptedWorkflowStepId?: string | null;
@@ -671,7 +721,11 @@ export interface UpdateProposedPlanArtifactInput {
 }
 
 export interface ListProposedPlanArtifactsOptions {
-  readonly threadId: string;
+  readonly threadId?: string;
+  readonly channelId?: string;
+  readonly goalId?: string;
+  readonly agentId?: string;
+  readonly statuses?: readonly ProposedPlanArtifactStatus[];
   readonly limit?: number;
 }
 

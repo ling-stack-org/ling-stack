@@ -138,6 +138,7 @@ interface ChannelComposerProps {
   readonly onOpenGoalEditor: () => void;
   readonly onGoalContinue: () => void;
   readonly onGoalPauseResume: () => void;
+  readonly onGoalComplete: () => void;
   readonly onGoalClear: () => void;
   readonly onToggleGoalExpanded: () => void;
   readonly onRemovePendingAttachment: (localId: string) => void;
@@ -188,6 +189,7 @@ export function ChannelComposer({
   onOpenGoalEditor,
   onGoalContinue,
   onGoalPauseResume,
+  onGoalComplete,
   onGoalClear,
   onToggleGoalExpanded,
   onRemovePendingAttachment,
@@ -266,6 +268,9 @@ export function ChannelComposer({
                   <button className="icon-button compact-icon-button" type="button" onClick={onGoalPauseResume} disabled={goalBusy} aria-label={goalPaused ? t("Resume goal") : t("Pause goal")} title={goalPaused ? t("Resume goal") : t("Pause goal")}>
                     {goalPaused ? <RefreshCw size={14} /> : <Pause size={14} />}
                   </button>
+                  <button className="icon-button compact-icon-button" type="button" onClick={onGoalComplete} disabled={goalBusy} aria-label={t("Complete goal")} title={t("Complete goal")}>
+                    <CheckCircle2 size={14} />
+                  </button>
                   <button className="icon-button compact-icon-button" type="button" onClick={onOpenGoalEditor} disabled={goalBusy} aria-label={t("Edit goal")} title={t("Edit goal")}>
                     <Pencil size={14} />
                   </button>
@@ -281,6 +286,8 @@ export function ChannelComposer({
                 <div className="goal-floating-details">
                   <span>{t("Status")}: {goalStatusLabel}</span>
                   {goal.tokenBudget !== undefined ? <span>{t("Budget")}: {goal.tokensUsed}/{goal.tokenBudget}</span> : null}
+                  {goal.usageSource ? <span>{t("Source")}: {goal.usageSource}</span> : null}
+                  {goal.continuationDepth > 0 ? <span>{t("Continuation")}: {goal.continuationDepth}</span> : null}
                   {goal.lastRunId ? <span>{t("Last run")}: {goal.lastRunId}</span> : null}
                   {goal.blockedReason ? <span>{t("Blocker")}: {goal.blockedReason}</span> : null}
                 </div>
