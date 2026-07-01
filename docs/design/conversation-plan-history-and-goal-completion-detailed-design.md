@@ -463,6 +463,276 @@ interface GoalContinuationState {
 }
 ```
 
+## Follow-up Tuning Detailed Design
+
+These follow-ups are not required for the shipped PR6/PR7 behavior. They make the
+behavior easier to tune, easier to trust, and easier to browse once real multi-agent
+usage produces longer histories.
+
+### Continuation Threshold Observability
+
+Current defaults are intentionally conservative:
+
+- `maxAutomaticContinuationDepth = 3`;
+- `maxNoEvidenceContinuations = 2`;
+- `sameBlockerBeforeBlocked = 3`.
+
+Do not tune these numbers blindly. First record why every automatic continuation either
+started or stopped.
+
+```text
+terminal run
+  -> evaluate goal continuation guards
+      -> start visible queued follow-up
+      -> or write stop event with reason
+  -> update goal chain counters
+  -> show chain state in Goal panel
+```
+
+Stop reasons should be explicit and stable:
+
+```ts
+type GoalContinuationStopReason =
+  | "max_depth"
+  | "no_evidence_threshold"
+  | "same_blocker_threshold"
+  | "plan_mode_active"
+  | "pending_approval"
+  | "active_run_exists"
+  | "latest_run_not_terminal"
+  | "goal_not_active"
+  | "budget_limited"
+  | "usage_limited"
+  | "manual_stop"
+  | "unknown";
+```
+
+Recommended event shape:
+
+```ts
+interface GoalContinuationEvent {
+  readonly id: string;
+  readonly goalId: string;
+  readonly chainId: string;
+  readonly sourceRunId: string;
+  readonly continuationRunId?: string;
+  readonly decision: "started" | "stopped";
+  readonly stopReason?: GoalContinuationStopReason;
+  readonly continuationDepth: number;
+  readonly noEvidenceContinuationCount: number;
+  readonly sameBlockerCount: number;
+  readonly blockerFingerprint?: string;
+  readonly evidenceDelta: {
+    readonly newEvidenceRefs: number;
+    readonly changedFiles: number;
+    readonly acceptedPlans: number;
+    readonly artifacts: number;
+    readonly statusChanged: boolean;
+  };
+  readonly createdAt: string;
+}
+```
+
+The first implementation can avoid a new table if run intervention metadata is already
+sufficient for local debugging. Add a durable event table only when the UI or tuning
+dashboard needs historical aggregate queries.
+
+Tuning policy:
+
+- collect at least 20 automatic continuation chains before changing defaults;
+- increase `maxAutomaticContinuationDepth` only when chains often stop at depth 3 with
+  fresh evidence still appearing;
+- decrease `maxAutomaticContinuationDepth` only when depth 3 mostly produces no new
+  evidence or repeated blocker events;
+- increase `maxNoEvidenceContinuations` only for workflows that legitimately need one
+  "check again" turn after a quiet run;
+- decrease `sameBlockerBeforeBlocked` only if repeated blockers are already specific and
+  stable enough to avoid false blocked states.
+
+Goal panel display:
+
+```text
+Goal active
+Continuation: 2 / 3
+Last auto-stop: no new evidence (2 / 2)
+Evidence delta: 0 refs, 0 files, 0 artifacts
+```
+
+Verification:
+
+- a started continuation records `decision: "started"` and visible follow-up/run ids;
+- every guard failure records one stable `stopReason`;
+- no-evidence stop is visible in the Goal panel;
+- same-blocker stop includes the blocker fingerprint;
+- manual `Run goal` resets the chain counter and starts a new chain id;
+- changing threshold constants updates tests without changing API contracts.
+
+### Workflow Preview Owner Inference
+
+Workflow conversion should suggest owners, not silently assign irreversible work. The
+preview remains the user approval surface.
+
+Owner inference reads signals in this order:
+
+1. explicit step owner in the plan text, for example `Owner: Ling Engineer`;
+2. proposed-plan `ownerAgentId`, then `sourceAgentId`;
+3. step keywords mapped to teammate roles, for example UI/frontend/backend/docs/test;
+4. file or path mentions, for example `apps/web`, `packages/daemon`, `docs/`;
+5. prior workflow steps in the same channel with similar title/path/category;
+6. channel teammate role and council specialist membership;
+7. fallback to unassigned.
+
+Recommended preview shape:
+
+```ts
+interface WorkflowConversionStepPreview {
+  readonly title: string;
+  readonly description?: string;
+  readonly suggestedOwnerId?: string;
+  readonly ownerConfidence: "high" | "medium" | "low" | "none";
+  readonly ownerReason?: string;
+  readonly sourceSignals: readonly string[];
+  readonly dependsOnStepIndexes: readonly number[];
+  readonly inputs: readonly string[];
+  readonly outputs: readonly string[];
+  readonly risks: readonly string[];
+}
+```
+
+Confidence rules:
+
+- `high`: explicit owner or path/category maps to exactly one available teammate;
+- `medium`: role keyword and teammate role match, but no file/path evidence;
+- `low`: inferred from prior workflow history or weak keyword match;
+- `none`: no credible owner signal.
+
+Preview UI:
+
+```text
+Step 1: Add daemon API
+Owner: Ling Engineer  Confidence: high
+Reason: packages/daemon path mention and backend step wording
+
+[Owner dropdown] [Edit step] [Remove]
+```
+
+Boundaries:
+
+- owner inference never starts execution;
+- saving a draft workflow stores editable owner suggestions only;
+- low-confidence suggestions must be visually different from confirmed owners;
+- if no teammate matches, show `Unassigned` rather than inventing an owner;
+- teammate agents may propose refinements, but user action remains authoritative for
+  saving the workflow draft.
+
+Verification:
+
+- explicit `Owner:` text wins over path and history signals;
+- path-only inference creates a suggested owner with a reason;
+- ambiguous owner matches downgrade confidence instead of picking randomly;
+- no owner signal results in `Unassigned`;
+- editing owner in the preview persists into the draft workflow;
+- canceling the preview leaves no workflow mutation.
+
+### Plan Lineage Browser
+
+The current Plans page lists artifacts and supports status, agent, and goal filters. A
+lineage browser becomes useful once a single goal has many refinements from multiple
+agents.
+
+Lineage read model:
+
+```ts
+interface ProposedPlanLineageGroup {
+  readonly planGroupId: string;
+  readonly goalId?: string;
+  readonly latestPlanId: string;
+  readonly acceptedPlanId?: string;
+  readonly versions: readonly ProposedPlanLineageVersion[];
+}
+
+interface ProposedPlanLineageVersion {
+  readonly planId: string;
+  readonly parentPlanId?: string;
+  readonly supersededByPlanId?: string;
+  readonly version: number;
+  readonly status: ProposedPlanArtifact["status"];
+  readonly title: string;
+  readonly threadId: string;
+  readonly sourceMessageId?: string;
+  readonly sourceAgentId?: string;
+  readonly ownerAgentId?: string;
+  readonly updatedAt: string;
+}
+```
+
+Default presentation:
+
+```text
+Goal: Ship plan/goal modes
+plan_group_123
+  v4 accepted   Ling Agent     Jul 01 22:04
+  v3 superseded Backend Agent  Jul 01 21:50
+  v2 superseded local user     Jul 01 21:32
+  v1 superseded Ling Agent     Jul 01 21:20
+```
+
+Thread and channel behavior differ:
+
+- thread view shows only versions owned by the current source thread;
+- channel view aggregates versions across source threads and groups first by goal, then
+  by `planGroupId`;
+- accepted versions stay visible even when superseded drafts are folded;
+- archived versions stay hidden by default and appear only under explicit archived/all
+  filters.
+
+Source navigation:
+
+- clicking a version opens the detail panel;
+- `Open source` jumps to `sourceMessageId` when loaded;
+- if the message is outside the loaded window, load the surrounding slice before jumping;
+- if the source is unavailable, keep the detail open and show `Source unavailable`.
+
+Mutation rules:
+
+- accepted plan content is immutable;
+- refining an accepted plan creates a new draft version in the same `planGroupId`;
+- direct edit of an accepted record is rejected;
+- cross-agent refinement creates a linked version, not an overwrite.
+
+Verification:
+
+- versions are sorted by version desc and remain stable when timestamps tie;
+- folded superseded versions can be expanded;
+- accepted versions remain visible in default current view;
+- archived versions are hidden unless requested;
+- source jump works for loaded messages;
+- unloaded source jump requests a surrounding slice before fallback;
+- channel lineage groups plans from multiple threads without changing canonical owner.
+
+### Follow-up Implementation Slices
+
+PR8: Continuation Observability And Tuning
+
+- Add continuation event/metadata recording.
+- Add stop reason projection to Goal panel/right dock.
+- Keep thresholds as constants until enough real data exists.
+- Verify every guard records a reason and no hidden continuation is introduced.
+
+PR9: Workflow Owner Inference Preview
+
+- Add owner inference helper and confidence model.
+- Extend workflow conversion preview with owner dropdowns and reasons.
+- Persist edited owner suggestions into the draft workflow only after user save.
+- Verify explicit, path-based, ambiguous, and unassigned cases.
+
+PR10: Plan Lineage Browser
+
+- Add lineage grouping read helper for existing proposed-plan fields.
+- Extend Plans page with grouped versions and expand/collapse behavior.
+- Keep thread-owned canonical mutation rules unchanged.
+- Verify long refinement chains, archived filters, and source navigation fallback.
+
 ## API Additions
 
 Thread-owned plan APIs remain canonical:
@@ -571,6 +841,7 @@ Verification:
 ## Open Decisions
 
 No blocking product decision remains for PR6 or the conservative PR7 implementation.
-The remaining work is operational tuning: validate the continuation depth and
-no-evidence thresholds against real usage, then adjust constants if the shipped defaults
-are too eager or too conservative.
+The follow-up shape is specified above as PR8-PR10. The only remaining operational
+decision is empirical tuning: validate continuation stop reasons and evidence deltas
+against real usage before changing the shipped defaults. Do not change continuation
+thresholds from taste alone.

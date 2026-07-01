@@ -1,5 +1,5 @@
 import type { SQLOutputValue } from "node:sqlite";
-import { conversationModeKinds, runContinuationReasons, type ConversationModeKind, type ConversationModeState, type GoalEvidenceRef, type GoalUsageSource, type LingThread, type LingThreadGoal, type LingThreadGoalCompletionActor, type LingThreadGoalStatus, type LingThreadKind, type LingThreadMetadata, type LingThreadStatus, type LingTurn, type LingTurnKind, type LingTurnRun, type LingTurnRunRole, type LingTurnStatus, type ProposedPlanArtifact, type ProposedPlanArtifactStatus, type RunContinuationReason, type RunEventEnvelope, type RunEventType, type RunSession, type RunStatus } from "../../run-types.js";
+import { conversationModeKinds, runContinuationReasons, type ConversationModeKind, type ConversationModeState, type GoalContinuationEvidenceDelta, type GoalContinuationStopReason, type GoalEvidenceRef, type GoalUsageSource, type LingThread, type LingThreadGoal, type LingThreadGoalCompletionActor, type LingThreadGoalStatus, type LingThreadKind, type LingThreadMetadata, type LingThreadStatus, type LingTurn, type LingTurnKind, type LingTurnRun, type LingTurnRunRole, type LingTurnStatus, type ProposedPlanArtifact, type ProposedPlanArtifactStatus, type RunContinuationReason, type RunEventEnvelope, type RunEventType, type RunSession, type RunStatus } from "../../run-types.js";
 import { omitUndefined, parseJson, readNullableNumber, readNullableString, readNumber, readString } from "./helpers.js";
 
 export function mapLingThread(row: Record<string, SQLOutputValue>): LingThread {
@@ -58,6 +58,9 @@ export function mapLingThreadGoal(row: Record<string, SQLOutputValue>): LingThre
     noEvidenceContinuationCount: readNumber(row, "no_evidence_continuation_count"),
     lastBlockerFingerprint: readNullableString(row, "last_blocker_fingerprint"),
     sameBlockerCount: readNumber(row, "same_blocker_count"),
+    lastContinuationStopReason: readNullableString(row, "last_continuation_stop_reason") as GoalContinuationStopReason | undefined,
+    lastContinuationStoppedAt: readNullableString(row, "last_continuation_stopped_at"),
+    lastContinuationEvidenceDelta: parseGoalContinuationEvidenceDelta(readNullableString(row, "last_continuation_evidence_delta_json")),
   });
 }
 
@@ -117,6 +120,43 @@ function parseGoalEvidenceRefs(value: string): readonly GoalEvidenceRef[] {
     const record = item as Record<string, unknown>;
     return typeof record.kind === "string" && typeof record.id === "string";
   });
+}
+
+function parseGoalContinuationEvidenceDelta(value: string | undefined): GoalContinuationEvidenceDelta | undefined {
+  if (!value) {
+    return undefined;
+  }
+  const parsed = parseJson(value);
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    return undefined;
+  }
+  const record = parsed as Record<string, unknown>;
+  const newEvidenceRefs = readDeltaNumber(record, "newEvidenceRefs");
+  const changedFiles = readDeltaNumber(record, "changedFiles");
+  const acceptedPlans = readDeltaNumber(record, "acceptedPlans");
+  const artifacts = readDeltaNumber(record, "artifacts");
+  const statusChanged = record.statusChanged;
+  if (
+    newEvidenceRefs === undefined ||
+    changedFiles === undefined ||
+    acceptedPlans === undefined ||
+    artifacts === undefined ||
+    typeof statusChanged !== "boolean"
+  ) {
+    return undefined;
+  }
+  return {
+    newEvidenceRefs,
+    changedFiles,
+    acceptedPlans,
+    artifacts,
+    statusChanged,
+  };
+}
+
+function readDeltaNumber(record: Record<string, unknown>, key: string): number | undefined {
+  const value = record[key];
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
 export function mapLingTurn(row: Record<string, SQLOutputValue>): LingTurn {

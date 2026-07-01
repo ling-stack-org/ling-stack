@@ -3180,9 +3180,34 @@ test("channel composer manages goal lifecycle from the floating panel", async ({
   await composer.getByRole("button", { name: "Apply command" }).click();
   await expect.poll(planMode).toBe("default");
 
+  const goalWithStopMetadata = activeGoal();
+  if (!goalWithStopMetadata) {
+    throw new Error("Expected active goal before injecting continuation stop metadata");
+  }
+  state.goals = state.goals.map((goal) => goal.id === goalWithStopMetadata.id
+    ? {
+        ...goal,
+        continuationDepth: 2,
+        noEvidenceContinuationCount: 2,
+        lastContinuationStopReason: "no_evidence_threshold",
+        lastContinuationStoppedAt: "2026-05-25T00:46:00.000Z",
+        lastContinuationEvidenceDelta: {
+          newEvidenceRefs: 0,
+          changedFiles: 0,
+          acceptedPlans: 0,
+          artifacts: 0,
+          statusChanged: false,
+        },
+      }
+    : goal);
   await goalPanel.getByRole("button", { name: "Pause goal" }).click();
   await expect.poll(() => activeGoal()?.status).toBe("paused");
   await expect(goalPanel).toContainText("Paused");
+  await goalPanel.getByRole("button", { name: "Expand goal details" }).click();
+  await expect(goalPanel).toContainText("Continuation: 2 / 3");
+  await expect(goalPanel).toContainText("Last auto-stop: No new evidence");
+  await expect(goalPanel).toContainText("Evidence delta: 0 refs, 0 files, 0 artifacts");
+  await goalPanel.getByRole("button", { name: "Collapse goal details" }).click();
   await expect(goalPanel.getByRole("button", { name: "Run goal" })).toBeDisabled();
   await goalPanel.getByRole("button", { name: "Resume goal" }).click();
   await expect.poll(() => activeGoal()?.status).toBe("active");
@@ -3190,7 +3215,10 @@ test("channel composer manages goal lifecycle from the floating panel", async ({
 
   await goalPanel.getByRole("button", { name: "Edit goal" }).click();
   await expectComposerValue(composerInput, "/goal edit Finish PR4 with a visible goal panel");
-  await composerInput.fill("");
+  await composerInput.evaluate((editor) => {
+    editor.textContent = "";
+    editor.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "deleteContentBackward", data: "" }));
+  });
   await expectComposerValue(composerInput, "");
   await composerInput.fill("/goal edit Finish PR4, PR5, and local QA");
   await composer.getByRole("button", { name: "Apply command" }).click();

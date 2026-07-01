@@ -4,6 +4,9 @@ import {
   permissionPresets,
   runInterventionModes,
   sessionPermissionModes,
+  type GoalContinuationEvidenceDelta,
+  type GoalContinuationStopReason,
+  type LingThreadGoal,
   type PermissionConfirmation,
   type PermissionPreset,
   type RunEventType,
@@ -424,56 +427,62 @@ export function maybeQueueGoalContinuation(input: {
     return undefined;
   }
   const thread = input.store.getLingThread(run.threadId);
-  if (!thread || thread.status === "archived" || thread.lastRunId !== run.id) {
-    return undefined;
-  }
-  const mode = input.store.getLingThreadConversationMode(thread.id);
-  if (mode?.mode === "plan") {
+  if (!thread || thread.status === "archived") {
     return undefined;
   }
   const goal = input.store.getLingThreadGoal(thread.id);
-  if (!goal || goal.status !== "active") {
+  const evidenceDelta = goal ? goalContinuationEvidenceDelta(input.store, goal, run) : emptyGoalContinuationEvidenceDelta();
+  if (thread.lastRunId !== run.id) {
+    if (goal) {
+      recordGoalContinuationStop(input.store, goal, "latest_run_not_terminal", evidenceDelta);
+    }
     return undefined;
   }
-  if (goal.tokenBudget !== undefined && goal.tokensUsed >= goal.tokenBudget) {
-    return undefined;
-  }
-  if (input.store.listApprovalRequests({ runId: run.id, status: "pending", limit: 1 }).length > 0) {
-    return undefined;
-  }
+  const mode = input.store.getLingThreadConversationMode(thread.id);
   const rootRunId = run.parentRunId ?? run.id;
-  if (hasPendingRunIntervention(input.store, run.id)) {
-    return undefined;
-  }
-  if (goal.continuationDepth >= MAX_GOAL_CONTINUATION_DEPTH) {
-    return undefined;
-  }
   const currentRunHasEvidence = hasMeaningfulGoalProgressEvidence(input.store, run.id);
   const nextNoEvidenceContinuationCount = isAutomaticContinuationRun && !currentRunHasEvidence
-    ? goal.noEvidenceContinuationCount + 1
+    ? (goal?.noEvidenceContinuationCount ?? 0) + 1
     : 0;
-  if (nextNoEvidenceContinuationCount >= MAX_GOAL_NO_EVIDENCE_CONTINUATIONS) {
-    input.store.updateLingThreadGoal(
-      goal.id,
-      {
-        noEvidenceContinuationCount: nextNoEvidenceContinuationCount,
-      },
-      new Date().toISOString(),
-    );
+  const guard = evaluateGoalContinuationGuard({
+    goal,
+    modeKind: mode?.mode,
+    hasPendingApproval: input.store.listApprovalRequests({ runId: run.id, status: "pending", limit: 1 }).length > 0,
+    hasActiveRun: Boolean(thread.activeRunId && thread.activeRunId !== run.id && input.activeRuns.get(thread.activeRunId)),
+    hasPendingIntervention: hasPendingRunIntervention(input.store, run.id),
+    nextNoEvidenceContinuationCount,
+  });
+  if (guard.decision === "stopped") {
+    if (goal) {
+      recordGoalContinuationStop(
+        input.store,
+        goal,
+        guard.stopReason,
+        evidenceDelta,
+        guard.noEvidenceContinuationCount,
+      );
+    }
     return undefined;
   }
+  if (!goal) {
+    return undefined;
+  }
+  const activeGoal = goal;
 
   const now = new Date().toISOString();
   const sourceWorkUnit = run.workUnitId ? input.store.getWorkUnit(run.workUnitId) : undefined;
-  const instruction = renderGoalContinuationInstruction(goal.objective);
-  const chainId = goal.continuationChainId ?? `goal_chain_${goal.id}_${rootRunId}`;
-  const nextDepth = goal.continuationDepth + 1;
+  const instruction = renderGoalContinuationInstruction(activeGoal.objective);
+  const chainId = activeGoal.continuationChainId ?? `goal_chain_${activeGoal.id}_${rootRunId}`;
+  const nextDepth = activeGoal.continuationDepth + 1;
   input.store.updateLingThreadGoal(
-    goal.id,
+    activeGoal.id,
     {
       continuationChainId: chainId,
       continuationDepth: nextDepth,
       noEvidenceContinuationCount: nextNoEvidenceContinuationCount,
+      lastContinuationStopReason: null,
+      lastContinuationStoppedAt: null,
+      lastContinuationEvidenceDelta: evidenceDelta,
     },
     now,
   );
@@ -490,7 +499,7 @@ export function maybeQueueGoalContinuation(input: {
         linkPreviewIds: [],
       },
       requestedBy: "system",
-      idempotencyKey: `goal_auto_continue:${goal.id}:${run.id}:${nextDepth}`,
+      idempotencyKey: `goal_auto_continue:${activeGoal.id}:${run.id}:${nextDepth}`,
     },
     now,
   );
@@ -499,7 +508,7 @@ export function maybeQueueGoalContinuation(input: {
     mode: intervention.mode,
     status: intervention.status,
     reason: "goal_auto_continue",
-    goalId: goal.id,
+    goalId: activeGoal.id,
     continuationChainId: chainId,
     continuationDepth: nextDepth,
   });
@@ -507,7 +516,7 @@ export function maybeQueueGoalContinuation(input: {
     interventionId: intervention.id,
     instruction: intervention.instruction,
     reason: "goal_auto_continue",
-    goalId: goal.id,
+    goalId: activeGoal.id,
     continuationChainId: chainId,
     continuationDepth: nextDepth,
   });
@@ -516,6 +525,111 @@ export function maybeQueueGoalContinuation(input: {
 
 const MAX_GOAL_CONTINUATION_DEPTH = 3;
 const MAX_GOAL_NO_EVIDENCE_CONTINUATIONS = 2;
+
+type GoalContinuationGuardDecision =
+  | { readonly decision: "started" }
+  | {
+      readonly decision: "stopped";
+      readonly stopReason: GoalContinuationStopReason;
+      readonly noEvidenceContinuationCount?: number;
+    };
+
+function evaluateGoalContinuationGuard(input: {
+  readonly goal: LingThreadGoal | undefined;
+  readonly modeKind: string | undefined;
+  readonly hasPendingApproval: boolean;
+  readonly hasActiveRun: boolean;
+  readonly hasPendingIntervention: boolean;
+  readonly nextNoEvidenceContinuationCount: number;
+}): GoalContinuationGuardDecision {
+  const { goal } = input;
+  if (!goal) {
+    return { decision: "stopped", stopReason: "goal_not_active" };
+  }
+  if (input.modeKind === "plan") {
+    return { decision: "stopped", stopReason: "plan_mode_active" };
+  }
+  if (goal.status === "usage_limited") {
+    return { decision: "stopped", stopReason: "usage_limited" };
+  }
+  if (goal.status === "budget_limited" || (goal.tokenBudget !== undefined && goal.tokensUsed >= goal.tokenBudget)) {
+    return { decision: "stopped", stopReason: "budget_limited" };
+  }
+  if (goal.status !== "active") {
+    return { decision: "stopped", stopReason: "goal_not_active" };
+  }
+  if (input.hasPendingApproval) {
+    return { decision: "stopped", stopReason: "pending_approval" };
+  }
+  if (input.hasActiveRun || input.hasPendingIntervention) {
+    return { decision: "stopped", stopReason: "active_run_exists" };
+  }
+  if (goal.continuationDepth >= MAX_GOAL_CONTINUATION_DEPTH) {
+    return { decision: "stopped", stopReason: "max_depth" };
+  }
+  if (input.nextNoEvidenceContinuationCount >= MAX_GOAL_NO_EVIDENCE_CONTINUATIONS) {
+    return {
+      decision: "stopped",
+      stopReason: "no_evidence_threshold",
+      noEvidenceContinuationCount: input.nextNoEvidenceContinuationCount,
+    };
+  }
+  return { decision: "started" };
+}
+
+function recordGoalContinuationStop(
+  store: RunStore,
+  goal: LingThreadGoal,
+  stopReason: GoalContinuationStopReason,
+  evidenceDelta: GoalContinuationEvidenceDelta,
+  noEvidenceContinuationCount = goal.noEvidenceContinuationCount,
+): void {
+  const now = new Date().toISOString();
+  store.updateLingThreadGoal(
+    goal.id,
+    {
+      noEvidenceContinuationCount,
+      lastContinuationStopReason: stopReason,
+      lastContinuationStoppedAt: now,
+      lastContinuationEvidenceDelta: evidenceDelta,
+    },
+    now,
+  );
+}
+
+function goalContinuationEvidenceDelta(store: RunStore, goal: LingThreadGoal, run: RunSession): GoalContinuationEvidenceDelta {
+  const existingRefs = new Set(goal.completionEvidenceRefs.map(goalEvidenceRefKey));
+  const newEvidenceRefs = goalEvidenceRefsForContinuationRun(store, run).filter((ref) => !existingRefs.has(goalEvidenceRefKey(ref))).length;
+  return {
+    newEvidenceRefs,
+    changedFiles: 0,
+    acceptedPlans: 0,
+    artifacts: store.listArtifacts(run.id).length,
+    statusChanged: false,
+  };
+}
+
+function emptyGoalContinuationEvidenceDelta(): GoalContinuationEvidenceDelta {
+  return {
+    newEvidenceRefs: 0,
+    changedFiles: 0,
+    acceptedPlans: 0,
+    artifacts: 0,
+    statusChanged: false,
+  };
+}
+
+function goalEvidenceRefsForContinuationRun(store: RunStore, run: RunSession): readonly { readonly kind: "run" | "artifact"; readonly id: string }[] {
+  const refs: { readonly kind: "run" | "artifact"; readonly id: string }[] = [{ kind: "run", id: run.id }];
+  for (const artifact of store.listArtifacts(run.id)) {
+    refs.push({ kind: "artifact", id: artifact.id });
+  }
+  return refs;
+}
+
+function goalEvidenceRefKey(ref: { readonly kind: string; readonly id: string }): string {
+  return `${ref.kind}:${ref.id}`;
+}
 
 function hasPendingRunIntervention(store: RunStore, sourceRunId: string): boolean {
   return ["queued", "cancelling_source", "starting_continuation"].
