@@ -23,6 +23,7 @@ import type {
   ChannelLinkPreview,
   ChannelMention,
   ChannelMessageFileRef,
+  LingThreadGoal,
   RunIntervention,
   RunSession,
 } from "../../types.js";
@@ -66,6 +67,8 @@ interface ChannelComposerActionsInput {
   readonly slashCommands: readonly ComposerSlashCommandOption[];
   readonly channelAttachmentById: ReadonlyMap<string, ChannelAttachment>;
   readonly channelLinkPreviewById: ReadonlyMap<string, ChannelLinkPreview>;
+  readonly planModeActive: boolean;
+  readonly activeGoal: LingThreadGoal | undefined;
   readonly messageFeedScrollToLatest: () => void;
   readonly focusComposerAt: (offset: number) => void;
   readonly showComposerFeedback: (tone: "success" | "info" | "error", message: string) => void;
@@ -77,6 +80,10 @@ interface ChannelComposerActionsInput {
     readonly requestedSkillId: string;
     readonly attachmentIds?: readonly string[];
   }) => Promise<void>;
+  readonly onSetPlanMode: (active: boolean) => Promise<void>;
+  readonly onSetGoalObjective: (objective: string, replaceExisting?: boolean) => Promise<void>;
+  readonly onPatchGoal: (input: { readonly status?: LingThreadGoal["status"]; readonly objective?: string; readonly blockedReason?: string | null }) => Promise<void>;
+  readonly onClearGoal: () => Promise<void>;
   readonly onSendMessage: (input: {
     readonly threadId?: string;
     readonly body: string;
@@ -114,6 +121,8 @@ export function useChannelComposerActionsController({
   autoPreviewUrlsRef,
   channelAttachmentById,
   channelLinkPreviewById,
+  planModeActive,
+  activeGoal,
   composerBusy,
   composerFileRefs,
   composerHasSendableContent,
@@ -127,6 +136,10 @@ export function useChannelComposerActionsController({
   onCancelActiveRun,
   onCreateLinkPreview,
   onCreateTaskFromSlashCommand,
+  onSetPlanMode,
+  onSetGoalObjective,
+  onPatchGoal,
+  onClearGoal,
   onRefreshChannelActivity,
   onRefreshRunApprovals,
   onRefreshRuntime,
@@ -494,7 +507,60 @@ export function useChannelComposerActionsController({
     setSendState("sending");
     setSendError("");
     try {
+      if (slashIntent.kind === "session_command") {
+        if (slashIntent.commandId === "plan") {
+          if (slashIntent.action === "status") {
+            showComposerFeedback("info", planModeActive ? t("Plan Mode is on") : t("Plan Mode is off"));
+          } else {
+            const nextActive = slashIntent.action === "on";
+            await onSetPlanMode(nextActive);
+            showComposerFeedback("success", nextActive ? t("Plan Mode enabled") : t("Plan Mode disabled"));
+          }
+        }
+        if (slashIntent.commandId === "goal") {
+          if (slashIntent.action === "status") {
+            showComposerFeedback("info", activeGoal ? t("Goal is {status}: {objective}", { status: activeGoal.status, objective: activeGoal.objective }) : t("Goal is not set"));
+          } else if (slashIntent.action === "pause") {
+            await onPatchGoal({ status: "paused" });
+            showComposerFeedback("success", t("Goal paused"));
+          } else if (slashIntent.action === "resume") {
+            await onPatchGoal({ status: "active", blockedReason: null });
+            showComposerFeedback("success", t("Goal resumed"));
+          } else if (slashIntent.action === "clear") {
+            await onClearGoal();
+            showComposerFeedback("success", t("Goal cleared"));
+          } else {
+            const objective = slashIntent.action === "edit"
+              ? slashIntent.args.replace(/^edit\b/i, "").trim()
+              : slashIntent.args.trim();
+            if (!objective) {
+              const draft = activeGoal ? `/goal ${activeGoal.objective}` : "/goal ";
+              setMessageDraft(draft);
+              focusComposerAt(draft.length);
+              showComposerFeedback("info", activeGoal ? t("Edit the goal objective and press Enter") : t("Type a goal objective and press Enter"));
+              setSendState("idle");
+              setSendError("");
+              return;
+            }
+            await onSetGoalObjective(objective, Boolean(activeGoal));
+            showComposerFeedback("success", activeGoal ? t("Goal updated") : t("Goal set"));
+          }
+        }
+        setMessageDraft("");
+        setMessageMentions([]);
+        setMentionPicker(undefined);
+        setMentionActiveIndex(0);
+        setSendState("idle");
+        setSendError("");
+        return;
+      }
       if (slashIntent.kind === "agent_command" || slashIntent.kind === "multi_agent_command" || slashIntent.kind === "global_command") {
+        if (planModeActive) {
+          showComposerFeedback("error", t("Exit Plan Mode before creating implementation tasks."));
+          setSendState("idle");
+          setSendError("");
+          return;
+        }
         const prompt = slashIntent.args.trim() || t("Run /{command} using the current channel context.", { command: slashIntent.commandId });
         const title = titleFromPrompt(prompt || slashIntent.commandLabel);
         const slashTaskTargets = slashIntent.kind === "multi_agent_command"
@@ -589,6 +655,7 @@ export function useChannelComposerActionsController({
       setComposerBusy(false);
     }
   }, [
+    activeGoal,
     assetOperationPending,
     attachmentPreviewUrlsRef,
     autoPreviewUrlsRef,
@@ -601,12 +668,17 @@ export function useChannelComposerActionsController({
     messageMentions,
     onCreateLinkPreview,
     onCreateTaskFromSlashCommand,
+    onClearGoal,
+    onPatchGoal,
+    onSetGoalObjective,
+    onSetPlanMode,
     onSendMessage,
     pendingAttachments,
     pendingLinkPreviews,
     selectedChannel?.autoReplyMode,
     selectedChannelBranchRootThreadId,
     selectedChannelId,
+    planModeActive,
     sendState,
     setComposerBusy,
     setMessageDraft,

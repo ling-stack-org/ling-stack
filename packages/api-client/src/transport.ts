@@ -17,6 +17,7 @@ export interface LingDaemonEndpointContext {
   _post<T>(path: string, query?: Query, body?: unknown): Promise<T>;
   _put<T>(path: string, query?: Query, body?: unknown): Promise<T>;
   _patch<T>(path: string, query?: Query, body?: unknown): Promise<T>;
+  _delete<T>(path: string, query?: Query, body?: unknown): Promise<T>;
   _requestJson<T>(method: string, path: string, query?: Query, body?: unknown): Promise<T>;
   _request<T>(method: string, path: string, query?: Query, body?: unknown): Promise<T>;
   _url(path: string, query?: Query): string;
@@ -72,6 +73,11 @@ export class LingDaemonTransport implements LingDaemonEndpointContext {
   /** @internal */
   _patch<T>(path: string, query: Query = {}, body?: unknown): Promise<T> {
     return this._request("PATCH", path, query, body);
+  }
+
+  /** @internal */
+  _delete<T>(path: string, query: Query = {}, body?: unknown): Promise<T> {
+    return this._request("DELETE", path, query, body);
   }
 
   /** @internal */

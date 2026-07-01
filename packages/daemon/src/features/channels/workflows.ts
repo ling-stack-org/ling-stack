@@ -31,6 +31,7 @@ import {
   renderContextPack,
   type ContextPack,
 } from "./context-packs.js";
+import { getWorkflowPlanModeBlocker } from "./plan-mode-guard.js";
 import {
   maybeCompactWorkflowStepContext,
   type WorkflowStepContextCompactionSummary,
@@ -688,6 +689,10 @@ export function prepareWorkflowStepStart(
   const channel = store.getChannel(step.channelId);
   if (!channel) {
     return { kind: "error", statusCode: 404, code: "channel_not_found", message: `Channel not found: ${step.channelId}` };
+  }
+  const planModeBlocker = getWorkflowPlanModeBlocker(store, workflow);
+  if (planModeBlocker) {
+    return { kind: "error", statusCode: 409, code: "plan_mode_workflow_blocked", message: planModeBlocker };
   }
 
   const now = new Date().toISOString();

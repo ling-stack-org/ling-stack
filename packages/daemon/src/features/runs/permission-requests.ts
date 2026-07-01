@@ -8,6 +8,7 @@ import {
   type ApprovalRequest,
   type ApprovalRisk,
   type CreateApprovalRequestInput,
+  type EffectiveRunPolicySnapshot,
   type RunEventEnvelope,
   type RunEventType,
   type RunSession,
@@ -30,6 +31,7 @@ import {
 import {
   applyRiskReviewToApprovalInput,
 } from "./risk-review-approval-adapter.js";
+import { evaluatePlanModePermissionDenial } from "./plan-mode-policy.js";
 
 const PERMISSION_REQUEST_TIMEOUT_MS = 30 * 60 * 1000;
 
@@ -37,6 +39,7 @@ export function createRunPermissionRequestHandler(options: {
   readonly store: RunStore;
   readonly run: RunSession;
   readonly approvalPolicy: ApprovalPolicy;
+  readonly effectivePolicySnapshot?: EffectiveRunPolicySnapshot;
   readonly appendAndMaybeStream: (type: RunEventType, data: unknown) => RunEventEnvelope | undefined;
   readonly streamEnvelope: (envelope: RunEventEnvelope) => void;
   readonly signal?: AbortSignal;
@@ -75,17 +78,21 @@ export function createRunPermissionRequestHandler(options: {
       toCreateApprovalRequestInput(options.run, request, payload, evaluation.decision === "deny" ? "high" : undefined),
       riskReview,
     );
+    const planModeDenial = evaluatePlanModePermissionDenial({
+      effectivePolicySnapshot: options.effectivePolicySnapshot,
+      payload,
+    });
 
-    if (evaluation.decision === "deny") {
+    if (evaluation.decision === "deny" || planModeDenial) {
       const denied = createAutoDeniedPermissionApproval({
         ...options,
         approvalInput,
-        reason: evaluation.reason,
+        reason: planModeDenial?.reason ?? evaluation.reason,
       });
       return {
         approved: false,
         approvalId: denied.id,
-        reason: denied.decisionReason ?? evaluation.reason,
+        reason: denied.decisionReason ?? planModeDenial?.reason ?? evaluation.reason,
       };
     }
 

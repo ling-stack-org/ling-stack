@@ -10,8 +10,19 @@ import type {
   LingThreadForkResponse,
   LingThreadListRequest,
   LingThreadListResponse,
+  LingThreadModeResponse,
+  LingThreadModeUpdateRequest,
+  LingThreadGoalPatchRequest,
+  LingThreadGoalPutRequest,
+  LingThreadGoalResponse,
   LingThreadMutationResponse,
   LingThreadPinRequest,
+  ProposedPlanActionRequest,
+  ProposedPlanActionResponse,
+  ProposedPlanArtifactListResponse,
+  ProposedPlanArtifactPatchRequest,
+  ProposedPlanArtifactPutRequest,
+  ProposedPlanArtifactResponse,
   LingThreadResumePreviewResponse,
   LingThreadResumeRequest,
   LingThreadResumeResponse,
@@ -68,6 +79,92 @@ export async function getLingThread(cwd: string, threadId: string): Promise<Ling
 
 export async function getLingThreadEvidence(cwd: string, threadId: string): Promise<LingThreadEvidenceResponse> {
   return daemonClient.getLingThreadEvidence(cwd, threadId);
+}
+
+export async function getLingThreadMode(cwd: string, threadId: string): Promise<LingThreadModeResponse> {
+  return daemonClient.getLingThreadMode(cwd, threadId);
+}
+
+export async function updateLingThreadMode(cwd: string, threadId: string, input: LingThreadModeUpdateRequest): Promise<LingThreadModeResponse> {
+  return daemonClient.updateLingThreadMode(cwd, threadId, input);
+}
+
+export async function getLingThreadGoal(cwd: string, threadId: string): Promise<LingThreadGoalResponse> {
+  return daemonClient.getLingThreadGoal(cwd, threadId);
+}
+
+export async function putLingThreadGoal(cwd: string, threadId: string, input: LingThreadGoalPutRequest): Promise<LingThreadGoalResponse> {
+  return daemonClient.putLingThreadGoal(cwd, threadId, input);
+}
+
+export async function patchLingThreadGoal(cwd: string, threadId: string, input: LingThreadGoalPatchRequest): Promise<LingThreadGoalResponse> {
+  return daemonClient.patchLingThreadGoal(cwd, threadId, input);
+}
+
+export async function deleteLingThreadGoal(cwd: string, threadId: string): Promise<LingThreadGoalResponse> {
+  return daemonClient.deleteLingThreadGoal(cwd, threadId);
+}
+
+export async function listProposedPlanArtifacts(
+  cwd: string,
+  threadId: string,
+  options: { readonly limit?: number } = {},
+): Promise<ProposedPlanArtifactListResponse> {
+  return daemonClient.listProposedPlanArtifacts(cwd, threadId, options);
+}
+
+export async function putProposedPlanArtifact(
+  cwd: string,
+  threadId: string,
+  planId: string,
+  input: ProposedPlanArtifactPutRequest,
+): Promise<ProposedPlanArtifactResponse> {
+  return daemonClient.putProposedPlanArtifact(cwd, threadId, planId, input);
+}
+
+export async function patchProposedPlanArtifact(
+  cwd: string,
+  threadId: string,
+  planId: string,
+  input: ProposedPlanArtifactPatchRequest,
+): Promise<ProposedPlanArtifactResponse> {
+  return daemonClient.patchProposedPlanArtifact(cwd, threadId, planId, input);
+}
+
+export async function saveProposedPlanArtifact(
+  cwd: string,
+  threadId: string,
+  planId: string,
+  input: ProposedPlanActionRequest = {},
+): Promise<ProposedPlanActionResponse> {
+  return daemonClient.saveProposedPlanArtifact(cwd, threadId, planId, input);
+}
+
+export async function acceptProposedPlanArtifact(
+  cwd: string,
+  threadId: string,
+  planId: string,
+  input: ProposedPlanActionRequest = {},
+): Promise<ProposedPlanActionResponse> {
+  return daemonClient.acceptProposedPlanArtifact(cwd, threadId, planId, input);
+}
+
+export async function refineProposedPlanArtifact(
+  cwd: string,
+  threadId: string,
+  planId: string,
+  input: ProposedPlanActionRequest = {},
+): Promise<ProposedPlanActionResponse> {
+  return daemonClient.refineProposedPlanArtifact(cwd, threadId, planId, input);
+}
+
+export async function convertProposedPlanToWorkflow(
+  cwd: string,
+  threadId: string,
+  planId: string,
+  input: ProposedPlanActionRequest = {},
+): Promise<ProposedPlanActionResponse> {
+  return daemonClient.convertProposedPlanToWorkflow(cwd, threadId, planId, input);
 }
 
 export async function listLingTraces(

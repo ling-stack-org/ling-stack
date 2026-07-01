@@ -180,6 +180,12 @@ const CHANNEL_TEAM_SNAPSHOTS_MIGRATION_VERSION = 84;
 const CHANNEL_TEAM_SNAPSHOTS_MIGRATION_NAME = "create_channel_team_snapshots_and_evaluations";
 const CONVERSATION_ATTACHMENTS_MIGRATION_VERSION = 85;
 const CONVERSATION_ATTACHMENTS_MIGRATION_NAME = "create_conversation_attachments";
+const LING_THREAD_CONVERSATION_MODE_MIGRATION_VERSION = 86;
+const LING_THREAD_CONVERSATION_MODE_MIGRATION_NAME = "add_ling_thread_conversation_mode";
+const LING_THREAD_GOALS_MIGRATION_VERSION = 87;
+const LING_THREAD_GOALS_MIGRATION_NAME = "create_ling_thread_goals";
+const LING_THREAD_PROPOSED_PLANS_MIGRATION_VERSION = 88;
+const LING_THREAD_PROPOSED_PLANS_MIGRATION_NAME = "create_ling_thread_proposed_plans";
 
 export function configureSqliteRunStoreDatabase(database: DatabaseSync): void {
   database.exec(`
@@ -2609,6 +2615,8 @@ export function applySqliteRunStoreMigrations(context: SqliteRunStoreMigrationCo
           parent_turn_id TEXT,
           forked_from_run_id TEXT,
           metadata_json TEXT,
+          conversation_mode TEXT NOT NULL DEFAULT 'default',
+          conversation_mode_updated_at TEXT,
           created_at TEXT NOT NULL,
           updated_at TEXT NOT NULL,
           pinned_at TEXT,
@@ -3166,6 +3174,89 @@ export function applySqliteRunStoreMigrations(context: SqliteRunStoreMigrationCo
       `);
       if (!hasLingThreadVisibilityMigration) {
         context.recordMigration(LING_THREAD_VISIBILITY_MIGRATION_VERSION, LING_THREAD_VISIBILITY_MIGRATION_NAME);
+      }
+    }
+
+    const hasLingThreadConversationModeMigration = context.hasMigration(LING_THREAD_CONVERSATION_MODE_MIGRATION_VERSION);
+    if (
+      !hasLingThreadConversationModeMigration ||
+      !context.hasColumn("ling_threads", "conversation_mode") ||
+      !context.hasColumn("ling_threads", "conversation_mode_updated_at")
+    ) {
+      if (!context.hasColumn("ling_threads", "conversation_mode")) {
+        database.exec("ALTER TABLE ling_threads ADD COLUMN conversation_mode TEXT NOT NULL DEFAULT 'default';");
+      }
+      if (!context.hasColumn("ling_threads", "conversation_mode_updated_at")) {
+        database.exec("ALTER TABLE ling_threads ADD COLUMN conversation_mode_updated_at TEXT;");
+      }
+      if (!hasLingThreadConversationModeMigration) {
+        context.recordMigration(LING_THREAD_CONVERSATION_MODE_MIGRATION_VERSION, LING_THREAD_CONVERSATION_MODE_MIGRATION_NAME);
+      }
+    }
+
+    const hasLingThreadGoalsMigration = context.hasMigration(LING_THREAD_GOALS_MIGRATION_VERSION);
+    if (!hasLingThreadGoalsMigration || !context.hasTable("ling_thread_goals")) {
+      database.exec(`
+        CREATE TABLE IF NOT EXISTS ling_thread_goals (
+          id TEXT PRIMARY KEY,
+          workspace_id TEXT NOT NULL,
+          thread_id TEXT NOT NULL,
+          objective TEXT NOT NULL,
+          status TEXT NOT NULL,
+          token_budget INTEGER,
+          tokens_used INTEGER NOT NULL DEFAULT 0,
+          time_used_seconds INTEGER NOT NULL DEFAULT 0,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          completed_at TEXT,
+          cleared_at TEXT,
+          replaced_by_goal_id TEXT,
+          last_run_id TEXT,
+          blocked_reason TEXT,
+          completion_evidence_refs_json TEXT NOT NULL DEFAULT '[]'
+        );
+        CREATE INDEX IF NOT EXISTS idx_ling_thread_goals_thread_status_updated
+          ON ling_thread_goals(thread_id, status, updated_at);
+        CREATE INDEX IF NOT EXISTS idx_ling_thread_goals_last_run
+          ON ling_thread_goals(last_run_id);
+      `);
+      if (!hasLingThreadGoalsMigration) {
+        context.recordMigration(LING_THREAD_GOALS_MIGRATION_VERSION, LING_THREAD_GOALS_MIGRATION_NAME);
+      }
+    }
+
+    const hasLingThreadProposedPlansMigration = context.hasMigration(LING_THREAD_PROPOSED_PLANS_MIGRATION_VERSION);
+    if (!hasLingThreadProposedPlansMigration || !context.hasTable("ling_thread_proposed_plans")) {
+      database.exec(`
+        CREATE TABLE IF NOT EXISTS ling_thread_proposed_plans (
+          id TEXT PRIMARY KEY,
+          workspace_id TEXT NOT NULL,
+          thread_id TEXT NOT NULL,
+          source_turn_id TEXT,
+          source_message_id TEXT,
+          source_run_id TEXT,
+          title TEXT NOT NULL,
+          body_markdown TEXT NOT NULL,
+          status TEXT NOT NULL,
+          saved_at TEXT,
+          accepted_at TEXT,
+          converted_at TEXT,
+          accepted_task_id TEXT,
+          accepted_workflow_id TEXT,
+          accepted_workflow_step_id TEXT,
+          accepted_run_id TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_ling_thread_proposed_plans_thread_status_updated
+          ON ling_thread_proposed_plans(thread_id, status, updated_at);
+        CREATE INDEX IF NOT EXISTS idx_ling_thread_proposed_plans_source_message
+          ON ling_thread_proposed_plans(source_message_id);
+        CREATE INDEX IF NOT EXISTS idx_ling_thread_proposed_plans_acceptance_refs
+          ON ling_thread_proposed_plans(accepted_task_id, accepted_workflow_id, accepted_run_id);
+      `);
+      if (!hasLingThreadProposedPlansMigration) {
+        context.recordMigration(LING_THREAD_PROPOSED_PLANS_MIGRATION_VERSION, LING_THREAD_PROPOSED_PLANS_MIGRATION_NAME);
       }
     }
 

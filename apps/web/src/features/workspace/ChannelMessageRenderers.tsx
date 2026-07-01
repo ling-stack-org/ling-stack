@@ -13,6 +13,7 @@ import {
   Plus,
   RefreshCw,
   Reply,
+  Save,
   Square,
   SquareTerminal,
   ThumbsDown,
@@ -64,6 +65,7 @@ import type {
   MemoryObject,
   RunArtifact,
   RunSession,
+  ProposedPlanArtifact,
   StateTransitionEvent,
   UsedMemoryEvent,
   UpdateChannelExecutionProposalRequest,
@@ -127,6 +129,8 @@ export interface ChannelMessageRenderersInput {
   readonly onCancelWorkflow: (workflow: ChannelWorkflow) => void;
   readonly onConfirmExecutionProposal: (proposal: ChannelExecutionProposal) => void;
   readonly onCreateTaskFromContextSummary: (summary: ChannelContextSummary) => void;
+  readonly onAcceptProposedPlan: (plan: ProposedPlanArtifact) => void;
+  readonly onConvertProposedPlan: (plan: ProposedPlanArtifact) => void;
   readonly onLoadConversationWorkCellDetails: (threadId: string) => void;
   readonly onLoadWorkflowWorkCellDetails: (workflowIdOrThreadId: string, options?: { readonly force?: boolean }) => void;
   readonly onOpenApprovalDetail: (approval: ApprovalRequest | undefined) => void;
@@ -135,6 +139,8 @@ export interface ChannelMessageRenderersInput {
   readonly onOpenThreadForMessage: (message: ChannelMessage) => void;
   readonly onOrchestrateWorkflow: (workflow: ChannelWorkflow) => void;
   readonly onRejectDecision: (decision: ChannelDecision) => void;
+  readonly onRefineProposedPlan: (plan: ProposedPlanArtifact) => void;
+  readonly onSaveProposedPlan: (plan: ProposedPlanArtifact) => void;
   readonly onRetryWorkflowStep: (step: ChannelWorkflowStep) => void;
   readonly onRevealReviewInConversation: () => void;
   readonly onRevealRunFromActivity: (runId: string) => void;
@@ -150,6 +156,8 @@ export interface ChannelMessageRenderersInput {
   readonly onUpdateHandoffStatus: (handoff: ChannelHandoff, status: ChannelHandoffStatus) => void;
   readonly readRunTitle: (run: RunSession) => string;
   readonly resolveExpertTeammate: (agentId: string | undefined) => LocalTeammateDraft | undefined;
+  readonly planActionBusyId: string;
+  readonly proposedPlanArtifactsById: ReadonlyMap<string, ProposedPlanArtifact>;
   readonly workflowWorkCellDetailsCacheKey: (workflowId: string) => string;
 }
 
@@ -585,6 +593,13 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
     const nonChatAction = message.linkedTaskId
       ? input.activityActionRow(item.id, <code>{message.linkedTaskId}</code>)
       : input.activityActionRow(item.id);
+    const proposedPlanBlock = message.kind === "ai_reply" && message.authorType === "ai-teammate"
+      ? readProposedPlanBlock(pendingAiReplyBody, message)
+      : undefined;
+    const proposedPlan = proposedPlanBlock
+      ? input.proposedPlanArtifactsById.get(proposedPlanBlock.plan.id) ?? proposedPlanBlock.plan
+      : undefined;
+    const visibleMessageBody = proposedPlanBlock?.displayBody ?? pendingAiReplyBody;
     if (plainChatMessage) {
       return (
         <div className="message-group">
@@ -597,7 +612,19 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
             bodyNode={(
               <div className={pendingAiReply ? "message-body-shell message-body-with-spinner" : "message-body-shell"}>
                 {pendingAiReply ? <Loader2 className="message-pending-spinner spin" size={13} /> : null}
-                <MessageBodyRenderer text={pendingAiReplyBody} cwd={input.cwd} compact streaming={pendingAiReply} />
+                {visibleMessageBody.trim() ? <MessageBodyRenderer text={visibleMessageBody} cwd={input.cwd} compact streaming={pendingAiReply} /> : null}
+                {proposedPlanBlock ? (
+                  <ProposedPlanBlock
+                    plan={proposedPlan ?? proposedPlanBlock.plan}
+                    cwd={input.cwd}
+                    t={input.t}
+                    busy={input.planActionBusyId === (proposedPlan ?? proposedPlanBlock.plan).id}
+                    onAccept={input.onAcceptProposedPlan}
+                    onConvert={input.onConvertProposedPlan}
+                    onRefine={input.onRefineProposedPlan}
+                    onSave={input.onSaveProposedPlan}
+                  />
+                ) : null}
               </div>
             )}
             attachmentsNode={renderChannelMessageAssets(message.attachmentIds, messageFileRefs, message.channelId)}
@@ -1032,6 +1059,102 @@ function conversationCoordinatorDisplayBody(
     ? conversationCoordinatorTerminalFallback(turn, t)
     : conversationCoordinatorStartFallback(turn, t);
   return isDuplicateCoordinatorDisplayBody(turn, fallback) ? "" : fallback;
+}
+
+interface ParsedProposedPlanBlock {
+  readonly displayBody: string;
+  readonly plan: ProposedPlanArtifact;
+}
+
+const proposedPlanPattern = /<proposed_plan(?:\s+title=(?:"([^"]+)"|'([^']+)'))?\s*>([\s\S]*?)<\/proposed_plan>/i;
+
+function readProposedPlanBlock(text: string, message: ChannelMessage): ParsedProposedPlanBlock | undefined {
+  const match = proposedPlanPattern.exec(text);
+  if (!match) {
+    return undefined;
+  }
+  const bodyMarkdown = (match[3] ?? "").trim();
+  if (!bodyMarkdown) {
+    return undefined;
+  }
+  const before = text.slice(0, match.index).trim();
+  const after = text.slice(match.index + match[0].length).trim();
+  const title = (match[1] ?? match[2] ?? readFirstMarkdownHeading(bodyMarkdown) ?? "Proposed plan").trim();
+  return {
+    displayBody: [before, after].filter(Boolean).join("\n\n"),
+    plan: {
+      id: `proposed_plan_${message.id}`,
+      workspaceId: message.workspaceId,
+      threadId: message.threadId ?? message.id,
+      sourceMessageId: message.id,
+      sourceRunId: message.linkedRunId,
+      title,
+      bodyMarkdown,
+      status: "draft",
+      createdAt: message.createdAt,
+      updatedAt: message.updatedAt,
+    },
+  };
+}
+
+function readFirstMarkdownHeading(markdown: string): string | undefined {
+  const heading = markdown.split(/\n/u).map((line) => /^#{1,3}\s+(.+)$/.exec(line.trim())?.[1]?.trim()).find(Boolean);
+  return heading;
+}
+
+function ProposedPlanBlock({
+  plan,
+  cwd,
+  t,
+  busy,
+  onAccept,
+  onConvert,
+  onRefine,
+  onSave,
+}: {
+  readonly plan: ProposedPlanArtifact;
+  readonly cwd: string;
+  readonly t: (key: string, values?: Record<string, string | number>) => string;
+  readonly busy: boolean;
+  readonly onAccept: (plan: ProposedPlanArtifact) => void;
+  readonly onConvert: (plan: ProposedPlanArtifact) => void;
+  readonly onRefine: (plan: ProposedPlanArtifact) => void;
+  readonly onSave: (plan: ProposedPlanArtifact) => void;
+}): JSX.Element {
+  return (
+    <section className="proposed-plan-block" aria-label={t("Proposed plan")}>
+      <header className="proposed-plan-head">
+        <span className="proposed-plan-icon" aria-hidden="true">
+          <FileCheck2 size={15} />
+        </span>
+        <span>
+          <strong>{plan.title}</strong>
+          <small>{t("Proposed plan")} · {plan.status === "accepted" ? t("Accepted") : plan.savedAt ? t("Saved") : t("Draft")}</small>
+        </span>
+      </header>
+      <div className="proposed-plan-body">
+        <MessageBodyRenderer text={plan.bodyMarkdown} cwd={cwd} compact />
+      </div>
+      <footer className="proposed-plan-actions">
+        <button className="secondary-button compact-button" type="button" onClick={() => onSave(plan)} disabled={busy}>
+          {busy ? <Loader2 className="spin" size={14} /> : <Save size={14} />}
+          {t("Save")}
+        </button>
+        <button className="secondary-button compact-button" type="button" onClick={() => onConvert(plan)} disabled={busy}>
+          {busy ? <Loader2 className="spin" size={14} /> : <Workflow size={14} />}
+          {t("Convert to workflow")}
+        </button>
+        <button className="secondary-button compact-button" type="button" onClick={() => onRefine(plan)} disabled={busy}>
+          {busy ? <Loader2 className="spin" size={14} /> : <RefreshCw size={14} />}
+          {t("Refine plan")}
+        </button>
+        <button className="primary-button compact-button" type="button" onClick={() => onAccept(plan)} disabled={busy}>
+          {busy ? <Loader2 className="spin" size={14} /> : <CheckCircle2 size={14} />}
+          {t("Implement")}
+        </button>
+      </footer>
+    </section>
+  );
 }
 
 function shouldSanitizeGeneratedCoordinatorBody(body: string): boolean {

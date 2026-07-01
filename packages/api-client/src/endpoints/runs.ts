@@ -13,12 +13,23 @@ import type {
   LingThreadForkResponse,
   LingThreadListRequest,
   LingThreadListResponse,
+  LingThreadModeResponse,
+  LingThreadModeUpdateRequest,
+  LingThreadGoalPatchRequest,
+  LingThreadGoalPutRequest,
   LingThreadMutationResponse,
   LingThreadPinRequest,
+  ProposedPlanActionRequest,
+  ProposedPlanActionResponse,
+  ProposedPlanArtifactListResponse,
+  ProposedPlanArtifactPatchRequest,
+  ProposedPlanArtifactPutRequest,
+  ProposedPlanArtifactResponse,
   LingThreadResumePreviewResponse,
   LingThreadResumeRequest,
   LingThreadResumeResponse,
   LingThreadTurnsResponse,
+  LingThreadGoalResponse,
   LingTraceDetailResponse,
   LingTraceListResponse,
   LingTraceSpansResponse,
@@ -98,6 +109,58 @@ export const runEndpoints = {
 
   async getLingThreadEvidence(this: LingDaemonEndpointContext, cwd: string, threadId: string): Promise<LingThreadEvidenceResponse> {
       return this._get(`/threads/${encodeURIComponent(threadId)}/evidence`, { cwd });
+    },
+
+  async getLingThreadMode(this: LingDaemonEndpointContext, cwd: string, threadId: string): Promise<LingThreadModeResponse> {
+      return this._get(`/threads/${encodeURIComponent(threadId)}/mode`, { cwd });
+    },
+
+  async updateLingThreadMode(this: LingDaemonEndpointContext, cwd: string, threadId: string, input: LingThreadModeUpdateRequest): Promise<LingThreadModeResponse> {
+      return this._patch(`/threads/${encodeURIComponent(threadId)}/mode`, { cwd }, input);
+    },
+
+  async getLingThreadGoal(this: LingDaemonEndpointContext, cwd: string, threadId: string): Promise<LingThreadGoalResponse> {
+      return this._get(`/threads/${encodeURIComponent(threadId)}/goal`, { cwd });
+    },
+
+  async putLingThreadGoal(this: LingDaemonEndpointContext, cwd: string, threadId: string, input: LingThreadGoalPutRequest): Promise<LingThreadGoalResponse> {
+      return this._put(`/threads/${encodeURIComponent(threadId)}/goal`, { cwd }, input);
+    },
+
+  async patchLingThreadGoal(this: LingDaemonEndpointContext, cwd: string, threadId: string, input: LingThreadGoalPatchRequest): Promise<LingThreadGoalResponse> {
+      return this._patch(`/threads/${encodeURIComponent(threadId)}/goal`, { cwd }, input);
+    },
+
+  async deleteLingThreadGoal(this: LingDaemonEndpointContext, cwd: string, threadId: string): Promise<LingThreadGoalResponse> {
+      return this._delete(`/threads/${encodeURIComponent(threadId)}/goal`, { cwd });
+    },
+
+  async listProposedPlanArtifacts(this: LingDaemonEndpointContext, cwd: string, threadId: string, options: { readonly limit?: number } = {}): Promise<ProposedPlanArtifactListResponse> {
+      return this._get(`/threads/${encodeURIComponent(threadId)}/proposed-plans`, { cwd, limit: options.limit });
+    },
+
+  async putProposedPlanArtifact(this: LingDaemonEndpointContext, cwd: string, threadId: string, planId: string, input: ProposedPlanArtifactPutRequest): Promise<ProposedPlanArtifactResponse> {
+      return this._put(`/threads/${encodeURIComponent(threadId)}/proposed-plans/${encodeURIComponent(planId)}`, { cwd }, input);
+    },
+
+  async patchProposedPlanArtifact(this: LingDaemonEndpointContext, cwd: string, threadId: string, planId: string, input: ProposedPlanArtifactPatchRequest): Promise<ProposedPlanArtifactResponse> {
+      return this._patch(`/threads/${encodeURIComponent(threadId)}/proposed-plans/${encodeURIComponent(planId)}`, { cwd }, input);
+    },
+
+  async saveProposedPlanArtifact(this: LingDaemonEndpointContext, cwd: string, threadId: string, planId: string, input: ProposedPlanActionRequest = {}): Promise<ProposedPlanActionResponse> {
+      return this._post(`/threads/${encodeURIComponent(threadId)}/proposed-plans/${encodeURIComponent(planId)}/save`, { cwd }, input);
+    },
+
+  async acceptProposedPlanArtifact(this: LingDaemonEndpointContext, cwd: string, threadId: string, planId: string, input: ProposedPlanActionRequest = {}): Promise<ProposedPlanActionResponse> {
+      return this._post(`/threads/${encodeURIComponent(threadId)}/proposed-plans/${encodeURIComponent(planId)}/accept`, { cwd }, input);
+    },
+
+  async refineProposedPlanArtifact(this: LingDaemonEndpointContext, cwd: string, threadId: string, planId: string, input: ProposedPlanActionRequest = {}): Promise<ProposedPlanActionResponse> {
+      return this._post(`/threads/${encodeURIComponent(threadId)}/proposed-plans/${encodeURIComponent(planId)}/refine`, { cwd }, input);
+    },
+
+  async convertProposedPlanToWorkflow(this: LingDaemonEndpointContext, cwd: string, threadId: string, planId: string, input: ProposedPlanActionRequest = {}): Promise<ProposedPlanActionResponse> {
+      return this._post(`/threads/${encodeURIComponent(threadId)}/proposed-plans/${encodeURIComponent(planId)}/convert-workflow`, { cwd }, input);
     },
 
   async listLingTraces(this: LingDaemonEndpointContext,

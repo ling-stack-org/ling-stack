@@ -230,18 +230,23 @@ import type {
 } from "../skill-usage-types.js";
 import {
   type AppendControlPlaneEventInput,
+  type ConversationModeState,
+  type CreateLingThreadGoalInput,
   type ControlPlaneEvent,
   type CreateLingThreadInput,
+  type CreateProposedPlanArtifactInput,
   type CreateLingTurnInput,
   type CreateRunArtifactInput,
   type CreateRunInterventionInput,
   type CreateRunInput,
   type LinkRunToLingTurnInput,
   type LingThread,
+  type LingThreadGoal,
   type LingThreadKind,
   type LingThreadStatus,
   type LingTurn,
   type LingTurnRun,
+  type ListProposedPlanArtifactsOptions,
   type ListControlPlaneEventsOptions,
   type ListLingThreadsOptions,
   type ListLingTurnsOptions,
@@ -256,8 +261,12 @@ import {
   type RunSession,
   type RunStore,
   type RunStatus,
+  type ProposedPlanArtifact,
   type SearchLingThreadsResult,
+  type UpdateLingThreadConversationModeInput,
+  type UpdateLingThreadGoalInput,
   type UpdateLingThreadInput,
+  type UpdateProposedPlanArtifactInput,
   type UpdateRunInterventionStatusInput,
 } from "../run-types.js";
 import {
@@ -962,6 +971,54 @@ export class SqliteRunStore implements RunStore {
 
   updateLingThread(threadId: string, input: UpdateLingThreadInput, now: string): LingThread | undefined {
     return this.lingThreads.updateLingThread(threadId, input, now);
+  }
+
+  getLingThreadConversationMode(threadId: string): ConversationModeState | undefined {
+    return this.lingThreads.getLingThreadConversationMode(threadId);
+  }
+
+  updateLingThreadConversationMode(
+    threadId: string,
+    input: UpdateLingThreadConversationModeInput,
+    now: string,
+  ): ConversationModeState | undefined {
+    return this.lingThreads.updateLingThreadConversationMode(threadId, input, now);
+  }
+
+  getLingThreadGoal(threadId: string): LingThreadGoal | undefined {
+    return this.lingThreads.getLingThreadGoal(threadId);
+  }
+
+  createLingThreadGoal(input: CreateLingThreadGoalInput, now: string): LingThreadGoal {
+    return this.lingThreads.createLingThreadGoal(input, now);
+  }
+
+  replaceLingThreadGoal(input: CreateLingThreadGoalInput, now: string): LingThreadGoal {
+    return this.lingThreads.replaceLingThreadGoal(input, now);
+  }
+
+  updateLingThreadGoal(goalId: string, input: UpdateLingThreadGoalInput, now: string): LingThreadGoal | undefined {
+    return this.lingThreads.updateLingThreadGoal(goalId, input, now);
+  }
+
+  clearLingThreadGoal(threadId: string, now: string): LingThreadGoal | undefined {
+    return this.lingThreads.clearLingThreadGoal(threadId, now);
+  }
+
+  getProposedPlanArtifact(planId: string): ProposedPlanArtifact | undefined {
+    return this.lingThreads.getProposedPlanArtifact(planId);
+  }
+
+  listProposedPlanArtifacts(options: ListProposedPlanArtifactsOptions): ProposedPlanArtifact[] {
+    return this.lingThreads.listProposedPlanArtifacts(options);
+  }
+
+  upsertProposedPlanArtifact(input: CreateProposedPlanArtifactInput, now: string): ProposedPlanArtifact {
+    return this.lingThreads.upsertProposedPlanArtifact(input, now);
+  }
+
+  updateProposedPlanArtifact(planId: string, input: UpdateProposedPlanArtifactInput, now: string): ProposedPlanArtifact | undefined {
+    return this.lingThreads.updateProposedPlanArtifact(planId, input, now);
   }
 
   rebuildLingThreadMetadata(threadId: string, now: string): LingThread | undefined {

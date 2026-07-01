@@ -6,6 +6,7 @@ import {
   createChannelWorkspaceSnapshot,
   createRunId,
   DEFAULT_WORKSPACE_ID,
+  applyConversationModeToEffectiveRunPolicySnapshot,
   resolveSessionRunPolicy,
   getEffectiveTeammateSkill,
   getRunSummaryPath,
@@ -345,6 +346,10 @@ export async function executeRunRequest(
     createdAt = new Date().toISOString();
     const idempotencyKey = runRequest.idempotencyKey ?? `run:${runId}`;
     thread = ensureLingThreadForRun(store, runRequest, createdAt);
+    effectivePolicySnapshot = applyConversationModeToEffectiveRunPolicySnapshot(
+      effectivePolicySnapshot,
+      thread.conversationMode.mode,
+    );
     turn = ensureLingTurnForRun(store, thread, runRequest, createdAt);
     const workUnitOwner = resolveRunWorkUnitOwner(thread, runRequest, turn.id);
     const existingWorkUnit = runRequest.idempotencyKey
@@ -880,6 +885,7 @@ export async function executeRunRequest(
         store,
         run,
         approvalPolicy,
+        effectivePolicySnapshot,
         appendAndMaybeStream,
         streamEnvelope,
         signal: abortController.signal,
@@ -893,6 +899,7 @@ export async function executeRunRequest(
         store,
         run,
         approvalPolicy,
+        effectivePolicySnapshot,
         appendAndMaybeStream,
         streamEnvelope,
         signal: abortController.signal,

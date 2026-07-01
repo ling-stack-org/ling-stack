@@ -2596,6 +2596,41 @@ test("channel AI reply prompt carries recent context for short follow-ups", asyn
   }
 });
 
+test("channel AI reply injects Plan Mode instructions for plan threads", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-plan-mode-prompt-"));
+  const runner = new ScriptedRunner(["<proposed_plan title=\"Plan slice\">1. Inspect first.</proposed_plan>"]);
+  const daemon = await startDaemonForTest(runner);
+  try {
+    const channel = await createChannel(daemon.url, cwd);
+    const provider = (await createStaticChatProvider(daemon.url, cwd)).provider;
+    await postJson(`${daemon.url}/providers/${encodeURIComponent(provider.id)}/check?cwd=${encodeURIComponent(cwd)}`);
+    const thread = await postJson(`${daemon.url}/threads?cwd=${encodeURIComponent(cwd)}`, {
+      kind: "channel_discussion",
+      channelId: channel.id,
+    });
+    await patchJson(`${daemon.url}/threads/${encodeURIComponent(thread.thread.id)}/mode?cwd=${encodeURIComponent(cwd)}`, {
+      mode: "plan",
+    });
+
+    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/messages?cwd=${encodeURIComponent(cwd)}`, {
+      body: "Plan the next implementation slice.",
+      threadId: thread.thread.id,
+      providerPresetId: provider.id,
+      teammateId: "ling_agent",
+      requestAiReply: true,
+    });
+    await waitForChannelMessageStatus(daemon.url, cwd, channel.id, created.aiReply.id, "ready");
+
+    assert.equal(runner.runs.length, 1);
+    assert.match(runner.runs[0].systemPrompt, /Plan Mode is active/);
+    assert.match(runner.runs[0].systemPrompt, /<proposed_plan title=/);
+    assert.doesNotMatch(runner.runs[0].systemPrompt, /<ling_task_proposal>/);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("channel no-tools AI reply retries once with compacted channel summary after context-length error", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-reply-context-retry-"));
   const runner = new ScriptedRunner([

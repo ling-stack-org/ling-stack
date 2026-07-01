@@ -39,7 +39,23 @@ import {
 } from "lucide-react";
 import type { ComposerSlashCommandOption } from "@ling-stack/core/composer-slash-intents";
 import type { AiTeammateTemplate } from "@ling-stack/core";
-import { artifactContentUrl, getChannelWorkflowEvidence, getLingThreadEvidence, getLingTrace, listLingThreadTurns, listLingTraces } from "../../api.js";
+import {
+  artifactContentUrl,
+  acceptProposedPlanArtifact,
+  convertProposedPlanToWorkflow,
+  deleteLingThreadGoal,
+  getChannelWorkflowEvidence,
+  getLingThreadEvidence,
+  getLingThreadGoal,
+  getLingTrace,
+  listProposedPlanArtifacts,
+  listLingThreadTurns,
+  listLingTraces,
+  patchLingThreadGoal,
+  putLingThreadGoal,
+  refineProposedPlanArtifact,
+  saveProposedPlanArtifact,
+} from "../../api.js";
 import {
   createChannelWorktree,
   getChannelWorkspaceGitStatus,
@@ -175,11 +191,13 @@ import type {
   FoldedExpertsReadModel,
   MemoryObject,
   ProviderPreset,
+  ProposedPlanArtifact,
   ResourceLease,
   RuntimeDiagnosticsResponse,
   RunArtifact,
   RunSession,
   LingThread,
+  LingThreadGoal,
   LingTurn,
   LingTurnRun,
   PermissionPreset,
@@ -829,6 +847,13 @@ export function WorkspaceClientView({
     showComposerFeedback,
   } = useChannelComposerDraftController();
   const [conversationBackgroundToast, setConversationBackgroundToast] = useState<ChannelComposerInlineFeedback | undefined>();
+  const [activeChannelGoal, setActiveChannelGoal] = useState<LingThreadGoal | undefined>();
+  const [channelGoalLoadingThreadId, setChannelGoalLoadingThreadId] = useState("");
+  const [channelGoalBusy, setChannelGoalBusy] = useState(false);
+  const [channelGoalExpanded, setChannelGoalExpanded] = useState(false);
+  const [channelGoalError, setChannelGoalError] = useState("");
+  const [proposedPlanArtifactsById, setProposedPlanArtifactsById] = useState<ReadonlyMap<string, ProposedPlanArtifact>>(new Map());
+  const [proposedPlanActionBusyId, setProposedPlanActionBusyId] = useState("");
   const [pendingChannelTeammateId, setPendingChannelTeammateId] = useState("");
   const [pendingChannelCouncilId, setPendingChannelCouncilId] = useState("");
   const [channelNotificationLevel, setChannelNotificationLevel] = useState<ChannelNotificationLevel>("mentions");
@@ -950,11 +975,14 @@ export function WorkspaceClientView({
     channelDiscussionRootThread,
     forkingWorkThreadId,
     workThreadVisibilityId,
+    workThreadConversationModeId,
     archiveConfirmWorkThreadId,
     setArchiveConfirmWorkThreadId,
     forkChannelWorkThread,
     forkChannelMainBranch,
+    ensureChannelDiscussionRootThread,
     mutateChannelWorkThreadVisibility,
+    updateChannelWorkThreadConversationMode,
   } = useChannelWorkThreadsController({
     cwd,
     selectedChannelId,
@@ -2533,6 +2561,321 @@ export function WorkspaceClientView({
     }
   }, []);
 
+  const activeChannelConversationThread = useMemo(
+    () => selectedChannelBranchRootThreadId
+      ? visibleChannelWorkThreads.find((thread) => thread.id === selectedChannelBranchRootThreadId) ?? channelDiscussionRootThread
+      : channelDiscussionRootThread,
+    [channelDiscussionRootThread, selectedChannelBranchRootThreadId, visibleChannelWorkThreads],
+  );
+  const channelPlanModeThreadId = activeChannelConversationThread?.id ?? selectedChannelBranchRootThreadId ?? "";
+  const channelPlanModeActive = activeChannelConversationThread?.conversationMode.mode === "plan";
+  const channelPlanModeBusy = Boolean(channelPlanModeThreadId && workThreadConversationModeId === channelPlanModeThreadId);
+
+  useEffect(() => {
+    const workspaceCwd = cwd.trim();
+    const threadId = channelPlanModeThreadId;
+    if (!workspaceCwd || !threadId) {
+      setActiveChannelGoal(undefined);
+      setChannelGoalError("");
+      setChannelGoalLoadingThreadId("");
+      return;
+    }
+    let cancelled = false;
+    setChannelGoalLoadingThreadId(threadId);
+    setChannelGoalError("");
+    void getLingThreadGoal(workspaceCwd, threadId)
+      .then((response) => {
+        if (cancelled) {
+          return;
+        }
+        setActiveChannelGoal(response.goal ?? undefined);
+      })
+      .catch((error: unknown) => {
+        if (cancelled) {
+          return;
+        }
+        setActiveChannelGoal(undefined);
+        setChannelGoalError(error instanceof Error ? error.message : String(error));
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setChannelGoalLoadingThreadId("");
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [cwd, channelPlanModeThreadId]);
+
+  useEffect(() => {
+    const workspaceCwd = cwd.trim();
+    const threadId = channelPlanModeThreadId;
+    if (!workspaceCwd || !threadId) {
+      setProposedPlanArtifactsById(new Map());
+      return;
+    }
+    let cancelled = false;
+    void listProposedPlanArtifacts(workspaceCwd, threadId, { limit: 100 })
+      .then((response) => {
+        if (cancelled) {
+          return;
+        }
+        setProposedPlanArtifactsById(new Map(response.plans.map((plan) => [plan.id, plan])));
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setProposedPlanArtifactsById(new Map());
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [cwd, channelPlanModeThreadId]);
+
+  async function setChannelPlanMode(active: boolean): Promise<void> {
+    let threadId = channelPlanModeThreadId;
+    if (!threadId && active) {
+      threadId = (await ensureChannelDiscussionRootThread())?.id ?? "";
+    }
+    if (!threadId) {
+      if (!active) {
+        return;
+      }
+      const message = t("Plan Mode needs a saved Ling thread.");
+      showComposerFeedback("error", message);
+      throw new Error(message);
+    }
+    await updateChannelWorkThreadConversationMode(threadId, active ? "plan" : "default");
+  }
+
+  async function ensureChannelGoalThreadId(): Promise<string> {
+    let threadId = channelPlanModeThreadId;
+    if (!threadId) {
+      threadId = (await ensureChannelDiscussionRootThread())?.id ?? "";
+    }
+    if (!threadId) {
+      const message = t("Goal needs a saved Ling thread.");
+      showComposerFeedback("error", message);
+      throw new Error(message);
+    }
+    return threadId;
+  }
+
+  async function setChannelGoalObjective(objective: string, replaceExisting = true): Promise<void> {
+    const workspaceCwd = cwd.trim();
+    if (!workspaceCwd) {
+      throw new Error(t("Workspace cwd is required."));
+    }
+    const threadId = await ensureChannelGoalThreadId();
+    setChannelGoalBusy(true);
+    setChannelGoalError("");
+    try {
+      const response = await putLingThreadGoal(workspaceCwd, threadId, { objective, replaceExisting });
+      setActiveChannelGoal(response.goal ?? undefined);
+      setChannelGoalExpanded(false);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setChannelGoalError(message);
+      throw error;
+    } finally {
+      setChannelGoalBusy(false);
+    }
+  }
+
+  async function patchChannelGoal(input: { readonly status?: LingThreadGoal["status"]; readonly objective?: string; readonly blockedReason?: string | null }): Promise<void> {
+    const workspaceCwd = cwd.trim();
+    const threadId = await ensureChannelGoalThreadId();
+    setChannelGoalBusy(true);
+    setChannelGoalError("");
+    try {
+      const response = await patchLingThreadGoal(workspaceCwd, threadId, input);
+      setActiveChannelGoal(response.goal ?? undefined);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setChannelGoalError(message);
+      throw error;
+    } finally {
+      setChannelGoalBusy(false);
+    }
+  }
+
+  async function clearChannelGoal(): Promise<void> {
+    const workspaceCwd = cwd.trim();
+    const threadId = await ensureChannelGoalThreadId();
+    setChannelGoalBusy(true);
+    setChannelGoalError("");
+    try {
+      await deleteLingThreadGoal(workspaceCwd, threadId);
+      setActiveChannelGoal(undefined);
+      setChannelGoalExpanded(false);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setChannelGoalError(message);
+      throw error;
+    } finally {
+      setChannelGoalBusy(false);
+    }
+  }
+
+  function openChannelGoalEditor(): void {
+    const draft = activeChannelGoal ? `/goal edit ${activeChannelGoal.objective}` : "/goal ";
+    setMessageDraft(draft);
+    focusComposerAt(draft.length);
+  }
+
+  function continueChannelGoal(): void {
+    if (!activeChannelGoal || channelGoalBusy) {
+      return;
+    }
+    if (activeChannelGoal.status === "paused") {
+      showComposerFeedback("error", t("Resume the goal before continuing."));
+      return;
+    }
+    if (channelPlanModeActive) {
+      showComposerFeedback("error", t("Exit Plan Mode before continuing a goal."));
+      return;
+    }
+    void (async () => {
+      setChannelGoalBusy(true);
+      setChannelGoalError("");
+      try {
+        const threadId = await ensureChannelGoalThreadId();
+        const body = t("Continue working toward goal: {objective}", { objective: activeChannelGoal.objective });
+        await onSendMessage({
+          threadId,
+          body,
+          mentions: [],
+          attachmentIds: [],
+          linkPreviewIds: [],
+          fileRefs: [],
+          requestAiReply: true,
+        });
+        showComposerFeedback("success", t("Goal continuation queued"));
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        setChannelGoalError(message);
+        showComposerFeedback("error", message);
+      } finally {
+        setChannelGoalBusy(false);
+      }
+    })();
+  }
+
+  function pauseOrResumeChannelGoal(): void {
+    if (!activeChannelGoal || channelGoalBusy) {
+      return;
+    }
+    const paused = activeChannelGoal.status === "paused";
+    void patchChannelGoal(paused ? { status: "active", blockedReason: null } : { status: "paused" })
+      .then(() => {
+        showComposerFeedback("success", paused ? t("Goal resumed") : t("Goal paused"));
+      })
+      .catch((error: unknown) => {
+        showComposerFeedback("error", error instanceof Error ? error.message : String(error));
+      });
+  }
+
+  function clearChannelGoalFromPanel(): void {
+    void clearChannelGoal()
+      .then(() => {
+        showComposerFeedback("success", t("Goal cleared"));
+      })
+      .catch((error: unknown) => {
+        showComposerFeedback("error", error instanceof Error ? error.message : String(error));
+      });
+  }
+
+  function handleAcceptProposedPlan(plan: ProposedPlanArtifact): void {
+    void runProposedPlanAction(plan, "accept");
+  }
+
+  function handleRefineProposedPlan(plan: ProposedPlanArtifact): void {
+    void runProposedPlanAction(plan, "refine");
+  }
+
+  function handleSaveProposedPlan(plan: ProposedPlanArtifact): void {
+    void runProposedPlanAction(plan, "save");
+  }
+
+  function handleConvertProposedPlan(plan: ProposedPlanArtifact): void {
+    void runProposedPlanAction(plan, "convert");
+  }
+
+  function rememberProposedPlanArtifact(plan: ProposedPlanArtifact): void {
+    setProposedPlanArtifactsById((current) => {
+      const next = new Map(current);
+      next.set(plan.id, plan);
+      return next;
+    });
+  }
+
+  async function runProposedPlanAction(plan: ProposedPlanArtifact, action: "accept" | "refine" | "save" | "convert"): Promise<void> {
+    if (proposedPlanActionBusyId) {
+      return;
+    }
+    setProposedPlanActionBusyId(plan.id);
+    try {
+      const threadId = await ensureChannelGoalThreadId();
+      if (action === "accept" && channelPlanModeActive) {
+        await setChannelPlanMode(false);
+      }
+      if (action === "refine" && !channelPlanModeActive) {
+        await setChannelPlanMode(true);
+      }
+      const actionRequest = { plan: proposedPlanActionPayload(plan) };
+      if (action === "save") {
+        const result = await saveProposedPlanArtifact(cwd, threadId, plan.id, actionRequest);
+        rememberProposedPlanArtifact(result.plan);
+        showComposerFeedback("success", t("Plan saved"));
+        return;
+      }
+      if (action === "convert") {
+        const result = await convertProposedPlanToWorkflow(cwd, threadId, plan.id, actionRequest);
+        rememberProposedPlanArtifact(result.plan);
+        onRefreshChannelActivity();
+        showComposerFeedback("success", t("Workflow draft created"));
+        return;
+      }
+      const body = action === "accept"
+        ? `${t("Implement accepted plan: {title}", { title: plan.title })}\n\n${plan.bodyMarkdown}`
+        : `${t("Refine this plan before implementation: {title}", { title: plan.title })}\n\n${plan.bodyMarkdown}`;
+      if (action === "accept") {
+        const result = await acceptProposedPlanArtifact(cwd, threadId, plan.id, actionRequest);
+        rememberProposedPlanArtifact(result.plan);
+        onRefreshTasks();
+      } else {
+        const result = await refineProposedPlanArtifact(cwd, threadId, plan.id, actionRequest);
+        rememberProposedPlanArtifact(result.plan);
+      }
+      await onSendMessage({
+        threadId,
+        body,
+        mentions: [],
+        attachmentIds: [],
+        linkPreviewIds: [],
+        fileRefs: [],
+        requestAiReply: action === "refine",
+      });
+      showComposerFeedback("success", action === "accept" ? t("Implementation task queued") : t("Plan refinement queued"));
+    } catch (error) {
+      showComposerFeedback("error", error instanceof Error ? error.message : String(error));
+    } finally {
+      setProposedPlanActionBusyId("");
+    }
+  }
+
+  function proposedPlanActionPayload(plan: ProposedPlanArtifact) {
+    return {
+      id: plan.id,
+      sourceTurnId: plan.sourceTurnId ?? null,
+      sourceMessageId: plan.sourceMessageId ?? null,
+      sourceRunId: plan.sourceRunId ?? null,
+      title: plan.title,
+      bodyMarkdown: plan.bodyMarkdown,
+      status: plan.status,
+    };
+  }
+
   const {
     runGuidanceLoading,
     runGuidanceSubmitting,
@@ -2578,11 +2921,17 @@ export function WorkspaceClientView({
     slashCommands,
     channelAttachmentById,
     channelLinkPreviewById,
+    planModeActive: channelPlanModeActive,
+    activeGoal: activeChannelGoal,
     messageFeedScrollToLatest: messageFeedState.scrollToLatest,
     focusComposerAt,
     showComposerFeedback,
     onCreateLinkPreview,
     onCreateTaskFromSlashCommand,
+    onSetPlanMode: setChannelPlanMode,
+    onSetGoalObjective: setChannelGoalObjective,
+    onPatchGoal: patchChannelGoal,
+    onClearGoal: clearChannelGoal,
     onSendMessage,
     onCancelActiveRun,
     onRefreshChannelActivity,
@@ -2594,10 +2943,13 @@ export function WorkspaceClientView({
   const channelComposerSubmitDisabled = activeConversationRun
     ? !selectedChannelId || isCancellingRun || Boolean(runGuidanceSubmitting) || (composerHasSendableContent && (composerBusy || assetOperationPending))
     : !selectedChannelId || composerBusy || assetOperationPending || !composerHasSendableContent;
+  const composerSessionCommandActive = composerSlashIntent.kind === "session_command";
   const channelComposerSubmitLabel = activeConversationRun
     ? composerHasSendableContent
       ? runGuidanceSubmitting === "queue_followup" ? t("Queueing guidance...") : t("Queue guidance")
       : isCancellingRun ? t("Stopping run...") : t("Stop run")
+    : composerSessionCommandActive
+      ? sendState === "sending" ? t("Applying command...") : t("Apply command")
     : composerSlashCommandActive
       ? sendState === "sending" ? t("Creating task...") : t("Create task")
       : sendState === "sending" ? t("Sending...") : t("Send");
@@ -2636,6 +2988,7 @@ export function WorkspaceClientView({
     localUserDisplayName,
     memoryById,
     orchestratingWorkflowId,
+    proposedPlanArtifactsById,
     runningWorkflowStepId,
     runById,
     selectedChannelBranchRootThreadId,
@@ -2651,6 +3004,8 @@ export function WorkspaceClientView({
     onCancelWorkflow,
     onConfirmExecutionProposal,
     onCreateTaskFromContextSummary,
+    onAcceptProposedPlan: handleAcceptProposedPlan,
+    onConvertProposedPlan: handleConvertProposedPlan,
     onLoadConversationWorkCellDetails: loadConversationWorkCellDetails,
     onLoadWorkflowWorkCellDetails: loadWorkflowWorkCellDetails,
     onOpenApprovalDetail: openApprovalDetail,
@@ -2659,6 +3014,8 @@ export function WorkspaceClientView({
     onOpenThreadForMessage: threadReplyController.openThreadForMessage,
     onOrchestrateWorkflow,
     onRejectDecision,
+    onRefineProposedPlan: handleRefineProposedPlan,
+    onSaveProposedPlan: handleSaveProposedPlan,
     onRetryWorkflowStep,
     onRevealReviewInConversation: revealReviewInConversation,
     onRevealRunFromActivity: revealRunFromActivity,
@@ -2671,6 +3028,7 @@ export function WorkspaceClientView({
     onUpdateHandoffStatus,
     readRunTitle,
     resolveExpertTeammate: (agentId) => channelExpertTeammateByKey.get(normalizeChannelExpertTeammateKey(agentId)),
+    planActionBusyId: proposedPlanActionBusyId,
     workflowWorkCellDetailsCacheKey,
   });
 
@@ -2719,6 +3077,13 @@ export function WorkspaceClientView({
       pendingMessageAssetsVisible={pendingMessageAssetsVisible}
       permissionLocked={channelComposerPermissionLocked}
       permissionPreset={channelComposerPermissionPreset}
+      planModeActive={channelPlanModeActive}
+      planModeBusy={channelPlanModeBusy}
+      goal={activeChannelGoal}
+      goalBusy={channelGoalBusy}
+      goalLoading={Boolean(channelGoalLoadingThreadId)}
+      goalError={channelGoalError}
+      goalExpanded={channelGoalExpanded}
       channelTeammateIds={channelTeammateIds}
       resolvingApprovals={resolvingApprovals}
       runGuidanceError={runGuidanceError}
@@ -2754,6 +3119,20 @@ export function WorkspaceClientView({
       onInsertMentionTrigger={insertMentionTrigger}
       onOpenApproval={(approvalId) => openApprovalDetail(approvals.find((approval) => approval.id === approvalId))}
       onPermissionPresetChange={(preset) => onPermissionModeChange(permissionModeForPreset(preset))}
+      onTogglePlanMode={() => {
+        void setChannelPlanMode(!channelPlanModeActive)
+          .then(() => {
+            showComposerFeedback("success", channelPlanModeActive ? t("Plan Mode disabled") : t("Plan Mode enabled"));
+          })
+          .catch((error: unknown) => {
+            showComposerFeedback("error", error instanceof Error ? error.message : String(error));
+          });
+      }}
+      onOpenGoalEditor={openChannelGoalEditor}
+      onGoalContinue={continueChannelGoal}
+      onGoalPauseResume={pauseOrResumeChannelGoal}
+      onGoalClear={clearChannelGoalFromPanel}
+      onToggleGoalExpanded={() => setChannelGoalExpanded((expanded) => !expanded)}
       onRemovePendingAttachment={removePendingAttachment}
       onResizePointerCancel={handleComposerResizePointerEnd}
       onResizePointerDown={handleComposerResizePointerDown}

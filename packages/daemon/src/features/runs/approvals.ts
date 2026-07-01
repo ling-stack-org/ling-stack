@@ -12,6 +12,7 @@ import {
   type ApprovalRisk,
   type ApprovalToolDecision,
   type CreateApprovalRequestInput,
+  type EffectiveRunPolicySnapshot,
   type ExternalWorkStoreFacet,
   type RunEventEnvelope,
   type RunEventType,
@@ -50,6 +51,7 @@ import {
   applyRiskReviewToApprovalInput,
   applyRiskReviewToPolicyDecision,
 } from "./risk-review-approval-adapter.js";
+import { evaluatePlanModeApprovalDenial } from "./plan-mode-policy.js";
 
 const APPROVAL_TIMEOUT_MS = 30 * 60 * 1000;
 const APPROVAL_POLL_INTERVAL_MS = 500;
@@ -136,6 +138,7 @@ export function createRunApprovalHandler(options: {
   readonly store: RunStore;
   readonly run: RunSession;
   readonly approvalPolicy: ApprovalPolicy;
+  readonly effectivePolicySnapshot?: EffectiveRunPolicySnapshot;
   readonly appendAndMaybeStream: (type: RunEventType, data: unknown) => RunEventEnvelope | undefined;
   readonly streamEnvelope: (envelope: RunEventEnvelope) => void;
   readonly signal?: AbortSignal;
@@ -183,6 +186,17 @@ export function createRunApprovalHandler(options: {
     });
     approvalInput = applyRiskReviewToApprovalInput(approvalInput, riskReview);
     policyDecision = applyRiskReviewToPolicyDecision(policyDecision, riskReview);
+    const planModeDenial = evaluatePlanModeApprovalDenial({
+      effectivePolicySnapshot: options.effectivePolicySnapshot,
+      actionType: approvalInput.actionType,
+      payload: approvalInput.payload,
+    });
+    if (planModeDenial) {
+      policyDecision = {
+        decision: "deny",
+        reason: planModeDenial.reason,
+      };
+    }
 
     if (policyDecision.decision === "allow") {
       if (unifiedExecBash) {
