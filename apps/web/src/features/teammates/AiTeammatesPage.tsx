@@ -245,30 +245,28 @@ export function AiTeammatesPage({
             </p>
           </div>
         ) : null}
-        {!onBackToWorkspaceTools ? (
-          <div className="teammate-management-tabs" role="tablist" aria-label={t("Teammate management tabs")}>
-            <button
-              className={activeManagementView === "teammates" ? "active" : ""}
-              type="button"
-              role="tab"
-              aria-selected={activeManagementView === "teammates"}
-              onClick={() => setActiveManagementView("teammates")}
-            >
-              <Users size={14} />
-              {t("Teammates")}
-            </button>
-            <button
-              className={activeManagementView === "councils" ? "active" : ""}
-              type="button"
-              role="tab"
-              aria-selected={activeManagementView === "councils"}
-              onClick={() => setActiveManagementView("councils")}
-            >
-              <Brain size={14} />
-              {t("AI Councils")}
-            </button>
-          </div>
-        ) : null}
+        <div className="teammate-management-tabs" role="tablist" aria-label={t("Teammate management tabs")}>
+          <button
+            className={activeManagementView === "teammates" ? "active" : ""}
+            type="button"
+            role="tab"
+            aria-selected={activeManagementView === "teammates"}
+            onClick={() => setActiveManagementView("teammates")}
+          >
+            <Users size={14} />
+            {t("Teammates")}
+          </button>
+          <button
+            className={activeManagementView === "councils" ? "active" : ""}
+            type="button"
+            role="tab"
+            aria-selected={activeManagementView === "councils"}
+            onClick={() => setActiveManagementView("councils")}
+          >
+            <Brain size={14} />
+            {t("AI Councils")}
+          </button>
+        </div>
         <button className="primary-button teammate-page-create-button" type="button" onClick={focusCreateFlow}>
           <Plus size={16} />
           {t("Add teammate")}

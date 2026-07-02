@@ -1417,13 +1417,13 @@
 
 .provider-table {
   width: 100%;
-  min-width: 1040px;
+  min-width: 0;
   border-collapse: collapse;
   table-layout: fixed;
   color: #111111;
   font-size: 13px;
   text-align: left;
-  white-space: nowrap;
+  white-space: normal;
 }
 
 .provider-table th,
@@ -1451,29 +1451,32 @@
 
 .provider-table th:nth-child(1),
 .provider-table td:nth-child(1) {
-  width: 190px;
+  width: 16%;
 }
 
 .provider-table th:nth-child(2),
 .provider-table td:nth-child(2) {
-  width: 180px;
+  width: 24%;
 }
 
 .provider-table th:nth-child(3),
 .provider-table td:nth-child(3) {
-  width: 240px;
+  width: 20%;
 }
 
 .provider-table th:nth-child(4),
-.provider-table td:nth-child(4),
+.provider-table td:nth-child(4) {
+  width: 9%;
+}
+
 .provider-table th:nth-child(5),
 .provider-table td:nth-child(5) {
-  width: 110px;
+  width: 8%;
 }
 
 .provider-table th:nth-child(6),
 .provider-table td:nth-child(6) {
-  width: 100px;
+  width: 8%;
 }
 
 .provider-table td:nth-child(6) {
@@ -1487,9 +1490,7 @@
 
 .provider-table th:nth-child(7),
 .provider-table td:nth-child(7) {
-  position: sticky;
-  right: 0;
-  width: 178px;
+  width: 14%;
   border-left: 1px solid #e5e5e5;
   background: #ffffff;
 }
@@ -1558,7 +1559,7 @@
 }
 
 .provider-name-cell {
-  min-width: 190px;
+  min-width: 0;
 }
 
 .provider-name-main {
@@ -1591,8 +1592,9 @@
 
 .provider-name-copy strong,
 .provider-model-name {
+  display: block;
   overflow: hidden;
-  max-width: 220px;
+  max-width: 100%;
   color: #111111;
   font-size: 13px;
   font-weight: 500;
@@ -1618,7 +1620,7 @@
 
 .provider-workbench .provider-meta-line.mono {
   display: block;
-  max-width: 300px;
+  max-width: 100%;
   overflow: hidden;
   color: #6b6b6b;
   font-size: 12px;
@@ -1657,7 +1659,7 @@
 .provider-key-status-stack {
   display: grid;
   gap: 4px;
-  min-width: 120px;
+  min-width: 0;
   justify-items: start;
 }
 
@@ -1672,8 +1674,9 @@
 }
 
 .provider-endpoint-cell span {
+  display: block;
   overflow: hidden;
-  max-width: 230px;
+  max-width: 100%;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -1939,7 +1942,7 @@
 }
 
 .provider-workbench .provider-actions .provider-main-action {
-  min-width: 86px;
+  min-width: 76px;
   justify-content: center;
   font-weight: 600;
 }
