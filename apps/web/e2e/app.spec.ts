@@ -34,7 +34,13 @@ async function readComposerGeometry(page: Page, selector: string): Promise<{ bac
 test("sidebar selection is exclusive and conversation sections stay below primary navigation", async ({ page }) => {
   await useEnglishLocale(page);
   const state = createBaseState({ approvalStatus: "expired" });
-  state.aiTeammates = [createMockTeammate({ id: "teammate_sidebar_designer", displayName: "Designer" })];
+  state.aiTeammates = [
+    createMockTeammate({
+      id: "teammate_sidebar_designer",
+      displayName: "Designer",
+      avatarImageAttachmentId: "attachment_sidebar_designer",
+    }),
+  ];
   await mockDaemon(page, state);
   await page.goto("/");
 
@@ -52,6 +58,19 @@ test("sidebar selection is exclusive and conversation sections stay below primar
   await expect(primaryNav.getByRole("button", { name: "AI Teammates" })).toHaveCount(0);
   await expect(navigation.getByRole("button", { name: "AI Teammates" })).toBeVisible();
   await expect(navigation.getByRole("button", { name: "Recent conversations", exact: true })).toBeVisible();
+  const teammateAvatarGeometry = await navigation.getByRole("button", { name: "Designer", exact: true }).evaluate((row) => {
+    const avatar = row.querySelector<HTMLElement>(".teammate-avatar-image.compact");
+    const label = [...row.querySelectorAll<HTMLElement>("span")]
+      .find((span) => !span.classList.contains("avatar-initial") && !span.classList.contains("channel-mention") && !span.classList.contains("channel-unread"));
+    const avatarRect = avatar?.getBoundingClientRect();
+    const labelRect = label?.getBoundingClientRect();
+    return {
+      avatarWidth: Math.round(avatarRect?.width ?? 0),
+      gap: Math.round((labelRect?.left ?? 0) - (avatarRect?.right ?? 0)),
+    };
+  });
+  expect(teammateAvatarGeometry.avatarWidth).toBeLessThanOrEqual(24);
+  expect(teammateAvatarGeometry.gap).toBeGreaterThanOrEqual(4);
   await expect.poll(() => readSidebarSelection(page)).toEqual({ activeNav: [], selectedRows: [] });
 
   await navigation.getByRole("button", { name: "Engineering" }).click();

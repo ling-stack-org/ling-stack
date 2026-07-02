@@ -396,6 +396,9 @@ async function handleLingThreadGoalComplete(
         noEvidenceContinuationCount: 0,
         lastBlockerFingerprint: null,
         sameBlockerCount: 0,
+        lastContinuationStopReason: null,
+        lastContinuationStoppedAt: null,
+        lastContinuationEvidenceDelta: null,
       },
       new Date().toISOString(),
     );
@@ -2042,6 +2045,16 @@ interface ProposedPlanActionInput {
   readonly toParticipantLabel?: string;
   readonly workflowTitle?: string;
   readonly workflowSteps?: readonly string[];
+  readonly workflowStepPreviews?: readonly ProposedPlanWorkflowStepPreviewInput[];
+}
+
+interface ProposedPlanWorkflowStepPreviewInput {
+  readonly title: string;
+  readonly ownerId?: string;
+  readonly ownerLabel?: string;
+  readonly ownerConfidence?: "high" | "medium" | "low" | "none";
+  readonly ownerReason?: string;
+  readonly sourceSignals?: readonly string[];
 }
 
 function parsePutProposedPlanArtifactBody(value: unknown, threadId: string): CreateProposedPlanArtifactInput {
@@ -2132,6 +2145,7 @@ function parseProposedPlanActionBody(value: unknown): ProposedPlanActionInput {
     toParticipantLabel: readOptionalString(value, "toParticipantLabel")?.trim() || undefined,
     workflowTitle: readOptionalString(value, "workflowTitle")?.trim() || undefined,
     workflowSteps: readOptionalWorkflowSteps(value, "workflowSteps"),
+    workflowStepPreviews: readOptionalWorkflowStepPreviews(value, "workflowStepPreviews"),
   };
 }
 
@@ -2259,7 +2273,19 @@ function applyProposedPlanAction(
   }
   const createdBy = input.createdBy || "local-user";
   const workflowTitle = input.workflowTitle || plan.title;
-  const workflowSteps = input.workflowSteps && input.workflowSteps.length > 0 ? input.workflowSteps : [plan.bodyMarkdown];
+  const workflowSteps = input.workflowSteps && input.workflowSteps.length > 0
+    ? input.workflowSteps
+    : input.workflowStepPreviews && input.workflowStepPreviews.length > 0
+      ? input.workflowStepPreviews.map((preview) => preview.title)
+      : [plan.bodyMarkdown];
+  const workflowStepPreviews = workflowSteps.map((step, index) => ({
+    title: step,
+    ownerId: input.workflowStepPreviews?.[index]?.ownerId || input.toParticipantId,
+    ownerLabel: input.workflowStepPreviews?.[index]?.ownerLabel || input.toParticipantLabel,
+    ownerConfidence: input.workflowStepPreviews?.[index]?.ownerConfidence,
+    ownerReason: input.workflowStepPreviews?.[index]?.ownerReason,
+    sourceSignals: input.workflowStepPreviews?.[index]?.sourceSignals,
+  }));
   const workflow = store.createChannelWorkflow(
     {
       channelId: thread.channelId,
@@ -2273,35 +2299,36 @@ function applyProposedPlanAction(
     },
     now,
   );
-  const workflowStep = store.createChannelWorkflowStep(
+  const workflowStepRecords = workflowStepPreviews.map((stepPreview) => store.createChannelWorkflowStep(
     {
       workflowId: workflow.id,
-      title: workflowSteps.length > 1 ? workflowSteps[0] : `Implement ${workflowTitle}`,
+      title: workflowSteps.length > 1 ? stepPreview.title : `Implement ${workflowTitle}`,
       prompt: [
-        workflowSteps.join("\n"),
+        stepPreview.title,
         "",
         `Source proposed plan: ${plan.id}`,
         plan.sourceMessageId ? `Source message: ${plan.sourceMessageId}` : "",
       ].filter(Boolean).join("\n"),
-      toParticipantId: input.toParticipantId || "local-user",
-      toParticipantLabel: input.toParticipantLabel || "Local user",
+      toParticipantId: stepPreview.ownerId || "local-user",
+      toParticipantLabel: stepPreview.ownerLabel || "Unassigned",
       status: "queued",
       metadata: {
         sourceMessageId: plan.sourceMessageId,
       },
     },
     now,
-  );
+  ));
+  const firstWorkflowStep = workflowStepRecords[0];
   return {
     plan: requireUpdatedProposedPlan(store, plan.id, {
       status: "accepted",
       acceptedAt: plan.acceptedAt ?? now,
       convertedAt: now,
       acceptedWorkflowId: workflow.id,
-      acceptedWorkflowStepId: workflowStep.id,
+      acceptedWorkflowStepId: firstWorkflowStep?.id,
     }, now),
     workflowId: workflow.id,
-    workflowStepId: workflowStep.id,
+    workflowStepId: firstWorkflowStep?.id,
   };
 }
 
@@ -2384,6 +2411,68 @@ function readOptionalWorkflowSteps(record: Record<string, unknown>, key: string)
     .filter(Boolean)
     .slice(0, 50);
   return steps.length > 0 ? steps : undefined;
+}
+
+function readOptionalWorkflowStepPreviews(
+  record: Record<string, unknown>,
+  key: string,
+): readonly ProposedPlanWorkflowStepPreviewInput[] | undefined {
+  const value = record[key];
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!Array.isArray(value)) {
+    throw new HttpError(400, "bad_workflow_step_previews", `${key} must be an array.`);
+  }
+  const previews = value
+    .map((item) => {
+      if (!isRecord(item)) {
+        throw new HttpError(400, "bad_workflow_step_previews", "workflowStepPreviews items must be objects.");
+      }
+      const title = readString(item, "title").trim();
+      if (!title) {
+        throw new HttpError(400, "bad_workflow_step_previews", "workflowStepPreviews items require title.");
+      }
+      return {
+        title,
+        ownerId: readOptionalString(item, "ownerId")?.trim() || undefined,
+        ownerLabel: readOptionalString(item, "ownerLabel")?.trim() || undefined,
+        ownerConfidence: readOptionalWorkflowOwnerConfidence(item, "ownerConfidence"),
+        ownerReason: readOptionalString(item, "ownerReason")?.trim() || undefined,
+        sourceSignals: readOptionalStringArray(item, "sourceSignals"),
+      };
+    })
+    .slice(0, 50);
+  return previews.length > 0 ? previews : undefined;
+}
+
+function readOptionalWorkflowOwnerConfidence(
+  record: Record<string, unknown>,
+  key: string,
+): ProposedPlanWorkflowStepPreviewInput["ownerConfidence"] {
+  const value = readOptionalString(record, key)?.trim();
+  if (!value) {
+    return undefined;
+  }
+  if (value === "high" || value === "medium" || value === "low" || value === "none") {
+    return value;
+  }
+  throw new HttpError(400, "bad_workflow_step_previews", `${key} must be high, medium, low, or none.`);
+}
+
+function readOptionalStringArray(record: Record<string, unknown>, key: string): readonly string[] | undefined {
+  const value = record[key];
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!Array.isArray(value)) {
+    throw new HttpError(400, "bad_string_array", `${key} must be an array.`);
+  }
+  const items = value
+    .map((item) => typeof item === "string" ? item.trim() : "")
+    .filter(Boolean)
+    .slice(0, 20);
+  return items.length > 0 ? items : undefined;
 }
 
 function mergeGoalEvidenceRefs(

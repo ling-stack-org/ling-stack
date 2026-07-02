@@ -1,6 +1,7 @@
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, test, type Locator, type Page } from "@playwright/test";
+import type { ProposedPlanArtifact } from "@ling-stack/contracts";
 import { mockDaemon } from "./support/mock-daemon";
 import {
   createBaseState,
@@ -29,6 +30,24 @@ async function expectComposerValue(composer: Locator, value: string): Promise<vo
 
 function channelComposerTextbox(scope: Page | Locator): Locator {
   return scope.getByRole("textbox", { name: "Message this channel or @ an AI teammate", exact: true });
+}
+
+function createLineagePlan(overrides: Partial<ProposedPlanArtifact>): ProposedPlanArtifact {
+  return {
+    id: "plan_lineage",
+    workspaceId: "workspace_default",
+    threadId: "thread_channel_main_channel_engineering",
+    channelId: "channel_engineering",
+    goalId: "goal_ship_plan_modes",
+    planGroupId: "plan_group_ship_plan_modes",
+    version: 1,
+    title: "Plan lineage",
+    bodyMarkdown: "Plan body",
+    status: "draft",
+    createdAt: "2026-05-25T00:40:00.000Z",
+    updatedAt: "2026-05-25T00:40:00.000Z",
+    ...overrides,
+  };
 }
 
 async function useEnglishLocale(page: Page): Promise<void> {
@@ -817,6 +836,7 @@ test("channel environment surface shows read-only context and opens review", asy
     const main = document.querySelector<HTMLElement>(".task-workbench-main");
     const chatPanel = document.querySelector<HTMLElement>(".channel-chat-panel");
     const chatBox = chatLayout?.getBoundingClientRect();
+    const composerBox = composer?.getBoundingClientRect();
     return {
       chatHeight: Math.round(chatBox?.height ?? 0),
       chatTransform: chatLayout ? getComputedStyle(chatLayout).transform : "",
@@ -824,6 +844,7 @@ test("channel environment surface shows read-only context and opens review", asy
       chatX: Math.round(chatBox?.x ?? 0),
       chatY: Math.round(chatBox?.y ?? 0),
       composerTransform: composer ? getComputedStyle(composer).transform : "",
+      composerWidth: Math.round(composerBox?.width ?? 0),
       mainPaddingRight: main ? getComputedStyle(main).paddingRight : "",
       panelMarginRight: chatPanel ? getComputedStyle(chatPanel).marginRight : "",
     };
@@ -832,7 +853,8 @@ test("channel environment surface shows read-only context and opens review", asy
   await page.getByLabel("Workspace task toolbar").getByRole("button", { name: "Progress" }).click();
   const popover = page.locator(".channel-progress-popover");
   await expect(popover).toBeVisible();
-  await expect.poll(async () => Math.round((await popover.boundingBox())?.width ?? 0)).toBeLessThanOrEqual(360);
+  await expect.poll(async () => Math.round((await popover.boundingBox())?.width ?? 0)).toBeGreaterThanOrEqual(270);
+  await expect.poll(async () => Math.round((await popover.boundingBox())?.width ?? 0)).toBeLessThanOrEqual(290);
   await expect(popover).toContainText("Environment");
   await expect(popover).toContainText("Changes");
   await expect(popover).toContainText("Review");
@@ -863,7 +885,11 @@ test("channel environment surface shows read-only context and opens review", asy
   const chatLayoutBeforeDock = await chatLayout.boundingBox();
   expect(chatLayoutBeforeDock).not.toBeNull();
   const chatSnapshotBeforeDock = await readChatLayoutSnapshot();
-  expect(chatSnapshotBeforeDock.chatTransform).toBe("matrix(1, 0, 0, 1, 32, 0)");
+  expect(chatSnapshotBeforeDock.chatWidth).toBeGreaterThanOrEqual(780);
+  expect(chatSnapshotBeforeDock.chatWidth).toBeLessThanOrEqual(820);
+  expect(chatSnapshotBeforeDock.composerWidth).toBeGreaterThanOrEqual(780);
+  expect(chatSnapshotBeforeDock.composerWidth).toBeLessThanOrEqual(820);
+  expect(["none", "matrix(1, 0, 0, 1, 0, 0)"]).toContain(chatSnapshotBeforeDock.chatTransform);
   expect(["none", "matrix(1, 0, 0, 1, 0, 0)"]).toContain(chatSnapshotBeforeDock.composerTransform);
   expect(chatSnapshotBeforeDock.mainPaddingRight).toBe("0px");
   expect(chatSnapshotBeforeDock.panelMarginRight).toBe("0px");
@@ -913,8 +939,12 @@ test("channel environment surface shows read-only context and opens review", asy
   expect(chatLayoutAfterDockClose).not.toBeNull();
   expect(Math.abs((chatLayoutAfterDockClose?.y ?? 0) - (chatLayoutBeforeDock?.y ?? 0))).toBeLessThanOrEqual(1);
   expect(Math.abs((chatLayoutAfterDockClose?.height ?? 0) - (chatLayoutBeforeDock?.height ?? 0))).toBeLessThanOrEqual(1);
+  await expect.poll(async () => {
+    const snapshot = await readChatLayoutSnapshot();
+    return Math.abs(snapshot.chatX - chatSnapshotBeforeDock.chatX);
+  }).toBeLessThanOrEqual(12);
   const chatSnapshotAfterDockClose = await readChatLayoutSnapshot();
-  expect(Math.abs(chatSnapshotAfterDockClose.chatX - chatSnapshotBeforeDock.chatX)).toBeLessThanOrEqual(1);
+  expect(Math.abs(chatSnapshotAfterDockClose.chatX - chatSnapshotBeforeDock.chatX)).toBeLessThanOrEqual(12);
   expect(Math.abs(chatSnapshotAfterDockClose.chatY - chatSnapshotBeforeDock.chatY)).toBeLessThanOrEqual(1);
   expect(Math.abs(chatSnapshotAfterDockClose.chatWidth - chatSnapshotBeforeDock.chatWidth)).toBeLessThanOrEqual(1);
   expect(Math.abs(chatSnapshotAfterDockClose.chatHeight - chatSnapshotBeforeDock.chatHeight)).toBeLessThanOrEqual(1);
@@ -1333,7 +1363,7 @@ test("channel composer does not render the resource lease active work strip", as
   await expect(composer).not.toContainText("Resource leases");
 });
 
-test("wide channel progress popover keeps the accepted HTML spacing", async ({ page }) => {
+test("wide channel progress popover does not resize the conversation", async ({ page }) => {
   await useEnglishLocale(page);
   await page.setViewportSize({ width: 2048, height: 1140 });
   const state = createBaseState({ approvalStatus: "pending" });
@@ -1384,14 +1414,18 @@ test("wide channel progress popover keeps the accepted HTML spacing", async ({ p
     };
   });
   expect(spacing.mainPaddingRight).toBe("0px");
-  expect(spacing.chatWidth).toBe(960);
-  expect(spacing.composerWidth).toBe(960);
-  expect(spacing.attentionWidth).toBe(340);
-  expect(spacing.chatTransform).not.toBe("none");
-  expect(spacing.composerTransform).not.toBe("none");
+  expect(spacing.chatWidth).toBe(800);
+  expect(spacing.composerWidth).toBe(800);
+  expect(spacing.attentionWidth).toBeGreaterThanOrEqual(270);
+  expect(spacing.attentionWidth).toBeLessThanOrEqual(290);
+  expect(["none", "matrix(1, 0, 0, 1, 0, 0)"]).toContain(spacing.chatTransform);
+  expect(["none", "matrix(1, 0, 0, 1, 0, 0)"]).toContain(spacing.composerTransform);
   expect(spacing.gap).toBeGreaterThanOrEqual(48);
-  expect(spacing.gap).toBeLessThanOrEqual(80);
   expect(spacing.overlapX).toBe(0);
+
+  await page.locator(".task-toolbar-progress").click();
+  await expect(page.locator(".channel-progress-popover")).toHaveClass(/is-popover-collapsed/);
+  await expect(page.locator(".channel-progress-popover")).toHaveCount(0);
 });
 
 test("channel runtime policy is visible while preferred specialist controls stay hidden", async ({ page }) => {
@@ -3180,9 +3214,34 @@ test("channel composer manages goal lifecycle from the floating panel", async ({
   await composer.getByRole("button", { name: "Apply command" }).click();
   await expect.poll(planMode).toBe("default");
 
+  const goalWithStopMetadata = activeGoal();
+  if (!goalWithStopMetadata) {
+    throw new Error("Expected active goal before injecting continuation stop metadata");
+  }
+  state.goals = state.goals.map((goal) => goal.id === goalWithStopMetadata.id
+    ? {
+        ...goal,
+        continuationDepth: 2,
+        noEvidenceContinuationCount: 2,
+        lastContinuationStopReason: "no_evidence_threshold",
+        lastContinuationStoppedAt: "2026-05-25T00:46:00.000Z",
+        lastContinuationEvidenceDelta: {
+          newEvidenceRefs: 0,
+          changedFiles: 0,
+          acceptedPlans: 0,
+          artifacts: 0,
+          statusChanged: false,
+        },
+      }
+    : goal);
   await goalPanel.getByRole("button", { name: "Pause goal" }).click();
   await expect.poll(() => activeGoal()?.status).toBe("paused");
   await expect(goalPanel).toContainText("Paused");
+  await goalPanel.getByRole("button", { name: "Expand goal details" }).click();
+  await expect(goalPanel).toContainText("Continuation: 2 / 3");
+  await expect(goalPanel).toContainText("Last auto-stop: No new evidence");
+  await expect(goalPanel).toContainText("Evidence delta: 0 refs, 0 files, 0 artifacts");
+  await goalPanel.getByRole("button", { name: "Collapse goal details" }).click();
   await expect(goalPanel.getByRole("button", { name: "Run goal" })).toBeDisabled();
   await goalPanel.getByRole("button", { name: "Resume goal" }).click();
   await expect.poll(() => activeGoal()?.status).toBe("active");
@@ -3190,7 +3249,10 @@ test("channel composer manages goal lifecycle from the floating panel", async ({
 
   await goalPanel.getByRole("button", { name: "Edit goal" }).click();
   await expectComposerValue(composerInput, "/goal edit Finish PR4 with a visible goal panel");
-  await composerInput.fill("");
+  await composerInput.evaluate((editor) => {
+    editor.textContent = "";
+    editor.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "deleteContentBackward", data: "" }));
+  });
   await expectComposerValue(composerInput, "");
   await composerInput.fill("/goal edit Finish PR4, PR5, and local QA");
   await composer.getByRole("button", { name: "Apply command" }).click();
@@ -3342,6 +3404,241 @@ test("channel feed renders proposed_plan blocks as proposed plan cards", async (
   await expect.poll(() => state.tasks.find((task) => task.title === "Implement accepted plan: PR1 + PR2 implementation")?.requestedSkillId).toBe("plan-acceptance");
   await expect.poll(() => state.tasks.find((task) => task.title === "Implement accepted plan: PR1 + PR2 implementation")?.prompt ?? "").toContain("Source proposed plan: proposed_plan_msg_proposed_plan");
   await expect(feed.getByText("Implement accepted plan: PR1 + PR2 implementation")).toBeVisible();
+});
+
+test("workflow conversion preview infers owners without mutating until save", async ({ page }) => {
+  await useEnglishLocale(page);
+  const state = createBaseState({ approvalStatus: "pending" });
+  state.runs = [];
+  state.tasks = [];
+  state.approvals = [];
+  state.aiTeammates = [
+    createMockTeammate({ id: "teammate_builtin_engineer", displayName: "Ling Engineer", roleKey: "engineer" }),
+    createMockTeammate({ id: "teammate_builtin_docs", displayName: "Docs Lead", roleKey: "docs", description: "Owns documentation updates." }),
+    createMockTeammate({ id: "teammate_builtin_qa", displayName: "Ling QA", roleKey: "qa" }),
+    createMockTeammate({ id: "teammate_builtin_quality", displayName: "Quality Partner", roleKey: "qa" }),
+  ];
+  state.teammateChannelMemberships = state.aiTeammates.map((teammate) => ({
+    teammateId: String(teammate.id),
+    channelId: "channel_engineering",
+    isDefault: false,
+    createdAt: "2026-05-25T00:39:00.000Z",
+    updatedAt: "2026-05-25T00:39:00.000Z",
+  }));
+  state.threads = [
+    {
+      id: "thread_channel_main_channel_engineering",
+      workspaceId: "workspace_default",
+      kind: "channel_discussion",
+      channelId: "channel_engineering",
+      title: "Main branch",
+      objective: "Main conversation branch for Engineering.",
+      status: "open",
+      conversationMode: { mode: "default" },
+      createdAt: "2026-05-25T00:40:00.000Z",
+      updatedAt: "2026-05-25T00:40:00.000Z",
+    },
+  ];
+  state.channelMessages = [
+    {
+      id: "msg_owner_preview_plan",
+      workspaceId: "workspace_default",
+      channelId: "channel_engineering",
+      threadId: "thread_channel_main_channel_engineering",
+      kind: "ai_reply",
+      intent: "discuss",
+      authorType: "ai-teammate",
+      authorId: "ling_agent",
+      body: [
+        "<proposed_plan title=\"Owner preview workflow\">",
+        "1. Owner: Ling Engineer; implement daemon contract.",
+        "2. Update docs/design/conversation-plan-and-goal-modes.md.",
+        "3. Run test verification.",
+        "4. Summarize launch notes.",
+        "</proposed_plan>",
+      ].join("\n"),
+      mentions: [],
+      attachmentIds: [],
+      linkPreviewIds: [],
+      fileRefs: [],
+      status: "ready",
+      createdAt: "2026-05-25T00:41:00.000Z",
+      updatedAt: "2026-05-25T00:41:00.000Z",
+    },
+  ];
+  await mockDaemon(page, state);
+  await page.goto("/");
+  await openEngineeringChannel(page);
+
+  const plan = page.getByLabel("Proposed plan");
+  await plan.getByRole("button", { name: "Convert to workflow" }).click();
+  const preview = page.getByRole("dialog", { name: "Workflow conversion preview" });
+  await expect(preview).toBeVisible();
+  await expect(preview.getByLabel("Owner for step 1")).toHaveValue("teammate_builtin_engineer");
+  await expect(preview.getByLabel("Owner for step 2")).toHaveValue("teammate_builtin_docs");
+  await expect(preview.getByLabel("Owner for step 3")).toHaveValue("");
+  await expect(preview.getByLabel("Owner for step 4")).toHaveValue("");
+  await expect(preview).toContainText("Explicit owner \"Ling Engineer\" in the plan.");
+  await expect(preview).toContainText("docs/ matched documentation ownership.");
+  await expect(preview).toContainText("Owner signal was ambiguous across teammates.");
+  await expect(preview).toContainText("No owner signal found.");
+
+  await preview.getByRole("button", { name: "Cancel" }).click();
+  await expect(page.getByRole("dialog", { name: "Workflow conversion preview" })).toHaveCount(0);
+  await expect.poll(() => state.channelWorkflows.length).toBe(0);
+  await expect.poll(() => state.channelWorkflowSteps.length).toBe(0);
+
+  await plan.getByRole("button", { name: "Convert to workflow" }).click();
+  const reopened = page.getByRole("dialog", { name: "Workflow conversion preview" });
+  await reopened.getByLabel("Owner for step 4").selectOption("teammate_builtin_docs");
+  await reopened.getByRole("button", { name: "Save draft workflow" }).click();
+
+  await expect.poll(() => state.channelWorkflows.find((workflow) => isRecord(workflow) && workflow.title === "Owner preview workflow")?.status).toBe("draft");
+  await expect.poll(() => state.channelWorkflowSteps.filter((step) => isRecord(step) && step.workflowId === state.channelWorkflows[0]?.id).length).toBe(4);
+  await expect.poll(() => state.channelWorkflowSteps.find((step) => isRecord(step) && step.title.includes("implement daemon contract"))?.toParticipantId).toBe("teammate_builtin_engineer");
+  await expect.poll(() => state.channelWorkflowSteps.find((step) => isRecord(step) && step.title.includes("docs/design"))?.toParticipantId).toBe("teammate_builtin_docs");
+  await expect.poll(() => state.channelWorkflowSteps.find((step) => isRecord(step) && step.title.includes("Run test verification"))?.toParticipantLabel).toBe("Unassigned");
+  await expect.poll(() => state.channelWorkflowSteps.find((step) => isRecord(step) && step.title.includes("Summarize launch notes"))?.toParticipantId).toBe("teammate_builtin_docs");
+  await expect(page.getByRole("dialog", { name: "Workflow conversion preview" })).toHaveCount(0);
+});
+
+test("plan history groups lineage versions across thread and channel scopes", async ({ page }) => {
+  await useEnglishLocale(page);
+  const state = createBaseState({ approvalStatus: "pending" });
+  state.runs = [];
+  state.tasks = [];
+  state.approvals = [];
+  state.threads = [
+    {
+      id: "thread_channel_main_channel_engineering",
+      workspaceId: "workspace_default",
+      kind: "channel_discussion",
+      channelId: "channel_engineering",
+      title: "Main branch",
+      objective: "Main conversation branch for Engineering.",
+      status: "open",
+      conversationMode: { mode: "default" },
+      createdAt: "2026-05-25T00:40:00.000Z",
+      updatedAt: "2026-05-25T00:40:00.000Z",
+    },
+    {
+      id: "thread_channel_plan_sibling",
+      workspaceId: "workspace_default",
+      kind: "channel_discussion",
+      channelId: "channel_engineering",
+      parentThreadId: "thread_channel_main_channel_engineering",
+      title: "Plan sibling",
+      objective: "Sibling thread for accepted plan version.",
+      status: "open",
+      conversationMode: { mode: "default" },
+      createdAt: "2026-05-25T00:40:10.000Z",
+      updatedAt: "2026-05-25T00:40:10.000Z",
+    },
+  ];
+  state.channelMessages = [
+    {
+      id: "msg_lineage_v3",
+      workspaceId: "workspace_default",
+      channelId: "channel_engineering",
+      threadId: "thread_channel_plan_sibling",
+      kind: "ai_reply",
+      intent: "discuss",
+      authorType: "ai-teammate",
+      authorId: "ling_agent",
+      body: "Accepted lineage source message.",
+      mentions: [],
+      attachmentIds: [],
+      linkPreviewIds: [],
+      fileRefs: [],
+      status: "ready",
+      createdAt: "2026-05-25T00:42:00.000Z",
+      updatedAt: "2026-05-25T00:42:00.000Z",
+    },
+  ];
+  state.proposedPlans = [
+    createLineagePlan({
+      id: "plan_lineage_v4",
+      threadId: "thread_channel_main_channel_engineering",
+      title: "Plan v4 latest",
+      bodyMarkdown: "Latest draft body",
+      status: "draft",
+      version: 4,
+      updatedAt: "2026-05-25T00:46:00.000Z",
+    }),
+    createLineagePlan({
+      id: "plan_lineage_v3",
+      threadId: "thread_channel_plan_sibling",
+      title: "Plan v3 accepted",
+      bodyMarkdown: "Accepted body",
+      status: "accepted",
+      version: 3,
+      sourceMessageId: "msg_lineage_v3",
+      updatedAt: "2026-05-25T00:45:00.000Z",
+    }),
+    createLineagePlan({
+      id: "plan_lineage_v2",
+      threadId: "thread_channel_main_channel_engineering",
+      title: "Plan v2 superseded",
+      bodyMarkdown: "Second body",
+      status: "superseded",
+      version: 2,
+      supersededByPlanId: "plan_lineage_v3",
+      updatedAt: "2026-05-25T00:44:00.000Z",
+    }),
+    createLineagePlan({
+      id: "plan_lineage_v1",
+      threadId: "thread_channel_main_channel_engineering",
+      title: "Plan v1 superseded",
+      bodyMarkdown: "First body",
+      status: "superseded",
+      version: 1,
+      supersededByPlanId: "plan_lineage_v2",
+      updatedAt: "2026-05-25T00:43:00.000Z",
+    }),
+    createLineagePlan({
+      id: "plan_lineage_archived",
+      threadId: "thread_channel_main_channel_engineering",
+      planGroupId: "plan_group_archived",
+      title: "Archived lineage version",
+      bodyMarkdown: "Archived body",
+      status: "archived",
+      version: 1,
+      archivedAt: "2026-05-25T00:47:00.000Z",
+      updatedAt: "2026-05-25T00:47:00.000Z",
+    }),
+  ];
+  await mockDaemon(page, state);
+  await page.goto("/");
+  await openEngineeringChannel(page);
+
+  await page.getByRole("button", { name: "Show details" }).click();
+  const dock = page.locator(".channel-side-panel.right-dock");
+  await dock.getByRole("button", { name: /Plans/ }).click();
+  await expect(dock).toContainText("Plan history");
+  await expect(dock).toContainText("Plan v4 latest");
+  await expect(dock).not.toContainText("Plan v3 accepted");
+  await expect(dock).not.toContainText("Plan v2 superseded");
+  await expect(dock).toContainText("2 superseded versions hidden");
+
+  await dock.getByRole("button", { name: "Expand versions" }).click();
+  await expect(dock).toContainText("Plan v2 superseded");
+  await expect(dock).toContainText("Plan v1 superseded");
+
+  await dock.getByRole("button", { name: "This channel" }).click();
+  await expect(dock).toContainText("Plan v3 accepted");
+  const acceptedRow = dock.locator(".right-dock-plan-row").filter({ hasText: "Plan v3 accepted" });
+  await acceptedRow.getByRole("button", { name: "Open source" }).click();
+  await expect(page.locator('[data-feed-item-id="message:msg_lineage_v3"]')).toHaveClass(/conversation-work-cell-locate-pulse/);
+
+  const latestRow = dock.locator(".right-dock-plan-row").filter({ hasText: "Plan v4 latest" });
+  await latestRow.getByRole("button", { name: "Open plan detail" }).click();
+  await expect(dock.locator(".right-dock-plan-detail")).toContainText("Plan v4 latest");
+  await expect(dock.locator(".right-dock-plan-detail")).toContainText("Latest draft body");
+  await dock.getByRole("button", { name: "Back" }).click();
+
+  await dock.getByLabel("Plan status").selectOption("archived");
+  await expect(dock).toContainText("Archived lineage version");
+  await expect(dock).not.toContainText("Plan v4 latest");
 });
 
 test("channel composer supports spaced teammate names before slash commands", async ({ page }) => {

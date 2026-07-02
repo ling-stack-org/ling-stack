@@ -23,6 +23,20 @@ export type ConversationModeKind = (typeof conversationModeKinds)[number];
 export type LingThreadGoalStatus = "active" | "paused" | "blocked" | "usage_limited" | "budget_limited" | "complete" | "cleared" | "replaced";
 export type LingThreadGoalCompletionActor = "local-user" | "ling-agent";
 export type GoalUsageSource = "provider" | "estimated" | "mixed";
+export type GoalContinuationStopReason =
+  | "max_depth"
+  | "no_evidence_threshold"
+  | "same_blocker_threshold"
+  | "plan_mode_active"
+  | "pending_approval"
+  | "active_run_exists"
+  | "latest_run_not_terminal"
+  | "goal_not_active"
+  | "budget_limited"
+  | "usage_limited"
+  | "manual_stop"
+  | "unknown";
+export type GoalContinuationDecision = "started" | "stopped";
 export type ProposedPlanArtifactStatus = "draft" | "accepted" | "superseded" | "archived";
 export type LingThreadSearchField =
   | "thread_title"
@@ -61,6 +75,30 @@ export type GoalEvidenceRef =
   | { readonly kind: "approval"; readonly id: string }
   | { readonly kind: "workflow"; readonly id: string };
 
+export interface GoalContinuationEvidenceDelta {
+  readonly newEvidenceRefs: number;
+  readonly changedFiles: number;
+  readonly acceptedPlans: number;
+  readonly artifacts: number;
+  readonly statusChanged: boolean;
+}
+
+export interface GoalContinuationEvent {
+  readonly id: string;
+  readonly goalId: string;
+  readonly chainId: string;
+  readonly sourceRunId: string;
+  readonly continuationRunId?: string;
+  readonly decision: GoalContinuationDecision;
+  readonly stopReason?: GoalContinuationStopReason;
+  readonly continuationDepth: number;
+  readonly noEvidenceContinuationCount: number;
+  readonly sameBlockerCount: number;
+  readonly blockerFingerprint?: string;
+  readonly evidenceDelta: GoalContinuationEvidenceDelta;
+  readonly createdAt: string;
+}
+
 export interface LingThreadGoal {
   readonly id: string;
   readonly workspaceId: string;
@@ -87,6 +125,9 @@ export interface LingThreadGoal {
   readonly noEvidenceContinuationCount: number;
   readonly lastBlockerFingerprint?: string;
   readonly sameBlockerCount: number;
+  readonly lastContinuationStopReason?: GoalContinuationStopReason;
+  readonly lastContinuationStoppedAt?: string;
+  readonly lastContinuationEvidenceDelta?: GoalContinuationEvidenceDelta;
 }
 
 export interface LingThreadGoalPutRequest {
@@ -195,6 +236,16 @@ export interface ProposedPlanActionRequest {
   readonly toParticipantLabel?: string;
   readonly workflowTitle?: string;
   readonly workflowSteps?: readonly string[];
+  readonly workflowStepPreviews?: readonly ProposedPlanWorkflowStepPreview[];
+}
+
+export interface ProposedPlanWorkflowStepPreview {
+  readonly title: string;
+  readonly ownerId?: string;
+  readonly ownerLabel?: string;
+  readonly ownerConfidence?: "high" | "medium" | "low" | "none";
+  readonly ownerReason?: string;
+  readonly sourceSignals?: readonly string[];
 }
 
 export interface LingThread {
