@@ -1930,29 +1930,18 @@ export function AppShell(): JSX.Element {
         channels={channels}
         localTeammates={localTeammates}
         defaultProviderId={workspaceDefaultProviderPresetId}
-        aiCouncils={aiCouncils}
-        aiCouncilsLoading={aiCouncilsLoading}
-        selectedChannelId={selectedChannelId}
-        channelCouncilPolicy={channelCouncilPolicy}
-        channelCouncilSaving={channelCouncilSaving}
         createRequestId={teammateCreateRequestId}
         onCreateRequestHandled={() => setTeammateCreateRequestId(0)}
         onCreateTeammate={(input) => void addAiTeammate(input)}
         onRemoveTeammate={(teammateId) => void removeAiTeammate(teammateId)}
         onToggleTeammatePinned={(teammateId) => void toggleAiTeammatePinned(teammateId)}
         onToggleTeammateHidden={(teammateId) => void toggleAiTeammateHidden(teammateId)}
-        onRefreshAiCouncils={() => void refreshAiCouncils()}
-        onImportCouncilToChannel={importAiCouncilToChannel}
         onOpenTeammate={(teammateId) => {
           clearSettingsWorkspaceToolView();
           selectAiTeammate(teammateId);
         }}
         onOpenCouncils={() => {
           openSettingsWorkspaceTool("councils");
-        }}
-        onOpenChannel={(channelId) => {
-          clearSettingsWorkspaceToolView();
-          selectWorkspaceChannel(channelId);
         }}
         onOpenProviders={() => openSettingsWorkspaceTool("providers")}
         onBackToWorkspaceTools={returnToWorkspaceTools}
@@ -2407,22 +2396,14 @@ export function AppShell(): JSX.Element {
                     channels={channels}
                     localTeammates={localTeammates}
                     defaultProviderId={workspaceDefaultProviderPresetId}
-                    aiCouncils={aiCouncils}
-                    aiCouncilsLoading={aiCouncilsLoading}
-                    selectedChannelId={selectedChannelId}
-                    channelCouncilPolicy={channelCouncilPolicy}
-                    channelCouncilSaving={channelCouncilSaving}
                     createRequestId={teammateCreateRequestId}
                     onCreateRequestHandled={() => setTeammateCreateRequestId(0)}
                     onCreateTeammate={(input) => void addAiTeammate(input)}
                     onRemoveTeammate={(teammateId) => void removeAiTeammate(teammateId)}
                     onToggleTeammatePinned={(teammateId) => void toggleAiTeammatePinned(teammateId)}
                     onToggleTeammateHidden={(teammateId) => void toggleAiTeammateHidden(teammateId)}
-                    onRefreshAiCouncils={() => void refreshAiCouncils()}
-                    onImportCouncilToChannel={importAiCouncilToChannel}
                     onOpenTeammate={selectAiTeammate}
                     onOpenCouncils={() => openSettingsWorkspaceTool("councils")}
-                    onOpenChannel={selectWorkspaceChannel}
                     onOpenProviders={() => openSettingsWorkspaceTool("providers")}
                     onBackToWorkspaceTools={settingsReturnSection === "workspace-tools" ? returnToWorkspaceTools : undefined}
                   />
