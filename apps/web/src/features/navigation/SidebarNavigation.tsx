@@ -19,8 +19,10 @@ import {
   MoreHorizontal,
   PanelLeftClose,
   PanelLeftOpen,
+  PlugZap,
   Plus,
   Settings,
+  SlidersHorizontal,
   Timer,
 } from "lucide-react";
 import { useI18n } from "../../i18n.js";
@@ -81,6 +83,10 @@ export function SidebarNavigation({
   onOpenConversationHome,
   onCreateChannel,
   onCreateTeammate,
+  onQuickCreateTeammate,
+  quickCreateTeammateDisabled = false,
+  quickCreateTeammateDescription = "",
+  onOpenTeammateModelWorkbench,
   onCreateChannelBranch,
   onArchiveChannel,
   onArchiveChannelBranch,
@@ -111,6 +117,10 @@ export function SidebarNavigation({
   readonly onOpenConversationHome: () => void;
   readonly onCreateChannel: () => void;
   readonly onCreateTeammate?: () => void;
+  readonly onQuickCreateTeammate?: () => void | Promise<void>;
+  readonly quickCreateTeammateDisabled?: boolean;
+  readonly quickCreateTeammateDescription?: string;
+  readonly onOpenTeammateModelWorkbench?: () => void;
   readonly onCreateChannelBranch?: (channelId: string, name: string) => void | Promise<void>;
   readonly onArchiveChannel?: (channelId: string) => void | Promise<void>;
   readonly onArchiveChannelBranch?: (channelId: string, branchId: string) => void | Promise<void>;
@@ -418,9 +428,28 @@ export function SidebarNavigation({
         onMenuOpenChange={(open) => setOpenSectionMenu(open ? "teammates" : "")}
         menuItems={[
           {
-            id: "new-teammate",
-            label: t("New teammate"),
+            id: "quick-create-teammate",
+            label: t("Quick create default teammate"),
+            description: quickCreateTeammateDescription || t("Engineer · use the default ready model"),
             icon: <Plus size={14} />,
+            disabled: !onQuickCreateTeammate || quickCreateTeammateDisabled,
+            disabledLabel: t("Open Model Workbench before quick creating a teammate."),
+            onSelect: () => void onQuickCreateTeammate?.(),
+          },
+          ...(quickCreateTeammateDisabled && onOpenTeammateModelWorkbench ? [
+            {
+              id: "open-teammate-model-workbench",
+              label: t("Open Model Workbench"),
+              description: t("Configure a ready chat model before creating."),
+              icon: <PlugZap size={14} />,
+              onSelect: onOpenTeammateModelWorkbench,
+            },
+          ] satisfies readonly SidebarSectionMenuItem[] : []),
+          {
+            id: "advanced-teammate-create",
+            label: t("More configuration"),
+            description: t("Choose role, model, channels, and advanced settings."),
+            icon: <SlidersHorizontal size={14} />,
             disabled: !onCreateTeammate,
             onSelect: () => onCreateTeammate?.(),
           },
@@ -626,6 +655,7 @@ function SidebarSection({
     railCollapsed ? "rail-collapsed" : "",
     collapsed ? "collapsed" : "expanded",
   ].filter(Boolean).join(" ");
+  const hasRichMenuItems = menuItems?.some((item) => item.description) ?? false;
 
   useEffect(() => {
     const closeMenu = onMenuOpenChange;
@@ -693,7 +723,7 @@ function SidebarSection({
             >
               <MoreHorizontal size={14} />
             </button>
-            <span className="sidebar-section-menu-popover" role="menu" hidden={!menuOpen}>
+            <span className={hasRichMenuItems ? "sidebar-section-menu-popover rich" : "sidebar-section-menu-popover"} role="menu" hidden={!menuOpen}>
               {menuItems.map((item) => (
                 <button
                   key={item.id}
@@ -711,7 +741,10 @@ function SidebarSection({
                   }}
                 >
                   {item.icon}
-                  <span>{item.label}</span>
+                  <span className="sidebar-section-menu-copy">
+                    <span>{item.label}</span>
+                    {item.description ? <small>{item.description}</small> : null}
+                  </span>
                 </button>
               ))}
             </span>
@@ -732,6 +765,7 @@ interface SidebarSectionMenuItem {
   readonly id: string;
   readonly label: string;
   readonly icon: ReactNode;
+  readonly description?: string;
   readonly disabled?: boolean;
   readonly disabledLabel?: string;
   readonly danger?: boolean;

@@ -642,6 +642,18 @@ Rules:
 - client-specific layout language belongs in client sections, not in the storage or
   runtime contract.
 
+Web Council Workspace module boundary:
+
+- `CouncilWorkspacePage.tsx` owns page-level orchestration: selected council, loading
+  state, create/clone/archive/update callbacks, and data passed down from AppShell.
+- `CouncilWorkspacePanels.tsx` owns the detail layout and tab panels: overview, members,
+  channel attach/open management, custom settings, and health findings.
+- Shared council health and view-model derivation should stay in core helpers such as
+  `@ling-stack/core/ai-council-view`, not be reimplemented in Web panels.
+- AppShell should keep Council Workspace work to route selection and prop wiring. New
+  council product behavior should land in daemon/core contracts first, then be rendered
+  through the workspace components.
+
 Desktop-specific expectations:
 
 - the desktop app can attach a council to a channel with the same API call as Web;
@@ -907,6 +919,8 @@ Implemented base slices:
   council endpoints.
 - [x] Council Workspace page with overview, create/clone/archive, member editing,
   custom settings, health, and channel attach/open management.
+- [x] Council Workspace Web component boundary split between page orchestration and
+  panel rendering.
 - [x] client-neutral `@ling-stack/core/ai-council-view` council health view model for Web
   and future Desktop chips.
 

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Bot,
   Brain,
@@ -31,7 +31,7 @@ import type {
   WorkflowStepTemplate,
 } from "@ling-stack/core/skill-types";
 import { useI18n } from "../../i18n.js";
-import { isMediaProvider, providerModelRouteLabel, providerPreflightReady } from "../../lib/providers.js";
+import { providerPreflightReady } from "../../lib/providers.js";
 import { MetaRow, SettingsToolReturnRow } from "../../shared/components/index.js";
 import type {
   AiCouncil,
@@ -45,17 +45,11 @@ import {
   workflowPhaseLabel,
 } from "./helpers.js";
 import { TeammateAvatarView } from "./TeammateAvatarView.js";
+import { TeammateCreateDrawer } from "./TeammateCreateDrawer.js";
 import type {
   LocalTeammateCreateInput,
   LocalTeammateDraft,
 } from "./types.js";
-
-const defaultMemoryScopeLabels: readonly string[] = [
-  "private-chat-summary",
-  "private-notes",
-  "channel-brief",
-  "channel-decisions",
-];
 
 const developmentCouncilId = "council_builtin_development";
 
@@ -85,6 +79,7 @@ export function AiTeammatesPage({
   onOpenChannel,
   onOpenProviders,
   onBackToWorkspaceTools,
+  defaultProviderId = "",
 }: {
   readonly cwd: string;
   readonly skillPack: SkillPack | undefined;
@@ -109,13 +104,13 @@ export function AiTeammatesPage({
   readonly onOpenChannel?: (channelId: string) => void;
   readonly onOpenProviders: () => void;
   readonly onBackToWorkspaceTools?: () => void;
+  readonly defaultProviderId?: string;
 }): JSX.Element {
   const { t } = useI18n();
   const templates = skillPack?.teammateTemplates ?? [];
   const skills = skillPack?.skills ?? [];
   const workflow = skillPack?.workflowTemplates.find((item) => item.id === "autoplan-lite") ?? skillPack?.workflowTemplates[0];
   const skillById = useMemo(() => new Map(skills.map((skill) => [skill.id, skill])), [skills]);
-  const providerOptions = useMemo(() => providers.filter((provider) => !isMediaProvider(provider)), [providers]);
   const activeLocalTeammates = useMemo(
     () => localTeammates.filter((teammate) => !teammate.disabled),
     [localTeammates],
@@ -134,29 +129,17 @@ export function AiTeammatesPage({
     () => aiCouncils.filter((council) => council.status !== "archived"),
     [aiCouncils],
   );
-  const [selectedTemplateId, setSelectedTemplateId] = useState(() => templates[0]?.id ?? "");
-  const [draftName, setDraftName] = useState(() => templates[0] ? t(templates[0].name) : t("Custom teammate"));
-  const [draftDescription, setDraftDescription] = useState(() => templates[0] ? t(templates[0].summary) : "");
-  const [selectedProviderId, setSelectedProviderId] = useState(() => providerOptions.find(providerPreflightReady)?.id ?? providerOptions[0]?.id ?? "");
-  const [selectedChannelIds, setSelectedChannelIds] = useState<readonly string[]>(() => channels[0] ? [channels[0].id] : []);
   const [isCreateOpen, setCreateOpen] = useState(false);
+  const [createTemplateId, setCreateTemplateId] = useState("");
   const [detailTemplateId, setDetailTemplateId] = useState<string>("");
   const [openTeammateMenuId, setOpenTeammateMenuId] = useState("");
   const [activeManagementView, setActiveManagementView] = useState<TeammateManagementView>("teammates");
   const [selectedImportChannelId, setSelectedImportChannelId] = useState(() => selectedChannelId || (channels[0]?.id ?? ""));
   const [importingCouncilId, setImportingCouncilId] = useState("");
   const [lastImportedTarget, setLastImportedTarget] = useState<{ readonly councilId: string; readonly channelId: string } | undefined>();
-  const wizardRef = useRef<HTMLElement | null>(null);
-  const selectedTemplate = templates.find((template) => template.id === selectedTemplateId) ?? templates[0];
   const detailTemplate = templates.find((template) => template.id === detailTemplateId);
   const developmentCouncil = activeAiCouncils.find((council) => council.id === developmentCouncilId) ?? activeAiCouncils[0];
-  const selectedProvider = providerOptions.find((provider) => provider.id === selectedProviderId);
-  const previewName = draftName.trim() || selectedTemplate?.name || t("Custom teammate");
-  const previewDescription = draftDescription.trim() || selectedTemplate?.summary || t("Describe this teammate with a short working brief.");
-  const selectedProviderReady = selectedProvider ? providerPreflightReady(selectedProvider) : false;
-  const canCreateTeammate = Boolean(previewName.trim()) && Boolean(selectedProvider) && selectedProviderReady;
   const connectedChannelCount = new Set(activeLocalTeammates.flatMap((teammate) => teammate.channelIds)).size;
-  const visibleCreateTemplates = templates.slice(0, 5);
   const selectedChannelAlreadyHasDevelopmentCouncil = Boolean(
     developmentCouncil &&
     selectedImportChannelId === selectedChannelId &&
@@ -169,18 +152,6 @@ export function AiTeammatesPage({
   );
 
   useEffect(() => {
-    if (!selectedProviderId || !providerOptions.some((provider) => provider.id === selectedProviderId)) {
-      setSelectedProviderId(providerOptions.find(providerPreflightReady)?.id ?? providerOptions[0]?.id ?? "");
-    }
-  }, [providerOptions, selectedProviderId]);
-
-  useEffect(() => {
-    if (selectedChannelIds.length === 0 && channels[0]) {
-      setSelectedChannelIds([channels[0].id]);
-    }
-  }, [channels, selectedChannelIds.length]);
-
-  useEffect(() => {
     const fallbackChannelId = selectedChannelId && channels.some((channel) => channel.id === selectedChannelId)
       ? selectedChannelId
       : channels[0]?.id ?? "";
@@ -191,24 +162,11 @@ export function AiTeammatesPage({
 
   useEffect(() => {
     if (createRequestId > 0) {
+      setCreateTemplateId("");
       setCreateOpen(true);
       onCreateRequestHandled?.();
     }
   }, [createRequestId, onCreateRequestHandled]);
-
-  useEffect(() => {
-    if (!isCreateOpen || typeof document === "undefined") {
-      return;
-    }
-    const previousBodyOverflow = document.body.style.overflow;
-    const previousHtmlOverflow = document.documentElement.style.overflow;
-    document.body.style.overflow = "hidden";
-    document.documentElement.style.overflow = "hidden";
-    return () => {
-      document.body.style.overflow = previousBodyOverflow;
-      document.documentElement.style.overflow = previousHtmlOverflow;
-    };
-  }, [isCreateOpen]);
 
   useEffect(() => {
     if (!openTeammateMenuId || typeof document === "undefined") {
@@ -234,40 +192,8 @@ export function AiTeammatesPage({
     };
   }, [openTeammateMenuId]);
 
-  function selectTemplate(template: AiTeammateTemplate): void {
-    setSelectedTemplateId(template.id);
-    setDraftName(t(template.name));
-    setDraftDescription(t(template.summary));
-  }
-
-  function selectBlankTemplate(): void {
-    setSelectedTemplateId("");
-    setDraftName(t("Custom teammate"));
-    setDraftDescription(t("Describe this teammate with a short working brief."));
-  }
-
-  function toggleChannel(channelId: string): void {
-    setSelectedChannelIds((currentIds) =>
-      currentIds.includes(channelId) ? currentIds.filter((id) => id !== channelId) : [...currentIds, channelId],
-    );
-  }
-
-  function createTeammateDraft(): void {
-    if (!canCreateTeammate) {
-      return;
-    }
-    onCreateTeammate({
-      templateId: selectedTemplate?.id,
-      displayName: previewName,
-      description: previewDescription,
-      providerPresetId: selectedProvider?.id,
-      modelLabel: selectedProvider ? `${selectedProvider.displayName} / ${selectedProvider.model}` : t("No model selected"),
-      channelIds: selectedChannelIds,
-    });
-    setCreateOpen(false);
-  }
-
   function focusCreateFlow(): void {
+    setCreateTemplateId("");
     setCreateOpen(true);
   }
 
@@ -276,8 +202,8 @@ export function AiTeammatesPage({
   }
 
   function createFromTemplate(template: AiTeammateTemplate): void {
-    selectTemplate(template);
     setDetailTemplateId("");
+    setCreateTemplateId(template.id);
     setCreateOpen(true);
   }
 
@@ -349,175 +275,17 @@ export function AiTeammatesPage({
         </button>
       </header>
 
-      {isCreateOpen ? (
-        <div className="channel-create-overlay teammate-create-overlay" role="presentation" onMouseDown={(event) => {
-          if (event.target === event.currentTarget) {
-            setCreateOpen(false);
-          }
-        }}>
-          <section className="channel-create-dialog teammate-create-dialog" aria-label={t("Create AI teammate")} ref={wizardRef} role="dialog" aria-modal="true">
-            <div className="channel-create-head">
-              <div className="teammate-create-title-block">
-                <strong>{t("New teammate")}</strong>
-                <p>{t("Choose a role first, then model. Extra configuration can be completed later.")}</p>
-              </div>
-              <button className="icon-button" type="button" onClick={() => setCreateOpen(false)} aria-label={t("Cancel")} title={t("Cancel")}>
-                <X size={14} />
-              </button>
-            </div>
-
-            <div className="channel-options-grid channel-create-grid teammate-create-body">
-              <div className="teammate-create-steps" aria-hidden="true">
-                <span className="active"><strong>1</strong>{t("Role")}</span>
-                <span><strong>2</strong>{t("Model")}</span>
-                <span><strong>3</strong>{t("Confirm")}</span>
-              </div>
-
-              <section className="teammate-create-section">
-                <div className="teammate-create-section-title">
-                  <span>{t("Choose initial role")}</span>
-                </div>
-                <div className="teammate-create-list role-grid" aria-label={t("Teammate template chooser")}>
-                  {visibleCreateTemplates.map((template) => (
-                    <button
-                      key={template.id}
-                      className={template.id === selectedTemplate?.id ? "teammate-template-row selected" : "teammate-template-row"}
-                      type="button"
-                      aria-pressed={template.id === selectedTemplate?.id}
-                      onClick={() => selectTemplate(template)}
-                    >
-                      <span className="teammate-role-icon">{templateRoleIcon(template)}</span>
-                      <span className="teammate-template-copy">
-                        <strong>{t(template.name)}</strong>
-                        <small>{t(template.summary)}</small>
-                      </span>
-                      <small className="template-skill-count">{roleLabel(template.roleKey, t)}</small>
-                    </button>
-                  ))}
-                  <button
-                    className={!selectedTemplateId ? "teammate-template-row selected" : "teammate-template-row"}
-                    type="button"
-                    aria-pressed={!selectedTemplateId}
-                    onClick={selectBlankTemplate}
-                  >
-                    <span className="teammate-role-icon"><Plus size={14} /></span>
-                    <span className="teammate-template-copy">
-                      <strong>{t("Start from blank")}</strong>
-                      <small>{t("Use a short description now, then bind skills and memory later.")}</small>
-                    </span>
-                    <small className="template-skill-count">{t("Custom")}</small>
-                  </button>
-                </div>
-              </section>
-
-              <section className="teammate-create-section">
-                <div className="teammate-create-section-title">
-                  <span>{t("Basic information")}</span>
-                </div>
-                <div className="teammate-create-fields">
-                  <label className="field">
-                    <span>{t("Teammate name")}</span>
-                    <input value={draftName} onChange={(event) => setDraftName(event.target.value)} />
-                  </label>
-                  <label className="field">
-                    <span>{t("Join channels")}</span>
-                    <select
-                      value={selectedChannelIds[0] ?? ""}
-                      onChange={(event) => setSelectedChannelIds(event.target.value ? [event.target.value] : [])}
-                      disabled={channels.length === 0}
-                    >
-                      <option value="">{channels.length === 0 ? t("No channels yet") : t("No channels available")}</option>
-                      {channels.map((channel) => (
-                        <option key={channel.id} value={channel.id}>
-                          {channel.name}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <label className="field">
-                    <span>{t("Base model")}</span>
-                    <select value={selectedProviderId} onChange={(event) => setSelectedProviderId(event.target.value)} disabled={providerOptions.length === 0}>
-                      <option value="">{t("Select model")}</option>
-                      {providerOptions.map((provider) => (
-                        <option key={provider.id} value={provider.id}>
-                          {providerModelRouteLabel(provider)}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                </div>
-                {providerOptions.length === 0 ? (
-                  <div className="client-empty-state teammate-empty">
-                    <PlugZap size={20} />
-                    <span>{t("No model presets")}</span>
-                    <button className="secondary-button" type="button" onClick={onOpenProviders}>{t("Open Model Workbench")}</button>
-                  </div>
-                ) : null}
-              </section>
-
-              <details className="teammate-create-section teammate-create-advanced">
-                <summary>
-                  <span>{t("Advanced settings")}</span>
-                  <small>{t("Memory, skills, MCP, permissions and prompt")}</small>
-                </summary>
-                <div className="teammate-create-advanced-body">
-                  <section>
-                    <h3>{t("Join channels")}</h3>
-                    <div className="teammate-chip-grid" aria-label={t("Channel choices")}>
-                      {channels.length === 0 ? (
-                        <span className="teammate-muted-note">{t("No channels yet")}</span>
-                      ) : (
-                        channels.map((channel) => (
-                          <button
-                            key={channel.id}
-                            className={selectedChannelIds.includes(channel.id) ? "teammate-chip selected" : "teammate-chip"}
-                            type="button"
-                            aria-pressed={selectedChannelIds.includes(channel.id)}
-                            onClick={() => toggleChannel(channel.id)}
-                          >
-                            <Hash size={13} />
-                            {channel.name}
-                          </button>
-                        ))
-                      )}
-                    </div>
-                  </section>
-                  <section>
-                    <h3>{t("Memory")}</h3>
-                    <div className="provider-run-notice neutral">
-                      <ShieldCheck size={15} />
-                      <span>{t("Memory is always on for each teammate.")}</span>
-                    </div>
-                    <div className="teammate-memory-list compact">
-                      {defaultMemoryScopeLabels.map((scope) => (
-                        <span key={scope} className="teammate-toggle static">
-                          <FileText size={15} />
-                          <span>
-                            <strong>{t(scope)}</strong>
-                          </span>
-                        </span>
-                      ))}
-                    </div>
-                  </section>
-                </div>
-              </details>
-
-              <div className="channel-option-actions teammate-create-actions">
-                {!selectedProviderReady ? (
-                  <span className="teammate-create-blocked">{selectedProvider ? t("Selected model needs configuration.") : t("Choose a model before creating.")}</span>
-                ) : null}
-                <button className="secondary-button compact-button" type="button" onClick={() => setCreateOpen(false)}>
-                  {t("Cancel")}
-                </button>
-                <button className="primary-button compact-button" type="button" onClick={createTeammateDraft} disabled={!canCreateTeammate}>
-                  <Plus size={14} />
-                  {t("Create teammate")}
-                </button>
-              </div>
-            </div>
-          </section>
-        </div>
-      ) : null}
+      <TeammateCreateDrawer
+        open={isCreateOpen}
+        initialTemplateId={createTemplateId}
+        templates={templates}
+        providers={providers}
+        channels={channels}
+        defaultProviderId={defaultProviderId}
+        onCreate={onCreateTeammate}
+        onClose={() => setCreateOpen(false)}
+        onOpenProviders={onOpenProviders}
+      />
 
       {activeManagementView === "teammates" ? (
         <div className="teammate-management-grid">

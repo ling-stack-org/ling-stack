@@ -20,6 +20,8 @@ paths.
 ## Goals
 
 - Add archive actions to left-sidebar recent conversations.
+- Add a section-level "Archive all conversations" action for visible recent
+  conversation threads.
 - Add archive actions to left-sidebar AI teammate rows.
 - Keep archived conversations and hidden teammates restorable from Settings.
 - Preserve all existing channel, branch, teammate, private chat, and conversation
@@ -34,18 +36,25 @@ paths.
 - No database schema migration.
 - No new backend endpoint.
 - No change to teammate direct-message thread semantics.
-- No bulk archive for recent conversations in this slice.
+- No bulk restore or permanent delete for recent conversations in this slice.
 - No mobile-specific acceptance scope.
 
 ## Key Changes
 
 - Sidebar:
   - Recent conversation rows get a hover/focus archive icon button.
+  - Recent conversations section gets a trailing overflow menu. The menu contains
+    `Archive all conversations`, is disabled when there are no visible recent
+    conversations, and asks for confirmation before archiving.
   - AI teammate rows get a hover/focus archive icon button.
   - Channel and branch archive controls keep their current behavior.
 - Conversation domain:
   - Add an `archiveConversationThread(threadId)` action that calls the existing
     thread archive endpoint and refreshes active conversation threads.
+  - Add an `archiveAllConversationThreads()` action that archives the current
+    visible recent conversation threads through the same thread archive endpoint.
+    Successful archives are removed immediately; failures are surfaced through
+    the same sidebar/global error feedback path.
   - If the archived thread is open, return the workspace to the empty
     conversation home.
 - Teammate domain:
@@ -95,6 +104,7 @@ paths.
   - `AiTeammate.hidden`
 - Sidebar callback props may be extended:
   - `onArchiveRecentConversation(conversation)`
+  - `onArchiveAllRecentConversations()`
   - `onArchiveTeammate(teammateId)`
 
 ## State / Data Flow
@@ -110,6 +120,23 @@ paths.
    home.
 6. Settings Archived Items can later restore it with
    `POST /threads/:id/unarchive`.
+
+### Archive All Recent Conversations
+
+1. User opens the Recent conversations section overflow menu.
+2. If there are no visible recent conversations, `Archive all conversations` is
+   disabled and shows `No conversations to archive`.
+3. User confirms `Archive all conversations`.
+4. Conversation domain calls `POST /threads/:id/archive` for each visible,
+   unarchived conversation thread using the existing thread archive endpoint.
+5. Successfully archived conversations are removed from the sidebar
+   immediately. If the selected conversation was archived, the workspace returns
+   to conversation home.
+6. If some conversations cannot be archived because they still have active work,
+   those conversations remain visible and the sidebar/global error message
+   explains the partial failure.
+7. Settings Archived Items can later restore successfully archived conversations
+   with `POST /threads/:id/unarchive`.
 
 ### Archive Teammate
 
@@ -131,12 +158,20 @@ paths.
   separate product decision is made.
 - Do not allow archived conversation threads to receive new user messages.
 - Do not add major archive logic to `AppShell.tsx`.
+- Do not make section-level bulk archive a hard delete, database migration, or
+  new endpoint. It is a client-side batch over the existing archive endpoint.
+- Do not silently swallow partial archive failures; active-work blocks must stay
+  visible and actionable.
 
 ## Test Plan
 
 - Typecheck Web and daemon.
 - E2E/sidebar:
   - Archive a recent conversation; it disappears from Recent conversations.
+  - Open Recent conversations actions; `Archive all conversations` is disabled
+    when there are no visible conversations.
+  - Archive all recent conversations; archived rows disappear, Settings can
+    restore them, and any active-work failures remain visible with an error.
   - Restore the conversation from Settings; it returns to Recent conversations.
   - Archive an AI teammate; it disappears from AI Teammates.
   - Restore the teammate from Settings; it returns to AI Teammates.
@@ -173,3 +208,5 @@ paths.
   teammates, or should built-ins be separated visually later?
 - Should conversation archive ask for confirmation, or is row-level archive with
   Settings restore enough?
+- Should bulk archive eventually get a one-click undo affordance, or is Settings
+  restore sufficient for the desktop sidebar?

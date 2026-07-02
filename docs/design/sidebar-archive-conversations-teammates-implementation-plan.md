@@ -5,10 +5,13 @@
 Implement sidebar archive for recent conversations and AI teammates by reusing
 existing non-destructive primitives: Ling thread archive for conversations and
 teammate `hidden` for AI teammates. Update Settings to restore both item types.
+Recent conversations also expose a section overflow action to archive all visible
+conversation threads through the same existing thread archive endpoint.
 
 ## Goals
 
 - Recent conversation rows can be archived from the sidebar.
+- Recent conversations can be bulk archived from the section overflow menu.
 - AI teammate rows can be archived from the sidebar.
 - Settings > Archived Items lists and restores archived conversations and
   archived teammates.
@@ -31,6 +34,9 @@ teammate `hidden` for AI teammates. Update Settings to restore both item types.
 - Convert teammate/recent sidebar rows to the existing `sidebar-row-shell`
   structure so row actions are not nested inside buttons.
 - Add `archiveConversationThread` to the conversation domain.
+- Add `archiveAllConversationThreads` to the conversation domain. It confirms,
+  batches the existing thread archive call across visible recent conversations,
+  removes successful archives immediately, and reports partial failures.
 - Add `archiveAiTeammate` to the teammate domain.
 - Extend archived settings controller state/actions for conversations and
   teammates.
@@ -42,10 +48,11 @@ teammate `hidden` for AI teammates. Update Settings to restore both item types.
 ## Module Boundaries
 
 - `SidebarNavigation.tsx`
-  - Presentational row action rendering.
+  - Presentational row action rendering and section overflow menu rendering.
   - No API calls.
 - `use-conversation-domain.ts`
-  - Conversation archive mutation, refresh, and selected-thread cleanup.
+  - Conversation archive mutation, bulk archive batching, refresh, selected-thread
+    cleanup, and user-facing archive failure formatting.
 - `use-teammates-domain.ts`
   - Teammate archive mutation, refresh, and active teammate cleanup.
 - `useArchivedSettingsController.ts`
@@ -74,6 +81,12 @@ teammate `hidden` for AI teammates. Update Settings to restore both item types.
   `conversationThreads` projection.
 - Archived conversations are loaded directly in Settings with
   `archived: "only"`.
+- Bulk archive uses the current visible conversation projection. It does not
+  discover hidden/archived conversations, and it does not create a new backend
+  batch API.
+- Bulk archive is best-effort: successful archives are removed immediately, while
+  active-work or unexpected failures stay visible and surface an inline/global
+  error.
 - Active sidebar teammates keep filtering `!hidden && status !== "disabled"`.
 - Archived teammate settings list filters `hidden && status !== "disabled"`.
 - Settings `onChanged` must refresh channels, conversation threads, and
@@ -86,11 +99,13 @@ teammate `hidden` for AI teammates. Update Settings to restore both item types.
 3. Add teammate domain archive action.
 4. Wire AppShell callbacks with a small shared archived-items refresh helper.
 5. Add SidebarNavigation row archive buttons.
-6. Expand archived settings controller and panel.
-7. Add i18n copy.
-8. Add daemon archived-thread guard.
-9. Run typechecks and targeted e2e where feasible.
-10. Verify in desktop browser if services are available.
+6. Add Recent conversations section overflow menu with `Archive all
+   conversations`.
+7. Expand archived settings controller and panel.
+8. Add i18n copy.
+9. Add daemon archived-thread guard.
+10. Run typechecks and targeted e2e where feasible.
+11. Verify in desktop browser if services are available.
 
 ## Test Plan
 
@@ -98,6 +113,9 @@ teammate `hidden` for AI teammates. Update Settings to restore both item types.
 - `corepack pnpm --filter @ling-stack/daemon typecheck`
 - Targeted Web e2e:
   - sidebar archive recent conversation
+  - sidebar recent conversations overflow menu
+  - sidebar archive all recent conversations
+  - archive-all partial failure feedback
   - settings restore conversation
   - sidebar archive teammate
   - settings restore teammate
@@ -106,6 +124,8 @@ teammate `hidden` for AI teammates. Update Settings to restore both item types.
   - Row archive buttons appear on hover/focus only.
   - Archive removes the item from the sidebar without deleting data.
   - Restore returns the item.
+  - Archive all asks for confirmation, archives visible recent conversations,
+    and leaves active-work failures visible.
   - Archived conversation cannot be continued until restored.
 
 ## Risks
@@ -116,6 +136,9 @@ teammate `hidden` for AI teammates. Update Settings to restore both item types.
   navigation refactors in this slice.
 - If a teammate was hidden for a reason other than sidebar archive, it will show
   in Archived Items. This matches the current single `hidden` primitive.
+- Bulk archive fans out existing per-thread archive calls. It can partially
+  succeed when some conversations still have active work; the UI must not imply
+  all-or-nothing semantics.
 
 ## Assumptions
 
@@ -124,6 +147,8 @@ teammate `hidden` for AI teammates. Update Settings to restore both item types.
 - Disabled teammates should not be restored by this settings group.
 - Conversation archive does not require confirmation because Settings restore is
   available and no data is deleted.
+- Bulk conversation archive requires confirmation because it can hide many rows
+  at once, even though data remains restorable.
 
 ## Open Questions
 
@@ -131,16 +156,25 @@ teammate `hidden` for AI teammates. Update Settings to restore both item types.
   teammates?
 - Should row-level archive eventually support undo toast? This slice avoids toast
   noise and relies on Settings restore.
+- Should bulk archive later include filters such as only completed or only idle
+  conversations? Current behavior archives the visible recent conversation list.
 
 ## Verification Checklist
 
 - [x] Docs landed.
 - [x] Conversation archive action exists and refreshes active recents.
+- [x] Conversation bulk archive action exists and best-effort archives visible
+  recents through the existing thread archive endpoint.
 - [x] Teammate archive action exists and hides active sidebar teammate.
 - [x] Sidebar recent and teammate rows expose archive actions.
+- [x] Sidebar Recent conversations section exposes an overflow menu with
+  `Archive all conversations`.
 - [x] Settings lists archived conversations and teammates.
 - [x] Settings restores archived conversations and teammates.
 - [x] Conversation stream rejects `archivedAt` threads.
+- [x] Archive guard allows idle open turns without runs and blocks truly active
+  work.
 - [x] Web typecheck passes.
 - [x] Daemon typecheck passes.
-- [x] Desktop browser flow verified through Playwright Chromium app flow.
+- [x] App e2e covers recent conversation archive, teammate archive, channel
+  archive regression, archive-all menu, and active-work guard behavior.

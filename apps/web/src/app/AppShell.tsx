@@ -60,6 +60,7 @@ import {
   LazyWorkspaceClientView as WorkspaceClientView,
 } from "./lazy-pages.js";
 import type { WorkBoardScope } from "../features/work-board/GlobalWorkBoardPage.js";
+import { resolveDefaultTeammateCreateSelection } from "../features/teammates/teammate-create-defaults.js";
 import {
   buildRunApprovalSummaries,
   effectiveApprovalStatus,
@@ -997,6 +998,19 @@ export function AppShell(): JSX.Element {
     () => aiTeammates.map((teammate) => aiTeammateToLocalDraft(teammate, providers)),
     [aiTeammates, providers],
   );
+  const defaultTeammateCreateSelection = useMemo(
+    () => resolveDefaultTeammateCreateSelection({
+      templates: builtinTeammateTemplates,
+      providers,
+      defaultProviderId: workspaceDefaultProviderPresetId,
+      existingNames: aiTeammates.map((teammate) => teammate.displayName),
+      t,
+    }),
+    [aiTeammates, providers, t, workspaceDefaultProviderPresetId],
+  );
+  const quickCreateTeammateDescription = defaultTeammateCreateSelection.template && defaultTeammateCreateSelection.provider
+    ? `${t(defaultTeammateCreateSelection.template.name)} · ${defaultTeammateCreateSelection.provider.displayName}`
+    : t("Configure a ready chat model before creating.");
   const selectedChannelTeammateMemberships = useMemo(() => {
     const selectedChannel = channels.find((channel) => channel.id === selectedChannelId);
     return deriveSelectedChannelTeammateMemberships({
@@ -1298,6 +1312,14 @@ export function AppShell(): JSX.Element {
   function openTeammateCreatePanel(): void {
     openPlainViewWithoutSettingsReturn("teammates");
     setTeammateCreateRequestId((current) => current + 1);
+  }
+
+  function quickCreateDefaultTeammate(): void {
+    if (!defaultTeammateCreateSelection.input) {
+      openPlainViewWithoutSettingsReturn("providers");
+      return;
+    }
+    void addAiTeammate(defaultTeammateCreateSelection.input);
   }
 
   const {
@@ -1874,6 +1896,7 @@ export function AppShell(): JSX.Element {
         providers={providers}
         channels={channels}
         localTeammates={localTeammates}
+        defaultProviderId={workspaceDefaultProviderPresetId}
         aiCouncils={aiCouncils}
         aiCouncilsLoading={aiCouncilsLoading}
         selectedChannelId={selectedChannelId}
@@ -2010,6 +2033,10 @@ export function AppShell(): JSX.Element {
         onOpenConversationHome={openConversationHome}
         onCreateChannel={openChannelCreatePanel}
         onCreateTeammate={openTeammateCreatePanel}
+        onQuickCreateTeammate={quickCreateDefaultTeammate}
+        quickCreateTeammateDisabled={!defaultTeammateCreateSelection.input}
+        quickCreateTeammateDescription={quickCreateTeammateDescription}
+        onOpenTeammateModelWorkbench={() => openPlainViewWithoutSettingsReturn("providers")}
         onCreateChannelBranch={(channelId, name) => void saveChannelBranch(channelId, name)}
         onArchiveChannel={(channelId) => void archiveSidebarChannel(channelId)}
         onArchiveChannelBranch={(channelId, branchId) => void archiveSidebarChannelBranch(channelId, branchId)}
@@ -2344,6 +2371,7 @@ export function AppShell(): JSX.Element {
                     providers={providers}
                     channels={channels}
                     localTeammates={localTeammates}
+                    defaultProviderId={workspaceDefaultProviderPresetId}
                     aiCouncils={aiCouncils}
                     aiCouncilsLoading={aiCouncilsLoading}
                     selectedChannelId={selectedChannelId}
