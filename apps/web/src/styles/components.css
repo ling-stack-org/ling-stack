@@ -6589,34 +6589,160 @@ code,
 }
 
 .channel-settings-page > .channel-settings-stack {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 14px;
-  width: min(1120px, 100%);
+  width: min(1160px, 100%);
   min-height: 0;
   margin: 0 auto;
   padding: 18px 24px 28px;
   overflow: auto;
 }
 
-.channel-settings-page .channel-teammate-manager,
-.channel-settings-page .channel-management-panel {
-  grid-column: 1 / -1;
+.channel-settings-detail-grid,
+.channel-settings-detail-column {
+  display: grid;
+  align-items: start;
+  gap: 14px;
+  min-width: 0;
+}
+
+.channel-settings-detail-grid {
+  grid-template-columns: minmax(0, 1fr) minmax(340px, 0.92fr);
+}
+
+.channel-settings-detail-column {
+  align-content: start;
 }
 
 .channel-settings-page .channel-settings-card {
   align-self: start;
 }
 
-.channel-settings-page .channel-management-panel .channel-options-grid {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+.channel-settings-page .channel-management-panel-primary .channel-options-grid-primary {
+  grid-template-columns: minmax(180px, 0.7fr) minmax(280px, 1.3fr);
   gap: 12px;
 }
 
-.channel-settings-page .channel-management-panel .field.wide,
-.channel-settings-page .channel-management-panel .channel-workspace-control,
-.channel-settings-page .channel-management-panel .runtime-policy-grid,
-.channel-settings-page .channel-management-panel .channel-option-actions {
+.channel-settings-page .channel-management-panel-primary .channel-path-field,
+.channel-settings-page .channel-management-panel-primary .channel-workspace-control,
+.channel-settings-page .channel-management-panel-primary .channel-runtime-card,
+.channel-settings-page .channel-management-panel-primary .channel-option-actions {
   grid-column: 1 / -1;
+}
+
+.channel-autosave-status {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  min-width: 0;
+  height: 28px;
+  padding: 0 9px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 999px;
+  background: var(--surface-panel-strong);
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.channel-autosave-status.saved {
+  color: var(--success);
+}
+
+.channel-autosave-status.error {
+  border-color: var(--danger-border);
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.channel-autosave-status small {
+  color: inherit;
+  font-size: 11px;
+  font-weight: 720;
+  line-height: 1;
+}
+
+.channel-runtime-card {
+  display: grid;
+  grid-template-columns: minmax(180px, 0.42fr) minmax(0, 1fr);
+  gap: 12px;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--surface-panel-strong) 68%, transparent);
+}
+
+.channel-runtime-card .field {
+  min-width: 0;
+  margin-bottom: 0;
+}
+
+.channel-runtime-card .runtime-policy-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  min-width: 0;
+}
+
+.channel-runtime-card .runtime-policy-grid .field.wide {
+  min-width: 0;
+}
+
+.channel-runtime-card .runtime-policy-grid .toggle-row {
+  min-width: 0;
+  min-height: 38px;
+  padding: 0 10px;
+  border-radius: 8px;
+}
+
+.channel-runtime-card .runtime-policy-grid .toggle-row span {
+  min-width: 0;
+  line-height: 18px;
+  overflow-wrap: anywhere;
+}
+
+.channel-settings-page .channel-notification-panel {
+  gap: 8px;
+}
+
+.channel-settings-page .channel-notification-panel .channel-settings-section-head strong {
+  font-size: 15px;
+}
+
+.channel-settings-page .channel-notification-panel .channel-settings-section-head small {
+  font-size: 12px;
+}
+
+.channel-settings-page .channel-notification-panel .channel-notification-options {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.channel-settings-page .channel-notification-panel .channel-notification-option {
+  min-height: 76px;
+  padding: 9px 10px;
+}
+
+.channel-settings-page .channel-notification-panel .channel-notification-option strong {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 12px;
+  line-height: 16px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.channel-settings-page .channel-notification-panel .channel-notification-option small {
+  display: -webkit-box;
+  overflow: hidden;
+  font-size: 11px;
+  line-height: 15px;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.channel-council-projection {
+  max-height: 260px;
+  overflow: auto;
 }
 
 @media (max-width: 900px) {
@@ -6634,13 +6760,22 @@ code,
 
   .channel-settings-page > .channel-settings-stack,
   .channel-environment-stack,
-  .channel-settings-page .channel-management-panel .channel-options-grid {
+  .channel-settings-detail-grid,
+  .channel-settings-page .channel-management-panel-primary .channel-options-grid-primary,
+  .channel-runtime-card,
+  .channel-runtime-card .runtime-policy-grid {
     grid-template-columns: minmax(0, 1fr);
   }
 
   .channel-settings-page > .channel-settings-stack,
   .channel-environment-stack {
     padding: 14px;
+  }
+}
+
+@media (max-width: 680px) {
+  .channel-settings-page .channel-notification-panel .channel-notification-options {
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 

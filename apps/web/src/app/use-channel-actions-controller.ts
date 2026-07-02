@@ -18,6 +18,7 @@ import {
   revertChannelCollaborationProtocol,
 } from "../api.js";
 import {
+  channelFormPersistenceKey,
   channelToForm,
   defaultChannelCreateForm,
   defaultChannelEditForm,
@@ -296,7 +297,11 @@ export function useChannelActionsController(input: {
       const response = await updateChannel(input.form.cwd.trim(), channelId, channelForm);
       input.setSelectedChannelId(response.channel.id);
       input.setTaskRunProviderId("");
-      input.setChannelEditForm(channelToForm(response.channel, input.form.cwd));
+      input.setChannelEditForm((current) =>
+        channelFormPersistenceKey(current) === channelFormPersistenceKey(channelForm)
+          ? channelToForm(response.channel, input.form.cwd)
+          : current
+      );
       await input.refreshChannels();
     } catch (error) {
       input.setErrorMessage(error instanceof Error ? error.message : String(error));

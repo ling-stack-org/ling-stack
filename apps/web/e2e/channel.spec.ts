@@ -1465,7 +1465,8 @@ test("channel runtime policy is visible while preferred specialist controls stay
   await expect(currentManagement.getByLabel("Preferred specialist")).toHaveCount(0);
   await expect(currentManagement).not.toContainText("Preferred specialist");
   await expect(currentManagement.getByLabel("Ling reply")).toHaveCount(0);
-  await currentManagement.getByRole("button", { name: "Save channel" }).click();
+  await expect(currentManagement.getByRole("button", { name: "Save channel" })).toHaveCount(0);
+  await expect(currentManagement.getByText("Changes save automatically")).toBeVisible();
 
   const navigation = page.getByLabel("Ling Stack navigation");
   await navigation.getByRole("button", { name: "Channel actions" }).click();
@@ -1506,12 +1507,13 @@ test("channel runtime policy is visible while preferred specialist controls stay
   await expect(details.getByLabel("Ling reply")).toHaveCount(0);
   await expect(details.getByRole("button", { name: "Create channel" })).toHaveCount(0);
   await expect(details.getByRole("button", { name: "Create default" })).toHaveCount(0);
+  await expect(details.getByRole("button", { name: "Save channel" })).toHaveCount(0);
   await details.getByLabel("Name").fill("Release QA");
-  await details.getByRole("button", { name: "Save channel" }).click();
   await expect.poll(() => {
     const updated = state.channels.find((channel) => isRecord(channel) && channel.id === (isRecord(created) ? created.id : ""));
     return isRecord(updated) ? updated.name : "";
   }).toBe("Release QA");
+  await expect(details.getByText("Saved")).toBeVisible();
 });
 
 test("channel reply routing mode is not exposed in ordinary settings", async ({ page }) => {

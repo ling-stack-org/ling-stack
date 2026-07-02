@@ -58,3 +58,38 @@ export function channelToForm(channel: Channel, fallbackCwd: string): ChannelFor
     runtimePolicy: effectiveChannelRuntimePolicy(channel),
   };
 }
+
+export function channelFormPersistenceKey(form: ChannelFormState): string {
+  return JSON.stringify({
+    name: form.name.trim(),
+    status: form.status,
+    boundPath: form.boundPath.trim(),
+    workspaceBinding: form.workspaceBinding
+      ? {
+          mode: form.workspaceBinding.mode,
+          status: form.workspaceBinding.status,
+          executionPath: form.workspaceBinding.executionPath ?? "",
+          worktreePath: form.workspaceBinding.worktreePath ?? "",
+          branchName: form.workspaceBinding.branchName ?? "",
+          baseBranch: form.workspaceBinding.baseBranch ?? "",
+          baseCommit: form.workspaceBinding.baseCommit ?? "",
+          errorMessage: form.workspaceBinding.errorMessage ?? "",
+          createdAt: form.workspaceBinding.createdAt ?? "",
+          checkedAt: form.workspaceBinding.checkedAt ?? "",
+          updatedAt: form.workspaceBinding.updatedAt,
+        }
+      : null,
+    defaultProviderPresetId: form.defaultProviderPresetId,
+    defaultTeammateId: form.defaultTeammateId,
+    autoReplyMode: form.autoReplyMode,
+    responseLanguage: form.responseLanguage,
+    allowedTools: [...form.allowedTools],
+    runtimePolicy: {
+      maxConcurrentRuns: form.runtimePolicy.maxConcurrentRuns,
+      executionMode: form.runtimePolicy.executionMode,
+      writeLockScope: form.runtimePolicy.writeLockScope,
+      allowReadOnlyParallel: form.runtimePolicy.allowReadOnlyParallel,
+      queueOnConflict: form.runtimePolicy.queueOnConflict,
+    },
+  });
+}

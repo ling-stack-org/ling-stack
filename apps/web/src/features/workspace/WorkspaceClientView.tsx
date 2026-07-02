@@ -108,6 +108,10 @@ import {
   summarizeEffectivePolicySnapshot,
 } from "../../lib/session-permissions.js";
 import {
+  channelFormPersistenceKey,
+  channelToForm,
+} from "../../lib/channels.js";
+import {
   canUseProviderForRun,
   isMediaProvider,
   providerPreflightReady,
@@ -232,6 +236,7 @@ import {
   ChannelSettingsPanels,
   channelWorkspaceModeIcon,
   isLingAgentTeammate,
+  type ChannelSettingsAutosaveState,
   type ChannelNotificationLevel,
 } from "./ChannelSettingsPanels.js";
 import { ChannelComposer, type ChannelComposerInlineFeedback } from "./ChannelComposer.js";
@@ -860,6 +865,8 @@ export function WorkspaceClientView({
   const [pendingChannelTeammateId, setPendingChannelTeammateId] = useState("");
   const [pendingChannelCouncilId, setPendingChannelCouncilId] = useState("");
   const [channelNotificationLevel, setChannelNotificationLevel] = useState<ChannelNotificationLevel>("mentions");
+  const [channelSettingsAutosaveState, setChannelSettingsAutosaveState] = useState<ChannelSettingsAutosaveState>("idle");
+  const [channelSettingsAutosaveRevision, setChannelSettingsAutosaveRevision] = useState(0);
   const [channelWorkspaceBusyAction, setChannelWorkspaceBusyAction] = useState("");
   const [channelWorkspaceExternalPath, setChannelWorkspaceExternalPath] = useState("");
   const [channelWorkspaceNotice, setChannelWorkspaceNotice] = useState("");
@@ -886,8 +893,19 @@ export function WorkspaceClientView({
   const conversationThreadTurnLoadsRef = useRef(new Set<string>());
   const conversationThreadTurnRunSignaturesRef = useRef(new Map<string, string>());
   const channelWorkspaceExternalPathChannelIdRef = useRef(selectedChannelId);
+  const channelSettingsAutosaveTimerRef = useRef<number | undefined>();
+  const channelSettingsAutosaveInFlightRef = useRef(false);
+  const channelSettingsAutosaveQueuedRef = useRef(false);
+  const channelSettingsAutosaveRequestRef = useRef(0);
+  const channelSettingsAutosaveLastSavedKeyRef = useRef("");
+  const channelSettingsAutosaveLatestKeyRef = useRef("");
+  const onSaveChannelRef = useRef(onSaveChannel);
   const workspaceSettingsRef = useRef(workspaceSettings);
   const onWorkspaceSettingsPatchRef = useRef(onWorkspaceSettingsPatch);
+
+  useEffect(() => {
+    onSaveChannelRef.current = onSaveChannel;
+  }, [onSaveChannel]);
 
   useEffect(() => {
     workspaceSettingsRef.current = workspaceSettings;
@@ -898,6 +916,11 @@ export function WorkspaceClientView({
   }, [onWorkspaceSettingsPatch]);
 
   const activeRun = activeRunId ? runById.get(activeRunId) : undefined;
+  const selectedChannelFormKey = useMemo(
+    () => selectedChannel ? channelFormPersistenceKey(channelToForm(selectedChannel, cwd)) : "",
+    [cwd, selectedChannel],
+  );
+  const channelEditFormKey = useMemo(() => channelFormPersistenceKey(channelEditForm), [channelEditForm]);
   const taskById = useMemo(() => new Map(tasks.map((task) => [task.id, task])), [tasks]);
   const taskChannelById = useMemo(() => new Map(tasks.map((task) => [task.id, task.channelId])), [tasks]);
   const workflowStepById = useMemo(() => new Map(channelWorkflowSteps.map((step) => [step.id, step])), [channelWorkflowSteps]);
@@ -1757,6 +1780,87 @@ export function WorkspaceClientView({
   }, [channelExecutionProposals]);
   const channelRunsForFiles = channelRuns;
 
+  useEffect(() => {
+    channelSettingsAutosaveLatestKeyRef.current = channelEditFormKey;
+  }, [channelEditFormKey]);
+
+  useEffect(() => {
+    if (channelSettingsAutosaveRevision === 0) {
+      channelSettingsAutosaveLastSavedKeyRef.current = selectedChannelFormKey;
+      setChannelSettingsAutosaveState("idle");
+    }
+  }, [channelSettingsAutosaveRevision, selectedChannelFormKey]);
+
+  useEffect(() => {
+    channelSettingsAutosaveRequestRef.current += 1;
+    channelSettingsAutosaveLastSavedKeyRef.current = selectedChannelFormKey;
+    channelSettingsAutosaveQueuedRef.current = false;
+    setChannelSettingsAutosaveRevision(0);
+    setChannelSettingsAutosaveState("idle");
+    if (channelSettingsAutosaveTimerRef.current !== undefined) {
+      globalThis.clearTimeout(channelSettingsAutosaveTimerRef.current);
+      channelSettingsAutosaveTimerRef.current = undefined;
+    }
+  }, [cwd, selectedChannelId]);
+
+  useEffect(() => {
+    if (channelSettingsAutosaveRevision === 0 || !selectedChannelId) {
+      return undefined;
+    }
+    if (channelEditFormKey === selectedChannelFormKey || channelEditFormKey === channelSettingsAutosaveLastSavedKeyRef.current) {
+      setChannelSettingsAutosaveState("saved");
+      return undefined;
+    }
+
+    setChannelSettingsAutosaveState("saving");
+    if (channelSettingsAutosaveTimerRef.current !== undefined) {
+      globalThis.clearTimeout(channelSettingsAutosaveTimerRef.current);
+    }
+
+    channelSettingsAutosaveTimerRef.current = globalThis.setTimeout(() => {
+      const saveSnapshot = async (): Promise<void> => {
+        if (channelSettingsAutosaveInFlightRef.current) {
+          channelSettingsAutosaveQueuedRef.current = true;
+          return;
+        }
+
+        const requestId = ++channelSettingsAutosaveRequestRef.current;
+        const snapshotKey = channelEditFormKey;
+        const snapshotForm = channelEditForm;
+        channelSettingsAutosaveInFlightRef.current = true;
+        try {
+          await onSaveChannelRef.current(snapshotForm);
+          if (requestId === channelSettingsAutosaveRequestRef.current) {
+            channelSettingsAutosaveLastSavedKeyRef.current = snapshotKey;
+            setChannelSettingsAutosaveState(channelSettingsAutosaveLatestKeyRef.current === snapshotKey ? "saved" : "saving");
+          }
+        } catch {
+          if (requestId === channelSettingsAutosaveRequestRef.current) {
+            setChannelSettingsAutosaveState("error");
+          }
+        } finally {
+          channelSettingsAutosaveInFlightRef.current = false;
+          if (requestId === channelSettingsAutosaveRequestRef.current) {
+            const hasQueuedChange = channelSettingsAutosaveQueuedRef.current || channelSettingsAutosaveLatestKeyRef.current !== snapshotKey;
+            channelSettingsAutosaveQueuedRef.current = false;
+            if (hasQueuedChange) {
+              setChannelSettingsAutosaveRevision((current) => current + 1);
+            }
+          }
+        }
+      };
+
+      void saveSnapshot();
+    }, 700);
+
+    return () => {
+      if (channelSettingsAutosaveTimerRef.current !== undefined) {
+        globalThis.clearTimeout(channelSettingsAutosaveTimerRef.current);
+        channelSettingsAutosaveTimerRef.current = undefined;
+      }
+    };
+  }, [channelEditForm, channelEditFormKey, channelSettingsAutosaveRevision, selectedChannelFormKey, selectedChannelId]);
+
   const selectedChannelNotificationLevel = workspaceSettings?.channelNotifications?.[selectedChannelId];
   const workspaceSettingsLoaded = workspaceSettings !== undefined;
 
@@ -2119,6 +2223,11 @@ export function WorkspaceClientView({
         [selectedChannelId]: level,
       },
     });
+  }
+
+  function updateChannelSettingsEditForm(form: ChannelFormState): void {
+    onChannelEditFormChange(form);
+    setChannelSettingsAutosaveRevision((current) => current + 1);
   }
 
   async function runChannelWorkspaceAction(
@@ -3538,7 +3647,8 @@ export function WorkspaceClientView({
       onRefreshChannelCouncil={onRefreshChannelCouncil}
       channelTeamMetricsPanel={channelTeamMetricsPanel}
       channelEditForm={channelEditForm}
-      onChannelEditFormChange={onChannelEditFormChange}
+      channelSettingsAutosaveState={channelSettingsAutosaveState}
+      onChannelEditFormChange={updateChannelSettingsEditForm}
       providersLoading={providersLoading}
       providers={providers}
       taskReadyProviders={taskReadyProviders}
@@ -3556,7 +3666,6 @@ export function WorkspaceClientView({
       onHandoffChannelWorkspace={onHandoffChannelWorkspace}
       channelsLoading={channelsLoading}
       onRefreshChannels={onRefreshChannels}
-      onSaveChannel={() => void onSaveChannel()}
     />
   );
   const channelContextDockContent = (
