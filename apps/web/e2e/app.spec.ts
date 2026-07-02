@@ -128,6 +128,18 @@ test("sidebar sections collapse locally and keep group action menus", async ({ p
   await navigation.getByRole("button", { name: "Teammate actions" }).click();
   await expect(page.getByRole("menuitem", { name: /Quick create default teammate/ })).toBeVisible();
   await expect(page.getByRole("menuitem", { name: /More configuration/ })).toBeVisible();
+  const teammateMenuAlignment = await page.getByRole("menuitem", { name: /More configuration/ }).evaluate((element) => {
+    const icon = element.querySelector(".sidebar-section-menu-rich-title svg")?.getBoundingClientRect();
+    const label = element.querySelector(".sidebar-section-menu-rich-title > span")?.getBoundingClientRect();
+    return icon && label
+      ? { iconCenter: icon.top + icon.height / 2, labelCenter: label.top + label.height / 2 }
+      : undefined;
+  });
+  expect(teammateMenuAlignment).toBeTruthy();
+  if (!teammateMenuAlignment) {
+    throw new Error("Missing teammate menu alignment target");
+  }
+  expect(Math.abs(teammateMenuAlignment.iconCenter - teammateMenuAlignment.labelCenter)).toBeLessThanOrEqual(1);
   await page.keyboard.press("Escape");
   await navigation.getByRole("button", { name: "Recent conversation actions" }).click();
   const archiveAllConversations = page.getByRole("menuitem", { name: "Archive all conversations" });

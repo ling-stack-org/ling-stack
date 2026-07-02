@@ -39,50 +39,11 @@
   margin: 0;
 }
 
-.teammate-management-tabs {
-  display: inline-grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  align-items: center;
-  gap: 4px;
-  min-height: 38px;
-  padding: 4px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: rgba(255, 255, 255, 0.58);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.64);
-}
-
-.teammate-management-tabs button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  min-width: 0;
-  min-height: 30px;
-  padding: 0 12px;
-  border: 0;
-  border-radius: 6px;
-  background: transparent;
-  color: var(--text-secondary);
-  font-size: 13px;
-  font-weight: 780;
-  white-space: nowrap;
-  cursor: pointer;
-}
-
-.teammate-management-tabs button.active {
-  background: var(--text-strong);
-  color: #ffffff;
-  box-shadow: var(--shadow-control);
-}
-
 .teammate-command-strip,
 .teammate-template-panel,
 .teammate-detail-panel,
 .teammate-add-panel,
-.teammate-workflow-panel,
-.teammate-council-home,
-.teammate-council-import-card {
+.teammate-workflow-panel {
   border: 1px solid rgba(37, 42, 45, 0.1);
   border-radius: 8px;
   background: rgba(255, 255, 255, 0.56);
@@ -974,6 +935,36 @@
   white-space: nowrap;
 }
 
+.teammate-council-inline-entry {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 42px;
+  margin-bottom: 14px;
+  padding: 9px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-panel);
+}
+
+.teammate-council-inline-entry > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  color: var(--text-secondary);
+}
+
+.teammate-council-inline-entry small {
+  overflow: hidden;
+  min-width: 0;
+  font-size: 12px;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .teammate-template-list,
 .teammate-skill-list,
 .teammate-draft-list {
@@ -1235,122 +1226,6 @@
   padding: 9px;
   background: rgba(255, 255, 255, 0.46);
   box-shadow: none;
-}
-
-.teammate-council-home {
-  display: grid;
-  align-content: start;
-  gap: 14px;
-  min-height: 0;
-  overflow: hidden;
-  padding: 14px;
-}
-
-.teammate-council-home-head {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 16px;
-  min-width: 0;
-  padding-bottom: 12px;
-  border-bottom: 1px solid var(--border);
-}
-
-.teammate-council-home-head > div {
-  display: grid;
-  gap: 4px;
-  min-width: 0;
-}
-
-.teammate-council-home-head h2,
-.teammate-council-home-head p {
-  margin: 0;
-}
-
-.teammate-council-home-head p {
-  max-width: 680px;
-  color: var(--text-secondary);
-  font-size: 13px;
-  line-height: 1.45;
-}
-
-.teammate-council-summary-actions {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-  gap: 8px;
-  min-width: 0;
-}
-
-.teammate-council-home-grid {
-  display: grid;
-  grid-template-columns: minmax(360px, 1fr) minmax(280px, 0.42fr);
-  gap: 12px;
-  align-items: start;
-  min-height: 0;
-  overflow: hidden;
-}
-
-.teammate-council-summary.featured {
-  align-content: center;
-  min-height: 132px;
-  padding: 16px;
-  background:
-    linear-gradient(135deg, rgba(232, 248, 241, 0.84), rgba(255, 255, 255, 0.68)),
-    var(--surface-panel);
-}
-
-.teammate-council-card-head {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 12px;
-  align-items: center;
-}
-
-.teammate-council-card-head > span:first-child {
-  display: grid;
-  gap: 6px;
-  min-width: 0;
-}
-
-.teammate-council-card-head strong {
-  overflow-wrap: anywhere;
-  color: var(--text-primary);
-  font-size: 18px;
-  line-height: 1.2;
-}
-
-.teammate-council-card-head small {
-  color: var(--text-secondary);
-  font-size: 13px;
-  line-height: 1.45;
-}
-
-.teammate-council-import-card {
-  display: grid;
-  align-content: start;
-  gap: 12px;
-  min-width: 0;
-  padding: 14px;
-}
-
-.teammate-council-import-card .panel-title {
-  min-height: 32px;
-  padding-bottom: 8px;
-  border-bottom: 1px solid var(--border);
-}
-
-.teammate-council-import-card .panel-title h3 {
-  margin: 0;
-  color: var(--text-primary);
-  font-size: 14px;
-  line-height: 1.25;
-}
-
-.teammate-council-import-card .compact-button {
-  justify-content: center;
-  width: 100%;
-  min-height: 34px;
 }
 
 .teammate-draft-row.hidden-row {
@@ -4451,18 +4326,17 @@
 }
 
 .teammates-page-header {
-  display: grid;
-  grid-template-columns: minmax(220px, auto) minmax(260px, 360px) auto;
+  display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 18px;
-  min-height: 96px;
+  min-height: 80px;
   padding: 24px 32px 22px;
   border-bottom: 1px solid #e5e5e5;
   background: #ffffff;
 }
 
 .teammates-page-header.settings-return-mode {
-  justify-content: space-between;
   min-height: 48px;
   padding: 8px 32px;
 }
@@ -4483,12 +4357,6 @@
   line-height: 20px;
 }
 
-.teammate-page-create-button {
-  min-height: 40px;
-  border-radius: 7px;
-  padding-inline: 18px;
-}
-
 .teammates-page > .teammate-management-grid {
   grid-template-columns: minmax(560px, 1fr) minmax(320px, 0.34fr);
   gap: 0;
@@ -4497,9 +4365,7 @@
 }
 
 .teammates-page .teammate-add-panel,
-.teammates-page .teammate-template-panel,
-.teammates-page .teammate-council-home,
-.teammates-page .teammate-council-import-card {
+.teammates-page .teammate-template-panel {
   border: 0;
   border-radius: 0;
   background: #ffffff;
@@ -4535,8 +4401,7 @@
 }
 
 .teammates-page .teammate-add-panel > .panel-title,
-.teammates-page .teammate-template-panel > .panel-title,
-.teammates-page .teammate-council-import-card > .panel-title {
+.teammates-page .teammate-template-panel > .panel-title {
   min-height: 36px;
   margin-bottom: 26px;
 }
@@ -4568,33 +4433,6 @@
   border: 1px solid #e5e5e5;
   border-radius: 8px;
   background: #fafafa;
-}
-
-.teammates-page > .teammate-council-home {
-  height: 100%;
-  min-height: 0;
-  overflow-y: auto;
-}
-
-.teammates-page .teammate-council-home-grid {
-  grid-template-columns: minmax(420px, 1fr) minmax(300px, 0.4fr);
-}
-
-.teammates-page .teammate-council-summary.featured {
-  min-height: 150px;
-  padding: 24px;
-  border-color: #dbe8e1;
-  background: #f2faf6;
-}
-
-.teammates-page .teammate-council-import-card {
-  align-self: start;
-  border-left: 1px solid #e5e5e5;
-  padding-inline: 32px;
-}
-
-.teammates-page .teammate-council-import-card .panel-title {
-  margin-bottom: 0;
 }
 
 .teammate-council-summary strong {
@@ -4751,15 +4589,18 @@
 .teammates-page .teammate-draft-list,
 .teammates-page .teammate-template-list {
   gap: 14px;
+  min-width: 0;
+  overflow-x: hidden;
   overflow-y: auto;
   padding: 0 2px 0 0;
 }
 
 .teammates-page .teammate-draft-row {
-  grid-template-columns: 48px minmax(132px, 1fr) 124px 112px 74px 150px;
-  gap: 14px;
+  grid-template-columns: 44px minmax(0, 1.35fr) minmax(90px, 0.72fr) minmax(78px, 0.58fr) minmax(58px, 0.44fr) minmax(116px, auto);
+  gap: 10px;
+  min-width: 0;
   min-height: 82px;
-  padding: 16px 18px;
+  padding: 16px 12px;
   border: 1px solid #e5e5e5;
   border-radius: 8px;
   background: #ffffff;
@@ -4824,10 +4665,11 @@
 
 .teammates-page .teammate-row-actions {
   display: grid;
-  grid-template-columns: 108px 32px;
+  grid-template-columns: minmax(92px, 1fr) 30px;
   justify-self: end;
-  width: 150px;
-  gap: 10px;
+  width: min(100%, 128px);
+  min-width: 0;
+  gap: 8px;
 }
 
 .teammates-page .teammate-row-status {
@@ -4835,9 +4677,10 @@
 }
 
 .teammates-page .teammate-row-primary-action {
-  width: 108px;
+  width: 100%;
   min-height: 34px;
-  padding: 0 16px;
+  min-width: 0;
+  padding: 0 10px;
   border-radius: 7px;
   background: #ffffff;
   color: #111111;

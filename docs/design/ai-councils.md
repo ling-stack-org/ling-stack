@@ -100,8 +100,9 @@ Already implemented:
 - daemon APIs expose council list/get/create/clone/update, member list/replace, channel
   council policy, and effective channel council projection.
 - daemon exposes a read-only council health report for Web and future desktop clients.
-- Web AI teammates management shows a read-only council summary and routes council
-  management to Council Workspace.
+- Web AI teammates management keeps a lightweight Council Workspace entry only; full
+  council lists, summaries, health, and channel attach management live in Council
+  Workspace.
 - Web exposes a first Council Workspace page for council overview, create/clone/archive,
   custom settings, member roster editing, health, and channel attach/open management.
 - Web channel Settings can attach an AI council by reference and show projected
@@ -160,13 +161,13 @@ GET /channels/:id/effective-council
 
 Implemented client behavior:
 
-- AI teammates management shows `AI Councils` as a read-only summary with a Council
-  Workspace entry point.
-- The selected council shows source, routing mode, enabled member count, maximum active
-  member capacity when present, Ling Agent exclusion, and restrict-only governance chips.
-- AI teammates management shows a compact council health overview, while Council
-  Workspace filters councils by health
-  state, and surfaces the first actionable health findings for the selected council.
+- AI teammates management is scoped to single teammate management and shows only a
+  lightweight Council Workspace entry: teammates can join councils for shared management.
+- Council Workspace owns the full council list, selected council source, routing mode,
+  enabled member count, maximum active member capacity when present, Ling Agent exclusion,
+  restrict-only governance chips, and health overview.
+- Council Workspace filters councils by health state and surfaces the first actionable
+  health findings for the selected council.
 - Channel Settings shows attached councils, preferred council, routing mode, capacity, and
   projected specialist source details such as `Development Council / Product design`,
   plus council health chips for attached councils.

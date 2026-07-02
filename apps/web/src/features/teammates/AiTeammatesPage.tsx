@@ -6,14 +6,11 @@ import {
   Code2,
   EyeOff,
   FileText,
-  Hash,
   MoreHorizontal,
   Palette,
   Pin,
   PinOff,
   PlugZap,
-  Plus,
-  RefreshCw,
   Rocket,
   Sparkles,
   ShieldCheck,
@@ -34,9 +31,7 @@ import { useI18n } from "../../i18n.js";
 import { providerPreflightReady } from "../../lib/providers.js";
 import { MetaRow, SettingsToolReturnRow } from "../../shared/components/index.js";
 import type {
-  AiCouncil,
   Channel,
-  ChannelCouncilPolicy,
   ProviderPreset,
 } from "../../types.js";
 import {
@@ -51,32 +46,20 @@ import type {
   LocalTeammateDraft,
 } from "./types.js";
 
-const developmentCouncilId = "council_builtin_development";
-
-type TeammateManagementView = "teammates" | "councils";
-
 export function AiTeammatesPage({
   cwd,
   skillPack,
   providers,
   channels,
   localTeammates,
-  aiCouncils = [],
-  aiCouncilsLoading = false,
-  selectedChannelId = "",
-  channelCouncilPolicy,
-  channelCouncilSaving = false,
   createRequestId = 0,
   onCreateRequestHandled,
   onCreateTeammate,
   onRemoveTeammate,
   onToggleTeammatePinned,
   onToggleTeammateHidden,
-  onRefreshAiCouncils,
-  onImportCouncilToChannel,
   onOpenTeammate,
   onOpenCouncils,
-  onOpenChannel,
   onOpenProviders,
   onBackToWorkspaceTools,
   defaultProviderId = "",
@@ -86,22 +69,14 @@ export function AiTeammatesPage({
   readonly providers: readonly ProviderPreset[];
   readonly channels: readonly Channel[];
   readonly localTeammates: readonly LocalTeammateDraft[];
-  readonly aiCouncils?: readonly AiCouncil[];
-  readonly aiCouncilsLoading?: boolean;
-  readonly selectedChannelId?: string;
-  readonly channelCouncilPolicy?: ChannelCouncilPolicy;
-  readonly channelCouncilSaving?: boolean;
   readonly createRequestId?: number;
   readonly onCreateRequestHandled?: () => void;
   readonly onCreateTeammate: (teammate: LocalTeammateCreateInput) => void;
   readonly onRemoveTeammate: (teammateId: string) => void;
   readonly onToggleTeammatePinned: (teammateId: string) => void;
   readonly onToggleTeammateHidden: (teammateId: string) => void;
-  readonly onRefreshAiCouncils?: () => void;
-  readonly onImportCouncilToChannel?: (councilId: string, channelId: string) => Promise<void>;
   readonly onOpenTeammate?: (teammateId: string) => void;
   readonly onOpenCouncils?: () => void;
-  readonly onOpenChannel?: (channelId: string) => void;
   readonly onOpenProviders: () => void;
   readonly onBackToWorkspaceTools?: () => void;
   readonly defaultProviderId?: string;
@@ -125,40 +100,12 @@ export function AiTeammatesPage({
   }).length;
   const noChannelTeammateCount = activeLocalTeammates.filter((teammate) => teammate.channelIds.length === 0).length;
   const hiddenTeammateCount = localTeammates.filter((teammate) => teammate.hidden && !teammate.disabled).length;
-  const activeAiCouncils = useMemo(
-    () => aiCouncils.filter((council) => council.status !== "archived"),
-    [aiCouncils],
-  );
   const [isCreateOpen, setCreateOpen] = useState(false);
   const [createTemplateId, setCreateTemplateId] = useState("");
   const [detailTemplateId, setDetailTemplateId] = useState<string>("");
   const [openTeammateMenuId, setOpenTeammateMenuId] = useState("");
-  const [activeManagementView, setActiveManagementView] = useState<TeammateManagementView>("teammates");
-  const [selectedImportChannelId, setSelectedImportChannelId] = useState(() => selectedChannelId || (channels[0]?.id ?? ""));
-  const [importingCouncilId, setImportingCouncilId] = useState("");
-  const [lastImportedTarget, setLastImportedTarget] = useState<{ readonly councilId: string; readonly channelId: string } | undefined>();
   const detailTemplate = templates.find((template) => template.id === detailTemplateId);
-  const developmentCouncil = activeAiCouncils.find((council) => council.id === developmentCouncilId) ?? activeAiCouncils[0];
   const connectedChannelCount = new Set(activeLocalTeammates.flatMap((teammate) => teammate.channelIds)).size;
-  const selectedChannelAlreadyHasDevelopmentCouncil = Boolean(
-    developmentCouncil &&
-    selectedImportChannelId === selectedChannelId &&
-    channelCouncilPolicy?.attachedCouncilIds.includes(developmentCouncil.id),
-  );
-  const developmentCouncilJustImported = Boolean(
-    developmentCouncil &&
-    lastImportedTarget?.councilId === developmentCouncil.id &&
-    lastImportedTarget.channelId === selectedImportChannelId,
-  );
-
-  useEffect(() => {
-    const fallbackChannelId = selectedChannelId && channels.some((channel) => channel.id === selectedChannelId)
-      ? selectedChannelId
-      : channels[0]?.id ?? "";
-    if (!selectedImportChannelId || !channels.some((channel) => channel.id === selectedImportChannelId)) {
-      setSelectedImportChannelId(fallbackChannelId);
-    }
-  }, [channels, selectedChannelId, selectedImportChannelId]);
 
   useEffect(() => {
     if (createRequestId > 0) {
@@ -207,19 +154,6 @@ export function AiTeammatesPage({
     setCreateOpen(true);
   }
 
-  async function importDevelopmentCouncilToChannel(): Promise<void> {
-    if (!developmentCouncil || !selectedImportChannelId || !onImportCouncilToChannel || importingCouncilId) {
-      return;
-    }
-    setImportingCouncilId(developmentCouncil.id);
-    try {
-      await onImportCouncilToChannel(developmentCouncil.id, selectedImportChannelId);
-      setLastImportedTarget({ councilId: developmentCouncil.id, channelId: selectedImportChannelId });
-    } finally {
-      setImportingCouncilId("");
-    }
-  }
-
   if (!skillPack || templates.length === 0) {
     return (
       <div className="empty-state">
@@ -245,32 +179,6 @@ export function AiTeammatesPage({
             </p>
           </div>
         ) : null}
-        <div className="teammate-management-tabs" role="tablist" aria-label={t("Teammate management tabs")}>
-          <button
-            className={activeManagementView === "teammates" ? "active" : ""}
-            type="button"
-            role="tab"
-            aria-selected={activeManagementView === "teammates"}
-            onClick={() => setActiveManagementView("teammates")}
-          >
-            <Users size={14} />
-            {t("Teammates")}
-          </button>
-          <button
-            className={activeManagementView === "councils" ? "active" : ""}
-            type="button"
-            role="tab"
-            aria-selected={activeManagementView === "councils"}
-            onClick={() => setActiveManagementView("councils")}
-          >
-            <Brain size={14} />
-            {t("AI Councils")}
-          </button>
-        </div>
-        <button className="primary-button teammate-page-create-button" type="button" onClick={focusCreateFlow}>
-          <Plus size={16} />
-          {t("Add teammate")}
-        </button>
       </header>
 
       <TeammateCreateDrawer
@@ -285,232 +193,148 @@ export function AiTeammatesPage({
         onOpenProviders={onOpenProviders}
       />
 
-      {activeManagementView === "teammates" ? (
-        <div className="teammate-management-grid">
-          <section className="teammate-add-panel" aria-label={t("Workspace teammates")}>
-            <div className="panel-title split teammate-panel-title">
-              <span>
-                <Users size={16} />
-                <span className="teammate-panel-heading">
-                  <h2>{t("Workspace teammates")}</h2>
-                  <small className="teammate-panel-meta" aria-label={t("AI teammate action summary")}>
-                    {t("Ready")} {readyLocalTeammateCount} · {t("Needs model")} {needsModelTeammateCount} · {t("No channel")} {noChannelTeammateCount} · {t("Hidden")} {hiddenTeammateCount}
-                  </small>
-                </span>
+      <div className="teammate-management-grid">
+        <section className="teammate-add-panel" aria-label={t("Workspace teammates")}>
+          <div className="panel-title split teammate-panel-title">
+            <span>
+              <Users size={16} />
+              <span className="teammate-panel-heading">
+                <h2>{t("Workspace teammates")}</h2>
+                <small className="teammate-panel-meta" aria-label={t("AI teammate action summary")}>
+                  {t("Ready")} {readyLocalTeammateCount} · {t("Needs model")} {needsModelTeammateCount} · {t("No channel")} {noChannelTeammateCount} · {t("Hidden")} {hiddenTeammateCount}
+                </small>
               </span>
-              <small>{t("{count} configured", { count: activeLocalTeammates.length })}</small>
-            </div>
-            {activeLocalTeammates.length === 0 ? (
-              <div className="client-empty-state teammate-empty">
-                <Bot size={18} />
-                <span>{t("No workspace teammates")}</span>
-              </div>
-            ) : (
-              <div className="teammate-draft-list">
-                {activeLocalTeammates.map((draft) => {
-                  const template = draft.templateId ? templates.find((item) => item.id === draft.templateId) : undefined;
-                  const draftChannels = draft.channelIds
-                    .map((channelId) => channels.find((channel) => channel.id === channelId)?.name)
-                    .filter((name): name is string => Boolean(name));
-                  const provider = draft.providerPresetId ? providers.find((item) => item.id === draft.providerPresetId) : undefined;
-                  const ready = provider ? providerPreflightReady(provider) : false;
-                  const modelLabel = draft.modelLabel === "No model selected" ? t("No model selected") : draft.modelLabel;
-                  const channelLabel = draftChannels.length ? draftChannels.join(", ") : t("No channel");
-                  const roleSummary = template ? t(template.name) : roleLabel(draft.roleKey ?? "custom", t);
-                  const readinessLabel = !provider ? t("Needs model") : ready ? t("Ready teammate") : t("Model needs check");
-                  return (
-                    <article key={draft.id} className={draft.hidden ? "teammate-draft-row hidden-row" : "teammate-draft-row"}>
-                      <TeammateAvatarView teammate={draft} cwd={cwd} compact />
-                      <span className="teammate-draft-copy">
-                        <strong>{draft.displayName}</strong>
-                        <small>{roleSummary}</small>
-                      </span>
-                      <span className={ready ? "teammate-model-pill ready" : "teammate-model-pill warning"}>{modelLabel}</span>
-                      <span className="teammate-channel-pill">{channelLabel}</span>
-                      <time className="teammate-updated-time">{draft.updatedAt ? formatRelativeDraftTime(draft.updatedAt, t) : t("Just now")}</time>
-                      <span className="teammate-row-actions">
-                        <span className={ready ? "teammate-row-status ready" : "teammate-row-status warning"}>{readinessLabel}</span>
-                        {ready && onOpenTeammate ? (
-                          <button className="teammate-row-primary-action" type="button" onClick={() => onOpenTeammate(draft.id)}>
-                            {t("Open")}
-                          </button>
-                        ) : !ready ? (
-                          <button className="teammate-row-primary-action" type="button" onClick={onOpenProviders}>
-                            <PlugZap size={13} />
-                            {t("Configure model")}
-                          </button>
-                        ) : null}
-                        <span
-                          className={openTeammateMenuId === draft.id ? "teammate-row-menu hover-action-menu open" : "teammate-row-menu hover-action-menu"}
-                          onBlur={(event) => {
-                            if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
-                              setOpenTeammateMenuId("");
-                            }
-                          }}
-                        >
-                          <button
-                            className="teammate-row-menu-trigger hover-action-menu-trigger"
-                            type="button"
-                            aria-label={t("Teammate actions")}
-                            title={t("Teammate actions")}
-                            aria-haspopup="menu"
-                            aria-expanded={openTeammateMenuId === draft.id}
-                            onClick={() => setOpenTeammateMenuId((currentId) => currentId === draft.id ? "" : draft.id)}
-                          >
-                            <MoreHorizontal size={16} />
-                          </button>
-                          <span
-                            className="teammate-row-menu-popover hover-action-menu-popover"
-                            role="menu"
-                            hidden={openTeammateMenuId !== draft.id}
-                          >
-                            <button type="button" onClick={() => { setOpenTeammateMenuId(""); onToggleTeammatePinned(draft.id); }} role="menuitem">
-                              {draft.pinned ? <PinOff size={14} /> : <Pin size={14} />}
-                              {draft.pinned ? t("Unpin") : t("Pin")}
-                            </button>
-                            <button type="button" onClick={() => { setOpenTeammateMenuId(""); onToggleTeammateHidden(draft.id); }} role="menuitem">
-                              <EyeOff size={14} />
-                              {draft.hidden ? t("Show") : t("Hide")}
-                            </button>
-                            <button type="button" onClick={() => { setOpenTeammateMenuId(""); onRemoveTeammate(draft.id); }} role="menuitem">
-                              <Trash2 size={14} />
-                              {t("Delete")}
-                            </button>
-                          </span>
-                        </span>
-                      </span>
-                    </article>
-                  );
-                })}
-              </div>
-            )}
-          </section>
-
-          <section className="teammate-template-panel" aria-label={t("Teammate templates")}>
-            <div className="panel-title split">
-              <span>
-                <Brain size={16} />
-                <h2>{t("Default roles")}</h2>
-              </span>
-              <button className="primary-button compact-button" type="button" onClick={focusCreateFlow}>
-                <UserPlus size={14} />
-                {t("Add teammate")}
-              </button>
-            </div>
-            <div className="teammate-template-list">
-              {templates.map((template) => (
-                <button
-                  key={template.id}
-                  className={template.id === detailTemplate?.id ? "teammate-template-row selected" : "teammate-template-row"}
-                  type="button"
-                  aria-pressed={template.id === detailTemplate?.id}
-                  onClick={() => openTemplateDetail(template)}
-                >
-                  <span className="teammate-role-icon">{templateRoleIcon(template)}</span>
-                  <span className="teammate-template-copy">
-                    <strong>{t(template.name)}</strong>
-                    <small>{t(template.summary)}</small>
-                  </span>
-                  <small className="template-skill-count">{roleLabel(template.roleKey, t)}</small>
-                </button>
-              ))}
-            </div>
-          </section>
-        </div>
-      ) : (
-        <section className="teammate-council-home" aria-label={t("AI Councils")}>
-          <div className="teammate-council-home-head">
-            <div>
-              <h2>{t("AI Councils")}</h2>
-            </div>
-            <span className="teammate-council-summary-actions">
-              <button className="icon-button compact-icon-button" type="button" onClick={onRefreshAiCouncils} disabled={aiCouncilsLoading} aria-label={t("Refresh AI councils")} title={t("Refresh AI councils")}>
-                <RefreshCw className={aiCouncilsLoading ? "spin" : undefined} size={14} />
-              </button>
-              {onOpenCouncils ? (
-                <button className="secondary-button compact-button" type="button" onClick={onOpenCouncils}>
-                  <Plus size={14} />
-                  {t("Custom council")}
-                </button>
-              ) : null}
-              {onOpenCouncils ? (
-                <button className="primary-button compact-button" type="button" onClick={onOpenCouncils}>
-                  <Users size={14} />
-                  {t("Open Council Workspace")}
-                </button>
-              ) : null}
             </span>
+            <small>{t("{count} configured", { count: activeLocalTeammates.length })}</small>
           </div>
-
-          {developmentCouncil ? (
-            <div className="teammate-council-home-grid">
-              <article className="teammate-council-summary featured" aria-label={t("Default development council")}>
-                <div className="teammate-council-card-head">
-                  <span>
-                    <strong>{developmentCouncil.displayName}</strong>
-                  </span>
-                  <span className="status-badge active">{developmentCouncil.status}</span>
-                </div>
-              </article>
-
-              <section className="teammate-council-import-card" aria-label={t("Import council to channel")}>
-                <div className="panel-title split">
-                  <span>
-                    <Hash size={16} />
-                    <span className="teammate-panel-heading">
-                      <h3>{t("Import council to channel")}</h3>
-                    </span>
-                  </span>
-                </div>
-                <label className="field">
-                  <span>{t("Selected channel")}</span>
-                  <select
-                    aria-label={t("Select channel for council")}
-                    value={selectedImportChannelId}
-                    onChange={(event) => setSelectedImportChannelId(event.target.value)}
-                    disabled={channels.length === 0 || Boolean(importingCouncilId)}
-                  >
-                    <option value="">{channels.length === 0 ? t("No channels yet") : t("No channels available")}</option>
-                    {channels.map((channel) => (
-                      <option key={channel.id} value={channel.id}>{channel.name}</option>
-                    ))}
-                  </select>
-                </label>
-                <button
-                  className="primary-button compact-button"
-                  type="button"
-                  onClick={() => void importDevelopmentCouncilToChannel()}
-                  disabled={
-                    !onImportCouncilToChannel ||
-                    !selectedImportChannelId ||
-                    channelCouncilSaving ||
-                    Boolean(importingCouncilId) ||
-                    selectedChannelAlreadyHasDevelopmentCouncil ||
-                    developmentCouncilJustImported
-                  }
-                >
-                  <Users size={14} />
-                  {importingCouncilId === developmentCouncil.id
-                    ? t("Importing council...")
-                    : selectedChannelAlreadyHasDevelopmentCouncil || developmentCouncilJustImported
-                      ? t("Council imported")
-                      : t("Import council to channel")}
-                </button>
-                {onOpenChannel && selectedImportChannelId ? (
-                  <button className="secondary-button compact-button" type="button" onClick={() => onOpenChannel(selectedImportChannelId)}>
-                    {t("Open selected channel")}
-                  </button>
-                ) : null}
-              </section>
+          {onOpenCouncils ? (
+            <section className="teammate-council-inline-entry" aria-label={t("Council workspace entry")}>
+              <span>
+                <Users size={15} />
+                <small>{t("Teammates can join councils for shared management.")}</small>
+              </span>
+              <button className="secondary-button compact-button" type="button" onClick={onOpenCouncils}>
+                {t("Open Council Workspace")}
+              </button>
+            </section>
+          ) : null}
+          {activeLocalTeammates.length === 0 ? (
+            <div className="client-empty-state teammate-empty">
+              <Bot size={18} />
+              <span>{t("No workspace teammates")}</span>
             </div>
           ) : (
-            <div className="client-empty-state teammate-empty">
-              <Users size={18} />
-              <span>{aiCouncilsLoading ? t("Loading councils...") : t("No AI councils available")}</span>
+            <div className="teammate-draft-list">
+              {activeLocalTeammates.map((draft) => {
+                const template = draft.templateId ? templates.find((item) => item.id === draft.templateId) : undefined;
+                const draftChannels = draft.channelIds
+                  .map((channelId) => channels.find((channel) => channel.id === channelId)?.name)
+                  .filter((name): name is string => Boolean(name));
+                const provider = draft.providerPresetId ? providers.find((item) => item.id === draft.providerPresetId) : undefined;
+                const ready = provider ? providerPreflightReady(provider) : false;
+                const modelLabel = draft.modelLabel === "No model selected" ? t("No model selected") : draft.modelLabel;
+                const channelLabel = draftChannels.length ? draftChannels.join(", ") : t("No channel");
+                const roleSummary = template ? t(template.name) : roleLabel(draft.roleKey ?? "custom", t);
+                const readinessLabel = !provider ? t("Needs model") : ready ? t("Ready teammate") : t("Model needs check");
+                return (
+                  <article key={draft.id} className={draft.hidden ? "teammate-draft-row hidden-row" : "teammate-draft-row"}>
+                    <TeammateAvatarView teammate={draft} cwd={cwd} compact />
+                    <span className="teammate-draft-copy">
+                      <strong>{draft.displayName}</strong>
+                      <small>{roleSummary}</small>
+                    </span>
+                    <span className={ready ? "teammate-model-pill ready" : "teammate-model-pill warning"}>{modelLabel}</span>
+                    <span className="teammate-channel-pill">{channelLabel}</span>
+                    <time className="teammate-updated-time">{draft.updatedAt ? formatRelativeDraftTime(draft.updatedAt, t) : t("Just now")}</time>
+                    <span className="teammate-row-actions">
+                      <span className={ready ? "teammate-row-status ready" : "teammate-row-status warning"}>{readinessLabel}</span>
+                      {ready && onOpenTeammate ? (
+                        <button className="teammate-row-primary-action" type="button" onClick={() => onOpenTeammate(draft.id)}>
+                          {t("Open")}
+                        </button>
+                      ) : !ready ? (
+                        <button className="teammate-row-primary-action" type="button" onClick={onOpenProviders}>
+                          <PlugZap size={13} />
+                          {t("Configure model")}
+                        </button>
+                      ) : null}
+                      <span
+                        className={openTeammateMenuId === draft.id ? "teammate-row-menu hover-action-menu open" : "teammate-row-menu hover-action-menu"}
+                        onBlur={(event) => {
+                          if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+                            setOpenTeammateMenuId("");
+                          }
+                        }}
+                      >
+                        <button
+                          className="teammate-row-menu-trigger hover-action-menu-trigger"
+                          type="button"
+                          aria-label={t("Teammate actions")}
+                          title={t("Teammate actions")}
+                          aria-haspopup="menu"
+                          aria-expanded={openTeammateMenuId === draft.id}
+                          onClick={() => setOpenTeammateMenuId((currentId) => currentId === draft.id ? "" : draft.id)}
+                        >
+                          <MoreHorizontal size={16} />
+                        </button>
+                        <span
+                          className="teammate-row-menu-popover hover-action-menu-popover"
+                          role="menu"
+                          hidden={openTeammateMenuId !== draft.id}
+                        >
+                          <button type="button" onClick={() => { setOpenTeammateMenuId(""); onToggleTeammatePinned(draft.id); }} role="menuitem">
+                            {draft.pinned ? <PinOff size={14} /> : <Pin size={14} />}
+                            {draft.pinned ? t("Unpin") : t("Pin")}
+                          </button>
+                          <button type="button" onClick={() => { setOpenTeammateMenuId(""); onToggleTeammateHidden(draft.id); }} role="menuitem">
+                            <EyeOff size={14} />
+                            {draft.hidden ? t("Show") : t("Hide")}
+                          </button>
+                          <button type="button" onClick={() => { setOpenTeammateMenuId(""); onRemoveTeammate(draft.id); }} role="menuitem">
+                            <Trash2 size={14} />
+                            {t("Delete")}
+                          </button>
+                        </span>
+                      </span>
+                    </span>
+                  </article>
+                );
+              })}
             </div>
           )}
         </section>
-      )}
+
+        <section className="teammate-template-panel" aria-label={t("Teammate templates")}>
+          <div className="panel-title split">
+            <span>
+              <Brain size={16} />
+              <h2>{t("Default roles")}</h2>
+            </span>
+            <button className="primary-button compact-button" type="button" onClick={focusCreateFlow}>
+              <UserPlus size={14} />
+              {t("Add teammate")}
+            </button>
+          </div>
+          <div className="teammate-template-list">
+            {templates.map((template) => (
+              <button
+                key={template.id}
+                className={template.id === detailTemplate?.id ? "teammate-template-row selected" : "teammate-template-row"}
+                type="button"
+                aria-pressed={template.id === detailTemplate?.id}
+                onClick={() => openTemplateDetail(template)}
+              >
+                <span className="teammate-role-icon">{templateRoleIcon(template)}</span>
+                <span className="teammate-template-copy">
+                  <strong>{t(template.name)}</strong>
+                  <small>{t(template.summary)}</small>
+                </span>
+                <small className="template-skill-count">{roleLabel(template.roleKey, t)}</small>
+              </button>
+            ))}
+          </div>
+        </section>
+      </div>
 
       {detailTemplate ? (
         <TemplateDetailSheet

@@ -396,6 +396,7 @@ test("AI teammates page links council management to Council Workspace", async ({
     },
   ];
   const originalChannelMembershipCount = state.teammateChannelMemberships.length;
+  const originalChannelCouncilPolicyCount = state.channelCouncilPolicies.length;
 
   await mockDaemon(page, state);
   await page.goto("/");
@@ -409,35 +410,25 @@ test("AI teammates page links council management to Council Workspace", async ({
   await expect(page.locator(".teammates-page-header.settings-return-mode .settings-tool-return-row").getByRole("button", { name: "Back to configuration" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "AI Teammates", level: 1 })).toHaveCount(0);
   await expect(page.getByLabel("Workspace teammates")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Add teammate" })).toHaveCount(1);
+  const teammateListSize = await page.getByLabel("Workspace teammates").locator(".teammate-draft-list").evaluate((element) => ({
+    clientWidth: element.clientWidth,
+    scrollWidth: element.scrollWidth,
+  }));
+  expect(teammateListSize.scrollWidth).toBeLessThanOrEqual(teammateListSize.clientWidth + 1);
   await expect(page.locator(".teammate-council-panel")).toHaveCount(0);
+  await expect(page.getByRole("tab", { name: "AI Councils" })).toHaveCount(0);
+  await expect(page.locator(".teammate-council-home")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Import council to channel" })).toHaveCount(0);
 
-  await page.getByRole("tab", { name: "AI Councils" }).click();
-  const councils = page.locator(".teammate-council-home");
-  await expect(councils).toBeVisible();
-  await expect(councils.getByLabel("Default development council")).toContainText("Development Council");
-  await expect(councils.getByRole("button", { name: "Custom council" })).toBeVisible();
-  await expect(councils).not.toContainText("Reference collection");
-  await expect(councils).not.toContainText("Cannot bypass approvals");
-  await expect(councils).not.toContainText("Health clear");
-  await expect(councils).not.toContainText("Architect: Teammate inactive");
-  await expect(councils.getByLabel("Select AI council")).toHaveCount(0);
-  await expect(councils.getByLabel("Add teammate to council")).toHaveCount(0);
-  await expect(councils.getByRole("button", { name: "Create council" })).toHaveCount(0);
-  await expect(councils.getByRole("button", { name: "Clone council" })).toHaveCount(0);
-  await expect(councils.getByRole("button", { name: "Archive council" })).toHaveCount(0);
-  await expect(councils.getByLabel("Select channel for council")).toHaveValue("channel_engineering");
-
-  await councils.getByRole("button", { name: "Import council to channel" }).click();
-  await expect(councils.getByRole("button", { name: "Council imported" })).toBeDisabled();
-  await expect.poll(() => {
-    const policy = state.channelCouncilPolicies.find((item) => isRecord(item) && item.channelId === "channel_engineering");
-    return isRecord(policy) && Array.isArray(policy.attachedCouncilIds)
-      ? policy.attachedCouncilIds.join(",")
-      : "";
-  }).toBe("council_builtin_development");
+  const councilEntry = page.getByLabel("Council workspace entry");
+  await expect(councilEntry).toBeVisible();
+  await expect(councilEntry).toContainText("Teammates can join councils for shared management.");
+  await expect(councilEntry.getByRole("button", { name: "Open Council Workspace" })).toBeVisible();
   expect(state.teammateChannelMemberships).toHaveLength(originalChannelMembershipCount);
+  expect(state.channelCouncilPolicies).toHaveLength(originalChannelCouncilPolicyCount);
 
-  await councils.getByRole("button", { name: "Open Council Workspace" }).click();
+  await councilEntry.getByRole("button", { name: "Open Council Workspace" }).click();
   await expect(page.getByLabel("Settings sections")).toBeVisible();
   await expect(page.getByLabel("Ling Stack navigation")).toHaveCount(0);
   await expect(page.getByRole("heading", { name: "Council Workspace", level: 1 })).toBeVisible();
