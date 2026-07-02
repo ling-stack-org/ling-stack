@@ -203,11 +203,17 @@ textarea {
   min-width: 178px;
   padding: 4px;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   background: var(--surface-panel);
   box-shadow: 0 10px 28px rgba(15, 23, 42, 0.12);
   letter-spacing: 0;
   text-transform: none;
+}
+
+.sidebar-section-menu-popover.rich {
+  width: 206px;
+  min-width: 206px;
+  padding: 6px;
 }
 
 .sidebar-section-menu-popover[hidden] {
@@ -234,6 +240,36 @@ textarea {
   font-weight: 600;
   text-align: left;
   cursor: pointer;
+}
+
+.sidebar-section-menu-popover.rich button {
+  align-items: flex-start;
+  min-height: 48px;
+  padding: 8px 9px;
+}
+
+.sidebar-section-menu-copy {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.sidebar-section-menu-copy > span,
+.sidebar-section-menu-copy > small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sidebar-section-menu-copy > span {
+  white-space: nowrap;
+}
+
+.sidebar-section-menu-copy > small {
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 15px;
+  white-space: normal;
 }
 
 .sidebar-section-menu-popover button:hover:not(:disabled) {

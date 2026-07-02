@@ -44,4 +44,9 @@ test("review queue resolves offline local approvals and refreshes state", async 
   await expect.poll(() => state.approvals[0]?.status).toBe("denied");
   await expect(approvalRows).toHaveCount(0);
   await expect(page.locator(".approval-list")).toContainText("Inbox is clear");
+
+  await page.locator(".review-queue-empty-state").getByRole("button", { name: "Open Work Board" }).click();
+  await expect(page.getByLabel("Settings sections")).toBeVisible();
+  await expect(page.getByLabel("Ling Stack navigation")).toHaveCount(0);
+  await expect(page.locator(".work-board-settings-toolbar .settings-tool-return-row").getByRole("button", { name: "Back to configuration" })).toBeVisible();
 });

@@ -303,6 +303,9 @@ async function mockAutomationReadRoutes(page: Page): Promise<void> {
 }
 
 async function assertDarkPage(page: Page, label: string, selectors: readonly string[]): Promise<void> {
+  for (const selector of selectors) {
+    await expect(page.locator(selector).first(), `${label}: ${selector} should render`).toBeVisible();
+  }
   const surfaces = await readDarkSurfaces(page, selectors);
   for (const selector of selectors) {
     expect(surfaces.some((surface) => surface.selector === selector), `${label}: ${selector} should render`).toBe(true);

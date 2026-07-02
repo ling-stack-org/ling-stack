@@ -126,7 +126,9 @@ test("sidebar sections collapse locally and keep group action menus", async ({ p
   await navigation.getByRole("button", { name: "Channel actions" }).click();
   await expect(page.getByRole("menuitem", { name: "New channel" })).toBeVisible();
   await navigation.getByRole("button", { name: "Teammate actions" }).click();
-  await expect(page.getByRole("menuitem", { name: "New teammate" })).toBeVisible();
+  await expect(page.getByRole("menuitem", { name: /Quick create default teammate/ })).toBeVisible();
+  await expect(page.getByRole("menuitem", { name: /More configuration/ })).toBeVisible();
+  await page.keyboard.press("Escape");
   await navigation.getByRole("button", { name: "Recent conversation actions" }).click();
   const archiveAllConversations = page.getByRole("menuitem", { name: "Archive all conversations" });
   await expect(archiveAllConversations).toBeVisible();

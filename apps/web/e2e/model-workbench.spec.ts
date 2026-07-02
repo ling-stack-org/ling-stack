@@ -86,6 +86,7 @@ async function expectProviderModelDiscoveryLayout(page: Page): Promise<void> {
 }
 
 test("model workbench Chinese mode localizes setup copy and uses an add model sheet", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "zh-CN");
   });
@@ -106,6 +107,11 @@ test("model workbench Chinese mode localizes setup copy and uses an add model sh
   await expect(page.getByRole("heading", { name: "模型工作台" })).toHaveCount(0);
   await expect(page.getByRole("heading", { name: "模型预设" })).toHaveCount(0);
   await expect(page.locator(".provider-table")).toBeVisible();
+  const tableOverflow = await page.locator(".provider-table-shell").evaluate((element) => ({
+    clientWidth: element.clientWidth,
+    scrollWidth: element.scrollWidth,
+  }));
+  expect(tableOverflow.scrollWidth).toBeLessThanOrEqual(tableOverflow.clientWidth + 1);
   await expect(page.getByText("上一页")).toHaveCount(0);
   await expect(page.getByText("下一页")).toHaveCount(0);
   await expect(page.locator(".provider-group-row")).toHaveCount(0);
