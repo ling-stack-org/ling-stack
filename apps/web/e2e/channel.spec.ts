@@ -453,7 +453,7 @@ test("global sidebar keeps fixed chrome, scrollable recents, and a true compact 
     const selectedChannelAvatar = document.querySelector(".channel-left-drawer .sidebar-row-shell.selected .sidebar-channel-avatar");
     const selectedChannelHash = document.querySelectorAll(".channel-left-drawer .sidebar-row-shell.selected .sidebar-hash");
     const selectedChannelButton = document.querySelector(".channel-left-drawer .sidebar-row-shell.selected .sidebar-row-main");
-    const teammateButton = document.querySelector('.channel-left-drawer .sidebar-row[title="Designer"]');
+    const teammateButton = document.querySelector('.channel-left-drawer .sidebar-row-main[title="Designer"]');
     return {
       columns: shell ? getComputedStyle(shell).gridTemplateColumns : "",
       firstColumnWidth: Math.round(Number.parseFloat(shell ? getComputedStyle(shell).gridTemplateColumns : "0")),
@@ -504,6 +504,9 @@ test("global sidebar keeps fixed chrome, scrollable recents, and a true compact 
   await page.getByRole("button", { name: "Open AI Teammates" }).click();
   await expect(page.locator(".teammates-page-header.settings-return-mode .settings-tool-return-row").getByRole("button", { name: "Back to configuration" })).toBeVisible();
   await expect(page.getByLabel("Workspace teammates")).toBeVisible();
+  await expect(page.getByLabel("Ling Stack navigation")).toHaveCount(0);
+  await page.getByRole("button", { name: "Back to configuration" }).click();
+  await page.getByRole("button", { name: "Back to app" }).click();
 
   await page.getByRole("button", { name: "Show navigation" }).click();
   await expect.poll(async () => Math.round((await page.locator(".channel-left-drawer").boundingBox())?.width ?? 0)).toBe(240);
@@ -1278,7 +1281,7 @@ test("channel drawer does not flash legacy create labels in section headers", as
   const drawer = page.locator(".channel-left-drawer");
   await expect(drawer.getByRole("button", { name: "New channel" })).toHaveCount(0);
   await expect(drawer.getByRole("button", { name: "Channel actions" })).toBeVisible();
-  await expect(drawer.locator(".sidebar-section-title small")).toHaveCount(0);
+  await expect(drawer.locator(".sidebar-section-toggle small")).toHaveCount(0);
   await expect(drawer.getByText("Create", { exact: true })).toHaveCount(0);
   await expect(drawer.locator(".sidebar-section:first-of-type .sidebar-section-action")).toHaveText("");
   await drawer.getByRole("button", { name: "Channel actions" }).click();
