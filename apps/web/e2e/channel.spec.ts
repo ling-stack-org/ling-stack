@@ -158,6 +158,35 @@ test("channel header hides empty governance review queue while notifications loa
   await expect(page.getByLabel("Channel message feed").getByText("No channel messages yet")).toBeVisible();
 });
 
+test("terminal bottom panel runs commands in the channel workspace", async ({ page }) => {
+  await useEnglishLocale(page);
+  const state = createBaseState({ approvalStatus: "expired" });
+  state.eventsByRun = {};
+
+  await mockDaemon(page, state);
+  await page.goto("/");
+  await openEngineeringChannel(page);
+
+  await page.getByRole("button", { name: "Show details" }).click();
+  const dock = page.locator(".channel-side-panel.right-dock");
+  await expect(dock).toBeVisible();
+  await expect(dock.getByRole("button", { name: "Terminal" })).toBeVisible();
+
+  await page.getByRole("button", { name: "Toggle bottom panel" }).click();
+  const terminal = page.locator(".channel-bottom-terminal");
+  await expect(terminal).toBeVisible();
+  await expect(terminal.locator(".workspace-terminal-tab")).toContainText("ling-stack");
+  await expect(page.locator(".channel-side-panel .workspace-terminal-panel")).toHaveCount(0);
+
+  const commandInput = terminal.getByRole("textbox", { name: "Command" });
+  await commandInput.fill("pwd");
+  await commandInput.press("Enter");
+
+  await expect.poll(() => state.terminalCommandRequests.length).toBe(1);
+  expect(state.terminalCommandRequests[0]).toEqual({ cwd, command: "pwd" });
+  await expect(terminal.locator(".workspace-terminal-output")).toContainText(cwd);
+});
+
 test("channel team experts fold into latest turn and metrics stay in settings", async ({ page }) => {
   await useEnglishLocale(page);
   const state = createBaseState({ approvalStatus: "pending" });
@@ -500,12 +529,11 @@ test("global sidebar keeps fixed chrome, scrollable recents, and a true compact 
   await expect(page.getByRole("heading", { name: "Automations", level: 1 })).toBeVisible();
   await navigation.getByRole("button", { name: "Settings" }).click();
   await expect(page.getByLabel("Settings sections")).toBeVisible();
-  await expect(page.getByLabel("Settings sections").getByRole("button", { name: "Configuration overview" })).toBeVisible();
-  await page.getByRole("button", { name: "Open AI Teammates" }).click();
-  await expect(page.locator(".teammates-page-header.settings-return-mode .settings-tool-return-row").getByRole("button", { name: "Back to configuration" })).toBeVisible();
+  await expect(page.getByLabel("Settings sections").getByRole("button", { name: "Configuration overview" })).toHaveCount(0);
+  await page.getByLabel("Settings sections").getByRole("button", { name: "AI Teammates" }).click();
+  await expect(page.locator(".settings-tool-return-row")).toHaveCount(0);
   await expect(page.getByLabel("Workspace teammates")).toBeVisible();
   await expect(page.getByLabel("Ling Stack navigation")).toHaveCount(0);
-  await page.getByRole("button", { name: "Back to configuration" }).click();
   await page.getByRole("button", { name: "Back to app" }).click();
 
   await page.getByRole("button", { name: "Show navigation" }).click();

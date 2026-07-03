@@ -16,10 +16,6 @@
   grid-template-rows: minmax(0, 1fr);
 }
 
-.work-board-page > .settings-tool-return-row {
-  padding: 0;
-}
-
 .work-board-page > .panel-title {
   padding: 14px 16px;
 }

@@ -17,7 +17,7 @@ import {
   type WorkItemView,
   type WorkItemWaitingReason,
 } from "../../lib/work-items.js";
-import { SettingsToolReturnRow, StatusBadge } from "../../shared/components/index.js";
+import { StatusBadge } from "../../shared/components/index.js";
 import type {
   ApprovalRequest,
   Channel,
@@ -242,7 +242,6 @@ export function GlobalWorkBoardPage({
           <div className={settingsToolMode ? "work-board-toolbar settings-tool-mode" : "work-board-toolbar"}>
             {settingsToolMode ? (
               <div className="work-board-settings-toolbar">
-                {onBackToWorkspaceTools ? <SettingsToolReturnRow onBack={onBackToWorkspaceTools} /> : null}
                 {workBoardTabs}
                 {filterToggleButton}
                 {clearFiltersButton}

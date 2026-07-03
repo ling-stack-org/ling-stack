@@ -27,7 +27,7 @@ test("language switcher toggles Chinese and English UI labels", async ({ page })
   await expect(page.getByRole("heading", { name: "Engineering", level: 1 })).toBeVisible();
 
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
-  await page.getByLabel("Settings sections").getByRole("button", { name: /Personal and interface/ }).click();
+  await page.getByLabel("Settings sections").getByRole("button", { name: /Interface preferences/ }).click();
   await expect(page.getByRole("heading", { name: "Interface preferences" })).toBeVisible();
   await page.getByRole("button", { name: "中文" }).click();
   await expect(page.locator("html")).toHaveAttribute("lang", "zh-CN");
@@ -56,7 +56,7 @@ test("language switcher toggles Chinese and English UI labels", async ({ page })
   await expect(page.getByRole("heading", { name: "Engineering", level: 1 })).toBeVisible();
 
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "设置" }).click();
-  await page.getByLabel("设置分组").getByRole("button", { name: /个人与界面/ }).click();
+  await page.getByLabel("设置分组").getByRole("button", { name: /界面偏好/ }).click();
   await page.getByRole("button", { name: "EN", exact: true }).click();
   await expect(page.locator("html")).toHaveAttribute("lang", "en-US");
   await expect.poll(() => state.workspaceSettings.locale).toBe("en-US");
@@ -105,9 +105,8 @@ test("Chinese mode localizes workspace settings, runtime policy, and teammate se
   await expect(page.getByLabel("频道管理").getByRole("button", { name: "创建频道" })).toHaveCount(0);
 
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "设置" }).click();
-  await page.getByLabel("设置分组").getByRole("button", { name: /配置/ }).click();
-  await page.getByRole("button", { name: "打开 AI 队友" }).click();
-  await expect(page.locator(".teammates-page-header.settings-return-mode .settings-tool-return-row").getByRole("button", { name: "返回配置" })).toBeVisible();
+  await page.getByLabel("设置分组").getByRole("button", { name: "AI 队友" }).click();
+  await expect(page.locator(".settings-tool-return-row")).toHaveCount(0);
   await expect(page.getByRole("heading", { name: "AI 队友", level: 1 })).toHaveCount(0);
   await expect(page.getByLabel("AI 队友上下文")).toHaveCount(0);
   await expect(page.locator(".teammate-detail-panel")).toHaveCount(0);
@@ -155,7 +154,7 @@ test("theme switcher supports system, light, and dark preferences", async ({ pag
   await expect(html).toHaveAttribute("data-theme", "dark");
   await expect(html).toHaveAttribute("data-theme-preference", "system");
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
-  await page.getByLabel("Settings sections").getByRole("button", { name: /Personal and interface/ }).click();
+  await page.getByLabel("Settings sections").getByRole("button", { name: /Interface preferences/ }).click();
   await expect(page.getByRole("heading", { name: "Interface preferences" })).toBeVisible();
   await expect(page.getByRole("button", { name: "System" })).toHaveAttribute("aria-pressed", "true");
 
@@ -175,7 +174,7 @@ test("theme switcher supports system, light, and dark preferences", async ({ pag
   await expect(html).toHaveAttribute("data-theme-preference", "dark");
 
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
-  await page.getByLabel("Settings sections").getByRole("button", { name: /Personal and interface/ }).click();
+  await page.getByLabel("Settings sections").getByRole("button", { name: /Interface preferences/ }).click();
   await page.getByRole("button", { name: "System" }).click();
   await expect(html).toHaveAttribute("data-theme", "dark");
   await expect(html).toHaveAttribute("data-theme-preference", "system");
@@ -193,8 +192,8 @@ test("settings interface preferences do not expose the channel protocol editor",
   await page.goto("/");
 
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
-  await page.getByLabel("Settings sections").getByRole("button", { name: /Personal and interface/ }).click();
-  const settingsPanel = page.locator(".settings-panel").filter({ hasText: "Interface preferences" });
+  await page.getByLabel("Settings sections").getByRole("button", { name: /Interface preferences/ }).click();
+  const settingsPanel = page.locator(".interface-settings-panel");
   await expect(settingsPanel).not.toContainText("Channel protocol");
   await expect(settingsPanel.getByRole("button", { name: "Open editor" })).toHaveCount(0);
 });
@@ -207,7 +206,7 @@ test("settings runtime runners show daemon readiness blockers", async ({ page })
   await page.goto("/");
 
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
-  await page.getByLabel("Settings sections").getByRole("button", { name: /Execution and permissions/ }).click();
+  await page.getByLabel("Settings sections").getByRole("button", { name: /Approval strategy/ }).click();
   await page.getByRole("tab", { name: /Runtime runners/ }).click();
   const settingsPanel = page.locator(".runtime-runner-settings-panel");
   await expect(page.getByRole("heading", { name: "Runtime runners" })).toBeVisible();
@@ -232,8 +231,7 @@ test("settings developer section contains startup readiness", async ({ page }) =
   const settingsSections = page.getByLabel("Settings sections");
   await expect(settingsSections.getByRole("button", { name: /Startup readiness/ })).toHaveCount(0);
 
-  await settingsSections.getByRole("button", { name: /Data and maintenance/ }).click();
-  await page.getByRole("tab", { name: /Startup and diagnostics/ }).click();
+  await settingsSections.getByRole("button", { name: /Startup and diagnostics/ }).click();
   const developerPanel = page.locator(".developer-settings-panel");
   await expect(developerPanel.getByRole("heading", { name: "Developer" })).toBeVisible();
   await expect(developerPanel.getByRole("heading", { name: "Startup readiness" })).toBeVisible();
@@ -242,7 +240,7 @@ test("settings developer section contains startup readiness", async ({ page }) =
   await expect(developerPanel.getByRole("button", { name: "Open Run Diagnostics" })).toBeVisible();
 });
 
-test("settings workspace tools use compact rows and live counts", async ({ page }) => {
+test("settings configuration entries open nested tools directly", async ({ page }) => {
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");
   });
@@ -293,31 +291,24 @@ test("settings workspace tools use compact rows and live counts", async ({ page 
   await expect(settingsSections).not.toContainText("Extensions");
   await expect(settingsSections).not.toContainText("Model, teammates, and board shortcuts");
   await expect(settingsSections).not.toContainText("Profile, preferences, and identity");
+  await expect(settingsSections.getByRole("button", { name: "Configuration overview" })).toHaveCount(0);
+  await expect(settingsSections.getByRole("button", { name: "Model Workbench" })).toBeVisible();
+  await expect(settingsSections.getByRole("button", { name: "AI Teammates" })).toBeVisible();
+  await expect(settingsSections.getByRole("button", { name: "AI Councils" })).toBeVisible();
+  await expect(settingsSections.getByRole("button", { name: "Work Board" })).toBeVisible();
+  await expect(settingsSections.getByRole("button", { name: "Approval strategy" })).toBeVisible();
+  await expect(page.locator(".settings-workspace-tools")).toHaveCount(0);
 
-  const workspaceTools = page.locator(".settings-workspace-tools");
-  await expect(page.getByRole("heading", { name: "Configuration overview" })).toBeVisible();
-  await expect(workspaceTools.locator(".settings-tool-row")).toHaveCount(5);
-  await expect(workspaceTools.locator(".settings-tool-row.selected")).toHaveCount(0);
-  await expect(workspaceTools.locator(".settings-global-approval-card")).toHaveCount(0);
-  await expect(workspaceTools).toContainText("1 available model");
-  await expect(workspaceTools).toContainText("2 teammates");
-  await expect(workspaceTools).toContainText("1 council(s)");
-  await expect(workspaceTools).toContainText("1 pending work items");
-  await expect(workspaceTools).toContainText("Default: Smart authorization");
-  await expect(workspaceTools).not.toContainText("Global approval default");
-  await expect(workspaceTools.getByRole("button", { name: "Open Model Workbench" })).toBeVisible();
-  await expect(workspaceTools.getByRole("button", { name: "Open AI Teammates" })).toBeVisible();
-  await expect(workspaceTools.getByRole("button", { name: "Open Council Workspace" })).toBeVisible();
-  await expect(workspaceTools.getByRole("button", { name: "Open Work Board" })).toBeVisible();
-  await workspaceTools.getByRole("button", { name: "Open Council Workspace" }).click();
+  await settingsSections.getByRole("button", { name: "AI Councils" }).click();
   await expect(settingsSections).toBeVisible();
   await expect(page.getByLabel("Ling Stack navigation")).toHaveCount(0);
   await expect(page.getByRole("heading", { name: "Council Workspace", level: 1 })).toBeVisible();
-  await expect(page.locator(".council-workspace-page.settings-return-mode .settings-tool-return-row").getByRole("button", { name: "Back to configuration" })).toBeVisible();
-  await page.getByRole("button", { name: "Back to configuration" }).click();
-  await expect(workspaceTools.locator(".settings-tool-row")).toHaveCount(5);
-  await workspaceTools.getByRole("button", { name: "Open advanced policy" }).click();
-  await expect(settingsSections.getByRole("button", { name: /Execution and permissions/ })).toHaveClass(/active/);
+  await expect(settingsSections.getByRole("button", { name: "AI Councils" })).toHaveClass(/active/);
+  await expect(page.locator(".settings-tool-return-row")).toHaveCount(0);
+  await expect(page.locator(".settings-workspace-tools")).toHaveCount(0);
+
+  await settingsSections.getByRole("button", { name: "Approval strategy" }).click();
+  await expect(settingsSections.getByRole("button", { name: /Approval strategy/ })).toHaveClass(/active/);
   await expect(page.locator(".settings-global-approval-card")).toHaveCount(1);
   await page.locator(".settings-global-approval-card").getByRole("button", { name: "Ask first" }).click();
   await expect.poll(() => state.workspaceSettings.defaultPermissionMode).toBe("ask_everything");
@@ -334,7 +325,7 @@ test("settings approval policy loads, edits, and saves tool decisions and write 
 
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Engineering" }).click();
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
-  await page.getByLabel("Settings sections").getByRole("button", { name: /Execution and permissions/ }).click();
+  await page.getByLabel("Settings sections").getByRole("button", { name: /Approval strategy/ }).click();
   await page.getByRole("tab", { name: /Approval policy/ }).click();
   const settingsPanel = page.locator(".settings-panel").filter({ hasText: "Approval policy" });
   await expect(page.getByRole("heading", { name: "Approval policy" })).toBeVisible();
@@ -366,7 +357,7 @@ test("settings permission preset cards update the effective preview", async ({ p
   await page.goto("/");
 
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
-  await page.getByLabel("Settings sections").getByRole("button", { name: /Execution and permissions/ }).click();
+  await page.getByLabel("Settings sections").getByRole("button", { name: /Approval strategy/ }).click();
   await page.getByRole("tab", { name: /Approval policy/ }).click();
   const settingsPanel = page.locator(".settings-panel").filter({ hasText: "Approval policy" });
 
@@ -392,11 +383,9 @@ test("settings plugins page applies and controls the CUA trusted-local preset wi
 
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Engineering" }).click();
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
-  await page.getByLabel("Settings sections").getByRole("button", { name: /Integrations/ }).click();
-  await expect(page.locator(".external-work-settings-panel")).toBeVisible();
+  await page.getByLabel("Settings sections").getByRole("button", { name: /Plugin Manager/ }).click();
+  await expect(page.locator(".external-work-settings-panel")).toHaveCount(0);
   await expect(page.locator(".mcp-page")).toHaveCount(0);
-  await expect(page.locator(".settings-plugin-manager")).toHaveCount(0);
-  await page.getByRole("tab", { name: /Plugin Manager/ }).click();
 
   const pluginsPanel = page.locator(".settings-plugin-manager");
   await expect(pluginsPanel).toContainText("Cua Driver");
@@ -456,8 +445,8 @@ test("settings plugins page applies and controls the CUA trusted-local preset wi
   expect(state.mcpServers.find((server) => server.id === "mcp_cua_driver")?.enabled).toBe(true);
 
   await pluginsPanel.getByRole("button", { name: "MCP settings" }).click();
-  await expect(page.getByLabel("Settings sections").getByRole("button", { name: /Integrations/ })).toHaveClass(/active/);
-  await expect(page.getByRole("tab", { name: /MCP tool servers/ })).toHaveAttribute("aria-selected", "true");
+  await expect(page.getByLabel("Settings sections").getByRole("button", { name: /MCP tool servers/ })).toHaveClass(/active/);
+  await expect(page.getByRole("tab", { name: /MCP tool servers/ })).toHaveCount(0);
   await expect(page.locator(".mcp-server-row").filter({ hasText: "Cua Driver" })).toBeVisible();
 });
 
@@ -676,7 +665,7 @@ test("settings external work status shows setup and explicit controls", async ({
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Engineering" }).click();
   await expect(page.getByRole("heading", { name: "Engineering", level: 1 })).toBeVisible();
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
-  await page.getByLabel("Settings sections").getByRole("button", { name: /Integrations/ }).click();
+  await page.getByLabel("Settings sections").getByRole("button", { name: /External work/ }).click();
   const panel = page.locator(".external-work-settings-panel");
   await expect(panel).toContainText("External work");
   await expect(panel).toContainText("openclaw/openclaw");
@@ -717,7 +706,7 @@ test("settings external work token setup saves to daemon and clears the input", 
 
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Engineering" }).click();
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
-  await page.getByLabel("Settings sections").getByRole("button", { name: /Integrations/ }).click();
+  await page.getByLabel("Settings sections").getByRole("button", { name: /External work/ }).click();
   const panel = page.locator(".external-work-settings-panel");
   await expect(panel).toContainText("External token");
   await expect(panel).toContainText("env:GITHUB_TOKEN");
@@ -756,7 +745,7 @@ test("settings external work status renders invalid, missing, and Linear states"
 
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Engineering" }).click();
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
-  await page.getByLabel("Settings sections").getByRole("button", { name: /Integrations/ }).click();
+  await page.getByLabel("Settings sections").getByRole("button", { name: /External work/ }).click();
   const panel = page.locator(".external-work-settings-panel");
   await expect(panel).toContainText("invalid");
   await expect(panel).toContainText("source.kind is required");

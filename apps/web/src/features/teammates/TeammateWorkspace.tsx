@@ -61,7 +61,6 @@ import {
   revokePendingAttachmentPreview,
   revokePendingAttachmentPreviews,
   serializeComposerInputParts,
-  SettingsToolReturnRow,
   type PendingAttachmentItem,
 } from "../../shared/components/index.js";
 import type {
@@ -1889,13 +1888,11 @@ export function TeammateWorkspace({
             setActiveTab("profile");
           }}
           onToggleContextPanel={() => setChatContextPanelOpen((current) => !current)}
-          toolbarStart={onBackToWorkspaceTools ? <SettingsToolReturnRow onBack={onBackToWorkspaceTools} /> : undefined}
         />
       ) : (
         <section className={onBackToWorkspaceTools ? "teammate-settings-header settings-return-mode" : "teammate-settings-header"} aria-label={t("Single agent settings")}>
           {onBackToWorkspaceTools ? (
             <span className="teammate-settings-return-actions">
-              <SettingsToolReturnRow onBack={onBackToWorkspaceTools} />
               <button className="secondary-button compact-button" type="button" onClick={() => setWorkspaceView("chat")}>
                 <ArrowLeft size={15} />
                 {t("Back to private chat")}

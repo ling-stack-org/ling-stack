@@ -27,7 +27,6 @@ import type {
   Channel,
   ChannelCouncilPolicy,
 } from "../../types.js";
-import { SettingsToolReturnRow } from "../../shared/components/index.js";
 import { TeammateAvatarView } from "../teammates/TeammateAvatarView.js";
 
 type CouncilActionKind = "create" | "clone" | "archive" | "";
@@ -127,7 +126,6 @@ export function CouncilWorkspacePanels(props: CouncilWorkspacePanelsProps): JSX.
 
   return (
     <div className={props.onBackToWorkspaceTools ? "council-workspace-page settings-return-mode" : "council-workspace-page"} aria-label={t("Council Workspace")}>
-      {props.onBackToWorkspaceTools ? <SettingsToolReturnRow onBack={props.onBackToWorkspaceTools} /> : null}
       <header className="council-workspace-header">
         <div>
           <h1>{t("Council Workspace")}</h1>

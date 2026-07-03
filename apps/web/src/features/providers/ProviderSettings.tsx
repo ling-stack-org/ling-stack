@@ -53,7 +53,6 @@ import {
   sortProvidersForWorkbench,
 } from "../../lib/providers.js";
 import { readRunProviderPresetId } from "../../lib/run-evidence.js";
-import { SettingsToolReturnRow } from "../../shared/components/index.js";
 import type {
   ProviderCheckResult,
   ProviderFormState,
@@ -433,7 +432,6 @@ export function ProviderSettings({
         aria-labelledby={onBackToWorkspaceTools ? undefined : "provider-workbench-title"}
       >
         <header className={onBackToWorkspaceTools ? "provider-workbench-header settings-return-mode" : "provider-workbench-header"}>
-          {onBackToWorkspaceTools ? <SettingsToolReturnRow onBack={onBackToWorkspaceTools} /> : null}
           {!onBackToWorkspaceTools ? (
             <div>
               <h1 id="provider-workbench-title">{t("Model Workbench")}</h1>

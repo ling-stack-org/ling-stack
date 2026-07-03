@@ -7,7 +7,6 @@ export { MessageComposer, type MessageComposerProps } from "./MessageComposer.js
 export { MetaRow } from "./MetaRow.js";
 export { createAttachmentPreviewUrl, createLocalComposerAssetId, pendingAssetLabel, pendingPreviewLabel, revokeObjectUrl, revokePendingAttachmentPreview, revokePendingAttachmentPreviews, type PendingAssetState, type PendingAttachmentItem } from "./composer-pending-assets.js";
 export { RunRepairHintBanner } from "./RunRepairHintBanner.js";
-export { SettingsToolReturnRow } from "./SettingsToolReturnRow.js";
 export { StatusBadge } from "./StatusBadge.js";
 export { TokenizedComposerInput, type TokenizedComposerInputHandle, type TokenizedComposerInputProps } from "@ling-stack/conversation-ui-react";
 export { UsedMemorySummary, filterUsedMemoryEventsByResponse } from "./UsedMemorySummary.js";

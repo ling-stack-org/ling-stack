@@ -543,6 +543,7 @@ export function WorkspaceRightDock({
     t,
     terminalEvidenceCount,
     terminalGroups,
+    cwd,
     visiblePlanCount,
   ]);
 
