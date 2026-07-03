@@ -29,7 +29,11 @@
   min-width: 0;
 }
 
-.council-workspace-header > div:first-child {
+.council-workspace-page.settings-return-mode .council-workspace-header {
+  justify-content: flex-end;
+}
+
+.council-workspace-title {
   display: grid;
   gap: 4px;
   min-width: 0;

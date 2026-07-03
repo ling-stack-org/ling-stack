@@ -2829,12 +2829,20 @@ button.message-local-file-link {
 
 .diff-line {
   display: grid;
-  grid-template-columns: 24px minmax(0, 1fr);
+  grid-template-columns: 46px 22px minmax(0, 1fr);
   min-width: 0;
 }
 
+.diff-line-number {
+  padding: 0 7px;
+  border-right: 1px solid color-mix(in srgb, var(--conversation-code-border) 72%, transparent);
+  color: var(--conversation-code-muted);
+  text-align: right;
+  user-select: none;
+}
+
 .diff-gutter {
-  padding: 0 6px;
+  padding: 0 4px;
   border-right: 1px solid var(--conversation-code-border);
   color: var(--conversation-code-muted);
   text-align: center;
@@ -2853,14 +2861,47 @@ button.message-local-file-link {
   background: color-mix(in srgb, var(--conversation-diff-add-bg) 54%, transparent);
 }
 
+.diff-line.add .diff-line-number,
+.diff-line.add .diff-gutter {
+  color: var(--success);
+}
+
 .diff-line.delete {
   background: color-mix(in srgb, var(--conversation-diff-remove-bg) 54%, transparent);
+}
+
+.diff-line.delete .diff-line-number,
+.diff-line.delete .diff-gutter {
+  color: var(--danger);
 }
 
 .diff-line.hunk,
 .diff-line.meta {
   background: var(--surface-subtle);
   color: var(--text-muted);
+}
+
+.diff-fold {
+  display: grid;
+  grid-template-columns: minmax(16px, 1fr) auto minmax(16px, 1fr);
+  gap: 8px;
+  align-items: center;
+  min-width: 0;
+  padding: 7px 10px;
+  border-block: 1px solid var(--conversation-code-border);
+  background: color-mix(in srgb, var(--conversation-bg-muted) 78%, transparent);
+  color: var(--conversation-text-soft);
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 10.5px;
+  font-weight: 720;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+.diff-fold-rule {
+  height: 1px;
+  min-width: 0;
+  background: var(--conversation-code-border);
 }
 
 
@@ -7151,6 +7192,10 @@ code,
   padding: 10px 14px 16px;
 }
 
+.right-dock-page-body:has(> .right-dock-review-page-accordion) {
+  padding-inline: 0;
+}
+
 .right-dock-launcher,
 .right-dock-review-page,
 .right-dock-plans-page,
@@ -7177,6 +7222,16 @@ code,
   align-content: start;
   gap: 10px;
   min-width: 0;
+}
+
+.right-dock-review-page-accordion .right-dock-review-list-pane {
+  gap: 0;
+}
+
+.right-dock-review-page-accordion .right-dock-filter-row,
+.right-dock-review-page-accordion .right-dock-review-status-card,
+.right-dock-review-page-accordion > .right-dock-review-list-pane > .right-dock-empty {
+  margin-inline: 14px;
 }
 
 .right-dock-review-detail-pane {
@@ -7282,6 +7337,10 @@ code,
   border-bottom: 1px solid var(--border-subtle);
 }
 
+.right-dock-review-page-accordion .right-dock-review-accordion-item {
+  border-bottom: 0;
+}
+
 .right-dock-review-accordion-item > .right-dock-review-row {
   width: 100%;
   border-bottom: 0;
@@ -7303,6 +7362,10 @@ code,
   animation: right-dock-review-inline-open 180ms cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 
+.right-dock-review-page-accordion .right-dock-review-inline-detail {
+  padding: 0 0 16px;
+}
+
 .right-dock-review-inline-detail .right-dock-review-detail.compact {
   gap: 0;
 }
@@ -7310,6 +7373,12 @@ code,
 .right-dock-review-inline-detail .right-dock-code-preview {
   border-radius: 8px;
   box-shadow: 0 12px 26px rgba(0, 0, 0, 0.16);
+}
+
+.right-dock-review-page-accordion .right-dock-review-inline-detail .right-dock-code-preview {
+  border-inline: 0;
+  border-radius: 0;
+  box-shadow: none;
 }
 
 .right-dock-review-inline-detail .right-dock-code-preview pre {
@@ -8600,10 +8669,10 @@ code,
   display: grid;
   min-width: 0;
   margin: 0;
-  border: 1px solid #30362f;
+  border: 1px solid var(--conversation-code-border);
   border-radius: 10px;
-  background: #101211;
-  color: #e7e7e2;
+  background: var(--conversation-code-bg);
+  color: var(--conversation-code-text);
   overflow: hidden;
 }
 
@@ -8611,9 +8680,9 @@ code,
   display: block;
   min-width: 0;
   min-height: 34px;
-  border-bottom: 1px solid #30362f;
-  background: #151816;
-  color: #999f98;
+  border-bottom: 1px solid var(--conversation-code-border);
+  background: var(--conversation-code-bg-hover);
+  color: var(--conversation-code-muted);
   font-family: "SFMono-Regular", Consolas, monospace;
   font-size: 10.5px;
   font-weight: 720;
@@ -8643,11 +8712,11 @@ code,
 }
 
 .right-dock-code-preview-toggle:hover {
-  background: color-mix(in srgb, #ffffff 4%, transparent);
+  background: color-mix(in srgb, var(--conversation-code-text) 5%, transparent);
 }
 
 .right-dock-code-preview-toggle:focus-visible {
-  outline: 2px solid color-mix(in srgb, var(--accent) 72%, #ffffff);
+  outline: 2px solid color-mix(in srgb, var(--accent) 72%, transparent);
   outline-offset: -2px;
 }
 
@@ -8675,11 +8744,11 @@ code,
 }
 
 .right-dock-code-stat span:first-child {
-  color: #35d06d;
+  color: var(--success);
 }
 
 .right-dock-code-stat span:last-child {
-  color: #ff6b66;
+  color: var(--danger);
 }
 
 .right-dock-code-preview figcaption small {
@@ -8692,8 +8761,8 @@ code,
   max-height: 560px;
   margin: 0;
   overflow: auto;
-  background: #101211;
-  color: #e7e7e2;
+  background: var(--conversation-code-bg);
+  color: var(--conversation-code-text);
   font-family: "SFMono-Regular", Consolas, monospace;
   font-size: 11px;
   line-height: 1.48;
@@ -8715,7 +8784,7 @@ code,
 .right-dock-code-mark,
 .right-dock-code-note-mark {
   padding: 0 5px;
-  color: #999f98;
+  color: var(--conversation-code-muted);
   font-size: 11px;
   font-weight: 650;
   text-align: right;
@@ -8723,7 +8792,7 @@ code,
 }
 
 .right-dock-code-mark {
-  border-right: 1px solid #30362f;
+  border-right: 1px solid var(--conversation-code-border);
   text-align: center;
 }
 
@@ -8742,59 +8811,59 @@ code,
 }
 
 .right-dock-code-line.add {
-  border-left-color: #22c55e;
-  background: rgba(34, 197, 94, 0.16);
-  color: #e7e7e2;
+  border-left-color: var(--conversation-diff-add);
+  background: color-mix(in srgb, var(--conversation-diff-add) 13%, var(--conversation-code-bg));
+  color: var(--conversation-code-text);
 }
 
 .right-dock-code-line.delete {
-  border-left-color: #ef4444;
-  background: rgba(239, 68, 68, 0.16);
-  color: #e7e7e2;
+  border-left-color: var(--conversation-diff-remove);
+  background: color-mix(in srgb, var(--conversation-diff-remove) 12%, var(--conversation-code-bg));
+  color: var(--conversation-code-text);
 }
 
 .right-dock-code-line.add .right-dock-code-number,
 .right-dock-code-line.add .right-dock-code-mark {
-  color: #4ade80;
+  color: var(--conversation-diff-add);
 }
 
 .right-dock-code-line.delete .right-dock-code-number,
 .right-dock-code-line.delete .right-dock-code-mark {
-  color: #f87171;
+  color: var(--conversation-diff-remove);
 }
 
 .right-dock-code-line.hunk,
 .right-dock-code-line.meta {
-  background: #1f241f;
-  color: #93c5fd;
+  background: color-mix(in srgb, var(--info) 8%, var(--conversation-code-bg));
+  color: var(--info);
 }
 
 .right-dock-code-line.hunk {
-  color: #93c5fd;
+  color: var(--info);
 }
 
 .right-dock-code-line.command {
-  color: #93c5fd;
+  color: var(--info);
 }
 
 .right-dock-code-line.has-note .right-dock-code-note-mark {
-  color: #b45309;
+  color: var(--warning);
 }
 
 .right-dock-code-line.block-note .right-dock-code-note-mark {
-  color: #f87171;
+  color: var(--danger);
 }
 
 .right-dock-code-token.kw {
-  color: #c084fc;
+  color: var(--info);
 }
 
 .right-dock-code-token.fn {
-  color: #fb923c;
+  color: var(--warning);
 }
 
 .right-dock-code-token.str {
-  color: #86efac;
+  color: var(--success);
 }
 
 .right-dock-code-fold {
@@ -8804,9 +8873,9 @@ code,
   align-items: center;
   min-width: 0;
   padding: 7px 10px;
-  border-block: 1px solid #30362f;
-  background: #191d1a;
-  color: #999f98;
+  border-block: 1px solid var(--conversation-code-border);
+  background: var(--conversation-code-bg-hover);
+  color: var(--conversation-code-muted);
   font-family: "SFMono-Regular", Consolas, monospace;
   font-size: 10.5px;
   font-weight: 720;
@@ -8821,8 +8890,8 @@ code,
   padding: 0;
   border: 0;
   border-radius: 6px;
-  background: #242922;
-  color: #999f98;
+  background: color-mix(in srgb, var(--conversation-code-border) 42%, transparent);
+  color: var(--conversation-code-muted);
   font-size: 11px;
 }
 
@@ -8833,9 +8902,9 @@ code,
   align-items: start;
   min-width: 0;
   padding: 8px 10px;
-  border-top: 1px solid #4a341f;
-  background: rgba(180, 83, 9, 0.13);
-  color: #fed7aa;
+  border-top: 1px solid var(--warning-border);
+  background: color-mix(in srgb, var(--warning) 11%, var(--conversation-code-bg));
+  color: var(--warning);
   font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   font-size: 11px;
   line-height: 1.45;
@@ -8843,23 +8912,23 @@ code,
 }
 
 .right-dock-inline-note.blocker {
-  border-top-color: #59211d;
-  background: rgba(239, 68, 68, 0.14);
-  color: #fecaca;
+  border-top-color: var(--danger-border);
+  background: color-mix(in srgb, var(--danger) 12%, var(--conversation-code-bg));
+  color: var(--danger);
 }
 
 .right-dock-inline-note.suggestion {
-  border-top-color: rgba(37, 99, 235, 0.42);
-  background: rgba(37, 99, 235, 0.13);
-  color: #bfdbfe;
+  border-top-color: var(--info-border);
+  background: color-mix(in srgb, var(--info) 11%, var(--conversation-code-bg));
+  color: var(--info);
 }
 
 .right-dock-note-pill {
   height: 20px;
   padding: 0 7px;
   border-radius: 999px;
-  background: rgba(251, 146, 60, 0.2);
-  color: #fdba74;
+  background: var(--warning-soft);
+  color: var(--warning);
   font-size: 10px;
   font-weight: 780;
   line-height: 20px;
@@ -8867,13 +8936,13 @@ code,
 }
 
 .right-dock-inline-note.blocker .right-dock-note-pill {
-  background: rgba(248, 113, 113, 0.2);
-  color: #fca5a5;
+  background: var(--danger-soft);
+  color: var(--danger);
 }
 
 .right-dock-inline-note.suggestion .right-dock-note-pill {
-  background: rgba(96, 165, 250, 0.18);
-  color: #93c5fd;
+  background: var(--info-soft);
+  color: var(--info);
 }
 
 .right-dock-note-author {
@@ -8882,8 +8951,8 @@ code,
 
 .right-dock-code-truncated {
   padding: 6px 8px;
-  border-top: 1px solid #30362f;
-  color: #999f98;
+  border-top: 1px solid var(--conversation-code-border);
+  color: var(--conversation-code-muted);
   font-size: 10.5px;
   font-weight: 650;
 }

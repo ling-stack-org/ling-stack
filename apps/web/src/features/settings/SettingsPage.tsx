@@ -66,9 +66,17 @@ type SettingsSectionId =
 
 type SettingsWorkspaceToolView = "" | "providers" | "teammates" | "councils" | "work_board";
 
+type SettingsSectionItem = {
+  readonly id: SettingsSectionId;
+  readonly label: string;
+  readonly pageTitle?: string;
+  readonly description: string;
+  readonly icon: LucideIcon;
+};
+
 const settingsSectionGroups: readonly {
   readonly heading?: string;
-  readonly items: readonly { readonly id: SettingsSectionId; readonly label: string; readonly description: string; readonly icon: LucideIcon }[];
+  readonly items: readonly SettingsSectionItem[];
 }[] = [
   {
     heading: "Configuration",
@@ -88,6 +96,7 @@ const settingsSectionGroups: readonly {
       {
         id: "ai-councils",
         label: "AI Councils",
+        pageTitle: "Council Workspace",
         description: "Manage council workspaces",
         icon: Brain,
       },
@@ -415,10 +424,10 @@ export function SettingsPage({
       </nav>
 
       <div className="settings-content-stack">
-        {activeSectionItem && !workspaceToolDetailOpen ? (
+        {activeSectionItem ? (
           <header className="settings-section-head settings-page-section-head">
             <span>{t(activeSectionGroup?.heading ?? "Settings")}</span>
-            <h2>{t(activeSectionItem.label)}</h2>
+            <h2>{t(activeSectionItem.pageTitle ?? activeSectionItem.label)}</h2>
             <p>{t(activeSectionItem.description)}</p>
           </header>
         ) : null}

@@ -79,8 +79,14 @@ export function ReviewQueuePage({
     }
   }, [selectedItemId, usePaneDetail, visibleItems]);
 
+  const rootClassName = [
+    "right-dock-review-page",
+    usePaneDetail ? "right-dock-review-workbench right-dock-review-page-pane" : "",
+    useAccordionDetail ? "right-dock-review-page-accordion" : "",
+  ].filter(Boolean).join(" ");
+
   return (
-    <div className={usePaneDetail ? "right-dock-review-page right-dock-review-workbench" : "right-dock-review-page"}>
+    <div className={rootClassName}>
       <section className="right-dock-review-list-pane">
         <div className="right-dock-filter-row" role="tablist" aria-label="Review filters">
           {filters.map((filter) => (

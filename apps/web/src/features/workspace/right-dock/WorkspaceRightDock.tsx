@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import { previewArtifactContent } from "../../../api.js";
 import { useI18n } from "../../../i18n.js";
+import { useTheme } from "../../../theme.js";
 import type { ProposedPlanArtifact } from "../../../types.js";
 import {
   createDockPageEntry,
@@ -807,7 +808,7 @@ type DockReviewCodeRenderRow =
   | {
     readonly type: "fold";
     readonly id: string;
-    readonly label: string;
+    readonly hiddenLineCount: number;
   }
   | {
     readonly type: "line";
@@ -865,7 +866,7 @@ function DockReviewCodePreview({
                 return (
                   <span key={row.id} className="right-dock-code-fold">
                     <button type="button" aria-label={t("Show previous context")}>⌃</button>
-                    <span>{row.label}</span>
+                    <span>{t("{count} unmodified lines", { count: row.hiddenLineCount })}</span>
                     <button type="button" aria-label={t("Show next context")}>⌄</button>
                   </span>
                 );
@@ -906,6 +907,8 @@ function useShikiHighlightedCodeRows(
   preview: NonNullable<DockReviewItem["codePreview"]>,
   rows: readonly DockReviewCodeRenderRow[],
 ): Readonly<Record<string, readonly ShikiHighlightedToken[]>> {
+  const { resolvedTheme } = useTheme();
+  const shikiTheme = resolvedTheme === "dark" ? "github-dark-default" : "github-light-default";
   const language = useMemo(() => shikiLanguageForPreview(preview), [preview]);
   const source = useMemo(() => rows.map((row) => (row.type === "line" ? displayCodeLineText(row.line) : "")).join("\n"), [rows]);
   const rowIds = useMemo(() => rows.map((row) => (row.type === "line" ? row.id : "")), [rows]);
@@ -918,7 +921,8 @@ function useShikiHighlightedCodeRows(
       return;
     }
     let cancelled = false;
-    void tokenizeWithShiki(source, language).then((tokenLines) => {
+    setHighlightedLines({});
+    void tokenizeWithShiki(source, language, shikiTheme).then((tokenLines) => {
       if (cancelled) {
         return;
       }
@@ -938,7 +942,7 @@ function useShikiHighlightedCodeRows(
     return () => {
       cancelled = true;
     };
-  }, [language, rowIds, source]);
+  }, [language, rowIds, shikiTheme, source]);
 
   return highlightedLines;
 }
@@ -946,11 +950,12 @@ function useShikiHighlightedCodeRows(
 async function tokenizeWithShiki(
   source: string,
   language: string,
+  theme: "github-light-default" | "github-dark-default",
 ): Promise<readonly (readonly ShikiHighlightedToken[])[]> {
   const { codeToTokens } = await import("shiki");
   const result = await codeToTokens(source, {
     lang: language as Parameters<typeof codeToTokens>[1]["lang"],
-    theme: "github-dark-default",
+    theme,
   });
   const tokenLines = "tokens" in result ? result.tokens : [];
   return tokenLines.map((line) => line.map((token) => ({
@@ -1097,7 +1102,7 @@ function codePreviewRenderRows(
         rows.push({
           type: "fold",
           id: `fold:${index}:${foldCount}`,
-          label: `${foldCount} unchanged lines`,
+          hiddenLineCount: foldCount,
         });
       }
     }
