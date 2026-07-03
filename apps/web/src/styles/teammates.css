@@ -3598,12 +3598,6 @@
   grid-template-rows: auto minmax(0, 1fr);
 }
 
-.teammate-workspace > .settings-tool-return-row {
-  grid-column: 1 / -1;
-  padding: 8px 18px 0;
-  background: var(--surface-panel);
-}
-
 .teammate-chat-header,
 .teammate-settings-header {
   grid-column: 1 / -1;
@@ -4318,11 +4312,7 @@
 }
 
 .teammates-page.settings-return-mode {
-  grid-template-rows: auto minmax(0, 1fr);
-}
-
-.teammates-page > .settings-tool-return-row {
-  padding: 0;
+  grid-template-rows: minmax(0, 1fr);
 }
 
 .teammates-page-header {
@@ -4334,11 +4324,6 @@
   padding: 24px 32px 22px;
   border-bottom: 1px solid #e5e5e5;
   background: #ffffff;
-}
-
-.teammates-page-header.settings-return-mode {
-  min-height: 48px;
-  padding: 8px 32px;
 }
 
 .teammates-page-header h1 {

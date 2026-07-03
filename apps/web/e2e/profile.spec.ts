@@ -13,7 +13,7 @@ test("profile avatar crop exports a transparent circular image", async ({ page }
   await page.goto("/");
 
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
-  await page.getByLabel("Settings sections").getByRole("button", { name: /Personal and interface/ }).click();
+  await page.getByLabel("Settings sections").getByRole("button", { name: /Account and profile/ }).click();
   await expect(page.getByRole("heading", { name: "Ling User", level: 1 })).toBeVisible();
 
   await page.locator('input[type="file"][accept="image/*"]').setInputFiles({

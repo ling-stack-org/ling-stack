@@ -17,12 +17,8 @@
 }
 
 .council-workspace-page.settings-return-mode {
-  grid-template-rows: auto auto minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr);
   height: 100%;
-}
-
-.council-workspace-page > .settings-tool-return-row {
-  padding: 0;
 }
 
 .council-workspace-header {

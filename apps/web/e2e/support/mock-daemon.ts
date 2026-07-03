@@ -156,6 +156,7 @@ export interface MockState {
   executionActions: MockExecutionAction[];
   userProfile: UserProfile;
   workspaceSettings: Record<string, unknown>;
+  terminalCommandRequests: Array<{ readonly cwd: string; readonly command: string }>;
 }
 
 export interface MockWorkspaceGitStatusFailure {
@@ -1224,6 +1225,7 @@ export function createBaseState(options: { approvalStatus: "pending" | "expired"
       workspaceCwd: cwd,
       updatedAt: "2026-05-22T00:00:00.000Z",
     },
+    terminalCommandRequests: [],
   };
 }
 
@@ -5962,6 +5964,29 @@ export async function handleDaemonRoute(
         cancelled: false,
         path: "/Users/gsx/minimax-agent-cn/projects",
         label: "projects",
+      },
+    });
+    return;
+  }
+  if (request.method() === "POST" && path === "/workspace-terminal/commands") {
+    const requestedCwd = url.searchParams.get("cwd") ?? cwd;
+    const body = await request.postDataJSON() as { command?: unknown };
+    const command = typeof body.command === "string" ? body.command : "";
+    state.terminalCommandRequests.push({ cwd: requestedCwd, command });
+    await route.fulfill({
+      json: {
+        id: `terminal_command_${state.terminalCommandRequests.length}`,
+        cwd: requestedCwd,
+        command,
+        status: "succeeded",
+        exitCode: 0,
+        stdout: command === "pwd" ? `${requestedCwd}\n` : `mock output: ${command}\n`,
+        stderr: "",
+        stdoutTruncated: false,
+        stderrTruncated: false,
+        startedAt: "2026-05-25T00:00:00.000Z",
+        completedAt: "2026-05-25T00:00:00.012Z",
+        durationMs: 12,
       },
     });
     return;

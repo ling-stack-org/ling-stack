@@ -191,8 +191,8 @@ test("sidebar archive hides conversations and teammates without deleting data", 
   await expect.poll(() => state.aiTeammates.find((teammate) => teammate.id === "teammate_sidebar_designer")?.hidden).toBe(true);
 
   await navigation.getByRole("button", { name: "Settings" }).click();
-  await page.getByLabel("Settings sections").getByRole("button", { name: /Data and maintenance/ }).click();
-  await expect(page.getByRole("heading", { name: "Archived items" })).toBeVisible();
+  await page.getByLabel("Settings sections").getByRole("button", { name: /Archived items/ }).click();
+  await expect(page.locator(".archived-items-settings-panel").getByRole("heading", { name: "Archived items" })).toBeVisible();
 
   const conversationGroup = page.locator(".archived-item-group").filter({ hasText: "Conversations" });
   const teammateGroup = page.locator(".archived-item-group").filter({ hasText: "AI Teammates" });
@@ -363,29 +363,28 @@ test("sidebar text entries route to context-aware inspectors", async ({ page }) 
   await expect(page.locator(".approvals-panel").getByRole("heading", { name: "Inbox" })).toBeVisible();
 
   await navigation.getByRole("button", { name: "Settings" }).click();
-  await expect(page.getByLabel("Settings sections")).toBeVisible();
-  await expect(page.getByRole("button", { name: "Open Model Workbench" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Open AI Teammates" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Open Work Board" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Open Council Workspace" })).toBeVisible();
-  await page.getByRole("button", { name: "Open Council Workspace" }).click();
-  await expect(page.getByLabel("Settings sections")).toBeVisible();
+  const settingsSections = page.getByLabel("Settings sections");
+  await expect(settingsSections).toBeVisible();
+  await expect(settingsSections.getByRole("button", { name: "Model Workbench" })).toBeVisible();
+  await expect(settingsSections.getByRole("button", { name: "AI Teammates" })).toBeVisible();
+  await expect(settingsSections.getByRole("button", { name: "Work Board" })).toBeVisible();
+  await expect(settingsSections.getByRole("button", { name: "AI Councils" })).toBeVisible();
+  await settingsSections.getByRole("button", { name: "AI Councils" }).click();
+  await expect(settingsSections).toBeVisible();
   await expect(page.getByLabel("Ling Stack navigation")).toHaveCount(0);
   await expect(page.getByRole("heading", { name: "Council Workspace", level: 1 })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Back to configuration" })).toBeVisible();
-  await page.getByRole("button", { name: "Back to configuration" }).click();
-  await expect(page.getByRole("button", { name: "Open Council Workspace" })).toBeVisible();
-  await expect(page.getByLabel("Settings sections").getByRole("button", { name: /Personal and interface/ })).toBeVisible();
-  await page.getByLabel("Settings sections").getByRole("button", { name: /Personal and interface/ }).click();
+  await expect(page.locator(".settings-tool-return-row")).toHaveCount(0);
+  await expect(settingsSections.getByRole("button", { name: "AI Councils" })).toBeVisible();
+  await expect(settingsSections.getByRole("button", { name: /Account and profile/ })).toBeVisible();
+  await expect(settingsSections.getByRole("button", { name: /Interface preferences/ })).toBeVisible();
+  await settingsSections.getByRole("button", { name: /Account and profile/ }).click();
   await expect(page.getByRole("heading", { name: "Ling User", level: 1 })).toBeVisible();
   await expect(page.getByLabel("Run context")).toHaveCount(0);
-  await page.getByLabel("Settings sections").getByRole("button", { name: /Configuration/ }).click();
-  await expect(page.getByRole("button", { name: "Open Model Workbench" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Open Work Board" })).toBeVisible();
-  await page.getByRole("button", { name: "Open AI Teammates" }).click();
-  await expect(page.locator(".teammates-page-header.settings-return-mode .settings-tool-return-row").getByRole("button", { name: "Back to configuration" })).toBeVisible();
+  await expect(settingsSections.getByRole("button", { name: "Model Workbench" })).toBeVisible();
+  await expect(settingsSections.getByRole("button", { name: "Work Board" })).toBeVisible();
+  await settingsSections.getByRole("button", { name: "AI Teammates" }).click();
+  await expect(page.locator(".settings-tool-return-row")).toHaveCount(0);
   await expect(page.getByLabel("Workspace teammates")).toBeVisible();
-  await page.getByRole("button", { name: "Back to configuration" }).click();
   await page.getByRole("button", { name: "Back to app" }).click();
 
   await navigation.getByRole("button", { name: "Image Generation" }).click();
@@ -515,11 +514,10 @@ test("conversation home model picker uses the model workbench default without ch
 
   const navigation = page.getByLabel("Ling Stack navigation");
   await navigation.getByRole("button", { name: "Settings" }).click();
-  await page.getByRole("button", { name: "Open Model Workbench" }).click();
+  await page.getByLabel("Settings sections").getByRole("button", { name: "Model Workbench" }).click();
   const geminiRow = page.locator(".provider-row").filter({ hasText: "Gemini Pro" });
   await geminiRow.getByRole("button", { name: "Set default" }).click();
   await expect(geminiRow.getByRole("button", { name: "Clear default" })).toBeVisible();
-  await page.getByRole("button", { name: "Back to configuration" }).click();
   await page.getByRole("button", { name: "Back to app" }).click();
 
   await navigation.getByRole("button", { name: "New conversation" }).click();
@@ -584,7 +582,7 @@ test("conversation home model picker uses the model workbench default without ch
   await expect(conversationPage.getByRole("button", { name: "Selected thinking mode High" })).toBeVisible();
 });
 
-test("settings workspace tools provide a clear return path from nested tool pages", async ({ page }) => {
+test("settings workspace tools keep left navigation available on nested tool pages", async ({ page }) => {
   await useEnglishLocale(page);
   const state = createBaseState({ approvalStatus: "expired" });
   state.providers = [createChatProvider({
@@ -603,35 +601,32 @@ test("settings workspace tools provide a clear return path from nested tool page
   const navigation = page.getByLabel("Ling Stack navigation");
   await navigation.getByRole("button", { name: "Settings" }).click();
   const settingsSections = page.getByLabel("Settings sections");
-  await expect(page.getByRole("button", { name: "Open Model Workbench" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Open AI Teammates" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Open Work Board" })).toBeVisible();
+  await expect(settingsSections.getByRole("button", { name: "Model Workbench" })).toBeVisible();
+  await expect(settingsSections.getByRole("button", { name: "AI Teammates" })).toBeVisible();
+  await expect(settingsSections.getByRole("button", { name: "Work Board" })).toBeVisible();
 
-  await page.getByRole("button", { name: "Open Model Workbench" }).click();
+  await settingsSections.getByRole("button", { name: "Model Workbench" }).click();
   await expect(settingsSections).toBeVisible();
   await expect(page.getByLabel("Ling Stack navigation")).toHaveCount(0);
-  await expect(page.locator(".provider-workbench-header.settings-return-mode .settings-tool-return-row").getByRole("button", { name: "Back to configuration" })).toBeVisible();
+  await expect(page.locator(".settings-tool-return-row")).toHaveCount(0);
   await expect(page.getByRole("heading", { name: "Model Workbench", level: 1 })).toHaveCount(0);
-  await page.getByRole("button", { name: "Back to configuration" }).click();
-  await expect(page.getByRole("button", { name: "Open Model Workbench" })).toBeVisible();
+  await expect(settingsSections.getByRole("button", { name: "Model Workbench" })).toBeVisible();
   await expect(settingsSections).toBeVisible();
 
-  await page.getByRole("button", { name: "Open AI Teammates" }).click();
+  await settingsSections.getByRole("button", { name: "AI Teammates" }).click();
   await expect(settingsSections).toBeVisible();
   await expect(page.getByLabel("Ling Stack navigation")).toHaveCount(0);
-  await expect(page.locator(".teammates-page-header.settings-return-mode .settings-tool-return-row").getByRole("button", { name: "Back to configuration" })).toBeVisible();
+  await expect(page.locator(".settings-tool-return-row")).toHaveCount(0);
   await expect(page.getByRole("heading", { name: "AI Teammates", level: 1 })).toHaveCount(0);
-  await page.getByRole("button", { name: "Back to configuration" }).click();
-  await expect(page.getByRole("button", { name: "Open AI Teammates" })).toBeVisible();
+  await expect(settingsSections.getByRole("button", { name: "AI Teammates" })).toBeVisible();
   await expect(settingsSections).toBeVisible();
 
-  await page.getByRole("button", { name: "Open Work Board" }).click();
+  await settingsSections.getByRole("button", { name: "Work Board" }).click();
   await expect(settingsSections).toBeVisible();
   await expect(page.getByLabel("Ling Stack navigation")).toHaveCount(0);
-  await expect(page.locator(".work-board-settings-toolbar .settings-tool-return-row").getByRole("button", { name: "Back to configuration" })).toBeVisible();
+  await expect(page.locator(".settings-tool-return-row")).toHaveCount(0);
   await expect(page.locator(".work-board-page").getByRole("heading", { name: "Needs action" })).toHaveCount(0);
-  await page.locator(".work-board-page").getByRole("button", { name: "Back to configuration" }).click();
-  await expect(page.getByRole("button", { name: "Open Work Board" })).toBeVisible();
+  await expect(settingsSections.getByRole("button", { name: "Work Board" })).toBeVisible();
 
   await expect(page.getByRole("button", { name: "Back to configuration" })).toHaveCount(0);
 });

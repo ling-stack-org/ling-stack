@@ -19,6 +19,8 @@ import {
   Loader2,
   MessageSquare,
   MoreHorizontal,
+  PanelBottom,
+  PanelBottomClose,
   PanelRightClose,
   PanelRightOpen,
   PencilLine,
@@ -141,6 +143,7 @@ import {
 import { ChannelRenameDialog } from "./ChannelRenameDialog.js";
 import { WorkflowConversionPreviewDrawer, type WorkflowConversionDraft } from "./WorkflowConversionPreviewDialog.js";
 import { ChannelGovernanceNotificationsPopover } from "./ChannelGovernanceNotificationsPopover.js";
+import { WorkspaceTerminalPanel } from "./WorkspaceTerminalPanel.js";
 import {
   NewTaskPanel,
   TaskDetailPanel,
@@ -745,7 +748,9 @@ export function WorkspaceClientView({
   const [attentionProgressExpanded, setAttentionProgressExpanded] = useState(true);
   const [conversationDetailOverlay, setConversationDetailOverlay] = useState<ConversationDetailOverlayState | undefined>();
   const [selectedSourceDetail, setSelectedSourceDetail] = useState<SelectedSourceDetailState | undefined>();
+  const [channelBottomPanelOpen, setChannelBottomPanelOpen] = useState(false);
   const channelUtilityPageOpen = channelSettingsPageOpen || channelEnvironmentPageOpen;
+  const channelBottomPanelVisible = channelBottomPanelOpen && !channelUtilityPageOpen;
   const channelRightDockIntentOpen = !channelUtilityPageOpen && sidePanelOpen;
   const channelRightDock = useChannelRightDockController({
     initialOpen: Boolean(selectedTaskId),
@@ -3876,6 +3881,7 @@ export function WorkspaceClientView({
         channelRightDockVisible ? "with-channel-side-panel" : "",
         channelRightDockVisible ? (channelRightDockExpanded ? "channel-right-dock-expanded" : "channel-right-dock-collapsed") : "",
         progressPopoverCanRender && !progressPopoverInMainLayout ? "with-channel-progress-popover" : "",
+        channelBottomPanelVisible ? "with-channel-bottom-panel" : "",
       ].filter(Boolean).join(" ")}
       style={taskWorkbenchWindowStyle}
       aria-label={t("Workspace")}
@@ -4094,6 +4100,31 @@ export function WorkspaceClientView({
             }}
           >
             <ListChecks size={15} />
+          </button>
+          <button
+            className={channelBottomPanelVisible ? "icon-button active task-toolbar-bottom-panel" : "icon-button task-toolbar-bottom-panel"}
+            type="button"
+            aria-expanded={channelBottomPanelVisible}
+            aria-label={t("Toggle bottom panel")}
+            title={t("Toggle bottom panel")}
+            onClick={() => {
+              if (channelBottomPanelVisible) {
+                setChannelBottomPanelOpen(false);
+                return;
+              }
+              setChannelSettingsPageOpen(false);
+              setChannelEnvironmentPageOpen(false);
+              setEnvironmentCommitDialogOpen(false);
+              setCreateTaskOpen(false);
+              setChannelMoreOpen(false);
+              setActivityToolsOpen(false);
+              setTeammateManagerOpen(false);
+              setProgressPopoverOpen(false);
+              setChannelBottomPanelOpen(true);
+            }}
+            disabled={!cwd.trim()}
+          >
+            {channelBottomPanelVisible ? <PanelBottomClose size={15} /> : <PanelBottom size={15} />}
           </button>
           <button
             className={channelRightDockIntentOpen ? "icon-button active task-toolbar-panel" : "icon-button task-toolbar-panel"}
@@ -4537,6 +4568,13 @@ export function WorkspaceClientView({
           </>
         )}
       </div>
+      {channelBottomPanelVisible ? (
+        <WorkspaceTerminalPanel
+          cwd={cwd.trim()}
+          className="channel-bottom-terminal"
+          onClose={() => setChannelBottomPanelOpen(false)}
+        />
+      ) : null}
     </div>
   );
 }

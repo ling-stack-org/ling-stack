@@ -149,7 +149,7 @@ import {
   handlePluginsCollection,
 } from "../features/plugins/routes.js";
 import { handleWorkItemRoute, handleWorkItemsCollection } from "../features/work-items/routes.js";
-import { handleWorkspaceDirectorySelect } from "../features/workspace-directory/routes.js";
+import { handleWorkspaceDirectorySelect, handleWorkspaceTerminalCommand } from "../features/workspace-directory/routes.js";
 import {
   handleProviderDraftCheck,
   handleProviderItem,
@@ -406,6 +406,11 @@ export async function routeRequest(
 
   if (url.pathname === "/workspace-directory/select") {
     await handleWorkspaceDirectorySelect(request, response, config);
+    return;
+  }
+
+  if (url.pathname === "/workspace-terminal/commands") {
+    await handleWorkspaceTerminalCommand(request, response, config);
     return;
   }
 

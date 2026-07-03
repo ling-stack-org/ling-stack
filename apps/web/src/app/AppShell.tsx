@@ -111,7 +111,6 @@ import {
   customOpenAICompatibleForm,
   providerModelRouteLabel,
   providerFormToTemplate,
-  providerPreflightReady,
   sortProvidersForWorkbench,
 } from "../lib/providers.js";
 import { removeRecordKey } from "../lib/records.js";
@@ -679,12 +678,6 @@ export function AppShell(): JSX.Element {
     routeExternalWorkToChannel,
     resetForCwd: resetDurableWorkItemsForCwd,
   } = durableWorkItemsDomain.actions;
-  const workspaceToolCounts = useMemo(() => ({
-    readyProviderCount: providers.filter(providerPreflightReady).length,
-    visibleTeammateCount: aiTeammates.filter((teammate) => !teammate.hidden && teammate.status !== "disabled").length,
-    activeCouncilCount: aiCouncils.filter((council) => council.status !== "archived").length,
-    openWorkItemCount: durableWorkItems.filter((item) => item.status !== "done" && item.status !== "archived").length,
-  }), [aiCouncils, aiTeammates, durableWorkItems, providers]);
   const runtimeDomain = useRuntimeDomain({
     cwd: form.cwd.trim(),
     setErrorMessage,
@@ -2634,7 +2627,6 @@ export function AppShell(): JSX.Element {
                     workspaceResponseLanguage={workspaceSettings?.responseLanguage ?? effectiveConfig?.values.responseLanguage.value ?? "follow_user"}
                     selectedChannel={channels.find((channel) => channel.id === selectedChannelId)}
                     externalWorkStatus={externalWorkStatus}
-                    workspaceToolCounts={workspaceToolCounts}
                     mcpServers={mcpServers}
                     mcpTools={mcpTools}
                     mcpLoading={mcpLoading}
@@ -2709,6 +2701,7 @@ export function AppShell(): JSX.Element {
                     onOpenCouncils={() => openSettingsWorkspaceTool("councils")}
                     onOpenWorkBoard={() => openSettingsWorkBoard()}
                     workspaceToolDetail={settingsWorkspaceToolDetail}
+                    workspaceToolView={settingsWorkspaceToolView}
                     onCloseWorkspaceTool={clearSettingsWorkspaceToolView}
                     onOpenExternalWorkRecords={() => {
                       if (selectedChannelId) {

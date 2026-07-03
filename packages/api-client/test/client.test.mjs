@@ -138,6 +138,7 @@ test("builds URL query parameters for list endpoints", async () => {
     sourceRefs: [{ type: "manual", id: "manual 1" }],
   });
   await client.selectWorkspaceDirectory("/repo path");
+  await client.runWorkspaceTerminalCommand("/repo path", { command: "pwd" });
 
   assert.equal(mock.calls[0].url, "http://daemon.test/runs?cwd=%2Frepo+path&limit=25");
   assert.equal(mock.calls[1].url, "http://daemon.test/channels/channel%201/messages?cwd=%2Frepo&limit=15");
@@ -202,6 +203,9 @@ test("builds URL query parameters for list endpoints", async () => {
   assert.equal(mock.calls[45].method, "POST");
   assert.equal(mock.calls[46].url, "http://daemon.test/workspace-directory/select?cwd=%2Frepo+path");
   assert.equal(mock.calls[46].method, "POST");
+  assert.equal(mock.calls[47].url, "http://daemon.test/workspace-terminal/commands?cwd=%2Frepo+path");
+  assert.equal(mock.calls[47].method, "POST");
+  assert.deepEqual(JSON.parse(mock.calls[47].body), { command: "pwd" });
 });
 
 test("builds channel team experts projection endpoint URL", async () => {

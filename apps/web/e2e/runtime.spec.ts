@@ -22,8 +22,7 @@ test.beforeEach(async ({ page }) => {
 
 async function openRunDiagnostics(page: Page): Promise<void> {
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
-  await page.getByLabel("Settings sections").getByRole("button", { name: /Data and maintenance/ }).click();
-  await page.getByLabel("Data and maintenance sections").getByRole("tab", { name: /Startup and diagnostics/ }).click();
+  await page.getByLabel("Settings sections").getByRole("button", { name: /Startup and diagnostics/ }).click();
   await page.getByRole("button", { name: "Open Run Diagnostics" }).click();
   await expect(page.getByRole("heading", { name: "Run Diagnostics", level: 1 })).toBeVisible();
 }
