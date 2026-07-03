@@ -4,7 +4,6 @@ import {
   CheckCircle2,
   Code2,
   FileText,
-  Hash,
   Palette,
   PlugZap,
   Plus,
@@ -16,10 +15,10 @@ import {
 } from "lucide-react";
 import type { AiTeammateTemplate } from "@ling-stack/core/skill-types";
 import { useI18n } from "../../i18n.js";
-import { isMediaProvider, providerModelRouteLabel, providerPreflightReady } from "../../lib/providers.js";
+import { canUseConversationProvider, providerModelRouteLabel, providerPreflightReady } from "../../lib/providers.js";
 import type { Channel, ProviderPreset } from "../../types.js";
 import { roleLabel } from "./helpers.js";
-import { selectDefaultTeammateProvider } from "./teammate-create-defaults.js";
+import { selectDefaultTeammateProvider, selectDefaultTeammateTemplate } from "./teammate-create-defaults.js";
 import type { LocalTeammateCreateInput } from "./types.js";
 
 const defaultMemoryScopeLabels: readonly string[] = [
@@ -51,16 +50,19 @@ export function TeammateCreateDrawer({
   readonly onOpenProviders: () => void;
 }): JSX.Element | null {
   const { t } = useI18n();
-  const providerOptions = useMemo(() => providers.filter((provider) => !isMediaProvider(provider)), [providers]);
+  const providerOptions = useMemo(
+    () => providers.filter((provider) => canUseConversationProvider(provider) && providerPreflightReady(provider)),
+    [providers],
+  );
   const [selectedTemplateId, setSelectedTemplateId] = useState("");
   const [draftName, setDraftName] = useState("");
   const [draftDescription, setDraftDescription] = useState("");
   const [selectedProviderId, setSelectedProviderId] = useState("");
   const [selectedChannelIds, setSelectedChannelIds] = useState<readonly string[]>([]);
-  const selectedTemplate = templates.find((template) => template.id === selectedTemplateId) ?? templates[0];
+  const selectedTemplate = selectedTemplateId ? templates.find((template) => template.id === selectedTemplateId) : undefined;
   const selectedProvider = providerOptions.find((provider) => provider.id === selectedProviderId);
-  const previewName = draftName.trim() || selectedTemplate?.name || t("Custom teammate");
-  const previewDescription = draftDescription.trim() || selectedTemplate?.summary || t("Describe this teammate with a short working brief.");
+  const previewName = draftName.trim() || (selectedTemplate ? t(selectedTemplate.name) : t("Custom teammate"));
+  const previewDescription = draftDescription.trim() || (selectedTemplate ? t(selectedTemplate.summary) : t("Describe this teammate with a short working brief."));
   const selectedProviderReady = selectedProvider ? providerPreflightReady(selectedProvider) : false;
   const canCreateTeammate = Boolean(previewName.trim()) && Boolean(selectedProvider) && selectedProviderReady;
   const visibleCreateTemplates = templates.slice(0, 5);
@@ -69,7 +71,7 @@ export function TeammateCreateDrawer({
     if (!open) {
       return;
     }
-    const template = templates.find((item) => item.id === initialTemplateId) ?? templates[0];
+    const template = templates.find((item) => item.id === initialTemplateId) ?? selectDefaultTeammateTemplate(templates);
     setSelectedTemplateId(template?.id ?? "");
     setDraftName(template ? t(template.name) : t("Custom teammate"));
     setDraftDescription(template ? t(template.summary) : t("Describe this teammate with a short working brief."));
@@ -115,12 +117,6 @@ export function TeammateCreateDrawer({
     setDraftDescription(t("Describe this teammate with a short working brief."));
   }
 
-  function toggleChannel(channelId: string): void {
-    setSelectedChannelIds((currentIds) =>
-      currentIds.includes(channelId) ? currentIds.filter((id) => id !== channelId) : [...currentIds, channelId],
-    );
-  }
-
   function createTeammateDraft(): void {
     if (!canCreateTeammate) {
       return;
@@ -154,8 +150,8 @@ export function TeammateCreateDrawer({
       <section className="teammate-create-dialog teammate-create-drawer" aria-label={t("Create AI teammate")} role="dialog">
         <div className="channel-create-head">
           <div className="teammate-create-title-block">
-            <strong>{t("New teammate")}</strong>
-            <p>{t("Choose a role first, then model. Extra configuration can be completed later.")}</p>
+            <strong>{t("New AI teammate")}</strong>
+            <p>{t("Recommended role and model are prefilled. Review them, then create.")}</p>
           </div>
           <button className="icon-button" type="button" onClick={onClose} aria-label={t("Cancel")} title={t("Cancel")}>
             <X size={14} />
@@ -239,8 +235,8 @@ export function TeammateCreateDrawer({
             {providerOptions.length === 0 ? (
               <div className="client-empty-state teammate-empty">
                 <PlugZap size={20} />
-                <span>{t("No model presets")}</span>
-                <button className="secondary-button" type="button" onClick={openProvidersAndClose}>{t("Open Model Workbench")}</button>
+                <span>{t("No ready chat model")}</span>
+                <button className="secondary-button" type="button" onClick={openProvidersAndClose}>{t("Configure model")}</button>
               </div>
             ) : null}
           </section>
@@ -251,27 +247,6 @@ export function TeammateCreateDrawer({
               <small>{t("Memory, skills, MCP, permissions and prompt")}</small>
             </summary>
             <div className="teammate-create-advanced-body">
-              <section>
-                <h3>{t("Join channels")}</h3>
-                <div className="teammate-chip-grid" aria-label={t("Channel choices")}>
-                  {channels.length === 0 ? (
-                    <span className="teammate-muted-note">{t("No channels yet")}</span>
-                  ) : (
-                    channels.map((channel) => (
-                      <button
-                        key={channel.id}
-                        className={selectedChannelIds.includes(channel.id) ? "teammate-chip selected" : "teammate-chip"}
-                        type="button"
-                        aria-pressed={selectedChannelIds.includes(channel.id)}
-                        onClick={() => toggleChannel(channel.id)}
-                      >
-                        <Hash size={13} />
-                        {channel.name}
-                      </button>
-                    ))
-                  )}
-                </div>
-              </section>
               <section>
                 <h3>{t("Memory")}</h3>
                 <div className="provider-run-notice neutral">

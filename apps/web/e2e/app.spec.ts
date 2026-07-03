@@ -99,6 +99,12 @@ test("sidebar selection is exclusive and conversation sections stay below primar
 test("sidebar sections collapse locally and keep group action menus", async ({ page }) => {
   await useEnglishLocale(page);
   const state = createBaseState({ approvalStatus: "expired" });
+  state.providers = [createChatProvider({
+    id: "provider_local",
+    displayName: "Local Relay",
+    model: "gpt-5.5",
+    lastCheck: { ok: true, message: "ok", checkedAt: "2026-05-22T00:00:00.000Z" },
+  })];
   state.aiTeammates = [createMockTeammate({ id: "teammate_sidebar_designer", displayName: "Designer" })];
   await mockDaemon(page, state);
   await page.goto("/");
@@ -126,9 +132,10 @@ test("sidebar sections collapse locally and keep group action menus", async ({ p
   await navigation.getByRole("button", { name: "Channel actions" }).click();
   await expect(page.getByRole("menuitem", { name: "New channel" })).toBeVisible();
   await navigation.getByRole("button", { name: "Teammate actions" }).click();
-  await expect(page.getByRole("menuitem", { name: /Quick create default teammate/ })).toBeVisible();
-  await expect(page.getByRole("menuitem", { name: /More configuration/ })).toBeVisible();
-  const teammateMenuAlignment = await page.getByRole("menuitem", { name: /More configuration/ }).evaluate((element) => {
+  await expect(page.getByRole("menuitem", { name: /New AI teammate/ })).toBeVisible();
+  await expect(page.getByRole("menuitem", { name: /Quick create default teammate/ })).toHaveCount(0);
+  await expect(page.getByRole("menuitem", { name: /More configuration/ })).toHaveCount(0);
+  const teammateMenuAlignment = await page.getByRole("menuitem", { name: /New AI teammate/ }).evaluate((element) => {
     const icon = element.querySelector(".sidebar-section-menu-rich-title svg")?.getBoundingClientRect();
     const label = element.querySelector(".sidebar-section-menu-rich-title > span")?.getBoundingClientRect();
     return icon && label

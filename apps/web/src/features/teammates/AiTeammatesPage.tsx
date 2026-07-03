@@ -222,6 +222,10 @@ export function AiTeammatesPage({
             <div className="client-empty-state teammate-empty">
               <Bot size={18} />
               <span>{t("No workspace teammates")}</span>
+              <button className="primary-button compact-button" type="button" onClick={focusCreateFlow}>
+                <UserPlus size={14} />
+                {t("New AI teammate")}
+              </button>
             </div>
           ) : (
             <div className="teammate-draft-list">
@@ -310,10 +314,12 @@ export function AiTeammatesPage({
               <Brain size={16} />
               <h2>{t("Default roles")}</h2>
             </span>
-            <button className="primary-button compact-button" type="button" onClick={focusCreateFlow}>
-              <UserPlus size={14} />
-              {t("Add teammate")}
-            </button>
+            {activeLocalTeammates.length > 0 ? (
+              <button className="primary-button compact-button" type="button" onClick={focusCreateFlow}>
+                <UserPlus size={14} />
+                {t("New AI teammate")}
+              </button>
+            ) : null}
           </div>
           <div className="teammate-template-list">
             {templates.map((template) => (

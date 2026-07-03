@@ -1,6 +1,6 @@
 import type { AiTeammateTemplate } from "@ling-stack/core/skill-types";
 import type { Translate } from "../../i18n.js";
-import { isMediaProvider, providerPreflightReady } from "../../lib/providers.js";
+import { canUseConversationProvider, providerPreflightReady } from "../../lib/providers.js";
 import type { ProviderPreset } from "../../types.js";
 import type { LocalTeammateCreateInput } from "./types.js";
 
@@ -50,7 +50,7 @@ export function selectDefaultTeammateProvider(
   providers: readonly ProviderPreset[],
   defaultProviderId: string,
 ): ProviderPreset | undefined {
-  const readyProviders = providers.filter((provider) => !isMediaProvider(provider) && providerPreflightReady(provider));
+  const readyProviders = providers.filter((provider) => canUseConversationProvider(provider) && providerPreflightReady(provider));
   return readyProviders.find((provider) => provider.id === defaultProviderId) ?? readyProviders[0];
 }
 

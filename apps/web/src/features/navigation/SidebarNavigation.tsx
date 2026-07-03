@@ -22,7 +22,6 @@ import {
   PlugZap,
   Plus,
   Settings,
-  SlidersHorizontal,
   Timer,
 } from "lucide-react";
 import { useI18n } from "../../i18n.js";
@@ -83,9 +82,7 @@ export function SidebarNavigation({
   onOpenConversationHome,
   onCreateChannel,
   onCreateTeammate,
-  onQuickCreateTeammate,
-  quickCreateTeammateDisabled = false,
-  quickCreateTeammateDescription = "",
+  teammateCreateModelReady = true,
   onOpenTeammateModelWorkbench,
   onCreateChannelBranch,
   onArchiveChannel,
@@ -117,9 +114,7 @@ export function SidebarNavigation({
   readonly onOpenConversationHome: () => void;
   readonly onCreateChannel: () => void;
   readonly onCreateTeammate?: () => void;
-  readonly onQuickCreateTeammate?: () => void | Promise<void>;
-  readonly quickCreateTeammateDisabled?: boolean;
-  readonly quickCreateTeammateDescription?: string;
+  readonly teammateCreateModelReady?: boolean;
   readonly onOpenTeammateModelWorkbench?: () => void;
   readonly onCreateChannelBranch?: (channelId: string, name: string) => void | Promise<void>;
   readonly onArchiveChannel?: (channelId: string) => void | Promise<void>;
@@ -426,32 +421,23 @@ export function SidebarNavigation({
         menuLabel={t("AI teammate actions")}
         menuOpen={openSectionMenu === "teammates"}
         onMenuOpenChange={(open) => setOpenSectionMenu(open ? "teammates" : "")}
-        menuItems={[
+        menuItems={teammateCreateModelReady ? [
           {
-            id: "quick-create-teammate",
-            label: t("Quick create default teammate"),
-            description: quickCreateTeammateDescription || t("Engineer · use the default ready model"),
+            id: "new-ai-teammate",
+            label: t("New AI teammate"),
+            description: t("Choose a role and model. You can adjust details before creating."),
             icon: <Plus size={14} />,
-            disabled: !onQuickCreateTeammate || quickCreateTeammateDisabled,
-            disabledLabel: t("Open Model Workbench before quick creating a teammate."),
-            onSelect: () => void onQuickCreateTeammate?.(),
-          },
-          ...(quickCreateTeammateDisabled && onOpenTeammateModelWorkbench ? [
-            {
-              id: "open-teammate-model-workbench",
-              label: t("Open Model Workbench"),
-              description: t("Configure a ready chat model before creating."),
-              icon: <PlugZap size={14} />,
-              onSelect: onOpenTeammateModelWorkbench,
-            },
-          ] satisfies readonly SidebarSectionMenuItem[] : []),
-          {
-            id: "advanced-teammate-create",
-            label: t("More configuration"),
-            description: t("Choose role, model, channels, and advanced settings."),
-            icon: <SlidersHorizontal size={14} />,
             disabled: !onCreateTeammate,
             onSelect: () => onCreateTeammate?.(),
+          },
+        ] : [
+          {
+            id: "configure-teammate-model",
+            label: t("Configure model"),
+            description: t("Configure a ready chat model before creating."),
+            icon: <PlugZap size={14} />,
+            disabled: !onOpenTeammateModelWorkbench,
+            onSelect: () => onOpenTeammateModelWorkbench?.(),
           },
         ]}
       >
