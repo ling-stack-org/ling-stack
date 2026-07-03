@@ -170,14 +170,17 @@ test("terminal bottom panel runs commands in the channel workspace", async ({ pa
   await page.getByRole("button", { name: "Show details" }).click();
   const dock = page.locator(".channel-side-panel.right-dock");
   await expect(dock).toBeVisible();
-  await expect(dock.getByRole("button", { name: "Terminal" })).toBeVisible();
+  await dock.getByRole("button", { name: "Terminal" }).click();
+  const sideTerminal = dock.locator(".channel-side-terminal");
+  await expect(sideTerminal).toBeVisible();
+  const workspacePromptLabel = `tianxiao@tianxiaodeMacBook-Pro ${cwd.split("/").filter(Boolean).at(-1) ?? cwd} %`;
+  await expect(sideTerminal.locator(".workspace-terminal-prompt")).toContainText(workspacePromptLabel);
 
   await page.getByRole("button", { name: "Toggle bottom panel" }).click();
   const terminal = page.locator(".channel-bottom-terminal");
   await expect(terminal).toBeVisible();
   await expect(terminal.locator(".workspace-terminal-tab")).toContainText("ling-stack");
-  await expect(page.locator(".channel-side-panel .workspace-terminal-panel")).toHaveCount(0);
-  const workspacePromptLabel = `${cwd.split("/").filter(Boolean).at(-1) ?? cwd} %`;
+  await expect(page.locator(".channel-side-panel .workspace-terminal-panel")).toHaveCount(1);
   await expect(terminal.locator(".workspace-terminal-prompt")).toContainText(workspacePromptLabel);
   await expect.poll(async () => terminal.locator(".workspace-terminal-prompt").evaluate((node) => {
     const element = node as HTMLElement;
@@ -221,6 +224,7 @@ test("terminal bottom panel runs commands in the channel workspace", async ({ pa
   await expect.poll(() => state.terminalCommandRequests.length).toBe(1);
   expect(state.terminalCommandRequests[0]).toEqual({ cwd, command: "pwd" });
   await expect(terminal.locator(".workspace-terminal-output")).toContainText(cwd);
+  await expect(sideTerminal.locator(".workspace-terminal-output")).toContainText(cwd);
 });
 
 test("channel team experts fold into latest turn and metrics stay in settings", async ({ page }) => {

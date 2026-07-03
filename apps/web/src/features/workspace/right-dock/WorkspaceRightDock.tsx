@@ -43,6 +43,7 @@ import {
   type PlanStatusFilter,
 } from "./PlanHistoryPage.js";
 import { reviewNeedsAction } from "./projections.js";
+import { WorkspaceTerminalPanel, type WorkspaceTerminalSession } from "../WorkspaceTerminalPanel.js";
 
 export interface WorkspaceRightDockForcedDetail {
   readonly id: string;
@@ -68,6 +69,7 @@ export interface WorkspaceRightDockProps {
   readonly reviewItems: readonly DockReviewItem[];
   readonly evidenceGroups: readonly DockEvidenceGroupView[];
   readonly fileItems: readonly DockFileItem[];
+  readonly terminalSession?: WorkspaceTerminalSession;
   readonly proposedPlans?: readonly ProposedPlanArtifact[];
   readonly proposedPlansLoading?: boolean;
   readonly proposedPlansError?: string;
@@ -102,6 +104,7 @@ export function WorkspaceRightDock({
   reviewItems,
   evidenceGroups,
   fileItems,
+  terminalSession,
   proposedPlans = [],
   proposedPlansLoading = false,
   proposedPlansError = "",
@@ -139,6 +142,7 @@ export function WorkspaceRightDock({
   );
   const browserEvidenceCount = browserGroups.reduce((count, group) => count + group.items.length, 0);
   const terminalEvidenceCount = terminalGroups.reduce((count, group) => count + group.items.length, 0);
+  const hasTerminalSession = Boolean(terminalSession);
   const evidenceCount = evidenceGroups.reduce((count, group) => count + group.items.length, 0);
   const visiblePlanCount = proposedPlans.filter((plan) => plan.status !== "archived").length;
   const enrichedReviewItems = useMemo(() => reviewItems.map((item) => {
@@ -486,10 +490,16 @@ export function WorkspaceRightDock({
       launcherItem: {
         description: t("Shell snapshots and terminal evidence"),
         count: terminalEvidenceCount,
-        statusLabel: terminalEvidenceCount > 0 ? t("{count} terminal items", { count: terminalEvidenceCount }) : t("No terminal evidence"),
-        severity: terminalEvidenceCount > 0 ? "info" : "neutral",
+        statusLabel: hasTerminalSession ? t("Terminal session") : terminalEvidenceCount > 0 ? t("{count} terminal items", { count: terminalEvidenceCount }) : t("No terminal evidence"),
+        severity: hasTerminalSession || terminalEvidenceCount > 0 ? "info" : "neutral",
       },
-      render: () => (
+      render: () => terminalSession ? (
+        <WorkspaceTerminalPanel
+          cwd={cwd}
+          className="channel-side-terminal"
+          session={terminalSession}
+        />
+      ) : (
         <EvidencePage
           groups={terminalGroups}
           emptyTitle={t("No terminal evidence")}
@@ -529,6 +539,7 @@ export function WorkspaceRightDock({
     evidenceCount,
     evidenceGroups,
     fileItems,
+    hasTerminalSession,
     includeActivity,
     enrichedReviewItems,
     currentPlanThreadId,
@@ -544,6 +555,7 @@ export function WorkspaceRightDock({
     t,
     terminalEvidenceCount,
     terminalGroups,
+    terminalSession,
     cwd,
     visiblePlanCount,
   ]);

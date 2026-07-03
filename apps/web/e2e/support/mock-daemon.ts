@@ -6112,6 +6112,21 @@ export async function handleDaemonRoute(
     });
     return;
   }
+  if (request.method() === "GET" && path === "/workspace-terminal/profile") {
+    const requestedCwd = url.searchParams.get("cwd") ?? cwd;
+    const workspaceLabel = requestedCwd.split("/").filter(Boolean).at(-1) ?? requestedCwd;
+    await route.fulfill({
+      json: {
+        cwd: requestedCwd,
+        workspaceLabel,
+        promptLabel: `tianxiao@tianxiaodeMacBook-Pro ${workspaceLabel} %`,
+        username: "tianxiao",
+        hostname: "tianxiaodeMacBook-Pro",
+        shell: "/bin/zsh",
+      },
+    });
+    return;
+  }
   if (request.method() === "POST" && path === "/workspace-terminal/commands") {
     const requestedCwd = url.searchParams.get("cwd") ?? cwd;
     const body = await request.postDataJSON() as { command?: unknown };

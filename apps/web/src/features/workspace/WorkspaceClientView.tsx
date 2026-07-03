@@ -143,7 +143,7 @@ import {
 import { ChannelRenameDialog } from "./ChannelRenameDialog.js";
 import { WorkflowConversionPreviewDrawer, type WorkflowConversionDraft } from "./WorkflowConversionPreviewDialog.js";
 import { ChannelGovernanceNotificationsPopover } from "./ChannelGovernanceNotificationsPopover.js";
-import { WorkspaceTerminalPanel } from "./WorkspaceTerminalPanel.js";
+import { useWorkspaceTerminalSession, WorkspaceTerminalPanel } from "./WorkspaceTerminalPanel.js";
 import {
   NewTaskPanel,
   TaskDetailPanel,
@@ -3753,6 +3753,7 @@ export function WorkspaceClientView({
   const channelDockReviewItems = channelRightDockContent.reviewItems;
   const channelDockEvidenceGroups = channelRightDockContent.evidenceGroups;
   const channelDockFileItems = channelRightDockContent.fileItems;
+  const workspaceTerminalSession = useWorkspaceTerminalSession(cwd.trim() || undefined);
   const channelEnvironmentSummary = useChannelEnvironmentSummary({
     cwd,
     workspace: selectedChannelWorkspace,
@@ -4534,6 +4535,7 @@ export function WorkspaceClientView({
               reviewItems={channelDockReviewItems}
               evidenceGroups={channelDockEvidenceGroups}
               fileItems={channelDockFileItems}
+              terminalSession={workspaceTerminalSession}
               proposedPlans={proposedPlanArtifacts}
               proposedPlansLoading={proposedPlanHistoryLoading}
               proposedPlansError={proposedPlanHistoryError}
@@ -4581,6 +4583,7 @@ export function WorkspaceClientView({
         <WorkspaceTerminalPanel
           cwd={cwd.trim()}
           className="channel-bottom-terminal"
+          session={workspaceTerminalSession}
           resizeHandleNode={(
             <button
               className="channel-bottom-panel-resize-handle"
