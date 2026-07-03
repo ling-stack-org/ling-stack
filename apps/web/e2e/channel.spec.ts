@@ -1288,6 +1288,31 @@ test("channel drawer does not flash legacy create labels in section headers", as
   await expect(page.getByRole("menuitem", { name: "New channel" })).toBeVisible();
 });
 
+test("empty channel drawer opens the new channel dialog", async ({ page }) => {
+  await useEnglishLocale(page);
+  const state = createBaseState({ approvalStatus: "pending" });
+  state.channels = [];
+  state.channelBranches = [];
+  state.tasks = [];
+  state.runs = [];
+  state.approvals = [];
+  await mockDaemon(page, state);
+  await page.goto("/");
+
+  const navigation = page.getByLabel("Ling Stack navigation");
+  await expect(navigation.getByRole("button", { name: "No channel yet" })).toBeVisible();
+  await navigation.getByRole("button", { name: "No channel yet" }).click();
+
+  const createChannelPanel = page.getByRole("dialog", { name: "New channel" });
+  await expect(createChannelPanel).toBeVisible();
+  await createChannelPanel.getByLabel("Name").fill("Launch Ops");
+  await createChannelPanel.getByRole("button", { name: "Create channel" }).click();
+
+  await expect.poll(() => state.channels.some((channel) => isRecord(channel) && channel.name === "Launch Ops")).toBe(true);
+  await expect(createChannelPanel).toHaveCount(0);
+  await expect(navigation.getByRole("button", { name: "Launch Ops" })).toBeVisible();
+});
+
 test("channel drawer uses unread dots instead of count badges and clears on channel open", async ({ page }) => {
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");

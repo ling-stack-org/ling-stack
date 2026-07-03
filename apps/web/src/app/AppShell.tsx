@@ -42,6 +42,7 @@ import type { DomainEvent } from "./domain-events.js";
 import type { ApprovalResolution } from "../features/approvals/types.js";
 import { PageInspector } from "../features/inspector/PageInspector.js";
 import { SidebarNavigation, type SidebarRecentConversation } from "../features/navigation/SidebarNavigation.js";
+import { ChannelCreateDialog } from "../features/workspace/ChannelCreateDialog.js";
 import { ConversationHome, type ConversationHomeMessage } from "../features/workspace/ConversationHome.js";
 import {
   LazyAutomationsPage as AutomationsPage,
@@ -2121,7 +2122,6 @@ export function AppShell(): JSX.Element {
             channels={channels}
             selectedChannelId={selectedChannelId}
             selectedChannelBranchRootThreadId={selectedChannelBranchRootThreadId}
-            channelForm={channelForm}
             channelCreateOpen={channelCreateOpen}
             channelEditForm={channelEditForm}
             tasks={tasks}
@@ -2203,7 +2203,6 @@ export function AppShell(): JSX.Element {
             runningWorkflowStepId={runningWorkflowStepId}
             orchestratingWorkflowId={orchestratingWorkflowId}
             errorMessage={errorMessage}
-            onChannelFormChange={setChannelForm}
             onChannelCreateOpenChange={setChannelCreateOpen}
             onChannelEditFormChange={setChannelEditForm}
             onTaskFormChange={setTaskForm}
@@ -2219,7 +2218,6 @@ export function AppShell(): JSX.Element {
             onSetDefaultChannelTeammate={(teammateId) => setDefaultChannelTeammate(selectedChannelId, teammateId)}
             onOpenTeammates={() => openSettingsWorkspaceTool("teammates")}
             onRefreshChannels={() => void refreshChannels()}
-            onCreateChannel={() => void saveChannel()}
             onSaveChannel={(formOverride) => selectedChannelId ? saveChannelEdit(selectedChannelId, formOverride) : undefined}
             onCreateTask={() => void saveTask()}
             onCreateTaskFromSlashCommand={createTaskFromSlashCommand}
@@ -2818,6 +2816,19 @@ export function AppShell(): JSX.Element {
             />
           ) : null}
         </aside>
+      ) : null}
+      {channelCreateOpen ? (
+        <ChannelCreateDialog
+          cwd={form.cwd}
+          form={channelForm}
+          providers={providers}
+          providersLoading={providersLoading}
+          teammates={localTeammates}
+          creating={channelsLoading}
+          onFormChange={setChannelForm}
+          onCreateChannel={() => void saveChannel()}
+          onClose={() => setChannelCreateOpen(false)}
+        />
       ) : null}
       {fullAccessConfirmOpen ? (
         <div className="provider-sheet-backdrop" role="presentation">
