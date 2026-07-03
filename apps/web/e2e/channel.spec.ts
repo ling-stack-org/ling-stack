@@ -177,8 +177,44 @@ test("terminal bottom panel runs commands in the channel workspace", async ({ pa
   await expect(terminal).toBeVisible();
   await expect(terminal.locator(".workspace-terminal-tab")).toContainText("ling-stack");
   await expect(page.locator(".channel-side-panel .workspace-terminal-panel")).toHaveCount(0);
+  const workspacePromptLabel = `${cwd.split("/").filter(Boolean).at(-1) ?? cwd} %`;
+  await expect(terminal.locator(".workspace-terminal-prompt")).toContainText(workspacePromptLabel);
+  await expect.poll(async () => terminal.locator(".workspace-terminal-prompt").evaluate((node) => {
+    const element = node as HTMLElement;
+    return element.scrollWidth - element.clientWidth;
+  })).toBeLessThanOrEqual(1);
+
+  const terminalResizeHandle = page.getByRole("separator", { name: "Resize terminal panel" });
+  await expect(terminalResizeHandle).toBeVisible();
+  await expect(terminalResizeHandle).toHaveCSS("cursor", "row-resize");
+  const initialTerminalBox = await terminal.boundingBox();
+  const initialHandleBox = await terminalResizeHandle.boundingBox();
+  expect(initialTerminalBox).not.toBeNull();
+  expect(initialHandleBox).not.toBeNull();
+  await page.mouse.move(initialHandleBox!.x + initialHandleBox!.width / 2, initialHandleBox!.y + 5);
+  await page.mouse.down();
+  await page.mouse.move(initialHandleBox!.x + initialHandleBox!.width / 2, initialHandleBox!.y - 140, { steps: 6 });
+  await page.mouse.up();
+  await expect.poll(async () => Math.round((await terminal.boundingBox())?.height ?? 0)).toBeGreaterThan(Math.round((initialTerminalBox?.height ?? 0) + 40));
+
+  const expandedHandleBox = await terminalResizeHandle.boundingBox();
+  expect(expandedHandleBox).not.toBeNull();
+  await page.mouse.move(expandedHandleBox!.x + expandedHandleBox!.width / 2, expandedHandleBox!.y + 5);
+  await page.mouse.down();
+  await page.mouse.move(expandedHandleBox!.x + expandedHandleBox!.width / 2, expandedHandleBox!.y - 500, { steps: 8 });
+  await page.mouse.up();
+  await expect.poll(async () => {
+    const terminalBox = await terminal.boundingBox();
+    const maxHeight = await page.evaluate(() => {
+      const workbench = document.querySelector<HTMLElement>(".task-workbench-window");
+      return Math.floor((workbench?.getBoundingClientRect().height ?? window.innerHeight) / 2);
+    });
+    return Math.round((terminalBox?.height ?? 0) - maxHeight);
+  }).toBeLessThanOrEqual(2);
 
   const commandInput = terminal.getByRole("textbox", { name: "Command" });
+  await expect(commandInput).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+  await expect(commandInput).toHaveCSS("box-shadow", "none");
   await commandInput.fill("pwd");
   await commandInput.press("Enter");
 

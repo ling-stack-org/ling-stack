@@ -5314,6 +5314,7 @@ code,
   --channel-side-panel-handle-width: 8px;
   --channel-side-panel-layout-handle-width: 0px;
   --channel-progress-popover-right: 18px;
+  --channel-bottom-panel-height: 260px;
   --channel-right-dock-motion-duration: 620ms;
   --channel-right-dock-motion-ease: cubic-bezier(0.4, 0, 0.2, 1);
   position: relative;
@@ -7815,6 +7816,7 @@ code,
 }
 
 .workspace-terminal-panel {
+  position: relative;
   display: flex;
   flex-direction: column;
   min-width: 0;
@@ -7827,9 +7829,56 @@ code,
 }
 
 .channel-bottom-terminal {
-  flex: 0 0 clamp(190px, 28vh, 320px);
+  flex: 0 0 var(--channel-bottom-panel-height, clamp(190px, 28vh, 320px));
   width: 100%;
-  max-height: 320px;
+  height: var(--channel-bottom-panel-height, clamp(190px, 28vh, 320px));
+  max-height: 50%;
+}
+
+.task-workbench-window.is-resizing-channel-bottom-panel,
+.task-workbench-window.is-resizing-channel-bottom-panel * {
+  cursor: row-resize !important;
+  user-select: none;
+}
+
+.channel-bottom-panel-resize-handle {
+  position: absolute;
+  z-index: 5;
+  top: 0;
+  right: 0;
+  left: 0;
+  height: 10px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  appearance: none;
+  background: transparent;
+  cursor: row-resize;
+  touch-action: none;
+}
+
+.channel-bottom-panel-resize-handle::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: 0;
+  height: 1px;
+  background: var(--border);
+  opacity: 0.85;
+  transition: height 120ms ease, background 120ms ease, opacity 120ms ease;
+}
+
+.channel-bottom-panel-resize-handle:hover::before,
+.channel-bottom-panel-resize-handle:focus-visible::before,
+.task-workbench-window.is-resizing-channel-bottom-panel .channel-bottom-panel-resize-handle::before {
+  height: 2px;
+  background: var(--accent-border);
+  opacity: 1;
+}
+
+.channel-bottom-panel-resize-handle:focus-visible {
+  outline: 0;
 }
 
 .workspace-terminal-head {
@@ -7936,11 +7985,19 @@ code,
   line-height: 18px;
 }
 
-.workspace-terminal-command-line span,
-.workspace-terminal-prompt {
+.workspace-terminal-command-line span {
   flex: 0 1 auto;
   overflow: hidden;
   max-width: min(260px, 44vw);
+  color: var(--text-muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspace-terminal-prompt {
+  flex: 0 0 auto;
+  overflow: hidden;
+  max-width: min(420px, 58%);
   color: var(--text-muted);
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -7986,14 +8043,26 @@ code,
 
 .workspace-terminal-prompt-row input {
   flex: 1 1 auto;
-  min-width: 48px;
+  min-width: 16px;
   height: 22px;
   padding: 0;
   border: 0;
+  border-radius: 0;
+  appearance: none;
   background: transparent;
+  box-shadow: none;
   color: var(--text);
   font: inherit;
   outline: none;
+}
+
+.workspace-terminal-prompt-row input:focus,
+.workspace-terminal-prompt-row input:focus-visible,
+.workspace-terminal-prompt-row input:disabled {
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  outline: 0;
 }
 
 .workspace-terminal-prompt-row input::placeholder {
