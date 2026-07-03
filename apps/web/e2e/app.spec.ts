@@ -372,7 +372,7 @@ test("sidebar text entries route to context-aware inspectors", async ({ page }) 
   await settingsSections.getByRole("button", { name: "AI Councils" }).click();
   await expect(settingsSections).toBeVisible();
   await expect(page.getByLabel("Ling Stack navigation")).toHaveCount(0);
-  await expect(page.getByRole("heading", { name: "Council Workspace", level: 1 })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Council Workspace", level: 2 })).toBeVisible();
   await expect(page.locator(".settings-tool-return-row")).toHaveCount(0);
   await expect(settingsSections.getByRole("button", { name: "AI Councils" })).toBeVisible();
   await expect(settingsSections.getByRole("button", { name: /Account and profile/ })).toBeVisible();
@@ -609,6 +609,7 @@ test("settings workspace tools keep left navigation available on nested tool pag
   await expect(settingsSections).toBeVisible();
   await expect(page.getByLabel("Ling Stack navigation")).toHaveCount(0);
   await expect(page.locator(".settings-tool-return-row")).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "Model Workbench", level: 2 })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Model Workbench", level: 1 })).toHaveCount(0);
   await expect(settingsSections.getByRole("button", { name: "Model Workbench" })).toBeVisible();
   await expect(settingsSections).toBeVisible();
@@ -617,6 +618,7 @@ test("settings workspace tools keep left navigation available on nested tool pag
   await expect(settingsSections).toBeVisible();
   await expect(page.getByLabel("Ling Stack navigation")).toHaveCount(0);
   await expect(page.locator(".settings-tool-return-row")).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "AI Teammates", level: 2 })).toBeVisible();
   await expect(page.getByRole("heading", { name: "AI Teammates", level: 1 })).toHaveCount(0);
   await expect(settingsSections.getByRole("button", { name: "AI Teammates" })).toBeVisible();
   await expect(settingsSections).toBeVisible();
@@ -625,6 +627,7 @@ test("settings workspace tools keep left navigation available on nested tool pag
   await expect(settingsSections).toBeVisible();
   await expect(page.getByLabel("Ling Stack navigation")).toHaveCount(0);
   await expect(page.locator(".settings-tool-return-row")).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "Work Board", level: 2 })).toBeVisible();
   await expect(page.locator(".work-board-page").getByRole("heading", { name: "Needs action" })).toHaveCount(0);
   await expect(settingsSections.getByRole("button", { name: "Work Board" })).toBeVisible();
 

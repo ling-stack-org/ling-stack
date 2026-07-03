@@ -127,9 +127,11 @@ export function CouncilWorkspacePanels(props: CouncilWorkspacePanelsProps): JSX.
   return (
     <div className={props.onBackToWorkspaceTools ? "council-workspace-page settings-return-mode" : "council-workspace-page"} aria-label={t("Council Workspace")}>
       <header className="council-workspace-header">
-        <div>
-          <h1>{t("Council Workspace")}</h1>
-        </div>
+        {!props.onBackToWorkspaceTools ? (
+          <div className="council-workspace-title">
+            <h1>{t("Council Workspace")}</h1>
+          </div>
+        ) : null}
         <div className="council-workspace-actions">
           <button className="secondary-button compact-button" type="button" onClick={() => void props.onRefresh()} aria-label={t("Refresh councils")}>
             <span>{t("Refresh")}</span>

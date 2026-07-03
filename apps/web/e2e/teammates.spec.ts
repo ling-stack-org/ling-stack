@@ -428,7 +428,7 @@ test("AI teammates page links council management to Council Workspace", async ({
   await councilEntry.getByRole("button", { name: "Open Council Workspace" }).click();
   await expect(page.getByLabel("Settings sections")).toBeVisible();
   await expect(page.getByLabel("Ling Stack navigation")).toHaveCount(0);
-  await expect(page.getByRole("heading", { name: "Council Workspace", level: 1 })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Council Workspace", level: 2 })).toBeVisible();
   await expect(page.locator(".settings-tool-return-row")).toHaveCount(0);
   await expect(page.getByLabel("Council members")).toContainText("Ling Engineer");
   await expect(page.getByLabel("Settings sections").getByRole("button", { name: "AI Teammates" })).toBeVisible();

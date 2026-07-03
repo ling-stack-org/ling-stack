@@ -810,7 +810,7 @@ test("channel environment surface shows read-only context and opens review", asy
           "index 1111111..2222222 100644",
           "--- a/apps/web/src/features/workspace/WorkspaceClientView.tsx",
           "+++ b/apps/web/src/features/workspace/WorkspaceClientView.tsx",
-          "@@ -1,3 +1,4 @@",
+          "@@ -10,3 +10,4 @@",
           " import React from \"react\";",
           "-const oldLabel = \"Environment\";",
           "+const newLabel = \"Environment\";",
@@ -1047,9 +1047,49 @@ test("channel environment surface shows read-only context and opens review", asy
   const reviewSummaryRow = dock.locator(".right-dock-review-row", { hasText: "Workspace environment diff" });
   const codePreview = dock.locator(".right-dock-code-preview");
   await expect(codePreview).toBeVisible();
+  const reviewPageBody = dock.locator(".right-dock-page-body");
+  const fullBleedBoxes = await Promise.all([
+    reviewPageBody.boundingBox(),
+    codePreview.boundingBox(),
+  ]);
+  const [reviewPageBodyBox, codePreviewBox] = fullBleedBoxes;
+  expect(reviewPageBodyBox).not.toBeNull();
+  expect(codePreviewBox).not.toBeNull();
+  expect(Math.abs((codePreviewBox?.x ?? 0) - (reviewPageBodyBox?.x ?? 0))).toBeLessThanOrEqual(1);
+  expect(Math.abs(((codePreviewBox?.x ?? 0) + (codePreviewBox?.width ?? 0)) - ((reviewPageBodyBox?.x ?? 0) + (reviewPageBodyBox?.width ?? 0)))).toBeLessThanOrEqual(1);
+  const codePreviewTheme = await page.evaluate(() => {
+    const preview = document.querySelector<HTMLElement>(".right-dock-code-preview");
+    const caption = document.querySelector<HTMLElement>(".right-dock-code-preview figcaption");
+    const pre = document.querySelector<HTMLElement>(".right-dock-code-preview pre");
+    if (!preview || !caption || !pre) {
+      return undefined;
+    }
+    const resolveColor = (value: string): string => {
+      const probe = document.createElement("span");
+      probe.style.color = value;
+      document.body.append(probe);
+      const resolved = getComputedStyle(probe).color;
+      probe.remove();
+      return resolved;
+    };
+    return {
+      theme: document.documentElement.dataset.theme,
+      previewBg: getComputedStyle(preview).backgroundColor,
+      preBg: getComputedStyle(pre).backgroundColor,
+      expectedCodeBg: resolveColor("var(--conversation-code-bg)"),
+      captionBg: getComputedStyle(caption).backgroundColor,
+      expectedCaptionBg: resolveColor("var(--conversation-code-bg-hover)"),
+    };
+  });
+  expect(codePreviewTheme).toBeDefined();
+  expect(codePreviewTheme?.theme).toBe("light");
+  expect(codePreviewTheme?.previewBg).toBe(codePreviewTheme?.expectedCodeBg);
+  expect(codePreviewTheme?.preBg).toBe(codePreviewTheme?.expectedCodeBg);
+  expect(codePreviewTheme?.captionBg).toBe(codePreviewTheme?.expectedCaptionBg);
   await expect(reviewSummaryRow).toHaveCount(0);
   await expect(dock.locator(".right-dock-review-row")).toHaveCount(0);
   await expect(codePreview.locator("pre")).toContainText("reviewPreview");
+  await expect(codePreview.locator(".right-dock-code-fold")).toContainText("9 unmodified lines");
   await codePreview.getByRole("button", { name: "Collapse code preview" }).click();
   await expect(codePreview).toHaveClass(/collapsed/u);
   await expect(codePreview.locator("pre")).toHaveCount(0);
@@ -2855,6 +2895,10 @@ test("channel message body renders safe markdown, highlighted code, folded logs,
       "@@ -1 +1 @@",
       "-export const value = 1;",
       "+export const value = 2;",
+      "@@ -20,2 +20,2 @@",
+      " export const stable = true;",
+      "-export const other = 1;",
+      "+export const other = 2;",
       "```",
       "",
       "```diff",
@@ -2947,9 +2991,13 @@ test("channel message body renders safe markdown, highlighted code, folded logs,
 
   const diffBlock = message.locator(".message-diff-block").filter({ hasText: "src/example.ts" });
   await expect(diffBlock).toHaveCount(1);
+  await expect(diffBlock).toContainText("Edited 1 file");
   await expect(diffBlock).toContainText("src/example.ts");
-  await expect(diffBlock.locator(".diff-line.delete")).toContainText("-export const value = 1;");
-  await expect(diffBlock.locator(".diff-line.add")).toContainText("+export const value = 2;");
+  await expect(diffBlock.locator(".diff-line.delete .diff-gutter").first()).toHaveText("-");
+  await expect(diffBlock.locator(".diff-line.delete code").first()).toContainText("export const value = 1;");
+  await expect(diffBlock.locator(".diff-line.add .diff-gutter").first()).toHaveText("+");
+  await expect(diffBlock.locator(".diff-line.add code").first()).toContainText("export const value = 2;");
+  await expect(diffBlock.locator(".diff-fold")).toContainText("18 unmodified lines");
   await expect(diffBlock.getByRole("button", { name: "Copy diff" })).toBeVisible();
   await expect.poll(() => diffBlock.locator(".diff-viewer").evaluate((element) => {
     const resolveBackground = (tokenName: string): string => {
@@ -3003,8 +3051,8 @@ test("channel message body renders safe markdown, highlighted code, folded logs,
   await expect(expandedDeferredDiff).toContainText("src/large.ts");
   await expect(expandedDeferredDiff.locator(".diff-viewer")).toBeVisible();
   await expect(expandedDeferredDiff).not.toContainText("deferredDiffLine190");
-  await expect(expandedDeferredDiff.getByRole("button", { name: /Show full diff/ })).toBeVisible();
-  await expandedDeferredDiff.getByRole("button", { name: /Show full diff/ }).click();
+  await expect(expandedDeferredDiff.getByRole("button", { name: /Show remaining diff ranges/ })).toBeVisible();
+  await expandedDeferredDiff.getByRole("button", { name: /Show remaining diff ranges/ }).click();
   await expect(expandedDeferredDiff).toContainText("deferredDiffLine190");
   await expandedDeferredDiff.getByRole("button", { name: "Collapse diff details" }).click();
   await expect(message.locator(".message-diff-block.deferred")).toContainText("Large diff deferred");

@@ -302,7 +302,7 @@ test("settings configuration entries open nested tools directly", async ({ page 
   await settingsSections.getByRole("button", { name: "AI Councils" }).click();
   await expect(settingsSections).toBeVisible();
   await expect(page.getByLabel("Ling Stack navigation")).toHaveCount(0);
-  await expect(page.getByRole("heading", { name: "Council Workspace", level: 1 })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Council Workspace", level: 2 })).toBeVisible();
   await expect(settingsSections.getByRole("button", { name: "AI Councils" })).toHaveClass(/active/);
   await expect(page.locator(".settings-tool-return-row")).toHaveCount(0);
   await expect(page.locator(".settings-workspace-tools")).toHaveCount(0);
