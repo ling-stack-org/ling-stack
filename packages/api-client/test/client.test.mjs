@@ -638,6 +638,11 @@ test("reads skill source snapshots and source health through expected routes", a
     { cwd: "/repo", report: { workspaceId: "workspace_default" }, snapshots: [] },
     { cwd: "/repo", snapshot: { id: "skill_source_1", skillId: "review" } },
     { cwd: "/repo", snapshot: { id: "skill_source_1", skillId: "review", reviewStatus: "archived" } },
+    { cwd: "/repo", preview: { skillId: "review skill", mode: "preview_on_demand" } },
+    { cwd: "/repo", preview: { skillId: "draft skill", mode: "preview_on_demand" } },
+    { cwd: "/repo", views: [{ id: "skill_compiled_1", skillId: "review skill" }] },
+    { cwd: "/repo", view: { id: "skill_compiled_1", skillId: "review skill", reviewStatus: "active" } },
+    { cwd: "/repo", view: { id: "skill_compiled_1", skillId: "review skill", reviewStatus: "archived" } },
   ];
   const mock = createFetchMock(responses);
   const client = new LingDaemonClient({ baseUrl: "http://daemon.test", fetch: mock.fetch });
@@ -645,6 +650,15 @@ test("reads skill source snapshots and source health through expected routes", a
   assert.deepEqual(await client.getSkillSourceHealth("/repo path", { limit: 7 }), responses[0]);
   assert.deepEqual(await client.getSkillSourceSnapshot("/repo path", "review skill"), responses[1]);
   assert.deepEqual(await client.archiveSkillSourceSnapshot("/repo path", "review skill"), responses[2]);
+  assert.deepEqual(await client.previewSkillOptimization("/repo path", "review skill", { mode: "preview_on_demand" }), responses[3]);
+  assert.deepEqual(await client.previewSkillImportDraftOptimization("/repo path", {
+    content: "# Draft skill\n\nUse when a draft needs review.",
+    source: "custom",
+    mode: "preview_on_demand",
+  }), responses[4]);
+  assert.deepEqual(await client.listSkillCompiledRuntimeViews("/repo path", "review skill"), responses[5]);
+  assert.deepEqual(await client.createSkillCompiledRuntimeView("/repo path", "review skill", { mode: "preview_on_demand" }), responses[6]);
+  assert.deepEqual(await client.archiveSkillCompiledRuntimeView("/repo path", "review skill", "skill_compiled_1"), responses[7]);
 
   assert.equal(mock.calls[0].method, "GET");
   assert.equal(mock.calls[0].url, "http://daemon.test/skills/source-health?cwd=%2Frepo+path&limit=7");
@@ -652,6 +666,24 @@ test("reads skill source snapshots and source health through expected routes", a
   assert.equal(mock.calls[1].url, "http://daemon.test/skills/review%20skill/source?cwd=%2Frepo+path");
   assert.equal(mock.calls[2].method, "POST");
   assert.equal(mock.calls[2].url, "http://daemon.test/skills/review%20skill/source/archive?cwd=%2Frepo+path");
+  assert.equal(mock.calls[3].method, "POST");
+  assert.equal(mock.calls[3].url, "http://daemon.test/skills/review%20skill/optimization-preview?cwd=%2Frepo+path");
+  assert.deepEqual(JSON.parse(mock.calls[3].body), { mode: "preview_on_demand" });
+  assert.equal(mock.calls[4].method, "POST");
+  assert.equal(mock.calls[4].url, "http://daemon.test/skills/import-draft/optimization-preview?cwd=%2Frepo+path");
+  assert.deepEqual(JSON.parse(mock.calls[4].body), {
+    content: "# Draft skill\n\nUse when a draft needs review.",
+    source: "custom",
+    mode: "preview_on_demand",
+  });
+  assert.equal(mock.calls[5].method, "GET");
+  assert.equal(mock.calls[5].url, "http://daemon.test/skills/review%20skill/compiled-views?cwd=%2Frepo+path");
+  assert.equal(mock.calls[6].method, "POST");
+  assert.equal(mock.calls[6].url, "http://daemon.test/skills/review%20skill/compiled-views?cwd=%2Frepo+path");
+  assert.deepEqual(JSON.parse(mock.calls[6].body), { mode: "preview_on_demand" });
+  assert.equal(mock.calls[7].method, "POST");
+  assert.equal(mock.calls[7].url, "http://daemon.test/skills/review%20skill/compiled-views/skill_compiled_1/archive?cwd=%2Frepo+path");
+  assert.deepEqual(JSON.parse(mock.calls[7].body), {});
 });
 
 test("syncs gstack skill sources through expected routes", async () => {

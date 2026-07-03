@@ -22,10 +22,13 @@ import type {
   SkillCorrectionResponse,
   SkillInvocationSuggestionRequest,
   SkillInvocationSuggestionResponse,
+  SkillImportDraftOptimizationPreviewRequest,
   SkillImportDraftRequest,
   SkillImportDraftResponse,
   SkillImportPublishResponse,
   SkillHealthResponse,
+  SkillOptimizationPreviewRequest,
+  SkillOptimizationPreviewResponse,
   SkillRecordingEligibilityResponse,
   SkillRecordingObservationRequest,
   SkillRecordingObservationResponse,
@@ -77,6 +80,10 @@ export async function rollbackSkillSourceSnapshot(cwd: string, skillId: string, 
 
 export async function listSkillSourceArtifacts(cwd: string, skillId: string): Promise<SkillSourceArtifactListResponse> {
   return daemonClient.listSkillSourceArtifacts(cwd, skillId);
+}
+
+export async function previewSkillOptimization(cwd: string, skillId: string, input: SkillOptimizationPreviewRequest = {}): Promise<SkillOptimizationPreviewResponse> {
+  return daemonClient.previewSkillOptimization(cwd, skillId, input);
 }
 
 export function skillSourceArtifactContentUrl(artifactId: string, cwd?: string): string {
@@ -224,6 +231,13 @@ export async function createSkillCandidateDraft(cwd: string, candidateId: string
 
 export async function createSkillImportDraft(cwd: string, input: SkillImportDraftRequest): Promise<SkillImportDraftResponse> {
   return daemonClient.createSkillImportDraft(cwd, input);
+}
+
+export async function previewSkillImportDraftOptimization(
+  cwd: string,
+  input: SkillImportDraftOptimizationPreviewRequest,
+): Promise<SkillOptimizationPreviewResponse> {
+  return daemonClient.previewSkillImportDraftOptimization(cwd, input);
 }
 
 export async function publishSkillImportDraft(cwd: string, draftId: string): Promise<SkillImportPublishResponse> {

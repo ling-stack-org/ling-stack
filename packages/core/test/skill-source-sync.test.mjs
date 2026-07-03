@@ -204,7 +204,39 @@ test("gstack source preview blocks raw secret-like and over-cap source previews"
     assert.equal(report.records[0].state, "blocked");
     assert.equal(report.records[0].warnings.some((warning) => warning.code === "secret_reference" && warning.severity === "error"), true);
     assert.equal(report.records[0].warnings.some((warning) => warning.code === "large_source" && warning.severity === "warning"), true);
+    assert.equal(report.records[0].contextFindings.some((finding) => finding.kind === "optimization_unsafe"), true);
+    assert.equal(report.records[0].contextFindings.some((finding) => finding.kind === "missing_or_weak_routing_description"), true);
     assert.equal(report.records[0].snapshotPreview, undefined);
+  });
+});
+
+test("gstack source preview returns context findings for third-party source sync rows", async () => {
+  await withTempDir("ling-stack-skill-source-context-", async (root) => {
+    await writeSkill(root, "gstack-context-risk", [
+      "---",
+      "name: context-risk",
+      "description: Use this skill.",
+      "---",
+      "# Context Risk",
+      "Core instruction.",
+      "## Background",
+      "Background details.",
+      "## Examples",
+      "Example output must include the exact checklist.",
+    ].join("\n"));
+
+    const report = await previewGstackSkillSourceSync({
+      roots: [{ rootPath: root, sourceKind: "gstack-skill-directory", upstreamName: "gstack" }],
+      registrySkills: builtinRegistryEntries(),
+      snapshots: [],
+      generatedAt: "2026-07-03T00:00:00.000Z",
+    });
+
+    assert.equal(report.records.length, 1);
+    assert.equal(report.records[0].skillId, "context-risk");
+    assert.equal(report.records[0].contextFindings.some((finding) => finding.kind === "missing_or_weak_routing_description"), true);
+    assert.equal(report.records[0].contextFindings.some((finding) => finding.kind === "body_taxonomy_risk"), true);
+    assert.equal(report.records[0].contextFindings.some((finding) => finding.kind === "optimization_unsafe"), true);
   });
 });
 

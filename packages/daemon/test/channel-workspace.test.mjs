@@ -8354,11 +8354,116 @@ test("task run validates requestedSkillId and records the selected skill", async
     assert.ok(runner.runs[0].appendSystemPrompt.some((line) => /Selected Skill Source Snapshot/.test(line)));
     assert.ok(runner.runs[0].appendSystemPrompt.some((line) => /# Full Implement Skill/.test(line)));
     assert.ok(runner.runs[0].appendSystemPrompt.some((line) => /does not grant tools/.test(line)));
-    assert.equal(run.requestSnapshot.skillSourceContext.snapshotId, "skill_source_implement_runtime");
-    assert.equal(run.requestSnapshot.skillSourceContext.sourceChecksum, "sha256:implement-runtime");
+    const skillSourceContext = run.requestSnapshot.skillSourceContext;
+    assert.equal(skillSourceContext.runtimeViewKind, "original_source");
+    assert.equal(skillSourceContext.optimizationMode, "no_operation");
+    assert.equal(skillSourceContext.compiledViewId, undefined);
+    assert.equal(skillSourceContext.snapshotId, "skill_source_implement_runtime");
+    assert.equal(skillSourceContext.sourceChecksum, "sha256:implement-runtime");
+    assert.equal(skillSourceContext.includedRefs.some((ref) => ref.sourceRef === "skill-source:skill_source_implement_runtime:rawSkillMarkdown"), true);
+    assert.equal(skillSourceContext.deferredRefs.some((ref) => ref.sourceRef === "skill-source-file:references/plan.md"), true);
     const runCreated = store.listEvents(runId).find((event) => event.type === "run_created");
+    assert.equal(runCreated?.data.skillSourceContext.runtimeViewKind, "original_source");
     assert.equal(runCreated?.data.skillSourceContext.snapshotId, "skill_source_implement_runtime");
     assert.equal(runCreated?.data.skillSourceContext.sourceChecksum, "sha256:implement-runtime");
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("task run records compiled skill context fallback plan on missing lazy reference failure", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-skill-runtime-fallback-"));
+  const runner = new ScriptedRunner([new Error("missing reference lazy_examples")]);
+  const stores = new Map();
+  const daemon = await startDaemonForTest(runner, {
+    storeFactory: (storeCwd) => {
+      const store = createSqliteRunStore(storeCwd);
+      stores.set(storeCwd, store);
+      return store;
+    },
+  });
+  try {
+    const channel = (await postJson(`${daemon.url}/channels?cwd=${encodeURIComponent(cwd)}`, {
+      name: "Engineering",
+      status: "active",
+      boundPath: cwd,
+      defaultTeammateId: "teammate_builtin_engineer",
+      allowedTools: ["read", "grep", "find", "ls", "bash", "edit", "write"],
+    })).channel;
+    const provider = (await createStaticChatProvider(daemon.url, cwd, { capabilities: ["chat", "tool_call"] })).provider;
+    const task = (await postJson(`${daemon.url}/tasks?cwd=${encodeURIComponent(cwd)}`, {
+      channelId: channel.id,
+      title: "Implement with compiled skill context",
+      prompt: "Use the implement skill.",
+      assigneeTeammateId: "teammate_builtin_engineer",
+      requestedSkillId: "implement",
+    })).task;
+    const store = stores.get(cwd);
+    assert.ok(store);
+    store.upsertSkillSourceSnapshot({
+      id: "skill_source_implement_runtime_compiled",
+      skillId: "implement",
+      sourceKind: "gstack-skill-directory",
+      sourcePath: "skills/gstack-implement/SKILL.md",
+      upstreamName: "gstack",
+      upstreamVersion: "1.58.3.0",
+      upstreamSkillPath: "gstack-implement/SKILL.md",
+      sourceChecksum: "sha256:implement-runtime-compiled",
+      rawSkillMarkdown: "---\nname: implement\n---\n# Full Implement Skill\nUse full source details.\n# Examples\nLong examples.",
+      referencedFiles: [],
+      warnings: [],
+      reviewStatus: "published",
+    }, "2026-06-22T00:00:00.000Z");
+    store.upsertSkillCompiledRuntimeView({
+      view: {
+        id: "skill_compiled_implement_runtime",
+        skillId: "implement",
+        sourceSnapshotId: "skill_source_implement_runtime_compiled",
+        createdAt: "2026-06-22T00:01:00.000Z",
+        compilerVersion: "test",
+        coreRulesMarkdown: "Use compact implement rules.",
+        lazyReferences: [{
+          id: "lazy_examples",
+          title: "Implementation examples",
+          kind: "example",
+          sourceRef: "SKILL.md#examples",
+          summary: "Examples stay lazy until retry.",
+          tokenEstimate: 8,
+          loadPolicy: "on_retry",
+        }],
+        sourceMap: [{
+          compiledRef: "coreRulesMarkdown",
+          sourceRef: "SKILL.md#workflow",
+          rationale: "Core workflow remains included.",
+        }],
+        tokenEstimate: 15,
+        fallbackPolicy: "original_on_error",
+      },
+      authorityBoundary: {
+        requiredToolsChanged: false,
+        requiredProviderCapabilitiesChanged: false,
+        approvalProfileChanged: false,
+        teammateBindingsChanged: false,
+      },
+    }, "2026-06-22T00:02:00.000Z");
+
+    const runId = await postTaskRunAndReadReadyRunId(daemon.url, cwd, task.id, {
+      providerPresetId: provider.id,
+      skipProviderPreflight: true,
+      skillOptimizationMode: "auto_runtime_experimental",
+    });
+    const run = await getJson(`${daemon.url}/runs/${encodeURIComponent(runId)}?cwd=${encodeURIComponent(cwd)}`);
+
+    assert.equal(run.status, "failed");
+    assert.equal(run.requestSnapshot.skillSourceContext.runtimeViewKind, "compiled_view");
+    assert.equal(run.requestSnapshot.skillSourceContext.compiledViewId, "skill_compiled_implement_runtime");
+    assert.ok(runner.runs[0].appendSystemPrompt.some((line) => /Selected Skill Compiled Runtime View/.test(line)));
+    assert.ok(runner.runs[0].appendSystemPrompt.some((line) => /Available Skill References/.test(line)));
+    const runError = store.listEvents(runId).find((event) => event.type === "run_error");
+    assert.equal(runError?.data.skillContextFallback.reasonCode, "compiled_missing_reference");
+    assert.equal(runError?.data.skillContextFallback.retryRuntimeViewKind, "original_source");
+    assert.deepEqual(runError?.data.skillContextFallback.matchedRefIds, ["lazy_examples"]);
   } finally {
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });
@@ -8553,6 +8658,36 @@ test("skill source API returns source health and published snapshots", async () 
     assert.equal(source.cwd, cwd);
     assert.equal(source.snapshot.id, snapshot.id);
     assert.equal(source.snapshot.rawSkillMarkdown.includes("# Review"), true);
+
+    const optimizationPreview = await postJson(`${daemon.url}/skills/review/optimization-preview?cwd=${encodeURIComponent(cwd)}`, {
+      mode: "preview_on_demand",
+    });
+    assert.equal(optimizationPreview.cwd, cwd);
+    assert.equal(optimizationPreview.preview.skillId, "review");
+    assert.equal(optimizationPreview.preview.sourceSnapshotId, snapshot.id);
+    assert.equal(optimizationPreview.preview.mode, "preview_on_demand");
+    assert.ok(optimizationPreview.preview.compiledView);
+    assert.equal(optimizationPreview.preview.authorityBoundary.requiredToolsChanged, false);
+    assert.equal(store.listSkillSourceSnapshots({ includeArchived: true }).length, 1);
+
+    const compiledCreate = await postJson(`${daemon.url}/skills/review/compiled-views?cwd=${encodeURIComponent(cwd)}`, {
+      mode: "preview_on_demand",
+    });
+    assert.equal(compiledCreate.cwd, cwd);
+    assert.equal(compiledCreate.view.skillId, "review");
+    assert.equal(compiledCreate.view.sourceSnapshotId, snapshot.id);
+    assert.equal(compiledCreate.view.reviewStatus, "active");
+    assert.equal(compiledCreate.view.authorityBoundary.requiredToolsChanged, false);
+    assert.equal(store.listSkillCompiledRuntimeViews({ skillId: "review" }).length, 1);
+
+    const compiledList = await getJson(`${daemon.url}/skills/review/compiled-views?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(compiledList.views.length, 1);
+    assert.equal(compiledList.views[0].id, compiledCreate.view.id);
+
+    const archivedCompiled = await postJson(`${daemon.url}/skills/review/compiled-views/${encodeURIComponent(compiledCreate.view.id)}/archive?cwd=${encodeURIComponent(cwd)}`, {});
+    assert.equal(archivedCompiled.view.reviewStatus, "archived");
+    assert.equal(store.listSkillCompiledRuntimeViews({ skillId: "review" }).length, 0);
+    assert.equal(store.listSkillCompiledRuntimeViews({ skillId: "review", includeArchived: true }).length, 1);
 
     const postSource = await fetch(`${daemon.url}/skills/review/source?cwd=${encodeURIComponent(cwd)}`, {
       method: "POST",
@@ -9364,7 +9499,7 @@ test("skill import draft publishes registry skills and teammate bindings use eff
     const initialSkills = await getJson(`${daemon.url}/skills?cwd=${encodeURIComponent(cwd)}`);
     assert.ok(initialSkills.skills.some((skill) => skill.id === "implement" && skill.source === "builtin"));
 
-    const draft = await postJson(`${daemon.url}/skills/import-draft?cwd=${encodeURIComponent(cwd)}`, {
+    const importRequest = {
       source: "custom",
       sourcePath: "SKILL.md",
       content: [
@@ -9375,13 +9510,31 @@ test("skill import draft publishes registry skills and teammate bindings use eff
         "",
         "Review the target surface and report concrete failures first.",
       ].join("\n"),
-    });
+    };
+    const draft = await postJson(`${daemon.url}/skills/import-draft?cwd=${encodeURIComponent(cwd)}`, importRequest);
     assert.equal(draft.draft.definitions.length, 1);
     assert.equal(draft.draft.definitions[0].definition.id, "custom-qa-review");
     assert.ok(draft.draft.definitions[0].warnings.some((warning) => warning.code === "permission_like_instruction"));
+    assert.ok(draft.contextFindings.some((finding) => finding.kind === "optimization_unsafe"));
+
+    const draftPreview = await postJson(`${daemon.url}/skills/import-draft/optimization-preview?cwd=${encodeURIComponent(cwd)}`, {
+      ...importRequest,
+      mode: "preview_on_demand",
+    });
+    assert.equal(draftPreview.preview.skillId, "custom-qa-review");
+    assert.equal(draftPreview.preview.mode, "preview_on_demand");
+    assert.equal(draftPreview.preview.status, "manual_review_required");
+    assert.equal(draftPreview.preview.authorityBoundary.requiredToolsChanged, false);
 
     const published = await postJson(`${daemon.url}/skills/import-drafts/${encodeURIComponent(draft.draft.id)}/publish?cwd=${encodeURIComponent(cwd)}`, {});
     assert.equal(published.skills[0].id, "custom-qa-review");
+    const draftCompiledResponse = await fetch(`${daemon.url}/skills/custom-qa-review/compiled-views?cwd=${encodeURIComponent(cwd)}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mode: "preview_on_demand" }),
+    });
+    assert.equal(draftCompiledResponse.status, 404);
+    assert.equal((await draftCompiledResponse.json()).error, "skill_source_snapshot_not_found");
     const listed = await getJson(`${daemon.url}/skills?cwd=${encodeURIComponent(cwd)}`);
     assert.ok(listed.skills.some((skill) => skill.id === "custom-qa-review" && skill.source === "custom"));
     const refreshed = await postJson(`${daemon.url}/skills/refresh?cwd=${encodeURIComponent(cwd)}`, {});

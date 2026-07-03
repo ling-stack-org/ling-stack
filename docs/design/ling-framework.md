@@ -44,6 +44,7 @@ docs:
 - [AI Teammate Private Workspace](ai-teammate-private-workspace.md)
 - [Ling Memory v1](ling-memory-v1.md)
 - [Ling Skill Import v1](ling-skill-import-v1.md)
+- [Skill Context Optimization](skill-context-optimization.md)
 - [Runtime Supervisor](runtime-supervisor.md)
 - [Runtime Control Plane Detailed Design](runtime-control-plane-detailed-design.md)
 - [Conversation Plan And Goal Modes](conversation-plan-and-goal-modes.md)

@@ -2157,7 +2157,8 @@
 }
 
 .settings-skill-source-sync-meta,
-.settings-skill-source-sync-warnings {
+.settings-skill-source-sync-warnings,
+.settings-skill-source-sync-context {
   display: flex;
   flex-wrap: wrap;
   gap: 5px;
@@ -2166,6 +2167,7 @@
 
 .settings-skill-source-sync-meta span,
 .settings-skill-source-sync-warnings small,
+.settings-skill-source-sync-context small,
 .settings-skill-sync-state {
   min-height: 22px;
   padding: 3px 7px;
@@ -2202,12 +2204,18 @@
 .settings-skill-sync-state.blocked,
 .settings-skill-sync-state.missing,
 .settings-skill-sync-state.orphaned,
+.settings-skill-source-sync-context small.critical,
 .settings-skill-source-sync-warnings small.error {
   color: var(--danger);
 }
 
+.settings-skill-source-sync-context small.warning,
 .settings-skill-source-sync-warnings small.warning {
   color: var(--warning);
+}
+
+.settings-skill-source-sync-context small.info {
+  color: var(--text-muted);
 }
 
 .settings-skill-source-sync-diff {
@@ -2593,7 +2601,24 @@
 
 .settings-skill-source-actions {
   display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
   justify-content: flex-start;
+}
+
+.settings-skill-optimization-preview {
+  display: grid;
+  gap: 8px;
+  padding: 9px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface-panel);
+}
+
+.settings-skill-optimization-preview > small {
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 16px;
 }
 
 .settings-skill-source-tags span,

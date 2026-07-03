@@ -31,6 +31,8 @@ import {
   listSkills,
   listTeammateSkills,
   previewGstackSkillSourceSync,
+  previewSkillImportDraftOptimization,
+  previewSkillOptimization,
   publishGstackSkillSourceSync,
   publishSkillImportDraft,
   refreshGstackSkillSourceSync,
@@ -50,9 +52,11 @@ import type {
   SkillCandidateReviewAction,
   SkillHealthReport,
   SkillImportDraft,
+  SkillOptimizationPreview,
   SkillPackSource,
   SkillRegistryEntry,
   SkillSourceArtifact,
+  SkillSourceContextHealthFinding,
   SkillSourceHealthReport,
   SkillSourceSnapshot,
   SkillSourceSyncPreviewRecord,
@@ -83,6 +87,7 @@ import {
   skillCandidateReviewReason,
   skillLibraryFilterLabel,
   skillRegistryState,
+  sourceHealthKindLabel,
   type SkillLibraryFilter,
   type TeammateSkillBindingSummary,
 } from "./SkillLibraryWidgets.js";
@@ -112,6 +117,7 @@ export function SkillLibrarySettingsPanel({ cwd, refreshToken = 0 }: { readonly 
   const [skillSourceSnapshots, setSkillSourceSnapshots] = useState<readonly SkillSourceSnapshot[]>([]);
   const [skillSourceUpgradePolicy, setSkillSourceUpgradePolicy] = useState<SkillSourceUpgradePolicy | undefined>();
   const [skillSourceArtifacts, setSkillSourceArtifacts] = useState<readonly SkillSourceArtifact[]>([]);
+  const [skillOptimizationPreview, setSkillOptimizationPreview] = useState<SkillOptimizationPreview | undefined>();
   const [skillCandidates, setSkillCandidates] = useState<readonly SkillCandidate[]>([]);
   const [playbookCandidates, setPlaybookCandidates] = useState<readonly ChannelPlaybookCandidate[]>([]);
   const [channels, setChannels] = useState<readonly Channel[]>([]);
@@ -124,6 +130,8 @@ export function SkillLibrarySettingsPanel({ cwd, refreshToken = 0 }: { readonly 
   const [importOpen, setImportOpen] = useState(false);
   const [importForm, setImportForm] = useState<SkillImportForm>(initialSkillImportForm);
   const [importDraft, setImportDraft] = useState<SkillImportDraft | undefined>();
+  const [importContextFindings, setImportContextFindings] = useState<readonly SkillSourceContextHealthFinding[]>([]);
+  const [importOptimizationPreview, setImportOptimizationPreview] = useState<SkillOptimizationPreview | undefined>();
   const [activeSubsection, setActiveSubsection] = useState<SkillLibrarySubsectionId>("skills");
   const [syncRootPath, setSyncRootPath] = useState("");
   const [syncIncludeDetectedRoots, setSyncIncludeDetectedRoots] = useState(true);
@@ -132,6 +140,8 @@ export function SkillLibrarySettingsPanel({ cwd, refreshToken = 0 }: { readonly 
   const [selectedSyncSkillIds, setSelectedSyncSkillIds] = useState<readonly string[]>([]);
   const [syncing, setSyncing] = useState(false);
   const [checkingSourceUpdates, setCheckingSourceUpdates] = useState(false);
+  const [optimizationPreviewLoading, setOptimizationPreviewLoading] = useState(false);
+  const [importOptimizationPreviewLoading, setImportOptimizationPreviewLoading] = useState(false);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
@@ -238,6 +248,10 @@ export function SkillLibrarySettingsPanel({ cwd, refreshToken = 0 }: { readonly 
     void loadSelectedSkillSourceArtifacts();
   }, [cwd, selectedSkill?.id, skillSourceSnapshots]);
 
+  useEffect(() => {
+    setSkillOptimizationPreview(undefined);
+  }, [selectedSkill?.id]);
+
   async function refresh(): Promise<void> {
     const workspaceCwd = cwd.trim();
     if (!workspaceCwd) {
@@ -315,11 +329,35 @@ export function SkillLibrarySettingsPanel({ cwd, refreshToken = 0 }: { readonly 
         name: importForm.name.trim() || undefined,
       });
       setImportDraft(response.draft);
+      setImportContextFindings(response.contextFindings ?? []);
+      setImportOptimizationPreview(undefined);
       setMessage(t("Draft ready"));
     } catch (draftError) {
       setError(draftError instanceof Error ? draftError.message : String(draftError));
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function previewImportDraftOptimization(): Promise<void> {
+    if (!importDraft || !importForm.content.trim() || importOptimizationPreviewLoading) {
+      return;
+    }
+    setImportOptimizationPreviewLoading(true);
+    try {
+      setError("");
+      const response = await previewSkillImportDraftOptimization(cwd.trim(), {
+        content: importForm.content,
+        source: importForm.source,
+        sourcePath: importForm.sourcePath.trim() || undefined,
+        name: importForm.name.trim() || undefined,
+        mode: "preview_on_demand",
+      });
+      setImportOptimizationPreview(response.preview);
+    } catch (previewError) {
+      setError(previewError instanceof Error ? previewError.message : String(previewError));
+    } finally {
+      setImportOptimizationPreviewLoading(false);
     }
   }
 
@@ -332,6 +370,8 @@ export function SkillLibrarySettingsPanel({ cwd, refreshToken = 0 }: { readonly 
       setError("");
       const response = await publishSkillImportDraft(cwd.trim(), importDraft.id);
       setImportDraft(undefined);
+      setImportContextFindings([]);
+      setImportOptimizationPreview(undefined);
       setImportForm(initialSkillImportForm);
       setImportOpen(false);
       await refresh();
@@ -485,6 +525,28 @@ export function SkillLibrarySettingsPanel({ cwd, refreshToken = 0 }: { readonly 
     }
   }
 
+  async function previewSelectedSkillOptimization(): Promise<void> {
+    if (!selectedSkill?.id || optimizationPreviewLoading) {
+      return;
+    }
+    const workspaceCwd = cwd.trim();
+    if (!workspaceCwd) {
+      setError(t("Workspace path is required."));
+      return;
+    }
+    setOptimizationPreviewLoading(true);
+    try {
+      setError("");
+      const response = await previewSkillOptimization(workspaceCwd, selectedSkill.id, { mode: "preview_on_demand" });
+      setSkillOptimizationPreview(response.preview);
+      setMessage(t("Optimization preview ready"));
+    } catch (previewError) {
+      setError(previewError instanceof Error ? previewError.message : String(previewError));
+    } finally {
+      setOptimizationPreviewLoading(false);
+    }
+  }
+
   function toggleSyncSkillId(record: SkillSourceSyncPreviewRecord): void {
     if (!isSelectableSyncRecord(record, syncAllowNewSkills)) {
       return;
@@ -534,6 +596,8 @@ export function SkillLibrarySettingsPanel({ cwd, refreshToken = 0 }: { readonly 
       setError("");
       const response = await createSkillCandidateDraft(workspaceCwd, candidateId);
       setImportDraft(response.draft);
+      setImportContextFindings(response.contextFindings ?? []);
+      setImportOptimizationPreview(undefined);
       setImportOpen(true);
       setMessage(t("Draft ready"));
     } catch (draftError) {
@@ -826,12 +890,48 @@ export function SkillLibrarySettingsPanel({ cwd, refreshToken = 0 }: { readonly 
               {[...importDraft.warnings, ...importDraft.definitions.flatMap((item) => item.warnings ?? [])].map((warning, index) => (
                 <small key={`${warning.code}-${index}`} className={`teammate-warning ${warning.severity}`}>{t(warning.code)}: {warning.message}</small>
               ))}
+              {importContextFindings.length > 0 ? (
+                <div className="settings-skill-source-warning-list" aria-label={t("Import context findings")}>
+                  {importContextFindings.slice(0, 5).map((finding, index) => (
+                    <small key={`${finding.kind}-${index}`} className={finding.severity}>
+                      {sourceHealthKindLabel(finding.kind, t)} · {t(finding.message)}
+                    </small>
+                  ))}
+                </div>
+              ) : null}
+              {importOptimizationPreview ? (
+                <div className="settings-skill-optimization-preview" aria-label={t("Skill optimization preview")}>
+                  <div className="settings-skill-source-detail">
+                    <span><small>{t("Mode")}</small><code>{importOptimizationPreview.mode}</code></span>
+                    <span><small>{t("Status")}</small><code>{importOptimizationPreview.status}</code></span>
+                    <span><small>{t("Original tokens")}</small><code>{importOptimizationPreview.originalTokenEstimate}</code></span>
+                    <span><small>{t("Compiled tokens")}</small><code>{importOptimizationPreview.compiledTokenEstimate}</code></span>
+                  </div>
+                  <div className="settings-skill-source-tags">
+                    <span>{t("Risks")}: {importOptimizationPreview.risks.length}</span>
+                    <span>{t("Lazy references")}: {importOptimizationPreview.compiledView?.lazyReferences.length ?? 0}</span>
+                    <span>{t("Authority unchanged")}</span>
+                  </div>
+                  {importOptimizationPreview.routingDescription?.suggested ? (
+                    <small>{t("Suggested routing")}: {importOptimizationPreview.routingDescription.suggested}</small>
+                  ) : null}
+                </div>
+              ) : null}
             </div>
           ) : null}
           <div className="settings-skill-import-actions">
             <button className="secondary-button compact-button" type="button" onClick={() => void previewImportDraft()} disabled={saving || !importForm.content.trim()}>
               {saving ? <Loader2 className="spin" size={15} /> : <Search size={15} />}
               {t("Preview draft")}
+            </button>
+            <button
+              className="secondary-button compact-button"
+              type="button"
+              onClick={() => void previewImportDraftOptimization()}
+              disabled={saving || importOptimizationPreviewLoading || !importDraft}
+            >
+              {importOptimizationPreviewLoading ? <Loader2 className="spin" size={15} /> : <Search size={15} />}
+              {t("Preview optimization")}
             </button>
             <button
               className="primary-button compact-button"
@@ -1009,8 +1109,11 @@ export function SkillLibrarySettingsPanel({ cwd, refreshToken = 0 }: { readonly 
                 snapshot={sourceSnapshotBySkillId.get(selectedSkill.id)}
                 history={sourceSnapshotHistoryBySkillId.get(selectedSkill.id) ?? []}
                 artifacts={skillSourceArtifacts}
+                optimizationPreview={skillOptimizationPreview}
+                optimizationPreviewLoading={optimizationPreviewLoading}
                 cwd={cwd.trim()}
                 saving={saving}
+                onPreviewOptimization={() => void previewSelectedSkillOptimization()}
                 onArchive={() => void archiveSourceSnapshot(selectedSkill.id)}
                 onRollback={(snapshotId) => void rollbackSelectedSkillSource(snapshotId)}
                 t={t}

@@ -16,6 +16,39 @@ export type SkillSourceFileKind = "script" | "asset" | "reference" | "agent-meta
 export type SkillSourceWarningSeverity = "info" | "warning" | "error";
 export type SkillSourceArtifactReviewStatus = "draft" | "reviewed" | "published" | "archived";
 export type SkillSourceUpgradeMode = "manual" | "prompt" | "auto-safe";
+export type SkillSourceContextHealthSeverity = "info" | "warning" | "critical";
+export type SkillSourceContextHealthFindingKind =
+  | "token_bloat"
+  | "missing_or_weak_routing_description"
+  | "reference_duplication"
+  | "body_taxonomy_risk"
+  | "source_snapshot_gap"
+  | "optimization_unsafe";
+export type SkillOptimizationMode =
+  | "no_operation"
+  | "report_only"
+  | "preview_on_demand"
+  | "auto_safe"
+  | "auto_runtime_experimental";
+export type SkillRuntimeViewKind =
+  | "metadata_only"
+  | "original_source"
+  | "compiled_view"
+  | "disabled_for_runner"
+  | "fallback_original";
+export type SkillOptimizationPreviewStatus =
+  | "not_run"
+  | "preview_ready"
+  | "safe_for_auto_runtime"
+  | "manual_review_required"
+  | "blocked";
+export type SkillLazyReferenceKind = "background" | "example" | "template" | "reference" | "script_note" | "asset_note";
+export type SkillLazyReferenceLoadPolicy = "on_request" | "on_retry" | "never_auto";
+export type SkillOptimizationRiskKind =
+  | "context_health"
+  | "unsafe_source"
+  | "authority_boundary"
+  | "manual_review";
 export type SkillSourceWarningCode =
   | "permission_like_instruction"
   | "secret_reference"
@@ -201,6 +234,115 @@ export interface SkillSourceWarning {
   readonly location?: string;
 }
 
+export interface SkillSourceContextFindingEvidence {
+  readonly sourceRef: string;
+  readonly byteStart?: number;
+  readonly byteEnd?: number;
+  readonly tokenEstimate?: number;
+  readonly message: string;
+}
+
+export interface SkillSourceContextHealthFinding {
+  readonly kind: SkillSourceContextHealthFindingKind;
+  readonly severity: SkillSourceContextHealthSeverity;
+  readonly skillId: string;
+  readonly snapshotId?: string;
+  readonly title: string;
+  readonly message: string;
+  readonly evidence: readonly SkillSourceContextFindingEvidence[];
+  readonly tokenEstimate?: number;
+  readonly recommendation: string;
+}
+
+export interface SkillDescriptionOptimization {
+  readonly original?: string;
+  readonly suggested?: string;
+  readonly reason: string;
+}
+
+export interface SkillLazyReference {
+  readonly id: string;
+  readonly title: string;
+  readonly kind: SkillLazyReferenceKind;
+  readonly sourceRef: string;
+  readonly summary: string;
+  readonly tokenEstimate: number;
+  readonly loadPolicy: SkillLazyReferenceLoadPolicy;
+}
+
+export interface SkillCompiledSourceMapEntry {
+  readonly compiledRef: string;
+  readonly sourceRef: string;
+  readonly sourceStartLine?: number;
+  readonly sourceEndLine?: number;
+  readonly rationale: string;
+}
+
+export interface SkillCompiledRuntimeView {
+  readonly id: string;
+  readonly skillId: string;
+  readonly sourceSnapshotId: string;
+  readonly createdAt: string;
+  readonly compilerVersion: string;
+  readonly coreRulesMarkdown: string;
+  readonly lazyReferences: readonly SkillLazyReference[];
+  readonly sourceMap: readonly SkillCompiledSourceMapEntry[];
+  readonly tokenEstimate: number;
+  readonly fallbackPolicy: "original_on_error" | "manual_only";
+}
+
+export type SkillCompiledRuntimeViewReviewStatus = "active" | "archived";
+
+export interface SkillCompiledRuntimeViewRecord extends SkillCompiledRuntimeView {
+  readonly workspaceId: string;
+  readonly authorityBoundary: SkillOptimizationAuthorityBoundary;
+  readonly reviewStatus: SkillCompiledRuntimeViewReviewStatus;
+  readonly updatedAt: string;
+}
+
+export interface CreateSkillCompiledRuntimeViewInput {
+  readonly view: SkillCompiledRuntimeView;
+  readonly authorityBoundary: SkillOptimizationAuthorityBoundary;
+  readonly reviewStatus?: SkillCompiledRuntimeViewReviewStatus;
+}
+
+export interface ListSkillCompiledRuntimeViewOptions {
+  readonly skillId?: string;
+  readonly sourceSnapshotId?: string;
+  readonly reviewStatus?: SkillCompiledRuntimeViewReviewStatus;
+  readonly includeArchived?: boolean;
+}
+
+export interface SkillOptimizationRisk {
+  readonly kind: SkillOptimizationRiskKind;
+  readonly severity: SkillSourceContextHealthSeverity;
+  readonly title: string;
+  readonly message: string;
+  readonly sourceRefs: readonly string[];
+  readonly blocksAutoRuntime: boolean;
+}
+
+export interface SkillOptimizationAuthorityBoundary {
+  readonly requiredToolsChanged: false;
+  readonly requiredProviderCapabilitiesChanged: false;
+  readonly approvalProfileChanged: false;
+  readonly teammateBindingsChanged: false;
+}
+
+export interface SkillOptimizationPreview {
+  readonly skillId: string;
+  readonly sourceSnapshotId: string;
+  readonly generatedAt: string;
+  readonly mode: SkillOptimizationMode;
+  readonly status: SkillOptimizationPreviewStatus;
+  readonly originalTokenEstimate: number;
+  readonly compiledTokenEstimate: number;
+  readonly routingDescription?: SkillDescriptionOptimization;
+  readonly compiledView?: SkillCompiledRuntimeView;
+  readonly risks: readonly SkillOptimizationRisk[];
+  readonly authorityBoundary: SkillOptimizationAuthorityBoundary;
+}
+
 export interface SkillSourceSyncDiffItem {
   readonly field: SkillSourceSyncDiffField;
   readonly label: string;
@@ -305,6 +447,7 @@ export interface SkillSourceSyncPreviewRecord {
   readonly diff: readonly SkillSourceSyncDiffItem[];
   readonly semanticProfile?: SkillSourceSemanticProfile;
   readonly semanticDiff: readonly SkillSourceSemanticDiffItem[];
+  readonly contextFindings: readonly SkillSourceContextHealthFinding[];
 }
 
 export interface SkillSourceSyncPreviewSummary {
@@ -379,29 +522,214 @@ export interface UpdateSkillSourceUpgradePolicyInput {
   readonly lastCheckedAt?: string;
 }
 
+export interface SkillSourceRuntimeReference {
+  readonly id: string;
+  readonly title: string;
+  readonly kind: SkillLazyReferenceKind;
+  readonly sourceRef: string;
+  readonly summary?: string;
+  readonly tokenEstimate?: number;
+  readonly loadPolicy?: SkillLazyReferenceLoadPolicy;
+  readonly reason?: string;
+}
+
+export type SkillSourceRuntimeFallbackReasonCode =
+  | "compiled_missing_reference"
+  | "compiled_view_failed";
+export type SkillRegressionMode =
+  | "original_source"
+  | "compiled_view"
+  | "compressed_routing_compiled_view";
+export type SkillRegressionLifecycleVerdict =
+  | "safe_to_keep_full"
+  | "safe_for_core_lazy"
+  | "needs_manual_review"
+  | "obsolete_or_low_value"
+  | "black_box_runtime_only";
+export type SkillRegressionFindingKind =
+  | "routing_regression"
+  | "task_success_regression"
+  | "approval_risk_regression"
+  | "missing_reference_regression"
+  | "fallback_regression"
+  | "baseline_failure"
+  | "low_value";
+
+export interface SkillSourceRuntimeFallbackPlan {
+  readonly reasonCode: SkillSourceRuntimeFallbackReasonCode;
+  readonly fromRuntimeViewKind: SkillRuntimeViewKind;
+  readonly retryRuntimeViewKind: "original_source";
+  readonly message: string;
+  readonly matchedRefIds: readonly string[];
+}
+
 export interface SkillSourceRuntimeContext {
   readonly loaded: boolean;
-  readonly snapshotId: string;
+  readonly runtimeViewKind: SkillRuntimeViewKind;
   readonly skillId: string;
-  readonly sourceKind: SkillSourceKind;
+  readonly optimizationMode?: SkillOptimizationMode;
+  readonly snapshotId?: string;
+  readonly compiledViewId?: string;
+  readonly sourceKind?: SkillSourceKind;
   readonly sourcePath?: string;
   readonly upstreamName?: string;
   readonly upstreamVersion?: string;
   readonly upstreamSkillPath?: string;
-  readonly sourceChecksum: string;
-  readonly sourceLengthChars: number;
-  readonly loadedChars: number;
-  readonly maxLoadedChars: number;
-  readonly truncated: boolean;
-  readonly warningCount: number;
-  readonly warningSeverities: readonly SkillSourceWarningSeverity[];
-  readonly referencedFiles: readonly SkillSourceFileRef[];
+  readonly sourceChecksum?: string;
+  readonly sourceLengthChars?: number;
+  readonly loadedChars?: number;
+  readonly maxLoadedChars?: number;
+  readonly truncated?: boolean;
+  readonly tokenEstimate?: number;
+  readonly warningCount?: number;
+  readonly warningSeverities?: readonly SkillSourceWarningSeverity[];
+  readonly referencedFiles?: readonly SkillSourceFileRef[];
+  readonly includedRefs?: readonly SkillSourceRuntimeReference[];
+  readonly deferredRefs?: readonly SkillSourceRuntimeReference[];
+  readonly materializedRefs?: readonly SkillSourceRuntimeReference[];
   readonly blockedReason?: string;
+  readonly fallbackReason?: string;
 }
 
 export interface SkillSourceRuntimePrompt {
   readonly context: SkillSourceRuntimeContext;
   readonly promptFragment?: string;
+}
+
+export interface SkillRegressionGuardrails {
+  readonly authority: "shadow";
+  readonly canMutateSkillDefinition: false;
+  readonly canMutateSourceSnapshot: false;
+  readonly canMutateCompiledView: false;
+  readonly canChangeRuntimeAuthority: false;
+  readonly requiresPassingGateForAutoSafe: true;
+}
+
+export interface SkillRegressionFixture {
+  readonly id: string;
+  readonly skillId: string;
+  readonly sourceSnapshotId?: string;
+  readonly prompt: string;
+  readonly source: "real_task" | "real_run" | "synthetic_task";
+  readonly expectedSelectedSkillId: string;
+  readonly expectedSuccessMarkers?: readonly string[];
+  readonly forbiddenOutputMarkers?: readonly string[];
+  readonly maxApprovalCount?: number;
+  readonly maxApprovalRisk?: ApprovalRisk;
+  readonly allowFallback?: boolean;
+  readonly expectedLazyReferenceIds?: readonly string[];
+}
+
+export interface SkillRegressionObservation {
+  readonly fixtureId: string;
+  readonly mode: SkillRegressionMode;
+  readonly selectedSkillId?: string;
+  readonly runtimeContext?: SkillSourceRuntimeContext;
+  readonly outputText?: string;
+  readonly completed?: boolean;
+  readonly approvalCount?: number;
+  readonly maxApprovalRisk?: ApprovalRisk;
+  readonly fallbackPlan?: SkillSourceRuntimeFallbackPlan;
+  readonly clarificationCount?: number;
+  readonly latencyMs?: number;
+  readonly tokenEstimate?: number;
+  readonly loadedLazyReferenceIds?: readonly string[];
+  readonly errorMessage?: string;
+}
+
+export interface SkillRegressionFinding {
+  readonly kind: SkillRegressionFindingKind;
+  readonly severity: SkillSourceContextHealthSeverity;
+  readonly fixtureId: string;
+  readonly mode: SkillRegressionMode;
+  readonly message: string;
+  readonly sourceRefs: readonly string[];
+}
+
+export interface SkillRegressionCaseResult {
+  readonly fixtureId: string;
+  readonly mode: SkillRegressionMode;
+  readonly passed: boolean;
+  readonly routingPreserved: boolean;
+  readonly taskSucceeded: boolean;
+  readonly approvalSafe: boolean;
+  readonly fallbackUsed: boolean;
+  readonly fallbackSafe: boolean;
+  readonly missingReferenceRegression: boolean;
+  readonly clarificationCount: number;
+  readonly tokenEstimate: number;
+  readonly latencyMs?: number;
+  readonly loadedLazyReferenceCount: number;
+  readonly reasons: readonly string[];
+  readonly findings: readonly SkillRegressionFinding[];
+}
+
+export interface SkillRegressionModeSummary {
+  readonly mode: SkillRegressionMode;
+  readonly passedCount: number;
+  readonly failedCount: number;
+  readonly totalCount: number;
+  readonly fallbackCount: number;
+  readonly missingReferenceRegressionCount: number;
+  readonly clarificationCount: number;
+  readonly averageTokenEstimate: number;
+  readonly averageLatencyMs?: number;
+}
+
+export interface SkillRegressionSummary {
+  readonly passedCount: number;
+  readonly failedCount: number;
+  readonly totalCount: number;
+  readonly originalAverageTokenEstimate: number;
+  readonly compiledAverageTokenEstimate: number;
+  readonly tokenReductionRatio: number;
+  readonly fallbackRate: number;
+  readonly missingReferenceRegressionCount: number;
+  readonly approvalRegressionCount: number;
+  readonly routingRegressionCount: number;
+  readonly taskSuccessRegressionCount: number;
+  readonly modeSummaries: readonly SkillRegressionModeSummary[];
+}
+
+export interface SkillRegressionRun {
+  readonly id: string;
+  readonly workspaceId: string;
+  readonly skillId: string;
+  readonly sourceSnapshotId?: string;
+  readonly compiledViewId?: string;
+  readonly suiteId?: string;
+  readonly guardrails: SkillRegressionGuardrails;
+  readonly fixtures: readonly SkillRegressionFixture[];
+  readonly observations: readonly SkillRegressionObservation[];
+  readonly results: readonly SkillRegressionCaseResult[];
+  readonly summary: SkillRegressionSummary;
+  readonly lifecycleVerdict: SkillRegressionLifecycleVerdict;
+  readonly autoSafeEligible: boolean;
+  readonly createdAt: string;
+}
+
+export interface CreateSkillRegressionRunInput {
+  readonly id?: string;
+  readonly skillId: string;
+  readonly sourceSnapshotId?: string;
+  readonly compiledViewId?: string;
+  readonly suiteId?: string;
+  readonly fixtures: readonly SkillRegressionFixture[];
+  readonly observations: readonly SkillRegressionObservation[];
+  readonly results: readonly SkillRegressionCaseResult[];
+  readonly summary: SkillRegressionSummary;
+  readonly lifecycleVerdict: SkillRegressionLifecycleVerdict;
+  readonly autoSafeEligible: boolean;
+}
+
+export interface ListSkillRegressionRunsOptions {
+  readonly skillId?: string;
+  readonly sourceSnapshotId?: string;
+  readonly compiledViewId?: string;
+  readonly suiteId?: string;
+  readonly lifecycleVerdict?: SkillRegressionLifecycleVerdict;
+  readonly autoSafeEligible?: boolean;
+  readonly limit?: number;
 }
 
 export interface CreateSkillSourceSnapshotInput {
@@ -487,6 +815,10 @@ export function createSkillSourceSnapshotId(): string {
 
 export function createSkillSourceArtifactId(): string {
   return `skill_source_artifact_${cryptoRandomId()}`;
+}
+
+export function createSkillRegressionRunId(): string {
+  return `skill_regression_${cryptoRandomId()}`;
 }
 
 function cryptoRandomId(): string {

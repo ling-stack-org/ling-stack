@@ -21,10 +21,16 @@ import type {
   CandidateRouteKind,
   SkillInvocationSuggestionRequest,
   SkillInvocationSuggestionResponse,
+  SkillCompiledRuntimeViewCreateRequest,
+  SkillCompiledRuntimeViewListResponse,
+  SkillCompiledRuntimeViewMutationResponse,
+  SkillImportDraftOptimizationPreviewRequest,
   SkillImportDraftRequest,
   SkillImportDraftResponse,
   SkillImportPublishResponse,
   SkillHealthResponse,
+  SkillOptimizationPreviewRequest,
+  SkillOptimizationPreviewResponse,
   SkillRecordingEligibilityResponse,
   SkillRecordingObservationRequest,
   SkillRecordingObservationResponse,
@@ -80,6 +86,40 @@ export const skillEndpoints = {
 
   async listSkillSourceArtifacts(this: LingDaemonEndpointContext, cwd: string, skillId: string): Promise<SkillSourceArtifactListResponse> {
     return this._get(`/skills/${encodeURIComponent(skillId)}/source/artifacts`, { cwd });
+  },
+
+  async previewSkillOptimization(this: LingDaemonEndpointContext, cwd: string, skillId: string, input: SkillOptimizationPreviewRequest = {}): Promise<SkillOptimizationPreviewResponse> {
+    return this._post(`/skills/${encodeURIComponent(skillId)}/optimization-preview`, { cwd }, input);
+  },
+
+  async listSkillCompiledRuntimeViews(this: LingDaemonEndpointContext, cwd: string, skillId: string): Promise<SkillCompiledRuntimeViewListResponse> {
+    return this._get(`/skills/${encodeURIComponent(skillId)}/compiled-views`, { cwd });
+  },
+
+  async createSkillCompiledRuntimeView(
+    this: LingDaemonEndpointContext,
+    cwd: string,
+    skillId: string,
+    input: SkillCompiledRuntimeViewCreateRequest = {},
+  ): Promise<SkillCompiledRuntimeViewMutationResponse> {
+    return this._post(`/skills/${encodeURIComponent(skillId)}/compiled-views`, { cwd }, input);
+  },
+
+  async archiveSkillCompiledRuntimeView(
+    this: LingDaemonEndpointContext,
+    cwd: string,
+    skillId: string,
+    viewId: string,
+  ): Promise<SkillCompiledRuntimeViewMutationResponse> {
+    return this._post(`/skills/${encodeURIComponent(skillId)}/compiled-views/${encodeURIComponent(viewId)}/archive`, { cwd }, {});
+  },
+
+  async previewSkillImportDraftOptimization(
+    this: LingDaemonEndpointContext,
+    cwd: string,
+    input: SkillImportDraftOptimizationPreviewRequest,
+  ): Promise<SkillOptimizationPreviewResponse> {
+    return this._post("/skills/import-draft/optimization-preview", { cwd }, input);
   },
 
   skillSourceArtifactContentUrl(this: LingDaemonEndpointContext, artifactId: string, cwd?: string): string {

@@ -1415,6 +1415,8 @@ test("run detail shows stored permission preset and full access confirmation evi
       selectedSkillId: "review",
       skillSourceContext: {
         loaded: true,
+        runtimeViewKind: "original_source",
+        optimizationMode: "no_operation",
         snapshotId: "skill_source_review_mock",
         skillId: "review",
         sourceKind: "gstack-skill-directory",
@@ -1426,9 +1428,25 @@ test("run detail shows stored permission preset and full access confirmation evi
         loadedChars: 96,
         maxLoadedChars: 60000,
         truncated: false,
+        tokenEstimate: 48,
         warningCount: 0,
         warningSeverities: [],
         referencedFiles: [{ path: "references/checklist.md", kind: "reference", includedInSnapshot: false }],
+        includedRefs: [{
+          id: "skill_source_review_mock:skill-md",
+          title: "SKILL.md source",
+          kind: "reference",
+          sourceRef: "skill-source:skill_source_review_mock:rawSkillMarkdown",
+          tokenEstimate: 32,
+        }],
+        deferredRefs: [{
+          id: "file:references/checklist.md",
+          title: "references/checklist.md",
+          kind: "reference",
+          sourceRef: "skill-source-file:references/checklist.md",
+          tokenEstimate: 6,
+          loadPolicy: "on_request",
+        }],
       },
       permissionConfirmation: {
         mode: "full_access",
@@ -1460,7 +1478,11 @@ test("run detail shows stored permission preset and full access confirmation evi
   await expect(detail).toContainText("Write scope: /");
   await expect(summary.getByText("Skill source", { exact: true })).toBeVisible();
   await expect(detail).toContainText("Skill source context");
+  await expect(detail).toContainText("Original source");
+  await expect(detail).toContainText("no_operation");
   await expect(detail).toContainText("skill_source_review_mock");
   await expect(detail).toContainText("sha256:review-mock");
+  await expect(detail).toContainText("Included");
+  await expect(detail).toContainText("Deferred");
   await expect(detail).toContainText("references/checklist.md");
 });

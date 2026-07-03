@@ -5,6 +5,7 @@ import { readdir, readFile, stat } from "node:fs/promises";
 import { parseDocument } from "yaml";
 import { readOnlyRunTools, type RunTool } from "./approval-policy.js";
 import type { ProviderCapability } from "./provider-types.js";
+import { buildSkillSourceContextFindings } from "./skill-source-health.js";
 import type {
   AiTeammateRoleKey,
   CreateSkillSourceSnapshotInput,
@@ -170,6 +171,14 @@ export async function previewGstackSkillSourceSync(input: PreviewGstackSkillSour
       const definitionPreview = existingSkill?.definition ?? normalizeDefinitionFromSource(skillId, source);
       const snapshotPreview = buildSnapshotPreview(skillId, source, state);
       const diff = existingSnapshot && snapshotPreview ? buildSourceSyncDiff(existingSnapshot, source, snapshotPreview) : [];
+      const contextFindings = buildSkillSourceContextFindings({
+        skillId,
+        snapshotId: existingSnapshot?.id,
+        markdown: source.markdown,
+        referencedFiles: source.referencedFiles,
+        warnings: source.warnings,
+        routingDescription: source.frontMatter.description ?? source.agentMetadata?.shortDescription,
+      });
       const semanticDiff = existingSnapshot
         ? diffSkillSourceSemanticProfiles(buildSkillSourceSemanticProfile({
             markdown: existingSnapshot.rawSkillMarkdown,
@@ -198,6 +207,7 @@ export async function previewGstackSkillSourceSync(input: PreviewGstackSkillSour
         diff,
         semanticProfile: source.semanticProfile,
         semanticDiff,
+        contextFindings,
       });
     }
   }
@@ -233,6 +243,14 @@ export async function previewGstackSkillSourceSync(input: PreviewGstackSkillSour
       existingSnapshotId: snapshot.id,
       diff: [],
       semanticDiff: [],
+      contextFindings: buildSkillSourceContextFindings({
+        skillId: snapshot.skillId,
+        snapshotId: snapshot.id,
+        markdown: snapshot.rawSkillMarkdown,
+        referencedFiles: snapshot.referencedFiles,
+        warnings: [...snapshot.warnings, warning],
+        routingDescription: snapshot.agentMetadata?.shortDescription,
+      }),
     });
   }
 

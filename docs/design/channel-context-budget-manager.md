@@ -16,6 +16,7 @@ Related docs:
 - [Channel Intent To Workflow Selector](channel-intent-workflow-selector.md)
 - [Multi-Agent Orchestrator](multi-agent-orchestrator.md)
 - [Ling Memory v1](ling-memory-v1.md)
+- [Skill Context Optimization](skill-context-optimization.md)
 
 ## Purpose
 

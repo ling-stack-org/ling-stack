@@ -192,6 +192,10 @@ const PROVIDER_SECRET_HEADER_REFS_MIGRATION_VERSION = 90;
 const PROVIDER_SECRET_HEADER_REFS_MIGRATION_NAME = "add_provider_secret_header_refs";
 const GOAL_CONTINUATION_OBSERVABILITY_MIGRATION_VERSION = 91;
 const GOAL_CONTINUATION_OBSERVABILITY_MIGRATION_NAME = "add_goal_continuation_observability";
+const SKILL_COMPILED_RUNTIME_VIEWS_MIGRATION_VERSION = 92;
+const SKILL_COMPILED_RUNTIME_VIEWS_MIGRATION_NAME = "create_skill_compiled_runtime_views";
+const SKILL_REGRESSION_RUNS_MIGRATION_VERSION = 93;
+const SKILL_REGRESSION_RUNS_MIGRATION_NAME = "create_skill_regression_runs";
 
 export function configureSqliteRunStoreDatabase(database: DatabaseSync): void {
   database.exec(`
@@ -4386,6 +4390,79 @@ export function applySqliteRunStoreMigrations(context: SqliteRunStoreMigrationCo
       `);
       if (!hasSkillSourceUpgradeLifecycleMigration) {
         context.recordMigration(SKILL_SOURCE_UPGRADE_LIFECYCLE_MIGRATION_VERSION, SKILL_SOURCE_UPGRADE_LIFECYCLE_MIGRATION_NAME);
+      }
+    }
+    const hasSkillCompiledRuntimeViewsMigration = context.hasMigration(SKILL_COMPILED_RUNTIME_VIEWS_MIGRATION_VERSION);
+    if (
+      !hasSkillCompiledRuntimeViewsMigration ||
+      !context.hasTable("skill_compiled_runtime_views")
+    ) {
+      database.exec(`
+        CREATE TABLE IF NOT EXISTS skill_compiled_runtime_views (
+          id TEXT PRIMARY KEY,
+          workspace_id TEXT NOT NULL,
+          skill_id TEXT NOT NULL,
+          source_snapshot_id TEXT NOT NULL,
+          compiler_version TEXT NOT NULL,
+          core_rules_markdown TEXT NOT NULL,
+          lazy_references_json TEXT NOT NULL,
+          source_map_json TEXT NOT NULL,
+          token_estimate INTEGER NOT NULL,
+          fallback_policy TEXT NOT NULL,
+          authority_boundary_json TEXT NOT NULL,
+          review_status TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          FOREIGN KEY(workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE,
+          FOREIGN KEY(source_snapshot_id) REFERENCES skill_source_snapshots(id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_skill_compiled_runtime_views_skill
+        ON skill_compiled_runtime_views(workspace_id, skill_id, review_status, updated_at);
+
+        CREATE INDEX IF NOT EXISTS idx_skill_compiled_runtime_views_snapshot
+        ON skill_compiled_runtime_views(workspace_id, source_snapshot_id, review_status, updated_at);
+      `);
+      if (!hasSkillCompiledRuntimeViewsMigration) {
+        context.recordMigration(SKILL_COMPILED_RUNTIME_VIEWS_MIGRATION_VERSION, SKILL_COMPILED_RUNTIME_VIEWS_MIGRATION_NAME);
+      }
+    }
+    const hasSkillRegressionRunsMigration = context.hasMigration(SKILL_REGRESSION_RUNS_MIGRATION_VERSION);
+    if (
+      !hasSkillRegressionRunsMigration ||
+      !context.hasTable("skill_regression_runs")
+    ) {
+      database.exec(`
+        CREATE TABLE IF NOT EXISTS skill_regression_runs (
+          id TEXT PRIMARY KEY,
+          workspace_id TEXT NOT NULL,
+          skill_id TEXT NOT NULL,
+          source_snapshot_id TEXT,
+          compiled_view_id TEXT,
+          suite_id TEXT,
+          fixtures_json TEXT NOT NULL,
+          observations_json TEXT NOT NULL,
+          results_json TEXT NOT NULL,
+          summary_json TEXT NOT NULL,
+          lifecycle_verdict TEXT NOT NULL,
+          auto_safe_eligible INTEGER NOT NULL,
+          created_at TEXT NOT NULL,
+          FOREIGN KEY(workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE,
+          FOREIGN KEY(source_snapshot_id) REFERENCES skill_source_snapshots(id) ON DELETE SET NULL,
+          FOREIGN KEY(compiled_view_id) REFERENCES skill_compiled_runtime_views(id) ON DELETE SET NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_skill_regression_runs_skill
+        ON skill_regression_runs(workspace_id, skill_id, lifecycle_verdict, created_at);
+
+        CREATE INDEX IF NOT EXISTS idx_skill_regression_runs_snapshot
+        ON skill_regression_runs(workspace_id, source_snapshot_id, created_at);
+
+        CREATE INDEX IF NOT EXISTS idx_skill_regression_runs_compiled_view
+        ON skill_regression_runs(workspace_id, compiled_view_id, created_at);
+      `);
+      if (!hasSkillRegressionRunsMigration) {
+        context.recordMigration(SKILL_REGRESSION_RUNS_MIGRATION_VERSION, SKILL_REGRESSION_RUNS_MIGRATION_NAME);
       }
     }
     const hasTaskAttachmentIdsMigration = context.hasMigration(TASK_ATTACHMENT_IDS_MIGRATION_VERSION);

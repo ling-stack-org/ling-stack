@@ -11,6 +11,7 @@ import {
   type RunTool,
   type SessionPermissionMode,
   type SkillApprovalProfile,
+  type SkillOptimizationMode,
 } from "@ling-stack/core";
 import type { PiRunnerProviderConfig, PiRunnerRunOptions } from "@ling-stack/runner-pi";
 import { HttpError } from "../../errors.js";
@@ -35,6 +36,7 @@ export interface RunRequest extends Omit<PiRunnerRunOptions, "onApprovalRequired
   readonly turnId?: string;
   readonly runnerId?: string;
   readonly requestedSkillId?: string;
+  readonly skillOptimizationMode?: SkillOptimizationMode;
   readonly tools?: readonly RunTool[];
   readonly approvalProfile?: SkillApprovalProfile;
   readonly permissionPreset?: PermissionPreset;
@@ -64,6 +66,7 @@ export function parseRunRequest(value: unknown): RunRequest {
   const turnId = readOptionalString(value, "turnId");
   const runnerId = readOptionalString(value, "runnerId");
   const requestedSkillId = readOptionalString(value, "requestedSkillId");
+  const skillOptimizationMode = readOptionalSkillOptimizationMode(value, "skillOptimizationMode");
   const skipProviderPreflight = readOptionalBoolean(value, "skipProviderPreflight") ?? false;
   const idempotencyKey = readOptionalString(value, "idempotencyKey");
   const permissionPreset = readOptionalPermissionPreset(value, "permissionPreset");
@@ -95,6 +98,7 @@ export function parseRunRequest(value: unknown): RunRequest {
     turnId,
     runnerId,
     requestedSkillId,
+    skillOptimizationMode,
     skipProviderPreflight,
     idempotencyKey,
     task: {
@@ -207,6 +211,24 @@ function readOptionalSessionPermissionMode(record: Record<string, unknown>, key:
     throw new Error(`${key} must be one of: ${sessionPermissionModes.join(", ")}`);
   }
   return value as SessionPermissionMode;
+}
+
+function readOptionalSkillOptimizationMode(record: Record<string, unknown>, key: string): SkillOptimizationMode | undefined {
+  const value = readOptionalString(record, key);
+  if (value === undefined) {
+    return undefined;
+  }
+  const modes: readonly SkillOptimizationMode[] = [
+    "no_operation",
+    "report_only",
+    "preview_on_demand",
+    "auto_safe",
+    "auto_runtime_experimental",
+  ];
+  if (!modes.includes(value as SkillOptimizationMode)) {
+    throw new Error(`${key} must be one of: ${modes.join(", ")}`);
+  }
+  return value as SkillOptimizationMode;
 }
 
 function readOptionalPermissionPreset(record: Record<string, unknown>, key: string): PermissionPreset | undefined {
