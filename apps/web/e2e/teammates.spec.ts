@@ -133,12 +133,9 @@ test("AI teammates page creates a durable teammate and opens its private workspa
   await expect(navigation.getByRole("menuitem", { name: /More configuration/ })).toHaveCount(0);
   await expect(navigation.getByRole("menuitem", { name: "New teammate" })).toHaveCount(0);
   await navigation.getByRole("menuitem", { name: /New AI teammate/ }).click();
-  await expect(page.getByLabel("Settings sections")).toBeVisible();
-  await expect(page.getByLabel("Ling Stack navigation")).toHaveCount(0);
-  await expect(page.locator(".teammates-page-header.settings-return-mode .settings-tool-return-row").getByRole("button", { name: "Back to configuration" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "AI Teammates", level: 1 })).toHaveCount(0);
-  await expect(page.locator(".teammate-create-drawer")).toBeVisible();
-  await expect(page.locator(".teammate-create-overlay")).toHaveCount(0);
+  await expect(page.getByLabel("Ling Stack navigation")).toBeVisible();
+  await expect(page.getByLabel("Settings sections")).toHaveCount(0);
+  await expect(page.locator(".teammate-create-overlay")).toBeVisible();
   await expect(page.locator(".teammate-create-sheet")).toHaveCount(0);
   await expect(page.getByRole("dialog", { name: "Create AI teammate" })).toBeVisible();
   await expect(page.getByText("Recommended role and model are prefilled. Review them, then create.")).toBeVisible();
@@ -146,18 +143,13 @@ test("AI teammates page creates a durable teammate and opens its private workspa
   await expect(page.getByRole("dialog", { name: "Create AI teammate" }).getByLabel("Base model")).toHaveValue("provider_local");
   await page.getByRole("dialog", { name: "Create AI teammate" }).getByRole("button", { name: "Cancel" }).last().click();
   await expect(page.getByRole("dialog", { name: "Create AI teammate" })).toHaveCount(0);
-  await page.getByRole("button", { name: "Back to configuration" }).click();
-  await page.getByRole("button", { name: "Back to app" }).click();
   await expect(navigation).toBeVisible();
   await navigation.getByRole("button", { name: "No teammate yet" }).click();
-  await expect(page.getByLabel("Settings sections")).toBeVisible();
-  await expect(page.getByLabel("Ling Stack navigation")).toHaveCount(0);
-  await expect(page.locator(".teammates-page-header.settings-return-mode .settings-tool-return-row").getByRole("button", { name: "Back to configuration" })).toBeVisible();
+  await expect(page.getByLabel("Ling Stack navigation")).toBeVisible();
+  await expect(page.getByLabel("Settings sections")).toHaveCount(0);
   await expect(page.getByRole("dialog", { name: "Create AI teammate" })).toBeVisible();
   await page.getByRole("dialog", { name: "Create AI teammate" }).getByRole("button", { name: "Cancel" }).last().click();
   await expect(page.getByRole("dialog", { name: "Create AI teammate" })).toHaveCount(0);
-  await page.getByRole("button", { name: "Back to configuration" }).click();
-  await page.getByRole("button", { name: "Back to app" }).click();
 
   await openAiTeammatesFromSettings(page);
   await expect(page.locator(".teammates-page-header.settings-return-mode .settings-tool-return-row").getByRole("button", { name: "Back to configuration" })).toBeVisible();
@@ -223,7 +215,7 @@ test("AI teammates page creates a durable teammate and opens its private workspa
   await expect(page.getByLabel("Workspace teammates")).toContainText("No workspace teammates");
 });
 
-test("sidebar new teammate action opens a prefilled drawer before creating", async ({ page }) => {
+test("sidebar new teammate action opens a prefilled dialog before creating", async ({ page }) => {
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");
   });
@@ -429,6 +421,10 @@ test("AI teammates page links council management to Council Workspace", async ({
   await openSidebarSectionMenu(page, "Teammate actions");
   await navigation.getByRole("menuitem", { name: /New AI teammate/ }).click();
   await page.getByRole("dialog", { name: "Create AI teammate" }).getByRole("button", { name: "Cancel" }).last().click();
+  await expect(page.getByLabel("Ling Stack navigation")).toBeVisible();
+  await expect(page.getByLabel("Settings sections")).toHaveCount(0);
+
+  await openAiTeammatesFromSettings(page);
   await expect(page.getByLabel("Settings sections")).toBeVisible();
   await expect(page.getByLabel("Ling Stack navigation")).toHaveCount(0);
   await expect(page.locator(".teammates-page-header.settings-return-mode .settings-tool-return-row").getByRole("button", { name: "Back to configuration" })).toBeVisible();

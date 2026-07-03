@@ -40,7 +40,7 @@ import {
   workflowPhaseLabel,
 } from "./helpers.js";
 import { TeammateAvatarView } from "./TeammateAvatarView.js";
-import { TeammateCreateDrawer } from "./TeammateCreateDrawer.js";
+import { TeammateCreateDialog } from "./TeammateCreateDialog.js";
 import type {
   LocalTeammateCreateInput,
   LocalTeammateDraft,
@@ -52,8 +52,6 @@ export function AiTeammatesPage({
   providers,
   channels,
   localTeammates,
-  createRequestId = 0,
-  onCreateRequestHandled,
   onCreateTeammate,
   onRemoveTeammate,
   onToggleTeammatePinned,
@@ -69,8 +67,6 @@ export function AiTeammatesPage({
   readonly providers: readonly ProviderPreset[];
   readonly channels: readonly Channel[];
   readonly localTeammates: readonly LocalTeammateDraft[];
-  readonly createRequestId?: number;
-  readonly onCreateRequestHandled?: () => void;
   readonly onCreateTeammate: (teammate: LocalTeammateCreateInput) => void;
   readonly onRemoveTeammate: (teammateId: string) => void;
   readonly onToggleTeammatePinned: (teammateId: string) => void;
@@ -106,14 +102,6 @@ export function AiTeammatesPage({
   const [openTeammateMenuId, setOpenTeammateMenuId] = useState("");
   const detailTemplate = templates.find((template) => template.id === detailTemplateId);
   const connectedChannelCount = new Set(activeLocalTeammates.flatMap((teammate) => teammate.channelIds)).size;
-
-  useEffect(() => {
-    if (createRequestId > 0) {
-      setCreateTemplateId("");
-      setCreateOpen(true);
-      onCreateRequestHandled?.();
-    }
-  }, [createRequestId, onCreateRequestHandled]);
 
   useEffect(() => {
     if (!openTeammateMenuId || typeof document === "undefined") {
@@ -181,7 +169,7 @@ export function AiTeammatesPage({
         ) : null}
       </header>
 
-      <TeammateCreateDrawer
+      <TeammateCreateDialog
         open={isCreateOpen}
         initialTemplateId={createTemplateId}
         templates={templates}

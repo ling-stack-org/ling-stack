@@ -28,7 +28,7 @@ const defaultMemoryScopeLabels: readonly string[] = [
   "channel-decisions",
 ];
 
-export function TeammateCreateDrawer({
+export function TeammateCreateDialog({
   open,
   initialTemplateId,
   templates,
@@ -139,7 +139,7 @@ export function TeammateCreateDrawer({
 
   return (
     <div
-      className="teammate-create-drawer-backdrop"
+      className="channel-create-overlay teammate-create-overlay"
       role="presentation"
       onMouseDown={(event) => {
         if (event.target === event.currentTarget) {
@@ -147,7 +147,7 @@ export function TeammateCreateDrawer({
         }
       }}
     >
-      <section className="teammate-create-dialog teammate-create-drawer" aria-label={t("Create AI teammate")} role="dialog">
+      <section className="channel-create-dialog teammate-create-dialog" aria-label={t("Create AI teammate")} role="dialog" aria-modal="true">
         <div className="channel-create-head">
           <div className="teammate-create-title-block">
             <strong>{t("New AI teammate")}</strong>

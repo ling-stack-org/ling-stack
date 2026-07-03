@@ -62,6 +62,7 @@ import {
 } from "./lazy-pages.js";
 import type { WorkBoardScope } from "../features/work-board/GlobalWorkBoardPage.js";
 import { selectDefaultTeammateProvider } from "../features/teammates/teammate-create-defaults.js";
+import { TeammateCreateDialog } from "../features/teammates/TeammateCreateDialog.js";
 import {
   buildRunApprovalSummaries,
   effectiveApprovalStatus,
@@ -216,7 +217,7 @@ export function AppShell(): JSX.Element {
   const [inspectorCollapsed, setInspectorCollapsed] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
   const [skillLibraryRefreshToken, setSkillLibraryRefreshToken] = useState(0);
-  const [teammateCreateRequestId, setTeammateCreateRequestId] = useState(0);
+  const [teammateCreateOpen, setTeammateCreateOpen] = useState(false);
   const fullAccessConfirmResolveRef = useRef<((approved: boolean) => void) | undefined>(undefined);
   const workspaceTimelineLoadRef = useRef("");
   const channelEditFormSyncKeyRef = useRef("");
@@ -1326,8 +1327,7 @@ export function AppShell(): JSX.Element {
   }
 
   function openTeammateCreatePanel(): void {
-    openSettingsWorkspaceTool("teammates");
-    setTeammateCreateRequestId((current) => current + 1);
+    setTeammateCreateOpen(true);
   }
 
   const {
@@ -1914,8 +1914,6 @@ export function AppShell(): JSX.Element {
         channels={channels}
         localTeammates={localTeammates}
         defaultProviderId={workspaceDefaultProviderPresetId}
-        createRequestId={teammateCreateRequestId}
-        onCreateRequestHandled={() => setTeammateCreateRequestId(0)}
         onCreateTeammate={(input) => void addAiTeammate(input)}
         onRemoveTeammate={(teammateId) => void removeAiTeammate(teammateId)}
         onToggleTeammatePinned={(teammateId) => void toggleAiTeammatePinned(teammateId)}
@@ -2375,8 +2373,6 @@ export function AppShell(): JSX.Element {
                     channels={channels}
                     localTeammates={localTeammates}
                     defaultProviderId={workspaceDefaultProviderPresetId}
-                    createRequestId={teammateCreateRequestId}
-                    onCreateRequestHandled={() => setTeammateCreateRequestId(0)}
                     onCreateTeammate={(input) => void addAiTeammate(input)}
                     onRemoveTeammate={(teammateId) => void removeAiTeammate(teammateId)}
                     onToggleTeammatePinned={(teammateId) => void toggleAiTeammatePinned(teammateId)}
@@ -2809,6 +2805,18 @@ export function AppShell(): JSX.Element {
           onFormChange={setChannelForm}
           onCreateChannel={() => void saveChannel()}
           onClose={() => setChannelCreateOpen(false)}
+        />
+      ) : null}
+      {teammateCreateOpen && builtinTeammateTemplates.length > 0 ? (
+        <TeammateCreateDialog
+          open={teammateCreateOpen}
+          templates={builtinTeammateTemplates}
+          providers={providers}
+          channels={channels}
+          defaultProviderId={workspaceDefaultProviderPresetId}
+          onCreate={(input) => void addAiTeammate(input)}
+          onClose={() => setTeammateCreateOpen(false)}
+          onOpenProviders={() => openSettingsWorkspaceTool("providers")}
         />
       ) : null}
       {fullAccessConfirmOpen ? (
