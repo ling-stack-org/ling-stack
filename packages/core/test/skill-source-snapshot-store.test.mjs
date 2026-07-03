@@ -3,7 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import test from "node:test";
-import { createSqliteRunStore } from "../dist/index.js";
+import { buildSkillOptimizationPreview, createSqliteRunStore } from "../dist/index.js";
 
 async function withStore(prefix, fn) {
   const cwd = await mkdtemp(resolve(tmpdir(), prefix));
@@ -145,5 +145,55 @@ test("sqlite skill source lifecycle stores policy, artifacts, and rollback snaps
     assert.equal(rolledBack.id, "skill_source_review_v1");
     assert.equal(store.listSkillSourceArtifacts({ snapshotId: rolledBack.id }).length, 1);
     assert.equal(store.getSkillSourceSnapshotById("skill_source_review_v2").reviewStatus, "archived");
+  });
+});
+
+test("sqlite skill compiled runtime views persist and archive without runtime use", async () => {
+  await withStore("ling-stack-skill-compiled-view-", async (store, cwd) => {
+    const snapshot = store.upsertSkillSourceSnapshot(sourceSnapshotInput({
+      id: "skill_source_review_compiled",
+      rawSkillMarkdown: [
+        "---",
+        "name: review",
+        "description: Review a code diff before landing.",
+        "---",
+        "# Review",
+        "Find concrete issues first.",
+        "",
+        "# Examples",
+        "Example output stays lazy.",
+      ].join("\n"),
+      warnings: [],
+    }), "2026-07-03T00:00:00.000Z");
+    const preview = buildSkillOptimizationPreview({
+      snapshot,
+      mode: "preview_on_demand",
+      generatedAt: "2026-07-03T00:01:00.000Z",
+    });
+    assert.ok(preview.compiledView);
+
+    const created = store.upsertSkillCompiledRuntimeView({
+      view: preview.compiledView,
+      authorityBoundary: preview.authorityBoundary,
+    }, "2026-07-03T00:02:00.000Z");
+
+    assert.equal(created.skillId, "review");
+    assert.equal(created.sourceSnapshotId, snapshot.id);
+    assert.equal(created.reviewStatus, "active");
+    assert.equal(created.authorityBoundary.requiredToolsChanged, false);
+    assert.equal(created.lazyReferences.length, 2);
+    assert.deepEqual(store.listSkillCompiledRuntimeViews({ skillId: "review" }).map((view) => view.id), [created.id]);
+
+    store.close();
+    const reopened = createSqliteRunStore(cwd);
+    try {
+      assert.equal(reopened.getSkillCompiledRuntimeView(created.id).coreRulesMarkdown.includes("# Review"), true);
+      const archived = reopened.archiveSkillCompiledRuntimeView(created.id, "2026-07-03T00:03:00.000Z");
+      assert.equal(archived.reviewStatus, "archived");
+      assert.equal(reopened.listSkillCompiledRuntimeViews({ skillId: "review" }).length, 0);
+      assert.equal(reopened.listSkillCompiledRuntimeViews({ skillId: "review", includeArchived: true }).length, 1);
+    } finally {
+      reopened.close();
+    }
   });
 });

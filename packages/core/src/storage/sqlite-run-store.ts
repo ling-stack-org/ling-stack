@@ -190,13 +190,19 @@ import {
   type WorkflowSelectorDecision,
 } from "../workspace-types.js";
 import {
+  type CreateSkillCompiledRuntimeViewInput,
   type CreateSkillImportDraftInput,
+  type CreateSkillRegressionRunInput,
   type CreateSkillSourceArtifactInput,
   type CreateSkillSourceSnapshotInput,
+  type ListSkillCompiledRuntimeViewOptions,
+  type ListSkillRegressionRunsOptions,
   type ListSkillSourceArtifactOptions,
   type ListSkillRegistryOptions,
   type ListSkillSourceSnapshotOptions,
+  type SkillCompiledRuntimeViewRecord,
   type SkillImportDraft,
+  type SkillRegressionRun,
   type SkillRegistryEntry,
   type SkillSourceArtifact,
   type SkillSourceSnapshot,
@@ -459,6 +465,7 @@ import { SqliteRuntimeWorkUnitStore } from "./sqlite/runtime-work-unit-store.js"
 import { SqliteUserProfileStore } from "./sqlite/user-profile-store.js";
 import { SqliteWorkspaceSettingsStore } from "./sqlite/workspace-settings-store.js";
 import { SqliteSkillRegistryStore } from "./sqlite/skill-registry-store.js";
+import { SqliteSkillRegressionStore } from "./sqlite/skill-regression-store.js";
 import { SqliteSkillCandidateStore } from "./sqlite/skill-candidate-store.js";
 import { SqliteSkillUsageStore } from "./sqlite/skill-usage-store.js";
 import { SqliteProcedureObservationStore } from "./sqlite/procedure-observation-store.js";
@@ -530,6 +537,7 @@ export class SqliteRunStore implements RunStore {
   private readonly userProfile: SqliteUserProfileStore;
   private readonly workspaceSettings: SqliteWorkspaceSettingsStore;
   private readonly skillRegistry: SqliteSkillRegistryStore;
+  private readonly skillRegression: SqliteSkillRegressionStore;
   private readonly skillCandidates: SqliteSkillCandidateStore;
   private readonly skillUsage: SqliteSkillUsageStore;
   private readonly procedureObservations: SqliteProcedureObservationStore;
@@ -703,6 +711,7 @@ export class SqliteRunStore implements RunStore {
     this.userProfile = new SqliteUserProfileStore({ database: this.database });
     this.workspaceSettings = new SqliteWorkspaceSettingsStore({ database: this.database });
     this.skillRegistry = new SqliteSkillRegistryStore({ database: this.database });
+    this.skillRegression = new SqliteSkillRegressionStore({ database: this.database });
     this.skillCandidates = new SqliteSkillCandidateStore({ database: this.database });
     this.skillUsage = new SqliteSkillUsageStore({ database: this.database });
     this.procedureObservations = new SqliteProcedureObservationStore({ database: this.database });
@@ -1718,6 +1727,34 @@ export class SqliteRunStore implements RunStore {
 
   listSkillSourceArtifacts(options: ListSkillSourceArtifactOptions = {}): SkillSourceArtifact[] {
     return this.skillRegistry.listSkillSourceArtifacts(options);
+  }
+
+  upsertSkillCompiledRuntimeView(input: CreateSkillCompiledRuntimeViewInput, now: string): SkillCompiledRuntimeViewRecord {
+    return this.skillRegistry.upsertSkillCompiledRuntimeView(input, now);
+  }
+
+  getSkillCompiledRuntimeView(id: string): SkillCompiledRuntimeViewRecord | undefined {
+    return this.skillRegistry.getSkillCompiledRuntimeView(id);
+  }
+
+  listSkillCompiledRuntimeViews(options: ListSkillCompiledRuntimeViewOptions = {}): SkillCompiledRuntimeViewRecord[] {
+    return this.skillRegistry.listSkillCompiledRuntimeViews(options);
+  }
+
+  archiveSkillCompiledRuntimeView(id: string, now: string): SkillCompiledRuntimeViewRecord | undefined {
+    return this.skillRegistry.archiveSkillCompiledRuntimeView(id, now);
+  }
+
+  createSkillRegressionRun(input: CreateSkillRegressionRunInput, now: string): SkillRegressionRun {
+    return this.skillRegression.createSkillRegressionRun(input, now);
+  }
+
+  getSkillRegressionRun(id: string): SkillRegressionRun | undefined {
+    return this.skillRegression.getSkillRegressionRun(id);
+  }
+
+  listSkillRegressionRuns(options: ListSkillRegressionRunsOptions = {}): SkillRegressionRun[] {
+    return this.skillRegression.listSkillRegressionRuns(options);
   }
 
   createSkillImportDraft(input: CreateSkillImportDraftInput, now: string): SkillImportDraft {

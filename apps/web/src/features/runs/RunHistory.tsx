@@ -1364,6 +1364,7 @@ function RunDetailPanel({
   const effectivePolicySnapshot = run ? readEffectivePolicySnapshot(run.requestSnapshot) : undefined;
   const effectivePolicySummary = summarizeEffectivePolicySnapshot(effectivePolicySnapshot, t);
   const skillSourceContext = run ? readDataField(run.requestSnapshot, "skillSourceContext") : undefined;
+  const skillContextFallback = terminalEvent ? readDataField(terminalEvent.data, "skillContextFallback") : undefined;
   const runCancellable = Boolean(run && runCanBeStopped(run));
   const runStopping = Boolean(run && cancellingRunId === run.id);
   const pendingApprovals = approvals.filter((approval) => approval.status === "pending");
@@ -1428,6 +1429,10 @@ function RunDetailPanel({
 
           {skillSourceContext ? (
             <SkillSourceRuntimePanel context={skillSourceContext} t={t} />
+          ) : null}
+
+          {skillContextFallback ? (
+            <SkillContextFallbackPanel fallback={skillContextFallback} t={t} />
           ) : null}
 
           {turnContext ? (
@@ -1696,7 +1701,10 @@ function SkillSourceRuntimePanel({
 }): JSX.Element {
   const loaded = readDataBoolean(context, "loaded");
   const truncated = readDataBoolean(context, "truncated");
+  const runtimeViewKind = readDataString(context, "runtimeViewKind") || "original_source";
+  const optimizationMode = readDataString(context, "optimizationMode") || "-";
   const snapshotId = readDataString(context, "snapshotId") || "-";
+  const compiledViewId = readDataString(context, "compiledViewId") || "-";
   const skillId = readDataString(context, "skillId") || "-";
   const sourceKind = readDataString(context, "sourceKind") || "-";
   const sourceChecksum = readDataString(context, "sourceChecksum") || "-";
@@ -1707,7 +1715,12 @@ function SkillSourceRuntimePanel({
   const maxLoadedChars = readDataNumber(context, "maxLoadedChars") ?? 0;
   const warningCount = readDataNumber(context, "warningCount") ?? 0;
   const blockedReason = readDataString(context, "blockedReason");
+  const fallbackReason = readDataString(context, "fallbackReason");
+  const tokenEstimate = readDataNumber(context, "tokenEstimate");
   const referencedFiles = readDataArray(context, "referencedFiles");
+  const includedRefs = readDataArray(context, "includedRefs");
+  const deferredRefs = readDataArray(context, "deferredRefs");
+  const materializedRefs = readDataArray(context, "materializedRefs");
   const warningSeverities = readDataArray(context, "warningSeverities").map(String);
 
   return (
@@ -1723,13 +1736,17 @@ function SkillSourceRuntimePanel({
       </div>
       <div className="run-evidence-grid skill-source-runtime-grid">
         <MetaRow label={t("Skill")} value={skillId} compact />
+        <MetaRow label={t("Runtime view")} value={runtimeViewLabel(runtimeViewKind, t)} compact />
+        <MetaRow label={t("Optimization mode")} value={optimizationMode} compact />
         <MetaRow label={t("Snapshot")} value={snapshotId} compact />
+        {compiledViewId !== "-" ? <MetaRow label={t("Compiled view")} value={compiledViewId} compact /> : null}
         <MetaRow label={t("Checksum")} value={sourceChecksum} compact />
         <MetaRow label={t("Source kind")} value={sourceKind} compact />
         <MetaRow label={t("Upstream")} value={upstream} compact />
         <MetaRow label={t("Path")} value={upstreamPath} compact />
         <MetaRow label={t("Loaded chars")} value={`${loadedChars}/${sourceLengthChars || maxLoadedChars}`} compact />
         <MetaRow label={t("Max chars")} value={String(maxLoadedChars || "-")} compact />
+        <MetaRow label={t("Token estimate")} value={tokenEstimate === undefined ? "-" : String(tokenEstimate)} compact />
         <MetaRow label={t("Warnings")} value={warningSeverities.length > 0 ? `${warningCount}: ${warningSeverities.join(", ")}` : String(warningCount)} compact />
       </div>
       {blockedReason ? (
@@ -1737,6 +1754,34 @@ function SkillSourceRuntimePanel({
           <strong>{t("Blocked reason")}</strong>
           {blockedReason}
         </p>
+      ) : null}
+      {fallbackReason ? (
+        <p className="run-evidence-copy">
+          <strong>{t("Fallback reason")}</strong>
+          {fallbackReason}
+        </p>
+      ) : null}
+      {includedRefs.length > 0 || deferredRefs.length > 0 || materializedRefs.length > 0 ? (
+        <div className="skill-source-runtime-files" aria-label={t("Skill context references")}>
+          {includedRefs.slice(0, 4).map((ref, index) => (
+            <code key={`included:${readDataString(ref, "id") || index}`}>
+              {t("Included")}: {formatRuntimeReference(ref)}
+            </code>
+          ))}
+          {deferredRefs.slice(0, 6).map((ref, index) => (
+            <code key={`deferred:${readDataString(ref, "id") || index}`}>
+              {t("Deferred")}: {formatRuntimeReference(ref)}
+            </code>
+          ))}
+          {materializedRefs.slice(0, 4).map((ref, index) => (
+            <code key={`materialized:${readDataString(ref, "id") || index}`}>
+              {t("Materialized")}: {formatRuntimeReference(ref)}
+            </code>
+          ))}
+          {includedRefs.length + deferredRefs.length + materializedRefs.length > 14 ? (
+            <small>+{includedRefs.length + deferredRefs.length + materializedRefs.length - 14}</small>
+          ) : null}
+        </div>
       ) : null}
       {referencedFiles.length > 0 ? (
         <div className="skill-source-runtime-files" aria-label={t("Referenced files")}>
@@ -1752,17 +1797,73 @@ function SkillSourceRuntimePanel({
   );
 }
 
+function SkillContextFallbackPanel({
+  fallback,
+  t,
+}: {
+  readonly fallback: unknown;
+  readonly t: Translate;
+}): JSX.Element {
+  const reasonCode = readDataString(fallback, "reasonCode") || "-";
+  const retryRuntimeViewKind = readDataString(fallback, "retryRuntimeViewKind") || "-";
+  const message = readDataString(fallback, "message");
+  const matchedRefIds = readDataArray(fallback, "matchedRefIds").map(String);
+
+  return (
+    <div className="run-detail-section skill-source-runtime-section">
+      <div className="panel-title tight">
+        <RefreshCw size={16} />
+        <h3>{t("Skill context fallback")}</h3>
+      </div>
+      <div className="run-evidence-grid skill-source-runtime-grid">
+        <MetaRow label={t("Fallback reason")} value={reasonCode} compact />
+        <MetaRow label={t("Retry runtime view")} value={runtimeViewLabel(retryRuntimeViewKind, t)} compact />
+        <MetaRow label={t("Matched refs")} value={matchedRefIds.length > 0 ? matchedRefIds.join(", ") : "-"} compact />
+      </div>
+      {message ? <p className="run-evidence-copy">{message}</p> : null}
+    </div>
+  );
+}
+
 function skillSourceRuntimeSummary(context: unknown, t: Translate): string {
   if (!context) {
     return "-";
   }
+  const runtimeViewKind = readDataString(context, "runtimeViewKind");
   const loaded = readDataBoolean(context, "loaded");
   const truncated = readDataBoolean(context, "truncated");
   const snapshotId = readDataString(context, "snapshotId");
+  if (runtimeViewKind) {
+    return runtimeViewLabel(runtimeViewKind, t);
+  }
   if (!loaded) {
     return snapshotId ? t("Suppressed") : "-";
   }
   return truncated ? t("Loaded, truncated") : t("Loaded");
+}
+
+function runtimeViewLabel(runtimeViewKind: string, t: Translate): string {
+  switch (runtimeViewKind) {
+    case "metadata_only":
+      return t("Metadata only");
+    case "original_source":
+      return t("Original source");
+    case "compiled_view":
+      return t("Compiled view");
+    case "disabled_for_runner":
+      return t("Disabled for runner");
+    case "fallback_original":
+      return t("Fallback original");
+    default:
+      return runtimeViewKind;
+  }
+}
+
+function formatRuntimeReference(ref: unknown): string {
+  const title = readDataString(ref, "title");
+  const kind = readDataString(ref, "kind");
+  const sourceRef = readDataString(ref, "sourceRef");
+  return [title, kind, sourceRef].filter(Boolean).join(" / ") || formatEventPreview(ref);
 }
 
 function readDataArray(data: unknown, key: string): readonly unknown[] {

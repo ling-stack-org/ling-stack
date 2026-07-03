@@ -513,6 +513,10 @@ test("settings skill library shows read-only skill health findings", async ({ pa
   await reviewSkillRow.getByRole("button", { name: /Code Review review/ }).click();
   await expect(panel.locator(".settings-skill-inspector")).toContainText("skill_source_review_mock");
   await expect(panel.locator(".settings-skill-inspector")).toContainText("View SKILL.md");
+  await panel.getByRole("button", { name: "Preview optimization" }).click();
+  await expect(panel.locator(".settings-skill-inspector")).toContainText("preview_on_demand");
+  await expect(panel.locator(".settings-skill-inspector")).toContainText("Compiled tokens");
+  await expect(panel.locator(".settings-skill-inspector")).toContainText("Lazy references: 1");
   await panel.getByRole("button", { name: "Archive source snapshot" }).click();
   await expect(panel).toContainText("Source snapshot archived");
   await expect.poll(() => {
@@ -539,6 +543,9 @@ test("settings skill library shows read-only skill health findings", async ({ pa
   await expect(sourceSyncPanel).toContainText("sha256:review-mock");
   await expect(sourceSyncPanel).toContainText("sha256:review-sync");
   await expect(sourceSyncPanel).toContainText("gstack-danger-demo");
+  await expect(sourceSyncPanel).toContainText("Weak routing description");
+  await expect(sourceSyncPanel).toContainText("Manual optimization review");
+  await expect(sourceSyncPanel).toContainText("Context: 1");
   await expect(sourceSyncPanel).toContainText("Selected");
   await expect(sourceSyncPanel.getByLabel("Select implement")).toBeChecked();
   await expect(sourceSyncPanel.getByLabel("Select review")).toBeChecked();
@@ -564,6 +571,7 @@ test("settings skill library shows read-only skill health findings", async ({ pa
   await expect(candidatePanel).toContainText("Approved for draft");
   await candidatePanel.getByRole("button", { name: "Create registry draft" }).click();
   await expect(panel.locator(".settings-skill-import-preview")).toContainText("Channel canvas protocol skill");
+  await expect(panel.locator(".settings-skill-import-preview")).toContainText("Weak routing description");
   await expect(panel).toContainText("Draft ready");
   await panel.getByRole("button", { name: "Publish to registry" }).click();
   await expect(panel).toContainText("Published 1 skills");

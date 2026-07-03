@@ -1,8 +1,8 @@
 import type { ServerResponse } from "node:http";
 import {
   type ApprovalPolicy,
+  buildSkillSourceRuntimeFallbackPlan,
   buildEffectiveTeammateSkills,
-  buildSkillSourceRuntimePrompt,
   createChannelWorkspaceSnapshot,
   createRunId,
   DEFAULT_WORKSPACE_ID,
@@ -30,6 +30,7 @@ import {
   type WorkUnit,
   type WorkUnitAttempt,
   type WorkUnitKind,
+  resolveSkillSourceRuntimeView,
 } from "@ling-stack/core";
 import type {
   PiRunnerEvent,
@@ -261,12 +262,23 @@ export async function executeRunRequest(
       }
     }
     if (selectedSkill) {
+      const skillOptimizationMode = runRequest.skillOptimizationMode ?? "no_operation";
       const sourceSnapshot = store.getSkillSourceSnapshot(selectedSkill.skillId);
-      if (sourceSnapshot) {
-        const sourcePrompt = buildSkillSourceRuntimePrompt({ snapshot: sourceSnapshot });
-        selectedSkillSourceContext = sourcePrompt.context;
-        selectedSkillSourcePrompt = sourcePrompt.promptFragment;
-      }
+      const compiledView = sourceSnapshot && skillRuntimeCompiledViewRequested(skillOptimizationMode)
+        ? store.listSkillCompiledRuntimeViews({
+            skillId: selectedSkill.skillId,
+            sourceSnapshotId: sourceSnapshot.id,
+            reviewStatus: "active",
+          })[0]
+        : undefined;
+      const sourcePrompt = resolveSkillSourceRuntimeView({
+        skillId: selectedSkill.skillId,
+        snapshot: sourceSnapshot,
+        compiledView,
+        optimizationMode: skillOptimizationMode,
+      });
+      selectedSkillSourceContext = sourcePrompt.context;
+      selectedSkillSourcePrompt = sourcePrompt.promptFragment;
     }
     const runStore = store;
     const mcpToolAccess = resolveMcpToolAccessForRun(runStore, secretResolver, runRequest, (teammateId) =>
@@ -1074,9 +1086,17 @@ export async function executeRunRequest(
     }
     const message = redactTextWithSecrets(error instanceof Error ? error.message : String(error), resolvedSecretValues);
     const endedAt = new Date().toISOString();
+    const skillContextFallback = buildSkillSourceRuntimeFallbackPlan(selectedSkillSourceContext, message);
     const failureEvent = persistedRunError
       ? undefined
-      : appendFailureEvent(store, run.id, message, sinkClosed, sink);
+      : appendFailureEvent(
+          store,
+          run.id,
+          message,
+          sinkClosed,
+          sink,
+          skillContextFallback ? { skillContextFallback } : undefined,
+        );
     const summaryPath = writeTerminalSummary(getRunSummaryPath(store.paths, run.id), {
       runId: run.id,
       status: "failed",
@@ -1159,6 +1179,10 @@ export async function executeRunRequest(
     }
   }
   return run.id;
+}
+
+function skillRuntimeCompiledViewRequested(mode: string): boolean {
+  return mode === "auto_safe" || mode === "auto_runtime_experimental";
 }
 
 function appendRunCreatedControlPlaneEvent(

@@ -2182,6 +2182,17 @@ function createMockSkillSourceSyncPreview(state: MockState, input: Record<string
       ],
       warnings: [],
       definitionPreview: implementDefinition,
+      contextFindings: [
+        {
+          kind: "missing_or_weak_routing_description",
+          severity: "warning",
+          skillId: "implement",
+          title: "Missing or weak routing description",
+          message: "implement has a weak routing description.",
+          evidence: [{ sourceRef: "gstack-implement/SKILL.md", message: "Routing description is too generic for reliable selection." }],
+          recommendation: "Add a concise trigger-oriented description before relying on automatic routing.",
+        },
+      ],
       snapshotPreview: {
         skillId: "implement",
         sourceKind: "gstack-skill-directory",
@@ -2238,6 +2249,7 @@ function createMockSkillSourceSyncPreview(state: MockState, input: Record<string
         reviewStatus: "reviewed",
       },
       existingSnapshotId: isRecord(existingReviewSnapshot) && typeof existingReviewSnapshot.id === "string" ? existingReviewSnapshot.id : undefined,
+      contextFindings: [],
       diff: [
         { field: "sourceChecksum", label: "Checksum", before: "sha256:review-mock", after: "sha256:review-sync", severity: "warning" },
         { field: "upstreamVersion", label: "Upstream version", before: "1.58.3.0", after: "1.58.4.0", severity: "info" },
@@ -2272,6 +2284,17 @@ function createMockSkillSourceSyncPreview(state: MockState, input: Record<string
         approvalProfile: "standard",
         stateEffects: ["updates_plan"],
       },
+      contextFindings: [
+        {
+          kind: "body_taxonomy_risk",
+          severity: "warning",
+          skillId: "gstack-design-review",
+          title: "Mixed skill body taxonomy",
+          message: "gstack-design-review mixes core instructions with examples or references.",
+          evidence: [{ sourceRef: "gstack-design-review/SKILL.md", message: "Default body includes background and examples." }],
+          recommendation: "Split default runtime instructions from lazy examples before optimization.",
+        },
+      ],
       snapshotPreview: {
         skillId: "gstack-design-review",
         sourceKind: "gstack-skill-directory",
@@ -2306,6 +2329,17 @@ function createMockSkillSourceSyncPreview(state: MockState, input: Record<string
       frontMatter: { name: "danger-demo", description: "Blocked sample" },
       referencedFiles: [],
       warnings: [{ code: "destructive_command", severity: "error", message: "Source contains destructive command guidance." }],
+      contextFindings: [
+        {
+          kind: "optimization_unsafe",
+          severity: "critical",
+          skillId: "gstack-danger-demo",
+          title: "Automatic optimization unsafe",
+          message: "gstack-danger-demo needs manual review before automatic skill context optimization.",
+          evidence: [{ sourceRef: "gstack-danger-demo/SKILL.md", message: "destructive_command: Source contains destructive command guidance." }],
+          recommendation: "Keep this skill on manual preview until unsafe claims are reviewed.",
+        },
+      ],
       diff: [],
       semanticDiff: [],
     },
@@ -2720,7 +2754,19 @@ export function createMockSkillSourceHealthReport(state: MockState, limit = 100)
       title: "Orphaned skill source snapshot",
       message: "A published source snapshot points to a missing or archived skill.",
     }));
-  const findings = [...warningFindings, ...orphanedFindings, ...missingSourceFindings].slice(0, Math.max(limit, 1));
+  const contextFindings = publishedSnapshots
+    .slice(0, 1)
+    .map((snapshot) => ({
+      kind: "missing_or_weak_routing_description",
+      severity: "warning",
+      skillId: isRecord(snapshot) && typeof snapshot.skillId === "string" ? snapshot.skillId : undefined,
+      snapshotId: isRecord(snapshot) && typeof snapshot.id === "string" ? snapshot.id : undefined,
+      title: "Missing or weak routing description",
+      message: "Published source snapshot has a weak routing description.",
+      evidence: [{ sourceRef: "SKILL.md", message: "Description is too short for reliable automatic routing." }],
+      recommendation: "Add a trigger-oriented description before relying on automatic routing.",
+    }));
+  const findings = [...warningFindings, ...contextFindings, ...orphanedFindings, ...missingSourceFindings].slice(0, Math.max(limit, 1));
   return {
     workspaceId: "workspace_default",
     generatedAt: "2026-06-22T00:00:00.000Z",
@@ -2733,6 +2779,104 @@ export function createMockSkillSourceHealthReport(state: MockState, limit = 100)
     },
     findings,
   };
+}
+
+function createMockSkillOptimizationPreview(snapshot: Record<string, unknown>, mode = "preview_on_demand"): Record<string, unknown> {
+  const skillId = typeof snapshot.skillId === "string" ? snapshot.skillId : "unknown";
+  const snapshotId = typeof snapshot.id === "string" ? snapshot.id : "skill_source_unknown";
+  return {
+    skillId,
+    sourceSnapshotId: snapshotId,
+    generatedAt: "2026-07-03T00:00:00.000Z",
+    mode,
+    status: "preview_ready",
+    originalTokenEstimate: 96,
+    compiledTokenEstimate: 52,
+    routingDescription: {
+      original: "Pre-landing review.",
+      suggested: "Use when the task specifically calls for the review skill workflow.",
+      reason: "Source health flagged the routing description as short.",
+    },
+    compiledView: {
+      id: "skill_compiled_preview_mock",
+      skillId,
+      sourceSnapshotId: snapshotId,
+      createdAt: "2026-07-03T00:00:00.000Z",
+      compilerVersion: "skill-reducer-preview-v1",
+      coreRulesMarkdown: "# Review\nFind concrete issues first.",
+      lazyReferences: [
+        {
+          id: "section-1",
+          title: "Checklist",
+          kind: "reference",
+          sourceRef: "references/checklist.md",
+          summary: "Review checklist stays lazy until requested.",
+          tokenEstimate: 12,
+          loadPolicy: "on_request",
+        },
+      ],
+      sourceMap: [
+        {
+          compiledRef: "coreRulesMarkdown",
+          sourceRef: "SKILL.md",
+          sourceStartLine: 1,
+          rationale: "Default runtime context keeps core instructions only.",
+        },
+      ],
+      tokenEstimate: 52,
+      fallbackPolicy: "original_on_error",
+    },
+    risks: [
+      {
+        kind: "context_health",
+        severity: "warning",
+        title: "Missing or weak routing description",
+        message: "Routing description is short.",
+        sourceRefs: ["SKILL.md"],
+        blocksAutoRuntime: false,
+      },
+    ],
+    authorityBoundary: {
+      requiredToolsChanged: false,
+      requiredProviderCapabilitiesChanged: false,
+      approvalProfileChanged: false,
+      teammateBindingsChanged: false,
+    },
+  };
+}
+
+function createMockSkillImportDraftContextFindings(draft: Record<string, unknown>): Record<string, unknown>[] {
+  const definitions = Array.isArray(draft.definitions) ? draft.definitions.filter(isRecord) : [];
+  const definition = definitions[0];
+  const skill = isRecord(definition?.definition) ? definition.definition : {};
+  const skillId = typeof skill.id === "string" ? skill.id : "import-draft";
+  const warnings = [
+    ...(Array.isArray(draft.warnings) ? draft.warnings.filter(isRecord) : []),
+    ...(Array.isArray(definition?.warnings) ? definition.warnings.filter(isRecord) : []),
+  ];
+  return [
+    {
+      kind: "missing_or_weak_routing_description",
+      severity: "warning",
+      skillId,
+      title: "Missing or weak routing description",
+      message: `${skillId} has a weak routing description.`,
+      evidence: [{ sourceRef: "SKILL.md", message: "Routing descriptions should identify when the skill should be selected." }],
+      recommendation: "Add a concise trigger-oriented description before relying on automatic routing.",
+    },
+    ...(warnings.length > 0 ? [{
+      kind: "optimization_unsafe",
+      severity: "warning",
+      skillId,
+      title: "Automatic optimization unsafe",
+      message: `${skillId} needs manual review before automatic skill context optimization.`,
+      evidence: warnings.map((warning) => ({
+        sourceRef: typeof warning.location === "string" ? warning.location : "SKILL.md",
+        message: `${String(warning.code)}: ${String(warning.message)}`,
+      })),
+      recommendation: "Keep this skill on manual preview until unsafe claims and hidden rules are reviewed.",
+    }] : []),
+  ];
 }
 
 export function buildMockEffectiveSkills(state: MockState, teammateId: string): unknown[] {
@@ -6398,6 +6542,49 @@ export async function handleDaemonRoute(
     await route.fulfill({ status: 405, json: { error: "method_not_allowed" } });
     return;
   }
+  if (request.method() === "POST" && path === "/skills/import-draft/optimization-preview") {
+    const body = safePostDataJson(request);
+    const draft = createMockSkillImportDraft(state, body);
+    const definitions = Array.isArray(draft.definitions) ? draft.definitions.filter(isRecord) : [];
+    const firstDefinition = definitions[0];
+    const definition = isRecord(firstDefinition?.definition) ? firstDefinition.definition : {};
+    const skillId = typeof definition.id === "string"
+      ? definition.id
+      : "import-draft";
+    await route.fulfill({
+      json: {
+        cwd,
+        preview: createMockSkillOptimizationPreview({
+          id: "skill_source_import_preview_mock",
+          skillId,
+        }, typeof body.mode === "string" ? body.mode : "preview_on_demand"),
+      },
+    });
+    return;
+  }
+  const skillOptimizationPreviewMatch = /^\/skills\/([^/]+)\/optimization-preview$/.exec(path);
+  if (skillOptimizationPreviewMatch) {
+    const skillId = decodeURIComponent(skillOptimizationPreviewMatch[1]);
+    if (request.method() !== "POST") {
+      await route.fulfill({ status: 405, json: { error: "method_not_allowed" } });
+      return;
+    }
+    const snapshot = state.skillSourceSnapshots.find((item) =>
+      isRecord(item) && item.skillId === skillId && item.reviewStatus === "published"
+    );
+    if (!isRecord(snapshot)) {
+      await route.fulfill({ status: 404, json: { error: "skill_source_snapshot_not_found", message: `Skill source snapshot not found: ${skillId}` } });
+      return;
+    }
+    const body = safePostDataJson(request);
+    await route.fulfill({
+      json: {
+        cwd,
+        preview: createMockSkillOptimizationPreview(snapshot, typeof body.mode === "string" ? body.mode : "preview_on_demand"),
+      },
+    });
+    return;
+  }
   const skillSourceMatch = /^\/skills\/([^/]+)\/source(?:\/([^/]+))?$/.exec(path);
   if (skillSourceMatch) {
     const skillId = decodeURIComponent(skillSourceMatch[1]);
@@ -6665,7 +6852,7 @@ export async function handleDaemonRoute(
       }
       const draft = createMockSkillCandidateDraft(state, candidate);
       state.skillImportDrafts.unshift(draft);
-      await route.fulfill({ status: 201, json: { cwd, candidate, draft } });
+      await route.fulfill({ status: 201, json: { cwd, candidate, draft, contextFindings: createMockSkillImportDraftContextFindings(draft) } });
       return;
     }
   }
@@ -6928,7 +7115,7 @@ export async function handleDaemonRoute(
     const body = await request.postDataJSON() as Record<string, unknown>;
     const draft = createMockSkillImportDraft(state, body);
     state.skillImportDrafts.unshift(draft);
-    await route.fulfill({ status: 201, json: { cwd, draft } });
+    await route.fulfill({ status: 201, json: { cwd, draft, contextFindings: createMockSkillImportDraftContextFindings(draft) } });
     return;
   }
   const skillDraftMatch = /^\/skills\/import-drafts\/([^/]+)(?:\/([^/]+))?$/.exec(path);
@@ -6941,7 +7128,7 @@ export async function handleDaemonRoute(
       return;
     }
     if (!action && request.method() === "GET") {
-      await route.fulfill({ json: { cwd, draft } });
+      await route.fulfill({ json: { cwd, draft, contextFindings: createMockSkillImportDraftContextFindings(draft) } });
       return;
     }
     if (action === "publish" && request.method() === "POST") {

@@ -826,9 +826,52 @@ Draft response:
       }
     ],
     "warnings": []
-  }
+  },
+  "contextFindings": [
+    {
+      "kind": "missing_or_weak_routing_description",
+      "severity": "warning",
+      "skillId": "custom-qa-review",
+      "title": "Missing or weak routing description",
+      "message": "custom-qa-review has a weak routing description.",
+      "evidence": [{ "sourceRef": "SKILL.md", "message": "Routing descriptions should identify when the skill should be selected." }],
+      "recommendation": "Add a concise trigger-oriented description before relying on automatic routing."
+    }
+  ]
 }
 ```
+
+Draft optimization preview uses the same draft payload plus optional `mode`. It returns a
+preview only; it does not create a draft, publish a skill, create a source snapshot, or
+change runtime behavior:
+
+```http
+POST /skills/import-draft/optimization-preview?cwd=/path/to/project
+```
+
+```json
+{
+  "source": "skill-directory",
+  "sourcePath": "SKILL.md",
+  "content": "---\nname: Custom QA Review\ndescription: Run a focused QA pass.\n---\n\nReport failures first.",
+  "mode": "preview_on_demand"
+}
+```
+
+Published source-backed skills can persist a compiled runtime view for later review. The
+daemon rebuilds the view from the published source snapshot; callers do not submit
+compiled prompt text. These APIs do not affect current run context selection.
+
+```http
+GET /skills/:id/compiled-views?cwd=/path/to/project
+POST /skills/:id/compiled-views?cwd=/path/to/project
+POST /skills/:id/compiled-views/:viewId/archive?cwd=/path/to/project
+```
+
+`POST /skills/:id/compiled-views` accepts optional `mode`. It returns `404
+skill_source_snapshot_not_found` when the skill has no published source snapshot, which
+keeps import-draft previews and source-sync preview rows from becoming persisted runtime
+views.
 
 Publishing a draft writes registry definitions and still does not bind them:
 
@@ -2851,6 +2894,7 @@ Request with inline provider config:
     "apiKey": "env-or-runtime-key"
   },
   "tools": ["read", "grep", "find", "ls"],
+  "skillOptimizationMode": "no_operation",
   "thinkingLevel": "medium"
 }
 ```
@@ -2948,6 +2992,10 @@ Rules:
 - `skipProviderPreflight: true` is a development/debug escape hatch for direct callers and CLI `--skip-preflight`. It bypasses secret-readiness and `lastCheck` gates only; it does not allow disabled, media-only, or no-chat presets to run.
 - Inline `provider` requests are development-only and are not checked against persisted provider `lastCheck`.
 - Product runs default to read-only tools: `read`, `grep`, `find`, `ls`.
+- `skillOptimizationMode` defaults to `no_operation`. `auto_runtime_experimental` is
+  an explicit experimental per-run override; it may select an active compiled runtime view
+  for the selected skill when one exists. Import, publish, and ordinary task runs do not
+  enable compiled views automatically.
 - If `bash`, `edit`, or `write` are enabled for a run, Pi tool execution is paused before the side effect and an approval request is created.
 - The run stays `waiting_for_approval` until `/approvals/:id/approve` or `/approvals/:id/deny` resolves the request.
 
@@ -3057,6 +3105,69 @@ GET /runs/:id?cwd=/path/to/project
 ```
 
 Passing `cwd` is recommended after daemon restart because the in-memory run-to-store index is rebuilt lazily.
+
+When a run selects a source-backed skill, `requestSnapshot.skillSourceContext` records
+the runtime view evidence used to build the runner prompt. In the default
+`no_operation` mode, Ling still uses the original published source snapshot. A compiled
+runtime view is not selected unless a future policy explicitly enables it.
+
+```json
+{
+  "requestSnapshot": {
+    "selectedSkillId": "implement",
+    "skillSourceContext": {
+      "runtimeViewKind": "original_source",
+      "optimizationMode": "no_operation",
+      "snapshotId": "skill_source_...",
+      "skillId": "implement",
+      "sourceChecksum": "sha256:...",
+      "tokenEstimate": 128,
+      "includedRefs": [
+        {
+          "id": "skill_source_...:skill-md",
+          "title": "SKILL.md source",
+          "kind": "reference",
+          "sourceRef": "skill-source:skill_source_...:rawSkillMarkdown"
+        }
+      ],
+      "deferredRefs": [
+        {
+          "id": "file:references/checklist.md",
+          "title": "references/checklist.md",
+          "kind": "reference",
+          "sourceRef": "skill-source-file:references/checklist.md",
+          "loadPolicy": "on_request"
+        }
+      ],
+      "materializedRefs": []
+    }
+  }
+}
+```
+
+`runtimeViewKind` may be `metadata_only`, `original_source`, `compiled_view`, or
+`disabled_for_runner` in the current P2A slice. P2A exposes the lazy reference index as
+evidence only; it does not perform hidden mid-run reference injection.
+
+If an explicitly compiled run fails with a missing-reference signature, `run_error.data`
+may include `skillContextFallback`. This is a retry-time fallback plan, not a hidden
+continuation:
+
+```json
+{
+  "type": "run_error",
+  "data": {
+    "message": "missing reference lazy_examples",
+    "skillContextFallback": {
+      "reasonCode": "compiled_missing_reference",
+      "fromRuntimeViewKind": "compiled_view",
+      "retryRuntimeViewKind": "original_source",
+      "matchedRefIds": ["lazy_examples"],
+      "message": "Compiled skill context failed with a missing deferred reference; retry with original source."
+    }
+  }
+}
+```
 
 ### Get Run Events
 

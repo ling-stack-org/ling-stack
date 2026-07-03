@@ -13,6 +13,7 @@ import type {
   SkillHealthFinding,
   SkillHealthReport,
   SkillHealthSeverity,
+  SkillOptimizationPreview,
   SkillPackSource,
   SkillRegistryEntry,
   SkillSourceArtifact,
@@ -71,6 +72,7 @@ export {
   skillCandidateReviewReason,
   skillLibraryFilterLabel,
   skillRegistryState,
+  sourceHealthKindLabel,
   type SkillLibraryFilter,
   type TeammateSkillBindingSummary,
 } from "./skill-library-utils.js";
@@ -199,6 +201,7 @@ export function SkillSourceSyncPanel({
             const path = record.upstreamSkillPath ?? record.sourcePath ?? "-";
             const diff = record.diff ?? [];
             const semanticDiff = record.semanticDiff ?? [];
+            const contextFindings = record.contextFindings ?? [];
             const artifactReviewCount = record.referencedFiles.filter((file) => file.kind === "script" || file.kind === "asset").length;
             return (
               <article key={`${record.skillId}:${record.sourcePath ?? record.upstreamSkillPath ?? record.state}`} className={`settings-skill-source-sync-record ${record.state}`}>
@@ -224,6 +227,7 @@ export function SkillSourceSyncPanel({
                     {record.sourceRootId ? <span>{t("Root")}: {record.sourceRootId}</span> : null}
                     <span>{t("Files")}: {record.referencedFiles.length}</span>
                     <span>{t("Warnings")}: {record.warnings.length}</span>
+                    <span>{t("Context")}: {contextFindings.length}</span>
                     <span>{t("Semantic")}: {semanticDiff.length}</span>
                     {artifactReviewCount > 0 ? <span>{t("Artifact review")}: {artifactReviewCount}</span> : null}
                     {record.sourceChecksum ? <span>{record.sourceChecksum}</span> : null}
@@ -233,6 +237,15 @@ export function SkillSourceSyncPanel({
                       {record.warnings.slice(0, 2).map((warning, index) => (
                         <small key={`${warning.code}:${warning.location ?? index}`} className={warning.severity}>
                           {warning.severity}: {warning.code}
+                        </small>
+                      ))}
+                    </div>
+                  ) : null}
+                  {contextFindings.length > 0 ? (
+                    <div className="settings-skill-source-sync-context" aria-label={t("Context health for {skill}", { skill: record.skillId })}>
+                      {contextFindings.slice(0, 3).map((finding, index) => (
+                        <small key={`${finding.kind}:${index}`} className={finding.severity}>
+                          {sourceHealthKindLabel(finding.kind, t)}: {sourceHealthTitle(finding, t)}
                         </small>
                       ))}
                     </div>
@@ -388,6 +401,12 @@ export function SkillSourceHealthPanel({
                 </span>
                 <p>{sourceHealthMessage(finding, t)}</p>
                 <small>{sourceHealthKindLabel(finding.kind, t)}</small>
+                {finding.recommendation ? <small>{t("Recommendation")}: {finding.recommendation}</small> : null}
+                {finding.evidence?.length ? (
+                  <small>
+                    {t("Evidence")}: {finding.evidence.slice(0, 3).map((item) => item.sourceRef).join(", ")}
+                  </small>
+                ) : null}
               </div>
               <div className="settings-skill-health-finding-meta">
                 <SkillHealthSeverityPill severity={finding.severity} t={t} />
@@ -426,8 +445,11 @@ export function SkillSourceInspector({
   snapshot,
   history,
   artifacts,
+  optimizationPreview,
+  optimizationPreviewLoading,
   cwd,
   saving,
+  onPreviewOptimization,
   onArchive,
   onRollback,
   t,
@@ -435,8 +457,11 @@ export function SkillSourceInspector({
   readonly snapshot: SkillSourceSnapshot | undefined;
   readonly history: readonly SkillSourceSnapshot[];
   readonly artifacts: readonly SkillSourceArtifact[];
+  readonly optimizationPreview?: SkillOptimizationPreview;
+  readonly optimizationPreviewLoading: boolean;
   readonly cwd: string;
   readonly saving: boolean;
+  readonly onPreviewOptimization: () => void;
   readonly onArchive: () => void;
   readonly onRollback: (snapshotId: string) => void;
   readonly t: SettingsTranslator;
@@ -464,11 +489,42 @@ export function SkillSourceInspector({
         <span>{t("Artifacts")}: {artifacts.length}</span>
       </div>
       <div className="settings-skill-source-actions">
+        <button className="secondary-button compact-button" type="button" onClick={onPreviewOptimization} disabled={saving || optimizationPreviewLoading}>
+          <Search size={14} />
+          {optimizationPreviewLoading ? t("Previewing...") : t("Preview optimization")}
+        </button>
         <button className="secondary-button danger compact-button" type="button" onClick={onArchive} disabled={saving}>
           <Archive size={14} />
           {t("Archive source snapshot")}
         </button>
       </div>
+      {optimizationPreview ? (
+        <div className="settings-skill-optimization-preview" aria-label={t("Skill optimization preview")}>
+          <div className="settings-skill-source-detail">
+            <span><small>{t("Mode")}</small><code>{optimizationPreview.mode}</code></span>
+            <span><small>{t("Status")}</small><code>{optimizationPreview.status}</code></span>
+            <span><small>{t("Original tokens")}</small><code>{optimizationPreview.originalTokenEstimate}</code></span>
+            <span><small>{t("Compiled tokens")}</small><code>{optimizationPreview.compiledTokenEstimate}</code></span>
+          </div>
+          <div className="settings-skill-source-tags">
+            <span>{t("Risks")}: {optimizationPreview.risks.length}</span>
+            <span>{t("Lazy references")}: {optimizationPreview.compiledView?.lazyReferences.length ?? 0}</span>
+            <span>{t("Authority unchanged")}</span>
+          </div>
+          {optimizationPreview.routingDescription?.suggested ? (
+            <small>{t("Suggested routing")}: {optimizationPreview.routingDescription.suggested}</small>
+          ) : null}
+          {optimizationPreview.risks.length > 0 ? (
+            <div className="settings-skill-source-warning-list">
+              {optimizationPreview.risks.slice(0, 3).map((risk, index) => (
+                <small key={`${risk.kind}:${index}`} className={risk.severity}>
+                  {risk.title} · {risk.message}
+                </small>
+              ))}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
       {snapshot.warnings.length > 0 ? (
         <div className="settings-skill-source-warning-list">
           {snapshot.warnings.slice(0, 4).map((warning, index) => (

@@ -26,6 +26,7 @@ import {
   type SkillDuplicateAnalysis,
   type SkillHealthFinding,
   type SkillImportWarning,
+  type SkillOptimizationMode,
   type SkillPackSource,
   type SkillRegistryEntry,
   type SkillSourceKind,
@@ -75,8 +76,18 @@ export interface ParsedSkillSourceUpgradePolicyUpdateRequest {
   readonly allowNewSkills?: boolean;
 }
 
+export interface ParsedSkillImportDraftOptimizationPreviewRequest {
+  readonly draftInput: CreateSkillImportDraftInput;
+  readonly content: string;
+  readonly mode?: SkillOptimizationMode;
+}
+
 export interface ParsedSkillSourceSnapshotRollbackRequest {
   readonly snapshotId: string;
+}
+
+export interface ParsedSkillOptimizationPreviewRequest {
+  readonly mode?: SkillOptimizationMode;
 }
 
 export function parseCreateSkillCandidateRequest(value: unknown): ParsedCreateSkillCandidateRequest {
@@ -675,6 +686,7 @@ const skillHealthRecommendedActions = [
   "reject_candidate",
 ] as const;
 const skillUsageEventKinds = ["selected", "started", "succeeded", "failed", "cancelled", "user_corrected", "draft_created", "published", "superseded"] as const;
+const skillOptimizationModes = ["no_operation", "report_only", "preview_on_demand", "auto_safe", "auto_runtime_experimental"] as const;
 
 export function parseSkillImportDraftRequest(
   value: unknown,
@@ -719,6 +731,25 @@ export function parseSkillImportDraftRequest(
     description: parsed.description,
     definitions,
     warnings,
+  };
+}
+
+export function parseSkillImportDraftOptimizationPreviewRequest(
+  value: unknown,
+  existingSkills: readonly SkillRegistryEntry[],
+): ParsedSkillImportDraftOptimizationPreviewRequest {
+  if (!isRecord(value)) {
+    throw new Error("Skill import draft optimization preview request must be a JSON object");
+  }
+  const content = readString(value, "content");
+  const mode = readOptionalString(value, "mode");
+  if (mode !== undefined && !skillOptimizationModes.includes(mode as SkillOptimizationMode)) {
+    throw new Error(`mode must be one of: ${skillOptimizationModes.join(", ")}`);
+  }
+  return {
+    draftInput: parseSkillImportDraftRequest(value, existingSkills),
+    content,
+    mode: mode as SkillOptimizationMode | undefined,
   };
 }
 
@@ -785,6 +816,22 @@ export function parseSkillSourceSnapshotRollbackRequest(value: unknown): ParsedS
     throw new Error("snapshotId is required");
   }
   return { snapshotId };
+}
+
+export function parseSkillOptimizationPreviewRequest(value: unknown): ParsedSkillOptimizationPreviewRequest {
+  if (value === undefined) {
+    return {};
+  }
+  if (!isRecord(value)) {
+    throw new Error("Skill optimization preview request must be a JSON object");
+  }
+  const mode = readOptionalString(value, "mode");
+  if (mode !== undefined && !skillOptimizationModes.includes(mode as SkillOptimizationMode)) {
+    throw new Error(`mode must be one of: ${skillOptimizationModes.join(", ")}`);
+  }
+  return {
+    mode: mode as SkillOptimizationMode | undefined,
+  };
 }
 
 function parseSkillImportContent(

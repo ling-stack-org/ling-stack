@@ -8,6 +8,8 @@ and permission boundaries for full `SKILL.md` content
 Follow-up lifecycle design for first-run onboarding, upstream upgrades, semantic
 migration evidence, and artifact-backed storage lives in
 [GStack Source Upgrade Lifecycle](gstack-source-upgrade-lifecycle.md).
+Skill source health, optional optimization previews, and core-plus-lazy-reference
+runtime views are specified in [Skill Context Optimization](skill-context-optimization.md).
 
 ## Summary
 

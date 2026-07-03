@@ -8,6 +8,8 @@ Skills UI, and skill-aware task/run polish
 
 Follow-up source preservation and gstack sync are covered by
 [GStack Skill Source Sync](gstack-skill-source-sync.md).
+Source health, optional optimization previews, and compiled runtime views are covered by
+[Skill Context Optimization](skill-context-optimization.md).
 
 ## Summary
 

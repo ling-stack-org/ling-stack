@@ -2,6 +2,7 @@ import type { SQLOutputValue } from "node:sqlite";
 import { DEFAULT_WORKSPACE_ID } from "../../workspace-types.js";
 import {
   createSkillImportDraftId,
+  type CreateSkillCompiledRuntimeViewInput,
   createSkillSourceArtifactId,
   createSkillSourceSnapshotId,
   createSkillPackId,
@@ -9,9 +10,11 @@ import {
   type CreateSkillSourceArtifactInput,
   type CreateSkillSourceSnapshotInput,
   type ListSkillSourceArtifactOptions,
+  type ListSkillCompiledRuntimeViewOptions,
   type ListSkillRegistryOptions,
   type ListSkillSourceSnapshotOptions,
   type SkillImportDraft,
+  type SkillCompiledRuntimeViewRecord,
   type SkillRegistryEntry,
   type SkillSourceArtifact,
   type SkillSourceSnapshot,
@@ -20,8 +23,8 @@ import {
   type UpdateSkillSourceUpgradePolicyInput,
 } from "../../skill-types.js";
 import { omitUndefined, stringifyJson } from "./helpers.js";
-import { mapSkillImportDraft, mapSkillRegistryEntry, mapSkillSourceArtifact, mapSkillSourceSnapshot, mapSkillSourceUpgradePolicy } from "./task-skill-mappers.js";
-import { skillImportDraftSelectSql, skillRegistryEntrySelectSql, skillSourceArtifactSelectSql, skillSourceSnapshotSelectSql, skillSourceUpgradePolicySelectSql } from "./select-sql.js";
+import { mapSkillCompiledRuntimeView, mapSkillImportDraft, mapSkillRegistryEntry, mapSkillSourceArtifact, mapSkillSourceSnapshot, mapSkillSourceUpgradePolicy } from "./task-skill-mappers.js";
+import { skillCompiledRuntimeViewSelectSql, skillImportDraftSelectSql, skillRegistryEntrySelectSql, skillSourceArtifactSelectSql, skillSourceSnapshotSelectSql, skillSourceUpgradePolicySelectSql } from "./select-sql.js";
 import type { SqliteStoreContext } from "./store-context.js";
 
 export class SqliteSkillRegistryStore {
@@ -355,6 +358,107 @@ export class SqliteSkillRegistryStore {
       .prepare(`${skillSourceArtifactSelectSql(`WHERE ${conditions.join(" AND ")}`)} ORDER BY updated_at DESC, id ASC`)
       .all(...params)
       .map((row) => mapSkillSourceArtifact(row as Record<string, SQLOutputValue>));
+  }
+
+  upsertSkillCompiledRuntimeView(input: CreateSkillCompiledRuntimeViewInput, now: string): SkillCompiledRuntimeViewRecord {
+    const existing = this.getSkillCompiledRuntimeView(input.view.id);
+    const record: SkillCompiledRuntimeViewRecord = {
+      ...input.view,
+      workspaceId: DEFAULT_WORKSPACE_ID,
+      authorityBoundary: input.authorityBoundary,
+      reviewStatus: input.reviewStatus ?? "active",
+      createdAt: existing?.createdAt ?? input.view.createdAt,
+      updatedAt: now,
+    };
+    this.context.database
+      .prepare(`
+        INSERT INTO skill_compiled_runtime_views (
+          id,
+          workspace_id,
+          skill_id,
+          source_snapshot_id,
+          compiler_version,
+          core_rules_markdown,
+          lazy_references_json,
+          source_map_json,
+          token_estimate,
+          fallback_policy,
+          authority_boundary_json,
+          review_status,
+          created_at,
+          updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+          skill_id = excluded.skill_id,
+          source_snapshot_id = excluded.source_snapshot_id,
+          compiler_version = excluded.compiler_version,
+          core_rules_markdown = excluded.core_rules_markdown,
+          lazy_references_json = excluded.lazy_references_json,
+          source_map_json = excluded.source_map_json,
+          token_estimate = excluded.token_estimate,
+          fallback_policy = excluded.fallback_policy,
+          authority_boundary_json = excluded.authority_boundary_json,
+          review_status = excluded.review_status,
+          updated_at = excluded.updated_at
+      `)
+      .run(
+        record.id,
+        record.workspaceId,
+        record.skillId,
+        record.sourceSnapshotId,
+        record.compilerVersion,
+        record.coreRulesMarkdown,
+        stringifyJson(record.lazyReferences),
+        stringifyJson(record.sourceMap),
+        record.tokenEstimate,
+        record.fallbackPolicy,
+        stringifyJson(record.authorityBoundary),
+        record.reviewStatus,
+        record.createdAt,
+        record.updatedAt,
+      );
+    return this.getSkillCompiledRuntimeView(record.id) ?? record;
+  }
+
+  getSkillCompiledRuntimeView(id: string): SkillCompiledRuntimeViewRecord | undefined {
+    const row = this.context.database
+      .prepare(skillCompiledRuntimeViewSelectSql("WHERE workspace_id = ? AND id = ?"))
+      .get(DEFAULT_WORKSPACE_ID, id);
+    return row ? mapSkillCompiledRuntimeView(row as Record<string, SQLOutputValue>) : undefined;
+  }
+
+  listSkillCompiledRuntimeViews(options: ListSkillCompiledRuntimeViewOptions = {}): SkillCompiledRuntimeViewRecord[] {
+    const conditions = ["workspace_id = ?"];
+    const params: string[] = [DEFAULT_WORKSPACE_ID];
+    if (options.skillId) {
+      conditions.push("skill_id = ?");
+      params.push(options.skillId);
+    }
+    if (options.sourceSnapshotId) {
+      conditions.push("source_snapshot_id = ?");
+      params.push(options.sourceSnapshotId);
+    }
+    if (options.reviewStatus) {
+      conditions.push("review_status = ?");
+      params.push(options.reviewStatus);
+    } else if (!options.includeArchived) {
+      conditions.push("review_status != 'archived'");
+    }
+    return this.context.database
+      .prepare(`${skillCompiledRuntimeViewSelectSql(`WHERE ${conditions.join(" AND ")}`)} ORDER BY updated_at DESC, id ASC`)
+      .all(...params)
+      .map((row) => mapSkillCompiledRuntimeView(row as Record<string, SQLOutputValue>));
+  }
+
+  archiveSkillCompiledRuntimeView(id: string, now: string): SkillCompiledRuntimeViewRecord | undefined {
+    const existing = this.getSkillCompiledRuntimeView(id);
+    if (!existing) {
+      return undefined;
+    }
+    this.context.database
+      .prepare("UPDATE skill_compiled_runtime_views SET review_status = 'archived', updated_at = ? WHERE workspace_id = ? AND id = ?")
+      .run(now, DEFAULT_WORKSPACE_ID, id);
+    return this.getSkillCompiledRuntimeView(id);
   }
 
   createSkillImportDraft(input: CreateSkillImportDraftInput, now: string): SkillImportDraft {
