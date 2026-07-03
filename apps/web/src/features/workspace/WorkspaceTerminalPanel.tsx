@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type CSSProperties, type FormEvent, type ReactNode } from "react";
 import type { WorkspaceTerminalCommandResponse } from "@ling-stack/contracts";
 import { LoaderCircle, SquareTerminal, X } from "lucide-react";
 import { runWorkspaceTerminalCommand } from "../../api.js";
@@ -16,12 +16,16 @@ export interface WorkspaceTerminalPanelProps {
   readonly cwd?: string;
   readonly className?: string;
   readonly onClose?: () => void;
+  readonly resizeHandleNode?: ReactNode;
+  readonly style?: CSSProperties;
 }
 
 export function WorkspaceTerminalPanel({
   cwd,
   className,
   onClose,
+  resizeHandleNode,
+  style,
 }: WorkspaceTerminalPanelProps): JSX.Element {
   const { t } = useI18n();
   const [command, setCommand] = useState("");
@@ -85,7 +89,8 @@ export function WorkspaceTerminalPanel({
   }, [command, cwd, entries.length, running]);
 
   return (
-    <section className={["workspace-terminal-panel", className].filter(Boolean).join(" ")} aria-label={t("Terminal session")}>
+    <section className={["workspace-terminal-panel", className].filter(Boolean).join(" ")} style={style} aria-label={t("Terminal session")}>
+      {resizeHandleNode}
       <header className="workspace-terminal-head">
         <span className="workspace-terminal-tab" title={cwd}>
           <SquareTerminal size={13} />

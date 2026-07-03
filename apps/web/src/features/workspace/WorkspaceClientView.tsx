@@ -245,6 +245,7 @@ import {
 import { ChannelComposer, type ChannelComposerInlineFeedback } from "./ChannelComposer.js";
 import { ChannelActivityWorkspace } from "./ChannelActivityWorkspace.js";
 import { useChannelRightDockController } from "./useChannelRightDockController.js";
+import { useChannelBottomPanelResizeController } from "./useChannelBottomPanelResizeController.js";
 import {
   conversationTurnRenderSignature,
   useChannelMessageFeed,
@@ -764,6 +765,10 @@ export function WorkspaceClientView({
   const channelRightDockMotionUntilRef = channelRightDock.motionUntilRef;
   const taskWorkbenchWindowRef = channelRightDock.windowRef;
   const taskWorkbenchMainRef = channelRightDock.mainRef;
+  const channelBottomPanelResize = useChannelBottomPanelResizeController({
+    containerRef: taskWorkbenchWindowRef,
+    resizeObserverKey: selectedChannelId ?? "",
+  });
   const progressPopoverCanFitMainLayout = channelRightDock.progressPopoverCanFitMainLayout;
   const progressPopoverCanUseMainLayout = channelRightDock.progressPopoverCanUseMainLayout;
 
@@ -3855,7 +3860,10 @@ export function WorkspaceClientView({
       onOpenSourceGroup={openSourceGroupInConversationDetail}
     />
   );
-  const taskWorkbenchWindowStyle = channelRightDock.windowStyle;
+  const taskWorkbenchWindowStyle = {
+    ...channelRightDock.windowStyle,
+    ...channelBottomPanelResize.panelStyle,
+  } as CSSProperties;
   const taskWorkbenchMainStyle = channelRightDock.mainStyle;
 
   function toggleChannelTeammateManager(): void {
@@ -3882,6 +3890,7 @@ export function WorkspaceClientView({
         channelRightDockVisible ? (channelRightDockExpanded ? "channel-right-dock-expanded" : "channel-right-dock-collapsed") : "",
         progressPopoverCanRender && !progressPopoverInMainLayout ? "with-channel-progress-popover" : "",
         channelBottomPanelVisible ? "with-channel-bottom-panel" : "",
+        channelBottomPanelResize.resizing ? "is-resizing-channel-bottom-panel" : "",
       ].filter(Boolean).join(" ")}
       style={taskWorkbenchWindowStyle}
       aria-label={t("Workspace")}
@@ -4572,6 +4581,21 @@ export function WorkspaceClientView({
         <WorkspaceTerminalPanel
           cwd={cwd.trim()}
           className="channel-bottom-terminal"
+          resizeHandleNode={(
+            <button
+              className="channel-bottom-panel-resize-handle"
+              type="button"
+              role="separator"
+              aria-orientation="horizontal"
+              aria-label={t("Resize terminal panel")}
+              title={t("Drag to resize terminal panel")}
+              onPointerDown={channelBottomPanelResize.handleResizePointerDown}
+              onPointerMove={channelBottomPanelResize.handleResizePointerMove}
+              onPointerUp={channelBottomPanelResize.handleResizePointerEnd}
+              onPointerCancel={channelBottomPanelResize.handleResizePointerEnd}
+              onLostPointerCapture={channelBottomPanelResize.handleResizePointerEnd}
+            />
+          )}
           onClose={() => setChannelBottomPanelOpen(false)}
         />
       ) : null}

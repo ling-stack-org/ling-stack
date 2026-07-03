@@ -322,6 +322,12 @@ test("conversation home follows user language and shows thinking as off", async 
   const navigation = page.getByLabel("Ling Stack navigation");
   await navigation.getByRole("button", { name: "新建对话" }).click();
   const home = page.getByLabel("对话首页");
+  await expect(home.getByRole("heading", { name: "Ling Stack，让工作更简单。", level: 1 })).toBeVisible();
+  await expect(home.getByRole("textbox", { name: "对话内容" })).toHaveAttribute("data-placeholder", "输入消息...（输入 / 唤起命令）");
+  await expect(home.getByRole("button", { name: "创建 Team" })).toBeVisible();
+  await expect(home.getByRole("button", { name: "幻灯片" })).toBeVisible();
+  await expect(home.getByRole("button", { name: "文档" })).toBeVisible();
+  await expect(home.getByRole("button", { name: "表格" })).toBeVisible();
   await expect(home.getByText("思考关闭")).toBeVisible();
   await home.getByRole("textbox", { name: "对话内容" }).fill("你好");
   await home.getByRole("button", { name: "发送" }).click();
@@ -335,6 +341,35 @@ test("conversation home follows user language and shows thinking as off", async 
   await home.getByRole("button", { name: "发送" }).click();
   await expect(page.getByLabel("对话页面").locator(".normal-conversation-message-row.ai-teammate")).toHaveCount(1);
   await expect(page.getByLabel("对话页面").getByText("Ling Agent response: hello")).toBeVisible();
+});
+
+test("conversation home refreshes interface language and theme after workspace settings change outside the tab", async ({ page }) => {
+  const state = createBaseState({ approvalStatus: "expired" });
+  state.workspaceSettings = {
+    ...state.workspaceSettings,
+    locale: "en-US",
+    theme: "dark",
+  };
+  await mockDaemon(page, state);
+  await page.goto("/");
+
+  const navigation = page.getByLabel("Ling Stack navigation");
+  await expect(page.locator("html")).toHaveAttribute("lang", "en-US");
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
+  await navigation.getByRole("button", { name: "New conversation" }).click();
+  await expect(page.getByLabel("Conversation home").getByRole("heading", { name: "Ling Stack, make work easier.", level: 1 })).toBeVisible();
+
+  state.workspaceSettings = {
+    ...state.workspaceSettings,
+    locale: "zh-CN",
+    theme: "light",
+  };
+  await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+
+  await expect(page.locator("html")).toHaveAttribute("lang", "zh-CN");
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
+  await expect(page.getByLabel("对话首页").getByRole("heading", { name: "Ling Stack，让工作更简单。", level: 1 })).toBeVisible();
+  await expect(navigation.getByRole("button", { name: "收件箱" })).toBeVisible();
 });
 
 test("sidebar text entries route to context-aware inspectors", async ({ page }) => {
