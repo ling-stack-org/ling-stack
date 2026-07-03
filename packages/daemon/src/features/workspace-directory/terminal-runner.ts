@@ -1,15 +1,19 @@
 import { spawn } from "node:child_process";
 import { stat } from "node:fs/promises";
-import { resolve } from "node:path";
+import { basename, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
+import { hostname as readHostname, userInfo } from "node:os";
 import type {
   WorkspaceTerminalCommandRequest,
   WorkspaceTerminalCommandResponse,
+  WorkspaceTerminalProfileResponse,
 } from "@ling-stack/contracts";
 
 type SpawnImpl = typeof spawn;
 type StatImpl = typeof stat;
 type ChildProcessLike = ReturnType<typeof spawn>;
+type UserInfoImpl = typeof userInfo;
+type HostnameImpl = typeof readHostname;
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 const DEFAULT_OUTPUT_LIMIT_BYTES = 24_000;
@@ -30,6 +34,37 @@ export class WorkspaceTerminalCommandError extends Error {
     this.code = code;
     this.statusCode = statusCode;
   }
+}
+
+export async function getWorkspaceTerminalProfile(input: {
+  readonly cwd: string;
+  readonly platform?: NodeJS.Platform;
+  readonly statImpl?: StatImpl;
+  readonly userInfoImpl?: UserInfoImpl;
+  readonly hostnameImpl?: HostnameImpl;
+}): Promise<WorkspaceTerminalProfileResponse> {
+  const rawCwd = input.cwd.trim();
+  if (!rawCwd) {
+    throw new WorkspaceTerminalCommandError("terminal_command_invalid_directory", "Workspace directory is required.", 400);
+  }
+  const directory = resolve(rawCwd);
+  await assertDirectory(directory, input.statImpl ?? stat);
+
+  const username = readUsername(input.userInfoImpl ?? userInfo);
+  const host = normalizeHostname((input.hostnameImpl ?? readHostname)());
+  const workspaceLabel = workspaceLabelFromCwd(directory);
+  const promptPrefix = username && host
+    ? `${username}@${host} ${workspaceLabel}`
+    : workspaceLabel;
+  const shell = shellPathForPlatform(input.platform ?? process.platform);
+  return {
+    cwd: directory,
+    workspaceLabel,
+    promptLabel: `${promptPrefix} ${promptSymbolForShell(shell)}`,
+    username,
+    hostname: host,
+    shell,
+  };
 }
 
 export async function runWorkspaceTerminalCommand(input: {
@@ -131,6 +166,37 @@ function shellCommandForPlatform(platform: NodeJS.Platform, command: string): {
     command: platform === "darwin" ? "/bin/zsh" : "/bin/sh",
     args: ["-lc", command],
   };
+}
+
+function shellPathForPlatform(platform: NodeJS.Platform): string {
+  if (platform === "win32") {
+    return process.env.ComSpec ?? "cmd.exe";
+  }
+  if (platform === "darwin") {
+    return "/bin/zsh";
+  }
+  return process.env.SHELL || "/bin/sh";
+}
+
+function promptSymbolForShell(shell: string): string {
+  return /(?:^|\/)(?:zsh|csh|tcsh)$/u.test(shell) ? "%" : "$";
+}
+
+function workspaceLabelFromCwd(cwd: string): string {
+  return basename(cwd.replace(/\/+$/u, "")) || cwd;
+}
+
+function normalizeHostname(value: string): string | undefined {
+  const normalized = value.trim().replace(/\.local$/iu, "");
+  return normalized || undefined;
+}
+
+function readUsername(userInfoImpl: UserInfoImpl): string | undefined {
+  try {
+    return userInfoImpl().username.trim() || process.env.USER || process.env.LOGNAME || undefined;
+  } catch {
+    return process.env.USER || process.env.LOGNAME || undefined;
+  }
 }
 
 async function assertDirectory(directory: string, statImpl: StatImpl): Promise<void> {

@@ -7,6 +7,7 @@ import {
 } from "./directory-picker.js";
 import { readJsonBody } from "../../shared/request.js";
 import {
+  getWorkspaceTerminalProfile,
   parseWorkspaceTerminalCommandRequest,
   runWorkspaceTerminalCommand,
   WorkspaceTerminalCommandError,
@@ -96,6 +97,47 @@ export async function handleWorkspaceTerminalCommand(
     }
     writeJson(response, 500, {
       error: "terminal_command_failed",
+      message: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
+export async function handleWorkspaceTerminalProfile(
+  request: IncomingMessage,
+  response: ServerResponse,
+  config: ResolvedDaemonConfig,
+): Promise<void> {
+  const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
+  if (request.method !== "GET") {
+    writeJson(response, 405, {
+      error: "method_not_allowed",
+      message: `${request.method} is not supported for workspace terminal profile`,
+    });
+    return;
+  }
+
+  const cwd = url.searchParams.get("cwd")?.trim();
+  if (!cwd) {
+    writeJson(response, 400, { error: "bad_request", message: "cwd query parameter is required" });
+    return;
+  }
+  if (!isAllowedLocalOrigin(request.headers.origin)) {
+    writeJson(response, 403, {
+      error: "forbidden_origin",
+      message: "Workspace terminal profile is only available from local Ling Stack pages.",
+    });
+    return;
+  }
+
+  try {
+    writeJson(response, 200, await getWorkspaceTerminalProfile({ cwd }));
+  } catch (error) {
+    if (error instanceof WorkspaceTerminalCommandError) {
+      writeJson(response, error.statusCode, { error: error.code, message: error.message });
+      return;
+    }
+    writeJson(response, 500, {
+      error: "terminal_profile_failed",
       message: error instanceof Error ? error.message : String(error),
     });
   }

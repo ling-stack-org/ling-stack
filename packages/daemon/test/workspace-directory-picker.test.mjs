@@ -7,6 +7,7 @@ import {
   WorkspaceDirectoryPickerError,
 } from "../dist/features/workspace-directory/directory-picker.js";
 import {
+  getWorkspaceTerminalProfile,
   runWorkspaceTerminalCommand,
   WorkspaceTerminalCommandError,
 } from "../dist/features/workspace-directory/terminal-runner.js";
@@ -105,6 +106,25 @@ test("workspace terminal runner executes a command in the workspace directory", 
   assert.equal(recorder.calls[0].command, "/bin/zsh");
   assert.deepEqual(recorder.calls[0].args, ["-lc", "pwd"]);
   assert.equal(recorder.calls[0].options.cwd, "/tmp/ling-stack");
+});
+
+test("workspace terminal profile reports user host and workspace prompt", async () => {
+  const profile = await getWorkspaceTerminalProfile({
+    cwd: "/Users/tianxiao/ling-stack",
+    platform: "darwin",
+    statImpl: async () => ({ isDirectory: () => true }),
+    userInfoImpl: () => ({ username: "tianxiao" }),
+    hostnameImpl: () => "tianxiaodeMacBook-Pro.local",
+  });
+
+  assert.deepEqual(profile, {
+    cwd: "/Users/tianxiao/ling-stack",
+    workspaceLabel: "ling-stack",
+    promptLabel: "tianxiao@tianxiaodeMacBook-Pro ling-stack %",
+    username: "tianxiao",
+    hostname: "tianxiaodeMacBook-Pro",
+    shell: "/bin/zsh",
+  });
 });
 
 test("workspace terminal runner reports failed commands without throwing", async () => {

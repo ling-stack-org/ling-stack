@@ -13,6 +13,7 @@ import type {
   WorkspaceDirectorySelectResponse,
   WorkspaceTerminalCommandRequest,
   WorkspaceTerminalCommandResponse,
+  WorkspaceTerminalProfileResponse,
   WorkspaceSettingsResponse,
 } from "@ling-stack/contracts";
 import { LingDaemonError } from "../errors.js";
@@ -71,6 +72,10 @@ export const systemEndpoints = {
 
   async selectWorkspaceDirectory(this: LingDaemonEndpointContext, cwd: string): Promise<WorkspaceDirectorySelectResponse> {
       return this._post("/workspace-directory/select", { cwd });
+    },
+
+  async getWorkspaceTerminalProfile(this: LingDaemonEndpointContext, cwd: string): Promise<WorkspaceTerminalProfileResponse> {
+      return this._get("/workspace-terminal/profile", { cwd });
     },
 
   async runWorkspaceTerminalCommand(

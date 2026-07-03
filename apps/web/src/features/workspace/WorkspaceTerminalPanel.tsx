@@ -1,10 +1,10 @@
-import { useCallback, useEffect, useRef, useState, type CSSProperties, type FormEvent, type ReactNode } from "react";
-import type { WorkspaceTerminalCommandResponse } from "@ling-stack/contracts";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent, type ReactNode } from "react";
+import type { WorkspaceTerminalCommandResponse, WorkspaceTerminalProfileResponse } from "@ling-stack/contracts";
 import { LoaderCircle, SquareTerminal, X } from "lucide-react";
-import { runWorkspaceTerminalCommand } from "../../api.js";
+import { getWorkspaceTerminalProfile, runWorkspaceTerminalCommand } from "../../api.js";
 import { useI18n } from "../../i18n.js";
 
-interface WorkspaceTerminalHistoryEntry {
+export interface WorkspaceTerminalHistoryEntry {
   readonly id: string;
   readonly command: string;
   readonly status: "running" | WorkspaceTerminalCommandResponse["status"] | "client_failed";
@@ -12,62 +12,78 @@ interface WorkspaceTerminalHistoryEntry {
   readonly error?: string;
 }
 
+export interface WorkspaceTerminalSession {
+  readonly command: string;
+  readonly entries: readonly WorkspaceTerminalHistoryEntry[];
+  readonly prompt: string;
+  readonly workspaceLabel: string;
+  readonly running: boolean;
+  readonly setCommand: (command: string) => void;
+  readonly submitCommand: (command: string) => void;
+}
+
 export interface WorkspaceTerminalPanelProps {
   readonly cwd?: string;
   readonly className?: string;
+  readonly session?: WorkspaceTerminalSession;
   readonly onClose?: () => void;
   readonly resizeHandleNode?: ReactNode;
   readonly style?: CSSProperties;
 }
 
-export function WorkspaceTerminalPanel({
-  cwd,
-  className,
-  onClose,
-  resizeHandleNode,
-  style,
-}: WorkspaceTerminalPanelProps): JSX.Element {
+export function useWorkspaceTerminalSession(cwd?: string): WorkspaceTerminalSession {
   const { t } = useI18n();
   const [command, setCommand] = useState("");
   const [entries, setEntries] = useState<readonly WorkspaceTerminalHistoryEntry[]>([]);
   const [running, setRunning] = useState(false);
-  const historyEndRef = useRef<HTMLDivElement | null>(null);
-  const inputRef = useRef<HTMLInputElement | null>(null);
-  const workspaceLabel = cwd ? workspaceTerminalLabel(cwd) : t("Workspace");
-  const prompt = `${workspaceLabel} %`;
+  const [profile, setProfile] = useState<WorkspaceTerminalProfileResponse | undefined>();
+  const workspaceLabel = profile?.workspaceLabel ?? (cwd ? workspaceTerminalLabel(cwd) : t("Workspace"));
+  const prompt = profile?.promptLabel ?? `${workspaceLabel} %`;
 
   useEffect(() => {
-    inputRef.current?.focus();
+    setCommand("");
+    setEntries([]);
+    setProfile(undefined);
+    if (!cwd) {
+      return;
+    }
+    let cancelled = false;
+    void getWorkspaceTerminalProfile(cwd)
+      .then((nextProfile) => {
+        if (!cancelled) {
+          setProfile(nextProfile);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setProfile(undefined);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [cwd]);
 
-  useEffect(() => {
-    historyEndRef.current?.scrollIntoView({ block: "end" });
-  }, [entries]);
-
-  const handleSubmit = useCallback((event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
+  const submitCommand = useCallback((nextCommand: string) => {
     if (!cwd || running) {
       return;
     }
-    const nextCommand = (inputRef.current?.value ?? command).trim();
-    if (!nextCommand) {
+    const trimmedCommand = nextCommand.trim();
+    if (!trimmedCommand) {
       return;
     }
     const localId = `terminal-${Date.now()}-${entries.length}`;
-    if (inputRef.current) {
-      inputRef.current.value = "";
-    }
     setCommand("");
     setRunning(true);
     setEntries((current) => [
       ...current,
       {
         id: localId,
-        command: nextCommand,
+        command: trimmedCommand,
         status: "running",
       },
     ]);
-    void runWorkspaceTerminalCommand(cwd, { command: nextCommand })
+    void runWorkspaceTerminalCommand(cwd, { command: trimmedCommand })
       .then((response) => {
         setEntries((current) => current.map((entry) => entry.id === localId
           ? { ...entry, response, status: response.status }
@@ -84,9 +100,54 @@ export function WorkspaceTerminalPanel({
       })
       .finally(() => {
         setRunning(false);
-        requestAnimationFrame(() => inputRef.current?.focus());
       });
-  }, [command, cwd, entries.length, running]);
+  }, [cwd, entries.length, running]);
+
+  return useMemo(() => ({
+    command,
+    entries,
+    prompt,
+    workspaceLabel,
+    running,
+    setCommand,
+    submitCommand,
+  }), [command, entries, prompt, running, submitCommand, workspaceLabel]);
+}
+
+export function WorkspaceTerminalPanel({
+  cwd,
+  className,
+  session,
+  onClose,
+  resizeHandleNode,
+  style,
+}: WorkspaceTerminalPanelProps): JSX.Element {
+  const { t } = useI18n();
+  const internalSession = useWorkspaceTerminalSession(session ? undefined : cwd);
+  const terminalSession = session ?? internalSession;
+  const historyEndRef = useRef<HTMLDivElement | null>(null);
+  const inputRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    inputRef.current?.focus();
+  }, [cwd]);
+
+  useEffect(() => {
+    historyEndRef.current?.scrollIntoView({ block: "end" });
+  }, [terminalSession.entries]);
+
+  const handleSubmit = useCallback((event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!cwd || terminalSession.running) {
+      return;
+    }
+    const nextCommand = (inputRef.current?.value ?? terminalSession.command).trim();
+    if (!nextCommand) {
+      return;
+    }
+    terminalSession.submitCommand(nextCommand);
+    requestAnimationFrame(() => inputRef.current?.focus());
+  }, [cwd, terminalSession]);
 
   return (
     <section className={["workspace-terminal-panel", className].filter(Boolean).join(" ")} style={style} aria-label={t("Terminal session")}>
@@ -94,7 +155,7 @@ export function WorkspaceTerminalPanel({
       <header className="workspace-terminal-head">
         <span className="workspace-terminal-tab" title={cwd}>
           <SquareTerminal size={13} />
-          <strong>{workspaceLabel}</strong>
+          <strong>{terminalSession.workspaceLabel}</strong>
         </span>
         <span className="workspace-terminal-tab-plus" aria-hidden="true">+</span>
         {onClose ? (
@@ -111,27 +172,27 @@ export function WorkspaceTerminalPanel({
       </header>
       <div className="workspace-terminal-screen">
         <div className="workspace-terminal-history" role="log" aria-live="polite">
-          {entries.map((entry) => (
+          {terminalSession.entries.map((entry) => (
             <WorkspaceTerminalHistoryLine
               key={entry.id}
               entry={entry}
-              prompt={prompt}
+              prompt={terminalSession.prompt}
             />
           ))}
           <form className="workspace-terminal-prompt-row" onSubmit={handleSubmit}>
-            <span className="workspace-terminal-prompt" title={prompt}>{prompt}</span>
+            <span className="workspace-terminal-prompt" title={terminalSession.prompt}>{terminalSession.prompt}</span>
             <input
               ref={inputRef}
               aria-label={t("Command")}
               autoCapitalize="off"
               autoComplete="off"
-              disabled={!cwd || running}
+              disabled={!cwd || terminalSession.running}
               placeholder={cwd ? "" : t("Workspace folder unavailable")}
               spellCheck={false}
-              value={command}
-              onChange={(event) => setCommand(event.target.value)}
+              value={terminalSession.command}
+              onChange={(event) => terminalSession.setCommand(event.target.value)}
             />
-            {running ? <LoaderCircle size={14} className="spin-icon workspace-terminal-running" /> : null}
+            {terminalSession.running ? <LoaderCircle size={14} className="spin-icon workspace-terminal-running" /> : null}
           </form>
           <div ref={historyEndRef} />
         </div>

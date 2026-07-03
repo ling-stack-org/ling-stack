@@ -7835,6 +7835,12 @@ code,
   max-height: 50%;
 }
 
+.channel-side-terminal {
+  height: 100%;
+  border-top: 0;
+  box-shadow: none;
+}
+
 .task-workbench-window.is-resizing-channel-bottom-panel,
 .task-workbench-window.is-resizing-channel-bottom-panel * {
   cursor: row-resize !important;

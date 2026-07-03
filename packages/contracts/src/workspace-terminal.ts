@@ -4,6 +4,15 @@ export interface WorkspaceTerminalCommandRequest {
   readonly command: string;
 }
 
+export interface WorkspaceTerminalProfileResponse {
+  readonly cwd: string;
+  readonly workspaceLabel: string;
+  readonly promptLabel: string;
+  readonly username?: string;
+  readonly hostname?: string;
+  readonly shell?: string;
+}
+
 export interface WorkspaceTerminalCommandResponse {
   readonly id: string;
   readonly cwd: string;
