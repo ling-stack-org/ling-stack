@@ -1173,7 +1173,12 @@ test("channel environment surface shows read-only context and opens review", asy
 
   await environmentPage.getByRole("button", { name: "View review" }).click();
   await expect(page.locator(".channel-environment-page")).toHaveCount(0);
-  await expect(page.locator(".channel-side-panel .right-dock-head-page")).toContainText("Review");
+  const rightDock = page.locator(".channel-side-panel");
+  await expect(rightDock.locator(".right-dock-head-page")).toContainText("Review");
+  await expect(rightDock.locator(".right-dock-filter-row")).toHaveCount(0);
+  await expect(rightDock.locator(".right-dock-review-status-card")).toHaveCount(0);
+  await expect(rightDock.locator(".right-dock-review-page")).not.toContainText("Risk");
+  await expect(rightDock.locator(".right-dock-review-page")).not.toContainText("Runtime");
 });
 
 test("channel environment labels review-only items as review instead of changes", async ({ page }) => {

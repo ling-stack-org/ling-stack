@@ -5,7 +5,6 @@ import {
   FileText,
   Globe2,
   History,
-  ListChecks,
   Search,
   ShieldCheck,
   SquareTerminal,
@@ -30,7 +29,6 @@ import {
   type DockPageStackEntry,
   type DockReviewArtifactRef,
   type DockReviewCodeLine,
-  type DockReviewFilter,
   type DockReviewInlineNote,
   type DockReviewItem,
   type DockSurfaceKind,
@@ -128,7 +126,6 @@ export function WorkspaceRightDock({
 }: WorkspaceRightDockProps): JSX.Element | null {
   const { t } = useI18n();
   const [stack, setStack] = useState<readonly DockPageStackEntry[]>([]);
-  const [reviewFilter, setReviewFilter] = useState<DockReviewFilter>("all");
   const [planScope, setPlanScope] = useState<"thread" | "channel">("thread");
   const [planStatusFilter, setPlanStatusFilter] = useState<PlanStatusFilter>("current");
   const [artifactPreviewByReviewId, setArtifactPreviewByReviewId] = useState<Readonly<Record<string, DockReviewItem["codePreview"]>>>({});
@@ -157,7 +154,11 @@ export function WorkspaceRightDock({
       stats: item.stats ?? preview.stats,
     };
   }), [artifactPreviewByReviewId, reviewItems]);
-  const reviewActionCount = enrichedReviewItems.filter(reviewNeedsAction).length;
+  const codeChangeReviewItems = useMemo(
+    () => enrichedReviewItems.filter((item) => item.group === "files"),
+    [enrichedReviewItems],
+  );
+  const codeChangeActionCount = codeChangeReviewItems.filter(reviewNeedsAction).length;
   const detailNodeById = useMemo(() => {
     const map = new Map<string, ReactNode>();
     for (const item of enrichedReviewItems) {
@@ -312,42 +313,37 @@ export function WorkspaceRightDock({
   const pages = useMemo<readonly RightDockPageManifest[]>(() => {
     const manifests: RightDockPageManifest[] = [
       {
-      id: "review",
-      label: t("Review workbench"),
-      icon: <ListChecks size={16} />,
-      launcherItem: {
-        description: t("Changes, risks, evidence gaps, and approval gates"),
-        count: reviewActionCount,
-        statusLabel: reviewActionCount > 0 ? t("{count} items to inspect", { count: reviewActionCount }) : t("Clean"),
-        severity: reviewActionCount > 0 ? "warning" : "neutral",
+        id: "review",
+        label: t("Review workbench"),
+        icon: <Code2 size={16} />,
+        launcherItem: {
+          description: t("Changed files and diff previews"),
+          count: codeChangeReviewItems.length,
+          statusLabel: codeChangeReviewItems.length > 0 ? t("{count} code changes", { count: codeChangeReviewItems.length }) : t("No code changes"),
+          severity: codeChangeActionCount > 0 ? "warning" : codeChangeReviewItems.length > 0 ? "info" : "neutral",
+        },
+        render: () => (
+          <ReviewQueuePage
+            items={codeChangeReviewItems}
+            activeFilter="files"
+            filters={[{ id: "files", label: t("Code changes") }]}
+            emptyTitle={t("No code changes")}
+            emptyDescription={t("Changed files and diff previews will appear here.")}
+            needsActionLabel={t("Pending")}
+            trackedLabel={t("Tracked")}
+            blockerLabel={t("Blocker")}
+            sendReviewLabel={t("Send review")}
+            clearReviewLabel={t("Clear")}
+            detailEmptyTitle={t("Select a code change")}
+            detailEmptyDescription={t("Choose a changed file to inspect its diff.")}
+            detailPresentation="accordion"
+            showStatusSummary={false}
+            renderItemDetail={(item) => <DockReviewItemDetail item={item} cwd={cwd} compact />}
+            onFilterChange={() => undefined}
+          />
+        ),
       },
-      render: () => (
-        <ReviewQueuePage
-          items={enrichedReviewItems}
-          activeFilter={reviewFilter}
-          filters={[
-            { id: "all", label: t("All") },
-            { id: "needs_action", label: t("Needs action") },
-            { id: "risk", label: t("Risk") },
-            { id: "runtime", label: t("Runtime") },
-            { id: "files", label: t("Changes") },
-          ]}
-          emptyTitle={t("No code review items")}
-          emptyDescription={t("Changed files, failed runs, evidence gaps, and approval gates will appear here.")}
-          needsActionLabel={t("Pending")}
-          trackedLabel={t("Tracked")}
-          blockerLabel={t("Blocker")}
-          sendReviewLabel={t("Send review")}
-          clearReviewLabel={t("Clear")}
-          detailEmptyTitle={t("Select a review item")}
-          detailEmptyDescription={t("Choose an item to inspect code, fallback state, or approval context.")}
-          detailPresentation="accordion"
-          renderItemDetail={(item) => <DockReviewItemDetail item={item} cwd={cwd} compact />}
-          onFilterChange={setReviewFilter}
-        />
-      ),
-    },
-    {
+      {
       id: "plans",
       label: t("Plans"),
       icon: <History size={16} />,
@@ -541,7 +537,8 @@ export function WorkspaceRightDock({
     fileItems,
     hasTerminalSession,
     includeActivity,
-    enrichedReviewItems,
+    codeChangeActionCount,
+    codeChangeReviewItems,
     currentPlanThreadId,
     onOpenPlanSource,
     planActionBusyId,
@@ -550,8 +547,6 @@ export function WorkspaceRightDock({
     proposedPlans,
     proposedPlansError,
     proposedPlansLoading,
-    reviewActionCount,
-    reviewFilter,
     t,
     terminalEvidenceCount,
     terminalGroups,
