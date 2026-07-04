@@ -17,12 +17,8 @@
 }
 
 .council-workspace-page.settings-return-mode {
-  grid-template-rows: auto auto minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr);
   height: 100%;
-}
-
-.council-workspace-page > .settings-tool-return-row {
-  padding: 0;
 }
 
 .council-workspace-header {
@@ -33,7 +29,11 @@
   min-width: 0;
 }
 
-.council-workspace-header > div:first-child {
+.council-workspace-page.settings-return-mode .council-workspace-header {
+  justify-content: flex-end;
+}
+
+.council-workspace-title {
   display: grid;
   gap: 4px;
   min-width: 0;

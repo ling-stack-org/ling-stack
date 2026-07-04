@@ -158,6 +158,75 @@ test("channel header hides empty governance review queue while notifications loa
   await expect(page.getByLabel("Channel message feed").getByText("No channel messages yet")).toBeVisible();
 });
 
+test("terminal bottom panel runs commands in the channel workspace", async ({ page }) => {
+  await useEnglishLocale(page);
+  const state = createBaseState({ approvalStatus: "expired" });
+  state.eventsByRun = {};
+
+  await mockDaemon(page, state);
+  await page.goto("/");
+  await openEngineeringChannel(page);
+
+  await page.getByRole("button", { name: "Show details" }).click();
+  const dock = page.locator(".channel-side-panel.right-dock");
+  await expect(dock).toBeVisible();
+  await dock.getByRole("button", { name: "Terminal" }).click();
+  const sideTerminal = dock.locator(".channel-side-terminal");
+  await expect(sideTerminal).toBeVisible();
+  const workspacePromptLabel = `tianxiao@tianxiaodeMacBook-Pro ${cwd.split("/").filter(Boolean).at(-1) ?? cwd} %`;
+  await expect(sideTerminal.locator(".workspace-terminal-prompt")).toContainText(workspacePromptLabel);
+
+  await page.getByRole("button", { name: "Toggle bottom panel" }).click();
+  const terminal = page.locator(".channel-bottom-terminal");
+  await expect(terminal).toBeVisible();
+  await expect(terminal.locator(".workspace-terminal-tab")).toContainText("ling-stack");
+  await expect(page.locator(".channel-side-panel .workspace-terminal-panel")).toHaveCount(1);
+  await expect(terminal.locator(".workspace-terminal-prompt")).toContainText(workspacePromptLabel);
+  await expect.poll(async () => terminal.locator(".workspace-terminal-prompt").evaluate((node) => {
+    const element = node as HTMLElement;
+    return element.scrollWidth - element.clientWidth;
+  })).toBeLessThanOrEqual(1);
+
+  const terminalResizeHandle = page.getByRole("separator", { name: "Resize terminal panel" });
+  await expect(terminalResizeHandle).toBeVisible();
+  await expect(terminalResizeHandle).toHaveCSS("cursor", "row-resize");
+  const initialTerminalBox = await terminal.boundingBox();
+  const initialHandleBox = await terminalResizeHandle.boundingBox();
+  expect(initialTerminalBox).not.toBeNull();
+  expect(initialHandleBox).not.toBeNull();
+  await page.mouse.move(initialHandleBox!.x + initialHandleBox!.width / 2, initialHandleBox!.y + 5);
+  await page.mouse.down();
+  await page.mouse.move(initialHandleBox!.x + initialHandleBox!.width / 2, initialHandleBox!.y - 140, { steps: 6 });
+  await page.mouse.up();
+  await expect.poll(async () => Math.round((await terminal.boundingBox())?.height ?? 0)).toBeGreaterThan(Math.round((initialTerminalBox?.height ?? 0) + 40));
+
+  const expandedHandleBox = await terminalResizeHandle.boundingBox();
+  expect(expandedHandleBox).not.toBeNull();
+  await page.mouse.move(expandedHandleBox!.x + expandedHandleBox!.width / 2, expandedHandleBox!.y + 5);
+  await page.mouse.down();
+  await page.mouse.move(expandedHandleBox!.x + expandedHandleBox!.width / 2, expandedHandleBox!.y - 500, { steps: 8 });
+  await page.mouse.up();
+  await expect.poll(async () => {
+    const terminalBox = await terminal.boundingBox();
+    const maxHeight = await page.evaluate(() => {
+      const workbench = document.querySelector<HTMLElement>(".task-workbench-window");
+      return Math.floor((workbench?.getBoundingClientRect().height ?? window.innerHeight) / 2);
+    });
+    return Math.round((terminalBox?.height ?? 0) - maxHeight);
+  }).toBeLessThanOrEqual(2);
+
+  const commandInput = terminal.getByRole("textbox", { name: "Command" });
+  await expect(commandInput).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+  await expect(commandInput).toHaveCSS("box-shadow", "none");
+  await commandInput.fill("pwd");
+  await commandInput.press("Enter");
+
+  await expect.poll(() => state.terminalCommandRequests.length).toBe(1);
+  expect(state.terminalCommandRequests[0]).toEqual({ cwd, command: "pwd" });
+  await expect(terminal.locator(".workspace-terminal-output")).toContainText(cwd);
+  await expect(sideTerminal.locator(".workspace-terminal-output")).toContainText(cwd);
+});
+
 test("channel team experts fold into latest turn and metrics stay in settings", async ({ page }) => {
   await useEnglishLocale(page);
   const state = createBaseState({ approvalStatus: "pending" });
@@ -500,9 +569,9 @@ test("global sidebar keeps fixed chrome, scrollable recents, and a true compact 
   await expect(page.getByRole("heading", { name: "Automations", level: 1 })).toBeVisible();
   await navigation.getByRole("button", { name: "Settings" }).click();
   await expect(page.getByLabel("Settings sections")).toBeVisible();
-  await expect(page.getByLabel("Settings sections").getByRole("button", { name: "Configuration overview" })).toBeVisible();
-  await page.getByRole("button", { name: "Open Teammate Management" }).click();
-  await expect(page.locator(".teammates-page-header.settings-return-mode .settings-tool-return-row").getByRole("button", { name: "Back to workspace tools" })).toBeVisible();
+  await expect(page.getByLabel("Settings sections").getByRole("button", { name: "Configuration overview" })).toHaveCount(0);
+  await page.getByLabel("Settings sections").getByRole("button", { name: "Teammate Management" }).click();
+  await expect(page.locator(".teammates-page.settings-return-mode .settings-tool-return-row").getByRole("button", { name: "Back to workspace tools" })).toBeVisible();
   await expect(page.getByLabel("Workspace teammates")).toBeVisible();
   await expect(page.getByLabel("Ling Stack navigation")).toHaveCount(0);
   await page.getByRole("button", { name: "Back to workspace tools" }).click();
@@ -782,7 +851,7 @@ test("channel environment surface shows read-only context and opens review", asy
           "index 1111111..2222222 100644",
           "--- a/apps/web/src/features/workspace/WorkspaceClientView.tsx",
           "+++ b/apps/web/src/features/workspace/WorkspaceClientView.tsx",
-          "@@ -1,3 +1,4 @@",
+          "@@ -10,3 +10,4 @@",
           " import React from \"react\";",
           "-const oldLabel = \"Environment\";",
           "+const newLabel = \"Environment\";",
@@ -942,7 +1011,7 @@ test("channel environment surface shows read-only context and opens review", asy
   expect(chatLayoutAfterDockClose).not.toBeNull();
   expect(Math.abs((chatLayoutAfterDockClose?.y ?? 0) - (chatLayoutBeforeDock?.y ?? 0))).toBeLessThanOrEqual(1);
   expect(Math.abs((chatLayoutAfterDockClose?.height ?? 0) - (chatLayoutBeforeDock?.height ?? 0))).toBeLessThanOrEqual(1);
-  const dockCloseHorizontalTolerance = 20;
+  const dockCloseHorizontalTolerance = 28;
   await expect.poll(async () => {
     const snapshot = await readChatLayoutSnapshot();
     return Math.abs(snapshot.chatX - chatSnapshotBeforeDock.chatX);
@@ -1020,9 +1089,49 @@ test("channel environment surface shows read-only context and opens review", asy
   const reviewSummaryRow = dock.locator(".right-dock-review-row", { hasText: "Workspace environment diff" });
   const codePreview = dock.locator(".right-dock-code-preview");
   await expect(codePreview).toBeVisible();
+  const reviewPageBody = dock.locator(".right-dock-page-body");
+  const fullBleedBoxes = await Promise.all([
+    reviewPageBody.boundingBox(),
+    codePreview.boundingBox(),
+  ]);
+  const [reviewPageBodyBox, codePreviewBox] = fullBleedBoxes;
+  expect(reviewPageBodyBox).not.toBeNull();
+  expect(codePreviewBox).not.toBeNull();
+  expect(Math.abs((codePreviewBox?.x ?? 0) - (reviewPageBodyBox?.x ?? 0))).toBeLessThanOrEqual(1);
+  expect(Math.abs(((codePreviewBox?.x ?? 0) + (codePreviewBox?.width ?? 0)) - ((reviewPageBodyBox?.x ?? 0) + (reviewPageBodyBox?.width ?? 0)))).toBeLessThanOrEqual(1);
+  const codePreviewTheme = await page.evaluate(() => {
+    const preview = document.querySelector<HTMLElement>(".right-dock-code-preview");
+    const caption = document.querySelector<HTMLElement>(".right-dock-code-preview figcaption");
+    const pre = document.querySelector<HTMLElement>(".right-dock-code-preview pre");
+    if (!preview || !caption || !pre) {
+      return undefined;
+    }
+    const resolveColor = (value: string): string => {
+      const probe = document.createElement("span");
+      probe.style.color = value;
+      document.body.append(probe);
+      const resolved = getComputedStyle(probe).color;
+      probe.remove();
+      return resolved;
+    };
+    return {
+      theme: document.documentElement.dataset.theme,
+      previewBg: getComputedStyle(preview).backgroundColor,
+      preBg: getComputedStyle(pre).backgroundColor,
+      expectedCodeBg: resolveColor("var(--conversation-code-bg)"),
+      captionBg: getComputedStyle(caption).backgroundColor,
+      expectedCaptionBg: resolveColor("var(--conversation-code-bg-hover)"),
+    };
+  });
+  expect(codePreviewTheme).toBeDefined();
+  expect(codePreviewTheme?.theme).toBe("light");
+  expect(codePreviewTheme?.previewBg).toBe(codePreviewTheme?.expectedCodeBg);
+  expect(codePreviewTheme?.preBg).toBe(codePreviewTheme?.expectedCodeBg);
+  expect(codePreviewTheme?.captionBg).toBe(codePreviewTheme?.expectedCaptionBg);
   await expect(reviewSummaryRow).toHaveCount(0);
   await expect(dock.locator(".right-dock-review-row")).toHaveCount(0);
   await expect(codePreview.locator("pre")).toContainText("reviewPreview");
+  await expect(codePreview.locator(".right-dock-code-fold")).toContainText("9 unmodified lines");
   await codePreview.getByRole("button", { name: "Collapse code preview" }).click();
   await expect(codePreview).toHaveClass(/collapsed/u);
   await expect(codePreview.locator("pre")).toHaveCount(0);
@@ -1066,7 +1175,12 @@ test("channel environment surface shows read-only context and opens review", asy
 
   await environmentPage.getByRole("button", { name: "View review" }).click();
   await expect(page.locator(".channel-environment-page")).toHaveCount(0);
-  await expect(page.locator(".channel-side-panel .right-dock-head-page")).toContainText("Review");
+  const rightDock = page.locator(".channel-side-panel");
+  await expect(rightDock.locator(".right-dock-head-page")).toContainText("Review");
+  await expect(rightDock.locator(".right-dock-filter-row")).toHaveCount(0);
+  await expect(rightDock.locator(".right-dock-review-status-card")).toHaveCount(0);
+  await expect(rightDock.locator(".right-dock-review-page")).not.toContainText("Risk");
+  await expect(rightDock.locator(".right-dock-review-page")).not.toContainText("Runtime");
 });
 
 test("channel environment labels review-only items as review instead of changes", async ({ page }) => {
@@ -2858,6 +2972,10 @@ test("channel message body renders safe markdown, highlighted code, folded logs,
       "@@ -1 +1 @@",
       "-export const value = 1;",
       "+export const value = 2;",
+      "@@ -20,2 +20,2 @@",
+      " export const stable = true;",
+      "-export const other = 1;",
+      "+export const other = 2;",
       "```",
       "",
       "```diff",
@@ -2950,9 +3068,13 @@ test("channel message body renders safe markdown, highlighted code, folded logs,
 
   const diffBlock = message.locator(".message-diff-block").filter({ hasText: "src/example.ts" });
   await expect(diffBlock).toHaveCount(1);
+  await expect(diffBlock).toContainText("Edited 1 file");
   await expect(diffBlock).toContainText("src/example.ts");
-  await expect(diffBlock.locator(".diff-line.delete")).toContainText("-export const value = 1;");
-  await expect(diffBlock.locator(".diff-line.add")).toContainText("+export const value = 2;");
+  await expect(diffBlock.locator(".diff-line.delete .diff-gutter").first()).toHaveText("-");
+  await expect(diffBlock.locator(".diff-line.delete code").first()).toContainText("export const value = 1;");
+  await expect(diffBlock.locator(".diff-line.add .diff-gutter").first()).toHaveText("+");
+  await expect(diffBlock.locator(".diff-line.add code").first()).toContainText("export const value = 2;");
+  await expect(diffBlock.locator(".diff-fold")).toContainText("18 unmodified lines");
   await expect(diffBlock.getByRole("button", { name: "Copy diff" })).toBeVisible();
   await expect.poll(() => diffBlock.locator(".diff-viewer").evaluate((element) => {
     const resolveBackground = (tokenName: string): string => {
@@ -3006,8 +3128,8 @@ test("channel message body renders safe markdown, highlighted code, folded logs,
   await expect(expandedDeferredDiff).toContainText("src/large.ts");
   await expect(expandedDeferredDiff.locator(".diff-viewer")).toBeVisible();
   await expect(expandedDeferredDiff).not.toContainText("deferredDiffLine190");
-  await expect(expandedDeferredDiff.getByRole("button", { name: /Show full diff/ })).toBeVisible();
-  await expandedDeferredDiff.getByRole("button", { name: /Show full diff/ }).click();
+  await expect(expandedDeferredDiff.getByRole("button", { name: /Show remaining diff ranges/ })).toBeVisible();
+  await expandedDeferredDiff.getByRole("button", { name: /Show remaining diff ranges/ }).click();
   await expect(expandedDeferredDiff).toContainText("deferredDiffLine190");
   await expandedDeferredDiff.getByRole("button", { name: "Collapse diff details" }).click();
   await expect(message.locator(".message-diff-block.deferred")).toContainText("Large diff deferred");

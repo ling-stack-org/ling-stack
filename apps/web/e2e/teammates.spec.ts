@@ -14,8 +14,7 @@ import {
 
 async function openAiTeammatesFromSettings(page: Page): Promise<void> {
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
-  await page.getByLabel("Settings sections").getByRole("button", { name: /Configuration/ }).click();
-  await page.getByRole("button", { name: "Open Teammate Management" }).click();
+  await page.getByLabel("Settings sections").getByRole("button", { name: "Teammate Management" }).click();
 }
 
 async function openChannelTeammateManager(page: Page): Promise<void> {
@@ -152,7 +151,7 @@ test("AI teammates page creates a durable teammate and opens its private workspa
   await expect(page.getByRole("dialog", { name: "Create AI teammate" })).toHaveCount(0);
 
   await openAiTeammatesFromSettings(page);
-  await expect(page.locator(".teammates-page-header.settings-return-mode .settings-tool-return-row").getByRole("button", { name: "Back to workspace tools" })).toBeVisible();
+  await expect(page.locator(".teammates-page.settings-return-mode .settings-tool-return-row").getByRole("button", { name: "Back to workspace tools" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "AI Teammates", level: 1 })).toHaveCount(0);
   await expect(page.locator(".teammate-management-grid")).toBeVisible();
   await expect(page.getByLabel("Workspace teammates")).toBeVisible();
@@ -427,7 +426,7 @@ test("AI teammates page links council management to Council Workspace", async ({
   await openAiTeammatesFromSettings(page);
   await expect(page.getByLabel("Settings sections")).toBeVisible();
   await expect(page.getByLabel("Ling Stack navigation")).toHaveCount(0);
-  await expect(page.locator(".teammates-page-header.settings-return-mode .settings-tool-return-row").getByRole("button", { name: "Back to workspace tools" })).toBeVisible();
+  await expect(page.locator(".teammates-page.settings-return-mode .settings-tool-return-row").getByRole("button", { name: "Back to workspace tools" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "AI Teammates", level: 1 })).toHaveCount(0);
   await expect(page.getByLabel("Workspace teammates")).toBeVisible();
   await expect(page.getByRole("button", { name: /New AI teammate/ })).toHaveCount(1);
@@ -455,7 +454,7 @@ test("AI teammates page links council management to Council Workspace", async ({
   await expect(page.getByRole("button", { name: "Back to workspace tools" })).toBeVisible();
   await expect(page.getByLabel("Council members")).toContainText("Ling Engineer");
   await page.getByRole("button", { name: "Back to workspace tools" }).click();
-  await expect(page.getByRole("button", { name: "Open Teammate Management" })).toBeVisible();
+  await expect(page.getByLabel("Settings sections").getByRole("button", { name: "Teammate Management" })).toBeVisible();
   expect(state.aiCouncilMembers).toHaveLength(1);
   expect(state.teammateChannelMemberships).toHaveLength(originalChannelMembershipCount);
 });

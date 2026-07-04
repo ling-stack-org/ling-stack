@@ -48,5 +48,5 @@ test("review queue resolves offline local approvals and refreshes state", async 
   await page.locator(".review-queue-empty-state").getByRole("button", { name: "Open Work Board" }).click();
   await expect(page.getByLabel("Settings sections")).toBeVisible();
   await expect(page.getByLabel("Ling Stack navigation")).toHaveCount(0);
-  await expect(page.locator(".work-board-settings-toolbar .settings-tool-return-row").getByRole("button", { name: "Back to workspace tools" })).toBeVisible();
+  await expect(page.locator(".settings-tool-return-row").getByRole("button", { name: "Back to workspace tools" })).toBeVisible();
 });

@@ -9,7 +9,7 @@ import {
 async function openCouncilWorkspace(page: Page): Promise<void> {
   const navigation = page.getByLabel("Ling Stack navigation");
   await navigation.getByRole("button", { name: "Settings" }).click();
-  await page.getByRole("button", { name: "Open Council Workspace" }).click();
+  await page.getByLabel("Settings sections").getByRole("button", { name: "Council Workspace" }).click();
 }
 
 test("Council Workspace shows council health, members, and channel entry points", async ({ page }) => {
@@ -187,7 +187,7 @@ test("Council Workspace shows council health, members, and channel entry points"
   await expect(page.getByLabel("Workspace teammates")).toBeVisible();
   await page.getByRole("button", { name: "Back to workspace tools" }).click();
 
-  await page.getByRole("button", { name: "Open Council Workspace" }).click();
+  await page.getByLabel("Settings sections").getByRole("button", { name: "Council Workspace" }).click();
   await expect(page.getByLabel("Settings sections")).toBeVisible();
   await page.getByRole("tab", { name: "Channel usage" }).click();
   await page.getByLabel("Channel usage").getByRole("button", { name: "Open channel" }).click();

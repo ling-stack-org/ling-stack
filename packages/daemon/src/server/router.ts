@@ -149,7 +149,7 @@ import {
   handlePluginsCollection,
 } from "../features/plugins/routes.js";
 import { handleWorkItemRoute, handleWorkItemsCollection } from "../features/work-items/routes.js";
-import { handleWorkspaceDirectorySelect } from "../features/workspace-directory/routes.js";
+import { handleWorkspaceDirectorySelect, handleWorkspaceTerminalCommand, handleWorkspaceTerminalProfile } from "../features/workspace-directory/routes.js";
 import {
   handleProviderDraftCheck,
   handleProviderItem,
@@ -406,6 +406,16 @@ export async function routeRequest(
 
   if (url.pathname === "/workspace-directory/select") {
     await handleWorkspaceDirectorySelect(request, response, config);
+    return;
+  }
+
+  if (url.pathname === "/workspace-terminal/profile") {
+    await handleWorkspaceTerminalProfile(request, response, config);
+    return;
+  }
+
+  if (url.pathname === "/workspace-terminal/commands") {
+    await handleWorkspaceTerminalCommand(request, response, config);
     return;
   }
 
@@ -901,6 +911,7 @@ export async function routeRequest(
     url.pathname === "/skills" ||
     url.pathname === "/skills/refresh" ||
     url.pathname === "/skills/import-draft" ||
+    url.pathname === "/skills/import-draft/optimization-preview" ||
     url.pathname === "/skills/sync/gstack/preview" ||
     url.pathname === "/skills/sync/gstack/publish" ||
     url.pathname === "/skills/sync/gstack/refresh" ||
@@ -1930,6 +1941,7 @@ export async function routeRequest(
               runnerId: runRequest.runnerId,
               teammateId: task.assigneeTeammateId ?? channel.defaultTeammateId,
               requestedSkillId: runRequest.requestedSkillId ?? task.requestedSkillId,
+              skillOptimizationMode: runRequest.skillOptimizationMode,
               skipProviderPreflight: runRequest.skipProviderPreflight,
               idempotencyKey: runRequest.idempotencyKey,
               task: {

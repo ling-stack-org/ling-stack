@@ -10,6 +10,7 @@ import {
   type RunTool,
   type SessionPermissionMode,
   type SkillApprovalProfile,
+  type SkillOptimizationMode,
   type TaskStatus,
   type TaskUpdateInput,
 } from "@ling-stack/core";
@@ -20,6 +21,7 @@ export interface TaskRunRequest {
   readonly providerPresetId: string;
   readonly runnerId?: string;
   readonly requestedSkillId?: string;
+  readonly skillOptimizationMode?: SkillOptimizationMode;
   readonly skipProviderPreflight: boolean;
   readonly idempotencyKey?: string;
   readonly tools?: readonly RunTool[];
@@ -81,6 +83,7 @@ export function parseTaskRunRequest(value: unknown): TaskRunRequest {
     providerPresetId: readString(value, "providerPresetId"),
     runnerId: readOptionalString(value, "runnerId"),
     requestedSkillId: readOptionalString(value, "requestedSkillId"),
+    skillOptimizationMode: readOptionalSkillOptimizationMode(value, "skillOptimizationMode"),
     skipProviderPreflight: readOptionalBoolean(value, "skipProviderPreflight") ?? false,
     idempotencyKey: readOptionalString(value, "idempotencyKey"),
     tools: readOptionalRunTools(value, "tools"),
@@ -104,6 +107,24 @@ function readOptionalSessionPermissionMode(record: Record<string, unknown>, key:
     throw new Error(`${key} must be one of: ${sessionPermissionModes.join(", ")}`);
   }
   return value as SessionPermissionMode;
+}
+
+function readOptionalSkillOptimizationMode(record: Record<string, unknown>, key: string): SkillOptimizationMode | undefined {
+  const value = readOptionalString(record, key);
+  if (value === undefined) {
+    return undefined;
+  }
+  const modes: readonly SkillOptimizationMode[] = [
+    "no_operation",
+    "report_only",
+    "preview_on_demand",
+    "auto_safe",
+    "auto_runtime_experimental",
+  ];
+  if (!modes.includes(value as SkillOptimizationMode)) {
+    throw new Error(`${key} must be one of: ${modes.join(", ")}`);
+  }
+  return value as SkillOptimizationMode;
 }
 
 function readOptionalPermissionPreset(record: Record<string, unknown>, key: string): PermissionPreset | undefined {

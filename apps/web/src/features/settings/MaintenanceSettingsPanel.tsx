@@ -1,14 +1,8 @@
-import { useState } from "react";
 import { CircleAlert, Database, Loader2, Power, RefreshCw, ShieldCheck } from "lucide-react";
 import { useI18n, type Translate } from "../../i18n.js";
 import { formatDateTime } from "../../lib/formatting.js";
 import { MetaRow, StatusBadge } from "../../shared/components/index.js";
 import type { StartupStatusResponse } from "../../types.js";
-import { ArchivedSettingsPanel } from "./ArchivedSettingsPanel.js";
-import { SettingsSubnav } from "./SettingsSubnav.js";
-import type { ArchivedSettingsControllerActions, ArchivedSettingsControllerState } from "./useArchivedSettingsController.js";
-
-type MaintenanceSubsectionId = "archived" | "diagnostics";
 
 const STARTUP_REQUIRED_PHASES = [
   "process_config",
@@ -26,10 +20,8 @@ const STARTUP_OPTIONAL_PHASES = [
   "plugin_warmup",
 ] as const;
 
-export function MaintenanceSettingsPanel({
+export function StartupDiagnosticsSettingsPanel({
   cwd,
-  archivedState,
-  archivedActions,
   startupStatus,
   startupStatusLoading,
   startupStatusAction,
@@ -38,8 +30,6 @@ export function MaintenanceSettingsPanel({
   onOpenRunDiagnostics,
 }: {
   readonly cwd: string;
-  readonly archivedState: ArchivedSettingsControllerState;
-  readonly archivedActions: ArchivedSettingsControllerActions;
   readonly startupStatus: StartupStatusResponse | undefined;
   readonly startupStatusLoading: boolean;
   readonly startupStatusAction: "refresh" | undefined;
@@ -48,42 +38,13 @@ export function MaintenanceSettingsPanel({
   readonly onOpenRunDiagnostics: () => void;
 }): JSX.Element {
   const { t } = useI18n();
-  const [activeSubsection, setActiveSubsection] = useState<MaintenanceSubsectionId>("archived");
 
   return (
     <div className="settings-section-stack">
-      <SettingsSubnav
-        label="Data and diagnostics sections"
-        activeId={activeSubsection}
-        onChange={(id) => setActiveSubsection(id as MaintenanceSubsectionId)}
-        options={[
-          {
-            id: "archived",
-            label: "Archived data",
-            description: "Restore archived conversations, teammates, channels, and branches.",
-            badge: String(
-              archivedState.archivedConversations.length +
-              archivedState.archivedTeammates.length +
-              archivedState.archivedChannels.length +
-              archivedState.archivedBranches.length
-            ),
-          },
-          {
-            id: "diagnostics",
-            label: "System health",
-            description: "Inspect startup readiness and open support diagnostics when needed.",
-            badge: startupStatus ? t(startupStatus.state) : undefined,
-          },
-        ]}
-      />
-
-      {activeSubsection === "archived" ? <ArchivedSettingsPanel state={archivedState} actions={archivedActions} /> : null}
-
-      {activeSubsection === "diagnostics" ? (
-        <section className="panel settings-panel developer-settings-panel" aria-labelledby="developer-settings-title">
+      <section className="panel settings-panel developer-settings-panel" aria-labelledby="developer-settings-title">
         <div className="panel-title">
           <Database size={18} />
-          <h2 id="developer-settings-title">{t("System health")}</h2>
+          <h2 id="developer-settings-title">{t("Developer")}</h2>
         </div>
         <div className="developer-settings-stack">
           <StartupReadinessSection
@@ -97,17 +58,16 @@ export function MaintenanceSettingsPanel({
           />
           <div className="settings-action-box">
             <div>
-              <strong>{t("Support diagnostics")}</strong>
+              <strong>{t("Run Diagnostics")}</strong>
               <small>{t("Inspect raw runs, events, artifacts, approvals, shell snapshots, and thread bindings for support debugging.")}</small>
             </div>
             <button className="secondary-button" type="button" onClick={onOpenRunDiagnostics}>
               <Database size={16} />
-              {t("Open Support Diagnostics")}
+              {t("Open Run Diagnostics")}
             </button>
           </div>
         </div>
-        </section>
-      ) : null}
+      </section>
     </div>
   );
 }

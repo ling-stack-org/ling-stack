@@ -82,6 +82,27 @@ export function channelTeamEvaluationSelectSql(whereClause: string): string {
   `;
 }
 
+export function skillRegressionRunSelectSql(whereClause: string): string {
+  return `
+    SELECT
+      id,
+      workspace_id,
+      skill_id,
+      source_snapshot_id,
+      compiled_view_id,
+      suite_id,
+      fixtures_json,
+      observations_json,
+      results_json,
+      summary_json,
+      lifecycle_verdict,
+      auto_safe_eligible,
+      created_at
+    FROM skill_regression_runs
+    ${whereClause}
+  `;
+}
+
 export function channelPlaybookCandidateSelectSql(whereClause: string): string {
   return `
     SELECT
@@ -691,6 +712,28 @@ export function skillSourceArtifactSelectSql(whereClause: string): string {
       created_at,
       updated_at
     FROM skill_source_artifacts
+    ${whereClause}
+  `;
+}
+
+export function skillCompiledRuntimeViewSelectSql(whereClause: string): string {
+  return `
+    SELECT
+      id,
+      workspace_id,
+      skill_id,
+      source_snapshot_id,
+      compiler_version,
+      core_rules_markdown,
+      lazy_references_json,
+      source_map_json,
+      token_estimate,
+      fallback_policy,
+      authority_boundary_json,
+      review_status,
+      created_at,
+      updated_at
+    FROM skill_compiled_runtime_views
     ${whereClause}
   `;
 }

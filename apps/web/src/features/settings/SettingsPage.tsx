@@ -1,5 +1,20 @@
 import { type ReactNode, useState } from "react";
-import { ArrowLeft } from "lucide-react";
+import {
+  Archive,
+  ArrowLeft,
+  Bot,
+  Box,
+  Brain,
+  Database,
+  GitBranch,
+  Kanban,
+  Palette,
+  PlugZap,
+  Shield,
+  UserCircle,
+  Wrench,
+  type LucideIcon,
+} from "lucide-react";
 import type { RuntimeSettingsFormState } from "../../domains/settings/use-settings-domain.js";
 import type { McpBusyAction } from "../../domains/mcp/use-mcp-domain.js";
 import type { PluginActionNotice, PluginBusyAction } from "../../domains/plugins/use-plugins-domain.js";
@@ -24,54 +39,79 @@ import type {
   UserProfile,
   WorkspaceRuntimeSettings,
 } from "../../types.js";
+import { McpToolsPage } from "../mcp/McpToolsPage.js";
+import { ArchivedSettingsPanel } from "./ArchivedSettingsPanel.js";
 import { ExecutionPermissionsSettingsPanel } from "./ExecutionPermissionsSettingsPanel.js";
+import { ExternalWorkSettingsPanel } from "./ExternalWorkSettingsPanel.js";
 import { InterfacePreferencesSettingsPanel } from "./InterfacePreferencesSettingsPanel.js";
-import { IntegrationsSettingsPanel } from "./IntegrationsSettingsPanel.js";
-import { MaintenanceSettingsPanel } from "./MaintenanceSettingsPanel.js";
+import { StartupDiagnosticsSettingsPanel } from "./MaintenanceSettingsPanel.js";
+import { PluginManagerSettingsPanel } from "./PluginManagerSettingsPanel.js";
 import { ProfileSettingsPanel } from "./ProfileSettingsPanel.js";
-import { SettingsWorkspaceToolsPanel, type WorkspaceToolCounts } from "./SettingsWorkspaceToolsPanel.js";
 import { SkillsSettingsPanel } from "./SkillsSettingsPanel.js";
 import { useArchivedSettingsController } from "./useArchivedSettingsController.js";
 
 type SettingsSectionId =
-  | "overview"
-  | "profile"
-  | "interface-language"
-  | "runtime-permissions"
-  | "connections"
+  | "model-workbench"
+  | "ai-teammates"
+  | "ai-councils"
+  | "work-board"
+  | "approval-strategy"
+  | "personal-profile"
+  | "interface-preferences"
+  | "external-work"
+  | "mcp-tools"
+  | "plugin-manager"
   | "skills"
-  | "data-diagnostics";
+  | "archived-items"
+  | "startup-diagnostics";
+
+type SettingsWorkspaceToolView = "" | "providers" | "teammates" | "councils" | "work_board";
+
+type SettingsSectionItem = {
+  readonly id: SettingsSectionId;
+  readonly label: string;
+  readonly pageTitle?: string;
+  readonly description: string;
+  readonly icon: LucideIcon;
+};
 
 const settingsSectionGroups: readonly {
   readonly heading?: string;
-  readonly items: readonly { readonly id: SettingsSectionId; readonly label: string; readonly description: string }[];
+  readonly items: readonly SettingsSectionItem[];
 }[] = [
   {
+    heading: "Workspace tools",
     items: [
       {
-        id: "overview",
-        label: "Configuration overview",
-        description: "Workspace setup, work controls, and default authorization",
+        id: "model-workbench",
+        label: "Model Workbench",
+        description: "Configure model routes, API keys, and readiness checks.",
+        icon: Box,
       },
-    ],
-  },
-  {
-    heading: "Personal",
-    items: [
       {
-        id: "profile",
-        label: "User profile",
-        description: "Avatar, display name, handle, and local profile overview",
+        id: "ai-teammates",
+        label: "Teammate Management",
+        description: "Manage individual AI teammates, models, and private chat settings.",
+        icon: Bot,
       },
-    ],
-  },
-  {
-    heading: "Preferences",
-    items: [
       {
-        id: "interface-language",
-        label: "Interface and language",
-        description: "Theme, app language, and AI response language",
+        id: "ai-councils",
+        pageTitle: "Council Workspace",
+        label: "Council Workspace",
+        description: "Manage multiple councils, members, and channel connections.",
+        icon: Brain,
+      },
+      {
+        id: "work-board",
+        label: "Work Board",
+        description: "Review cross-channel work status as a workspace tool.",
+        icon: Kanban,
+      },
+      {
+        id: "approval-strategy",
+        label: "Default authorization",
+        description: "Set the default authorization for new conversations.",
+        icon: Shield,
       },
     ],
   },
@@ -79,19 +119,40 @@ const settingsSectionGroups: readonly {
     heading: "Workspace",
     items: [
       {
-        id: "runtime-permissions",
-        label: "Runtime and permissions",
-        description: "Default authorization, tool policy, and execution runners",
+        id: "personal-profile",
+        label: "Profile",
+        description: "Manage local identity and profile details.",
+        icon: UserCircle,
       },
       {
-        id: "connections",
-        label: "Connections",
-        description: "Work intake, tool servers, and plugin bundles",
+        id: "interface-preferences",
+        label: "Interface preferences",
+        description: "Theme, language, and AI response language",
+        icon: Palette,
+      },
+      {
+        id: "external-work",
+        label: "External work",
+        description: "Connect GitHub or Linear workflow intake for the selected channel.",
+        icon: GitBranch,
+      },
+      {
+        id: "mcp-tools",
+        label: "MCP tool servers",
+        description: "Manage tool servers and sync tool access for AI teammates.",
+        icon: Wrench,
+      },
+      {
+        id: "plugin-manager",
+        label: "Plugin Manager",
+        description: "Manage trusted local presets and bundled capability packages.",
+        icon: PlugZap,
       },
       {
         id: "skills",
         label: "Skills",
-        description: "Skill policy and workspace skill library",
+        description: "Skill governance and workspace skill library",
+        icon: Brain,
       },
     ],
   },
@@ -99,9 +160,16 @@ const settingsSectionGroups: readonly {
     heading: "Maintenance",
     items: [
       {
-        id: "data-diagnostics",
-        label: "Data and diagnostics",
-        description: "Archived data, system health, and support diagnostics",
+        id: "archived-items",
+        label: "Archived items",
+        description: "Restore archived conversations, teammates, channels, and branches.",
+        icon: Archive,
+      },
+      {
+        id: "startup-diagnostics",
+        label: "Startup and diagnostics",
+        description: "Inspect startup readiness and open raw run diagnostics when support needs evidence.",
+        icon: Database,
       },
     ],
   },
@@ -120,7 +188,6 @@ export function SettingsPage({
   workspaceResponseLanguage,
   selectedChannel,
   externalWorkStatus,
-  workspaceToolCounts,
   mcpServers,
   mcpTools,
   mcpLoading,
@@ -191,6 +258,7 @@ export function SettingsPage({
   onOpenCouncils,
   onOpenWorkBoard,
   workspaceToolDetail,
+  workspaceToolView,
   onCloseWorkspaceTool,
   onBackToApplication,
 }: {
@@ -206,7 +274,6 @@ export function SettingsPage({
   readonly workspaceResponseLanguage: ResponseLanguagePreference;
   readonly selectedChannel: Channel | undefined;
   readonly externalWorkStatus: ExternalWorkStatusResponse | undefined;
-  readonly workspaceToolCounts: WorkspaceToolCounts;
   readonly mcpServers: readonly McpServer[];
   readonly mcpTools: readonly McpTool[];
   readonly mcpLoading: boolean;
@@ -281,19 +348,47 @@ export function SettingsPage({
   readonly onOpenCouncils: () => void;
   readonly onOpenWorkBoard: () => void;
   readonly workspaceToolDetail?: ReactNode;
+  readonly workspaceToolView?: SettingsWorkspaceToolView;
   readonly onCloseWorkspaceTool?: () => void;
   readonly onBackToApplication?: () => void;
 }): JSX.Element {
   const { t } = useI18n();
-  const [activeSection, setActiveSection] = useState<SettingsSectionId>("overview");
-  const activeSectionGroup = settingsSectionGroups.find((group) => group.items.some((item) => item.id === activeSection));
-  const activeSectionItem = activeSectionGroup?.items.find((item) => item.id === activeSection) ?? settingsSectionGroups[0]?.items[0];
-  const workspaceToolDetailOpen = activeSection === "overview" && workspaceToolDetail !== undefined && workspaceToolDetail !== null;
+  const [activeSection, setActiveSection] = useState<SettingsSectionId>("personal-profile");
+  const workspaceToolDetailOpen = workspaceToolDetail !== undefined && workspaceToolDetail !== null;
+  const workspaceToolSection = workspaceToolViewToSectionId(workspaceToolView);
+  const visibleActiveSection = workspaceToolDetailOpen && workspaceToolSection
+    ? workspaceToolSection
+    : isWorkspaceToolSection(activeSection)
+      ? "personal-profile"
+      : activeSection;
+  const activeSectionGroup = settingsSectionGroups.find((group) => group.items.some((item) => item.id === visibleActiveSection));
+  const activeSectionItem = activeSectionGroup?.items.find((item) => item.id === visibleActiveSection) ?? settingsSectionGroups[0]?.items[0];
   const archivedController = useArchivedSettingsController({
     cwd,
-    enabled: activeSection === "data-diagnostics",
+    enabled: visibleActiveSection === "archived-items",
     onChanged: onArchivedItemsChanged,
   });
+
+  const selectSettingsSection = (sectionId: SettingsSectionId): void => {
+    setActiveSection(sectionId);
+    if (sectionId === "model-workbench") {
+      onOpenProviders();
+      return;
+    }
+    if (sectionId === "ai-teammates") {
+      onOpenTeammates();
+      return;
+    }
+    if (sectionId === "ai-councils") {
+      onOpenCouncils();
+      return;
+    }
+    if (sectionId === "work-board") {
+      onOpenWorkBoard();
+      return;
+    }
+    onCloseWorkspaceTool?.();
+  };
 
   return (
     <div className="settings-layout">
@@ -307,57 +402,44 @@ export function SettingsPage({
         {settingsSectionGroups.map((group, groupIndex) => (
           <div key={group.heading ?? `primary-${groupIndex}`} className="settings-section-group">
             {group.heading ? <span className="settings-section-group-label">{t(group.heading)}</span> : null}
-            {group.items.map((item) => (
-              <button
-                key={item.id}
-                className={activeSection === item.id ? "settings-section-item active" : "settings-section-item"}
-                type="button"
-                onClick={() => {
-                  setActiveSection(item.id);
-                  onCloseWorkspaceTool?.();
-                }}
-                title={t(item.description)}
-                aria-current={activeSection === item.id ? "page" : undefined}
-              >
-                <span>{t(item.label)}</span>
-              </button>
-            ))}
+            {group.items.map((item) => {
+              const SectionIcon = item.icon;
+              return (
+                <button
+                  key={item.id}
+                  className={visibleActiveSection === item.id ? "settings-section-item active" : "settings-section-item"}
+                  type="button"
+                  onClick={() => {
+                    selectSettingsSection(item.id);
+                  }}
+                  title={t(item.description)}
+                  aria-current={visibleActiveSection === item.id ? "page" : undefined}
+                >
+                  <SectionIcon className="settings-section-icon" size={16} strokeWidth={2} aria-hidden="true" />
+                  <span>{t(item.label)}</span>
+                </button>
+              );
+            })}
           </div>
         ))}
       </nav>
 
       <div className="settings-content-stack">
-        {activeSectionItem && !workspaceToolDetailOpen ? (
+        {activeSectionItem ? (
           <header className="settings-section-head settings-page-section-head">
             <span>{t(activeSectionGroup?.heading ?? "Settings")}</span>
-            <h2>{t(activeSectionItem.label)}</h2>
+            <h2>{t(activeSectionItem.pageTitle ?? activeSectionItem.label)}</h2>
             <p>{t(activeSectionItem.description)}</p>
           </header>
         ) : null}
 
         {workspaceToolDetailOpen ? workspaceToolDetail : null}
 
-        {activeSection === "overview" && !workspaceToolDetailOpen ? (
-          <SettingsWorkspaceToolsPanel
-            counts={workspaceToolCounts}
-            defaultPermissionMode={workspaceDefaultPermissionMode}
-            defaultPermissionPreset={workspaceDefaultPermissionPreset}
-            onOpenProviders={onOpenProviders}
-            onOpenTeammates={onOpenTeammates}
-            onOpenCouncils={onOpenCouncils}
-            onOpenWorkBoard={onOpenWorkBoard}
-            onOpenApprovalPolicy={() => setActiveSection("runtime-permissions")}
-          />
+        {visibleActiveSection === "personal-profile" && !workspaceToolDetailOpen ? (
+          <ProfileSettingsPanel cwd={cwd} onProfileChange={onProfileChange} />
         ) : null}
 
-        {activeSection === "profile" ? (
-          <ProfileSettingsPanel
-            cwd={cwd}
-            onProfileChange={onProfileChange}
-          />
-        ) : null}
-
-        {activeSection === "interface-language" ? (
+        {visibleActiveSection === "interface-preferences" && !workspaceToolDetailOpen ? (
           <InterfacePreferencesSettingsPanel
             effectiveConfig={effectiveConfig}
             workspaceResponseLanguage={workspaceResponseLanguage}
@@ -365,7 +447,7 @@ export function SettingsPage({
           />
         ) : null}
 
-        {activeSection === "runtime-permissions" ? (
+        {visibleActiveSection === "approval-strategy" && !workspaceToolDetailOpen ? (
           <ExecutionPermissionsSettingsPanel
             policy={policy}
             form={form}
@@ -394,28 +476,14 @@ export function SettingsPage({
           />
         ) : null}
 
-        {activeSection === "connections" ? (
-          <IntegrationsSettingsPanel
-            cwd={cwd}
+        {visibleActiveSection === "external-work" && !workspaceToolDetailOpen ? (
+          <ExternalWorkSettingsPanel
             selectedChannel={selectedChannel}
             externalWorkStatus={externalWorkStatus}
             externalWorkStatusLoading={externalWorkStatusLoading}
             externalWorkStatusAction={externalWorkStatusAction}
             externalWorkSecretAction={externalWorkSecretAction}
             externalWorkWorkflowAction={externalWorkWorkflowAction}
-            mcpServers={mcpServers}
-            mcpTools={mcpTools}
-            mcpLoading={mcpLoading}
-            mcpBusyServerId={mcpBusyServerId}
-            mcpBusyAction={mcpBusyAction}
-            plugins={plugins}
-            pluginsLoading={pluginsLoading}
-            pluginBusyId={pluginBusyId}
-            pluginBusyAction={pluginBusyAction}
-            latestPluginApplyResult={latestPluginApplyResult}
-            latestPluginRuntimePreview={latestPluginRuntimePreview}
-            latestPluginNotice={latestPluginNotice}
-            errorMessage={errorMessage}
             onRefreshExternalWork={onRefreshExternalWork}
             onExternalWorkAction={onExternalWorkAction}
             onConfigureExternalWorkWorkflow={onConfigureExternalWorkWorkflow}
@@ -423,32 +491,65 @@ export function SettingsPage({
             onDeleteExternalWorkSecret={onDeleteExternalWorkSecret}
             onOpenExternalWorkRecords={onOpenExternalWorkRecords}
             onOpenExternalWorkTriage={onOpenExternalWorkTriage}
-            onRefreshMcp={onRefreshMcp}
-            onCreateMcpServer={onCreateMcpServer}
-            onUpdateMcpServer={onUpdateMcpServer}
-            onDeleteMcpServer={onDeleteMcpServer}
-            onCheckMcpServer={onCheckMcpServer}
-            onSyncMcpTools={onSyncMcpTools}
-            onRefreshPlugins={onRefreshPlugins}
-            onApplyPluginPreset={onApplyPluginPreset}
-            onCheckPlugin={onCheckPlugin}
-            onValidatePluginPackage={onValidatePluginPackage}
-            onInstallPlugin={onInstallPlugin}
-            onUninstallPlugin={onUninstallPlugin}
-            onRefreshPluginPackage={onRefreshPluginPackage}
-            onPreviewPluginRuntime={onPreviewPluginRuntime}
-            onEnablePlugin={onEnablePlugin}
-            onDisablePlugin={onDisablePlugin}
           />
         ) : null}
 
-        {activeSection === "skills" ? <SkillsSettingsPanel cwd={cwd} skillLibraryRefreshToken={skillLibraryRefreshToken} /> : null}
+        {visibleActiveSection === "mcp-tools" && !workspaceToolDetailOpen ? (
+          <div className="settings-section-stack">
+            <McpToolsPage
+              servers={mcpServers}
+              tools={mcpTools}
+              isLoading={mcpLoading}
+              busyServerId={mcpBusyServerId}
+              busyAction={mcpBusyAction}
+              errorMessage={errorMessage}
+              cwd={cwd}
+              onRefresh={onRefreshMcp}
+              onCreate={onCreateMcpServer}
+              onUpdate={onUpdateMcpServer}
+              onDelete={onDeleteMcpServer}
+              onCheck={onCheckMcpServer}
+              onSyncTools={onSyncMcpTools}
+            />
+          </div>
+        ) : null}
 
-        {activeSection === "data-diagnostics" ? (
-          <MaintenanceSettingsPanel
+        {visibleActiveSection === "plugin-manager" && !workspaceToolDetailOpen ? (
+          <PluginManagerSettingsPanel
             cwd={cwd}
-            archivedState={archivedController.state}
-            archivedActions={archivedController.actions}
+            plugins={plugins}
+            isLoading={pluginsLoading}
+            busyPluginId={pluginBusyId}
+            busyAction={pluginBusyAction}
+            latestApplyResult={latestPluginApplyResult}
+            latestRuntimePreview={latestPluginRuntimePreview}
+            latestNotice={latestPluginNotice}
+            onRefresh={onRefreshPlugins}
+            onApplyPreset={onApplyPluginPreset}
+            onCheck={onCheckPlugin}
+            onValidatePackage={onValidatePluginPackage}
+            onInstall={onInstallPlugin}
+            onUninstall={onUninstallPlugin}
+            onRefreshPackage={onRefreshPluginPackage}
+            onRuntimePreview={onPreviewPluginRuntime}
+            onEnable={onEnablePlugin}
+            onDisable={onDisablePlugin}
+            onOpenMcpSettings={() => {
+              onRefreshMcp();
+              setActiveSection("mcp-tools");
+            }}
+          />
+        ) : null}
+
+        {visibleActiveSection === "skills" && !workspaceToolDetailOpen ? <SkillsSettingsPanel cwd={cwd} skillLibraryRefreshToken={skillLibraryRefreshToken} /> : null}
+
+        {visibleActiveSection === "archived-items" && !workspaceToolDetailOpen ? (
+          <ArchivedSettingsPanel state={archivedController.state} actions={archivedController.actions} />
+        ) : null}
+
+        {visibleActiveSection === "startup-diagnostics" && !workspaceToolDetailOpen ? (
+          <StartupDiagnosticsSettingsPanel
+            cwd={cwd}
             startupStatus={startupStatus}
             startupStatusLoading={startupStatusLoading}
             startupStatusAction={startupStatusAction}
@@ -460,4 +561,24 @@ export function SettingsPage({
       </div>
     </div>
   );
+}
+
+function workspaceToolViewToSectionId(view: SettingsWorkspaceToolView | undefined): SettingsSectionId | undefined {
+  if (view === "providers") {
+    return "model-workbench";
+  }
+  if (view === "teammates") {
+    return "ai-teammates";
+  }
+  if (view === "councils") {
+    return "ai-councils";
+  }
+  if (view === "work_board") {
+    return "work-board";
+  }
+  return undefined;
+}
+
+function isWorkspaceToolSection(sectionId: SettingsSectionId): boolean {
+  return sectionId === "model-workbench" || sectionId === "ai-teammates" || sectionId === "ai-councils" || sectionId === "work-board";
 }

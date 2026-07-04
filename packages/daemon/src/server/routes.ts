@@ -212,7 +212,7 @@ export function parseLingThreadRoute(
 
 export type SkillRoute =
   | { readonly kind: "draft"; readonly draftId: string; readonly action?: "publish" }
-  | { readonly kind: "skill"; readonly skillId: string; readonly action?: "corrections" | "source" | "source-archive" | "source-rollback" | "source-artifacts" }
+  | { readonly kind: "skill"; readonly skillId: string; readonly action?: "corrections" | "source" | "source-archive" | "source-rollback" | "source-artifacts" | "optimization-preview" | "compiled-views" | "compiled-view-archive"; readonly viewId?: string }
   | { readonly kind: "candidate"; readonly candidateId: string; readonly action?: "review" | "draft" };
 
 export function parseSkillRoute(pathname: string): SkillRoute | undefined {
@@ -246,6 +246,15 @@ export function parseSkillRoute(pathname: string): SkillRoute | undefined {
   }
   if (segments.length === 4 && segments[0] === "skills" && segments[2] === "source" && segments[3] === "artifacts") {
     return { kind: "skill", skillId: segments[1], action: "source-artifacts" };
+  }
+  if (segments.length === 3 && segments[0] === "skills" && segments[2] === "optimization-preview") {
+    return { kind: "skill", skillId: segments[1], action: "optimization-preview" };
+  }
+  if (segments.length === 3 && segments[0] === "skills" && segments[2] === "compiled-views") {
+    return { kind: "skill", skillId: segments[1], action: "compiled-views" };
+  }
+  if (segments.length === 5 && segments[0] === "skills" && segments[2] === "compiled-views" && segments[4] === "archive") {
+    return { kind: "skill", skillId: segments[1], action: "compiled-view-archive", viewId: segments[3] };
   }
   if (segments.length === 2 && segments[0] === "skills") {
     return { kind: "skill", skillId: segments[1] };

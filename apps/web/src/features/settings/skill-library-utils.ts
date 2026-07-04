@@ -201,6 +201,24 @@ export function sourceHealthKindLabel(kind: string, t: (key: string) => string):
   if (kind === "orphaned_source_snapshot") {
     return t("Orphaned source snapshot");
   }
+  if (kind === "token_bloat") {
+    return t("Token bloat");
+  }
+  if (kind === "missing_or_weak_routing_description") {
+    return t("Weak routing description");
+  }
+  if (kind === "reference_duplication") {
+    return t("Reference duplication");
+  }
+  if (kind === "body_taxonomy_risk") {
+    return t("Mixed skill body");
+  }
+  if (kind === "source_snapshot_gap") {
+    return t("Source snapshot gap");
+  }
+  if (kind === "optimization_unsafe") {
+    return t("Manual optimization review");
+  }
   return kind;
 }
 

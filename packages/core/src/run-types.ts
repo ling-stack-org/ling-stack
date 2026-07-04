@@ -252,13 +252,19 @@ import type {
   WorkItemRouteRequest,
 } from "./work-item-types.js";
 import type {
+  CreateSkillCompiledRuntimeViewInput,
   CreateSkillImportDraftInput,
+  CreateSkillRegressionRunInput,
   CreateSkillSourceArtifactInput,
   CreateSkillSourceSnapshotInput,
+  ListSkillCompiledRuntimeViewOptions,
+  ListSkillRegressionRunsOptions,
   ListSkillSourceArtifactOptions,
   ListSkillRegistryOptions,
   ListSkillSourceSnapshotOptions,
+  SkillCompiledRuntimeViewRecord,
   SkillImportDraft,
+  SkillRegressionRun,
   SkillRegistryEntry,
   SkillSourceArtifact,
   SkillSourceSnapshot,
@@ -1256,6 +1262,9 @@ export interface RunStore {
   createChannelTeamEvaluationRun(input: CreateChannelTeamEvaluationRunInput, now: string): ChannelTeamEvaluationRun;
   getChannelTeamEvaluationRun(id: string): ChannelTeamEvaluationRun | undefined;
   listChannelTeamEvaluationRuns(options: ListChannelTeamEvaluationRunsOptions): ChannelTeamEvaluationRun[];
+  createSkillRegressionRun(input: CreateSkillRegressionRunInput, now: string): SkillRegressionRun;
+  getSkillRegressionRun(id: string): SkillRegressionRun | undefined;
+  listSkillRegressionRuns(options?: ListSkillRegressionRunsOptions): SkillRegressionRun[];
   getRun(runId: string): RunSession | undefined;
   listRuns(options?: ListRunsOptions): RunSession[];
   listEvents(runId: string, options?: ListRunEventsOptions): RunEventEnvelope[];
@@ -1739,6 +1748,13 @@ export interface RunStore {
   upsertSkillSourceArtifact(input: CreateSkillSourceArtifactInput, now: string): SkillSourceArtifact;
   getSkillSourceArtifact(id: string): SkillSourceArtifact | undefined;
   listSkillSourceArtifacts(options?: ListSkillSourceArtifactOptions): SkillSourceArtifact[];
+  upsertSkillCompiledRuntimeView(input: CreateSkillCompiledRuntimeViewInput, now: string): SkillCompiledRuntimeViewRecord;
+  getSkillCompiledRuntimeView(id: string): SkillCompiledRuntimeViewRecord | undefined;
+  listSkillCompiledRuntimeViews(options?: ListSkillCompiledRuntimeViewOptions): SkillCompiledRuntimeViewRecord[];
+  archiveSkillCompiledRuntimeView(id: string, now: string): SkillCompiledRuntimeViewRecord | undefined;
+  createSkillRegressionRun(input: CreateSkillRegressionRunInput, now: string): SkillRegressionRun;
+  getSkillRegressionRun(id: string): SkillRegressionRun | undefined;
+  listSkillRegressionRuns(options?: ListSkillRegressionRunsOptions): SkillRegressionRun[];
   createSkillImportDraft(input: CreateSkillImportDraftInput, now: string): SkillImportDraft;
   getSkillImportDraft(id: string): SkillImportDraft | undefined;
   publishSkillImportDraft(id: string, now: string): SkillRegistryEntry[];
@@ -2156,6 +2172,13 @@ export type SkillRegistryStoreFacet = RunStoreFacet<
   | "upsertSkillSourceArtifact"
   | "getSkillSourceArtifact"
   | "listSkillSourceArtifacts"
+  | "upsertSkillCompiledRuntimeView"
+  | "getSkillCompiledRuntimeView"
+  | "listSkillCompiledRuntimeViews"
+  | "archiveSkillCompiledRuntimeView"
+  | "createSkillRegressionRun"
+  | "getSkillRegressionRun"
+  | "listSkillRegressionRuns"
   | "createSkillImportDraft"
   | "getSkillImportDraft"
   | "publishSkillImportDraft"

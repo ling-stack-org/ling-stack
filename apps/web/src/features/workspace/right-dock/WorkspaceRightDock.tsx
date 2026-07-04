@@ -5,13 +5,13 @@ import {
   FileText,
   Globe2,
   History,
-  ListChecks,
   Search,
   ShieldCheck,
   SquareTerminal,
 } from "lucide-react";
 import { previewArtifactContent } from "../../../api.js";
 import { useI18n } from "../../../i18n.js";
+import { useTheme } from "../../../theme.js";
 import type { ProposedPlanArtifact } from "../../../types.js";
 import {
   createDockPageEntry,
@@ -29,7 +29,6 @@ import {
   type DockPageStackEntry,
   type DockReviewArtifactRef,
   type DockReviewCodeLine,
-  type DockReviewFilter,
   type DockReviewInlineNote,
   type DockReviewItem,
   type DockSurfaceKind,
@@ -42,6 +41,7 @@ import {
   type PlanStatusFilter,
 } from "./PlanHistoryPage.js";
 import { reviewNeedsAction } from "./projections.js";
+import { WorkspaceTerminalPanel, type WorkspaceTerminalSession } from "../WorkspaceTerminalPanel.js";
 
 export interface WorkspaceRightDockForcedDetail {
   readonly id: string;
@@ -67,6 +67,7 @@ export interface WorkspaceRightDockProps {
   readonly reviewItems: readonly DockReviewItem[];
   readonly evidenceGroups: readonly DockEvidenceGroupView[];
   readonly fileItems: readonly DockFileItem[];
+  readonly terminalSession?: WorkspaceTerminalSession;
   readonly proposedPlans?: readonly ProposedPlanArtifact[];
   readonly proposedPlansLoading?: boolean;
   readonly proposedPlansError?: string;
@@ -101,6 +102,7 @@ export function WorkspaceRightDock({
   reviewItems,
   evidenceGroups,
   fileItems,
+  terminalSession,
   proposedPlans = [],
   proposedPlansLoading = false,
   proposedPlansError = "",
@@ -124,7 +126,6 @@ export function WorkspaceRightDock({
 }: WorkspaceRightDockProps): JSX.Element | null {
   const { t } = useI18n();
   const [stack, setStack] = useState<readonly DockPageStackEntry[]>([]);
-  const [reviewFilter, setReviewFilter] = useState<DockReviewFilter>("all");
   const [planScope, setPlanScope] = useState<"thread" | "channel">("thread");
   const [planStatusFilter, setPlanStatusFilter] = useState<PlanStatusFilter>("current");
   const [artifactPreviewByReviewId, setArtifactPreviewByReviewId] = useState<Readonly<Record<string, DockReviewItem["codePreview"]>>>({});
@@ -138,6 +139,7 @@ export function WorkspaceRightDock({
   );
   const browserEvidenceCount = browserGroups.reduce((count, group) => count + group.items.length, 0);
   const terminalEvidenceCount = terminalGroups.reduce((count, group) => count + group.items.length, 0);
+  const hasTerminalSession = Boolean(terminalSession);
   const evidenceCount = evidenceGroups.reduce((count, group) => count + group.items.length, 0);
   const visiblePlanCount = proposedPlans.filter((plan) => plan.status !== "archived").length;
   const enrichedReviewItems = useMemo(() => reviewItems.map((item) => {
@@ -152,7 +154,11 @@ export function WorkspaceRightDock({
       stats: item.stats ?? preview.stats,
     };
   }), [artifactPreviewByReviewId, reviewItems]);
-  const reviewActionCount = enrichedReviewItems.filter(reviewNeedsAction).length;
+  const codeChangeReviewItems = useMemo(
+    () => enrichedReviewItems.filter((item) => item.group === "files"),
+    [enrichedReviewItems],
+  );
+  const codeChangeActionCount = codeChangeReviewItems.filter(reviewNeedsAction).length;
   const detailNodeById = useMemo(() => {
     const map = new Map<string, ReactNode>();
     for (const item of enrichedReviewItems) {
@@ -307,42 +313,37 @@ export function WorkspaceRightDock({
   const pages = useMemo<readonly RightDockPageManifest[]>(() => {
     const manifests: RightDockPageManifest[] = [
       {
-      id: "review",
-      label: t("Review workbench"),
-      icon: <ListChecks size={16} />,
-      launcherItem: {
-        description: t("Changes, risks, evidence gaps, and approval gates"),
-        count: reviewActionCount,
-        statusLabel: reviewActionCount > 0 ? t("{count} items to inspect", { count: reviewActionCount }) : t("Clean"),
-        severity: reviewActionCount > 0 ? "warning" : "neutral",
+        id: "review",
+        label: t("Review workbench"),
+        icon: <Code2 size={16} />,
+        launcherItem: {
+          description: t("Changed files and diff previews"),
+          count: codeChangeReviewItems.length,
+          statusLabel: codeChangeReviewItems.length > 0 ? t("{count} code changes", { count: codeChangeReviewItems.length }) : t("No code changes"),
+          severity: codeChangeActionCount > 0 ? "warning" : codeChangeReviewItems.length > 0 ? "info" : "neutral",
+        },
+        render: () => (
+          <ReviewQueuePage
+            items={codeChangeReviewItems}
+            activeFilter="files"
+            filters={[{ id: "files", label: t("Code changes") }]}
+            emptyTitle={t("No code changes")}
+            emptyDescription={t("Changed files and diff previews will appear here.")}
+            needsActionLabel={t("Pending")}
+            trackedLabel={t("Tracked")}
+            blockerLabel={t("Blocker")}
+            sendReviewLabel={t("Send review")}
+            clearReviewLabel={t("Clear")}
+            detailEmptyTitle={t("Select a code change")}
+            detailEmptyDescription={t("Choose a changed file to inspect its diff.")}
+            detailPresentation="accordion"
+            showStatusSummary={false}
+            renderItemDetail={(item) => <DockReviewItemDetail item={item} cwd={cwd} compact />}
+            onFilterChange={() => undefined}
+          />
+        ),
       },
-      render: () => (
-        <ReviewQueuePage
-          items={enrichedReviewItems}
-          activeFilter={reviewFilter}
-          filters={[
-            { id: "all", label: t("All") },
-            { id: "needs_action", label: t("Needs action") },
-            { id: "risk", label: t("Risk") },
-            { id: "runtime", label: t("Runtime") },
-            { id: "files", label: t("Changes") },
-          ]}
-          emptyTitle={t("No code review items")}
-          emptyDescription={t("Changed files, failed runs, evidence gaps, and approval gates will appear here.")}
-          needsActionLabel={t("Pending")}
-          trackedLabel={t("Tracked")}
-          blockerLabel={t("Blocker")}
-          sendReviewLabel={t("Send review")}
-          clearReviewLabel={t("Clear")}
-          detailEmptyTitle={t("Select a review item")}
-          detailEmptyDescription={t("Choose an item to inspect code, fallback state, or approval context.")}
-          detailPresentation="accordion"
-          renderItemDetail={(item) => <DockReviewItemDetail item={item} cwd={cwd} compact />}
-          onFilterChange={setReviewFilter}
-        />
-      ),
-    },
-    {
+      {
       id: "plans",
       label: t("Plans"),
       icon: <History size={16} />,
@@ -485,10 +486,16 @@ export function WorkspaceRightDock({
       launcherItem: {
         description: t("Shell snapshots and terminal evidence"),
         count: terminalEvidenceCount,
-        statusLabel: terminalEvidenceCount > 0 ? t("{count} terminal items", { count: terminalEvidenceCount }) : t("No terminal evidence"),
-        severity: terminalEvidenceCount > 0 ? "info" : "neutral",
+        statusLabel: hasTerminalSession ? t("Terminal session") : terminalEvidenceCount > 0 ? t("{count} terminal items", { count: terminalEvidenceCount }) : t("No terminal evidence"),
+        severity: hasTerminalSession || terminalEvidenceCount > 0 ? "info" : "neutral",
       },
-      render: () => (
+      render: () => terminalSession ? (
+        <WorkspaceTerminalPanel
+          cwd={cwd}
+          className="channel-side-terminal"
+          session={terminalSession}
+        />
+      ) : (
         <EvidencePage
           groups={terminalGroups}
           emptyTitle={t("No terminal evidence")}
@@ -528,8 +535,10 @@ export function WorkspaceRightDock({
     evidenceCount,
     evidenceGroups,
     fileItems,
+    hasTerminalSession,
     includeActivity,
-    enrichedReviewItems,
+    codeChangeActionCount,
+    codeChangeReviewItems,
     currentPlanThreadId,
     onOpenPlanSource,
     planActionBusyId,
@@ -538,11 +547,11 @@ export function WorkspaceRightDock({
     proposedPlans,
     proposedPlansError,
     proposedPlansLoading,
-    reviewActionCount,
-    reviewFilter,
     t,
     terminalEvidenceCount,
     terminalGroups,
+    terminalSession,
+    cwd,
     visiblePlanCount,
   ]);
 
@@ -806,7 +815,7 @@ type DockReviewCodeRenderRow =
   | {
     readonly type: "fold";
     readonly id: string;
-    readonly label: string;
+    readonly hiddenLineCount: number;
   }
   | {
     readonly type: "line";
@@ -864,7 +873,7 @@ function DockReviewCodePreview({
                 return (
                   <span key={row.id} className="right-dock-code-fold">
                     <button type="button" aria-label={t("Show previous context")}>⌃</button>
-                    <span>{row.label}</span>
+                    <span>{t("{count} unmodified lines", { count: row.hiddenLineCount })}</span>
                     <button type="button" aria-label={t("Show next context")}>⌄</button>
                   </span>
                 );
@@ -905,6 +914,8 @@ function useShikiHighlightedCodeRows(
   preview: NonNullable<DockReviewItem["codePreview"]>,
   rows: readonly DockReviewCodeRenderRow[],
 ): Readonly<Record<string, readonly ShikiHighlightedToken[]>> {
+  const { resolvedTheme } = useTheme();
+  const shikiTheme = resolvedTheme === "dark" ? "github-dark-default" : "github-light-default";
   const language = useMemo(() => shikiLanguageForPreview(preview), [preview]);
   const source = useMemo(() => rows.map((row) => (row.type === "line" ? displayCodeLineText(row.line) : "")).join("\n"), [rows]);
   const rowIds = useMemo(() => rows.map((row) => (row.type === "line" ? row.id : "")), [rows]);
@@ -917,7 +928,8 @@ function useShikiHighlightedCodeRows(
       return;
     }
     let cancelled = false;
-    void tokenizeWithShiki(source, language).then((tokenLines) => {
+    setHighlightedLines({});
+    void tokenizeWithShiki(source, language, shikiTheme).then((tokenLines) => {
       if (cancelled) {
         return;
       }
@@ -937,7 +949,7 @@ function useShikiHighlightedCodeRows(
     return () => {
       cancelled = true;
     };
-  }, [language, rowIds, source]);
+  }, [language, rowIds, shikiTheme, source]);
 
   return highlightedLines;
 }
@@ -945,11 +957,12 @@ function useShikiHighlightedCodeRows(
 async function tokenizeWithShiki(
   source: string,
   language: string,
+  theme: "github-light-default" | "github-dark-default",
 ): Promise<readonly (readonly ShikiHighlightedToken[])[]> {
   const { codeToTokens } = await import("shiki");
   const result = await codeToTokens(source, {
     lang: language as Parameters<typeof codeToTokens>[1]["lang"],
-    theme: "github-dark-default",
+    theme,
   });
   const tokenLines = "tokens" in result ? result.tokens : [];
   return tokenLines.map((line) => line.map((token) => ({
@@ -1096,7 +1109,7 @@ function codePreviewRenderRows(
         rows.push({
           type: "fold",
           id: `fold:${index}:${foldCount}`,
-          label: `${foldCount} unchanged lines`,
+          hiddenLineCount: foldCount,
         });
       }
     }

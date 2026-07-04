@@ -188,6 +188,50 @@ export function useWorkspaceSettingsController(input: {
   }, [input.daemonHealthy, input.setLocale, input.setThemePreference, workspaceCwd]);
 
   useEffect(() => {
+    if (input.daemonHealthy !== true || !workspaceCwd) {
+      return undefined;
+    }
+    let cancelled = false;
+    const refreshInterfaceSettings = (): void => {
+      if (workspaceSettingsLoadedCwdRef.current !== workspaceCwd) {
+        return;
+      }
+      void getEffectiveConfig(workspaceCwd)
+        .then((response) => {
+          if (cancelled || workspaceSettingsLoadedCwdRef.current !== workspaceCwd) {
+            return;
+          }
+          const workspaceLayer = response.layers.workspaceSettings;
+          const nextTheme = response.values.theme.value;
+          const nextLocale = isWorkspaceSettingsLocale(response.values.locale.value)
+            ? response.values.locale.value
+            : currentLocaleRef.current;
+          setWorkspaceSettings(workspaceLayer);
+          setEffectiveConfig(response);
+          input.setThemePreference(nextTheme);
+          input.setLocale(nextLocale);
+          interfaceSettingsSyncRef.current = { cwd: workspaceCwd, theme: nextTheme, locale: nextLocale };
+          clearSavedThemePreference();
+          clearSavedLocale();
+        })
+        .catch(() => undefined);
+    };
+    const handleFocus = (): void => refreshInterfaceSettings();
+    const handleVisibilityChange = (): void => {
+      if (globalThis.document?.visibilityState === "visible") {
+        refreshInterfaceSettings();
+      }
+    };
+    globalThis.window?.addEventListener("focus", handleFocus);
+    globalThis.document?.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => {
+      cancelled = true;
+      globalThis.window?.removeEventListener("focus", handleFocus);
+      globalThis.document?.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+  }, [input.daemonHealthy, input.setLocale, input.setThemePreference, workspaceCwd]);
+
+  useEffect(() => {
     if (input.daemonHealthy !== true || !workspaceCwd || workspaceSettingsLoadedCwdRef.current !== workspaceCwd) {
       return;
     }

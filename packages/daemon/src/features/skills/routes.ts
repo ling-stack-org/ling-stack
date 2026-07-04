@@ -5,7 +5,9 @@ import { basename, dirname, extname, relative, resolve, sep } from "node:path";
 import {
   analyzeSkillDuplicate,
   buildEffectiveTeammateSkills,
+  buildSkillOptimizationPreview,
   buildSkillHealthReport,
+  buildSkillSourceContextFindings,
   buildSkillSourceHealthReport,
   createProcedureObservationJobFromRecording,
   createProcedureObservationInputFromJob,
@@ -37,7 +39,9 @@ import {
   type SkillCandidateHealthInput,
   type SkillDefinition,
   type SkillDuplicateAnalysis,
+  type SkillImportDraft,
   type SkillImportWarning,
+  type SkillPackSource,
   type SkillRegistryEntry,
   type SkillSourceArtifact,
   type SkillSourceFileRef,
@@ -45,6 +49,7 @@ import {
   type SkillSourceSyncPreviewRecord,
   type SkillSourceSyncPreviewReport,
   type SkillSourceSnapshot,
+  type SkillSourceWarning,
   type SkillWorkflowPhase,
 } from "@ling-stack/core";
 import type {
@@ -69,7 +74,9 @@ import {
   parseSkillRecordingObservationRequest,
   parseSkillCorrectionRequest,
   parseSkillCandidateReviewRequest,
+  parseSkillImportDraftOptimizationPreviewRequest,
   parseSkillImportDraftRequest,
+  parseSkillOptimizationPreviewRequest,
   parseSkillSourceSnapshotRollbackRequest,
   parseSkillSourceSyncPublishRequest,
   parseSkillSourceSyncRequest,
@@ -581,6 +588,23 @@ export async function handleSkillRoute(
       return;
     }
 
+    if (url.pathname === "/skills/import-draft/optimization-preview") {
+      if (request.method !== "POST") {
+        writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for /skills/import-draft/optimization-preview` });
+        return;
+      }
+      const body = await readJsonBody(request, config.maxBodyBytes);
+      const input = parseSkillImportDraftOptimizationPreviewRequest(body, listEffectiveSkillRegistryEntries(store));
+      const snapshot = buildImportDraftPreviewSnapshot(input.draftInput, input.content, new Date().toISOString());
+      const preview = buildSkillOptimizationPreview({
+        snapshot,
+        mode: input.mode,
+        generatedAt: new Date().toISOString(),
+      });
+      writeJson(response, 200, { cwd, preview });
+      return;
+    }
+
     if (url.pathname === "/skills/import-draft") {
       if (request.method !== "POST") {
         writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for /skills/import-draft` });
@@ -589,7 +613,8 @@ export async function handleSkillRoute(
       const body = await readJsonBody(request, config.maxBodyBytes);
       const draftInput = parseSkillImportDraftRequest(body, listEffectiveSkillRegistryEntries(store));
       const draft = store.createSkillImportDraft(draftInput, new Date().toISOString());
-      writeJson(response, 201, { cwd, draft });
+      const contextFindings = buildImportDraftContextFindings(draftInput, readImportDraftContent(body));
+      writeJson(response, 201, { cwd, draft, contextFindings });
       return;
     }
 
@@ -605,7 +630,7 @@ export async function handleSkillRoute(
           writeJson(response, 404, { error: "skill_import_draft_not_found", message: `Skill import draft not found: ${route.draftId}` });
           return;
         }
-        writeJson(response, 200, { cwd, draft });
+        writeJson(response, 200, { cwd, draft, contextFindings: buildStoredImportDraftContextFindings(draft) });
         return;
       }
       if (request.method === "POST" && route.action === "publish") {
@@ -725,6 +750,94 @@ export async function handleSkillRoute(
       return;
     }
 
+    if (route.kind === "skill" && route.action === "optimization-preview") {
+      if (request.method !== "POST") {
+        writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for /skills/:id/optimization-preview` });
+        return;
+      }
+      if (!listEffectiveSkillRegistryEntries(store).some((skill) => skill.id === route.skillId)) {
+        writeJson(response, 404, { error: "skill_not_found", message: `Skill not found: ${route.skillId}` });
+        return;
+      }
+      const snapshot = store.getSkillSourceSnapshot(route.skillId);
+      if (!snapshot) {
+        writeJson(response, 404, { error: "skill_source_snapshot_not_found", message: `Skill source snapshot not found: ${route.skillId}` });
+        return;
+      }
+      const body = await readOptionalJsonBody(request, config.maxBodyBytes);
+      const input = parseSkillOptimizationPreviewRequest(body);
+      const preview = buildSkillOptimizationPreview({
+        snapshot,
+        mode: input.mode,
+        generatedAt: new Date().toISOString(),
+      });
+      writeJson(response, 200, { cwd, preview });
+      return;
+    }
+
+    if (route.kind === "skill" && route.action === "compiled-views") {
+      if (!listEffectiveSkillRegistryEntries(store).some((skill) => skill.id === route.skillId)) {
+        writeJson(response, 404, { error: "skill_not_found", message: `Skill not found: ${route.skillId}` });
+        return;
+      }
+      if (request.method === "GET") {
+        writeJson(response, 200, { cwd, views: store.listSkillCompiledRuntimeViews({ skillId: route.skillId }) });
+        return;
+      }
+      if (request.method !== "POST") {
+        writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for /skills/:id/compiled-views` });
+        return;
+      }
+      const snapshot = store.getSkillSourceSnapshot(route.skillId);
+      if (!snapshot) {
+        writeJson(response, 404, { error: "skill_source_snapshot_not_found", message: `Skill source snapshot not found: ${route.skillId}` });
+        return;
+      }
+      const body = await readOptionalJsonBody(request, config.maxBodyBytes);
+      const input = parseSkillOptimizationPreviewRequest(body);
+      const now = new Date().toISOString();
+      const preview = buildSkillOptimizationPreview({
+        snapshot,
+        mode: input.mode ?? "preview_on_demand",
+        generatedAt: now,
+      });
+      if (!preview.compiledView) {
+        writeJson(response, 400, { error: "skill_compiled_view_not_created", message: "Optimization mode did not produce a compiled runtime view." });
+        return;
+      }
+      if (!isAuthorityBoundaryUnchanged(preview.authorityBoundary)) {
+        writeJson(response, 409, { error: "skill_compiled_view_authority_changed", message: "Compiled runtime views cannot change tools, provider capabilities, approvals, or teammate bindings." });
+        return;
+      }
+      const view = store.upsertSkillCompiledRuntimeView({
+        view: preview.compiledView,
+        authorityBoundary: preview.authorityBoundary,
+        reviewStatus: "active",
+      }, now);
+      writeJson(response, 201, { cwd, view });
+      return;
+    }
+
+    if (route.kind === "skill" && route.action === "compiled-view-archive") {
+      if (request.method !== "POST") {
+        writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for /skills/:id/compiled-views/:viewId/archive` });
+        return;
+      }
+      const viewId = route.viewId;
+      if (!viewId) {
+        writeJson(response, 404, { error: "skill_compiled_view_not_found", message: "Compiled runtime view id is required." });
+        return;
+      }
+      const existing = store.getSkillCompiledRuntimeView(viewId);
+      if (!existing || existing.skillId !== route.skillId) {
+        writeJson(response, 404, { error: "skill_compiled_view_not_found", message: `Compiled runtime view not found: ${viewId}` });
+        return;
+      }
+      const view = store.archiveSkillCompiledRuntimeView(viewId, new Date().toISOString());
+      writeJson(response, 200, { cwd, view });
+      return;
+    }
+
     if (route.kind === "skill" && request.method === "DELETE") {
       const now = new Date().toISOString();
       const archived = store.archiveSkillRegistryEntry(route.skillId, now);
@@ -778,7 +891,7 @@ export async function handleSkillRoute(
           reason: `Created import draft ${draft.id}.`,
         }, now);
         appendSkillCandidateChangedEvent(store, controlPlaneEvents, cwd, "create_draft", candidate.id, candidate.status);
-        writeJson(response, 201, { cwd, candidate, draft });
+        writeJson(response, 201, { cwd, candidate, draft, contextFindings: buildImportDraftContextFindings(draftInput) });
         return;
       }
     }
@@ -2053,6 +2166,145 @@ function appendSkillCandidateChangedEvent(
       status,
     },
   });
+}
+
+function buildImportDraftContextFindings(input: CreateSkillImportDraftInput, rawContent?: string) {
+  const targets = input.definitions.length > 0 ? input.definitions : [undefined];
+  return targets.flatMap((item) => {
+    const definition = item?.definition;
+    const markdown = rawContent?.trim() ? rawContent : importDraftMarkdown(input, item);
+    return buildSkillSourceContextFindings({
+      skillId: definition?.id ?? "import-draft",
+      markdown,
+      referencedFiles: [],
+      warnings: importWarningsToSourceWarnings([...(input.warnings ?? []), ...(item?.warnings ?? [])]),
+      routingDescription: definition?.summary ?? input.description,
+    });
+  });
+}
+
+function isAuthorityBoundaryUnchanged(boundary: {
+  readonly requiredToolsChanged: boolean;
+  readonly requiredProviderCapabilitiesChanged: boolean;
+  readonly approvalProfileChanged: boolean;
+  readonly teammateBindingsChanged: boolean;
+}): boolean {
+  return !boundary.requiredToolsChanged &&
+    !boundary.requiredProviderCapabilitiesChanged &&
+    !boundary.approvalProfileChanged &&
+    !boundary.teammateBindingsChanged;
+}
+
+function buildStoredImportDraftContextFindings(draft: SkillImportDraft) {
+  return buildImportDraftContextFindings({
+    source: draft.source,
+    ...(draft.sourcePath ? { sourcePath: draft.sourcePath } : {}),
+    ...(draft.packId ? { packId: draft.packId } : {}),
+    name: draft.name,
+    ...(draft.version ? { version: draft.version } : {}),
+    description: draft.description,
+    definitions: draft.definitions,
+    warnings: draft.warnings,
+  });
+}
+
+function buildImportDraftPreviewSnapshot(input: CreateSkillImportDraftInput, rawContent: string, now: string): SkillSourceSnapshot {
+  const firstDefinition = input.definitions[0];
+  const markdown = rawContent.trim() ? rawContent : importDraftMarkdown(input, firstDefinition);
+  const checksum = createHash("sha256").update(markdown).digest("hex");
+  return {
+    id: `skill_source_import_preview_${checksum.slice(0, 16)}`,
+    workspaceId: DEFAULT_WORKSPACE_ID,
+    skillId: firstDefinition?.definition.id ?? "import-draft",
+    sourceKind: importSourceKind(input.source),
+    ...(input.sourcePath ? { sourcePath: input.sourcePath } : {}),
+    sourceChecksum: `sha256:${checksum}`,
+    rawSkillMarkdown: markdown,
+    agentMetadata: {
+      displayName: firstDefinition?.definition.name ?? input.name,
+      shortDescription: firstDefinition?.definition.summary ?? input.description,
+      ...(firstDefinition ? { defaultPrompt: firstDefinition.definition.promptFragments.join("\n\n") } : {}),
+      allowImplicitInvocation: false,
+    },
+    referencedFiles: [],
+    warnings: importWarningsToSourceWarnings([...(input.warnings ?? []), ...(firstDefinition?.warnings ?? [])]),
+    reviewStatus: "draft",
+    createdAt: now,
+    updatedAt: now,
+  };
+}
+
+function importDraftMarkdown(input: CreateSkillImportDraftInput, item: CreateSkillImportDraftInput["definitions"][number] | undefined): string {
+  const definition = item?.definition;
+  if (!definition) {
+    return [`# ${input.name}`, "", input.description].join("\n");
+  }
+  return [
+    `# ${definition.name}`,
+    "",
+    definition.summary,
+    "",
+    ...definition.promptFragments,
+  ].filter(Boolean).join("\n");
+}
+
+function importSourceKind(source: SkillPackSource): SkillSourceSnapshot["sourceKind"] {
+  if (source === "gstack") {
+    return "gstack-skill-directory";
+  }
+  if (source === "skill-directory" || source === "workspace") {
+    return "workspace-skill-directory";
+  }
+  return "manual-markdown";
+}
+
+function importWarningsToSourceWarnings(warnings: readonly SkillImportWarning[]): SkillSourceWarning[] {
+  return warnings.map(importWarningToSourceWarning);
+}
+
+function importWarningToSourceWarning(warning: SkillImportWarning): SkillSourceWarning {
+  switch (warning.code) {
+    case "permission_like_instruction":
+    case "secret_reference":
+    case "external_send_claim":
+    case "missing_metadata":
+      return {
+        code: warning.code,
+        severity: warning.severity,
+        message: warning.message,
+        ...(warning.location ? { location: warning.location } : {}),
+      };
+    case "unknown_tool":
+    case "unknown_provider_capability":
+      return {
+        code: "unsupported_tool",
+        severity: warning.severity,
+        message: warning.message,
+        ...(warning.location ? { location: warning.location } : {}),
+      };
+    case "unsupported_section":
+      return {
+        code: "host_specific_tool",
+        severity: warning.severity,
+        message: warning.message,
+        ...(warning.location ? { location: warning.location } : {}),
+      };
+    case "duplicate_skill_id":
+      return {
+        code: "missing_metadata",
+        severity: warning.severity,
+        message: warning.message,
+        ...(warning.location ? { location: warning.location } : {}),
+      };
+  }
+}
+
+function readImportDraftContent(value: unknown): string | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+  const content = (value as { readonly content?: unknown }).content;
+  return typeof content === "string" ? content : undefined;
 }
 
 function createImportDraftInputFromCandidate(

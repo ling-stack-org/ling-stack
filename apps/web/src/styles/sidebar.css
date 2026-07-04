@@ -2004,3 +2004,9 @@
 .app-shell.settings-fullscreen-shell .settings-section-nav {
   min-height: 100dvh;
 }
+
+@media (max-width: 760px) {
+  .app-shell.settings-fullscreen-shell .settings-section-nav {
+    min-height: 0;
+  }
+}

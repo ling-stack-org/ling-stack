@@ -19,7 +19,7 @@ export function ArchivedSettingsPanel({
       <div className="panel-title split">
         <span>
           <Archive size={18} />
-          <h2 id="archived-items-settings-title">{t("Archived data")}</h2>
+          <h2 id="archived-items-settings-title">{t("Archived items")}</h2>
         </span>
         <button className="secondary-button compact-button" type="button" onClick={() => void actions.refresh()} disabled={state.isLoading}>
           {state.isLoading ? <Loader2 className="spin" size={15} /> : <RefreshCw size={15} />}

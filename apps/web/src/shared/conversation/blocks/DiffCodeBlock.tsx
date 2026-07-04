@@ -43,14 +43,12 @@ export function DiffCodeBlock({ diff, language, highlight = true }: DiffCodeBloc
   }, [bodyMounted, structuredChanges.length]);
 
   if (shouldDeferBody && !expanded) {
-    const summaryLabel = diffSummary.fileCount === 1
-      ? t("{count} file", { count: diffSummary.fileCount })
-      : t("{count} files", { count: diffSummary.fileCount });
+    const summaryLabel = editedFilesLabel(diffSummary.fileCount, t);
     return (
       <figure ref={rootRef} className="message-diff-block deferred">
         <figcaption>
-          <span>diff</span>
-          <small>{summaryLabel} · {t("{count} lines", { count: diffSummary.lineCount })}</small>
+          <span>{summaryLabel}</span>
+          <small>+{diffSummary.additions} / -{diffSummary.deletions} · {t("{count} lines", { count: diffSummary.lineCount })}</small>
           <CopyActionButton text={diff} label={t("Copy diff")} className="message-code-copy" />
         </figcaption>
         <div className="message-deferred-body-shell">
@@ -75,14 +73,12 @@ export function DiffCodeBlock({ diff, language, highlight = true }: DiffCodeBloc
     return <CodeBlock code={diff} language={language ?? "diff"} highlight={false} copyLabel={t("Copy diff")} />;
   }
 
-  const summaryLabel = structuredChanges.length === 1
-    ? t("{count} file", { count: structuredChanges.length })
-    : t("{count} files", { count: structuredChanges.length });
+  const summaryLabel = editedFilesLabel(structuredChanges.length, t);
 
   return (
     <figure ref={rootRef} className={["message-diff-block", shouldDeferBody ? "expanded-deferred" : ""].filter(Boolean).join(" ")}>
       <figcaption>
-        <span>diff</span>
+        <span>{summaryLabel}</span>
         <small>{summaryLabel} · +{diffSummary.additions} / -{diffSummary.deletions}</small>
         <CopyActionButton text={diff} label={t("Copy diff")} className="message-code-copy" />
       </figcaption>
@@ -167,6 +163,10 @@ function formatDiffSize(characters: number): string {
     return `${(characters / 1024).toFixed(1)} KB`;
   }
   return `${(characters / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function editedFilesLabel(count: number, t: (key: string, values?: Readonly<Record<string, string | number>>) => string): string {
+  return count === 1 ? t("Edited 1 file") : t("Edited {count} files", { count });
 }
 
 export function isDiffLanguage(language?: string): boolean {

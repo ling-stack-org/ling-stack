@@ -153,9 +153,9 @@ export function AiTeammatesPage({
 
   return (
     <div className={onBackToWorkspaceTools ? "teammates-page settings-return-mode" : "teammates-page"}>
-      <header className={onBackToWorkspaceTools ? "teammates-page-header settings-return-mode" : "teammates-page-header"}>
-        {onBackToWorkspaceTools ? <SettingsToolReturnRow onBack={onBackToWorkspaceTools} /> : null}
-        {!onBackToWorkspaceTools ? (
+      {onBackToWorkspaceTools ? <SettingsToolReturnRow onBack={onBackToWorkspaceTools} /> : null}
+      {!onBackToWorkspaceTools ? (
+        <header className="teammates-page-header">
           <div>
             <h1>{t("AI Teammates")}</h1>
             <p>
@@ -166,8 +166,8 @@ export function AiTeammatesPage({
               })}
             </p>
           </div>
-        ) : null}
-      </header>
+        </header>
+      ) : null}
 
       <TeammateCreateDialog
         open={isCreateOpen}

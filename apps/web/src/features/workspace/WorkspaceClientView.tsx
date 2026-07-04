@@ -18,6 +18,8 @@ import {
   Loader2,
   MessageSquare,
   MoreHorizontal,
+  PanelBottom,
+  PanelBottomClose,
   PanelRightClose,
   PanelRightOpen,
   PencilLine,
@@ -139,6 +141,7 @@ import {
 import { ChannelRenameDialog } from "./ChannelRenameDialog.js";
 import { WorkflowConversionPreviewDrawer, type WorkflowConversionDraft } from "./WorkflowConversionPreviewDialog.js";
 import { ChannelGovernanceNotificationsPopover } from "./ChannelGovernanceNotificationsPopover.js";
+import { useWorkspaceTerminalSession, WorkspaceTerminalPanel } from "./WorkspaceTerminalPanel.js";
 import {
   NewTaskPanel,
   TaskDetailPanel,
@@ -238,6 +241,7 @@ import {
 import { ChannelComposer, type ChannelComposerInlineFeedback } from "./ChannelComposer.js";
 import { ChannelActivityWorkspace } from "./ChannelActivityWorkspace.js";
 import { useChannelRightDockController } from "./useChannelRightDockController.js";
+import { useChannelBottomPanelResizeController } from "./useChannelBottomPanelResizeController.js";
 import {
   conversationTurnRenderSignature,
   useChannelMessageFeed,
@@ -735,7 +739,9 @@ export function WorkspaceClientView({
   const [attentionProgressExpanded, setAttentionProgressExpanded] = useState(true);
   const [conversationDetailOverlay, setConversationDetailOverlay] = useState<ConversationDetailOverlayState | undefined>();
   const [selectedSourceDetail, setSelectedSourceDetail] = useState<SelectedSourceDetailState | undefined>();
+  const [channelBottomPanelOpen, setChannelBottomPanelOpen] = useState(false);
   const channelUtilityPageOpen = channelSettingsPageOpen || channelEnvironmentPageOpen;
+  const channelBottomPanelVisible = channelBottomPanelOpen && !channelUtilityPageOpen;
   const channelRightDockIntentOpen = !channelUtilityPageOpen && sidePanelOpen;
   const channelRightDock = useChannelRightDockController({
     initialOpen: Boolean(selectedTaskId),
@@ -749,6 +755,10 @@ export function WorkspaceClientView({
   const channelRightDockMotionUntilRef = channelRightDock.motionUntilRef;
   const taskWorkbenchWindowRef = channelRightDock.windowRef;
   const taskWorkbenchMainRef = channelRightDock.mainRef;
+  const channelBottomPanelResize = useChannelBottomPanelResizeController({
+    containerRef: taskWorkbenchWindowRef,
+    resizeObserverKey: selectedChannelId ?? "",
+  });
   const progressPopoverCanFitMainLayout = channelRightDock.progressPopoverCanFitMainLayout;
   const progressPopoverCanUseMainLayout = channelRightDock.progressPopoverCanUseMainLayout;
 
@@ -3705,6 +3715,7 @@ export function WorkspaceClientView({
   const channelDockReviewItems = channelRightDockContent.reviewItems;
   const channelDockEvidenceGroups = channelRightDockContent.evidenceGroups;
   const channelDockFileItems = channelRightDockContent.fileItems;
+  const workspaceTerminalSession = useWorkspaceTerminalSession(cwd.trim() || undefined);
   const channelEnvironmentSummary = useChannelEnvironmentSummary({
     cwd,
     workspace: selectedChannelWorkspace,
@@ -3812,7 +3823,10 @@ export function WorkspaceClientView({
       onOpenSourceGroup={openSourceGroupInConversationDetail}
     />
   );
-  const taskWorkbenchWindowStyle = channelRightDock.windowStyle;
+  const taskWorkbenchWindowStyle = {
+    ...channelRightDock.windowStyle,
+    ...channelBottomPanelResize.panelStyle,
+  } as CSSProperties;
   const taskWorkbenchMainStyle = channelRightDock.mainStyle;
 
   function toggleChannelTeammateManager(): void {
@@ -3838,6 +3852,8 @@ export function WorkspaceClientView({
         channelRightDockVisible ? "with-channel-side-panel" : "",
         channelRightDockVisible ? (channelRightDockExpanded ? "channel-right-dock-expanded" : "channel-right-dock-collapsed") : "",
         progressPopoverCanRender && !progressPopoverInMainLayout ? "with-channel-progress-popover" : "",
+        channelBottomPanelVisible ? "with-channel-bottom-panel" : "",
+        channelBottomPanelResize.resizing ? "is-resizing-channel-bottom-panel" : "",
       ].filter(Boolean).join(" ")}
       style={taskWorkbenchWindowStyle}
       aria-label={t("Workspace")}
@@ -4056,6 +4072,31 @@ export function WorkspaceClientView({
             }}
           >
             <ListChecks size={15} />
+          </button>
+          <button
+            className={channelBottomPanelVisible ? "icon-button active task-toolbar-bottom-panel" : "icon-button task-toolbar-bottom-panel"}
+            type="button"
+            aria-expanded={channelBottomPanelVisible}
+            aria-label={t("Toggle bottom panel")}
+            title={t("Toggle bottom panel")}
+            onClick={() => {
+              if (channelBottomPanelVisible) {
+                setChannelBottomPanelOpen(false);
+                return;
+              }
+              setChannelSettingsPageOpen(false);
+              setChannelEnvironmentPageOpen(false);
+              setEnvironmentCommitDialogOpen(false);
+              setCreateTaskOpen(false);
+              setChannelMoreOpen(false);
+              setActivityToolsOpen(false);
+              setTeammateManagerOpen(false);
+              setProgressPopoverOpen(false);
+              setChannelBottomPanelOpen(true);
+            }}
+            disabled={!cwd.trim()}
+          >
+            {channelBottomPanelVisible ? <PanelBottomClose size={15} /> : <PanelBottom size={15} />}
           </button>
           <button
             className={channelRightDockIntentOpen ? "icon-button active task-toolbar-panel" : "icon-button task-toolbar-panel"}
@@ -4370,6 +4411,7 @@ export function WorkspaceClientView({
               reviewItems={channelDockReviewItems}
               evidenceGroups={channelDockEvidenceGroups}
               fileItems={channelDockFileItems}
+              terminalSession={workspaceTerminalSession}
               proposedPlans={proposedPlanArtifacts}
               proposedPlansLoading={proposedPlanHistoryLoading}
               proposedPlansError={proposedPlanHistoryError}
@@ -4413,6 +4455,29 @@ export function WorkspaceClientView({
           </>
         )}
       </div>
+      {channelBottomPanelVisible ? (
+        <WorkspaceTerminalPanel
+          cwd={cwd.trim()}
+          className="channel-bottom-terminal"
+          session={workspaceTerminalSession}
+          resizeHandleNode={(
+            <button
+              className="channel-bottom-panel-resize-handle"
+              type="button"
+              role="separator"
+              aria-orientation="horizontal"
+              aria-label={t("Resize terminal panel")}
+              title={t("Drag to resize terminal panel")}
+              onPointerDown={channelBottomPanelResize.handleResizePointerDown}
+              onPointerMove={channelBottomPanelResize.handleResizePointerMove}
+              onPointerUp={channelBottomPanelResize.handleResizePointerEnd}
+              onPointerCancel={channelBottomPanelResize.handleResizePointerEnd}
+              onLostPointerCapture={channelBottomPanelResize.handleResizePointerEnd}
+            />
+          )}
+          onClose={() => setChannelBottomPanelOpen(false)}
+        />
+      ) : null}
     </div>
   );
 }

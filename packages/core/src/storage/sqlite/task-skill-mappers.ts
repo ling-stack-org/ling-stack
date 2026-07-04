@@ -1,5 +1,7 @@
 import type { SQLOutputValue } from "node:sqlite";
 import {
+  type SkillCompiledRuntimeViewRecord,
+  type SkillCompiledRuntimeViewReviewStatus,
   type SkillImportDraft,
   type SkillImportDraftDefinition,
   type SkillPackSource,
@@ -116,6 +118,25 @@ export function mapSkillSourceArtifact(row: Record<string, SQLOutputValue>): Ski
     createdAt: readString(row, "created_at"),
     updatedAt: readString(row, "updated_at"),
   });
+}
+
+export function mapSkillCompiledRuntimeView(row: Record<string, SQLOutputValue>): SkillCompiledRuntimeViewRecord {
+  return {
+    id: readString(row, "id"),
+    workspaceId: readString(row, "workspace_id"),
+    skillId: readString(row, "skill_id"),
+    sourceSnapshotId: readString(row, "source_snapshot_id"),
+    createdAt: readString(row, "created_at"),
+    compilerVersion: readString(row, "compiler_version"),
+    coreRulesMarkdown: readString(row, "core_rules_markdown"),
+    lazyReferences: parseJson(readString(row, "lazy_references_json")) as SkillCompiledRuntimeViewRecord["lazyReferences"],
+    sourceMap: parseJson(readString(row, "source_map_json")) as SkillCompiledRuntimeViewRecord["sourceMap"],
+    tokenEstimate: readNumber(row, "token_estimate"),
+    fallbackPolicy: readString(row, "fallback_policy") as SkillCompiledRuntimeViewRecord["fallbackPolicy"],
+    authorityBoundary: parseJson(readString(row, "authority_boundary_json")) as SkillCompiledRuntimeViewRecord["authorityBoundary"],
+    reviewStatus: readString(row, "review_status") as SkillCompiledRuntimeViewReviewStatus,
+    updatedAt: readString(row, "updated_at"),
+  };
 }
 
 export function mapSkillSourceUpgradePolicy(row: Record<string, SQLOutputValue>): SkillSourceUpgradePolicy {

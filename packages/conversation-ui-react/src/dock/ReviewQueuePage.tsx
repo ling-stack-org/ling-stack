@@ -18,6 +18,7 @@ export interface ReviewQueuePageProps {
   readonly detailEmptyTitle?: string;
   readonly detailEmptyDescription?: string;
   readonly detailPresentation?: "pane" | "accordion";
+  readonly showStatusSummary?: boolean;
   readonly renderItemDetail?: (item: DockReviewItem) => ReactNode;
   readonly onSendReviewPacket?: (items: readonly DockReviewItem[]) => void;
   readonly onClearReviewPacket?: () => void;
@@ -39,6 +40,7 @@ export function ReviewQueuePage({
   detailEmptyTitle = "No item selected",
   detailEmptyDescription,
   detailPresentation = "pane",
+  showStatusSummary = true,
   renderItemDetail,
   onSendReviewPacket,
   onClearReviewPacket,
@@ -65,6 +67,7 @@ export function ReviewQueuePage({
   const selectedItem = visibleItems.find((item) => item.id === selectedItemId) ?? visibleItems[0];
   const useAccordionDetail = Boolean(renderItemDetail) && detailPresentation === "accordion";
   const usePaneDetail = Boolean(renderItemDetail) && detailPresentation === "pane";
+  const showFilterRow = filters.length > 1;
 
   useEffect(() => {
     if (!usePaneDetail) {
@@ -79,24 +82,32 @@ export function ReviewQueuePage({
     }
   }, [selectedItemId, usePaneDetail, visibleItems]);
 
+  const rootClassName = [
+    "right-dock-review-page",
+    usePaneDetail ? "right-dock-review-workbench right-dock-review-page-pane" : "",
+    useAccordionDetail ? "right-dock-review-page-accordion" : "",
+  ].filter(Boolean).join(" ");
+
   return (
-    <div className={usePaneDetail ? "right-dock-review-page right-dock-review-workbench" : "right-dock-review-page"}>
+    <div className={rootClassName}>
       <section className="right-dock-review-list-pane">
-        <div className="right-dock-filter-row" role="tablist" aria-label="Review filters">
-          {filters.map((filter) => (
-            <button
-              key={filter.id}
-              className={filter.id === activeFilter ? "right-dock-filter active" : "right-dock-filter"}
-              type="button"
-              role="tab"
-              aria-selected={filter.id === activeFilter}
-              onClick={() => onFilterChange(filter.id)}
-            >
-              {filter.label}
-            </button>
-          ))}
-        </div>
-        {items.length > 0 ? (
+        {showFilterRow ? (
+          <div className="right-dock-filter-row" role="tablist" aria-label="Review filters">
+            {filters.map((filter) => (
+              <button
+                key={filter.id}
+                className={filter.id === activeFilter ? "right-dock-filter active" : "right-dock-filter"}
+                type="button"
+                role="tab"
+                aria-selected={filter.id === activeFilter}
+                onClick={() => onFilterChange(filter.id)}
+              >
+                {filter.label}
+              </button>
+            ))}
+          </div>
+        ) : null}
+        {showStatusSummary && items.length > 0 ? (
           <div className="right-dock-review-status-card">
             <span><strong>{pendingCount}</strong> {needsActionLabel}</span>
             {stats ? (

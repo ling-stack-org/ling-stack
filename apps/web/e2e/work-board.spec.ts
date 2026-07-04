@@ -46,9 +46,8 @@ test("work board merges durable items and supports claim heartbeat", async ({ pa
   await expect(channelBoard).toContainText("durable");
 
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
-  await page.getByLabel("Settings sections").getByRole("button", { name: /Configuration/ }).click();
-  await page.getByRole("button", { name: "Open Work Board" }).click();
-  await expect(page.locator(".work-board-settings-toolbar .settings-tool-return-row").getByRole("button", { name: "Back to workspace tools" })).toBeVisible();
+  await page.getByLabel("Settings sections").getByRole("button", { name: "Work Board" }).click();
+  await expect(page.locator(".settings-tool-return-row")).toHaveCount(0);
   await expect(page.locator(".work-board-page").getByRole("heading", { name: "Needs action" })).toHaveCount(0);
   await page.getByLabel("Work board views").getByRole("button", { name: "All active" }).click();
   await expect(page.locator(".work-board-page").getByRole("heading", { name: "All active work" })).toHaveCount(0);

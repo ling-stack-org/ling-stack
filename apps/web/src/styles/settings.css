@@ -40,7 +40,7 @@
 
 .settings-content-stack {
   display: grid;
-  gap: 14px;
+  gap: 16px;
 }
 
 .settings-layout {
@@ -126,9 +126,10 @@
   position: relative;
   display: flex;
   align-items: center;
+  gap: 9px;
   min-width: 0;
   min-height: 34px;
-  padding: 0 10px 0 14px;
+  padding: 0 10px 0 12px;
   border: 0;
   border-radius: 6px;
   background: transparent;
@@ -161,7 +162,15 @@
 }
 
 .settings-section-icon {
-  display: none;
+  flex: 0 0 16px;
+  color: var(--text-soft);
+  opacity: 0.9;
+}
+
+.settings-section-item:hover .settings-section-icon,
+.settings-section-item.active .settings-section-icon {
+  color: currentColor;
+  opacity: 1;
 }
 
 .settings-section-item > span,
@@ -192,6 +201,8 @@
   justify-content: center;
   overflow-y: auto;
   padding: 24px 28px 30px;
+  font-size: 14px;
+  line-height: 20px;
 }
 
 .settings-content-stack > * {
@@ -205,10 +216,10 @@
 .settings-skill-library,
 .settings-section-stack > .mcp-page {
   display: grid;
-  gap: 12px;
+  gap: 14px;
   min-width: 0;
   max-width: none;
-  padding: 12px;
+  padding: 14px;
   border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--surface-panel);
@@ -241,9 +252,9 @@
 .settings-section-head h2 {
   margin: 0;
   color: var(--text-strong);
-  font-size: 23px;
+  font-size: 25px;
   font-weight: 760;
-  line-height: 29px;
+  line-height: 32px;
   letter-spacing: 0;
 }
 
@@ -251,8 +262,8 @@
   max-width: 720px;
   margin: 0;
   color: var(--text-muted);
-  font-size: 13px;
-  line-height: 19px;
+  font-size: 14px;
+  line-height: 21px;
 }
 
 .developer-settings-stack {
@@ -278,8 +289,8 @@
   max-width: 720px;
   margin: 0;
   color: var(--text-soft);
-  font-size: 13px;
-  line-height: 19px;
+  font-size: 14px;
+  line-height: 21px;
 }
 
 .settings-content-stack .panel-title,
@@ -332,9 +343,9 @@
 .settings-skill-library-head h2 {
   margin: 0;
   color: var(--text-strong);
-  font-size: 17px;
+  font-size: 18px;
   font-weight: 720;
-  line-height: 22px;
+  line-height: 24px;
   letter-spacing: 0;
 }
 
@@ -343,8 +354,8 @@
 .settings-skill-audit-note {
   margin: 3px 0 0;
   color: var(--text-muted);
-  font-size: 12px;
-  line-height: 18px;
+  font-size: 13px;
+  line-height: 19px;
 }
 
 .settings-subnav-shell {
@@ -439,7 +450,7 @@
   min-width: 0;
   overflow-wrap: anywhere;
   color: var(--text-strong);
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 700;
 }
 
@@ -456,7 +467,7 @@
 
 .settings-content-stack .meta-row strong {
   font-family: inherit;
-  font-size: 12px;
+  font-size: 13px;
 }
 
 .settings-inline-success {
@@ -468,21 +479,6 @@
   color: var(--success);
   font-size: 13px;
   line-height: 18px;
-}
-
-.settings-tool-return-row {
-  display: flex;
-  align-items: center;
-  justify-content: flex-start;
-  min-width: 0;
-  min-height: 32px;
-  padding: 0;
-}
-
-.settings-tool-return-row .secondary-button {
-  width: fit-content;
-  min-height: 32px;
-  white-space: nowrap;
 }
 
 .account-profile-settings-panel .profile-page {
@@ -967,11 +963,11 @@
 
 .interface-preference-row {
   display: grid;
-  grid-template-columns: minmax(160px, 1fr) auto;
+  grid-template-columns: minmax(190px, 1fr) auto;
   align-items: center;
   gap: 12px;
   min-width: 0;
-  padding: 10px;
+  padding: 12px;
   border: 1px solid var(--border);
   background: var(--surface-panel);
 }
@@ -985,7 +981,14 @@
 }
 
 .interface-preference-row strong {
-  font-size: 13px;
+  font-size: 14px;
+  line-height: 20px;
+}
+
+.interface-preference-row small {
+  color: var(--text-soft);
+  font-size: 12px;
+  line-height: 18px;
 }
 
 .settings-status-grid,
@@ -2229,7 +2232,8 @@
 }
 
 .settings-skill-source-sync-meta,
-.settings-skill-source-sync-warnings {
+.settings-skill-source-sync-warnings,
+.settings-skill-source-sync-context {
   display: flex;
   flex-wrap: wrap;
   gap: 5px;
@@ -2238,6 +2242,7 @@
 
 .settings-skill-source-sync-meta span,
 .settings-skill-source-sync-warnings small,
+.settings-skill-source-sync-context small,
 .settings-skill-sync-state {
   min-height: 22px;
   padding: 3px 7px;
@@ -2274,12 +2279,18 @@
 .settings-skill-sync-state.blocked,
 .settings-skill-sync-state.missing,
 .settings-skill-sync-state.orphaned,
+.settings-skill-source-sync-context small.critical,
 .settings-skill-source-sync-warnings small.error {
   color: var(--danger);
 }
 
+.settings-skill-source-sync-context small.warning,
 .settings-skill-source-sync-warnings small.warning {
   color: var(--warning);
+}
+
+.settings-skill-source-sync-context small.info {
+  color: var(--text-muted);
 }
 
 .settings-skill-source-sync-diff {
@@ -2665,7 +2676,24 @@
 
 .settings-skill-source-actions {
   display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
   justify-content: flex-start;
+}
+
+.settings-skill-optimization-preview {
+  display: grid;
+  gap: 8px;
+  padding: 9px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface-panel);
+}
+
+.settings-skill-optimization-preview > small {
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 16px;
 }
 
 .settings-skill-source-tags span,
@@ -2812,4 +2840,71 @@
 .archived-item-empty {
   border: 0;
   border-radius: 0;
+}
+
+@media (max-width: 760px) {
+  .settings-layout {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+  }
+
+  .settings-section-nav {
+    display: flex;
+    flex: 0 0 auto;
+    align-items: center;
+    gap: 8px;
+    overflow-x: auto;
+    overflow-y: hidden;
+    padding: 11px 12px;
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .settings-section-group {
+    display: flex;
+    flex: 0 0 auto;
+    gap: 6px;
+  }
+
+  .settings-section-group-label {
+    display: none;
+  }
+
+  .settings-app-return-button,
+  .settings-section-item {
+    flex: 0 0 auto;
+    width: auto;
+  }
+
+  .settings-section-item.active::before {
+    top: auto;
+    right: 10px;
+    bottom: 3px;
+    left: 10px;
+    width: auto;
+    height: 3px;
+  }
+
+  .settings-content-stack {
+    flex: 1 1 auto;
+    grid-template-columns: minmax(0, 1fr);
+    height: auto;
+    padding: 18px 14px 24px;
+  }
+
+  .settings-section-head h2 {
+    font-size: 24px;
+    line-height: 30px;
+  }
+
+  .interface-preference-row {
+    grid-template-columns: minmax(0, 1fr);
+    align-items: start;
+  }
+
+  .interface-preference-row > :last-child {
+    justify-self: start;
+    max-width: 100%;
+  }
 }

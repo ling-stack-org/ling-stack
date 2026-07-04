@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useI18n } from "../../../i18n.js";
-import type { ConversationFileChange } from "../../../lib/diff-summary.js";
+import { parseUnifiedDiffHunkRows, type ConversationDiffDisplayLine, type ConversationFileChange } from "../../../lib/diff-summary.js";
 import { notifyConversationDeferredContentReady } from "./deferred-rendering.js";
 
 export interface DiffViewerProps {
@@ -14,28 +14,45 @@ export function DiffViewer({ change, maxCollapsedLines = defaultMaxCollapsedLine
   const { t } = useI18n();
   const rootRef = useRef<HTMLPreElement | null>(null);
   const [expanded, setExpanded] = useState(false);
-  const lineCount = countLines(change.diff);
-  const shouldCollapse = lineCount > maxCollapsedLines;
-  const visibleDiff = shouldCollapse && !expanded ? takeLines(change.diff, maxCollapsedLines) : change.diff;
-  const lines = visibleDiff.replace(/\r\n?/g, "\n").split("\n");
-  const hiddenLineCount = Math.max(0, lineCount - maxCollapsedLines);
+  const diffRows = useMemo(() => parseUnifiedDiffHunkRows(change.diff), [change.diff]);
+  const shouldCollapse = diffRows.rows.length > maxCollapsedLines;
+  const visibleRows = shouldCollapse && !expanded ? diffRows.rows.slice(0, maxCollapsedLines) : diffRows.rows;
+  const hiddenLineCount = Math.max(0, diffRows.rows.length - maxCollapsedLines);
 
   useEffect(() => {
     const frameId = globalThis.requestAnimationFrame(() => {
       notifyConversationDeferredContentReady(rootRef.current);
     });
     return () => globalThis.cancelAnimationFrame(frameId);
-  }, [expanded, visibleDiff]);
+  }, [expanded, visibleRows.length]);
 
   return (
     <>
-      <pre ref={rootRef} className={`diff-viewer${shouldCollapse && !expanded ? " collapsed" : ""}`} aria-label={change.path}>
-        {lines.map((line, index) => {
-          const kind = diffLineKind(line);
+      <pre
+        ref={rootRef}
+        className={[
+          "diff-viewer",
+          diffRows.structured ? "structured" : "raw",
+          shouldCollapse && !expanded ? "collapsed" : "",
+        ].filter(Boolean).join(" ")}
+        aria-label={change.path}
+      >
+        {visibleRows.map((row) => {
+          if (row.type === "fold") {
+            return (
+              <span key={row.id} className="diff-fold">
+                <span className="diff-fold-rule" aria-hidden="true" />
+                <span>{t("{count} unmodified lines", { count: row.hiddenLineCount })}</span>
+                <span className="diff-fold-rule" aria-hidden="true" />
+              </span>
+            );
+          }
+          const { line } = row;
           return (
-            <span key={`${index}-${line}`} className={`diff-line ${kind}`}>
-              <span className="diff-gutter">{gutterForKind(kind)}</span>
-              <code>{line || " "}</code>
+            <span key={row.id} className={`diff-line ${line.kind}`}>
+              <span className="diff-line-number">{lineNumberLabel(line)}</span>
+              <span className="diff-gutter">{gutterForKind(line.kind)}</span>
+              <code>{line.text || " "}</code>
             </span>
           );
         })}
@@ -47,60 +64,26 @@ export function DiffViewer({ change, maxCollapsedLines = defaultMaxCollapsedLine
           aria-expanded={expanded}
           onClick={() => setExpanded((current) => !current)}
         >
-          {expanded ? t("Collapse diff") : t("Show full diff ({count} more lines)", { count: hiddenLineCount })}
+          {expanded ? t("Collapse diff ranges") : t("Show remaining diff ranges ({count} more lines)", { count: hiddenLineCount })}
         </button>
       ) : null}
     </>
   );
 }
 
-function countLines(value: string): number {
-  if (value.length === 0) {
-    return 0;
+function lineNumberLabel(line: ConversationDiffDisplayLine): string {
+  if (line.kind === "delete") {
+    return line.oldLineNumber === undefined ? "" : String(line.oldLineNumber);
   }
-  let count = 1;
-  for (let index = 0; index < value.length; index += 1) {
-    if (value.charCodeAt(index) === 10) {
-      count += 1;
-    }
+  if (line.kind === "add") {
+    return line.newLineNumber === undefined ? "" : String(line.newLineNumber);
   }
-  return count;
+  return line.newLineNumber === undefined && line.oldLineNumber === undefined
+    ? line.lineNumber === undefined ? "" : String(line.lineNumber)
+    : String(line.newLineNumber ?? line.oldLineNumber);
 }
 
-function takeLines(value: string, count: number): string {
-  if (count <= 0) {
-    return "";
-  }
-  let seen = 0;
-  for (let index = 0; index < value.length; index += 1) {
-    if (value.charCodeAt(index) !== 10) {
-      continue;
-    }
-    seen += 1;
-    if (seen >= count) {
-      return value.slice(0, index);
-    }
-  }
-  return value;
-}
-
-function diffLineKind(line: string): "add" | "delete" | "hunk" | "meta" | "context" {
-  if (line.startsWith("+") && !line.startsWith("+++")) {
-    return "add";
-  }
-  if (line.startsWith("-") && !line.startsWith("---")) {
-    return "delete";
-  }
-  if (line.startsWith("@@")) {
-    return "hunk";
-  }
-  if (line.startsWith("diff ") || line.startsWith("---") || line.startsWith("+++") || line.startsWith("index ")) {
-    return "meta";
-  }
-  return "context";
-}
-
-function gutterForKind(kind: ReturnType<typeof diffLineKind>): string {
+function gutterForKind(kind: ConversationDiffDisplayLine["kind"]): string {
   if (kind === "add") {
     return "+";
   }

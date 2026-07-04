@@ -55,15 +55,15 @@ test("main pages and workspace tools follow dark theme tokens", async ({ page })
 
   await navigation.getByRole("button", { name: "设置" }).click();
   await expect(page.getByLabel("设置分组")).toBeVisible();
-  await assertDarkPage(page, "settings workspace tools", [
+  await assertDarkPage(page, "settings shell", [
     ".settings-layout",
     ".settings-section-nav",
     ".settings-content-stack",
-    ".settings-workspace-tools",
-    ".settings-tool-row",
+    ".account-profile-settings-panel",
+    ".profile-page",
   ]);
 
-  await page.getByRole("button", { name: "打开智囊团工作区" }).click();
+  await page.getByLabel("设置分组").getByRole("button", { name: /智囊团工作区|Council Workspace/ }).click();
   await expect(page.locator(".council-workspace-page")).toBeVisible();
   await assertDarkPage(page, "AI councils", [
     ".workspace-settings-surface",
@@ -76,9 +76,7 @@ test("main pages and workspace tools follow dark theme tokens", async ({ page })
     ".council-detail-tabs",
     ".council-member-row",
   ]);
-  await page.getByRole("button", { name: "返回工作区工具" }).click();
-
-  await page.getByLabel("设置分组").getByRole("button", { name: /个人资料|User profile/ }).click();
+  await page.getByLabel("设置分组").getByRole("button", { name: /资料|Profile/ }).click();
   await expect(page.locator(".profile-page")).toBeVisible();
   await assertDarkPage(page, "account profile settings", [
     ".account-profile-settings-panel",
@@ -88,8 +86,7 @@ test("main pages and workspace tools follow dark theme tokens", async ({ page })
     ".profile-insights",
   ]);
 
-  await page.getByLabel("设置分组").getByRole("button", { name: "配置" }).click();
-  await page.getByRole("button", { name: "打开模型工作台" }).click();
+  await page.getByLabel("设置分组").getByRole("button", { name: /模型工作台|Model Workbench/ }).click();
   await expect(page.locator(".provider-workbench-surface")).toBeVisible();
   await assertDarkPage(page, "model workbench", [
     ".workspace-settings-surface",
@@ -100,8 +97,7 @@ test("main pages and workspace tools follow dark theme tokens", async ({ page })
     ".provider-row",
   ]);
 
-  await page.getByRole("button", { name: "返回工作区工具" }).click();
-  await page.getByRole("button", { name: "打开队友管理" }).click();
+  await page.getByLabel("设置分组").getByRole("button", { name: /队友管理|Teammate Management/ }).click();
   await expect(page.locator(".teammates-page")).toBeVisible();
   await assertDarkPage(page, "AI teammates", [
     ".workspace-settings-surface",
@@ -112,7 +108,6 @@ test("main pages and workspace tools follow dark theme tokens", async ({ page })
     ".teammate-draft-row",
   ]);
 
-  await page.getByRole("button", { name: "返回工作区工具" }).click();
   await page.getByRole("button", { name: "返回应用" }).click();
   await navigation.getByRole("button", { name: "工程队友" }).click();
   await expect(page.getByRole("heading", { name: "工程队友", level: 1 })).toBeVisible();
@@ -126,8 +121,7 @@ test("main pages and workspace tools follow dark theme tokens", async ({ page })
   ]);
 
   await navigation.getByRole("button", { name: "设置" }).click();
-  await page.getByLabel("设置分组").getByRole("button", { name: /连接|Connections/ }).click();
-  await page.getByRole("tab", { name: /工具服务|Tool servers/ }).click();
+  await page.getByLabel("设置分组").getByRole("button", { name: /MCP 工具服务/ }).click();
   await assertDarkPage(page, "MCP settings", [
     ".settings-layout",
     ".mcp-page",
@@ -136,7 +130,7 @@ test("main pages and workspace tools follow dark theme tokens", async ({ page })
     ".mcp-empty",
   ]);
 
-  await page.getByRole("tab", { name: /插件能力包|Plugin bundles/ }).click();
+  await page.getByLabel("设置分组").getByRole("button", { name: /Plugin Manager|插件管理/ }).click();
   await expect(page.locator(".settings-plugin-manager")).toBeVisible();
   await assertDarkPage(page, "plugin settings", [
     ".settings-layout",
@@ -179,8 +173,7 @@ test("main pages and workspace tools follow dark theme tokens", async ({ page })
     ".settings-skill-candidate-review",
   ]);
 
-  await page.getByLabel("设置分组").getByRole("button", { name: "配置" }).click();
-  await page.getByRole("button", { name: "打开工作看板" }).click();
+  await page.getByLabel("设置分组").getByRole("button", { name: /工作看板|Work Board/ }).click();
   await expect(page.locator(".work-board-page")).toBeVisible();
   await assertDarkPage(page, "work board", [
     ".work-board-page",

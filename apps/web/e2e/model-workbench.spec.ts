@@ -28,8 +28,7 @@ async function clickProviderRowMenuItem(row: Locator, name: string | RegExp): Pr
 
 async function openModelWorkbench(page: Page): Promise<void> {
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: /^(Settings|设置)$/ }).click();
-  await page.getByLabel(/^(Settings sections|设置分组)$/).getByRole("button", { name: /^(Configuration|配置)/ }).click();
-  await page.getByRole("button", { name: /^(Open Model Workbench|打开模型工作台)$/ }).click();
+  await page.getByLabel(/^(Settings sections|设置分组)$/).getByRole("button", { name: /^(Model Workbench|模型工作台)$/ }).click();
   await expect(page.getByLabel(/^(Settings sections|设置分组)$/)).toBeVisible();
   await expect(page.getByLabel("Ling Stack navigation")).toHaveCount(0);
 }
@@ -103,8 +102,8 @@ test("model workbench Chinese mode localizes setup copy and uses an add model sh
   await page.goto("/");
 
   await openModelWorkbench(page);
-  await expect(page.locator(".provider-workbench-header.settings-return-mode .settings-tool-return-row").getByRole("button", { name: "返回工作区工具" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "模型工作台" })).toHaveCount(0);
+  await expect(page.locator(".settings-tool-return-row").getByRole("button", { name: "返回工作区工具" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "模型工作台", level: 1 })).toHaveCount(0);
   await expect(page.getByRole("heading", { name: "模型预设" })).toHaveCount(0);
   await expect(page.locator(".provider-table")).toBeVisible();
   const tableOverflow = await page.locator(".provider-table-shell").evaluate((element) => ({
@@ -641,7 +640,7 @@ test("model workbench creates custom OpenAI-compatible presets and surfaces read
   await page.goto("/");
 
   await openModelWorkbench(page);
-  await expect(page.locator(".provider-workbench-header.settings-return-mode .settings-tool-return-row").getByRole("button", { name: "Back to workspace tools" })).toBeVisible();
+  await expect(page.locator(".settings-tool-return-row").getByRole("button", { name: "Back to workspace tools" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Model Workbench", level: 1 })).toHaveCount(0);
   await expect(page.locator(".provider-page-meta")).toHaveCount(0);
   await expect(page.getByRole("dialog")).toHaveCount(0);
