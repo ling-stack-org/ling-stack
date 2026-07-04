@@ -1,8 +1,8 @@
 import type { MediaJob, MediaJobStatus, MediaOperation, RunArtifact } from "../../types.js";
 
-export type MediaJobStatusFilter = "all" | "succeeded" | "failed" | "queued";
+export type MediaJobStatusFilter = "all" | "succeeded" | "failed" | "active";
 
-export const mediaJobStatusFilters: readonly MediaJobStatusFilter[] = ["all", "succeeded", "failed", "queued"];
+export const mediaJobStatusFilters: readonly MediaJobStatusFilter[] = ["all", "succeeded", "failed", "active"];
 
 export function mediaArtifactsForJob(artifacts: readonly RunArtifact[]): readonly RunArtifact[] {
   return artifacts.filter((artifact) => artifact.type === "image" || artifact.type === "video");
@@ -12,7 +12,7 @@ export function mediaJobMatchesFilter(job: MediaJob, filter: MediaJobStatusFilte
   if (filter === "all") {
     return true;
   }
-  if (filter === "queued") {
+  if (filter === "active") {
     return isMediaJobActiveStatus(job.status);
   }
   return job.status === filter;
@@ -40,6 +40,32 @@ export function mediaJobCanRun(job: MediaJob, artifacts: readonly RunArtifact[])
   );
 }
 
+export function mediaJobRunDisabledReason({
+  job,
+  artifacts,
+  isLoading,
+  isRunning,
+}: {
+  readonly job: MediaJob;
+  readonly artifacts: readonly RunArtifact[];
+  readonly isLoading: boolean;
+  readonly isRunning: boolean;
+}): string {
+  if (isLoading) {
+    return "Generation tasks are refreshing.";
+  }
+  if (isRunning || job.status === "running") {
+    return "Generation is already running.";
+  }
+  if (mediaJobCanRun(job, artifacts)) {
+    return "";
+  }
+  if (job.status === "succeeded" && mediaArtifactsForJob(artifacts).length > 0) {
+    return "This task already has generated results.";
+  }
+  return "Cannot run while task is {status}";
+}
+
 export function mediaOperationLabel(operation: MediaOperation): string {
   if (operation === "image_generate") {
     return "Image generation";
@@ -52,7 +78,7 @@ export function mediaOperationLabel(operation: MediaOperation): string {
 
 export function mediaJobStatusLabel(status: MediaJobStatus): string {
   if (status === "queued") {
-    return "Queued";
+    return "Ready";
   }
   if (status === "running") {
     return "Running";
@@ -67,6 +93,13 @@ export function mediaJobStatusLabel(status: MediaJobStatus): string {
     return "Failed";
   }
   return "Cancelled";
+}
+
+export function mediaJobStatusBadgeClass(status: MediaJobStatus): string {
+  if (status === "queued" || status === "waiting_for_approval") {
+    return "active";
+  }
+  return status;
 }
 
 export function mediaJobInputValue(input: Record<string, unknown>, keys: readonly string[]): string {

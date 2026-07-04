@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { CheckCircle2, CircleAlert, ClipboardList, ExternalLink, Inbox, Kanban, ListFilter, RefreshCw, Route, SquareTerminal, UserCheck, XCircle } from "lucide-react";
+import { CheckCircle2, CircleAlert, ClipboardList, ExternalLink, Inbox, ListFilter, RefreshCw, Route, SquareTerminal, UserCheck, XCircle } from "lucide-react";
 import { useI18n } from "../../i18n.js";
 import { formatDateTime } from "../../lib/formatting.js";
 import {
@@ -17,7 +17,7 @@ import {
   type WorkItemView,
   type WorkItemWaitingReason,
 } from "../../lib/work-items.js";
-import { SettingsToolReturnRow, StatusBadge } from "../../shared/components/index.js";
+import { OperationEmptyState, PageActionHeader, SettingsToolReturnRow, StatusBadge } from "../../shared/components/index.js";
 import type {
   ApprovalRequest,
   Channel,
@@ -223,19 +223,25 @@ export function GlobalWorkBoardPage({
       aria-labelledby={settingsToolMode ? undefined : "global-work-board-title"}
     >
       {!settingsToolMode ? (
-        <div className="panel-title split">
-          <span className="work-board-heading">
-            <Kanban size={18} />
-            <span>
-              <h2 id="global-work-board-title">{headerTitle}</h2>
-              <small>{headerDescription}</small>
-            </span>
-          </span>
-          <button className="secondary-button compact-button" type="button" onClick={onRefresh}>
-            <RefreshCw size={15} />
-            {t("Refresh")}
-          </button>
-        </div>
+        <PageActionHeader
+          title={<span id="global-work-board-title">{headerTitle}</span>}
+          description={headerDescription}
+          meta={(
+            <div className="work-board-count-line">
+              <button className={activeScope === "actionable" ? "active" : ""} type="button" onClick={() => selectScope("actionable")}>{t("{count} need action", { count: stats.actionable })}</button>
+              <button className={activeScope === "global" ? "active" : ""} type="button" onClick={() => selectScope("global")}>{t("{count} running", { count: stats.running })}</button>
+              <button className={activeScope === "blocked" ? "active" : ""} type="button" onClick={() => selectScope("blocked")}>{t("{count} blocked or failed", { count: stats.blocked })}</button>
+              <button className={activeScope === "history" ? "active" : ""} type="button" onClick={() => selectScope("history")}>{t("{count} recently completed", { count: stats.completed })}</button>
+            </div>
+          )}
+          secondaryActions={(
+            <button className="secondary-button compact-button" type="button" onClick={onRefresh}>
+              <RefreshCw size={15} />
+              {t("Refresh")}
+            </button>
+          )}
+          className="work-board-page-header"
+        />
       ) : null}
       <div className="work-board-shell">
         <div className="work-board-list-pane">
@@ -254,12 +260,6 @@ export function GlobalWorkBoardPage({
             ) : (
               <>
                 {workBoardTabs}
-                <div className="work-board-count-line">
-                  <button className={activeScope === "actionable" ? "active" : ""} type="button" onClick={() => selectScope("actionable")}>{t("{count} need action", { count: stats.actionable })}</button>
-                  <button className={activeScope === "global" ? "active" : ""} type="button" onClick={() => selectScope("global")}>{t("{count} running", { count: stats.running })}</button>
-                  <button className={activeScope === "blocked" ? "active" : ""} type="button" onClick={() => selectScope("blocked")}>{t("{count} blocked or failed", { count: stats.blocked })}</button>
-                  <button className={activeScope === "history" ? "active" : ""} type="button" onClick={() => selectScope("history")}>{t("{count} recently completed", { count: stats.completed })}</button>
-                </div>
               </>
             )}
           </div>
@@ -393,31 +393,36 @@ function WorkBoardEmptyState({
       ? t("When approvals, failed runs, blockers, or claimable work appear, they will show up here.")
       : t("This view is empty right now. You can switch views or inspect completed history.")
     : t("Try clearing filters or opening the related channel to continue.");
+  const actions = (
+    <>
+      {filtersActive ? (
+        <button className="secondary-button compact-button" type="button" onClick={onClearFilters}>
+          {t("Clear filters")}
+        </button>
+      ) : null}
+      {activeScope !== "history" ? (
+        <button className="secondary-button compact-button" type="button" onClick={onViewHistory}>
+          {t("View history")}
+        </button>
+      ) : null}
+      {channelFilter && onOpenChannel ? (
+        <button className="secondary-button compact-button" type="button" onClick={onOpenChannel}>
+          <ExternalLink size={14} />
+          {channelName ? t("Open {channelName}", { channelName }) : t("Open channel")}
+        </button>
+      ) : null}
+    </>
+  );
 
   return (
-    <div className="work-board-empty-state compact-empty">
-      <ClipboardList size={22} />
-      <strong>{title}</strong>
-      <p>{description}</p>
-      <div className="work-board-empty-actions">
-        {filtersActive ? (
-          <button className="secondary-button compact-button" type="button" onClick={onClearFilters}>
-            {t("Clear filters")}
-          </button>
-        ) : null}
-        {activeScope !== "history" ? (
-          <button className="secondary-button compact-button" type="button" onClick={onViewHistory}>
-            {t("View history")}
-          </button>
-        ) : null}
-        {channelFilter && onOpenChannel ? (
-          <button className="secondary-button compact-button" type="button" onClick={onOpenChannel}>
-            <ExternalLink size={14} />
-            {channelName ? t("Open {channelName}", { channelName }) : t("Open channel")}
-          </button>
-        ) : null}
-      </div>
-    </div>
+    <OperationEmptyState
+      compact
+      className="work-board-empty-state"
+      icon={<ClipboardList size={22} />}
+      title={title}
+      description={description}
+      action={actions}
+    />
   );
 }
 
@@ -616,11 +621,14 @@ function WorkItemDetailDrawer({
   if (!item) {
     return (
       <aside className="work-board-detail empty guide" aria-label={t("Work detail")}>
-        <ClipboardList size={22} />
-        <strong>{t("Work handling guide")}</strong>
-        <p>{scopedCount === 0 && activeScope === "actionable"
-          ? t("You are clear for now. This panel explains where new work will appear.")
-          : t("Use the left list to choose a work item, or use the shortcuts below to recover context.")}</p>
+        <OperationEmptyState
+          compact
+          icon={<ClipboardList size={22} />}
+          title={t("Work handling guide")}
+          description={scopedCount === 0 && activeScope === "actionable"
+            ? t("You are clear for now. This panel explains where new work will appear.")
+            : t("Use the left list to choose a work item, or use the shortcuts below to recover context.")}
+        />
         <div className="work-board-guide-list">
           <span>
             <strong>{t("Approvals land in Inbox")}</strong>

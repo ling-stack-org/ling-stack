@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { CircleAlert, Loader2, PlugZap, Plus, RefreshCw, X } from "lucide-react";
+import { CircleAlert, Loader2, PlugZap, Plus, RefreshCw } from "lucide-react";
 import { useI18n } from "../../i18n.js";
 import {
   canUseGenerationProviderForOperation,
@@ -17,6 +17,12 @@ import type {
 import { MediaJobAdvancedFields } from "./MediaJobAdvancedFields.js";
 import { MediaJobDetailPanel } from "./MediaJobDetailPanel.js";
 import { MediaJobList } from "./MediaJobList.js";
+import {
+  CreateDialogShell,
+  DialogSection,
+  OperationEmptyState,
+  PageActionHeader,
+} from "../../shared/components/index.js";
 import {
   isMediaJobActiveStatus,
   mediaArtifactsForJob,
@@ -68,7 +74,7 @@ export function MediaJobsPage({
   const selectedProviderCanRun = Boolean(selectedProvider && canUseGenerationProviderForOperation(selectedProvider, form.operation));
   const hasRunnableGenerationModel = runnableProvidersForOperation.length > 0;
   const canCreate = Boolean(selectedProviderCanRun && form.prompt.trim());
-  const queuedCount = jobs.filter((job) => isMediaJobActiveStatus(job.status)).length;
+  const activeCount = jobs.filter((job) => isMediaJobActiveStatus(job.status)).length;
   const selectedJob = jobs.find((job) => job.id === selectedJobId) ?? jobs[0];
   const selectedProviderForJob = selectedJob ? providers.find((provider) => provider.id === selectedJob.providerPresetId) : undefined;
   const selectedJobArtifacts = selectedJob ? artifactsByJob[selectedJob.id] ?? [] : [];
@@ -92,21 +98,24 @@ export function MediaJobsPage({
 
   return (
     <div className="media-jobs-page">
-      <header className="media-jobs-page-header">
-        <div>
-          <h1 id="media-jobs-title">{t("Generation tasks")}</h1>
-          <p>
-            {t("{modelCount} available generation models · {taskCount} history tasks · {queuedCount} queued", {
+      <PageActionHeader
+        className="media-jobs-page-header"
+        title={<span id="media-jobs-title">{t("Generation tasks")}</span>}
+        description={(
+          <>
+            {t("{modelCount} available generation models · {taskCount} history tasks · {activeCount} active", {
               modelCount: runnableProvidersForOperation.length,
               taskCount: jobs.length,
-              queuedCount,
+              activeCount,
             })}
-          </p>
-        </div>
-        <div className="media-job-title-actions">
+          </>
+        )}
+        secondaryActions={(
           <button className="secondary-button compact-button media-refresh-button" type="button" onClick={onRefresh} disabled={isLoading} aria-label={t("Refresh")}>
             {isLoading ? <Loader2 className="spin" size={16} /> : <RefreshCw size={16} />}
           </button>
+        )}
+        primaryAction={(
           <button
             className="primary-button media-create-button"
             type="button"
@@ -118,8 +127,8 @@ export function MediaJobsPage({
             {hasRunnableGenerationModel ? <Plus size={16} /> : <PlugZap size={16} />}
             {hasRunnableGenerationModel ? t("Create generation task") : t("Configure generation model")}
           </button>
-        </div>
-      </header>
+        )}
+      />
 
       {errorMessage ? (
         <div className="inline-error media-page-error">
@@ -129,10 +138,12 @@ export function MediaJobsPage({
       ) : null}
 
       {!hasRunnableGenerationModel ? (
-        <div className="provider-next-action media-model-alert">
-          <CircleAlert size={16} />
-          <span>{t("当前没有可真实生成的模型，请先在模型工作台配置具备图片或视频能力的模型。")}</span>
-        </div>
+        <OperationEmptyState
+          className="media-model-alert"
+          icon={<CircleAlert size={17} />}
+          title={t("No runnable generation model")}
+          description={t("当前没有可真实生成的模型，请先在模型工作台配置具备图片或视频能力的模型。")}
+        />
       ) : null}
 
       <div className="media-jobs-layout">
@@ -172,23 +183,32 @@ export function MediaJobsPage({
       </div>
 
       {isCreateOpen ? (
-        <div className="media-create-overlay" role="presentation" onMouseDown={(event) => {
-          if (event.target === event.currentTarget) {
-            setCreateOpen(false);
-          }
-        }}>
-          <section className="media-create-dialog" role="dialog" aria-modal="true" aria-label={t("Create generation task")}>
-            <header className="media-create-header">
-              <div>
-                <h2>{t("Create generation task")}</h2>
-                <p>{t("Choose a model, write a prompt, then submit a generation task")}</p>
-              </div>
-              <button className="ghost-icon-button" type="button" onClick={() => setCreateOpen(false)} aria-label={t("Cancel")} title={t("Cancel")}>
-                <X size={18} />
+        <CreateDialogShell
+          ariaLabel={t("Create generation task")}
+          title={t("Create generation task")}
+          description={t("Choose a model, write a prompt, then submit a generation task")}
+          closeLabel={t("Cancel")}
+          onClose={() => setCreateOpen(false)}
+          overlayClassName="media-create-overlay"
+          className="media-create-dialog"
+          bodyClassName="media-create-body"
+          footer={(
+            <>
+              <span className="media-create-footer-note">
+                <CircleAlert size={15} />
+                {t("This will create a generation task")}
+              </span>
+              <button className="secondary-button" type="button" onClick={() => setCreateOpen(false)}>
+                {t("Cancel")}
               </button>
-            </header>
-
-            <div className="media-create-body">
+              <button className="primary-button" type="button" onClick={createGenerationTask} disabled={isLoading || !canCreate}>
+                {isLoading ? <Loader2 className="spin" size={16} /> : <Plus size={16} />}
+                {t("Create generation task")}
+              </button>
+            </>
+          )}
+        >
+              <DialogSection title={t("Model and operation")} description={t("Choose what Ling should generate.")}>
               <div className="media-job-form-toolbar" aria-label={t("Generation task controls")}>
                 <label className="field wide">
                   <span>{t("Generation model")}</span>
@@ -237,7 +257,9 @@ export function MediaJobsPage({
                   <span>{t("当前没有可真实生成的模型，请先在模型工作台配置具备图片或视频能力的模型。")}</span>
                 </div>
               ) : null}
+              </DialogSection>
 
+              <DialogSection title={t("Prompt")} description={t("Describe the output you expect.")}>
               <label className="field wide media-job-prompt-composer">
                 <span>{t("Prompt")}</span>
                 <textarea
@@ -249,31 +271,18 @@ export function MediaJobsPage({
                 />
                 <small>{form.prompt.length} / 2000</small>
               </label>
+              </DialogSection>
 
-              <details className="advanced-settings media-create-advanced" open>
-                <summary>
-                  <span>{t("Advanced parameters")}</span>
-                  <small>{t(mediaAdvancedSummary(form.operation))}</small>
-                </summary>
+              <DialogSection
+                title={t("Advanced parameters")}
+                description={t(mediaAdvancedSummary(form.operation))}
+                collapsible
+                defaultOpen
+                className="media-create-advanced"
+              >
                 <MediaJobAdvancedFields form={form} onFormChange={onFormChange} />
-              </details>
-            </div>
-
-            <footer className="media-create-footer">
-              <span>
-                <CircleAlert size={15} />
-                {t("This will create a queued task")}
-              </span>
-              <button className="secondary-button" type="button" onClick={() => setCreateOpen(false)}>
-                {t("Cancel")}
-              </button>
-              <button className="primary-button" type="button" onClick={createGenerationTask} disabled={isLoading || !canCreate}>
-                {isLoading ? <Loader2 className="spin" size={16} /> : <Plus size={16} />}
-                {t("Create generation task")}
-              </button>
-            </footer>
-          </section>
-        </div>
+              </DialogSection>
+        </CreateDialogShell>
       ) : null}
     </div>
   );

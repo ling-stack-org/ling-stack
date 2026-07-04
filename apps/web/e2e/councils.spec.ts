@@ -53,7 +53,7 @@ test("Council Workspace shows council health, members, and channel entry points"
   await expect(page.getByRole("heading", { name: "Council Workspace", level: 1 })).toBeVisible();
   await expect(page.getByLabel("Settings sections")).toBeVisible();
   await expect(page.getByLabel("Ling Stack navigation")).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "Back to configuration" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Back to workspace tools" })).toBeVisible();
   await expect(page.getByLabel("Council overview")).toHaveCount(0);
   await expect(page.getByText("Manage advisor councils")).toHaveCount(0);
   await expect(page.getByText("Health filter")).toBeHidden();
@@ -111,16 +111,16 @@ test("Council Workspace shows council health, members, and channel entry points"
 
   const councilList = page.locator(".council-workspace-list");
   await councilList.getByRole("button", { name: "Create council" }).click();
-  const createCouncilForm = councilList.locator(".council-create-inline");
-  await expect(createCouncilForm).toBeVisible();
-  await createCouncilForm.getByLabel("New council name").fill("Design Council");
-  await createCouncilForm.getByLabel("New council description").fill("Design review collective");
-  await createCouncilForm.getByRole("button", { name: "Create council" }).click();
+  const createCouncilDialog = page.getByRole("dialog", { name: "Create council" });
+  await expect(createCouncilDialog).toBeVisible();
+  await createCouncilDialog.getByLabel("New council name").fill("Design Council");
+  await createCouncilDialog.getByLabel("New council description").fill("Design review collective");
+  await createCouncilDialog.getByRole("button", { name: "Create council" }).click();
   await expect.poll(() => {
     const created = state.aiCouncils.find((item) => isRecord(item) && item.displayName === "Design Council");
     return isRecord(created) ? String(created.id) : "";
   }).not.toBe("");
-  await expect(createCouncilForm).toHaveCount(0);
+  await expect(createCouncilDialog).toHaveCount(0);
   await expect(page.locator(".council-workspace-list")).toContainText("Design Council");
   await expect(page.getByLabel("Selected council")).toContainText("Design Council");
 
@@ -185,7 +185,7 @@ test("Council Workspace shows council health, members, and channel entry points"
 
   await page.getByRole("button", { name: "Open AI Teammates" }).click();
   await expect(page.getByLabel("Workspace teammates")).toBeVisible();
-  await page.getByRole("button", { name: "Back to configuration" }).click();
+  await page.getByRole("button", { name: "Back to workspace tools" }).click();
 
   await page.getByRole("button", { name: "Open Council Workspace" }).click();
   await expect(page.getByLabel("Settings sections")).toBeVisible();

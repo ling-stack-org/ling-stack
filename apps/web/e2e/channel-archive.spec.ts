@@ -14,8 +14,8 @@ async function useEnglishLocale(page: Page): Promise<void> {
 
 async function openArchivedItemsSettings(page: Page): Promise<void> {
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
-  await page.getByLabel("Settings sections").getByRole("button", { name: /Data and maintenance/ }).click();
-  await page.getByRole("tab", { name: /Archived items/ }).click();
+  await page.getByLabel("Settings sections").getByRole("button", { name: /Data and diagnostics/ }).click();
+  await page.getByRole("tab", { name: /Archived data/ }).click();
 }
 
 test("channel branch list shows real branches without default branch chrome", async ({ page }) => {

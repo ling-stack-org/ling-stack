@@ -116,25 +116,25 @@ export function IntegrationsSettingsPanel({
   return (
     <div className="settings-section-stack">
       <SettingsSubnav
-        label="Integration sections"
+        label="Connection sections"
         activeId={activeSubsection}
         onChange={(id) => setActiveSubsection(id as IntegrationSubsectionId)}
         options={[
           {
             id: "external-work",
-            label: "External work",
-            description: "Connect GitHub or Linear workflow intake for the selected channel.",
+            label: "Work intake",
+            description: "Connect GitHub or Linear work intake for the selected channel.",
             badge: selectedChannel?.boundPath ? "Ready" : "Needs setup",
           },
           {
             id: "mcp",
-            label: "MCP tool servers",
-            description: "Manage tool servers and sync tool access for AI teammates.",
+            label: "Tool servers",
+            description: "Manage MCP tool servers and sync tool access for AI teammates.",
             badge: `${mcpServers.length}`,
           },
           {
             id: "plugins",
-            label: "Plugin Manager",
+            label: "Plugin bundles",
             description: "Manage trusted local presets and bundled capability packages.",
             badge: `${plugins.length}`,
           },

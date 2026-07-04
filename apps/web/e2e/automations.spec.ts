@@ -62,7 +62,9 @@ test("automations page uses Codex-style inbox, manual composer, templates, and p
     expect(surface.maxChannel, `${surface.selector} should stay on dark theme tokens`).toBeLessThanOrEqual(45);
   }
   const headerActions = automationsPage.locator(".automation-header-actions");
-  await expect(automationsPage.getByText("调度运行中")).toHaveCount(0);
+  const schedulerStrip = automationsPage.locator(".automation-scheduler-strip");
+  await expect(schedulerStrip.getByText("调度运行中")).toBeVisible();
+  await expect(schedulerStrip.getByRole("button", { name: "停止调度" })).toBeVisible();
   await expect(headerActions.getByRole("button", { name: "暂停自动触发" })).toHaveCount(0);
   await expect(headerActions.getByRole("button", { name: "恢复自动触发" })).toHaveCount(0);
   await expect(headerActions.getByRole("button", { name: "使用模板" })).toBeVisible();

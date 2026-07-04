@@ -97,6 +97,11 @@ Global Work Board is the full work ledger across channels and sources.
 In the Web sidebar, this is a top-level `Work Board` / `工作看板` entry. It is not a
 Model Workbench subview.
 
+P1 product-semantic convergence note: the current Web IA keeps Global Work Board reachable
+from Settings workspace tools and contextual Inbox links, and defers any primary-sidebar
+promotion to P2. This document still describes the broader Work Board boundary and
+longer-term navigation option.
+
 It answers:
 
 - "What work exists anywhere in this workspace?"
@@ -432,6 +437,10 @@ This slice is where the strongest OpenClaw Workboard execution protocol becomes 
 - Work detail is a contextual drawer inside Work Board or Review Queue flows, not a
   navigation item.
 - Global Work Board does not live under Model Workbench.
+
+Current P1 Web IA keeps Work Board out of primary sidebar and exposes it through Settings
+workspace tools plus contextual links; top-level promotion remains a later product
+decision.
 
 ## Open Questions
 

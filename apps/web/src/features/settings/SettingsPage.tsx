@@ -25,20 +25,22 @@ import type {
   WorkspaceRuntimeSettings,
 } from "../../types.js";
 import { ExecutionPermissionsSettingsPanel } from "./ExecutionPermissionsSettingsPanel.js";
+import { InterfacePreferencesSettingsPanel } from "./InterfacePreferencesSettingsPanel.js";
 import { IntegrationsSettingsPanel } from "./IntegrationsSettingsPanel.js";
 import { MaintenanceSettingsPanel } from "./MaintenanceSettingsPanel.js";
-import { PersonalInterfaceSettingsPanel } from "./PersonalInterfaceSettingsPanel.js";
+import { ProfileSettingsPanel } from "./ProfileSettingsPanel.js";
 import { SettingsWorkspaceToolsPanel, type WorkspaceToolCounts } from "./SettingsWorkspaceToolsPanel.js";
 import { SkillsSettingsPanel } from "./SkillsSettingsPanel.js";
 import { useArchivedSettingsController } from "./useArchivedSettingsController.js";
 
 type SettingsSectionId =
   | "overview"
-  | "personal-interface"
-  | "execution-permissions"
-  | "integrations"
+  | "profile"
+  | "interface-language"
+  | "runtime-permissions"
+  | "connections"
   | "skills"
-  | "maintenance";
+  | "data-diagnostics";
 
 const settingsSectionGroups: readonly {
   readonly heading?: string;
@@ -49,7 +51,27 @@ const settingsSectionGroups: readonly {
       {
         id: "overview",
         label: "Configuration overview",
-        description: "Models, teammates, work board, and approval defaults",
+        description: "Workspace setup, work controls, and default authorization",
+      },
+    ],
+  },
+  {
+    heading: "Personal",
+    items: [
+      {
+        id: "profile",
+        label: "User profile",
+        description: "Avatar, display name, handle, and local profile overview",
+      },
+    ],
+  },
+  {
+    heading: "Preferences",
+    items: [
+      {
+        id: "interface-language",
+        label: "Interface and language",
+        description: "Theme, app language, and AI response language",
       },
     ],
   },
@@ -57,24 +79,19 @@ const settingsSectionGroups: readonly {
     heading: "Workspace",
     items: [
       {
-        id: "personal-interface",
-        label: "Personal and interface",
-        description: "Profile, language, theme, and response language",
+        id: "runtime-permissions",
+        label: "Runtime and permissions",
+        description: "Default authorization, tool policy, and execution runners",
       },
       {
-        id: "execution-permissions",
-        label: "Execution and permissions",
-        description: "Approval policy, authorization, and runtime runners",
-      },
-      {
-        id: "integrations",
-        label: "Integrations",
-        description: "External work, MCP servers, and plugins",
+        id: "connections",
+        label: "Connections",
+        description: "Work intake, tool servers, and plugin bundles",
       },
       {
         id: "skills",
         label: "Skills",
-        description: "Skill governance and workspace skill library",
+        description: "Skill policy and workspace skill library",
       },
     ],
   },
@@ -82,9 +99,9 @@ const settingsSectionGroups: readonly {
     heading: "Maintenance",
     items: [
       {
-        id: "maintenance",
-        label: "Data and maintenance",
-        description: "Archived items, startup readiness, and diagnostics",
+        id: "data-diagnostics",
+        label: "Data and diagnostics",
+        description: "Archived data, system health, and support diagnostics",
       },
     ],
   },
@@ -274,7 +291,7 @@ export function SettingsPage({
   const workspaceToolDetailOpen = activeSection === "overview" && workspaceToolDetail !== undefined && workspaceToolDetail !== null;
   const archivedController = useArchivedSettingsController({
     cwd,
-    enabled: activeSection === "maintenance",
+    enabled: activeSection === "data-diagnostics",
     onChanged: onArchivedItemsChanged,
   });
 
@@ -329,21 +346,26 @@ export function SettingsPage({
             onOpenTeammates={onOpenTeammates}
             onOpenCouncils={onOpenCouncils}
             onOpenWorkBoard={onOpenWorkBoard}
-            onOpenApprovalPolicy={() => setActiveSection("execution-permissions")}
+            onOpenApprovalPolicy={() => setActiveSection("runtime-permissions")}
           />
         ) : null}
 
-        {activeSection === "personal-interface" ? (
-          <PersonalInterfaceSettingsPanel
+        {activeSection === "profile" ? (
+          <ProfileSettingsPanel
             cwd={cwd}
-            effectiveConfig={effectiveConfig}
-            workspaceResponseLanguage={workspaceResponseLanguage}
-            onWorkspaceResponseLanguageChange={onWorkspaceResponseLanguageChange}
             onProfileChange={onProfileChange}
           />
         ) : null}
 
-        {activeSection === "execution-permissions" ? (
+        {activeSection === "interface-language" ? (
+          <InterfacePreferencesSettingsPanel
+            effectiveConfig={effectiveConfig}
+            workspaceResponseLanguage={workspaceResponseLanguage}
+            onWorkspaceResponseLanguageChange={onWorkspaceResponseLanguageChange}
+          />
+        ) : null}
+
+        {activeSection === "runtime-permissions" ? (
           <ExecutionPermissionsSettingsPanel
             policy={policy}
             form={form}
@@ -372,7 +394,7 @@ export function SettingsPage({
           />
         ) : null}
 
-        {activeSection === "integrations" ? (
+        {activeSection === "connections" ? (
           <IntegrationsSettingsPanel
             cwd={cwd}
             selectedChannel={selectedChannel}
@@ -422,7 +444,7 @@ export function SettingsPage({
 
         {activeSection === "skills" ? <SkillsSettingsPanel cwd={cwd} skillLibraryRefreshToken={skillLibraryRefreshToken} /> : null}
 
-        {activeSection === "maintenance" ? (
+        {activeSection === "data-diagnostics" ? (
           <MaintenanceSettingsPanel
             cwd={cwd}
             archivedState={archivedController.state}

@@ -99,24 +99,24 @@ export function ExecutionPermissionsSettingsPanel({
   return (
     <div className="settings-section-stack">
       <SettingsSubnav
-        label="Execution and permissions sections"
+        label="Runtime and permissions sections"
         activeId={activeSubsection}
         onChange={(id) => setActiveSubsection(id as ExecutionSubsectionId)}
         options={[
           {
             id: "defaults",
-            label: "Global approval default",
-            description: "Set the authorization mode new conversations inherit.",
+            label: "Default authorization",
+            description: "Choose how new conversations get permission to use tools.",
           },
           {
             id: "policy",
-            label: "Approval policy",
-            description: "Tune workspace tool decisions, permission previews, and write boundaries.",
+            label: "Tool permission policy",
+            description: "Tune tool decisions, permission previews, and write boundaries.",
           },
           {
             id: "runners",
-            label: "Runtime runners",
-            description: "Choose allowed execution runners and fallback behavior.",
+            label: "Execution runners",
+            description: "Choose which local execution runners Ling can use.",
             badge: String(enabledRunners.length),
           },
         ]}
@@ -135,7 +135,7 @@ export function ExecutionPermissionsSettingsPanel({
         <div className="panel-title split">
           <span>
             <Settings size={18} />
-            <h2 id="settings-title">{t("Approval policy")}</h2>
+            <h2 id="settings-title">{t("Tool permission policy")}</h2>
           </span>
           <button className="secondary-button compact-button" type="button" onClick={onRefresh} disabled={isLoading}>
             {isLoading ? <Loader2 className="spin" size={15} /> : <RefreshCw size={15} />}
@@ -234,7 +234,7 @@ export function ExecutionPermissionsSettingsPanel({
         <div className="panel-title split">
           <span>
             <Bot size={18} />
-            <h2 id="runtime-runner-settings-title">{t("Runtime runners")}</h2>
+            <h2 id="runtime-runner-settings-title">{t("Execution runners")}</h2>
           </span>
           <button className="secondary-button compact-button" type="button" onClick={onRefreshRuntimeSettings} disabled={runtimeSettingsLoading}>
             {runtimeSettingsLoading ? <Loader2 className="spin" size={15} /> : <RefreshCw size={15} />}

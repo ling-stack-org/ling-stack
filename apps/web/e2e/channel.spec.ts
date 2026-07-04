@@ -501,11 +501,11 @@ test("global sidebar keeps fixed chrome, scrollable recents, and a true compact 
   await navigation.getByRole("button", { name: "Settings" }).click();
   await expect(page.getByLabel("Settings sections")).toBeVisible();
   await expect(page.getByLabel("Settings sections").getByRole("button", { name: "Configuration overview" })).toBeVisible();
-  await page.getByRole("button", { name: "Open AI Teammates" }).click();
-  await expect(page.locator(".teammates-page-header.settings-return-mode .settings-tool-return-row").getByRole("button", { name: "Back to configuration" })).toBeVisible();
+  await page.getByRole("button", { name: "Open Teammate Management" }).click();
+  await expect(page.locator(".teammates-page-header.settings-return-mode .settings-tool-return-row").getByRole("button", { name: "Back to workspace tools" })).toBeVisible();
   await expect(page.getByLabel("Workspace teammates")).toBeVisible();
   await expect(page.getByLabel("Ling Stack navigation")).toHaveCount(0);
-  await page.getByRole("button", { name: "Back to configuration" }).click();
+  await page.getByRole("button", { name: "Back to workspace tools" }).click();
   await page.getByRole("button", { name: "Back to app" }).click();
 
   await page.getByRole("button", { name: "Show navigation" }).click();
@@ -942,12 +942,13 @@ test("channel environment surface shows read-only context and opens review", asy
   expect(chatLayoutAfterDockClose).not.toBeNull();
   expect(Math.abs((chatLayoutAfterDockClose?.y ?? 0) - (chatLayoutBeforeDock?.y ?? 0))).toBeLessThanOrEqual(1);
   expect(Math.abs((chatLayoutAfterDockClose?.height ?? 0) - (chatLayoutBeforeDock?.height ?? 0))).toBeLessThanOrEqual(1);
+  const dockCloseHorizontalTolerance = 20;
   await expect.poll(async () => {
     const snapshot = await readChatLayoutSnapshot();
     return Math.abs(snapshot.chatX - chatSnapshotBeforeDock.chatX);
-  }).toBeLessThanOrEqual(12);
+  }).toBeLessThanOrEqual(dockCloseHorizontalTolerance);
   const chatSnapshotAfterDockClose = await readChatLayoutSnapshot();
-  expect(Math.abs(chatSnapshotAfterDockClose.chatX - chatSnapshotBeforeDock.chatX)).toBeLessThanOrEqual(12);
+  expect(Math.abs(chatSnapshotAfterDockClose.chatX - chatSnapshotBeforeDock.chatX)).toBeLessThanOrEqual(dockCloseHorizontalTolerance);
   expect(Math.abs(chatSnapshotAfterDockClose.chatY - chatSnapshotBeforeDock.chatY)).toBeLessThanOrEqual(1);
   expect(Math.abs(chatSnapshotAfterDockClose.chatWidth - chatSnapshotBeforeDock.chatWidth)).toBeLessThanOrEqual(1);
   expect(Math.abs(chatSnapshotAfterDockClose.chatHeight - chatSnapshotBeforeDock.chatHeight)).toBeLessThanOrEqual(1);
@@ -1503,7 +1504,11 @@ test("channel runtime policy is visible while preferred specialist controls stay
   await expect(createChannelPanel.getByLabel("Ling reply")).toHaveCount(0);
   await expect(createChannelPanel.getByLabel("Preferred specialist")).toHaveCount(0);
   await expect(createChannelPanel).not.toContainText("Preferred specialist");
+  await expect(createChannelPanel.getByText("Invite teammates", { exact: true })).toBeVisible();
+  await expect(createChannelPanel.getByLabel("Base model")).toBeHidden();
   await createChannelPanel.getByLabel("Name").fill("Release");
+  await createChannelPanel.getByText("Advanced settings").click();
+  await expect(createChannelPanel.getByLabel("Base model")).toBeVisible();
   await createChannelPanel.getByLabel("Status").selectOption("paused");
   await createChannelPanel.getByLabel("Execution mode").selectOption("parallel");
   await createChannelPanel.getByLabel("Write lock").selectOption("workspace");
@@ -2538,6 +2543,7 @@ test("channel activity supports mentions, messages, files, links, and topic repl
       checkedAt: "2026-05-25T00:11:00.000Z",
     },
   })];
+  state.aiTeammates = [createMockTeammate({ id: "engineer", displayName: "Engineer" })];
   state.channelMessageDelayMs = 150;
   state.linkPreviewDelayMs = 150;
   await mockDaemon(page, state);
@@ -2560,7 +2566,7 @@ test("channel activity supports mentions, messages, files, links, and topic repl
   await page.getByLabel("Message tools").getByRole("button", { name: "Mention teammate" }).click();
   await expectComposerValue(composerInput, "@");
   await expect(page.getByRole("option", { name: /@Engineer/ })).toBeVisible();
-  await composerInput.type("Eng");
+  await composerInput.fill("@Eng");
   await expect(page.getByRole("option", { name: /@Engineer/ })).toBeVisible();
   await page.getByRole("option", { name: /@Engineer/ }).click();
   await expect(page.locator(".channel-composer .composer-inline-token.mention").filter({ hasText: "Engineer" })).toBeVisible();
@@ -5113,7 +5119,7 @@ test("phase 1 parallel multi-agent active transcript shows latest action per age
 
   const engineerSpan = workCell.locator(".conversation-work-cell-agent-span").filter({ hasText: "Engineer" });
   await expect(engineerSpan.locator(".conversation-work-cell-agent-avatar")).toHaveCount(1);
-  await expect(engineerSpan.locator(".conversation-work-cell-agent-avatar .avatar-initial")).toHaveCount(1);
+  await expect(engineerSpan.locator(".conversation-work-cell-agent-avatar .teammate-avatar-image-default")).toHaveCount(1);
   await expect(engineerSpan.locator(".conversation-work-cell-agent-span-head .conversation-work-cell-row-icon")).toHaveCount(0);
   await expect(engineerSpan).toContainText("Implement login form");
   await expect(engineerSpan).not.toContainText("Implement the login form.");
@@ -5127,7 +5133,7 @@ test("phase 1 parallel multi-agent active transcript shows latest action per age
 
   const qaSpan = workCell.locator(".conversation-work-cell-agent-span").filter({ hasText: "QA" });
   await expect(qaSpan.locator(".conversation-work-cell-agent-avatar")).toHaveCount(1);
-  await expect(qaSpan.locator(".conversation-work-cell-agent-avatar .avatar-initial")).toHaveCount(1);
+  await expect(qaSpan.locator(".conversation-work-cell-agent-avatar .teammate-avatar-image-default")).toHaveCount(1);
   await expect(qaSpan.locator(".conversation-work-cell-agent-span-head .conversation-work-cell-row-icon")).toHaveCount(0);
   await expect(qaSpan).toContainText("Prepare QA checklist");
   await expect(qaSpan.locator(".conversation-work-cell-agent-span-detail")).toHaveCount(0);

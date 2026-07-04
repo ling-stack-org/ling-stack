@@ -53,13 +53,13 @@ export function MaintenanceSettingsPanel({
   return (
     <div className="settings-section-stack">
       <SettingsSubnav
-        label="Data and maintenance sections"
+        label="Data and diagnostics sections"
         activeId={activeSubsection}
         onChange={(id) => setActiveSubsection(id as MaintenanceSubsectionId)}
         options={[
           {
             id: "archived",
-            label: "Archived items",
+            label: "Archived data",
             description: "Restore archived conversations, teammates, channels, and branches.",
             badge: String(
               archivedState.archivedConversations.length +
@@ -70,8 +70,8 @@ export function MaintenanceSettingsPanel({
           },
           {
             id: "diagnostics",
-            label: "Startup and diagnostics",
-            description: "Inspect startup readiness and open raw run diagnostics when support needs evidence.",
+            label: "System health",
+            description: "Inspect startup readiness and open support diagnostics when needed.",
             badge: startupStatus ? t(startupStatus.state) : undefined,
           },
         ]}
@@ -83,7 +83,7 @@ export function MaintenanceSettingsPanel({
         <section className="panel settings-panel developer-settings-panel" aria-labelledby="developer-settings-title">
         <div className="panel-title">
           <Database size={18} />
-          <h2 id="developer-settings-title">{t("Developer")}</h2>
+          <h2 id="developer-settings-title">{t("System health")}</h2>
         </div>
         <div className="developer-settings-stack">
           <StartupReadinessSection
@@ -97,12 +97,12 @@ export function MaintenanceSettingsPanel({
           />
           <div className="settings-action-box">
             <div>
-              <strong>{t("Run Diagnostics")}</strong>
+              <strong>{t("Support diagnostics")}</strong>
               <small>{t("Inspect raw runs, events, artifacts, approvals, shell snapshots, and thread bindings for support debugging.")}</small>
             </div>
             <button className="secondary-button" type="button" onClick={onOpenRunDiagnostics}>
               <Database size={16} />
-              {t("Open Run Diagnostics")}
+              {t("Open Support Diagnostics")}
             </button>
           </div>
         </div>

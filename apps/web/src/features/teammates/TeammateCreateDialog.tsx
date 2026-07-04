@@ -11,11 +11,11 @@ import {
   ShieldCheck,
   Sparkles,
   Workflow,
-  X,
 } from "lucide-react";
 import type { AiTeammateTemplate } from "@ling-stack/core/skill-types";
 import { useI18n } from "../../i18n.js";
 import { canUseConversationProvider, providerModelRouteLabel, providerPreflightReady } from "../../lib/providers.js";
+import { CreateDialogShell, DialogSection } from "../../shared/components/index.js";
 import type { Channel, ProviderPreset } from "../../types.js";
 import { roleLabel } from "./helpers.js";
 import { selectDefaultTeammateProvider, selectDefaultTeammateTemplate } from "./teammate-create-defaults.js";
@@ -138,31 +138,31 @@ export function TeammateCreateDialog({
   }
 
   return (
-    <div
-      className="channel-create-overlay teammate-create-overlay"
-      role="presentation"
-      onMouseDown={(event) => {
-        if (event.target === event.currentTarget) {
-          onClose();
-        }
-      }}
-    >
-      <section className="channel-create-dialog teammate-create-dialog" aria-label={t("Create AI teammate")} role="dialog" aria-modal="true">
-        <div className="channel-create-head">
-          <div className="teammate-create-title-block">
-            <strong>{t("New AI teammate")}</strong>
-            <p>{t("Recommended role and model are prefilled. Review them, then create.")}</p>
-          </div>
-          <button className="icon-button" type="button" onClick={onClose} aria-label={t("Cancel")} title={t("Cancel")}>
-            <X size={14} />
+    <CreateDialogShell
+      ariaLabel={t("Create AI teammate")}
+      title={t("New AI teammate")}
+      description={t("Recommended role and model are prefilled. Review them, then create.")}
+      closeLabel={t("Cancel")}
+      onClose={onClose}
+      className="channel-create-dialog teammate-create-dialog"
+      overlayClassName="channel-create-overlay teammate-create-overlay"
+      bodyClassName="channel-options-grid channel-create-grid teammate-create-body"
+      footer={(
+        <>
+          {!selectedProviderReady ? (
+            <span className="teammate-create-blocked">{selectedProvider ? t("Selected model needs configuration.") : t("Choose a model before creating.")}</span>
+          ) : null}
+          <button className="secondary-button compact-button" type="button" onClick={onClose}>
+            {t("Cancel")}
           </button>
-        </div>
-
-        <div className="channel-options-grid channel-create-grid teammate-create-body">
-          <section className="teammate-create-section">
-            <div className="teammate-create-section-title">
-              <span>{t("Choose initial role")}</span>
-            </div>
+          <button className="primary-button compact-button" type="button" onClick={createTeammateDraft} disabled={!canCreateTeammate}>
+            <Plus size={14} />
+            {t("Create teammate")}
+          </button>
+        </>
+      )}
+    >
+          <DialogSection className="teammate-create-section" title={t("Choose initial role")}>
             <div className="teammate-create-list role-grid" aria-label={t("Teammate template chooser")}>
               {visibleCreateTemplates.map((template) => (
                 <button
@@ -194,12 +194,9 @@ export function TeammateCreateDialog({
                 <small className="template-skill-count">{t("Custom")}</small>
               </button>
             </div>
-          </section>
+          </DialogSection>
 
-          <section className="teammate-create-section">
-            <div className="teammate-create-section-title">
-              <span>{t("Basic information")}</span>
-            </div>
+          <DialogSection className="teammate-create-section" title={t("Basic information")}>
             <div className="teammate-create-fields">
               <label className="field">
                 <span>{t("Teammate name")}</span>
@@ -239,13 +236,14 @@ export function TeammateCreateDialog({
                 <button className="secondary-button" type="button" onClick={openProvidersAndClose}>{t("Configure model")}</button>
               </div>
             ) : null}
-          </section>
+          </DialogSection>
 
-          <details className="teammate-create-section teammate-create-advanced">
-            <summary>
-              <span>{t("Advanced settings")}</span>
-              <small>{t("Memory, skills, MCP, permissions and prompt")}</small>
-            </summary>
+          <DialogSection
+            className="teammate-create-section teammate-create-advanced"
+            title={t("Advanced settings")}
+            description={t("Memory, skills, MCP, permissions and prompt")}
+            collapsible
+          >
             <div className="teammate-create-advanced-body">
               <section>
                 <h3>{t("Memory")}</h3>
@@ -265,23 +263,9 @@ export function TeammateCreateDialog({
                 </div>
               </section>
             </div>
-          </details>
+          </DialogSection>
 
-          <div className="channel-option-actions teammate-create-actions">
-            {!selectedProviderReady ? (
-              <span className="teammate-create-blocked">{selectedProvider ? t("Selected model needs configuration.") : t("Choose a model before creating.")}</span>
-            ) : null}
-            <button className="secondary-button compact-button" type="button" onClick={onClose}>
-              {t("Cancel")}
-            </button>
-            <button className="primary-button compact-button" type="button" onClick={createTeammateDraft} disabled={!canCreateTeammate}>
-              <Plus size={14} />
-              {t("Create teammate")}
-            </button>
-          </div>
-        </div>
-      </section>
-    </div>
+    </CreateDialogShell>
   );
 }
 

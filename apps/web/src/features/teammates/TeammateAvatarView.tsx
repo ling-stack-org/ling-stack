@@ -1,10 +1,15 @@
+import { useEffect, useState } from "react";
 import { attachmentContentUrlById } from "../../api.js";
 import { AvatarInitial, type AvatarTone } from "../../shared/components/index.js";
 import type { AiTeammate } from "../../types.js";
+import { defaultTeammateAvatarSrc } from "./default-teammate-avatars.js";
 import { roleAvatarTone, teammateInitialFromName } from "./helpers.js";
 
 export interface TeammateAvatarLike {
   readonly displayName: string;
+  readonly templateId?: string;
+  readonly kind?: AiTeammate["kind"];
+  readonly systemRole?: AiTeammate["systemRole"];
   readonly roleKey?: AiTeammate["roleKey"];
   readonly avatarTone?: string;
   readonly avatarImageAttachmentId?: string;
@@ -19,12 +24,28 @@ export function TeammateAvatarView({
   readonly cwd: string;
   readonly compact?: boolean;
 }): JSX.Element {
+  const defaultAvatarSrc = defaultTeammateAvatarSrc(teammate);
+  const [defaultAvatarFailed, setDefaultAvatarFailed] = useState(false);
+  useEffect(() => {
+    setDefaultAvatarFailed(false);
+  }, [defaultAvatarSrc, teammate.avatarImageAttachmentId]);
+
   if (teammate.avatarImageAttachmentId) {
     return (
       <img
         className={`teammate-avatar-image ${compact ? "compact" : ""}`}
         src={attachmentContentUrlById(teammate.avatarImageAttachmentId, cwd.trim())}
         alt=""
+      />
+    );
+  }
+  if (!defaultAvatarFailed) {
+    return (
+      <img
+        className={`teammate-avatar-image teammate-avatar-image-default ${compact ? "compact" : ""}`}
+        src={defaultAvatarSrc}
+        alt=""
+        onError={() => setDefaultAvatarFailed(true)}
       />
     );
   }

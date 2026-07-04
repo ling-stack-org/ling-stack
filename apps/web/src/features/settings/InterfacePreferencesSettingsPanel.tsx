@@ -1,34 +1,21 @@
-import { Bot, Languages, Palette, UserRound } from "lucide-react";
+import { Bot, Languages, Palette } from "lucide-react";
 import { LanguageSwitcher, useI18n, type Translate } from "../../i18n.js";
 import { ThemeSwitcher } from "../../theme.js";
-import type { EffectiveConfigResponse, ResponseLanguagePreference, UserProfile } from "../../types.js";
-import { ProfilePage } from "../profile/ProfilePage.js";
+import type { EffectiveConfigResponse, ResponseLanguagePreference } from "../../types.js";
 
-export function PersonalInterfaceSettingsPanel({
-  cwd,
+export function InterfacePreferencesSettingsPanel({
   effectiveConfig,
   workspaceResponseLanguage,
   onWorkspaceResponseLanguageChange,
-  onProfileChange,
 }: {
-  readonly cwd: string;
   readonly effectiveConfig: EffectiveConfigResponse | undefined;
   readonly workspaceResponseLanguage: ResponseLanguagePreference;
   readonly onWorkspaceResponseLanguageChange: (language: ResponseLanguagePreference) => void;
-  readonly onProfileChange?: (profile: UserProfile) => void;
 }): JSX.Element {
   const { t } = useI18n();
 
   return (
     <div className="settings-section-stack">
-      <section className="panel settings-panel account-profile-settings-panel" aria-labelledby="account-profile-settings-title">
-        <div className="panel-title">
-          <UserRound size={18} />
-          <h2 id="account-profile-settings-title">{t("Account and profile")}</h2>
-        </div>
-        <ProfilePage cwd={cwd} onProfileChange={onProfileChange} />
-      </section>
-
       <section className="panel settings-panel interface-settings-panel" aria-labelledby="interface-settings-title">
         <div className="panel-title">
           <Palette size={18} />

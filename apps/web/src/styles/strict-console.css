@@ -963,7 +963,7 @@
   gap: 0;
 }
 
-.teammate-create-overlay .teammate-create-dialog .channel-create-head {
+.teammate-create-overlay .teammate-create-dialog .create-dialog-head {
   min-height: 72px;
   align-items: center;
   padding: 18px 28px 14px;
@@ -1083,7 +1083,7 @@
 }
 
 @media (max-height: 760px) and (min-width: 701px) {
-  .teammate-create-overlay .teammate-create-dialog .channel-create-head {
+  .teammate-create-overlay .teammate-create-dialog .create-dialog-head {
     min-height: 64px;
     padding-block: 14px 12px;
   }

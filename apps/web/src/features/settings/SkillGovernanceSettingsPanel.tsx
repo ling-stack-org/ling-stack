@@ -44,11 +44,11 @@ export function SkillGovernanceSettingsPanel({
   readonly t: SettingsTranslator;
 }): JSX.Element {
   return (
-    <section className="settings-skill-governance" aria-label={t("Skill Governance Policy")}>
+    <section className="settings-skill-governance" aria-label={t("Skill policy")}>
       <header className="settings-skill-governance-head">
         <span>
           <ShieldCheck size={15} />
-          <strong>{t("Skill Governance Policy")}</strong>
+          <strong>{t("Skill policy")}</strong>
         </span>
         <small>{t("Source")}: {supported ? (source ? t(skillGovernanceSourceLabel(source)) : t("not loaded")) : t("Unsupported by daemon")}</small>
       </header>

@@ -420,6 +420,8 @@ export function AppShell(): JSX.Element {
     loading: automationsLoading,
     mutatingAutomationId,
     mutatingDraftId,
+    schedulers: automationSchedulers,
+    schedulerAction,
   } = automationsDomain.state;
   const {
     setSelectedAutomationId,
@@ -438,6 +440,8 @@ export function AppShell(): JSX.Element {
     archiveSelectedAutomation,
     setSelectedStatus,
     setSelectedSchedule,
+    startScheduler,
+    stopScheduler,
     resetForCwd: resetAutomationsForCwd,
   } = automationsDomain.actions;
   const { clearProviderUsage } = useProviderUsageController({
@@ -2449,6 +2453,8 @@ export function AppShell(): JSX.Element {
                 automationRuns={automationRuns}
                 automationDrafts={automationDrafts}
                 templates={automationTemplates}
+                schedulers={automationSchedulers}
+                schedulerAction={schedulerAction}
                 selectedAutomationId={selectedAutomationId}
                 selectedDraftId={selectedDraftId}
                 previewByAutomationId={previewByAutomationId}
@@ -2461,6 +2467,8 @@ export function AppShell(): JSX.Element {
                 onCreateManualDraft={createManualDraft}
                 onCreateAutomation={createAutomationDefinition}
                 onCreateChatDraft={createChatDraft}
+                onStartScheduler={() => void startScheduler()}
+                onStopScheduler={() => void stopScheduler()}
                 onSelectAutomation={setSelectedAutomationId}
                 onSelectDraft={setSelectedDraftId}
                 onUpdateDraft={updateDraft}

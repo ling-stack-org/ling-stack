@@ -3,11 +3,12 @@ import { artifactContentUrl } from "../../api.js";
 import { useI18n } from "../../i18n.js";
 import { artifactDownloadName, isImageArtifact } from "../../lib/artifacts.js";
 import { formatDateTime } from "../../lib/formatting.js";
-import { ArtifactRow } from "../../shared/components/index.js";
+import { ArtifactRow, StatusActionRow } from "../../shared/components/index.js";
 import type { MediaJob, RunArtifact } from "../../types.js";
 import {
   formatMediaJobError,
   mediaJobCanRun,
+  mediaJobRunDisabledReason,
   mediaJobInputValue,
   mediaJobNeedsRecovery,
   mediaOperationLabel,
@@ -90,6 +91,8 @@ function MediaJobDetail({
   const size = mediaJobInputValue(job.input, ["size", "resolution", "image_size", "imageSize"]);
   const seed = mediaJobInputValue(job.input, ["seed"]);
   const steps = mediaJobInputValue(job.input, ["steps", "num_steps", "numSteps"]);
+  const runDisabledReason = mediaJobRunDisabledReason({ job, artifacts, isLoading, isRunning });
+  const runDisabledTitle = runDisabledReason ? t(runDisabledReason, { status: t(mediaJobStatusLabel(job.status)) }) : t("Run generation");
   return (
     <div className="media-job-detail-content">
       <div className="media-job-detail-head">
@@ -121,21 +124,31 @@ function MediaJobDetail({
         </span>
       )}
 
-      <div className="media-job-detail-actions">
-        <button
-          className={needsRecovery ? "primary-button" : "secondary-button"}
-          type="button"
-          onClick={onRun}
-          disabled={isLoading || isRunning || !canRun}
-        >
-          {isRunning ? <Loader2 className="spin" size={16} /> : <Play size={16} />}
-          {isRunning ? t("Running") : needsRecovery ? t("Run again") : t("Run")}
-        </button>
-        <button className="secondary-button" type="button" onClick={onCopy}>
-          <Copy size={16} />
-          {t("Copy details")}
-        </button>
-      </div>
+      <StatusActionRow
+        className="media-job-detail-control-row"
+        title={t("Generation controls")}
+        description={runDisabledReason ? runDisabledTitle : t("Run this task or copy its prompt and parameters.")}
+        status={<span className={`status-badge ${job.status}`}>{t(mediaJobStatusLabel(job.status))}</span>}
+        actions={(
+          <>
+            <button
+              className={needsRecovery ? "primary-button" : "secondary-button"}
+              type="button"
+              onClick={onRun}
+              disabled={isLoading || isRunning || !canRun}
+              title={runDisabledTitle}
+              aria-label={runDisabledReason ? `${needsRecovery ? t("Run again") : t("Run")}. ${runDisabledTitle}` : undefined}
+            >
+              {isRunning ? <Loader2 className="spin" size={16} /> : <Play size={16} />}
+              {isRunning ? t("Running") : needsRecovery ? t("Run again") : t("Run")}
+            </button>
+            <button className="secondary-button" type="button" onClick={onCopy}>
+              <Copy size={16} />
+              {t("Copy details")}
+            </button>
+          </>
+        )}
+      />
 
       <div className="media-job-detail-meta stitch-params" aria-label={t("Generation task parameters")}>
         <span>{t("Model")}<strong>{providerName}</strong></span>

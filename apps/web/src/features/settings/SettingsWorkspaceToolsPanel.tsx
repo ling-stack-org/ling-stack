@@ -14,6 +14,7 @@ import {
   permissionToAuthorizationMode,
   type ConversationAuthorizationMode,
 } from "../../lib/conversation-authorization.js";
+import { StatusActionRow } from "../../shared/components/index.js";
 import type { PermissionPreset, SessionPermissionMode } from "../../types.js";
 
 export interface WorkspaceToolCounts {
@@ -31,6 +32,13 @@ interface WorkspaceToolItem {
   readonly actionLabel: string;
   readonly icon: LucideIcon;
   readonly onOpen: () => void;
+}
+
+interface WorkspaceToolGroup {
+  readonly id: "setup" | "controls";
+  readonly title: string;
+  readonly description: string;
+  readonly tools: readonly WorkspaceToolItem[];
 }
 
 export function SettingsWorkspaceToolsPanel({
@@ -59,7 +67,7 @@ export function SettingsWorkspaceToolsPanel({
     {
       id: "providers",
       title: t("Model Workbench"),
-      description: t("Configure providers, models, and checks."),
+      description: t("Configure model routes, API keys, and readiness checks."),
       chipLabel: readyModelCountLabel(counts.readyProviderCount, t),
       actionLabel: t("Open Model Workbench"),
       icon: Box,
@@ -67,17 +75,17 @@ export function SettingsWorkspaceToolsPanel({
     },
     {
       id: "teammates",
-      title: t("AI Teammates"),
-      description: t("Manage teammate roster, models, and private chats."),
+      title: t("Teammate Management"),
+      description: t("Manage individual AI teammates, models, and private chat settings."),
       chipLabel: t("{count} teammates", { count: counts.visibleTeammateCount }),
-      actionLabel: t("Open AI Teammates"),
+      actionLabel: t("Open Teammate Management"),
       icon: Bot,
       onOpen: onOpenTeammates,
     },
     {
       id: "councils",
-      title: t("AI Councils"),
-      description: t("Manage council workspaces"),
+      title: t("Council Workspace"),
+      description: t("Manage councils, members, and channel participation."),
       chipLabel: t("{count} council(s)", { count: counts.activeCouncilCount }),
       actionLabel: t("Open Council Workspace"),
       icon: Brain,
@@ -86,7 +94,7 @@ export function SettingsWorkspaceToolsPanel({
     {
       id: "work-board",
       title: t("Work Board"),
-      description: t("Review actionable work across channels and runs."),
+      description: t("Inspect work across channels; stays a workspace tool in this release."),
       chipLabel: t("{count} pending work items", { count: counts.openWorkItemCount }),
       actionLabel: t("Open Work Board"),
       icon: Kanban,
@@ -94,23 +102,47 @@ export function SettingsWorkspaceToolsPanel({
     },
     {
       id: "approval",
-      title: t("Approval strategy"),
-      description: t("Set the default authorization for new conversations."),
+      title: t("Default authorization"),
+      description: t("Choose how new conversations get permission to use tools."),
       chipLabel: t("Default: {mode}", { mode: t(authorizationOption.labelKey) }),
-      actionLabel: t("Open advanced policy"),
+      actionLabel: t("Open default authorization"),
       icon: ShieldCheck,
       onOpen: onOpenApprovalPolicy,
+    },
+  ];
+  const toolGroups: readonly WorkspaceToolGroup[] = [
+    {
+      id: "setup",
+      title: t("Workspace setup"),
+      description: t("Prepare the models and AI collaborators Ling uses."),
+      tools: tools.filter((tool) => tool.id === "providers" || tool.id === "teammates" || tool.id === "councils"),
+    },
+    {
+      id: "controls",
+      title: t("Work controls"),
+      description: t("Review workspace work and default authorization."),
+      tools: tools.filter((tool) => tool.id === "work-board" || tool.id === "approval"),
     },
   ];
 
   return (
     <section className="settings-workspace-tools" aria-label={t("Configuration shortcuts")}>
       <div className="settings-configuration-grid">
-        <div className="settings-tool-row-list" aria-label={t("Configuration shortcuts")}>
-          {tools.map((tool) => (
-            <WorkspaceToolRow key={tool.id} tool={tool} />
-          ))}
-        </div>
+        {toolGroups.map((group) => (
+          <section key={group.id} className="settings-tool-row-group" aria-labelledby={`settings-tool-group-${group.id}`}>
+            <header className="settings-tool-row-group-head">
+              <div>
+                <h3 id={`settings-tool-group-${group.id}`}>{group.title}</h3>
+                <p>{group.description}</p>
+              </div>
+            </header>
+            <div className="settings-tool-row-list" aria-label={group.title}>
+              {group.tools.map((tool) => (
+                <WorkspaceToolRow key={tool.id} tool={tool} />
+              ))}
+            </div>
+          </section>
+        ))}
       </div>
     </section>
   );
@@ -138,8 +170,8 @@ export function SettingsGlobalApprovalDefaultCard({
           <ShieldCheck size={18} />
         </span>
         <div>
-          <strong id="settings-global-approval-title">{t("Global approval default")}</strong>
-          <small>{t("New conversations inherit this setting unless the conversation changes it.")}</small>
+          <strong id="settings-global-approval-title">{t("Default authorization")}</strong>
+          <small>{t("Choose how new conversations get permission to use tools.")}</small>
         </div>
       </div>
       <div className="settings-authorization-options" aria-label={t("Authorization mode")}>
@@ -171,21 +203,26 @@ export function SettingsGlobalApprovalDefaultCard({
 function WorkspaceToolRow({ tool }: { readonly tool: WorkspaceToolItem }): JSX.Element {
   const Icon = tool.icon;
   return (
-    <article className="settings-tool-row">
-      <span className="settings-tool-row-icon" aria-hidden="true">
-        <Icon size={21} />
-      </span>
-      <span className="settings-tool-row-copy">
+    <StatusActionRow
+      className="settings-tool-row settings-tool-status-row"
+      leading={(
+        <span className="settings-tool-row-icon" aria-hidden="true">
+          <Icon size={21} />
+        </span>
+      )}
+      title={(
         <span className="settings-tool-row-heading">
           <strong>{tool.title}</strong>
-          <small>{tool.chipLabel}</small>
         </span>
-        <span>{tool.description}</span>
-      </span>
-      <button className="secondary-button settings-tool-row-action" type="button" onClick={tool.onOpen}>
-        {tool.actionLabel}
-      </button>
-    </article>
+      )}
+      description={tool.description}
+      status={<small className="settings-tool-row-chip">{tool.chipLabel}</small>}
+      actions={(
+        <button className="secondary-button settings-tool-row-action" type="button" onClick={tool.onOpen}>
+          {tool.actionLabel}
+        </button>
+      )}
+    />
   );
 }
 

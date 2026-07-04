@@ -27,7 +27,13 @@ import type {
   Channel,
   ChannelCouncilPolicy,
 } from "../../types.js";
-import { SettingsToolReturnRow } from "../../shared/components/index.js";
+import {
+  CreateDialogShell,
+  DialogSection,
+  OperationEmptyState,
+  PageActionHeader,
+  SettingsToolReturnRow,
+} from "../../shared/components/index.js";
 import { TeammateAvatarView } from "../teammates/TeammateAvatarView.js";
 
 type CouncilActionKind = "create" | "clone" | "archive" | "";
@@ -128,19 +134,35 @@ export function CouncilWorkspacePanels(props: CouncilWorkspacePanelsProps): JSX.
   return (
     <div className={props.onBackToWorkspaceTools ? "council-workspace-page settings-return-mode" : "council-workspace-page"} aria-label={t("Council Workspace")}>
       {props.onBackToWorkspaceTools ? <SettingsToolReturnRow onBack={props.onBackToWorkspaceTools} /> : null}
-      <header className="council-workspace-header">
-        <div>
-          <h1>{t("Council Workspace")}</h1>
-        </div>
-        <div className="council-workspace-actions">
+      <PageActionHeader
+        title={t("Council Workspace")}
+        description={t("Manage councils, members, health, and channel usage from one workspace.")}
+        meta={(
+          <div className="council-workspace-summary" aria-label={t("Council summary")}>
+            <span>{t("{count} council(s)", { count: props.totalCouncilCount })}</span>
+            <span>{t("{count} active", { count: props.activeCouncilCount })}</span>
+            <span>{t("{count} need attention", { count: props.needsAttentionCount })}</span>
+            <span>{t("{count} custom", { count: props.userCouncilCount })}</span>
+          </div>
+        )}
+        primaryAction={(
+          <button className="primary-button compact-button" type="button" onClick={() => props.onCreateCouncilOpenChange(true)}>
+            <Plus size={14} />
+            {t("Create council")}
+          </button>
+        )}
+        secondaryActions={(
+          <>
           <button className="secondary-button compact-button" type="button" onClick={() => void props.onRefresh()} aria-label={t("Refresh councils")}>
             <span>{t("Refresh")}</span>
           </button>
           <button className="secondary-button compact-button" type="button" onClick={props.onOpenAiTeammates} aria-label={t("Open AI Teammates")}>
             <span>{t("Open AI Teammates")}</span>
           </button>
-        </div>
-      </header>
+          </>
+        )}
+        className="council-workspace-header"
+      />
 
       <div className="council-workspace-grid">
         <section className="council-workspace-list" aria-label={t("AI Councils")}>
@@ -169,53 +191,24 @@ export function CouncilWorkspacePanels(props: CouncilWorkspacePanelsProps): JSX.
           </div>
 
           {props.createCouncilOpen ? (
-            <form
-              className="council-create-inline"
-              aria-label={t("Create council")}
-              onSubmit={(event) => {
-                event.preventDefault();
-                void props.onCreateCouncil();
-              }}
-            >
-              <label className="field">
-                <span>{t("New council name")}</span>
-                <input
-                  aria-label={t("New council name")}
-                  value={props.newCouncilName}
-                  onChange={(event) => props.onNewCouncilNameChange(event.target.value)}
-                  disabled={mutationDisabled}
-                />
-              </label>
-              <label className="field">
-                <span>{t("New council description")}</span>
-                <input
-                  aria-label={t("New council description")}
-                  value={props.newCouncilDescription}
-                  onChange={(event) => props.onNewCouncilDescriptionChange(event.target.value)}
-                  placeholder={t("Optional council description")}
-                  disabled={mutationDisabled}
-                />
-              </label>
-              <div className="council-create-inline-actions">
-                <button className="primary-button compact-button" type="submit" disabled={!props.canCreateCouncil}>
-                  {props.actionSaving === "create" ? t("Creating council...") : t("Create council")}
-                </button>
-                <button className="secondary-button compact-button" type="button" onClick={() => props.onCreateCouncilOpenChange(false)}>
-                  {t("Cancel")}
-                </button>
-              </div>
-              {props.actionSaving === "create" && props.actionError ? <p className="inline-error">{props.actionError}</p> : null}
-            </form>
+            <CouncilCreateDialog
+              newCouncilName={props.newCouncilName}
+              newCouncilDescription={props.newCouncilDescription}
+              mutationDisabled={mutationDisabled}
+              canCreateCouncil={props.canCreateCouncil}
+              actionSaving={props.actionSaving}
+              actionError={props.actionError}
+              onNameChange={props.onNewCouncilNameChange}
+              onDescriptionChange={props.onNewCouncilDescriptionChange}
+              onClose={() => props.onCreateCouncilOpenChange(false)}
+              onCreate={props.onCreateCouncil}
+            />
           ) : null}
 
           {props.activeCouncils.length === 0 ? (
-            <div className="client-empty-state">
-              <span>{t("No councils available")}</span>
-            </div>
+            <OperationEmptyState compact title={t("No councils available")} description={t("Create a council to group teammates for shared channel work.")} />
           ) : props.filteredCouncils.length === 0 ? (
-            <div className="client-empty-state">
-              <span>{t("No councils match this health filter")}</span>
-            </div>
+            <OperationEmptyState compact title={t("No councils match this health filter")} description={t("Try another health filter to inspect other councils.")} />
           ) : (
             <div className="council-list-stack">
               {props.filteredCouncils.map((council) => (
@@ -254,9 +247,7 @@ export function CouncilWorkspacePanels(props: CouncilWorkspacePanelsProps): JSX.
               </div>
             </>
           ) : (
-            <div className="client-empty-state">
-              <span>{t("No council selected")}</span>
-            </div>
+            <OperationEmptyState compact title={t("No council selected")} description={t("Select a council to manage members, channels, and settings.")} />
           )}
         </section>
       </div>
@@ -289,6 +280,80 @@ function CouncilDetailHeader({
         {visibleBoundaryLabels.map((label) => <span key={label}>{label}</span>)}
       </div>
     </div>
+  );
+}
+
+function CouncilCreateDialog({
+  newCouncilName,
+  newCouncilDescription,
+  mutationDisabled,
+  canCreateCouncil,
+  actionSaving,
+  actionError,
+  onNameChange,
+  onDescriptionChange,
+  onClose,
+  onCreate,
+}: {
+  readonly newCouncilName: string;
+  readonly newCouncilDescription: string;
+  readonly mutationDisabled: boolean;
+  readonly canCreateCouncil: boolean;
+  readonly actionSaving: CouncilActionKind;
+  readonly actionError: string;
+  readonly onNameChange: (value: string) => void;
+  readonly onDescriptionChange: (value: string) => void;
+  readonly onClose: () => void;
+  readonly onCreate: () => void | Promise<void>;
+}): JSX.Element {
+  const { t } = useI18n();
+
+  return (
+    <CreateDialogShell
+      ariaLabel={t("Create council")}
+      title={t("Create council")}
+      description={t("Name the council first. Members and channel usage can be adjusted after creation.")}
+      onClose={onClose}
+      closeLabel={t("Cancel")}
+      footer={(
+        <>
+          <button className="secondary-button" type="button" onClick={onClose}>
+            {t("Cancel")}
+          </button>
+          <button
+            className="primary-button"
+            type="button"
+            disabled={!canCreateCouncil}
+            onClick={() => void onCreate()}
+          >
+            {actionSaving === "create" ? t("Creating council...") : t("Create council")}
+          </button>
+        </>
+      )}
+    >
+      <DialogSection title={t("Basic information")} description={t("Keep it short and easy to recognize in channel settings.")}>
+        <label className="field">
+          <span>{t("New council name")}</span>
+          <input
+            aria-label={t("New council name")}
+            value={newCouncilName}
+            onChange={(event) => onNameChange(event.target.value)}
+            disabled={mutationDisabled}
+          />
+        </label>
+        <label className="field">
+          <span>{t("New council description")}</span>
+          <input
+            aria-label={t("New council description")}
+            value={newCouncilDescription}
+            onChange={(event) => onDescriptionChange(event.target.value)}
+            placeholder={t("Optional council description")}
+            disabled={mutationDisabled}
+          />
+        </label>
+      </DialogSection>
+      {actionSaving === "create" && actionError ? <p className="inline-error">{actionError}</p> : null}
+    </CreateDialogShell>
   );
 }
 
@@ -353,7 +418,7 @@ function CouncilMembersPanel(props: CouncilWorkspacePanelsProps & { readonly mut
       </div>
       {props.membersError ? <p className="inline-error">{props.membersError}</p> : null}
       {props.availableTeammates.length === 0 ? (
-        <p className="council-member-add-empty">{t("No teammates available to add")}</p>
+        <OperationEmptyState compact className="council-member-add-empty" title={t("No teammates available to add")} description={t("Create or unhide teammates before adding them to this council.")} />
       ) : (
         <div className="council-member-add-row">
           <select
@@ -374,9 +439,9 @@ function CouncilMembersPanel(props: CouncilWorkspacePanelsProps & { readonly mut
         </div>
       )}
       {props.membersLoading ? (
-        <div className="client-empty-state compact"><span>{t("Loading council members...")}</span></div>
+        <OperationEmptyState compact title={t("Loading council members...")} />
       ) : props.members.length === 0 ? (
-        <div className="client-empty-state compact"><span>{t("No council members")}</span></div>
+        <OperationEmptyState compact title={t("No council members")} description={t("Add teammates to make this council useful in channel work.")} />
       ) : (
         <div className="council-member-list">
           {props.members.map((member, memberIndex) => {
@@ -428,9 +493,7 @@ function CouncilChannelPanel(props: CouncilWorkspacePanelsProps): JSX.Element {
         </small>
       </div>
       {props.visibleChannels.length === 0 ? (
-        <div className="client-empty-state compact">
-          <span>{t("No channels available")}</span>
-        </div>
+        <OperationEmptyState compact title={t("No channels available")} description={t("Create a channel before attaching councils to channel work.")} />
       ) : (
         <div className="council-channel-policy">
           <label className="field council-channel-select-field">
@@ -461,9 +524,7 @@ function CouncilChannelPanel(props: CouncilWorkspacePanelsProps): JSX.Element {
           </div>
 
           {props.attachedCouncils.length === 0 ? (
-            <div className="client-empty-state compact">
-              <span>{t("No AI councils attached")}</span>
-            </div>
+            <OperationEmptyState compact title={t("No AI councils attached")} description={t("Attach the selected council when this channel should use it.")} />
           ) : (
             <div className="council-channel-list" role="list" aria-label={t("Attached councils")}>
               {props.attachedCouncils.map((council) => {

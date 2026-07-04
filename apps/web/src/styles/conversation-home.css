@@ -520,10 +520,19 @@
 }
 
 .conversation-model-empty {
+  display: grid;
+  align-items: center;
+  justify-items: center;
+  min-height: 42px;
   padding: 10px 8px;
+  border: 1px dashed var(--border);
+  border-radius: 9px;
+  background: var(--surface-subtle);
   color: var(--text-muted);
   font-size: 12px;
   line-height: 17px;
+  overflow-wrap: anywhere;
+  text-align: center;
 }
 
 .conversation-home-send {

@@ -1395,6 +1395,17 @@
   background: #f8faf8;
 }
 
+.teammate-avatar-image-default {
+  background: transparent;
+  border-color: rgba(33, 38, 42, 0.08);
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.55) inset;
+}
+
+:root[data-theme="dark"] .teammate-avatar-image-default {
+  border-color: rgba(255, 255, 255, 0.14);
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.08) inset;
+}
+
 .teammate-avatar-image.compact {
   width: 34px;
   height: 34px;
@@ -4759,7 +4770,7 @@
   overflow: hidden;
 }
 
-.teammate-create-dialog .channel-create-head {
+.teammate-create-dialog .create-dialog-head {
   min-height: 72px;
   align-items: center;
   padding: 18px 28px 14px;

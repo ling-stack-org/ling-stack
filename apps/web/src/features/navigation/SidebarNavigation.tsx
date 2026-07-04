@@ -25,6 +25,7 @@ import {
   Timer,
 } from "lucide-react";
 import { useI18n } from "../../i18n.js";
+import { ActionMenuItem } from "../../shared/components/index.js";
 import {
   channelSidebarTarget,
   teammateSidebarTarget,
@@ -710,47 +711,21 @@ function SidebarSection({
               <MoreHorizontal size={14} />
             </button>
             <span className={hasRichMenuItems ? "sidebar-section-menu-popover rich" : "sidebar-section-menu-popover"} role="menu" hidden={!menuOpen}>
-              {menuItems.map((item) => {
-                const menuItemClassName = [
-                  item.danger ? "danger" : "",
-                  item.description ? "has-description" : "",
-                ].filter(Boolean).join(" ");
-                return (
-                  <button
-                    key={item.id}
-                    className={menuItemClassName || undefined}
-                    type="button"
-                    role="menuitem"
-                    disabled={item.disabled}
-                    title={item.disabled ? item.disabledLabel ?? item.label : item.label}
-                    onClick={() => {
-                      if (item.disabled) {
-                        return;
-                      }
-                      onMenuOpenChange(false);
-                      item.onSelect();
-                    }}
-                  >
-                    {hasRichMenuItems ? (
-                      <span className="sidebar-section-menu-rich-copy">
-                        <span className="sidebar-section-menu-rich-title">
-                          {item.icon}
-                          <span>{item.label}</span>
-                        </span>
-                        {item.description ? <small>{item.description}</small> : null}
-                      </span>
-                    ) : (
-                      <>
-                        {item.icon}
-                        <span className="sidebar-section-menu-copy">
-                          <span>{item.label}</span>
-                          {item.description ? <small>{item.description}</small> : null}
-                        </span>
-                      </>
-                    )}
-                  </button>
-                );
-              })}
+              {menuItems.map((item) => (
+                <ActionMenuItem
+                  key={item.id}
+                  icon={item.icon}
+                  label={item.label}
+                  description={item.description}
+                  danger={item.danger}
+                  disabled={item.disabled}
+                  disabledLabel={item.disabledLabel}
+                  onSelect={() => {
+                    onMenuOpenChange(false);
+                    item.onSelect();
+                  }}
+                />
+              ))}
             </span>
           </span>
         ) : null}
