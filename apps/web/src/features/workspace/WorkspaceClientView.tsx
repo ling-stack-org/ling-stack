@@ -860,6 +860,8 @@ export function WorkspaceClientView({
   const [channelGoalBusy, setChannelGoalBusy] = useState(false);
   const [channelGoalExpanded, setChannelGoalExpanded] = useState(false);
   const [channelGoalError, setChannelGoalError] = useState("");
+  const [channelPlanModeChipVisible, setChannelPlanModeChipVisible] = useState(false);
+  const [channelGoalChipVisible, setChannelGoalChipVisible] = useState(false);
   const [proposedPlanActionBusyId, setProposedPlanActionBusyId] = useState("");
   const [workflowConversionPreviewPlan, setWorkflowConversionPreviewPlan] = useState<ProposedPlanArtifact | undefined>();
   const [pendingChannelTeammateId, setPendingChannelTeammateId] = useState("");
@@ -2557,6 +2559,8 @@ export function WorkspaceClientView({
     attachmentPreviewUrlsRef,
     teammateOptions,
     slashCommands,
+    onRevealPlanModeChip: () => setChannelPlanModeChipVisible(true),
+    onRevealGoalChip: () => setChannelGoalChipVisible(true),
     onUploadAttachments,
     onCreateLinkPreview,
     t,
@@ -2751,6 +2755,11 @@ export function WorkspaceClientView({
     channelId: selectedChannelId,
   });
 
+  useEffect(() => {
+    setChannelPlanModeChipVisible(false);
+    setChannelGoalChipVisible(false);
+  }, [selectedChannelId]);
+
   async function setChannelPlanMode(active: boolean): Promise<void> {
     let threadId = channelPlanModeThreadId;
     if (!threadId && active) {
@@ -2827,6 +2836,7 @@ export function WorkspaceClientView({
       await deleteLingThreadGoal(workspaceCwd, threadId);
       setActiveChannelGoal(undefined);
       setChannelGoalExpanded(false);
+      setChannelGoalChipVisible(false);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       setChannelGoalError(message);
@@ -2849,6 +2859,7 @@ export function WorkspaceClientView({
       });
       setActiveChannelGoal(response.goal ?? undefined);
       setChannelGoalExpanded(false);
+      setChannelGoalChipVisible(false);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       setChannelGoalError(message);
@@ -2930,6 +2941,47 @@ export function WorkspaceClientView({
     void completeChannelGoal()
       .then(() => {
         showComposerFeedback("success", t("Goal completed"));
+      })
+      .catch((error: unknown) => {
+        showComposerFeedback("error", error instanceof Error ? error.message : String(error));
+      });
+  }
+
+  function toggleChannelPlanModeFromComposer(): void {
+    setChannelPlanModeChipVisible(true);
+    void setChannelPlanMode(!channelPlanModeActive)
+      .then(() => {
+        showComposerFeedback("success", channelPlanModeActive ? t("Plan Mode disabled") : t("Plan Mode enabled"));
+      })
+      .catch((error: unknown) => {
+        showComposerFeedback("error", error instanceof Error ? error.message : String(error));
+      });
+  }
+
+  function closeChannelPlanModeChip(): void {
+    if (!channelPlanModeActive) {
+      setChannelPlanModeChipVisible(false);
+      return;
+    }
+    void setChannelPlanMode(false)
+      .then(() => {
+        setChannelPlanModeChipVisible(false);
+        showComposerFeedback("success", t("Plan Mode disabled"));
+      })
+      .catch((error: unknown) => {
+        showComposerFeedback("error", error instanceof Error ? error.message : String(error));
+      });
+  }
+
+  function closeChannelGoalChip(): void {
+    if (!activeChannelGoal) {
+      setChannelGoalChipVisible(false);
+      return;
+    }
+    void clearChannelGoal()
+      .then(() => {
+        setChannelGoalChipVisible(false);
+        showComposerFeedback("success", t("Goal cleared"));
       })
       .catch((error: unknown) => {
         showComposerFeedback("error", error instanceof Error ? error.message : String(error));
@@ -3125,6 +3177,8 @@ export function WorkspaceClientView({
     showComposerFeedback,
     onCreateLinkPreview,
     onCreateTaskFromSlashCommand,
+    onRevealPlanModeChip: () => setChannelPlanModeChipVisible(true),
+    onRevealGoalChip: () => setChannelGoalChipVisible(true),
     onSetPlanMode: setChannelPlanMode,
     onSetGoalObjective: setChannelGoalObjective,
     onPatchGoal: patchChannelGoal,
@@ -3277,11 +3331,13 @@ export function WorkspaceClientView({
       permissionPreset={channelComposerPermissionPreset}
       planModeActive={channelPlanModeActive}
       planModeBusy={channelPlanModeBusy}
+      planModeChipVisible={channelPlanModeChipVisible}
       goal={activeChannelGoal}
       goalBusy={channelGoalBusy}
       goalLoading={Boolean(channelGoalLoadingThreadId)}
       goalError={channelGoalError}
       goalExpanded={channelGoalExpanded}
+      goalChipVisible={channelGoalChipVisible}
       channelTeammateIds={channelTeammateIds}
       resolvingApprovals={resolvingApprovals}
       runGuidanceError={runGuidanceError}
@@ -3317,16 +3373,12 @@ export function WorkspaceClientView({
       onInsertMentionTrigger={insertMentionTrigger}
       onOpenApproval={(approvalId) => openApprovalDetail(approvals.find((approval) => approval.id === approvalId))}
       onPermissionPresetChange={(preset) => onPermissionModeChange(permissionModeForPreset(preset))}
-      onTogglePlanMode={() => {
-        void setChannelPlanMode(!channelPlanModeActive)
-          .then(() => {
-            showComposerFeedback("success", channelPlanModeActive ? t("Plan Mode disabled") : t("Plan Mode enabled"));
-          })
-          .catch((error: unknown) => {
-            showComposerFeedback("error", error instanceof Error ? error.message : String(error));
-          });
-      }}
+      onTogglePlanMode={toggleChannelPlanModeFromComposer}
+      onRevealPlanModeChip={() => setChannelPlanModeChipVisible(true)}
+      onClosePlanModeChip={closeChannelPlanModeChip}
       onOpenGoalEditor={openChannelGoalEditor}
+      onRevealGoalChip={() => setChannelGoalChipVisible(true)}
+      onCloseGoalChip={closeChannelGoalChip}
       onGoalContinue={continueChannelGoal}
       onGoalPauseResume={pauseOrResumeChannelGoal}
       onGoalComplete={completeChannelGoalFromPanel}
