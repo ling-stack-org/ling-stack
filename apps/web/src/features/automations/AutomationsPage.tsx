@@ -170,9 +170,10 @@ export function AutomationsPage({
       needsAttention: failedAutomations,
       succeeded: succeededAutomations,
       recentRuns,
+      attentionCount: automationSummary.attentionCount,
       t,
     }),
-    [activeAutomations, pausedAutomations, failedAutomations, succeededAutomations, recentRuns, t],
+    [activeAutomations, pausedAutomations, failedAutomations, succeededAutomations, recentRuns, automationSummary.attentionCount, t],
   );
   const threadTitleById = useMemo(() => new Map(threads.map((thread) => [thread.id, thread.title])), [threads]);
 
@@ -243,10 +244,10 @@ export function AutomationsPage({
       <PageActionHeader
         className="automations-inbox-header"
         title={<span id="automations-title">{t("Automations")}</span>}
-        description={t("{count} automations · {enabled} enabled · {running} running runs · {attention} need attention", {
+        description={t("{count} automations · {enabled} enabled · {scheduled} scheduled watches · {attention} need attention", {
           count: automationSummary.totalDefinitions,
           enabled: automationSummary.enabledDefinitions,
-          running: automationSummary.runningRunCount,
+          scheduled: automationSummary.scheduledWatchCount,
           attention: automationSummary.attentionCount,
         })}
         secondaryActions={(
@@ -274,6 +275,7 @@ export function AutomationsPage({
       <AutomationSchedulerStrip
         scheduler={scheduler}
         schedulerAction={schedulerAction}
+        manualEnabledCount={automationSummary.manualEnabledDefinitions}
         onStart={onStartScheduler}
         onStop={onStopScheduler}
       />
@@ -283,7 +285,11 @@ export function AutomationsPage({
           <div className="automation-attention-banner">
             <Info size={17} />
             <strong>{t("{count} automation items need attention", { count: automationSummary.attentionCount })}</strong>
-            <span>{automationSummary.readyDraftCount > 0 ? t("Review drafts before enabling.") : t("Check recent failed runs or automation errors.")}</span>
+            <span>{automationSummary.schedulerStoppedWithScheduledWatches
+              ? t("Start scheduler to run scheduled automations automatically.")
+              : automationSummary.readyDraftCount > 0
+                ? t("Review drafts before enabling.")
+                : t("Check recent failed runs or automation errors.")}</span>
           </div>
         ) : null}
         <AutomationListPane

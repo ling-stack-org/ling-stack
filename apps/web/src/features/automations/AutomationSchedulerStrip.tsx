@@ -6,18 +6,20 @@ import { automationSchedulerCopy } from "./automation-view-models.js";
 export function AutomationSchedulerStrip({
   scheduler,
   schedulerAction,
+  manualEnabledCount,
   onStart,
   onStop,
 }: {
   readonly scheduler?: AutomationSchedulerState;
   readonly schedulerAction: "start" | "stop" | "";
+  readonly manualEnabledCount: number;
   readonly onStart: () => void;
   readonly onStop: () => void;
 }): JSX.Element {
   const { t } = useI18n();
   const isRunning = scheduler?.status === "running";
   const isBusy = schedulerAction !== "";
-  const copy = automationSchedulerCopy({ scheduler, t });
+  const copy = automationSchedulerCopy({ scheduler, manualEnabledCount, t });
 
   return (
     <section className="automation-scheduler-strip" aria-label={t("Automation scheduler")}>

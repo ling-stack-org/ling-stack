@@ -7,11 +7,11 @@ import { StatusActionRow } from "../../shared/components/index.js";
 import type { MediaJob, MediaJobStatus, ProviderPreset, RunArtifact } from "../../types.js";
 import {
   mediaArtifactsForJob,
-  deriveMediaJobProductState,
+  deriveMediaJobDisplayState,
   mediaJobMatchesProductFilter,
-  mediaJobPrimaryActionView,
-  mediaJobProductStateLabel,
+  mediaJobDisplayStateLabel,
   mediaJobRunDisabledReason,
+  mediaJobPrimaryActionView,
   mediaJobStatusBadgeClass,
   mediaJobStatusFilters,
   mediaOperationLabel,
@@ -25,6 +25,7 @@ export function MediaJobList({
   artifactsByJob,
   selectedJobId,
   runningJobId,
+  startingJobId,
   isLoading,
   statusFilter,
   onStatusFilterChange,
@@ -37,6 +38,7 @@ export function MediaJobList({
   readonly artifactsByJob: Record<string, readonly RunArtifact[]>;
   readonly selectedJobId: string;
   readonly runningJobId: string;
+  readonly startingJobId: string;
   readonly isLoading: boolean;
   readonly statusFilter: MediaJobStatusFilter;
   readonly onStatusFilterChange: (filter: MediaJobStatusFilter) => void;
@@ -49,6 +51,7 @@ export function MediaJobList({
       job,
       artifacts: artifactsByJob[job.id] ?? [],
       runningJobId,
+      startingJobId,
       filter: statusFilter,
     })
   );
@@ -80,26 +83,34 @@ export function MediaJobList({
             const jobArtifacts = artifactsByJob[job.id] ?? [];
             const mediaArtifacts = mediaArtifactsForJob(jobArtifacts);
             const isRunningJob = runningJobId === job.id;
-            const productState = deriveMediaJobProductState({ job, artifacts: jobArtifacts, runningJobId });
+            const isStartingJob = startingJobId === job.id;
+            const displayState = deriveMediaJobDisplayState({
+              job,
+              artifacts: jobArtifacts,
+              runningJobId,
+              startingJobId,
+            });
             const actionView = mediaJobPrimaryActionView({
               job,
               artifacts: jobArtifacts,
               isLoading,
               isRunning: isRunningJob,
+              isStarting: isStartingJob,
             });
             const operationLabel = t(mediaOperationLabel(job.operation));
-            const statusLabel = t(mediaJobProductStateLabel(productState));
+            const statusLabel = t(mediaJobDisplayStateLabel(displayState));
             const disabledReason = mediaJobRunDisabledReason({
               job,
               artifacts: jobArtifacts,
               isLoading,
               isRunning: isRunningJob,
+              isStarting: isStartingJob,
             });
             const disabledTitle = disabledReason ? t(disabledReason) : t(actionView.label);
             return (
               <article
                 key={job.id}
-                className={`media-job-row ${job.status} ${productState}${productState === "needs_attention" ? " needs-recovery" : ""}${selectedJobId === job.id ? " selected" : ""}`}
+                className={`media-job-row ${job.status} ${displayState}${displayState === "needs_attention" ? " needs-recovery" : ""}${selectedJobId === job.id ? " selected" : ""}`}
                 onClick={() => onSelectJob(job.id)}
                 onKeyDown={(event) => {
                   if (event.key === "Enter" || event.key === " ") {
@@ -112,7 +123,7 @@ export function MediaJobList({
               >
                 <StatusActionRow
                   className="media-job-row-content"
-                  leading={<MediaJobResultPreview artifact={mediaArtifacts[0]} count={mediaArtifacts.length} cwd={cwd} status={job.status} productState={productState} />}
+                  leading={<MediaJobResultPreview artifact={mediaArtifacts[0]} count={mediaArtifacts.length} cwd={cwd} status={job.status} displayState={displayState} />}
                   title={<strong>{operationLabel}</strong>}
                   description={`${provider?.displayName ?? t("Unknown provider")} · ${formatDateTime(job.createdAt)}`}
                   meta={(
@@ -121,7 +132,7 @@ export function MediaJobList({
                       <time>{formatDateTime(job.updatedAt)}</time>
                     </>
                   )}
-                  status={<span className={`status-badge ${mediaJobStatusBadgeClass(productState)}`}>{statusLabel}</span>}
+                  status={<span className={`status-badge ${mediaJobStatusBadgeClass(displayState)}`}>{statusLabel}</span>}
                   actions={actionView.visible ? (
                     <button
                       className={actionView.emphasis === "primary" ? "primary-button compact-button" : "secondary-button compact-button"}
@@ -135,7 +146,7 @@ export function MediaJobList({
                       title={disabledTitle}
                       aria-label={disabledReason ? `${t(actionView.label)}. ${disabledTitle}` : t(actionView.label)}
                     >
-                      {isRunningJob ? <Loader2 className="spin" size={14} /> : <Play size={14} />}
+                      {isRunningJob || isStartingJob ? <Loader2 className="spin" size={14} /> : <Play size={14} />}
                       {t(actionView.label)}
                     </button>
                   ) : undefined}
@@ -154,13 +165,13 @@ function MediaJobResultPreview({
   count,
   cwd,
   status,
-  productState,
+  displayState,
 }: {
   readonly artifact?: RunArtifact;
   readonly count: number;
   readonly cwd: string;
   readonly status: MediaJobStatus;
-  readonly productState: ReturnType<typeof deriveMediaJobProductState>;
+  readonly displayState: ReturnType<typeof deriveMediaJobDisplayState>;
 }): JSX.Element {
   const { t } = useI18n();
   if (artifact && isImageArtifact(artifact)) {
@@ -180,8 +191,8 @@ function MediaJobResultPreview({
     );
   }
   return (
-    <span className={`media-job-result-preview empty ${status} ${productState}`} aria-label={t(mediaJobProductStateLabel(productState))}>
-      {productState === "generating" ? <Loader2 className="spin" size={20} /> : <CircleAlert size={20} />}
+    <span className={`media-job-result-preview empty ${status} ${displayState}`} aria-label={t(mediaJobDisplayStateLabel(displayState))}>
+      {displayState === "generating" || displayState === "starting" ? <Loader2 className="spin" size={20} /> : <CircleAlert size={20} />}
     </span>
   );
 }

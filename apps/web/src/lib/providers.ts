@@ -835,12 +835,15 @@ export function providerCheckMessage(result: ProviderCheckResult, t?: ProviderTr
 }
 
 export function providerCheckDisplayMessage(result: ProviderCheckResult, provider: Pick<ProviderPreset, "api"> | undefined, t?: ProviderTranslate): string {
+  if (result.ok && provider?.api === "media-job") {
+    return translateProviderText(t, "Generation model configuration check passed.");
+  }
   return providerCheckMessage(result, t);
 }
 
 export function providerCheckDisplayGuidance(result: ProviderCheckResult, provider: Pick<ProviderPreset, "api"> | undefined, t?: ProviderTranslate): string {
   if (result.ok && provider?.api === "media-job") {
-    return "";
+    return translateProviderText(t, "Run Image Generation to create real results. This check does not create an image.");
   }
   return providerCheckGuidance(result, provider, t);
 }

@@ -43,6 +43,14 @@
   gap: 7px;
 }
 
+.provider-empty-actions {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
 .provider-toolbar {
   display: grid;
   grid-template-columns: minmax(220px, 1fr) minmax(180px, 220px);
@@ -253,6 +261,22 @@
   padding: 1px 4px;
   background: rgba(255, 255, 255, 0.72);
   font-family: "SFMono-Regular", Consolas, monospace;
+  overflow-wrap: anywhere;
+}
+
+.provider-check-raw-details {
+  margin-top: 4px;
+}
+
+.provider-check-raw-details summary {
+  cursor: pointer;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.provider-check-raw-details small {
+  display: block;
+  margin-top: 4px;
   overflow-wrap: anywhere;
 }
 

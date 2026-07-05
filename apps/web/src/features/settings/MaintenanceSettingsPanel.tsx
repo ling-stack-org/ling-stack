@@ -92,6 +92,10 @@ function StartupReadinessSection({
   readonly onRefreshStartup: () => void;
   readonly t: Translate;
 }): JSX.Element {
+  const blockers = (startupStatus?.diagnostics ?? []).filter((diagnostic) =>
+    diagnostic.level === "error" || diagnostic.level === "warning"
+  );
+
   return (
     <section className="developer-settings-subsection startup-settings-panel" aria-labelledby="startup-settings-title">
       <div className="panel-title split">
@@ -112,18 +116,44 @@ function StartupReadinessSection({
         </div>
       ) : null}
 
-      <div className="startup-summary-grid">
-        <MetaRow label={t("Workspace")} value={startupStatus?.cwd ?? cwd} compact />
-        <MetaRow label={t("State")} value={startupStatus ? startupStatusLabel(startupStatus, t) : startupStatusLoading ? t("Loading") : t("not loaded")} compact />
-        <MetaRow label={t("Attempt")} value={startupStatus?.startupAttemptId ?? "-"} compact />
-        <MetaRow label={t("Effective config")} value={startupStatus?.effectiveConfigLoadedAt ? formatDateTime(startupStatus.effectiveConfigLoadedAt) : "-"} compact />
+      <div className="startup-readiness-card">
+        <div className="startup-readiness-main">
+          <span>
+            <strong>{startupStatus ? startupStatusLabel(startupStatus, t) : startupStatusLoading ? t("Loading") : t("not loaded")}</strong>
+            <small>{startupStatus?.updatedAt ? t("Updated {time}", { time: formatDateTime(startupStatus.updatedAt) }) : t("Refresh startup status to inspect this workspace.")}</small>
+          </span>
+          <StatusBadge status={startupStatus?.state ?? (startupStatusLoading ? "loading" : "not_loaded")} />
+        </div>
+        <div className="startup-summary-grid">
+          <MetaRow label={t("Workspace")} value={startupStatus?.cwd ?? cwd} compact />
+          <MetaRow label={t("Attempt")} value={startupStatus?.startupAttemptId ?? "-"} compact />
+          <MetaRow label={t("Effective config")} value={startupStatus?.effectiveConfigLoadedAt ? formatDateTime(startupStatus.effectiveConfigLoadedAt) : "-"} compact />
+          <MetaRow label={t("Diagnostics")} value={String(startupStatus?.diagnostics.length ?? 0)} compact />
+        </div>
       </div>
 
-      <div className="startup-phase-grid" aria-label={t("Startup phases")}>
-        {STARTUP_REQUIRED_PHASES.map((phase) => (
-          <StartupPhaseRow key={phase} phase={phase} status={startupStatus?.phases[phase] ?? "not_started"} required t={t} />
-        ))}
-      </div>
+      {blockers.length > 0 ? (
+        <div className="startup-blocker-list" aria-label={t("Startup blockers")}>
+          {blockers.slice(0, 4).map((diagnostic) => (
+            <div key={`${diagnostic.phase}:${diagnostic.code}:${diagnostic.message}`} className={`startup-diagnostic ${diagnostic.level}`}>
+              <div>
+                <strong>{diagnostic.phase} / {diagnostic.code}{diagnostic.count && diagnostic.count > 1 ? ` x${diagnostic.count}` : ""}</strong>
+                <span>{diagnostic.message}</span>
+              </div>
+              {diagnostic.nextAction ? <small>{diagnostic.nextAction}</small> : null}
+            </div>
+          ))}
+        </div>
+      ) : null}
+
+      <details className="settings-compact-details startup-details">
+        <summary>{t("Startup phases")}</summary>
+        <div className="startup-phase-grid" aria-label={t("Startup phases")}>
+          {STARTUP_REQUIRED_PHASES.map((phase) => (
+            <StartupPhaseRow key={phase} phase={phase} status={startupStatus?.phases[phase] ?? "not_started"} required t={t} />
+          ))}
+        </div>
+      </details>
 
       <details className="settings-compact-details startup-details">
         <summary>{t("Warmup phases")}</summary>

@@ -84,6 +84,33 @@ async function expectProviderModelDiscoveryLayout(page: Page): Promise<void> {
   }
 }
 
+test("model workbench empty state offers beginner chat and generation setup paths", async ({ page }) => {
+  await useEnglishLocale(page);
+  const state = createBaseState({ approvalStatus: "expired" });
+  state.providers = [];
+  await mockDaemon(page, state, { templates: createDefaultProviderTemplates() });
+  await page.goto("/");
+
+  await openModelWorkbench(page);
+  await expect(page.getByText("Add a model route to start using Ling.")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Add chat model" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Add image generation model" })).toBeVisible();
+
+  await page.getByRole("button", { name: "Add chat model" }).click();
+  const chatEditor = page.getByRole("dialog", { name: "New chat model" });
+  await expect(chatEditor).toBeVisible();
+  await expect(chatEditor.getByLabel("Model supplier")).toHaveValue("openai-gpt");
+  await expect(chatEditor.getByLabel("Model supplier")).not.toContainText("Seedream Image");
+  await chatEditor.getByRole("button", { name: "Close model preset editor" }).click();
+
+  await page.getByRole("button", { name: "Add image generation model" }).click();
+  const generationEditor = page.getByRole("dialog", { name: "New image generation model" });
+  await expect(generationEditor).toBeVisible();
+  await expect(generationEditor.getByLabel("Model supplier")).toHaveValue("seedream-image");
+  await expect(generationEditor.getByLabel("Model supplier")).not.toContainText("OpenAI GPT");
+  await expect(generationEditor.getByText("Generation adapter")).toBeVisible();
+});
+
 test("model workbench Chinese mode localizes setup copy and uses an add model sheet", async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 800 });
   await page.addInitScript(() => {
@@ -146,7 +173,7 @@ test("model workbench Chinese mode localizes setup copy and uses an add model sh
   await expect(page.getByText("New preset")).toHaveCount(0);
   await expect(page.getByLabel("Model Workbench context")).toHaveCount(0);
   const missingKeyGatewayRow = page.locator(".provider-row").filter({ hasText: "Missing Key Gateway" });
-  await expect(missingKeyGatewayRow.getByRole("button", { name: "修复配置" })).toBeVisible();
+  await expect(missingKeyGatewayRow.getByRole("button", { name: "添加 API Key" })).toBeVisible();
   const missingKeyStatusHint = missingKeyGatewayRow.locator(".provider-status-hint");
   await expect(missingKeyStatusHint).toBeVisible();
   await missingKeyStatusHint.hover();
@@ -960,8 +987,10 @@ test("model workbench row checks show inline feedback without spinning batch che
 
   const mediaRow = page.locator(".provider-row").filter({ hasText: "Seedream Image" });
   await clickProviderRowMenuItem(mediaRow, "Check");
-  const mediaFeedback = page.locator(".provider-check-feedback-row.ok").filter({ hasText: "Generated a real image successfully." });
+  const mediaFeedback = page.locator(".provider-check-feedback-row.ok").filter({ hasText: "Generation model configuration check passed." });
   await expect(mediaFeedback).toContainText("Check passed");
+  await expect(mediaFeedback).toContainText("Run Image Generation to create real results. This check does not create an image.");
+  await expect(mediaFeedback).toContainText("Check details");
   await expect(mediaFeedback).not.toContainText("Media vendor transport");
   await expect(mediaFeedback).not.toContainText("no live vendor");
   await expect(page.locator(".provider-check-feedback-row")).toHaveCount(1);

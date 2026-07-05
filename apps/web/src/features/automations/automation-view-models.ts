@@ -11,12 +11,16 @@ export interface AutomationTabItem {
 export interface AutomationPageSummary {
   readonly totalDefinitions: number;
   readonly enabledDefinitions: number;
+  readonly manualEnabledDefinitions: number;
+  readonly scheduledEnabledDefinitions: number;
   readonly pausedDefinitions: number;
+  readonly schedulerRunning: boolean;
   readonly scheduledWatchCount: number;
   readonly runningRunCount: number;
   readonly failedRecentRunCount: number;
   readonly readyDraftCount: number;
   readonly errorDefinitionCount: number;
+  readonly schedulerStoppedWithScheduledWatches: boolean;
   readonly attentionCount: number;
 }
 
@@ -97,22 +101,32 @@ export function summarizeAutomationsPage({
   readonly scheduler?: AutomationSchedulerState;
 }): AutomationPageSummary {
   const recentRuns = automationRuns.slice(0, 8);
-  const enabledDefinitions = automations.filter((automation) => automation.status === "enabled").length;
+  const enabledAutomations = automations.filter((automation) => automation.status === "enabled");
+  const enabledDefinitions = enabledAutomations.length;
+  const scheduledEnabledDefinitions = enabledAutomations.filter(isScheduledAutomationDefinition).length;
+  const manualEnabledDefinitions = enabledDefinitions - scheduledEnabledDefinitions;
   const pausedDefinitions = automations.filter((automation) => automation.status === "paused").length;
   const errorDefinitionCount = automations.filter((automation) => automation.status === "error").length;
   const runningRunCount = recentRuns.filter(isAutomationRunInProgress).length;
   const failedRecentRunCount = recentRuns.filter((run) => run.status === "failed").length;
   const readyDraftCount = automationDrafts.filter((draft) => draft.status === "ready_for_confirmation").length;
+  const schedulerRunning = isSchedulerRunning(scheduler?.status);
+  const scheduledWatchCount = scheduler?.automationCount ?? scheduledEnabledDefinitions;
+  const schedulerStoppedWithScheduledWatches = !schedulerRunning && scheduledWatchCount > 0;
   return {
     totalDefinitions: automations.filter((automation) => automation.status !== "archived").length,
     enabledDefinitions,
+    manualEnabledDefinitions,
+    scheduledEnabledDefinitions,
     pausedDefinitions,
-    scheduledWatchCount: scheduler?.automationCount ?? 0,
+    schedulerRunning,
+    scheduledWatchCount,
     runningRunCount,
     failedRecentRunCount,
     readyDraftCount,
     errorDefinitionCount,
-    attentionCount: readyDraftCount + failedRecentRunCount + errorDefinitionCount,
+    schedulerStoppedWithScheduledWatches,
+    attentionCount: readyDraftCount + failedRecentRunCount + errorDefinitionCount + (schedulerStoppedWithScheduledWatches ? 1 : 0),
   };
 }
 
@@ -122,6 +136,7 @@ export function buildAutomationTabs({
   needsAttention,
   succeeded,
   recentRuns,
+  attentionCount,
   t,
 }: {
   readonly enabled: readonly AutomationDefinition[];
@@ -129,12 +144,13 @@ export function buildAutomationTabs({
   readonly needsAttention: readonly AutomationDefinition[];
   readonly succeeded: readonly AutomationDefinition[];
   readonly recentRuns: readonly AutomationRun[];
+  readonly attentionCount: number;
   readonly t: AutomationTranslate;
 }): readonly AutomationTabItem[] {
   return [
     { id: "enabled", label: t("Enabled automations"), count: enabled.length },
     { id: "paused", label: t("Paused"), count: paused.length },
-    { id: "failed", label: t("Needs attention"), count: needsAttention.length },
+    { id: "failed", label: t("Needs attention"), count: attentionCount },
     { id: "succeeded", label: t("Succeeded"), count: succeeded.length },
     { id: "history", label: t("Recent history"), count: recentRuns.length },
   ];
@@ -142,9 +158,11 @@ export function buildAutomationTabs({
 
 export function automationSchedulerCopy({
   scheduler,
+  manualEnabledCount = 0,
   t,
 }: {
   readonly scheduler?: AutomationSchedulerState;
+  readonly manualEnabledCount?: number;
   readonly t: AutomationTranslate;
 }): AutomationSchedulerCopy {
   const isRunning = scheduler?.status === "running";
@@ -165,7 +183,9 @@ export function automationSchedulerCopy({
   if (isRunning) {
     return {
       statusLabel: t("Scheduler started"),
-      summary: t("No enabled scheduled automations. Manual automations can still run now."),
+      summary: manualEnabledCount > 0
+        ? t("No scheduled automations are enabled. Manual automations can still run now.")
+        : t("No enabled scheduled automations yet."),
     };
   }
   if (scheduleCount > 0) {
@@ -176,8 +196,14 @@ export function automationSchedulerCopy({
   }
   return {
     statusLabel: t("Scheduler stopped"),
-    summary: t("No enabled scheduled automations yet. Create or edit one with a schedule."),
+    summary: manualEnabledCount > 0
+      ? t("Manual automations can still run now. Add a schedule to run automatically.")
+      : t("No enabled scheduled automations yet. Create or edit one with a schedule."),
   };
+}
+
+function isScheduledAutomationDefinition(automation: AutomationDefinition): boolean {
+  return automation.trigger.type === "schedule" || Boolean(automation.rrule);
 }
 
 function isAutomationRunInProgress(run: AutomationRun): boolean {

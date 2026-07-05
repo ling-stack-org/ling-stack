@@ -104,6 +104,7 @@ export interface MockState {
   nextStreamEvents?: MockRunEvent[];
   providerCheckDelayMs?: number;
   runResponseDelayMs?: number;
+  mediaJobRunDelayMs?: number;
   channelMessageDelayMs?: number;
   governanceNotificationDelayMs?: number;
   channelAiReplyBody?: string;
@@ -11766,6 +11767,9 @@ export async function handleDaemonRoute(
         await route.fulfill({ status: 409, json: { error: "media_job_not_runnable" } });
         return;
       }
+    }
+    if (state.mediaJobRunDelayMs) {
+      await new Promise((resolve) => setTimeout(resolve, state.mediaJobRunDelayMs));
     }
     const provider = state.providers.find((item) => isRecord(item) && item.id === job.providerPresetId);
     const normalizedProvider = isRecord(provider) ? normalizeMockProviderForGenerationRuntime(provider) : undefined;

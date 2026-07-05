@@ -39,10 +39,13 @@ import { ProviderModelImportPanel } from "./ProviderModelImportPanel.js";
 import { ProviderRouteList } from "./ProviderRouteList.js";
 import { ProviderWorkbenchHeader } from "./ProviderWorkbenchHeader.js";
 import {
+  filterProviderTemplatesForSetupIntent,
   filterProviderWorkbenchRoutes,
   normalizeProviderEndpoint,
   providerModelSourceLabel,
   readProviderWorkbenchSummary,
+  selectProviderTemplateForSetupIntent,
+  type ProviderSetupIntent,
   type ProviderStatusFilter,
 } from "./provider-workbench-view-models.js";
 
@@ -90,6 +93,8 @@ export function ProviderSettings({
   onOpenRun,
   onClearCheckFeedback,
   onClearRepair,
+  setupIntent = "",
+  onSetupIntentConsumed,
   settingsToolMode = false,
 }: {
   readonly cwd: string;
@@ -112,7 +117,7 @@ export function ProviderSettings({
   readonly isRunning: boolean;
   readonly onFormChange: (form: ProviderFormState) => void;
   readonly onTemplateSelect: (template: ProviderTemplate) => void;
-  readonly onNew: () => void;
+  readonly onNew: (template: ProviderTemplate) => void;
   readonly onSave: () => Promise<ProviderSaveResult>;
   readonly onImportModels: (models: readonly ProviderModelOption[]) => Promise<{ readonly ok: boolean; readonly errorMessage?: string }>;
   readonly onRefresh: () => void;
@@ -127,6 +132,8 @@ export function ProviderSettings({
   readonly onOpenRun: (runId: string) => void;
   readonly onClearCheckFeedback: (providerId: string) => void;
   readonly onClearRepair: () => void;
+  readonly setupIntent?: ProviderSetupIntent | "";
+  readonly onSetupIntentConsumed?: () => void;
   readonly settingsToolMode?: boolean;
 }): JSX.Element {
   const { t } = useI18n();
@@ -150,6 +157,7 @@ export function ProviderSettings({
   const [isFetchingModels, setIsFetchingModels] = useState(false);
   const [editorErrorMessage, setEditorErrorMessage] = useState("");
   const [editorWarningMessage, setEditorWarningMessage] = useState("");
+  const [activeEditorSetupIntent, setActiveEditorSetupIntent] = useState<ProviderSetupIntent | "">("");
   const skipNextModelDiscoveryResetRef = useRef(false);
   const nextActionProvider =
     providers.find(
@@ -256,8 +264,20 @@ export function ProviderSettings({
     resetModelDiscovery();
   }, [form.providerId, form.api, form.baseUrl, form.apiKey]);
 
-  function openNewProviderSheet(): void {
-    onNew();
+  const visibleSupplierTemplates = useMemo(
+    () => filterProviderTemplatesForSetupIntent(supplierTemplates, activeEditorSetupIntent),
+    [activeEditorSetupIntent, supplierTemplates],
+  );
+
+  function openNewProviderSheet(intent: ProviderSetupIntent | "" = ""): void {
+    const customTemplate = providerFormToTemplate(customOpenAICompatibleForm);
+    const nextTemplate = selectProviderTemplateForSetupIntent({
+      templates: supplierTemplates,
+      intent,
+      fallbackTemplate: customTemplate,
+    });
+    onNew(nextTemplate);
+    setActiveEditorSetupIntent(intent);
     setShowApiKey(true);
     setEditorErrorMessage("");
     setEditorWarningMessage("");
@@ -267,6 +287,7 @@ export function ProviderSettings({
 
   function openEditProviderSheet(provider: ProviderPreset): void {
     onEdit(provider);
+    setActiveEditorSetupIntent("");
     setShowApiKey(true);
     setEditorErrorMessage("");
     setEditorWarningMessage("");
@@ -277,8 +298,20 @@ export function ProviderSettings({
   function closeProviderSheet(): void {
     setEditorErrorMessage("");
     setEditorWarningMessage("");
+    setActiveEditorSetupIntent("");
     setIsEditorOpen(false);
   }
+
+  useEffect(() => {
+    if (!setupIntent || isEditorOpen) {
+      return;
+    }
+    if (setupIntent === "generation" && templates.length === 0) {
+      return;
+    }
+    openNewProviderSheet(setupIntent);
+    onSetupIntentConsumed?.();
+  }, [isEditorOpen, onSetupIntentConsumed, setupIntent, templates.length]);
 
   async function handleImportSelectedModels(): Promise<void> {
     setEditorErrorMessage("");
@@ -387,7 +420,7 @@ export function ProviderSettings({
           isBatchChecking={isBatchChecking}
           onProviderSearchChange={setProviderSearch}
           onProviderStatusFilterChange={setProviderStatusFilter}
-          onAddModel={openNewProviderSheet}
+          onAddModel={() => openNewProviderSheet()}
           onCheckBatch={onCheckBatch}
           onRefresh={onRefresh}
           settingsToolMode={settingsToolMode}
@@ -455,7 +488,8 @@ export function ProviderSettings({
 
       {isEditorOpen ? (
         <ProviderEditorPanel
-          supplierTemplates={supplierTemplates}
+          supplierTemplates={visibleSupplierTemplates}
+          setupIntent={activeEditorSetupIntent}
           selectedTemplateId={selectedTemplateId}
           form={form}
           editingProvider={editingProvider}
@@ -536,7 +570,7 @@ function ProviderNextAction({
     return (
       <div className="provider-next-action">
         <CircleAlert size={16} />
-        <span>{t("Next: choose a template, add an API key, then Save before using it.")}</span>
+        <span>{t("Next: add a chat model for conversations or a generation model for image tasks.")}</span>
       </div>
     );
   }

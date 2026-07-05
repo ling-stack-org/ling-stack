@@ -8,9 +8,11 @@ import type {
   ProviderPreset,
   ProviderTemplate,
 } from "../../types.js";
+import type { ProviderSetupIntent } from "./provider-workbench-view-models.js";
 
 export function ProviderEditorPanel({
   supplierTemplates,
+  setupIntent,
   selectedTemplateId,
   form,
   editingProvider,
@@ -36,6 +38,7 @@ export function ProviderEditorPanel({
   onPrimaryAction,
 }: {
   readonly supplierTemplates: readonly ProviderTemplate[];
+  readonly setupIntent: ProviderSetupIntent | "";
   readonly selectedTemplateId: string;
   readonly form: ProviderFormState;
   readonly editingProvider: ProviderPreset | undefined;
@@ -61,13 +64,28 @@ export function ProviderEditorPanel({
   readonly onPrimaryAction: () => void;
 }): JSX.Element {
   const { t } = useI18n();
+  const setupTitle =
+    !editingProviderId && setupIntent === "chat"
+      ? t("New chat model")
+      : !editingProviderId && setupIntent === "generation"
+        ? t("New image generation model")
+        : editingProviderId
+          ? t("Edit preset")
+          : t("New preset");
+  const setupDescription =
+    !editingProviderId && setupIntent === "chat"
+      ? t("Choose a chat-capable supplier and add its API key.")
+      : !editingProviderId && setupIntent === "generation"
+        ? t("Choose a generation-capable supplier and add its API key.")
+        : "";
 
   return (
     <div className="provider-sheet-backdrop" role="presentation">
       <section className="panel provider-form-panel provider-sheet" aria-labelledby="provider-form-title" role="dialog" aria-modal="true">
         <div className="panel-title split provider-sheet-header">
           <span>
-            <h2 id="provider-form-title">{editingProviderId ? t("Edit preset") : t("New preset")}</h2>
+            <h2 id="provider-form-title">{setupTitle}</h2>
+            {setupDescription ? <small>{setupDescription}</small> : null}
           </span>
           <button className="icon-button" type="button" onClick={onClose} aria-label={t("Close model preset editor")}>
             <X size={16} />
@@ -276,6 +294,12 @@ export function ProviderEditorPanel({
                 <strong>{editorCheckProviderName || t("Provider check")}</strong>
                 <span>{editorCheckMessage}</span>
                 {editorCheckGuidance ? <small>{editorCheckGuidance}</small> : null}
+                {checkResult.message ? (
+                  <details className="provider-check-raw-details">
+                    <summary>{t("Check details")}</summary>
+                    <small>{t("Provider response")}: {t(checkResult.message)}</small>
+                  </details>
+                ) : null}
               </div>
             </div>
           ) : null}

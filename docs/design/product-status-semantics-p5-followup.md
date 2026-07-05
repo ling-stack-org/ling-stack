@@ -6,6 +6,9 @@
 - [P5 Next Inventory](product-ux-system-p5-next-inventory.md)
 - [P5 Status Semantics Implementation Plan](product-status-semantics-p5-followup-implementation-plan.md)
 - [Media And Automations Workbench Refinement](media-automations-workbench-refinement.md)
+- [P7 Usage Closure](product-ux-usage-closure-p7.md)
+- [P7 Usage Closure Detailed Design](product-ux-usage-closure-p7-detailed-design.md)
+- [P7 Usage Closure Implementation Plan](product-ux-usage-closure-p7-implementation-plan.md)
 
 ## Summary
 

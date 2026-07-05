@@ -1,6 +1,8 @@
 import type { MediaJob, MediaJobStatus, MediaOperation, RunArtifact } from "../../types.js";
 
 export type MediaJobProductState = "ready_to_start" | "generating" | "needs_attention" | "completed" | "unknown";
+export type MediaJobRunActionState = "idle" | "starting" | "generating";
+export type MediaJobDisplayState = MediaJobProductState | "starting";
 export type MediaJobStatusFilter = "all" | "ready_to_start" | "generating" | "needs_attention" | "completed";
 
 export const mediaJobStatusFilters: readonly MediaJobStatusFilter[] = ["all", "ready_to_start", "generating", "needs_attention", "completed"];
@@ -9,6 +11,10 @@ export interface MediaJobProductStateInput {
   readonly job: MediaJob;
   readonly artifacts: readonly RunArtifact[];
   readonly runningJobId?: string;
+}
+
+export interface MediaJobDisplayStateInput extends MediaJobProductStateInput {
+  readonly startingJobId?: string;
 }
 
 export interface MediaJobSummary {
@@ -26,6 +32,21 @@ export interface MediaJobPrimaryActionView {
   readonly disabled: boolean;
   readonly disabledReason: string;
   readonly emphasis: "primary" | "secondary";
+}
+
+export interface MediaJobFailureRecoveryView {
+  readonly title: string;
+  readonly description: string;
+  readonly actionLabel: string;
+  readonly actionKind: "open_providers" | "retry";
+  readonly rawDetails: string;
+}
+
+export interface MediaJobResultActionView {
+  readonly hasResult: boolean;
+  readonly primaryLabel: string;
+  readonly copyPromptLabel: string;
+  readonly copyResultUrlLabel: string;
 }
 
 export function mediaArtifactsForJob(artifacts: readonly RunArtifact[]): readonly RunArtifact[] {
@@ -57,6 +78,39 @@ export function deriveMediaJobProductState({
     return "ready_to_start";
   }
   return "unknown";
+}
+
+export function mediaJobRunActionState({
+  job,
+  runningJobId = "",
+  startingJobId = "",
+}: {
+  readonly job: MediaJob;
+  readonly runningJobId?: string;
+  readonly startingJobId?: string;
+}): MediaJobRunActionState {
+  if (job.status === "running" || runningJobId === job.id) {
+    return "generating";
+  }
+  if (startingJobId === job.id) {
+    return "starting";
+  }
+  return "idle";
+}
+
+export function deriveMediaJobDisplayState({
+  job,
+  artifacts,
+  runningJobId = "",
+  startingJobId = "",
+}: MediaJobDisplayStateInput): MediaJobDisplayState {
+  if (job.status === "running") {
+    return "generating";
+  }
+  if (startingJobId === job.id) {
+    return "starting";
+  }
+  return deriveMediaJobProductState({ job, artifacts, runningJobId });
 }
 
 export function summarizeMediaJobs({
@@ -102,12 +156,17 @@ export function mediaJobMatchesProductFilter({
   job,
   artifacts,
   runningJobId = "",
+  startingJobId = "",
   filter,
-}: MediaJobProductStateInput & { readonly filter: MediaJobStatusFilter }): boolean {
+}: MediaJobDisplayStateInput & { readonly filter: MediaJobStatusFilter }): boolean {
   if (filter === "all") {
     return true;
   }
-  return deriveMediaJobProductState({ job, artifacts, runningJobId }) === filter;
+  const displayState = deriveMediaJobDisplayState({ job, artifacts, runningJobId, startingJobId });
+  if (displayState === "starting") {
+    return filter === "generating";
+  }
+  return displayState === filter;
 }
 
 export function isMediaJobActiveStatus(status: MediaJobStatus): boolean {
@@ -137,12 +196,17 @@ export function mediaJobRunDisabledReason({
   artifacts,
   isLoading,
   isRunning,
+  isStarting = false,
 }: {
   readonly job: MediaJob;
   readonly artifacts: readonly RunArtifact[];
   readonly isLoading: boolean;
   readonly isRunning: boolean;
+  readonly isStarting?: boolean;
 }): string {
+  if (isStarting) {
+    return "Generation request is starting.";
+  }
   if (isLoading) {
     return "Generation tasks are refreshing.";
   }
@@ -163,18 +227,34 @@ export function mediaJobPrimaryActionView({
   artifacts,
   isLoading,
   isRunning,
+  isStarting = false,
 }: {
   readonly job: MediaJob;
   readonly artifacts: readonly RunArtifact[];
   readonly isLoading: boolean;
   readonly isRunning: boolean;
+  readonly isStarting?: boolean;
 }): MediaJobPrimaryActionView {
-  const state = deriveMediaJobProductState({ job, artifacts, runningJobId: isRunning ? job.id : "" });
-  const disabledReason = mediaJobRunDisabledReason({ job, artifacts, isLoading, isRunning });
+  const state = deriveMediaJobDisplayState({
+    job,
+    artifacts,
+    runningJobId: isRunning ? job.id : "",
+    startingJobId: isStarting ? job.id : "",
+  });
+  const disabledReason = mediaJobRunDisabledReason({ job, artifacts, isLoading, isRunning, isStarting });
   if (state === "completed") {
     return {
       visible: false,
       label: "Completed",
+      disabled: true,
+      disabledReason,
+      emphasis: "secondary",
+    };
+  }
+  if (state === "starting") {
+    return {
+      visible: true,
+      label: "Starting",
       disabled: true,
       disabledReason,
       emphasis: "secondary",
@@ -261,9 +341,19 @@ export function mediaJobProductStateLabel(state: MediaJobProductState): string {
   return "Unknown";
 }
 
-export function mediaJobStatusBadgeClass(state: MediaJobProductState): string {
+export function mediaJobDisplayStateLabel(state: MediaJobDisplayState): string {
+  if (state === "starting") {
+    return "Starting generation";
+  }
+  return mediaJobProductStateLabel(state);
+}
+
+export function mediaJobStatusBadgeClass(state: MediaJobDisplayState): string {
   if (state === "ready_to_start") {
     return "ready";
+  }
+  if (state === "starting") {
+    return "running";
   }
   if (state === "generating") {
     return "running";
@@ -288,6 +378,108 @@ export function mediaJobInputValue(input: Record<string, unknown>, keys: readonl
     }
   }
   return "--";
+}
+
+export function mediaJobFailureRecoveryView({
+  job,
+  artifacts,
+  t,
+}: {
+  readonly job: MediaJob;
+  readonly artifacts: readonly RunArtifact[];
+  readonly t: (key: string, values?: Readonly<Record<string, string | number>>) => string;
+}): MediaJobFailureRecoveryView {
+  const normalized = job.errorMessage?.trim() ?? "";
+  const lower = normalized.toLowerCase();
+  const rawDetails = normalized || t("No raw generation error was returned.");
+  if (mediaJobHasMissingResult(job, artifacts) || (job.status === "succeeded" && mediaArtifactsForJob(artifacts).length === 0)) {
+    return {
+      title: t("No usable result was returned"),
+      description: t("The task finished, but Ling did not receive an image or video it can show."),
+      actionLabel: t("Retry generation"),
+      actionKind: "retry",
+      rawDetails,
+    };
+  }
+  if (lower.includes("api key") || lower.includes("secret") || lower.includes("unauthorized") || lower.includes("401")) {
+    return {
+      title: t("This model needs an API key"),
+      description: t("Add or fix the API key for this model route before generating again."),
+      actionLabel: t("Open Model Workbench"),
+      actionKind: "open_providers",
+      rawDetails,
+    };
+  }
+  if (lower.includes("base url") || lower.includes("base_url")) {
+    return {
+      title: t("This model route needs a Base URL"),
+      description: t("Check the route URL in Model Workbench, then retry generation."),
+      actionLabel: t("Open Model Workbench"),
+      actionKind: "open_providers",
+      rawDetails,
+    };
+  }
+  if (lower.includes("disabled")) {
+    return {
+      title: t("This model route is disabled"),
+      description: t("Enable the route in Model Workbench before generating again."),
+      actionLabel: t("Open Model Workbench"),
+      actionKind: "open_providers",
+      rawDetails,
+    };
+  }
+  if (lower.includes("live_media_transport_required") || lower.includes("unsupported") || lower.includes("暂未接入") || lower.includes("可真实生成")) {
+    return {
+      title: t("Real generation is not connected for this model"),
+      description: t("Choose another runnable generation model or configure one in Model Workbench."),
+      actionLabel: t("Open Model Workbench"),
+      actionKind: "open_providers",
+      rawDetails,
+    };
+  }
+  if (lower.includes("429") || lower.includes("rate limit") || lower.includes("rate limited") || lower.includes("quota")) {
+    return {
+      title: t("The provider limited this request"),
+      description: t("Try again later, or choose another generation route."),
+      actionLabel: t("Retry generation"),
+      actionKind: "retry",
+      rawDetails,
+    };
+  }
+  if (lower.includes("timeout") || lower.includes("timed out") || lower.includes("network") || lower.includes("econn") || lower.includes("fetch failed")) {
+    return {
+      title: t("The provider did not respond in time"),
+      description: t("Check the route connection, then retry generation."),
+      actionLabel: t("Retry generation"),
+      actionKind: "retry",
+      rawDetails,
+    };
+  }
+  if (lower.includes("invalid_request") || lower.includes("bad_request") || lower.includes("rejected") || lower.includes("400")) {
+    return {
+      title: t("The relay rejected this generation request"),
+      description: t("Check the model name, route, prompt, and account permissions."),
+      actionLabel: t("Open Model Workbench"),
+      actionKind: "open_providers",
+      rawDetails,
+    };
+  }
+  return {
+    title: t("Generation failed"),
+    description: t("Review the details, retry generation, or choose another model route."),
+    actionLabel: t("Retry generation"),
+    actionKind: "retry",
+    rawDetails,
+  };
+}
+
+export function mediaJobResultActionView(artifacts: readonly RunArtifact[]): MediaJobResultActionView {
+  return {
+    hasResult: artifacts.length > 0,
+    primaryLabel: "View result",
+    copyPromptLabel: "Copy prompt",
+    copyResultUrlLabel: "Copy result URL",
+  };
 }
 
 export function formatMediaJobError(

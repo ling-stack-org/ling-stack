@@ -447,6 +447,7 @@ export function SkillSourceInspector({
   artifacts,
   optimizationPreview,
   optimizationPreviewLoading,
+  showPreviewAction = true,
   cwd,
   saving,
   onPreviewOptimization,
@@ -459,6 +460,7 @@ export function SkillSourceInspector({
   readonly artifacts: readonly SkillSourceArtifact[];
   readonly optimizationPreview?: SkillOptimizationPreview;
   readonly optimizationPreviewLoading: boolean;
+  readonly showPreviewAction?: boolean;
   readonly cwd: string;
   readonly saving: boolean;
   readonly onPreviewOptimization: () => void;
@@ -489,10 +491,12 @@ export function SkillSourceInspector({
         <span>{t("Artifacts")}: {artifacts.length}</span>
       </div>
       <div className="settings-skill-source-actions">
-        <button className="secondary-button compact-button" type="button" onClick={onPreviewOptimization} disabled={saving || optimizationPreviewLoading}>
-          <Search size={14} />
-          {optimizationPreviewLoading ? t("Previewing...") : t("Preview optimization")}
-        </button>
+        {showPreviewAction ? (
+          <button className="secondary-button compact-button" type="button" onClick={onPreviewOptimization} disabled={saving || optimizationPreviewLoading}>
+            <Search size={14} />
+            {optimizationPreviewLoading ? t("Previewing...") : t("Preview optimization")}
+          </button>
+        ) : null}
         <button className="secondary-button danger compact-button" type="button" onClick={onArchive} disabled={saving}>
           <Archive size={14} />
           {t("Archive source snapshot")}

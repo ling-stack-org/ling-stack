@@ -94,6 +94,7 @@ import { useMediaDomain } from "../domains/media/use-media-domain.js";
 import { useMcpDomain } from "../domains/mcp/use-mcp-domain.js";
 import { usePluginsDomain } from "../domains/plugins/use-plugins-domain.js";
 import { useProvidersDomain } from "../domains/providers/use-providers-domain.js";
+import type { ProviderSetupIntent } from "../features/providers/provider-workbench-view-models.js";
 import { useRuntimeDomain } from "../domains/runtime/use-runtime-domain.js";
 import { useRunCommandController } from "../domains/runs/use-run-command-controller.js";
 import { useRunsDomain } from "../domains/runs/use-runs-domain.js";
@@ -110,9 +111,7 @@ import {
 import { defaultTools } from "../lib/tools.js";
 import {
   canUseConversationProvider,
-  customOpenAICompatibleForm,
   providerModelRouteLabel,
-  providerFormToTemplate,
   sortProvidersForWorkbench,
 } from "../lib/providers.js";
 import { removeRecordKey } from "../lib/records.js";
@@ -186,6 +185,7 @@ export function AppShell(): JSX.Element {
   const [activeSidebarTarget, setActiveSidebarTarget] = useState<SidebarTarget>("workspace");
   const [workBoardRequestedScope, setWorkBoardRequestedScope] = useState<WorkBoardScope>("actionable");
   const [settingsWorkspaceToolView, setSettingsWorkspaceToolView] = useState<SettingsWorkspaceToolView>("");
+  const [providerSetupIntent, setProviderSetupIntent] = useState<ProviderSetupIntent | "">("");
   const settingsReturnTargetRef = useRef<SettingsReturnTarget | undefined>(undefined);
   const [channelSidebarOpen, setChannelSidebarOpen] = useState(() =>
     typeof globalThis.matchMedia === "function"
@@ -1276,7 +1276,7 @@ export function AppShell(): JSX.Element {
     }
   }
 
-  function openSettingsWorkspaceTool(view: SettingsWorkspaceToolView): void {
+  function openSettingsWorkspaceTool(view: SettingsWorkspaceToolView, setupIntent: ProviderSetupIntent | "" = ""): void {
     if (!view) {
       return;
     }
@@ -1286,10 +1286,13 @@ export function AppShell(): JSX.Element {
       setWorkBoardRequestedScope("actionable");
     }
     if (view === "providers") {
+      setProviderSetupIntent(setupIntent);
       void Promise.all([
         refreshProviderTemplates(),
         refreshProviders(),
       ]);
+    } else {
+      setProviderSetupIntent("");
     }
     if (view === "teammates") {
       void Promise.all([
@@ -1870,12 +1873,11 @@ export function AppShell(): JSX.Element {
         selectedTemplateId={selectedProviderTemplateId}
         repairRun={providerRepairRun}
         isRunning={isRunning}
+        setupIntent={providerSetupIntent}
+        onSetupIntentConsumed={() => setProviderSetupIntent("")}
         onFormChange={setProviderForm}
         onTemplateSelect={selectProviderTemplate}
-        onNew={() => {
-          const customTemplate = providerFormToTemplate(customOpenAICompatibleForm);
-          startNewProviderFromTemplate(customTemplate);
-        }}
+        onNew={startNewProviderFromTemplate}
         onSave={saveProviderWithPreflight}
         onImportModels={importModelsFromProviderForm}
         onRefresh={() => void refreshProviders()}
@@ -2493,12 +2495,11 @@ export function AppShell(): JSX.Element {
                 selectedTemplateId={selectedProviderTemplateId}
                 repairRun={providerRepairRun}
                 isRunning={isRunning}
+                setupIntent={providerSetupIntent}
+                onSetupIntentConsumed={() => setProviderSetupIntent("")}
                 onFormChange={setProviderForm}
                 onTemplateSelect={selectProviderTemplate}
-                onNew={() => {
-                  const customTemplate = providerFormToTemplate(customOpenAICompatibleForm);
-                  startNewProviderFromTemplate(customTemplate);
-                }}
+                onNew={startNewProviderFromTemplate}
                 onSave={saveProviderWithPreflight}
                 onImportModels={importModelsFromProviderForm}
                 onRefresh={() => void refreshProviders()}
@@ -2579,8 +2580,8 @@ export function AppShell(): JSX.Element {
                 onRefresh={() => void refreshMediaJobs()}
                 onCreate={() => void saveMediaJob()}
                 onSelectJob={setSelectedMediaJobId}
-                onRun={(jobId) => void executeMediaJob(jobId)}
-                onOpenProviders={() => openSettingsWorkspaceTool("providers")}
+                onRun={executeMediaJob}
+                onOpenProviders={() => openSettingsWorkspaceTool("providers", "generation")}
                   />
                 ) : activeView === "profile" ? (
                   <ProfilePage cwd={form.cwd} onProfileChange={setUserProfile} />

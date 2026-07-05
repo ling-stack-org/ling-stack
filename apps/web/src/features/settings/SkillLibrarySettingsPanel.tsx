@@ -42,7 +42,6 @@ import {
   updateSkillSourceUpgradePolicy,
 } from "../../api.js";
 import { useI18n } from "../../i18n.js";
-import { formatDateTime } from "../../lib/formatting.js";
 import type {
   Channel,
   ChannelPlaybookCandidate,
@@ -70,9 +69,7 @@ import {
   ProcedureObservationClusterPanel,
   SkillCandidateReviewPanel,
   SkillHealthPanel,
-  SkillInspectorSection,
   SkillSourceHealthPanel,
-  SkillSourceInspector,
   SkillSourceStatus,
   SkillSourceSyncPanel,
   SkillStatePill,
@@ -91,6 +88,7 @@ import {
   type SkillLibraryFilter,
   type TeammateSkillBindingSummary,
 } from "./SkillLibraryWidgets.js";
+import { SkillCompactInspector } from "./SkillCompactInspector.js";
 import { SettingsSubnav } from "./SettingsSubnav.js";
 
 type SkillLibrarySubsectionId = "skills" | "review" | "source";
@@ -231,8 +229,8 @@ export function SkillLibrarySettingsPanel({ cwd, refreshToken = 0 }: { readonly 
   }, [filter, searchQuery, skills, sortMode, sourceSnapshotBySkillId]);
 
   const selectedSkill = useMemo(() => {
-    return skills.find((entry) => entry.id === selectedSkillId) ?? filteredSkills[0] ?? skills[0];
-  }, [filteredSkills, selectedSkillId, skills]);
+    return filteredSkills.find((entry) => entry.id === selectedSkillId) ?? filteredSkills[0];
+  }, [filteredSkills, selectedSkillId]);
 
   useEffect(() => {
     if (!selectedSkill && selectedSkillId) {
@@ -1072,53 +1070,27 @@ export function SkillLibrarySettingsPanel({ cwd, refreshToken = 0 }: { readonly 
 
         <aside className="settings-skill-inspector" aria-label={t("Skill detail")}>
           {selectedSkill ? (
-            <>
-              <div className="settings-skill-inspector-head">
-                <span>
-                  <BookOpen size={15} />
-                  <strong>{selectedSkill.definition.name}</strong>
-                </span>
-                <SkillStatePill label={skillRegistryState(selectedSkill, t).label} tone={skillRegistryState(selectedSkill, t).tone} />
-              </div>
-              <SkillInspectorSection title={t("Description")}>
-                <p>{selectedSkill.definition.summary}</p>
-              </SkillInspectorSection>
-              <SkillInspectorSection title={t("Prompt fragments")}>
-                {selectedSkill.definition.promptFragments.length > 0 ? (
-                  <pre>{selectedSkill.definition.promptFragments.slice(0, 3).join("\n\n")}</pre>
-                ) : (
-                  <p>{t("No prompt fragments")}</p>
-                )}
-              </SkillInspectorSection>
-              <SkillInspectorSection title={t("Required tools")}>
-                <SkillTokenList values={selectedSkill.definition.requiredTools} emptyLabel={t("No tools")} />
-              </SkillInspectorSection>
-              <SkillInspectorSection title={t("Approval profile")}>
-                <p>{approvalProfileText(selectedSkill.definition.approvalProfile, t)}</p>
-              </SkillInspectorSection>
-              <SkillInspectorSection title={t("Provider capability")}>
-                <SkillTokenList values={selectedSkill.definition.requiredProviderCapabilities} emptyLabel={t("No provider capability required")} />
-              </SkillInspectorSection>
-              <SkillInspectorSection title={t("Bound teammates")}>
-                <SkillTokenList values={boundTeammateNames(selectedSkill.id, bindingSummaries)} emptyLabel={t("Unbound")} />
-              </SkillInspectorSection>
-              <SkillSourceInspector
-                snapshot={sourceSnapshotBySkillId.get(selectedSkill.id)}
-                history={sourceSnapshotHistoryBySkillId.get(selectedSkill.id) ?? []}
-                artifacts={skillSourceArtifacts}
-                optimizationPreview={skillOptimizationPreview}
-                optimizationPreviewLoading={optimizationPreviewLoading}
-                cwd={cwd.trim()}
-                saving={saving}
-                onPreviewOptimization={() => void previewSelectedSkillOptimization()}
-                onArchive={() => void archiveSourceSnapshot(selectedSkill.id)}
-                onRollback={(snapshotId) => void rollbackSelectedSkillSource(snapshotId)}
-                t={t}
-              />
-              <small>{t("Updated {time}", { time: formatDateTime(selectedSkill.updatedAt) })}</small>
-            </>
+            <SkillCompactInspector
+              skill={selectedSkill}
+              sourceSnapshot={sourceSnapshotBySkillId.get(selectedSkill.id)}
+              sourceHistory={sourceSnapshotHistoryBySkillId.get(selectedSkill.id) ?? []}
+              artifacts={skillSourceArtifacts}
+              optimizationPreview={skillOptimizationPreview}
+              optimizationPreviewLoading={optimizationPreviewLoading}
+              cwd={cwd.trim()}
+              saving={saving}
+              boundTeammates={boundTeammateNames(selectedSkill.id, bindingSummaries)}
+              onPreviewOptimization={() => void previewSelectedSkillOptimization()}
+              onArchiveSource={() => void archiveSourceSnapshot(selectedSkill.id)}
+              onRollbackSource={(snapshotId) => void rollbackSelectedSkillSource(snapshotId)}
+              t={t}
+            />
           ) : (
-            <div className="compact-empty">{t("Select a skill to inspect")}</div>
+            <div className="compact-empty settings-skill-search-empty">
+              <Search size={16} />
+              <span>{t("No skill selected")}</span>
+              <small>{t("Adjust search or filters to inspect a skill.")}</small>
+            </div>
           )}
         </aside>
       </div>

@@ -9,6 +9,9 @@
 - [P5 Status Semantics Follow-up Implementation Plan](product-status-semantics-p5-followup-implementation-plan.md)
 - [Product UX Priorities P6](product-ux-priorities-p6.md)
 - [Product UX Priorities P6 Implementation Plan](product-ux-priorities-p6-implementation-plan.md)
+- [P7 Usage Closure](product-ux-usage-closure-p7.md)
+- [P7 Usage Closure Detailed Design](product-ux-usage-closure-p7-detailed-design.md)
+- [P7 Usage Closure Implementation Plan](product-ux-usage-closure-p7-implementation-plan.md)
 
 ## Summary
 

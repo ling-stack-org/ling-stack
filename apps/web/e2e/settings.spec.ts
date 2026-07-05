@@ -236,6 +236,8 @@ test("settings developer section contains startup readiness", async ({ page }) =
   await settingsSections.getByRole("button", { name: /Startup and diagnostics/ }).click();
   const developerPanel = page.locator(".developer-settings-panel");
   await expect(developerPanel.getByRole("heading", { name: "Startup readiness" })).toBeVisible();
+  await expect(developerPanel.locator(".startup-readiness-card")).toBeVisible();
+  await expect(developerPanel.getByText("Startup phases")).toBeVisible();
   await expect(developerPanel).toContainText("ready");
   await expect(developerPanel.getByRole("button", { name: "Refresh" })).toBeVisible();
   await expect(developerPanel.getByRole("button", { name: "Open Run Diagnostics" })).toBeVisible();
@@ -529,12 +531,20 @@ test("settings skill library shows read-only skill health findings", async ({ pa
   const reviewSkillRow = panel.getByRole("row", { name: /Code Review review .* Source-backed/ });
   await expect(reviewSkillRow).toContainText("Source-backed");
   await reviewSkillRow.getByRole("button", { name: /Code Review review/ }).click();
-  await expect(panel.locator(".settings-skill-inspector")).toContainText("skill_source_review_mock");
-  await expect(panel.locator(".settings-skill-inspector")).toContainText("View SKILL.md");
+  const inspector = panel.locator(".settings-skill-inspector");
+  await expect(inspector.locator(".settings-skill-summary-card")).toBeVisible();
+  await expect(inspector).toContainText("Source details are available below when you need them.");
+  const sourceDetails = inspector.locator(".settings-skill-inspector-details").filter({ hasText: "Source and raw details" });
+  await expect(sourceDetails).toBeVisible();
+  await expect.poll(() => sourceDetails.evaluate((element) => element.hasAttribute("open"))).toBe(false);
+  await sourceDetails.getByText("Source and raw details").click();
+  await expect(sourceDetails).toContainText("skill_source_review_mock");
+  await expect(sourceDetails).toContainText("View SKILL.md");
+  await expect(panel.getByRole("button", { name: "Preview optimization" })).toHaveCount(1);
   await panel.getByRole("button", { name: "Preview optimization" }).click();
-  await expect(panel.locator(".settings-skill-inspector")).toContainText("preview_on_demand");
-  await expect(panel.locator(".settings-skill-inspector")).toContainText("Compiled tokens");
-  await expect(panel.locator(".settings-skill-inspector")).toContainText("Lazy references: 1");
+  await expect(sourceDetails).toContainText("preview_on_demand");
+  await expect(sourceDetails).toContainText("Compiled tokens");
+  await expect(sourceDetails).toContainText("Lazy references: 1");
   await panel.getByRole("button", { name: "Archive source snapshot" }).click();
   await expect(panel).toContainText("Source snapshot archived");
   await expect.poll(() => {
@@ -543,7 +553,8 @@ test("settings skill library shows read-only skill health findings", async ({ pa
   }).toBe("archived");
   const archivedReviewSkillRow = panel.getByRole("row", { name: /Code Review review .* Metadata only/ });
   await expect(archivedReviewSkillRow).toContainText("Metadata only");
-  await expect(panel.locator(".settings-skill-inspector")).toContainText("Metadata only. No published SKILL.md snapshot is attached yet.");
+  await expect(panel.locator(".settings-skill-inspector")).toContainText("Metadata only");
+  await expect(panel.locator(".settings-skill-inspector")).toContainText("No published SKILL.md snapshot is attached yet.");
 
   await panel.getByRole("button", { name: "Sync gstack source" }).click();
   await expect(page.getByRole("tab", { name: /Source sync/ })).toHaveAttribute("aria-selected", "true");

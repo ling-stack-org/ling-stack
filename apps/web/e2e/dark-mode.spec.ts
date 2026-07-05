@@ -161,6 +161,7 @@ test("main pages and workspace tools follow dark theme tokens", async ({ page })
     ".settings-skill-table-wrap",
     ".settings-skill-table",
     ".settings-skill-inspector",
+    ".settings-skill-summary-card",
   ]);
 
   await page.getByRole("tab", { name: /待复核|Review queue/ }).click();

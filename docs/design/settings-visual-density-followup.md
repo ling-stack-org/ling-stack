@@ -5,6 +5,9 @@
 - [Settings Semantic Convergence P3](settings-semantic-convergence-p3.md)
 - [Product UX System P5](product-ux-system-p5.md)
 - [Product UX Priorities P6](product-ux-priorities-p6.md)
+- [P7 Usage Closure](product-ux-usage-closure-p7.md)
+- [P7 Usage Closure Detailed Design](product-ux-usage-closure-p7-detailed-design.md)
+- [P7 Usage Closure Implementation Plan](product-ux-usage-closure-p7-implementation-plan.md)
 
 ## Summary
 
