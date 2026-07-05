@@ -1,0 +1,402 @@
+.create-dialog-shell {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 0;
+  padding: 0;
+  overflow: hidden;
+}
+
+.create-dialog-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  min-height: 72px;
+  padding: 18px 28px 14px;
+  border-bottom: 1px solid var(--border);
+}
+
+.create-dialog-title-block {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.create-dialog-title-block strong {
+  color: var(--text-primary);
+  font-size: 18px;
+  font-weight: 760;
+  line-height: 24px;
+}
+
+.create-dialog-title-block p {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 18px;
+}
+
+.create-dialog-body {
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.create-dialog-actions {
+  position: sticky;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  justify-content: flex-end;
+  margin: 0 -28px;
+  padding: 12px 28px 16px;
+  border-top: 1px solid var(--border);
+  background: linear-gradient(to top, var(--surface-panel-strong) 72%, color-mix(in srgb, var(--surface-panel-strong) 0%, transparent));
+}
+
+.dialog-section {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--surface-panel);
+}
+
+.dialog-section-title,
+.dialog-section summary {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.dialog-section-title > span,
+.dialog-section summary > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 800;
+  line-height: 1.25;
+}
+
+.dialog-section-title > small,
+.dialog-section summary > small {
+  max-width: 300px;
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 1.35;
+  text-align: right;
+}
+
+.dialog-section-body {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+
+.dialog-section.collapsible {
+  padding: 0;
+}
+
+.dialog-section.collapsible summary {
+  position: relative;
+  min-height: 44px;
+  padding: 12px 36px 12px 12px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.dialog-section.collapsible summary::-webkit-details-marker {
+  display: none;
+}
+
+.dialog-section.collapsible summary::after {
+  content: "";
+  position: absolute;
+  top: 17px;
+  right: 14px;
+  width: 7px;
+  height: 7px;
+  border-right: 1.5px solid var(--text-secondary);
+  border-bottom: 1.5px solid var(--text-secondary);
+  transform: rotate(45deg);
+  transition: transform 140ms ease;
+}
+
+.dialog-section.collapsible[open] summary {
+  padding-bottom: 8px;
+}
+
+.dialog-section.collapsible[open] summary::after {
+  top: 19px;
+  transform: rotate(225deg);
+}
+
+.dialog-section.collapsible .dialog-section-body {
+  padding: 0 12px 12px;
+}
+
+.channel-create-dialog-clean {
+  width: min(780px, calc(100vw - 48px));
+  max-height: min(820px, calc(100dvh - 40px));
+}
+
+.channel-create-body {
+  display: grid;
+  align-content: start;
+  gap: 14px;
+  padding: 18px 28px 0;
+}
+
+.channel-create-section {
+  display: grid;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--surface-panel);
+}
+
+.channel-create-section-title,
+.channel-create-advanced summary {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.channel-create-section-title span,
+.channel-create-advanced summary span {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 800;
+  line-height: 1.25;
+}
+
+.channel-create-section-title small,
+.channel-create-advanced summary small {
+  max-width: 260px;
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 1.35;
+  text-align: right;
+}
+
+.channel-create-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.channel-create-fields .field {
+  margin-bottom: 0;
+}
+
+.channel-create-fields .field.wide {
+  grid-column: 1 / -1;
+}
+
+.channel-create-dialog-clean input,
+.channel-create-dialog-clean select,
+.teammate-create-dialog input,
+.teammate-create-dialog select {
+  min-height: 40px;
+  border-radius: 7px;
+}
+
+.channel-create-dialog-clean .channel-create-teammates {
+  display: grid;
+}
+
+.channel-create-dialog-clean .channel-create-teammate-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.channel-create-dialog-clean .channel-create-teammate {
+  min-height: 52px;
+  padding: 9px 10px;
+  border-radius: 8px;
+  transition: border-color 140ms ease, background 140ms ease, box-shadow 140ms ease;
+}
+
+.channel-create-dialog-clean .channel-create-teammate:hover,
+.channel-create-dialog-clean .channel-create-teammate.selected {
+  border-color: var(--accent-border);
+  background:
+    linear-gradient(90deg, var(--accent-soft), transparent 34%),
+    var(--surface-panel-strong);
+  box-shadow:
+    inset 3px 0 0 var(--accent),
+    inset 0 1px 0 var(--hairline);
+}
+
+.channel-create-advanced {
+  padding: 0;
+}
+
+.channel-create-advanced summary {
+  position: relative;
+  min-height: 44px;
+  padding: 12px 36px 12px 12px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.channel-create-advanced summary::-webkit-details-marker {
+  display: none;
+}
+
+.channel-create-advanced summary::after {
+  content: "";
+  position: absolute;
+  top: 17px;
+  right: 14px;
+  width: 7px;
+  height: 7px;
+  border-right: 1.5px solid var(--text-secondary);
+  border-bottom: 1.5px solid var(--text-secondary);
+  transform: rotate(45deg);
+  transition: transform 140ms ease;
+}
+
+.channel-create-advanced[open] summary {
+  padding-bottom: 8px;
+}
+
+.channel-create-advanced[open] summary::after {
+  top: 19px;
+  transform: rotate(225deg);
+}
+
+.channel-create-advanced-body {
+  display: grid;
+  gap: 12px;
+  padding: 0 12px 12px;
+}
+
+.channel-create-advanced-body .runtime-policy-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.teammate-create-dialog {
+  width: min(920px, calc(100vw - 48px));
+  max-height: min(820px, calc(100dvh - 40px));
+}
+
+.teammate-create-dialog .create-dialog-title-block strong {
+  color: var(--text-primary);
+}
+
+.teammate-create-dialog .teammate-create-body {
+  display: grid;
+  grid-template-columns: 1fr;
+  align-content: start;
+  gap: 14px;
+  max-height: none;
+  padding: 18px 28px 0;
+}
+
+.teammate-create-dialog .teammate-create-list.role-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  max-height: none;
+}
+
+.teammate-create-dialog .teammate-create-list.role-grid .teammate-template-row {
+  grid-template-columns: 24px minmax(0, 1fr);
+  min-height: 76px;
+  padding: 11px 12px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  background: var(--surface-panel);
+}
+
+.teammate-create-dialog .teammate-create-list.role-grid .teammate-template-row::after {
+  content: none;
+}
+
+.teammate-create-dialog .teammate-create-list.role-grid .teammate-role-icon {
+  display: inline-grid;
+}
+
+.teammate-create-dialog .teammate-create-list.role-grid .template-skill-count {
+  display: inline-flex;
+}
+
+.teammate-create-dialog .teammate-create-list.role-grid .teammate-template-row.selected {
+  border-color: var(--text-primary);
+  box-shadow: inset 0 0 0 1px var(--text-primary);
+}
+
+.teammate-create-dialog .teammate-create-fields {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.teammate-create-dialog .teammate-create-fields label:has(textarea) {
+  grid-column: 1 / -1;
+}
+
+.teammate-create-dialog .teammate-create-fields textarea {
+  min-height: 64px;
+}
+
+.teammate-create-dialog .teammate-create-advanced {
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  padding: 0;
+}
+
+.teammate-create-dialog .teammate-create-advanced summary {
+  min-height: 44px;
+  padding: 12px 36px 12px 12px;
+}
+
+.teammate-create-dialog .teammate-create-blocked {
+  margin-right: auto;
+}
+
+@media (max-width: 900px) {
+  .teammate-create-dialog .teammate-create-list.role-grid,
+  .teammate-create-dialog .teammate-create-fields {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 760px) {
+  .channel-create-dialog-clean,
+  .teammate-create-dialog {
+    width: min(100%, calc(100vw - 24px));
+  }
+
+  .create-dialog-head,
+  .channel-create-body,
+  .teammate-create-dialog .teammate-create-body {
+    padding-right: 18px;
+    padding-left: 18px;
+  }
+
+  .channel-create-fields,
+  .channel-create-dialog-clean .channel-create-teammate-grid,
+  .channel-create-advanced-body .runtime-policy-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .create-dialog-actions {
+    margin-right: -18px;
+    margin-left: -18px;
+    padding-right: 18px;
+    padding-left: 18px;
+  }
+}

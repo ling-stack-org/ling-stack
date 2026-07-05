@@ -14,7 +14,7 @@ import {
 
 async function openAiTeammatesFromSettings(page: Page): Promise<void> {
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
-  await page.getByLabel("Settings sections").getByRole("button", { name: "AI Teammates" }).click();
+  await page.getByLabel("Settings sections").getByRole("button", { name: "Teammate Management" }).click();
 }
 
 async function openChannelTeammateManager(page: Page): Promise<void> {
@@ -127,32 +127,31 @@ test("AI teammates page creates a durable teammate and opens its private workspa
 
   const navigation = page.getByLabel("Ling Stack navigation");
   await openSidebarSectionMenu(page, "Teammate actions");
-  await expect(navigation.getByRole("menuitem", { name: /Quick create default teammate/ })).toBeVisible();
-  await expect(navigation.getByRole("menuitem", { name: /More configuration/ })).toBeVisible();
+  await expect(navigation.getByRole("menuitem", { name: /New AI teammate/ })).toBeVisible();
+  await expect(navigation.getByRole("menuitem", { name: /Quick create default teammate/ })).toHaveCount(0);
+  await expect(navigation.getByRole("menuitem", { name: /More configuration/ })).toHaveCount(0);
   await expect(navigation.getByRole("menuitem", { name: "New teammate" })).toHaveCount(0);
-  await navigation.getByRole("menuitem", { name: /More configuration/ }).click();
-  await expect(page.getByLabel("Settings sections")).toBeVisible();
-  await expect(page.getByLabel("Ling Stack navigation")).toHaveCount(0);
-  await expect(page.locator(".settings-tool-return-row")).toHaveCount(0);
-  await expect(page.getByRole("heading", { name: "AI Teammates", level: 1 })).toHaveCount(0);
-  await expect(page.locator(".teammate-create-drawer")).toBeVisible();
-  await expect(page.locator(".teammate-create-overlay")).toHaveCount(0);
+  await navigation.getByRole("menuitem", { name: /New AI teammate/ }).click();
+  await expect(page.getByLabel("Ling Stack navigation")).toBeVisible();
+  await expect(page.getByLabel("Settings sections")).toHaveCount(0);
+  await expect(page.locator(".teammate-create-overlay")).toBeVisible();
   await expect(page.locator(".teammate-create-sheet")).toHaveCount(0);
   await expect(page.getByRole("dialog", { name: "Create AI teammate" })).toBeVisible();
+  await expect(page.getByText("Recommended role and model are prefilled. Review them, then create.")).toBeVisible();
+  await expect(page.getByLabel("Teammate template chooser").getByRole("button", { name: /Engineer/ })).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByRole("dialog", { name: "Create AI teammate" }).getByLabel("Base model")).toHaveValue("provider_local");
   await page.getByRole("dialog", { name: "Create AI teammate" }).getByRole("button", { name: "Cancel" }).last().click();
   await expect(page.getByRole("dialog", { name: "Create AI teammate" })).toHaveCount(0);
-  await page.getByRole("button", { name: "Back to app" }).click();
   await expect(navigation).toBeVisible();
   await navigation.getByRole("button", { name: "No teammate yet" }).click();
-  await expect(page.getByLabel("Settings sections")).toBeVisible();
-  await expect(page.getByLabel("Ling Stack navigation")).toHaveCount(0);
-  await expect(page.locator(".settings-tool-return-row")).toHaveCount(0);
+  await expect(page.getByLabel("Ling Stack navigation")).toBeVisible();
+  await expect(page.getByLabel("Settings sections")).toHaveCount(0);
   await expect(page.getByRole("dialog", { name: "Create AI teammate" })).toBeVisible();
   await page.getByRole("dialog", { name: "Create AI teammate" }).getByRole("button", { name: "Cancel" }).last().click();
   await expect(page.getByRole("dialog", { name: "Create AI teammate" })).toHaveCount(0);
-  await page.getByRole("button", { name: "Back to app" }).click();
 
   await openAiTeammatesFromSettings(page);
+  await expect(page.getByLabel("Settings sections").getByRole("button", { name: "Teammate Management" })).toHaveClass(/active/);
   await expect(page.locator(".settings-tool-return-row")).toHaveCount(0);
   await expect(page.getByRole("heading", { name: "AI Teammates", level: 1 })).toHaveCount(0);
   await expect(page.locator(".teammate-management-grid")).toBeVisible();
@@ -162,7 +161,8 @@ test("AI teammates page creates a durable teammate and opens its private workspa
   await expect(page.locator(".teammate-command-strip")).toHaveCount(0);
   await expect(page.locator(".teammate-detail-panel")).toHaveCount(0);
   await expect(page.getByLabel("AI teammate context")).toHaveCount(0);
-  await expect(page.getByLabel("Teammate templates").getByRole("button", { name: "Add teammate" })).toBeVisible();
+  await expect(page.getByLabel("Workspace teammates").getByRole("button", { name: /New AI teammate/ })).toBeVisible();
+  await expect(page.getByLabel("Teammate templates").getByRole("button", { name: /New AI teammate/ })).toHaveCount(0);
   await page.getByLabel("Teammate templates").getByRole("button", { name: /Product Strategist/ }).click();
   const roleDetail = page.getByRole("dialog", { name: "Role detail" });
   await expect(roleDetail).toBeVisible();
@@ -175,7 +175,7 @@ test("AI teammates page creates a durable teammate and opens its private workspa
   await expect(page.getByLabel("Teammate preview")).toHaveCount(0);
   await page.getByRole("dialog", { name: "Create AI teammate" }).getByRole("button", { name: "Cancel" }).last().click();
   await expect(page.getByRole("dialog", { name: "Create AI teammate" })).toHaveCount(0);
-  await page.getByLabel("Teammate templates").getByRole("button", { name: "Add teammate" }).click();
+  await page.getByLabel("Workspace teammates").getByRole("button", { name: /New AI teammate/ }).click();
   const creator = page.getByRole("dialog", { name: "Create AI teammate" });
   await expect(creator).toBeVisible();
   await expect(page.getByLabel("Teammate setup steps")).toHaveCount(0);
@@ -187,7 +187,7 @@ test("AI teammates page creates a durable teammate and opens its private workspa
   await expect(creator.getByLabel("Base model")).toBeVisible();
   await creator.getByLabel("Base model").selectOption("provider_local");
   await creator.getByText("Advanced settings").click();
-  await expect(page.getByLabel("Channel choices").getByRole("button", { name: /Engineering/ })).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByLabel("Channel choices")).toHaveCount(0);
   await page.getByRole("button", { name: "Create teammate" }).click();
 
   await expect(page.getByRole("heading", { name: "Ling Engineer", level: 1 })).toBeVisible();
@@ -215,7 +215,7 @@ test("AI teammates page creates a durable teammate and opens its private workspa
   await expect(page.getByLabel("Workspace teammates")).toContainText("No workspace teammates");
 });
 
-test("sidebar quick create makes an Engineer teammate without channel side effects", async ({ page }) => {
+test("sidebar new teammate action opens a prefilled dialog before creating", async ({ page }) => {
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");
   });
@@ -230,11 +230,20 @@ test("sidebar quick create makes an Engineer teammate without channel side effec
   await page.goto("/");
 
   const navigation = page.getByLabel("Ling Stack navigation");
+  const initialTeammateCount = state.aiTeammates.length;
   await openSidebarSectionMenu(page, "Teammate actions");
-  await expect(navigation.getByRole("menuitem", { name: /Quick create default teammate/ })).toBeVisible();
-  await expect(navigation.getByRole("menuitem", { name: /Local Relay/ })).toBeVisible();
-  await navigation.getByRole("menuitem", { name: /Quick create default teammate/ }).click();
+  await expect(navigation.getByRole("menuitem", { name: /New AI teammate/ })).toBeVisible();
+  await expect(navigation.getByRole("menuitem", { name: /Quick create default teammate/ })).toHaveCount(0);
+  await navigation.getByRole("menuitem", { name: /New AI teammate/ }).click();
 
+  const creator = page.getByRole("dialog", { name: "Create AI teammate" });
+  await expect(creator).toBeVisible();
+  await expect(page.getByText("Recommended role and model are prefilled. Review them, then create.")).toBeVisible();
+  await expect(page.getByLabel("Teammate template chooser").getByRole("button", { name: /Engineer/ })).toHaveAttribute("aria-pressed", "true");
+  await expect(creator.getByLabel("Base model")).toHaveValue("provider_local");
+  await expect.poll(() => state.aiTeammates.length).toBe(initialTeammateCount);
+
+  await creator.getByRole("button", { name: "Create teammate" }).click();
   await expect(page.getByRole("heading", { name: "Engineer", level: 1 })).toBeVisible();
   await expect(page.getByLabel("Private chat", { exact: true })).toBeVisible();
   await expect.poll(() => state.aiTeammates.some((item) =>
@@ -243,9 +252,6 @@ test("sidebar quick create makes an Engineer teammate without channel side effec
     item.templateId === "engineer" &&
     item.providerPresetId === "provider_local",
   )).toBe(true);
-  await expect.poll(() => state.teammateChannelMemberships.some((item) =>
-    isRecord(item) && item.teammateId === "teammate_created_1",
-  )).toBe(false);
 });
 
 test("sidebar teammate create offers model workbench when no ready model exists", async ({ page }) => {
@@ -259,12 +265,14 @@ test("sidebar teammate create offers model workbench when no ready model exists"
 
   const navigation = page.getByLabel("Ling Stack navigation");
   await openSidebarSectionMenu(page, "Teammate actions");
-  await expect(navigation.getByRole("menuitem", { name: /Quick create default teammate/ })).toBeDisabled();
-  await expect(navigation.getByRole("menuitem", { name: /Open Model Workbench/ })).toBeVisible();
-  await navigation.getByRole("menuitem", { name: /Open Model Workbench/ }).click();
+  await expect(navigation.getByRole("menuitem", { name: /Quick create default teammate/ })).toHaveCount(0);
+  await expect(navigation.getByRole("menuitem", { name: /New AI teammate/ })).toHaveCount(0);
+  await expect(navigation.getByRole("menuitem", { name: /Configure model/ })).toBeVisible();
+  await navigation.getByRole("menuitem", { name: /Configure model/ }).click();
 
   await expect(page.getByLabel("Settings sections")).toBeVisible();
   await expect(page.getByLabel("Ling Stack navigation")).toHaveCount(0);
+  await expect(page.getByLabel("Settings sections").getByRole("button", { name: "Model Workbench" })).toHaveClass(/active/);
   await expect(page.locator(".settings-tool-return-row")).toHaveCount(0);
   await expect(page.getByRole("heading", { name: "Model Workbench", level: 1 })).toHaveCount(0);
   await expect.poll(() => state.aiTeammates.length).toBe(0);
@@ -314,6 +322,12 @@ test("Ling Agent private chat renders workspace governance digest without source
     localStorage.setItem("ling-stack.locale", "en-US");
   });
   const state = createBaseState({ approvalStatus: "expired" });
+  state.providers = [createChatProvider({
+    id: "provider_local",
+    displayName: "Local Relay",
+    model: "gpt-5.5",
+    lastCheck: { ok: true, message: "ok", checkedAt: "2026-05-22T00:00:00.000Z" },
+  })];
   state.aiTeammates = [
     createMockTeammate({
       id: "ling_agent",
@@ -366,6 +380,12 @@ test("AI teammates page links council management to Council Workspace", async ({
     localStorage.setItem("ling-stack.locale", "en-US");
   });
   const state = createBaseState({ approvalStatus: "expired" });
+  state.providers = [createChatProvider({
+    id: "provider_local",
+    displayName: "Local Relay",
+    model: "gpt-5.5",
+    lastCheck: { ok: true, message: "ok", checkedAt: "2026-05-22T00:00:00.000Z" },
+  })];
   state.aiTeammates = [
     createMockTeammate({ id: "teammate_builtin_engineer", displayName: "Ling Engineer", roleKey: "engineer" }),
     createMockTeammate({ id: "teammate_builtin_designer", displayName: "Ling Designer", roleKey: "designer" }),
@@ -400,14 +420,19 @@ test("AI teammates page links council management to Council Workspace", async ({
 
   const navigation = page.getByLabel("Ling Stack navigation");
   await openSidebarSectionMenu(page, "Teammate actions");
-  await navigation.getByRole("menuitem", { name: /More configuration/ }).click();
+  await navigation.getByRole("menuitem", { name: /New AI teammate/ }).click();
   await page.getByRole("dialog", { name: "Create AI teammate" }).getByRole("button", { name: "Cancel" }).last().click();
+  await expect(page.getByLabel("Ling Stack navigation")).toBeVisible();
+  await expect(page.getByLabel("Settings sections")).toHaveCount(0);
+
+  await openAiTeammatesFromSettings(page);
   await expect(page.getByLabel("Settings sections")).toBeVisible();
   await expect(page.getByLabel("Ling Stack navigation")).toHaveCount(0);
+  await expect(page.getByLabel("Settings sections").getByRole("button", { name: "Teammate Management" })).toHaveClass(/active/);
   await expect(page.locator(".settings-tool-return-row")).toHaveCount(0);
   await expect(page.getByRole("heading", { name: "AI Teammates", level: 1 })).toHaveCount(0);
   await expect(page.getByLabel("Workspace teammates")).toBeVisible();
-  await expect(page.getByRole("button", { name: "Add teammate" })).toHaveCount(1);
+  await expect(page.getByRole("button", { name: /New AI teammate/ })).toHaveCount(1);
   const teammateListSize = await page.getByLabel("Workspace teammates").locator(".teammate-draft-list").evaluate((element) => ({
     clientWidth: element.clientWidth,
     scrollWidth: element.scrollWidth,
@@ -428,10 +453,12 @@ test("AI teammates page links council management to Council Workspace", async ({
   await councilEntry.getByRole("button", { name: "Open Council Workspace" }).click();
   await expect(page.getByLabel("Settings sections")).toBeVisible();
   await expect(page.getByLabel("Ling Stack navigation")).toHaveCount(0);
-  await expect(page.getByRole("heading", { name: "Council Workspace", level: 2 })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Council Workspace", level: 1 })).toBeVisible();
+  await expect(page.getByLabel("Settings sections").getByRole("button", { name: "Council Workspace" })).toHaveClass(/active/);
   await expect(page.locator(".settings-tool-return-row")).toHaveCount(0);
   await expect(page.getByLabel("Council members")).toContainText("Ling Engineer");
-  await expect(page.getByLabel("Settings sections").getByRole("button", { name: "AI Teammates" })).toBeVisible();
+  await page.getByLabel("Settings sections").getByRole("button", { name: "Teammate Management" }).click();
+  await expect(page.getByLabel("Settings sections").getByRole("button", { name: "Teammate Management" })).toHaveClass(/active/);
   expect(state.aiCouncilMembers).toHaveLength(1);
   expect(state.teammateChannelMemberships).toHaveLength(originalChannelMembershipCount);
 });
@@ -441,6 +468,12 @@ test("AI teammate sidebar menu keeps create action without bulk archive", async 
     localStorage.setItem("ling-stack.locale", "en-US");
   });
   const state = createBaseState({ approvalStatus: "expired" });
+  state.providers = [createChatProvider({
+    id: "provider_local",
+    displayName: "Local Relay",
+    model: "gpt-5.5",
+    lastCheck: { ok: true, message: "ok", checkedAt: "2026-05-22T00:00:00.000Z" },
+  })];
   state.aiTeammates = [
     createMockTeammate({ id: "teammate_archive_engineer", displayName: "Ling Engineer" }),
     createMockTeammate({ id: "teammate_archive_designer", displayName: "Ling Designer", roleKey: "designer" }),
@@ -452,8 +485,9 @@ test("AI teammate sidebar menu keeps create action without bulk archive", async 
   await expect(navigation.getByRole("button", { name: "Ling Engineer" })).toBeVisible();
   await expect(navigation.getByRole("button", { name: "Ling Designer" })).toBeVisible();
   await openSidebarSectionMenu(page, "Teammate actions");
-  await expect(navigation.getByRole("menuitem", { name: /Quick create default teammate/ })).toBeVisible();
-  await expect(navigation.getByRole("menuitem", { name: /More configuration/ })).toBeVisible();
+  await expect(navigation.getByRole("menuitem", { name: /New AI teammate/ })).toBeVisible();
+  await expect(navigation.getByRole("menuitem", { name: /Quick create default teammate/ })).toHaveCount(0);
+  await expect(navigation.getByRole("menuitem", { name: /More configuration/ })).toHaveCount(0);
   await expect(navigation.getByRole("menuitem", { name: "Archive all chats" })).toHaveCount(0);
   await expect(navigation.getByRole("button", { name: "Ling Engineer" })).toBeVisible();
   await expect(navigation.getByRole("button", { name: "Ling Designer" })).toBeVisible();
@@ -954,6 +988,7 @@ test("AI teammate private workspace sends blocked chat replies and persists sett
     return isRecord(teammate) ? teammate.avatarImageAttachmentId : undefined;
   }).toBe("tpatt_2");
   await expect(page.getByLabel("Avatar").locator(".teammate-avatar-image")).toBeVisible();
+  await expect(page.getByLabel("Avatar").locator(".teammate-avatar-image-default")).toHaveCount(0);
   await expect(page.getByLabel("Ling Stack navigation").locator(".sidebar-row-shell.selected .teammate-avatar-image")).toBeVisible();
 
   await openAiTeammatesFromSettings(page);
@@ -976,8 +1011,8 @@ test("AI teammate private workspace sends blocked chat replies and persists sett
     const teammate = state.aiTeammates.find((item) => isRecord(item) && item.id === teammateId);
     return isRecord(teammate) ? teammate.avatarImageAttachmentId : "missing";
   }).toBeUndefined();
-  await expect(page.getByLabel("Avatar").locator(".teammate-avatar-image")).toHaveCount(0);
-  await expect(page.getByLabel("Ling Stack navigation").locator(".sidebar-row-shell.selected .teammate-avatar-image")).toHaveCount(0);
+  await expect(page.getByLabel("Avatar").locator(".teammate-avatar-image-default")).toBeVisible();
+  await expect(page.getByLabel("Ling Stack navigation").locator(".sidebar-row-shell.selected .teammate-avatar-image-default")).toBeVisible();
 
   await page.getByLabel("Settings sections").getByRole("button", { name: "Danger zone" }).click();
   await page.getByPlaceholder("Reason").fill("owner request");

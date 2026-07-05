@@ -187,6 +187,31 @@
   box-shadow: inset 3px 0 0 #111111;
 }
 
+.media-job-row .status-action-row {
+  min-height: 0;
+  padding: 0;
+  border-bottom: 0;
+  background: transparent;
+}
+
+.media-job-row .status-action-row.selected {
+  box-shadow: none;
+}
+
+.media-job-row .status-action-row-leading {
+  width: 48px;
+  height: 48px;
+}
+
+.media-job-row .status-action-row-description,
+.media-job-row .status-action-row-meta {
+  color: #707070;
+}
+
+.media-job-row .status-action-row-actions .compact-button {
+  min-height: 32px;
+}
+
 .media-job-row.needs-recovery,
 .media-job-row.succeeded.needs-recovery {
   background: #ffffff;
@@ -542,6 +567,17 @@
   border-radius: 7px;
 }
 
+.media-job-detail-control-row {
+  border: 1px solid #e5e5e5;
+  border-radius: 7px;
+}
+
+.media-job-detail-control-row .status-action-row-actions .primary-button,
+.media-job-detail-control-row .status-action-row-actions .secondary-button {
+  min-height: 40px;
+  border-radius: 7px;
+}
+
 .media-job-detail-disclosure {
   overflow: hidden;
   border: 1px solid #e5e5e5;
@@ -741,7 +777,8 @@
   border-bottom: 0;
 }
 
-.media-create-footer > span {
+.media-create-footer > span,
+.media-create-footer-note {
   display: inline-flex;
   align-items: center;
   gap: 8px;

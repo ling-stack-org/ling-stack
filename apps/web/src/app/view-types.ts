@@ -97,7 +97,7 @@ export function viewDescription(view: ViewId): string {
     return "全局工作状态台账：按频道、来源、负责人、等待原因和阻塞状态查看所有工作。";
   }
   if (view === "media") {
-    return "创建和查看媒体 job 元数据；当前切片只验证模型与适配器边界，不调用真实媒体生成 API。";
+    return "Create and run image and video generation tasks. Configure a generation-capable model in Model Workbench first.";
   }
   if (view === "profile") {
     return "查看个人资料、Token 活动、连续使用天数和技能调用统计。";

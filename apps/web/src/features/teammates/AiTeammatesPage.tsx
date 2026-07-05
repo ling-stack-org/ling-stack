@@ -52,8 +52,6 @@ export function AiTeammatesPage({
   providers,
   channels,
   localTeammates,
-  createRequestId = 0,
-  onCreateRequestHandled,
   onCreateTeammate,
   onRemoveTeammate,
   onToggleTeammatePinned,
@@ -61,7 +59,7 @@ export function AiTeammatesPage({
   onOpenTeammate,
   onOpenCouncils,
   onOpenProviders,
-  onBackToWorkspaceTools,
+  settingsToolMode = false,
   defaultProviderId = "",
 }: {
   readonly cwd: string;
@@ -69,8 +67,6 @@ export function AiTeammatesPage({
   readonly providers: readonly ProviderPreset[];
   readonly channels: readonly Channel[];
   readonly localTeammates: readonly LocalTeammateDraft[];
-  readonly createRequestId?: number;
-  readonly onCreateRequestHandled?: () => void;
   readonly onCreateTeammate: (teammate: LocalTeammateCreateInput) => void;
   readonly onRemoveTeammate: (teammateId: string) => void;
   readonly onToggleTeammatePinned: (teammateId: string) => void;
@@ -78,7 +74,7 @@ export function AiTeammatesPage({
   readonly onOpenTeammate?: (teammateId: string) => void;
   readonly onOpenCouncils?: () => void;
   readonly onOpenProviders: () => void;
-  readonly onBackToWorkspaceTools?: () => void;
+  readonly settingsToolMode?: boolean;
   readonly defaultProviderId?: string;
 }): JSX.Element {
   const { t } = useI18n();
@@ -106,14 +102,6 @@ export function AiTeammatesPage({
   const [openTeammateMenuId, setOpenTeammateMenuId] = useState("");
   const detailTemplate = templates.find((template) => template.id === detailTemplateId);
   const connectedChannelCount = new Set(activeLocalTeammates.flatMap((teammate) => teammate.channelIds)).size;
-
-  useEffect(() => {
-    if (createRequestId > 0) {
-      setCreateTemplateId("");
-      setCreateOpen(true);
-      onCreateRequestHandled?.();
-    }
-  }, [createRequestId, onCreateRequestHandled]);
 
   useEffect(() => {
     if (!openTeammateMenuId || typeof document === "undefined") {
@@ -164,8 +152,8 @@ export function AiTeammatesPage({
   }
 
   return (
-    <div className={onBackToWorkspaceTools ? "teammates-page settings-return-mode" : "teammates-page"}>
-      {!onBackToWorkspaceTools ? (
+    <div className={settingsToolMode ? "teammates-page settings-return-mode" : "teammates-page"}>
+      {!settingsToolMode ? (
         <header className="teammates-page-header">
           <div>
             <h1>{t("AI Teammates")}</h1>
@@ -221,6 +209,10 @@ export function AiTeammatesPage({
             <div className="client-empty-state teammate-empty">
               <Bot size={18} />
               <span>{t("No workspace teammates")}</span>
+              <button className="primary-button compact-button" type="button" onClick={focusCreateFlow}>
+                <UserPlus size={14} />
+                {t("New AI teammate")}
+              </button>
             </div>
           ) : (
             <div className="teammate-draft-list">
@@ -309,10 +301,12 @@ export function AiTeammatesPage({
               <Brain size={16} />
               <h2>{t("Default roles")}</h2>
             </span>
-            <button className="primary-button compact-button" type="button" onClick={focusCreateFlow}>
-              <UserPlus size={14} />
-              {t("Add teammate")}
-            </button>
+            {activeLocalTeammates.length > 0 ? (
+              <button className="primary-button compact-button" type="button" onClick={focusCreateFlow}>
+                <UserPlus size={14} />
+                {t("New AI teammate")}
+              </button>
+            ) : null}
           </div>
           <div className="teammate-template-list">
             {templates.map((template) => (

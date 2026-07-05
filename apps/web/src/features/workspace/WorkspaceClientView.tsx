@@ -3,7 +3,6 @@ import {
   ArrowDown,
   ArrowLeft,
   ChevronUp,
-  Check,
   CircleAlert,
   Clock3,
   Command,
@@ -37,7 +36,6 @@ import {
   ThumbsUp,
   UserPlus,
   Workflow,
-  X,
 } from "lucide-react";
 import type { ComposerSlashCommandOption } from "@ling-stack/core/composer-slash-intents";
 import type { AiTeammateTemplate } from "@ling-stack/core";
@@ -175,7 +173,6 @@ import type {
   ChannelCollaborationProtocolResponse,
   ChannelContextSummary,
   ChannelCouncilPolicy,
-  ChannelCreateFormState,
   ChannelDecision,
   ChannelFormState,
   ChannelHandoff,
@@ -233,7 +230,6 @@ import { InlineApprovalStrip } from "../approvals/InlineApprovalStrip.js";
 import type { ApprovalResolution } from "../approvals/types.js";
 import type { LocalTeammateDraft } from "../teammates/index.js";
 import { ChannelTeamMetricsPanel } from "./ChannelTeamMetricsPanel.js";
-import { ChannelRuntimePolicyFields, ProviderPresetOptions } from "./WorkspaceControls.js";
 import {
   ChannelTeammateManagerPanel,
   ChannelSettingsPanels,
@@ -381,7 +377,6 @@ export function WorkspaceClientView({
   channels,
   selectedChannelId,
   selectedChannelBranchRootThreadId,
-  channelForm,
   channelCreateOpen,
   channelEditForm,
   tasks,
@@ -463,7 +458,6 @@ export function WorkspaceClientView({
   runningWorkflowStepId,
   orchestratingWorkflowId,
   errorMessage,
-  onChannelFormChange,
   onChannelCreateOpenChange,
   onChannelEditFormChange,
   onTaskFormChange,
@@ -473,7 +467,6 @@ export function WorkspaceClientView({
   onSetDefaultChannelTeammate,
   onOpenTeammates,
   onRefreshChannels,
-  onCreateChannel,
   onSaveChannel,
   onCreateTask,
   onCreateTaskFromSlashCommand,
@@ -546,7 +539,6 @@ export function WorkspaceClientView({
   readonly channels: readonly Channel[];
   readonly selectedChannelId: string;
   readonly selectedChannelBranchRootThreadId?: string;
-  readonly channelForm: ChannelCreateFormState;
   readonly channelCreateOpen: boolean;
   readonly channelEditForm: ChannelFormState;
   readonly tasks: readonly Task[];
@@ -628,7 +620,6 @@ export function WorkspaceClientView({
   readonly runningWorkflowStepId: string;
   readonly orchestratingWorkflowId: string;
   readonly errorMessage: string;
-  readonly onChannelFormChange: (form: ChannelCreateFormState) => void;
   readonly onChannelCreateOpenChange: (open: boolean) => void;
   readonly onChannelEditFormChange: (form: ChannelFormState) => void;
   readonly onTaskFormChange: (form: TaskFormState) => void;
@@ -638,7 +629,6 @@ export function WorkspaceClientView({
   readonly onSetDefaultChannelTeammate: (teammateId: string) => Promise<void>;
   readonly onOpenTeammates: () => void;
   readonly onRefreshChannels: () => void;
-  readonly onCreateChannel: () => void;
   readonly onSaveChannel: (formOverride?: ChannelFormState) => void | Promise<void>;
   readonly onCreateTask: () => void;
   readonly onCreateTaskFromSlashCommand: (input: {
@@ -2362,30 +2352,6 @@ export function WorkspaceClientView({
     });
   }
 
-  function toggleCreateChannelTeammate(teammateId: string): void {
-    const selected = new Set(channelForm.selectedTeammateIds);
-    if (selected.has(teammateId)) {
-      selected.delete(teammateId);
-    } else {
-      selected.add(teammateId);
-    }
-    onChannelFormChange({
-      ...channelForm,
-      selectedTeammateIds: [...selected],
-      defaultResponderTeammateId: "",
-      defaultTeammateId: "",
-    });
-  }
-
-  function updateCreateChannelRuntimeForm(nextForm: ChannelFormState): void {
-    onChannelFormChange({
-      ...nextForm,
-      selectedTeammateIds: channelForm.selectedTeammateIds,
-      defaultResponderTeammateId: "",
-      defaultTeammateId: "",
-    });
-  }
-
   function createTask(): void {
     onCreateTask();
     setCreateTaskOpen(false);
@@ -2666,10 +2632,6 @@ export function WorkspaceClientView({
   const availableChannelTeammates = useMemo(
     () => activeLocalTeammates.filter((teammate) => teammate.id !== LING_AGENT_AUTHOR_ID && !teammate.hidden && !channelTeammateIds.has(teammate.id)),
     [activeLocalTeammates, channelTeammateIds],
-  );
-  const createChannelTeammateOptions = useMemo(
-    () => activeLocalTeammates.filter((teammate) => teammate.id !== LING_AGENT_AUTHOR_ID && !teammate.hidden),
-    [activeLocalTeammates],
   );
   const activeAiCouncils = useMemo(
     () => aiCouncils.filter((council) => council.status === "active"),
@@ -4190,92 +4152,6 @@ export function WorkspaceClientView({
           onSubmit={(event) => void submitChannelRename(event)}
           onClose={closeChannelRenameDialog}
         />
-      ) : null}
-
-      {channelCreateOpen ? (
-        <div className="channel-create-overlay" role="presentation" onMouseDown={(event) => {
-          if (event.target === event.currentTarget) {
-            onChannelCreateOpenChange(false);
-          }
-        }}>
-          <section className="channel-create-dialog" role="dialog" aria-modal="true" aria-label={t("New channel")}>
-            <div className="channel-create-head">
-              <span>
-                <Plus size={16} />
-                <strong>{t("New channel")}</strong>
-              </span>
-              <button className="icon-button" type="button" onClick={() => onChannelCreateOpenChange(false)} aria-label={t("Cancel")} title={t("Cancel")}>
-                <X size={14} />
-              </button>
-            </div>
-            <div className="channel-options-grid channel-create-grid">
-              <label className="field wide">
-                <span>{t("Run provider")}</span>
-                <select value={channelForm.defaultProviderPresetId} onChange={(event) => onChannelFormChange({ ...channelForm, defaultProviderPresetId: event.target.value })} disabled={providersLoading || providers.length === 0}>
-                  <option value="">{t("Select provider preset")}</option>
-                  <ProviderPresetOptions runnableProviders={taskReadyProviders} blockedProviders={setupChatProviders} />
-                </select>
-              </label>
-              <label className="field wide">
-                <span>{t("Name")}</span>
-                <input value={channelForm.name} onChange={(event) => onChannelFormChange({ ...channelForm, name: event.target.value })} autoFocus />
-              </label>
-              <section className="channel-create-teammates field wide" aria-label={t("AI teammates")}>
-                <span>{t("AI teammates")}</span>
-                {createChannelTeammateOptions.length === 0 ? (
-                  <div className="client-empty-state compact-empty">
-                    <UserPlus size={16} />
-                    <span>{t("Create a workspace teammate before assigning channel members.")}</span>
-                  </div>
-                ) : (
-                  <div className="channel-create-teammate-grid">
-                    {createChannelTeammateOptions.map((teammate) => {
-                      const selected = channelForm.selectedTeammateIds.includes(teammate.id);
-                      return (
-                        <button
-                          key={teammate.id}
-                          className={selected ? "channel-create-teammate selected" : "channel-create-teammate"}
-                          type="button"
-                          aria-pressed={selected}
-                          onClick={() => toggleCreateChannelTeammate(teammate.id)}
-                        >
-                          <TeammateAvatarView teammate={teammate} cwd={cwd} compact />
-                          <span>
-                            <strong>{teammate.displayName}</strong>
-                            <small>{selected ? t("Joined channel") : t("Not joined")}</small>
-                          </span>
-                          {selected ? <Check size={14} /> : <Plus size={14} />}
-                        </button>
-                      );
-                    })}
-                  </div>
-                )}
-              </section>
-              <label className="field wide">
-                <span>{t("AI response language")}</span>
-                <select
-                  value={channelForm.responseLanguage}
-                  onChange={(event) => onChannelFormChange({ ...channelForm, responseLanguage: event.target.value as ChannelFormState["responseLanguage"] })}
-                >
-                  <option value="workspace">{t("Workspace default")}</option>
-                  <option value="follow_user">{t("Follow user message")}</option>
-                  <option value="zh-CN">{t("Chinese")}</option>
-                  <option value="en-US">{t("English")}</option>
-                </select>
-              </label>
-              <ChannelRuntimePolicyFields form={channelForm} onChange={updateCreateChannelRuntimeForm} />
-              <div className="channel-option-actions">
-                <button className="primary-button compact-button" type="button" onClick={onCreateChannel} disabled={channelsLoading}>
-                  {channelsLoading ? <Loader2 className="spin" size={14} /> : <Plus size={14} />}
-                  {channelsLoading ? t("Creating isolated workspace...") : t("Create channel")}
-                </button>
-                <button className="secondary-button compact-button" type="button" onClick={() => onChannelCreateOpenChange(false)}>
-                  {t("Cancel")}
-                </button>
-              </div>
-            </div>
-          </section>
-        </div>
       ) : null}
 
       {environmentCommitDialogOpen ? (

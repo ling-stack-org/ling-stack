@@ -119,7 +119,7 @@ test("generation tasks page lists, runs, and creates generation tasks", async ({
   await expect(jobRows).toHaveCount(3);
 
   const failedJob = jobRows.nth(0);
-  await expect(failedJob).toContainText("failed");
+  await expect(failedJob).toContainText("Failed");
   await expect(failedJob).not.toContainText("Live product mockup.");
   await expect(detailPanel).toContainText("Live product mockup.");
   await expect(detailPanel).toContainText("Seedream image generation failed with HTTP 429");
@@ -140,7 +140,7 @@ test("generation tasks page lists, runs, and creates generation tasks", async ({
   await expect(existingJob).not.toContainText("Existing product mockup.");
   await expect(detailPanel).toContainText("Existing product mockup.");
   await existingJob.getByRole("button", { name: "Run" }).click();
-  await expect(existingJob).toContainText("succeeded");
+  await expect(existingJob).toContainText("Succeeded");
   await expect(detailPanel.locator(".artifact-row")).toContainText("Seedream image result");
   await expect(detailPanel.locator(".artifact-main-link")).toHaveAttribute("href", /\/artifacts\/artifact_media_job_existing\/content/);
   expect(state.approvals.some((approval) => approval.mediaJobId === "media_job_existing" && approval.actionType === "media_cost")).toBe(false);
@@ -157,7 +157,7 @@ test("generation tasks page lists, runs, and creates generation tasks", async ({
   await createDialog.getByRole("textbox", { name: "Prompt" }).fill("New campaign image.");
   await createDialog.getByRole("button", { name: "Create generation task" }).click();
 
-  await expect(page.locator(".media-job-row").first()).toContainText("queued");
+  await expect(page.locator(".media-job-row").first()).toContainText("Ready");
   await expect(detailPanel).toContainText("New campaign image.");
   await expect.poll(() => state.mediaJobs.length).toBe(4);
   expect(state.mediaJobs[0]?.input).toEqual({
@@ -262,7 +262,7 @@ test("generation tasks page runs live generation without media cost approval", a
   const jobRow = page.locator(".media-job-row").first();
   await expect(detailPanel).toContainText("Live product mockup.");
   await jobRow.getByRole("button", { name: "Run" }).click();
-  await expect(jobRow).toContainText("succeeded");
+  await expect(jobRow).toContainText("Succeeded");
   await expect(page.locator(".media-job-detail-panel .artifact-row")).toContainText("Seedream image result");
   expect(state.approvals.some((approval) => approval.mediaJobId === "media_job_live_pending" && approval.actionType === "media_cost")).toBe(false);
 });
@@ -313,6 +313,6 @@ test("generation tasks page lets legacy waiting media jobs run directly", async 
   await expect(detailPanel).toContainText("Ready to run");
   await expect(jobRow.getByRole("button", { name: "Handle approval" })).toHaveCount(0);
   await jobRow.getByRole("button", { name: "Run" }).click();
-  await expect(jobRow).toContainText("succeeded");
+  await expect(jobRow).toContainText("Succeeded");
   expect(state.approvals.some((approval) => approval.mediaJobId === "media_job_legacy_waiting" && approval.actionType === "media_cost")).toBe(false);
 });

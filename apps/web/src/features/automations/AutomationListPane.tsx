@@ -1,6 +1,6 @@
 import { Check, Loader2, MessageCircle, Pause, Play, Timer, Trash2 } from "lucide-react";
 import { formatDateTime } from "../../lib/formatting.js";
-import { StatusBadge } from "../../shared/components/index.js";
+import { OperationEmptyState, StatusActionRow, StatusBadge } from "../../shared/components/index.js";
 import type { AutomationDefinition, AutomationDraft, AutomationRun } from "../../types.js";
 import type { AutomationTab, AutomationTabItem } from "./automation-view-models.js";
 
@@ -136,13 +136,12 @@ function AutomationDefinitionList({
 }): JSX.Element {
   if (automations.length === 0) {
     return (
-      <div className="automation-inbox-empty">
-        <Timer size={18} />
-        <span className="automation-empty-copy">
-          <strong>{emptyLabel}</strong>
-          <small>{t("Start by choosing a template or creating one manually.")}</small>
-        </span>
-      </div>
+      <OperationEmptyState
+        className="automation-inbox-empty"
+        icon={<Timer size={18} />}
+        title={emptyLabel}
+        description={t("Start by choosing a template or creating one manually.")}
+      />
     );
   }
   return (
@@ -155,7 +154,7 @@ function AutomationDefinitionList({
         return (
           <div
             key={automation.id}
-            className={automation.id === selectedAutomationId ? "automation-inbox-row selected" : "automation-inbox-row"}
+            className={automation.id === selectedAutomationId ? "automation-inbox-row automation-status-row-shell selected" : "automation-inbox-row automation-status-row-shell"}
             role="button"
             tabIndex={0}
             onClick={() => onSelect(automation.id)}
@@ -166,72 +165,75 @@ function AutomationDefinitionList({
               }
             }}
           >
-            <span className="automation-row-dot" />
-            <span className="automation-inbox-row-main">
-              <strong>{automation.title}</strong>
-              <small>{automationModeLabel(automation, t)} · {automationTargetSummary(automation, threadTitleById, t)} · {automationScheduleLabel(automation, t)}</small>
-            </span>
-            <span className="automation-row-actions">
-              {latestRun ? <StatusBadge status={latestRun.status} /> : <StatusBadge status={automation.status} />}
-              <button
-                className="automation-row-primary-action"
-                type="button"
-                onClick={(event) => {
-                  event.stopPropagation();
-                  if (automation.status === "paused") {
-                    onToggle(automation);
-                    return;
-                  }
-                  onRun(automation.id);
-                }}
-                disabled={primaryActionDisabled}
-                aria-label={primaryActionLabel}
-                title={primaryActionLabel}
-              >
-                {busy ? <Loader2 className="spin" size={14} /> : <Play size={14} />}
-                {primaryActionLabel}
-              </button>
-              {automation.status === "enabled" ? (
-                <button
-                  className="ghost-icon-button"
-                  type="button"
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    onToggle(automation);
-                  }}
-                  disabled={busy}
-                  aria-label={t("Pause")}
-                  title={t("Pause")}
-                >
-                  <Pause size={14} />
-                </button>
-              ) : null}
-              <button
-                className="ghost-icon-button"
-                type="button"
-                onClick={(event) => {
-                  event.stopPropagation();
-                  onOpenThread(automation.threadId);
-                }}
-                aria-label={t("Thread")}
-                title={t("Thread")}
-              >
-                <MessageCircle size={14} />
-              </button>
-              <button
-                className="ghost-icon-button danger"
-                type="button"
-                onClick={(event) => {
-                  event.stopPropagation();
-                  onArchive(automation.id);
-                }}
-                disabled={busy}
-                aria-label={t("Delete")}
-                title={t("Delete")}
-              >
-                <Trash2 size={14} />
-              </button>
-            </span>
+            <StatusActionRow
+              className="automation-inbox-row-content"
+              leading={<span className="automation-row-dot" />}
+              title={<strong>{automation.title}</strong>}
+              description={`${automationModeLabel(automation, t)} · ${automationTargetSummary(automation, threadTitleById, t)} · ${automationScheduleLabel(automation, t)}`}
+              status={latestRun ? <StatusBadge status={latestRun.status} /> : <StatusBadge status={automation.status} />}
+              actions={(
+                <>
+                  <button
+                    className="automation-row-primary-action"
+                    type="button"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      if (automation.status === "paused") {
+                        onToggle(automation);
+                        return;
+                      }
+                      onRun(automation.id);
+                    }}
+                    disabled={primaryActionDisabled}
+                    aria-label={primaryActionLabel}
+                    title={primaryActionLabel}
+                  >
+                    {busy ? <Loader2 className="spin" size={14} /> : <Play size={14} />}
+                    {primaryActionLabel}
+                  </button>
+                  {automation.status === "enabled" ? (
+                    <button
+                      className="ghost-icon-button"
+                      type="button"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        onToggle(automation);
+                      }}
+                      disabled={busy}
+                      aria-label={t("Pause")}
+                      title={t("Pause")}
+                    >
+                      <Pause size={14} />
+                    </button>
+                  ) : null}
+                  <button
+                    className="ghost-icon-button"
+                    type="button"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      onOpenThread(automation.threadId);
+                    }}
+                    aria-label={t("Thread")}
+                    title={t("Thread")}
+                  >
+                    <MessageCircle size={14} />
+                  </button>
+                  <button
+                    className="ghost-icon-button danger"
+                    type="button"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      onArchive(automation.id);
+                    }}
+                    disabled={busy}
+                    aria-label={t("Archive")}
+                    title={t("Archive")}
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                </>
+              )}
+            />
           </div>
         );
       })}
@@ -252,10 +254,12 @@ function AutomationRunList({
 }): JSX.Element {
   if (runs.length === 0) {
     return (
-      <div className="automation-inbox-empty compact">
-        <Play size={16} />
-        <span>{t("No runs yet")}</span>
-      </div>
+      <OperationEmptyState
+        className="automation-inbox-empty compact"
+        compact
+        icon={<Play size={16} />}
+        title={t("No runs yet")}
+      />
     );
   }
   return (
@@ -298,14 +302,14 @@ function AutomationDraftList({
 }): JSX.Element {
   return (
     <section className="automation-draft-lite-list automation-secondary-section" aria-label={t("Draft review")}>
-      <h2>{t("Draft review")}</h2>
+      <h2>{t("Drafts waiting for confirmation")}</h2>
       {drafts.map((draft) => {
         const busy = mutatingDraftId === draft.id;
         const ready = draft.status === "ready_for_confirmation";
         return (
           <div
             key={draft.id}
-            className={draft.id === selectedDraftId ? "automation-inbox-row selected draft" : "automation-inbox-row draft"}
+            className={draft.id === selectedDraftId ? "automation-inbox-row draft selected" : "automation-inbox-row draft"}
             role="button"
             tabIndex={0}
             onClick={() => onSelectDraft(draft.id)}
@@ -326,7 +330,7 @@ function AutomationDraftList({
             <span className="automation-row-actions">
               <StatusBadge status={draft.status} />
               <button
-                className="ghost-icon-button"
+                className="automation-row-primary-action"
                 type="button"
                 onClick={(event) => {
                   event.stopPropagation();
@@ -337,6 +341,7 @@ function AutomationDraftList({
                 title={t("Confirm automation")}
               >
                 {busy ? <Loader2 className="spin" size={14} /> : <Check size={14} />}
+                {t("Confirm")}
               </button>
               <button
                 className="ghost-icon-button danger"
@@ -346,8 +351,8 @@ function AutomationDraftList({
                   onDiscardDraft(draft.id);
                 }}
                 disabled={busy}
-                aria-label={t("Discard draft")}
-                title={t("Discard draft")}
+                aria-label={t("Discard")}
+                title={t("Discard")}
               >
                 <Trash2 size={14} />
               </button>
@@ -358,7 +363,6 @@ function AutomationDraftList({
     </section>
   );
 }
-
 function automationModeLabel(automation: AutomationDefinition, t: (value: string) => string): string {
   if (automation.automationMode === "heartbeat") {
     return t("Automation heartbeat");

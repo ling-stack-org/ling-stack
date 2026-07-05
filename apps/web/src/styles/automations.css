@@ -17,7 +17,7 @@
   height: 100%;
   min-height: 0;
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-rows: auto auto minmax(0, 1fr);
   align-content: stretch;
   gap: 0;
   overflow: hidden;
@@ -365,6 +365,57 @@
   cursor: pointer;
 }
 
+.automation-inbox-row.automation-status-row-shell {
+  display: block;
+  min-height: 74px;
+  padding: 0;
+}
+
+.automation-inbox-row.automation-status-row-shell .automation-inbox-row-content {
+  min-height: 74px;
+  border-bottom: 0;
+  background: transparent;
+}
+
+.automation-inbox-row.automation-status-row-shell .status-action-row-leading {
+  width: 14px;
+  min-width: 14px;
+  height: 14px;
+}
+
+.automation-inbox-row.automation-status-row-shell .status-action-row-title strong {
+  overflow: hidden;
+  color: var(--text-strong);
+  font-size: 15px;
+  font-weight: 650;
+  line-height: 21px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.automation-inbox-row.automation-status-row-shell .status-action-row-description {
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 19px;
+}
+
+.automation-inbox-row.automation-status-row-shell.selected .automation-inbox-row-content {
+  background: var(--surface-selected);
+}
+
+.automation-inbox-empty.operation-empty-state {
+  margin: 0;
+  border-top: 1px solid var(--border-subtle);
+  border-right: 0;
+  border-left: 0;
+  border-radius: 0;
+}
+
+.automation-inbox-empty.operation-empty-state.compact {
+  border-top: 0;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
 .automation-inbox-row.selected {
   background: var(--surface-selected);
   box-shadow: inset 3px 0 0 var(--accent);
@@ -650,6 +701,12 @@
   line-height: 18px;
 }
 
+.automation-trigger-note {
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 16px;
+}
+
 .automation-composer-title,
 .automation-composer-prompt {
   width: 100%;
@@ -700,7 +757,7 @@
 
 .automation-trigger-segmented button {
   min-height: 42px;
-  min-width: 86px;
+  min-width: 112px;
   border: 0;
   border-right: 1px solid var(--border);
   background: var(--surface-panel);
@@ -812,6 +869,22 @@
   color: var(--text-primary);
   font: inherit;
   padding: 7px 8px;
+}
+
+.automation-advanced-schedule {
+  display: grid;
+  gap: 8px;
+  padding: 8px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  background: var(--surface-subtle);
+}
+
+.automation-advanced-schedule summary {
+  cursor: pointer;
+  color: var(--text-primary);
+  font-size: 12px;
+  font-weight: 650;
 }
 
 .automation-risk-tooltip {
@@ -967,17 +1040,28 @@
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  margin-top: 12px;
-  padding: 10px 12px;
-  border: 1px solid var(--border-subtle);
-  border-radius: 8px;
-  background: var(--surface-subtle);
+  min-height: 42px;
+  margin-top: 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 0;
+  background: var(--surface-panel);
+}
+
+.automations-inbox-page > .automation-scheduler-strip {
+  margin: 12px 32px 0;
 }
 
 .automation-scheduler-summary {
   min-width: 0;
   display: grid;
   gap: 3px;
+}
+
+.automation-scheduler-summary strong {
+  color: var(--text-primary);
+  font-size: 13px;
+  line-height: 18px;
 }
 
 .automation-scheduler-summary span {

@@ -79,36 +79,36 @@ const settingsSectionGroups: readonly {
   readonly items: readonly SettingsSectionItem[];
 }[] = [
   {
-    heading: "Configuration",
+    heading: "Workspace tools",
     items: [
       {
         id: "model-workbench",
         label: "Model Workbench",
-        description: "Configure providers, models, and checks.",
+        description: "Configure model routes, API keys, and readiness checks.",
         icon: Box,
       },
       {
         id: "ai-teammates",
-        label: "AI Teammates",
-        description: "Manage teammate roster, models, and private chats.",
+        label: "Teammate Management",
+        description: "Manage individual AI teammates, models, and private chat settings.",
         icon: Bot,
       },
       {
         id: "ai-councils",
-        label: "AI Councils",
         pageTitle: "Council Workspace",
-        description: "Manage council workspaces",
+        label: "Council Workspace",
+        description: "Manage multiple councils, members, and channel connections.",
         icon: Brain,
       },
       {
         id: "work-board",
         label: "Work Board",
-        description: "Review actionable work across channels and runs.",
+        description: "Review cross-channel work status as a workspace tool.",
         icon: Kanban,
       },
       {
         id: "approval-strategy",
-        label: "Approval strategy",
+        label: "Default authorization",
         description: "Set the default authorization for new conversations.",
         icon: Shield,
       },
@@ -119,8 +119,8 @@ const settingsSectionGroups: readonly {
     items: [
       {
         id: "personal-profile",
-        label: "Account and profile",
-        description: "Profile, preferences, and identity",
+        label: "Profile",
+        description: "Manage local identity and profile details.",
         icon: UserCircle,
       },
       {

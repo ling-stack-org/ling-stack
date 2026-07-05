@@ -1,4 +1,4 @@
-import { Bot, Languages, Palette } from "lucide-react";
+import { Bot, Languages, Palette, UserRound } from "lucide-react";
 import { LanguageSwitcher, useI18n, type Translate } from "../../i18n.js";
 import { ThemeSwitcher } from "../../theme.js";
 import type { EffectiveConfigResponse, ResponseLanguagePreference, UserProfile } from "../../types.js";
@@ -15,7 +15,11 @@ export function PersonalSettingsPanel({
 
   return (
     <div className="settings-section-stack">
-      <section className="panel settings-panel account-profile-settings-panel" aria-label={t("Account and profile")}>
+      <section className="panel settings-panel account-profile-settings-panel" aria-labelledby="account-profile-settings-title">
+        <div className="panel-title">
+          <UserRound size={18} />
+          <h2 id="account-profile-settings-title">{t("Profile identity")}</h2>
+        </div>
         <ProfilePage cwd={cwd} onProfileChange={onProfileChange} />
       </section>
     </div>
@@ -35,7 +39,11 @@ export function InterfacePreferencesSettingsPanel({
 
   return (
     <div className="settings-section-stack">
-      <section className="panel settings-panel interface-settings-panel" aria-label={t("Interface preferences")}>
+      <section className="panel settings-panel interface-settings-panel" aria-labelledby="interface-settings-title">
+        <div className="panel-title">
+          <Palette size={18} />
+          <h2 id="interface-settings-title">{t("Interface preferences")}</h2>
+        </div>
         <div className="interface-preference-grid">
           <div className="interface-preference-row">
             <span>

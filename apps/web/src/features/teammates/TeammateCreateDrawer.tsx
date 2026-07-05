@@ -4,7 +4,6 @@ import {
   CheckCircle2,
   Code2,
   FileText,
-  Hash,
   Palette,
   PlugZap,
   Plus,
@@ -12,14 +11,14 @@ import {
   ShieldCheck,
   Sparkles,
   Workflow,
-  X,
 } from "lucide-react";
 import type { AiTeammateTemplate } from "@ling-stack/core/skill-types";
 import { useI18n } from "../../i18n.js";
-import { isMediaProvider, providerModelRouteLabel, providerPreflightReady } from "../../lib/providers.js";
+import { canUseConversationProvider, providerModelRouteLabel, providerPreflightReady } from "../../lib/providers.js";
+import { CreateDialogShell, DialogSection } from "../../shared/components/index.js";
 import type { Channel, ProviderPreset } from "../../types.js";
 import { roleLabel } from "./helpers.js";
-import { selectDefaultTeammateProvider } from "./teammate-create-defaults.js";
+import { selectDefaultTeammateProvider, selectDefaultTeammateTemplate } from "./teammate-create-defaults.js";
 import type { LocalTeammateCreateInput } from "./types.js";
 
 const defaultMemoryScopeLabels: readonly string[] = [
@@ -51,16 +50,19 @@ export function TeammateCreateDrawer({
   readonly onOpenProviders: () => void;
 }): JSX.Element | null {
   const { t } = useI18n();
-  const providerOptions = useMemo(() => providers.filter((provider) => !isMediaProvider(provider)), [providers]);
+  const providerOptions = useMemo(
+    () => providers.filter((provider) => canUseConversationProvider(provider) && providerPreflightReady(provider)),
+    [providers],
+  );
   const [selectedTemplateId, setSelectedTemplateId] = useState("");
   const [draftName, setDraftName] = useState("");
   const [draftDescription, setDraftDescription] = useState("");
   const [selectedProviderId, setSelectedProviderId] = useState("");
   const [selectedChannelIds, setSelectedChannelIds] = useState<readonly string[]>([]);
-  const selectedTemplate = templates.find((template) => template.id === selectedTemplateId) ?? templates[0];
+  const selectedTemplate = selectedTemplateId ? templates.find((template) => template.id === selectedTemplateId) : undefined;
   const selectedProvider = providerOptions.find((provider) => provider.id === selectedProviderId);
-  const previewName = draftName.trim() || selectedTemplate?.name || t("Custom teammate");
-  const previewDescription = draftDescription.trim() || selectedTemplate?.summary || t("Describe this teammate with a short working brief.");
+  const previewName = draftName.trim() || (selectedTemplate ? t(selectedTemplate.name) : t("Custom teammate"));
+  const previewDescription = draftDescription.trim() || (selectedTemplate ? t(selectedTemplate.summary) : t("Describe this teammate with a short working brief."));
   const selectedProviderReady = selectedProvider ? providerPreflightReady(selectedProvider) : false;
   const canCreateTeammate = Boolean(previewName.trim()) && Boolean(selectedProvider) && selectedProviderReady;
   const visibleCreateTemplates = templates.slice(0, 5);
@@ -69,7 +71,7 @@ export function TeammateCreateDrawer({
     if (!open) {
       return;
     }
-    const template = templates.find((item) => item.id === initialTemplateId) ?? templates[0];
+    const template = templates.find((item) => item.id === initialTemplateId) ?? selectDefaultTeammateTemplate(templates);
     setSelectedTemplateId(template?.id ?? "");
     setDraftName(template ? t(template.name) : t("Custom teammate"));
     setDraftDescription(template ? t(template.summary) : t("Describe this teammate with a short working brief."));
@@ -115,12 +117,6 @@ export function TeammateCreateDrawer({
     setDraftDescription(t("Describe this teammate with a short working brief."));
   }
 
-  function toggleChannel(channelId: string): void {
-    setSelectedChannelIds((currentIds) =>
-      currentIds.includes(channelId) ? currentIds.filter((id) => id !== channelId) : [...currentIds, channelId],
-    );
-  }
-
   function createTeammateDraft(): void {
     if (!canCreateTeammate) {
       return;
@@ -142,31 +138,31 @@ export function TeammateCreateDrawer({
   }
 
   return (
-    <div
-      className="teammate-create-drawer-backdrop"
-      role="presentation"
-      onMouseDown={(event) => {
-        if (event.target === event.currentTarget) {
-          onClose();
-        }
-      }}
-    >
-      <section className="teammate-create-dialog teammate-create-drawer" aria-label={t("Create AI teammate")} role="dialog">
-        <div className="channel-create-head">
-          <div className="teammate-create-title-block">
-            <strong>{t("New teammate")}</strong>
-            <p>{t("Choose a role first, then model. Extra configuration can be completed later.")}</p>
-          </div>
-          <button className="icon-button" type="button" onClick={onClose} aria-label={t("Cancel")} title={t("Cancel")}>
-            <X size={14} />
+    <CreateDialogShell
+      ariaLabel={t("Create AI teammate")}
+      title={t("New AI teammate")}
+      description={t("Recommended role and model are prefilled. Review them, then create.")}
+      closeLabel={t("Cancel")}
+      onClose={onClose}
+      className="channel-create-dialog teammate-create-dialog"
+      overlayClassName="channel-create-overlay teammate-create-overlay"
+      bodyClassName="channel-options-grid channel-create-grid teammate-create-body"
+      footer={(
+        <>
+          {!selectedProviderReady ? (
+            <span className="teammate-create-blocked">{selectedProvider ? t("Selected model needs configuration.") : t("Choose a model before creating.")}</span>
+          ) : null}
+          <button className="secondary-button compact-button" type="button" onClick={onClose}>
+            {t("Cancel")}
           </button>
-        </div>
-
-        <div className="channel-options-grid channel-create-grid teammate-create-body">
-          <section className="teammate-create-section">
-            <div className="teammate-create-section-title">
-              <span>{t("Choose initial role")}</span>
-            </div>
+          <button className="primary-button compact-button" type="button" onClick={createTeammateDraft} disabled={!canCreateTeammate}>
+            <Plus size={14} />
+            {t("Create teammate")}
+          </button>
+        </>
+      )}
+    >
+          <DialogSection className="teammate-create-section" title={t("Choose initial role")}>
             <div className="teammate-create-list role-grid" aria-label={t("Teammate template chooser")}>
               {visibleCreateTemplates.map((template) => (
                 <button
@@ -198,12 +194,9 @@ export function TeammateCreateDrawer({
                 <small className="template-skill-count">{t("Custom")}</small>
               </button>
             </div>
-          </section>
+          </DialogSection>
 
-          <section className="teammate-create-section">
-            <div className="teammate-create-section-title">
-              <span>{t("Basic information")}</span>
-            </div>
+          <DialogSection className="teammate-create-section" title={t("Basic information")}>
             <div className="teammate-create-fields">
               <label className="field">
                 <span>{t("Teammate name")}</span>
@@ -239,39 +232,19 @@ export function TeammateCreateDrawer({
             {providerOptions.length === 0 ? (
               <div className="client-empty-state teammate-empty">
                 <PlugZap size={20} />
-                <span>{t("No model presets")}</span>
-                <button className="secondary-button" type="button" onClick={openProvidersAndClose}>{t("Open Model Workbench")}</button>
+                <span>{t("No ready chat model")}</span>
+                <button className="secondary-button" type="button" onClick={openProvidersAndClose}>{t("Configure model")}</button>
               </div>
             ) : null}
-          </section>
+          </DialogSection>
 
-          <details className="teammate-create-section teammate-create-advanced">
-            <summary>
-              <span>{t("Advanced settings")}</span>
-              <small>{t("Memory, skills, MCP, permissions and prompt")}</small>
-            </summary>
+          <DialogSection
+            className="teammate-create-section teammate-create-advanced"
+            title={t("Advanced settings")}
+            description={t("Memory, skills, MCP, permissions and prompt")}
+            collapsible
+          >
             <div className="teammate-create-advanced-body">
-              <section>
-                <h3>{t("Join channels")}</h3>
-                <div className="teammate-chip-grid" aria-label={t("Channel choices")}>
-                  {channels.length === 0 ? (
-                    <span className="teammate-muted-note">{t("No channels yet")}</span>
-                  ) : (
-                    channels.map((channel) => (
-                      <button
-                        key={channel.id}
-                        className={selectedChannelIds.includes(channel.id) ? "teammate-chip selected" : "teammate-chip"}
-                        type="button"
-                        aria-pressed={selectedChannelIds.includes(channel.id)}
-                        onClick={() => toggleChannel(channel.id)}
-                      >
-                        <Hash size={13} />
-                        {channel.name}
-                      </button>
-                    ))
-                  )}
-                </div>
-              </section>
               <section>
                 <h3>{t("Memory")}</h3>
                 <div className="provider-run-notice neutral">
@@ -290,23 +263,9 @@ export function TeammateCreateDrawer({
                 </div>
               </section>
             </div>
-          </details>
+          </DialogSection>
 
-          <div className="channel-option-actions teammate-create-actions">
-            {!selectedProviderReady ? (
-              <span className="teammate-create-blocked">{selectedProvider ? t("Selected model needs configuration.") : t("Choose a model before creating.")}</span>
-            ) : null}
-            <button className="secondary-button compact-button" type="button" onClick={onClose}>
-              {t("Cancel")}
-            </button>
-            <button className="primary-button compact-button" type="button" onClick={createTeammateDraft} disabled={!canCreateTeammate}>
-              <Plus size={14} />
-              {t("Create teammate")}
-            </button>
-          </div>
-        </div>
-      </section>
-    </div>
+    </CreateDialogShell>
   );
 }
 

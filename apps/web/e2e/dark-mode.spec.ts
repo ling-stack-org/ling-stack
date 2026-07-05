@@ -63,7 +63,7 @@ test("main pages and workspace tools follow dark theme tokens", async ({ page })
     ".profile-page",
   ]);
 
-  await page.getByLabel("设置分组").getByRole("button", { name: /AI 智囊团|AI Councils/ }).click();
+  await page.getByLabel("设置分组").getByRole("button", { name: /智囊团工作区|Council Workspace/ }).click();
   await expect(page.locator(".council-workspace-page")).toBeVisible();
   await assertDarkPage(page, "AI councils", [
     ".workspace-settings-surface",
@@ -76,8 +76,7 @@ test("main pages and workspace tools follow dark theme tokens", async ({ page })
     ".council-detail-tabs",
     ".council-member-row",
   ]);
-
-  await page.getByLabel("设置分组").getByRole("button", { name: /账户与资料|Account and profile/ }).click();
+  await page.getByLabel("设置分组").getByRole("button", { name: /资料|Profile/ }).click();
   await expect(page.locator(".profile-page")).toBeVisible();
   await assertDarkPage(page, "account profile settings", [
     ".account-profile-settings-panel",
@@ -98,7 +97,7 @@ test("main pages and workspace tools follow dark theme tokens", async ({ page })
     ".provider-row",
   ]);
 
-  await page.getByLabel("设置分组").getByRole("button", { name: /AI 队友|AI Teammates/ }).click();
+  await page.getByLabel("设置分组").getByRole("button", { name: /队友管理|Teammate Management/ }).click();
   await expect(page.locator(".teammates-page")).toBeVisible();
   await assertDarkPage(page, "AI teammates", [
     ".workspace-settings-surface",
@@ -141,7 +140,7 @@ test("main pages and workspace tools follow dark theme tokens", async ({ page })
   ]);
 
   await page.getByLabel("设置分组").getByRole("button", { name: /技能|Skills/ }).click();
-  await page.getByRole("tab", { name: /技能治理|Skill Governance/ }).click();
+  await page.getByRole("tab", { name: /技能策略|Skill policy/ }).click();
   await expect(page.locator(".skill-governance-settings-panel")).toBeVisible();
   await assertDarkPage(page, "skill governance settings", [
     ".settings-layout",
@@ -151,7 +150,7 @@ test("main pages and workspace tools follow dark theme tokens", async ({ page })
     ".settings-skill-governance-fixed span",
   ]);
 
-  await page.getByRole("tab", { name: /技能库|Skill Library/ }).click();
+  await page.getByRole("tab", { name: /技能库|Skill library/ }).click();
   await expect(page.locator(".settings-skill-table")).toBeVisible();
   await assertDarkPage(page, "skill library settings", [
     ".settings-layout",

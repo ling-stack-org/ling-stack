@@ -42,6 +42,7 @@ import type { DomainEvent } from "./domain-events.js";
 import type { ApprovalResolution } from "../features/approvals/types.js";
 import { PageInspector } from "../features/inspector/PageInspector.js";
 import { SidebarNavigation, type SidebarRecentConversation } from "../features/navigation/SidebarNavigation.js";
+import { ChannelCreateDialog } from "../features/workspace/ChannelCreateDialog.js";
 import { ConversationHome, type ConversationHomeMessage } from "../features/workspace/ConversationHome.js";
 import {
   LazyAutomationsPage as AutomationsPage,
@@ -60,7 +61,8 @@ import {
   LazyWorkspaceClientView as WorkspaceClientView,
 } from "./lazy-pages.js";
 import type { WorkBoardScope } from "../features/work-board/GlobalWorkBoardPage.js";
-import { resolveDefaultTeammateCreateSelection } from "../features/teammates/teammate-create-defaults.js";
+import { selectDefaultTeammateProvider } from "../features/teammates/teammate-create-defaults.js";
+import { TeammateCreateDrawer } from "../features/teammates/TeammateCreateDrawer.js";
 import {
   buildRunApprovalSummaries,
   effectiveApprovalStatus,
@@ -183,7 +185,6 @@ export function AppShell(): JSX.Element {
   const [activeView, setActiveView] = useState<ViewId>("workspace");
   const [activeSidebarTarget, setActiveSidebarTarget] = useState<SidebarTarget>("workspace");
   const [workBoardRequestedScope, setWorkBoardRequestedScope] = useState<WorkBoardScope>("actionable");
-  const [settingsReturnSection, setSettingsReturnSection] = useState<"" | "workspace-tools">("");
   const [settingsWorkspaceToolView, setSettingsWorkspaceToolView] = useState<SettingsWorkspaceToolView>("");
   const settingsReturnTargetRef = useRef<SettingsReturnTarget | undefined>(undefined);
   const [channelSidebarOpen, setChannelSidebarOpen] = useState(() =>
@@ -214,7 +215,7 @@ export function AppShell(): JSX.Element {
   const [inspectorCollapsed, setInspectorCollapsed] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
   const [skillLibraryRefreshToken, setSkillLibraryRefreshToken] = useState(0);
-  const [teammateCreateRequestId, setTeammateCreateRequestId] = useState(0);
+  const [teammateCreateOpen, setTeammateCreateOpen] = useState(false);
   const fullAccessConfirmResolveRef = useRef<((approved: boolean) => void) | undefined>(undefined);
   const workspaceTimelineLoadRef = useRef("");
   const channelEditFormSyncKeyRef = useRef("");
@@ -417,6 +418,8 @@ export function AppShell(): JSX.Element {
     loading: automationsLoading,
     mutatingAutomationId,
     mutatingDraftId,
+    schedulers: automationSchedulers,
+    schedulerAction,
   } = automationsDomain.state;
   const {
     setSelectedAutomationId,
@@ -435,6 +438,8 @@ export function AppShell(): JSX.Element {
     archiveSelectedAutomation,
     setSelectedStatus,
     setSelectedSchedule,
+    startScheduler,
+    stopScheduler,
     resetForCwd: resetAutomationsForCwd,
   } = automationsDomain.actions;
   const { clearProviderUsage } = useProviderUsageController({
@@ -995,19 +1000,10 @@ export function AppShell(): JSX.Element {
     () => aiTeammates.map((teammate) => aiTeammateToLocalDraft(teammate, providers)),
     [aiTeammates, providers],
   );
-  const defaultTeammateCreateSelection = useMemo(
-    () => resolveDefaultTeammateCreateSelection({
-      templates: builtinTeammateTemplates,
-      providers,
-      defaultProviderId: workspaceDefaultProviderPresetId,
-      existingNames: aiTeammates.map((teammate) => teammate.displayName),
-      t,
-    }),
-    [aiTeammates, providers, t, workspaceDefaultProviderPresetId],
+  const teammateCreateModelReady = useMemo(
+    () => Boolean(selectDefaultTeammateProvider(providers, workspaceDefaultProviderPresetId)),
+    [providers, workspaceDefaultProviderPresetId],
   );
-  const quickCreateTeammateDescription = defaultTeammateCreateSelection.template && defaultTeammateCreateSelection.provider
-    ? `${t(defaultTeammateCreateSelection.template.name)} · ${defaultTeammateCreateSelection.provider.displayName}`
-    : t("Configure a ready chat model before creating.");
   const selectedChannelTeammateMemberships = useMemo(() => {
     const selectedChannel = channels.find((channel) => channel.id === selectedChannelId);
     return deriveSelectedChannelTeammateMemberships({
@@ -1186,7 +1182,6 @@ export function AppShell(): JSX.Element {
   }
 
   function clearSettingsWorkspaceToolView(): void {
-    setSettingsReturnSection("");
     setSettingsWorkspaceToolView("");
   }
 
@@ -1286,7 +1281,6 @@ export function AppShell(): JSX.Element {
       return;
     }
     rememberSettingsReturnTarget();
-    setSettingsReturnSection("");
     setSettingsWorkspaceToolView(view);
     if (view === "work_board") {
       setWorkBoardRequestedScope("actionable");
@@ -1321,22 +1315,8 @@ export function AppShell(): JSX.Element {
     setWorkBoardRequestedScope(scope);
   }
 
-  function returnToWorkspaceTools(): void {
-    clearSettingsWorkspaceToolView();
-    activateSettingsView();
-  }
-
   function openTeammateCreatePanel(): void {
-    openSettingsWorkspaceTool("teammates");
-    setTeammateCreateRequestId((current) => current + 1);
-  }
-
-  function quickCreateDefaultTeammate(): void {
-    if (!defaultTeammateCreateSelection.input) {
-      openSettingsWorkspaceTool("providers");
-      return;
-    }
-    void addAiTeammate(defaultTeammateCreateSelection.input);
+    setTeammateCreateOpen(true);
   }
 
   const {
@@ -1913,7 +1893,7 @@ export function AppShell(): JSX.Element {
         }}
         onClearCheckFeedback={clearProviderCheckFeedback}
         onClearRepair={() => setProviderRepairRunId("")}
-        onBackToWorkspaceTools={returnToWorkspaceTools}
+        settingsToolMode
       />
     ) : settingsWorkspaceToolView === "teammates" ? (
       <AiTeammatesPage
@@ -1923,8 +1903,6 @@ export function AppShell(): JSX.Element {
         channels={channels}
         localTeammates={localTeammates}
         defaultProviderId={workspaceDefaultProviderPresetId}
-        createRequestId={teammateCreateRequestId}
-        onCreateRequestHandled={() => setTeammateCreateRequestId(0)}
         onCreateTeammate={(input) => void addAiTeammate(input)}
         onRemoveTeammate={(teammateId) => void removeAiTeammate(teammateId)}
         onToggleTeammatePinned={(teammateId) => void toggleAiTeammatePinned(teammateId)}
@@ -1937,7 +1915,7 @@ export function AppShell(): JSX.Element {
           openSettingsWorkspaceTool("councils");
         }}
         onOpenProviders={() => openSettingsWorkspaceTool("providers")}
-        onBackToWorkspaceTools={returnToWorkspaceTools}
+        settingsToolMode
       />
     ) : settingsWorkspaceToolView === "work_board" ? (
       <GlobalWorkBoardPage
@@ -1985,7 +1963,7 @@ export function AppShell(): JSX.Element {
         routingExternalWorkId={routingExternalWorkId}
         busyWorkItemId={busyWorkItemId}
         requestedScope={workBoardRequestedScope}
-        onBackToWorkspaceTools={returnToWorkspaceTools}
+        settingsToolMode
       />
     ) : settingsWorkspaceToolView === "councils" ? (
       <CouncilWorkspacePage
@@ -2001,7 +1979,7 @@ export function AppShell(): JSX.Element {
           clearSettingsWorkspaceToolView();
           selectWorkspaceChannel(channelId);
         }}
-        onBackToWorkspaceTools={returnToWorkspaceTools}
+        settingsToolMode
       />
     ) : undefined;
 
@@ -2048,9 +2026,7 @@ export function AppShell(): JSX.Element {
         onOpenConversationHome={openConversationHome}
         onCreateChannel={openChannelCreatePanel}
         onCreateTeammate={openTeammateCreatePanel}
-        onQuickCreateTeammate={quickCreateDefaultTeammate}
-        quickCreateTeammateDisabled={!defaultTeammateCreateSelection.input}
-        quickCreateTeammateDescription={quickCreateTeammateDescription}
+        teammateCreateModelReady={teammateCreateModelReady}
         onOpenTeammateModelWorkbench={() => openSettingsWorkspaceTool("providers")}
         onCreateChannelBranch={(channelId, name) => void saveChannelBranch(channelId, name)}
         onArchiveChannel={(channelId) => void archiveSidebarChannel(channelId)}
@@ -2114,7 +2090,6 @@ export function AppShell(): JSX.Element {
             channels={channels}
             selectedChannelId={selectedChannelId}
             selectedChannelBranchRootThreadId={selectedChannelBranchRootThreadId}
-            channelForm={channelForm}
             channelCreateOpen={channelCreateOpen}
             channelEditForm={channelEditForm}
             tasks={tasks}
@@ -2196,7 +2171,6 @@ export function AppShell(): JSX.Element {
             runningWorkflowStepId={runningWorkflowStepId}
             orchestratingWorkflowId={orchestratingWorkflowId}
             errorMessage={errorMessage}
-            onChannelFormChange={setChannelForm}
             onChannelCreateOpenChange={setChannelCreateOpen}
             onChannelEditFormChange={setChannelEditForm}
             onTaskFormChange={setTaskForm}
@@ -2212,7 +2186,6 @@ export function AppShell(): JSX.Element {
             onSetDefaultChannelTeammate={(teammateId) => setDefaultChannelTeammate(selectedChannelId, teammateId)}
             onOpenTeammates={() => openSettingsWorkspaceTool("teammates")}
             onRefreshChannels={() => void refreshChannels()}
-            onCreateChannel={() => void saveChannel()}
             onSaveChannel={(formOverride) => selectedChannelId ? saveChannelEdit(selectedChannelId, formOverride) : undefined}
             onCreateTask={() => void saveTask()}
             onCreateTaskFromSlashCommand={createTaskFromSlashCommand}
@@ -2373,7 +2346,6 @@ export function AppShell(): JSX.Element {
                 onDisableTeammate={removeAiTeammate}
                 onHardDeleteTeammate={hardDeleteAiTeammateAndRefresh}
                 onOpenProviders={() => openSettingsWorkspaceTool("providers")}
-                onBackToWorkspaceTools={settingsReturnSection === "workspace-tools" ? returnToWorkspaceTools : undefined}
                 onRefreshTeammates={() => refreshAiTeammates(form.cwd.trim())}
                 onRefreshChannels={() => refreshChannels()}
                 onRefreshTasks={(channelId) => refreshTasks(channelId)}
@@ -2389,8 +2361,6 @@ export function AppShell(): JSX.Element {
                     channels={channels}
                     localTeammates={localTeammates}
                     defaultProviderId={workspaceDefaultProviderPresetId}
-                    createRequestId={teammateCreateRequestId}
-                    onCreateRequestHandled={() => setTeammateCreateRequestId(0)}
                     onCreateTeammate={(input) => void addAiTeammate(input)}
                     onRemoveTeammate={(teammateId) => void removeAiTeammate(teammateId)}
                     onToggleTeammatePinned={(teammateId) => void toggleAiTeammatePinned(teammateId)}
@@ -2398,7 +2368,6 @@ export function AppShell(): JSX.Element {
                     onOpenTeammate={selectAiTeammate}
                     onOpenCouncils={() => openSettingsWorkspaceTool("councils")}
                     onOpenProviders={() => openSettingsWorkspaceTool("providers")}
-                    onBackToWorkspaceTools={settingsReturnSection === "workspace-tools" ? returnToWorkspaceTools : undefined}
                   />
                 ) : activeView === "councils" ? (
                   <CouncilWorkspacePage
@@ -2467,6 +2436,8 @@ export function AppShell(): JSX.Element {
                 automationRuns={automationRuns}
                 automationDrafts={automationDrafts}
                 templates={automationTemplates}
+                schedulers={automationSchedulers}
+                schedulerAction={schedulerAction}
                 selectedAutomationId={selectedAutomationId}
                 selectedDraftId={selectedDraftId}
                 previewByAutomationId={previewByAutomationId}
@@ -2479,6 +2450,8 @@ export function AppShell(): JSX.Element {
                 onCreateManualDraft={createManualDraft}
                 onCreateAutomation={createAutomationDefinition}
                 onCreateChatDraft={createChatDraft}
+                onStartScheduler={() => void startScheduler()}
+                onStopScheduler={() => void stopScheduler()}
                 onSelectAutomation={setSelectedAutomationId}
                 onSelectDraft={setSelectedDraftId}
                 onUpdateDraft={updateDraft}
@@ -2543,7 +2516,6 @@ export function AppShell(): JSX.Element {
                 }}
                 onClearCheckFeedback={clearProviderCheckFeedback}
                 onClearRepair={() => setProviderRepairRunId("")}
-                onBackToWorkspaceTools={settingsReturnSection === "workspace-tools" ? returnToWorkspaceTools : undefined}
                   />
                 ) : activeView === "work_board" ? (
                   <GlobalWorkBoardPage
@@ -2591,7 +2563,6 @@ export function AppShell(): JSX.Element {
                     routingExternalWorkId={routingExternalWorkId}
                     busyWorkItemId={busyWorkItemId}
                     requestedScope={workBoardRequestedScope}
-                    onBackToWorkspaceTools={settingsReturnSection === "workspace-tools" ? returnToWorkspaceTools : undefined}
                   />
                 ) : activeView === "media" ? (
                   <MediaJobsPage
@@ -2811,6 +2782,31 @@ export function AppShell(): JSX.Element {
             />
           ) : null}
         </aside>
+      ) : null}
+      {channelCreateOpen ? (
+        <ChannelCreateDialog
+          cwd={form.cwd}
+          form={channelForm}
+          providers={providers}
+          providersLoading={providersLoading}
+          teammates={localTeammates}
+          creating={channelsLoading}
+          onFormChange={setChannelForm}
+          onCreateChannel={() => void saveChannel()}
+          onClose={() => setChannelCreateOpen(false)}
+        />
+      ) : null}
+      {teammateCreateOpen && builtinTeammateTemplates.length > 0 ? (
+        <TeammateCreateDrawer
+          open={teammateCreateOpen}
+          templates={builtinTeammateTemplates}
+          providers={providers}
+          channels={channels}
+          defaultProviderId={workspaceDefaultProviderPresetId}
+          onCreate={(input) => void addAiTeammate(input)}
+          onClose={() => setTeammateCreateOpen(false)}
+          onOpenProviders={() => openSettingsWorkspaceTool("providers")}
+        />
       ) : null}
       {fullAccessConfirmOpen ? (
         <div className="provider-sheet-backdrop" role="presentation">

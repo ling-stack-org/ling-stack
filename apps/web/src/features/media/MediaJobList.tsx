@@ -3,13 +3,15 @@ import { artifactContentUrl } from "../../api.js";
 import { useI18n } from "../../i18n.js";
 import { artifactDownloadName, isImageArtifact } from "../../lib/artifacts.js";
 import { formatDateTime } from "../../lib/formatting.js";
-import { StatusBadge } from "../../shared/components/index.js";
+import { StatusActionRow } from "../../shared/components/index.js";
 import type { MediaJob, MediaJobStatus, ProviderPreset, RunArtifact } from "../../types.js";
 import {
   mediaArtifactsForJob,
   mediaJobCanRun,
   mediaJobMatchesFilter,
   mediaJobNeedsRecovery,
+  mediaJobRunDisabledReason,
+  mediaJobStatusBadgeClass,
   mediaJobStatusFilters,
   mediaJobStatusLabel,
   mediaOperationLabel,
@@ -76,6 +78,13 @@ export function MediaJobList({
             const operationLabel = t(mediaOperationLabel(job.operation));
             const statusLabel = t(mediaJobStatusLabel(job.status));
             const actionLabel = job.status === "failed" || job.status === "cancelled" ? t("Run again") : t("Run");
+            const disabledReason = mediaJobRunDisabledReason({
+              job,
+              artifacts: jobArtifacts,
+              isLoading,
+              isRunning: isRunningJob,
+            });
+            const disabledTitle = disabledReason ? t(disabledReason, { status: statusLabel }) : t("Run generation");
             return (
               <article
                 key={job.id}
@@ -90,39 +99,36 @@ export function MediaJobList({
                 role="button"
                 tabIndex={0}
               >
-                <div className="media-job-result-layout">
-                  <MediaJobResultPreview artifact={mediaArtifacts[0]} count={mediaArtifacts.length} cwd={cwd} status={job.status} />
-                  <div className="media-job-summary">
-                    <div className="media-job-row-head">
-                      <span className="media-job-title">
-                        <strong>{operationLabel}</strong>
-                        <small>{provider?.displayName ?? t("Unknown provider")} · {formatDateTime(job.createdAt)}</small>
-                      </span>
-                      <span className="media-job-actions">
-                        <StatusBadge status={job.status === "waiting_for_approval" ? "queued" : job.status} />
-                        <button
-                          className={needsRecovery ? "primary-button compact-button" : "secondary-button compact-button"}
-                          type="button"
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            onSelectJob(job.id);
-                            onRun(job.id);
-                          }}
-                          disabled={isLoading || isRunningJob || !isRunnable}
-                          title={isRunnable ? t("Run generation") : t("Cannot run while task is {status}", { status: statusLabel })}
-                        >
-                          {isRunningJob ? <Loader2 className="spin" size={14} /> : <Play size={14} />}
-                          {isRunningJob ? t("Running") : actionLabel}
-                        </button>
-                      </span>
-                    </div>
-                    <div className="provider-meta-line">
-                      <span>{statusLabel}</span>
+                <StatusActionRow
+                  className="media-job-row-content"
+                  leading={<MediaJobResultPreview artifact={mediaArtifacts[0]} count={mediaArtifacts.length} cwd={cwd} status={job.status} />}
+                  title={<strong>{operationLabel}</strong>}
+                  description={`${provider?.displayName ?? t("Unknown provider")} · ${formatDateTime(job.createdAt)}`}
+                  meta={(
+                    <>
                       <span>{t("{count} generated results", { count: mediaArtifacts.length })}</span>
                       <time>{formatDateTime(job.updatedAt)}</time>
-                    </div>
-                  </div>
-                </div>
+                    </>
+                  )}
+                  status={<span className={`status-badge ${mediaJobStatusBadgeClass(job.status)}`}>{statusLabel}</span>}
+                  actions={(
+                    <button
+                      className={needsRecovery ? "primary-button compact-button" : "secondary-button compact-button"}
+                      type="button"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        onSelectJob(job.id);
+                        onRun(job.id);
+                      }}
+                      disabled={isLoading || isRunningJob || !isRunnable}
+                      title={disabledTitle}
+                      aria-label={disabledReason ? `${actionLabel}. ${disabledTitle}` : actionLabel}
+                    >
+                      {isRunningJob ? <Loader2 className="spin" size={14} /> : <Play size={14} />}
+                      {isRunningJob ? t("Running") : actionLabel}
+                    </button>
+                  )}
+                />
               </article>
             );
           })
@@ -177,5 +183,5 @@ function mediaJobFilterLabel(filter: MediaJobStatusFilter): string {
   if (filter === "failed") {
     return "Failed";
   }
-  return "Queued";
+  return "Active";
 }

@@ -726,8 +726,8 @@ export function SkillLibrarySettingsPanel({ cwd, refreshToken = 0 }: { readonly 
     >
       <header className="settings-skill-library-head">
         <div>
-          <h2 id="settings-skill-library-title">{t("Skill Library")}</h2>
-          <p>{t("Workspace Skill Library manages Skill definitions and teammate binding visibility.")}</p>
+          <h2 id="settings-skill-library-title">{t("Skill library")}</h2>
+          <p>{t("Inspect reusable skill definitions, source health, and workspace skills.")}</p>
         </div>
         <div className="settings-skill-library-actions">
           <button

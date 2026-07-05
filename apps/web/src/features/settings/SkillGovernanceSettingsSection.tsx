@@ -69,7 +69,7 @@ export function SkillGovernanceSettingsSection({ cwd }: { readonly cwd: string }
       <div className="panel-title split">
         <span>
           <ShieldCheck size={18} />
-          <h2 id="skill-governance-settings-title">{t("Skill Governance")}</h2>
+          <h2 id="skill-governance-settings-title">{t("Skill policy")}</h2>
         </span>
         <button className="secondary-button compact-button" type="button" onClick={() => void refresh(true)} disabled={loading}>
           {loading ? <Loader2 className="spin" size={15} /> : <RefreshCw size={15} />}
@@ -78,7 +78,7 @@ export function SkillGovernanceSettingsSection({ cwd }: { readonly cwd: string }
       </div>
 
       <p className="settings-panel-copy">
-        {t("Configure candidate generation, recording, and fixed review guards.")}
+        {t("Control skill recording, generation, and publication policy.")}
       </p>
 
       {error ? <div className="inline-error">{error}</div> : null}

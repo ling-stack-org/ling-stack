@@ -55,7 +55,7 @@ test("channel branch list shows real branches without default branch chrome", as
   await expect(navigation.locator(".sidebar-branch-list")).toHaveCount(0);
   await expect(navigation.getByRole("button", { name: "API cleanup" })).toHaveCount(0);
   await page.mouse.move(640, 120);
-  await expect.poll(async () => engineeringGroup.locator(".sidebar-row-tools").evaluate((node) => getComputedStyle(node).pointerEvents)).toBe("none");
+  await expect.poll(async () => engineeringGroup.locator(".sidebar-row-tools").evaluate((node) => getComputedStyle(node).pointerEvents)).toBe("auto");
   await engineeringRow.hover();
   await expect.poll(async () => engineeringGroup.locator(".sidebar-row-tools").evaluate((node) => getComputedStyle(node).pointerEvents)).toBe("auto");
   await expect(engineeringGroup.getByRole("button", { name: "Create branch" })).toBeVisible();
@@ -74,7 +74,7 @@ test("channel branch list shows real branches without default branch chrome", as
   await expect.poll(() => state.lastChannelMessageRequest?.threadId).toBe(quickSplitRootThreadId);
 
   await openArchivedItemsSettings(page);
-  const archivedPanel = page.getByRole("region", { name: "Archived channels and branches" });
+  const archivedPanel = page.locator(".archived-item-group").filter({ hasText: "Branches" });
   await expect(archivedPanel).toContainText("Engineering / API cleanup");
   await expect(archivedPanel).toContainText("Engineering / Legacy split");
   await expect(archivedPanel.locator(".archived-item-row").filter({ hasText: "Engineering / API cleanup" }).getByRole("button", { name: "Restore" })).toBeVisible();
@@ -104,9 +104,10 @@ test("channel branch list shows real branches without default branch chrome", as
   await expect(navigation.getByRole("button", { name: "Engineering" })).toHaveCount(0);
 
   await openArchivedItemsSettings(page);
-  await expect(archivedPanel).toContainText("Engineering");
-  await expect(archivedPanel.getByRole("button", { name: "Restore" })).toBeVisible();
-  await expect(archivedPanel.getByRole("button", { name: "Delete" })).toBeVisible();
+  const archivedChannelsPanel = page.locator(".archived-item-group").filter({ hasText: "Channels" });
+  await expect(archivedChannelsPanel).toContainText("Engineering");
+  await expect(archivedChannelsPanel.getByRole("button", { name: "Restore" })).toBeVisible();
+  await expect(archivedChannelsPanel.getByRole("button", { name: "Delete" })).toBeVisible();
 });
 
 test("channel sidebar menu keeps create action without bulk archive", async ({ page }) => {

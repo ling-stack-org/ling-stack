@@ -430,9 +430,102 @@
   pointer-events: auto;
 }
 
+.channel-left-drawer .sidebar-section-menu-popover {
+  min-width: 192px;
+  padding: 5px;
+}
+
+.channel-left-drawer .sidebar-section-menu-popover.rich {
+  width: 224px;
+  min-width: 224px;
+}
+
+.channel-left-drawer .sidebar-section-menu-popover:not(.rich) button {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  align-items: center;
+  column-gap: 8px;
+  min-height: 32px;
+  padding: 0 8px;
+}
+
+.channel-left-drawer .sidebar-section-menu-popover.rich button {
+  min-height: 36px;
+  padding: 8px 9px;
+}
+
+.channel-left-drawer .sidebar-section-menu-popover.rich button.has-description {
+  min-height: 50px;
+}
+
+.channel-left-drawer .sidebar-section-menu-popover button > svg,
+.channel-left-drawer .sidebar-section-menu-rich-title > svg {
+  display: block;
+  justify-self: center;
+  align-self: center;
+  width: 14px;
+  height: 14px;
+  stroke-width: 2;
+}
+
+.channel-left-drawer .sidebar-section-menu-copy,
+.channel-left-drawer .sidebar-section-menu-rich-copy {
+  align-self: center;
+}
+
+.channel-left-drawer .sidebar-section-menu-copy > span,
+.channel-left-drawer .sidebar-section-menu-rich-title > span {
+  line-height: 18px;
+}
+
+.channel-left-drawer .sidebar-section-menu-rich-title {
+  grid-template-columns: 18px minmax(0, 1fr);
+  align-items: center;
+  column-gap: 8px;
+  min-height: 18px;
+}
+
+.channel-left-drawer .sidebar-section-menu-rich-copy > small {
+  padding-left: 26px;
+  line-height: 15px;
+}
+
+.channel-left-drawer .sidebar-row-shell:focus-within:not(:hover) .sidebar-row-tools,
+.channel-left-drawer .sidebar-branch-row-shell:focus-within:not(:hover) .sidebar-row-tools {
+  opacity: 1;
+  pointer-events: auto;
+}
+
 .channel-left-drawer .sidebar-mini-action,
 .channel-left-drawer .sidebar-mini-action:hover {
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border-radius: 6px;
   background: transparent;
+  color: var(--text-muted);
+}
+
+.channel-left-drawer .sidebar-mini-action svg {
+  display: block;
+  width: 14px;
+  height: 14px;
+  stroke-width: 2;
+}
+
+.channel-left-drawer .sidebar-mini-action:hover,
+.channel-left-drawer .sidebar-mini-action:focus-visible {
+  background: var(--surface-selected);
+  color: var(--text-strong);
+  outline: none;
+}
+
+.channel-left-drawer .sidebar-mini-action.danger:hover,
+.channel-left-drawer .sidebar-mini-action.danger:focus-visible {
+  color: var(--danger);
 }
 
 .channel-left-drawer .sidebar-recent-row {

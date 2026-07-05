@@ -28,10 +28,10 @@ test("language switcher toggles Chinese and English UI labels", async ({ page })
 
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
   await page.getByLabel("Settings sections").getByRole("button", { name: /Interface preferences/ }).click();
-  await expect(page.getByRole("heading", { name: "Interface preferences" })).toBeVisible();
+  await expect(page.locator(".interface-settings-panel").getByRole("heading", { name: "Interface preferences" })).toBeVisible();
   await page.getByRole("button", { name: "中文" }).click();
   await expect(page.locator("html")).toHaveAttribute("lang", "zh-CN");
-  await expect(page.getByRole("heading", { name: "界面偏好" })).toBeVisible();
+  await expect(page.locator(".interface-settings-panel").getByRole("heading", { name: "界面偏好" })).toBeVisible();
   await page.getByRole("button", { name: "返回应用" }).click();
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Engineering" }).click();
   await expect(page.getByRole("heading", { name: "Engineering", level: 1 })).toBeVisible();
@@ -105,7 +105,8 @@ test("Chinese mode localizes workspace settings, runtime policy, and teammate se
   await expect(page.getByLabel("频道管理").getByRole("button", { name: "创建频道" })).toHaveCount(0);
 
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "设置" }).click();
-  await page.getByLabel("设置分组").getByRole("button", { name: "AI 队友" }).click();
+  await page.getByLabel("设置分组").getByRole("button", { name: "队友管理" }).click();
+  await expect(page.getByLabel("设置分组").getByRole("button", { name: "队友管理" })).toHaveClass(/active/);
   await expect(page.locator(".settings-tool-return-row")).toHaveCount(0);
   await expect(page.getByRole("heading", { name: "AI 队友", level: 1 })).toHaveCount(0);
   await expect(page.getByLabel("AI 队友上下文")).toHaveCount(0);
@@ -120,21 +121,21 @@ test("Chinese mode localizes workspace settings, runtime policy, and teammate se
   await expect(page.getByText("Role", { exact: true })).toHaveCount(0);
   await expect(page.getByText("Pick a default teammate or start blank")).toHaveCount(0);
   await expect(page.getByText("标准 · medium")).toHaveCount(0);
-  await page.getByLabel("队友模板").getByRole("button", { name: "添加队友", exact: true }).click();
+  await page.getByLabel("工作区队友").getByRole("button", { name: "新建 AI 队友", exact: true }).click();
   const createDialog = page.getByRole("dialog", { name: "创建 AI 队友" });
   await expect(createDialog).toBeVisible();
   await expect(createDialog).toContainText("选择初始角色");
   await expect(createDialog.getByLabel("基础模型")).toBeVisible();
   await expect(createDialog).toContainText("基础信息");
-  await expect(createDialog).toContainText("没有模型预设");
+  await expect(createDialog).toContainText("没有可用的聊天模型");
   await expect(createDialog.getByLabel("队友设置步骤")).toHaveCount(0);
   await expect(createDialog.getByLabel("队友预览")).toHaveCount(0);
   await expect(createDialog.getByText("系统提示词")).toHaveCount(0);
   await createDialog.getByText("高级设置").click();
   await expect(page.getByText("Project files")).toHaveCount(0);
   await expect(page.getByText("Skill pack")).toHaveCount(0);
-  await expect(createDialog.getByRole("heading", { name: "加入频道" })).toBeVisible();
-  await expect(createDialog.getByRole("heading", { name: "记忆" })).toBeVisible();
+  await expect(createDialog.getByLabel("加入频道")).toBeVisible();
+  await expect(createDialog.getByText("高级设置")).toBeVisible();
 });
 
 test("theme switcher supports system, light, and dark preferences", async ({ page }) => {
@@ -155,7 +156,7 @@ test("theme switcher supports system, light, and dark preferences", async ({ pag
   await expect(html).toHaveAttribute("data-theme-preference", "system");
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
   await page.getByLabel("Settings sections").getByRole("button", { name: /Interface preferences/ }).click();
-  await expect(page.getByRole("heading", { name: "Interface preferences" })).toBeVisible();
+  await expect(page.locator(".interface-settings-panel").getByRole("heading", { name: "Interface preferences" })).toBeVisible();
   await expect(page.getByRole("button", { name: "System" })).toHaveAttribute("aria-pressed", "true");
 
   await page.getByRole("button", { name: "Light" }).click();
@@ -206,10 +207,10 @@ test("settings runtime runners show daemon readiness blockers", async ({ page })
   await page.goto("/");
 
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
-  await page.getByLabel("Settings sections").getByRole("button", { name: /Approval strategy/ }).click();
-  await page.getByRole("tab", { name: /Runtime runners/ }).click();
+  await page.getByLabel("Settings sections").getByRole("button", { name: /Default authorization/ }).click();
+  await page.getByRole("tab", { name: /Execution runners/ }).click();
   const settingsPanel = page.locator(".runtime-runner-settings-panel");
-  await expect(page.getByRole("heading", { name: "Runtime runners" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Execution runners" })).toBeVisible();
   await expect(settingsPanel).toContainText("Pi Runner");
   await expect(settingsPanel).toContainText("readiness ready");
   await expect(settingsPanel).toContainText("Codex App Server");
@@ -233,7 +234,6 @@ test("settings developer section contains startup readiness", async ({ page }) =
 
   await settingsSections.getByRole("button", { name: /Startup and diagnostics/ }).click();
   const developerPanel = page.locator(".developer-settings-panel");
-  await expect(developerPanel.getByRole("heading", { name: "Developer" })).toBeVisible();
   await expect(developerPanel.getByRole("heading", { name: "Startup readiness" })).toBeVisible();
   await expect(developerPanel).toContainText("ready");
   await expect(developerPanel.getByRole("button", { name: "Refresh" })).toBeVisible();
@@ -285,30 +285,36 @@ test("settings configuration entries open nested tools directly", async ({ page 
   await expect(page.getByRole("heading", { name: "Engineering", level: 1 })).toBeVisible();
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
   const settingsSections = page.getByLabel("Settings sections");
+  await expect(settingsSections.getByText("Workspace tools", { exact: true })).toBeVisible();
   await expect(settingsSections.getByText("Workspace", { exact: true })).toBeVisible();
   await expect(settingsSections.getByText("Maintenance", { exact: true })).toBeVisible();
+  await expect(settingsSections.getByRole("button", { name: /^Profile$/ })).toBeVisible();
+  await expect(settingsSections.getByRole("button", { name: /Interface preferences/ })).toBeVisible();
+  await expect(settingsSections.getByRole("button", { name: /Personal and interface/ })).toHaveCount(0);
   await expect(settingsSections).not.toContainText("System");
   await expect(settingsSections).not.toContainText("Extensions");
   await expect(settingsSections).not.toContainText("Model, teammates, and board shortcuts");
   await expect(settingsSections).not.toContainText("Profile, preferences, and identity");
   await expect(settingsSections.getByRole("button", { name: "Configuration overview" })).toHaveCount(0);
   await expect(settingsSections.getByRole("button", { name: "Model Workbench" })).toBeVisible();
-  await expect(settingsSections.getByRole("button", { name: "AI Teammates" })).toBeVisible();
-  await expect(settingsSections.getByRole("button", { name: "AI Councils" })).toBeVisible();
+  await expect(settingsSections.getByRole("button", { name: "Teammate Management" })).toBeVisible();
+  await expect(settingsSections.getByRole("button", { name: "AI Teammates" })).toHaveCount(0);
+  await expect(settingsSections.getByRole("button", { name: "Council Workspace" })).toBeVisible();
+  await expect(settingsSections.getByRole("button", { name: "AI Councils" })).toHaveCount(0);
   await expect(settingsSections.getByRole("button", { name: "Work Board" })).toBeVisible();
-  await expect(settingsSections.getByRole("button", { name: "Approval strategy" })).toBeVisible();
+  await expect(settingsSections.getByRole("button", { name: "Default authorization" })).toBeVisible();
   await expect(page.locator(".settings-workspace-tools")).toHaveCount(0);
 
-  await settingsSections.getByRole("button", { name: "AI Councils" }).click();
+  await settingsSections.getByRole("button", { name: "Council Workspace" }).click();
   await expect(settingsSections).toBeVisible();
   await expect(page.getByLabel("Ling Stack navigation")).toHaveCount(0);
   await expect(page.getByRole("heading", { name: "Council Workspace", level: 2 })).toBeVisible();
-  await expect(settingsSections.getByRole("button", { name: "AI Councils" })).toHaveClass(/active/);
+  await expect(settingsSections.getByRole("button", { name: "Council Workspace" })).toHaveClass(/active/);
   await expect(page.locator(".settings-tool-return-row")).toHaveCount(0);
   await expect(page.locator(".settings-workspace-tools")).toHaveCount(0);
 
-  await settingsSections.getByRole("button", { name: "Approval strategy" }).click();
-  await expect(settingsSections.getByRole("button", { name: /Approval strategy/ })).toHaveClass(/active/);
+  await settingsSections.getByRole("button", { name: "Default authorization" }).click();
+  await expect(settingsSections.getByRole("button", { name: /Default authorization/ })).toHaveClass(/active/);
   await expect(page.locator(".settings-global-approval-card")).toHaveCount(1);
   await page.locator(".settings-global-approval-card").getByRole("button", { name: "Ask first" }).click();
   await expect.poll(() => state.workspaceSettings.defaultPermissionMode).toBe("ask_everything");
@@ -325,10 +331,10 @@ test("settings approval policy loads, edits, and saves tool decisions and write 
 
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Engineering" }).click();
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
-  await page.getByLabel("Settings sections").getByRole("button", { name: /Approval strategy/ }).click();
-  await page.getByRole("tab", { name: /Approval policy/ }).click();
-  const settingsPanel = page.locator(".settings-panel").filter({ hasText: "Approval policy" });
-  await expect(page.getByRole("heading", { name: "Approval policy" })).toBeVisible();
+  await page.getByLabel("Settings sections").getByRole("button", { name: /Default authorization/ }).click();
+  await page.getByRole("tab", { name: /Tool permission policy/ }).click();
+  const settingsPanel = page.locator(".settings-panel").filter({ hasText: "Tool permission policy" });
+  await expect(page.getByRole("heading", { name: "Tool permission policy" })).toBeVisible();
   await expect(settingsPanel).not.toContainText("workspace_default");
 
   const bashDecision = settingsPanel.locator(".policy-tool-row").filter({ hasText: "bash" }).locator("select");
@@ -357,9 +363,9 @@ test("settings permission preset cards update the effective preview", async ({ p
   await page.goto("/");
 
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
-  await page.getByLabel("Settings sections").getByRole("button", { name: /Approval strategy/ }).click();
-  await page.getByRole("tab", { name: /Approval policy/ }).click();
-  const settingsPanel = page.locator(".settings-panel").filter({ hasText: "Approval policy" });
+  await page.getByLabel("Settings sections").getByRole("button", { name: /Default authorization/ }).click();
+  await page.getByRole("tab", { name: /Tool permission policy/ }).click();
+  const settingsPanel = page.locator(".settings-panel").filter({ hasText: "Tool permission policy" });
 
   await settingsPanel.getByRole("button", { name: /Workspace collaboration/ }).click();
   await expect(settingsPanel.getByLabel("Effective permissions")).toContainText("Allows: read, grep, find, ls, edit, write");
@@ -499,11 +505,15 @@ test("settings skill library shows read-only skill health findings", async ({ pa
 
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
   await page.getByLabel("Settings sections").getByRole("button", { name: /Skills/ }).click();
+  const skillSubnav = page.getByRole("tablist", { name: "Skill sections" });
   await expect(page.locator(".skill-governance-settings-panel")).toBeVisible();
   await expect(page.locator(".settings-skill-library")).toHaveCount(0);
-  await page.getByRole("tab", { name: /Skill Library/ }).click();
+  await expect(skillSubnav.getByRole("tab", { name: "Skill policy" })).toHaveAttribute("aria-selected", "true");
+  await expect(skillSubnav.getByRole("tab", { name: "Skill library" })).toBeVisible();
+  await expect(page.getByRole("tab", { name: "Skill Governance" })).toHaveCount(0);
+  await page.getByRole("tab", { name: /Skill library/ }).click();
   const panel = page.locator(".settings-skill-library");
-  await expect(panel.getByRole("heading", { name: "Skill Library" })).toBeVisible();
+  await expect(panel.getByRole("heading", { name: "Skill library" })).toBeVisible();
   await expect(page.getByLabel("Settings sections").getByRole("button", { name: /Skills/ })).toHaveClass(/active/);
   await expect(page.getByRole("tab", { name: /Skills list/ })).toHaveAttribute("aria-selected", "true");
   await expect(panel.getByRole("region", { name: "Skill Health" })).toHaveCount(0);
@@ -637,9 +647,9 @@ test("settings skill governance saves policy from a separate section", async ({ 
   await page.getByLabel("Settings sections").getByRole("button", { name: /Skills/ }).click();
   await expect(page.getByLabel("Settings sections").getByRole("button", { name: /Skills/ })).toHaveClass(/active/);
   const panel = page.locator(".skill-governance-settings-panel");
-  const governancePanel = panel.getByRole("region", { name: "Skill Governance Policy" });
-  await expect(panel.getByRole("heading", { name: "Skill Governance" })).toBeVisible();
-  await expect(panel).toContainText("Configure candidate generation, recording, and fixed review guards.");
+  const governancePanel = panel.getByRole("region", { name: "Skill policy" });
+  await expect(panel.getByRole("heading", { name: "Skill policy" })).toBeVisible();
+  await expect(panel).toContainText("Control skill recording, generation, and publication policy.");
   await expect(governancePanel).toContainText("Semi-auto");
   await expect(governancePanel).toContainText("User initiated");
   await expect(governancePanel).toContainText("Explicit only");

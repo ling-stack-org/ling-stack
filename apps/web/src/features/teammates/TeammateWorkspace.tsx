@@ -177,7 +177,6 @@ export function TeammateWorkspace({
   onRefreshChannels,
   onRefreshTasks,
   onOpenRun,
-  onBackToWorkspaceTools,
   defaultPermissionMode,
   defaultPermissionPreset,
 }: {
@@ -197,7 +196,6 @@ export function TeammateWorkspace({
   readonly onRefreshChannels?: () => MaybePromise<void>;
   readonly onRefreshTasks?: (channelId: string) => MaybePromise<void>;
   readonly onOpenRun?: (runId: string) => void;
-  readonly onBackToWorkspaceTools?: () => void;
   readonly defaultPermissionMode?: SessionPermissionMode;
   readonly defaultPermissionPreset?: PermissionPreset;
 }): JSX.Element {
@@ -1865,7 +1863,6 @@ export function TeammateWorkspace({
     <div className={[
       "teammate-workspace",
       workspaceView === "settings" ? "settings-mode" : "chat-mode",
-      onBackToWorkspaceTools ? "settings-return-mode" : "",
       workspaceView === "chat" && !chatContextPanelOpen ? "context-collapsed" : "",
     ].filter(Boolean).join(" ")}>
       {workspaceView === "chat" ? (
@@ -1890,30 +1887,17 @@ export function TeammateWorkspace({
           onToggleContextPanel={() => setChatContextPanelOpen((current) => !current)}
         />
       ) : (
-        <section className={onBackToWorkspaceTools ? "teammate-settings-header settings-return-mode" : "teammate-settings-header"} aria-label={t("Single agent settings")}>
-          {onBackToWorkspaceTools ? (
-            <span className="teammate-settings-return-actions">
-              <button className="secondary-button compact-button" type="button" onClick={() => setWorkspaceView("chat")}>
-                <ArrowLeft size={15} />
-                {t("Back to private chat")}
-              </button>
-            </span>
-          ) : (
-            <span className="teammate-settings-header-back-actions">
-              <button className="secondary-button compact-button" type="button" onClick={() => setWorkspaceView("chat")}>
-                <ArrowLeft size={15} />
-                {t("Back to private chat")}
-              </button>
-            </span>
-          )}
-          {!onBackToWorkspaceTools ? (
-            <div>
-              <h2>{t("{name} settings", { name: teammate.displayName })}</h2>
-              <p>{isProtectedSystemTeammate ? t("Built-in teammate profile and user-added instructions") : t("Single agent profile, permissions, and tool configuration")}</p>
-            </div>
-          ) : (
-            <div className="teammate-settings-header-spacer" aria-hidden="true" />
-          )}
+        <section className="teammate-settings-header" aria-label={t("Single agent settings")}>
+          <span className="teammate-settings-header-back-actions">
+            <button className="secondary-button compact-button" type="button" onClick={() => setWorkspaceView("chat")}>
+              <ArrowLeft size={15} />
+              {t("Back to private chat")}
+            </button>
+          </span>
+          <div>
+            <h2>{t("{name} settings", { name: teammate.displayName })}</h2>
+            <p>{isProtectedSystemTeammate ? t("Built-in teammate profile and user-added instructions") : t("Single agent profile, permissions, and tool configuration")}</p>
+          </div>
           <div className="teammate-settings-header-actions">
             <button className="secondary-button compact-button" type="button" onClick={() => setSettingsForm(teammateToSettingsForm(teammate))}>
               {t("Reset")}

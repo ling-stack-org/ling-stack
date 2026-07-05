@@ -9,7 +9,7 @@ import {
 async function openCouncilWorkspace(page: Page): Promise<void> {
   const navigation = page.getByLabel("Ling Stack navigation");
   await navigation.getByRole("button", { name: "Settings" }).click();
-  await page.getByLabel("Settings sections").getByRole("button", { name: "AI Councils" }).click();
+  await page.getByLabel("Settings sections").getByRole("button", { name: "Council Workspace" }).click();
 }
 
 test("Council Workspace shows council health, members, and channel entry points", async ({ page }) => {
@@ -53,6 +53,7 @@ test("Council Workspace shows council health, members, and channel entry points"
   await expect(page.getByRole("heading", { name: "Council Workspace", level: 1 })).toBeVisible();
   await expect(page.getByLabel("Settings sections")).toBeVisible();
   await expect(page.getByLabel("Ling Stack navigation")).toHaveCount(0);
+  await expect(page.getByLabel("Settings sections").getByRole("button", { name: "Council Workspace" })).toHaveClass(/active/);
   await expect(page.locator(".settings-tool-return-row")).toHaveCount(0);
   await expect(page.getByLabel("Council overview")).toHaveCount(0);
   await expect(page.getByText("Manage advisor councils")).toHaveCount(0);
@@ -111,16 +112,16 @@ test("Council Workspace shows council health, members, and channel entry points"
 
   const councilList = page.locator(".council-workspace-list");
   await councilList.getByRole("button", { name: "Create council" }).click();
-  const createCouncilForm = councilList.locator(".council-create-inline");
-  await expect(createCouncilForm).toBeVisible();
-  await createCouncilForm.getByLabel("New council name").fill("Design Council");
-  await createCouncilForm.getByLabel("New council description").fill("Design review collective");
-  await createCouncilForm.getByRole("button", { name: "Create council" }).click();
+  const createCouncilDialog = page.getByRole("dialog", { name: "Create council" });
+  await expect(createCouncilDialog).toBeVisible();
+  await createCouncilDialog.getByLabel("New council name").fill("Design Council");
+  await createCouncilDialog.getByLabel("New council description").fill("Design review collective");
+  await createCouncilDialog.getByRole("button", { name: "Create council" }).click();
   await expect.poll(() => {
     const created = state.aiCouncils.find((item) => isRecord(item) && item.displayName === "Design Council");
     return isRecord(created) ? String(created.id) : "";
   }).not.toBe("");
-  await expect(createCouncilForm).toHaveCount(0);
+  await expect(createCouncilDialog).toHaveCount(0);
   await expect(page.locator(".council-workspace-list")).toContainText("Design Council");
   await expect(page.getByLabel("Selected council")).toContainText("Design Council");
 
@@ -185,9 +186,8 @@ test("Council Workspace shows council health, members, and channel entry points"
 
   await page.getByRole("button", { name: "Open AI Teammates" }).click();
   await expect(page.getByLabel("Workspace teammates")).toBeVisible();
-  await expect(page.locator(".settings-tool-return-row")).toHaveCount(0);
 
-  await page.getByLabel("Settings sections").getByRole("button", { name: "AI Councils" }).click();
+  await page.getByLabel("Settings sections").getByRole("button", { name: "Council Workspace" }).click();
   await expect(page.getByLabel("Settings sections")).toBeVisible();
   await page.getByRole("tab", { name: "Channel usage" }).click();
   await page.getByLabel("Channel usage").getByRole("button", { name: "Open channel" }).click();

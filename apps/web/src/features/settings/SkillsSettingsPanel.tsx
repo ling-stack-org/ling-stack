@@ -23,13 +23,13 @@ export function SkillsSettingsPanel({
         options={[
           {
             id: "governance",
-            label: "Skill Governance",
-            description: "Control when Ling can generate, record, and publish reusable skills.",
+            label: "Skill policy",
+            description: "Control skill recording, generation, and publication policy.",
           },
           {
             id: "library",
-            label: "Skill Library",
-            description: "Inspect skill definitions, source health, and reusable workspace skills.",
+            label: "Skill library",
+            description: "Inspect reusable skill definitions, source health, and workspace skills.",
           },
         ]}
       />
