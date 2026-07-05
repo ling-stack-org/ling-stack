@@ -1733,9 +1733,16 @@
     align-items: initial;
     justify-items: stretch;
     gap: 12px;
+    grid-row: 2;
     height: auto;
+    max-height: none;
+    min-height: 0;
     margin: 0;
-    padding: 0 2px 0 0;
+    padding: 0 2px 8px 0;
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
   }
 
   .app-shell.channel-drawer-shell:not(.channel-sidebar-collapsed) .channel-left-drawer .primary-nav {
@@ -1791,7 +1798,7 @@
     width: auto;
     margin: 0;
     padding: 0;
-    overflow: clip;
+    overflow: visible;
     animation: sidebar-list-reveal-down var(--sidebar-rail-motion-duration) var(--sidebar-rail-motion-ease) both;
   }
 
@@ -1969,8 +1976,36 @@
 .app-shell.channel-drawer-shell:not(.channel-sidebar-collapsed) .channel-left-drawer .sidebar-section-list,
 .app-shell.channel-drawer-shell:not(.channel-sidebar-collapsed) .channel-left-drawer .sidebar-section:first-of-type .sidebar-section-list,
 .app-shell.channel-drawer-shell:not(.channel-sidebar-collapsed) .channel-left-drawer .sidebar-section:last-of-type .sidebar-section-list {
-  overflow: clip;
-  animation: sidebar-list-reveal-down var(--sidebar-rail-motion-duration) var(--sidebar-rail-motion-ease) both;
+  overflow: visible;
+  animation: none;
+  clip-path: none;
+}
+
+.app-shell.channel-drawer-shell:not(.channel-sidebar-collapsed) .channel-left-drawer .sidebar-section,
+.app-shell.channel-drawer-shell:not(.channel-sidebar-collapsed) .channel-left-drawer .sidebar-section:first-of-type,
+.app-shell.channel-drawer-shell:not(.channel-sidebar-collapsed) .channel-left-drawer .sidebar-section:last-of-type {
+  flex: 0 0 auto;
+  grid-template-rows: auto auto;
+  max-height: none;
+  overflow: visible;
+}
+
+.app-shell.channel-drawer-shell:not(.channel-sidebar-collapsed) .sidebar-scroll-region {
+  display: flex;
+  flex-direction: column;
+  grid-row: 2;
+  align-self: stretch;
+  align-content: normal;
+  align-items: stretch;
+  gap: 12px;
+  height: auto;
+  max-height: none;
+  min-height: 0;
+  padding: 0 2px 8px 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
 }
 
 .app-shell.channel-drawer-shell:not(.channel-sidebar-collapsed) .channel-left-drawer .sidebar-section-list > * {
