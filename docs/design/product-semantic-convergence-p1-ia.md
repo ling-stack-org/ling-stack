@@ -149,7 +149,7 @@ sidebar primary workflow click
 Settings workspace tool click
   -> AppShell settingsWorkspaceToolView
   -> nested workspace tool page
-  -> SettingsToolReturnRow back to workspace tools
+  -> Settings left navigation highlights the active workspace tool
 ```
 
 ```text

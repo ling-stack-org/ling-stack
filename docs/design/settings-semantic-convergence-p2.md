@@ -69,9 +69,9 @@ Maintenance
    - `Execution and permissions` -> `Runtime and permissions`
    - `Integrations` -> `Connections`
    - `Data and maintenance` -> `Data and diagnostics`
-3. Split `PersonalInterfaceSettingsPanel` into focused panels:
-   - `ProfileSettingsPanel`
-   - `InterfacePreferencesSettingsPanel`
+3. Keep remote Settings IA structure:
+   - `PersonalInterfaceSettingsPanel` exports personal profile and interface preference
+     surfaces from one module.
 4. Keep `Configuration overview` as the first settings section and keep nested workspace
    tools inside Settings.
 5. Keep `SettingsPage` as the owner of section navigation, but do not add backend or
@@ -92,8 +92,8 @@ Maintenance
 ## Module Boundaries
 
 - `SettingsPage.tsx` owns the section list and routes props to focused settings panels.
-- `ProfileSettingsPanel.tsx` owns the user profile settings wrapper.
-- `InterfacePreferencesSettingsPanel.tsx` owns theme, UI language, and response language.
+- `PersonalInterfaceSettingsPanel.tsx` owns the user profile wrapper and interface
+  preferences exports.
 - `SettingsWorkspaceToolsPanel.tsx` continues to own workspace tool rows.
 - Existing `ExecutionPermissionsSettingsPanel`, `IntegrationsSettingsPanel`,
   `SkillsSettingsPanel`, and `MaintenanceSettingsPanel` keep their internal logic.

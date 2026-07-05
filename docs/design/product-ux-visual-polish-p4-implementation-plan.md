@@ -17,7 +17,7 @@ state machines.
    - Add a shared `CreateDialogShell` component for overlay, header, body, and footer.
    - Replace duplicated channel/teammate dialog frames with the shared shell.
    - Rename the local style import from `channel-create.css` to `creation-dialogs.css`.
-   - Keep domain fields inside `ChannelCreateDialog` and `TeammateCreateDialog`.
+   - Keep domain fields inside `ChannelCreateDialog` and `TeammateCreateDrawer`.
 
 3. Generation tasks:
    - Rename the user-facing grouped filter from `Queued` to `Active`.

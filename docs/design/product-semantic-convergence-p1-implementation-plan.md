@@ -38,7 +38,8 @@ refactor.
 2. Settings workspace tools:
    - Confirm and tighten descriptions for Model Workbench, Teammate Management, Council
      Workspace, Work Board, and Approval strategy.
-   - Ensure `Back to workspace tools` return rows are present from nested tool views.
+   - Ensure nested tool views use the persistent Settings left navigation instead of a
+     separate return row.
 3. AI Teammates and Council Workspace:
    - Keep AI Teammates page free of the old `AI Councils` tab and full council list.
    - Keep only the lightweight Council Workspace entry.

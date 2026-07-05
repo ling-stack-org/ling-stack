@@ -37,8 +37,8 @@ only patch missing or inconsistent pieces.
    - Verify `SettingsPage.tsx` has the P2/P3 section list.
    - Verify `SettingsWorkspaceToolsPanel.tsx` has `Workspace setup` and `Work controls`.
    - Verify Runtime, Connections, Skills, and Data panels use `SettingsSubnav`.
-   - Verify Settings nested workspace tools still hide the global sidebar and return to
-     `Back to workspace tools`.
+   - Verify Settings nested workspace tools still hide the global sidebar while keeping
+     the Settings left navigation available.
 
 2. Complete missing P3 copy:
    - Runtime: `Default authorization`, `Tool permission policy`, `Execution runners`.
@@ -131,7 +131,7 @@ Settings subnav
 Configuration overview row
   -> existing AppShell open handler
   -> nested workspace tool detail
-  -> Back to workspace tools
+  -> Settings left navigation remains the return/switch path
 ```
 
 ## Implementation Slices
@@ -190,7 +190,8 @@ Configuration overview row
 - [x] Connections subnav labels match P3.
 - [x] Skills subnav labels match P3.
 - [x] Data subnav labels match P3.
-- [x] Nested workspace tools still return to `Back to workspace tools`.
+- [x] Nested workspace tools use persistent Settings left navigation instead of a
+  separate return row.
 - [x] Work Board remains out of primary sidebar.
 - [x] Settings dark mode remains visually consistent.
 - [x] Typecheck and targeted e2e pass.

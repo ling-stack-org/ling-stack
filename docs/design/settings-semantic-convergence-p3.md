@@ -201,7 +201,7 @@ Settings subsection click
 Configuration overview tool click
   -> AppShell existing workspaceToolDetail
   -> nested tool page
-  -> Back to workspace tools
+  -> Settings left navigation stays available
 ```
 
 ## Hard Stops
