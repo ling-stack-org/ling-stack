@@ -53,10 +53,6 @@ export function SkillGovernanceSettingsPanel({
         <small>{t("Source")}: {supported ? (source ? t(skillGovernanceSourceLabel(source)) : t("not loaded")) : t("Unsupported by daemon")}</small>
       </header>
 
-      <p className="settings-skill-governance-intro">
-        {t("Generation policy controls when Ling turns repeatable work into a reviewable SkillCandidate.")}
-      </p>
-
       {!supported ? (
         <div className="settings-skill-governance-notice">
           {t("Update Ling daemon to save skill governance policy.")}
@@ -94,26 +90,30 @@ export function SkillGovernanceSettingsPanel({
         </label>
       </div>
 
-      <div className="settings-skill-governance-mode-guide" aria-label={t("Candidate generation options")}>
-        <strong>{t("Candidate generation options")}</strong>
-        <div>
-          {skillGovernanceGenerationModes.map((mode) => (
-            <span key={mode} className={policy.generationMode === mode ? "active" : undefined}>
-              <small>{skillGovernanceGenerationModeLabel(mode, t)}</small>
-              <em>{skillGovernanceGenerationModeDescription(mode, t)}</em>
-            </span>
-          ))}
+      <details className="settings-compact-details">
+        <summary>{t("Candidate generation options")}</summary>
+        <div className="settings-skill-governance-mode-guide" aria-label={t("Candidate generation options")}>
+          <div>
+            {skillGovernanceGenerationModes.map((mode) => (
+              <span key={mode} className={policy.generationMode === mode ? "active" : undefined}>
+                <small>{skillGovernanceGenerationModeLabel(mode, t)}</small>
+                <em>{skillGovernanceGenerationModeDescription(mode, t)}</em>
+              </span>
+            ))}
+          </div>
         </div>
-      </div>
+      </details>
 
-      <div className="settings-skill-governance-recording-guide" aria-label={t("How recording works")}>
-        <strong>{t("How recording works")}</strong>
-        <ol>
-          <li>{t("Start recording from a deliberate user action; Ling does not record background agent work automatically.")}</li>
-          <li>{t("Finish the run, then review the captured evidence before any candidate is created.")}</li>
-          <li>{t("Generated candidates still require draft, publish, and binding review before runtime use.")}</li>
-        </ol>
-      </div>
+      <details className="settings-compact-details">
+        <summary>{t("How recording works")}</summary>
+        <div className="settings-skill-governance-recording-guide" aria-label={t("How recording works")}>
+          <ol>
+            <li>{t("Start recording from a deliberate user action; Ling does not record background agent work automatically.")}</li>
+            <li>{t("Finish the run, then review the captured evidence before any candidate is created.")}</li>
+            <li>{t("Generated candidates still require draft, publish, and binding review before runtime use.")}</li>
+          </ol>
+        </div>
+      </details>
 
       <div className="settings-skill-governance-fixed" aria-label={t("Fixed skill governance guards")}>
         <span><small>{t("Invocation")}</small><strong>{skillGovernanceFixedModeLabel(policy.invocationMode, t)}</strong></span>

@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "@playwright/test";
 import { mockDaemon } from "./support/mock-daemon";
 import {
   createBaseState,
@@ -29,6 +29,39 @@ async function readComposerGeometry(page: Page, selector: string): Promise<{ bac
       padding: style.padding,
     };
   });
+}
+
+async function expectActionMenuItemAligned(menuItem: Locator, options: { readonly disabled?: boolean } = {}): Promise<void> {
+  const alignment = await menuItem.evaluate((element) => {
+    const buttonRect = element.getBoundingClientRect();
+    const iconRect = element.querySelector(".action-menu-item-icon svg")?.getBoundingClientRect();
+    const labelRect = element.querySelector(".action-menu-item-title > span:last-child")?.getBoundingClientRect();
+    const disabled = element instanceof HTMLButtonElement ? element.disabled : false;
+
+    return iconRect && labelRect
+      ? {
+          disabled,
+          height: buttonRect.height,
+          iconCenter: iconRect.top + iconRect.height / 2,
+          iconHeight: iconRect.height,
+          iconWidth: iconRect.width,
+          labelCenter: labelRect.top + labelRect.height / 2,
+        }
+      : undefined;
+  });
+
+  expect(alignment).toBeTruthy();
+  if (!alignment) {
+    throw new Error("Missing sidebar action menu alignment target");
+  }
+  expect(Math.abs(alignment.iconCenter - alignment.labelCenter)).toBeLessThanOrEqual(1);
+  expect(Math.round(alignment.height)).toBeGreaterThanOrEqual(30);
+  expect(Math.round(alignment.height)).toBeLessThanOrEqual(34);
+  expect(Math.round(alignment.iconWidth)).toBe(14);
+  expect(Math.round(alignment.iconHeight)).toBe(14);
+  if (options.disabled !== undefined) {
+    expect(alignment.disabled).toBe(options.disabled);
+  }
 }
 
 test("sidebar selection is exclusive and conversation sections stay below primary navigation", async ({ page }) => {
@@ -157,28 +190,21 @@ test("sidebar sections collapse locally and keep group action menus", async ({ p
   await expect(recentConversationRow).toBeVisible();
 
   await navigation.getByRole("button", { name: "Channel actions" }).click();
-  await expect(page.getByRole("menuitem", { name: "New channel" })).toBeVisible();
+  const newChannelMenuItem = page.getByRole("menuitem", { name: "New channel" });
+  await expect(newChannelMenuItem).toBeVisible();
+  await expectActionMenuItemAligned(newChannelMenuItem);
   await navigation.getByRole("button", { name: "Teammate actions" }).click();
-  await expect(page.getByRole("menuitem", { name: /New AI teammate/ })).toBeVisible();
+  const newAiTeammateMenuItem = page.getByRole("menuitem", { name: /New AI teammate/ });
+  await expect(newAiTeammateMenuItem).toBeVisible();
   await expect(page.getByRole("menuitem", { name: /Quick create default teammate/ })).toHaveCount(0);
   await expect(page.getByRole("menuitem", { name: /More configuration/ })).toHaveCount(0);
-  const teammateMenuAlignment = await page.getByRole("menuitem", { name: /New AI teammate/ }).evaluate((element) => {
-    const icon = element.querySelector(".sidebar-section-menu-rich-title svg")?.getBoundingClientRect();
-    const label = element.querySelector(".sidebar-section-menu-rich-title > span")?.getBoundingClientRect();
-    return icon && label
-      ? { iconCenter: icon.top + icon.height / 2, labelCenter: label.top + label.height / 2 }
-      : undefined;
-  });
-  expect(teammateMenuAlignment).toBeTruthy();
-  if (!teammateMenuAlignment) {
-    throw new Error("Missing teammate menu alignment target");
-  }
-  expect(Math.abs(teammateMenuAlignment.iconCenter - teammateMenuAlignment.labelCenter)).toBeLessThanOrEqual(1);
+  await expectActionMenuItemAligned(newAiTeammateMenuItem);
   await page.keyboard.press("Escape");
   await navigation.getByRole("button", { name: "Recent conversation actions" }).click();
   const archiveAllConversations = page.getByRole("menuitem", { name: "Archive all conversations" });
   await expect(archiveAllConversations).toBeVisible();
   await expect(archiveAllConversations).toBeDisabled();
+  await expectActionMenuItemAligned(archiveAllConversations, { disabled: true });
 });
 
 test("sidebar archive hides conversations and teammates without deleting data", async ({ page }) => {
@@ -443,7 +469,7 @@ test("sidebar text entries route to context-aware inspectors", async ({ page }) 
   await settingsSections.getByRole("button", { name: "Council Workspace" }).click();
   await expect(settingsSections).toBeVisible();
   await expect(page.getByLabel("Ling Stack navigation")).toHaveCount(0);
-  await expect(page.getByRole("heading", { name: "Council Workspace", level: 2 })).toBeVisible();
+  await expect(page.locator(".council-workspace-page[aria-label='Council Workspace']")).toBeVisible();
   await expect(settingsSections.getByRole("button", { name: "Council Workspace" })).toHaveClass(/active/);
   await expect(page.locator(".settings-tool-return-row")).toHaveCount(0);
   await expect(settingsSections.getByRole("button", { name: /Profile/ })).toBeVisible();
@@ -683,7 +709,7 @@ test("settings workspace tools keep left navigation available on nested tool pag
   await expect(page.getByLabel("Ling Stack navigation")).toHaveCount(0);
   await expect(settingsSections.getByRole("button", { name: "Model Workbench" })).toHaveClass(/active/);
   await expect(page.locator(".settings-tool-return-row")).toHaveCount(0);
-  await expect(page.getByRole("heading", { name: "Model Workbench", level: 2 })).toBeVisible();
+  await expect(page.locator(".provider-workbench[aria-label='Model Workbench']")).toBeVisible();
   await expect(page.getByRole("heading", { name: "Model Workbench", level: 1 })).toHaveCount(0);
   await expect(settingsSections.getByRole("button", { name: "Model Workbench" })).toBeVisible();
   await expect(settingsSections).toBeVisible();
@@ -693,7 +719,7 @@ test("settings workspace tools keep left navigation available on nested tool pag
   await expect(page.getByLabel("Ling Stack navigation")).toHaveCount(0);
   await expect(settingsSections.getByRole("button", { name: "Teammate Management" })).toHaveClass(/active/);
   await expect(page.locator(".settings-tool-return-row")).toHaveCount(0);
-  await expect(page.getByRole("heading", { name: "Teammate Management", level: 2 })).toBeVisible();
+  await expect(page.getByLabel("Workspace teammates")).toBeVisible();
   await expect(page.getByRole("heading", { name: "AI Teammates", level: 1 })).toHaveCount(0);
   await expect(settingsSections.getByRole("button", { name: "Teammate Management" })).toBeVisible();
   await expect(settingsSections).toBeVisible();
@@ -703,7 +729,7 @@ test("settings workspace tools keep left navigation available on nested tool pag
   await expect(page.getByLabel("Ling Stack navigation")).toHaveCount(0);
   await expect(settingsSections.getByRole("button", { name: "Work Board" })).toHaveClass(/active/);
   await expect(page.locator(".settings-tool-return-row")).toHaveCount(0);
-  await expect(page.getByRole("heading", { name: "Work Board", level: 2 })).toBeVisible();
+  await expect(page.locator(".work-board-page")).toBeVisible();
   await expect(page.locator(".work-board-page").getByRole("heading", { name: "Needs action" })).toHaveCount(0);
   await expect(settingsSections.getByRole("button", { name: "Work Board" })).toBeVisible();
 

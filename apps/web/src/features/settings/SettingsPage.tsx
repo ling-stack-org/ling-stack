@@ -70,7 +70,6 @@ type SettingsSectionItem = {
   readonly id: SettingsSectionId;
   readonly label: string;
   readonly pageTitle?: string;
-  readonly description: string;
   readonly icon: LucideIcon;
 };
 
@@ -84,32 +83,27 @@ const settingsSectionGroups: readonly {
       {
         id: "model-workbench",
         label: "Model Workbench",
-        description: "Configure model routes, API keys, and readiness checks.",
         icon: Box,
       },
       {
         id: "ai-teammates",
         label: "Teammate Management",
-        description: "Manage individual AI teammates, models, and private chat settings.",
         icon: Bot,
       },
       {
         id: "ai-councils",
         pageTitle: "Council Workspace",
         label: "Council Workspace",
-        description: "Manage multiple councils, members, and channel connections.",
         icon: Brain,
       },
       {
         id: "work-board",
         label: "Work Board",
-        description: "Review cross-channel work status as a workspace tool.",
         icon: Kanban,
       },
       {
         id: "approval-strategy",
         label: "Default authorization",
-        description: "Set the default authorization for new conversations.",
         icon: Shield,
       },
     ],
@@ -120,37 +114,31 @@ const settingsSectionGroups: readonly {
       {
         id: "personal-profile",
         label: "Profile",
-        description: "Manage local identity and profile details.",
         icon: UserCircle,
       },
       {
         id: "interface-preferences",
         label: "Interface preferences",
-        description: "Theme, language, and AI response language",
         icon: Palette,
       },
       {
         id: "external-work",
         label: "External work",
-        description: "Connect GitHub or Linear workflow intake for the selected channel.",
         icon: GitBranch,
       },
       {
         id: "mcp-tools",
         label: "MCP tool servers",
-        description: "Manage tool servers and sync tool access for AI teammates.",
         icon: Wrench,
       },
       {
         id: "plugin-manager",
         label: "Plugin Manager",
-        description: "Manage trusted local presets and bundled capability packages.",
         icon: PlugZap,
       },
       {
         id: "skills",
         label: "Skills",
-        description: "Skill governance and workspace skill library",
         icon: Brain,
       },
     ],
@@ -161,13 +149,11 @@ const settingsSectionGroups: readonly {
       {
         id: "archived-items",
         label: "Archived items",
-        description: "Restore archived conversations, teammates, channels, and branches.",
         icon: Archive,
       },
       {
         id: "startup-diagnostics",
         label: "Startup and diagnostics",
-        description: "Inspect startup readiness and open raw run diagnostics when support needs evidence.",
         icon: Database,
       },
     ],
@@ -360,8 +346,6 @@ export function SettingsPage({
     : isWorkspaceToolSection(activeSection)
       ? "personal-profile"
       : activeSection;
-  const activeSectionGroup = settingsSectionGroups.find((group) => group.items.some((item) => item.id === visibleActiveSection));
-  const activeSectionItem = activeSectionGroup?.items.find((item) => item.id === visibleActiveSection) ?? settingsSectionGroups[0]?.items[0];
   const archivedController = useArchivedSettingsController({
     cwd,
     enabled: visibleActiveSection === "archived-items",
@@ -411,7 +395,7 @@ export function SettingsPage({
                   onClick={() => {
                     selectSettingsSection(item.id);
                   }}
-                  title={t(item.description)}
+                  title={t(item.pageTitle ?? item.label)}
                   aria-current={visibleActiveSection === item.id ? "page" : undefined}
                 >
                   <SectionIcon className="settings-section-icon" size={16} strokeWidth={2} aria-hidden="true" />
@@ -424,14 +408,6 @@ export function SettingsPage({
       </nav>
 
       <div className="settings-content-stack">
-        {activeSectionItem ? (
-          <header className="settings-section-head settings-page-section-head">
-            <span>{t(activeSectionGroup?.heading ?? "Settings")}</span>
-            <h2>{t(activeSectionItem.pageTitle ?? activeSectionItem.label)}</h2>
-            <p>{t(activeSectionItem.description)}</p>
-          </header>
-        ) : null}
-
         {workspaceToolDetailOpen ? workspaceToolDetail : null}
 
         {visibleActiveSection === "personal-profile" && !workspaceToolDetailOpen ? (

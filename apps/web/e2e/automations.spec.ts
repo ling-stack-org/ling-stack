@@ -63,7 +63,8 @@ test("automations page uses Codex-style inbox, manual composer, templates, and p
   }
   const headerActions = automationsPage.locator(".automation-header-actions");
   const schedulerStrip = automationsPage.locator(".automation-scheduler-strip");
-  await expect(schedulerStrip.getByText("调度运行中")).toBeVisible();
+  await expect(schedulerStrip.getByText("调度已启动")).toBeVisible();
+  await expect(schedulerStrip.getByText("当前没有启用的定时计划；手动自动化仍可直接运行。")).toBeVisible();
   await expect(schedulerStrip.getByRole("button", { name: "停止调度" })).toBeVisible();
   await expect(headerActions.getByRole("button", { name: "暂停自动触发" })).toHaveCount(0);
   await expect(headerActions.getByRole("button", { name: "恢复自动触发" })).toHaveCount(0);

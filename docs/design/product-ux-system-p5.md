@@ -5,6 +5,10 @@
 - [P5 First Implementation Plan](product-ux-system-p5-implementation-plan.md)
 - [P5 Next Inventory](product-ux-system-p5-next-inventory.md)
 - [P5 Next Implementation Plan](product-ux-system-p5-next-implementation-plan.md)
+- [P5 Status Semantics Follow-up](product-status-semantics-p5-followup.md)
+- [P5 Status Semantics Follow-up Implementation Plan](product-status-semantics-p5-followup-implementation-plan.md)
+- [Product UX Priorities P6](product-ux-priorities-p6.md)
+- [Product UX Priorities P6 Implementation Plan](product-ux-priorities-p6-implementation-plan.md)
 
 ## Summary
 
@@ -20,8 +24,11 @@ adds more UI.
 
 Current status: first implementation slice completed on 2026-07-03 for shared display
 components, image generation, automations, Settings workspace tools, sidebar action
-menus, and channel / AI teammate creation dialogs. The remaining target surfaces should
-adopt these patterns incrementally rather than reopening IA or backend behavior.
+menus, and channel / AI teammate creation dialogs. Later QA found that Image Generation
+and Automations still need a status-semantics follow-up so stored states, scheduler
+counts, and user-facing action labels do not contradict the user's next decision. The
+remaining target surfaces should adopt these patterns incrementally rather than
+reopening IA or backend behavior.
 
 ## Goals
 
@@ -54,6 +61,8 @@ Primary UI should use product nouns and outcomes:
 - "Generation task" instead of "media job" in user-facing workflows.
 - "Configure generation model" instead of provider transport or adapter language.
 - "Enabled automation" for automation definitions; "running" belongs to runs.
+- "Scheduled automation" for definitions watched by the scheduler; manual enabled
+  automations are runnable but not scheduler watches.
 - "From conversation" for automation creation sourced from a chat/conversation.
 - "Workspace tools" for lower-frequency setup surfaces in Settings.
 
@@ -116,6 +125,9 @@ configuration:
 - Status badges use product labels where the user is deciding what to do next.
 - Stored states may keep backend names, but primary UI should map them to user-facing
   labels such as Ready, Active, Succeeded, Failed, or Needs attention.
+- Count summaries must not mix stored states with product buckets. If a stored state is
+  runnable but not actually running, primary UI should say ready to start, not active or
+  in progress.
 - Loading state is scoped to the initiated action unless the whole surface is blocked.
 
 ### Dark Mode

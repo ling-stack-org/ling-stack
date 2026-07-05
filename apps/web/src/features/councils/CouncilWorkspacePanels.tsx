@@ -8,6 +8,7 @@ import {
   Pin,
   Play,
   Plus,
+  RefreshCw,
   Save,
   Trash2,
 } from "lucide-react";
@@ -132,42 +133,51 @@ export function CouncilWorkspacePanels(props: CouncilWorkspacePanelsProps): JSX.
 
   return (
     <div className={props.settingsToolMode ? "council-workspace-page settings-return-mode" : "council-workspace-page"} aria-label={t("Council Workspace")}>
-      <PageActionHeader
-        title={t("Council Workspace")}
-        description={t("Manage councils, members, health, and channel usage from one workspace.")}
-        meta={(
-          <div className="council-workspace-summary" aria-label={t("Council summary")}>
-            <span>{t("{count} council(s)", { count: props.totalCouncilCount })}</span>
-            <span>{t("{count} active", { count: props.activeCouncilCount })}</span>
-            <span>{t("{count} need attention", { count: props.needsAttentionCount })}</span>
-            <span>{t("{count} custom", { count: props.userCouncilCount })}</span>
-          </div>
-        )}
-        primaryAction={(
-          <button className="primary-button compact-button" type="button" onClick={() => props.onCreateCouncilOpenChange(true)}>
-            <Plus size={14} />
-            {t("Create council")}
-          </button>
-        )}
-        secondaryActions={(
-          <>
-          <button className="secondary-button compact-button" type="button" onClick={() => void props.onRefresh()} aria-label={t("Refresh councils")}>
-            <span>{t("Refresh")}</span>
-          </button>
-          <button className="secondary-button compact-button" type="button" onClick={props.onOpenAiTeammates} aria-label={t("Open AI Teammates")}>
-            <span>{t("Open AI Teammates")}</span>
-          </button>
-          </>
-        )}
-        className="council-workspace-header"
-      />
+      {!props.settingsToolMode ? (
+        <PageActionHeader
+          title={t("Council Workspace")}
+          description={t("Manage councils, members, health, and channel usage from one workspace.")}
+          meta={<CouncilWorkspaceSummary {...props} />}
+          primaryAction={(
+            <button className="primary-button compact-button" type="button" onClick={() => props.onCreateCouncilOpenChange(true)}>
+              <Plus size={14} />
+              {t("Create council")}
+            </button>
+          )}
+          secondaryActions={(
+            <>
+              <button className="secondary-button compact-button" type="button" onClick={() => void props.onRefresh()} aria-label={t("Refresh councils")}>
+                <span>{t("Refresh")}</span>
+              </button>
+              <button className="secondary-button compact-button" type="button" onClick={props.onOpenAiTeammates} aria-label={t("Open AI Teammates")}>
+                <span>{t("Open AI Teammates")}</span>
+              </button>
+            </>
+          )}
+          className="council-workspace-header"
+        />
+      ) : null}
 
       <div className="council-workspace-grid">
         <section className="council-workspace-list" aria-label={t("AI Councils")}>
           <div className="council-panel-title">
             <strong>{t("AI Councils")}</strong>
-            {props.aiCouncilsLoading ? <small>{t("Loading")}</small> : <small>{t("{count} council(s)", { count: props.filteredCouncils.length })}</small>}
+            <span className="council-panel-title-actions">
+              {props.aiCouncilsLoading ? <small>{t("Loading")}</small> : <small>{t("{count} council(s)", { count: props.filteredCouncils.length })}</small>}
+              <button
+                className="icon-button compact-icon-button"
+                type="button"
+                onClick={() => void props.onRefresh()}
+                aria-label={t("Refresh councils")}
+                title={t("Refresh councils")}
+                disabled={props.aiCouncilsLoading}
+              >
+                <RefreshCw size={14} />
+              </button>
+            </span>
           </div>
+
+          {props.settingsToolMode ? <CouncilWorkspaceSummary {...props} compact /> : null}
 
           <div className="council-list-toolbar">
             <label className="field council-filter-field">
@@ -249,6 +259,27 @@ export function CouncilWorkspacePanels(props: CouncilWorkspacePanelsProps): JSX.
           )}
         </section>
       </div>
+    </div>
+  );
+}
+
+function CouncilWorkspaceSummary({
+  totalCouncilCount,
+  activeCouncilCount,
+  needsAttentionCount,
+  userCouncilCount,
+  compact = false,
+}: Pick<CouncilWorkspacePanelsProps, "totalCouncilCount" | "activeCouncilCount" | "needsAttentionCount" | "userCouncilCount"> & {
+  readonly compact?: boolean;
+}): JSX.Element {
+  const { t } = useI18n();
+
+  return (
+    <div className={compact ? "council-workspace-summary compact" : "council-workspace-summary"} aria-label={t("Council summary")}>
+      <span>{t("{count} council(s)", { count: totalCouncilCount })}</span>
+      <span>{t("{count} active", { count: activeCouncilCount })}</span>
+      <span>{t("{count} need attention", { count: needsAttentionCount })}</span>
+      <span>{t("{count} custom", { count: userCouncilCount })}</span>
     </div>
   );
 }
@@ -412,7 +443,13 @@ function CouncilMembersPanel(props: CouncilWorkspacePanelsProps & { readonly mut
     <section aria-label={t("Council members")} className="council-detail-section council-members-panel">
       <div className="council-panel-title">
         <strong>{t("Council members")}</strong>
-        <small>{props.membersLoading ? t("Loading council members...") : t("{count} enabled members", { count: props.members.filter((member) => member.enabled).length })}</small>
+        <span className="council-panel-title-actions">
+          <small>{props.membersLoading ? t("Loading council members...") : t("{count} enabled members", { count: props.members.filter((member) => member.enabled).length })}</small>
+          <button className="secondary-button compact-button" type="button" onClick={props.onOpenAiTeammates}>
+            <ArrowRight size={14} />
+            {t("Manage teammates")}
+          </button>
+        </span>
       </div>
       {props.membersError ? <p className="inline-error">{props.membersError}</p> : null}
       {props.availableTeammates.length === 0 ? (

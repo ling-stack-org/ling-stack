@@ -125,6 +125,12 @@ export function GlobalWorkBoardPage({
   const waitingOptions = [...new Set(scopedItems.map((item) => item.waitingReason).filter(Boolean))].sort() as WorkItemWaitingReason[];
   const stats = useMemo(() => readWorkBoardStats(items), [items]);
   const visibleGroups = useMemo(() => buildVisibleWorkBoardGroups(filteredItems, activeScope), [activeScope, filteredItems]);
+  const settingsSummary = t("Work summary: {actionable} need action · {blocked} blocked · {active} active · {history} history", {
+    actionable: stats.actionable,
+    blocked: stats.blocked,
+    active: stats.active,
+    history: stats.completed,
+  });
   const filterSummary = readFilterSummary({
     channelName: channelFilter ? channelById.get(channelFilter)?.name : undefined,
     statusFilter,
@@ -248,6 +254,7 @@ export function GlobalWorkBoardPage({
             {settingsToolMode ? (
               <div className="work-board-settings-toolbar">
                 {workBoardTabs}
+                <span className="work-board-settings-summary" title={settingsSummary}>{settingsSummary}</span>
                 {filterToggleButton}
                 {clearFiltersButton}
                 <button className="secondary-button compact-button" type="button" onClick={onRefresh}>
@@ -502,12 +509,14 @@ function scopeDescription(scope: WorkBoardScope): string {
 
 function readWorkBoardStats(items: readonly WorkItemView[]): {
   readonly actionable: number;
+  readonly active: number;
   readonly running: number;
   readonly blocked: number;
   readonly completed: number;
 } {
   return {
     actionable: items.filter(isActionableWorkItem).length,
+    active: items.filter((item) => !isTerminalWorkItemView(item)).length,
     running: items.filter((item) => item.status === "running").length,
     blocked: items.filter((item) => item.status === "blocked" || item.status === "waiting").length,
     completed: items.filter(isTerminalWorkItemView).length,

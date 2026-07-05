@@ -1,4 +1,4 @@
-import type { AutomationDefinition, AutomationRun } from "../../types.js";
+import type { AutomationDefinition, AutomationDraft, AutomationRun, AutomationSchedulerState } from "../../types.js";
 
 export type AutomationTab = "enabled" | "paused" | "failed" | "succeeded" | "history";
 
@@ -8,8 +8,30 @@ export interface AutomationTabItem {
   readonly count: number;
 }
 
+export interface AutomationPageSummary {
+  readonly totalDefinitions: number;
+  readonly enabledDefinitions: number;
+  readonly pausedDefinitions: number;
+  readonly scheduledWatchCount: number;
+  readonly runningRunCount: number;
+  readonly failedRecentRunCount: number;
+  readonly readyDraftCount: number;
+  readonly errorDefinitionCount: number;
+  readonly attentionCount: number;
+}
+
+export type AutomationTranslate = (
+  value: string,
+  values?: Readonly<Record<string, string | number>>,
+) => string;
+
+export interface AutomationSchedulerCopy {
+  readonly statusLabel: string;
+  readonly summary: string;
+}
+
 export function activeAutomations(automations: readonly AutomationDefinition[]): readonly AutomationDefinition[] {
-  return automations.filter((automation) => automation.status !== "paused" && automation.status !== "archived");
+  return automations.filter((automation) => automation.status === "enabled");
 }
 
 export function pausedAutomations(automations: readonly AutomationDefinition[]): readonly AutomationDefinition[] {
@@ -61,4 +83,103 @@ export function visibleAutomationsForTab(input: {
 
 export function isSchedulerRunning(status: string | undefined): boolean {
   return status === "running";
+}
+
+export function summarizeAutomationsPage({
+  automations,
+  automationRuns,
+  automationDrafts,
+  scheduler,
+}: {
+  readonly automations: readonly AutomationDefinition[];
+  readonly automationRuns: readonly AutomationRun[];
+  readonly automationDrafts: readonly AutomationDraft[];
+  readonly scheduler?: AutomationSchedulerState;
+}): AutomationPageSummary {
+  const recentRuns = automationRuns.slice(0, 8);
+  const enabledDefinitions = automations.filter((automation) => automation.status === "enabled").length;
+  const pausedDefinitions = automations.filter((automation) => automation.status === "paused").length;
+  const errorDefinitionCount = automations.filter((automation) => automation.status === "error").length;
+  const runningRunCount = recentRuns.filter(isAutomationRunInProgress).length;
+  const failedRecentRunCount = recentRuns.filter((run) => run.status === "failed").length;
+  const readyDraftCount = automationDrafts.filter((draft) => draft.status === "ready_for_confirmation").length;
+  return {
+    totalDefinitions: automations.filter((automation) => automation.status !== "archived").length,
+    enabledDefinitions,
+    pausedDefinitions,
+    scheduledWatchCount: scheduler?.automationCount ?? 0,
+    runningRunCount,
+    failedRecentRunCount,
+    readyDraftCount,
+    errorDefinitionCount,
+    attentionCount: readyDraftCount + failedRecentRunCount + errorDefinitionCount,
+  };
+}
+
+export function buildAutomationTabs({
+  enabled,
+  paused,
+  needsAttention,
+  succeeded,
+  recentRuns,
+  t,
+}: {
+  readonly enabled: readonly AutomationDefinition[];
+  readonly paused: readonly AutomationDefinition[];
+  readonly needsAttention: readonly AutomationDefinition[];
+  readonly succeeded: readonly AutomationDefinition[];
+  readonly recentRuns: readonly AutomationRun[];
+  readonly t: AutomationTranslate;
+}): readonly AutomationTabItem[] {
+  return [
+    { id: "enabled", label: t("Enabled automations"), count: enabled.length },
+    { id: "paused", label: t("Paused"), count: paused.length },
+    { id: "failed", label: t("Needs attention"), count: needsAttention.length },
+    { id: "succeeded", label: t("Succeeded"), count: succeeded.length },
+    { id: "history", label: t("Recent history"), count: recentRuns.length },
+  ];
+}
+
+export function automationSchedulerCopy({
+  scheduler,
+  t,
+}: {
+  readonly scheduler?: AutomationSchedulerState;
+  readonly t: AutomationTranslate;
+}): AutomationSchedulerCopy {
+  const isRunning = scheduler?.status === "running";
+  const isError = scheduler?.status === "error";
+  const scheduleCount = scheduler?.automationCount ?? 0;
+  if (isError) {
+    return {
+      statusLabel: t("Scheduler needs attention"),
+      summary: t("Scheduler needs attention: {message}", { message: scheduler?.lastErrorMessage || t("Unknown error") }),
+    };
+  }
+  if (isRunning && scheduleCount > 0) {
+    return {
+      statusLabel: t("Scheduler started"),
+      summary: t("Watching {count} scheduled automations.", { count: scheduleCount }),
+    };
+  }
+  if (isRunning) {
+    return {
+      statusLabel: t("Scheduler started"),
+      summary: t("No enabled scheduled automations. Manual automations can still run now."),
+    };
+  }
+  if (scheduleCount > 0) {
+    return {
+      statusLabel: t("Scheduler stopped"),
+      summary: t("{count} scheduled automations are ready. Start scheduler to run them automatically.", { count: scheduleCount }),
+    };
+  }
+  return {
+    statusLabel: t("Scheduler stopped"),
+    summary: t("No enabled scheduled automations yet. Create or edit one with a schedule."),
+  };
+}
+
+function isAutomationRunInProgress(run: AutomationRun): boolean {
+  return run.status === "running" || run.status === "queued" || run.status === "waiting_for_approval";
 }

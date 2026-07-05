@@ -11,11 +11,13 @@ export function SettingsSubnav({
   label,
   options,
   activeId,
+  showDescription = false,
   onChange,
 }: {
   readonly label: string;
   readonly options: readonly SettingsSubnavOption[];
   readonly activeId: string;
+  readonly showDescription?: boolean;
   readonly onChange: (id: string) => void;
 }): JSX.Element {
   const { t } = useI18n();
@@ -38,7 +40,7 @@ export function SettingsSubnav({
           </button>
         ))}
       </div>
-      {activeOption?.description ? <p className="settings-subnav-description">{t(activeOption.description)}</p> : null}
+      {showDescription && activeOption?.description ? <p className="settings-subnav-description">{t(activeOption.description)}</p> : null}
     </div>
   );
 }

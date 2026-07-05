@@ -1358,6 +1358,60 @@
   background: #cfcfcf;
 }
 
+.provider-readiness-strip {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+}
+
+.provider-workbench-header:not(.settings-return-mode) .provider-readiness-strip {
+  margin-top: -4px;
+  margin-bottom: 10px;
+}
+
+.provider-readiness-strip span {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+  min-height: 26px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface-panel);
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.provider-readiness-strip span.ready {
+  border-color: color-mix(in srgb, var(--success) 38%, var(--border));
+  background: color-mix(in srgb, var(--success-soft) 72%, var(--surface-panel));
+  color: var(--success);
+}
+
+.provider-readiness-strip span.attention {
+  border-color: color-mix(in srgb, var(--danger) 36%, var(--border));
+  background: color-mix(in srgb, var(--danger-soft) 74%, var(--surface-panel));
+  color: var(--danger);
+}
+
+.provider-readiness-strip span.quiet {
+  background: var(--surface-panel-strong);
+}
+
+.provider-readiness-strip strong {
+  color: currentColor;
+  font-size: 13px;
+  font-weight: 760;
+}
+
+.provider-readiness-strip small {
+  color: currentColor;
+  font-size: 11px;
+  font-weight: 700;
+}
+
 .provider-toolbar-controls {
   display: flex;
   align-items: center;

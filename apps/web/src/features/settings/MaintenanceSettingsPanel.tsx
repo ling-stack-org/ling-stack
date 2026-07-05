@@ -44,7 +44,7 @@ export function StartupDiagnosticsSettingsPanel({
       <section className="panel settings-panel developer-settings-panel" aria-labelledby="developer-settings-title">
         <div className="panel-title">
           <Database size={18} />
-          <h2 id="developer-settings-title">{t("Developer")}</h2>
+          <h2 id="developer-settings-title">{t("Startup and diagnostics")}</h2>
         </div>
         <div className="developer-settings-stack">
           <StartupReadinessSection
@@ -59,8 +59,11 @@ export function StartupDiagnosticsSettingsPanel({
           <div className="settings-action-box">
             <div>
               <strong>{t("Run Diagnostics")}</strong>
-              <small>{t("Inspect raw runs, events, artifacts, approvals, shell snapshots, and thread bindings for support debugging.")}</small>
             </div>
+            <details className="settings-compact-details">
+              <summary>{t("What diagnostics include")}</summary>
+              <span>{t("Inspect raw runs, events, artifacts, approvals, shell snapshots, and thread bindings for support debugging.")}</span>
+            </details>
             <button className="secondary-button" type="button" onClick={onOpenRunDiagnostics}>
               <Database size={16} />
               {t("Open Run Diagnostics")}
@@ -122,24 +125,30 @@ function StartupReadinessSection({
         ))}
       </div>
 
-      <div className="startup-warmup-list" aria-label={t("Warmup phases")}>
-        {STARTUP_OPTIONAL_PHASES.map((phase) => (
-          <StartupPhaseRow key={phase} phase={phase} status={startupStatus?.phases[phase] ?? "not_started"} t={t} />
-        ))}
-      </div>
-
-      {startupStatus?.diagnostics.length ? (
-        <div className="startup-diagnostic-list">
-          {startupStatus.diagnostics.slice(0, 8).map((diagnostic) => (
-            <div key={`${diagnostic.phase}:${diagnostic.code}:${diagnostic.message}`} className={`startup-diagnostic ${diagnostic.level}`}>
-              <div>
-                <strong>{diagnostic.phase} / {diagnostic.code}{diagnostic.count && diagnostic.count > 1 ? ` x${diagnostic.count}` : ""}</strong>
-                <span>{diagnostic.message}</span>
-              </div>
-              {diagnostic.nextAction ? <small>{diagnostic.nextAction}</small> : null}
-            </div>
+      <details className="settings-compact-details startup-details">
+        <summary>{t("Warmup phases")}</summary>
+        <div className="startup-warmup-list" aria-label={t("Warmup phases")}>
+          {STARTUP_OPTIONAL_PHASES.map((phase) => (
+            <StartupPhaseRow key={phase} phase={phase} status={startupStatus?.phases[phase] ?? "not_started"} t={t} />
           ))}
         </div>
+      </details>
+
+      {startupStatus?.diagnostics.length ? (
+        <details className="settings-compact-details startup-details">
+          <summary>{t("Startup diagnostics")}: {startupStatus.diagnostics.length}</summary>
+          <div className="startup-diagnostic-list">
+            {startupStatus.diagnostics.slice(0, 8).map((diagnostic) => (
+              <div key={`${diagnostic.phase}:${diagnostic.code}:${diagnostic.message}`} className={`startup-diagnostic ${diagnostic.level}`}>
+                <div>
+                  <strong>{diagnostic.phase} / {diagnostic.code}{diagnostic.count && diagnostic.count > 1 ? ` x${diagnostic.count}` : ""}</strong>
+                  <span>{diagnostic.message}</span>
+                </div>
+                {diagnostic.nextAction ? <small>{diagnostic.nextAction}</small> : null}
+              </div>
+            ))}
+          </div>
+        </details>
       ) : (
         <div className="empty-state compact-empty startup-empty">
           {startupStatusLoading ? <Loader2 className="spin" /> : <ShieldCheck />}

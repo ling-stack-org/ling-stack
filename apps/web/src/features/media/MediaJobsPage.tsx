@@ -24,9 +24,9 @@ import {
   PageActionHeader,
 } from "../../shared/components/index.js";
 import {
-  isMediaJobActiveStatus,
   mediaArtifactsForJob,
   mediaOperationLabel,
+  summarizeMediaJobs,
   type MediaJobStatusFilter,
 } from "./media-job-view-models.js";
 
@@ -74,7 +74,7 @@ export function MediaJobsPage({
   const selectedProviderCanRun = Boolean(selectedProvider && canUseGenerationProviderForOperation(selectedProvider, form.operation));
   const hasRunnableGenerationModel = runnableProvidersForOperation.length > 0;
   const canCreate = Boolean(selectedProviderCanRun && form.prompt.trim());
-  const activeCount = jobs.filter((job) => isMediaJobActiveStatus(job.status)).length;
+  const jobSummary = summarizeMediaJobs({ jobs, artifactsByJob, runningJobId });
   const selectedJob = jobs.find((job) => job.id === selectedJobId) ?? jobs[0];
   const selectedProviderForJob = selectedJob ? providers.find((provider) => provider.id === selectedJob.providerPresetId) : undefined;
   const selectedJobArtifacts = selectedJob ? artifactsByJob[selectedJob.id] ?? [] : [];
@@ -103,10 +103,12 @@ export function MediaJobsPage({
         title={<span id="media-jobs-title">{t("Generation tasks")}</span>}
         description={(
           <>
-            {t("{modelCount} available generation models · {taskCount} history tasks · {activeCount} active", {
+            {t("{modelCount} available generation models · {taskCount} tasks · {generatingCount} generating · {readyCount} ready · {attentionCount} need attention", {
               modelCount: runnableProvidersForOperation.length,
-              taskCount: jobs.length,
-              activeCount,
+              taskCount: jobSummary.taskCount,
+              generatingCount: jobSummary.generatingCount,
+              readyCount: jobSummary.readyCount,
+              attentionCount: jobSummary.attentionCount,
             })}
           </>
         )}

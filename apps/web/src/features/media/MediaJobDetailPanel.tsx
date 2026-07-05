@@ -6,13 +6,15 @@ import { formatDateTime } from "../../lib/formatting.js";
 import { ArtifactRow, StatusActionRow } from "../../shared/components/index.js";
 import type { MediaJob, RunArtifact } from "../../types.js";
 import {
+  deriveMediaJobProductState,
   formatMediaJobError,
   mediaJobCanRun,
+  mediaJobPrimaryActionView,
+  mediaJobProductStateLabel,
   mediaJobRunDisabledReason,
   mediaJobInputValue,
-  mediaJobNeedsRecovery,
   mediaOperationLabel,
-  mediaJobStatusLabel,
+  mediaJobStatusBadgeClass,
 } from "./media-job-view-models.js";
 
 export function MediaJobDetailPanel({
@@ -86,13 +88,15 @@ function MediaJobDetail({
 }): JSX.Element {
   const { t } = useI18n();
   const primaryArtifact = artifacts[0];
+  const productState = deriveMediaJobProductState({ job, artifacts, runningJobId: isRunning ? job.id : "" });
   const canRun = mediaJobCanRun(job, artifacts);
-  const needsRecovery = mediaJobNeedsRecovery(job, artifacts);
+  const needsRecovery = productState === "needs_attention";
   const size = mediaJobInputValue(job.input, ["size", "resolution", "image_size", "imageSize"]);
   const seed = mediaJobInputValue(job.input, ["seed"]);
   const steps = mediaJobInputValue(job.input, ["steps", "num_steps", "numSteps"]);
   const runDisabledReason = mediaJobRunDisabledReason({ job, artifacts, isLoading, isRunning });
-  const runDisabledTitle = runDisabledReason ? t(runDisabledReason, { status: t(mediaJobStatusLabel(job.status)) }) : t("Run generation");
+  const runDisabledTitle = runDisabledReason ? t(runDisabledReason) : t("Run generation");
+  const actionView = mediaJobPrimaryActionView({ job, artifacts, isLoading, isRunning });
   return (
     <div className="media-job-detail-content">
       <div className="media-job-detail-head">
@@ -108,40 +112,44 @@ function MediaJobDetail({
       </div>
       <h2>{t(mediaOperationLabel(job.operation))}</h2>
       <p className="media-job-detail-summary">
-        {job.status === "succeeded"
+        {productState === "completed"
           ? t("Successfully generated {count} artifact based on the provided prompt.", { count: artifacts.length })
+          : productState === "generating"
+            ? t("Generation is running. Results will appear here when it finishes.")
           : needsRecovery
             ? (job.errorMessage ? formatMediaJobError(job.errorMessage, t) : t("No usable result was returned. Try another run or choose a different model."))
-            : t("This task is ready to run when model settings are satisfied.")}
+            : t("This task is ready to start when model settings are satisfied.")}
       </p>
 
       {primaryArtifact ? (
         <MediaJobResultHero artifact={primaryArtifact} cwd={cwd} />
       ) : (
-        <span className={`media-job-detail-preview empty ${job.status}`}>
+        <span className={`media-job-detail-preview empty ${job.status} ${productState}`}>
           {isRunning ? <Loader2 className="spin" size={22} /> : needsRecovery ? <CircleAlert size={22} /> : <ImageIcon size={22} />}
-          <strong>{isRunning ? t("Running") : needsRecovery ? t("Needs recovery") : t("No result yet")}</strong>
+          <strong>{productState === "generating" ? t("Generating") : needsRecovery ? t("Needs attention") : t("No result yet")}</strong>
         </span>
       )}
 
       <StatusActionRow
         className="media-job-detail-control-row"
         title={t("Generation controls")}
-        description={runDisabledReason ? runDisabledTitle : t("Run this task or copy its prompt and parameters.")}
-        status={<span className={`status-badge ${job.status}`}>{t(mediaJobStatusLabel(job.status))}</span>}
+        description={actionView.visible ? (runDisabledReason ? runDisabledTitle : t("Start or retry this task, or copy its prompt and parameters.")) : t("This task already has generated results.")}
+        status={<span className={`status-badge ${mediaJobStatusBadgeClass(productState)}`}>{t(mediaJobProductStateLabel(productState))}</span>}
         actions={(
           <>
-            <button
-              className={needsRecovery ? "primary-button" : "secondary-button"}
-              type="button"
-              onClick={onRun}
-              disabled={isLoading || isRunning || !canRun}
-              title={runDisabledTitle}
-              aria-label={runDisabledReason ? `${needsRecovery ? t("Run again") : t("Run")}. ${runDisabledTitle}` : undefined}
-            >
-              {isRunning ? <Loader2 className="spin" size={16} /> : <Play size={16} />}
-              {isRunning ? t("Running") : needsRecovery ? t("Run again") : t("Run")}
-            </button>
+            {actionView.visible ? (
+              <button
+                className={actionView.emphasis === "primary" ? "primary-button" : "secondary-button"}
+                type="button"
+                onClick={onRun}
+                disabled={isLoading || isRunning || !canRun || actionView.disabled}
+                title={runDisabledTitle}
+                aria-label={runDisabledReason ? `${t(actionView.label)}. ${runDisabledTitle}` : undefined}
+              >
+                {isRunning ? <Loader2 className="spin" size={16} /> : <Play size={16} />}
+                {t(actionView.label)}
+              </button>
+            ) : null}
             <button className="secondary-button" type="button" onClick={onCopy}>
               <Copy size={16} />
               {t("Copy details")}
@@ -164,7 +172,7 @@ function MediaJobDetail({
 
       <div className="media-job-detail-meta runtime-meta">
         <span>{t("Provider")}<strong>{providerName}</strong></span>
-        <span>{t("Status")}<strong>{t(mediaJobStatusLabel(job.status))}</strong></span>
+        <span>{t("Status")}<strong>{t(mediaJobProductStateLabel(productState))}</strong></span>
         <span>{t("Created")}<strong>{formatDateTime(job.createdAt)}</strong></span>
         <span>{t("Updated")}<strong>{formatDateTime(job.updatedAt)}</strong></span>
       </div>

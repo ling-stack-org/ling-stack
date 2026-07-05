@@ -727,7 +727,6 @@ export function SkillLibrarySettingsPanel({ cwd, refreshToken = 0 }: { readonly 
       <header className="settings-skill-library-head">
         <div>
           <h2 id="settings-skill-library-title">{t("Skill library")}</h2>
-          <p>{t("Inspect reusable skill definitions, source health, and workspace skills.")}</p>
         </div>
         <div className="settings-skill-library-actions">
           <button
@@ -766,9 +765,7 @@ export function SkillLibrarySettingsPanel({ cwd, refreshToken = 0 }: { readonly 
       <div className="settings-skill-library-stats" aria-label={t("Skill library stats")}>
         <span><small>{t("Total skills")}</small><strong>{stats.total}</strong></span>
         <span><small>{t("Bindable")}</small><strong>{stats.bindable}</strong></span>
-        <span><small>{t("Drafts")}</small><strong>{stats.draft}</strong></span>
         <span><small>{t("Blocked")}</small><strong>{stats.blocked}</strong></span>
-        <span><small>{t("Source-backed")}</small><strong>{stats.sourceBacked}</strong></span>
         <span><small>{t("Missing source")}</small><strong>{stats.missingSource}</strong></span>
       </div>
 

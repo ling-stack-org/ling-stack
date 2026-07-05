@@ -146,7 +146,8 @@ test("main pages and workspace tools follow dark theme tokens", async ({ page })
     ".settings-layout",
     ".skill-governance-settings-panel",
     ".settings-skill-governance",
-    ".settings-skill-governance-mode-guide",
+    ".settings-skill-governance-field",
+    ".settings-compact-details summary",
     ".settings-skill-governance-fixed span",
   ]);
 

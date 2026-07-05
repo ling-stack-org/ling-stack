@@ -29,6 +29,7 @@ test("language switcher toggles Chinese and English UI labels", async ({ page })
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
   await page.getByLabel("Settings sections").getByRole("button", { name: /Interface preferences/ }).click();
   await expect(page.locator(".interface-settings-panel").getByRole("heading", { name: "Interface preferences" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Interface preferences" })).toHaveCount(1);
   await page.getByRole("button", { name: "中文" }).click();
   await expect(page.locator("html")).toHaveAttribute("lang", "zh-CN");
   await expect(page.locator(".interface-settings-panel").getByRole("heading", { name: "界面偏好" })).toBeVisible();
@@ -48,7 +49,7 @@ test("language switcher toggles Chinese and English UI labels", async ({ page })
   await expect(page.locator(".channel-progress-popover")).toBeVisible();
   await expect(page.locator(".channel-side-panel")).toHaveCount(0);
   await page.locator(".task-toolbar-panel").click();
-  await expect(page.locator(".channel-side-panel")).toHaveAttribute("aria-label", "Channel workspace dock");
+  await expect(page.locator(".channel-side-panel")).toHaveAttribute("aria-label", "频道工作区面板");
   await expect(page.locator(".channel-progress-popover")).toHaveCount(0);
 
   await page.reload();
@@ -297,24 +298,31 @@ test("settings configuration entries open nested tools directly", async ({ page 
   await expect(settingsSections).not.toContainText("Profile, preferences, and identity");
   await expect(settingsSections.getByRole("button", { name: "Configuration overview" })).toHaveCount(0);
   await expect(settingsSections.getByRole("button", { name: "Model Workbench" })).toBeVisible();
+  await expect(settingsSections.getByRole("button", { name: "Model Workbench" })).toHaveAttribute("title", "Model Workbench");
   await expect(settingsSections.getByRole("button", { name: "Teammate Management" })).toBeVisible();
   await expect(settingsSections.getByRole("button", { name: "AI Teammates" })).toHaveCount(0);
   await expect(settingsSections.getByRole("button", { name: "Council Workspace" })).toBeVisible();
+  await expect(settingsSections.getByRole("button", { name: "Council Workspace" })).toHaveAttribute("title", "Council Workspace");
   await expect(settingsSections.getByRole("button", { name: "AI Councils" })).toHaveCount(0);
   await expect(settingsSections.getByRole("button", { name: "Work Board" })).toBeVisible();
   await expect(settingsSections.getByRole("button", { name: "Default authorization" })).toBeVisible();
+  await expect(page.locator(".settings-page-section-head")).toHaveCount(0);
+  await expect(page.locator(".settings-subnav-description")).toHaveCount(0);
   await expect(page.locator(".settings-workspace-tools")).toHaveCount(0);
 
   await settingsSections.getByRole("button", { name: "Council Workspace" }).click();
   await expect(settingsSections).toBeVisible();
   await expect(page.getByLabel("Ling Stack navigation")).toHaveCount(0);
-  await expect(page.getByRole("heading", { name: "Council Workspace", level: 2 })).toBeVisible();
+  await expect(page.locator(".council-workspace-page[aria-label='Council Workspace']")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Council Workspace", level: 1 })).toHaveCount(0);
   await expect(settingsSections.getByRole("button", { name: "Council Workspace" })).toHaveClass(/active/);
   await expect(page.locator(".settings-tool-return-row")).toHaveCount(0);
   await expect(page.locator(".settings-workspace-tools")).toHaveCount(0);
 
   await settingsSections.getByRole("button", { name: "Default authorization" }).click();
   await expect(settingsSections.getByRole("button", { name: /Default authorization/ })).toHaveClass(/active/);
+  await expect(page.locator(".settings-page-section-head")).toHaveCount(0);
+  await expect(page.locator(".settings-subnav-description")).toHaveCount(0);
   await expect(page.locator(".settings-global-approval-card")).toHaveCount(1);
   await page.locator(".settings-global-approval-card").getByRole("button", { name: "Ask first" }).click();
   await expect.poll(() => state.workspaceSettings.defaultPermissionMode).toBe("ask_everything");

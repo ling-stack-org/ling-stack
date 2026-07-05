@@ -7,13 +7,13 @@ import { StatusActionRow } from "../../shared/components/index.js";
 import type { MediaJob, MediaJobStatus, ProviderPreset, RunArtifact } from "../../types.js";
 import {
   mediaArtifactsForJob,
-  mediaJobCanRun,
-  mediaJobMatchesFilter,
-  mediaJobNeedsRecovery,
+  deriveMediaJobProductState,
+  mediaJobMatchesProductFilter,
+  mediaJobPrimaryActionView,
+  mediaJobProductStateLabel,
   mediaJobRunDisabledReason,
   mediaJobStatusBadgeClass,
   mediaJobStatusFilters,
-  mediaJobStatusLabel,
   mediaOperationLabel,
   type MediaJobStatusFilter,
 } from "./media-job-view-models.js";
@@ -44,7 +44,14 @@ export function MediaJobList({
   readonly onRun: (jobId: string) => void;
 }): JSX.Element {
   const { t } = useI18n();
-  const filteredJobs = jobs.filter((job) => mediaJobMatchesFilter(job, statusFilter));
+  const filteredJobs = jobs.filter((job) =>
+    mediaJobMatchesProductFilter({
+      job,
+      artifacts: artifactsByJob[job.id] ?? [],
+      runningJobId,
+      filter: statusFilter,
+    })
+  );
 
   return (
     <section className="media-job-list-panel" aria-labelledby="media-jobs-title">
@@ -72,23 +79,27 @@ export function MediaJobList({
             const provider = providers.find((item) => item.id === job.providerPresetId);
             const jobArtifacts = artifactsByJob[job.id] ?? [];
             const mediaArtifacts = mediaArtifactsForJob(jobArtifacts);
-            const needsRecovery = mediaJobNeedsRecovery(job, jobArtifacts);
-            const isRunnable = mediaJobCanRun(job, jobArtifacts);
             const isRunningJob = runningJobId === job.id;
+            const productState = deriveMediaJobProductState({ job, artifacts: jobArtifacts, runningJobId });
+            const actionView = mediaJobPrimaryActionView({
+              job,
+              artifacts: jobArtifacts,
+              isLoading,
+              isRunning: isRunningJob,
+            });
             const operationLabel = t(mediaOperationLabel(job.operation));
-            const statusLabel = t(mediaJobStatusLabel(job.status));
-            const actionLabel = job.status === "failed" || job.status === "cancelled" ? t("Run again") : t("Run");
+            const statusLabel = t(mediaJobProductStateLabel(productState));
             const disabledReason = mediaJobRunDisabledReason({
               job,
               artifacts: jobArtifacts,
               isLoading,
               isRunning: isRunningJob,
             });
-            const disabledTitle = disabledReason ? t(disabledReason, { status: statusLabel }) : t("Run generation");
+            const disabledTitle = disabledReason ? t(disabledReason) : t(actionView.label);
             return (
               <article
                 key={job.id}
-                className={`media-job-row ${job.status}${needsRecovery ? " needs-recovery" : ""}${selectedJobId === job.id ? " selected" : ""}`}
+                className={`media-job-row ${job.status} ${productState}${productState === "needs_attention" ? " needs-recovery" : ""}${selectedJobId === job.id ? " selected" : ""}`}
                 onClick={() => onSelectJob(job.id)}
                 onKeyDown={(event) => {
                   if (event.key === "Enter" || event.key === " ") {
@@ -101,7 +112,7 @@ export function MediaJobList({
               >
                 <StatusActionRow
                   className="media-job-row-content"
-                  leading={<MediaJobResultPreview artifact={mediaArtifacts[0]} count={mediaArtifacts.length} cwd={cwd} status={job.status} />}
+                  leading={<MediaJobResultPreview artifact={mediaArtifacts[0]} count={mediaArtifacts.length} cwd={cwd} status={job.status} productState={productState} />}
                   title={<strong>{operationLabel}</strong>}
                   description={`${provider?.displayName ?? t("Unknown provider")} · ${formatDateTime(job.createdAt)}`}
                   meta={(
@@ -110,24 +121,24 @@ export function MediaJobList({
                       <time>{formatDateTime(job.updatedAt)}</time>
                     </>
                   )}
-                  status={<span className={`status-badge ${mediaJobStatusBadgeClass(job.status)}`}>{statusLabel}</span>}
-                  actions={(
+                  status={<span className={`status-badge ${mediaJobStatusBadgeClass(productState)}`}>{statusLabel}</span>}
+                  actions={actionView.visible ? (
                     <button
-                      className={needsRecovery ? "primary-button compact-button" : "secondary-button compact-button"}
+                      className={actionView.emphasis === "primary" ? "primary-button compact-button" : "secondary-button compact-button"}
                       type="button"
                       onClick={(event) => {
                         event.stopPropagation();
                         onSelectJob(job.id);
                         onRun(job.id);
                       }}
-                      disabled={isLoading || isRunningJob || !isRunnable}
+                      disabled={actionView.disabled}
                       title={disabledTitle}
-                      aria-label={disabledReason ? `${actionLabel}. ${disabledTitle}` : actionLabel}
+                      aria-label={disabledReason ? `${t(actionView.label)}. ${disabledTitle}` : t(actionView.label)}
                     >
                       {isRunningJob ? <Loader2 className="spin" size={14} /> : <Play size={14} />}
-                      {isRunningJob ? t("Running") : actionLabel}
+                      {t(actionView.label)}
                     </button>
-                  )}
+                  ) : undefined}
                 />
               </article>
             );
@@ -143,11 +154,13 @@ function MediaJobResultPreview({
   count,
   cwd,
   status,
+  productState,
 }: {
   readonly artifact?: RunArtifact;
   readonly count: number;
   readonly cwd: string;
   readonly status: MediaJobStatus;
+  readonly productState: ReturnType<typeof deriveMediaJobProductState>;
 }): JSX.Element {
   const { t } = useI18n();
   if (artifact && isImageArtifact(artifact)) {
@@ -167,8 +180,8 @@ function MediaJobResultPreview({
     );
   }
   return (
-    <span className={`media-job-result-preview empty ${status}`} aria-label={t(mediaJobStatusLabel(status))}>
-      {status === "running" ? <Loader2 className="spin" size={20} /> : <CircleAlert size={20} />}
+    <span className={`media-job-result-preview empty ${status} ${productState}`} aria-label={t(mediaJobProductStateLabel(productState))}>
+      {productState === "generating" ? <Loader2 className="spin" size={20} /> : <CircleAlert size={20} />}
     </span>
   );
 }
@@ -177,11 +190,14 @@ function mediaJobFilterLabel(filter: MediaJobStatusFilter): string {
   if (filter === "all") {
     return "All";
   }
-  if (filter === "succeeded") {
-    return "Succeeded";
+  if (filter === "ready_to_start") {
+    return "Ready to start";
   }
-  if (filter === "failed") {
-    return "Failed";
+  if (filter === "generating") {
+    return "Generating";
   }
-  return "Active";
+  if (filter === "needs_attention") {
+    return "Needs attention";
+  }
+  return "Completed";
 }

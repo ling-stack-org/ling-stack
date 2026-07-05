@@ -108,9 +108,6 @@ export function ExternalWorkSettingsPanel({
           <SettingsMetaLine
             label={t("External work status")}
             items={[
-              { label: "Channel", value: `${selectedChannel.name} (${selectedChannel.id})` },
-              { label: "Bound path", value: selectedChannel.boundPath ?? t("not set") },
-              { label: "Workflow", value: externalWorkStatus?.workflow.path ?? "WORKFLOW.md" },
               { label: "Workflow status", value: workflowStatusLabel(externalWorkStatus) },
               { label: "Source", value: externalWorkStatus?.workflow.sourceKind ?? "unknown" },
               { label: "Target", value: externalWorkTargetLabel(externalWorkStatus) },
@@ -118,6 +115,17 @@ export function ExternalWorkSettingsPanel({
               { label: "Background", value: externalWorkStatus?.background.status ?? "not_configured" },
             ]}
           />
+          <details className="settings-compact-details">
+            <summary>{t("Details")}</summary>
+            <SettingsMetaLine
+              label={t("External work status")}
+              items={[
+                { label: "Channel", value: `${selectedChannel.name} (${selectedChannel.id})` },
+                { label: "Bound path", value: selectedChannel.boundPath ?? t("not set") },
+                { label: "Workflow", value: externalWorkStatus?.workflow.path ?? "WORKFLOW.md" },
+              ]}
+            />
+          </details>
 
           {!selectedChannel.boundPath ? (
             <div className="inline-warning">
@@ -199,16 +207,19 @@ export function ExternalWorkSettingsPanel({
           <div className="settings-action-box">
             <div>
               <strong>{t("External token")}</strong>
-              <small>
-                {canConfigureSecret
-                  ? t("Saved to system Keychain; token value is never shown in Ling.")
-                  : t("Create a valid WORKFLOW.md before saving an external token.")}
-              </small>
             </div>
             <SettingsMetaLine
               label={t("External credential status")}
               items={[{ label: "Secret ref", value: secretRef ?? t("not configured") }]}
             />
+            <details className="settings-compact-details">
+              <summary>{t("Token storage")}</summary>
+              <span>
+                {canConfigureSecret
+                  ? t("Saved to system Keychain; token value is never shown in Ling.")
+                  : t("Create a valid WORKFLOW.md before saving an external token.")}
+              </span>
+            </details>
             <div className="external-work-secret-form">
               <label className="field">
                 <span>{t("Token")}</span>

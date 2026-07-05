@@ -2673,7 +2673,12 @@ test("channel activity supports mentions, messages, files, links, and topic repl
   const composerInput = channelComposerTextbox(page);
   await expect(page.getByLabel("Message tools").getByRole("button", { name: "Add" })).toBeVisible();
   await page.getByLabel("Message tools").getByRole("button", { name: "Add" }).click();
-  await expect(page.getByRole("menu", { name: "Add" }).getByRole("menuitem", { name: /Attach files/ })).toBeVisible();
+  const addMenu = page.getByRole("menu", { name: "Add" });
+  await expect(addMenu.getByRole("menuitem", { name: /Attach files/ })).toBeVisible();
+  await expect(addMenu.locator(".composer-add-menu-row small")).toHaveCount(0);
+  await expect(addMenu).not.toContainText("Add files or folders to this message");
+  await expect(addMenu).not.toContainText("Plan first, then implement after review");
+  await expect(addMenu).not.toContainText("Set a thread goal");
   await page.getByLabel("Message tools").getByRole("button", { name: "Add" }).click();
   await expect(page.getByLabel("Message tools").getByRole("button", { name: "Mention teammate" })).toBeVisible();
   await expect(page.locator(".channel-composer").getByRole("button", { name: "Send" })).toBeVisible();

@@ -128,6 +128,7 @@ test("AI teammates page creates a durable teammate and opens its private workspa
   const navigation = page.getByLabel("Ling Stack navigation");
   await openSidebarSectionMenu(page, "Teammate actions");
   await expect(navigation.getByRole("menuitem", { name: /New AI teammate/ })).toBeVisible();
+  await expect(navigation.getByText("Choose a role and model. You can adjust details before creating.")).toHaveCount(0);
   await expect(navigation.getByRole("menuitem", { name: /Quick create default teammate/ })).toHaveCount(0);
   await expect(navigation.getByRole("menuitem", { name: /More configuration/ })).toHaveCount(0);
   await expect(navigation.getByRole("menuitem", { name: "New teammate" })).toHaveCount(0);
@@ -268,6 +269,7 @@ test("sidebar teammate create offers model workbench when no ready model exists"
   await expect(navigation.getByRole("menuitem", { name: /Quick create default teammate/ })).toHaveCount(0);
   await expect(navigation.getByRole("menuitem", { name: /New AI teammate/ })).toHaveCount(0);
   await expect(navigation.getByRole("menuitem", { name: /Configure model/ })).toBeVisible();
+  await expect(navigation.getByText("Configure a ready chat model before creating.")).toHaveCount(0);
   await navigation.getByRole("menuitem", { name: /Configure model/ }).click();
 
   await expect(page.getByLabel("Settings sections")).toBeVisible();
@@ -453,7 +455,8 @@ test("AI teammates page links council management to Council Workspace", async ({
   await councilEntry.getByRole("button", { name: "Open Council Workspace" }).click();
   await expect(page.getByLabel("Settings sections")).toBeVisible();
   await expect(page.getByLabel("Ling Stack navigation")).toHaveCount(0);
-  await expect(page.getByRole("heading", { name: "Council Workspace", level: 1 })).toBeVisible();
+  await expect(page.locator(".council-workspace-page[aria-label='Council Workspace']")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Council Workspace", level: 1 })).toHaveCount(0);
   await expect(page.getByLabel("Settings sections").getByRole("button", { name: "Council Workspace" })).toHaveClass(/active/);
   await expect(page.locator(".settings-tool-return-row")).toHaveCount(0);
   await expect(page.getByLabel("Council members")).toContainText("Ling Engineer");
@@ -1450,7 +1453,7 @@ test("AI teammate private chat exposes direct reply guidance and stop controls",
     return isRecord(message) ? message.status : undefined;
   }).toBe("cancelled");
   await expect(page.locator(".teammate-direct-composer").getByRole("button", { name: "停止回复" })).toHaveCount(0);
-  await expect(page.getByLabel("Private message feed").getByText("回复已停止").first()).toBeVisible();
+  await expect(page.getByLabel("私聊消息流").getByText("回复已停止").first()).toBeVisible();
 });
 
 test("AI teammate private chat queues image attachments in direct guidance", async ({ page }) => {

@@ -31,6 +31,9 @@ export type ProviderWorkbenchTranslate = (
 ) => string;
 
 export interface ProviderWorkbenchSummary {
+  readonly totalCount: number;
+  readonly chatReadyCount: number;
+  readonly generationReadyCount: number;
   readonly readyCount: number;
   readonly needsAttentionCount: number;
   readonly missingSecretCount: number;
@@ -58,7 +61,17 @@ export interface ProviderRouteRowView {
 }
 
 export function readProviderWorkbenchSummary(providers: readonly ProviderPreset[]): ProviderWorkbenchSummary {
+  const generationOperations = ["image_generate", "image_edit", "video_generate"] as const;
   return {
+    totalCount: providers.length,
+    chatReadyCount: providers.filter((provider) =>
+      provider.api !== "media-job" &&
+      provider.capabilities.includes("chat") &&
+      providerPreflightReady(provider)
+    ).length,
+    generationReadyCount: providers.filter((provider) =>
+      generationOperations.some((operation) => canUseGenerationProviderForOperation(provider, operation))
+    ).length,
     readyCount: providers.filter(isWorkbenchReadyProvider).length,
     needsAttentionCount: providers.filter(isWorkbenchNeedsConfigProvider).length,
     missingSecretCount: providers.filter((provider) => providerNeedsSecret(provider) && !provider.apiKeyConfigured).length,

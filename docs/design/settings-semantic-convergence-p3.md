@@ -5,6 +5,7 @@
 - [Product Semantic Convergence](product-semantic-convergence.md)
 - [Settings Semantic Convergence P2](settings-semantic-convergence-p2.md)
 - [Settings Semantic Convergence P3 Implementation Plan](settings-semantic-convergence-p3-implementation-plan.md)
+- [Settings Visual Density Follow-up](settings-visual-density-followup.md)
 
 ## Summary
 
@@ -35,6 +36,8 @@ The product target is simple:
   broad card launcher.
 - Give Settings subnavs, row lists, empty states, and action surfaces one consistent
   visual rhythm.
+- Keep default Settings surfaces low-noise: navigation names destinations, panels own
+  task titles, and explanations appear only where they unblock a concrete action.
 - Prevent new Settings work from making already-large files larger without a clear
   boundary.
 

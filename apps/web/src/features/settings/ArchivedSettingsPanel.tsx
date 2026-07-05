@@ -34,9 +34,10 @@ export function ArchivedSettingsPanel({
         </div>
       ) : null}
 
-      <div className="archived-items-copy">
+      <details className="settings-compact-details archived-items-copy">
+        <summary>{t("Restore and delete rules")}</summary>
         {t("Restore returns archived items to the sidebar. Channel and branch delete is permanent and requires confirmation.")}
-      </div>
+      </details>
 
       <ArchivedItemGroup
         title={t("Conversations")}

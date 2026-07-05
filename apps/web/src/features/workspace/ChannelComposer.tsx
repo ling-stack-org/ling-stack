@@ -474,11 +474,18 @@ export function ChannelComposer({
             />
             {addMenuOpen ? (
               <div className="composer-add-popover" role="menu" aria-label={t("Add")}>
-                <label className="composer-add-menu-row" htmlFor={fileInputId} role="menuitem" tabIndex={0} aria-label={t("Attach files")} onClick={() => setAddMenuOpen(false)}>
+                <label
+                  className="composer-add-menu-row"
+                  htmlFor={fileInputId}
+                  role="menuitem"
+                  tabIndex={0}
+                  aria-label={t("Attach files")}
+                  title={t("Add files or folders to this message")}
+                  onClick={() => setAddMenuOpen(false)}
+                >
                   <FileText size={15} />
                   <span>
                     <strong>{t("Attach files")}</strong>
-                    <small>{t("Add files or folders to this message")}</small>
                   </span>
                 </label>
                 <button
@@ -486,6 +493,7 @@ export function ChannelComposer({
                   type="button"
                   role="menuitem"
                   disabled={!selectedChannelId || composerBusy || planModeBusy || activeRun}
+                  title={planModeActive ? t("Return to implementation mode") : t("Plan first, then implement after review")}
                   onClick={() => {
                     setAddMenuOpen(false);
                     onTogglePlanMode();
@@ -494,7 +502,6 @@ export function ChannelComposer({
                   {planModeBusy ? <Loader2 className="spin" size={15} /> : <ListChecks size={15} />}
                   <span>
                     <strong>{planModeActive ? t("Exit Plan Mode") : t("Plan Mode")}</strong>
-                    <small>{planModeActive ? t("Return to implementation mode") : t("Plan first, then implement after review")}</small>
                   </span>
                 </button>
                 <button
@@ -502,6 +509,7 @@ export function ChannelComposer({
                   type="button"
                   role="menuitem"
                   disabled={!selectedChannelId || composerBusy}
+                  title={goal ? t("Edit the current goal") : t("Set a thread goal")}
                   onClick={() => {
                     setAddMenuOpen(false);
                     onOpenGoalEditor();
@@ -510,7 +518,6 @@ export function ChannelComposer({
                   <Target size={15} />
                   <span>
                     <strong>{t("Goal")}</strong>
-                    <small>{goal ? t("Edit the current goal") : t("Set a thread goal")}</small>
                   </span>
                 </button>
               </div>
