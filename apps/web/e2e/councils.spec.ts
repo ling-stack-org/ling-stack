@@ -53,7 +53,8 @@ test("Council Workspace shows council health, members, and channel entry points"
   await expect(page.getByRole("heading", { name: "Council Workspace", level: 1 })).toBeVisible();
   await expect(page.getByLabel("Settings sections")).toBeVisible();
   await expect(page.getByLabel("Ling Stack navigation")).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "Back to workspace tools" })).toBeVisible();
+  await expect(page.getByLabel("Settings sections").getByRole("button", { name: "Council Workspace" })).toHaveClass(/active/);
+  await expect(page.locator(".settings-tool-return-row")).toHaveCount(0);
   await expect(page.getByLabel("Council overview")).toHaveCount(0);
   await expect(page.getByText("Manage advisor councils")).toHaveCount(0);
   await expect(page.getByText("Health filter")).toBeHidden();
@@ -185,7 +186,6 @@ test("Council Workspace shows council health, members, and channel entry points"
 
   await page.getByRole("button", { name: "Open AI Teammates" }).click();
   await expect(page.getByLabel("Workspace teammates")).toBeVisible();
-  await page.getByRole("button", { name: "Back to workspace tools" }).click();
 
   await page.getByLabel("Settings sections").getByRole("button", { name: "Council Workspace" }).click();
   await expect(page.getByLabel("Settings sections")).toBeVisible();

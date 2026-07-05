@@ -17,7 +17,7 @@ import {
   type WorkItemView,
   type WorkItemWaitingReason,
 } from "../../lib/work-items.js";
-import { OperationEmptyState, PageActionHeader, SettingsToolReturnRow, StatusBadge } from "../../shared/components/index.js";
+import { OperationEmptyState, PageActionHeader, StatusBadge } from "../../shared/components/index.js";
 import type {
   ApprovalRequest,
   Channel,
@@ -59,7 +59,7 @@ export function GlobalWorkBoardPage({
   routingExternalWorkId,
   busyWorkItemId,
   requestedScope,
-  onBackToWorkspaceTools,
+  settingsToolMode = false,
 }: {
   readonly channels: readonly Channel[];
   readonly tasks: readonly Task[];
@@ -84,7 +84,7 @@ export function GlobalWorkBoardPage({
   readonly routingExternalWorkId?: string;
   readonly busyWorkItemId?: string;
   readonly requestedScope?: WorkBoardScope;
-  readonly onBackToWorkspaceTools?: () => void;
+  readonly settingsToolMode?: boolean;
 }): JSX.Element {
   const { t } = useI18n();
   const [channelFilter, setChannelFilter] = useState("");
@@ -156,7 +156,6 @@ export function GlobalWorkBoardPage({
   };
   const headerTitle = t(scopeTitle(activeScope));
   const headerDescription = t(scopeDescription(activeScope));
-  const settingsToolMode = Boolean(onBackToWorkspaceTools);
   const workBoardTabs = (
     <div className="work-board-tabs" aria-label={t("Work board views")}>
       {workBoardScopeOrder.map((scope) => (
@@ -248,7 +247,6 @@ export function GlobalWorkBoardPage({
           <div className={settingsToolMode ? "work-board-toolbar settings-tool-mode" : "work-board-toolbar"}>
             {settingsToolMode ? (
               <div className="work-board-settings-toolbar">
-                {onBackToWorkspaceTools ? <SettingsToolReturnRow onBack={onBackToWorkspaceTools} /> : null}
                 {workBoardTabs}
                 {filterToggleButton}
                 {clearFiltersButton}

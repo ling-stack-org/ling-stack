@@ -571,10 +571,10 @@ test("global sidebar keeps fixed chrome, scrollable recents, and a true compact 
   await expect(page.getByLabel("Settings sections")).toBeVisible();
   await expect(page.getByLabel("Settings sections").getByRole("button", { name: "Configuration overview" })).toHaveCount(0);
   await page.getByLabel("Settings sections").getByRole("button", { name: "Teammate Management" }).click();
-  await expect(page.locator(".teammates-page.settings-return-mode .settings-tool-return-row").getByRole("button", { name: "Back to workspace tools" })).toBeVisible();
+  await expect(page.getByLabel("Settings sections").getByRole("button", { name: "Teammate Management" })).toHaveClass(/active/);
+  await expect(page.locator(".settings-tool-return-row")).toHaveCount(0);
   await expect(page.getByLabel("Workspace teammates")).toBeVisible();
   await expect(page.getByLabel("Ling Stack navigation")).toHaveCount(0);
-  await page.getByRole("button", { name: "Back to workspace tools" }).click();
   await page.getByRole("button", { name: "Back to app" }).click();
 
   await page.getByRole("button", { name: "Show navigation" }).click();
@@ -5241,7 +5241,7 @@ test("phase 1 parallel multi-agent active transcript shows latest action per age
 
   const engineerSpan = workCell.locator(".conversation-work-cell-agent-span").filter({ hasText: "Engineer" });
   await expect(engineerSpan.locator(".conversation-work-cell-agent-avatar")).toHaveCount(1);
-  await expect(engineerSpan.locator(".conversation-work-cell-agent-avatar .teammate-avatar-image-default")).toHaveCount(1);
+  await expect(engineerSpan.locator(".conversation-work-cell-agent-avatar .avatar-initial")).toHaveCount(1);
   await expect(engineerSpan.locator(".conversation-work-cell-agent-span-head .conversation-work-cell-row-icon")).toHaveCount(0);
   await expect(engineerSpan).toContainText("Implement login form");
   await expect(engineerSpan).not.toContainText("Implement the login form.");
@@ -5255,7 +5255,7 @@ test("phase 1 parallel multi-agent active transcript shows latest action per age
 
   const qaSpan = workCell.locator(".conversation-work-cell-agent-span").filter({ hasText: "QA" });
   await expect(qaSpan.locator(".conversation-work-cell-agent-avatar")).toHaveCount(1);
-  await expect(qaSpan.locator(".conversation-work-cell-agent-avatar .teammate-avatar-image-default")).toHaveCount(1);
+  await expect(qaSpan.locator(".conversation-work-cell-agent-avatar .avatar-initial")).toHaveCount(1);
   await expect(qaSpan.locator(".conversation-work-cell-agent-span-head .conversation-work-cell-row-icon")).toHaveCount(0);
   await expect(qaSpan).toContainText("Prepare QA checklist");
   await expect(qaSpan.locator(".conversation-work-cell-agent-span-detail")).toHaveCount(0);

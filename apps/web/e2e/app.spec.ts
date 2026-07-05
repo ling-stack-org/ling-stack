@@ -77,9 +77,8 @@ test("sidebar selection is exclusive and conversation sections stay below primar
   });
   expect(teammateAvatarGeometry.avatarWidth).toBeLessThanOrEqual(24);
   expect(teammateAvatarGeometry.gap).toBeGreaterThanOrEqual(4);
-  const defaultTeammateAvatar = navigation.getByRole("button", { name: "Ling Engineer", exact: true }).locator(".teammate-avatar-image-default");
-  await expect(defaultTeammateAvatar).toBeVisible();
-  await expect(defaultTeammateAvatar).toHaveAttribute("src", /\/avatars\/teammates\/engineer\.png$/);
+  const engineerInitial = navigation.getByRole("button", { name: "Ling Engineer", exact: true }).locator(".avatar-initial");
+  await expect(engineerInitial).toBeVisible();
   await expect.poll(() => readSidebarSelection(page)).toEqual({ activeNav: [], selectedRows: [] });
 
   await navigation.getByRole("button", { name: "Engineering" }).click();
@@ -105,7 +104,7 @@ test("sidebar selection is exclusive and conversation sections stay below primar
   await expect(page.getByRole("heading", { name: "Designer", level: 1 })).toBeVisible();
 });
 
-test("AI teammate default avatar falls back to initials when the image asset fails", async ({ page }) => {
+test("AI teammate without uploaded avatar uses initials", async ({ page }) => {
   await useEnglishLocale(page);
   const state = createBaseState({ approvalStatus: "expired" });
   state.aiTeammates = [
@@ -116,12 +115,11 @@ test("AI teammate default avatar falls back to initials when the image asset fai
       roleKey: "engineer",
     }),
   ];
-  await page.route("**/avatars/teammates/engineer.png", (route) => route.fulfill({ status: 404, body: "" }));
   await mockDaemon(page, state);
   await page.goto("/");
 
   const engineerRow = page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Ling Engineer", exact: true });
-  await expect(engineerRow.locator(".teammate-avatar-image-default")).toHaveCount(0);
+  await expect(engineerRow.locator(".teammate-avatar-image")).toHaveCount(0);
   await expect(engineerRow.locator(".avatar-initial")).toBeVisible();
 });
 
@@ -446,8 +444,8 @@ test("sidebar text entries route to context-aware inspectors", async ({ page }) 
   await expect(settingsSections).toBeVisible();
   await expect(page.getByLabel("Ling Stack navigation")).toHaveCount(0);
   await expect(page.getByRole("heading", { name: "Council Workspace", level: 2 })).toBeVisible();
-  await expect(page.locator(".settings-tool-return-row").getByRole("button", { name: "Back to workspace tools" })).toBeVisible();
-  await expect(settingsSections.getByRole("button", { name: "Council Workspace" })).toBeVisible();
+  await expect(settingsSections.getByRole("button", { name: "Council Workspace" })).toHaveClass(/active/);
+  await expect(page.locator(".settings-tool-return-row")).toHaveCount(0);
   await expect(settingsSections.getByRole("button", { name: /Profile/ })).toBeVisible();
   await expect(settingsSections.getByRole("button", { name: /Interface preferences/ })).toBeVisible();
   await settingsSections.getByRole("button", { name: /Profile/ }).click();
@@ -456,7 +454,8 @@ test("sidebar text entries route to context-aware inspectors", async ({ page }) 
   await expect(settingsSections.getByRole("button", { name: "Model Workbench" })).toBeVisible();
   await expect(settingsSections.getByRole("button", { name: "Work Board" })).toBeVisible();
   await settingsSections.getByRole("button", { name: "Teammate Management" }).click();
-  await expect(page.locator(".settings-tool-return-row").getByRole("button", { name: "Back to workspace tools" })).toBeVisible();
+  await expect(settingsSections.getByRole("button", { name: "Teammate Management" })).toHaveClass(/active/);
+  await expect(page.locator(".settings-tool-return-row")).toHaveCount(0);
   await expect(page.getByLabel("Workspace teammates")).toBeVisible();
   await page.getByRole("button", { name: "Back to app" }).click();
 
@@ -682,7 +681,8 @@ test("settings workspace tools keep left navigation available on nested tool pag
   await settingsSections.getByRole("button", { name: "Model Workbench" }).click();
   await expect(settingsSections).toBeVisible();
   await expect(page.getByLabel("Ling Stack navigation")).toHaveCount(0);
-  await expect(page.locator(".settings-tool-return-row").getByRole("button", { name: "Back to workspace tools" })).toBeVisible();
+  await expect(settingsSections.getByRole("button", { name: "Model Workbench" })).toHaveClass(/active/);
+  await expect(page.locator(".settings-tool-return-row")).toHaveCount(0);
   await expect(page.getByRole("heading", { name: "Model Workbench", level: 2 })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Model Workbench", level: 1 })).toHaveCount(0);
   await expect(settingsSections.getByRole("button", { name: "Model Workbench" })).toBeVisible();
@@ -691,7 +691,8 @@ test("settings workspace tools keep left navigation available on nested tool pag
   await settingsSections.getByRole("button", { name: "Teammate Management" }).click();
   await expect(settingsSections).toBeVisible();
   await expect(page.getByLabel("Ling Stack navigation")).toHaveCount(0);
-  await expect(page.locator(".settings-tool-return-row").getByRole("button", { name: "Back to workspace tools" })).toBeVisible();
+  await expect(settingsSections.getByRole("button", { name: "Teammate Management" })).toHaveClass(/active/);
+  await expect(page.locator(".settings-tool-return-row")).toHaveCount(0);
   await expect(page.getByRole("heading", { name: "Teammate Management", level: 2 })).toBeVisible();
   await expect(page.getByRole("heading", { name: "AI Teammates", level: 1 })).toHaveCount(0);
   await expect(settingsSections.getByRole("button", { name: "Teammate Management" })).toBeVisible();
@@ -700,10 +701,11 @@ test("settings workspace tools keep left navigation available on nested tool pag
   await settingsSections.getByRole("button", { name: "Work Board" }).click();
   await expect(settingsSections).toBeVisible();
   await expect(page.getByLabel("Ling Stack navigation")).toHaveCount(0);
-  await expect(page.locator(".settings-tool-return-row").getByRole("button", { name: "Back to workspace tools" })).toBeVisible();
+  await expect(settingsSections.getByRole("button", { name: "Work Board" })).toHaveClass(/active/);
+  await expect(page.locator(".settings-tool-return-row")).toHaveCount(0);
   await expect(page.getByRole("heading", { name: "Work Board", level: 2 })).toBeVisible();
   await expect(page.locator(".work-board-page").getByRole("heading", { name: "Needs action" })).toHaveCount(0);
   await expect(settingsSections.getByRole("button", { name: "Work Board" })).toBeVisible();
 
-  await expect(page.getByRole("button", { name: "Back to workspace tools" })).toBeVisible();
+  await expect(page.locator(".settings-tool-return-row")).toHaveCount(0);
 });

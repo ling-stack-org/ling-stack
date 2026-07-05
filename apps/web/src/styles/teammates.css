@@ -3604,11 +3604,6 @@
   background: var(--surface-panel);
 }
 
-.teammate-workspace.chat-mode.settings-return-mode,
-.teammate-workspace.settings-mode.settings-return-mode {
-  grid-template-rows: auto minmax(0, 1fr);
-}
-
 .teammate-chat-header,
 .teammate-settings-header {
   grid-column: 1 / -1;
@@ -3637,12 +3632,7 @@
   min-height: 48px;
 }
 
-.teammate-settings-header.settings-return-mode {
-  min-height: 48px;
-}
-
-.teammate-chat-toolbar-start,
-.teammate-settings-return-actions {
+.teammate-chat-toolbar-start {
   display: inline-flex;
   align-items: center;
   gap: 8px;
@@ -3895,10 +3885,6 @@
   box-shadow: none;
 }
 
-.teammate-workspace.chat-mode.settings-return-mode > .teammate-private-chat {
-  grid-row: 2;
-}
-
 .teammate-workspace.chat-mode.context-collapsed > .teammate-private-chat {
   grid-column: 1 / -1;
 }
@@ -4031,10 +4017,6 @@
   background: var(--surface-panel);
 }
 
-.teammate-workspace.chat-mode.settings-return-mode > .teammate-context-panel {
-  grid-row: 3;
-}
-
 .teammate-context-panel section,
 .teammate-settings-summary-panel section {
   display: grid;
@@ -4112,10 +4094,6 @@
   background: var(--surface-panel);
 }
 
-.teammate-workspace.settings-mode.settings-return-mode > .teammate-settings-nav {
-  grid-row: 2;
-}
-
 .teammate-settings-nav button {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
@@ -4161,12 +4139,6 @@
   box-shadow: none;
 }
 
-.teammate-workspace.settings-mode.settings-return-mode > .teammate-list-panel,
-.teammate-workspace.settings-mode.settings-return-mode > .teammate-settings-panel,
-.teammate-workspace.settings-mode.settings-return-mode > .teammate-mcp-panel {
-  grid-row: 2;
-}
-
 .teammate-workspace.settings-mode > .teammate-mcp-panel {
   overflow: hidden;
   background: transparent;
@@ -4208,10 +4180,6 @@
   padding: 14px;
   border-left: 1px solid var(--border);
   background: var(--surface-panel);
-}
-
-.teammate-workspace.settings-mode.settings-return-mode > .teammate-settings-summary-panel {
-  grid-row: 3;
 }
 
 .teammate-summary-list {
@@ -4323,14 +4291,7 @@
 }
 
 .teammates-page.settings-return-mode {
-  grid-template-rows: auto minmax(0, 1fr);
-}
-
-.teammates-page.settings-return-mode > .settings-tool-return-row {
-  padding: 18px 24px 0;
-  background: var(--surface-panel, #ffffff);
-  position: relative;
-  z-index: 1;
+  grid-template-rows: minmax(0, 1fr);
 }
 
 .teammates-page-header {

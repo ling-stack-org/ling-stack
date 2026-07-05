@@ -1,6 +1,6 @@
 import { CheckCircle2, Loader2, Plus, RefreshCw, Search } from "lucide-react";
 import { useI18n } from "../../i18n.js";
-import { PageActionHeader, SettingsToolReturnRow } from "../../shared/components/index.js";
+import { PageActionHeader } from "../../shared/components/index.js";
 import type { ProviderStatusFilter, ProviderWorkbenchSummary } from "./provider-workbench-view-models.js";
 
 export function ProviderWorkbenchHeader({
@@ -15,7 +15,7 @@ export function ProviderWorkbenchHeader({
   onAddModel,
   onCheckBatch,
   onRefresh,
-  onBackToWorkspaceTools,
+  settingsToolMode = false,
 }: {
   readonly summary: ProviderWorkbenchSummary;
   readonly providerSearch: string;
@@ -28,7 +28,7 @@ export function ProviderWorkbenchHeader({
   readonly onAddModel: () => void;
   readonly onCheckBatch: () => void;
   readonly onRefresh: () => void;
-  readonly onBackToWorkspaceTools?: () => void;
+  readonly settingsToolMode?: boolean;
 }): JSX.Element {
   const { t } = useI18n();
   const meta = (
@@ -82,10 +82,9 @@ export function ProviderWorkbenchHeader({
     </div>
   );
 
-  if (onBackToWorkspaceTools) {
+  if (settingsToolMode) {
     return (
       <header className="provider-workbench-header settings-return-mode">
-        <SettingsToolReturnRow onBack={onBackToWorkspaceTools} />
         <div className="provider-header-tools">
           <div className="provider-title-actions">
             {primaryAction}

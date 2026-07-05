@@ -106,7 +106,8 @@ test("Chinese mode localizes workspace settings, runtime policy, and teammate se
 
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "设置" }).click();
   await page.getByLabel("设置分组").getByRole("button", { name: "队友管理" }).click();
-  await expect(page.locator(".settings-tool-return-row").getByRole("button", { name: "返回工作区工具" })).toBeVisible();
+  await expect(page.getByLabel("设置分组").getByRole("button", { name: "队友管理" })).toHaveClass(/active/);
+  await expect(page.locator(".settings-tool-return-row")).toHaveCount(0);
   await expect(page.getByRole("heading", { name: "AI 队友", level: 1 })).toHaveCount(0);
   await expect(page.getByLabel("AI 队友上下文")).toHaveCount(0);
   await expect(page.locator(".teammate-detail-panel")).toHaveCount(0);
@@ -309,7 +310,7 @@ test("settings configuration entries open nested tools directly", async ({ page 
   await expect(page.getByLabel("Ling Stack navigation")).toHaveCount(0);
   await expect(page.getByRole("heading", { name: "Council Workspace", level: 2 })).toBeVisible();
   await expect(settingsSections.getByRole("button", { name: "Council Workspace" })).toHaveClass(/active/);
-  await expect(page.locator(".settings-tool-return-row").getByRole("button", { name: "Back to workspace tools" })).toBeVisible();
+  await expect(page.locator(".settings-tool-return-row")).toHaveCount(0);
   await expect(page.locator(".settings-workspace-tools")).toHaveCount(0);
 
   await settingsSections.getByRole("button", { name: "Default authorization" }).click();

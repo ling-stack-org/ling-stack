@@ -43,10 +43,9 @@ import { McpToolsPage } from "../mcp/McpToolsPage.js";
 import { ArchivedSettingsPanel } from "./ArchivedSettingsPanel.js";
 import { ExecutionPermissionsSettingsPanel } from "./ExecutionPermissionsSettingsPanel.js";
 import { ExternalWorkSettingsPanel } from "./ExternalWorkSettingsPanel.js";
-import { InterfacePreferencesSettingsPanel } from "./InterfacePreferencesSettingsPanel.js";
 import { StartupDiagnosticsSettingsPanel } from "./MaintenanceSettingsPanel.js";
+import { InterfacePreferencesSettingsPanel, PersonalSettingsPanel } from "./PersonalInterfaceSettingsPanel.js";
 import { PluginManagerSettingsPanel } from "./PluginManagerSettingsPanel.js";
-import { ProfileSettingsPanel } from "./ProfileSettingsPanel.js";
 import { SkillsSettingsPanel } from "./SkillsSettingsPanel.js";
 import { useArchivedSettingsController } from "./useArchivedSettingsController.js";
 
@@ -436,7 +435,7 @@ export function SettingsPage({
         {workspaceToolDetailOpen ? workspaceToolDetail : null}
 
         {visibleActiveSection === "personal-profile" && !workspaceToolDetailOpen ? (
-          <ProfileSettingsPanel cwd={cwd} onProfileChange={onProfileChange} />
+          <PersonalSettingsPanel cwd={cwd} onProfileChange={onProfileChange} />
         ) : null}
 
         {visibleActiveSection === "interface-preferences" && !workspaceToolDetailOpen ? (

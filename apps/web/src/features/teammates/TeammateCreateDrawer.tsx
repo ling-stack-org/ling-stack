@@ -28,7 +28,7 @@ const defaultMemoryScopeLabels: readonly string[] = [
   "channel-decisions",
 ];
 
-export function TeammateCreateDialog({
+export function TeammateCreateDrawer({
   open,
   initialTemplateId,
   templates,

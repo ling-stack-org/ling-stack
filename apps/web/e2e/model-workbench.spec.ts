@@ -102,7 +102,8 @@ test("model workbench Chinese mode localizes setup copy and uses an add model sh
   await page.goto("/");
 
   await openModelWorkbench(page);
-  await expect(page.locator(".settings-tool-return-row").getByRole("button", { name: "返回工作区工具" })).toBeVisible();
+  await expect(page.getByLabel("设置分组").getByRole("button", { name: "模型工作台" })).toHaveClass(/active/);
+  await expect(page.locator(".settings-tool-return-row")).toHaveCount(0);
   await expect(page.getByRole("heading", { name: "模型工作台", level: 1 })).toHaveCount(0);
   await expect(page.getByRole("heading", { name: "模型预设" })).toHaveCount(0);
   await expect(page.locator(".provider-table")).toBeVisible();
@@ -640,7 +641,8 @@ test("model workbench creates custom OpenAI-compatible presets and surfaces read
   await page.goto("/");
 
   await openModelWorkbench(page);
-  await expect(page.locator(".settings-tool-return-row").getByRole("button", { name: "Back to workspace tools" })).toBeVisible();
+  await expect(page.getByLabel("Settings sections").getByRole("button", { name: "Model Workbench" })).toHaveClass(/active/);
+  await expect(page.locator(".settings-tool-return-row")).toHaveCount(0);
   await expect(page.getByRole("heading", { name: "Model Workbench", level: 1 })).toHaveCount(0);
   await expect(page.locator(".provider-page-meta")).toHaveCount(0);
   await expect(page.getByRole("dialog")).toHaveCount(0);

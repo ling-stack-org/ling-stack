@@ -32,7 +32,6 @@ import {
   DialogSection,
   OperationEmptyState,
   PageActionHeader,
-  SettingsToolReturnRow,
 } from "../../shared/components/index.js";
 import { TeammateAvatarView } from "../teammates/TeammateAvatarView.js";
 
@@ -56,7 +55,7 @@ export interface CouncilWorkspacePanelsProps {
   readonly onSelectCouncil: (councilId: string) => void;
   readonly onRefresh: () => void | Promise<void>;
   readonly onOpenAiTeammates: () => void;
-  readonly onBackToWorkspaceTools?: () => void;
+  readonly settingsToolMode?: boolean;
 
   readonly createCouncilOpen: boolean;
   readonly onCreateCouncilOpenChange: (open: boolean) => void;
@@ -132,8 +131,7 @@ export function CouncilWorkspacePanels(props: CouncilWorkspacePanelsProps): JSX.
   }, [props.selectedCouncilId]);
 
   return (
-    <div className={props.onBackToWorkspaceTools ? "council-workspace-page settings-return-mode" : "council-workspace-page"} aria-label={t("Council Workspace")}>
-      {props.onBackToWorkspaceTools ? <SettingsToolReturnRow onBack={props.onBackToWorkspaceTools} /> : null}
+    <div className={props.settingsToolMode ? "council-workspace-page settings-return-mode" : "council-workspace-page"} aria-label={t("Council Workspace")}>
       <PageActionHeader
         title={t("Council Workspace")}
         description={t("Manage councils, members, health, and channel usage from one workspace.")}

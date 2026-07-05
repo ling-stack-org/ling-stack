@@ -41,7 +41,7 @@ export interface CouncilWorkspacePageProps {
   readonly onRefresh: () => void | Promise<void>;
   readonly onOpenAiTeammates: () => void;
   readonly onOpenChannel: (channelId: string) => void;
-  readonly onBackToWorkspaceTools?: () => void;
+  readonly settingsToolMode?: boolean;
 }
 
 export function CouncilWorkspacePage({
@@ -54,7 +54,7 @@ export function CouncilWorkspacePage({
   onRefresh,
   onOpenAiTeammates,
   onOpenChannel,
-  onBackToWorkspaceTools,
+  settingsToolMode = false,
 }: CouncilWorkspacePageProps): JSX.Element {
   const { t } = useI18n();
   const [selectedCouncilId, setSelectedCouncilId] = useState("");
@@ -506,7 +506,7 @@ export function CouncilWorkspacePage({
       onSelectCouncil={setSelectedCouncilId}
       onRefresh={refreshCouncils}
       onOpenAiTeammates={onOpenAiTeammates}
-      onBackToWorkspaceTools={onBackToWorkspaceTools}
+      settingsToolMode={settingsToolMode}
       createCouncilOpen={createCouncilOpen}
       onCreateCouncilOpenChange={setCreateCouncilOpen}
       newCouncilName={newCouncilName}

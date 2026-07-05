@@ -90,7 +90,7 @@ export function ProviderSettings({
   onOpenRun,
   onClearCheckFeedback,
   onClearRepair,
-  onBackToWorkspaceTools,
+  settingsToolMode = false,
 }: {
   readonly cwd: string;
   readonly providers: readonly ProviderPreset[];
@@ -127,7 +127,7 @@ export function ProviderSettings({
   readonly onOpenRun: (runId: string) => void;
   readonly onClearCheckFeedback: (providerId: string) => void;
   readonly onClearRepair: () => void;
-  readonly onBackToWorkspaceTools?: () => void;
+  readonly settingsToolMode?: boolean;
 }): JSX.Element {
   const { t } = useI18n();
   const workbenchSummary = useMemo(() => readProviderWorkbenchSummary(providers), [providers]);
@@ -372,11 +372,11 @@ export function ProviderSettings({
   }
 
   return (
-    <div className={onBackToWorkspaceTools ? "provider-layout provider-management-layout provider-workbench-surface settings-return-mode" : "provider-layout provider-management-layout provider-workbench-surface"}>
+    <div className={settingsToolMode ? "provider-layout provider-management-layout provider-workbench-surface settings-return-mode" : "provider-layout provider-management-layout provider-workbench-surface"}>
       <section
         className="provider-list-panel provider-workbench"
-        aria-label={onBackToWorkspaceTools ? t("Model Workbench") : undefined}
-        aria-labelledby={onBackToWorkspaceTools ? undefined : "provider-workbench-title"}
+        aria-label={settingsToolMode ? t("Model Workbench") : undefined}
+        aria-labelledby={settingsToolMode ? undefined : "provider-workbench-title"}
       >
         <ProviderWorkbenchHeader
           summary={workbenchSummary}
@@ -390,7 +390,7 @@ export function ProviderSettings({
           onAddModel={openNewProviderSheet}
           onCheckBatch={onCheckBatch}
           onRefresh={onRefresh}
-          onBackToWorkspaceTools={onBackToWorkspaceTools}
+          settingsToolMode={settingsToolMode}
         />
 
         {errorMessage ? (

@@ -29,7 +29,7 @@ import type {
 } from "@ling-stack/core/skill-types";
 import { useI18n } from "../../i18n.js";
 import { providerPreflightReady } from "../../lib/providers.js";
-import { MetaRow, SettingsToolReturnRow } from "../../shared/components/index.js";
+import { MetaRow } from "../../shared/components/index.js";
 import type {
   Channel,
   ProviderPreset,
@@ -40,7 +40,7 @@ import {
   workflowPhaseLabel,
 } from "./helpers.js";
 import { TeammateAvatarView } from "./TeammateAvatarView.js";
-import { TeammateCreateDialog } from "./TeammateCreateDialog.js";
+import { TeammateCreateDrawer } from "./TeammateCreateDrawer.js";
 import type {
   LocalTeammateCreateInput,
   LocalTeammateDraft,
@@ -59,7 +59,7 @@ export function AiTeammatesPage({
   onOpenTeammate,
   onOpenCouncils,
   onOpenProviders,
-  onBackToWorkspaceTools,
+  settingsToolMode = false,
   defaultProviderId = "",
 }: {
   readonly cwd: string;
@@ -74,7 +74,7 @@ export function AiTeammatesPage({
   readonly onOpenTeammate?: (teammateId: string) => void;
   readonly onOpenCouncils?: () => void;
   readonly onOpenProviders: () => void;
-  readonly onBackToWorkspaceTools?: () => void;
+  readonly settingsToolMode?: boolean;
   readonly defaultProviderId?: string;
 }): JSX.Element {
   const { t } = useI18n();
@@ -152,9 +152,8 @@ export function AiTeammatesPage({
   }
 
   return (
-    <div className={onBackToWorkspaceTools ? "teammates-page settings-return-mode" : "teammates-page"}>
-      {onBackToWorkspaceTools ? <SettingsToolReturnRow onBack={onBackToWorkspaceTools} /> : null}
-      {!onBackToWorkspaceTools ? (
+    <div className={settingsToolMode ? "teammates-page settings-return-mode" : "teammates-page"}>
+      {!settingsToolMode ? (
         <header className="teammates-page-header">
           <div>
             <h1>{t("AI Teammates")}</h1>
@@ -169,7 +168,7 @@ export function AiTeammatesPage({
         </header>
       ) : null}
 
-      <TeammateCreateDialog
+      <TeammateCreateDrawer
         open={isCreateOpen}
         initialTemplateId={createTemplateId}
         templates={templates}

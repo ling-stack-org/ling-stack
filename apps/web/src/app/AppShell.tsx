@@ -62,7 +62,7 @@ import {
 } from "./lazy-pages.js";
 import type { WorkBoardScope } from "../features/work-board/GlobalWorkBoardPage.js";
 import { selectDefaultTeammateProvider } from "../features/teammates/teammate-create-defaults.js";
-import { TeammateCreateDialog } from "../features/teammates/TeammateCreateDialog.js";
+import { TeammateCreateDrawer } from "../features/teammates/TeammateCreateDrawer.js";
 import {
   buildRunApprovalSummaries,
   effectiveApprovalStatus,
@@ -185,7 +185,6 @@ export function AppShell(): JSX.Element {
   const [activeView, setActiveView] = useState<ViewId>("workspace");
   const [activeSidebarTarget, setActiveSidebarTarget] = useState<SidebarTarget>("workspace");
   const [workBoardRequestedScope, setWorkBoardRequestedScope] = useState<WorkBoardScope>("actionable");
-  const [settingsReturnSection, setSettingsReturnSection] = useState<"" | "workspace-tools">("");
   const [settingsWorkspaceToolView, setSettingsWorkspaceToolView] = useState<SettingsWorkspaceToolView>("");
   const settingsReturnTargetRef = useRef<SettingsReturnTarget | undefined>(undefined);
   const [channelSidebarOpen, setChannelSidebarOpen] = useState(() =>
@@ -1183,7 +1182,6 @@ export function AppShell(): JSX.Element {
   }
 
   function clearSettingsWorkspaceToolView(): void {
-    setSettingsReturnSection("");
     setSettingsWorkspaceToolView("");
   }
 
@@ -1283,7 +1281,6 @@ export function AppShell(): JSX.Element {
       return;
     }
     rememberSettingsReturnTarget();
-    setSettingsReturnSection("");
     setSettingsWorkspaceToolView(view);
     if (view === "work_board") {
       setWorkBoardRequestedScope("actionable");
@@ -1316,11 +1313,6 @@ export function AppShell(): JSX.Element {
   function openSettingsWorkBoard(scope: WorkBoardScope = "actionable"): void {
     openSettingsWorkspaceTool("work_board");
     setWorkBoardRequestedScope(scope);
-  }
-
-  function returnToWorkspaceTools(): void {
-    clearSettingsWorkspaceToolView();
-    activateSettingsView();
   }
 
   function openTeammateCreatePanel(): void {
@@ -1901,7 +1893,7 @@ export function AppShell(): JSX.Element {
         }}
         onClearCheckFeedback={clearProviderCheckFeedback}
         onClearRepair={() => setProviderRepairRunId("")}
-        onBackToWorkspaceTools={returnToWorkspaceTools}
+        settingsToolMode
       />
     ) : settingsWorkspaceToolView === "teammates" ? (
       <AiTeammatesPage
@@ -1923,7 +1915,7 @@ export function AppShell(): JSX.Element {
           openSettingsWorkspaceTool("councils");
         }}
         onOpenProviders={() => openSettingsWorkspaceTool("providers")}
-        onBackToWorkspaceTools={returnToWorkspaceTools}
+        settingsToolMode
       />
     ) : settingsWorkspaceToolView === "work_board" ? (
       <GlobalWorkBoardPage
@@ -1971,7 +1963,7 @@ export function AppShell(): JSX.Element {
         routingExternalWorkId={routingExternalWorkId}
         busyWorkItemId={busyWorkItemId}
         requestedScope={workBoardRequestedScope}
-        onBackToWorkspaceTools={returnToWorkspaceTools}
+        settingsToolMode
       />
     ) : settingsWorkspaceToolView === "councils" ? (
       <CouncilWorkspacePage
@@ -1987,7 +1979,7 @@ export function AppShell(): JSX.Element {
           clearSettingsWorkspaceToolView();
           selectWorkspaceChannel(channelId);
         }}
-        onBackToWorkspaceTools={returnToWorkspaceTools}
+        settingsToolMode
       />
     ) : undefined;
 
@@ -2354,7 +2346,6 @@ export function AppShell(): JSX.Element {
                 onDisableTeammate={removeAiTeammate}
                 onHardDeleteTeammate={hardDeleteAiTeammateAndRefresh}
                 onOpenProviders={() => openSettingsWorkspaceTool("providers")}
-                onBackToWorkspaceTools={settingsReturnSection === "workspace-tools" ? returnToWorkspaceTools : undefined}
                 onRefreshTeammates={() => refreshAiTeammates(form.cwd.trim())}
                 onRefreshChannels={() => refreshChannels()}
                 onRefreshTasks={(channelId) => refreshTasks(channelId)}
@@ -2377,7 +2368,6 @@ export function AppShell(): JSX.Element {
                     onOpenTeammate={selectAiTeammate}
                     onOpenCouncils={() => openSettingsWorkspaceTool("councils")}
                     onOpenProviders={() => openSettingsWorkspaceTool("providers")}
-                    onBackToWorkspaceTools={settingsReturnSection === "workspace-tools" ? returnToWorkspaceTools : undefined}
                   />
                 ) : activeView === "councils" ? (
                   <CouncilWorkspacePage
@@ -2526,7 +2516,6 @@ export function AppShell(): JSX.Element {
                 }}
                 onClearCheckFeedback={clearProviderCheckFeedback}
                 onClearRepair={() => setProviderRepairRunId("")}
-                onBackToWorkspaceTools={settingsReturnSection === "workspace-tools" ? returnToWorkspaceTools : undefined}
                   />
                 ) : activeView === "work_board" ? (
                   <GlobalWorkBoardPage
@@ -2574,7 +2563,6 @@ export function AppShell(): JSX.Element {
                     routingExternalWorkId={routingExternalWorkId}
                     busyWorkItemId={busyWorkItemId}
                     requestedScope={workBoardRequestedScope}
-                    onBackToWorkspaceTools={settingsReturnSection === "workspace-tools" ? returnToWorkspaceTools : undefined}
                   />
                 ) : activeView === "media" ? (
                   <MediaJobsPage
@@ -2809,7 +2797,7 @@ export function AppShell(): JSX.Element {
         />
       ) : null}
       {teammateCreateOpen && builtinTeammateTemplates.length > 0 ? (
-        <TeammateCreateDialog
+        <TeammateCreateDrawer
           open={teammateCreateOpen}
           templates={builtinTeammateTemplates}
           providers={providers}
