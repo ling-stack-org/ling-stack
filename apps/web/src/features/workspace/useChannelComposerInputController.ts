@@ -55,6 +55,8 @@ interface ChannelComposerInputControllerInput {
   readonly attachmentPreviewUrlsRef: MutableRefObject<Set<string>>;
   readonly teammateOptions: readonly ChannelMention[];
   readonly slashCommands: readonly ComposerSlashCommandOption[];
+  readonly onRevealPlanModeChip: () => void;
+  readonly onRevealGoalChip: () => void;
   readonly onUploadAttachments: (files: readonly File[]) => Promise<readonly ChannelAttachment[]>;
   readonly onCreateLinkPreview: (url: string) => Promise<ChannelLinkPreview | undefined>;
   readonly t: Translate;
@@ -104,6 +106,8 @@ export function useChannelComposerInputController({
   mentionActiveIndex,
   mentionPicker,
   messageDraft,
+  onRevealGoalChip,
+  onRevealPlanModeChip,
   onCreateLinkPreview,
   onUploadAttachments,
   pendingAttachments,
@@ -202,6 +206,12 @@ export function useChannelComposerInputController({
   ]);
 
   const commitSlashCommand = useCallback((option: ComposerSlashCommandOption): void => {
+    if (option.id === "plan") {
+      onRevealPlanModeChip();
+    }
+    if (option.id === "goal") {
+      onRevealGoalChip();
+    }
     const composer = composerInputRef.current;
     const liveValue = messageDraft;
     const liveCaret = Math.min(composer?.readSelectionStart() ?? liveValue.length, liveValue.length);
@@ -217,6 +227,8 @@ export function useChannelComposerInputController({
     composerInputRef,
     focusComposerAt,
     messageDraft,
+    onRevealGoalChip,
+    onRevealPlanModeChip,
     setMessageDraft,
     setSendError,
     setSendState,

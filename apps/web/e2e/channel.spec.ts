@@ -1215,6 +1215,9 @@ test("channel environment surface shows read-only context and opens review", asy
   const dialog = page.getByRole("dialog", { name: "Commit or push" });
   await expect(dialog).toBeVisible();
   await expect(dialog).toContainText("first version is read-only");
+  const includeUnstagedCheckbox = dialog.locator(".environment-include-unstaged input[type='checkbox']");
+  await expect(includeUnstagedCheckbox).toHaveCSS("width", "16px");
+  await expect(includeUnstagedCheckbox).toHaveCSS("height", "16px");
   await expect(dialog.getByRole("button", { name: "Commit", exact: true })).toBeDisabled();
   await expect(dialog.getByRole("button", { name: "Commit and push" })).toBeDisabled();
   await expect(dialog.getByRole("button", { name: "Push", exact: true })).toBeDisabled();
@@ -3387,31 +3390,54 @@ test("channel composer applies plan mode session commands without creating slash
     channelRoots()[0]?.conversationMode?.mode;
 
   const composer = page.locator(".channel-composer");
-  const planButton = composer.getByRole("button", { name: "Plan Mode" });
-  await expect(planButton).toBeVisible();
+  const composerInput = channelComposerTextbox(page);
+  const planChip = composer.locator(".conversation-mode-chip.plan");
+  const planButton = planChip.getByRole("button", { name: "Plan Mode" });
+  await expect(planChip).toHaveCount(0);
   await expect.poll(() => channelRoots().length).toBe(0);
+
+  await composer.getByRole("button", { name: "Add" }).click();
+  await expect(page.getByRole("menu", { name: "Add" })).toBeVisible();
+  await composerInput.click();
+  await expect(page.getByRole("menu", { name: "Add" })).toHaveCount(0);
 
   await composer.getByRole("button", { name: "Add" }).click();
   await page.getByRole("menu", { name: "Add" }).getByRole("menuitem", { name: "Plan Mode" }).click();
   await expect.poll(() => channelRoots().length).toBe(1);
   await expect.poll(planMode).toBe("plan");
-  await expect(planButton).toHaveClass(/active/);
+  await expect(planChip).toBeVisible();
+  await expect(planChip).toHaveClass(/active/);
   await expect.poll(() => state.tasks).toHaveLength(0);
   await composer.getByRole("button", { name: "Add" }).click();
   await expect(page.getByRole("menu", { name: "Add" }).getByRole("menuitem", { name: "Exit Plan Mode" })).toBeVisible();
   await composer.getByRole("button", { name: "Add" }).click();
 
-  const composerInput = channelComposerTextbox(page);
   await composerInput.fill("/review apps/web");
   await composer.getByRole("button", { name: "Create task" }).click();
   await expect(composer).toContainText("Exit Plan Mode before creating implementation tasks.");
   await expect.poll(() => state.tasks).toHaveLength(0);
 
+  await planChip.hover();
+  await planChip.getByRole("button", { name: "Exit and hide Plan Mode" }).click();
+  await expect.poll(planMode).toBe("default");
+  await expect.poll(() => state.tasks).toHaveLength(0);
+  await expect(planChip).toHaveCount(0);
+
+  await composerInput.fill("/pla");
+  await expect(page.getByRole("listbox", { name: "Slash command" })).toBeVisible();
+  await page.getByRole("option", { name: "/plan Plan Mode" }).click();
+  await expect(planChip).toBeVisible();
+  await expect(planChip).not.toHaveClass(/active/);
+  await expectComposerValue(composerInput, "/plan ");
+  await composer.getByRole("button", { name: "Apply command" }).click();
+  await expect.poll(planMode).toBe("plan");
+  await expect(planChip).toHaveClass(/active/);
+
   await composerInput.fill("/plan off");
   await composer.getByRole("button", { name: "Apply command" }).click();
   await expect.poll(planMode).toBe("default");
-  await expect.poll(() => state.tasks).toHaveLength(0);
-  await expectComposerValue(composerInput, "");
+  await expect(planChip).toBeVisible();
+  await expect(planChip).not.toHaveClass(/active/);
 
   await composerInput.fill("/plan status");
   await composer.getByRole("button", { name: "Apply command" }).click();
@@ -3445,8 +3471,11 @@ test("channel composer manages goal lifecycle from the floating panel", async ({
 
   const composer = page.locator(".channel-composer");
   const composerInput = channelComposerTextbox(page);
+  const goalChip = composer.locator(".conversation-mode-chip.goal");
+  await expect(goalChip).toHaveCount(0);
   await composer.getByRole("button", { name: "Add" }).click();
   await page.getByRole("menu", { name: "Add" }).getByRole("menuitem", { name: /Goal/ }).click();
+  await expect(goalChip).toBeVisible();
   await expectComposerValue(composerInput, "/goal ");
   await composerInput.evaluate((node) => {
     const range = document.createRange();
@@ -3465,7 +3494,7 @@ test("channel composer manages goal lifecycle from the floating panel", async ({
   await expect(goalPanel).toBeVisible();
   await expect(goalPanel).toContainText("Finish PR4 with a visible goal panel");
   await expect(goalPanel).toContainText("Active");
-  await expect(composer.getByRole("button", { name: "Goal", exact: true })).toHaveClass(/active/);
+  await expect(goalChip).toHaveClass(/active/);
 
   await goalPanel.getByRole("button", { name: "Expand goal details" }).click();
   await expect(goalPanel).toContainText("Status: Active");
@@ -3532,9 +3561,11 @@ test("channel composer manages goal lifecycle from the floating panel", async ({
   await expect.poll(() => activeGoal()?.objective).toBe("Finish PR4, PR5, and local QA");
   await expect(goalPanel).toContainText("Finish PR4, PR5, and local QA");
 
-  await goalPanel.getByRole("button", { name: "Clear goal" }).click();
+  await goalChip.hover();
+  await goalChip.getByRole("button", { name: "Clear and hide goal" }).click();
   await expect.poll(() => activeGoal()).toBeUndefined();
   await expect(goalPanel).toHaveCount(0);
+  await expect(goalChip).toHaveCount(0);
 });
 
 test("channel feed renders proposed_plan blocks as proposed plan cards", async ({ page }) => {
