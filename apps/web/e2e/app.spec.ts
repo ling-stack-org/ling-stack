@@ -77,8 +77,8 @@ test("sidebar selection is exclusive and conversation sections stay below primar
   });
   expect(teammateAvatarGeometry.avatarWidth).toBeLessThanOrEqual(24);
   expect(teammateAvatarGeometry.gap).toBeGreaterThanOrEqual(4);
-  const engineerInitial = navigation.getByRole("button", { name: "Ling Engineer", exact: true }).locator(".avatar-initial");
-  await expect(engineerInitial).toBeVisible();
+  const engineerAvatar = navigation.getByRole("button", { name: "Ling Engineer", exact: true }).locator(".teammate-avatar-image-default");
+  await expect(engineerAvatar).toBeVisible();
   await expect.poll(() => readSidebarSelection(page)).toEqual({ activeNav: [], selectedRows: [] });
 
   await navigation.getByRole("button", { name: "Engineering" }).click();
@@ -104,7 +104,7 @@ test("sidebar selection is exclusive and conversation sections stay below primar
   await expect(page.getByRole("heading", { name: "Designer", level: 1 })).toBeVisible();
 });
 
-test("AI teammate without uploaded avatar uses initials", async ({ page }) => {
+test("AI teammate without uploaded avatar uses the default avatar", async ({ page }) => {
   await useEnglishLocale(page);
   const state = createBaseState({ approvalStatus: "expired" });
   state.aiTeammates = [
@@ -119,8 +119,8 @@ test("AI teammate without uploaded avatar uses initials", async ({ page }) => {
   await page.goto("/");
 
   const engineerRow = page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Ling Engineer", exact: true });
-  await expect(engineerRow.locator(".teammate-avatar-image")).toHaveCount(0);
-  await expect(engineerRow.locator(".avatar-initial")).toBeVisible();
+  await expect(engineerRow.locator(".teammate-avatar-image-default")).toBeVisible();
+  await expect(engineerRow.locator(".avatar-initial")).toHaveCount(0);
 });
 
 test("sidebar sections collapse locally and keep group action menus", async ({ page }) => {

@@ -5241,7 +5241,7 @@ test("phase 1 parallel multi-agent active transcript shows latest action per age
 
   const engineerSpan = workCell.locator(".conversation-work-cell-agent-span").filter({ hasText: "Engineer" });
   await expect(engineerSpan.locator(".conversation-work-cell-agent-avatar")).toHaveCount(1);
-  await expect(engineerSpan.locator(".conversation-work-cell-agent-avatar .avatar-initial")).toHaveCount(1);
+  await expect(engineerSpan.locator(".conversation-work-cell-agent-avatar .teammate-avatar-image-default")).toHaveCount(1);
   await expect(engineerSpan.locator(".conversation-work-cell-agent-span-head .conversation-work-cell-row-icon")).toHaveCount(0);
   await expect(engineerSpan).toContainText("Implement login form");
   await expect(engineerSpan).not.toContainText("Implement the login form.");
@@ -5255,7 +5255,7 @@ test("phase 1 parallel multi-agent active transcript shows latest action per age
 
   const qaSpan = workCell.locator(".conversation-work-cell-agent-span").filter({ hasText: "QA" });
   await expect(qaSpan.locator(".conversation-work-cell-agent-avatar")).toHaveCount(1);
-  await expect(qaSpan.locator(".conversation-work-cell-agent-avatar .avatar-initial")).toHaveCount(1);
+  await expect(qaSpan.locator(".conversation-work-cell-agent-avatar .teammate-avatar-image-default")).toHaveCount(1);
   await expect(qaSpan.locator(".conversation-work-cell-agent-span-head .conversation-work-cell-row-icon")).toHaveCount(0);
   await expect(qaSpan).toContainText("Prepare QA checklist");
   await expect(qaSpan.locator(".conversation-work-cell-agent-span-detail")).toHaveCount(0);
