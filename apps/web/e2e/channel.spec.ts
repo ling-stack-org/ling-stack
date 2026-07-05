@@ -2541,6 +2541,73 @@ test("channel message feed renders web evidence inline with sources and blocked 
   await expect(configuredOnlyReply).not.toContainText("openai-chat-completions-web-search");
 });
 
+test("right dock browser evidence exposes failed read URL detail", async ({ page }) => {
+  await useEnglishLocale(page);
+  const state = createBaseState({ approvalStatus: "pending" });
+  state.aiTeammates = [createMockTeammate({ id: "engineer", displayName: "Ling Engineer" })];
+  state.channelMessages = [
+    {
+      id: "msg_web_evidence_failed_read_url",
+      workspaceId: "workspace_default",
+      channelId: "channel_engineering",
+      kind: "ai_reply",
+      intent: "discuss",
+      authorType: "ai-teammate",
+      authorId: "engineer",
+      body: "Failed read URL reply.",
+      mentions: [],
+      attachmentIds: [],
+      linkPreviewIds: [],
+      fileRefs: [],
+      status: "ready",
+      webEvidence: {
+        status: "degraded",
+        query: "read failed source",
+        reason: "One requested URL could not be read.",
+        provider: {
+          adapterId: "openai-responses-web-search",
+          providerPresetId: "provider_openai_responses",
+          displayName: "OpenAI Responses + Web Search",
+        },
+        sources: [],
+        readUrls: [
+          {
+            url: "https://example.com/private-report",
+            status: "blocked",
+            reason: "HTTP 403 Forbidden",
+          },
+        ],
+        updatedAt: "2026-06-24T00:22:00.000Z",
+      },
+      createdAt: "2026-06-24T00:22:00.000Z",
+      updatedAt: "2026-06-24T00:22:00.000Z",
+    },
+  ];
+  await mockDaemon(page, state);
+  await page.goto("/");
+  await openEngineeringChannel(page);
+
+  await page.getByRole("button", { name: "Show details" }).click();
+  const dock = page.locator(".channel-side-panel.right-dock");
+  await expect(dock).toBeVisible();
+  await dock.getByRole("button", { name: "Browser" }).click();
+
+  const failedRow = dock.locator(".right-dock-evidence-row").filter({ hasText: "https://example.com/private-report" });
+  await expect(failedRow).toBeVisible();
+  await expect(failedRow).toContainText("Failed");
+  await expect(failedRow).toContainText("Read URL");
+  await failedRow.click();
+
+  const detail = dock.locator(".right-dock-detail-list");
+  await expect(detail).toContainText("Status");
+  await expect(detail).toContainText("Failed");
+  await expect(detail).toContainText("Link");
+  await expect(detail).toContainText("https://example.com/private-report");
+  await expect(detail).toContainText("Failure reason");
+  await expect(detail).toContainText("HTTP 403 Forbidden");
+  await expect(detail.locator("a.right-dock-evidence-link")).toHaveAttribute("href", "https://example.com/private-report");
+});
+
 test("conversation turn transcript renders coordinator web evidence in the main chat", async ({ page }) => {
   await useEnglishLocale(page);
   const state = createBaseState({ approvalStatus: "pending" });

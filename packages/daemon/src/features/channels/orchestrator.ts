@@ -67,6 +67,11 @@ export type WorkflowOrchestrationResult =
   | { readonly status: "failed"; readonly workflow: ChannelWorkflow; readonly workflowStep?: ChannelWorkflowStep; readonly blocker: string }
   | { readonly status: "completed"; readonly workflow: ChannelWorkflow };
 
+export type WorkflowApprovalDecisionSyncResult =
+  | { readonly status: "not_workflow_approval" }
+  | { readonly status: "missing_owner"; readonly workflowStepId: string }
+  | { readonly status: "synced"; readonly workflow: ChannelWorkflow; readonly workflowStep: ChannelWorkflowStep; readonly result?: WorkflowOrchestrationResult };
+
 export interface CancelWorkflowInput {
   readonly store: RunStore;
   readonly workflowId: string;
@@ -244,6 +249,57 @@ export async function orchestrateChannelWorkflow(input: OrchestrateWorkflowInput
     taskId: firstStarted.taskId,
     runId: firstStarted.runId,
     startedSteps,
+  };
+}
+
+export function syncWorkflowApprovalDecision(
+  store: RunStore,
+  approval: ApprovalRequest,
+  now = new Date().toISOString(),
+): WorkflowApprovalDecisionSyncResult {
+  if (!approval.workflowStepId) {
+    return { status: "not_workflow_approval" };
+  }
+  const step = store.getChannelWorkflowStep(approval.workflowStepId);
+  if (!step) {
+    return { status: "missing_owner", workflowStepId: approval.workflowStepId };
+  }
+  const workflow = store.getChannelWorkflow(step.workflowId);
+  if (!workflow) {
+    return { status: "missing_owner", workflowStepId: step.id };
+  }
+  const matchesPostGate = step.metadata?.postStepApprovalId === approval.id || (
+    approval.payload.type === "workflow_step" &&
+    approval.payload.gateStage === "post" &&
+    approval.payload.workflowStepId === step.id
+  );
+  if (matchesPostGate) {
+    const result = reconcilePostStepApprovalDecision(store, workflow, step, approval, now);
+    return {
+      status: "synced",
+      workflow: store.getChannelWorkflow(workflow.id) ?? workflow,
+      workflowStep: store.getChannelWorkflowStep(step.id) ?? step,
+      ...(result ? { result } : {}),
+    };
+  }
+  const matchesPreGate = step.metadata?.preStepApprovalId === approval.id || (
+    approval.payload.type === "workflow_step" &&
+    approval.payload.gateStage === "pre" &&
+    approval.payload.workflowStepId === step.id
+  );
+  if (matchesPreGate) {
+    const result = reconcilePreStepApprovalDecision(store, workflow, step, approval, now);
+    return {
+      status: "synced",
+      workflow: store.getChannelWorkflow(workflow.id) ?? workflow,
+      workflowStep: store.getChannelWorkflowStep(step.id) ?? step,
+      ...(result ? { result } : {}),
+    };
+  }
+  return {
+    status: "synced",
+    workflow,
+    workflowStep: step,
   };
 }
 
@@ -793,11 +849,12 @@ function reconcilePreStepApprovalDecision(
   workflow: ChannelWorkflow,
   step: ChannelWorkflowStep,
   approval: ApprovalRequest,
+  decisionAt = new Date().toISOString(),
 ): Extract<WorkflowOrchestrationResult, { status: "waiting_for_approval" | "blocked" | "failed" }> | undefined {
   if (approval.status === "pending") {
     return { status: "waiting_for_approval", workflow, workflowStep: step, approval };
   }
-  const now = new Date().toISOString();
+  const now = decisionAt;
   if (approval.status === "approved") {
     const workflowApproval = workflow.status === "waiting_for_approval"
       ? store.transitionChannelWorkflowStatus({
@@ -856,11 +913,12 @@ function reconcilePostStepApprovalDecision(
   workflow: ChannelWorkflow,
   step: ChannelWorkflowStep,
   approval: ApprovalRequest,
+  decisionAt = new Date().toISOString(),
 ): Extract<WorkflowOrchestrationResult, { status: "waiting_for_approval" | "blocked" | "failed" }> | undefined {
   if (approval.status === "pending") {
     return { status: "waiting_for_approval", workflow, workflowStep: step, approval };
   }
-  const now = new Date().toISOString();
+  const now = decisionAt;
   if (approval.status === "approved") {
     const workflowApproval = workflow.status === "waiting_for_approval"
       ? store.transitionChannelWorkflowStatus({

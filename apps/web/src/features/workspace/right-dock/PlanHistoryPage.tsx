@@ -175,27 +175,35 @@ export function PlanHistoryPage({
                   ) : null}
                 </header>
                 <div className="right-dock-plan-list">
-                  {visibleVersions.map((plan) => (
-                    <div key={plan.id} className={busyPlanId === plan.id ? "right-dock-plan-row busy" : "right-dock-plan-row"}>
-                      <button className="right-dock-row right-dock-plan-main" type="button" onClick={() => onOpenPlan(plan)}>
-                        <span className={`right-dock-row-dot ${planStatusTone(plan.status)}`} />
-                        <span className="right-dock-row-copy">
-                          <strong>{plan.title}</strong>
-                          <small>{proposedPlanSubtitle(plan, t)}</small>
-                        </span>
-                        <span className={`right-dock-row-state ${planStatusTone(plan.status)}`}>{proposedPlanStatusLabel(plan.status, t)}</span>
-                      </button>
-                      <button
-                        className="right-dock-icon-button right-dock-plan-source-button"
-                        type="button"
-                        onClick={() => plan.sourceMessageId ? onOpenSource?.(plan) : onOpenPlan(plan)}
-                        aria-label={plan.sourceMessageId ? t("Open source") : t("Open plan detail")}
-                        title={plan.sourceMessageId ? t("Open source") : t("Source unavailable")}
-                      >
-                        <LocateFixed size={14} />
-                      </button>
-                    </div>
-                  ))}
+                  {visibleVersions.map((plan) => {
+                    const sourceAvailable = planSourceMessageAvailable(plan);
+                    const sourceStateLabel = planSourceMessageStateLabel(plan, t);
+                    return (
+                      <div key={plan.id} className={busyPlanId === plan.id ? "right-dock-plan-row busy" : "right-dock-plan-row"}>
+                        <button className="right-dock-row right-dock-plan-main" type="button" onClick={() => onOpenPlan(plan)}>
+                          <span className={`right-dock-row-dot ${planStatusTone(plan.status)}`} />
+                          <span className="right-dock-row-copy">
+                            <strong>{plan.title}</strong>
+                            <small>{proposedPlanSubtitle(plan, t)}</small>
+                            {!sourceAvailable && plan.sourceMessageId ? (
+                              <small className="right-dock-plan-source-state">{sourceStateLabel}</small>
+                            ) : null}
+                          </span>
+                          <span className={`right-dock-row-state ${planStatusTone(plan.status)}`}>{proposedPlanStatusLabel(plan.status, t)}</span>
+                        </button>
+                        <button
+                          className="right-dock-icon-button right-dock-plan-source-button"
+                          type="button"
+                          onClick={() => onOpenSource?.(plan)}
+                          aria-label={sourceAvailable ? t("Open source") : sourceStateLabel}
+                          title={sourceAvailable ? t("Open source") : sourceStateLabel}
+                          disabled={!sourceAvailable || !onOpenSource}
+                        >
+                          <LocateFixed size={14} />
+                        </button>
+                      </div>
+                    );
+                  })}
                 </div>
                 {foldedSupersededCount > 0 ? (
                   <button className="right-dock-plan-lineage-fold" type="button" onClick={() => toggleLineageGroup(group.id)}>
@@ -237,6 +245,8 @@ export function PlanDetailPanel({
   const { t } = useI18n();
   const archived = plan.status === "archived";
   const accepted = plan.status === "accepted";
+  const sourceAvailable = planSourceMessageAvailable(plan);
+  const sourceStateLabel = planSourceMessageStateLabel(plan, t);
 
   return (
     <article className="right-dock-plan-detail">
@@ -250,9 +260,9 @@ export function PlanDetailPanel({
         </div>
       </header>
       <div className="right-dock-plan-action-row">
-        <button className="secondary-button compact-button" type="button" onClick={() => onOpenSource?.(plan)} disabled={!plan.sourceMessageId || busy}>
+        <button className="secondary-button compact-button" type="button" onClick={() => onOpenSource?.(plan)} disabled={!sourceAvailable || busy}>
           <LocateFixed size={14} />
-          {t("Open source")}
+          {sourceAvailable ? t("Open source") : sourceStateLabel}
         </button>
         <button className="secondary-button compact-button" type="button" onClick={() => onSave?.(plan)} disabled={archived || busy}>
           <Save size={14} />
@@ -283,7 +293,10 @@ export function PlanDetailPanel({
         {plan.sourceMessageId ? (
           <div>
             <dt>{t("Source message")}</dt>
-            <dd>{plan.sourceMessageId}</dd>
+            <dd>
+              {plan.sourceMessageId}
+              {!sourceAvailable ? <small className="right-dock-plan-source-state">{sourceStateLabel}</small> : null}
+            </dd>
           </div>
         ) : null}
         <div>
@@ -319,6 +332,26 @@ export function proposedPlanSubtitle(plan: ProposedPlanArtifact, t: (key: string
     formatCompactPlanDate(plan.updatedAt),
   ].filter(Boolean);
   return parts.join(" · ");
+}
+
+function planSourceMessageAvailable(plan: ProposedPlanArtifact): boolean {
+  return Boolean(plan.sourceMessageId && plan.sourceMessageState === "available");
+}
+
+function planSourceMessageStateLabel(
+  plan: ProposedPlanArtifact,
+  t: (key: string, values?: Record<string, string | number>) => string,
+): string {
+  if (!plan.sourceMessageId) {
+    return t("Source unavailable");
+  }
+  if (plan.sourceMessageState === "available") {
+    return t("Open source");
+  }
+  if (plan.sourceMessageState === "deleted") {
+    return t("Source message deleted");
+  }
+  return t("Source unavailable");
 }
 
 function proposedPlanStatusLabel(status: ProposedPlanArtifact["status"], t: (key: string) => string): string {
