@@ -5,6 +5,9 @@ export interface ChannelTeamMetricsPanelProps {
   readonly labels?: Partial<{
     readonly title: string;
     readonly subtitle: string;
+    readonly evidence: string;
+    readonly visibleEvidence: string;
+    readonly teamEvidence: string;
     readonly health: string;
     readonly active: string;
     readonly delayed: string;
@@ -20,6 +23,9 @@ export function ChannelTeamMetricsPanel({ metrics, labels = {} }: ChannelTeamMet
   const text = {
     title: labels.title ?? "Team metrics",
     subtitle: labels.subtitle ?? "Read-only health and evidence summary",
+    evidence: labels.evidence ?? "Evidence",
+    visibleEvidence: labels.visibleEvidence ?? "visible evidence",
+    teamEvidence: labels.teamEvidence ?? "team evidence",
     health: labels.health ?? "Health",
     active: labels.active ?? "Active",
     delayed: labels.delayed ?? "Delayed",
@@ -29,6 +35,10 @@ export function ChannelTeamMetricsPanel({ metrics, labels = {} }: ChannelTeamMet
     agentActivity: labels.agentActivity ?? "Agent activity",
     noAgentActivity: labels.noAgentActivity ?? "No agent evidence yet",
   };
+  const evidenceDetail = metrics.visibleEvidence
+    ? `${text.visibleEvidence} · ${metrics.summary.totalEvidenceCount} ${text.teamEvidence}`
+    : text.teamEvidence;
+
   return (
     <section className="channel-settings-card channel-team-metrics-panel" aria-label={text.title}>
       <div className="channel-settings-section-head">
@@ -42,7 +52,11 @@ export function ChannelTeamMetricsPanel({ metrics, labels = {} }: ChannelTeamMet
       </div>
 
       <div className="channel-team-metrics-grid">
-        <MetricTile label={text.health} value={metrics.summary.totalEvidenceCount} detail="evidence" />
+        <MetricTile
+          label={text.evidence}
+          value={metrics.visibleEvidence?.totalCount ?? metrics.summary.totalEvidenceCount}
+          detail={evidenceDetail}
+        />
         <MetricTile label={text.active} value={metrics.summary.activeEvidenceCount} detail="pending" />
         <MetricTile label={text.delayed} value={metrics.summary.delayedEvidenceCount} detail="late" />
         <MetricTile label={text.unavailable} value={metrics.summary.unavailableEvidenceCount} detail="blocked" />

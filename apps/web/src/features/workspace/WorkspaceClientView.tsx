@@ -936,6 +936,18 @@ export function WorkspaceClientView({
     () => deriveChannelRuns(selectedChannelId, tasks, runs, activeRun),
     [activeRun, runs, selectedChannelId, tasks],
   );
+  const selectedChannelTasks = useMemo(
+    () => tasks.filter((task) => task.channelId === selectedChannelId),
+    [selectedChannelId, tasks],
+  );
+  const selectedChannelWorkflows = useMemo(
+    () => channelWorkflows.filter((workflow) => workflow.channelId === selectedChannelId),
+    [channelWorkflows, selectedChannelId],
+  );
+  const selectedChannelWorkflowSteps = useMemo(
+    () => channelWorkflowSteps.filter((step) => step.channelId === selectedChannelId),
+    [channelWorkflowSteps, selectedChannelId],
+  );
   const channelCollaborationCardRefreshSignature = useMemo(() => {
     const workflowsSignature = channelWorkflows
       .filter((workflow) => workflow.channelId === selectedChannelId)
@@ -3559,6 +3571,9 @@ export function WorkspaceClientView({
       labels={{
         title: t("Team metrics"),
         subtitle: t("Read-only team activity and evidence"),
+        evidence: t("Evidence"),
+        visibleEvidence: t("visible evidence"),
+        teamEvidence: t("team evidence"),
         health: t("Health"),
         active: t("Active"),
         delayed: t("Delayed"),
@@ -3706,6 +3721,9 @@ export function WorkspaceClientView({
     channelMessages,
     channelAttachments,
     channelArtifactsByRun,
+    channelTasks: selectedChannelTasks,
+    channelWorkflows: selectedChannelWorkflows,
+    channelWorkflowSteps: selectedChannelWorkflowSteps,
     attentionProgressRows,
     teamAttentionCount: channelTeamMetricsState?.channelId === selectedChannelId ? channelTeamMetricsState.metrics.attention.activeAgentCount : 0,
     teamMetricsPanel: channelTeamMetricsPanel,

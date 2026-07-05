@@ -1,5 +1,6 @@
 import type {
   AvailabilityIncident,
+  ChannelEvidenceSummaryProjection,
   ChannelTeamAgentMetric,
   ChannelTeamAttentionMetric,
   ChannelTeamEvidenceItem,
@@ -21,6 +22,7 @@ export interface BuildChannelTeamMetricsProjectionInput {
   readonly reliabilityIncidents?: readonly ReliabilityIncident[];
   readonly availabilityIncidents?: readonly AvailabilityIncident[];
   readonly patterns?: readonly ChannelTeamPattern[];
+  readonly visibleEvidence?: ChannelEvidenceSummaryProjection;
   readonly now: string;
 }
 
@@ -36,6 +38,7 @@ export function buildChannelTeamMetricsProjection(
   return {
     channelId: input.channelId,
     generatedAt: input.now,
+    ...(input.visibleEvidence ? { visibleEvidence: input.visibleEvidence } : {}),
     summary,
     agents,
     attention: buildAttentionMetric(evidence),

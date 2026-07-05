@@ -4,8 +4,11 @@ import type {
   ApprovalRequest,
   ChannelAttachment,
   ChannelMessage,
+  ChannelWorkflow,
+  ChannelWorkflowStep,
   RunArtifact,
   RunSession,
+  Task,
 } from "../../types.js";
 import {
   mergeDockFileItems,
@@ -14,7 +17,7 @@ import {
   projectApprovalsToReviewItems,
   projectArtifactsToFileItems,
   projectChannelAttachmentsToFileItems,
-  projectFileRefsToFileItems,
+  projectMessageFileRefsToFileItems,
   projectFilesToEvidenceGroup,
   projectFilesToReviewItems,
   projectMessagesToReviewItems,
@@ -35,6 +38,9 @@ interface ChannelRightDockContentInput {
   readonly channelMessages: readonly ChannelMessage[];
   readonly channelAttachments: readonly ChannelAttachment[];
   readonly channelArtifactsByRun: Readonly<Record<string, readonly RunArtifact[]>>;
+  readonly channelTasks: readonly Task[];
+  readonly channelWorkflows: readonly ChannelWorkflow[];
+  readonly channelWorkflowSteps: readonly ChannelWorkflowStep[];
   readonly attentionProgressRows: readonly AttentionProgressRow[];
   readonly teamAttentionCount: number;
   readonly teamMetricsPanel: ReactNode;
@@ -59,6 +65,9 @@ export function useChannelRightDockContent({
   channelMessages,
   channelAttachments,
   channelArtifactsByRun,
+  channelTasks,
+  channelWorkflows,
+  channelWorkflowSteps,
   attentionProgressRows,
   teamAttentionCount,
   teamMetricsPanel,
@@ -92,11 +101,17 @@ export function useChannelRightDockContent({
 
   const fileItems = useMemo(
     () => mergeDockFileItems(
-      projectChannelAttachmentsToFileItems(channelAttachments, t),
-      projectFileRefsToFileItems(channelMessages.flatMap((message) => message.fileRefs ?? [])),
-      projectArtifactsToFileItems(channelArtifactsByRun),
+      projectChannelAttachmentsToFileItems(channelAttachments, t, { channelLabel: t("Channel files") }),
+      projectMessageFileRefsToFileItems(channelMessages, t),
+      projectArtifactsToFileItems(channelArtifactsByRun, {
+        runs: channelRuns,
+        workflowSteps: channelWorkflowSteps,
+        workflows: channelWorkflows,
+        tasks: channelTasks,
+        t,
+      }),
     ),
-    [channelArtifactsByRun, channelAttachments, channelMessages, t],
+    [channelArtifactsByRun, channelAttachments, channelMessages, channelRuns, channelTasks, channelWorkflowSteps, channelWorkflows, t],
   );
 
   const evidenceGroups = useMemo(

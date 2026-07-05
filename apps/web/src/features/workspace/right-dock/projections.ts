@@ -14,10 +14,14 @@ import type { Translate } from "../../../i18n.js";
 import type {
   ApprovalRequest,
   ChannelAttachment,
+  ChannelMessage,
   ChannelMessageFileRef,
+  ChannelWorkflow,
+  ChannelWorkflowStep,
   MessageWebEvidence,
   RunArtifact,
   RunSession,
+  Task,
 } from "../../../types.js";
 
 export interface RightDockMessageProjectionInput {
@@ -251,18 +255,29 @@ export function projectWebEvidenceToEvidenceGroup(
         title: source.title || source.url,
         summary: source.snippet || queryLabel,
         status: evidence.status === "blocked" ? "failed" : "available",
+        statusLabel: webEvidenceStatusLabel(evidence.status, t),
         sourceLabel: t("Web source"),
+        href: source.url,
+        originalUrl: source.url,
+        failureReason: evidence.status === "blocked" ? evidence.reason : undefined,
         timestampLabel: formatMaybeDate(evidence.updatedAt),
       });
     });
     evidence.readUrls.forEach((readUrl, index) => {
+      const failed = readUrl.status === "blocked";
+      const href = readUrl.finalUrl || readUrl.url;
       items.push({
         id: `web-read:${message.id}:${index}`,
         kind: "browser",
         title: readUrl.title || readUrl.finalUrl || readUrl.url,
         summary: readUrl.reason || queryLabel,
-        status: readUrl.status === "blocked" ? "failed" : "available",
+        status: failed ? "failed" : "available",
+        statusLabel: failed ? t("Failed") : evidence.status === "degraded" ? t("Degraded") : t("Ready"),
         sourceLabel: t("Read URL"),
+        href,
+        originalUrl: readUrl.url,
+        finalUrl: readUrl.finalUrl,
+        failureReason: failed ? readUrl.reason || evidence.reason : undefined,
         timestampLabel: formatMaybeDate(evidence.updatedAt),
       });
     });
@@ -272,6 +287,17 @@ export function projectWebEvidenceToEvidenceGroup(
     label: t("Browser evidence"),
     items,
   };
+}
+
+function webEvidenceStatusLabel(status: NonNullable<RightDockMessageProjectionInput["webEvidence"]>["status"], t: Translate): string {
+  switch (status) {
+    case "available":
+      return t("Ready");
+    case "degraded":
+      return t("Degraded");
+    case "blocked":
+      return t("Failed");
+  }
 }
 
 export function projectFilesToEvidenceGroup(
@@ -285,7 +311,7 @@ export function projectFilesToEvidenceGroup(
       id: `file-evidence:${item.id}`,
       kind: "file",
       title: item.name,
-      summary: item.pathLabel,
+      summary: item.ownerScope?.label ?? item.pathLabel,
       status: item.status === "missing" ? "failed" : "available",
       sourceLabel: fileKindLabel(item.kind, t),
     })),
@@ -308,8 +334,57 @@ export function projectAttachmentsToFileItems(
 export function projectChannelAttachmentsToFileItems(
   attachments: readonly ChannelAttachment[],
   t: Translate,
+  options: { readonly channelLabel?: string } = {},
 ): readonly DockFileItem[] {
-  return projectAttachmentsToFileItems(attachments, t);
+  return projectAttachmentsToFileItems(attachments, t).map((item, index) => {
+    const attachment = attachments[index];
+    return {
+      ...item,
+      ownerScope: attachment?.messageId
+        ? {
+            kind: "message",
+            id: attachment.messageId,
+            label: t("Message files"),
+            detail: options.channelLabel,
+          }
+        : {
+            kind: "channel",
+            id: attachment?.channelId ?? "channel",
+            label: options.channelLabel ?? t("Channel files"),
+          },
+    };
+  });
+}
+
+export function projectMessageFileRefsToFileItems(
+  messages: readonly ChannelMessage[],
+  t: Translate,
+): readonly DockFileItem[] {
+  const seen = new Set<string>();
+  const items: DockFileItem[] = [];
+  for (const message of messages) {
+    for (const ref of message.fileRefs ?? []) {
+      const key = `${message.id}:${ref.path}:${ref.line ?? ""}`;
+      if (seen.has(key)) {
+        continue;
+      }
+      seen.add(key);
+      items.push({
+        id: `ref:${key}`,
+        name: ref.label || fileNameFromPath(ref.path),
+        pathLabel: ref.line ? `${ref.path}:${ref.line}` : ref.path,
+        kind: "reference",
+        status: "available",
+        ownerScope: {
+          kind: "message",
+          id: message.id,
+          label: message.kind === "ai_reply" ? t("AI reply files") : message.authorType === "local-user" ? t("User message files") : t("Message files"),
+          detail: formatMaybeDate(message.updatedAt),
+        },
+      });
+    }
+  }
+  return items;
 }
 
 export function projectFileRefsToFileItems(
@@ -334,19 +409,93 @@ export function projectFileRefsToFileItems(
   return items;
 }
 
+export interface ProjectArtifactsToFileItemsContext {
+  readonly runs?: readonly RunSession[];
+  readonly workflowSteps?: readonly ChannelWorkflowStep[];
+  readonly workflows?: readonly ChannelWorkflow[];
+  readonly tasks?: readonly Task[];
+  readonly t?: Translate;
+}
+
 export function projectArtifactsToFileItems(
   artifactsByRun: Readonly<Record<string, readonly RunArtifact[]>> | readonly RunArtifact[],
+  context: ProjectArtifactsToFileItemsContext = {},
 ): readonly DockFileItem[] {
   const artifacts = Array.isArray(artifactsByRun)
     ? artifactsByRun
     : Object.values(artifactsByRun).flat();
+  const runById = new Map((context.runs ?? []).map((run) => [run.id, run]));
+  const workflowStepById = new Map((context.workflowSteps ?? []).map((step) => [step.id, step]));
+  const workflowById = new Map((context.workflows ?? []).map((workflow) => [workflow.id, workflow]));
+  const taskById = new Map((context.tasks ?? []).map((task) => [task.id, task]));
   return artifacts.map((artifact) => ({
     id: `artifact:${artifact.id}`,
     name: artifact.title || fileNameFromPath(artifact.path),
     pathLabel: artifact.path,
     kind: artifact.type === "diff" ? "change" : "artifact",
     status: artifact.type === "diff" ? "changed" : "generated",
+    ownerScope: artifactOwnerScope(artifact, {
+      runById,
+      workflowStepById,
+      workflowById,
+      taskById,
+      t: context.t,
+    }),
   }));
+}
+
+function artifactOwnerScope(
+  artifact: RunArtifact,
+  context: {
+    readonly runById: ReadonlyMap<string, RunSession>;
+    readonly workflowStepById: ReadonlyMap<string, ChannelWorkflowStep>;
+    readonly workflowById: ReadonlyMap<string, ChannelWorkflow>;
+    readonly taskById: ReadonlyMap<string, Task>;
+    readonly t?: Translate;
+  },
+): DockFileItem["ownerScope"] {
+  const t = context.t;
+  const run = artifact.runId ? context.runById.get(artifact.runId) : undefined;
+  const step = run?.workflowStepId ? context.workflowStepById.get(run.workflowStepId) : undefined;
+  const workflow = step ? context.workflowById.get(step.workflowId) : undefined;
+  const task = run?.taskId ? context.taskById.get(run.taskId) : undefined;
+  const runDetail = run ? `${t?.("Run") ?? "Run"}: ${run.providerModel || run.providerName} / ${run.status}` : undefined;
+  if (workflow) {
+    return {
+      kind: "workflow",
+      id: workflow.id,
+      label: `${t?.("Workflow") ?? "Workflow"}: ${workflow.title}`,
+      detail: [step ? `${t?.("Step") ?? "Step"}: ${step.title}` : undefined, runDetail].filter(Boolean).join(" · "),
+      order: step?.position,
+    };
+  }
+  if (step) {
+    return {
+      kind: "workflow_step",
+      id: step.id,
+      label: `${t?.("Step") ?? "Step"}: ${step.title}`,
+      detail: runDetail,
+      parentId: step.workflowId,
+      order: step.position,
+    };
+  }
+  if (task) {
+    return {
+      kind: "task",
+      id: task.id,
+      label: `${t?.("Task") ?? "Task"}: ${task.title}`,
+      detail: runDetail,
+    };
+  }
+  if (run) {
+    return {
+      kind: "run",
+      id: run.id,
+      label: `${t?.("Run") ?? "Run"}: ${run.providerModel || run.providerName}`,
+      detail: run.status,
+    };
+  }
+  return undefined;
 }
 
 export function mergeDockFileItems(...groups: readonly (readonly DockFileItem[])[]): readonly DockFileItem[] {

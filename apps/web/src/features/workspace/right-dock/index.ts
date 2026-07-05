@@ -8,6 +8,7 @@ export {
   projectAttachmentsToFileItems,
   projectChannelAttachmentsToFileItems,
   projectFileRefsToFileItems,
+  projectMessageFileRefsToFileItems,
   projectFilesToEvidenceGroup,
   projectFilesToReviewItems,
   projectMessagesToReviewItems,

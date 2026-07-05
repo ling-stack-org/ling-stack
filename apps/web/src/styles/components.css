@@ -7225,6 +7225,36 @@ code,
   min-width: 0;
 }
 
+.right-dock-file-group {
+  display: grid;
+  gap: 6px;
+}
+
+.right-dock-file-group-header {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  padding: 0 2px;
+}
+
+.right-dock-file-group-header strong,
+.right-dock-file-group-header small {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.right-dock-file-group-header strong {
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.right-dock-file-group-header small {
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 15px;
+}
+
 .right-dock-review-page-accordion .right-dock-review-list-pane {
   gap: 0;
 }
@@ -7792,6 +7822,14 @@ code,
 
 .right-dock-plan-source-button {
   margin-right: 2px;
+}
+
+.right-dock-plan-source-state {
+  display: block;
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 15px;
+  overflow-wrap: anywhere;
 }
 
 .right-dock-plan-detail {
@@ -8396,6 +8434,17 @@ code,
   font-weight: 550;
   line-height: 17px;
   overflow-wrap: anywhere;
+}
+
+.right-dock-evidence-link {
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  overflow-wrap: anywhere;
+}
+
+.right-dock-evidence-link:hover {
+  color: var(--accent-strong);
 }
 
 .right-dock-review-detail {

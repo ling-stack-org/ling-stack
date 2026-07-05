@@ -56,6 +56,7 @@ import {
   finalizeOrchestratedWorkflowStepRun,
   orchestrateChannelWorkflow,
   retryChannelWorkflowStep,
+  syncWorkflowApprovalDecision,
   type StartOrchestratedWorkflowStepRun,
 } from "../features/channels/orchestrator.js";
 import {
@@ -2025,8 +2026,9 @@ export async function routeRequest(
 
   const approvalRoute = parseApprovalRoute(url.pathname);
   if (approvalRoute) {
-    await handleApprovalItem(request, response, config, storeRegistry, approvalRoute, controlPlaneEvents, ({ cwd, store, approval, now }) =>
-      syncMediaJobForApprovalDecision({
+    await handleApprovalItem(request, response, config, storeRegistry, approvalRoute, controlPlaneEvents, ({ cwd, store, approval, now }) => {
+      syncWorkflowApprovalDecision(store, approval, now);
+      return syncMediaJobForApprovalDecision({
         cwd,
         store,
         storeRegistry,
@@ -2049,7 +2051,8 @@ export async function routeRequest(
             });
           },
         },
-      }));
+      });
+    });
     return;
   }
 

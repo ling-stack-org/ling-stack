@@ -277,6 +277,18 @@ export interface FoldedExpertsReadModel {
 
 export type ChannelTeamHealthState = "healthy" | "attention_needed" | "degraded";
 
+export type ChannelEvidenceSummaryKind = "runs" | "approvals" | "browser" | "files" | "team_evidence";
+
+export interface ChannelEvidenceSummaryProjection {
+  readonly channelId: string;
+  readonly generatedAt: string;
+  readonly totalCount: number;
+  readonly countsByKind: Partial<Record<ChannelEvidenceSummaryKind, number>>;
+  readonly pendingCount: number;
+  readonly failedCount: number;
+  readonly latestUpdatedAt?: string;
+}
+
 export interface ChannelTeamMetricsSummary {
   readonly healthState: ChannelTeamHealthState;
   readonly totalEvidenceCount: number;
@@ -325,6 +337,7 @@ export interface ChannelTeamLearningQueueMetric {
 export interface ChannelTeamMetricsProjection {
   readonly channelId: string;
   readonly generatedAt: string;
+  readonly visibleEvidence?: ChannelEvidenceSummaryProjection;
   readonly summary: ChannelTeamMetricsSummary;
   readonly agents: readonly ChannelTeamAgentMetric[];
   readonly attention: ChannelTeamAttentionMetric;

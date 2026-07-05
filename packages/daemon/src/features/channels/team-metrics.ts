@@ -1,9 +1,10 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { buildChannelTeamMetricsProjection } from "@ling-stack/core";
+import { buildChannelEvidenceSummaryProjection, buildChannelTeamMetricsProjection } from "@ling-stack/core";
 import type { ResolvedDaemonConfig } from "../../config.js";
 import type { RunStoreRegistry } from "../../runtime/store-registry.js";
 import { readOptionalIntegerQuery } from "../../shared/request.js";
 import { writeJson } from "../../shared/response.js";
+import { enrichChannelMessagesWithWebEvidence } from "../web/message-web-evidence.js";
 
 export async function handleChannelTeamMetricsProjection(
   request: IncomingMessage,
@@ -31,13 +32,38 @@ export async function handleChannelTeamMetricsProjection(
     }
     const now = new Date().toISOString();
     const limit = readOptionalIntegerQuery(url, "limit", 1) ?? 500;
+    const tasks = store.listTasks({ channelId, limit });
+    const taskIds = new Set(tasks.map((task) => task.id));
+    const runs = store
+      .listRuns({ limit: Math.max(limit * 4, 500) })
+      .filter((run) => run.channelId === channelId || taskIds.has(run.taskId));
+    const workflowSteps = store
+      .listChannelWorkflows({ channelId, limit })
+      .flatMap((workflow) => store.listChannelWorkflowSteps({ workflowId: workflow.id, limit: 500 }));
+    const approvals = store.listApprovalRequests({ limit: Math.max(limit * 4, 500) });
+    const messages = enrichChannelMessagesWithWebEvidence(store, store.listChannelMessages({ channelId, limit }));
+    const attachments = store.listChannelAttachments({ channelId, limit });
+    const artifacts = runs.flatMap((run) => store.listArtifacts(run.id));
+    const teamEvidence = store.listChannelTeamEvidenceItems({
+      channelId,
+      now,
+      limit,
+    });
     const metrics = buildChannelTeamMetricsProjection({
       channelId,
       now,
-      evidence: store.listChannelTeamEvidenceItems({
+      evidence: teamEvidence,
+      visibleEvidence: buildChannelEvidenceSummaryProjection({
         channelId,
-        now,
-        limit,
+        generatedAt: now,
+        runs,
+        approvals,
+        messages,
+        attachments,
+        artifacts,
+        tasks,
+        workflowSteps,
+        teamEvidence,
       }),
       reliabilityIncidents: store.listReliabilityIncidents({ now, limit }),
       availabilityIncidents: store.listAvailabilityIncidents({ now, limit }),
