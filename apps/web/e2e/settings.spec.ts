@@ -504,17 +504,14 @@ test("settings skill library shows read-only skill health findings", async ({ pa
   await page.goto("/");
 
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
-  await page.getByLabel("Settings sections").getByRole("button", { name: /Skills/ }).click();
-  const skillSubnav = page.getByRole("tablist", { name: "Skill sections" });
-  await expect(page.locator(".skill-governance-settings-panel")).toBeVisible();
-  await expect(page.locator(".settings-skill-library")).toHaveCount(0);
-  await expect(skillSubnav.getByRole("tab", { name: "Skill policy" })).toHaveAttribute("aria-selected", "true");
-  await expect(skillSubnav.getByRole("tab", { name: "Skill library" })).toBeVisible();
+  await expect(page.getByLabel("Settings sections").getByRole("button", { name: /Personalization/ })).toBeVisible();
+  await page.getByLabel("Settings sections").getByRole("button", { name: /Skill library/ }).click();
+  await expect(page.locator(".skill-governance-settings-panel")).toHaveCount(0);
+  await expect(page.getByRole("tablist", { name: "Skill sections" })).toHaveCount(0);
   await expect(page.getByRole("tab", { name: "Skill Governance" })).toHaveCount(0);
-  await page.getByRole("tab", { name: /Skill library/ }).click();
   const panel = page.locator(".settings-skill-library");
   await expect(panel.getByRole("heading", { name: "Skill library" })).toBeVisible();
-  await expect(page.getByLabel("Settings sections").getByRole("button", { name: /Skills/ })).toHaveClass(/active/);
+  await expect(page.getByLabel("Settings sections").getByRole("button", { name: /Skill library/ })).toHaveClass(/active/);
   await expect(page.getByRole("tab", { name: /Skills list/ })).toHaveAttribute("aria-selected", "true");
   await expect(panel.getByRole("region", { name: "Skill Health" })).toHaveCount(0);
   await expect(panel.getByRole("region", { name: "Skill Source Health" })).toHaveCount(0);
@@ -644,9 +641,25 @@ test("settings skill governance saves policy from a separate section", async ({ 
   await page.goto("/");
 
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
-  await page.getByLabel("Settings sections").getByRole("button", { name: /Skills/ }).click();
-  await expect(page.getByLabel("Settings sections").getByRole("button", { name: /Skills/ })).toHaveClass(/active/);
+  await page.getByLabel("Settings sections").getByRole("button", { name: /Personalization/ }).click();
+  await expect(page.getByLabel("Settings sections").getByRole("button", { name: /Personalization/ })).toHaveClass(/active/);
+  const tonePanel = page.locator(".personalization-settings-panel");
+  await expect(tonePanel.getByRole("heading", { name: "Ling conversation tone" })).toBeVisible();
+  await expect(tonePanel.getByRole("radio", { name: /Pragmatic/ })).toHaveAttribute("aria-checked", "true");
+  await expect(tonePanel).toContainText("Built-in");
+  await tonePanel.getByRole("radio", { name: /Friendly/ }).click();
+  await tonePanel.getByRole("button", { name: "Save conversation tone" }).click();
+  await expect.poll(() => state.workspaceSettings.lingConversationTone).toBe("friendly");
+  await expect(tonePanel).toContainText("Ling conversation tone saved");
+  await expect(tonePanel).toContainText("Workspace");
   const panel = page.locator(".skill-governance-settings-panel");
+  await expect.poll(async () => {
+    const boxes = await Promise.all([
+      tonePanel.boundingBox(),
+      panel.boundingBox(),
+    ]);
+    return boxes[0] && boxes[1] ? boxes[0].y < boxes[1].y : false;
+  }).toBe(true);
   const governancePanel = panel.getByRole("region", { name: "Skill policy" });
   await expect(panel.getByRole("heading", { name: "Skill policy" })).toBeVisible();
   await expect(panel).toContainText("Control skill recording, generation, and publication policy.");

@@ -2475,6 +2475,9 @@ test("conversation stream materializes uploaded attachments into the run prompt"
   try {
     const provider = (await createStaticChatProvider(daemon.url, cwd)).provider;
     await postJson(`${daemon.url}/providers/${encodeURIComponent(provider.id)}/check?cwd=${encodeURIComponent(cwd)}`);
+    await patchJson(`${daemon.url}/workspace-settings?cwd=${encodeURIComponent(cwd)}`, {
+      lingConversationTone: "friendly",
+    });
     const attachment = (await postJson(`${daemon.url}/conversations/attachments?cwd=${encodeURIComponent(cwd)}`, {
       fileName: "notes.txt",
       contentBase64: Buffer.from("Alpha decision: keep the shared composer contract.").toString("base64"),
@@ -2499,6 +2502,14 @@ test("conversation stream materializes uploaded attachments into the run prompt"
     assert.equal(runner.runs.length, 1);
     assert.match(runner.runs[0].task.prompt, /Attached files:/);
     assert.match(runner.runs[0].task.prompt, /Alpha decision: keep the shared composer contract\./);
+    assert.doesNotMatch(runner.runs[0].task.prompt, /Use English for user-visible output/);
+    assert.ok(runner.runs[0].appendSystemPrompt.some((instruction) => /Default conversation tone: friendly\./.test(instruction)));
+    assert.ok(runner.runs[0].appendSystemPrompt.some((instruction) => /Use English for user-visible output/.test(instruction)));
+
+    const done = events.find((event) => event.event === "done");
+    assert.ok(done);
+    assert.equal(done.data.run.requestSnapshot.lingConversationTone, "friendly");
+    assert.ok(done.data.run.requestSnapshot.appendSystemPrompt.some((instruction) => /Default conversation tone: friendly\./.test(instruction)));
 
     const detail = await getJson(`${daemon.url}/conversations/${encodeURIComponent(initialReady.data.thread.id)}?cwd=${encodeURIComponent(cwd)}`);
     const userMessage = detail.messages.find((message) => message.id === initialReady.data.userMessage.id);
@@ -7686,6 +7697,7 @@ test("workspace settings API persists UI preferences in .ling-stack state", asyn
     const initial = await getJson(`${daemon.url}/workspace-settings?cwd=${encodeURIComponent(cwd)}`);
     assert.equal(initial.settings.schemaVersion, 1);
     assert.equal(initial.settings.workspaceCwd, undefined);
+    assert.equal(initial.settings.lingConversationTone, undefined);
     assert.deepEqual(initial.settings.skillGovernancePolicy, {
       generationMode: "semi_auto",
       recordingMode: "user_initiated",
@@ -7698,6 +7710,7 @@ test("workspace settings API persists UI preferences in .ling-stack state", asyn
       workspaceCwd: cwd,
       theme: "dark",
       locale: "zh-CN",
+      lingConversationTone: "friendly",
       defaultProviderPresetId: "provider_default_chat",
       channelNotifications: { channel_one: "mentions" },
       channelActivityViews: { channel_one: [{ id: "custom:review", name: "Review" }] },
@@ -7712,22 +7725,34 @@ test("workspace settings API persists UI preferences in .ling-stack state", asyn
     assert.equal(patched.settings.workspaceCwd, cwd);
     assert.equal(patched.settings.theme, "dark");
     assert.equal(patched.settings.locale, "zh-CN");
+    assert.equal(patched.settings.lingConversationTone, "friendly");
     assert.equal(patched.settings.defaultProviderPresetId, "provider_default_chat");
     assert.equal(patched.settings.channelNotifications.channel_one, "mentions");
     assert.equal(patched.settings.skillGovernancePolicy.generationMode, "approval_only");
 
     const reopened = await getJson(`${daemon.url}/workspace-settings?cwd=${encodeURIComponent(cwd)}`);
     assert.equal(reopened.settings.theme, "dark");
+    assert.equal(reopened.settings.lingConversationTone, "friendly");
     assert.equal(reopened.settings.defaultProviderPresetId, "provider_default_chat");
     assert.equal(reopened.settings.channelActivityViews.channel_one[0].id, "custom:review");
     assert.equal(reopened.settings.skillGovernancePolicy.generationMode, "approval_only");
 
     const reset = await patchJson(`${daemon.url}/workspace-settings?cwd=${encodeURIComponent(cwd)}`, {
       defaultProviderPresetId: null,
+      lingConversationTone: null,
       skillGovernancePolicy: null,
     });
     assert.equal(reset.settings.defaultProviderPresetId, undefined);
+    assert.equal(reset.settings.lingConversationTone, undefined);
     assert.equal(reset.settings.skillGovernancePolicy.generationMode, "semi_auto");
+
+    const invalid = await fetch(`${daemon.url}/workspace-settings?cwd=${encodeURIComponent(cwd)}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ lingConversationTone: "verbose" }),
+    });
+    assert.equal(invalid.status, 400);
+    assert.match(await invalid.text(), /lingConversationTone must be friendly, pragmatic, none, or null/);
   } finally {
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });

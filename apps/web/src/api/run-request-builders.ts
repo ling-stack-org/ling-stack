@@ -115,6 +115,7 @@ export function buildRerunRequest(run: RunSession): unknown {
     permissionPreset: readOptionalString(snapshot, "permissionPreset"),
     permissionMode: readOptionalString(snapshot, "permissionMode"),
     thinkingLevel: readOptionalString(snapshot, "thinkingLevel") ?? "medium",
+    lingConversationTone: readOptionalString(snapshot, "lingConversationTone"),
     systemPrompt: readOptionalString(snapshot, "systemPrompt"),
     appendSystemPrompt: readStringArray(snapshot, "appendSystemPrompt"),
     agentDir: readOptionalString(snapshot, "agentDir"),

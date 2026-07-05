@@ -4,6 +4,8 @@ export type ResponseLanguage = "zh-CN" | "en-US";
 
 export type ResponseLanguagePreference = "follow_user" | ResponseLanguage;
 
+export type LingConversationTone = "friendly" | "pragmatic" | "none";
+
 export type SkillGovernanceGenerationMode = "off" | "approval_only" | "semi_auto" | "auto_candidate";
 
 export type SkillGovernanceRecordingMode = "disabled" | "user_initiated";
@@ -22,6 +24,7 @@ export interface WorkspaceSettings {
   readonly theme?: "light" | "dark" | "system";
   readonly locale?: string;
   readonly responseLanguage?: ResponseLanguagePreference;
+  readonly lingConversationTone?: LingConversationTone;
   readonly defaultProviderPresetId?: string;
   readonly defaultPermissionMode?: SessionPermissionMode;
   readonly defaultPermissionPreset?: PermissionPreset;
@@ -36,6 +39,7 @@ export interface UpdateWorkspaceSettingsRequest {
   readonly theme?: "light" | "dark" | "system" | null;
   readonly locale?: string | null;
   readonly responseLanguage?: ResponseLanguagePreference | null;
+  readonly lingConversationTone?: LingConversationTone | null;
   readonly defaultProviderPresetId?: string | null;
   readonly defaultPermissionMode?: SessionPermissionMode | null;
   readonly defaultPermissionPreset?: PermissionPreset | null;
@@ -101,6 +105,7 @@ export interface EffectiveConfigResponse {
     readonly theme: EffectiveConfigValue<"light" | "dark" | "system">;
     readonly locale: EffectiveConfigValue<string>;
     readonly responseLanguage: EffectiveConfigValue<ResponseLanguagePreference>;
+    readonly lingConversationTone: EffectiveConfigValue<LingConversationTone>;
     readonly skillGovernancePolicy: EffectiveConfigValue<SkillGovernancePolicy>;
     readonly runtime: {
       readonly defaultRunnerId: EffectiveConfigValue<string>;
