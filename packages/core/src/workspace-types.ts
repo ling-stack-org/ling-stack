@@ -50,6 +50,12 @@ export type ResponseLanguagePreference = "follow_user" | ResponseLanguage;
 
 export const responseLanguagePreferences: readonly ResponseLanguagePreference[] = ["follow_user", "zh-CN", "en-US"];
 
+export type LingConversationTone = "friendly" | "pragmatic" | "none";
+
+export const lingConversationTones: readonly LingConversationTone[] = ["friendly", "pragmatic", "none"];
+
+export const DEFAULT_LING_CONVERSATION_TONE: LingConversationTone = "pragmatic";
+
 export type SkillGovernanceGenerationMode = "off" | "approval_only" | "semi_auto" | "auto_candidate";
 
 export const skillGovernanceGenerationModes: readonly SkillGovernanceGenerationMode[] = [
@@ -463,6 +469,7 @@ export interface WorkspaceSettings {
   readonly theme?: "light" | "dark" | "system";
   readonly locale?: string;
   readonly responseLanguage?: ResponseLanguagePreference;
+  readonly lingConversationTone?: LingConversationTone;
   readonly defaultProviderPresetId?: string;
   readonly defaultPermissionMode?: SessionPermissionMode;
   readonly defaultPermissionPreset?: PermissionPreset;
@@ -477,6 +484,7 @@ export interface UpdateWorkspaceSettingsInput {
   readonly theme?: "light" | "dark" | "system" | null;
   readonly locale?: string | null;
   readonly responseLanguage?: ResponseLanguagePreference | null;
+  readonly lingConversationTone?: LingConversationTone | null;
   readonly defaultProviderPresetId?: string | null;
   readonly defaultPermissionMode?: SessionPermissionMode | null;
   readonly defaultPermissionPreset?: PermissionPreset | null;

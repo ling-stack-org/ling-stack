@@ -42,6 +42,7 @@ import { redactTextWithSecrets } from "../../shared/redaction.js";
 import { writeJson } from "../../shared/response.js";
 import { isRecord, readOptionalBoolean, readOptionalString, readString } from "../../shared/validation.js";
 import { listExecutionActions } from "./execution-actions.js";
+import { hydrateProposedPlanSourceState, hydrateProposedPlanSourceStates } from "./proposed-plan-source-state.js";
 import type { RunRequest } from "./schemas.js";
 
 export type LingThreadRoute =
@@ -447,7 +448,7 @@ async function handleLingThreadProposedPlans(
       writeJson(response, 200, {
         cwd,
         threadId,
-        plan: result.plan,
+        plan: hydrateProposedPlanSourceState(store, result.plan),
         taskId: result.taskId,
         workflowId: result.workflowId,
         workflowStepId: result.workflowStepId,
@@ -461,17 +462,17 @@ async function handleLingThreadProposedPlans(
         writeJson(response, 200, {
           cwd,
           threadId,
-          plans: store.listProposedPlanArtifacts({
+          plans: hydrateProposedPlanSourceStates(store, store.listProposedPlanArtifacts({
             threadId,
             limit: readOptionalIntegerQuery(url, "limit", 1),
-          }),
+          })),
         });
         return;
       }
       if (request.method === "POST") {
         const body = await readOptionalJsonBody(request, maxBodyBytes);
         const plan = store.upsertProposedPlanArtifact(parsePutProposedPlanArtifactBody(body, threadId), new Date().toISOString());
-        writeJson(response, 201, { cwd, threadId, plan });
+        writeJson(response, 201, { cwd, threadId, plan: hydrateProposedPlanSourceState(store, plan) });
         return;
       }
       writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for proposed plans` });
@@ -484,7 +485,7 @@ async function handleLingThreadProposedPlans(
         writeJson(response, 404, { error: "proposed_plan_not_found", message: `Proposed plan not found: ${planId}` });
         return;
       }
-      writeJson(response, 200, { cwd, threadId, plan });
+      writeJson(response, 200, { cwd, threadId, plan: hydrateProposedPlanSourceState(store, plan) });
       return;
     }
     if (request.method === "PUT") {
@@ -496,7 +497,7 @@ async function handleLingThreadProposedPlans(
       }
       assertProposedPlanDirectMutationAllowed(existing);
       const plan = store.upsertProposedPlanArtifact({ ...parsePutProposedPlanArtifactBody(body, threadId), id: planId }, new Date().toISOString());
-      writeJson(response, existing ? 200 : 201, { cwd, threadId, plan });
+      writeJson(response, existing ? 200 : 201, { cwd, threadId, plan: hydrateProposedPlanSourceState(store, plan) });
       return;
     }
     if (request.method === "PATCH") {
@@ -509,7 +510,7 @@ async function handleLingThreadProposedPlans(
       const patch = parsePatchProposedPlanArtifactBody(body);
       assertProposedPlanDirectMutationAllowed(existing, patch);
       const plan = store.updateProposedPlanArtifact(planId, patch, new Date().toISOString());
-      writeJson(response, 200, { cwd, threadId, plan: plan ?? existing });
+      writeJson(response, 200, { cwd, threadId, plan: hydrateProposedPlanSourceState(store, plan ?? existing) });
       return;
     }
     writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for proposed plan items` });

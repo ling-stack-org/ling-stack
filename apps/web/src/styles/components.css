@@ -6553,7 +6553,20 @@ code,
 }
 
 .environment-include-unstaged {
-  justify-content: start;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 8px;
+  min-height: 24px;
+}
+
+.environment-include-unstaged input[type="checkbox"] {
+  flex: 0 0 auto;
+  width: 16px;
+  min-width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--accent);
 }
 
 .environment-commit-dialog p {
@@ -7225,6 +7238,36 @@ code,
   min-width: 0;
 }
 
+.right-dock-file-group {
+  display: grid;
+  gap: 6px;
+}
+
+.right-dock-file-group-header {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  padding: 0 2px;
+}
+
+.right-dock-file-group-header strong,
+.right-dock-file-group-header small {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.right-dock-file-group-header strong {
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.right-dock-file-group-header small {
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 15px;
+}
+
 .right-dock-review-page-accordion .right-dock-review-list-pane {
   gap: 0;
 }
@@ -7792,6 +7835,14 @@ code,
 
 .right-dock-plan-source-button {
   margin-right: 2px;
+}
+
+.right-dock-plan-source-state {
+  display: block;
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 15px;
+  overflow-wrap: anywhere;
 }
 
 .right-dock-plan-detail {
@@ -8396,6 +8447,17 @@ code,
   font-weight: 550;
   line-height: 17px;
   overflow-wrap: anywhere;
+}
+
+.right-dock-evidence-link {
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  overflow-wrap: anywhere;
+}
+
+.right-dock-evidence-link:hover {
+  color: var(--accent-strong);
 }
 
 .right-dock-review-detail {
@@ -12271,26 +12333,23 @@ code,
 }
 
 .conversation-mode-chip {
-  display: inline-grid;
-  grid-auto-flow: column;
+  display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
+  gap: 2px;
   height: 30px;
   min-width: 30px;
-  max-width: 96px;
-  padding: 0 8px;
+  max-width: 128px;
+  padding: 0 4px 0 8px;
   border: 1px solid transparent;
   border-radius: 10px;
   background: transparent;
   color: var(--text-muted);
-  font-size: 12px;
-  font-weight: 620;
-  line-height: 1;
+  transition: background 140ms ease, border-color 140ms ease, color 140ms ease;
 }
 
-.conversation-mode-chip:hover:not(:disabled),
-.conversation-mode-chip:focus-visible {
+.conversation-mode-chip:hover,
+.conversation-mode-chip:focus-within {
   background: var(--surface-selected);
   color: var(--text-strong);
 }
@@ -12301,11 +12360,87 @@ code,
   color: var(--accent);
 }
 
-.conversation-mode-chip span {
+.conversation-mode-chip-main {
+  display: inline-grid;
+  grid-auto-flow: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-width: 0;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font-size: 12px;
+  font-weight: 620;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.conversation-mode-chip-main:disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
+}
+
+.conversation-mode-chip-main:focus-visible,
+.conversation-mode-chip-close:focus-visible {
+  outline: 2px solid var(--conversation-focus-ring);
+  outline-offset: 1px;
+}
+
+.conversation-mode-chip-main span {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.conversation-mode-chip-close {
+  display: inline-grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 0;
+  min-width: 0;
+  height: 22px;
+  margin-left: 0;
+  padding: 0;
+  overflow: hidden;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: currentColor;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateX(-3px) scale(0.86);
+  transition: width 150ms ease, min-width 150ms ease, margin-left 150ms ease, opacity 120ms ease, transform 150ms ease, background 120ms ease;
+}
+
+.conversation-mode-chip:hover .conversation-mode-chip-close,
+.conversation-mode-chip:focus-within .conversation-mode-chip-close {
+  width: 22px;
+  min-width: 22px;
+  margin-left: 2px;
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateX(0) scale(1);
+}
+
+.conversation-mode-chip-close:hover:not(:disabled),
+.conversation-mode-chip-close:focus-visible {
+  background: color-mix(in srgb, currentColor 12%, transparent);
+}
+
+.conversation-mode-chip-close:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .conversation-mode-chip,
+  .conversation-mode-chip-close {
+    transition: none;
+  }
 }
 
 .goal-floating-panel {

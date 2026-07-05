@@ -3,6 +3,7 @@ import {
   DEFAULT_WORKSPACE_ID,
   LING_AGENT_ID,
   type ConversationAttachment,
+  type LingConversationTone,
   type LingThread,
   type LingTurn,
   type RunEventEnvelope,
@@ -24,6 +25,7 @@ import type {
 } from "@ling-stack/contracts";
 import type { ResolvedDaemonConfig } from "../../config.js";
 import { HttpError } from "../../errors.js";
+import type { RunnerRegistry } from "../../runtime/runners.js";
 import type { RunStoreRegistry } from "../../runtime/store-registry.js";
 import { readJsonBody, readOptionalIntegerQuery } from "../../shared/request.js";
 import { writeJson, writeSse, writeSseHead } from "../../shared/response.js";
@@ -31,10 +33,12 @@ import { isRecord, readOptionalString, readOptionalStringArray, readString } fro
 import { persistConversationAttachment, CHANNEL_ATTACHMENT_REQUEST_MAX_BYTES } from "../channels/attachments.js";
 import { inferUserLanguage, responseLanguageInstruction } from "../channels/response-language.js";
 import { parseChannelAttachmentRequest } from "../channels/schemas.js";
+import { buildEffectiveConfigResponse } from "../settings/effective-config.js";
 import type { LingImageVisionSummarizer } from "../channels/materialization/registry.js";
 import type { RunExecutionSink } from "../runs/orchestrator.js";
 import type { RunRequest } from "../runs/schemas.js";
 import { materializeInlineConversationAttachments, type ConversationAttachmentMaterialization } from "./materialization.js";
+import { lingConversationToneInstruction } from "./conversation-tone.js";
 
 type StartConversationRun = (runRequest: RunRequest, sink: RunExecutionSink) => Promise<string | undefined>;
 
@@ -50,6 +54,7 @@ export async function handleConversationStream(
   response: ServerResponse,
   config: ResolvedDaemonConfig,
   storeRegistry: RunStoreRegistry,
+  runnerRegistry: RunnerRegistry,
   startRun: StartConversationRun,
   imageVisionSummarizer?: LingImageVisionSummarizer,
 ): Promise<void> {
@@ -85,6 +90,7 @@ export async function handleConversationStream(
       now,
       imageVisionSummarizer,
     });
+    const effectiveConfig = await buildEffectiveConfigResponse({ cwd: workspaceCwd, store, runnerRegistry });
     const userMessage = createUserTranscriptMessage(thread, turn, conversationAttachments);
     let assistantMessage = createAssistantTranscriptMessage(thread, turn, undefined, "", "running", now);
     let runId = "";
@@ -179,6 +185,7 @@ export async function handleConversationStream(
       thread,
       turn,
       input,
+      lingConversationTone: effectiveConfig.values.lingConversationTone.value,
       attachments: conversationAttachments,
       attachmentMaterializations,
     });
@@ -364,16 +371,23 @@ function buildConversationRunRequest(input: {
   readonly thread: LingThread;
   readonly turn: LingTurn;
   readonly input: ConversationStreamRequest;
+  readonly lingConversationTone: LingConversationTone;
   readonly attachments: readonly ConversationAttachment[];
   readonly attachmentMaterializations: ReadonlyMap<string, ConversationAttachmentMaterialization>;
 }): RunRequest {
+  const toneInstruction = lingConversationToneInstruction(input.lingConversationTone);
+  const responseLanguage = resolveConversationResponseLanguage(input.input.responseLanguage, input.input.message.trim());
+  const appendSystemPrompt = [
+    toneInstruction,
+    responseLanguageInstruction(responseLanguage),
+  ].filter((instruction) => instruction.trim());
   return {
     workspaceCwd: input.workspaceCwd,
     cwd: input.input.projectPath || input.workspaceCwd,
     task: {
       id: conversationRunTaskId(input.turn.id),
       title: input.turn.title,
-      prompt: buildConversationRunPrompt(input.input.message, input.input.responseLanguage, input.attachments, input.attachmentMaterializations),
+      prompt: buildConversationRunPrompt(input.input.message, input.attachments, input.attachmentMaterializations),
     },
     threadId: input.thread.id,
     turnId: input.turn.id,
@@ -383,6 +397,8 @@ function buildConversationRunRequest(input: {
     permissionPreset: input.input.permissionPreset,
     permissionMode: input.input.permissionMode,
     thinkingLevel: input.input.thinkingLevel,
+    lingConversationTone: input.lingConversationTone,
+    appendSystemPrompt,
     conversationAttachmentIds: input.attachments.map((attachment) => attachment.id),
     idempotencyKey: input.input.idempotencyKey ?? `conversation:${input.turn.id}`,
   };
@@ -566,7 +582,6 @@ function resolveConversationResponseLanguage(responseLanguage: ResponseLanguageP
 
 function buildConversationRunPrompt(
   message: string,
-  responseLanguage: ResponseLanguagePreference | undefined,
   attachments: readonly ConversationAttachment[],
   materializations: ReadonlyMap<string, ConversationAttachmentMaterialization>,
 ): string {
@@ -574,7 +589,6 @@ function buildConversationRunPrompt(
   const parts = [
     trimmedMessage || "User attached files.",
     renderConversationAttachmentsForPrompt(attachments, materializations),
-    responseLanguageInstruction(resolveConversationResponseLanguage(responseLanguage, trimmedMessage)),
   ].filter((part) => part.trim());
   return parts.join("\n\n");
 }

@@ -2,6 +2,7 @@ import { type ReactNode, useState } from "react";
 import {
   Archive,
   ArrowLeft,
+  BookOpen,
   Bot,
   Box,
   Brain,
@@ -11,6 +12,7 @@ import {
   Palette,
   PlugZap,
   Shield,
+  SlidersHorizontal,
   UserCircle,
   Wrench,
   type LucideIcon,
@@ -45,8 +47,9 @@ import { ExecutionPermissionsSettingsPanel } from "./ExecutionPermissionsSetting
 import { ExternalWorkSettingsPanel } from "./ExternalWorkSettingsPanel.js";
 import { StartupDiagnosticsSettingsPanel } from "./MaintenanceSettingsPanel.js";
 import { InterfacePreferencesSettingsPanel, PersonalSettingsPanel } from "./PersonalInterfaceSettingsPanel.js";
+import { PersonalizationSettingsPanel } from "./PersonalizationSettingsPanel.js";
 import { PluginManagerSettingsPanel } from "./PluginManagerSettingsPanel.js";
-import { SkillsSettingsPanel } from "./SkillsSettingsPanel.js";
+import { SkillLibrarySettingsPanel } from "./SkillLibrarySettingsPanel.js";
 import { useArchivedSettingsController } from "./useArchivedSettingsController.js";
 
 type SettingsSectionId =
@@ -56,11 +59,12 @@ type SettingsSectionId =
   | "work-board"
   | "approval-strategy"
   | "personal-profile"
+  | "personalization"
   | "interface-preferences"
   | "external-work"
   | "mcp-tools"
   | "plugin-manager"
-  | "skills"
+  | "skill-library"
   | "archived-items"
   | "startup-diagnostics";
 
@@ -70,6 +74,7 @@ type SettingsSectionItem = {
   readonly id: SettingsSectionId;
   readonly label: string;
   readonly pageTitle?: string;
+  readonly description?: string;
   readonly icon: LucideIcon;
 };
 
@@ -117,6 +122,12 @@ const settingsSectionGroups: readonly {
         icon: UserCircle,
       },
       {
+        id: "personalization",
+        label: "Personalization",
+        description: "Ling tone and skill generation policy",
+        icon: SlidersHorizontal,
+      },
+      {
         id: "interface-preferences",
         label: "Interface preferences",
         icon: Palette,
@@ -137,9 +148,10 @@ const settingsSectionGroups: readonly {
         icon: PlugZap,
       },
       {
-        id: "skills",
-        label: "Skills",
-        icon: Brain,
+        id: "skill-library",
+        label: "Skill library",
+        description: "Inspect reusable skill definitions, source health, and workspace skills.",
+        icon: BookOpen,
       },
     ],
   },
@@ -414,6 +426,8 @@ export function SettingsPage({
           <PersonalSettingsPanel cwd={cwd} onProfileChange={onProfileChange} />
         ) : null}
 
+        {visibleActiveSection === "personalization" && !workspaceToolDetailOpen ? <PersonalizationSettingsPanel cwd={cwd} /> : null}
+
         {visibleActiveSection === "interface-preferences" && !workspaceToolDetailOpen ? (
           <InterfacePreferencesSettingsPanel
             effectiveConfig={effectiveConfig}
@@ -516,7 +530,9 @@ export function SettingsPage({
           />
         ) : null}
 
-        {visibleActiveSection === "skills" && !workspaceToolDetailOpen ? <SkillsSettingsPanel cwd={cwd} skillLibraryRefreshToken={skillLibraryRefreshToken} /> : null}
+        {visibleActiveSection === "skill-library" && !workspaceToolDetailOpen ? (
+          <SkillLibrarySettingsPanel cwd={cwd} refreshToken={skillLibraryRefreshToken} />
+        ) : null}
 
         {visibleActiveSection === "archived-items" && !workspaceToolDetailOpen ? (
           <ArchivedSettingsPanel state={archivedController.state} actions={archivedController.actions} />

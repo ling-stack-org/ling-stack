@@ -80,6 +80,8 @@ interface ChannelComposerActionsInput {
     readonly requestedSkillId: string;
     readonly attachmentIds?: readonly string[];
   }) => Promise<void>;
+  readonly onRevealPlanModeChip: () => void;
+  readonly onRevealGoalChip: () => void;
   readonly onSetPlanMode: (active: boolean) => Promise<void>;
   readonly onSetGoalObjective: (objective: string, replaceExisting?: boolean) => Promise<void>;
   readonly onPatchGoal: (input: { readonly status?: LingThreadGoal["status"]; readonly objective?: string; readonly blockedReason?: string | null }) => Promise<void>;
@@ -137,6 +139,8 @@ export function useChannelComposerActionsController({
   onCancelActiveRun,
   onCreateLinkPreview,
   onCreateTaskFromSlashCommand,
+  onRevealGoalChip,
+  onRevealPlanModeChip,
   onSetPlanMode,
   onSetGoalObjective,
   onPatchGoal,
@@ -511,6 +515,7 @@ export function useChannelComposerActionsController({
     try {
       if (slashIntent.kind === "session_command") {
         if (slashIntent.commandId === "plan") {
+          onRevealPlanModeChip();
           if (slashIntent.action === "status") {
             showComposerFeedback("info", planModeActive ? t("Plan Mode is on") : t("Plan Mode is off"));
           } else {
@@ -520,6 +525,7 @@ export function useChannelComposerActionsController({
           }
         }
         if (slashIntent.commandId === "goal") {
+          onRevealGoalChip();
           if (slashIntent.action === "status") {
             showComposerFeedback("info", activeGoal ? t("Goal is {status}: {objective}", { status: activeGoal.status, objective: activeGoal.objective }) : t("Goal is not set"));
           } else if (slashIntent.action === "pause") {
@@ -676,6 +682,8 @@ export function useChannelComposerActionsController({
     onCreateTaskFromSlashCommand,
     onClearGoal,
     onPatchGoal,
+    onRevealGoalChip,
+    onRevealPlanModeChip,
     onSetGoalObjective,
     onSetPlanMode,
     onSendMessage,

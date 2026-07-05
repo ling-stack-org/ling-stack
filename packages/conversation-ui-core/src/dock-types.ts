@@ -147,7 +147,12 @@ export interface DockEvidenceItem {
   readonly title: string;
   readonly summary?: string;
   readonly status?: "available" | "loading" | "failed";
+  readonly statusLabel?: string;
   readonly sourceLabel?: string;
+  readonly href?: string;
+  readonly originalUrl?: string;
+  readonly finalUrl?: string;
+  readonly failureReason?: string;
   readonly timestampLabel?: string;
 }
 
@@ -157,10 +162,22 @@ export interface DockEvidenceGroupView {
   readonly items: readonly DockEvidenceItem[];
 }
 
+export type DockFileOwnerScopeKind = "workflow" | "workflow_step" | "task" | "run" | "message" | "channel";
+
+export interface DockFileOwnerScope {
+  readonly kind: DockFileOwnerScopeKind;
+  readonly id: string;
+  readonly label: string;
+  readonly detail?: string;
+  readonly parentId?: string;
+  readonly order?: number;
+}
+
 export interface DockFileItem {
   readonly id: string;
   readonly name: string;
   readonly pathLabel?: string;
   readonly kind: "attachment" | "reference" | "artifact" | "change";
   readonly status?: "available" | "generated" | "changed" | "missing";
+  readonly ownerScope?: DockFileOwnerScope;
 }

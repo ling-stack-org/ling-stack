@@ -5,7 +5,7 @@ import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, resolve } from "node:path";
 import test from "node:test";
-import { createCompositeSecretResolver, createSqliteRunStore, resolveStoragePaths } from "../../core/dist/index.js";
+import { DEFAULT_WORKSPACE_ID, createCompositeSecretResolver, createSqliteRunStore, resolveStoragePaths } from "../../core/dist/index.js";
 import { createDaemonServer } from "../dist/index.js";
 import { buildContextPack, resolveProviderContextBudget } from "../dist/features/channels/context-packs.js";
 import { routeChannelMessageReply } from "../dist/features/channels/channel-message-router.js";
@@ -317,6 +317,184 @@ test("ling agent session view projects draft proposal as task confirmation", asy
     assert.ok(view.evidenceRefs.some((ref) => ref.type === "proposal" && ref.id === proposal.id));
   } finally {
     store.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("proposed plan APIs hydrate deleted source message state without deleting plans", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-proposed-plan-source-state-"));
+  const store = createSqliteRunStore(cwd);
+  let thread;
+  let channel;
+  let message;
+  try {
+    ({ channel, message } = createStoreChannelAndMessage(store, cwd, "source plan"));
+    thread = store.createLingThread({
+      kind: "channel",
+      channelId: channel.id,
+      title: "Plan source state",
+      objective: "Hydrate proposed plan source state.",
+    }, "2026-06-11T00:01:00.000Z");
+    store.close();
+
+    const daemon = await startDaemonForTest();
+    try {
+      const available = await postJson(`${daemon.url}/threads/${encodeURIComponent(thread.id)}/proposed-plans?cwd=${encodeURIComponent(cwd)}`, {
+        id: "plan_available_source",
+        channelId: channel.id,
+        sourceMessageId: message.id,
+        title: "Available source plan",
+        bodyMarkdown: "Use the source message.",
+      });
+      assert.equal(available.plan.sourceMessageState, "available");
+
+      const orphan = await postJson(`${daemon.url}/threads/${encodeURIComponent(thread.id)}/proposed-plans?cwd=${encodeURIComponent(cwd)}`, {
+        id: "plan_deleted_source",
+        channelId: channel.id,
+        sourceMessageId: "msg_deleted_source",
+        title: "Deleted source plan",
+        bodyMarkdown: "Keep this plan for audit history.",
+      });
+      assert.equal(orphan.plan.sourceMessageState, "deleted");
+
+      const listed = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/proposed-plans?cwd=${encodeURIComponent(cwd)}&limit=20`);
+      const listedOrphan = listed.plans.find((plan) => plan.id === "plan_deleted_source");
+      assert.equal(listedOrphan?.sourceMessageState, "deleted");
+      assert.equal(listed.plans.some((plan) => plan.id === "plan_available_source" && plan.sourceMessageState === "available"), true);
+    } finally {
+      await daemon.close();
+    }
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("channel team metrics exposes visible evidence total separately from team evidence", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-evidence-summary-"));
+  const store = createSqliteRunStore(cwd);
+  try {
+    const { channel, message } = createStoreChannelAndMessage(store, cwd, "collect evidence");
+    const webMessage = store.createChannelMessage({
+      channelId: channel.id,
+      authorType: "ai-teammate",
+      body: "web evidence",
+      fileRefs: [{ path: `${cwd}/README.md`, line: 12 }],
+    }, "2026-06-11T00:02:00.000Z");
+    const workUnit = store.createWorkUnit({
+      id: "wu_channel_web_evidence",
+      workspaceId: DEFAULT_WORKSPACE_ID,
+      kind: "channel_ai_reply",
+      ownerType: "channel_message",
+      ownerId: webMessage.id,
+      channelId: channel.id,
+      idempotencyKey: "wu-channel-web-evidence",
+      createdByActor: "system",
+      request: { messageId: webMessage.id },
+      linkedMessageId: webMessage.id,
+      now: "2026-06-11T00:02:05.000Z",
+    });
+    store.appendRuntimeEvent({
+      workUnitId: workUnit.id,
+      type: "web_evidence_recorded",
+      actor: "system",
+      ts: "2026-06-11T00:02:10.000Z",
+      data: {
+        toolSurface: "web",
+        sourceMessageId: message.id,
+        linkedMessageId: webMessage.id,
+        sourceCount: 1,
+        readUrlCount: 1,
+        status: "degraded",
+        query: "ling stack",
+        sources: [{ url: "https://example.com/source", title: "Example source" }],
+        readUrls: [{ url: "https://example.com/read", status: "blocked", reason: "timeout" }],
+        updatedAt: "2026-06-11T00:02:10.000Z",
+      },
+    });
+    const task = store.createTask({
+      channelId: channel.id,
+      title: "Evidence task",
+      prompt: "Collect visible evidence.",
+    }, "2026-06-11T00:03:00.000Z");
+    const run = store.createRun({
+      id: "run_channel_visible_evidence",
+      cwd,
+      taskId: task.id,
+      channelId: channel.id,
+      providerName: "test-provider",
+      providerModel: "test-model",
+      taskSnapshot: { id: task.id, title: task.title },
+      providerSnapshot: { provider: "test-provider", model: "test-model" },
+      requestSnapshot: { cwd },
+      createdAt: "2026-06-11T00:04:00.000Z",
+    });
+    store.createApprovalRequest({
+      runId: run.id,
+      taskId: task.id,
+      channelId: channel.id,
+      actionType: "bash",
+      risk: "medium",
+      title: "Approve command",
+      description: "Approve visible evidence command.",
+      payload: { type: "bash", cwd, command: "echo ok", riskFlags: [] },
+    }, "2026-06-11T00:04:30.000Z");
+    store.createArtifact({
+      runId: run.id,
+      type: "file",
+      path: `${cwd}/report.md`,
+      title: "report.md",
+      createdAt: "2026-06-11T00:05:00.000Z",
+    });
+    store.createChannelAttachment({
+      channelId: channel.id,
+      messageId: webMessage.id,
+      kind: "text",
+      fileName: "notes.txt",
+      contentType: "text/plain",
+      sizeBytes: 20,
+      path: `${cwd}/notes.txt`,
+      createdAt: "2026-06-11T00:05:30.000Z",
+    });
+    for (let index = 0; index < 25; index += 1) {
+      store.createChannelAttachment({
+        channelId: channel.id,
+        messageId: webMessage.id,
+        kind: "text",
+        fileName: `extra-${index}.txt`,
+        contentType: "text/plain",
+        sizeBytes: 20 + index,
+        path: `${cwd}/extra-${index}.txt`,
+        createdAt: `2026-06-11T00:05:${String(31 + index).padStart(2, "0")}.000Z`,
+      });
+    }
+    store.createChannelTeamEvidenceItem({
+      channelId: channel.id,
+      turnId: webMessage.id,
+      agentId: "engineer",
+      kind: "specialist_note",
+      evidenceGrade: "observed",
+      summary: "Team-only specialist evidence.",
+      visibility: "internal",
+      status: "completed",
+    }, "2026-06-11T00:06:00.000Z");
+    store.close();
+
+    const daemon = await startDaemonForTest();
+    try {
+      const response = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/team-metrics?cwd=${encodeURIComponent(cwd)}&limit=50`);
+      assert.equal(response.metrics.summary.totalEvidenceCount, 1);
+      assert.equal(response.metrics.visibleEvidence.totalCount, 24);
+      assert.deepEqual(response.metrics.visibleEvidence.countsByKind, {
+        runs: 1,
+        approvals: 1,
+        browser: 2,
+        files: 20,
+        team_evidence: 1,
+      });
+    } finally {
+      await daemon.close();
+    }
+  } finally {
     await rm(cwd, { recursive: true, force: true });
   }
 });
@@ -2475,6 +2653,9 @@ test("conversation stream materializes uploaded attachments into the run prompt"
   try {
     const provider = (await createStaticChatProvider(daemon.url, cwd)).provider;
     await postJson(`${daemon.url}/providers/${encodeURIComponent(provider.id)}/check?cwd=${encodeURIComponent(cwd)}`);
+    await patchJson(`${daemon.url}/workspace-settings?cwd=${encodeURIComponent(cwd)}`, {
+      lingConversationTone: "friendly",
+    });
     const attachment = (await postJson(`${daemon.url}/conversations/attachments?cwd=${encodeURIComponent(cwd)}`, {
       fileName: "notes.txt",
       contentBase64: Buffer.from("Alpha decision: keep the shared composer contract.").toString("base64"),
@@ -2499,6 +2680,14 @@ test("conversation stream materializes uploaded attachments into the run prompt"
     assert.equal(runner.runs.length, 1);
     assert.match(runner.runs[0].task.prompt, /Attached files:/);
     assert.match(runner.runs[0].task.prompt, /Alpha decision: keep the shared composer contract\./);
+    assert.doesNotMatch(runner.runs[0].task.prompt, /Use English for user-visible output/);
+    assert.ok(runner.runs[0].appendSystemPrompt.some((instruction) => /Default conversation tone: friendly\./.test(instruction)));
+    assert.ok(runner.runs[0].appendSystemPrompt.some((instruction) => /Use English for user-visible output/.test(instruction)));
+
+    const done = events.find((event) => event.event === "done");
+    assert.ok(done);
+    assert.equal(done.data.run.requestSnapshot.lingConversationTone, "friendly");
+    assert.ok(done.data.run.requestSnapshot.appendSystemPrompt.some((instruction) => /Default conversation tone: friendly\./.test(instruction)));
 
     const detail = await getJson(`${daemon.url}/conversations/${encodeURIComponent(initialReady.data.thread.id)}?cwd=${encodeURIComponent(cwd)}`);
     const userMessage = detail.messages.find((message) => message.id === initialReady.data.userMessage.id);
@@ -6532,12 +6721,14 @@ test("workflow post-step gate pauses downstream steps until approval", async () 
     await postJson(`${daemon.url}/approvals/${encodeURIComponent(pending.approvals[0].id)}/approve?cwd=${encodeURIComponent(cwd)}`, {
       reason: "Discovery output reviewed.",
     });
-    const nextTick = await postJson(`${daemon.url}/workflows/${encodeURIComponent(compiled.workflow.id)}/orchestrate?cwd=${encodeURIComponent(cwd)}`, {});
-    assert.equal(nextTick.status, "started");
-    assert.equal(nextTick.workflowStep.metadata.templateStepId, "product-review");
     const discoveryAfterApproval = await waitForWorkflowStepStatus(daemon.url, cwd, compiled.workflow.id, discoveryStep.id, "succeeded");
     assert.equal(discoveryAfterApproval.metadata.activeGateStage, undefined);
     assert.ok(discoveryAfterApproval.metadata.outputArtifactId);
+    const workflowAfterApproval = await getJson(`${daemon.url}/workflows/${encodeURIComponent(compiled.workflow.id)}?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(workflowAfterApproval.workflow.status, "running");
+    const nextTick = await postJson(`${daemon.url}/workflows/${encodeURIComponent(compiled.workflow.id)}/orchestrate?cwd=${encodeURIComponent(cwd)}`, {});
+    assert.equal(nextTick.status, "started");
+    assert.equal(nextTick.workflowStep.metadata.templateStepId, "product-review");
   } finally {
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });
@@ -6683,14 +6874,15 @@ test("workflow approval denial follows onApprovalDenied policy and blocks", asyn
     await postJson(`${daemon.url}/approvals/${encodeURIComponent(pending.approvals[0].id)}/deny?cwd=${encodeURIComponent(cwd)}`, {
       reason: "Implementation plan needs revision.",
     });
-    const deniedTick = await postJson(`${daemon.url}/workflows/${encodeURIComponent(compiled.workflow.id)}/orchestrate?cwd=${encodeURIComponent(cwd)}`, {});
-    assert.equal(deniedTick.status, "blocked");
-    assert.equal(deniedTick.workflowStep.id, implementationStep.id);
-    assert.match(deniedTick.blocker, /revision/);
     const blockedStep = await waitForWorkflowTemplateStepStatus(daemon.url, cwd, compiled.workflow.id, "implementation", "blocked");
     assert.equal(blockedStep.metadata.policy.onApprovalDenied, "block_for_user");
     const workflow = await getJson(`${daemon.url}/workflows/${encodeURIComponent(compiled.workflow.id)}?cwd=${encodeURIComponent(cwd)}`);
     assert.equal(workflow.workflow.status, "blocked");
+    assert.equal(workflow.workflow.blocker, undefined);
+    const deniedTick = await postJson(`${daemon.url}/workflows/${encodeURIComponent(compiled.workflow.id)}/orchestrate?cwd=${encodeURIComponent(cwd)}`, {});
+    assert.equal(deniedTick.status, "blocked");
+    assert.equal(deniedTick.workflowStep.id, implementationStep.id);
+    assert.match(deniedTick.blocker, /revision/);
     assert.equal(runner.runs.length, 4);
   } finally {
     await daemon.close();
@@ -7686,6 +7878,7 @@ test("workspace settings API persists UI preferences in .ling-stack state", asyn
     const initial = await getJson(`${daemon.url}/workspace-settings?cwd=${encodeURIComponent(cwd)}`);
     assert.equal(initial.settings.schemaVersion, 1);
     assert.equal(initial.settings.workspaceCwd, undefined);
+    assert.equal(initial.settings.lingConversationTone, undefined);
     assert.deepEqual(initial.settings.skillGovernancePolicy, {
       generationMode: "semi_auto",
       recordingMode: "user_initiated",
@@ -7698,6 +7891,7 @@ test("workspace settings API persists UI preferences in .ling-stack state", asyn
       workspaceCwd: cwd,
       theme: "dark",
       locale: "zh-CN",
+      lingConversationTone: "friendly",
       defaultProviderPresetId: "provider_default_chat",
       channelNotifications: { channel_one: "mentions" },
       channelActivityViews: { channel_one: [{ id: "custom:review", name: "Review" }] },
@@ -7712,22 +7906,34 @@ test("workspace settings API persists UI preferences in .ling-stack state", asyn
     assert.equal(patched.settings.workspaceCwd, cwd);
     assert.equal(patched.settings.theme, "dark");
     assert.equal(patched.settings.locale, "zh-CN");
+    assert.equal(patched.settings.lingConversationTone, "friendly");
     assert.equal(patched.settings.defaultProviderPresetId, "provider_default_chat");
     assert.equal(patched.settings.channelNotifications.channel_one, "mentions");
     assert.equal(patched.settings.skillGovernancePolicy.generationMode, "approval_only");
 
     const reopened = await getJson(`${daemon.url}/workspace-settings?cwd=${encodeURIComponent(cwd)}`);
     assert.equal(reopened.settings.theme, "dark");
+    assert.equal(reopened.settings.lingConversationTone, "friendly");
     assert.equal(reopened.settings.defaultProviderPresetId, "provider_default_chat");
     assert.equal(reopened.settings.channelActivityViews.channel_one[0].id, "custom:review");
     assert.equal(reopened.settings.skillGovernancePolicy.generationMode, "approval_only");
 
     const reset = await patchJson(`${daemon.url}/workspace-settings?cwd=${encodeURIComponent(cwd)}`, {
       defaultProviderPresetId: null,
+      lingConversationTone: null,
       skillGovernancePolicy: null,
     });
     assert.equal(reset.settings.defaultProviderPresetId, undefined);
+    assert.equal(reset.settings.lingConversationTone, undefined);
     assert.equal(reset.settings.skillGovernancePolicy.generationMode, "semi_auto");
+
+    const invalid = await fetch(`${daemon.url}/workspace-settings?cwd=${encodeURIComponent(cwd)}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ lingConversationTone: "verbose" }),
+    });
+    assert.equal(invalid.status, 400);
+    assert.match(await invalid.text(), /lingConversationTone must be friendly, pragmatic, none, or null/);
   } finally {
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });

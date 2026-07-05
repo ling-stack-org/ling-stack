@@ -139,11 +139,13 @@ test("main pages and workspace tools follow dark theme tokens", async ({ page })
     ".settings-plugin-row",
   ]);
 
-  await page.getByLabel("设置分组").getByRole("button", { name: /技能|Skills/ }).click();
-  await page.getByRole("tab", { name: /技能策略|Skill policy/ }).click();
+  await page.getByLabel("设置分组").getByRole("button", { name: /个性化|Personalization/ }).click();
+  await expect(page.locator(".personalization-settings-panel")).toBeVisible();
   await expect(page.locator(".skill-governance-settings-panel")).toBeVisible();
-  await assertDarkPage(page, "skill governance settings", [
+  await assertDarkPage(page, "personalization settings", [
     ".settings-layout",
+    ".personalization-settings-panel",
+    ".ling-tone-option",
     ".skill-governance-settings-panel",
     ".settings-skill-governance",
     ".settings-skill-governance-field",
@@ -151,7 +153,7 @@ test("main pages and workspace tools follow dark theme tokens", async ({ page })
     ".settings-skill-governance-fixed span",
   ]);
 
-  await page.getByRole("tab", { name: /技能库|Skill library/ }).click();
+  await page.getByLabel("设置分组").getByRole("button", { name: /技能库|Skill library/ }).click();
   await expect(page.locator(".settings-skill-table")).toBeVisible();
   await assertDarkPage(page, "skill library settings", [
     ".settings-layout",

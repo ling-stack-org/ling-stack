@@ -36,6 +36,7 @@ export function EvidencePage({
                 {item.summary ? <small>{item.summary}</small> : null}
               </span>
               <span className="right-dock-row-meta">
+                {item.statusLabel ? <small>{item.statusLabel}</small> : null}
                 {item.sourceLabel ? <small>{item.sourceLabel}</small> : null}
                 {item.timestampLabel ? <small>{item.timestampLabel}</small> : null}
               </span>

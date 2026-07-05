@@ -481,6 +481,7 @@ export async function handleApprovalItem(
       return;
     }
     appendApprovalDecisionEvent(store, updated);
+    const mediaJob = onApprovalResolved?.({ cwd, store, approval: updated, now });
     appendApprovalResolvedControlPlaneEvent(
       store,
       controlPlaneEvents,
@@ -491,7 +492,6 @@ export async function handleApprovalItem(
       now,
     );
     syncExternalWorkActionForApproval(store, updated, now);
-    const mediaJob = onApprovalResolved?.({ cwd, store, approval: updated, now });
     writeJson(response, 200, { approval: updated, ...(mediaJob ? { mediaJob } : {}) });
   } catch (error) {
     writeJson(response, 400, {

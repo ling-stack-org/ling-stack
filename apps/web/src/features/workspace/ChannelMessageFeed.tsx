@@ -313,13 +313,14 @@ export function useChannelMessageFeed({
     const latestItemId = latestItem?.id ?? "";
     const previousLatestItemId = backgroundToastLatestItemRef.current;
     backgroundToastLatestItemRef.current = latestItemId;
-    if (!latestItem || !previousLatestItemId || previousLatestItemId === latestItemId || (pinnedToLatestRef.current && !latestButtonVisible)) {
+    if (!latestItem || !previousLatestItemId || previousLatestItemId === latestItemId) {
       return;
     }
     const toast = channelMessageFeedItemBackgroundToast(latestItem, t);
-    if (toast) {
-      onBackgroundToast(toast);
+    if (!toast || (toast.tone !== "error" && pinnedToLatestRef.current && !latestButtonVisible)) {
+      return;
     }
+    onBackgroundToast(toast);
   }, [items, latestButtonVisible, onBackgroundToast, t, tailRenderSignature]);
 
   const firstVirtualIndex = virtualRows[0]?.index ?? -1;

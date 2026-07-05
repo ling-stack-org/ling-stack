@@ -141,7 +141,7 @@ and the effective source for the settings the UI needs to explain. It does not c
 Current resolution:
 
 - `workspaceCwd`: workspace settings, then the request `cwd`;
-- `theme`, `locale`, `responseLanguage`: workspace settings, then
+- `theme`, `locale`, `responseLanguage`, `lingConversationTone`: workspace settings, then
   `~/.ling-stack/settings.json`, then built-in defaults;
 - runtime runner settings: field-level workspace runtime settings, then user
   `~/.ling-stack/config.json.runtimeDefaults`, then built-in Pi defaults.
@@ -200,6 +200,11 @@ Response:
       "source": "built_in",
       "key": "responseLanguage"
     },
+    "lingConversationTone": {
+      "value": "pragmatic",
+      "source": "built_in",
+      "key": "lingConversationTone"
+    },
     "runtime": {
       "defaultRunnerId": {
         "value": "pi",
@@ -227,7 +232,8 @@ Response:
     },
     "userSettings": {
       "theme": "dark",
-      "locale": "zh-CN"
+      "locale": "zh-CN",
+      "lingConversationTone": "friendly"
     },
     "workspaceSettings": {
       "schemaVersion": 1,
@@ -241,6 +247,29 @@ Response:
 `diagnostics` contains non-fatal warnings for unreadable or invalid optional user-level
 JSON files. The endpoint ignores unknown user config keys and returns only recognized,
 sanitized user-layer fields.
+
+## Workspace Settings
+
+```http
+GET /workspace-settings?cwd=/path/to/project
+PATCH /workspace-settings?cwd=/path/to/project
+Content-Type: application/json
+```
+
+Workspace settings are stored in the workspace SQLite state under `.ling-stack`.
+Nullable PATCH fields clear the workspace override and fall back to user settings or
+built-in defaults.
+
+`lingConversationTone` accepts `friendly`, `pragmatic`, `none`, or `null`.
+`pragmatic` is the built-in default. Invalid values are rejected on PATCH; invalid
+persisted or user-level settings fall back through effective config diagnostics instead
+of crashing the daemon.
+
+```json
+{
+  "lingConversationTone": "friendly"
+}
+```
 
 ## Channels and Tasks
 

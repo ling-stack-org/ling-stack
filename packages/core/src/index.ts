@@ -25,6 +25,7 @@ export * from "./channel-team-lifecycle.js";
 export * from "./channel-team-risk-review.js";
 export * from "./channel-team-runtime-governor.js";
 export * from "./channel-team-metrics.js";
+export * from "./channel-evidence-summary.js";
 export * from "./channel-team-authority-ledger.js";
 export * from "./channel-team-patterns.js";
 export * from "./channel-team-snapshot-harness.js";

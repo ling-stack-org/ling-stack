@@ -1243,6 +1243,7 @@ function normalizeWorkspaceSettings(settings: Record<string, unknown>): Record<s
     defaultProviderPresetId: typeof settings.defaultProviderPresetId === "string" && settings.defaultProviderPresetId.trim()
       ? settings.defaultProviderPresetId
       : undefined,
+    lingConversationTone: normalizeLingConversationTone(settings.lingConversationTone),
     defaultPermissionMode: normalizeDefaultPermissionMode(settings.defaultPermissionMode),
     defaultPermissionPreset: normalizeDefaultPermissionPreset(settings.defaultPermissionPreset),
     skillGovernancePolicy: normalizeSkillGovernancePolicy(settings.skillGovernancePolicy),
@@ -1260,6 +1261,10 @@ function normalizeDefaultPermissionPreset(value: unknown): string {
   return value === "read_only" || value === "workspace_collaboration" || value === "full_access" || value === "custom"
     ? value
     : "workspace_collaboration";
+}
+
+function normalizeLingConversationTone(value: unknown): string | undefined {
+  return value === "friendly" || value === "pragmatic" || value === "none" ? value : undefined;
 }
 
 function normalizeSkillGovernancePolicy(value: unknown): Record<string, string> {
@@ -6154,17 +6159,19 @@ export async function handleDaemonRoute(
   if (request.method() === "PATCH" && path === "/workspace-settings") {
     const body = await request.postDataJSON() as Record<string, unknown>;
     const nextSettings = { ...state.workspaceSettings };
-    for (const key of ["workspaceCwd", "theme", "locale", "responseLanguage", "defaultProviderPresetId", "defaultPermissionMode", "defaultPermissionPreset", "channelNotifications", "channelActivityViews", "skillGovernancePolicy"] as const) {
+    for (const key of ["workspaceCwd", "theme", "locale", "responseLanguage", "lingConversationTone", "defaultProviderPresetId", "defaultPermissionMode", "defaultPermissionPreset", "channelNotifications", "channelActivityViews", "skillGovernancePolicy"] as const) {
       if (body[key] === null) {
         delete nextSettings[key];
       } else if (body[key] !== undefined) {
         nextSettings[key] = key === "skillGovernancePolicy"
           ? normalizeSkillGovernancePolicy(body[key])
-          : key === "defaultPermissionMode"
-            ? normalizeDefaultPermissionMode(body[key])
-            : key === "defaultPermissionPreset"
-              ? normalizeDefaultPermissionPreset(body[key])
-              : body[key];
+          : key === "lingConversationTone"
+            ? normalizeLingConversationTone(body[key])
+            : key === "defaultPermissionMode"
+              ? normalizeDefaultPermissionMode(body[key])
+              : key === "defaultPermissionPreset"
+                ? normalizeDefaultPermissionPreset(body[key])
+                : body[key];
       }
     }
     state.workspaceSettings = {
@@ -6275,6 +6282,7 @@ export async function handleDaemonRoute(
           theme: effectiveWorkspaceSettingValue(state.workspaceSettings.theme, "theme", "system"),
           locale: effectiveWorkspaceSettingValue(state.workspaceSettings.locale, "locale", "zh-CN"),
           responseLanguage: effectiveWorkspaceSettingValue(state.workspaceSettings.responseLanguage, "responseLanguage", "follow_user"),
+          lingConversationTone: effectiveWorkspaceSettingValue(state.workspaceSettings.lingConversationTone, "lingConversationTone", "pragmatic"),
           skillGovernancePolicy: effectiveWorkspaceObjectSettingValue(
             state.workspaceSettings.skillGovernancePolicy,
             "skillGovernancePolicy",
@@ -10102,7 +10110,7 @@ export async function handleDaemonRoute(
       })
       .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt) || right.id.localeCompare(left.id))
       .slice(0, Number.isFinite(limit) && limit > 0 ? limit : 100);
-    await route.fulfill({ json: { cwd, channelId, plans } });
+    await route.fulfill({ json: { cwd, channelId, plans: plans.map((plan) => hydrateMockProposedPlanSourceState(state, plan)) } });
     return;
   }
   const channelMatch = /^\/channels\/([^/]+)$/.exec(path);
@@ -10573,14 +10581,16 @@ export async function handleDaemonRoute(
     }
     if (!planId) {
       if (request.method() === "GET") {
-        const plans = state.proposedPlans.filter((plan) => plan.threadId === threadId);
+        const plans = state.proposedPlans
+          .filter((plan) => plan.threadId === threadId)
+          .map((plan) => hydrateMockProposedPlanSourceState(state, plan));
         await route.fulfill({ json: { cwd, threadId, plans } });
         return;
       }
       if (request.method() === "POST") {
         const body = readMockPostData(request);
         const plan = upsertMockProposedPlan(state, threadId, undefined, body);
-        await route.fulfill({ status: 201, json: { cwd, threadId, plan } });
+        await route.fulfill({ status: 201, json: { cwd, threadId, plan: hydrateMockProposedPlanSourceState(state, plan) } });
         return;
       }
     }
@@ -10591,7 +10601,7 @@ export async function handleDaemonRoute(
           await route.fulfill({ status: 404, json: { error: "proposed_plan_not_found" } });
           return;
         }
-        await route.fulfill({ json: { cwd, threadId, plan } });
+        await route.fulfill({ json: { cwd, threadId, plan: hydrateMockProposedPlanSourceState(state, plan) } });
         return;
       }
       if (request.method() === "PUT") {
@@ -10602,7 +10612,7 @@ export async function handleDaemonRoute(
           return;
         }
         const plan = upsertMockProposedPlan(state, threadId, planId, body);
-        await route.fulfill({ json: { cwd, threadId, plan } });
+        await route.fulfill({ json: { cwd, threadId, plan: hydrateMockProposedPlanSourceState(state, plan) } });
         return;
       }
       if (request.method() === "PATCH") {
@@ -10617,7 +10627,7 @@ export async function handleDaemonRoute(
           return;
         }
         const plan = patchMockProposedPlan(state, existing, body);
-        await route.fulfill({ json: { cwd, threadId, plan } });
+        await route.fulfill({ json: { cwd, threadId, plan: hydrateMockProposedPlanSourceState(state, plan) } });
         return;
       }
     }
@@ -10631,7 +10641,7 @@ export async function handleDaemonRoute(
       }
       const plan = planInput ? upsertMockProposedPlan(state, threadId, planId, planInput) : existing!;
       const result = applyMockProposedPlanAction(state, thread, plan, action, body);
-      await route.fulfill({ json: { cwd, threadId, ...result } });
+      await route.fulfill({ json: { cwd, threadId, ...result, plan: hydrateMockProposedPlanSourceState(state, result.plan) } });
       return;
     }
   }
@@ -12864,6 +12874,19 @@ function incrementCountMap(value: unknown, key: string): void {
 }
 
 const mockActiveGoalStatuses: readonly string[] = ["active", "paused", "blocked", "usage_limited", "budget_limited"];
+
+function hydrateMockProposedPlanSourceState(state: MockState, plan: ProposedPlanArtifact): ProposedPlanArtifact {
+  if (!plan.sourceMessageId) {
+    return plan;
+  }
+  const sourceMessage = state.channelMessages.find((message) => isRecord(message) && message.id === plan.sourceMessageId);
+  return {
+    ...plan,
+    sourceMessageState: isRecord(sourceMessage) && (!plan.channelId || sourceMessage.channelId === plan.channelId)
+      ? "available"
+      : "deleted",
+  };
+}
 
 function upsertMockProposedPlan(
   state: MockState,

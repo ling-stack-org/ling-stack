@@ -35,6 +35,7 @@ import {
   readOptionalChannelHandoffStatusQuery,
 } from "./schemas.js";
 import { createManagedWorktreeBinding } from "./workspace.js";
+import { hydrateProposedPlanSourceStates } from "../runs/proposed-plan-source-state.js";
 
 export async function handleChannelsCollection(
   request: IncomingMessage,
@@ -215,7 +216,7 @@ export async function handleChannelProposedPlans(
       cwd,
       channelId,
       threadId: scope === "thread" ? threadId : undefined,
-      plans,
+      plans: hydrateProposedPlanSourceStates(store, plans),
     });
   } catch (error) {
     writeJson(response, 400, {

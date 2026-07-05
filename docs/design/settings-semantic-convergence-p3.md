@@ -6,6 +6,7 @@
 - [Settings Semantic Convergence P2](settings-semantic-convergence-p2.md)
 - [Settings Semantic Convergence P3 Implementation Plan](settings-semantic-convergence-p3-implementation-plan.md)
 - [Settings Visual Density Follow-up](settings-visual-density-followup.md)
+- [Settings Personalization And Ling Conversation Tone](settings-personalization-and-ling-tone.md)
 
 ## Summary
 
@@ -16,6 +17,12 @@ user jobs before exposing implementation terms.
 
 This is a Settings IA, copy, and local style-boundary pass. It does not change daemon
 APIs, storage, routes, runtime behavior, model/provider logic, or workspace data.
+
+Follow-up: [Settings Personalization And Ling Conversation Tone](settings-personalization-and-ling-tone.md)
+supersedes this document's `Skills -> Skill policy / Skill library` grouping for future
+implementation work. The follow-up moves `Skill policy` under `Personalization`, keeps
+`Skill library` as a standalone Settings item, and adds the behavior-bearing
+`Ling conversation tone` setting.
 
 The product target is simple:
 

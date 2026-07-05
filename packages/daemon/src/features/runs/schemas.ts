@@ -1,11 +1,13 @@
 import {
   readOnlyRunTools,
+  lingConversationTones,
   permissionModeForPreset,
   permissionPresets,
   providerTransports,
   runContinuationReasons,
   sessionPermissionModes,
   type PermissionConfirmation,
+  type LingConversationTone,
   type PermissionPreset,
   type RunContinuationReason,
   type RunTool,
@@ -44,6 +46,7 @@ export interface RunRequest extends Omit<PiRunnerRunOptions, "onApprovalRequired
   readonly permissionConfirmation?: PermissionConfirmation;
   readonly skipProviderPreflight?: boolean;
   readonly idempotencyKey?: string;
+  readonly lingConversationTone?: LingConversationTone;
   readonly conversationAttachmentIds?: readonly string[];
   readonly parentRunId?: string;
   readonly interventionId?: string;
@@ -118,12 +121,24 @@ export function parseRunRequest(value: unknown): RunRequest {
     appendSystemPrompt: readOptionalStringArray(value, "appendSystemPrompt"),
     agentDir: readOptionalString(value, "agentDir"),
     runtimeToolFeatures: readOptionalRuntimeToolFeatures(value, "runtimeToolFeatures"),
+    lingConversationTone: readOptionalLingConversationTone(value, "lingConversationTone"),
     parentRunId: readOptionalString(value, "parentRunId"),
     interventionId: readOptionalString(value, "interventionId"),
     continuationReason: readOptionalRunContinuationReason(value, "continuationReason"),
   };
   assertFullAccessPermissionConfirmed(runRequest);
   return runRequest;
+}
+
+function readOptionalLingConversationTone(record: Record<string, unknown>, key: string): LingConversationTone | undefined {
+  const value = readOptionalString(record, key);
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!lingConversationTones.includes(value as LingConversationTone)) {
+    throw new Error(`${key} must be one of: ${lingConversationTones.join(", ")}`);
+  }
+  return value as LingConversationTone;
 }
 
 function readOptionalRuntimeToolFeatures(record: Record<string, unknown>, key: string): RunRequest["runtimeToolFeatures"] {

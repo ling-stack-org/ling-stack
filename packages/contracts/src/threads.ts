@@ -38,6 +38,7 @@ export type GoalContinuationStopReason =
   | "unknown";
 export type GoalContinuationDecision = "started" | "stopped";
 export type ProposedPlanArtifactStatus = "draft" | "accepted" | "superseded" | "archived";
+export type ProposedPlanSourceMessageState = "available" | "deleted" | "unknown";
 export type LingThreadSearchField =
   | "thread_title"
   | "thread_objective"
@@ -164,6 +165,7 @@ export interface ProposedPlanArtifact {
   readonly ownerAgentId?: string;
   readonly sourceTurnId?: string;
   readonly sourceMessageId?: string;
+  readonly sourceMessageState?: ProposedPlanSourceMessageState;
   readonly sourceRunId?: string;
   readonly parentPlanId?: string;
   readonly supersededByPlanId?: string;

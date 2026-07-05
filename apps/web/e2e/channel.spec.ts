@@ -425,8 +425,31 @@ test("channel team experts fold into latest turn and metrics stay in settings", 
 
 test("global sidebar keeps fixed chrome, scrollable recents, and a true compact rail", async ({ page }) => {
   await useEnglishLocale(page);
+  await page.setViewportSize({ width: 1280, height: 720 });
   const state = createBaseState({ approvalStatus: "pending" });
-  state.aiTeammates = [createMockTeammate({ id: "teammate_drawer_designer", displayName: "Designer" })];
+  state.aiTeammates = [
+    createMockTeammate({ id: "teammate_drawer_designer", displayName: "Designer" }),
+    createMockTeammate({ id: "teammate_drawer_research", displayName: "Research" }),
+    createMockTeammate({ id: "teammate_drawer_runtime", displayName: "Runtime" }),
+  ];
+  state.threads = Array.from({ length: 5 }, (_, index) => {
+    const timestamp = `2026-05-29T00:0${index}:00.000Z`;
+    return {
+      id: `thread_recent_${index}`,
+      workspaceId: "workspace_default",
+      kind: "conversation",
+      teammateId: "ling_agent",
+      title: `Recent conversation ${index + 1}`,
+      objective: "Keep the sidebar recent conversation list populated.",
+      status: "open",
+      createdAt: timestamp,
+      updatedAt: timestamp,
+      metadata: {
+        schemaVersion: 1,
+        lastActivityAt: timestamp,
+      },
+    };
+  });
   for (let index = 0; index < 28; index += 1) {
     state.channels.push({
       id: `channel_recent_${index}`,
@@ -473,6 +496,12 @@ test("global sidebar keeps fixed chrome, scrollable recents, and a true compact 
     const firstSectionTitle = document.querySelector(".channel-left-drawer .sidebar-section-title");
     const sidebarSwitch = document.querySelector(".channel-sidebar-switch");
     const settings = document.querySelector(".channel-left-drawer .config-button");
+    const scrollRegionElement = scrollRegion as HTMLElement | null;
+    if (scrollRegionElement) {
+      scrollRegionElement.scrollTop = scrollRegionElement.scrollHeight;
+    }
+    const recentRows = [...document.querySelectorAll(".channel-left-drawer .sidebar-recent-row-shell")];
+    const lastRecent = recentRows.at(-1);
     return {
       columns: shell ? getComputedStyle(shell).gridTemplateColumns : "",
       firstColumnWidth: Math.round(Number.parseFloat(shell ? getComputedStyle(shell).gridTemplateColumns : "0")),
@@ -481,9 +510,18 @@ test("global sidebar keeps fixed chrome, scrollable recents, and a true compact 
       fixedTopTop: Math.round(fixedTop?.getBoundingClientRect().top ?? -1),
       scrollOverflowY: scrollRegion ? getComputedStyle(scrollRegion).overflowY : "",
       scrollTop: Math.round(scrollRegion?.getBoundingClientRect().top ?? -1),
+      scrollBottom: Math.round(scrollRegion?.getBoundingClientRect().bottom ?? -1),
+      scrollClientHeight: Math.round(scrollRegionElement?.clientHeight ?? 0),
+      scrollHeight: Math.round(scrollRegionElement?.scrollHeight ?? 0),
+      scrollTopAfterSet: Math.round(scrollRegionElement?.scrollTop ?? 0),
       bottomBottomGap: leftDrawer && bottom ? Math.round(leftDrawer.getBoundingClientRect().bottom - bottom.getBoundingClientRect().bottom) : -1,
+      bottomTop: Math.round(bottom?.getBoundingClientRect().top ?? -1),
       selectedChannelText: selectedChannel?.textContent?.trim() ?? "",
       selectedChannelBackground: selectedChannel ? getComputedStyle(selectedChannel).backgroundColor : "",
+      recentRowCount: recentRows.length,
+      lastRecentText: lastRecent?.textContent?.trim() ?? "",
+      lastRecentTop: Math.round(lastRecent?.getBoundingClientRect().top ?? -1),
+      lastRecentBottom: Math.round(lastRecent?.getBoundingClientRect().bottom ?? -1),
       primaryNavBorderBottom: primaryNav ? getComputedStyle(primaryNav).borderBottomWidth : "",
       sectionTitleColor: firstSectionTitle ? getComputedStyle(firstSectionTitle).color : "",
       sectionTitleFontSize: firstSectionTitle ? getComputedStyle(firstSectionTitle).fontSize : "",
@@ -499,6 +537,13 @@ test("global sidebar keeps fixed chrome, scrollable recents, and a true compact 
   expect(expanded.fixedTopTop).toBeGreaterThanOrEqual(10);
   expect(expanded.scrollOverflowY).toBe("auto");
   expect(expanded.scrollTop).toBeGreaterThan(expanded.fixedTopTop);
+  expect(expanded.scrollHeight).toBeGreaterThan(expanded.scrollClientHeight);
+  expect(expanded.scrollTopAfterSet).toBeGreaterThan(0);
+  expect(expanded.scrollBottom).toBeLessThan(expanded.bottomTop);
+  expect(expanded.recentRowCount).toBe(5);
+  expect(expanded.lastRecentText).toContain("Recent conversation");
+  expect(expanded.lastRecentTop).toBeGreaterThanOrEqual(expanded.scrollTop);
+  expect(expanded.lastRecentBottom).toBeLessThanOrEqual(expanded.scrollBottom + 1);
   expect(expanded.bottomBottomGap).toBeGreaterThanOrEqual(8);
   expect(expanded.selectedChannelText).toContain("Engineering");
   expect(expanded.selectedChannelBackground).toBe("rgb(245, 245, 245)");
@@ -509,6 +554,9 @@ test("global sidebar keeps fixed chrome, scrollable recents, and a true compact 
   expect(expanded.sidebarSwitchBorderWidth).toBe("0px");
   expect(expanded.settingsText).toBe("Settings");
   expect(expanded.globalRightPanels).toBe(0);
+  await navigation.locator(".sidebar-scroll-region").evaluate((element) => {
+    element.scrollTop = 0;
+  });
 
   await page.getByRole("button", { name: "Hide navigation" }).click();
   await page.mouse.move(22, 22);
@@ -1167,6 +1215,9 @@ test("channel environment surface shows read-only context and opens review", asy
   const dialog = page.getByRole("dialog", { name: "Commit or push" });
   await expect(dialog).toBeVisible();
   await expect(dialog).toContainText("first version is read-only");
+  const includeUnstagedCheckbox = dialog.locator(".environment-include-unstaged input[type='checkbox']");
+  await expect(includeUnstagedCheckbox).toHaveCSS("width", "16px");
+  await expect(includeUnstagedCheckbox).toHaveCSS("height", "16px");
   await expect(dialog.getByRole("button", { name: "Commit", exact: true })).toBeDisabled();
   await expect(dialog.getByRole("button", { name: "Commit and push" })).toBeDisabled();
   await expect(dialog.getByRole("button", { name: "Push", exact: true })).toBeDisabled();
@@ -2493,6 +2544,73 @@ test("channel message feed renders web evidence inline with sources and blocked 
   await expect(configuredOnlyReply).not.toContainText("openai-chat-completions-web-search");
 });
 
+test("right dock browser evidence exposes failed read URL detail", async ({ page }) => {
+  await useEnglishLocale(page);
+  const state = createBaseState({ approvalStatus: "pending" });
+  state.aiTeammates = [createMockTeammate({ id: "engineer", displayName: "Ling Engineer" })];
+  state.channelMessages = [
+    {
+      id: "msg_web_evidence_failed_read_url",
+      workspaceId: "workspace_default",
+      channelId: "channel_engineering",
+      kind: "ai_reply",
+      intent: "discuss",
+      authorType: "ai-teammate",
+      authorId: "engineer",
+      body: "Failed read URL reply.",
+      mentions: [],
+      attachmentIds: [],
+      linkPreviewIds: [],
+      fileRefs: [],
+      status: "ready",
+      webEvidence: {
+        status: "degraded",
+        query: "read failed source",
+        reason: "One requested URL could not be read.",
+        provider: {
+          adapterId: "openai-responses-web-search",
+          providerPresetId: "provider_openai_responses",
+          displayName: "OpenAI Responses + Web Search",
+        },
+        sources: [],
+        readUrls: [
+          {
+            url: "https://example.com/private-report",
+            status: "blocked",
+            reason: "HTTP 403 Forbidden",
+          },
+        ],
+        updatedAt: "2026-06-24T00:22:00.000Z",
+      },
+      createdAt: "2026-06-24T00:22:00.000Z",
+      updatedAt: "2026-06-24T00:22:00.000Z",
+    },
+  ];
+  await mockDaemon(page, state);
+  await page.goto("/");
+  await openEngineeringChannel(page);
+
+  await page.getByRole("button", { name: "Show details" }).click();
+  const dock = page.locator(".channel-side-panel.right-dock");
+  await expect(dock).toBeVisible();
+  await dock.getByRole("button", { name: "Browser" }).click();
+
+  const failedRow = dock.locator(".right-dock-evidence-row").filter({ hasText: "https://example.com/private-report" });
+  await expect(failedRow).toBeVisible();
+  await expect(failedRow).toContainText("Failed");
+  await expect(failedRow).toContainText("Read URL");
+  await failedRow.click();
+
+  const detail = dock.locator(".right-dock-detail-list");
+  await expect(detail).toContainText("Status");
+  await expect(detail).toContainText("Failed");
+  await expect(detail).toContainText("Link");
+  await expect(detail).toContainText("https://example.com/private-report");
+  await expect(detail).toContainText("Failure reason");
+  await expect(detail).toContainText("HTTP 403 Forbidden");
+  await expect(detail.locator("a.right-dock-evidence-link")).toHaveAttribute("href", "https://example.com/private-report");
+});
+
 test("conversation turn transcript renders coordinator web evidence in the main chat", async ({ page }) => {
   await useEnglishLocale(page);
   const state = createBaseState({ approvalStatus: "pending" });
@@ -3277,31 +3395,54 @@ test("channel composer applies plan mode session commands without creating slash
     channelRoots()[0]?.conversationMode?.mode;
 
   const composer = page.locator(".channel-composer");
-  const planButton = composer.getByRole("button", { name: "Plan Mode" });
-  await expect(planButton).toBeVisible();
+  const composerInput = channelComposerTextbox(page);
+  const planChip = composer.locator(".conversation-mode-chip.plan");
+  const planButton = planChip.getByRole("button", { name: "Plan Mode" });
+  await expect(planChip).toHaveCount(0);
   await expect.poll(() => channelRoots().length).toBe(0);
+
+  await composer.getByRole("button", { name: "Add" }).click();
+  await expect(page.getByRole("menu", { name: "Add" })).toBeVisible();
+  await composerInput.click();
+  await expect(page.getByRole("menu", { name: "Add" })).toHaveCount(0);
 
   await composer.getByRole("button", { name: "Add" }).click();
   await page.getByRole("menu", { name: "Add" }).getByRole("menuitem", { name: "Plan Mode" }).click();
   await expect.poll(() => channelRoots().length).toBe(1);
   await expect.poll(planMode).toBe("plan");
-  await expect(planButton).toHaveClass(/active/);
+  await expect(planChip).toBeVisible();
+  await expect(planChip).toHaveClass(/active/);
   await expect.poll(() => state.tasks).toHaveLength(0);
   await composer.getByRole("button", { name: "Add" }).click();
   await expect(page.getByRole("menu", { name: "Add" }).getByRole("menuitem", { name: "Exit Plan Mode" })).toBeVisible();
   await composer.getByRole("button", { name: "Add" }).click();
 
-  const composerInput = channelComposerTextbox(page);
   await composerInput.fill("/review apps/web");
   await composer.getByRole("button", { name: "Create task" }).click();
   await expect(composer).toContainText("Exit Plan Mode before creating implementation tasks.");
   await expect.poll(() => state.tasks).toHaveLength(0);
 
+  await planChip.hover();
+  await planChip.getByRole("button", { name: "Exit and hide Plan Mode" }).click();
+  await expect.poll(planMode).toBe("default");
+  await expect.poll(() => state.tasks).toHaveLength(0);
+  await expect(planChip).toHaveCount(0);
+
+  await composerInput.fill("/pla");
+  await expect(page.getByRole("listbox", { name: "Slash command" })).toBeVisible();
+  await page.getByRole("option", { name: "/plan Plan Mode" }).click();
+  await expect(planChip).toBeVisible();
+  await expect(planChip).not.toHaveClass(/active/);
+  await expectComposerValue(composerInput, "/plan ");
+  await composer.getByRole("button", { name: "Apply command" }).click();
+  await expect.poll(planMode).toBe("plan");
+  await expect(planChip).toHaveClass(/active/);
+
   await composerInput.fill("/plan off");
   await composer.getByRole("button", { name: "Apply command" }).click();
   await expect.poll(planMode).toBe("default");
-  await expect.poll(() => state.tasks).toHaveLength(0);
-  await expectComposerValue(composerInput, "");
+  await expect(planChip).toBeVisible();
+  await expect(planChip).not.toHaveClass(/active/);
 
   await composerInput.fill("/plan status");
   await composer.getByRole("button", { name: "Apply command" }).click();
@@ -3335,8 +3476,11 @@ test("channel composer manages goal lifecycle from the floating panel", async ({
 
   const composer = page.locator(".channel-composer");
   const composerInput = channelComposerTextbox(page);
+  const goalChip = composer.locator(".conversation-mode-chip.goal");
+  await expect(goalChip).toHaveCount(0);
   await composer.getByRole("button", { name: "Add" }).click();
   await page.getByRole("menu", { name: "Add" }).getByRole("menuitem", { name: /Goal/ }).click();
+  await expect(goalChip).toBeVisible();
   await expectComposerValue(composerInput, "/goal ");
   await composerInput.evaluate((node) => {
     const range = document.createRange();
@@ -3355,7 +3499,7 @@ test("channel composer manages goal lifecycle from the floating panel", async ({
   await expect(goalPanel).toBeVisible();
   await expect(goalPanel).toContainText("Finish PR4 with a visible goal panel");
   await expect(goalPanel).toContainText("Active");
-  await expect(composer.getByRole("button", { name: "Goal", exact: true })).toHaveClass(/active/);
+  await expect(goalChip).toHaveClass(/active/);
 
   await goalPanel.getByRole("button", { name: "Expand goal details" }).click();
   await expect(goalPanel).toContainText("Status: Active");
@@ -3422,9 +3566,11 @@ test("channel composer manages goal lifecycle from the floating panel", async ({
   await expect.poll(() => activeGoal()?.objective).toBe("Finish PR4, PR5, and local QA");
   await expect(goalPanel).toContainText("Finish PR4, PR5, and local QA");
 
-  await goalPanel.getByRole("button", { name: "Clear goal" }).click();
+  await goalChip.hover();
+  await goalChip.getByRole("button", { name: "Clear and hide goal" }).click();
   await expect.poll(() => activeGoal()).toBeUndefined();
   await expect(goalPanel).toHaveCount(0);
+  await expect(goalChip).toHaveCount(0);
 });
 
 test("channel feed renders proposed_plan blocks as proposed plan cards", async ({ page }) => {

@@ -7,7 +7,7 @@ import type {
   ReactNode,
   Ref,
 } from "react";
-import { useId, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import {
   AtSign,
   ChevronDown,
@@ -99,11 +99,13 @@ interface ChannelComposerProps {
   readonly permissionPreset: PermissionPreset;
   readonly planModeActive: boolean;
   readonly planModeBusy: boolean;
+  readonly planModeChipVisible: boolean;
   readonly goal: LingThreadGoal | undefined;
   readonly goalBusy: boolean;
   readonly goalLoading: boolean;
   readonly goalError: string;
   readonly goalExpanded: boolean;
+  readonly goalChipVisible: boolean;
   readonly channelTeammateIds: ReadonlySet<string>;
   readonly resolvingApprovals: Readonly<Record<string, ApprovalResolution>>;
   readonly runGuidanceError: string;
@@ -137,7 +139,11 @@ interface ChannelComposerProps {
   readonly onOpenApproval: (approvalId: string) => void;
   readonly onPermissionPresetChange: (preset: PermissionPreset) => void;
   readonly onTogglePlanMode: () => void;
+  readonly onRevealPlanModeChip: () => void;
+  readonly onClosePlanModeChip: () => void;
   readonly onOpenGoalEditor: () => void;
+  readonly onRevealGoalChip: () => void;
+  readonly onCloseGoalChip: () => void;
   readonly onGoalContinue: () => void;
   readonly onGoalPauseResume: () => void;
   readonly onGoalComplete: () => void;
@@ -188,7 +194,11 @@ export function ChannelComposer({
   onOpenApproval,
   onPermissionPresetChange,
   onTogglePlanMode,
+  onRevealPlanModeChip,
+  onClosePlanModeChip,
   onOpenGoalEditor,
+  onRevealGoalChip,
+  onCloseGoalChip,
   onGoalContinue,
   onGoalPauseResume,
   onGoalComplete,
@@ -208,11 +218,13 @@ export function ChannelComposer({
   permissionPreset,
   planModeActive,
   planModeBusy,
+  planModeChipVisible,
   goal,
   goalBusy,
   goalLoading,
   goalError,
   goalExpanded,
+  goalChipVisible,
   channelTeammateIds,
   resolvingApprovals,
   runGuidanceError,
@@ -234,6 +246,7 @@ export function ChannelComposer({
 }: ChannelComposerProps): JSX.Element {
   const { t } = useI18n();
   const [addMenuOpen, setAddMenuOpen] = useState(false);
+  const addMenuRef = useRef<HTMLDivElement | null>(null);
   const fileInputId = useId();
   const activeMentionIndex = mentionPickerOptions.length > 0
     ? Math.min(mentionActiveIndex, mentionPickerOptions.length - 1)
@@ -244,6 +257,30 @@ export function ChannelComposer({
   const goalPaused = goal?.status === "paused";
   const goalContinueDisabled = goalBusy || goalPaused;
   const goalStatusLabel = goal ? t(`goal.status.${goal.status}`) : "";
+
+  useEffect(() => {
+    if (!addMenuOpen || typeof document === "undefined") {
+      return undefined;
+    }
+    function handlePointerDown(event: PointerEvent): void {
+      const target = event.target as Node | null;
+      if (target && addMenuRef.current?.contains(target)) {
+        return;
+      }
+      setAddMenuOpen(false);
+    }
+    function handleKeyDown(event: KeyboardEvent): void {
+      if (event.key === "Escape") {
+        setAddMenuOpen(false);
+      }
+    }
+    document.addEventListener("pointerdown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [addMenuOpen]);
 
   return (
     <ConversationComposerShell
@@ -447,7 +484,7 @@ export function ChannelComposer({
       ) : null}
       leftToolsNode={(
         <>
-          <div className="composer-add-menu">
+          <div className="composer-add-menu" ref={addMenuRef}>
             <button
               className="icon-button composer-tool-button composer-add-button"
               type="button"
@@ -496,6 +533,7 @@ export function ChannelComposer({
                   title={planModeActive ? t("Return to implementation mode") : t("Plan first, then implement after review")}
                   onClick={() => {
                     setAddMenuOpen(false);
+                    onRevealPlanModeChip();
                     onTogglePlanMode();
                   }}
                 >
@@ -512,6 +550,7 @@ export function ChannelComposer({
                   title={goal ? t("Edit the current goal") : t("Set a thread goal")}
                   onClick={() => {
                     setAddMenuOpen(false);
+                    onRevealGoalChip();
                     onOpenGoalEditor();
                   }}
                 >
@@ -534,30 +573,58 @@ export function ChannelComposer({
             fullAccessConfirmationMessage={t("Full access can allow broad local file, network, and tool access for the next run. Continue?")}
             onPresetChange={onPermissionPresetChange}
           />
-          <button
-            className={planModeActive ? "conversation-mode-chip active" : "conversation-mode-chip"}
-            type="button"
-            onClick={onTogglePlanMode}
-            disabled={!selectedChannelId || composerBusy || planModeBusy || activeRun}
-            aria-label={t("Plan Mode")}
-            title={planModeActive
-              ? t("Plan Mode is on. Click to exit Plan Mode.")
-              : t("Plan Mode is off. Click to plan before implementing.")}
-          >
-            {planModeBusy ? <Loader2 className="spin" size={15} /> : <ListChecks size={15} />}
-            <span>{t("Plan")}</span>
-          </button>
-          <button
-            className={goal ? "conversation-mode-chip active" : "conversation-mode-chip"}
-            type="button"
-            onClick={onOpenGoalEditor}
-            disabled={!selectedChannelId || composerBusy}
-            aria-label={t("Goal")}
-            title={goal ? t("Goal is active. Click to edit.") : t("Goal is not set. Click to set a goal.")}
-          >
-            {goalLoading ? <Loader2 className="spin" size={15} /> : <Target size={15} />}
-            <span>{t("Goal")}</span>
-          </button>
+          {planModeChipVisible ? (
+            <span className={planModeActive ? "conversation-mode-chip plan active" : "conversation-mode-chip plan"}>
+              <button
+                className="conversation-mode-chip-main"
+                type="button"
+                onClick={onTogglePlanMode}
+                disabled={!selectedChannelId || composerBusy || planModeBusy || activeRun}
+                aria-label={t("Plan Mode")}
+                title={planModeActive
+                  ? t("Plan Mode is on. Click to exit Plan Mode.")
+                  : t("Plan Mode is off. Click to plan before implementing.")}
+              >
+                {planModeBusy ? <Loader2 className="spin" size={15} /> : <ListChecks size={15} />}
+                <span>{t("Plan")}</span>
+              </button>
+              <button
+                className="conversation-mode-chip-close"
+                type="button"
+                onClick={onClosePlanModeChip}
+                disabled={!selectedChannelId || (planModeActive && (composerBusy || planModeBusy || activeRun))}
+                aria-label={planModeActive ? t("Exit and hide Plan Mode") : t("Hide Plan Mode")}
+                title={planModeActive ? t("Exit and hide Plan Mode") : t("Hide Plan Mode")}
+              >
+                <X size={12} />
+              </button>
+            </span>
+          ) : null}
+          {goalChipVisible ? (
+            <span className={goal ? "conversation-mode-chip goal active" : "conversation-mode-chip goal"}>
+              <button
+                className="conversation-mode-chip-main"
+                type="button"
+                onClick={onOpenGoalEditor}
+                disabled={!selectedChannelId || composerBusy}
+                aria-label={t("Goal")}
+                title={goal ? t("Goal is active. Click to edit.") : t("Goal is not set. Click to set a goal.")}
+              >
+                {goalLoading ? <Loader2 className="spin" size={15} /> : <Target size={15} />}
+                <span>{t("Goal")}</span>
+              </button>
+              <button
+                className="conversation-mode-chip-close"
+                type="button"
+                onClick={onCloseGoalChip}
+                disabled={!selectedChannelId || Boolean(goal && (goalBusy || goalLoading))}
+                aria-label={goal ? t("Clear and hide goal") : t("Hide goal")}
+                title={goal ? t("Clear and hide goal") : t("Hide goal")}
+              >
+                <X size={12} />
+              </button>
+            </span>
+          ) : null}
         </>
       )}
       rightToolsNode={(
