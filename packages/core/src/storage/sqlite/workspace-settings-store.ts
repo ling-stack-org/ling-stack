@@ -2,6 +2,7 @@ import type { SQLOutputValue } from "node:sqlite";
 import {
   DEFAULT_SKILL_GOVERNANCE_POLICY,
   DEFAULT_WORKSPACE_ID,
+  type LingConversationTone,
   type ResponseLanguagePreference,
   type SkillGovernancePolicy,
   type UpdateWorkspaceSettingsInput,
@@ -31,6 +32,7 @@ export class SqliteWorkspaceSettingsStore {
       theme: nullableUpdate(input.theme, current.theme),
       locale: nullableUpdate(input.locale, current.locale),
       responseLanguage: nullableUpdate(input.responseLanguage, current.responseLanguage),
+      lingConversationTone: nullableUpdate(input.lingConversationTone, current.lingConversationTone),
       defaultProviderPresetId: nullableUpdate(input.defaultProviderPresetId, current.defaultProviderPresetId),
       defaultPermissionMode: nullableUpdate(input.defaultPermissionMode, current.defaultPermissionMode),
       defaultPermissionPreset: nullableUpdate(input.defaultPermissionPreset, current.defaultPermissionPreset),
@@ -68,6 +70,10 @@ function parseOptionalResponseLanguagePreference(value: unknown): ResponseLangua
   return value === "follow_user" || value === "zh-CN" || value === "en-US" ? value : undefined;
 }
 
+function parseOptionalLingConversationTone(value: unknown): LingConversationTone | undefined {
+  return value === "friendly" || value === "pragmatic" || value === "none" ? value : undefined;
+}
+
 function parseWorkspaceSettings(value: string, updatedAt: string): WorkspaceSettings {
   const parsed = parseJsonObject(value);
   const parsedTheme: WorkspaceSettings["theme"] =
@@ -78,6 +84,7 @@ function parseWorkspaceSettings(value: string, updatedAt: string): WorkspaceSett
     theme: parsedTheme,
     locale: typeof parsed.locale === "string" && parsed.locale.trim() ? parsed.locale : undefined,
     responseLanguage: parseOptionalResponseLanguagePreference(parsed.responseLanguage),
+    lingConversationTone: parseOptionalLingConversationTone(parsed.lingConversationTone),
     defaultProviderPresetId: typeof parsed.defaultProviderPresetId === "string" && parsed.defaultProviderPresetId.trim() ? parsed.defaultProviderPresetId : undefined,
     defaultPermissionMode: parseOptionalSessionPermissionMode(parsed.defaultPermissionMode) ?? "workspace_write",
     defaultPermissionPreset: parseOptionalPermissionPreset(parsed.defaultPermissionPreset) ?? "workspace_collaboration",

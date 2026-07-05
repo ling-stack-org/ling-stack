@@ -81,6 +81,33 @@ test("sqlite workspace settings persist default provider preset", async () => {
   }
 });
 
+test("sqlite workspace settings persist Ling conversation tone", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-workspace-ling-tone-"));
+  const store = createSqliteRunStore(cwd);
+  try {
+    assert.equal(store.getWorkspaceSettings().lingConversationTone, undefined);
+    const friendly = store.updateWorkspaceSettings({ lingConversationTone: "friendly" }, "2026-07-05T00:00:00.000Z");
+    assert.equal(friendly.lingConversationTone, "friendly");
+    const none = store.updateWorkspaceSettings({ lingConversationTone: "none" }, "2026-07-05T00:01:00.000Z");
+    assert.equal(none.lingConversationTone, "none");
+    store.close();
+
+    const reopened = createSqliteRunStore(cwd);
+    try {
+      assert.equal(reopened.getWorkspaceSettings().lingConversationTone, "none");
+      const pragmatic = reopened.updateWorkspaceSettings({ lingConversationTone: "pragmatic" }, "2026-07-05T00:02:00.000Z");
+      assert.equal(pragmatic.lingConversationTone, "pragmatic");
+      const cleared = reopened.updateWorkspaceSettings({ lingConversationTone: null }, "2026-07-05T00:03:00.000Z");
+      assert.equal(cleared.lingConversationTone, undefined);
+    } finally {
+      reopened.close();
+    }
+  } finally {
+    store.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("sqlite channel creation can use a preallocated channel id", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-preallocated-id-"));
   const now = "2026-06-10T00:00:00.000Z";

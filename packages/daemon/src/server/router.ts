@@ -804,7 +804,7 @@ export async function routeRequest(
   }
 
   if (url.pathname === "/conversations/stream") {
-    await handleConversationStream(request, response, config, storeRegistry, async (runRequest, sink) =>
+    await handleConversationStream(request, response, config, storeRegistry, runnerRegistry, async (runRequest, sink) =>
       await executeRunRequest(
         runRequest,
         sink,

@@ -1242,6 +1242,7 @@ function normalizeWorkspaceSettings(settings: Record<string, unknown>): Record<s
     defaultProviderPresetId: typeof settings.defaultProviderPresetId === "string" && settings.defaultProviderPresetId.trim()
       ? settings.defaultProviderPresetId
       : undefined,
+    lingConversationTone: normalizeLingConversationTone(settings.lingConversationTone),
     defaultPermissionMode: normalizeDefaultPermissionMode(settings.defaultPermissionMode),
     defaultPermissionPreset: normalizeDefaultPermissionPreset(settings.defaultPermissionPreset),
     skillGovernancePolicy: normalizeSkillGovernancePolicy(settings.skillGovernancePolicy),
@@ -1259,6 +1260,10 @@ function normalizeDefaultPermissionPreset(value: unknown): string {
   return value === "read_only" || value === "workspace_collaboration" || value === "full_access" || value === "custom"
     ? value
     : "workspace_collaboration";
+}
+
+function normalizeLingConversationTone(value: unknown): string | undefined {
+  return value === "friendly" || value === "pragmatic" || value === "none" ? value : undefined;
 }
 
 function normalizeSkillGovernancePolicy(value: unknown): Record<string, string> {
@@ -6153,17 +6158,19 @@ export async function handleDaemonRoute(
   if (request.method() === "PATCH" && path === "/workspace-settings") {
     const body = await request.postDataJSON() as Record<string, unknown>;
     const nextSettings = { ...state.workspaceSettings };
-    for (const key of ["workspaceCwd", "theme", "locale", "responseLanguage", "defaultProviderPresetId", "defaultPermissionMode", "defaultPermissionPreset", "channelNotifications", "channelActivityViews", "skillGovernancePolicy"] as const) {
+    for (const key of ["workspaceCwd", "theme", "locale", "responseLanguage", "lingConversationTone", "defaultProviderPresetId", "defaultPermissionMode", "defaultPermissionPreset", "channelNotifications", "channelActivityViews", "skillGovernancePolicy"] as const) {
       if (body[key] === null) {
         delete nextSettings[key];
       } else if (body[key] !== undefined) {
         nextSettings[key] = key === "skillGovernancePolicy"
           ? normalizeSkillGovernancePolicy(body[key])
-          : key === "defaultPermissionMode"
-            ? normalizeDefaultPermissionMode(body[key])
-            : key === "defaultPermissionPreset"
-              ? normalizeDefaultPermissionPreset(body[key])
-              : body[key];
+          : key === "lingConversationTone"
+            ? normalizeLingConversationTone(body[key])
+            : key === "defaultPermissionMode"
+              ? normalizeDefaultPermissionMode(body[key])
+              : key === "defaultPermissionPreset"
+                ? normalizeDefaultPermissionPreset(body[key])
+                : body[key];
       }
     }
     state.workspaceSettings = {
@@ -6274,6 +6281,7 @@ export async function handleDaemonRoute(
           theme: effectiveWorkspaceSettingValue(state.workspaceSettings.theme, "theme", "system"),
           locale: effectiveWorkspaceSettingValue(state.workspaceSettings.locale, "locale", "zh-CN"),
           responseLanguage: effectiveWorkspaceSettingValue(state.workspaceSettings.responseLanguage, "responseLanguage", "follow_user"),
+          lingConversationTone: effectiveWorkspaceSettingValue(state.workspaceSettings.lingConversationTone, "lingConversationTone", "pragmatic"),
           skillGovernancePolicy: effectiveWorkspaceObjectSettingValue(
             state.workspaceSettings.skillGovernancePolicy,
             "skillGovernancePolicy",

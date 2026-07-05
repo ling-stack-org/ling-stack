@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises";
 import {
+  DEFAULT_LING_CONVERSATION_TONE,
   DEFAULT_SKILL_GOVERNANCE_POLICY,
   resolveConfigPaths,
   type SkillGovernancePolicy,
@@ -26,6 +27,7 @@ interface UserSettingsLayer {
   readonly theme?: "light" | "dark" | "system";
   readonly locale?: string;
   readonly responseLanguage?: WorkspaceSettings["responseLanguage"];
+  readonly lingConversationTone?: WorkspaceSettings["lingConversationTone"];
 }
 
 interface UserConfigLayer {
@@ -123,6 +125,16 @@ export async function buildEffectiveConfigResponse(input: {
         paths.user.settingsPath,
         "follow_user",
       ),
+      lingConversationTone: effectiveValue(
+        workspaceSettings.lingConversationTone,
+        "workspace",
+        paths.workspace.databasePath,
+        "lingConversationTone",
+        userSettings?.lingConversationTone,
+        "user",
+        paths.user.settingsPath,
+        DEFAULT_LING_CONVERSATION_TONE,
+      ),
       skillGovernancePolicy: effectiveValue(
         workspaceSettings.skillGovernancePolicy,
         "workspace",
@@ -158,6 +170,7 @@ export function parseWorkspaceSettingsUpdate(value: unknown): UpdateWorkspaceSet
     theme: readNullableTheme(record.theme),
     locale: readNullableString(record.locale, "locale"),
     responseLanguage: readNullableResponseLanguagePreference(record.responseLanguage),
+    lingConversationTone: readNullableLingConversationTone(record.lingConversationTone),
     defaultProviderPresetId: readNullableString(record.defaultProviderPresetId, "defaultProviderPresetId"),
     defaultPermissionMode: readNullableSessionPermissionMode(record.defaultPermissionMode),
     defaultPermissionPreset: readNullablePermissionPreset(record.defaultPermissionPreset),
@@ -216,6 +229,7 @@ async function readUserSettingsLayer(path: string, diagnostics: EffectiveConfigD
     theme?: "light" | "dark" | "system";
     locale?: string;
     responseLanguage?: WorkspaceSettings["responseLanguage"];
+    lingConversationTone?: WorkspaceSettings["lingConversationTone"];
   } = {};
   const theme = readOptionalTheme(record.theme, path, diagnostics);
   if (theme) {
@@ -228,6 +242,10 @@ async function readUserSettingsLayer(path: string, diagnostics: EffectiveConfigD
   const responseLanguage = readOptionalResponseLanguage(record.responseLanguage, path, diagnostics);
   if (responseLanguage) {
     result.responseLanguage = responseLanguage;
+  }
+  const lingConversationTone = readOptionalLingConversationTone(record.lingConversationTone, path, diagnostics);
+  if (lingConversationTone) {
+    result.lingConversationTone = lingConversationTone;
   }
   return Object.keys(result).length > 0 ? result : {};
 }
@@ -306,6 +324,19 @@ function readNullableResponseLanguagePreference(value: unknown): UpdateWorkspace
   }
   if (value !== "follow_user" && value !== "zh-CN" && value !== "en-US") {
     throw new Error("responseLanguage must be follow_user, zh-CN, en-US, or null");
+  }
+  return value;
+}
+
+function readNullableLingConversationTone(value: unknown): UpdateWorkspaceSettingsInput["lingConversationTone"] {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (value === null) {
+    return null;
+  }
+  if (value !== "friendly" && value !== "pragmatic" && value !== "none") {
+    throw new Error("lingConversationTone must be friendly, pragmatic, none, or null");
   }
   return value;
 }
@@ -432,6 +463,22 @@ function readOptionalResponseLanguage(value: unknown, path: string, diagnostics:
     level: "warning",
     code: "user_settings_invalid_response_language",
     message: "responseLanguage must be follow_user, zh-CN, or en-US.",
+    path,
+  });
+  return undefined;
+}
+
+function readOptionalLingConversationTone(value: unknown, path: string, diagnostics: EffectiveConfigDiagnostic[]): WorkspaceSettings["lingConversationTone"] | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (value === "friendly" || value === "pragmatic" || value === "none") {
+    return value;
+  }
+  diagnostics.push({
+    level: "warning",
+    code: "user_settings_invalid_ling_conversation_tone",
+    message: "lingConversationTone must be friendly, pragmatic, or none.",
     path,
   });
   return undefined;

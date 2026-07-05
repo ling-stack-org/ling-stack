@@ -18,6 +18,7 @@ test("effective config reports user defaults and workspace execution sources", a
       theme: "dark",
       locale: "zh-CN",
       responseLanguage: "en-US",
+      lingConversationTone: "friendly",
     }), "utf8");
     await writeFile(resolve(userRoot, "config.json"), JSON.stringify({
       schemaVersion: 1,
@@ -40,6 +41,9 @@ test("effective config reports user defaults and workspace execution sources", a
     assert.equal(initial.values.theme.source, "user");
     assert.equal(initial.values.locale.value, "zh-CN");
     assert.equal(initial.values.responseLanguage.value, "en-US");
+    assert.equal(initial.values.lingConversationTone.value, "friendly");
+    assert.equal(initial.values.lingConversationTone.source, "user");
+    assert.equal(initial.values.lingConversationTone.path, resolve(userRoot, "settings.json"));
     assert.equal(initial.values.skillGovernancePolicy.value.generationMode, "semi_auto");
     assert.equal(initial.values.skillGovernancePolicy.source, "workspace");
     assert.equal(initial.values.runtime.defaultRunnerId.value, "pi");
@@ -55,6 +59,7 @@ test("effective config reports user defaults and workspace execution sources", a
     await patchJson(`${daemon.url}/workspace-settings?cwd=${encodeURIComponent(cwd)}`, {
       theme: "light",
       locale: "en-US",
+      lingConversationTone: "pragmatic",
       skillGovernancePolicy: {
         generationMode: "approval_only",
         recordingMode: "user_initiated",
@@ -73,6 +78,9 @@ test("effective config reports user defaults and workspace execution sources", a
     assert.equal(patched.values.theme.value, "light");
     assert.equal(patched.values.theme.source, "workspace");
     assert.equal(patched.values.theme.path, resolve(cwd, ".ling-stack", "ling-stack.sqlite"));
+    assert.equal(patched.values.lingConversationTone.value, "pragmatic");
+    assert.equal(patched.values.lingConversationTone.source, "workspace");
+    assert.equal(patched.values.lingConversationTone.path, resolve(cwd, ".ling-stack", "ling-stack.sqlite"));
     assert.equal(patched.values.skillGovernancePolicy.value.generationMode, "approval_only");
     assert.equal(patched.values.skillGovernancePolicy.source, "workspace");
     assert.equal(patched.values.runtime.defaultRunnerId.source, "workspace");
@@ -105,6 +113,7 @@ test("effective config reports user settings diagnostics without applying invali
       theme: "sepia",
       locale: "",
       responseLanguage: "fr-FR",
+      lingConversationTone: "verbose",
     }), "utf8");
     await writeFile(resolve(userRoot, "config.json"), JSON.stringify({
       schemaVersion: 1,
@@ -121,6 +130,8 @@ test("effective config reports user settings diagnostics without applying invali
     assert.equal(body.values.locale.source, "built_in");
     assert.equal(body.values.responseLanguage.value, "follow_user");
     assert.equal(body.values.responseLanguage.source, "built_in");
+    assert.equal(body.values.lingConversationTone.value, "pragmatic");
+    assert.equal(body.values.lingConversationTone.source, "built_in");
     assert.equal(body.values.runtime.defaultRunnerId.value, "pi");
     assert.equal(body.values.runtime.defaultRunnerId.source, "built_in");
     assert.equal(body.values.runtime.implicitRunnerFallback.value, "allow_to_default");
@@ -128,6 +139,7 @@ test("effective config reports user settings diagnostics without applying invali
     assert.deepEqual(body.diagnostics.map((diagnostic) => diagnostic.code).sort(), [
       "user_runtime_defaults_invalid_fallback_policy",
       "user_runtime_defaults_unavailable_runner",
+      "user_settings_invalid_ling_conversation_tone",
       "user_settings_invalid_locale",
       "user_settings_invalid_response_language",
       "user_settings_invalid_theme",
