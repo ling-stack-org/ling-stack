@@ -425,8 +425,31 @@ test("channel team experts fold into latest turn and metrics stay in settings", 
 
 test("global sidebar keeps fixed chrome, scrollable recents, and a true compact rail", async ({ page }) => {
   await useEnglishLocale(page);
+  await page.setViewportSize({ width: 1280, height: 720 });
   const state = createBaseState({ approvalStatus: "pending" });
-  state.aiTeammates = [createMockTeammate({ id: "teammate_drawer_designer", displayName: "Designer" })];
+  state.aiTeammates = [
+    createMockTeammate({ id: "teammate_drawer_designer", displayName: "Designer" }),
+    createMockTeammate({ id: "teammate_drawer_research", displayName: "Research" }),
+    createMockTeammate({ id: "teammate_drawer_runtime", displayName: "Runtime" }),
+  ];
+  state.threads = Array.from({ length: 5 }, (_, index) => {
+    const timestamp = `2026-05-29T00:0${index}:00.000Z`;
+    return {
+      id: `thread_recent_${index}`,
+      workspaceId: "workspace_default",
+      kind: "conversation",
+      teammateId: "ling_agent",
+      title: `Recent conversation ${index + 1}`,
+      objective: "Keep the sidebar recent conversation list populated.",
+      status: "open",
+      createdAt: timestamp,
+      updatedAt: timestamp,
+      metadata: {
+        schemaVersion: 1,
+        lastActivityAt: timestamp,
+      },
+    };
+  });
   for (let index = 0; index < 28; index += 1) {
     state.channels.push({
       id: `channel_recent_${index}`,
@@ -473,6 +496,12 @@ test("global sidebar keeps fixed chrome, scrollable recents, and a true compact 
     const firstSectionTitle = document.querySelector(".channel-left-drawer .sidebar-section-title");
     const sidebarSwitch = document.querySelector(".channel-sidebar-switch");
     const settings = document.querySelector(".channel-left-drawer .config-button");
+    const scrollRegionElement = scrollRegion as HTMLElement | null;
+    if (scrollRegionElement) {
+      scrollRegionElement.scrollTop = scrollRegionElement.scrollHeight;
+    }
+    const recentRows = [...document.querySelectorAll(".channel-left-drawer .sidebar-recent-row-shell")];
+    const lastRecent = recentRows.at(-1);
     return {
       columns: shell ? getComputedStyle(shell).gridTemplateColumns : "",
       firstColumnWidth: Math.round(Number.parseFloat(shell ? getComputedStyle(shell).gridTemplateColumns : "0")),
@@ -481,9 +510,18 @@ test("global sidebar keeps fixed chrome, scrollable recents, and a true compact 
       fixedTopTop: Math.round(fixedTop?.getBoundingClientRect().top ?? -1),
       scrollOverflowY: scrollRegion ? getComputedStyle(scrollRegion).overflowY : "",
       scrollTop: Math.round(scrollRegion?.getBoundingClientRect().top ?? -1),
+      scrollBottom: Math.round(scrollRegion?.getBoundingClientRect().bottom ?? -1),
+      scrollClientHeight: Math.round(scrollRegionElement?.clientHeight ?? 0),
+      scrollHeight: Math.round(scrollRegionElement?.scrollHeight ?? 0),
+      scrollTopAfterSet: Math.round(scrollRegionElement?.scrollTop ?? 0),
       bottomBottomGap: leftDrawer && bottom ? Math.round(leftDrawer.getBoundingClientRect().bottom - bottom.getBoundingClientRect().bottom) : -1,
+      bottomTop: Math.round(bottom?.getBoundingClientRect().top ?? -1),
       selectedChannelText: selectedChannel?.textContent?.trim() ?? "",
       selectedChannelBackground: selectedChannel ? getComputedStyle(selectedChannel).backgroundColor : "",
+      recentRowCount: recentRows.length,
+      lastRecentText: lastRecent?.textContent?.trim() ?? "",
+      lastRecentTop: Math.round(lastRecent?.getBoundingClientRect().top ?? -1),
+      lastRecentBottom: Math.round(lastRecent?.getBoundingClientRect().bottom ?? -1),
       primaryNavBorderBottom: primaryNav ? getComputedStyle(primaryNav).borderBottomWidth : "",
       sectionTitleColor: firstSectionTitle ? getComputedStyle(firstSectionTitle).color : "",
       sectionTitleFontSize: firstSectionTitle ? getComputedStyle(firstSectionTitle).fontSize : "",
@@ -499,6 +537,13 @@ test("global sidebar keeps fixed chrome, scrollable recents, and a true compact 
   expect(expanded.fixedTopTop).toBeGreaterThanOrEqual(10);
   expect(expanded.scrollOverflowY).toBe("auto");
   expect(expanded.scrollTop).toBeGreaterThan(expanded.fixedTopTop);
+  expect(expanded.scrollHeight).toBeGreaterThan(expanded.scrollClientHeight);
+  expect(expanded.scrollTopAfterSet).toBeGreaterThan(0);
+  expect(expanded.scrollBottom).toBeLessThan(expanded.bottomTop);
+  expect(expanded.recentRowCount).toBe(5);
+  expect(expanded.lastRecentText).toContain("Recent conversation");
+  expect(expanded.lastRecentTop).toBeGreaterThanOrEqual(expanded.scrollTop);
+  expect(expanded.lastRecentBottom).toBeLessThanOrEqual(expanded.scrollBottom + 1);
   expect(expanded.bottomBottomGap).toBeGreaterThanOrEqual(8);
   expect(expanded.selectedChannelText).toContain("Engineering");
   expect(expanded.selectedChannelBackground).toBe("rgb(245, 245, 245)");
@@ -509,6 +554,9 @@ test("global sidebar keeps fixed chrome, scrollable recents, and a true compact 
   expect(expanded.sidebarSwitchBorderWidth).toBe("0px");
   expect(expanded.settingsText).toBe("Settings");
   expect(expanded.globalRightPanels).toBe(0);
+  await navigation.locator(".sidebar-scroll-region").evaluate((element) => {
+    element.scrollTop = 0;
+  });
 
   await page.getByRole("button", { name: "Hide navigation" }).click();
   await page.mouse.move(22, 22);
