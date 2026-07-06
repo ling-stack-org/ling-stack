@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "@playwright/test";
 import { mockDaemon } from "./support/mock-daemon";
 import {
   createBaseState,
@@ -28,6 +28,37 @@ async function openSettingsRunDiagnostics(page: Page): Promise<void> {
   await expect(page.getByLabel("Ling Stack navigation")).toHaveCount(0);
   await expect(page.locator(".settings-run-diagnostics-panel")).toBeVisible();
   await expect(page.locator(".settings-run-diagnostics-panel").getByRole("heading", { name: "Run Diagnostics" })).toBeVisible();
+}
+
+async function expectLightweightSettingsMetaRows(scope: Locator): Promise<void> {
+  const rows = await scope.locator(".meta-row").evaluateAll((elements) =>
+    elements.filter((element) => element.getClientRects().length > 0).map((element) => {
+      const style = getComputedStyle(element);
+      return {
+        backgroundColor: style.backgroundColor,
+        borderBottomWidth: style.borderBottomWidth,
+        borderLeftWidth: style.borderLeftWidth,
+        borderRightWidth: style.borderRightWidth,
+        borderTopWidth: style.borderTopWidth,
+        clientWidth: element.clientWidth,
+        labelBackgroundColor: getComputedStyle(element.querySelector("span") ?? element).backgroundColor,
+        scrollWidth: element.scrollWidth,
+        valueBackgroundColor: getComputedStyle(element.querySelector("strong") ?? element).backgroundColor,
+      };
+    }),
+  );
+
+  expect(rows.length).toBeGreaterThan(0);
+  for (const row of rows) {
+    expect(row.backgroundColor).toBe("rgba(0, 0, 0, 0)");
+    expect(row.labelBackgroundColor).toBe("rgba(0, 0, 0, 0)");
+    expect(row.valueBackgroundColor).toBe("rgba(0, 0, 0, 0)");
+    expect(row.borderTopWidth).toBe("0px");
+    expect(row.borderRightWidth).toBe("0px");
+    expect(row.borderBottomWidth).toBe("0px");
+    expect(row.borderLeftWidth).toBe("0px");
+    expect(row.scrollWidth).toBeLessThanOrEqual(row.clientWidth + 1);
+  }
 }
 
 async function openMainRunHistory(page: Page, taskTitle = "Inspect workspace"): Promise<void> {
@@ -220,12 +251,26 @@ test("settings run diagnostics stays inside the Settings shell", async ({ page }
   await mockDaemon(page, createBaseState({ approvalStatus: "expired" }));
   await page.goto("/");
 
-  await openSettingsRunDiagnostics(page);
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
+  await page.getByLabel("Settings sections").getByRole("button", { name: /Startup and diagnostics/ }).click();
+  await expect(page.locator(".startup-readiness-card")).toBeVisible();
+  await expect(page.locator(".startup-readiness-card > .meta-row")).toHaveCount(0);
+  await expect(page.getByText("No startup diagnostics")).toBeVisible();
+
+  await page.getByRole("button", { name: "Open Run Diagnostics" }).click();
 
   await expect(page.getByLabel("Settings sections")).toBeVisible();
   await expect(page.getByLabel("Ling Stack navigation")).toHaveCount(0);
   await expect(page.locator(".run-history-layout")).toHaveCount(0);
-  await expect(page.locator(".settings-run-diagnostics-panel")).toContainText("Inspect workspace");
+  const diagnosticsPanel = page.locator(".settings-run-diagnostics-panel");
+  await expect(diagnosticsPanel).toContainText("Inspect workspace");
+  await expectLightweightSettingsMetaRows(diagnosticsPanel.locator(".settings-run-diagnostics-summary"));
+  await expectLightweightSettingsMetaRows(diagnosticsPanel.locator(".settings-run-diagnostics-detail"));
+  await expect.poll(() => readHorizontalOverflow(page, ".settings-run-diagnostics-panel")).toEqual([]);
+
+  const rawDetails = diagnosticsPanel.locator("details").filter({ hasText: "Raw run details" });
+  await rawDetails.getByText("Raw run details").click();
+  await expectLightweightSettingsMetaRows(diagnosticsPanel.locator(".settings-run-diagnostics-detail"));
 });
 
 test("run detail renders state transitions from daemon timeline API", async ({ page }) => {

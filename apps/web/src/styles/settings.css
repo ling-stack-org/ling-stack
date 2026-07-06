@@ -510,6 +510,21 @@
   line-height: 18px;
 }
 
+.settings-inline-tip {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  max-width: 100%;
+  margin: 6px 0;
+  padding: 5px 8px;
+  border: 1px solid var(--success-border);
+  border-radius: 6px;
+  background: var(--success-soft);
+  color: var(--success);
+  font-size: 12px;
+  line-height: 17px;
+}
+
 .account-profile-settings-panel .profile-page {
   width: 100%;
   margin: 0;
@@ -1110,23 +1125,6 @@
   line-height: 17px;
 }
 
-.personalization-settings-actions {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  min-width: 0;
-  margin-top: 12px;
-}
-
-.personalization-settings-actions small {
-  min-width: 0;
-  overflow-wrap: anywhere;
-  color: var(--text-muted);
-  font-size: 12px;
-  line-height: 18px;
-}
-
 .settings-status-grid,
 .external-work-status-grid {
   display: grid;
@@ -1710,7 +1708,8 @@
   background: var(--surface-panel);
 }
 
-.settings-skill-candidate-review {
+.settings-skill-candidate-review,
+.settings-skill-review-queue {
   display: grid;
   gap: 10px;
   min-width: 0;
@@ -1736,6 +1735,78 @@
 .settings-skill-governance-head,
 .settings-skill-candidate-head {
   justify-content: space-between;
+}
+
+.settings-skill-review-queue-head {
+  padding-bottom: 2px;
+}
+
+.settings-skill-review-diagnostics[open] {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  height: clamp(260px, 38vh, 360px);
+  overflow: hidden;
+}
+
+.settings-skill-source-diagnostics[open] {
+  height: clamp(360px, 42vh, 420px);
+}
+
+.settings-skill-review-diagnostics[open] > .settings-skill-health {
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr);
+  height: 100%;
+  max-height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.settings-skill-review-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  min-width: 0;
+}
+
+.settings-skill-review-filters button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 30px;
+  padding: 0 9px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface-panel);
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.settings-skill-review-filters button.active,
+.settings-skill-review-filters button:hover {
+  background: var(--surface-selected);
+  color: var(--text-strong);
+}
+
+.settings-skill-review-filters button small {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface-subtle);
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.settings-skill-review-filters button.active small {
+  background: var(--surface-panel);
+  color: var(--text-strong);
 }
 
 .settings-skill-health-head strong,
@@ -1942,6 +2013,43 @@
   gap: 8px;
 }
 
+.settings-skill-review-queue-list {
+  gap: 6px;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+
+.settings-skill-review-queue .settings-skill-review-empty {
+  min-height: 0;
+  align-content: center;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+
+.settings-skill-review-queue {
+  grid-template-rows: auto auto minmax(0, 1fr);
+  height: clamp(180px, 26vh, 240px);
+  overflow: hidden;
+}
+
+.settings-skill-review-diagnostics[open] .settings-skill-health-findings,
+.settings-skill-review-diagnostics[open] .settings-skill-health > .compact-empty {
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+}
+
+.settings-skill-source-diagnostics[open] .settings-skill-health-findings {
+  padding-right: 2px;
+}
+
 .settings-skill-health-finding {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(160px, auto);
@@ -1964,6 +2072,10 @@
   border: 1px solid var(--border);
   border-radius: 6px;
   background: var(--surface-panel);
+}
+
+.settings-skill-review-queue-card {
+  background: var(--surface-subtle);
 }
 
 .settings-skill-health-finding.critical {
@@ -2969,15 +3081,18 @@
 .settings-skill-audit-note {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-start;
   gap: 12px;
   min-height: 28px;
   border-top: 1px solid var(--border);
   padding-top: 8px;
 }
 
-.archived-items-copy {
-  margin: 0 0 12px;
+.archived-items-hint {
+  margin: 6px 0 2px;
+  color: var(--text-soft);
+  font-size: 12px;
+  line-height: 1.5;
 }
 
 .archived-item-group {
@@ -3005,7 +3120,10 @@
 
 .archived-item-list {
   display: grid;
-  overflow: hidden;
+  max-height: min(280px, 30vh);
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   background: var(--surface-panel);
@@ -3061,7 +3179,28 @@
   gap: 7px;
 }
 
+.archived-item-actions .compact-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 32px;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.archived-item-actions .compact-button svg {
+  display: block;
+  flex: 0 0 auto;
+}
+
+.archived-action-label {
+  display: block;
+  line-height: 1;
+}
+
 .archived-item-empty {
+  min-height: 112px;
   border: 0;
   border-radius: 0;
 }
@@ -3136,8 +3275,4 @@
     width: 100%;
   }
 
-  .personalization-settings-actions {
-    align-items: stretch;
-    flex-direction: column;
-  }
 }

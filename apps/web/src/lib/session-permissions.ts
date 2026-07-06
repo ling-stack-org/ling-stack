@@ -197,12 +197,20 @@ export function summarizeEffectivePolicySnapshot(snapshot: EffectiveRunPolicySna
   }
   const askCount = Object.values(snapshot.toolDecisions).filter((decision) => decision === "ask").length;
   const denyCount = Object.values(snapshot.toolDecisions).filter((decision) => decision === "deny").length;
+  const writeScope = snapshot.allowedWritePaths.length > 0 ? snapshot.allowedWritePaths.join(", ") : t("workspace policy");
   return [
-    t("Write scope: {paths}", { paths: snapshot.allowedWritePaths.length > 0 ? snapshot.allowedWritePaths.join(", ") : t("workspace policy") }),
-    t("{count} operations ask for approval", { count: askCount }),
-    t("{count} operations are blocked by policy", { count: denyCount }),
+    translateWithValues(t, "Write scope: {paths}", { paths: writeScope }),
+    translateWithValues(t, "{count} operations ask for approval", { count: askCount }),
+    translateWithValues(t, "{count} operations are blocked by policy", { count: denyCount }),
     ...snapshot.riskNotes.map((note) => note.message),
   ];
+}
+
+function translateWithValues(t: Translate, key: string, values: Readonly<Record<string, string | number>>): string {
+  return t(key, values).replace(/\{([A-Za-z0-9_]+)\}/g, (match, valueKey) => {
+    const value = values[valueKey];
+    return value === undefined ? match : String(value);
+  });
 }
 
 function isSessionPermissionMode(value: string | undefined): value is SessionPermissionMode {

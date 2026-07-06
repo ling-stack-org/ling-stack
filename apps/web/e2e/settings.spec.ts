@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 import { mockDaemon } from "./support/mock-daemon";
 import {
   createBaseState,
@@ -6,18 +6,80 @@ import {
   createExternalWorkStatus,
   createMockTeammate,
   isRecord,
+  type MockState,
 } from "./support/mock-state";
 import {
   channelEventFilterToggle,
   openChannelChatTools,
+  readHorizontalOverflow,
 } from "./support/test-helpers";
+
+function archivedTimestamp(index: number): string {
+  return `2026-07-${String(index + 1).padStart(2, "0")}T08:00:00.000Z`;
+}
+
+function createArchivedConversation(index: number): MockState["threads"][number] {
+  const timestamp = archivedTimestamp(index);
+  return {
+    id: `thread_archived_visual_${index}`,
+    workspaceId: "workspace_default",
+    kind: "conversation",
+    teammateId: "ling_agent",
+    title: `Archived conversation ${index + 1}`,
+    objective: `Archived conversation ${index + 1}`,
+    status: "archived",
+    conversationMode: { mode: "default" },
+    createdAt: timestamp,
+    updatedAt: timestamp,
+    archivedAt: timestamp,
+  };
+}
+
+function createArchivedChannel(index: number): Record<string, unknown> {
+  const timestamp = archivedTimestamp(index);
+  return {
+    id: `channel_archived_visual_${index}`,
+    workspaceId: "workspace_default",
+    name: `Archived channel ${index + 1}`,
+    status: "archived",
+    boundPath: "/tmp/ling-archived",
+    autoReplyMode: "mentions_only",
+    allowedTools: ["read"],
+    runtimePolicy: {},
+    createdAt: timestamp,
+    updatedAt: timestamp,
+  };
+}
+
+function createArchivedBranch(index: number): Record<string, unknown> {
+  const timestamp = archivedTimestamp(index);
+  return {
+    id: `branch_archived_visual_${index}`,
+    workspaceId: "workspace_default",
+    channelId: `channel_archived_visual_${index}`,
+    name: `Archived branch ${index + 1}`,
+    status: "archived",
+    createdAt: timestamp,
+    updatedAt: timestamp,
+    archivedAt: timestamp,
+  };
+}
+
+async function archivedGroupMetrics(page: Page, title: string): Promise<{
+  readonly scrollHeight: number;
+  readonly clientHeight: number;
+  readonly overflowY: string;
+}> {
+  return await page.locator(".archived-item-group").filter({ hasText: title }).locator(".archived-item-list").evaluate((element) => ({
+    scrollHeight: element.scrollHeight,
+    clientHeight: element.clientHeight,
+    overflowY: getComputedStyle(element).overflowY,
+  }));
+}
 
 test("language switcher toggles Chinese and English UI labels", async ({ page }) => {
   await page.addInitScript(() => {
-    if (!sessionStorage.getItem("ling-stack.localeSwitcherInitialized")) {
-      localStorage.setItem("ling-stack.locale", "en-US");
-      sessionStorage.setItem("ling-stack.localeSwitcherInitialized", "true");
-    }
+    localStorage.setItem("ling-stack.locale", "en-US");
   });
   const state = createBaseState({ approvalStatus: "expired" });
   await mockDaemon(page, state);
@@ -106,6 +168,8 @@ test("Chinese mode localizes workspace settings, runtime policy, and teammate se
   await expect(page.getByLabel("频道管理").getByRole("button", { name: "创建频道" })).toHaveCount(0);
 
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "设置" }).click();
+  await expect(page.getByLabel("设置分组").getByRole("button", { name: "个性化" })).toBeVisible();
+  await expect(page.getByLabel("设置分组").getByRole("button", { name: "Personalization" })).toHaveCount(0);
   await page.getByLabel("设置分组").getByRole("button", { name: "队友管理" }).click();
   await expect(page.getByLabel("设置分组").getByRole("button", { name: "队友管理" })).toHaveClass(/active/);
   await expect(page.locator(".settings-tool-return-row")).toHaveCount(0);
@@ -144,6 +208,7 @@ test("theme switcher supports system, light, and dark preferences", async ({ pag
     if (!sessionStorage.getItem("ling-stack.themeTestInitialized")) {
       localStorage.setItem("ling-stack.locale", "en-US");
       localStorage.removeItem("ling-stack.themePreference");
+      localStorage.removeItem("ling-stack.themeBootstrapPreference");
       sessionStorage.setItem("ling-stack.themeTestInitialized", "true");
     }
   });
@@ -165,12 +230,14 @@ test("theme switcher supports system, light, and dark preferences", async ({ pag
   await expect(html).toHaveAttribute("data-theme-preference", "light");
   await expect.poll(() => state.workspaceSettings.theme).toBe("light");
   await expect.poll(() => page.evaluate(() => localStorage.getItem("ling-stack.themePreference"))).toBeNull();
+  await expect.poll(() => page.evaluate(() => localStorage.getItem("ling-stack.themeBootstrapPreference"))).toBe("light");
 
   await page.getByRole("button", { name: "Dark" }).click();
   await expect(html).toHaveAttribute("data-theme", "dark");
   await expect(html).toHaveAttribute("data-theme-preference", "dark");
   await expect.poll(() => state.workspaceSettings.theme).toBe("dark");
   await expect.poll(() => page.evaluate(() => localStorage.getItem("ling-stack.themePreference"))).toBeNull();
+  await expect.poll(() => page.evaluate(() => localStorage.getItem("ling-stack.themeBootstrapPreference"))).toBe("dark");
   await page.reload();
   await expect(html).toHaveAttribute("data-theme", "dark");
   await expect(html).toHaveAttribute("data-theme-preference", "dark");
@@ -182,8 +249,23 @@ test("theme switcher supports system, light, and dark preferences", async ({ pag
   await expect(html).toHaveAttribute("data-theme-preference", "system");
   await expect.poll(() => state.workspaceSettings.theme).toBe("system");
   await expect.poll(() => page.evaluate(() => localStorage.getItem("ling-stack.themePreference"))).toBeNull();
+  await expect.poll(() => page.evaluate(() => localStorage.getItem("ling-stack.themeBootstrapPreference"))).toBe("system");
   await page.emulateMedia({ colorScheme: "light" });
   await expect(html).toHaveAttribute("data-theme", "light");
+});
+
+test("theme bootstrap cache prevents a dark first paint before React starts", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.removeItem("ling-stack.themePreference");
+    localStorage.setItem("ling-stack.themeBootstrapPreference", "light");
+  });
+  await page.emulateMedia({ colorScheme: "dark" });
+  await page.route("**/src/main.tsx", (route) => route.abort());
+  await page.goto("/");
+
+  const html = page.locator("html");
+  await expect(html).toHaveAttribute("data-theme", "light");
+  await expect(html).toHaveAttribute("data-theme-preference", "light");
 });
 
 test("settings interface preferences do not expose the channel protocol editor", async ({ page }) => {
@@ -249,6 +331,59 @@ test("settings developer section contains startup readiness", async ({ page }) =
   await expect(page.locator(".run-history-layout")).toHaveCount(0);
   await page.locator(".settings-run-diagnostics-panel").getByRole("button", { name: "Close run diagnostics" }).click();
   await expect(developerPanel.getByRole("heading", { name: "Startup readiness" })).toBeVisible();
+});
+
+test("settings archived items keep rules compact, lists scrollable, and actions aligned", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.locale", "en-US");
+  });
+  const state = createBaseState({ approvalStatus: "expired" });
+  state.threads = Array.from({ length: 9 }, (_, index) => createArchivedConversation(index));
+  state.aiTeammates = Array.from({ length: 6 }, (_, index) =>
+    createMockTeammate({
+      id: `teammate_archived_visual_${index}`,
+      displayName: `Archived teammate ${index + 1}`,
+      hidden: true,
+      status: "active",
+      updatedAt: archivedTimestamp(index),
+    })
+  );
+  state.channels.push(...Array.from({ length: 6 }, (_, index) => createArchivedChannel(index)));
+  state.channelBranches = Array.from({ length: 6 }, (_, index) => createArchivedBranch(index));
+  await mockDaemon(page, state);
+  await page.goto("/");
+
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
+  await page.getByLabel("Settings sections").getByRole("button", { name: /Archived items/ }).click();
+  const panel = page.locator(".archived-items-settings-panel");
+  await expect(panel.getByRole("heading", { name: "Archived items" })).toBeVisible();
+  await expect(panel.locator(".archived-items-rules-footer")).toHaveCount(0);
+  await expect(panel.locator(".archived-items-rule-note")).toHaveCount(0);
+  const hint = panel.locator(".archived-items-hint");
+  await expect(hint).toBeVisible();
+  await expect(hint).toHaveText("Restored items return to their lists; channel and branch delete is permanent.");
+  await expect(panel.getByText("Restore and delete rules")).toHaveCount(0);
+
+  for (const title of ["Conversations", "AI Teammates", "Channels", "Branches"]) {
+    const metrics = await archivedGroupMetrics(page, title);
+    expect(metrics.overflowY).toBe("auto");
+    expect(metrics.scrollHeight).toBeGreaterThan(metrics.clientHeight + 2);
+  }
+
+  const actionAlignment = await panel.locator(".archived-item-actions .compact-button").evaluateAll((buttons) =>
+    buttons.slice(0, 10).map((button) => {
+      const icon = button.querySelector("svg");
+      const label = button.querySelector(".archived-action-label");
+      const iconRect = icon?.getBoundingClientRect();
+      const labelRect = label?.getBoundingClientRect();
+      if (!iconRect || !labelRect) {
+        return 99;
+      }
+      return Math.abs((iconRect.top + iconRect.height / 2) - (labelRect.top + labelRect.height / 2));
+    })
+  );
+  expect(Math.max(...actionAlignment)).toBeLessThanOrEqual(2);
+  await expect.poll(() => readHorizontalOverflow(page, ".archived-items-settings-panel")).toEqual([]);
 });
 
 test("settings configuration entries open nested tools directly", async ({ page }) => {
@@ -592,6 +727,27 @@ test("settings skill library shows read-only skill health findings", async ({ pa
   const sourceHealthPanel = sourceHealthDetails.getByRole("region", { name: "Skill Source Health" });
   await expect(sourceHealthPanel).toContainText("Source-backed");
   await expect(sourceHealthPanel).toContainText("Missing source");
+  const sourceHealthLayout = await sourceHealthDetails.evaluate((element) => {
+    const findings = element.querySelector(".settings-skill-health-findings");
+    const style = getComputedStyle(element);
+    return {
+      height: element.getBoundingClientRect().height,
+      overflow: style.overflow,
+      findingsOverflowY: findings ? getComputedStyle(findings).overflowY : "",
+      findingCount: findings?.querySelectorAll(".settings-skill-health-finding").length ?? 0,
+      findingsScrollHeight: findings?.scrollHeight ?? 0,
+      findingsClientHeight: findings?.clientHeight ?? 0,
+      hidesFindingsByDefault: element.textContent?.includes("more source findings hidden by default") ?? false,
+    };
+  });
+  expect(sourceHealthLayout.height).toBeGreaterThanOrEqual(350);
+  expect(sourceHealthLayout.height).toBeLessThanOrEqual(430);
+  expect(sourceHealthLayout.overflow).toBe("hidden");
+  expect(sourceHealthLayout.findingsOverflowY).toBe("auto");
+  expect(sourceHealthLayout.findingCount).toBeGreaterThan(0);
+  expect(sourceHealthLayout.findingsScrollHeight).toBeGreaterThanOrEqual(sourceHealthLayout.findingsClientHeight);
+  expect(sourceHealthLayout.hidesFindingsByDefault).toBe(false);
+  await expect(panel).not.toContainText("Persona cannot grant tools");
   const sourceSyncPanel = panel.getByRole("region", { name: "gstack source sync" });
   await expect(sourceSyncPanel).toBeVisible();
   await expect(sourceSyncPanel.getByLabel("Include detected roots")).toBeChecked();
@@ -627,22 +783,58 @@ test("settings skill library shows read-only skill health findings", async ({ pa
   await page.getByRole("tab", { name: /Review queue/ }).click();
   const healthDetails = panel.locator(".settings-skill-review-diagnostics").filter({ hasText: "Skill health diagnostics" });
   await expect(healthDetails).toBeVisible();
-  await expect.poll(() => healthDetails.evaluate((element) => element.hasAttribute("open"))).toBe(false);
-  await healthDetails.getByText("Skill health diagnostics").click();
+  await expect.poll(() => healthDetails.evaluate((element) => element.hasAttribute("open"))).toBe(true);
+  const healthLayout = await healthDetails.evaluate((element) => {
+    const findings = element.querySelector(".settings-skill-health-findings");
+    const style = getComputedStyle(element);
+    return {
+      height: element.getBoundingClientRect().height,
+      overflow: style.overflow,
+      findingsOverflowY: findings ? getComputedStyle(findings).overflowY : "",
+    };
+  });
+  expect(healthLayout.height).toBeGreaterThanOrEqual(250);
+  expect(healthLayout.height).toBeLessThanOrEqual(370);
+  expect(healthLayout.overflow).toBe("hidden");
+  expect(healthLayout.findingsOverflowY).toBe("auto");
   const healthPanel = healthDetails.getByRole("region", { name: "Skill Health" });
   await expect(healthPanel).toContainText("Duplicate clusters");
   await expect(healthPanel).toContainText("Duplicate skill cluster");
   await expect(healthPanel).toContainText("Conflicting skill triggers");
   await healthPanel.getByText("Finding details").first().click();
   await expect(healthPanel).toContainText("implement-duplicate");
-  const candidatePanel = panel.getByRole("region", { name: "Skill Candidate Review" });
-  await expect(candidatePanel).toContainText("Channel canvas protocol skill");
-  await expect(candidatePanel).toContainText("No overlap");
-  await candidatePanel.getByText("Candidate details").first().click();
-  await expect(candidatePanel).toContainText("Draft gates clear");
-  await candidatePanel.getByRole("button", { name: "Approve for draft" }).click();
-  await expect(candidatePanel).toContainText("Approved for draft");
-  await candidatePanel.getByRole("button", { name: "Create registry draft" }).click();
+  const reviewQueuePanel = panel.getByRole("region", { name: "Skill review queue" });
+  const reviewQueueLayout = await reviewQueuePanel.evaluate((element) => {
+    const list = element.querySelector(".settings-skill-review-queue-list");
+    const style = getComputedStyle(element);
+    return {
+      height: element.getBoundingClientRect().height,
+      overflow: style.overflow,
+      listOverflowY: list ? getComputedStyle(list).overflowY : "",
+    };
+  });
+  expect(reviewQueueLayout.height).toBeGreaterThanOrEqual(175);
+  expect(reviewQueueLayout.height).toBeLessThanOrEqual(250);
+  expect(reviewQueueLayout.overflow).toBe("hidden");
+  expect(reviewQueueLayout.listOverflowY).toBe("auto");
+  await expect(reviewQueuePanel.getByRole("tab", { name: /All/ })).toHaveAttribute("aria-selected", "true");
+  await expect(reviewQueuePanel.getByRole("tab", { name: /Skill candidates/ })).toBeVisible();
+  await expect(reviewQueuePanel.getByRole("tab", { name: /Candidate Clusters/ })).toBeVisible();
+  await expect(reviewQueuePanel.getByRole("tab", { name: /Playbooks/ })).toBeVisible();
+  await reviewQueuePanel.getByRole("tab", { name: /Skill candidates/ }).click();
+  await expect(reviewQueuePanel.getByRole("tab", { name: /Skill candidates/ })).toHaveAttribute("aria-selected", "true");
+  await expect(reviewQueuePanel.locator(".settings-skill-candidate-card[data-review-kind='skill_candidates']")).toHaveCount(1);
+  await expect(reviewQueuePanel.locator(".settings-skill-candidate-card[data-review-kind='clusters']")).toHaveCount(0);
+  await expect(reviewQueuePanel.locator(".settings-skill-candidate-card[data-review-kind='playbooks']")).toHaveCount(0);
+  await reviewQueuePanel.getByRole("tab", { name: /All/ }).click();
+  const candidateCard = reviewQueuePanel.locator(".settings-skill-candidate-card[data-review-kind='skill_candidates']").filter({ hasText: "Channel canvas protocol skill" });
+  await expect(candidateCard).toContainText("Channel canvas protocol skill");
+  await expect(candidateCard).toContainText("No overlap");
+  await candidateCard.getByText("Candidate details").click();
+  await expect(candidateCard).toContainText("Draft gates clear");
+  await candidateCard.getByRole("button", { name: "Approve for draft" }).click();
+  await expect(candidateCard).toContainText("Approved for draft");
+  await candidateCard.getByRole("button", { name: "Create registry draft" }).click();
   await expect(panel.locator(".settings-skill-import-preview")).toContainText("Channel canvas protocol skill");
   await panel.locator(".settings-skill-import-preview").getByText("Import evidence").click();
   await expect(panel.locator(".settings-skill-import-preview")).toContainText("Weak routing description");
@@ -652,14 +844,13 @@ test("settings skill library shows read-only skill health findings", async ({ pa
   await expect.poll(() => state.skillRegistryEntries.some((item) => isRecord(item) && item.id === "channel-canvas-protocol-skill")).toBe(true);
   await expect(panel.locator(".settings-skill-table")).toContainText("Channel canvas protocol skill");
   await page.getByRole("tab", { name: /Review queue/ }).click();
-  await candidatePanel.getByRole("button", { name: "Reject candidate" }).click();
-  await expect(candidatePanel).toContainText("No open skill candidates");
+  await candidateCard.getByRole("button", { name: "Reject candidate" }).click();
+  await expect(reviewQueuePanel).not.toContainText("Channel canvas protocol skill");
 
-  const playbookPanel = panel.getByRole("region", { name: "Playbook Candidate Review" });
-  await expect(playbookPanel).toContainText("Deployment rollback playbook");
-  await playbookPanel.getByText("Playbook details").first().click();
-  await expect(playbookPanel).toContainText("docs-only change");
-  const seededPlaybook = playbookPanel.locator(".settings-skill-candidate-card").filter({ hasText: "Deployment rollback playbook" });
+  const seededPlaybook = reviewQueuePanel.locator(".settings-skill-candidate-card[data-review-kind='playbooks']").filter({ hasText: "Deployment rollback playbook" });
+  await expect(seededPlaybook).toContainText("Deployment rollback playbook");
+  await seededPlaybook.getByText("Playbook details").click();
+  await expect(seededPlaybook).toContainText("docs-only change");
   await seededPlaybook.getByRole("button", { name: "Reject playbook" }).click();
   await expect.poll(() => {
     const candidate = state.channelPlaybookCandidates.find((item) => isRecord(item) && item.id === "channel_playbook_candidate_rollback");
@@ -667,11 +858,11 @@ test("settings skill library shows read-only skill health findings", async ({ pa
   }).toBe("cancelled");
   await expect(panel).toContainText("Playbook candidate rejected");
 
-  const clusterPanel = panel.getByRole("region", { name: "Candidate Clusters" });
-  await expect(clusterPanel).toContainText("2 review · 1 blocked · 3 total");
-  await expect(clusterPanel).toContainText("Channel canvas handoff protocol");
-  await expect(clusterPanel).toContainText("Create channel protocol candidate");
-  await clusterPanel.getByRole("button", { name: "Create protocol candidate" }).click();
+  const clusterPanel = reviewQueuePanel.locator(".settings-skill-candidate-card[data-review-kind='clusters']");
+  const channelProtocolCluster = clusterPanel.filter({ hasText: "Channel canvas handoff protocol" });
+  await expect(channelProtocolCluster).toContainText("Channel canvas handoff protocol");
+  await expect(channelProtocolCluster).toContainText("Create channel protocol candidate");
+  await channelProtocolCluster.getByRole("button", { name: "Create protocol candidate" }).click();
   await expect.poll(() => state.channelProtocolDrafts.length).toBe(1);
   await expect.poll(() => {
     const draft = state.channelProtocolDrafts[0];
@@ -680,25 +871,27 @@ test("settings skill library shows read-only skill health findings", async ({ pa
       : "";
   }).toContain("Channel canvas handoff protocol");
   await expect(panel).toContainText("Protocol candidate created");
-  await expect(clusterPanel).toContainText("Release verification playbook");
-  await expect(clusterPanel).toContainText("Create playbook candidate");
-  await clusterPanel.getByRole("button", { name: "Create playbook candidate" }).click();
+  const releasePlaybookCluster = clusterPanel.filter({ hasText: "Release verification playbook" });
+  await expect(releasePlaybookCluster).toContainText("Release verification playbook");
+  await expect(releasePlaybookCluster).toContainText("Create playbook candidate");
+  await releasePlaybookCluster.getByRole("button", { name: "Create playbook candidate" }).click();
   await expect.poll(() => state.channelPlaybookCandidates.length).toBe(2);
   await expect.poll(() => {
     const candidate = state.channelPlaybookCandidates[0];
     return isRecord(candidate) && typeof candidate.title === "string" ? candidate.title : "";
   }).toContain("Release verification playbook");
   await expect(panel).toContainText("Playbook candidate created");
-  await expect(playbookPanel).toContainText("Release verification playbook");
-  const releasePlaybook = playbookPanel.locator(".settings-skill-candidate-card").filter({ hasText: "Release verification playbook" });
+  const releasePlaybook = reviewQueuePanel.locator(".settings-skill-candidate-card[data-review-kind='playbooks']").filter({ hasText: "Release verification playbook" });
+  await expect(releasePlaybook).toContainText("Release verification playbook");
   await releasePlaybook.getByRole("button", { name: "Approve playbook" }).click();
   await expect.poll(() => {
     const candidate = state.channelPlaybookCandidates.find((item) => isRecord(item) && typeof item.title === "string" && item.title.includes("Release verification playbook"));
     return isRecord(candidate) ? candidate.status : "";
   }).toBe("active");
   await expect(panel).toContainText("Playbook activated");
-  await expect(clusterPanel).toContainText("Generated skill missing gates");
-  await expect(clusterPanel).toContainText("Append evidence");
+  const blockedSkillCluster = clusterPanel.filter({ hasText: "Generated skill missing gates" });
+  await expect(blockedSkillCluster).toContainText("Generated skill missing gates");
+  await expect(blockedSkillCluster).toContainText("Append evidence");
 });
 
 test("settings skill governance saves policy from a separate section", async ({ page }) => {
@@ -714,12 +907,14 @@ test("settings skill governance saves policy from a separate section", async ({ 
   await expect(page.getByLabel("Settings sections").getByRole("button", { name: /Personalization/ })).toHaveClass(/active/);
   const tonePanel = page.locator(".personalization-settings-panel");
   await expect(tonePanel.getByRole("heading", { name: "Ling conversation tone" })).toBeVisible();
+  await expect(tonePanel).not.toContainText("Choose how Ling replies by default in this workspace.");
   await expect(tonePanel.getByRole("radio", { name: /Pragmatic/ })).toHaveAttribute("aria-checked", "true");
   await expect(tonePanel).toContainText("Built-in");
+  await expect(tonePanel.getByRole("button", { name: "Save conversation tone" })).toHaveCount(0);
   await tonePanel.getByRole("radio", { name: /Friendly/ }).click();
-  await tonePanel.getByRole("button", { name: "Save conversation tone" }).click();
   await expect.poll(() => state.workspaceSettings.lingConversationTone).toBe("friendly");
-  await expect(tonePanel).toContainText("Ling conversation tone saved");
+  await expect(tonePanel).toContainText("Ling conversation tone applied");
+  await expect(tonePanel.locator(".settings-inline-tip")).toHaveCount(0, { timeout: 3000 });
   await expect(tonePanel).toContainText("Workspace");
   const panel = page.locator(".skill-governance-settings-panel");
   await expect.poll(async () => {

@@ -106,6 +106,44 @@
   grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
+.settings-run-diagnostics-panel .meta-row {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+.settings-run-diagnostics-panel .meta-row span,
+.settings-run-diagnostics-panel .meta-row strong {
+  min-width: 0;
+  background: transparent;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-run-diagnostics-panel .meta-row span {
+  color: var(--text-soft);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 15px;
+}
+
+.settings-run-diagnostics-panel .meta-row strong {
+  color: var(--text-strong);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 17px;
+}
+
+.settings-run-diagnostics-panel .meta-row.compact strong {
+  background: transparent;
+  font-family: inherit;
+}
+
 .settings-run-diagnostics-layout {
   grid-template-columns: minmax(220px, 0.42fr) minmax(0, 1fr);
   align-items: start;
@@ -191,10 +229,6 @@
 
 .settings-external-work-inspector {
   gap: 10px;
-}
-
-.archived-items-rules-footer {
-  margin-top: 12px;
 }
 
 @media (max-width: 1100px) {

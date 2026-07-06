@@ -29,7 +29,7 @@ named `Open ... in app`.
 | Fig. 5 | Default authorization / Execution runners | Raw runner ids, fallback values, and readiness internals are visible by default; rows are too tall. | Runner rows show enabled state, display name, readiness summary, and a details disclosure for ids/blockers. |
 | Fig. 6 | Skill library / Source sync | Source path, health evidence, and preview space still form a diagnostic wall. | Top layer shows sync status and primary actions; paths, checksums, diffs, and context findings stay in details. |
 | Fig. 7 | Skill library / Review queue | Large empty panels and repeated health/review frames make the empty state heavy. | Compact empty states, one queue summary, and candidate details only when work exists. |
-| Fig. 8 | Archived items | Restore/delete rule text takes first-screen space and repeats policy. | Rules collapsed by default; rows show name, type, archived time, restore, and destructive copy only at confirmation. |
+| Fig. 8 | Archived items | Restore/delete rule text was easy to miss at the bottom, rows could stretch the page, and action icons could drift from labels. | A single muted hint sits under the title, each archived category has an internal scroll boundary, and row actions keep icon/text centered. |
 | Fig. 9 | Startup and diagnostics | The page still has technical diagnostic copy and a weak task hierarchy. | Startup status, blockers, refresh, and run diagnostics entry only; startup phases and diagnostic evidence collapsed. |
 | Fig. 10 | Run Diagnostics after opening from Settings | Settings opens the main app shell and shows the primary `Ling Stack navigation`. | Run diagnostics is embedded in Settings; Settings navigation remains visible and raw diagnostics are folded. |
 
@@ -172,17 +172,24 @@ Acceptance:
 ### Fig. 8 Archived Items
 
 Default layer:
+- A single muted hint sits below the page title:
+  `Restored items return to their lists; channel and branch delete is permanent.`
 - Archived rows show object name, type, archived time, and restore action.
+- Conversations, AI teammates, channels, and branches each own a bounded list
+  with internal vertical scrolling.
 
 Details layer:
-- Restore/delete rules are folded.
 - Destructive delete copy appears close to confirmation.
 
 Buttons:
 - Restore/delete stay in Settings.
 
 Acceptance:
-- Restore/delete rules do not take the first screen.
+- Restore/delete rules do not sit at the page footer or become a separate
+  disclosure/card.
+- Long archived lists scroll inside their own group instead of stretching the
+  Settings page.
+- Restore/delete action icons and labels are vertically centered.
 
 ### Fig. 9 Startup And Diagnostics
 

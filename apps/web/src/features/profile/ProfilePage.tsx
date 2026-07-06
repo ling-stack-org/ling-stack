@@ -5,26 +5,18 @@ import { listRuns } from "../../api/runs.js";
 import { listSkills } from "../../api/skills.js";
 import type { RunSession, SkillRegistryEntry, UserProfile } from "../../types.js";
 import { AvatarCropDialog } from "./AvatarCropDialog.js";
+import { ProfileSettingsSurface, type ActivityMode, type ProfileMetrics } from "./ProfileSettingsSurface.js";
 
-type ActivityMode = "day" | "week" | "total";
-
-interface ProfileMetrics {
-  readonly totalEstimatedTokens: number;
-  readonly peakEstimatedTokens: number;
-  readonly longestDurationMs: number;
-  readonly currentStreakDays: number;
-  readonly longestStreakDays: number;
-  readonly sessionCount: number;
-  readonly successRate: number;
-  readonly topModel: string;
-  readonly exploredSkillCount: number;
-  readonly totalSkillCount: number;
-  readonly topSkills: readonly { readonly id: string; readonly label: string; readonly count: number }[];
-  readonly activityDays: ReadonlyMap<string, number>;
-}
-
-export function ProfilePage({ cwd, onProfileChange }: { readonly cwd: string; readonly onProfileChange?: (profile: UserProfile) => void }): JSX.Element {
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
+export function ProfilePage({
+  cwd,
+  onProfileChange,
+  variant = "standalone",
+}: {
+  readonly cwd: string;
+  readonly onProfileChange?: (profile: UserProfile) => void;
+  readonly variant?: "standalone" | "settings";
+}): JSX.Element {
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [profile, setProfile] = useState<UserProfile | undefined>();
   const [runs, setRuns] = useState<readonly RunSession[]>([]);
   const [skills, setSkills] = useState<readonly SkillRegistryEntry[]>([]);
@@ -123,6 +115,58 @@ export function ProfilePage({ cwd, onProfileChange }: { readonly cwd: string; re
 
   const initials = initialsFromName(displayName || profile?.displayName || "Ling User");
   const visibleHandle = normalizeHandle(handle) || profile?.handle || "local-user";
+
+  function resetProfileChanges(): void {
+    if (!profile) {
+      return;
+    }
+    setDisplayName(profile.displayName);
+    setHandle(profile.handle ?? "");
+    setAvatarDataUrl(profile.avatarDataUrl);
+    setMessage("");
+  }
+
+  if (variant === "settings") {
+    return (
+      <>
+        <ProfileSettingsSurface
+          displayName={displayName}
+          handle={handle}
+          visibleHandle={visibleHandle}
+          avatarDataUrl={avatarDataUrl}
+          initials={initials}
+          metrics={metrics}
+          activity={activity}
+          activityMode={activityMode}
+          loading={loading}
+          saving={saving}
+          hasProfileChanges={hasProfileChanges}
+          message={message}
+          fileInputRef={fileInputRef}
+          onRefresh={() => void refresh()}
+          onSave={(event) => void saveProfile(event)}
+          onReset={resetProfileChanges}
+          onAvatarChange={(event) => void handleAvatarChange(event)}
+          onDisplayNameChange={setDisplayName}
+          onHandleChange={setHandle}
+          onActivityModeChange={setActivityMode}
+          formatCompactNumber={formatCompactNumber}
+          formatDuration={formatDuration}
+        />
+        {avatarCropSource ? (
+          <AvatarCropDialog
+            sourceDataUrl={avatarCropSource}
+            onCancel={() => setAvatarCropSource(undefined)}
+            onConfirm={(croppedAvatarDataUrl) => {
+              setAvatarDataUrl(croppedAvatarDataUrl);
+              setAvatarCropSource(undefined);
+              setMessage("头像已调整，保存后生效");
+            }}
+          />
+        ) : null}
+      </>
+    );
+  }
 
   return (
     <div className="profile-page">

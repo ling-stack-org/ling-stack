@@ -377,7 +377,6 @@ export function SkillSourceHealthPanel({
   readonly t: SettingsTranslator;
 }): JSX.Element {
   const findings = report?.findings ?? [];
-  const visibleFindings = findings.slice(0, 6);
   const summary = report?.summary;
   return (
     <section className="settings-skill-health settings-skill-source-health" aria-label={t("Skill Source Health")}>
@@ -400,7 +399,7 @@ export function SkillSourceHealthPanel({
         <div className="compact-empty">{loading ? t("Loading skill source health...") : t("No skill source findings")}</div>
       ) : (
         <div className="settings-skill-health-findings">
-          {visibleFindings.map((finding) => (
+          {findings.map((finding) => (
             <article key={`${finding.kind}:${finding.skillId ?? finding.snapshotId ?? finding.title}`} className={`settings-skill-health-finding ${finding.severity}`}>
               <div className="settings-skill-health-finding-main">
                 <span className="settings-skill-health-title">
@@ -427,9 +426,6 @@ export function SkillSourceHealthPanel({
               </div>
             </article>
           ))}
-          {findings.length > visibleFindings.length ? (
-            <div className="compact-empty">{t("{count} more source findings hidden by default", { count: findings.length - visibleFindings.length })}</div>
-          ) : null}
         </div>
       )}
     </section>
