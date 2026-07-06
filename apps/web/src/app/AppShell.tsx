@@ -185,6 +185,7 @@ export function AppShell(): JSX.Element {
   const [activeSidebarTarget, setActiveSidebarTarget] = useState<SidebarTarget>("workspace");
   const [workBoardRequestedScope, setWorkBoardRequestedScope] = useState<WorkBoardScope>("actionable");
   const [settingsWorkspaceToolView, setSettingsWorkspaceToolView] = useState<SettingsWorkspaceToolView>("");
+  const [settingsRunDiagnosticsRunId, setSettingsRunDiagnosticsRunId] = useState<string | undefined>();
   const [providerSetupIntent, setProviderSetupIntent] = useState<ProviderSetupIntent | "">("");
   const settingsReturnTargetRef = useRef<SettingsReturnTarget | undefined>(undefined);
   const [channelSidebarOpen, setChannelSidebarOpen] = useState(() =>
@@ -1185,8 +1186,13 @@ export function AppShell(): JSX.Element {
     setSettingsWorkspaceToolView("");
   }
 
+  function closeSettingsRunDiagnostics(): void {
+    setSettingsRunDiagnosticsRunId(undefined);
+  }
+
   function openSettingsView(): void {
     clearSettingsWorkspaceToolView();
+    closeSettingsRunDiagnostics();
     if (activeView !== "settings") {
       settingsReturnTargetRef.current = {
         activeView,
@@ -1205,6 +1211,7 @@ export function AppShell(): JSX.Element {
     const target = settingsReturnTargetRef.current;
     settingsReturnTargetRef.current = undefined;
     clearSettingsWorkspaceToolView();
+    closeSettingsRunDiagnostics();
     if (!target || target.activeView === "settings") {
       setActiveView("workspace");
       setActiveSidebarTarget("workspace");
@@ -1221,6 +1228,7 @@ export function AppShell(): JSX.Element {
 
   function openPlainViewWithoutSettingsReturn(view: ViewId): void {
     clearSettingsWorkspaceToolView();
+    closeSettingsRunDiagnostics();
     if (view === "settings") {
       openSettingsView();
       return;
@@ -1281,6 +1289,7 @@ export function AppShell(): JSX.Element {
       return;
     }
     rememberSettingsReturnTarget();
+    closeSettingsRunDiagnostics();
     setSettingsWorkspaceToolView(view);
     if (view === "work_board") {
       setWorkBoardRequestedScope("actionable");
@@ -1316,6 +1325,29 @@ export function AppShell(): JSX.Element {
   function openSettingsWorkBoard(scope: WorkBoardScope = "actionable"): void {
     openSettingsWorkspaceTool("work_board");
     setWorkBoardRequestedScope(scope);
+  }
+
+  function openSettingsRunDiagnostics(runId?: string): void {
+    rememberSettingsReturnTarget();
+    const targetRunId = runId || activeRunId || runs[0]?.id || "";
+    setSettingsWorkspaceToolView("");
+    setSettingsRunDiagnosticsRunId(targetRunId);
+    activateSettingsView();
+    void refreshRuns();
+    if (targetRunId) {
+      void loadRun(targetRunId, form.cwd.trim());
+      void refreshApprovals(form.cwd.trim(), targetRunId);
+    }
+  }
+
+  function openFullRunDiagnosticsFromSettings(runId?: string): void {
+    const targetRunId = runId || settingsRunDiagnosticsRunId || activeRunId || runs[0]?.id || "";
+    closeSettingsRunDiagnostics();
+    clearSettingsWorkspaceToolView();
+    if (targetRunId) {
+      void selectRun(targetRunId);
+    }
+    openRunDiagnosticsView();
   }
 
   function openTeammateCreatePanel(): void {
@@ -1890,8 +1922,7 @@ export function AppShell(): JSX.Element {
         onToggleEnabled={(provider, enabled) => void toggleProviderEnabled(provider, enabled)}
         onRerun={(sourceRun) => void rerunRun(sourceRun)}
         onOpenRun={(runId) => {
-          clearSettingsWorkspaceToolView();
-          void openRunFromWorkspace(runId);
+          openSettingsRunDiagnostics(runId);
         }}
         onClearCheckFeedback={clearProviderCheckFeedback}
         onClearRepair={() => setProviderRepairRunId("")}
@@ -1911,6 +1942,7 @@ export function AppShell(): JSX.Element {
         onToggleTeammateHidden={(teammateId) => void toggleAiTeammateHidden(teammateId)}
         onOpenTeammate={(teammateId) => {
           clearSettingsWorkspaceToolView();
+          closeSettingsRunDiagnostics();
           selectAiTeammate(teammateId);
         }}
         onOpenCouncils={() => {
@@ -1941,19 +1973,21 @@ export function AppShell(): JSX.Element {
         }}
         onOpenTask={(taskId) => {
           clearSettingsWorkspaceToolView();
+          closeSettingsRunDiagnostics();
           openTaskFromWorkBoard(taskId);
         }}
         onOpenRun={(runId) => {
-          clearSettingsWorkspaceToolView();
-          void openRunFromWorkspace(runId);
+          openSettingsRunDiagnostics(runId);
         }}
         onOpenApproval={(approvalId) => {
           clearSettingsWorkspaceToolView();
+          closeSettingsRunDiagnostics();
           setSelectedApprovalId(approvalId);
           openPlainView("approvals");
         }}
         onOpenChannel={(channelId) => {
           clearSettingsWorkspaceToolView();
+          closeSettingsRunDiagnostics();
           selectWorkspaceChannel(channelId);
         }}
         onRouteExternalWork={(externalWorkId, channelId) => void routeExternalWorkToChannel(externalWorkId, channelId)}
@@ -1979,6 +2013,7 @@ export function AppShell(): JSX.Element {
         onOpenAiTeammates={() => openSettingsWorkspaceTool("teammates")}
         onOpenChannel={(channelId) => {
           clearSettingsWorkspaceToolView();
+          closeSettingsRunDiagnostics();
           selectWorkspaceChannel(channelId);
         }}
         settingsToolMode
@@ -2658,8 +2693,11 @@ export function AppShell(): JSX.Element {
                     onConfigureExternalWorkSecret={(token) => configureExternalWorkSecretAction(token)}
                     onDeleteExternalWorkSecret={() => deleteExternalWorkSecretAction()}
                     onOpenRunDiagnostics={() => {
-                      openRunDiagnosticsView();
+                      openSettingsRunDiagnostics();
                     }}
+                    onCloseRunDiagnostics={closeSettingsRunDiagnostics}
+                    onSelectRunDiagnostics={(runId) => openSettingsRunDiagnostics(runId)}
+                    onOpenFullRunDiagnostics={(runId) => openFullRunDiagnosticsFromSettings(runId)}
                     onRefreshMcp={() => void refreshMcp()}
                     onArchivedItemsChanged={() => refreshArchivedSidebarItems()}
                     onCreateMcpServer={addMcpServer}
@@ -2674,6 +2712,9 @@ export function AppShell(): JSX.Element {
                     onOpenWorkBoard={() => openSettingsWorkBoard()}
                     workspaceToolDetail={settingsWorkspaceToolDetail}
                     workspaceToolView={settingsWorkspaceToolView}
+                    runDiagnosticsRunId={settingsRunDiagnosticsRunId}
+                    runs={runs}
+                    runsLoading={runsLoading}
                     onCloseWorkspaceTool={clearSettingsWorkspaceToolView}
                     onOpenExternalWorkRecords={() => {
                       if (selectedChannelId) {

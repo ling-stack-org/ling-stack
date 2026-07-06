@@ -58,7 +58,7 @@ export function StartupDiagnosticsSettingsPanel({
           />
           <div className="settings-action-box">
             <div>
-              <strong>{t("Run Diagnostics")}</strong>
+              <strong>{t("Run diagnostics in Settings")}</strong>
             </div>
             <details className="settings-compact-details">
               <summary>{t("What diagnostics include")}</summary>
@@ -124,12 +124,15 @@ function StartupReadinessSection({
           </span>
           <StatusBadge status={startupStatus?.state ?? (startupStatusLoading ? "loading" : "not_loaded")} />
         </div>
-        <div className="startup-summary-grid">
-          <MetaRow label={t("Workspace")} value={startupStatus?.cwd ?? cwd} compact />
-          <MetaRow label={t("Attempt")} value={startupStatus?.startupAttemptId ?? "-"} compact />
-          <MetaRow label={t("Effective config")} value={startupStatus?.effectiveConfigLoadedAt ? formatDateTime(startupStatus.effectiveConfigLoadedAt) : "-"} compact />
-          <MetaRow label={t("Diagnostics")} value={String(startupStatus?.diagnostics.length ?? 0)} compact />
-        </div>
+        <MetaRow label={t("Diagnostics")} value={String(startupStatus?.diagnostics.length ?? 0)} compact />
+        <details className="settings-compact-details settings-interaction-details">
+          <summary>{t("Startup details")}</summary>
+          <div className="startup-summary-grid">
+            <MetaRow label={t("Workspace")} value={startupStatus?.cwd ?? cwd} compact />
+            <MetaRow label={t("Attempt")} value={startupStatus?.startupAttemptId ?? "-"} compact />
+            <MetaRow label={t("Effective config")} value={startupStatus?.effectiveConfigLoadedAt ? formatDateTime(startupStatus.effectiveConfigLoadedAt) : "-"} compact />
+          </div>
+        </details>
       </div>
 
       {blockers.length > 0 ? (

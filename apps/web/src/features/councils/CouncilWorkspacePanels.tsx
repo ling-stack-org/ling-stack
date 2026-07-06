@@ -528,7 +528,9 @@ function CouncilChannelPanel(props: CouncilWorkspacePanelsProps): JSX.Element {
         </small>
       </div>
       {props.visibleChannels.length === 0 ? (
-        <OperationEmptyState compact title={t("No channels available")} description={t("Create a channel before attaching councils to channel work.")} />
+        <div className="council-channel-empty">
+          <OperationEmptyState compact title={t("No channels available")} description={t("Create a channel before attaching councils to channel work.")} />
+        </div>
       ) : (
         <div className="council-channel-policy">
           <label className="field council-channel-select-field">
@@ -554,12 +556,14 @@ function CouncilChannelPanel(props: CouncilWorkspacePanelsProps): JSX.Element {
             </button>
             <button className="secondary-button compact-button" type="button" onClick={() => props.selectedChannel ? props.onOpenChannel(props.selectedChannel.id) : undefined} disabled={!props.selectedChannel}>
               <ArrowRight size={14} />
-              {t("Open channel")}
+              {t("Open channel in app")}
             </button>
           </div>
 
           {props.attachedCouncils.length === 0 ? (
-            <OperationEmptyState compact title={t("No AI councils attached")} description={t("Attach the selected council when this channel should use it.")} />
+            <div className="council-channel-empty">
+              <OperationEmptyState compact title={t("No AI councils attached")} description={t("Attach the selected council when this channel should use it.")} />
+            </div>
           ) : (
             <div className="council-channel-list" role="list" aria-label={t("Attached councils")}>
               {props.attachedCouncils.map((council) => {
@@ -597,16 +601,19 @@ function CouncilSettingsPanel(props: CouncilWorkspacePanelsProps & { readonly mu
     <section className="council-detail-section council-workspace-settings" aria-label={t("Council settings")}>
       <div className="council-panel-title">
         <strong>{t("Council settings")}</strong>
-        <small>{props.canEditSelectedCouncil ? t("Editable for custom councils") : t("Built-in councils must be cloned before editing")}</small>
+        <small>{selectedCouncil ? aiCouncilSourceLabel(selectedCouncil.source, t) : t("Select a council")}</small>
       </div>
       <div className="council-settings-fields">
         {selectedCouncil ? (
-          <div className="council-settings-summary" aria-label={t("Council boundaries")}>
-            <span>{aiCouncilSourceLabel(selectedCouncil.source, t)}</span>
-            <span>{aiCouncilRoutingModeLabel(selectedCouncil.routingPolicy.defaultMode, t)}</span>
-            {props.selectedCapacityLabel ? <span>{props.selectedCapacityLabel}</span> : null}
-            {props.selectedBoundaryLabels.map((label) => <span key={label}>{label}</span>)}
-          </div>
+          <details className="settings-compact-details council-settings-boundary-details">
+            <summary>{t("Council boundaries")}</summary>
+            <div className="council-settings-summary" aria-label={t("Council boundaries")}>
+              <span>{aiCouncilSourceLabel(selectedCouncil.source, t)}</span>
+              <span>{aiCouncilRoutingModeLabel(selectedCouncil.routingPolicy.defaultMode, t)}</span>
+              {props.selectedCapacityLabel ? <span>{props.selectedCapacityLabel}</span> : null}
+              {props.selectedBoundaryLabels.map((label) => <span key={label}>{label}</span>)}
+            </div>
+          </details>
         ) : null}
         <label className="field">
           <span>{t("Council name")}</span>
@@ -658,22 +665,25 @@ function CouncilSettingsPanel(props: CouncilWorkspacePanelsProps & { readonly mu
         </button>
       </div>
       {props.settingsError ? <p className="inline-error">{props.settingsError}</p> : null}
-      <div className="council-action-row" aria-label={t("Council actions")}>
-        <button className="secondary-button compact-button" type="button" onClick={() => void props.onCloneCouncil()} disabled={!props.canCloneCouncil}>
-          <Copy size={14} />
-          {props.actionSaving === "clone" ? t("Cloning council...") : t("Clone council")}
-        </button>
-        <button
-          className="secondary-button compact-button"
-          type="button"
-          onClick={() => void props.onArchiveCouncil()}
-          disabled={!props.canArchiveCouncil}
-          title={selectedCouncil?.source === "user" ? t("Archive council") : t("Clone built-in councils before editing")}
-        >
-          <Archive size={14} />
-          {props.actionSaving === "archive" ? t("Archiving council...") : t("Archive council")}
-        </button>
-      </div>
+      <details className="settings-compact-details council-low-frequency-actions">
+        <summary>{t("More council actions")}</summary>
+        <div className="council-action-row" aria-label={t("Council actions")}>
+          <button className="secondary-button compact-button" type="button" onClick={() => void props.onCloneCouncil()} disabled={!props.canCloneCouncil}>
+            <Copy size={14} />
+            {props.actionSaving === "clone" ? t("Cloning council...") : t("Clone council")}
+          </button>
+          <button
+            className="secondary-button compact-button"
+            type="button"
+            onClick={() => void props.onArchiveCouncil()}
+            disabled={!props.canArchiveCouncil}
+            title={selectedCouncil?.source === "user" ? t("Archive council") : t("Clone built-in councils before editing")}
+          >
+            <Archive size={14} />
+            {props.actionSaving === "archive" ? t("Archiving council...") : t("Archive council")}
+          </button>
+        </div>
+      </details>
       {props.actionSaving !== "create" && props.actionError ? <p className="inline-error">{props.actionError}</p> : null}
     </section>
   );

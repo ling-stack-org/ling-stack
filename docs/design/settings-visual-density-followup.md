@@ -8,6 +8,9 @@
 - [P7 Usage Closure](product-ux-usage-closure-p7.md)
 - [P7 Usage Closure Detailed Design](product-ux-usage-closure-p7-detailed-design.md)
 - [P7 Usage Closure Implementation Plan](product-ux-usage-closure-p7-implementation-plan.md)
+- [Settings Diagnostic Density P8](settings-diagnostic-density-p8.md)
+- [Settings Interaction Depth P9](settings-interaction-depth-p9.md)
+- [Settings Full-Surface Productization P10](settings-full-surface-productization-p10.md)
 
 ## Summary
 
@@ -34,8 +37,14 @@ explanation. The product rule is:
   affordances, but they are not rendered as a persistent gray line.
 - Workspace tool rows prioritize title, status chip, and action. Row-level descriptions
   are removed from the default row surface; group-level context may remain.
-- Dense diagnostic content remains allowed in surfaces like Skill Library and Startup
-  readiness, but first-screen copy should still avoid repeated product explanations.
+- Dense diagnostic content remains allowed, but P8 tightens the default layer: Plugin
+  Manager and Skill Library must show summary, status, and next action first, with
+  raw ids, hashes, diffs, policy overlays, and source evidence behind details.
+- P9 extends this rule past first screens: tabs, dialogs, previews, inspectors,
+  and button-switched states must also stay summary-first and task-oriented.
+- P10 ties this rule to screenshot evidence and adds a hard Settings shell
+  boundary: management and diagnostics opened from Settings stay in Settings
+  unless the action explicitly says it opens in the app.
 
 ## Acceptance Criteria
 

@@ -36,6 +36,7 @@ import type {
   PermissionPreset,
   ResponseLanguagePreference,
   RunnerListItem,
+  RunSession,
   SessionPermissionMode,
   StartupStatusResponse,
   UserProfile,
@@ -49,6 +50,7 @@ import { StartupDiagnosticsSettingsPanel } from "./MaintenanceSettingsPanel.js";
 import { InterfacePreferencesSettingsPanel, PersonalSettingsPanel } from "./PersonalInterfaceSettingsPanel.js";
 import { PersonalizationSettingsPanel } from "./PersonalizationSettingsPanel.js";
 import { PluginManagerSettingsPanel } from "./PluginManagerSettingsPanel.js";
+import { SettingsRunDiagnosticsPanel } from "./SettingsRunDiagnosticsPanel.js";
 import { SkillLibrarySettingsPanel } from "./SkillLibrarySettingsPanel.js";
 import { useArchivedSettingsController } from "./useArchivedSettingsController.js";
 
@@ -242,6 +244,9 @@ export function SettingsPage({
   onOpenExternalWorkRecords,
   onOpenExternalWorkTriage,
   onOpenRunDiagnostics,
+  onCloseRunDiagnostics,
+  onSelectRunDiagnostics,
+  onOpenFullRunDiagnostics,
   onRefreshMcp,
   onArchivedItemsChanged,
   onCreateMcpServer,
@@ -256,6 +261,9 @@ export function SettingsPage({
   onOpenWorkBoard,
   workspaceToolDetail,
   workspaceToolView,
+  runDiagnosticsRunId,
+  runs,
+  runsLoading,
   onCloseWorkspaceTool,
   onBackToApplication,
 }: {
@@ -332,6 +340,9 @@ export function SettingsPage({
   readonly onOpenExternalWorkRecords: () => void;
   readonly onOpenExternalWorkTriage: () => void;
   readonly onOpenRunDiagnostics: () => void;
+  readonly onCloseRunDiagnostics: () => void;
+  readonly onSelectRunDiagnostics: (runId: string) => void;
+  readonly onOpenFullRunDiagnostics: (runId?: string) => void;
   readonly onRefreshMcp: () => void;
   readonly onArchivedItemsChanged?: () => void | Promise<void>;
   readonly onCreateMcpServer: (form: McpServerFormState) => Promise<void>;
@@ -346,18 +357,24 @@ export function SettingsPage({
   readonly onOpenWorkBoard: () => void;
   readonly workspaceToolDetail?: ReactNode;
   readonly workspaceToolView?: SettingsWorkspaceToolView;
+  readonly runDiagnosticsRunId?: string;
+  readonly runs: readonly RunSession[];
+  readonly runsLoading: boolean;
   readonly onCloseWorkspaceTool?: () => void;
   readonly onBackToApplication?: () => void;
 }): JSX.Element {
   const { t } = useI18n();
   const [activeSection, setActiveSection] = useState<SettingsSectionId>("personal-profile");
-  const workspaceToolDetailOpen = workspaceToolDetail !== undefined && workspaceToolDetail !== null;
+  const runDiagnosticsOpen = runDiagnosticsRunId !== undefined;
+  const workspaceToolDetailOpen = !runDiagnosticsOpen && workspaceToolDetail !== undefined && workspaceToolDetail !== null;
   const workspaceToolSection = workspaceToolViewToSectionId(workspaceToolView);
-  const visibleActiveSection = workspaceToolDetailOpen && workspaceToolSection
-    ? workspaceToolSection
-    : isWorkspaceToolSection(activeSection)
-      ? "personal-profile"
-      : activeSection;
+  const visibleActiveSection = runDiagnosticsOpen
+    ? "startup-diagnostics"
+    : workspaceToolDetailOpen && workspaceToolSection
+      ? workspaceToolSection
+      : isWorkspaceToolSection(activeSection)
+        ? "personal-profile"
+        : activeSection;
   const archivedController = useArchivedSettingsController({
     cwd,
     enabled: visibleActiveSection === "archived-items",
@@ -366,6 +383,7 @@ export function SettingsPage({
 
   const selectSettingsSection = (sectionId: SettingsSectionId): void => {
     setActiveSection(sectionId);
+    onCloseRunDiagnostics();
     if (sectionId === "model-workbench") {
       onOpenProviders();
       return;
@@ -420,6 +438,19 @@ export function SettingsPage({
       </nav>
 
       <div className="settings-content-stack">
+        {runDiagnosticsOpen ? (
+          <SettingsRunDiagnosticsPanel
+            runs={runs}
+            selectedRunId={runDiagnosticsRunId ?? ""}
+            isLoading={runsLoading}
+            errorMessage={errorMessage}
+            onRefresh={onOpenRunDiagnostics}
+            onSelectRun={onSelectRunDiagnostics}
+            onOpenFullDiagnostics={onOpenFullRunDiagnostics}
+            onClose={onCloseRunDiagnostics}
+          />
+        ) : null}
+
         {workspaceToolDetailOpen ? workspaceToolDetail : null}
 
         {visibleActiveSection === "personal-profile" && !workspaceToolDetailOpen ? (
@@ -538,7 +569,7 @@ export function SettingsPage({
           <ArchivedSettingsPanel state={archivedController.state} actions={archivedController.actions} />
         ) : null}
 
-        {visibleActiveSection === "startup-diagnostics" && !workspaceToolDetailOpen ? (
+        {visibleActiveSection === "startup-diagnostics" && !workspaceToolDetailOpen && !runDiagnosticsOpen ? (
           <StartupDiagnosticsSettingsPanel
             cwd={cwd}
             startupStatus={startupStatus}

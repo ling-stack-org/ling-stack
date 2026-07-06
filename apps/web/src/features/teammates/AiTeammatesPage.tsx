@@ -241,7 +241,7 @@ export function AiTeammatesPage({
                       <span className={ready ? "teammate-row-status ready" : "teammate-row-status warning"}>{readinessLabel}</span>
                       {ready && onOpenTeammate ? (
                         <button className="teammate-row-primary-action" type="button" onClick={() => onOpenTeammate(draft.id)}>
-                          {t("Open")}
+                          {t(settingsToolMode ? "Open chat in app" : "Open")}
                         </button>
                       ) : !ready ? (
                         <button className="teammate-row-primary-action" type="button" onClick={onOpenProviders}>

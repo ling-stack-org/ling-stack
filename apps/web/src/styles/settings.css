@@ -1677,6 +1677,19 @@
   justify-content: start;
 }
 
+.settings-skill-attention-line .compact-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  line-height: 1;
+}
+
+.settings-skill-attention-line .compact-button svg {
+  display: block;
+  flex: 0 0 auto;
+}
+
 .settings-skill-health {
   display: grid;
   gap: 10px;
@@ -2594,8 +2607,7 @@
   text-align: left;
 }
 
-.settings-skill-name-button strong,
-.settings-skill-name-button small {
+.settings-skill-name-button strong {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -2605,7 +2617,6 @@
   font-size: 12px;
 }
 
-.settings-skill-name-button small,
 .settings-skill-empty-token {
   color: var(--text-muted);
   font-size: 11px;
