@@ -24,6 +24,7 @@ import type {
 } from "../../types.js";
 
 export type ProviderStatusFilter = "all" | "ready" | "needsAttention" | "missingKey" | "disabled";
+export type ProviderSetupIntent = "chat" | "generation";
 
 export type ProviderWorkbenchTranslate = (
   key: string,
@@ -31,6 +32,9 @@ export type ProviderWorkbenchTranslate = (
 ) => string;
 
 export interface ProviderWorkbenchSummary {
+  readonly totalCount: number;
+  readonly chatReadyCount: number;
+  readonly generationReadyCount: number;
   readonly readyCount: number;
   readonly needsAttentionCount: number;
   readonly missingSecretCount: number;
@@ -57,14 +61,71 @@ export interface ProviderRouteRowView {
   readonly lastCheckSummary: string;
 }
 
+export function providerTemplateMatchesSetupIntent(
+  template: ProviderTemplate,
+  intent: ProviderSetupIntent,
+): boolean {
+  if (intent === "generation") {
+    return template.api === "media-job" || hasGenerationCapability(template.capabilities);
+  }
+  return template.api !== "media-job" && template.capabilities.includes("chat");
+}
+
+export function filterProviderTemplatesForSetupIntent(
+  templates: readonly ProviderTemplate[],
+  intent: ProviderSetupIntent | "",
+): readonly ProviderTemplate[] {
+  if (!intent) {
+    return templates;
+  }
+  const focusedTemplates = templates.filter((template) => providerTemplateMatchesSetupIntent(template, intent));
+  return focusedTemplates.length > 0 ? focusedTemplates : templates;
+}
+
+export function selectProviderTemplateForSetupIntent({
+  templates,
+  intent,
+  fallbackTemplate,
+}: {
+  readonly templates: readonly ProviderTemplate[];
+  readonly intent: ProviderSetupIntent | "";
+  readonly fallbackTemplate: ProviderTemplate;
+}): ProviderTemplate {
+  if (!intent) {
+    return fallbackTemplate;
+  }
+  const preferredTemplateId = intent === "generation" ? "seedream-image" : "openai-gpt";
+  return (
+    templates.find((template) => template.templateId === preferredTemplateId) ??
+    templates.find((template) => providerTemplateMatchesSetupIntent(template, intent)) ??
+    fallbackTemplate
+  );
+}
+
 export function readProviderWorkbenchSummary(providers: readonly ProviderPreset[]): ProviderWorkbenchSummary {
+  const generationOperations = ["image_generate", "image_edit", "video_generate"] as const;
   return {
+    totalCount: providers.length,
+    chatReadyCount: providers.filter((provider) =>
+      provider.api !== "media-job" &&
+      provider.capabilities.includes("chat") &&
+      providerPreflightReady(provider)
+    ).length,
+    generationReadyCount: providers.filter((provider) =>
+      generationOperations.some((operation) => canUseGenerationProviderForOperation(provider, operation))
+    ).length,
     readyCount: providers.filter(isWorkbenchReadyProvider).length,
     needsAttentionCount: providers.filter(isWorkbenchNeedsConfigProvider).length,
     missingSecretCount: providers.filter((provider) => providerNeedsSecret(provider) && !provider.apiKeyConfigured).length,
     disabledCount: providers.filter((provider) => !provider.enabled).length,
     batchCheckProviderCount: providers.filter(canWorkbenchBatchCheckProvider).length,
   };
+}
+
+function hasGenerationCapability(capabilities: readonly string[]): boolean {
+  return capabilities.some((capability) =>
+    capability === "image_generate" || capability === "image_edit" || capability === "video_generate"
+  );
 }
 
 export function filterProviderWorkbenchRoutes({

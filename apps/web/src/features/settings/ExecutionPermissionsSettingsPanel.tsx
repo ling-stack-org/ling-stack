@@ -6,7 +6,6 @@ import {
   formatToolDecisionGroups,
   inferPermissionPreset,
   permissionModeForPreset,
-  permissionPresetDescription,
   permissionPresetLabel,
   permissionPresetOptions,
   summarizeEffectivePolicySnapshot,
@@ -160,7 +159,6 @@ export function ExecutionPermissionsSettingsPanel({
               aria-pressed={resolvedPermissionPreset === preset}
             >
               <strong>{permissionPresetLabel(preset, t)}</strong>
-              <small>{permissionPresetDescription(preset, t)}</small>
             </button>
           ))}
         </div>
@@ -168,7 +166,10 @@ export function ExecutionPermissionsSettingsPanel({
         <div className="permission-preview-card" aria-label={t("Effective permissions")}>
           <div>
             <strong>{t("Effective permissions")}</strong>
-            <small>{t("This preview follows the selected preset and approval policy form. Save policy to apply advanced policy edits.")}</small>
+            <details className="settings-compact-details settings-interaction-details">
+              <summary>{t("Preview details")}</summary>
+              <small>{t("This preview follows the selected preset and approval policy form. Save policy to apply advanced policy edits.")}</small>
+            </details>
           </div>
           <div className="permission-preview-list">
             {policyPreviewRows.map((row) => (
@@ -182,7 +183,7 @@ export function ExecutionPermissionsSettingsPanel({
           <MetaRow label={t("Selected preset")} value={permissionPresetLabel(resolvedPermissionPreset, t)} compact />
         </div>
 
-        <details className="advanced-settings" open={resolvedPermissionPreset === "custom"}>
+        <details className="advanced-settings">
           <summary>{t("Advanced workspace policy")}</summary>
           <div className="policy-tool-grid" aria-label={t("Tool approval decisions")}>
             {allTools.map((tool) => (
@@ -249,13 +250,16 @@ export function ExecutionPermissionsSettingsPanel({
           </div>
         ) : null}
 
-        <div className="settings-status-grid">
-          <MetaRow label={t("Default runner")} value={runtimeSettings?.defaultRunnerId ?? "-"} compact />
-          <MetaRow label={t("Allowed runners")} value={runtimeSettings?.allowedRunnerIds.join(", ") || "-"} compact />
-          <MetaRow label={t("Explicit fallback")} value={runtimeSettings?.explicitRunnerFallback ?? "-"} compact />
-          <MetaRow label={t("Implicit fallback")} value={runtimeSettings?.implicitRunnerFallback ?? "-"} compact />
-          <MetaRow label={t("Updated")} value={runtimeSettings ? formatDateTime(runtimeSettings.updatedAt) : "-"} compact />
-        </div>
+        <details className="settings-compact-details settings-interaction-details">
+          <summary>{t("Current runner defaults")}</summary>
+          <div className="settings-status-grid compact-status-grid">
+            <MetaRow label={t("Default runner")} value={runtimeSettings?.defaultRunnerId ?? "-"} compact />
+            <MetaRow label={t("Allowed runners")} value={runtimeSettings?.allowedRunnerIds.join(", ") || "-"} compact />
+            <MetaRow label={t("Explicit fallback")} value={runtimeSettings?.explicitRunnerFallback ?? "-"} compact />
+            <MetaRow label={t("Implicit fallback")} value={runtimeSettings?.implicitRunnerFallback ?? "-"} compact />
+            <MetaRow label={t("Updated")} value={runtimeSettings ? formatDateTime(runtimeSettings.updatedAt) : "-"} compact />
+          </div>
+        </details>
 
         <div className="policy-tool-grid" aria-label={t("Runner settings")}>
           <label className="policy-tool-row">
@@ -317,17 +321,18 @@ export function ExecutionPermissionsSettingsPanel({
                 />
                 <StatusBadge status={runner.status} />
                 <span>{runner.displayName}</span>
-                <small>
-                  {runner.id}
-                  {runner.featureFlag ? ` · ${runner.featureFlag}` : ""}
-                  {runner.disabledReason ? ` · ${runner.disabledReason}` : ""}
-                  {runner.readiness ? ` · ${runnerReadinessLabel(runner, t)}` : ""}
-                </small>
-                {runner.readiness?.blockingReasons.length ? (
-                  <span className="runtime-runner-readiness" aria-label={t("{runner} readiness blockers", { runner: runner.displayName })}>
-                    {runner.readiness.blockingReasons.slice(0, 3).map((blocker) => blocker.message).join(" · ")}
-                  </span>
-                ) : null}
+                <small>{runnerReadinessLabel(runner, t)}</small>
+                <details className="settings-compact-details settings-interaction-details">
+                  <summary>{t("Runner details")}</summary>
+                  <span>{runner.id}</span>
+                  {runner.featureFlag ? <span>{runner.featureFlag}</span> : null}
+                  {runner.disabledReason ? <span>{runner.disabledReason}</span> : null}
+                  {runner.readiness?.blockingReasons.length ? (
+                    <span className="runtime-runner-readiness" aria-label={t("{runner} readiness blockers", { runner: runner.displayName })}>
+                      {runner.readiness.blockingReasons.slice(0, 3).map((blocker) => blocker.message).join(" · ")}
+                    </span>
+                  ) : null}
+                </details>
               </label>
             ))
           )}

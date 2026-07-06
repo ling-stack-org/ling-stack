@@ -39,6 +39,26 @@ export function ProviderWorkbenchHeader({
       <span>{t("Disabled")} {summary.disabledCount}</span>
     </div>
   );
+  const readinessSummary = (
+    <div className="provider-readiness-strip" aria-label={t("Model readiness summary")}>
+      <span className={summary.chatReadyCount > 0 ? "ready" : "attention"}>
+        <strong>{summary.chatReadyCount}</strong>
+        <small>{t("Chat ready")}</small>
+      </span>
+      <span className={summary.generationReadyCount > 0 ? "ready" : "attention"}>
+        <strong>{summary.generationReadyCount}</strong>
+        <small>{t("Image generation ready")}</small>
+      </span>
+      <span className={summary.missingSecretCount > 0 ? "attention" : "quiet"}>
+        <strong>{summary.missingSecretCount}</strong>
+        <small>{t("Need API key")}</small>
+      </span>
+      <span className={summary.disabledCount > 0 ? "quiet" : "ready"}>
+        <strong>{summary.disabledCount}</strong>
+        <small>{t("Disabled")}</small>
+      </span>
+    </div>
+  );
   const secondaryActions = (
     <>
       <button className="secondary-button compact-button" type="button" onClick={onCheckBatch} disabled={isCheckingProviders || summary.batchCheckProviderCount === 0}>
@@ -85,6 +105,7 @@ export function ProviderWorkbenchHeader({
   if (settingsToolMode) {
     return (
       <header className="provider-workbench-header settings-return-mode">
+        {readinessSummary}
         <div className="provider-header-tools">
           <div className="provider-title-actions">
             {primaryAction}
@@ -106,6 +127,7 @@ export function ProviderWorkbenchHeader({
         secondaryActions={secondaryActions}
         className="provider-page-action-header"
       />
+      {readinessSummary}
       {toolbarControls}
     </header>
   );

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { CircleAlert, Loader2, PlugZap, Plus, RefreshCw } from "lucide-react";
 import { useI18n } from "../../i18n.js";
 import {
@@ -24,9 +24,9 @@ import {
   PageActionHeader,
 } from "../../shared/components/index.js";
 import {
-  isMediaJobActiveStatus,
   mediaArtifactsForJob,
   mediaOperationLabel,
+  summarizeMediaJobs,
   type MediaJobStatusFilter,
 } from "./media-job-view-models.js";
 
@@ -60,12 +60,13 @@ export function MediaJobsPage({
   readonly onRefresh: () => void;
   readonly onCreate: () => void;
   readonly onSelectJob: (jobId: string) => void;
-  readonly onRun: (jobId: string) => void;
+  readonly onRun: (jobId: string) => void | Promise<void>;
   readonly onOpenProviders: () => void;
 }): JSX.Element {
   const { t } = useI18n();
   const [isCreateOpen, setCreateOpen] = useState(false);
   const [statusFilter, setStatusFilter] = useState<MediaJobStatusFilter>("all");
+  const [startingJobId, setStartingJobId] = useState("");
   const generationProviders = providers.filter(providerHasGenerationCapability);
   const generationProvidersForOperation = generationProviders.filter((provider) => providerSupportsGenerationOperation(provider, form.operation));
   const runnableProvidersForOperation = generationProvidersForOperation.filter((provider) => canUseGenerationProviderForOperation(provider, form.operation));
@@ -74,11 +75,21 @@ export function MediaJobsPage({
   const selectedProviderCanRun = Boolean(selectedProvider && canUseGenerationProviderForOperation(selectedProvider, form.operation));
   const hasRunnableGenerationModel = runnableProvidersForOperation.length > 0;
   const canCreate = Boolean(selectedProviderCanRun && form.prompt.trim());
-  const activeCount = jobs.filter((job) => isMediaJobActiveStatus(job.status)).length;
+  const jobSummary = summarizeMediaJobs({ jobs, artifactsByJob, runningJobId });
   const selectedJob = jobs.find((job) => job.id === selectedJobId) ?? jobs[0];
   const selectedProviderForJob = selectedJob ? providers.find((provider) => provider.id === selectedJob.providerPresetId) : undefined;
   const selectedJobArtifacts = selectedJob ? artifactsByJob[selectedJob.id] ?? [] : [];
   const selectedMediaArtifacts = mediaArtifactsForJob(selectedJobArtifacts);
+
+  useEffect(() => {
+    if (!startingJobId) {
+      return;
+    }
+    const startingJob = jobs.find((job) => job.id === startingJobId);
+    if (startingJob?.status === "running") {
+      setStartingJobId("");
+    }
+  }, [jobs, startingJobId]);
 
   function createGenerationTask(): void {
     if (!canCreate) {
@@ -96,6 +107,15 @@ export function MediaJobsPage({
     setCreateOpen(true);
   }
 
+  async function runGenerationJob(jobId: string): Promise<void> {
+    setStartingJobId(jobId);
+    try {
+      await onRun(jobId);
+    } finally {
+      setStartingJobId((current) => current === jobId ? "" : current);
+    }
+  }
+
   return (
     <div className="media-jobs-page">
       <PageActionHeader
@@ -103,10 +123,12 @@ export function MediaJobsPage({
         title={<span id="media-jobs-title">{t("Generation tasks")}</span>}
         description={(
           <>
-            {t("{modelCount} available generation models · {taskCount} history tasks · {activeCount} active", {
+            {t("{modelCount} available generation models · {taskCount} tasks · {generatingCount} generating · {readyCount} ready · {attentionCount} need attention", {
               modelCount: runnableProvidersForOperation.length,
-              taskCount: jobs.length,
-              activeCount,
+              taskCount: jobSummary.taskCount,
+              generatingCount: jobSummary.generatingCount,
+              readyCount: jobSummary.readyCount,
+              attentionCount: jobSummary.attentionCount,
             })}
           </>
         )}
@@ -154,11 +176,12 @@ export function MediaJobsPage({
           artifactsByJob={artifactsByJob}
           selectedJobId={selectedJobId}
           runningJobId={runningJobId}
+          startingJobId={startingJobId}
           isLoading={isLoading}
           statusFilter={statusFilter}
           onStatusFilterChange={setStatusFilter}
           onSelectJob={onSelectJob}
-          onRun={onRun}
+          onRun={(jobId) => void runGenerationJob(jobId)}
         />
 
         <MediaJobDetailPanel
@@ -168,6 +191,7 @@ export function MediaJobsPage({
           artifacts={selectedMediaArtifacts}
           isLoading={isLoading}
           isRunning={Boolean(selectedJob && runningJobId === selectedJob.id)}
+          isStarting={Boolean(selectedJob && startingJobId === selectedJob.id)}
           onCopy={() => {
             if (selectedJob) {
               void navigator.clipboard?.writeText(selectedJob.prompt);
@@ -176,7 +200,7 @@ export function MediaJobsPage({
           onOpenProviders={onOpenProviders}
           onRun={() => {
             if (selectedJob) {
-              onRun(selectedJob.id);
+              void runGenerationJob(selectedJob.id);
             }
           }}
         />

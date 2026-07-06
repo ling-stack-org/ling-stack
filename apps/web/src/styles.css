@@ -12,6 +12,8 @@
 @import "./styles/mcp.css";
 @import "./styles/providers.css";
 @import "./styles/settings.css";
+@import "./styles/settings-diagnostics.css";
+@import "./styles/settings-interactions.css";
 @import "./styles/approvals.css";
 @import "./styles/work-board.css";
 @import "./styles/layout.css";

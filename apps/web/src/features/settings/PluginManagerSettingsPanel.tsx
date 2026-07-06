@@ -15,11 +15,14 @@ import {
   XCircle,
 } from "lucide-react";
 import { useI18n } from "../../i18n.js";
-import { formatDateTime } from "../../lib/formatting.js";
 import { MetaRow, StatusBadge } from "../../shared/components/index.js";
 import type { ManagedPluginApplyPresetResponse, ManagedPluginRuntimePreviewResponse, ManagedPluginView } from "../../types.js";
 import type { PluginActionNotice, PluginBusyAction } from "../../domains/plugins/use-plugins-domain.js";
 import { SettingsMetaLine } from "./SettingsSubnav.js";
+import {
+  buildPluginRowView,
+  type PluginActionView,
+} from "./plugin-manager-view-models.js";
 
 export function PluginManagerSettingsPanel({
   cwd,
@@ -72,7 +75,6 @@ export function PluginManagerSettingsPanel({
       <header className="settings-plugin-manager-head">
         <div>
           <h2 id="settings-plugin-manager-title">{t("Plugin Manager")}</h2>
-          <p>{t("Managed capability bundles and trusted local presets")}</p>
         </div>
         <div className="settings-plugin-manager-actions">
           <button className="secondary-button compact-button" type="button" onClick={onOpenMcpSettings}>
@@ -100,9 +102,14 @@ export function PluginManagerSettingsPanel({
           <CheckCircle2 size={16} />
           <span>
             {t("Latest preset result")}: {latestApplyResult.plugin.displayName}
-            {latestApplyResult.linkedMcpServer ? ` · ${latestApplyResult.linkedMcpServer.id}` : ""}
             {` · ${latestApplyResult.tools.length} ${t("tools")}`}
           </span>
+          {latestApplyResult.linkedMcpServer ? (
+            <details className="settings-compact-details settings-interaction-details">
+              <summary>{t("Preset details")}</summary>
+              <span>{latestApplyResult.linkedMcpServer.id}</span>
+            </details>
+          ) : null}
         </div>
       ) : null}
 
@@ -117,10 +124,17 @@ export function PluginManagerSettingsPanel({
         <div className={`settings-plugin-runtime-preview ${latestRuntimePreview.preview.status}`} role="status" aria-live="polite">
           <Eye size={16} />
           <span>
-            {t("Runtime preview")}: {latestRuntimePreview.plugin.displayName} · {latestRuntimePreview.preview.status}
-            {latestRuntimePreview.preview.policyOverlays.length ? ` · ${latestRuntimePreview.preview.policyOverlays.length} ${t("policy overlays")}` : ""}
-            {latestRuntimePreview.preview.blockers.length ? ` · ${latestRuntimePreview.preview.blockers[0]}` : ""}
+            {latestRuntimePreview.preview.blockers.length > 0 ? t("Runtime preview blocked.") : t("Runtime preview ready.")}
+            {` ${latestRuntimePreview.plugin.displayName}`}
           </span>
+          <details className="settings-compact-details settings-interaction-details">
+            <summary>{t("Runtime preview details")}</summary>
+            <span>
+              {latestRuntimePreview.preview.status}
+              {latestRuntimePreview.preview.policyOverlays.length ? ` · ${latestRuntimePreview.preview.policyOverlays.length} ${t("policy overlays")}` : ""}
+              {latestRuntimePreview.preview.blockers.length ? ` · ${latestRuntimePreview.preview.blockers[0]}` : ""}
+            </span>
+          </details>
         </div>
       ) : null}
 
@@ -132,158 +146,21 @@ export function PluginManagerSettingsPanel({
       ) : (
         <div className="settings-plugin-list" aria-label={t("Plugins")}>
           {plugins.map((plugin) => (
-            <article key={plugin.id} className={`settings-plugin-row ${plugin.status}`}>
-              <div className="settings-plugin-main">
-                <div className="settings-plugin-title-line">
-                  <Plug size={17} />
-                  <strong>{plugin.displayName}</strong>
-                  <StatusBadge status={plugin.status} />
-                  <span className="settings-plugin-source">{sourceLabel(plugin.sourceKind)}</span>
-                </div>
-                <div className="settings-plugin-meta-line">
-                  <span>{plugin.id}</span>
-                  <span>{plugin.version}</span>
-                  <span>{plugin.trustSummary}</span>
-                </div>
-                <details className="settings-plugin-details">
-                  <summary>{t("Details")}</summary>
-                  <div className="settings-plugin-meta-grid">
-                    <MetaRow label={t("Health")} value={healthLabel(plugin)} compact />
-                    <MetaRow label={t("Package")} value={packageLabel(plugin)} compact />
-                    <MetaRow label={t("Contributions")} value={String(plugin.contributions.length)} compact />
-                    <MetaRow label={t("Linked resources")} value={linkedResourceLabel(plugin)} compact />
-                    <MetaRow label={t("Latest event")} value={latestEventLabel(plugin)} compact />
-                  </div>
-                </details>
-                {plugin.disabledReason ? (
-                  <div className="settings-plugin-warning">
-                    <XCircle size={15} />
-                    <span>{plugin.disabledReason}</span>
-                  </div>
-                ) : null}
-                {plugin.sourceKind === "bundled" ? (
-                  <div className="settings-plugin-package-note">
-                    <PackageCheck size={15} />
-                    <span>{plugin.package?.status === "installed" ? t("Bundled package installed for this workspace.") : t("Bundled package metadata only. Install before runtime injection.")}</span>
-                  </div>
-                ) : null}
-                {plugin.runtimePreview?.blockers.length ? (
-                  <div className="settings-plugin-warning">
-                    <XCircle size={15} />
-                    <span>{plugin.runtimePreview.blockers[0]}</span>
-                  </div>
-                ) : null}
-                <div className="settings-plugin-contributions">
-                  {plugin.contributions.map((contribution) => (
-                    <span key={`${contribution.kind}:${contribution.id}`} className={contribution.enabled ? "settings-plugin-token" : "settings-plugin-token disabled"}>
-                      {contribution.kind}: {contribution.label}
-                      {contribution.linkedResourceId ? ` -> ${contribution.linkedResourceId}` : ""}
-                    </span>
-                  ))}
-                </div>
-              </div>
-              <div className="settings-plugin-row-actions">
-                {plugin.actions.canApplyPreset ? (
-                  <button
-                    className="secondary-button compact-button"
-                    type="button"
-                    onClick={() => onApplyPreset(plugin.id)}
-                    disabled={isBusy(plugin.id, busyPluginId, busyAction)}
-                  >
-                    {busyPluginId === plugin.id && busyAction === "apply" ? <Loader2 className="spin" size={15} /> : <Wrench size={15} />}
-                    {t("Apply preset")}
-                  </button>
-                ) : null}
-                {plugin.actions.canCheck ? (
-                  <button
-                    className="ghost-button compact-button"
-                    type="button"
-                    onClick={() => onCheck(plugin.id)}
-                    disabled={isBusy(plugin.id, busyPluginId, busyAction)}
-                  >
-                    {busyPluginId === plugin.id && busyAction === "check" ? <Loader2 className="spin" size={15} /> : <Activity size={15} />}
-                    {t("Check")}
-                  </button>
-                ) : null}
-                {plugin.actions.canInstall ? (
-                  <button
-                    className="secondary-button compact-button"
-                    type="button"
-                    onClick={() => onInstall(plugin.id)}
-                    disabled={isBusy(plugin.id, busyPluginId, busyAction)}
-                  >
-                    {busyPluginId === plugin.id && busyAction === "install" ? <Loader2 className="spin" size={15} /> : <Download size={15} />}
-                    {t("Install")}
-                  </button>
-                ) : null}
-                {plugin.actions.canRuntimePreview ? (
-                  <button
-                    className="ghost-button compact-button"
-                    type="button"
-                    onClick={() => onRuntimePreview(plugin.id)}
-                    disabled={isBusy(plugin.id, busyPluginId, busyAction)}
-                  >
-                    {busyPluginId === plugin.id && busyAction === "runtime-preview" ? <Loader2 className="spin" size={15} /> : <Eye size={15} />}
-                    {t("Runtime preview")}
-                  </button>
-                ) : null}
-                {plugin.actions.canRefreshPackage ? (
-                  <button
-                    className="ghost-button compact-button"
-                    type="button"
-                    onClick={() => onRefreshPackage(plugin.id)}
-                    disabled={isBusy(plugin.id, busyPluginId, busyAction)}
-                  >
-                    {busyPluginId === plugin.id && busyAction === "refresh-package" ? <Loader2 className="spin" size={15} /> : <RefreshCw size={15} />}
-                    {t("Refresh package")}
-                  </button>
-                ) : null}
-                {plugin.sourceKind === "bundled" ? (
-                  <button
-                    className="ghost-button compact-button"
-                    type="button"
-                    onClick={() => onValidatePackage(plugin.id)}
-                    disabled={isBusy(plugin.id, busyPluginId, busyAction)}
-                  >
-                    {busyPluginId === plugin.id && busyAction === "validate" ? <Loader2 className="spin" size={15} /> : <ShieldCheck size={15} />}
-                    {t("Validate package")}
-                  </button>
-                ) : null}
-                {plugin.actions.canEnable ? (
-                  <button
-                    className="ghost-button compact-button"
-                    type="button"
-                    onClick={() => onEnable(plugin.id)}
-                    disabled={isBusy(plugin.id, busyPluginId, busyAction)}
-                  >
-                    {busyPluginId === plugin.id && busyAction === "enable" ? <Loader2 className="spin" size={15} /> : <Power size={15} />}
-                    {t("Enable")}
-                  </button>
-                ) : null}
-                {plugin.actions.canDisable ? (
-                  <button
-                    className="danger-ghost-button compact-button"
-                    type="button"
-                    onClick={() => onDisable(plugin.id)}
-                    disabled={isBusy(plugin.id, busyPluginId, busyAction)}
-                  >
-                    {busyPluginId === plugin.id && busyAction === "disable" ? <Loader2 className="spin" size={15} /> : <PowerOff size={15} />}
-                    {t("Disable")}
-                  </button>
-                ) : null}
-                {plugin.actions.canUninstall ? (
-                  <button
-                    className="danger-ghost-button compact-button"
-                    type="button"
-                    onClick={() => onUninstall(plugin.id)}
-                    disabled={isBusy(plugin.id, busyPluginId, busyAction)}
-                  >
-                    {busyPluginId === plugin.id && busyAction === "uninstall" ? <Loader2 className="spin" size={15} /> : <PowerOff size={15} />}
-                    {t("Uninstall")}
-                  </button>
-                ) : null}
-              </div>
-            </article>
+            <PluginRow
+              key={plugin.id}
+              plugin={plugin}
+              busyPluginId={busyPluginId}
+              busyAction={busyAction}
+              onApplyPreset={onApplyPreset}
+              onCheck={onCheck}
+              onValidatePackage={onValidatePackage}
+              onInstall={onInstall}
+              onUninstall={onUninstall}
+              onRefreshPackage={onRefreshPackage}
+              onRuntimePreview={onRuntimePreview}
+              onEnable={onEnable}
+              onDisable={onDisable}
+            />
           ))}
         </div>
       )}
@@ -296,48 +173,249 @@ export function PluginManagerSettingsPanel({
   );
 }
 
+function PluginRow({
+  plugin,
+  busyPluginId,
+  busyAction,
+  onApplyPreset,
+  onCheck,
+  onValidatePackage,
+  onInstall,
+  onUninstall,
+  onRefreshPackage,
+  onRuntimePreview,
+  onEnable,
+  onDisable,
+}: {
+  readonly plugin: ManagedPluginView;
+  readonly busyPluginId: string;
+  readonly busyAction: PluginBusyAction | undefined;
+  readonly onApplyPreset: (pluginId: string) => void;
+  readonly onCheck: (pluginId: string) => void;
+  readonly onValidatePackage: (pluginId: string) => void;
+  readonly onInstall: (pluginId: string) => void;
+  readonly onUninstall: (pluginId: string) => void;
+  readonly onRefreshPackage: (pluginId: string) => void;
+  readonly onRuntimePreview: (pluginId: string) => void;
+  readonly onEnable: (pluginId: string) => void;
+  readonly onDisable: (pluginId: string) => void;
+}): JSX.Element {
+  const { t } = useI18n();
+  const view = buildPluginRowView(plugin, t);
+
+  return (
+    <article className={`settings-plugin-row ${plugin.status}`}>
+      <div className="settings-plugin-row-summary">
+        <div className="settings-plugin-main">
+          <div className="settings-plugin-title-line">
+            <Plug size={17} />
+            <strong>{plugin.displayName}</strong>
+            <StatusBadge status={plugin.status} />
+            <span className="settings-plugin-source">{view.sourceLabel}</span>
+          </div>
+          <p className="settings-plugin-readiness">{view.readiness}</p>
+          {view.warnings.length > 0 ? (
+            <div className="settings-plugin-warning">
+              <XCircle size={15} />
+              <span>{view.warnings[0]}</span>
+            </div>
+          ) : null}
+        </div>
+        <div className="settings-plugin-row-actions">
+          {view.primaryAction ? (
+            <PluginActionButton
+              action={view.primaryAction}
+              pluginId={plugin.id}
+              busyPluginId={busyPluginId}
+              busyAction={busyAction}
+              onApplyPreset={onApplyPreset}
+              onCheck={onCheck}
+              onValidatePackage={onValidatePackage}
+              onInstall={onInstall}
+              onUninstall={onUninstall}
+              onRefreshPackage={onRefreshPackage}
+              onRuntimePreview={onRuntimePreview}
+              onEnable={onEnable}
+              onDisable={onDisable}
+            />
+          ) : null}
+        </div>
+      </div>
+
+      <details className="settings-plugin-details">
+        <summary>{t("Details and diagnostics")}</summary>
+        <div className="settings-plugin-detail-body">
+          <div className="settings-plugin-meta-grid">
+            {view.facts.map((fact) => (
+              <MetaRow key={fact.label} label={fact.label} value={fact.value} compact />
+            ))}
+            <MetaRow label={t("Contributions")} value={String(plugin.contributions.length)} compact />
+          </div>
+          {view.packageNotice ? (
+            <div className="settings-plugin-package-note">
+              <PackageCheck size={15} />
+              <span>{view.packageNotice}</span>
+            </div>
+          ) : null}
+          {view.contributionLabels.length > 0 ? (
+            <div className="settings-plugin-contributions" aria-label={t("Plugin contributions")}>
+              {plugin.contributions.map((contribution, index) => (
+                <span key={`${contribution.kind}:${contribution.id}`} className={contribution.enabled ? "settings-plugin-token" : "settings-plugin-token disabled"}>
+                  {view.contributionLabels[index]}
+                </span>
+              ))}
+            </div>
+          ) : null}
+          {view.detailActions.length > 0 ? (
+            <div className="settings-plugin-detail-actions">
+              {view.detailActions.map((action) => (
+                <PluginActionButton
+                  key={action.id}
+                  action={action}
+                  pluginId={plugin.id}
+                  busyPluginId={busyPluginId}
+                  busyAction={busyAction}
+                  onApplyPreset={onApplyPreset}
+                  onCheck={onCheck}
+                  onValidatePackage={onValidatePackage}
+                  onInstall={onInstall}
+                  onUninstall={onUninstall}
+                  onRefreshPackage={onRefreshPackage}
+                  onRuntimePreview={onRuntimePreview}
+                  onEnable={onEnable}
+                  onDisable={onDisable}
+                />
+              ))}
+            </div>
+          ) : null}
+        </div>
+      </details>
+    </article>
+  );
+}
+
+function PluginActionButton({
+  action,
+  pluginId,
+  busyPluginId,
+  busyAction,
+  onApplyPreset,
+  onCheck,
+  onValidatePackage,
+  onInstall,
+  onUninstall,
+  onRefreshPackage,
+  onRuntimePreview,
+  onEnable,
+  onDisable,
+}: {
+  readonly action: PluginActionView;
+  readonly pluginId: string;
+  readonly busyPluginId: string;
+  readonly busyAction: PluginBusyAction | undefined;
+  readonly onApplyPreset: (pluginId: string) => void;
+  readonly onCheck: (pluginId: string) => void;
+  readonly onValidatePackage: (pluginId: string) => void;
+  readonly onInstall: (pluginId: string) => void;
+  readonly onUninstall: (pluginId: string) => void;
+  readonly onRefreshPackage: (pluginId: string) => void;
+  readonly onRuntimePreview: (pluginId: string) => void;
+  readonly onEnable: (pluginId: string) => void;
+  readonly onDisable: (pluginId: string) => void;
+}): JSX.Element {
+  const busy = isBusy(pluginId, busyPluginId, busyAction);
+  const icon = busy ? <Loader2 className="spin" size={15} /> : pluginActionIcon(action.id);
+  const className = action.tone === "primary"
+    ? "secondary-button compact-button"
+    : action.tone === "danger"
+      ? "danger-ghost-button compact-button"
+      : "ghost-button compact-button";
+  return (
+    <button className={className} type="button" onClick={() => runPluginAction(action.id, pluginId, {
+      onApplyPreset,
+      onCheck,
+      onValidatePackage,
+      onInstall,
+      onUninstall,
+      onRefreshPackage,
+      onRuntimePreview,
+      onEnable,
+      onDisable,
+    })} disabled={busy}>
+      {icon}
+      {action.label}
+    </button>
+  );
+}
+
+function pluginActionIcon(action: PluginActionView["id"]): JSX.Element {
+  switch (action) {
+    case "apply":
+      return <Wrench size={15} />;
+    case "check":
+      return <Activity size={15} />;
+    case "install":
+      return <Download size={15} />;
+    case "runtime-preview":
+      return <Eye size={15} />;
+    case "refresh-package":
+      return <RefreshCw size={15} />;
+    case "validate":
+      return <ShieldCheck size={15} />;
+    case "enable":
+      return <Power size={15} />;
+    case "disable":
+    case "uninstall":
+      return <PowerOff size={15} />;
+  }
+}
+
+function runPluginAction(
+  action: PluginActionView["id"],
+  pluginId: string,
+  handlers: {
+    readonly onApplyPreset: (pluginId: string) => void;
+    readonly onCheck: (pluginId: string) => void;
+    readonly onValidatePackage: (pluginId: string) => void;
+    readonly onInstall: (pluginId: string) => void;
+    readonly onUninstall: (pluginId: string) => void;
+    readonly onRefreshPackage: (pluginId: string) => void;
+    readonly onRuntimePreview: (pluginId: string) => void;
+    readonly onEnable: (pluginId: string) => void;
+    readonly onDisable: (pluginId: string) => void;
+  },
+): void {
+  switch (action) {
+    case "apply":
+      handlers.onApplyPreset(pluginId);
+      return;
+    case "check":
+      handlers.onCheck(pluginId);
+      return;
+    case "validate":
+      handlers.onValidatePackage(pluginId);
+      return;
+    case "install":
+      handlers.onInstall(pluginId);
+      return;
+    case "uninstall":
+      handlers.onUninstall(pluginId);
+      return;
+    case "refresh-package":
+      handlers.onRefreshPackage(pluginId);
+      return;
+    case "runtime-preview":
+      handlers.onRuntimePreview(pluginId);
+      return;
+    case "enable":
+      handlers.onEnable(pluginId);
+      return;
+    case "disable":
+      handlers.onDisable(pluginId);
+      return;
+  }
+}
+
 function isBusy(pluginId: string, busyPluginId: string, busyAction: PluginBusyAction | undefined): boolean {
   return busyAction !== undefined && busyPluginId === pluginId;
-}
-
-function sourceLabel(sourceKind: ManagedPluginView["sourceKind"]): string {
-  switch (sourceKind) {
-    case "built-in":
-      return "built-in";
-    case "bundled":
-      return "bundled";
-    case "trusted-local-preset":
-      return "trusted local";
-  }
-}
-
-function healthLabel(plugin: ManagedPluginView): string {
-  if (!plugin.health) {
-    return "unknown";
-  }
-  const checked = formatDateTime(plugin.health.checkedAt);
-  return plugin.health.message ? `${plugin.health.status} · ${checked} · ${plugin.health.message}` : `${plugin.health.status} · ${checked}`;
-}
-
-function packageLabel(plugin: ManagedPluginView): string {
-  if (!plugin.package) {
-    return plugin.sourceKind === "bundled" ? "not installed" : "n/a";
-  }
-  const hash = plugin.package.packageHash ? plugin.package.packageHash.slice(0, 12) : "no hash";
-  return `${plugin.package.status} · ${plugin.package.version} · ${hash}`;
-}
-
-function linkedResourceLabel(plugin: ManagedPluginView): string {
-  if (plugin.linkedResources.length === 0) {
-    return "none";
-  }
-  return plugin.linkedResources.map((resource) => `${resource.id}${resource.present ? "" : " missing"}`).join(", ");
-}
-
-function latestEventLabel(plugin: ManagedPluginView): string {
-  const latest = plugin.events?.[plugin.events.length - 1];
-  if (!latest) {
-    return "none";
-  }
-  return `${latest.type} · ${formatDateTime(latest.createdAt)}`;
 }

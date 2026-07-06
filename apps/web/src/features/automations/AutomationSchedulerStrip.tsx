@@ -1,35 +1,31 @@
 import { Loader2, Play, Square } from "lucide-react";
 import { useI18n } from "../../i18n.js";
 import type { AutomationSchedulerState } from "../../types.js";
+import { automationSchedulerCopy } from "./automation-view-models.js";
 
 export function AutomationSchedulerStrip({
   scheduler,
   schedulerAction,
+  manualEnabledCount,
   onStart,
   onStop,
 }: {
   readonly scheduler?: AutomationSchedulerState;
   readonly schedulerAction: "start" | "stop" | "";
+  readonly manualEnabledCount: number;
   readonly onStart: () => void;
   readonly onStop: () => void;
 }): JSX.Element {
   const { t } = useI18n();
   const isRunning = scheduler?.status === "running";
-  const isError = scheduler?.status === "error";
   const isBusy = schedulerAction !== "";
-  const scheduleCount = scheduler?.automationCount ?? 0;
-  const statusLabel = isError ? t("Scheduler needs attention") : isRunning ? t("Scheduler running") : t("Scheduler stopped");
-  const summary = isError
-    ? t("Scheduler needs attention: {message}", { message: scheduler?.lastErrorMessage || t("Unknown error") })
-    : isRunning
-      ? t("{count} enabled schedules are being watched.", { count: scheduleCount })
-      : t("{count} enabled schedules are ready. Start scheduling to run them automatically.", { count: scheduleCount });
+  const copy = automationSchedulerCopy({ scheduler, manualEnabledCount, t });
 
   return (
     <section className="automation-scheduler-strip" aria-label={t("Automation scheduler")}>
       <div className="automation-scheduler-summary">
-        <strong>{statusLabel}</strong>
-        <span>{summary}</span>
+        <strong>{copy.statusLabel}</strong>
+        <span>{copy.summary}</span>
       </div>
       <div className="automation-scheduler-actions">
         {isRunning ? (

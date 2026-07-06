@@ -180,7 +180,13 @@ export function PlanHistoryPage({
                     const sourceStateLabel = planSourceMessageStateLabel(plan, t);
                     return (
                       <div key={plan.id} className={busyPlanId === plan.id ? "right-dock-plan-row busy" : "right-dock-plan-row"}>
-                        <button className="right-dock-row right-dock-plan-main" type="button" onClick={() => onOpenPlan(plan)}>
+                        <button
+                          className="right-dock-row right-dock-plan-main"
+                          type="button"
+                          onClick={() => onOpenPlan(plan)}
+                          aria-label={`${t("Open plan detail")} ${plan.title}`}
+                          title={t("Open plan detail")}
+                        >
                           <span className={`right-dock-row-dot ${planStatusTone(plan.status)}`} />
                           <span className="right-dock-row-copy">
                             <strong>{plan.title}</strong>

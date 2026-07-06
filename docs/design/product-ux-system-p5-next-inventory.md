@@ -7,7 +7,9 @@ slice already landed shared presentation primitives and adopted them in image
 generation, automations, Settings workspace tools, sidebar menus, and channel / AI
 teammate creation dialogs. P5-A/B/C have now been implemented locally; keep this
 inventory as the pre-implementation rationale and use the implementation plan evidence
-section for the current shipped state.
+section for the current shipped state. A later desktop QA pass found that Image
+Generation and Automations still need a status-semantics follow-up for counts, grouping,
+and action wording; see [P5 Status Semantics Follow-up](product-status-semantics-p5-followup.md).
 
 The next P5 work should not start by changing code. The remaining target surfaces need a
 clear inventory and slice order because several owners are large files. The most valuable
@@ -18,8 +20,8 @@ surfaces should remain mostly deferred unless a narrow shared-state issue appear
 
 | Surface | Current P5 state | Main gap | Proposed owner | Large-file risk | P5 priority |
 | --- | --- | --- | --- | --- | --- |
-| Image Generation | First slice adopted `PageActionHeader`, `OperationEmptyState`, `StatusActionRow`, and `DialogSection`. | Only follow-up bugs or copy refinements. | `features/media/*` view-models and focused CSS. | Low after extraction. | Done for now |
-| Automations | First slice extracted create dialogs and adopted shared header, empty state, status rows, and scheduler strip. | Further detail-pane cleanup should avoid growing `AutomationsPage.tsx`. | `AutomationCreateDialogs`, `AutomationExecutionInspector`, `AutomationListPane`. | Medium, but page is now 356 lines. | Done for now |
+| Image Generation | First slice adopted `PageActionHeader`, `OperationEmptyState`, `StatusActionRow`, and `DialogSection`. | Status grouping still mixes runnable stored states with active/in-progress language; buttons need start/retry/generating wording. | `features/media/*` view-models and focused CSS. | Low after extraction. | Follow-up needed |
+| Automations | First slice extracted create dialogs and adopted shared header, empty state, status rows, and scheduler strip. | Header and scheduler strip still blur enabled definitions, scheduled watches, and recent run health. | `AutomationCreateDialogs`, `AutomationExecutionInspector`, `AutomationListPane`, `automation-view-models`. | Medium, but page is now 356 lines. | Follow-up needed |
 | Settings workspace tools | First slice adopted `StatusActionRow` and preserved legacy selectors. | No immediate UX gap; keep as reference implementation. | `SettingsWorkspaceToolsPanel`. | Medium because `settings.css` is large. | Done for now |
 | Sidebar menus | First slice adopted `ActionMenuItem`. | No immediate UX gap; continue using fixed icon cell for future menus. | `SidebarNavigation` plus `action-menus.css`. | High if more behavior is added to `SidebarNavigation`. | Done for now |
 | Channel creation | First slice adopted `CreateDialogShell` and `DialogSection`. | No immediate UX gap; keep channel runtime fields advanced. | `ChannelCreateDialog`. | Low. | Done for now |

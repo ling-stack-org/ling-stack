@@ -17,6 +17,7 @@ import { ActionMenuItem, OperationEmptyState } from "../../shared/components/ind
 import type { ProviderCheckResult, ProviderPreset, ProviderTemplate } from "../../types.js";
 import type { ProviderCheckScope } from "./types.js";
 import { providerInitial, readProviderRouteRowView } from "./provider-workbench-view-models.js";
+import type { ProviderSetupIntent } from "./provider-workbench-view-models.js";
 
 type ProviderMenuAnchor = { readonly id: string; readonly top: number; readonly right: number };
 
@@ -51,7 +52,7 @@ export function ProviderRouteList({
   readonly checkedProviderId: string;
   readonly checkResult: ProviderCheckResult | undefined;
   readonly checkScope: ProviderCheckScope | undefined;
-  readonly onAddModel: () => void;
+  readonly onAddModel: (intent?: ProviderSetupIntent | "") => void;
   readonly onEdit: (provider: ProviderPreset) => void;
   readonly onDelete: (providerId: string) => void;
   readonly onCheck: (providerId: string) => void;
@@ -86,11 +87,17 @@ export function ProviderRouteList({
         <OperationEmptyState
           compact
           icon={isLoading ? <Loader2 className="spin" /> : <PlugZap />}
-          title={isLoading ? t("Loading providers...") : t("Configure a supplier endpoint, fetch its exposed models, and save selected presets.")}
+          title={isLoading ? t("Loading providers...") : t("Add a model route to start using Ling.")}
+          description={!isLoading ? t("Choose a chat model for conversations or a generation model for image tasks.") : undefined}
           action={!isLoading ? (
-            <button className="primary-button compact-button" type="button" onClick={onAddModel}>
-              {t("Add model")}
-            </button>
+            <span className="provider-empty-actions">
+              <button className="primary-button compact-button" type="button" onClick={() => onAddModel("chat")}>
+                {t("Add chat model")}
+              </button>
+              <button className="secondary-button compact-button" type="button" onClick={() => onAddModel("generation")}>
+                {t("Add image generation model")}
+              </button>
+            </span>
           ) : undefined}
         />
       ) : filteredProviders.length === 0 ? (
@@ -182,7 +189,7 @@ export function ProviderRouteList({
                         {row.missingApiKey ? (
                           <button className="secondary-button compact-button provider-main-action" type="button" onClick={() => onEdit(provider)}>
                             <Pencil size={14} />
-                            {t("Fix config")}
+                            {t("Add API key")}
                           </button>
                         ) : !row.ready && canUseProviderForRun(provider) ? (
                           <button className="secondary-button compact-button provider-main-action" type="button" disabled={isCheckingProviders} onClick={() => onCheck(provider.id)}>
@@ -294,6 +301,12 @@ export function ProviderRouteList({
                             </span>
                             <p>{rowCheckMessage}</p>
                             {rowCheckGuidance ? <small>{rowCheckGuidance}</small> : null}
+                            {rowCheckResult.message ? (
+                              <details className="provider-check-raw-details">
+                                <summary>{t("Check details")}</summary>
+                                <small>{t("Provider response")}: {t(rowCheckResult.message)}</small>
+                              </details>
+                            ) : null}
                           </div>
                         </div>
                       </td>

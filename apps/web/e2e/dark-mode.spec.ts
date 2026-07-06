@@ -148,7 +148,8 @@ test("main pages and workspace tools follow dark theme tokens", async ({ page })
     ".ling-tone-option",
     ".skill-governance-settings-panel",
     ".settings-skill-governance",
-    ".settings-skill-governance-mode-guide",
+    ".settings-skill-governance-field",
+    ".settings-compact-details summary",
     ".settings-skill-governance-fixed span",
   ]);
 
@@ -162,6 +163,7 @@ test("main pages and workspace tools follow dark theme tokens", async ({ page })
     ".settings-skill-table-wrap",
     ".settings-skill-table",
     ".settings-skill-inspector",
+    ".settings-skill-summary-card",
   ]);
 
   await page.getByRole("tab", { name: /待复核|Review queue/ }).click();
@@ -170,8 +172,7 @@ test("main pages and workspace tools follow dark theme tokens", async ({ page })
     ".settings-layout",
     ".settings-skill-library",
     ".settings-skill-review-stack",
-    ".settings-skill-health",
-    ".settings-skill-health-summary span",
+    ".settings-compact-details",
     ".settings-skill-candidate-review",
   ]);
 
@@ -185,13 +186,16 @@ test("main pages and workspace tools follow dark theme tokens", async ({ page })
     ".work-board-detail",
   ]);
 
-  await page.getByRole("button", { name: /查看失败原因|查看运行/ }).first().click();
-  await expect(page.locator(".run-history-layout")).toBeVisible();
-  await assertDarkPage(page, "run history", [
-    ".run-history-layout",
-    ".runs-panel",
-    ".run-detail-panel",
-    ".run-detail-summary",
+  await page.getByRole("button", { name: /打开运行诊断|Open run diagnostics/ }).first().click();
+  await expect(page.getByLabel("设置分组")).toBeVisible();
+  await expect(page.getByLabel("Ling Stack navigation")).toHaveCount(0);
+  await expect(page.locator(".settings-run-diagnostics-panel")).toBeVisible();
+  await assertDarkPage(page, "settings run diagnostics", [
+    ".settings-layout",
+    ".settings-run-diagnostics-panel",
+    ".settings-run-diagnostics-summary",
+    ".settings-run-diagnostics-list",
+    ".settings-run-diagnostics-detail",
   ]);
 
 });

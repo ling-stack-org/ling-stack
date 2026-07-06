@@ -17,7 +17,7 @@
 }
 
 .council-workspace-page.settings-return-mode {
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
   height: 100%;
 }
 
@@ -74,6 +74,38 @@
   white-space: nowrap;
 }
 
+.council-workspace-summary {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+}
+
+.council-workspace-summary span {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--surface-panel-strong);
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 650;
+  line-height: 16px;
+  white-space: nowrap;
+}
+
+.council-workspace-summary.compact {
+  gap: 5px;
+}
+
+.council-workspace-summary.compact span {
+  min-height: 21px;
+  padding-inline: 7px;
+}
+
 .council-workspace-grid {
   display: grid;
   grid-template-columns: 286px minmax(0, 1fr);
@@ -119,6 +151,27 @@
   color: var(--text-muted);
   font-size: 12px;
   line-height: 18px;
+}
+
+.council-panel-title-actions {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  min-width: 0;
+}
+
+.council-panel-title-actions .compact-icon-button {
+  width: 26px;
+  height: 26px;
+}
+
+.council-panel-title-actions .compact-button {
+  min-height: 28px;
+  padding-inline: 8px;
+  border-radius: 6px;
+  font-size: 12px;
+  white-space: nowrap;
 }
 
 .council-list-toolbar {
@@ -743,4 +796,33 @@
   padding-inline: 10px;
   border-radius: 6px;
   white-space: nowrap;
+}
+
+.council-channel-empty {
+  min-width: 0;
+}
+
+.council-channel-empty .empty-state {
+  min-height: 72px;
+  align-items: center;
+  justify-items: start;
+  text-align: left;
+}
+
+.council-channel-empty .empty-state,
+.council-channel-empty .empty-state span,
+.council-channel-empty .empty-state p {
+  max-width: none;
+  overflow-wrap: normal;
+  word-break: normal;
+  white-space: normal;
+}
+
+.council-settings-boundary-details,
+.council-low-frequency-actions {
+  min-width: 0;
+}
+
+.council-low-frequency-actions .council-action-row {
+  margin-top: 8px;
 }

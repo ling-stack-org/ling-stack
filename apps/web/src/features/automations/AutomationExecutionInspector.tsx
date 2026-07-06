@@ -34,6 +34,7 @@ export function AutomationExecutionInspector({
   const title = automation?.title ?? draft?.title ?? t("Execution details");
   const status = latestRun?.status ?? automation?.status ?? draft?.status;
   const output = inspectorOutputText(latestRun, preview, t);
+  const latestRunFailed = latestRun?.status === "failed";
   const sourceThreadId = automation ? sourceConversationId(automation) : draft ? draftSourceConversationId(draft) : undefined;
   const sourceThreadLabel = sourceThreadId ? threadTitleById.get(sourceThreadId) ?? t("Conversation") : "--";
   const outputThreadId = automation?.threadId ?? latestRun?.threadId;
@@ -63,14 +64,14 @@ export function AutomationExecutionInspector({
           </section>
 
           <section className="automation-inspector-section">
-            <h3>{t("Output result")}</h3>
+            <h3>{latestRunFailed ? t("Failure details") : t("Output result")}</h3>
             <pre>{output}</pre>
           </section>
 
           <div className="automation-inspector-actions">
             {latestRun?.runId ? (
               <button className="secondary-button compact-button" type="button" onClick={() => onOpenRun(latestRun.runId as string)}>
-                {t("Open run")}
+                {latestRunFailed ? t("Inspect failure") : t("Open run")}
               </button>
             ) : null}
             {automation ? (

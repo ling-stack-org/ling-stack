@@ -85,6 +85,7 @@ export function AutomationListPane({
           threadTitleById={threadTitleById}
           onSelect={onSelectAutomation}
           onRun={onRun}
+          onOpenRun={onOpenRun}
           onToggle={onToggle}
           onArchive={onArchive}
           onOpenThread={onOpenThread}
@@ -116,6 +117,7 @@ function AutomationDefinitionList({
   threadTitleById,
   onSelect,
   onRun,
+  onOpenRun,
   onToggle,
   onArchive,
   onOpenThread,
@@ -129,6 +131,7 @@ function AutomationDefinitionList({
   readonly threadTitleById: ReadonlyMap<string, string>;
   readonly onSelect: (automationId: string) => void;
   readonly onRun: (automationId: string) => void;
+  readonly onOpenRun: (runId: string) => void;
   readonly onToggle: (automation: AutomationDefinition) => void;
   readonly onArchive: (automationId: string) => void;
   readonly onOpenThread: (threadId: string) => void;
@@ -149,8 +152,20 @@ function AutomationDefinitionList({
       {automations.map((automation) => {
         const latestRun = automationRuns.find((run) => run.automationId === automation.id);
         const busy = mutatingAutomationId === automation.id;
-        const primaryActionLabel = automation.status === "paused" ? t("Resume") : t("Run now");
-        const primaryActionDisabled = busy || (automation.status !== "enabled" && automation.status !== "paused");
+        const latestRunFailed = latestRun?.status === "failed";
+        const primaryActionLabel = latestRunFailed ? t("Inspect failure") : automation.status === "paused" ? t("Resume") : t("Run now");
+        const primaryActionDisabled = busy || (latestRunFailed ? !latestRun?.runId : (automation.status !== "enabled" && automation.status !== "paused"));
+        const attentionPrefix = latestRunFailed
+          ? t("Recent run failed")
+          : automation.status === "error"
+            ? t("Setup needs attention")
+            : "";
+        const description = [
+          attentionPrefix,
+          automationModeLabel(automation, t),
+          automationTargetSummary(automation, threadTitleById, t),
+          automationScheduleLabel(automation, t),
+        ].filter(Boolean).join(" · ");
         return (
           <div
             key={automation.id}
@@ -169,7 +184,7 @@ function AutomationDefinitionList({
               className="automation-inbox-row-content"
               leading={<span className="automation-row-dot" />}
               title={<strong>{automation.title}</strong>}
-              description={`${automationModeLabel(automation, t)} · ${automationTargetSummary(automation, threadTitleById, t)} · ${automationScheduleLabel(automation, t)}`}
+              description={description}
               status={latestRun ? <StatusBadge status={latestRun.status} /> : <StatusBadge status={automation.status} />}
               actions={(
                 <>
@@ -178,6 +193,10 @@ function AutomationDefinitionList({
                     type="button"
                     onClick={(event) => {
                       event.stopPropagation();
+                      if (latestRunFailed && latestRun?.runId) {
+                        onOpenRun(latestRun.runId);
+                        return;
+                      }
                       if (automation.status === "paused") {
                         onToggle(automation);
                         return;
@@ -324,7 +343,7 @@ function AutomationDraftList({
             <span className="automation-inbox-row-main">
               <strong>{draft.title ?? t("Untitled draft")}</strong>
               <small>
-                {automationDraftSourceLabel(draft.source, t)} · {draft.kind ? automationKindLabel(draft.kind, t) : t("Missing")} · {automationTriggerLabel(draft.trigger, t)}
+                {ready ? `${t("Draft ready to confirm")} · ` : ""}{automationDraftSourceLabel(draft.source, t)} · {draft.kind ? automationKindLabel(draft.kind, t) : t("Missing")} · {automationTriggerLabel(draft.trigger, t)}
               </small>
             </span>
             <span className="automation-row-actions">

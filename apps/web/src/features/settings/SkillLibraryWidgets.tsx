@@ -1,15 +1,9 @@
-import { useMemo, type ReactNode } from "react";
-import { AlertTriangle, Archive, BookOpen, CheckCircle2, Gauge, RefreshCw, Search, Upload } from "lucide-react";
+import { type ReactNode } from "react";
+import { AlertTriangle, Archive, BookOpen, CheckCircle2, Gauge, RefreshCw, Search } from "lucide-react";
 import { skillSourceArtifactContentUrl } from "../../api.js";
 import { formatDateTime } from "../../lib/formatting.js";
 import type {
   AiTeammate,
-  Channel,
-  ChannelPlaybookCandidate,
-  ChannelPlaybookCandidateReviewAction,
-  ProcedureObservationCluster,
-  SkillCandidate,
-  SkillCandidateReviewAction,
   SkillHealthFinding,
   SkillHealthReport,
   SkillHealthSeverity,
@@ -30,22 +24,11 @@ import type {
 
 import {
   SettingsTranslator,
-  candidateRouteBlockerLabel,
-  candidateRouteKindLabel,
-  isOpenSkillCandidateStatus,
   isSelectableSyncRecord,
-  isTerminalSkillCandidateStatus,
   playbookCandidateReviewMessage,
   playbookCandidateReviewReason,
-  playbookCandidateStatusLabel,
-  procedureObservationClusterActionLabel,
-  procedureObservationClusterStatusLabel,
-  skillCandidateGate,
-  skillCandidateOriginLabel,
   skillCandidateReviewMessage,
   skillCandidateReviewReason,
-  skillCandidateStatusLabel,
-  skillDuplicateDecisionLabel,
   skillHealthActionLabel,
   skillHealthKindLabel,
   skillHealthSeverityLabel,
@@ -143,25 +126,6 @@ export function SkillSourceSyncPanel({
             <option value="auto-safe">{t("Auto-safe")}</option>
           </select>
         </label>
-        <label className="field">
-          <span>{t("Skill root paths")}</span>
-          <textarea
-            rows={2}
-            value={rootPath}
-            onChange={(event) => onRootPathChange(event.target.value)}
-            placeholder="~/.gstack/repos/gstack/.agents/skills"
-          />
-        </label>
-        <div className="settings-skill-source-sync-switches">
-          <label className="settings-toggle">
-            <input type="checkbox" checked={includeDetectedRoots} onChange={(event) => onIncludeDetectedRootsChange(event.target.checked)} />
-            {t("Include detected roots")}
-          </label>
-          <label className="settings-toggle">
-            <input type="checkbox" checked={allowNewSkills} onChange={(event) => onAllowNewSkillsChange(event.target.checked)} />
-            {t("Allow new skills")}
-          </label>
-        </div>
         <div className="settings-skill-source-sync-actions">
           <button className="secondary-button compact-button" type="button" onClick={onPreview} disabled={disabled || (!includeDetectedRoots && !rootPath.trim())}>
             <Search size={14} />
@@ -181,6 +145,28 @@ export function SkillSourceSyncPanel({
           </button>
         </div>
       </div>
+      <details className="settings-compact-details settings-interaction-details settings-skill-source-config">
+        <summary>{t("Sync settings")}</summary>
+        <label className="field">
+          <span>{t("Skill root paths")}</span>
+          <textarea
+            rows={2}
+            value={rootPath}
+            onChange={(event) => onRootPathChange(event.target.value)}
+            placeholder="~/.gstack/repos/gstack/.agents/skills"
+          />
+        </label>
+        <div className="settings-skill-source-sync-switches">
+          <label className="settings-toggle">
+            <input type="checkbox" checked={includeDetectedRoots} onChange={(event) => onIncludeDetectedRootsChange(event.target.checked)} />
+            {t("Include detected roots")}
+          </label>
+          <label className="settings-toggle">
+            <input type="checkbox" checked={allowNewSkills} onChange={(event) => onAllowNewSkillsChange(event.target.checked)} />
+            {t("Allow new skills")}
+          </label>
+        </div>
+      </details>
       {preview ? (
         <div className="settings-skill-source-sync-summary" aria-label={t("gstack source sync summary")}>
           <span><small>{t("Attachable")}</small><strong>{preview.summary.attachable}</strong></span>
@@ -218,7 +204,7 @@ export function SkillSourceSyncPanel({
                   <div className="settings-skill-source-sync-title">
                     <span>
                       <strong>{title}</strong>
-                      <small>{record.skillId} · {path}</small>
+                      <small>{t("{files} files · {warnings} warnings", { files: record.referencedFiles.length, warnings: record.warnings.length })}</small>
                     </span>
                     <span className={`settings-skill-sync-state ${record.state}`}>{skillSourceSyncStateLabel(record.state, t)}</span>
                   </div>
@@ -230,55 +216,73 @@ export function SkillSourceSyncPanel({
                     <span>{t("Context")}: {contextFindings.length}</span>
                     <span>{t("Semantic")}: {semanticDiff.length}</span>
                     {artifactReviewCount > 0 ? <span>{t("Artifact review")}: {artifactReviewCount}</span> : null}
-                    {record.sourceChecksum ? <span>{record.sourceChecksum}</span> : null}
                   </div>
-                  {record.warnings.length > 0 ? (
-                    <div className="settings-skill-source-sync-warnings">
-                      {record.warnings.slice(0, 2).map((warning, index) => (
-                        <small key={`${warning.code}:${warning.location ?? index}`} className={warning.severity}>
-                          {warning.severity}: {warning.code}
-                        </small>
-                      ))}
-                    </div>
-                  ) : null}
-                  {contextFindings.length > 0 ? (
-                    <div className="settings-skill-source-sync-context" aria-label={t("Context health for {skill}", { skill: record.skillId })}>
-                      {contextFindings.slice(0, 3).map((finding, index) => (
-                        <small key={`${finding.kind}:${index}`} className={finding.severity}>
-                          {sourceHealthKindLabel(finding.kind, t)}: {sourceHealthTitle(finding, t)}
-                        </small>
-                      ))}
-                    </div>
-                  ) : null}
-                  {diff.length > 0 ? (
-                    <div className="settings-skill-source-sync-diff" aria-label={t("Drift diff for {skill}", { skill: record.skillId })}>
-                      <span className="settings-skill-source-sync-diff-title">{t("Drift diff")} · {diff.length}</span>
-                      <div className="settings-skill-source-sync-diff-items">
-                        {diff.slice(0, 5).map((item) => (
-                          <div key={item.field} className={`settings-skill-source-sync-diff-item ${item.severity}`}>
-                            <small>{skillSourceSyncDiffLabel(item, t)}</small>
-                            <code>{item.before ?? "-"}</code>
-                            <span>→</span>
-                            <code>{item.after ?? "-"}</code>
-                          </div>
-                        ))}
+                  {record.sourceChecksum || record.warnings.length > 0 || contextFindings.length > 0 || diff.length > 0 || semanticDiff.length > 0 ? (
+                    <details className="settings-compact-details settings-skill-source-sync-details">
+                      <summary>{t("Source evidence")}</summary>
+                      <div className="settings-skill-source-sync-evidence-line">
+                        <small>{t("Skill ID")}</small>
+                        <code>{record.skillId}</code>
                       </div>
-                    </div>
-                  ) : null}
-                  {semanticDiff.length > 0 ? (
-                    <div className="settings-skill-source-sync-diff" aria-label={t("Semantic diff for {skill}", { skill: record.skillId })}>
-                      <span className="settings-skill-source-sync-diff-title">{t("Semantic diff")} · {semanticDiff.length}</span>
-                      <div className="settings-skill-source-sync-diff-items">
-                        {semanticDiff.slice(0, 5).map((item, index) => (
-                          <div key={`${item.kind}:${index}`} className={`settings-skill-source-sync-diff-item ${item.severity}`}>
-                            <small>{skillSourceSemanticDiffLabel(item, t)}</small>
-                            <code>{item.before ?? "-"}</code>
-                            <span>→</span>
-                            <code>{item.after ?? "-"}</code>
-                          </div>
-                        ))}
+                      <div className="settings-skill-source-sync-evidence-line">
+                        <small>{t("Source path")}</small>
+                        <code>{path}</code>
                       </div>
-                    </div>
+                      {record.sourceChecksum ? (
+                        <div className="settings-skill-source-sync-evidence-line">
+                          <small>{t("Raw source checksum")}</small>
+                          <code>{record.sourceChecksum}</code>
+                        </div>
+                      ) : null}
+                      {record.warnings.length > 0 ? (
+                        <div className="settings-skill-source-sync-warnings">
+                          {record.warnings.slice(0, 2).map((warning, index) => (
+                            <small key={`${warning.code}:${warning.location ?? index}`} className={warning.severity}>
+                              {warning.severity}: {warning.code}
+                            </small>
+                          ))}
+                        </div>
+                      ) : null}
+                      {contextFindings.length > 0 ? (
+                        <div className="settings-skill-source-sync-context" aria-label={t("Context health for {skill}", { skill: record.skillId })}>
+                          {contextFindings.slice(0, 3).map((finding, index) => (
+                            <small key={`${finding.kind}:${index}`} className={finding.severity}>
+                              {sourceHealthKindLabel(finding.kind, t)}: {sourceHealthTitle(finding, t)}
+                            </small>
+                          ))}
+                        </div>
+                      ) : null}
+                      {diff.length > 0 ? (
+                        <div className="settings-skill-source-sync-diff" aria-label={t("Drift diff for {skill}", { skill: record.skillId })}>
+                          <span className="settings-skill-source-sync-diff-title">{t("Drift diff")} · {diff.length}</span>
+                          <div className="settings-skill-source-sync-diff-items">
+                            {diff.slice(0, 5).map((item) => (
+                              <div key={item.field} className={`settings-skill-source-sync-diff-item ${item.severity}`}>
+                                <small>{skillSourceSyncDiffLabel(item, t)}</small>
+                                <code>{item.before ?? "-"}</code>
+                                <span>→</span>
+                                <code>{item.after ?? "-"}</code>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      ) : null}
+                      {semanticDiff.length > 0 ? (
+                        <div className="settings-skill-source-sync-diff" aria-label={t("Semantic diff for {skill}", { skill: record.skillId })}>
+                          <span className="settings-skill-source-sync-diff-title">{t("Semantic diff")} · {semanticDiff.length}</span>
+                          <div className="settings-skill-source-sync-diff-items">
+                            {semanticDiff.slice(0, 5).map((item, index) => (
+                              <div key={`${item.kind}:${index}`} className={`settings-skill-source-sync-diff-item ${item.severity}`}>
+                                <small>{skillSourceSemanticDiffLabel(item, t)}</small>
+                                <code>{item.before ?? "-"}</code>
+                                <span>→</span>
+                                <code>{item.after ?? "-"}</code>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      ) : null}
+                    </details>
                   ) : null}
                 </div>
               </article>
@@ -347,11 +351,15 @@ function SkillHealthFindingRow({
           <strong>{finding.title}</strong>
         </span>
         <p>{finding.message}</p>
-        <small>{skillHealthKindLabel(finding.kind, t)} · {t("Action")}: {skillHealthActionLabel(finding.recommendedAction, t)}</small>
+        <small>{t("Recommended")}: {skillHealthActionLabel(finding.recommendedAction, t)}</small>
       </div>
       <div className="settings-skill-health-finding-meta">
         <SkillHealthSeverityPill severity={finding.severity} t={t} />
-        <SkillTokenList values={relatedIds} emptyLabel={t("No related ids")} />
+        <details className="settings-compact-details settings-interaction-details">
+          <summary>{t("Finding details")}</summary>
+          <small>{skillHealthKindLabel(finding.kind, t)}</small>
+          <SkillTokenList values={relatedIds} emptyLabel={t("No related ids")} />
+        </details>
       </div>
     </article>
   );
@@ -401,11 +409,16 @@ export function SkillSourceHealthPanel({
                 </span>
                 <p>{sourceHealthMessage(finding, t)}</p>
                 <small>{sourceHealthKindLabel(finding.kind, t)}</small>
-                {finding.recommendation ? <small>{t("Recommendation")}: {finding.recommendation}</small> : null}
-                {finding.evidence?.length ? (
-                  <small>
-                    {t("Evidence")}: {finding.evidence.slice(0, 3).map((item) => item.sourceRef).join(", ")}
-                  </small>
+                {finding.recommendation || finding.evidence?.length ? (
+                  <details className="settings-compact-details settings-interaction-details">
+                    <summary>{t("Source finding details")}</summary>
+                    {finding.recommendation ? <small>{t("Recommendation")}: {finding.recommendation}</small> : null}
+                    {finding.evidence?.length ? (
+                      <small>
+                        {t("Evidence")}: {finding.evidence.slice(0, 3).map((item) => item.sourceRef).join(", ")}
+                      </small>
+                    ) : null}
+                  </details>
                 ) : null}
               </div>
               <div className="settings-skill-health-finding-meta">
@@ -426,17 +439,19 @@ export function SkillSourceHealthPanel({
 export function SkillSourceStatus({
   source,
   snapshot,
+  showState = true,
   t,
 }: {
   readonly source: SkillPackSource;
   readonly snapshot: SkillSourceSnapshot | undefined;
+  readonly showState?: boolean;
   readonly t: SettingsTranslator;
 }): JSX.Element {
   const sourceState = skillSourceSnapshotState(snapshot, t);
   return (
     <span className="settings-skill-source-status">
       <span>{skillSourceLabel(source, t)}</span>
-      <small className={sourceState.tone}>{sourceState.label}</small>
+      {showState ? <small className={sourceState.tone}>{sourceState.label}</small> : null}
     </span>
   );
 }
@@ -447,6 +462,7 @@ export function SkillSourceInspector({
   artifacts,
   optimizationPreview,
   optimizationPreviewLoading,
+  showPreviewAction = true,
   cwd,
   saving,
   onPreviewOptimization,
@@ -459,6 +475,7 @@ export function SkillSourceInspector({
   readonly artifacts: readonly SkillSourceArtifact[];
   readonly optimizationPreview?: SkillOptimizationPreview;
   readonly optimizationPreviewLoading: boolean;
+  readonly showPreviewAction?: boolean;
   readonly cwd: string;
   readonly saving: boolean;
   readonly onPreviewOptimization: () => void;
@@ -489,10 +506,12 @@ export function SkillSourceInspector({
         <span>{t("Artifacts")}: {artifacts.length}</span>
       </div>
       <div className="settings-skill-source-actions">
-        <button className="secondary-button compact-button" type="button" onClick={onPreviewOptimization} disabled={saving || optimizationPreviewLoading}>
-          <Search size={14} />
-          {optimizationPreviewLoading ? t("Previewing...") : t("Preview optimization")}
-        </button>
+        {showPreviewAction ? (
+          <button className="secondary-button compact-button" type="button" onClick={onPreviewOptimization} disabled={saving || optimizationPreviewLoading}>
+            <Search size={14} />
+            {optimizationPreviewLoading ? t("Previewing...") : t("Preview optimization")}
+          </button>
+        ) : null}
         <button className="secondary-button danger compact-button" type="button" onClick={onArchive} disabled={saving}>
           <Archive size={14} />
           {t("Archive source snapshot")}
@@ -578,304 +597,6 @@ function SkillHealthSeverityPill({
   readonly t: (key: string) => string;
 }): JSX.Element {
   return <span className={`settings-skill-health-severity ${severity}`}>{skillHealthSeverityLabel(severity, t)}</span>;
-}
-
-export function ProcedureObservationClusterPanel({
-  clusters,
-  loading,
-  saving,
-  onCreateProtocolCandidate,
-  onCreatePlaybookCandidate,
-  t,
-}: {
-  readonly clusters: readonly ProcedureObservationCluster[];
-  readonly loading: boolean;
-  readonly saving: boolean;
-  readonly onCreateProtocolCandidate: (cluster: ProcedureObservationCluster) => void;
-  readonly onCreatePlaybookCandidate: (cluster: ProcedureObservationCluster) => void;
-  readonly t: SettingsTranslator;
-}): JSX.Element {
-  const reviewable = clusters.filter((cluster) => cluster.status === "ready_for_review");
-  const blocked = clusters.filter((cluster) => cluster.status === "blocked");
-  return (
-    <section className="settings-skill-candidate-review settings-skill-clusters" aria-label={t("Candidate Clusters")}>
-      <header className="settings-skill-candidate-head">
-        <span>
-          <CheckCircle2 size={15} />
-          <strong>{t("Candidate Clusters")}</strong>
-        </span>
-        <small>{t("{review} review · {blocked} blocked · {total} total", { review: reviewable.length, blocked: blocked.length, total: clusters.length })}</small>
-      </header>
-      {clusters.length === 0 ? (
-        <div className="compact-empty">{loading ? t("Loading candidate clusters...") : t("No candidate clusters yet")}</div>
-      ) : (
-        <div className="settings-skill-candidate-list">
-          {clusters.slice(0, 6).map((cluster) => {
-            const canCreateProtocolCandidate = cluster.channelId &&
-              cluster.routeKind === "channel_protocol" &&
-              cluster.status === "ready_for_review" &&
-              cluster.recommendedAction === "create_channel_protocol_candidate" &&
-              cluster.routeBlockers.length === 0;
-            const canCreatePlaybookCandidate = cluster.channelId &&
-              cluster.routeKind === "playbook" &&
-              cluster.status === "ready_for_review" &&
-              cluster.recommendedAction === "create_playbook_candidate" &&
-              cluster.routeBlockers.length === 0;
-            return (
-              <article key={cluster.id} className="settings-skill-candidate-card">
-                <div className="settings-skill-candidate-main">
-                  <div className="settings-skill-candidate-title">
-                    <span>
-                      <strong>{cluster.title}</strong>
-                      <small>{cluster.id} · {candidateRouteKindLabel(cluster.routeKind, t)}</small>
-                    </span>
-                    <span className={`settings-skill-candidate-status ${cluster.status}`}>{procedureObservationClusterStatusLabel(cluster.status, t)}</span>
-                  </div>
-                  <p>{cluster.summary}</p>
-                  <div className="settings-skill-candidate-meta">
-                    <span>{t("Recommended")}: {procedureObservationClusterActionLabel(cluster.recommendedAction, t)}</span>
-                    <span>{t("Evidence")}: {cluster.observationCount}</span>
-                    <span>{t("Reusable")}: {cluster.reusableScore}</span>
-                    <span>{t("Updated {time}", { time: formatDateTime(cluster.lastObservedAt) })}</span>
-                  </div>
-                  <div className="settings-skill-candidate-gates">
-                    <span>
-                      <small>{t("Triggers")}</small>
-                      <SkillTokenList values={cluster.positiveTriggers} emptyLabel={t("No positive triggers")} />
-                    </span>
-                    <span>
-                      <small>{t("Blockers")}</small>
-                      <SkillTokenList values={cluster.routeBlockers.map((blocker) => candidateRouteBlockerLabel(blocker, t))} emptyLabel={t("No blockers")} />
-                    </span>
-                  </div>
-                </div>
-                {canCreateProtocolCandidate ? (
-                  <div className="settings-skill-candidate-actions">
-                    <button className="primary-button compact-button" type="button" onClick={() => onCreateProtocolCandidate(cluster)} disabled={saving}>
-                      <BookOpen size={14} />
-                      {t("Create protocol candidate")}
-                    </button>
-                  </div>
-                ) : null}
-                {canCreatePlaybookCandidate ? (
-                  <div className="settings-skill-candidate-actions">
-                    <button className="primary-button compact-button" type="button" onClick={() => onCreatePlaybookCandidate(cluster)} disabled={saving}>
-                      <BookOpen size={14} />
-                      {t("Create playbook candidate")}
-                    </button>
-                  </div>
-                ) : null}
-              </article>
-            );
-          })}
-        </div>
-      )}
-    </section>
-  );
-}
-
-export function PlaybookCandidateReviewPanel({
-  candidates,
-  channels,
-  loading,
-  saving,
-  onReview,
-  t,
-}: {
-  readonly candidates: readonly ChannelPlaybookCandidate[];
-  readonly channels: readonly Channel[];
-  readonly loading: boolean;
-  readonly saving: boolean;
-  readonly onReview: (candidate: ChannelPlaybookCandidate, action: ChannelPlaybookCandidateReviewAction) => void;
-  readonly t: SettingsTranslator;
-}): JSX.Element {
-  const channelNames = useMemo(() => new Map(channels.map((channel) => [channel.id, channel.name])), [channels]);
-  const draftCount = candidates.filter((candidate) => candidate.status === "draft").length;
-  const activeCount = candidates.filter((candidate) => candidate.status === "active").length;
-  const rows = useMemo(() => {
-    const statusRank: Record<ChannelPlaybookCandidate["status"], number> = {
-      draft: 0,
-      active: 1,
-      stale: 2,
-      cancelled: 3,
-    };
-    return [...candidates].sort((left, right) => {
-      const rank = statusRank[left.status] - statusRank[right.status];
-      return rank !== 0 ? rank : right.updatedAt.localeCompare(left.updatedAt);
-    });
-  }, [candidates]);
-
-  return (
-    <section className="settings-skill-candidate-review settings-playbook-candidate-review" aria-label={t("Playbook Candidate Review")}>
-      <header className="settings-skill-candidate-head">
-        <span>
-          <BookOpen size={15} />
-          <strong>{t("Playbook Candidate Review")}</strong>
-        </span>
-        <small>{t("{draft} draft · {active} active · {total} total", { draft: draftCount, active: activeCount, total: candidates.length })}</small>
-      </header>
-      {rows.length === 0 ? (
-        <div className="compact-empty">{loading ? t("Loading playbook candidates...") : t("No playbook candidates")}</div>
-      ) : (
-        <div className="settings-skill-candidate-list">
-          {rows.slice(0, 8).map((candidate) => {
-            const canReview = candidate.status === "draft";
-            const channelName = channelNames.get(candidate.channelId) ?? candidate.channelId;
-            return (
-              <article key={candidate.id} className="settings-skill-candidate-card">
-                <div className="settings-skill-candidate-main">
-                  <div className="settings-skill-candidate-title">
-                    <span>
-                      <strong>{candidate.title}</strong>
-                      <small>{channelName} · {candidate.id}</small>
-                    </span>
-                    <span className={`settings-skill-candidate-status ${candidate.status}`}>{playbookCandidateStatusLabel(candidate.status, t)}</span>
-                  </div>
-                  <p>{candidate.summary}</p>
-                  <div className="settings-skill-candidate-meta">
-                    <span>{t("Goal")}: {candidate.normalizedGoal}</span>
-                    <span>{t("Reason")}: {candidate.reason}</span>
-                    <span>{t("Updated {time}", { time: formatDateTime(candidate.updatedAt) })}</span>
-                  </div>
-                  <div className="settings-skill-candidate-gates">
-                    <span>
-                      <small>{t("Steps")}</small>
-                      <SkillTokenList values={candidate.procedureSteps.map((step) => step.title)} emptyLabel={t("No procedure steps")} />
-                    </span>
-                    <span>
-                      <small>{t("Validation")}</small>
-                      <SkillTokenList values={candidate.validationSteps.map((step) => step.title)} emptyLabel={t("No validation steps")} />
-                    </span>
-                    <span>
-                      <small>{t("Triggers")}</small>
-                      <SkillTokenList values={candidate.positiveTriggers} emptyLabel={t("No positive triggers")} />
-                    </span>
-                    <span>
-                      <small>{t("Avoid triggers")}</small>
-                      <SkillTokenList values={candidate.negativeTriggers} emptyLabel={t("No avoid triggers")} />
-                    </span>
-                    <span>
-                      <small>{t("Source refs")}</small>
-                      <SkillTokenList values={candidate.sourceRefs.map((ref) => `${ref.label ?? ref.type}:${ref.id}`)} emptyLabel={t("No source refs")} />
-                    </span>
-                  </div>
-                </div>
-                <div className="settings-skill-candidate-actions">
-                  <button className="primary-button compact-button" type="button" onClick={() => onReview(candidate, "approve")} disabled={saving || !canReview}>
-                    <CheckCircle2 size={14} />
-                    {t("Approve playbook")}
-                  </button>
-                  <button className="secondary-button danger compact-button" type="button" onClick={() => onReview(candidate, "reject")} disabled={saving || !canReview}>
-                    <Archive size={14} />
-                    {t("Reject playbook")}
-                  </button>
-                </div>
-              </article>
-            );
-          })}
-        </div>
-      )}
-    </section>
-  );
-}
-
-export function SkillCandidateReviewPanel({
-  candidates,
-  loading,
-  saving,
-  onReview,
-  onCreateDraft,
-  t,
-}: {
-  readonly candidates: readonly SkillCandidate[];
-  readonly loading: boolean;
-  readonly saving: boolean;
-  readonly onReview: (candidateId: string, action: SkillCandidateReviewAction) => void;
-  readonly onCreateDraft: (candidateId: string) => void;
-  readonly t: SettingsTranslator;
-}): JSX.Element {
-  const openCandidates = candidates.filter((candidate) => isOpenSkillCandidateStatus(candidate.status));
-  return (
-    <section className="settings-skill-candidate-review" aria-label={t("Skill Candidate Review")}>
-      <header className="settings-skill-candidate-head">
-        <span>
-          <CheckCircle2 size={15} />
-          <strong>{t("Skill Candidate Review")}</strong>
-        </span>
-        <small>{t("{open} open · {total} total", { open: openCandidates.length, total: candidates.length })}</small>
-      </header>
-      {openCandidates.length === 0 ? (
-        <div className="compact-empty">{loading ? t("Loading skill candidates...") : t("No open skill candidates")}</div>
-      ) : (
-        <div className="settings-skill-candidate-list">
-          {openCandidates.map((candidate) => {
-            const gate = skillCandidateGate(candidate, t);
-            const canApprove = (candidate.status === "pending" || candidate.status === "needs_edit") && !gate.approvalBlocked;
-            const canReject = !isTerminalSkillCandidateStatus(candidate.status);
-            const canCreateDraft = candidate.status === "approved_for_draft" && !gate.draftBlocked;
-            return (
-              <article key={candidate.id} className="settings-skill-candidate-card">
-                <div className="settings-skill-candidate-main">
-                  <div className="settings-skill-candidate-title">
-                    <span>
-                      <strong>{candidate.title}</strong>
-                      <small>{candidate.id} · {skillCandidateOriginLabel(candidate.origin, t)}</small>
-                    </span>
-                    <SkillCandidateStatusPill candidate={candidate} t={t} />
-                  </div>
-                  <p>{candidate.summary}</p>
-                  <div className="settings-skill-candidate-meta">
-                    <span>{t("Duplicate")}: {skillDuplicateDecisionLabel(candidate.duplicateAnalysis.decision, t)}</span>
-                    <span>{t("Similarity")}: {Math.round(candidate.duplicateAnalysis.similarityScore * 100)}%</span>
-                    <span>{t("Updated {time}", { time: formatDateTime(candidate.updatedAt) })}</span>
-                  </div>
-                  <div className="settings-skill-candidate-gates">
-                    <span>
-                      <small>{t("Gates")}</small>
-                      <SkillTokenList values={gate.labels} emptyLabel={t("Draft gates clear")} />
-                    </span>
-                    <span>
-                      <small>{t("Source refs")}</small>
-                      <SkillTokenList values={candidate.sourceRefs.map((ref) => `${ref.label ?? ref.type}:${ref.id}`)} emptyLabel={t("No source refs")} />
-                    </span>
-                  </div>
-                </div>
-                <div className="settings-skill-candidate-actions">
-                  {candidate.status === "approved_for_draft" ? (
-                    <button className="primary-button compact-button" type="button" onClick={() => onCreateDraft(candidate.id)} disabled={saving || !canCreateDraft}>
-                      <Upload size={14} />
-                      {t("Create registry draft")}
-                    </button>
-                  ) : (
-                    <button className="secondary-button compact-button" type="button" onClick={() => onReview(candidate.id, "approve_for_draft")} disabled={saving || !canApprove}>
-                      <CheckCircle2 size={14} />
-                      {t("Approve for draft")}
-                    </button>
-                  )}
-                  {canReject ? (
-                    <button className="secondary-button danger compact-button" type="button" onClick={() => onReview(candidate.id, "reject")} disabled={saving}>
-                      <Archive size={14} />
-                      {t("Reject candidate")}
-                    </button>
-                  ) : null}
-                </div>
-              </article>
-            );
-          })}
-        </div>
-      )}
-    </section>
-  );
-}
-
-function SkillCandidateStatusPill({
-  candidate,
-  t,
-}: {
-  readonly candidate: SkillCandidate;
-  readonly t: SettingsTranslator;
-}): JSX.Element {
-  return <span className={`settings-skill-candidate-status ${candidate.status}`}>{skillCandidateStatusLabel(candidate.status, t)}</span>;
 }
 
 export function SkillTokenList({ values, emptyLabel }: { readonly values: readonly string[]; readonly emptyLabel: string }): JSX.Element {

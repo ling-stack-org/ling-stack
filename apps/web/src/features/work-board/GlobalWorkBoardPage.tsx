@@ -125,6 +125,12 @@ export function GlobalWorkBoardPage({
   const waitingOptions = [...new Set(scopedItems.map((item) => item.waitingReason).filter(Boolean))].sort() as WorkItemWaitingReason[];
   const stats = useMemo(() => readWorkBoardStats(items), [items]);
   const visibleGroups = useMemo(() => buildVisibleWorkBoardGroups(filteredItems, activeScope), [activeScope, filteredItems]);
+  const settingsSummary = t("Work summary: {actionable} need action · {blocked} blocked · {active} active · {history} history", {
+    actionable: stats.actionable,
+    blocked: stats.blocked,
+    active: stats.active,
+    history: stats.completed,
+  });
   const filterSummary = readFilterSummary({
     channelName: channelFilter ? channelById.get(channelFilter)?.name : undefined,
     statusFilter,
@@ -248,6 +254,7 @@ export function GlobalWorkBoardPage({
             {settingsToolMode ? (
               <div className="work-board-settings-toolbar">
                 {workBoardTabs}
+                <span className="work-board-settings-summary" title={settingsSummary}>{settingsSummary}</span>
                 {filterToggleButton}
                 {clearFiltersButton}
                 <button className="secondary-button compact-button" type="button" onClick={onRefresh}>
@@ -314,6 +321,7 @@ export function GlobalWorkBoardPage({
                           onOpenRun={onOpenRun}
                           onOpenApproval={onOpenApproval}
                           onOpenExternalWork={item.channelId ? () => onOpenChannel(item.channelId as string) : undefined}
+                          settingsToolMode={settingsToolMode}
                           routeChannels={channels}
                           routing={item.externalWorkId === routingExternalWorkId}
                           onRouteExternalWork={onRouteExternalWork}
@@ -353,6 +361,7 @@ export function GlobalWorkBoardPage({
           onReleaseWorkItem={onReleaseWorkItem}
           onCompleteWorkItem={onCompleteWorkItem}
           onFailWorkItem={onFailWorkItem}
+          settingsToolMode={settingsToolMode}
         />
       </div>
     </section>
@@ -502,12 +511,14 @@ function scopeDescription(scope: WorkBoardScope): string {
 
 function readWorkBoardStats(items: readonly WorkItemView[]): {
   readonly actionable: number;
+  readonly active: number;
   readonly running: number;
   readonly blocked: number;
   readonly completed: number;
 } {
   return {
     actionable: items.filter(isActionableWorkItem).length,
+    active: items.filter((item) => !isTerminalWorkItemView(item)).length,
     running: items.filter((item) => item.status === "running").length,
     blocked: items.filter((item) => item.status === "blocked" || item.status === "waiting").length,
     completed: items.filter(isTerminalWorkItemView).length,
@@ -591,6 +602,7 @@ function WorkItemDetailDrawer({
   onReleaseWorkItem,
   onCompleteWorkItem,
   onFailWorkItem,
+  settingsToolMode,
 }: {
   readonly item?: WorkItemView;
   readonly activeScope: WorkBoardScope;
@@ -612,6 +624,7 @@ function WorkItemDetailDrawer({
   readonly onReleaseWorkItem?: (workItemId: string, claimToken: string) => void;
   readonly onCompleteWorkItem?: (workItemId: string, claimToken: string) => void;
   readonly onFailWorkItem?: (workItemId: string, claimToken: string) => void;
+  readonly settingsToolMode?: boolean;
 }): JSX.Element {
   const { t } = useI18n();
   const [routeChannelId, setRouteChannelId] = useState("");
@@ -667,10 +680,10 @@ function WorkItemDetailDrawer({
   const canFail = Boolean(item.durable && item.claim?.token && onFailWorkItem && !isTerminalWorkItemView(item));
   const owner = item.claim?.ownerId ?? item.assigneeTeammateId ?? t("Unassigned");
   const linkedObjects = [
-    item.runId ? { key: "run", label: t("Run"), value: item.runId, icon: <SquareTerminal size={14} />, onClick: () => onOpenRun(item.runId as string) } : undefined,
-    item.taskId ? { key: "task", label: t("Task"), value: item.taskId, icon: <ExternalLink size={14} />, onClick: () => onOpenTask(item.taskId as string) } : undefined,
-    item.approvalId ? { key: "approval", label: t("Approval"), value: item.approvalId, icon: <Inbox size={14} />, onClick: () => onOpenApproval(item.approvalId as string) } : undefined,
-    item.channelId ? { key: "channel", label: t("Channel"), value: channelName ?? item.channelId, icon: <ExternalLink size={14} />, onClick: () => onOpenChannel(item.channelId as string) } : undefined,
+    item.runId ? { key: "run", label: t(settingsToolMode ? "Run diagnostics" : "Run"), value: item.runId, icon: <SquareTerminal size={14} />, onClick: () => onOpenRun(item.runId as string) } : undefined,
+    item.taskId ? { key: "task", label: t(settingsToolMode ? "Task in app" : "Task"), value: item.taskId, icon: <ExternalLink size={14} />, onClick: () => onOpenTask(item.taskId as string) } : undefined,
+    item.approvalId ? { key: "approval", label: t(settingsToolMode ? "Approval in app" : "Approval"), value: item.approvalId, icon: <Inbox size={14} />, onClick: () => onOpenApproval(item.approvalId as string) } : undefined,
+    item.channelId ? { key: "channel", label: t(settingsToolMode ? "Channel in app" : "Channel"), value: channelName ?? item.channelId, icon: <ExternalLink size={14} />, onClick: () => onOpenChannel(item.channelId as string) } : undefined,
   ].filter(Boolean) as Array<{ readonly key: string; readonly label: string; readonly value: string; readonly icon: JSX.Element; readonly onClick: () => void }>;
 
   return (
@@ -693,27 +706,27 @@ function WorkItemDetailDrawer({
         {item.approvalId ? (
           <button className="primary-button compact-button" type="button" onClick={() => onOpenApproval(item.approvalId as string)}>
             <Inbox size={14} />
-            {t("Handle approval")}
+            {t(settingsToolMode ? "Open approval in app" : "Handle approval")}
           </button>
         ) : item.status === "blocked" && item.runId ? (
           <button className="primary-button compact-button" type="button" onClick={() => onOpenRun(item.runId as string)}>
             <CircleAlert size={14} />
-            {t("View failure")}
+            {t(settingsToolMode ? "Open run diagnostics" : "View failure")}
           </button>
         ) : item.runId ? (
           <button className="primary-button compact-button" type="button" onClick={() => onOpenRun(item.runId as string)}>
             <SquareTerminal size={14} />
-            {t("View run")}
+            {t(settingsToolMode ? "Open run diagnostics" : "View run")}
           </button>
         ) : item.taskId ? (
           <button className="primary-button compact-button" type="button" onClick={() => onOpenTask(item.taskId as string)}>
             <ExternalLink size={14} />
-            {t("Open task")}
+            {t(settingsToolMode ? "Open task in app" : "Open task")}
           </button>
         ) : item.channelId ? (
           <button className="primary-button compact-button" type="button" onClick={() => onOpenChannel(item.channelId as string)}>
             <ExternalLink size={14} />
-            {t("Open channel")}
+            {t(settingsToolMode ? "Open channel in app" : "Open channel")}
           </button>
         ) : null}
         {canClaim ? (
@@ -787,13 +800,13 @@ function WorkItemDetailDrawer({
         {item.channelId ? (
           <button className="secondary-button compact-button" type="button" onClick={() => onOpenChannel(item.channelId as string)}>
             <ExternalLink size={14} />
-            {t("Open channel")}
+            {t(settingsToolMode ? "Open channel in app" : "Open channel")}
           </button>
         ) : null}
         {item.approvalId ? (
           <button className="secondary-button compact-button" type="button" onClick={() => onOpenApproval(item.approvalId as string)}>
             <Inbox size={14} />
-            {t("Open approval")}
+            {t(settingsToolMode ? "Open approval in app" : "Open approval")}
           </button>
         ) : null}
         {canHeartbeat && item.claim ? (

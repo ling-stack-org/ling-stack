@@ -50,11 +50,17 @@ test("Council Workspace shows council health, members, and channel entry points"
 
   const navigation = page.getByLabel("Ling Stack navigation");
   await openCouncilWorkspace(page);
-  await expect(page.getByRole("heading", { name: "Council Workspace", level: 1 })).toBeVisible();
+  await expect(page.locator(".council-workspace-page[aria-label='Council Workspace']")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Council Workspace", level: 1 })).toHaveCount(0);
+  await expect(page.getByText("Manage councils, members, health, and channel usage from one workspace.")).toHaveCount(0);
   await expect(page.getByLabel("Settings sections")).toBeVisible();
   await expect(page.getByLabel("Ling Stack navigation")).toHaveCount(0);
   await expect(page.getByLabel("Settings sections").getByRole("button", { name: "Council Workspace" })).toHaveClass(/active/);
   await expect(page.locator(".settings-tool-return-row")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Create council" })).toHaveCount(1);
+  await expect(page.getByRole("button", { name: "Refresh councils" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Open AI Teammates" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Manage teammates" })).toBeVisible();
   await expect(page.getByLabel("Council overview")).toHaveCount(0);
   await expect(page.getByText("Manage advisor councils")).toHaveCount(0);
   await expect(page.getByText("Health filter")).toBeHidden();
@@ -128,7 +134,7 @@ test("Council Workspace shows council health, members, and channel entry points"
   await page.getByRole("tab", { name: "Council settings" }).click();
   const councilSettings = page.getByLabel("Council settings");
   let councilActions = page.getByLabel("Council actions");
-  await expect(councilSettings).toContainText("Editable for custom councils");
+  await expect(councilSettings).toContainText("Custom");
   await expect(councilSettings.getByLabel("Council boundaries")).toContainText("Reference collection");
   await expect(councilSettings.getByLabel("Council name")).toHaveValue("Design Council");
   await councilSettings.getByLabel("Council name").fill("Design Council Ops");
@@ -155,10 +161,12 @@ test("Council Workspace shows council health, members, and channel entry points"
 
   await page.locator(".council-workspace-list").getByRole("button", { name: /Development Council/ }).click();
   await page.getByRole("tab", { name: "Council settings" }).click();
-  await expect(councilSettings).toContainText("Built-in councils must be cloned before editing");
+  await expect(councilSettings).toContainText("Built-in");
   await expect(councilSettings.getByLabel("Council name")).toBeDisabled();
   await expect(councilSettings.getByRole("button", { name: "Save council settings" })).toBeDisabled();
   await expect(councilSettings.getByRole("button", { name: "Pause council" })).toBeDisabled();
+  await councilSettings.getByText("More council actions").click();
+  councilActions = page.getByLabel("Council actions");
   await expect(councilActions.getByRole("button", { name: "Archive council" })).toBeDisabled();
   await councilActions.getByRole("button", { name: "Clone council" }).click();
   await expect.poll(() => {
@@ -176,6 +184,7 @@ test("Council Workspace shows council health, members, and channel entry points"
   ).toBe(false);
 
   await page.getByRole("tab", { name: "Council settings" }).click();
+  await councilSettings.getByText("More council actions").click();
   councilActions = page.getByLabel("Council actions");
   await councilActions.getByRole("button", { name: "Archive council" }).click();
   await expect.poll(() => {
@@ -184,13 +193,14 @@ test("Council Workspace shows council health, members, and channel entry points"
   }).toBe("archived");
   await expect(page.locator(".council-workspace-list").getByRole("button", { name: /Copy of Development Council/ })).toHaveCount(0);
 
-  await page.getByRole("button", { name: "Open AI Teammates" }).click();
+  await page.getByRole("tab", { name: "Council members" }).click();
+  await page.getByRole("button", { name: "Manage teammates" }).click();
   await expect(page.getByLabel("Workspace teammates")).toBeVisible();
 
   await page.getByLabel("Settings sections").getByRole("button", { name: "Council Workspace" }).click();
   await expect(page.getByLabel("Settings sections")).toBeVisible();
   await page.getByRole("tab", { name: "Channel usage" }).click();
-  await page.getByLabel("Channel usage").getByRole("button", { name: "Open channel" }).click();
+  await page.getByLabel("Channel usage").getByRole("button", { name: "Open channel in app" }).click();
   await expect(navigation.locator(".sidebar-row-shell.selected")).toContainText("Engineering");
   expect(state.teammateChannelMemberships).toHaveLength(originalChannelMembershipCount);
 });

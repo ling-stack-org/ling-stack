@@ -104,6 +104,7 @@ export interface MockState {
   nextStreamEvents?: MockRunEvent[];
   providerCheckDelayMs?: number;
   runResponseDelayMs?: number;
+  mediaJobRunDelayMs?: number;
   channelMessageDelayMs?: number;
   governanceNotificationDelayMs?: number;
   channelAiReplyBody?: string;
@@ -10109,7 +10110,7 @@ export async function handleDaemonRoute(
       })
       .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt) || right.id.localeCompare(left.id))
       .slice(0, Number.isFinite(limit) && limit > 0 ? limit : 100);
-    await route.fulfill({ json: { cwd, channelId, plans } });
+    await route.fulfill({ json: { cwd, channelId, plans: plans.map((plan) => hydrateMockProposedPlanSourceState(state, plan)) } });
     return;
   }
   const channelMatch = /^\/channels\/([^/]+)$/.exec(path);
@@ -10580,14 +10581,16 @@ export async function handleDaemonRoute(
     }
     if (!planId) {
       if (request.method() === "GET") {
-        const plans = state.proposedPlans.filter((plan) => plan.threadId === threadId);
+        const plans = state.proposedPlans
+          .filter((plan) => plan.threadId === threadId)
+          .map((plan) => hydrateMockProposedPlanSourceState(state, plan));
         await route.fulfill({ json: { cwd, threadId, plans } });
         return;
       }
       if (request.method() === "POST") {
         const body = readMockPostData(request);
         const plan = upsertMockProposedPlan(state, threadId, undefined, body);
-        await route.fulfill({ status: 201, json: { cwd, threadId, plan } });
+        await route.fulfill({ status: 201, json: { cwd, threadId, plan: hydrateMockProposedPlanSourceState(state, plan) } });
         return;
       }
     }
@@ -10598,7 +10601,7 @@ export async function handleDaemonRoute(
           await route.fulfill({ status: 404, json: { error: "proposed_plan_not_found" } });
           return;
         }
-        await route.fulfill({ json: { cwd, threadId, plan } });
+        await route.fulfill({ json: { cwd, threadId, plan: hydrateMockProposedPlanSourceState(state, plan) } });
         return;
       }
       if (request.method() === "PUT") {
@@ -10609,7 +10612,7 @@ export async function handleDaemonRoute(
           return;
         }
         const plan = upsertMockProposedPlan(state, threadId, planId, body);
-        await route.fulfill({ json: { cwd, threadId, plan } });
+        await route.fulfill({ json: { cwd, threadId, plan: hydrateMockProposedPlanSourceState(state, plan) } });
         return;
       }
       if (request.method() === "PATCH") {
@@ -10624,7 +10627,7 @@ export async function handleDaemonRoute(
           return;
         }
         const plan = patchMockProposedPlan(state, existing, body);
-        await route.fulfill({ json: { cwd, threadId, plan } });
+        await route.fulfill({ json: { cwd, threadId, plan: hydrateMockProposedPlanSourceState(state, plan) } });
         return;
       }
     }
@@ -10638,7 +10641,7 @@ export async function handleDaemonRoute(
       }
       const plan = planInput ? upsertMockProposedPlan(state, threadId, planId, planInput) : existing!;
       const result = applyMockProposedPlanAction(state, thread, plan, action, body);
-      await route.fulfill({ json: { cwd, threadId, ...result } });
+      await route.fulfill({ json: { cwd, threadId, ...result, plan: hydrateMockProposedPlanSourceState(state, result.plan) } });
       return;
     }
   }
@@ -11775,6 +11778,9 @@ export async function handleDaemonRoute(
         return;
       }
     }
+    if (state.mediaJobRunDelayMs) {
+      await new Promise((resolve) => setTimeout(resolve, state.mediaJobRunDelayMs));
+    }
     const provider = state.providers.find((item) => isRecord(item) && item.id === job.providerPresetId);
     const normalizedProvider = isRecord(provider) ? normalizeMockProviderForGenerationRuntime(provider) : undefined;
     const jobOperation = mockMediaJobOperation(job.operation);
@@ -12868,6 +12874,19 @@ function incrementCountMap(value: unknown, key: string): void {
 }
 
 const mockActiveGoalStatuses: readonly string[] = ["active", "paused", "blocked", "usage_limited", "budget_limited"];
+
+function hydrateMockProposedPlanSourceState(state: MockState, plan: ProposedPlanArtifact): ProposedPlanArtifact {
+  if (!plan.sourceMessageId) {
+    return plan;
+  }
+  const sourceMessage = state.channelMessages.find((message) => isRecord(message) && message.id === plan.sourceMessageId);
+  return {
+    ...plan,
+    sourceMessageState: isRecord(sourceMessage) && (!plan.channelId || sourceMessage.channelId === plan.channelId)
+      ? "available"
+      : "deleted",
+  };
+}
 
 function upsertMockProposedPlan(
   state: MockState,

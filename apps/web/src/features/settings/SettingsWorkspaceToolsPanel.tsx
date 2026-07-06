@@ -27,7 +27,6 @@ export interface WorkspaceToolCounts {
 interface WorkspaceToolItem {
   readonly id: "providers" | "teammates" | "councils" | "work-board" | "approval";
   readonly title: string;
-  readonly description: string;
   readonly chipLabel: string;
   readonly actionLabel: string;
   readonly icon: LucideIcon;
@@ -67,7 +66,6 @@ export function SettingsWorkspaceToolsPanel({
     {
       id: "providers",
       title: t("Model Workbench"),
-      description: t("Configure model routes, API keys, and readiness checks."),
       chipLabel: readyModelCountLabel(counts.readyProviderCount, t),
       actionLabel: t("Open Model Workbench"),
       icon: Box,
@@ -76,7 +74,6 @@ export function SettingsWorkspaceToolsPanel({
     {
       id: "teammates",
       title: t("Teammate Management"),
-      description: t("Manage individual AI teammates, models, and private chat settings."),
       chipLabel: t("{count} teammates", { count: counts.visibleTeammateCount }),
       actionLabel: t("Open Teammate Management"),
       icon: Bot,
@@ -85,7 +82,6 @@ export function SettingsWorkspaceToolsPanel({
     {
       id: "councils",
       title: t("Council Workspace"),
-      description: t("Manage councils, members, and channel participation."),
       chipLabel: t("{count} council(s)", { count: counts.activeCouncilCount }),
       actionLabel: t("Open Council Workspace"),
       icon: Brain,
@@ -94,7 +90,6 @@ export function SettingsWorkspaceToolsPanel({
     {
       id: "work-board",
       title: t("Work Board"),
-      description: t("Inspect work across channels; stays a workspace tool in this release."),
       chipLabel: t("{count} pending work items", { count: counts.openWorkItemCount }),
       actionLabel: t("Open Work Board"),
       icon: Kanban,
@@ -103,7 +98,6 @@ export function SettingsWorkspaceToolsPanel({
     {
       id: "approval",
       title: t("Default authorization"),
-      description: t("Choose how new conversations get permission to use tools."),
       chipLabel: t("Default: {mode}", { mode: t(authorizationOption.labelKey) }),
       actionLabel: t("Open default authorization"),
       icon: ShieldCheck,
@@ -215,7 +209,6 @@ function WorkspaceToolRow({ tool }: { readonly tool: WorkspaceToolItem }): JSX.E
           <strong>{tool.title}</strong>
         </span>
       )}
-      description={tool.description}
       status={<small className="settings-tool-row-chip">{tool.chipLabel}</small>}
       actions={(
         <button className="secondary-button settings-tool-row-action" type="button" onClick={tool.onOpen}>

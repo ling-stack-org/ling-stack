@@ -1,11 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   AlertTriangle,
-  Archive,
   BookOpen,
-  CheckCircle2,
-  Eye,
-  Loader2,
   Plus,
   RefreshCw,
   Search,
@@ -42,7 +38,6 @@ import {
   updateSkillSourceUpgradePolicy,
 } from "../../api.js";
 import { useI18n } from "../../i18n.js";
-import { formatDateTime } from "../../lib/formatting.js";
 import type {
   Channel,
   ChannelPlaybookCandidate,
@@ -53,7 +48,6 @@ import type {
   SkillHealthReport,
   SkillImportDraft,
   SkillOptimizationPreview,
-  SkillPackSource,
   SkillRegistryEntry,
   SkillSourceArtifact,
   SkillSourceContextHealthFinding,
@@ -64,19 +58,10 @@ import type {
   SkillSourceSyncRequest,
   SkillSourceUpgradePolicy,
 } from "../../types.js";
-import { approvalProfileText, workflowPhaseLabel } from "../teammates/helpers.js";
 import {
-  PlaybookCandidateReviewPanel,
-  ProcedureObservationClusterPanel,
-  SkillCandidateReviewPanel,
   SkillHealthPanel,
-  SkillInspectorSection,
   SkillSourceHealthPanel,
-  SkillSourceInspector,
-  SkillSourceStatus,
   SkillSourceSyncPanel,
-  SkillStatePill,
-  SkillTokenList,
   boundTeammateNames,
   defaultSelectedSyncSkillIds,
   isOpenSkillCandidateStatus,
@@ -86,28 +71,20 @@ import {
   skillCandidateReviewMessage,
   skillCandidateReviewReason,
   skillLibraryFilterLabel,
-  skillRegistryState,
-  sourceHealthKindLabel,
   type SkillLibraryFilter,
   type TeammateSkillBindingSummary,
 } from "./SkillLibraryWidgets.js";
+import { SkillCompactInspector } from "./SkillCompactInspector.js";
+import { SkillImportDialog, initialSkillImportForm, type SkillImportForm } from "./SkillImportDialog.js";
+import { SkillLibraryTable } from "./SkillLibraryTable.js";
+import {
+  PlaybookCandidateReviewPanel,
+  ProcedureObservationClusterPanel,
+  SkillCandidateReviewPanel,
+} from "./SkillReviewQueuePanels.js";
 import { SettingsSubnav } from "./SettingsSubnav.js";
 
 type SkillLibrarySubsectionId = "skills" | "review" | "source";
-
-interface SkillImportForm {
-  readonly name: string;
-  readonly sourcePath: string;
-  readonly source: SkillPackSource;
-  readonly content: string;
-}
-
-const initialSkillImportForm: SkillImportForm = {
-  name: "",
-  sourcePath: "",
-  source: "custom",
-  content: "",
-};
 
 export function SkillLibrarySettingsPanel({ cwd, refreshToken = 0 }: { readonly cwd: string; readonly refreshToken?: number }): JSX.Element {
   const { t } = useI18n();
@@ -231,8 +208,8 @@ export function SkillLibrarySettingsPanel({ cwd, refreshToken = 0 }: { readonly 
   }, [filter, searchQuery, skills, sortMode, sourceSnapshotBySkillId]);
 
   const selectedSkill = useMemo(() => {
-    return skills.find((entry) => entry.id === selectedSkillId) ?? filteredSkills[0] ?? skills[0];
-  }, [filteredSkills, selectedSkillId, skills]);
+    return filteredSkills.find((entry) => entry.id === selectedSkillId) ?? filteredSkills[0];
+  }, [filteredSkills, selectedSkillId]);
 
   useEffect(() => {
     if (!selectedSkill && selectedSkillId) {
@@ -727,7 +704,6 @@ export function SkillLibrarySettingsPanel({ cwd, refreshToken = 0 }: { readonly 
       <header className="settings-skill-library-head">
         <div>
           <h2 id="settings-skill-library-title">{t("Skill library")}</h2>
-          <p>{t("Inspect reusable skill definitions, source health, and workspace skills.")}</p>
         </div>
         <div className="settings-skill-library-actions">
           <button
@@ -766,9 +742,7 @@ export function SkillLibrarySettingsPanel({ cwd, refreshToken = 0 }: { readonly 
       <div className="settings-skill-library-stats" aria-label={t("Skill library stats")}>
         <span><small>{t("Total skills")}</small><strong>{stats.total}</strong></span>
         <span><small>{t("Bindable")}</small><strong>{stats.bindable}</strong></span>
-        <span><small>{t("Drafts")}</small><strong>{stats.draft}</strong></span>
         <span><small>{t("Blocked")}</small><strong>{stats.blocked}</strong></span>
-        <span><small>{t("Source-backed")}</small><strong>{stats.sourceBacked}</strong></span>
         <span><small>{t("Missing source")}</small><strong>{stats.missingSource}</strong></span>
       </div>
 
@@ -838,118 +812,28 @@ export function SkillLibrarySettingsPanel({ cwd, refreshToken = 0 }: { readonly 
       ) : null}
 
       {importOpen ? (
-        <div className="settings-skill-import-overlay" role="presentation" onMouseDown={(event) => {
-          if (event.target === event.currentTarget) {
-            setImportOpen(false);
-          }
-        }}>
-        <section className="settings-skill-import-panel" role="dialog" aria-modal="true" aria-labelledby="settings-skill-import-title">
-          <div className="panel-title split">
-            <span>
-              <Upload size={15} />
-              <h3 id="settings-skill-import-title">{t("Import skill draft")}</h3>
-            </span>
-            <button className="ghost-button compact-button" type="button" onClick={() => setImportOpen(false)} aria-label={t("Close import dialog")}>
-              {t("Close")}
-            </button>
-          </div>
-          <div className="settings-skill-import-grid">
-            <label className="field">
-              <span>{t("Source")}</span>
-              <select value={importForm.source} onChange={(event) => setImportForm({ ...importForm, source: event.target.value as SkillPackSource })}>
-                <option value="custom">{t("custom")}</option>
-                <option value="skill-directory">{t("skill-directory")}</option>
-                <option value="agents-md">{t("agents-md")}</option>
-                <option value="workspace">{t("workspace")}</option>
-              </select>
-            </label>
-            <label className="field">
-              <span>{t("Draft name")}</span>
-              <input value={importForm.name} onChange={(event) => setImportForm({ ...importForm, name: event.target.value })} />
-            </label>
-            <label className="field">
-              <span>{t("Source path")}</span>
-              <input value={importForm.sourcePath} onChange={(event) => setImportForm({ ...importForm, sourcePath: event.target.value })} placeholder="SKILL.md / AGENTS.md" />
-            </label>
-            <label className="field wide">
-              <span>{t("Skill content")}</span>
-              <textarea rows={5} value={importForm.content} onChange={(event) => setImportForm({ ...importForm, content: event.target.value })} />
-            </label>
-          </div>
-          {importDraft ? (
-            <div className="settings-skill-import-preview">
-              {importDraft.definitions.map((item) => (
-                <article key={item.definition.id} className="settings-skill-draft-row">
-                  <span>
-                    <strong>{item.definition.name}</strong>
-                    <small>{item.definition.id} · {item.definition.summary}</small>
-                  </span>
-                  <SkillStatePill label={item.warnings?.some((warning) => warning.severity === "error") ? t("Blocked") : t("Draft")} tone={item.warnings?.some((warning) => warning.severity === "error") ? "blocked" : "draft"} />
-                </article>
-              ))}
-              {[...importDraft.warnings, ...importDraft.definitions.flatMap((item) => item.warnings ?? [])].map((warning, index) => (
-                <small key={`${warning.code}-${index}`} className={`teammate-warning ${warning.severity}`}>{t(warning.code)}: {warning.message}</small>
-              ))}
-              {importContextFindings.length > 0 ? (
-                <div className="settings-skill-source-warning-list" aria-label={t("Import context findings")}>
-                  {importContextFindings.slice(0, 5).map((finding, index) => (
-                    <small key={`${finding.kind}-${index}`} className={finding.severity}>
-                      {sourceHealthKindLabel(finding.kind, t)} · {t(finding.message)}
-                    </small>
-                  ))}
-                </div>
-              ) : null}
-              {importOptimizationPreview ? (
-                <div className="settings-skill-optimization-preview" aria-label={t("Skill optimization preview")}>
-                  <div className="settings-skill-source-detail">
-                    <span><small>{t("Mode")}</small><code>{importOptimizationPreview.mode}</code></span>
-                    <span><small>{t("Status")}</small><code>{importOptimizationPreview.status}</code></span>
-                    <span><small>{t("Original tokens")}</small><code>{importOptimizationPreview.originalTokenEstimate}</code></span>
-                    <span><small>{t("Compiled tokens")}</small><code>{importOptimizationPreview.compiledTokenEstimate}</code></span>
-                  </div>
-                  <div className="settings-skill-source-tags">
-                    <span>{t("Risks")}: {importOptimizationPreview.risks.length}</span>
-                    <span>{t("Lazy references")}: {importOptimizationPreview.compiledView?.lazyReferences.length ?? 0}</span>
-                    <span>{t("Authority unchanged")}</span>
-                  </div>
-                  {importOptimizationPreview.routingDescription?.suggested ? (
-                    <small>{t("Suggested routing")}: {importOptimizationPreview.routingDescription.suggested}</small>
-                  ) : null}
-                </div>
-              ) : null}
-            </div>
-          ) : null}
-          <div className="settings-skill-import-actions">
-            <button className="secondary-button compact-button" type="button" onClick={() => void previewImportDraft()} disabled={saving || !importForm.content.trim()}>
-              {saving ? <Loader2 className="spin" size={15} /> : <Search size={15} />}
-              {t("Preview draft")}
-            </button>
-            <button
-              className="secondary-button compact-button"
-              type="button"
-              onClick={() => void previewImportDraftOptimization()}
-              disabled={saving || importOptimizationPreviewLoading || !importDraft}
-            >
-              {importOptimizationPreviewLoading ? <Loader2 className="spin" size={15} /> : <Search size={15} />}
-              {t("Preview optimization")}
-            </button>
-            <button
-              className="primary-button compact-button"
-              type="button"
-              onClick={() => void publishImportDraft()}
-              disabled={saving || !importDraft || importDraft.warnings.some((warning) => warning.severity === "error") || importDraft.definitions.some((item) => item.warnings?.some((warning) => warning.severity === "error"))}
-            >
-              <CheckCircle2 size={15} />
-              {t("Publish to registry")}
-            </button>
-          </div>
-        </section>
-        </div>
+        <SkillImportDialog
+          form={importForm}
+          draft={importDraft}
+          contextFindings={importContextFindings}
+          optimizationPreview={importOptimizationPreview}
+          saving={saving}
+          optimizationPreviewLoading={importOptimizationPreviewLoading}
+          onClose={() => setImportOpen(false)}
+          onFormChange={setImportForm}
+          onPreviewDraft={() => void previewImportDraft()}
+          onPreviewOptimization={() => void previewImportDraftOptimization()}
+          onPublish={() => void publishImportDraft()}
+          t={t}
+        />
       ) : null}
 
       {activeSubsection === "review" ? (
         <div className="settings-skill-review-stack">
-          <SkillHealthPanel report={skillHealth} loading={loading} t={t} />
+          <details className="settings-compact-details settings-skill-review-diagnostics">
+            <summary>{t("Skill health diagnostics")}</summary>
+            <SkillHealthPanel report={skillHealth} loading={loading} t={t} />
+          </details>
           <SkillCandidateReviewPanel
             candidates={skillCandidates}
             loading={loading}
@@ -1005,123 +889,50 @@ export function SkillLibrarySettingsPanel({ cwd, refreshToken = 0 }: { readonly 
             onToggleRecord={toggleSyncSkillId}
             t={t}
           />
-          <SkillSourceHealthPanel report={skillSourceHealth} snapshots={skillSourceSnapshots} loading={loading} t={t} />
+          <details className="settings-compact-details settings-skill-review-diagnostics">
+            <summary>{t("Skill source health diagnostics")}</summary>
+            <SkillSourceHealthPanel report={skillSourceHealth} snapshots={skillSourceSnapshots} loading={loading} t={t} />
+          </details>
         </div>
       ) : null}
 
       {activeSubsection === "skills" ? (
       <div className="settings-skill-library-body">
-        <div className="settings-skill-table-wrap">
-          <table className="settings-skill-table">
-            <thead>
-              <tr>
-                <th>{t("Status")}</th>
-                <th>{t("Skill")}</th>
-                <th>{t("Source")}</th>
-                <th>{t("Stage")}</th>
-                <th>{t("Required tools")}</th>
-                <th>{t("Approval")}</th>
-                <th>{t("Bound teammates")}</th>
-                <th>{t("Actions")}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filteredSkills.length === 0 ? (
-                <tr>
-                  <td colSpan={8}>
-                    <div className="compact-empty">{loading ? t("Loading skills...") : t("No skills match these filters")}</div>
-                  </td>
-                </tr>
-              ) : filteredSkills.map((entry) => {
-                const boundTeammates = boundTeammateNames(entry.id, bindingSummaries);
-                const state = skillRegistryState(entry, t);
-                const selected = selectedSkill?.id === entry.id;
-                const canArchive = entry.source !== "builtin" && entry.reviewStatus !== "archived";
-                const sourceSnapshot = sourceSnapshotBySkillId.get(entry.id);
-                return (
-                  <tr key={entry.id} className={selected ? "selected" : ""}>
-                    <td><SkillStatePill label={state.label} tone={state.tone} /></td>
-                    <td>
-                      <button className="settings-skill-name-button" type="button" onClick={() => setSelectedSkillId(entry.id)}>
-                        <strong>{entry.definition.name}</strong>
-                        <small>{entry.id}</small>
-                      </button>
-                    </td>
-                    <td><SkillSourceStatus source={entry.source} snapshot={sourceSnapshot} t={t} /></td>
-                    <td><span className={`phase-token ${entry.definition.workflowPhase}`}>{workflowPhaseLabel(entry.definition.workflowPhase, t)}</span></td>
-                    <td><SkillTokenList values={entry.definition.requiredTools} emptyLabel={t("No tools")} /></td>
-                    <td>{approvalProfileText(entry.definition.approvalProfile, t)}</td>
-                    <td>{boundTeammates.length > 0 ? boundTeammates.join(", ") : t("Unbound")}</td>
-                    <td>
-                      <span className="settings-skill-row-actions">
-                        <button className="secondary-button compact-button" type="button" onClick={() => setSelectedSkillId(entry.id)}>
-                          <Eye size={14} />
-                          {t("Details")}
-                        </button>
-                        {canArchive ? (
-                          <button className="secondary-button danger compact-button" type="button" onClick={() => void archiveRegistrySkill(entry.id)} disabled={saving}>
-                            <Archive size={14} />
-                            {t("Archive")}
-                          </button>
-                        ) : null}
-                      </span>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
+        <SkillLibraryTable
+          entries={filteredSkills}
+          loading={loading}
+          saving={saving}
+          selectedSkillId={selectedSkill?.id}
+          bindingSummaries={bindingSummaries}
+          sourceSnapshotBySkillId={sourceSnapshotBySkillId}
+          onSelectSkill={setSelectedSkillId}
+          onArchiveSkill={(skillId) => void archiveRegistrySkill(skillId)}
+          t={t}
+        />
 
         <aside className="settings-skill-inspector" aria-label={t("Skill detail")}>
           {selectedSkill ? (
-            <>
-              <div className="settings-skill-inspector-head">
-                <span>
-                  <BookOpen size={15} />
-                  <strong>{selectedSkill.definition.name}</strong>
-                </span>
-                <SkillStatePill label={skillRegistryState(selectedSkill, t).label} tone={skillRegistryState(selectedSkill, t).tone} />
-              </div>
-              <SkillInspectorSection title={t("Description")}>
-                <p>{selectedSkill.definition.summary}</p>
-              </SkillInspectorSection>
-              <SkillInspectorSection title={t("Prompt fragments")}>
-                {selectedSkill.definition.promptFragments.length > 0 ? (
-                  <pre>{selectedSkill.definition.promptFragments.slice(0, 3).join("\n\n")}</pre>
-                ) : (
-                  <p>{t("No prompt fragments")}</p>
-                )}
-              </SkillInspectorSection>
-              <SkillInspectorSection title={t("Required tools")}>
-                <SkillTokenList values={selectedSkill.definition.requiredTools} emptyLabel={t("No tools")} />
-              </SkillInspectorSection>
-              <SkillInspectorSection title={t("Approval profile")}>
-                <p>{approvalProfileText(selectedSkill.definition.approvalProfile, t)}</p>
-              </SkillInspectorSection>
-              <SkillInspectorSection title={t("Provider capability")}>
-                <SkillTokenList values={selectedSkill.definition.requiredProviderCapabilities} emptyLabel={t("No provider capability required")} />
-              </SkillInspectorSection>
-              <SkillInspectorSection title={t("Bound teammates")}>
-                <SkillTokenList values={boundTeammateNames(selectedSkill.id, bindingSummaries)} emptyLabel={t("Unbound")} />
-              </SkillInspectorSection>
-              <SkillSourceInspector
-                snapshot={sourceSnapshotBySkillId.get(selectedSkill.id)}
-                history={sourceSnapshotHistoryBySkillId.get(selectedSkill.id) ?? []}
-                artifacts={skillSourceArtifacts}
-                optimizationPreview={skillOptimizationPreview}
-                optimizationPreviewLoading={optimizationPreviewLoading}
-                cwd={cwd.trim()}
-                saving={saving}
-                onPreviewOptimization={() => void previewSelectedSkillOptimization()}
-                onArchive={() => void archiveSourceSnapshot(selectedSkill.id)}
-                onRollback={(snapshotId) => void rollbackSelectedSkillSource(snapshotId)}
-                t={t}
-              />
-              <small>{t("Updated {time}", { time: formatDateTime(selectedSkill.updatedAt) })}</small>
-            </>
+            <SkillCompactInspector
+              skill={selectedSkill}
+              sourceSnapshot={sourceSnapshotBySkillId.get(selectedSkill.id)}
+              sourceHistory={sourceSnapshotHistoryBySkillId.get(selectedSkill.id) ?? []}
+              artifacts={skillSourceArtifacts}
+              optimizationPreview={skillOptimizationPreview}
+              optimizationPreviewLoading={optimizationPreviewLoading}
+              cwd={cwd.trim()}
+              saving={saving}
+              boundTeammates={boundTeammateNames(selectedSkill.id, bindingSummaries)}
+              onPreviewOptimization={() => void previewSelectedSkillOptimization()}
+              onArchiveSource={() => void archiveSourceSnapshot(selectedSkill.id)}
+              onRollbackSource={(snapshotId) => void rollbackSelectedSkillSource(snapshotId)}
+              t={t}
+            />
           ) : (
-            <div className="compact-empty">{t("Select a skill to inspect")}</div>
+            <div className="compact-empty settings-skill-search-empty">
+              <Search size={16} />
+              <span>{t("No skill selected")}</span>
+              <small>{t("Adjust search or filters to inspect a skill.")}</small>
+            </div>
           )}
         </aside>
       </div>

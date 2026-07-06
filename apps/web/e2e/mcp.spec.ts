@@ -96,7 +96,7 @@ test("AI teammate MCP tab groups tools by server with filters", async ({ page })
 
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "工程队友" }).click();
   await expect(page.getByRole("heading", { name: "工程队友", level: 1 })).toBeVisible();
-  await page.getByLabel("AI teammate private chat").getByRole("button", { name: "设置" }).click();
+  await page.getByLabel(/AI teammate private chat|AI 队友私聊/).getByRole("button", { name: "设置" }).click();
   await expect(page.getByLabel("设置分组")).toBeVisible();
   const tabNames = await page.getByLabel("设置分组").getByRole("button").evaluateAll((buttons) =>
     buttons.map((button) => (button as HTMLElement).innerText.trim())

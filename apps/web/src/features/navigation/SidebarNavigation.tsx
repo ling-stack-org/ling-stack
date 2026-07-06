@@ -426,7 +426,6 @@ export function SidebarNavigation({
           {
             id: "new-ai-teammate",
             label: t("New AI teammate"),
-            description: t("Choose a role and model. You can adjust details before creating."),
             icon: <Plus size={14} />,
             disabled: !onCreateTeammate,
             onSelect: () => onCreateTeammate?.(),
@@ -435,7 +434,6 @@ export function SidebarNavigation({
           {
             id: "configure-teammate-model",
             label: t("Configure model"),
-            description: t("Configure a ready chat model before creating."),
             icon: <PlugZap size={14} />,
             disabled: !onOpenTeammateModelWorkbench,
             onSelect: () => onOpenTeammateModelWorkbench?.(),

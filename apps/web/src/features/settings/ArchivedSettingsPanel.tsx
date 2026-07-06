@@ -34,10 +34,6 @@ export function ArchivedSettingsPanel({
         </div>
       ) : null}
 
-      <div className="archived-items-copy">
-        {t("Restore returns archived items to the sidebar. Channel and branch delete is permanent and requires confirmation.")}
-      </div>
-
       <ArchivedItemGroup
         title={t("Conversations")}
         countLabel={t("{count} archived", { count: state.archivedConversations.length })}
@@ -108,6 +104,11 @@ export function ArchivedSettingsPanel({
           />
         ))}
       </ArchivedItemGroup>
+
+      <details className="settings-compact-details archived-items-copy archived-items-rules-footer">
+        <summary>{t("Restore and delete rules")}</summary>
+        {t("Restore returns archived items to the sidebar. Channel and branch delete is permanent and requires confirmation.")}
+      </details>
     </section>
   );
 }

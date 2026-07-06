@@ -29,13 +29,14 @@ import { AutomationListPane } from "./AutomationListPane.js";
 import { AutomationSchedulerStrip } from "./AutomationSchedulerStrip.js";
 import {
   activeAutomations as deriveActiveAutomations,
+  buildAutomationTabs,
   failedAutomations as deriveFailedAutomations,
   latestRunByAutomationId,
   pausedAutomations as derivePausedAutomations,
   succeededAutomations as deriveSucceededAutomations,
+  summarizeAutomationsPage,
   visibleAutomationsForTab,
   type AutomationTab,
-  type AutomationTabItem,
 } from "./automation-view-models.js";
 
 type CreateDialog = "" | "templates" | "manual" | "chat";
@@ -138,9 +139,6 @@ export function AutomationsPage({
     [automations],
   );
   const recentRuns = automationRuns.slice(0, 8);
-  const runningRunCount = automationRuns.filter((run) => run.status === "running" || run.status === "queued" || run.status === "waiting_for_approval").length;
-  const recentFailedRunCount = recentRuns.filter((run) => run.status === "failed").length;
-  const readyDraftCount = automationDrafts.filter((draft) => draft.status === "ready_for_confirmation").length;
   const latestRunById = useMemo(() => latestRunByAutomationId(automationRuns), [automationRuns]);
   const failedAutomations = useMemo(
     () => deriveFailedAutomations(automations, latestRunById),
@@ -157,17 +155,26 @@ export function AutomationsPage({
     failed: failedAutomations,
     succeeded: succeededAutomations,
   });
-  const automationTabs: readonly AutomationTabItem[] = [
-    { id: "enabled", label: t("Enabled automations"), count: activeAutomations.length },
-    { id: "paused", label: t("Paused"), count: pausedAutomations.length },
-    { id: "failed", label: t("Failed"), count: failedAutomations.length },
-    { id: "succeeded", label: t("Succeeded"), count: succeededAutomations.length },
-    { id: "history", label: t("Recent history"), count: recentRuns.length },
-  ];
   const selectedAutomation = automations.find((automation) => automation.id === selectedAutomationId);
   const selectedDraft = automationDrafts.find((draft) => draft.id === selectedDraftId);
   const selectedRun = selectedAutomation ? latestRunById.get(selectedAutomation.id) : recentRuns[0];
   const scheduler = schedulers[0];
+  const automationSummary = useMemo(
+    () => summarizeAutomationsPage({ automations, automationRuns, automationDrafts, scheduler }),
+    [automations, automationRuns, automationDrafts, scheduler],
+  );
+  const automationTabs = useMemo(
+    () => buildAutomationTabs({
+      enabled: activeAutomations,
+      paused: pausedAutomations,
+      needsAttention: failedAutomations,
+      succeeded: succeededAutomations,
+      recentRuns,
+      attentionCount: automationSummary.attentionCount,
+      t,
+    }),
+    [activeAutomations, pausedAutomations, failedAutomations, succeededAutomations, recentRuns, automationSummary.attentionCount, t],
+  );
   const threadTitleById = useMemo(() => new Map(threads.map((thread) => [thread.id, thread.title])), [threads]);
 
   useEffect(() => {
@@ -237,10 +244,11 @@ export function AutomationsPage({
       <PageActionHeader
         className="automations-inbox-header"
         title={<span id="automations-title">{t("Automations")}</span>}
-        description={t("{count} automations · {running} running · {attention} need attention", {
-          count: activeAutomations.length + pausedAutomations.length,
-          running: runningRunCount,
-          attention: readyDraftCount + recentFailedRunCount,
+        description={t("{count} automations · {enabled} enabled · {scheduled} scheduled watches · {attention} need attention", {
+          count: automationSummary.totalDefinitions,
+          enabled: automationSummary.enabledDefinitions,
+          scheduled: automationSummary.scheduledWatchCount,
+          attention: automationSummary.attentionCount,
         })}
         secondaryActions={(
           <button className="secondary-button compact-button automation-refresh-button" type="button" onClick={onRefresh} disabled={isLoading} aria-label={t("Refresh")}>
@@ -267,16 +275,21 @@ export function AutomationsPage({
       <AutomationSchedulerStrip
         scheduler={scheduler}
         schedulerAction={schedulerAction}
+        manualEnabledCount={automationSummary.manualEnabledDefinitions}
         onStart={onStartScheduler}
         onStop={onStopScheduler}
       />
 
       <main className="automations-inbox-main" aria-labelledby="automations-title">
-        {readyDraftCount + recentFailedRunCount > 0 ? (
+        {automationSummary.attentionCount > 0 ? (
           <div className="automation-attention-banner">
             <Info size={17} />
-            <strong>{t("{count} automation needs attention", { count: readyDraftCount + recentFailedRunCount })}</strong>
-            <span>{readyDraftCount > 0 ? t("Review drafts before enabling.") : t("Check recent failed runs.")}</span>
+            <strong>{t("{count} automation items need attention", { count: automationSummary.attentionCount })}</strong>
+            <span>{automationSummary.schedulerStoppedWithScheduledWatches
+              ? t("Start scheduler to run scheduled automations automatically.")
+              : automationSummary.readyDraftCount > 0
+                ? t("Review drafts before enabling.")
+                : t("Check recent failed runs or automation errors.")}</span>
           </div>
         ) : null}
         <AutomationListPane

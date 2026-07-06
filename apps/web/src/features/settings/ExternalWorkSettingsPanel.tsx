@@ -29,8 +29,6 @@ export function ExternalWorkSettingsPanel({
   onConfigureExternalWorkWorkflow,
   onConfigureExternalWorkSecret,
   onDeleteExternalWorkSecret,
-  onOpenExternalWorkRecords,
-  onOpenExternalWorkTriage,
 }: {
   readonly selectedChannel: Channel | undefined;
   readonly externalWorkStatus: ExternalWorkStatusResponse | undefined;
@@ -55,6 +53,7 @@ export function ExternalWorkSettingsPanel({
   const [workflowSourceKind, setWorkflowSourceKind] = useState<"github" | "linear">("github");
   const [workflowRepository, setWorkflowRepository] = useState("");
   const [workflowProjectSlug, setWorkflowProjectSlug] = useState("");
+  const [recordsPanel, setRecordsPanel] = useState<"records" | "triage" | "">("");
 
   const secretRef = externalWorkStatus?.secret.ref ?? externalWorkStatus?.workflow.secretRef;
   const canConfigureSecret = Boolean(externalWorkStatus?.workflow.valid && externalWorkStatus.workflow.sourceKind !== "unknown");
@@ -105,19 +104,24 @@ export function ExternalWorkSettingsPanel({
         </div>
       ) : (
         <>
-          <SettingsMetaLine
-            label={t("External work status")}
-            items={[
-              { label: "Channel", value: `${selectedChannel.name} (${selectedChannel.id})` },
-              { label: "Bound path", value: selectedChannel.boundPath ?? t("not set") },
-              { label: "Workflow", value: externalWorkStatus?.workflow.path ?? "WORKFLOW.md" },
-              { label: "Workflow status", value: workflowStatusLabel(externalWorkStatus) },
-              { label: "Source", value: externalWorkStatus?.workflow.sourceKind ?? "unknown" },
-              { label: "Target", value: externalWorkTargetLabel(externalWorkStatus) },
-              { label: "Token", value: externalWorkStatus?.secret.status ?? "not_required" },
-              { label: "Background", value: externalWorkStatus?.background.status ?? "not_configured" },
-            ]}
-          />
+          <div className="settings-interaction-summary" aria-label={t("External work status")}>
+            <strong>{t("Workflow")}: {workflowStatusLabel(externalWorkStatus)}</strong>
+            <span>{t("Target")}: {externalWorkTargetLabel(externalWorkStatus)}</span>
+          </div>
+          <details className="settings-compact-details">
+            <summary>{t("Details")}</summary>
+            <SettingsMetaLine
+              label={t("External work status")}
+              items={[
+                { label: "Channel", value: `${selectedChannel.name} (${selectedChannel.id})` },
+                { label: "Bound path", value: selectedChannel.boundPath ?? t("not set") },
+                { label: "Workflow", value: externalWorkStatus?.workflow.path ?? "WORKFLOW.md" },
+                { label: "Source", value: externalWorkStatus?.workflow.sourceKind ?? "unknown" },
+                { label: "Token", value: externalWorkStatus?.secret.status ?? "not_required" },
+                { label: "Background", value: externalWorkStatus?.background.status ?? "not_configured" },
+              ]}
+            />
+          </details>
 
           {!selectedChannel.boundPath ? (
             <div className="inline-warning">
@@ -144,7 +148,10 @@ export function ExternalWorkSettingsPanel({
             <div className="settings-action-box">
               <div>
                 <strong>{t("Create WORKFLOW.md")}</strong>
-                <small>{t("Create a minimal local workflow before saving the token. This does not contact GitHub or Linear.")}</small>
+                <details className="settings-compact-details settings-interaction-details">
+                  <summary>{t("Setup details")}</summary>
+                  <span>{t("Create a minimal local workflow before saving the token. This does not contact GitHub or Linear.")}</span>
+                </details>
               </div>
               <div className="external-work-workflow-form">
                 <label className="field">
@@ -199,16 +206,19 @@ export function ExternalWorkSettingsPanel({
           <div className="settings-action-box">
             <div>
               <strong>{t("External token")}</strong>
-              <small>
+            </div>
+            <details className="settings-compact-details">
+              <summary>{t("Token storage")}</summary>
+              <SettingsMetaLine
+                label={t("External credential status")}
+                items={[{ label: "Secret ref", value: secretRef ?? t("not configured") }]}
+              />
+              <span>
                 {canConfigureSecret
                   ? t("Saved to system Keychain; token value is never shown in Ling.")
                   : t("Create a valid WORKFLOW.md before saving an external token.")}
-              </small>
-            </div>
-            <SettingsMetaLine
-              label={t("External credential status")}
-              items={[{ label: "Secret ref", value: secretRef ?? t("not configured") }]}
-            />
+              </span>
+            </details>
             <div className="external-work-secret-form">
               <label className="field">
                 <span>{t("Token")}</span>
@@ -297,15 +307,37 @@ export function ExternalWorkSettingsPanel({
                 {t("Stop background")}
               </button>
             ) : null}
-            <button className="ghost-button" type="button" onClick={onOpenExternalWorkRecords} disabled={!externalWorkStatus}>
+            <button className="ghost-button" type="button" onClick={() => setRecordsPanel((current) => current === "records" ? "" : "records")} disabled={!externalWorkStatus}>
               <Database size={16} />
               {t("View records")}
             </button>
-            <button className="ghost-button" type="button" onClick={onOpenExternalWorkTriage} disabled={!externalWorkStatus}>
+            <button className="ghost-button" type="button" onClick={() => setRecordsPanel((current) => current === "triage" ? "" : "triage")} disabled={!externalWorkStatus}>
               <ShieldCheck size={16} />
               {t("View CI triage")}
             </button>
           </div>
+
+          {recordsPanel ? (
+            <div className="settings-action-box settings-external-work-inspector" aria-label={t(recordsPanel === "records" ? "External work records" : "CI triage records")}>
+              <strong>{t(recordsPanel === "records" ? "External work records" : "CI triage records")}</strong>
+              <div className="settings-status-grid compact-status-grid">
+                <SettingsMetaLine
+                  label={t("Record summary")}
+                  items={recordsPanel === "records"
+                    ? [
+                        { label: t("External work"), value: String(externalWorkStatus?.records.externalWork.total ?? 0) },
+                        { label: t("Ready"), value: String(externalWorkStatus?.records.externalWork.ready ?? 0) },
+                        { label: t("Actions"), value: String(externalWorkStatus?.records.actions.total ?? 0) },
+                      ]
+                    : [
+                        { label: t("CI triage"), value: String(externalWorkStatus?.records.ciTriage.total ?? 0) },
+                        { label: t("Waiting"), value: String(externalWorkStatus?.records.actions.waitingForApproval ?? 0) },
+                        { label: t("Background"), value: externalWorkStatus?.background.status ?? "not_configured" },
+                      ]}
+                />
+              </div>
+            </div>
+          ) : null}
         </>
       )}
     </section>

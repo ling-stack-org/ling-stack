@@ -63,7 +63,8 @@ test("automations page uses Codex-style inbox, manual composer, templates, and p
   }
   const headerActions = automationsPage.locator(".automation-header-actions");
   const schedulerStrip = automationsPage.locator(".automation-scheduler-strip");
-  await expect(schedulerStrip.getByText("调度运行中")).toBeVisible();
+  await expect(schedulerStrip.getByText("调度已启动")).toBeVisible();
+  await expect(schedulerStrip.getByText("还没有启用的定时自动化。")).toBeVisible();
   await expect(schedulerStrip.getByRole("button", { name: "停止调度" })).toBeVisible();
   await expect(headerActions.getByRole("button", { name: "暂停自动触发" })).toHaveCount(0);
   await expect(headerActions.getByRole("button", { name: "恢复自动触发" })).toHaveCount(0);
@@ -86,6 +87,7 @@ test("automations page uses Codex-style inbox, manual composer, templates, and p
   await expect(chatDraftRow).toHaveCount(0);
   await expect(automationsPage.locator(".automation-inbox-row", { hasText: "每分钟给我发一下你好" })).toBeVisible();
   await expect.poll(() => automationState.schedulers[0]?.status).toBe("running");
+  await expect(schedulerStrip.getByText("正在监听 1 条定时自动化。")).toBeVisible();
 
   await headerActions.getByRole("button", { name: "手动创建" }).click();
 
@@ -131,6 +133,51 @@ test("automations page uses Codex-style inbox, manual composer, templates, and p
   const conversationAutomationRow = automationsPage.locator(".automation-inbox-row", { hasText: "站会 / 周总结" });
   await expect(conversationAutomationRow).toBeVisible();
   await expect(conversationAutomationRow).toContainText("来源会话 · Launch planning thread");
+});
+
+test("automations page keeps failed recent runs in enabled definitions with a clear repair action", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.locale", "en-US");
+  });
+  const state = createBaseState({ approvalStatus: "expired" });
+  state.providers = [createChatProvider({ id: "provider_local", displayName: "Relay", model: "gpt-test" })];
+  await mockDaemon(page, state);
+  const automationState = await mockAutomationRoutes(page, state);
+  const automation = createAutomationFromRequest(automationState, state, {
+    title: "Nightly check",
+    trigger: { type: "manual" },
+    target: { scope: "workspace", workspaceId: "workspace_default", cwd },
+  });
+  automationState.automations = [automation];
+  automationState.runs = [
+    {
+      id: "automation_run_failed",
+      automationId: automation.id,
+      workspaceId: automation.workspaceId,
+      channelId: automation.channelId,
+      threadId: automation.threadId,
+      runId: "run_failed_automation",
+      triggerType: "manual",
+      firedAt: "2026-06-06T00:14:00.000Z",
+      startedAt: "2026-06-06T00:14:00.000Z",
+      completedAt: "2026-06-06T00:15:00.000Z",
+      status: "failed",
+      idempotencyKey: `automation:${automation.id}:manual:failed`,
+      outputArtifactIds: [],
+    },
+  ];
+  refreshScheduler(automationState);
+
+  await page.goto("/");
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Automations" }).click();
+
+  const automationsPage = page.locator(".automations-inbox-page");
+  await expect(automationsPage.locator(".automation-scheduler-strip").getByText("No scheduled automations are enabled. Manual automations can still run now.")).toBeVisible();
+  await expect(automationsPage.getByRole("tab", { name: /Enabled automations/ })).toHaveAttribute("aria-selected", "true");
+  const failedRow = automationsPage.locator(".automation-inbox-row", { hasText: "Nightly check" });
+  await expect(failedRow).toContainText("Recent run failed");
+  await expect(failedRow.getByRole("button", { name: "Inspect failure" })).toBeVisible();
+  await expect(automationsPage.getByRole("tab", { name: /Needs attention\s+1/ })).toBeVisible();
 });
 
 interface MockAutomation {

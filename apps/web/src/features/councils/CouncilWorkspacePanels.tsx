@@ -8,6 +8,7 @@ import {
   Pin,
   Play,
   Plus,
+  RefreshCw,
   Save,
   Trash2,
 } from "lucide-react";
@@ -132,42 +133,51 @@ export function CouncilWorkspacePanels(props: CouncilWorkspacePanelsProps): JSX.
 
   return (
     <div className={props.settingsToolMode ? "council-workspace-page settings-return-mode" : "council-workspace-page"} aria-label={t("Council Workspace")}>
-      <PageActionHeader
-        title={t("Council Workspace")}
-        description={t("Manage councils, members, health, and channel usage from one workspace.")}
-        meta={(
-          <div className="council-workspace-summary" aria-label={t("Council summary")}>
-            <span>{t("{count} council(s)", { count: props.totalCouncilCount })}</span>
-            <span>{t("{count} active", { count: props.activeCouncilCount })}</span>
-            <span>{t("{count} need attention", { count: props.needsAttentionCount })}</span>
-            <span>{t("{count} custom", { count: props.userCouncilCount })}</span>
-          </div>
-        )}
-        primaryAction={(
-          <button className="primary-button compact-button" type="button" onClick={() => props.onCreateCouncilOpenChange(true)}>
-            <Plus size={14} />
-            {t("Create council")}
-          </button>
-        )}
-        secondaryActions={(
-          <>
-          <button className="secondary-button compact-button" type="button" onClick={() => void props.onRefresh()} aria-label={t("Refresh councils")}>
-            <span>{t("Refresh")}</span>
-          </button>
-          <button className="secondary-button compact-button" type="button" onClick={props.onOpenAiTeammates} aria-label={t("Open AI Teammates")}>
-            <span>{t("Open AI Teammates")}</span>
-          </button>
-          </>
-        )}
-        className="council-workspace-header"
-      />
+      {!props.settingsToolMode ? (
+        <PageActionHeader
+          title={t("Council Workspace")}
+          description={t("Manage councils, members, health, and channel usage from one workspace.")}
+          meta={<CouncilWorkspaceSummary {...props} />}
+          primaryAction={(
+            <button className="primary-button compact-button" type="button" onClick={() => props.onCreateCouncilOpenChange(true)}>
+              <Plus size={14} />
+              {t("Create council")}
+            </button>
+          )}
+          secondaryActions={(
+            <>
+              <button className="secondary-button compact-button" type="button" onClick={() => void props.onRefresh()} aria-label={t("Refresh councils")}>
+                <span>{t("Refresh")}</span>
+              </button>
+              <button className="secondary-button compact-button" type="button" onClick={props.onOpenAiTeammates} aria-label={t("Open AI Teammates")}>
+                <span>{t("Open AI Teammates")}</span>
+              </button>
+            </>
+          )}
+          className="council-workspace-header"
+        />
+      ) : null}
 
       <div className="council-workspace-grid">
         <section className="council-workspace-list" aria-label={t("AI Councils")}>
           <div className="council-panel-title">
             <strong>{t("AI Councils")}</strong>
-            {props.aiCouncilsLoading ? <small>{t("Loading")}</small> : <small>{t("{count} council(s)", { count: props.filteredCouncils.length })}</small>}
+            <span className="council-panel-title-actions">
+              {props.aiCouncilsLoading ? <small>{t("Loading")}</small> : <small>{t("{count} council(s)", { count: props.filteredCouncils.length })}</small>}
+              <button
+                className="icon-button compact-icon-button"
+                type="button"
+                onClick={() => void props.onRefresh()}
+                aria-label={t("Refresh councils")}
+                title={t("Refresh councils")}
+                disabled={props.aiCouncilsLoading}
+              >
+                <RefreshCw size={14} />
+              </button>
+            </span>
           </div>
+
+          {props.settingsToolMode ? <CouncilWorkspaceSummary {...props} compact /> : null}
 
           <div className="council-list-toolbar">
             <label className="field council-filter-field">
@@ -249,6 +259,27 @@ export function CouncilWorkspacePanels(props: CouncilWorkspacePanelsProps): JSX.
           )}
         </section>
       </div>
+    </div>
+  );
+}
+
+function CouncilWorkspaceSummary({
+  totalCouncilCount,
+  activeCouncilCount,
+  needsAttentionCount,
+  userCouncilCount,
+  compact = false,
+}: Pick<CouncilWorkspacePanelsProps, "totalCouncilCount" | "activeCouncilCount" | "needsAttentionCount" | "userCouncilCount"> & {
+  readonly compact?: boolean;
+}): JSX.Element {
+  const { t } = useI18n();
+
+  return (
+    <div className={compact ? "council-workspace-summary compact" : "council-workspace-summary"} aria-label={t("Council summary")}>
+      <span>{t("{count} council(s)", { count: totalCouncilCount })}</span>
+      <span>{t("{count} active", { count: activeCouncilCount })}</span>
+      <span>{t("{count} need attention", { count: needsAttentionCount })}</span>
+      <span>{t("{count} custom", { count: userCouncilCount })}</span>
     </div>
   );
 }
@@ -412,7 +443,13 @@ function CouncilMembersPanel(props: CouncilWorkspacePanelsProps & { readonly mut
     <section aria-label={t("Council members")} className="council-detail-section council-members-panel">
       <div className="council-panel-title">
         <strong>{t("Council members")}</strong>
-        <small>{props.membersLoading ? t("Loading council members...") : t("{count} enabled members", { count: props.members.filter((member) => member.enabled).length })}</small>
+        <span className="council-panel-title-actions">
+          <small>{props.membersLoading ? t("Loading council members...") : t("{count} enabled members", { count: props.members.filter((member) => member.enabled).length })}</small>
+          <button className="secondary-button compact-button" type="button" onClick={props.onOpenAiTeammates}>
+            <ArrowRight size={14} />
+            {t("Manage teammates")}
+          </button>
+        </span>
       </div>
       {props.membersError ? <p className="inline-error">{props.membersError}</p> : null}
       {props.availableTeammates.length === 0 ? (
@@ -491,7 +528,9 @@ function CouncilChannelPanel(props: CouncilWorkspacePanelsProps): JSX.Element {
         </small>
       </div>
       {props.visibleChannels.length === 0 ? (
-        <OperationEmptyState compact title={t("No channels available")} description={t("Create a channel before attaching councils to channel work.")} />
+        <div className="council-channel-empty">
+          <OperationEmptyState compact title={t("No channels available")} description={t("Create a channel before attaching councils to channel work.")} />
+        </div>
       ) : (
         <div className="council-channel-policy">
           <label className="field council-channel-select-field">
@@ -517,12 +556,14 @@ function CouncilChannelPanel(props: CouncilWorkspacePanelsProps): JSX.Element {
             </button>
             <button className="secondary-button compact-button" type="button" onClick={() => props.selectedChannel ? props.onOpenChannel(props.selectedChannel.id) : undefined} disabled={!props.selectedChannel}>
               <ArrowRight size={14} />
-              {t("Open channel")}
+              {t("Open channel in app")}
             </button>
           </div>
 
           {props.attachedCouncils.length === 0 ? (
-            <OperationEmptyState compact title={t("No AI councils attached")} description={t("Attach the selected council when this channel should use it.")} />
+            <div className="council-channel-empty">
+              <OperationEmptyState compact title={t("No AI councils attached")} description={t("Attach the selected council when this channel should use it.")} />
+            </div>
           ) : (
             <div className="council-channel-list" role="list" aria-label={t("Attached councils")}>
               {props.attachedCouncils.map((council) => {
@@ -560,16 +601,19 @@ function CouncilSettingsPanel(props: CouncilWorkspacePanelsProps & { readonly mu
     <section className="council-detail-section council-workspace-settings" aria-label={t("Council settings")}>
       <div className="council-panel-title">
         <strong>{t("Council settings")}</strong>
-        <small>{props.canEditSelectedCouncil ? t("Editable for custom councils") : t("Built-in councils must be cloned before editing")}</small>
+        <small>{selectedCouncil ? aiCouncilSourceLabel(selectedCouncil.source, t) : t("Select a council")}</small>
       </div>
       <div className="council-settings-fields">
         {selectedCouncil ? (
-          <div className="council-settings-summary" aria-label={t("Council boundaries")}>
-            <span>{aiCouncilSourceLabel(selectedCouncil.source, t)}</span>
-            <span>{aiCouncilRoutingModeLabel(selectedCouncil.routingPolicy.defaultMode, t)}</span>
-            {props.selectedCapacityLabel ? <span>{props.selectedCapacityLabel}</span> : null}
-            {props.selectedBoundaryLabels.map((label) => <span key={label}>{label}</span>)}
-          </div>
+          <details className="settings-compact-details council-settings-boundary-details">
+            <summary>{t("Council boundaries")}</summary>
+            <div className="council-settings-summary" aria-label={t("Council boundaries")}>
+              <span>{aiCouncilSourceLabel(selectedCouncil.source, t)}</span>
+              <span>{aiCouncilRoutingModeLabel(selectedCouncil.routingPolicy.defaultMode, t)}</span>
+              {props.selectedCapacityLabel ? <span>{props.selectedCapacityLabel}</span> : null}
+              {props.selectedBoundaryLabels.map((label) => <span key={label}>{label}</span>)}
+            </div>
+          </details>
         ) : null}
         <label className="field">
           <span>{t("Council name")}</span>
@@ -621,22 +665,25 @@ function CouncilSettingsPanel(props: CouncilWorkspacePanelsProps & { readonly mu
         </button>
       </div>
       {props.settingsError ? <p className="inline-error">{props.settingsError}</p> : null}
-      <div className="council-action-row" aria-label={t("Council actions")}>
-        <button className="secondary-button compact-button" type="button" onClick={() => void props.onCloneCouncil()} disabled={!props.canCloneCouncil}>
-          <Copy size={14} />
-          {props.actionSaving === "clone" ? t("Cloning council...") : t("Clone council")}
-        </button>
-        <button
-          className="secondary-button compact-button"
-          type="button"
-          onClick={() => void props.onArchiveCouncil()}
-          disabled={!props.canArchiveCouncil}
-          title={selectedCouncil?.source === "user" ? t("Archive council") : t("Clone built-in councils before editing")}
-        >
-          <Archive size={14} />
-          {props.actionSaving === "archive" ? t("Archiving council...") : t("Archive council")}
-        </button>
-      </div>
+      <details className="settings-compact-details council-low-frequency-actions">
+        <summary>{t("More council actions")}</summary>
+        <div className="council-action-row" aria-label={t("Council actions")}>
+          <button className="secondary-button compact-button" type="button" onClick={() => void props.onCloneCouncil()} disabled={!props.canCloneCouncil}>
+            <Copy size={14} />
+            {props.actionSaving === "clone" ? t("Cloning council...") : t("Clone council")}
+          </button>
+          <button
+            className="secondary-button compact-button"
+            type="button"
+            onClick={() => void props.onArchiveCouncil()}
+            disabled={!props.canArchiveCouncil}
+            title={selectedCouncil?.source === "user" ? t("Archive council") : t("Clone built-in councils before editing")}
+          >
+            <Archive size={14} />
+            {props.actionSaving === "archive" ? t("Archiving council...") : t("Archive council")}
+          </button>
+        </div>
+      </details>
       {props.actionSaving !== "create" && props.actionError ? <p className="inline-error">{props.actionError}</p> : null}
     </section>
   );

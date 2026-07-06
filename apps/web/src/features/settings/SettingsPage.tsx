@@ -36,6 +36,7 @@ import type {
   PermissionPreset,
   ResponseLanguagePreference,
   RunnerListItem,
+  RunSession,
   SessionPermissionMode,
   StartupStatusResponse,
   UserProfile,
@@ -49,6 +50,7 @@ import { StartupDiagnosticsSettingsPanel } from "./MaintenanceSettingsPanel.js";
 import { InterfacePreferencesSettingsPanel, PersonalSettingsPanel } from "./PersonalInterfaceSettingsPanel.js";
 import { PersonalizationSettingsPanel } from "./PersonalizationSettingsPanel.js";
 import { PluginManagerSettingsPanel } from "./PluginManagerSettingsPanel.js";
+import { SettingsRunDiagnosticsPanel } from "./SettingsRunDiagnosticsPanel.js";
 import { SkillLibrarySettingsPanel } from "./SkillLibrarySettingsPanel.js";
 import { useArchivedSettingsController } from "./useArchivedSettingsController.js";
 
@@ -74,7 +76,7 @@ type SettingsSectionItem = {
   readonly id: SettingsSectionId;
   readonly label: string;
   readonly pageTitle?: string;
-  readonly description: string;
+  readonly description?: string;
   readonly icon: LucideIcon;
 };
 
@@ -88,32 +90,27 @@ const settingsSectionGroups: readonly {
       {
         id: "model-workbench",
         label: "Model Workbench",
-        description: "Configure model routes, API keys, and readiness checks.",
         icon: Box,
       },
       {
         id: "ai-teammates",
         label: "Teammate Management",
-        description: "Manage individual AI teammates, models, and private chat settings.",
         icon: Bot,
       },
       {
         id: "ai-councils",
         pageTitle: "Council Workspace",
         label: "Council Workspace",
-        description: "Manage multiple councils, members, and channel connections.",
         icon: Brain,
       },
       {
         id: "work-board",
         label: "Work Board",
-        description: "Review cross-channel work status as a workspace tool.",
         icon: Kanban,
       },
       {
         id: "approval-strategy",
         label: "Default authorization",
-        description: "Set the default authorization for new conversations.",
         icon: Shield,
       },
     ],
@@ -124,7 +121,6 @@ const settingsSectionGroups: readonly {
       {
         id: "personal-profile",
         label: "Profile",
-        description: "Manage local identity and profile details.",
         icon: UserCircle,
       },
       {
@@ -136,25 +132,21 @@ const settingsSectionGroups: readonly {
       {
         id: "interface-preferences",
         label: "Interface preferences",
-        description: "Theme, language, and AI response language",
         icon: Palette,
       },
       {
         id: "external-work",
         label: "External work",
-        description: "Connect GitHub or Linear workflow intake for the selected channel.",
         icon: GitBranch,
       },
       {
         id: "mcp-tools",
         label: "MCP tool servers",
-        description: "Manage tool servers and sync tool access for AI teammates.",
         icon: Wrench,
       },
       {
         id: "plugin-manager",
         label: "Plugin Manager",
-        description: "Manage trusted local presets and bundled capability packages.",
         icon: PlugZap,
       },
       {
@@ -171,13 +163,11 @@ const settingsSectionGroups: readonly {
       {
         id: "archived-items",
         label: "Archived items",
-        description: "Restore archived conversations, teammates, channels, and branches.",
         icon: Archive,
       },
       {
         id: "startup-diagnostics",
         label: "Startup and diagnostics",
-        description: "Inspect startup readiness and open raw run diagnostics when support needs evidence.",
         icon: Database,
       },
     ],
@@ -254,6 +244,9 @@ export function SettingsPage({
   onOpenExternalWorkRecords,
   onOpenExternalWorkTriage,
   onOpenRunDiagnostics,
+  onCloseRunDiagnostics,
+  onSelectRunDiagnostics,
+  onOpenFullRunDiagnostics,
   onRefreshMcp,
   onArchivedItemsChanged,
   onCreateMcpServer,
@@ -268,6 +261,9 @@ export function SettingsPage({
   onOpenWorkBoard,
   workspaceToolDetail,
   workspaceToolView,
+  runDiagnosticsRunId,
+  runs,
+  runsLoading,
   onCloseWorkspaceTool,
   onBackToApplication,
 }: {
@@ -344,6 +340,9 @@ export function SettingsPage({
   readonly onOpenExternalWorkRecords: () => void;
   readonly onOpenExternalWorkTriage: () => void;
   readonly onOpenRunDiagnostics: () => void;
+  readonly onCloseRunDiagnostics: () => void;
+  readonly onSelectRunDiagnostics: (runId: string) => void;
+  readonly onOpenFullRunDiagnostics: (runId?: string) => void;
   readonly onRefreshMcp: () => void;
   readonly onArchivedItemsChanged?: () => void | Promise<void>;
   readonly onCreateMcpServer: (form: McpServerFormState) => Promise<void>;
@@ -358,20 +357,24 @@ export function SettingsPage({
   readonly onOpenWorkBoard: () => void;
   readonly workspaceToolDetail?: ReactNode;
   readonly workspaceToolView?: SettingsWorkspaceToolView;
+  readonly runDiagnosticsRunId?: string;
+  readonly runs: readonly RunSession[];
+  readonly runsLoading: boolean;
   readonly onCloseWorkspaceTool?: () => void;
   readonly onBackToApplication?: () => void;
 }): JSX.Element {
   const { t } = useI18n();
   const [activeSection, setActiveSection] = useState<SettingsSectionId>("personal-profile");
-  const workspaceToolDetailOpen = workspaceToolDetail !== undefined && workspaceToolDetail !== null;
+  const runDiagnosticsOpen = runDiagnosticsRunId !== undefined;
+  const workspaceToolDetailOpen = !runDiagnosticsOpen && workspaceToolDetail !== undefined && workspaceToolDetail !== null;
   const workspaceToolSection = workspaceToolViewToSectionId(workspaceToolView);
-  const visibleActiveSection = workspaceToolDetailOpen && workspaceToolSection
-    ? workspaceToolSection
-    : isWorkspaceToolSection(activeSection)
-      ? "personal-profile"
-      : activeSection;
-  const activeSectionGroup = settingsSectionGroups.find((group) => group.items.some((item) => item.id === visibleActiveSection));
-  const activeSectionItem = activeSectionGroup?.items.find((item) => item.id === visibleActiveSection) ?? settingsSectionGroups[0]?.items[0];
+  const visibleActiveSection = runDiagnosticsOpen
+    ? "startup-diagnostics"
+    : workspaceToolDetailOpen && workspaceToolSection
+      ? workspaceToolSection
+      : isWorkspaceToolSection(activeSection)
+        ? "personal-profile"
+        : activeSection;
   const archivedController = useArchivedSettingsController({
     cwd,
     enabled: visibleActiveSection === "archived-items",
@@ -380,6 +383,7 @@ export function SettingsPage({
 
   const selectSettingsSection = (sectionId: SettingsSectionId): void => {
     setActiveSection(sectionId);
+    onCloseRunDiagnostics();
     if (sectionId === "model-workbench") {
       onOpenProviders();
       return;
@@ -421,7 +425,7 @@ export function SettingsPage({
                   onClick={() => {
                     selectSettingsSection(item.id);
                   }}
-                  title={t(item.description)}
+                  title={t(item.pageTitle ?? item.label)}
                   aria-current={visibleActiveSection === item.id ? "page" : undefined}
                 >
                   <SectionIcon className="settings-section-icon" size={16} strokeWidth={2} aria-hidden="true" />
@@ -434,12 +438,17 @@ export function SettingsPage({
       </nav>
 
       <div className="settings-content-stack">
-        {activeSectionItem ? (
-          <header className="settings-section-head settings-page-section-head">
-            <span>{t(activeSectionGroup?.heading ?? "Settings")}</span>
-            <h2>{t(activeSectionItem.pageTitle ?? activeSectionItem.label)}</h2>
-            <p>{t(activeSectionItem.description)}</p>
-          </header>
+        {runDiagnosticsOpen ? (
+          <SettingsRunDiagnosticsPanel
+            runs={runs}
+            selectedRunId={runDiagnosticsRunId ?? ""}
+            isLoading={runsLoading}
+            errorMessage={errorMessage}
+            onRefresh={onOpenRunDiagnostics}
+            onSelectRun={onSelectRunDiagnostics}
+            onOpenFullDiagnostics={onOpenFullRunDiagnostics}
+            onClose={onCloseRunDiagnostics}
+          />
         ) : null}
 
         {workspaceToolDetailOpen ? workspaceToolDetail : null}
@@ -560,7 +569,7 @@ export function SettingsPage({
           <ArchivedSettingsPanel state={archivedController.state} actions={archivedController.actions} />
         ) : null}
 
-        {visibleActiveSection === "startup-diagnostics" && !workspaceToolDetailOpen ? (
+        {visibleActiveSection === "startup-diagnostics" && !workspaceToolDetailOpen && !runDiagnosticsOpen ? (
           <StartupDiagnosticsSettingsPanel
             cwd={cwd}
             startupStatus={startupStatus}

@@ -24,6 +24,7 @@ export function WorkItemRow({
   onCompleteWorkItem,
   onFailWorkItem,
   busyWorkItemId,
+  settingsToolMode,
 }: {
   readonly item: WorkItemView;
   readonly channelName?: string;
@@ -42,10 +43,11 @@ export function WorkItemRow({
   readonly onCompleteWorkItem?: (workItemId: string, claimToken: string) => void;
   readonly onFailWorkItem?: (workItemId: string, claimToken: string) => void;
   readonly busyWorkItemId?: string;
+  readonly settingsToolMode?: boolean;
 }): JSX.Element {
   const { t } = useI18n();
   const [routeChannelId, setRouteChannelId] = useState("");
-  const primaryAction = primaryOpenAction(item, { onOpenTask, onOpenRun, onOpenApproval, onOpenExternalWork });
+  const primaryAction = primaryOpenAction(item, { onOpenTask, onOpenRun, onOpenApproval, onOpenExternalWork }, settingsToolMode);
   const canRoute = Boolean(item.externalWorkId && onRouteExternalWork && routeChannels.length > 1);
   const targetChannelId = routeChannelId || item.channelId || "";
   const busy = busyWorkItemId === item.id;
@@ -191,21 +193,22 @@ function primaryOpenAction(
     readonly onOpenApproval?: (approvalId: string) => void;
     readonly onOpenExternalWork?: (externalWorkId: string) => void;
   },
+  settingsToolMode?: boolean,
 ): { readonly label: string; readonly icon: JSX.Element; readonly onClick: () => void } | undefined {
   if (item.approvalId && actions.onOpenApproval) {
-    return { label: "Handle approval", icon: <ShieldCheck size={14} />, onClick: () => actions.onOpenApproval?.(item.approvalId as string) };
+    return { label: settingsToolMode ? "Open approval in app" : "Handle approval", icon: <ShieldCheck size={14} />, onClick: () => actions.onOpenApproval?.(item.approvalId as string) };
   }
   if (item.status === "blocked" && item.runId && actions.onOpenRun) {
-    return { label: "View failure", icon: <CircleAlert size={14} />, onClick: () => actions.onOpenRun?.(item.runId as string) };
+    return { label: settingsToolMode ? "Open run diagnostics" : "View failure", icon: <CircleAlert size={14} />, onClick: () => actions.onOpenRun?.(item.runId as string) };
   }
   if (item.runId && actions.onOpenRun) {
-    return { label: "Open run", icon: <SquareTerminal size={14} />, onClick: () => actions.onOpenRun?.(item.runId as string) };
+    return { label: settingsToolMode ? "Open run diagnostics" : "Open run", icon: <SquareTerminal size={14} />, onClick: () => actions.onOpenRun?.(item.runId as string) };
   }
   if (item.taskId && actions.onOpenTask) {
-    return { label: "Open task", icon: <ExternalLink size={14} />, onClick: () => actions.onOpenTask?.(item.taskId as string) };
+    return { label: settingsToolMode ? "Open task in app" : "Open task", icon: <ExternalLink size={14} />, onClick: () => actions.onOpenTask?.(item.taskId as string) };
   }
   if (item.externalWorkId && actions.onOpenExternalWork) {
-    return { label: "Open work", icon: <ExternalLink size={14} />, onClick: () => actions.onOpenExternalWork?.(item.externalWorkId as string) };
+    return { label: settingsToolMode ? "Open work in app" : "Open work", icon: <ExternalLink size={14} />, onClick: () => actions.onOpenExternalWork?.(item.externalWorkId as string) };
   }
   return undefined;
 }
