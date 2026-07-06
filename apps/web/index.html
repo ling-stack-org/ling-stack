@@ -7,7 +7,13 @@
       (() => {
         try {
           const saved = localStorage.getItem("ling-stack.themePreference");
-          const preference = saved === "light" || saved === "dark" ? saved : "system";
+          const bootstrap = localStorage.getItem("ling-stack.themeBootstrapPreference");
+          const preference =
+            saved === "light" || saved === "dark" || saved === "system"
+              ? saved
+              : bootstrap === "light" || bootstrap === "dark" || bootstrap === "system"
+                ? bootstrap
+                : "system";
           const theme =
             preference === "system" && matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : preference;
           document.documentElement.dataset.theme = theme === "system" ? "light" : theme;

@@ -124,7 +124,6 @@ function StartupReadinessSection({
           </span>
           <StatusBadge status={startupStatus?.state ?? (startupStatusLoading ? "loading" : "not_loaded")} />
         </div>
-        <MetaRow label={t("Diagnostics")} value={String(startupStatus?.diagnostics.length ?? 0)} compact />
         <details className="settings-compact-details settings-interaction-details">
           <summary>{t("Startup details")}</summary>
           <div className="startup-summary-grid">

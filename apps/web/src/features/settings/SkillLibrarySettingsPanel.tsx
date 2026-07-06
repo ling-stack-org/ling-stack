@@ -77,11 +77,7 @@ import {
 import { SkillCompactInspector } from "./SkillCompactInspector.js";
 import { SkillImportDialog, initialSkillImportForm, type SkillImportForm } from "./SkillImportDialog.js";
 import { SkillLibraryTable } from "./SkillLibraryTable.js";
-import {
-  PlaybookCandidateReviewPanel,
-  ProcedureObservationClusterPanel,
-  SkillCandidateReviewPanel,
-} from "./SkillReviewQueuePanels.js";
+import { SkillReviewQueuePanel } from "./SkillReviewQueuePanels.js";
 import { SettingsSubnav } from "./SettingsSubnav.js";
 
 type SkillLibrarySubsectionId = "skills" | "review" | "source";
@@ -830,32 +826,22 @@ export function SkillLibrarySettingsPanel({ cwd, refreshToken = 0 }: { readonly 
 
       {activeSubsection === "review" ? (
         <div className="settings-skill-review-stack">
-          <details className="settings-compact-details settings-skill-review-diagnostics">
+          <details className="settings-compact-details settings-skill-review-diagnostics" open>
             <summary>{t("Skill health diagnostics")}</summary>
             <SkillHealthPanel report={skillHealth} loading={loading} t={t} />
           </details>
-          <SkillCandidateReviewPanel
-            candidates={skillCandidates}
-            loading={loading}
-            saving={saving}
-            onReview={(candidateId, action) => void reviewCandidate(candidateId, action)}
-            onCreateDraft={(candidateId) => void createDraftFromCandidate(candidateId)}
-            t={t}
-          />
-          <ProcedureObservationClusterPanel
+          <SkillReviewQueuePanel
+            skillCandidates={skillCandidates}
             clusters={observationClusters}
-            loading={loading}
-            saving={saving}
-            onCreateProtocolCandidate={(cluster) => void createProtocolCandidateFromCluster(cluster)}
-            onCreatePlaybookCandidate={(cluster) => void createPlaybookCandidateFromCluster(cluster)}
-            t={t}
-          />
-          <PlaybookCandidateReviewPanel
-            candidates={playbookCandidates}
+            playbookCandidates={playbookCandidates}
             channels={channels}
             loading={loading}
             saving={saving}
-            onReview={(candidate, action) => void reviewPlaybookCandidate(candidate, action)}
+            onReviewSkillCandidate={(candidateId, action) => void reviewCandidate(candidateId, action)}
+            onCreateDraft={(candidateId) => void createDraftFromCandidate(candidateId)}
+            onCreateProtocolCandidate={(cluster) => void createProtocolCandidateFromCluster(cluster)}
+            onCreatePlaybookCandidate={(cluster) => void createPlaybookCandidateFromCluster(cluster)}
+            onReviewPlaybookCandidate={(candidate, action) => void reviewPlaybookCandidate(candidate, action)}
             t={t}
           />
         </div>
@@ -889,7 +875,7 @@ export function SkillLibrarySettingsPanel({ cwd, refreshToken = 0 }: { readonly 
             onToggleRecord={toggleSyncSkillId}
             t={t}
           />
-          <details className="settings-compact-details settings-skill-review-diagnostics">
+          <details className="settings-compact-details settings-skill-review-diagnostics settings-skill-source-diagnostics">
             <summary>{t("Skill source health diagnostics")}</summary>
             <SkillSourceHealthPanel report={skillSourceHealth} snapshots={skillSourceSnapshots} loading={loading} t={t} />
           </details>
@@ -938,10 +924,11 @@ export function SkillLibrarySettingsPanel({ cwd, refreshToken = 0 }: { readonly 
       </div>
       ) : null}
 
-      <footer className="settings-skill-audit-note">
-        {message ? <span>{message}</span> : null}
-        <span>{t("Persona cannot grant tools, approvals, or secrets; Skill permissions are enforced by binding and policy checks.")}</span>
-      </footer>
+      {message ? (
+        <footer className="settings-skill-audit-note">
+          <span>{message}</span>
+        </footer>
+      ) : null}
     </section>
   );
 }

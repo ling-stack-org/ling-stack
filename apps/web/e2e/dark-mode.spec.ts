@@ -59,8 +59,6 @@ test("main pages and workspace tools follow dark theme tokens", async ({ page })
     ".settings-layout",
     ".settings-section-nav",
     ".settings-content-stack",
-    ".account-profile-settings-panel",
-    ".profile-page",
   ]);
 
   await page.getByLabel("设置分组").getByRole("button", { name: /智囊团工作区|Council Workspace/ }).click();
@@ -77,13 +75,12 @@ test("main pages and workspace tools follow dark theme tokens", async ({ page })
     ".council-member-row",
   ]);
   await page.getByLabel("设置分组").getByRole("button", { name: /资料|Profile/ }).click();
-  await expect(page.locator(".profile-page")).toBeVisible();
+  await expect(page.locator(".profile-settings-surface")).toBeVisible();
   await assertDarkPage(page, "account profile settings", [
-    ".account-profile-settings-panel",
-    ".profile-page",
-    ".profile-stat-strip",
-    ".profile-activity-section",
-    ".profile-insights",
+    ".profile-settings-surface",
+    ".profile-settings-head",
+    ".profile-settings-card",
+    ".profile-usage-summary-grid",
   ]);
 
   await page.getByLabel("设置分组").getByRole("button", { name: /模型工作台|Model Workbench/ }).click();
@@ -173,7 +170,8 @@ test("main pages and workspace tools follow dark theme tokens", async ({ page })
     ".settings-skill-library",
     ".settings-skill-review-stack",
     ".settings-compact-details",
-    ".settings-skill-candidate-review",
+    ".settings-skill-review-queue",
+    ".settings-skill-review-filters",
   ]);
 
   await page.getByLabel("设置分组").getByRole("button", { name: /工作看板|Work Board/ }).click();

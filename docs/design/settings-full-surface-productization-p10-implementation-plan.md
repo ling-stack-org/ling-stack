@@ -60,7 +60,9 @@ and interaction fix.
      disclosures.
 
 6. **P3 Archived and Startup**
-   - Keep Archived restore/delete rules collapsed.
+   - Keep Archived restore/delete rules as a single muted hint below the title.
+   - Give each archived category its own scroll boundary so long lists do not
+     stretch the Settings page.
    - Tighten Startup status and embedded diagnostics entry.
 
 ## Screenshot Task Checklist
@@ -74,7 +76,7 @@ and interaction fix.
 | Fig. 5 | `ExecutionPermissionsSettingsPanel` | Runner rows show summary first; raw defaults move into `Current runner defaults`. | Runner actions stay. | Raw runner blockers remain accessible but not first-screen default. |
 | Fig. 6 | `SkillLibraryWidgets`, `SkillLibrarySettingsPanel` | Source sync default layer hides root/path and health evidence behind details. | Sync preview/publish stay. | Source evidence details contain diff/checksum; row summary does not. |
 | Fig. 7 | `SkillReviewQueuePanels`, `SkillLibrarySettingsPanel` | Review queue and health diagnostics are folded/compact by default. | Review actions stay. | Health panels are not visible on Skills list and details are closed by default. |
-| Fig. 8 | `ArchivedSettingsPanel` | Restore/delete rules move from first screen into footer details. | Restore/delete stay. | Archived rules are hidden until disclosure expansion. |
+| Fig. 8 | `ArchivedSettingsPanel` | Rules become one muted hint below the title; each archived category gets an internal scroll boundary; row actions align icon/label centers. | Restore/delete stay. | Hint is visible without a disclosure/card, no footer rule block remains, all four lists scroll when long, and action icon/label center delta stays small. |
 | Fig. 9 | `MaintenanceSettingsPanel` | Startup readiness keeps only status, blocker, refresh, and diagnostics entry visible. | Diagnostics stays in Settings. | `Open Run Diagnostics` keeps Settings shell. |
 | Fig. 10 | `SettingsRunDiagnosticsPanel`, `SettingsPage`, `AppShell` | Embedded diagnostics panel replaces main app Run History for Settings-origin runs. | Refresh/select/close stay; no implicit main shell. | `Settings sections` visible, `Ling Stack navigation` count `0`, `.run-history-layout` count `0`. |
 

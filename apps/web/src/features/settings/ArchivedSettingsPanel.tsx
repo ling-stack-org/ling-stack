@@ -34,6 +34,8 @@ export function ArchivedSettingsPanel({
         </div>
       ) : null}
 
+      <p className="archived-items-hint">{t("Restored items return to their lists; channel and branch delete is permanent.")}</p>
+
       <ArchivedItemGroup
         title={t("Conversations")}
         countLabel={t("{count} archived", { count: state.archivedConversations.length })}
@@ -105,10 +107,6 @@ export function ArchivedSettingsPanel({
         ))}
       </ArchivedItemGroup>
 
-      <details className="settings-compact-details archived-items-copy archived-items-rules-footer">
-        <summary>{t("Restore and delete rules")}</summary>
-        {t("Restore returns archived items to the sidebar. Channel and branch delete is permanent and requires confirmation.")}
-      </details>
     </section>
   );
 }
@@ -135,7 +133,7 @@ function ArchivedConversationRow({
       <div className="archived-item-actions">
         <button className="secondary-button compact-button" type="button" onClick={onRestore} disabled={actionId !== ""}>
           {actionId === `conversation:${thread.id}:restore` ? <Loader2 className="spin" size={14} /> : <RefreshCw size={14} />}
-          {t("Restore")}
+          <span className="archived-action-label">{t("Restore")}</span>
         </button>
       </div>
     </div>
@@ -164,7 +162,7 @@ function ArchivedTeammateRow({
       <div className="archived-item-actions">
         <button className="secondary-button compact-button" type="button" onClick={onRestore} disabled={actionId !== ""}>
           {actionId === `teammate:${teammate.id}:restore` ? <Loader2 className="spin" size={14} /> : <RefreshCw size={14} />}
-          {t("Restore")}
+          <span className="archived-action-label">{t("Restore")}</span>
         </button>
       </div>
     </div>
@@ -192,11 +190,11 @@ function ArchivedChannelRow({
       <div className="archived-item-actions">
         <button className="secondary-button compact-button" type="button" onClick={onRestore} disabled={actionId !== ""}>
           {actionId === `channel:${channel.id}:restore` ? <Loader2 className="spin" size={14} /> : <RefreshCw size={14} />}
-          {t("Restore")}
+          <span className="archived-action-label">{t("Restore")}</span>
         </button>
         <button className="ghost-button danger-ghost-button compact-button" type="button" onClick={onDelete} disabled={actionId !== ""}>
           {actionId === `channel:${channel.id}:delete` ? <Loader2 className="spin" size={14} /> : <Trash2 size={14} />}
-          {t("Delete")}
+          <span className="archived-action-label">{t("Delete")}</span>
         </button>
       </div>
     </div>
@@ -227,11 +225,11 @@ function ArchivedBranchRow({
       <div className="archived-item-actions">
         <button className="secondary-button compact-button" type="button" onClick={onRestore} disabled={actionId !== ""}>
           {actionId === `branch:${branch.id}:restore` ? <Loader2 className="spin" size={14} /> : <RefreshCw size={14} />}
-          {parentArchived ? t("Restore both") : t("Restore")}
+          <span className="archived-action-label">{parentArchived ? t("Restore both") : t("Restore")}</span>
         </button>
         <button className="ghost-button danger-ghost-button compact-button" type="button" onClick={onDelete} disabled={actionId !== ""}>
           {actionId === `branch:${branch.id}:delete` ? <Loader2 className="spin" size={14} /> : <Trash2 size={14} />}
-          {t("Delete")}
+          <span className="archived-action-label">{t("Delete")}</span>
         </button>
       </div>
     </div>

@@ -8,6 +8,7 @@ import { SkillGovernanceSettingsSection } from "./SkillGovernanceSettingsSection
 
 const visibleLingConversationTones: readonly LingConversationTone[] = ["friendly", "pragmatic"];
 const defaultLingConversationTone: LingConversationTone = "pragmatic";
+const feedbackMessageDurationMs = 2000;
 
 export function PersonalizationSettingsPanel({ cwd }: { readonly cwd: string }): JSX.Element {
   const { t } = useI18n();
@@ -21,6 +22,14 @@ export function PersonalizationSettingsPanel({ cwd }: { readonly cwd: string }):
   useEffect(() => {
     void refresh(false);
   }, [cwd]);
+
+  useEffect(() => {
+    if (!message) {
+      return;
+    }
+    const timeoutId = globalThis.setTimeout(() => setMessage(""), feedbackMessageDurationMs);
+    return () => globalThis.clearTimeout(timeoutId);
+  }, [message]);
 
   async function refresh(showMessage = true): Promise<void> {
     const workspaceCwd = cwd.trim();
@@ -42,25 +51,28 @@ export function PersonalizationSettingsPanel({ cwd }: { readonly cwd: string }):
     }
   }
 
-  async function saveTone(): Promise<void> {
+  async function applyTone(tone: LingConversationTone): Promise<void> {
     const workspaceCwd = cwd.trim();
-    if (!workspaceCwd || saving) {
+    if (!workspaceCwd || saving || loading || toneDraft === tone) {
       return;
     }
+    const previousTone = toneDraft;
+    setToneDraft(tone);
     setSaving(true);
     try {
       setError("");
       setMessage("");
-      if (effectiveConfig && !effectiveConfig.values.lingConversationTone) {
-        setError(t("Ling conversation tone is not supported by this daemon."));
-        return;
-      }
-      await updateWorkspaceSettings(workspaceCwd, { lingConversationTone: toneDraft });
+      const response = await updateWorkspaceSettings(workspaceCwd, { lingConversationTone: tone });
       const nextConfig = await getEffectiveConfig(workspaceCwd);
+      const appliedTone = nextConfig.values.lingConversationTone?.value ?? response.settings.lingConversationTone;
+      if (appliedTone !== tone) {
+        throw new Error(t("Ling conversation tone was not applied. Please restart Ling and try again."));
+      }
       setEffectiveConfig(nextConfig);
-      setToneDraft(nextConfig.values.lingConversationTone?.value ?? defaultLingConversationTone);
-      setMessage(t("Ling conversation tone saved"));
+      setToneDraft(appliedTone);
+      setMessage(t("Ling conversation tone applied"));
     } catch (caught) {
+      setToneDraft(previousTone);
       setError(caught instanceof Error ? caught.message : String(caught));
     } finally {
       setSaving(false);
@@ -81,19 +93,17 @@ export function PersonalizationSettingsPanel({ cwd }: { readonly cwd: string }):
           </button>
         </div>
 
-        <p className="settings-panel-copy">
-          {t("Choose how Ling replies by default in this workspace.")}
-        </p>
-
         {error ? <div className="inline-error">{error}</div> : null}
-        {message ? <div className="settings-inline-success">{message}</div> : null}
+        {message ? <div className="settings-inline-tip" role="status" aria-live="polite">{message}</div> : null}
 
         <div className="interface-preference-grid">
           <div className="interface-preference-row">
             <span>
               <MessageCircle size={16} />
               <strong>{t("Ling conversation tone")}</strong>
-              <small>{configSourceLabel(effectiveConfig?.values.lingConversationTone?.source, t)}</small>
+              {effectiveConfig?.values.lingConversationTone?.source ? (
+                <small>{configSourceLabel(effectiveConfig.values.lingConversationTone.source, t)}</small>
+              ) : null}
             </span>
             <div className="ling-tone-options" role="radiogroup" aria-label={t("Ling conversation tone")}>
               {visibleLingConversationTones.map((tone) => (
@@ -103,7 +113,8 @@ export function PersonalizationSettingsPanel({ cwd }: { readonly cwd: string }):
                   type="button"
                   role="radio"
                   aria-checked={toneDraft === tone}
-                  onClick={() => setToneDraft(tone)}
+                  onClick={() => void applyTone(tone)}
+                  disabled={saving || loading}
                 >
                   <strong>{lingToneLabel(tone, t)}</strong>
                   <small>{lingToneDescription(tone, t)}</small>
@@ -112,16 +123,6 @@ export function PersonalizationSettingsPanel({ cwd }: { readonly cwd: string }):
             </div>
           </div>
         </div>
-
-        <footer className="personalization-settings-actions">
-          <small>
-            {t("Current source")}: {configSourceLabel(effectiveConfig?.values.lingConversationTone?.source, t)}
-          </small>
-          <button className="primary-button compact-button" type="button" onClick={() => void saveTone()} disabled={saving || loading}>
-            {saving ? <Loader2 className="spin" size={15} /> : null}
-            {saving ? t("Saving tone...") : t("Save conversation tone")}
-          </button>
-        </footer>
       </section>
 
       <SkillGovernanceSettingsSection cwd={cwd} />

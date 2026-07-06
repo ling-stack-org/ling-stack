@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useLayoutEffect, useMemo, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useState, type ReactNode } from "react";
 import { Monitor, Moon, Sun } from "lucide-react";
 import { useI18n } from "./i18n.js";
 
@@ -12,6 +12,7 @@ interface ThemeContextValue {
 }
 
 const themeStorageKey = "ling-stack.themePreference";
+const themeBootstrapStorageKey = "ling-stack.themeBootstrapPreference";
 const defaultThemePreference: ThemePreference = "system";
 
 const ThemeContext = createContext<ThemeContextValue>({
@@ -24,6 +25,10 @@ export function ThemeProvider({ children }: { readonly children: ReactNode }): J
   const [preference, setPreferenceState] = useState<ThemePreference>(() => readInitialThemePreference());
   const [systemTheme, setSystemTheme] = useState<ResolvedTheme>(() => readSystemTheme());
   const resolvedTheme = preference === "system" ? systemTheme : preference;
+  const setPreference = useCallback((nextPreference: ThemePreference): void => {
+    writeThemeBootstrapPreference(nextPreference);
+    setPreferenceState(nextPreference);
+  }, []);
 
   useEffect(() => {
     const mediaQuery = globalThis.matchMedia?.("(prefers-color-scheme: dark)");
@@ -55,9 +60,9 @@ export function ThemeProvider({ children }: { readonly children: ReactNode }): J
     () => ({
       preference,
       resolvedTheme,
-      setPreference: setPreferenceState,
+      setPreference,
     }),
-    [preference, resolvedTheme],
+    [preference, resolvedTheme, setPreference],
   );
 
   return <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>;
@@ -116,8 +121,16 @@ export function clearSavedThemePreference(): void {
   }
 }
 
+export function writeThemeBootstrapPreference(preference: ThemePreference): void {
+  try {
+    globalThis.localStorage?.setItem(themeBootstrapStorageKey, preference);
+  } catch {
+    // Storage can be unavailable in private or restricted browser contexts.
+  }
+}
+
 function readInitialThemePreference(): ThemePreference {
-  return readSavedThemePreference() ?? defaultThemePreference;
+  return readSavedThemePreference() ?? readThemeBootstrapPreference() ?? defaultThemePreference;
 }
 
 function readSystemTheme(): ResolvedTheme {
@@ -130,4 +143,13 @@ function readSystemTheme(): ResolvedTheme {
 
 function isThemePreference(value: string | null | undefined): value is ThemePreference {
   return value === "system" || value === "light" || value === "dark";
+}
+
+function readThemeBootstrapPreference(): ThemePreference | undefined {
+  try {
+    const saved = globalThis.localStorage?.getItem(themeBootstrapStorageKey);
+    return isThemePreference(saved) ? saved : undefined;
+  } catch {
+    return undefined;
+  }
 }

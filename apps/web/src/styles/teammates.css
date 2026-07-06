@@ -4560,10 +4560,11 @@
 }
 
 .teammates-page .teammate-draft-row {
-  grid-template-columns: 44px minmax(0, 1.35fr) minmax(90px, 0.72fr) minmax(78px, 0.58fr) minmax(58px, 0.44fr) minmax(116px, auto);
+  grid-template-columns: 44px minmax(128px, 1fr) minmax(104px, 0.72fr) minmax(78px, 0.5fr) minmax(54px, 0.35fr) 140px;
   gap: 10px;
   min-width: 0;
   min-height: 82px;
+  overflow: hidden;
   padding: 16px 12px;
   border: 1px solid #e5e5e5;
   border-radius: 8px;
@@ -4595,6 +4596,12 @@
   -webkit-line-clamp: 1;
 }
 
+.teammates-page .teammate-draft-copy,
+.teammates-page .teammate-draft-copy strong,
+.teammates-page .teammate-draft-copy small {
+  min-width: 0;
+}
+
 .teammate-model-pill,
 .teammate-channel-pill,
 .teammate-updated-time {
@@ -4610,7 +4617,7 @@
 .teammate-model-pill {
   display: inline-flex;
   align-items: center;
-  justify-content: center;
+  justify-content: flex-start;
   justify-self: stretch;
   min-height: 26px;
   width: 100%;
@@ -4620,6 +4627,7 @@
   border-radius: 5px;
   background: #f1f1f1;
   color: #5e5e5e;
+  text-align: left;
 }
 
 .teammate-model-pill.warning {
@@ -4629,9 +4637,10 @@
 
 .teammates-page .teammate-row-actions {
   display: grid;
-  grid-template-columns: minmax(92px, 1fr) 30px;
+  grid-template-columns: minmax(96px, 1fr) 30px;
+  align-items: center;
   justify-self: end;
-  width: min(100%, 128px);
+  width: 140px;
   min-width: 0;
   gap: 8px;
 }
@@ -4641,15 +4650,27 @@
 }
 
 .teammates-page .teammate-row-primary-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
   width: 100%;
   min-height: 34px;
   min-width: 0;
+  overflow: hidden;
   padding: 0 10px;
   border-radius: 7px;
   background: #ffffff;
   color: #111111;
   font-size: 14px;
   font-weight: 600;
+  line-height: 1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.teammates-page .teammate-row-primary-action svg {
+  flex: 0 0 auto;
 }
 
 .teammates-page .teammate-channel-pill,

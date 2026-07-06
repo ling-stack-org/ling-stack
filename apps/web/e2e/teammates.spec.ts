@@ -202,6 +202,29 @@ test("AI teammates page creates a durable teammate and opens its private workspa
   const lingEngineerRow = page.getByLabel("Workspace teammates").locator(".teammate-draft-row").filter({ hasText: "Ling Engineer" });
   await expect(lingEngineerRow.locator(".teammate-row-status.ready")).toContainText("Ready teammate");
   await expect(lingEngineerRow.getByLabel("Teammate actions")).toBeVisible();
+  await expect(lingEngineerRow.locator(".teammate-row-primary-action")).toContainText("Open chat");
+  const lingEngineerRowLayout = await lingEngineerRow.evaluate((row) => {
+    const model = row.querySelector<HTMLElement>(".teammate-model-pill");
+    const channel = row.querySelector<HTMLElement>(".teammate-channel-pill");
+    const updated = row.querySelector<HTMLElement>(".teammate-updated-time");
+    const primaryAction = row.querySelector<HTMLElement>(".teammate-row-primary-action");
+    const menuTrigger = row.querySelector<HTMLElement>(".teammate-row-menu-trigger");
+    const modelRect = model?.getBoundingClientRect();
+    const channelRect = channel?.getBoundingClientRect();
+    const updatedRect = updated?.getBoundingClientRect();
+    const primaryRect = primaryAction?.getBoundingClientRect();
+    const menuRect = menuTrigger?.getBoundingClientRect();
+    return {
+      rowOverflow: row.scrollWidth - row.clientWidth,
+      modelBeforeChannel: modelRect && channelRect ? modelRect.right <= channelRect.left : false,
+      channelBeforeUpdated: channelRect && updatedRect ? channelRect.right <= updatedRect.left : false,
+      actionBeforeMenu: primaryRect && menuRect ? primaryRect.right <= menuRect.left : false,
+    };
+  });
+  expect(lingEngineerRowLayout.rowOverflow).toBeLessThanOrEqual(1);
+  expect(lingEngineerRowLayout.modelBeforeChannel).toBe(true);
+  expect(lingEngineerRowLayout.channelBeforeUpdated).toBe(true);
+  expect(lingEngineerRowLayout.actionBeforeMenu).toBe(true);
   await expect(page.getByLabel("Workflow")).toHaveCount(0);
   await expect(page.locator(".teammate-detail-panel")).toHaveCount(0);
 

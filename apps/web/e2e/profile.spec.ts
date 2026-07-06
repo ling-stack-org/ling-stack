@@ -14,7 +14,14 @@ test("profile avatar crop exports a transparent circular image", async ({ page }
 
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
   await page.getByLabel("Settings sections").getByRole("button", { name: /Profile/ }).click();
-  await expect(page.getByRole("heading", { name: "Ling User", level: 1 })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "个人资料", level: 1 })).toBeVisible();
+  await expect(page.locator(".profile-settings-head > span")).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "身份信息" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "显示预览" })).toBeVisible();
+  await expect(page.getByLabel("个人资料显示预览")).toContainText("Ling User");
+  await expect(page.getByRole("heading", { name: "Token 活动" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "连续使用" })).toBeVisible();
+  await expect(page.locator(".profile-usage-streak-grid .profile-usage-metric")).toHaveCount(3);
 
   await page.locator('input[type="file"][accept="image/*"]').setInputFiles({
     name: "avatar.svg",
