@@ -3412,10 +3412,16 @@ test("channel composer applies plan mode session commands without creating slash
   await expect.poll(planMode).toBe("plan");
   await expect(planChip).toBeVisible();
   await expect(planChip).toHaveClass(/active/);
+  await expect(composer).not.toContainText("Plan Mode enabled");
   await expect.poll(() => state.tasks).toHaveLength(0);
   await composer.getByRole("button", { name: "Add" }).click();
-  await expect(page.getByRole("menu", { name: "Add" }).getByRole("menuitem", { name: "Exit Plan Mode" })).toBeVisible();
-  await composer.getByRole("button", { name: "Add" }).click();
+  const addMenu = page.getByRole("menu", { name: "Add" });
+  await expect(addMenu.getByRole("menuitem", { name: "Plan Mode" })).toBeVisible();
+  await expect(addMenu.getByRole("menuitem", { name: "Exit Plan Mode" })).toHaveCount(0);
+  await addMenu.getByRole("menuitem", { name: "Plan Mode" }).click();
+  await expect.poll(planMode).toBe("plan");
+  await expect(planChip).toBeVisible();
+  await expect(planChip).toHaveClass(/active/);
 
   await composerInput.fill("/review apps/web");
   await composer.getByRole("button", { name: "Create task" }).click();
@@ -3443,6 +3449,7 @@ test("channel composer applies plan mode session commands without creating slash
   await expect.poll(planMode).toBe("default");
   await expect(planChip).toBeVisible();
   await expect(planChip).not.toHaveClass(/active/);
+  await expect(composer).not.toContainText("Plan Mode disabled");
 
   await composerInput.fill("/plan status");
   await composer.getByRole("button", { name: "Apply command" }).click();
@@ -3481,16 +3488,17 @@ test("channel composer manages goal lifecycle from the floating panel", async ({
   await composer.getByRole("button", { name: "Add" }).click();
   await page.getByRole("menu", { name: "Add" }).getByRole("menuitem", { name: /Goal/ }).click();
   await expect(goalChip).toBeVisible();
-  await expectComposerValue(composerInput, "/goal ");
-  await composerInput.evaluate((node) => {
-    const range = document.createRange();
-    range.selectNodeContents(node);
-    range.collapse(false);
-    const selection = window.getSelection();
-    selection?.removeAllRanges();
-    selection?.addRange(range);
-  });
-  await page.keyboard.insertText("Finish PR4 with a visible goal panel");
+  await expectComposerValue(composerInput, "");
+  await goalChip.hover();
+  await goalChip.getByRole("button", { name: "Hide goal" }).click();
+  await expect(goalChip).toHaveCount(0);
+  await expectComposerValue(composerInput, "");
+
+  await composer.getByRole("button", { name: "Add" }).click();
+  await page.getByRole("menu", { name: "Add" }).getByRole("menuitem", { name: /Goal/ }).click();
+  await expect(goalChip).toBeVisible();
+  await expectComposerValue(composerInput, "");
+  await composerInput.fill("/goal Finish PR4 with a visible goal panel");
   await expectComposerValue(composerInput, "/goal Finish PR4 with a visible goal panel");
   await composer.getByRole("button", { name: "Apply command" }).click();
 

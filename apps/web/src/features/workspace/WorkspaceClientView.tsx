@@ -2947,18 +2947,30 @@ export function WorkspaceClientView({
       });
   }
 
+  function clearComposerSessionCommandDraft(commandId: "goal" | "plan"): void {
+    if (composerSlashIntent.kind !== "session_command" || composerSlashIntent.commandId !== commandId) {
+      return;
+    }
+    setMessageDraft("");
+    setMessageMentions([]);
+    setMentionPicker(undefined);
+    setMentionActiveIndex(0);
+    setSlashPicker(undefined);
+    setSlashActiveIndex(0);
+    setSendState("idle");
+    setSendError("");
+  }
+
   function toggleChannelPlanModeFromComposer(): void {
     setChannelPlanModeChipVisible(true);
     void setChannelPlanMode(!channelPlanModeActive)
-      .then(() => {
-        showComposerFeedback("success", channelPlanModeActive ? t("Plan Mode disabled") : t("Plan Mode enabled"));
-      })
       .catch((error: unknown) => {
         showComposerFeedback("error", error instanceof Error ? error.message : String(error));
       });
   }
 
   function closeChannelPlanModeChip(): void {
+    clearComposerSessionCommandDraft("plan");
     if (!channelPlanModeActive) {
       setChannelPlanModeChipVisible(false);
       return;
@@ -2966,7 +2978,6 @@ export function WorkspaceClientView({
     void setChannelPlanMode(false)
       .then(() => {
         setChannelPlanModeChipVisible(false);
-        showComposerFeedback("success", t("Plan Mode disabled"));
       })
       .catch((error: unknown) => {
         showComposerFeedback("error", error instanceof Error ? error.message : String(error));
@@ -2974,6 +2985,7 @@ export function WorkspaceClientView({
   }
 
   function closeChannelGoalChip(): void {
+    clearComposerSessionCommandDraft("goal");
     if (!activeChannelGoal) {
       setChannelGoalChipVisible(false);
       return;
@@ -2981,7 +2993,6 @@ export function WorkspaceClientView({
     void clearChannelGoal()
       .then(() => {
         setChannelGoalChipVisible(false);
-        showComposerFeedback("success", t("Goal cleared"));
       })
       .catch((error: unknown) => {
         showComposerFeedback("error", error instanceof Error ? error.message : String(error));
