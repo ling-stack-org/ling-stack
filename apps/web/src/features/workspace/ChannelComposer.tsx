@@ -14,6 +14,7 @@ import {
   ChevronUp,
   CheckCircle2,
   CircleAlert,
+  ClipboardList,
   FileText,
   Info,
   ListChecks,
@@ -530,16 +531,18 @@ export function ChannelComposer({
                   type="button"
                   role="menuitem"
                   disabled={!selectedChannelId || composerBusy || planModeBusy || activeRun}
-                  title={planModeActive ? t("Return to implementation mode") : t("Plan first, then implement after review")}
+                  title={planModeActive ? t("Plan Mode is on") : t("Plan first, then implement after review")}
                   onClick={() => {
                     setAddMenuOpen(false);
                     onRevealPlanModeChip();
-                    onTogglePlanMode();
+                    if (!planModeActive) {
+                      onTogglePlanMode();
+                    }
                   }}
                 >
-                  {planModeBusy ? <Loader2 className="spin" size={15} /> : <ListChecks size={15} />}
+                  {planModeBusy ? <Loader2 className="spin" size={15} /> : <ClipboardList size={15} />}
                   <span>
-                    <strong>{planModeActive ? t("Exit Plan Mode") : t("Plan Mode")}</strong>
+                    <strong>{t("Plan Mode")}</strong>
                   </span>
                 </button>
                 <button
@@ -547,11 +550,10 @@ export function ChannelComposer({
                   type="button"
                   role="menuitem"
                   disabled={!selectedChannelId || composerBusy}
-                  title={goal ? t("Edit the current goal") : t("Set a thread goal")}
+                  title={t("Goal")}
                   onClick={() => {
                     setAddMenuOpen(false);
                     onRevealGoalChip();
-                    onOpenGoalEditor();
                   }}
                 >
                   <Target size={15} />
@@ -585,7 +587,7 @@ export function ChannelComposer({
                   ? t("Plan Mode is on. Click to exit Plan Mode.")
                   : t("Plan Mode is off. Click to plan before implementing.")}
               >
-                {planModeBusy ? <Loader2 className="spin" size={15} /> : <ListChecks size={15} />}
+                {planModeBusy ? <Loader2 className="spin" size={15} /> : <ClipboardList size={15} />}
                 <span>{t("Plan")}</span>
               </button>
               <button

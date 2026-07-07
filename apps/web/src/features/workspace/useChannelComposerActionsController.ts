@@ -521,7 +521,6 @@ export function useChannelComposerActionsController({
           } else {
             const nextActive = slashIntent.action === "on";
             await onSetPlanMode(nextActive);
-            showComposerFeedback("success", nextActive ? t("Plan Mode enabled") : t("Plan Mode disabled"));
           }
         }
         if (slashIntent.commandId === "goal") {
