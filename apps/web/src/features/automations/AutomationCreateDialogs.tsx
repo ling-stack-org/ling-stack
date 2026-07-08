@@ -60,22 +60,61 @@ export function AutomationTemplateModal({
   readonly onClose: () => void;
 }): JSX.Element {
   const { t } = useI18n();
+  const templatePresets = buildTemplatePresets(templates);
+  const [selectedTemplateId, setSelectedTemplateId] = useState(templatePresets[0]?.id ?? "");
+  const selectedTemplate = templatePresets.find((template) => template.id === selectedTemplateId) ?? templatePresets[0];
   return (
     <AutomationModal title={t("Automation templates")} icon={<Layers size={18} />} actionLabel={t("Manual setup")} onAction={onManual} onClose={onClose}>
-      <div className="automation-template-grid modal-grid" aria-label={t("Automation templates")}>
-        {buildTemplatePresets(templates).map((template) => (
+      <div className="automation-template-picker" aria-label={t("Automation templates")}>
+        <div className="automation-template-list" role="listbox" aria-label={t("Automation templates")}>
+          {templatePresets.map((template) => (
           <button
             key={template.id}
-            className="automation-template-card"
+            className={template.id === selectedTemplate?.id ? "automation-template-row selected" : "automation-template-row"}
             type="button"
-            onClick={() => onApply({ ...template, title: t(template.title), description: t(template.description) })}
+            role="option"
+            aria-selected={template.id === selectedTemplate?.id}
+            onClick={() => setSelectedTemplateId(template.id)}
           >
             {templateIcon(template.id)}
-            <strong>{t(template.title)}</strong>
-            <span>{t(template.description)}</span>
-            <small>{schedulePresetLabel(template.schedule, t)} · {runtimeChoiceLabel(template.runtime, t)}</small>
+            <span>
+              <strong>{t(template.title)}</strong>
+              <small>{schedulePresetLabel(template.schedule, t)} · {runtimeChoiceLabel(template.runtime, t)}</small>
+            </span>
           </button>
-        ))}
+          ))}
+        </div>
+        <aside className="automation-template-preview" aria-label={t("Template preview")}>
+          {selectedTemplate ? (
+            <>
+              <span className="automation-template-preview-icon">{templateIcon(selectedTemplate.id)}</span>
+              <div className="automation-template-preview-copy">
+                <strong>{t(selectedTemplate.title)}</strong>
+                <p>{t(selectedTemplate.description)}</p>
+                <dl>
+                  <div>
+                    <dt>{t("Schedule")}</dt>
+                    <dd>{schedulePresetLabel(selectedTemplate.schedule, t)}</dd>
+                  </div>
+                  <div>
+                    <dt>{t("Runtime")}</dt>
+                    <dd>{runtimeChoiceLabel(selectedTemplate.runtime, t)}</dd>
+                  </div>
+                </dl>
+              </div>
+              <button
+                className="primary-button"
+                type="button"
+                onClick={() => onApply({ ...selectedTemplate, title: t(selectedTemplate.title), description: t(selectedTemplate.description) })}
+              >
+                <Check size={15} />
+                {t("Use this template")}
+              </button>
+            </>
+          ) : (
+            <p className="compact-empty">{t("No templates available")}</p>
+          )}
+        </aside>
       </div>
     </AutomationModal>
   );
@@ -409,8 +448,32 @@ function AutomationModal({
   readonly onClose: () => void;
 }): JSX.Element {
   const { t } = useI18n();
+
+  useEffect(() => {
+    function handleKeyDown(event: KeyboardEvent): void {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        event.stopPropagation();
+        onClose();
+      }
+    }
+
+    document.addEventListener("keydown", handleKeyDown, true);
+    return () => {
+      document.removeEventListener("keydown", handleKeyDown, true);
+    };
+  }, [onClose]);
+
   return (
-    <div className="automation-modal-backdrop" role="presentation">
+    <div
+      className="automation-modal-backdrop"
+      role="presentation"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) {
+          onClose();
+        }
+      }}
+    >
       <div className="automation-modal" role="dialog" aria-modal="true" aria-label={ariaLabel ?? title}>
         <div className="panel-title split">
           <span>

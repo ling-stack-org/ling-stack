@@ -118,8 +118,8 @@ test("channel governance notifications stay in the header review queue", async (
   await page.goto("/");
   await openEngineeringChannel(page);
 
-  await expect(page.locator(".channel-governance-button")).toContainText("Review");
-  await expect(page.locator(".channel-governance-button")).toContainText("1");
+  await expect(page.locator(".channel-governance-button")).toHaveAttribute("aria-label", "Review queue: 1");
+  await expect(page.locator(".channel-governance-button .workspace-toolbar-count-badge")).toContainText("1");
   await expect(page.getByLabel("Channel message feed").getByText("No channel messages yet")).toBeVisible();
 
   await page.locator(".channel-governance-button").click();
@@ -167,6 +167,9 @@ test("terminal bottom panel runs commands in the channel workspace", async ({ pa
   await page.goto("/");
   await openEngineeringChannel(page);
 
+  const channelToolbar = page.getByLabel("Workspace task toolbar");
+  await expect(channelToolbar).toHaveClass(/workspace-top-right-toolbar/);
+  await expect(channelToolbar.locator(".task-toolbar-bottom-panel")).toHaveCount(1);
   await page.getByRole("button", { name: "Show details" }).click();
   const dock = page.locator(".channel-side-panel.right-dock");
   await expect(dock).toBeVisible();
@@ -578,7 +581,7 @@ test("global sidebar keeps fixed chrome, scrollable recents, and a true compact 
       leftX: Math.round(leftDrawer?.getBoundingClientRect().x ?? -1),
       leftOpacity: leftDrawer ? getComputedStyle(leftDrawer).opacity : "",
       transform: leftDrawer ? getComputedStyle(leftDrawer).transform : "",
-      brandCopyDisplay: brandCopy ? getComputedStyle(brandCopy).display : "",
+      brandCopyHidden: !brandCopy || getComputedStyle(brandCopy).display === "none",
       firstNavTextDisplay: firstNavText ? getComputedStyle(firstNavText).display : "",
       settingsLabelDisplay: settingsLabel ? getComputedStyle(settingsLabel).display : "",
       selectedChannelAvatarDisplay: selectedChannelAvatar ? getComputedStyle(selectedChannelAvatar).display : "",
@@ -594,7 +597,7 @@ test("global sidebar keeps fixed chrome, scrollable recents, and a true compact 
   expect(leftCollapsed.leftX).toBe(0);
   expect(leftCollapsed.leftOpacity).toBe("1");
   expect(leftCollapsed.transform).toBe("none");
-  expect(leftCollapsed.brandCopyDisplay).toBe("none");
+  expect(leftCollapsed.brandCopyHidden).toBe(true);
   expect(leftCollapsed.firstNavTextDisplay).toBe("none");
   expect(leftCollapsed.settingsLabelDisplay).toBe("none");
   expect(leftCollapsed.selectedChannelAvatarDisplay).toBe("grid");
@@ -815,7 +818,7 @@ test("progress popover shows active context source groups and opens source detai
   await workCell.locator(".conversation-work-cell-agent-span-head").click();
   await expect(workCell.locator(".conversation-work-cell-agent-span-detail")).toContainText("From Development Council");
 
-  await page.getByLabel("Workspace task toolbar").getByRole("button", { name: "Progress" }).click();
+  await page.getByLabel("Workspace task toolbar").getByRole("button", { name: "Summary" }).click();
 
   const popover = page.locator(".channel-progress-popover");
   await expect(popover).toBeVisible();
@@ -970,7 +973,7 @@ test("channel environment surface shows read-only context and opens review", asy
     };
   });
 
-  await page.getByLabel("Workspace task toolbar").getByRole("button", { name: "Progress" }).click();
+  await page.getByLabel("Workspace task toolbar").getByRole("button", { name: "Summary" }).click();
   const popover = page.locator(".channel-progress-popover");
   await expect(popover).toBeVisible();
   await expect.poll(async () => Math.round((await popover.boundingBox())?.width ?? 0)).toBeGreaterThanOrEqual(270);
@@ -992,7 +995,7 @@ test("channel environment surface shows read-only context and opens review", asy
   await expect(quickEnvironmentPage).toContainText("ling/channel-environment");
   await page.getByRole("button", { name: "Back to channel" }).click();
   await expect(quickEnvironmentPage).toHaveCount(0);
-  await page.getByLabel("Workspace task toolbar").getByRole("button", { name: "Progress" }).click();
+  await page.getByLabel("Workspace task toolbar").getByRole("button", { name: "Summary" }).click();
   await expect(popover).toBeVisible();
 
   const dock = page.locator(".channel-side-panel");
@@ -1267,7 +1270,7 @@ test("channel environment labels review-only items as review instead of changes"
   await page.goto("/");
   await openEngineeringChannel(page);
 
-  await page.getByLabel("Workspace task toolbar").getByRole("button", { name: "Progress" }).click();
+  await page.getByLabel("Workspace task toolbar").getByRole("button", { name: "Summary" }).click();
   const environmentSection = page.locator(".channel-progress-popover .attention-environment-section");
   await expect(environmentSection).toBeVisible();
   await expect(environmentSection).toContainText("Review");
@@ -1289,7 +1292,7 @@ test("channel environment shows clean git state without review rows", async ({ p
   await page.goto("/");
   await openEngineeringChannel(page);
 
-  await page.getByLabel("Workspace task toolbar").getByRole("button", { name: "Progress" }).click();
+  await page.getByLabel("Workspace task toolbar").getByRole("button", { name: "Summary" }).click();
   const environmentSection = page.locator(".channel-progress-popover .attention-environment-section");
   await expect(environmentSection).toBeVisible();
   await expect(environmentSection).not.toContainText("Changes");

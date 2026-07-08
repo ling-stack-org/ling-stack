@@ -123,6 +123,9 @@ export function AutomationsPage({
   void onPreviewDraft;
   void onPreview;
   void onSetSchedule;
+  void schedulerAction;
+  void onStartScheduler;
+  void onStopScheduler;
 
   const { t } = useI18n();
   const [dialog, setDialog] = useState<CreateDialog>("");
@@ -274,10 +277,7 @@ export function AutomationsPage({
       />
       <AutomationSchedulerStrip
         scheduler={scheduler}
-        schedulerAction={schedulerAction}
         manualEnabledCount={automationSummary.manualEnabledDefinitions}
-        onStart={onStartScheduler}
-        onStop={onStopScheduler}
       />
 
       <main className="automations-inbox-main" aria-labelledby="automations-title">
@@ -286,7 +286,7 @@ export function AutomationsPage({
             <Info size={17} />
             <strong>{t("{count} automation items need attention", { count: automationSummary.attentionCount })}</strong>
             <span>{automationSummary.schedulerStoppedWithScheduledWatches
-              ? t("Start scheduler to run scheduled automations automatically.")
+              ? t("Review the schedule or run the automation manually.")
               : automationSummary.readyDraftCount > 0
                 ? t("Review drafts before enabling.")
                 : t("Check recent failed runs or automation errors.")}</span>
@@ -298,6 +298,7 @@ export function AutomationsPage({
           automations={visibleAutomations}
           automationRuns={automationTab === "history" ? recentRuns : automationRuns}
           allAutomations={automations}
+          channels={channels}
           drafts={automationDrafts}
           selectedAutomationId={selectedAutomationId}
           selectedDraftId={selectedDraftId}

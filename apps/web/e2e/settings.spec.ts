@@ -196,11 +196,12 @@ test("Chinese mode localizes workspace settings, runtime policy, and teammate se
   await expect(createDialog.getByLabel("队友设置步骤")).toHaveCount(0);
   await expect(createDialog.getByLabel("队友预览")).toHaveCount(0);
   await expect(createDialog.getByText("系统提示词")).toHaveCount(0);
-  await createDialog.getByText("高级设置").click();
+  await expect(createDialog.getByText("高级设置")).toHaveCount(0);
+  await expect(createDialog.getByText("默认记忆范围")).toHaveCount(0);
+  await expect(createDialog.getByRole("button", { name: "私聊摘要" })).toHaveCount(0);
   await expect(page.getByText("Project files")).toHaveCount(0);
   await expect(page.getByText("Skill pack")).toHaveCount(0);
   await expect(createDialog.getByLabel("加入频道")).toBeVisible();
-  await expect(createDialog.getByText("高级设置")).toBeVisible();
 });
 
 test("theme switcher supports system, light, and dark preferences", async ({ page }) => {
@@ -558,7 +559,8 @@ test("settings plugins page applies and controls the CUA trusted-local preset wi
   const bundledRow = pluginsPanel.locator(".settings-plugin-row").filter({ hasText: "Bundled" });
   const bundledSummary = bundledRow.locator(".settings-plugin-row-summary");
   await expect(bundledSummary).toContainText("Bundled");
-  await expect(bundledRow).toContainText("not installed");
+  await expect(bundledSummary).not.toContainText("not installed");
+  await expect(bundledSummary).not.toContainText("Not installed");
   await expect(bundledSummary).not.toContainText("bundled:cua-driver");
   await expect(bundledSummary).not.toContainText("mockhash1234");
   await expect(bundledRow.getByRole("button", { name: "Apply preset" })).toHaveCount(0);
@@ -573,14 +575,14 @@ test("settings plugins page applies and controls the CUA trusted-local preset wi
   const runtimePreview = pluginsPanel.locator(".settings-plugin-runtime-preview");
   await expect(runtimePreview).toContainText("Runtime preview blocked.");
   await runtimePreview.getByText("Runtime preview details").click();
-  await expect(runtimePreview).toContainText("disabled");
+  await expect(runtimePreview).toContainText("Runtime disabled");
   await expect(pluginsPanel.locator(".settings-plugin-action-notice")).toContainText("Runtime preview blocked.");
   await bundledRow.getByRole("button", { name: "Enable" }).click();
   await expect(pluginsPanel.locator(".settings-plugin-action-notice")).toContainText("Plugin enabled.");
   await bundledRow.getByRole("button", { name: "Runtime preview" }).click();
   await expect(runtimePreview).toContainText("Runtime preview ready.");
   await runtimePreview.getByText("Runtime preview details").click();
-  await expect(runtimePreview).toContainText("injectable");
+  await expect(runtimePreview).toContainText("Runtime ready");
   await expect(runtimePreview).toContainText("2 policy overlays");
   await bundledRow.getByRole("button", { name: "Uninstall" }).click();
   await expect(pluginsPanel.locator(".settings-plugin-action-notice")).toContainText("Plugin package uninstalled.");
@@ -692,8 +694,10 @@ test("settings skill library shows read-only skill health findings", async ({ pa
   await expect(panel.getByRole("region", { name: "Skill Source Health" })).toHaveCount(0);
   const reviewSkillRow = panel.locator(".settings-skill-table tbody tr").filter({ hasText: "Code Review" }).first();
   await expect(reviewSkillRow).not.toContainText("Source-backed");
-  await reviewSkillRow.getByRole("button", { name: /Code Review/ }).click();
   const inspector = panel.locator(".settings-skill-inspector");
+  await expect(inspector).toContainText("No skill selected");
+  await expect(inspector.locator(".settings-skill-summary-card")).toHaveCount(0);
+  await reviewSkillRow.getByRole("button", { name: "Details" }).click();
   await expect(inspector.locator(".settings-skill-summary-card")).toBeVisible();
   await expect(inspector).toContainText("Source details are available below when you need them.");
   const sourceDetails = inspector.locator(".settings-skill-inspector-details").filter({ hasText: "Source and raw details" });
@@ -783,7 +787,8 @@ test("settings skill library shows read-only skill health findings", async ({ pa
   await page.getByRole("tab", { name: /Review queue/ }).click();
   const healthDetails = panel.locator(".settings-skill-review-diagnostics").filter({ hasText: "Skill health diagnostics" });
   await expect(healthDetails).toBeVisible();
-  await expect.poll(() => healthDetails.evaluate((element) => element.hasAttribute("open"))).toBe(true);
+  await expect.poll(() => healthDetails.evaluate((element) => element.hasAttribute("open"))).toBe(false);
+  await healthDetails.getByText("Skill health diagnostics").click();
   const healthLayout = await healthDetails.evaluate((element) => {
     const findings = element.querySelector(".settings-skill-health-findings");
     const style = getComputedStyle(element);

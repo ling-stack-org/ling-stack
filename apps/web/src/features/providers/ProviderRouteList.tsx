@@ -106,12 +106,10 @@ export function ProviderRouteList({
         <table className="provider-table">
           <thead>
             <tr>
-              <th>{t("Supplier")}</th>
               <th>{t("Model")}</th>
-              <th>{t("Base URL")}</th>
-              <th>{t("API key status")}</th>
-              <th>{t("Check status")}</th>
-              <th>{t("Status")}</th>
+              <th>{t("Usage")}</th>
+              <th>{t("Availability")}</th>
+              <th>{t("Default and status")}</th>
               <th className="provider-table-action-head">{t("Actions")}</th>
             </tr>
           </thead>
@@ -137,35 +135,36 @@ export function ProviderRouteList({
                         <span className="provider-avatar" aria-hidden="true">{providerInitial(provider.displayName)}</span>
                         <span className="provider-name-copy">
                           <strong>{provider.displayName}</strong>
+                          <small>{providerModelRouteLabel(provider, templates)}</small>
                         </span>
                       </span>
                     </td>
                     <td>
-                      <span className="provider-model-name">{providerModelRouteLabel(provider, templates)}</span>
                       <div className="provider-meta-line provider-table-compat-line">
                         <span>{t("Capabilities")}: {row.capabilitySummary}</span>
-                        <span>{row.lastCheckSummary}</span>
                       </div>
                       {row.generationRuntimeSummary ? (
                         <div className="provider-meta-line provider-generation-status-line">
                           <span>{row.generationRuntimeSummary}</span>
                         </div>
                       ) : null}
-                    </td>
-                    <td>
-                      <div className="provider-meta-line mono provider-endpoint-cell">
-                        <span><span className="provider-endpoint-label">{t("Base URL")}: </span>{row.effectiveBaseUrl}</span>
-                      </div>
+                      <details className="settings-compact-details provider-row-technical-details">
+                        <summary>{t("Technical details")}</summary>
+                        <div className="provider-row-technical-grid">
+                          <span><small>{t("Base URL")}</small><code>{row.effectiveBaseUrl}</code></span>
+                          <span><small>{t("Model route")}</small><code>{provider.model}</code></span>
+                          <span><small>{t("Provider route")}</small><code>{provider.id}</code></span>
+                        </div>
+                      </details>
                     </td>
                     <td>
                       <span className="provider-key-status-stack">
                         <span className={providerSecretStatusClass(provider)}>{providerSecretStatusLabel(provider, t)}</span>
+                        <span className={providerLastCheckClass(provider)} title={providerLastCheckTitle(provider, t)}>
+                          {providerLastCheckLabel(provider, t)}
+                        </span>
                         {row.secretHeaderSummary ? <small>{row.secretHeaderSummary}</small> : null}
-                      </span>
-                    </td>
-                    <td>
-                      <span className={providerLastCheckClass(provider)} title={providerLastCheckTitle(provider, t)}>
-                        {providerLastCheckLabel(provider, t)}
+                        <small>{row.lastCheckSummary}</small>
                       </span>
                     </td>
                     <td className="provider-status-cell">
@@ -291,7 +290,7 @@ export function ProviderRouteList({
                   </tr>
                   {rowCheckResult ? (
                     <tr className={rowCheckResult.ok ? "provider-check-feedback-row ok" : "provider-check-feedback-row bad"}>
-                      <td colSpan={7}>
+                      <td colSpan={5}>
                         <div className="provider-check-feedback">
                           {rowCheckResult.ok ? <CheckCircle2 size={15} /> : <CircleAlert size={15} />}
                           <div className="provider-check-feedback-copy">

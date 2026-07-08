@@ -5,6 +5,7 @@ import {
   FileText,
   Globe2,
   History,
+  MessageSquare,
   Search,
   ShieldCheck,
   SquareTerminal,
@@ -73,6 +74,10 @@ export interface WorkspaceRightDockProps {
   readonly proposedPlansError?: string;
   readonly currentPlanThreadId?: string;
   readonly planActionBusyId?: string;
+  readonly contextNode?: ReactNode;
+  readonly contextLabel?: string;
+  readonly contextDescription?: string;
+  readonly contextCount?: number;
   readonly includeActivity?: boolean;
   readonly activityNode?: ReactNode;
   readonly activityCount?: number;
@@ -108,6 +113,10 @@ export function WorkspaceRightDock({
   proposedPlansError = "",
   currentPlanThreadId,
   planActionBusyId = "",
+  contextNode,
+  contextLabel,
+  contextDescription,
+  contextCount = 0,
   includeActivity = false,
   activityNode,
   activityCount = 0,
@@ -140,6 +149,7 @@ export function WorkspaceRightDock({
   const browserEvidenceCount = browserGroups.reduce((count, group) => count + group.items.length, 0);
   const terminalEvidenceCount = terminalGroups.reduce((count, group) => count + group.items.length, 0);
   const hasTerminalSession = Boolean(terminalSession);
+  const hasContextPage = Boolean(contextNode);
   const evidenceCount = evidenceGroups.reduce((count, group) => count + group.items.length, 0);
   const visiblePlanCount = proposedPlans.filter((plan) => plan.status !== "archived").length;
   const enrichedReviewItems = useMemo(() => reviewItems.map((item) => {
@@ -317,6 +327,18 @@ export function WorkspaceRightDock({
 
   const pages = useMemo<readonly RightDockPageManifest[]>(() => {
     const manifests: RightDockPageManifest[] = [
+      ...(hasContextPage ? [{
+        id: "context" as const,
+        label: contextLabel ?? t("Context"),
+        icon: <MessageSquare size={16} />,
+        launcherItem: {
+          description: contextDescription ?? t("Conversation context and workspace state"),
+          count: contextCount,
+          statusLabel: contextCount > 0 ? t("{count} context items", { count: contextCount }) : t("Context ready"),
+          severity: contextCount > 0 ? "info" as const : "neutral" as const,
+        },
+        render: () => contextNode,
+      }] : []),
       {
         id: "review",
         label: t("Review workbench"),
@@ -441,23 +463,28 @@ export function WorkspaceRightDock({
     },
     ];
     if (includeActivity) {
+      const activityDescription = surface === "channel"
+        ? t("Channel activity and collaboration state")
+        : t("Conversation context and workspace state");
       manifests.push({
         id: "activity",
         label: t("Activity"),
         icon: <Activity size={16} />,
         launcherItem: {
-          description: t("Channel activity and collaboration state"),
+          description: activityDescription,
           count: activityCount,
           statusLabel: activityCount > 0 ? t("{count} active signals", { count: activityCount }) : t("No activity"),
           severity: activityCount > 0 ? "info" : "neutral",
         },
-        render: () => (
+        render: () => activityNode ? (
+          <div className="right-dock-activity-stack">
+            {activityNode}
+          </div>
+        ) : (
           <ToolPlaceholderPage
             title={t("No activity yet")}
-            description={t("Channel activity and collaboration state will appear here.")}
-          >
-            {activityNode ?? null}
-          </ToolPlaceholderPage>
+            description={activityDescription}
+          />
         ),
       });
     }
@@ -537,11 +564,16 @@ export function WorkspaceRightDock({
     activityNode,
     browserEvidenceCount,
     browserGroups,
+    contextCount,
+    contextDescription,
+    contextLabel,
+    contextNode,
     detailNodeById,
     evidenceCount,
     evidenceGroups,
     fileItems,
     hasTerminalSession,
+    hasContextPage,
     includeActivity,
     codeChangeActionCount,
     codeChangeReviewItems,

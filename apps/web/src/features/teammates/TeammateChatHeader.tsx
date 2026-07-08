@@ -1,9 +1,14 @@
-import { PanelRightClose, PanelRightOpen, RefreshCw, Search, Settings, X } from "lucide-react";
-import type { ReactNode } from "react";
+import { Search, X } from "lucide-react";
+import type { RefCallback } from "react";
 import { useI18n } from "../../i18n.js";
 import { StatusBadge } from "../../shared/components/index.js";
 import { ConversationStatusStrip } from "../../shared/conversation/index.js";
 import type { AiTeammate } from "../../types.js";
+import {
+  ConversationSummaryPopover,
+  ConversationTopToolbar,
+  type ConversationSummaryRow,
+} from "../workspace/right-dock/index.js";
 import { TeammateAvatarView } from "./TeammateAvatarView.js";
 
 export function TeammateChatHeader({
@@ -15,14 +20,22 @@ export function TeammateChatHeader({
   loading,
   searchOpen,
   searchQuery,
-  contextPanelOpen,
+  summaryOpen,
+  summaryShouldRender,
+  summaryMotionClass,
+  summaryPlacementRef,
+  summaryRows,
+  terminalOpen,
+  terminalDisabled,
+  detailsOpen,
   onToggleSearch,
   onSearchQueryChange,
   onClearSearch,
   onRefresh,
-  onOpenSettings,
-  onToggleContextPanel,
-  toolbarStart,
+  onToggleSummary,
+  onCloseSummary,
+  onToggleTerminal,
+  onToggleDetails,
 }: {
   readonly cwd: string;
   readonly teammate: AiTeammate;
@@ -32,26 +45,34 @@ export function TeammateChatHeader({
   readonly loading: boolean;
   readonly searchOpen: boolean;
   readonly searchQuery: string;
-  readonly contextPanelOpen: boolean;
+  readonly summaryOpen: boolean;
+  readonly summaryShouldRender: boolean;
+  readonly summaryMotionClass: "is-popover-expanded" | "is-popover-collapsed";
+  readonly summaryPlacementRef: RefCallback<HTMLElement>;
+  readonly summaryRows: readonly ConversationSummaryRow[];
+  readonly terminalOpen: boolean;
+  readonly terminalDisabled?: boolean;
+  readonly detailsOpen: boolean;
   readonly onToggleSearch: () => void;
   readonly onSearchQueryChange: (value: string) => void;
   readonly onClearSearch: () => void;
   readonly onRefresh: () => void | Promise<void>;
-  readonly onOpenSettings: () => void;
-  readonly onToggleContextPanel: () => void;
-  readonly toolbarStart?: ReactNode;
+  readonly onToggleSummary: () => void;
+  readonly onCloseSummary: () => void;
+  readonly onToggleTerminal: () => void;
+  readonly onToggleDetails: () => void;
 }): JSX.Element {
   const { t } = useI18n();
+  const summaryShouldRenderInHeader = summaryShouldRender && !detailsOpen;
   return (
     <section
       className={[
         "teammate-chat-header",
         searchOpen ? "searching" : "",
-        toolbarStart ? "has-toolbar-start" : "",
+        summaryOpen ? "summary-open" : "",
       ].filter(Boolean).join(" ")}
       aria-label={t("AI teammate private chat")}
     >
-      {toolbarStart ? <div className="teammate-chat-toolbar-start">{toolbarStart}</div> : null}
       <div className="teammate-workspace-identity">
         <TeammateAvatarView teammate={teammate} cwd={cwd} />
         <div>
@@ -60,46 +81,26 @@ export function TeammateChatHeader({
           <p>{t("Private conversation only visible between you and {name}", { name: teammate.displayName })}</p>
         </div>
       </div>
-      <div className="teammate-chat-actions" aria-label={t("Private chat actions")}>
-        <button
-          className={searchOpen ? "secondary-button compact-button active" : "secondary-button compact-button"}
-          type="button"
-          onClick={onToggleSearch}
-          title={t("Search private messages")}
-          aria-label={t("Search private messages")}
-        >
-          <Search size={15} />
-        </button>
-        <button
-          className="secondary-button compact-button"
-          type="button"
-          onClick={() => void onRefresh()}
-          disabled={loading}
-          title={t("Refresh teammate workspace")}
-          aria-label={t("Refresh teammate workspace")}
-        >
-          <RefreshCw size={15} className={loading ? "spin" : undefined} />
-        </button>
-        <button
-          className="secondary-button compact-button"
-          type="button"
-          title={t("Settings")}
-          aria-label={t("Settings")}
-          onClick={onOpenSettings}
-        >
-          <Settings size={15} />
-        </button>
-        <button
-          className={contextPanelOpen ? "secondary-button compact-button active" : "secondary-button compact-button"}
-          type="button"
-          aria-expanded={contextPanelOpen}
-          aria-label={contextPanelOpen ? t("Hide details") : t("Show details")}
-          title={contextPanelOpen ? t("Hide details") : t("Show details")}
-          onClick={onToggleContextPanel}
-        >
-          {contextPanelOpen ? <PanelRightClose size={15} /> : <PanelRightOpen size={15} />}
-        </button>
-      </div>
+      <ConversationTopToolbar
+        ariaLabel={t("Private chat actions")}
+        searchActive={searchOpen}
+        searchLabel={t("Search")}
+        refreshDisabled={loading}
+        refreshLabel={t("Refresh")}
+        refreshLoading={loading}
+        summaryActive={summaryOpen}
+        summaryLabel={t("Summary")}
+        terminalActive={terminalOpen}
+        terminalDisabled={terminalDisabled}
+        terminalLabel={t("Terminal")}
+        detailsActive={detailsOpen}
+        detailsLabel={detailsOpen ? t("Hide details") : t("Show details")}
+        onToggleSearch={onToggleSearch}
+        onRefresh={() => void onRefresh()}
+        onToggleSummary={onToggleSummary}
+        onToggleTerminal={onToggleTerminal}
+        onToggleDetails={onToggleDetails}
+      />
       <ConversationStatusStrip
         className="teammate-chat-status-row"
         title={providerReady ? t("Model ready") : t("Model needs setup")}
@@ -116,9 +117,22 @@ export function TeammateChatHeader({
           {searchQuery ? (
             <button type="button" onClick={onClearSearch} aria-label={t("Clear search")}>
               <X size={14} />
-            </button>
-          ) : null}
-        </label>
+          </button>
+        ) : null}
+      </label>
+      ) : null}
+      {summaryShouldRenderInHeader ? (
+        <div
+          ref={summaryPlacementRef}
+          className={`channel-progress-popover conversation-summary-popover-wrap teammate-chat-summary-popover ${summaryMotionClass}`}
+        >
+          <ConversationSummaryPopover
+            title={t("Environment")}
+            subtitle={teammate.displayName}
+            rows={summaryRows}
+            onClose={onCloseSummary}
+          />
+        </div>
       ) : null}
     </section>
   );

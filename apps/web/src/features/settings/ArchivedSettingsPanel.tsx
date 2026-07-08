@@ -192,9 +192,15 @@ function ArchivedChannelRow({
           {actionId === `channel:${channel.id}:restore` ? <Loader2 className="spin" size={14} /> : <RefreshCw size={14} />}
           <span className="archived-action-label">{t("Restore")}</span>
         </button>
-        <button className="ghost-button danger-ghost-button compact-button" type="button" onClick={onDelete} disabled={actionId !== ""}>
+        <button
+          className="ghost-icon-button danger-ghost-button compact-icon-button archived-delete-action"
+          type="button"
+          onClick={onDelete}
+          disabled={actionId !== ""}
+          aria-label={t("Delete channel")}
+          title={t("Delete channel")}
+        >
           {actionId === `channel:${channel.id}:delete` ? <Loader2 className="spin" size={14} /> : <Trash2 size={14} />}
-          <span className="archived-action-label">{t("Delete")}</span>
         </button>
       </div>
     </div>
@@ -227,9 +233,15 @@ function ArchivedBranchRow({
           {actionId === `branch:${branch.id}:restore` ? <Loader2 className="spin" size={14} /> : <RefreshCw size={14} />}
           <span className="archived-action-label">{parentArchived ? t("Restore both") : t("Restore")}</span>
         </button>
-        <button className="ghost-button danger-ghost-button compact-button" type="button" onClick={onDelete} disabled={actionId !== ""}>
+        <button
+          className="ghost-icon-button danger-ghost-button compact-icon-button archived-delete-action"
+          type="button"
+          onClick={onDelete}
+          disabled={actionId !== ""}
+          aria-label={t("Delete branch")}
+          title={t("Delete branch")}
+        >
           {actionId === `branch:${branch.id}:delete` ? <Loader2 className="spin" size={14} /> : <Trash2 size={14} />}
-          <span className="archived-action-label">{t("Delete")}</span>
         </button>
       </div>
     </div>

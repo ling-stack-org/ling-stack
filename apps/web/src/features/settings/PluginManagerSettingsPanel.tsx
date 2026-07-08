@@ -25,7 +25,6 @@ import {
 } from "./plugin-manager-view-models.js";
 
 export function PluginManagerSettingsPanel({
-  cwd,
   plugins,
   isLoading,
   busyPluginId,
@@ -130,7 +129,7 @@ export function PluginManagerSettingsPanel({
           <details className="settings-compact-details settings-interaction-details">
             <summary>{t("Runtime preview details")}</summary>
             <span>
-              {latestRuntimePreview.preview.status}
+              {runtimePreviewStatusLabel(latestRuntimePreview.preview.status, t)}
               {latestRuntimePreview.preview.policyOverlays.length ? ` · ${latestRuntimePreview.preview.policyOverlays.length} ${t("policy overlays")}` : ""}
               {latestRuntimePreview.preview.blockers.length ? ` · ${latestRuntimePreview.preview.blockers[0]}` : ""}
             </span>
@@ -164,11 +163,6 @@ export function PluginManagerSettingsPanel({
           ))}
         </div>
       )}
-
-      <footer className="settings-plugin-audit-note">
-        <ShieldCheck size={15} />
-        <span>{cwd}</span>
-      </footer>
     </section>
   );
 }
@@ -213,7 +207,7 @@ function PluginRow({
             <StatusBadge status={plugin.status} />
             <span className="settings-plugin-source">{view.sourceLabel}</span>
           </div>
-          <p className="settings-plugin-readiness">{view.readiness}</p>
+          <span className="settings-plugin-readiness" title={view.readiness}>{view.readiness}</span>
           {view.warnings.length > 0 ? (
             <div className="settings-plugin-warning">
               <XCircle size={15} />
@@ -418,4 +412,17 @@ function runPluginAction(
 
 function isBusy(pluginId: string, busyPluginId: string, busyAction: PluginBusyAction | undefined): boolean {
   return busyAction !== undefined && busyPluginId === pluginId;
+}
+
+function runtimePreviewStatusLabel(status: string, t: (key: string) => string): string {
+  if (status === "injectable") {
+    return t("Runtime ready");
+  }
+  if (status === "blocked") {
+    return t("Runtime blocked");
+  }
+  if (status === "disabled") {
+    return t("Runtime disabled");
+  }
+  return status || t("Unknown");
 }

@@ -6,6 +6,7 @@ export type DockSurfaceKind =
 
 export type DockPageKind =
   | "launcher"
+  | "context"
   | "review"
   | "plans"
   | "evidence"

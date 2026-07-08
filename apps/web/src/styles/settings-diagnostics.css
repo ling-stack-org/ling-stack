@@ -1,4 +1,6 @@
 .settings-plugin-row {
+  grid-template-columns: minmax(0, 1fr);
+  align-items: stretch;
   gap: 10px;
 }
 
@@ -11,10 +13,20 @@
 }
 
 .settings-plugin-readiness {
-  margin: 0;
-  color: var(--text-muted);
-  font-size: 12px;
-  line-height: 17px;
+  width: fit-content;
+  max-width: 100%;
+  min-height: 24px;
+  overflow: hidden;
+  padding: 3px 7px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface-subtle);
+  color: var(--text);
+  font-size: 11px;
+  font-weight: 650;
+  line-height: 16px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .settings-plugin-detail-body {
@@ -32,6 +44,21 @@
 
 .settings-plugin-details .settings-plugin-meta-grid {
   padding-top: 0;
+}
+
+.settings-plugin-row-actions .compact-button,
+.settings-plugin-detail-actions .compact-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 32px;
+  min-width: max-content;
+  white-space: nowrap;
+}
+
+.settings-plugin-row-actions .compact-button svg,
+.settings-plugin-detail-actions .compact-button svg {
+  flex: 0 0 auto;
 }
 
 .settings-skill-table--compact th:nth-child(2),

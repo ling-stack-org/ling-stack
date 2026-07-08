@@ -1351,8 +1351,7 @@
 .settings-plugin-row-actions,
 .settings-plugin-contributions,
 .settings-plugin-warning,
-.settings-plugin-package-note,
-.settings-plugin-audit-note {
+.settings-plugin-package-note {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -1425,12 +1424,6 @@
 .settings-plugin-row-actions {
   justify-content: flex-end;
   max-width: 280px;
-}
-
-.settings-plugin-audit-note {
-  padding-top: 4px;
-  color: var(--text-soft);
-  font-size: 12px;
 }
 
 .settings-section-stack > .mcp-page {
@@ -1589,7 +1582,13 @@
 .settings-skill-library {
   display: grid;
   gap: 12px;
+  min-height: 0;
   min-width: 0;
+}
+
+.settings-skill-library--skills {
+  height: 100%;
+  min-height: 0;
 }
 
 .settings-skill-library-head,
@@ -2660,7 +2659,7 @@
 }
 
 .settings-skill-library--skills .settings-skill-library-body {
-  height: clamp(300px, calc(100vh - 570px), 540px);
+  height: clamp(320px, calc(100vh - 430px), 560px);
   overflow: hidden;
 }
 
@@ -2670,6 +2669,13 @@
   min-width: 0;
   overflow: auto;
   overscroll-behavior: contain;
+}
+
+.settings-skill-table-wrap--compact {
+  max-height: clamp(320px, calc(100vh - 430px), 560px);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-panel);
 }
 
 .settings-skill-table {
@@ -2937,6 +2943,7 @@
 .settings-skill-search-empty {
   gap: 4px;
   justify-items: center;
+  min-height: 220px;
   text-align: center;
 }
 
@@ -3092,13 +3099,13 @@
   margin: 6px 0 2px;
   color: var(--text-soft);
   font-size: 12px;
-  line-height: 1.5;
+  line-height: 1.45;
 }
 
 .archived-item-group {
   display: grid;
   gap: 8px;
-  margin-top: 18px;
+  margin-top: 14px;
 }
 
 .archived-item-group-head {
@@ -3120,7 +3127,7 @@
 
 .archived-item-list {
   display: grid;
-  max-height: min(280px, 30vh);
+  max-height: clamp(156px, 24vh, 230px);
   overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior: contain;
@@ -3134,8 +3141,8 @@
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   gap: 14px;
-  min-height: 64px;
-  padding: 11px 12px 11px 14px;
+  min-height: 56px;
+  padding: 9px 10px 9px 12px;
 }
 
 .archived-item-row + .archived-item-row {
@@ -3189,6 +3196,12 @@
   white-space: nowrap;
 }
 
+.archived-delete-action {
+  width: 32px;
+  height: 32px;
+  color: var(--danger);
+}
+
 .archived-item-actions .compact-button svg {
   display: block;
   flex: 0 0 auto;
@@ -3200,7 +3213,7 @@
 }
 
 .archived-item-empty {
-  min-height: 112px;
+  min-height: 84px;
   border: 0;
   border-radius: 0;
 }

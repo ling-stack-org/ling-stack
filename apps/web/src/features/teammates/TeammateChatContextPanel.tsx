@@ -18,6 +18,7 @@ import {
 
 export function TeammateChatContextPanel({
   cwd,
+  embedded = false,
   lastAiMessage,
   directWorkspace,
   directAttachments,
@@ -25,6 +26,7 @@ export function TeammateChatContextPanel({
   recentMemoryObjects,
 }: {
   readonly cwd: string;
+  readonly embedded?: boolean;
   readonly lastAiMessage: TeammateDirectMessage | undefined;
   readonly directWorkspace: DirectWorkspaceResponse | undefined;
   readonly directAttachments: readonly TeammatePrivateAttachment[];
@@ -33,7 +35,10 @@ export function TeammateChatContextPanel({
 }): JSX.Element {
   const { t } = useI18n();
   return (
-    <aside className="teammate-context-panel" aria-label={t("Conversation context")}>
+    <div
+      className={embedded ? "teammate-context-panel teammate-context-dock-page" : "teammate-context-panel"}
+      aria-label={t("Conversation context")}
+    >
       <section>
         <div className="panel-title split">
           <span>
@@ -103,6 +108,6 @@ export function TeammateChatContextPanel({
           </div>
         )}
       </section>
-    </aside>
+    </div>
   );
 }

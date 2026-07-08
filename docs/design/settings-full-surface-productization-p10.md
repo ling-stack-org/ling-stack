@@ -6,6 +6,8 @@
 - [Settings Diagnostic Density P8](settings-diagnostic-density-p8.md)
 - [Settings Interaction Depth P9](settings-interaction-depth-p9.md)
 - [P10 Implementation Plan](settings-full-surface-productization-p10-implementation-plan.md)
+- [Ling Design System](ling-design-system.md)
+- [Ling Design System P11 Implementation Plan](ling-design-system-p11-implementation-plan.md)
 
 ## Summary
 

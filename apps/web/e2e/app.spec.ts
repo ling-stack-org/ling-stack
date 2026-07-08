@@ -292,11 +292,59 @@ test("recent conversations only show records created from the conversation home"
   await home.getByRole("button", { name: "Send" }).click();
   const conversationPage = page.getByLabel("Conversation page");
   await expect(conversationPage).toBeVisible();
+  const conversationToolbar = conversationPage.getByLabel("Conversation workspace toolbar");
+  await expect(conversationToolbar).toBeVisible();
+  await expect(conversationToolbar).toHaveClass(/workspace-top-right-toolbar/);
+  await expect(conversationToolbar.locator(".workspace-toolbar-action-label")).toHaveCount(0);
+  await expect(conversationToolbar.getByRole("button", { name: "Search" })).toHaveClass(/workspace-toolbar-icon-button/);
+  await expect(conversationToolbar.getByRole("button", { name: "Refresh" })).toHaveClass(/workspace-toolbar-icon-button/);
+  await expect(conversationToolbar.getByRole("button", { name: "Summary" })).toHaveClass(/workspace-toolbar-icon-button/);
+  await expect(conversationToolbar.getByRole("button", { name: "Terminal" })).toHaveClass(/workspace-toolbar-icon-button/);
+  await expect(conversationToolbar.getByRole("button", { name: /^Review/ })).toHaveCount(0);
+  await expect(conversationToolbar.getByRole("button", { name: /^Evidence/ })).toHaveCount(0);
+  await expect(conversationToolbar.getByRole("button", { name: /^Files/ })).toHaveCount(0);
+  const conversationDetailsButtonBox = await conversationToolbar.getByRole("button", { name: "Show details" }).boundingBox();
+  expect(conversationDetailsButtonBox?.width ?? 0).toBeGreaterThanOrEqual(32);
+  expect(conversationDetailsButtonBox?.height ?? 0).toBeGreaterThanOrEqual(32);
+  await conversationToolbar.getByRole("button", { name: "Summary" }).click();
+  await expect(page.locator(".normal-conversation-summary-popover")).toContainText("Workspace");
+  await conversationPage.getByRole("button", { name: "Show details" }).click();
+  const conversationDock = page.getByLabel("Conversation workspace dock");
+  const conversationSummaryPanel = page.locator(".normal-conversation-summary-panel");
+  await expect(conversationSummaryPanel).toBeVisible();
+  await expect(conversationSummaryPanel).toHaveAttribute("data-summary-placement-motion", "header->main");
+  await expect(conversationDock).toBeVisible();
+  await expect(conversationDock).toContainText("Workspace tools");
+  await expect(conversationDock.getByRole("button", { name: "Activity" })).toBeVisible();
+  await expect(conversationSummaryPanel).toContainText("Environment");
+  await expect(conversationPage).toHaveClass(/summary-panel-expanded/);
+  await expect(conversationSummaryPanel).toHaveClass(/is-popover-expanded/);
+  await expect.poll(async () => {
+    const summaryBox = await conversationSummaryPanel.boundingBox();
+    const dockFrameBox = await page.locator(".normal-conversation-right-dock-frame").boundingBox();
+    return summaryBox && dockFrameBox ? summaryBox.x + summaryBox.width <= dockFrameBox.x + 1 : false;
+  }).toBe(true);
+  await conversationToolbar.getByRole("button", { name: "Summary" }).click();
+  await expect(conversationPage).toHaveClass(/summary-panel-collapsed/);
+  await expect(conversationSummaryPanel).toHaveClass(/is-popover-collapsed/);
+  await expect(conversationSummaryPanel).toHaveCount(0);
+  await conversationToolbar.getByRole("button", { name: "Summary" }).click();
+  await expect(conversationSummaryPanel).toBeVisible();
+  await conversationToolbar.getByRole("button", { name: "Hide details" }).click();
+  const conversationTopSummary = page.locator(".normal-conversation-summary-popover");
+  await expect(conversationTopSummary).toBeVisible();
+  await expect(conversationTopSummary).toHaveAttribute("data-summary-placement-motion", "main->header");
+  await expect(conversationDock).toHaveCount(0);
+  await expect(conversationTopSummary).toContainText("Workspace");
+  await conversationToolbar.getByRole("button", { name: "Summary" }).click();
+  await conversationToolbar.getByRole("button", { name: "Terminal" }).click();
+  await expect(page.getByLabel("Terminal session")).toBeVisible();
+  await page.getByRole("button", { name: "Close terminal panel" }).click();
   await expect(page.getByLabel("Conversation home")).toHaveCount(0);
   await expect(conversationPage.getByText("Conversation saved to recent conversations.")).toHaveCount(0);
   await expect(conversationPage.locator(".conversation-composer")).toHaveClass(/conversation-composer-surface-normal_conversation/);
   await expect(conversationPage.getByRole("textbox", { name: "Conversation message" })).toHaveAttribute("data-value", "");
-  await expect(conversationPage.getByLabel("Conversation messages")).toContainText("Plan launch");
+  await expect(conversationPage.getByLabel("Conversation messages", { exact: true })).toContainText("Plan launch");
   await expect(conversationPage.locator(".normal-conversation-message-row.ai-teammate")).toHaveCount(1);
   const assistantRow = conversationPage.locator(".normal-conversation-message-row.ai-teammate").first();
   await expect(assistantRow.locator(".conversation-work-cell")).toHaveCount(1);
@@ -310,6 +358,7 @@ test("recent conversations only show records created from the conversation home"
   await expect(assistantRow.locator(".teammate-avatar-stack")).toHaveCount(0);
   await expect(assistantRow.locator(".source-icon-stack")).toHaveCount(0);
   const messageThread = conversationPage.getByLabel("Conversation messages");
+  await expect.poll(() => messageThread.evaluate((element) => Math.round(element.getBoundingClientRect().width))).toBeGreaterThan(790);
   const threadWidthBeforeHover = await messageThread.evaluate((element) => element.getBoundingClientRect().width);
   await expect.poll(() => messageThread.evaluate((element) => getComputedStyle(element).scrollbarWidth)).toBe("none");
   await messageThread.hover();
@@ -367,10 +416,17 @@ test("normal conversation composer sends and replays uploaded attachments", asyn
   }));
   await expect.poll(async () => (await readComposerGeometry(page, ".normal-conversation-page .conversation-composer")).boxShadow).not.toBe("none");
   await expect(conversationPage.getByRole("button", { name: "Mention teammate" })).toHaveCount(0);
-  const messages = conversationPage.getByLabel("Conversation messages");
+  const messages = conversationPage.getByLabel("Conversation messages", { exact: true });
   await expect(messages).toContainText("Review this brief");
   await expect(messages.locator(".conversation-attachment-chip")).toContainText("brief.txt");
   await expect(conversationPage.locator(".composer-preview-strip")).toHaveCount(0);
+  await expect(conversationPage.getByLabel("Conversation workspace toolbar").getByRole("button", { name: /^Files/ })).toHaveCount(0);
+  await conversationPage.getByRole("button", { name: "Show details" }).click();
+  const conversationDock = page.getByLabel("Conversation workspace dock");
+  await expect(conversationDock).toBeVisible();
+  await conversationDock.getByRole("button", { name: "Files" }).click();
+  await expect(conversationDock.locator(".right-dock-head-page")).toContainText("Files");
+  await expect(conversationDock).toContainText("brief.txt");
 });
 
 test("conversation home follows user language and shows thinking as off", async ({ page }) => {
@@ -475,7 +531,8 @@ test("sidebar text entries route to context-aware inspectors", async ({ page }) 
   await expect(settingsSections.getByRole("button", { name: /Profile/ })).toBeVisible();
   await expect(settingsSections.getByRole("button", { name: /Interface preferences/ })).toBeVisible();
   await settingsSections.getByRole("button", { name: /Profile/ }).click();
-  await expect(page.getByRole("heading", { name: "Ling User", level: 1 })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "User profile", level: 1 })).toBeVisible();
+  await expect(page.getByLabel("Profile display preview")).toContainText("Ling User");
   await expect(page.getByLabel("Run context")).toHaveCount(0);
   await expect(settingsSections.getByRole("button", { name: "Model Workbench" })).toBeVisible();
   await expect(settingsSections.getByRole("button", { name: "Work Board" })).toBeVisible();
@@ -501,7 +558,7 @@ test("conversation home uses plus as the single attachment entry and keeps slash
   await page.goto("/");
 
   const navigation = page.getByLabel("Ling Stack navigation");
-  await navigation.getByRole("button", { name: "Ling Stack" }).click();
+  await navigation.getByRole("button", { name: "New conversation" }).click();
 
   const home = page.getByLabel("Conversation home");
   await expect(home).toBeVisible();

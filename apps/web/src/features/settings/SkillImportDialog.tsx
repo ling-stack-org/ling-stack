@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import { CheckCircle2, Loader2, Search, Upload } from "lucide-react";
 import type {
   SkillImportDraft,
@@ -52,6 +53,20 @@ export function SkillImportDialog({
   const draftWarnings = draft ? [...draft.warnings, ...draft.definitions.flatMap((item) => item.warnings ?? [])] : [];
   const hasBlockingWarnings = draftWarnings.some((warning) => warning.severity === "error");
   const publishDisabled = saving || !draft || hasBlockingWarnings || draft.definitions.some((item) => item.warnings?.some((warning) => warning.severity === "error"));
+
+  useEffect(() => {
+    function handleEscape(event: KeyboardEvent): void {
+      if (event.key !== "Escape") {
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      onClose();
+    }
+
+    document.addEventListener("keydown", handleEscape, true);
+    return () => document.removeEventListener("keydown", handleEscape, true);
+  }, [onClose]);
 
   return (
     <div

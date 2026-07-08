@@ -42,6 +42,14 @@ test("composer parser extracts attachments, teammate mentions, slash commands, u
   assert.deepEqual(composerSlashCommandParts(parts).map((part) => part.commandId), ["review"]);
 });
 
+test("composer parser keeps adjacent natural-language text outside URL tokens", () => {
+  const parts = parseComposerInputParts("https://github.com/QuantConnect/Lean这段文字应该继续显示");
+
+  assert.deepEqual(parts.map((part) => part.type), ["url_ref", "text"]);
+  assert.equal(parts[0].raw, "https://github.com/QuantConnect/Lean");
+  assert.equal(parts[1].text, "这段文字应该继续显示");
+});
+
 test("slash picker is pure and can insert command tokens", () => {
   const picker = findActiveSlashCommand("please /des", 11);
 

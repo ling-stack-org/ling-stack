@@ -58,7 +58,7 @@ export function SettingsRunDiagnosticsPanel({
         <MetaRow label={t("Recent runs")} value={String(runs.length)} compact />
         <MetaRow label={t("Running")} value={String(runningCount)} compact />
         <MetaRow label={t("Needs attention")} value={String(failedCount)} compact />
-        <MetaRow label={t("Selected run")} value={selectedRun?.id ?? t("None")} compact />
+        <MetaRow label={t("Selected run")} value={selectedRun ? runTitle(selectedRun, t) : t("None")} compact />
       </div>
 
       <div className="settings-run-diagnostics-layout">
@@ -97,12 +97,10 @@ export function SettingsRunDiagnosticsPanel({
               {selectedRun.errorMessage ? (
                 <div className="inline-error">
                   <CircleAlert size={17} />
-                  {selectedRun.errorMessage}
+                  {t("Run needs attention. Raw failure detail is available below.")}
                 </div>
               ) : null}
               <div className="settings-status-grid compact-status-grid">
-                <MetaRow label={t("Provider")} value={selectedRun.providerName || "-"} compact />
-                <MetaRow label={t("Model")} value={selectedRun.providerModel || "-"} compact />
                 <MetaRow label={t("Created")} value={formatDateTime(selectedRun.createdAt)} compact />
                 <MetaRow label={t("Updated")} value={formatDateTime(selectedRun.updatedAt)} compact />
               </div>
@@ -110,6 +108,9 @@ export function SettingsRunDiagnosticsPanel({
                 <summary>{t("Raw run details")}</summary>
                 <div className="settings-status-grid compact-status-grid">
                   <MetaRow label={t("Run id")} value={selectedRun.id} compact />
+                  <MetaRow label={t("Provider")} value={selectedRun.providerName || "-"} compact />
+                  <MetaRow label={t("Model")} value={selectedRun.providerModel || "-"} compact />
+                  <MetaRow label={t("Failure detail")} value={selectedRun.errorMessage || "-"} compact />
                   <MetaRow label={t("Task")} value={selectedRun.taskId || "-"} compact />
                   <MetaRow label={t("Channel")} value={selectedRun.channelId ?? "-"} compact />
                   <MetaRow label={t("Work unit")} value={selectedRun.workUnitId ?? "-"} compact />
@@ -141,7 +142,7 @@ function runTitle(run: RunSession, t: (key: string, values?: Readonly<Record<str
       return title;
     }
   }
-  return t("Run {id}", { id: run.id });
+  return t("Untitled run");
 }
 
 function runNextStep(run: RunSession, t: (key: string, values?: Readonly<Record<string, string | number>>) => string): string {

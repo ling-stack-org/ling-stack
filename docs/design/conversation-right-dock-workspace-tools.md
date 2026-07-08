@@ -60,6 +60,88 @@ Channel, normal conversation, and teammate private chat should not maintain sepa
 right-side UI systems. They should supply different page manifests and view models to
 the same dock primitives.
 
+### Toolbar Parity Addendum
+
+Channel, normal conversation, and teammate private chat also share the same dock
+discovery model. The top-right toolbar exposes the shared conversation controls, while
+the right dock launcher is the entry point for secondary pages.
+
+- `Review`, `Evidence`, `Files`, and private `Context` are dock launcher entries, not
+  top-right toolbar buttons.
+- `Details` is always the fallback toolbar entry for a surface that has a live
+  conversation/thread context.
+- Teammate private chat uses the shared dock for private context instead of keeping a
+  second independent right column.
+- Channel-only controls such as teammate activity, teammate stack, and governance stay
+  channel-only. The bottom terminal becomes shared only when the surface has a real
+  workspace folder and terminal session.
+- P12 toolbar correction: channel is the baseline. Normal conversation and teammate
+  private chat must move toward the channel toolbar grammar: same top-right container,
+  same height, hover/focus, badge/chip rules, and details toggle position.
+- Channel-specific controls remain channel-specific. The teammate avatar stack,
+  governance notifications, progress popover, and bottom panel are not copied into
+  private/normal conversation, and they must not be shrunk to make the other surfaces
+  easier to match.
+
+### P12b Behavior Parity
+
+The previous toolbar parity slice only made button chrome consistent. P12b makes the
+behavior model consistent with channel:
+
+- The shared top-right toolbar default order is `Search / Refresh / Summary / Terminal /
+  Details`.
+- `Review`, `Evidence`, `Files`, and private `Context` are detail tools. They live in the
+  right dock launcher and page stack, not as top-level toolbar buttons.
+- `Summary` opens a compact popover next to the toolbar. It is the product-facing name
+  for channel progress/context/environment summaries, normal conversation context, and
+  private chat workspace state.
+- `Terminal` opens the bottom terminal panel for the current workspace folder. It reuses
+  the existing workspace terminal command flow and height resize behavior.
+- `Details` opens the right dock. The right dock must be horizontally resizable on
+  channel, normal conversation, and private chat.
+- Channel-only controls remain additive slots: teammate stack, governance review, and
+  channel-specific management menus. They do not change the shared five-action model.
+
+### P12c Channel Visual Baseline
+
+P12c locks the visual baseline after the second parity pass: the channel header toolbar is
+the source of truth. Normal conversation and teammate private chat must match the channel
+toolbar, summary popover, terminal panel, and conversation column rhythm instead of
+inventing their own compact variants.
+
+- The shared top-right toolbar order remains `Search / Refresh / Summary / Terminal /
+  Details`, but every item is icon-only. Visible text labels are not allowed in the
+  header toolbar; labels live in `aria-label`, `title`, and tooltip text.
+- Private chat and normal conversation use the same icon button sizing, rounded shape,
+  hover/focus state, active state, spacing, and details-toggle position as channel
+  `Summary`, `Terminal`, and `Details`.
+- `Review`, `Evidence`, `Files`, and private `Context` must stay in the right dock
+  launcher/page stack. They must not return to the top-right toolbar to explain missing
+  capability.
+- `Details` opens the same workspace tool launcher used by channel. The launcher title is
+  `Workspace tools`, the subtitle names the current channel/thread/teammate, and the
+  visible launcher order is `Review / Plans / Evidence / Files / Activity / Browser /
+  Terminal`. Normal conversation and private chat must not use separate visible titles
+  such as `Conversation tools` or `Private chat tools`.
+- Private or normal conversation context belongs inside the `Activity` page content. It
+  must not appear as a separate first launcher row that breaks the channel baseline.
+- Search expands into the header content lane without changing toolbar position. The
+  search field has a fixed contained height; focus must not add border, padding, outline,
+  or line-height changes that push the input outside the header.
+- Summary opens exactly one popover anchored under the top-right toolbar. Its width,
+  border, shadow, z-index, motion, and close behavior follow the channel
+  Summary/Progress popover. Opening Search, Terminal, or Details closes Summary.
+- Terminal opens the bottom terminal panel using the same visual contract as channel. If
+  the surface has no workspace folder, the icon stays disabled with an accessible reason.
+- The conversation record column and composer column for normal conversation and private
+  chat use the channel conversation width baseline. Do not keep a separate arbitrary
+  `920px` normal-conversation width or an unconstrained private-chat feed width.
+
+Acceptance for this slice is visual, not just structural: at `1440x960` and `1280x800`,
+channel, normal conversation, and teammate private chat should show the same top-right
+icon rhythm, no search-input overflow on focus, one non-overlapping summary popover, and
+matching conversation-column width.
+
 ## External Patterns To Borrow
 
 Codex is the closest interaction reference: an empty dock is a tool launcher, while an

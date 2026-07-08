@@ -3,6 +3,7 @@ import { Bot, Camera, Check, Pencil, RefreshCw, ShieldCheck, Sparkles } from "lu
 import { getUserProfile, updateUserProfile } from "../../api/profile.js";
 import { listRuns } from "../../api/runs.js";
 import { listSkills } from "../../api/skills.js";
+import { useI18n } from "../../i18n.js";
 import type { RunSession, SkillRegistryEntry, UserProfile } from "../../types.js";
 import { AvatarCropDialog } from "./AvatarCropDialog.js";
 import { ProfileSettingsSurface, type ActivityMode, type ProfileMetrics } from "./ProfileSettingsSurface.js";
@@ -16,6 +17,7 @@ export function ProfilePage({
   readonly onProfileChange?: (profile: UserProfile) => void;
   readonly variant?: "standalone" | "settings";
 }): JSX.Element {
+  const { t } = useI18n();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [profile, setProfile] = useState<UserProfile | undefined>();
   const [runs, setRuns] = useState<readonly RunSession[]>([]);
@@ -85,7 +87,7 @@ export function ProfilePage({
       setDisplayName(response.profile.displayName);
       setHandle(response.profile.handle ?? "");
       setAvatarDataUrl(response.profile.avatarDataUrl);
-      setMessage("个人资料已保存");
+      setMessage(t("Profile saved"));
     } catch (caught) {
       setMessage(caught instanceof Error ? caught.message : String(caught));
     } finally {
@@ -99,7 +101,7 @@ export function ProfilePage({
       return;
     }
     if (!file.type.startsWith("image/")) {
-      setMessage("请选择图片文件");
+      setMessage(t("Choose an image file"));
       event.target.value = "";
       return;
     }
@@ -160,7 +162,7 @@ export function ProfilePage({
             onConfirm={(croppedAvatarDataUrl) => {
               setAvatarDataUrl(croppedAvatarDataUrl);
               setAvatarCropSource(undefined);
-              setMessage("头像已调整，保存后生效");
+              setMessage(t("Avatar adjusted. Save to apply."));
             }}
           />
         ) : null}

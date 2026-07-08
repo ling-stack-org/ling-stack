@@ -1114,6 +1114,55 @@ button.artifact-action-link {
   min-height: 0;
 }
 
+.workspace-dock-toolbar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  min-width: 0;
+}
+
+.workspace-dock-toolbar-button {
+  position: relative;
+  display: inline-grid;
+  place-items: center;
+  width: 30px;
+  min-width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.workspace-dock-toolbar-button:hover,
+.workspace-dock-toolbar-button:focus-visible,
+.workspace-dock-toolbar-button.active {
+  border-color: var(--border);
+  background: var(--surface-selected);
+  color: var(--text-strong);
+}
+
+.workspace-dock-toolbar-count {
+  position: absolute;
+  right: 1px;
+  top: 1px;
+  display: inline-grid;
+  place-items: center;
+  min-width: 13px;
+  height: 13px;
+  padding: 0 3px;
+  border: 1px solid var(--surface-panel);
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1;
+}
+
 .conversation-status-strip {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;

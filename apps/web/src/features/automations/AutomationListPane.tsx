@@ -1,7 +1,7 @@
 import { Check, Loader2, MessageCircle, Pause, Play, Timer, Trash2 } from "lucide-react";
 import { formatDateTime } from "../../lib/formatting.js";
 import { OperationEmptyState, StatusActionRow, StatusBadge } from "../../shared/components/index.js";
-import type { AutomationDefinition, AutomationDraft, AutomationRun } from "../../types.js";
+import type { AutomationDefinition, AutomationDraft, AutomationRun, Channel } from "../../types.js";
 import type { AutomationTab, AutomationTabItem } from "./automation-view-models.js";
 
 export function AutomationListPane({
@@ -10,6 +10,7 @@ export function AutomationListPane({
   automations,
   automationRuns,
   allAutomations,
+  channels,
   drafts,
   selectedAutomationId,
   selectedDraftId,
@@ -34,6 +35,7 @@ export function AutomationListPane({
   readonly automations: readonly AutomationDefinition[];
   readonly automationRuns: readonly AutomationRun[];
   readonly allAutomations: readonly AutomationDefinition[];
+  readonly channels: readonly Channel[];
   readonly drafts: readonly AutomationDraft[];
   readonly selectedAutomationId: string;
   readonly selectedDraftId: string;
@@ -80,6 +82,7 @@ export function AutomationListPane({
           emptyLabel={isLoading ? t("Loading automations...") : t("No automations yet")}
           automations={automations}
           automationRuns={automationRuns}
+          channels={channels}
           selectedAutomationId={selectedAutomationId}
           mutatingAutomationId={mutatingAutomationId}
           threadTitleById={threadTitleById}
@@ -111,6 +114,7 @@ export function AutomationListPane({
 function AutomationDefinitionList({
   automations,
   automationRuns,
+  channels,
   selectedAutomationId,
   mutatingAutomationId,
   emptyLabel,
@@ -125,6 +129,7 @@ function AutomationDefinitionList({
 }: {
   readonly automations: readonly AutomationDefinition[];
   readonly automationRuns: readonly AutomationRun[];
+  readonly channels: readonly Channel[];
   readonly selectedAutomationId: string;
   readonly mutatingAutomationId: string;
   readonly emptyLabel: string;
@@ -164,6 +169,7 @@ function AutomationDefinitionList({
           attentionPrefix,
           automationModeLabel(automation, t),
           automationTargetSummary(automation, threadTitleById, t),
+          automationChannelLabel(automation, channels, t),
           automationScheduleLabel(automation, t),
         ].filter(Boolean).join(" · ");
         return (
@@ -405,10 +411,20 @@ function automationTargetSummary(
   if (automation.automationMode === "heartbeat") {
     return t("Conversation");
   }
-  if (automation.target.channelId) {
-    return `#${automation.target.channelId}`;
+  return automation.target.scope === "channel" ? t("Channel") : t("Workspace");
+}
+
+function automationChannelLabel(
+  automation: AutomationDefinition,
+  channels: readonly Channel[],
+  t: (value: string) => string,
+): string {
+  const channelId = automation.channelId ?? automation.target.channelId;
+  if (!channelId) {
+    return "";
   }
-  return t("Workspace");
+  const channel = channels.find((item) => item.id === channelId);
+  return channel ? `#${channel.name}` : t("Channel");
 }
 
 function automationScheduleLabel(automation: AutomationDefinition, t: (value: string) => string): string {

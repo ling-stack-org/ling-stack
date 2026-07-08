@@ -130,7 +130,7 @@ export function writeThemeBootstrapPreference(preference: ThemePreference): void
 }
 
 function readInitialThemePreference(): ThemePreference {
-  return readSavedThemePreference() ?? readThemeBootstrapPreference() ?? defaultThemePreference;
+  return readThemeBootstrapPreference() ?? readSavedThemePreference() ?? defaultThemePreference;
 }
 
 function readSystemTheme(): ResolvedTheme {

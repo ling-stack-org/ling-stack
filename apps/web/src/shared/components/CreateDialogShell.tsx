@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useEffect, type ReactNode } from "react";
 import { X } from "lucide-react";
 
 export function CreateDialogShell({
@@ -27,6 +27,21 @@ export function CreateDialogShell({
   const overlayClasses = ["create-dialog-overlay", overlayClassName].filter(Boolean).join(" ");
   const shellClasses = ["create-dialog-shell", className].filter(Boolean).join(" ");
   const bodyClasses = ["create-dialog-body", bodyClassName].filter(Boolean).join(" ");
+
+  useEffect(() => {
+    function handleKeyDown(event: KeyboardEvent): void {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        event.stopPropagation();
+        onClose();
+      }
+    }
+
+    document.addEventListener("keydown", handleKeyDown, true);
+    return () => {
+      document.removeEventListener("keydown", handleKeyDown, true);
+    };
+  }, [onClose]);
 
   return (
     <div

@@ -14,14 +14,9 @@ import {
   History,
   Image as ImageIcon,
   Info,
-  ListChecks,
   Loader2,
   MessageSquare,
   MoreHorizontal,
-  PanelBottom,
-  PanelBottomClose,
-  PanelRightClose,
-  PanelRightOpen,
   PencilLine,
   Play,
   Plus,
@@ -34,7 +29,6 @@ import {
   SquareTerminal,
   ThumbsDown,
   ThumbsUp,
-  UserPlus,
   Workflow,
 } from "lucide-react";
 import type { ComposerSlashCommandOption } from "@ling-stack/core/composer-slash-intents";
@@ -128,6 +122,7 @@ import {
 } from "../../shared/conversation/index.js";
 import {
   WorkspaceRightDock,
+  WorkspaceToolbarIconButton,
 } from "./right-dock/index.js";
 import { channelRightDockTransitionMs } from "./layout/channel-workspace-layout.js";
 import {
@@ -139,6 +134,7 @@ import {
   type ChannelGitStatusLoadState,
 } from "./ChannelEnvironmentSummary.js";
 import { ChannelRenameDialog } from "./ChannelRenameDialog.js";
+import { ChannelHeaderToolbar } from "./ChannelHeaderToolbar.js";
 import { WorkflowConversionPreviewDrawer, type WorkflowConversionDraft } from "./WorkflowConversionPreviewDialog.js";
 import { ChannelGovernanceNotificationsPopover } from "./ChannelGovernanceNotificationsPopover.js";
 import { useWorkspaceTerminalSession, WorkspaceTerminalPanel } from "./WorkspaceTerminalPanel.js";
@@ -3424,7 +3420,6 @@ export function WorkspaceClientView({
       .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt) || b.createdAt.localeCompare(a.createdAt)),
     [channelGovernanceNotifications],
   );
-  const unreadGovernanceNotificationCount = actionableGovernanceNotifications.filter((notification) => notification.status === "unread").length;
   const governanceNotificationCount = actionableGovernanceNotifications.length;
   useEffect(() => {
     if (governanceNotificationCount === 0) {
@@ -4040,15 +4035,15 @@ export function WorkspaceClientView({
             </div>
           )}
         </div>
-        <div className="channel-header-actions" aria-label={t("Workspace task toolbar")}>
-          {channelSettingsPageOpen ? (
-            <button className="secondary-button compact-button channel-settings-refresh-button" type="button" onClick={refreshChannelSettingsPage} disabled={!selectedChannelId || channelSettingsLoading}>
-              {channelSettingsLoading ? <Loader2 className="spin" size={14} /> : <RefreshCw size={14} />}
-              {t("Refresh")}
-            </button>
-          ) : channelEnvironmentPageOpen ? null : (
-            <>
-          {channelHeaderTeammateCount > 0 ? (
+        <ChannelHeaderToolbar
+          ariaLabel={t("Workspace task toolbar")}
+          settingsPageOpen={channelSettingsPageOpen}
+          environmentPageOpen={channelEnvironmentPageOpen}
+          settingsLoading={channelSettingsLoading}
+          settingsRefreshDisabled={!selectedChannelId || channelSettingsLoading}
+          settingsRefreshLabel={t("Refresh")}
+          onRefreshSettings={refreshChannelSettingsPage}
+          teammateActionNode={channelHeaderTeammateCount > 0 ? (
             <button
               ref={teammateManagerButtonRef}
               className={teammateManagerOpen ? "channel-team-stack-button active" : "channel-team-stack-button"}
@@ -4068,14 +4063,15 @@ export function WorkspaceClientView({
                 {channelHeaderTeammateOverflow > 0 ? <span className="channel-team-stack-overflow">+{channelHeaderTeammateOverflow}</span> : null}
               </span>
             </button>
-          ) : null}
-          {governanceNotificationCount > 0 ? (
+          ) : undefined}
+          governanceActionNode={governanceNotificationCount > 0 ? (
             <div className="channel-governance-wrap" ref={governanceNotificationsRef}>
-              <button
+              <WorkspaceToolbarIconButton
                 className={governanceNotificationsOpen ? "channel-governance-button active" : "channel-governance-button"}
-                type="button"
                 aria-expanded={governanceNotificationsOpen}
-                title={t("Review queue")}
+                count={governanceNotificationCount}
+                icon={channelGovernanceNotificationsLoading ? <Loader2 className="spin" size={14} /> : <ShieldCheck size={14} />}
+                label={t("{label}: {count}", { label: t("Review queue"), count: governanceNotificationCount })}
                 onClick={() => {
                   const nextOpen = !governanceNotificationsOpen;
                   setGovernanceNotificationsOpen(nextOpen);
@@ -4089,12 +4085,7 @@ export function WorkspaceClientView({
                   }
                 }}
                 disabled={channelGovernanceNotificationsLoading}
-              >
-                {channelGovernanceNotificationsLoading ? <Loader2 className="spin" size={14} /> : <ShieldCheck size={14} />}
-                <span>{t("Review")}</span>
-                <strong>{governanceNotificationCount}</strong>
-                {unreadGovernanceNotificationCount > 0 ? <small>{unreadGovernanceNotificationCount}</small> : null}
-              </button>
+              />
               {governanceNotificationsOpen ? (
                 <ChannelGovernanceNotificationsPopover
                   notifications={actionableGovernanceNotifications}
@@ -4106,87 +4097,57 @@ export function WorkspaceClientView({
                 />
               ) : null}
             </div>
-          ) : null}
-          {channelHeaderTeammateCount === 0 ? (
-            <button
-              ref={teammateManagerButtonRef}
-              className={teammateManagerOpen ? "icon-button active task-toolbar-teammates" : "icon-button task-toolbar-teammates"}
-              type="button"
-              aria-expanded={teammateManagerOpen}
-              aria-label={t("AI teammate management")}
-              title={t("AI teammate management")}
-              onClick={toggleChannelTeammateManager}
-              disabled={!selectedChannelId}
-            >
-              <UserPlus size={15} />
-            </button>
-          ) : null}
-          <button
-            className={progressPopoverRendered ? "icon-button active task-toolbar-progress" : "icon-button task-toolbar-progress"}
-            type="button"
-            aria-label={t("Progress")}
-            title={t("Progress")}
-            onClick={() => {
-              if (!channelHasProgressPopoverContent) {
-                setProgressPopoverOpen(false);
-                return;
-              }
-              setChannelSettingsPageOpen(false);
-              setChannelEnvironmentPageOpen(false);
-              setEnvironmentCommitDialogOpen(false);
-              setCreateTaskOpen(false);
-              setChannelMoreOpen(false);
-              setActivityToolsOpen(false);
-              setTeammateManagerOpen(false);
-              setProgressPopoverOpen((current) => !current);
-            }}
-          >
-            <ListChecks size={15} />
-          </button>
-          <button
-            className={channelBottomPanelVisible ? "icon-button active task-toolbar-bottom-panel" : "icon-button task-toolbar-bottom-panel"}
-            type="button"
-            aria-expanded={channelBottomPanelVisible}
-            aria-label={t("Toggle bottom panel")}
-            title={t("Toggle bottom panel")}
-            onClick={() => {
-              if (channelBottomPanelVisible) {
-                setChannelBottomPanelOpen(false);
-                return;
-              }
-              setChannelSettingsPageOpen(false);
-              setChannelEnvironmentPageOpen(false);
-              setEnvironmentCommitDialogOpen(false);
-              setCreateTaskOpen(false);
-              setChannelMoreOpen(false);
-              setActivityToolsOpen(false);
-              setTeammateManagerOpen(false);
+          ) : undefined}
+          showEmptyTeammateAction={channelHeaderTeammateCount === 0}
+          emptyTeammateActionRef={teammateManagerButtonRef}
+          emptyTeammateActionActive={teammateManagerOpen}
+          emptyTeammateActionDisabled={!selectedChannelId}
+          emptyTeammateActionLabel={t("AI teammate management")}
+          onToggleEmptyTeammateAction={toggleChannelTeammateManager}
+          progressActive={progressPopoverRendered}
+          progressLabel={t("Summary")}
+          onToggleProgress={() => {
+            if (!channelHasProgressPopoverContent) {
               setProgressPopoverOpen(false);
-              setChannelBottomPanelOpen(true);
-            }}
-            disabled={!cwd.trim()}
-          >
-            {channelBottomPanelVisible ? <PanelBottomClose size={15} /> : <PanelBottom size={15} />}
-          </button>
-          <button
-            className={channelRightDockIntentOpen ? "icon-button active task-toolbar-panel" : "icon-button task-toolbar-panel"}
-            type="button"
-            aria-expanded={channelRightDockIntentOpen}
-            aria-label={channelRightDockIntentOpen ? t("Hide details") : t("Show details")}
-            title={channelRightDockIntentOpen ? t("Hide details") : t("Show details")}
-            onClick={() => {
-              if (channelRightDockIntentOpen) {
-                closeChannelRightDock();
-                return;
-              }
-              openSidePanelView(sidePanelView === "settings" ? "context" : sidePanelView);
-            }}
-          >
-            {channelRightDockIntentOpen ? <PanelRightClose size={15} /> : <PanelRightOpen size={15} />}
-          </button>
-            </>
-          )}
-        </div>
+              return;
+            }
+            setChannelSettingsPageOpen(false);
+            setChannelEnvironmentPageOpen(false);
+            setEnvironmentCommitDialogOpen(false);
+            setCreateTaskOpen(false);
+            setChannelMoreOpen(false);
+            setActivityToolsOpen(false);
+            setTeammateManagerOpen(false);
+            setProgressPopoverOpen((current) => !current);
+          }}
+          bottomPanelOpen={channelBottomPanelVisible}
+          bottomPanelDisabled={!cwd.trim()}
+          bottomPanelLabel={t("Toggle bottom panel")}
+          onToggleBottomPanel={() => {
+            if (channelBottomPanelVisible) {
+              setChannelBottomPanelOpen(false);
+              return;
+            }
+            setChannelSettingsPageOpen(false);
+            setChannelEnvironmentPageOpen(false);
+            setEnvironmentCommitDialogOpen(false);
+            setCreateTaskOpen(false);
+            setChannelMoreOpen(false);
+            setActivityToolsOpen(false);
+            setTeammateManagerOpen(false);
+            setProgressPopoverOpen(false);
+            setChannelBottomPanelOpen(true);
+          }}
+          detailsOpen={channelRightDockIntentOpen}
+          detailsLabel={channelRightDockIntentOpen ? t("Hide details") : t("Show details")}
+          onToggleDetails={() => {
+            if (channelRightDockIntentOpen) {
+              closeChannelRightDock();
+              return;
+            }
+            openSidePanelView(sidePanelView === "settings" ? "context" : sidePanelView);
+          }}
+        />
         {progressPopoverShouldRender && !progressPopoverInMainLayout ? (
           <div className={`channel-progress-popover ${progressPopoverMotionClass}`}>
             {progressPopoverNode}
@@ -4445,7 +4406,7 @@ export function WorkspaceClientView({
           } : undefined}
         />
         {progressPopoverInMainLayout ? (
-          <aside className={`channel-progress-popover channel-progress-panel ${progressPopoverMotionClass}`} aria-label={t("Progress")}>
+          <aside className={`channel-progress-popover channel-progress-panel ${progressPopoverMotionClass}`} aria-label={t("Summary")}>
             {progressPopoverNode}
           </aside>
         ) : null}

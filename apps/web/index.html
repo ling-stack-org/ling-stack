@@ -6,13 +6,13 @@
     <script>
       (() => {
         try {
-          const saved = localStorage.getItem("ling-stack.themePreference");
           const bootstrap = localStorage.getItem("ling-stack.themeBootstrapPreference");
+          const saved = localStorage.getItem("ling-stack.themePreference");
           const preference =
-            saved === "light" || saved === "dark" || saved === "system"
-              ? saved
-              : bootstrap === "light" || bootstrap === "dark" || bootstrap === "system"
-                ? bootstrap
+            bootstrap === "light" || bootstrap === "dark" || bootstrap === "system"
+              ? bootstrap
+              : saved === "light" || saved === "dark" || saved === "system"
+                ? saved
                 : "system";
           const theme =
             preference === "system" && matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : preference;
@@ -26,7 +26,7 @@
         }
       })();
     </script>
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="icon" type="image/png" href="/favicon.png" />
     <title>Ling Stack</title>
   </head>
   <body>

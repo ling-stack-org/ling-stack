@@ -143,7 +143,7 @@ export function ProgressPopover({
   }
   const sourceGroups = sourceSummary?.groups ?? [];
   return (
-    <section className="attention-queue compact" aria-label={t("Progress")}>
+    <section className="attention-queue compact" aria-label={t("Summary")}>
       {environmentRows.length > 0 ? (
         <ChannelEnvironmentPopoverSection summary={environmentSummary!} />
       ) : null}
@@ -184,7 +184,7 @@ export function ProgressPopover({
       {progressRows.length > 0 ? (
         <div className="attention-progress-preview">
           <div className="attention-section-head attention-progress-head">
-            <strong>{t("Progress")}</strong>
+            <strong>{t("Summary")}</strong>
             <button
               className="icon-button attention-progress-toggle"
               type="button"

@@ -9,6 +9,18 @@ import {
   type MockState,
 } from "./support/mock-state";
 
+test("theme bootstrap prefers last effective workspace theme over legacy system key", async ({ page }) => {
+  await page.emulateMedia({ colorScheme: "dark" });
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.themePreference", "system");
+    localStorage.setItem("ling-stack.themeBootstrapPreference", "light");
+  });
+  await page.goto("/");
+
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
+  await expect(page.locator("html")).toHaveAttribute("data-theme-preference", "light");
+});
+
 test("main pages and workspace tools follow dark theme tokens", async ({ page }) => {
   test.setTimeout(90_000);
   await page.addInitScript(() => {
@@ -160,7 +172,7 @@ test("main pages and workspace tools follow dark theme tokens", async ({ page })
     ".settings-skill-table-wrap",
     ".settings-skill-table",
     ".settings-skill-inspector",
-    ".settings-skill-summary-card",
+    ".settings-skill-search-empty",
   ]);
 
   await page.getByRole("tab", { name: /待复核|Review queue/ }).click();
