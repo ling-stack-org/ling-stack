@@ -18,6 +18,10 @@
   padding: 10px 12px;
 }
 
+.operation-empty-state.no-icon {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
 .operation-empty-state-icon {
   display: inline-grid;
   place-items: center;

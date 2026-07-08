@@ -18,7 +18,7 @@ export function OperationEmptyState({
   readonly className?: string;
 }): JSX.Element {
   return (
-    <div className={["operation-empty-state", compact ? "compact" : "", className].filter(Boolean).join(" ")}>
+    <div className={["operation-empty-state", compact ? "compact" : "", icon ? "" : "no-icon", className].filter(Boolean).join(" ")}>
       {icon ? <span className="operation-empty-state-icon" aria-hidden="true">{icon}</span> : null}
       <span className="operation-empty-state-copy">
         <strong>{title}</strong>

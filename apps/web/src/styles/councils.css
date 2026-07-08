@@ -528,13 +528,36 @@
   border-bottom: 1px solid var(--border);
 }
 
-.council-member-add-empty {
+.council-member-add-empty.operation-empty-state.compact {
   margin: 0;
-  padding: 0 11px 10px;
+  min-height: 36px;
+  padding: 6px 11px 10px;
   border-bottom: 1px solid var(--border);
   color: var(--text-soft);
   font-size: 12px;
   line-height: 18px;
+}
+
+.council-member-add-empty .operation-empty-state-copy {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+
+.council-member-add-empty .operation-empty-state-copy strong,
+.council-member-add-empty .operation-empty-state-copy span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.council-member-add-empty .operation-empty-state-copy strong {
+  flex: 0 0 auto;
+}
+
+.council-member-add-empty .operation-empty-state-copy span {
+  min-width: 0;
 }
 
 .council-member-add-row .compact-button,
