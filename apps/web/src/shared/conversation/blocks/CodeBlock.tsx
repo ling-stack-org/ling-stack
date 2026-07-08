@@ -1,5 +1,12 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useI18n } from "../../../i18n.js";
+import { useTheme } from "../../../theme.js";
+import {
+  renderShikiCodeTokens,
+  shikiThemeForResolvedTheme,
+  useShikiHighlightedCodeLines,
+  type ShikiHighlightedToken,
+} from "../code-highlighting/shiki.js";
 import { CopyActionButton } from "../feedback/CopyActionButton.js";
 import { notifyConversationDeferredContentReady } from "./deferred-rendering.js";
 
@@ -26,6 +33,7 @@ export function CodeBlock({
   copyLabel,
 }: CodeBlockProps): JSX.Element {
   const { t } = useI18n();
+  const { resolvedTheme } = useTheme();
   const rootRef = useRef<HTMLElement | null>(null);
   const [expanded, setExpanded] = useState(false);
   const normalizedLanguage = normalizeCodeLanguage(language);
@@ -37,7 +45,15 @@ export function CodeBlock({
     : code;
   const hiddenLineCount = Math.max(0, stats.lines - maxCollapsedLines);
   const bodyMounted = !shouldDeferBody || expanded;
-  const shouldHighlight = highlight && !shouldDeferBody && (!shouldCollapse || expanded);
+  const highlightLanguage = inferCodeHighlightLanguage(code, normalizedLanguage);
+  const shouldAttemptShiki = highlight && bodyMounted;
+  const shouldUseFallbackHighlighter = highlight && !shouldDeferBody;
+  const shikiHighlight = useShikiHighlightedCodeLines({
+    enabled: shouldAttemptShiki,
+    language: highlightLanguage,
+    source: bodyMounted ? visibleCode : "",
+    theme: shikiThemeForResolvedTheme(resolvedTheme),
+  });
 
   useEffect(() => {
     if (!bodyMounted) {
@@ -47,7 +63,7 @@ export function CodeBlock({
       notifyConversationDeferredContentReady(rootRef.current);
     });
     return () => globalThis.cancelAnimationFrame(frameId);
-  }, [bodyMounted, stats.characters]);
+  }, [bodyMounted, shikiHighlight.status, stats.characters]);
 
   return (
     <figure
@@ -58,6 +74,7 @@ export function CodeBlock({
         shouldDeferBody && !expanded ? "deferred" : "",
       ].filter(Boolean).join(" ")}
       data-language={normalizedLanguage}
+      data-highlight-engine={shikiHighlight.status === "ready" ? "shiki" : shouldUseFallbackHighlighter ? "fallback" : "plain"}
     >
       <figcaption>
         <span>{normalizedLanguage}</span>
@@ -67,8 +84,10 @@ export function CodeBlock({
       {bodyMounted ? (
         <pre>
           <code>
-            {shouldHighlight
-              ? renderHighlightedCode(visibleCode, normalizedLanguage)
+            {shikiHighlight.status === "ready"
+              ? renderShikiHighlightedCode(visibleCode, shikiHighlight.lines)
+              : shouldUseFallbackHighlighter
+              ? renderHighlightedCode(visibleCode, highlightLanguage)
               : visibleCode}
           </code>
         </pre>
@@ -111,6 +130,18 @@ export function CodeBlock({
       ) : null}
     </figure>
   );
+}
+
+function renderShikiHighlightedCode(
+  code: string,
+  tokenLines: readonly (readonly ShikiHighlightedToken[])[],
+): ReactNode {
+  const lines = code.replace(/\r\n?/g, "\n").split("\n");
+  return lines.map((line, index) => (
+    <span key={`${index}:${line}`} className="message-code-line">
+      {renderShikiCodeTokens(tokenLines[index]) ?? (line || " ")}
+    </span>
+  ));
 }
 
 interface CodeStats {
@@ -178,13 +209,62 @@ function normalizeCodeLanguage(language?: string): string {
   return normalized;
 }
 
+function inferCodeHighlightLanguage(code: string, language: string): string {
+  if (language !== "text" && language !== "bash") {
+    return language;
+  }
+  const sample = code.trimStart();
+  if (/^(?:<!doctype\s+html\b|<html[\s>])/iu.test(sample) || /<head[\s>][\s\S]*<body[\s>]/iu.test(sample)) {
+    return "html";
+  }
+  return language;
+}
+
 function renderHighlightedCode(code: string, language: string): ReactNode {
   const lines = code.replace(/\r\n?/g, "\n").split("\n");
-  return lines.map((line, index) => (
-    <span key={`${index}:${line}`} className="message-code-line">
-      {renderHighlightedLine(line, language)}
-    </span>
-  ));
+  let embeddedLanguage: "css" | "js" | undefined;
+  return lines.map((line, index) => {
+    const lineLanguage = htmlEmbeddedLanguageForLine(line, language, embeddedLanguage);
+    const node = (
+      <span key={`${index}:${line}`} className="message-code-line">
+        {renderHighlightedLine(line, lineLanguage)}
+      </span>
+    );
+    embeddedLanguage = nextHtmlEmbeddedLanguage(line, language, embeddedLanguage);
+    return node;
+  });
+}
+
+function htmlEmbeddedLanguageForLine(line: string, language: string, embeddedLanguage: "css" | "js" | undefined): string {
+  if (language !== "html" && language !== "xml") {
+    return language;
+  }
+  if (embeddedLanguage === "css" && !/^\s*<\/style\b/iu.test(line)) {
+    return "css";
+  }
+  if (embeddedLanguage === "js" && !/^\s*<\/script\b/iu.test(line)) {
+    return "js";
+  }
+  return language;
+}
+
+function nextHtmlEmbeddedLanguage(line: string, language: string, current: "css" | "js" | undefined): "css" | "js" | undefined {
+  if (language !== "html" && language !== "xml") {
+    return current;
+  }
+  if (current === "css") {
+    return /<\/style>/iu.test(line) ? undefined : current;
+  }
+  if (current === "js") {
+    return /<\/script>/iu.test(line) ? undefined : current;
+  }
+  if (/<style\b/iu.test(line) && !/<\/style>/iu.test(line)) {
+    return "css";
+  }
+  if (/<script\b/iu.test(line) && !/<\/script>/iu.test(line)) {
+    return "js";
+  }
+  return undefined;
 }
 
 function renderHighlightedLine(line: string, language: string): ReactNode {
@@ -249,6 +329,7 @@ function tokenSpecsForLanguage(language: string): readonly { readonly kind: Code
   if (language === "html" || language === "xml") {
     return [
       { kind: "comment", pattern: /^<!--.*?-->/u },
+      { kind: "tag", pattern: /^<!doctype\b/iu },
       { kind: "tag", pattern: /^<\/?[A-Za-z][A-Za-z0-9:-]*/u },
       { kind: "attribute", pattern: /^[A-Za-z_:][A-Za-z0-9:_.-]*(?==)/u },
       { kind: "string", pattern: /^"(?:\\.|[^"\\])*"|^'(?:\\.|[^'\\])*'/u },
@@ -258,8 +339,9 @@ function tokenSpecsForLanguage(language: string): readonly { readonly kind: Code
   if (language === "css") {
     return [
       { kind: "comment", pattern: /^\/\*.*?\*\//u },
-      { kind: "property", pattern: /^--?[A-Za-z][A-Za-z0-9-]*(?=\s*:)/u },
+      { kind: "property", pattern: /^(?:--)?[A-Za-z][A-Za-z0-9-]*(?=\s*:)/u },
       { kind: "string", pattern: /^"(?:\\.|[^"\\])*"|^'(?:\\.|[^'\\])*'/u },
+      { kind: "number", pattern: /^#[0-9a-f]{3,8}\b/iu },
       { kind: "number", pattern: /^-?\d+(?:\.\d+)?(?:px|rem|em|%|vh|vw|s|ms)?\b/iu },
       { kind: "function", pattern: /^[A-Za-z-]+(?=\()/u },
       { kind: "punctuation", pattern: /^[{}():;,]/u },

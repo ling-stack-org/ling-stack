@@ -2048,25 +2048,28 @@ button.message-local-file-link {
 
 .code-token.string,
 .code-token.attribute {
-  color: var(--conversation-status-success);
+  color: var(--success);
 }
 
 .code-token.keyword,
 .code-token.tag {
-  color: var(--conversation-text-strong);
-}
-
-.code-token.number {
-  color: var(--conversation-status-waiting);
-}
-
-.code-token.property,
-.code-token.function {
   color: var(--info);
 }
 
+.code-token.number {
+  color: var(--warning);
+}
+
+.code-token.property {
+  color: var(--info);
+}
+
+.code-token.function {
+  color: var(--warning);
+}
+
 .code-token.punctuation {
-  color: var(--conversation-text-muted);
+  color: var(--conversation-code-muted);
 }
 
 .message-code-expand {
