@@ -21,6 +21,7 @@
 @import "./styles/teammates.css";
 @import "./styles/councils.css";
 @import "./styles/components.css";
+@import "./styles/conversation-toolbar.css";
 @import "./styles/creation-dialogs.css";
 @import "./styles/channel-team-metrics.css";
 @import "./styles/strict-console.css";

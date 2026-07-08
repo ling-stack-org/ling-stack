@@ -96,10 +96,11 @@ export const TokenizedComposerInput = forwardRef<TokenizedComposerInputHandle, T
   }, [executableSlashCommandId, executableSlashTargetLabel, parts, value]);
 
   function emitChange(caret = readSelectionOffset(editorRef.current, "end", value.length)): void {
-    const nextValue = serializeComposerDom(editorRef.current);
-    currentValueRef.current = nextValue;
-    pendingCaretRef.current = caret;
-    onChange(nextValue, caret);
+    const serializedValue = serializeComposerDom(editorRef.current);
+    const normalized = normalizeAtomicTokenBoundaryValue(parts, serializedValue, caret);
+    currentValueRef.current = normalized.value;
+    pendingCaretRef.current = normalized.caret;
+    onChange(normalized.value, normalized.caret);
   }
 
   function scheduleCompositionCommit(): void {
@@ -121,8 +122,9 @@ export const TokenizedComposerInput = forwardRef<TokenizedComposerInputHandle, T
     const currentValue = currentValueRef.current;
     const rangeStart = Math.max(0, Math.min(start, end, currentValue.length));
     const rangeEnd = Math.max(rangeStart, Math.min(Math.max(start, end), currentValue.length));
-    const nextValue = `${currentValue.slice(0, rangeStart)}${insertedText}${currentValue.slice(rangeEnd)}`;
-    const caret = rangeStart + insertedText.length;
+    const normalizedInsertedText = normalizeAtomicBoundaryInsertion(parts, insertedText, rangeStart, rangeEnd);
+    const nextValue = `${currentValue.slice(0, rangeStart)}${normalizedInsertedText}${currentValue.slice(rangeEnd)}`;
+    const caret = rangeStart + normalizedInsertedText.length;
     currentValueRef.current = nextValue;
     pendingCaretRef.current = caret;
     onChange(nextValue, caret);
@@ -374,6 +376,72 @@ function findAtomicDeletionRange(
   }
   const tokenRange = tokenRanges.find((range) => range.start === caret);
   return tokenRange ?? { start: caret, end: Math.min(value.length, caret + 1) };
+}
+
+function normalizeAtomicBoundaryInsertion(
+  parts: readonly ComposerInputPart[],
+  insertedText: string,
+  start: number,
+  end: number,
+): string {
+  if (start !== end || !insertedText || startsWithBoundary(insertedText) || !isAtomicTokenEnd(parts, start)) {
+    return insertedText;
+  }
+  return ` ${insertedText}`;
+}
+
+function startsWithBoundary(value: string): boolean {
+  return /^\s/u.test(value) || /^[.,;:!?)\}\]，。！？；：、）】》」』]/u.test(value);
+}
+
+function isAtomicTokenEnd(parts: readonly ComposerInputPart[], caret: number): boolean {
+  let offset = 0;
+  for (const part of parts) {
+    if (part.type === "attachment") {
+      continue;
+    }
+    if (part.type === "text") {
+      offset += part.text.length;
+      continue;
+    }
+    offset += part.raw.length;
+    if (offset === caret) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function normalizeAtomicTokenBoundaryValue(
+  parts: readonly ComposerInputPart[],
+  value: string,
+  caret: number,
+): { readonly value: string; readonly caret: number } {
+  let nextValue = value;
+  let nextCaret = caret;
+  let offset = 0;
+  let adjustment = 0;
+  for (const part of parts) {
+    if (part.type === "attachment") {
+      continue;
+    }
+    if (part.type === "text") {
+      offset += part.text.length;
+      continue;
+    }
+    const start = offset + adjustment;
+    const end = start + part.raw.length;
+    offset += part.raw.length;
+    if (nextValue.slice(start, end) !== part.raw || end >= nextValue.length || startsWithBoundary(nextValue.slice(end))) {
+      continue;
+    }
+    nextValue = `${nextValue.slice(0, end)} ${nextValue.slice(end)}`;
+    if (nextCaret >= end) {
+      nextCaret += 1;
+    }
+    adjustment += 1;
+  }
+  return { value: nextValue, caret: nextCaret };
 }
 
 function readSelectionOffset(root: HTMLDivElement | null, edge: "start" | "end", fallback: number): number {

@@ -38,16 +38,24 @@ export function buildPluginRowView(plugin: ManagedPluginView, t: SettingsTransla
       const link = contribution.linkedResourceId ? ` -> ${contribution.linkedResourceId}` : "";
       return `${contribution.kind}: ${contribution.label}${link}`;
     }),
-    warnings: [
-      plugin.disabledReason,
-      ...(plugin.runtimePreview?.blockers.slice(0, 1) ?? []),
-    ].filter((value): value is string => Boolean(value)),
+    warnings: pluginDefaultWarnings(plugin, t),
     packageNotice: plugin.sourceKind === "bundled"
       ? plugin.package?.status === "installed"
         ? t("Bundled package installed for this workspace.")
         : t("Bundled package metadata only. Install before runtime injection.")
       : undefined,
   };
+}
+
+function pluginDefaultWarnings(plugin: ManagedPluginView, t: SettingsTranslator): readonly string[] {
+  const warnings: string[] = [];
+  if (plugin.disabledReason) {
+    warnings.push(t("Plugin is disabled. Enable it when you need its tools."));
+  }
+  if (plugin.runtimePreview?.blockers.length) {
+    warnings.push(t("Plugin needs attention. Open details to inspect availability."));
+  }
+  return warnings;
 }
 
 function pluginSourceLabel(sourceKind: ManagedPluginView["sourceKind"], t: SettingsTranslator): string {
@@ -133,38 +141,39 @@ function pluginDetailActions(plugin: ManagedPluginView, t: SettingsTranslator): 
 
 function pluginFacts(plugin: ManagedPluginView, t: SettingsTranslator): readonly PluginFactView[] {
   return [
+    { label: t("Availability"), value: pluginReadinessLabel(plugin, t) },
     { label: t("Plugin ID"), value: plugin.id },
     { label: t("Version"), value: plugin.version },
     { label: t("Trust"), value: plugin.trustSummary },
-    { label: t("Health"), value: healthLabel(plugin) },
-    { label: t("Package"), value: packageLabel(plugin) },
-    { label: t("Linked resources"), value: linkedResourceLabel(plugin) },
+    { label: t("Health"), value: healthLabel(plugin, t) },
+    { label: t("Package"), value: packageLabel(plugin, t) },
+    { label: t("Linked resources"), value: linkedResourceLabel(plugin, t) },
     { label: t("Runtime preview"), value: runtimePreviewLabel(plugin, t) },
-    { label: t("Latest event"), value: latestEventLabel(plugin) },
+    { label: t("Latest event"), value: latestEventLabel(plugin, t) },
   ];
 }
 
-function healthLabel(plugin: ManagedPluginView): string {
+function healthLabel(plugin: ManagedPluginView, t: SettingsTranslator): string {
   if (!plugin.health) {
-    return "unknown";
+    return t("Unknown");
   }
   const checked = formatDateTime(plugin.health.checkedAt);
   return plugin.health.message ? `${plugin.health.status} · ${checked} · ${plugin.health.message}` : `${plugin.health.status} · ${checked}`;
 }
 
-function packageLabel(plugin: ManagedPluginView): string {
+function packageLabel(plugin: ManagedPluginView, t: SettingsTranslator): string {
   if (!plugin.package) {
-    return plugin.sourceKind === "bundled" ? "not installed" : "n/a";
+    return plugin.sourceKind === "bundled" ? t("Not installed") : t("No package");
   }
-  const hash = plugin.package.packageHash ? plugin.package.packageHash.slice(0, 12) : "no hash";
+  const hash = plugin.package.packageHash ? plugin.package.packageHash.slice(0, 12) : t("No hash");
   return `${plugin.package.status} · ${plugin.package.version} · ${hash}`;
 }
 
-function linkedResourceLabel(plugin: ManagedPluginView): string {
+function linkedResourceLabel(plugin: ManagedPluginView, t: SettingsTranslator): string {
   if (plugin.linkedResources.length === 0) {
-    return "none";
+    return t("No linked resources");
   }
-  return plugin.linkedResources.map((resource) => `${resource.id}${resource.present ? "" : " missing"}`).join(", ");
+  return plugin.linkedResources.map((resource) => `${resource.id}${resource.present ? "" : ` ${t("missing")}`}`).join(", ");
 }
 
 function runtimePreviewLabel(plugin: ManagedPluginView, t: SettingsTranslator): string {
@@ -175,13 +184,26 @@ function runtimePreviewLabel(plugin: ManagedPluginView, t: SettingsTranslator): 
     ? ` · ${plugin.runtimePreview.policyOverlays.length} ${t("policy overlays")}`
     : "";
   const blocker = plugin.runtimePreview.blockers[0] ? ` · ${plugin.runtimePreview.blockers[0]}` : "";
-  return `${plugin.runtimePreview.status}${overlays}${blocker}`;
+  return `${runtimePreviewStatusLabel(plugin.runtimePreview.status, t)}${overlays}${blocker}`;
 }
 
-function latestEventLabel(plugin: ManagedPluginView): string {
+function latestEventLabel(plugin: ManagedPluginView, t: SettingsTranslator): string {
   const latest = plugin.events?.[plugin.events.length - 1];
   if (!latest) {
-    return "none";
+    return t("No recent event");
   }
   return `${latest.type} · ${formatDateTime(latest.createdAt)}`;
+}
+
+function runtimePreviewStatusLabel(status: string, t: SettingsTranslator): string {
+  if (status === "injectable") {
+    return t("Runtime ready");
+  }
+  if (status === "blocked") {
+    return t("Runtime blocked");
+  }
+  if (status === "disabled") {
+    return t("Runtime disabled");
+  }
+  return status || t("Unknown");
 }

@@ -219,19 +219,17 @@ export function SidebarNavigation({
   return (
     <aside className={channelDrawer ? "left-nav channel-left-drawer" : "left-nav"} aria-label="Ling Stack navigation">
       <div className="sidebar-fixed-top">
-        <div className="sidebar-brand-row">
+        <div className={channelDrawer ? "sidebar-brand-row has-sidebar-switch" : "sidebar-brand-row"}>
           <button
-            className="sidebar-brand-button"
+            className="sidebar-command-button sidebar-command-button-top"
             type="button"
             onClick={onOpenConversationHome}
-            aria-label="Ling Stack"
-            title="Ling Stack"
+            aria-label={t("New conversation")}
+            title={t("New conversation")}
+            {...tooltipProps(t("New conversation"))}
           >
-            <span className="sidebar-brand-mark" aria-hidden="true">L</span>
-            <span className="sidebar-brand-copy">
-              <strong>Ling Stack</strong>
-              <small>{t("AI teammate workspace")}</small>
-            </span>
+            <Plus size={15} />
+            <span>{t("New conversation")}</span>
           </button>
           {channelDrawer ? (
             <button
@@ -245,18 +243,6 @@ export function SidebarNavigation({
             </button>
           ) : null}
         </div>
-
-        <button
-          className="sidebar-command-button"
-          type="button"
-          onClick={onOpenConversationHome}
-          aria-label={t("New conversation")}
-          title={t("New conversation")}
-          {...tooltipProps(t("New conversation"))}
-        >
-          <Plus size={15} />
-          <span>{t("New conversation")}</span>
-        </button>
 
         <nav className="primary-nav">
           <NavItem icon={<Inbox />} label={t("Inbox")} active={activeSidebarTarget === "approvals"} onClick={() => onOpenView("approvals")} tooltipProps={tooltipProps(inboxTooltip)} />

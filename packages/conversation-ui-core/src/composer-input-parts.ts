@@ -282,7 +282,7 @@ function readUrlAtStart(
 }
 
 function trimUrlToken(value: string): string {
-  let next = value.replace(/[.,;!?]+$/u, "");
+  let next = trimNaturalLanguageSuffix(value).replace(/[.,;:!?，。！？；：、]+$/u, "");
   while (next.endsWith(")") || next.endsWith("]")) {
     const opener = next.endsWith(")") ? "(" : "[";
     const closer = next.endsWith(")") ? ")" : "]";
@@ -294,6 +294,14 @@ function trimUrlToken(value: string): string {
     next = next.slice(0, -1);
   }
   return next;
+}
+
+function trimNaturalLanguageSuffix(value: string): string {
+  const boundary = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u.exec(value);
+  if (!boundary || boundary.index <= 0) {
+    return value;
+  }
+  return value.slice(0, boundary.index);
 }
 
 function findLinkPreview(

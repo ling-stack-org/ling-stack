@@ -484,6 +484,7 @@
 .work-board-detail.empty.guide {
   place-content: start;
   justify-items: stretch;
+  gap: 10px;
   text-align: left;
 }
 
@@ -493,17 +494,15 @@
 
 .work-board-guide-list {
   display: grid;
-  gap: 8px;
+  gap: 6px;
   width: 100%;
 }
 
 .work-board-guide-list span {
   display: grid;
   gap: 3px;
-  padding: 9px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  background: var(--surface-panel-strong);
+  padding: 0 0 0 10px;
+  border-left: 2px solid var(--border);
 }
 
 .work-board-guide-list small {

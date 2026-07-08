@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   AlertTriangle,
-  BookOpen,
   Plus,
   RefreshCw,
   Search,
@@ -204,16 +203,12 @@ export function SkillLibrarySettingsPanel({ cwd, refreshToken = 0 }: { readonly 
   }, [filter, searchQuery, skills, sortMode, sourceSnapshotBySkillId]);
 
   const selectedSkill = useMemo(() => {
-    return filteredSkills.find((entry) => entry.id === selectedSkillId) ?? filteredSkills[0];
+    return selectedSkillId ? filteredSkills.find((entry) => entry.id === selectedSkillId) : undefined;
   }, [filteredSkills, selectedSkillId]);
 
   useEffect(() => {
     if (!selectedSkill && selectedSkillId) {
       setSelectedSkillId("");
-      return;
-    }
-    if (selectedSkill && selectedSkill.id !== selectedSkillId) {
-      setSelectedSkillId(selectedSkill.id);
     }
   }, [selectedSkill, selectedSkillId]);
 
@@ -770,20 +765,12 @@ export function SkillLibrarySettingsPanel({ cwd, refreshToken = 0 }: { readonly 
 
       {activeSubsection === "skills" ? (
         <>
-          {reviewQueueCount > 0 || sourceAttentionCount > 0 ? (
+          {reviewQueueCount > 0 ? (
             <div className="settings-skill-attention-line">
-              {reviewQueueCount > 0 ? (
-                <button type="button" className="ghost-button compact-button" onClick={() => setActiveSubsection("review")}>
-                  <AlertTriangle size={14} />
-                  {t("{count} skill review items", { count: reviewQueueCount })}
-                </button>
-              ) : null}
-              {sourceAttentionCount > 0 ? (
-                <button type="button" className="ghost-button compact-button" onClick={() => setActiveSubsection("source")}>
-                  <BookOpen size={14} />
-                  {t("{count} skill source items", { count: sourceAttentionCount })}
-                </button>
-              ) : null}
+              <button type="button" className="ghost-button compact-button" onClick={() => setActiveSubsection("review")}>
+                <AlertTriangle size={14} />
+                {t("{count} skill review items", { count: reviewQueueCount })}
+              </button>
             </div>
           ) : null}
 
@@ -826,7 +813,7 @@ export function SkillLibrarySettingsPanel({ cwd, refreshToken = 0 }: { readonly 
 
       {activeSubsection === "review" ? (
         <div className="settings-skill-review-stack">
-          <details className="settings-compact-details settings-skill-review-diagnostics" open>
+          <details className="settings-compact-details settings-skill-review-diagnostics">
             <summary>{t("Skill health diagnostics")}</summary>
             <SkillHealthPanel report={skillHealth} loading={loading} t={t} />
           </details>
@@ -917,7 +904,7 @@ export function SkillLibrarySettingsPanel({ cwd, refreshToken = 0 }: { readonly 
             <div className="compact-empty settings-skill-search-empty">
               <Search size={16} />
               <span>{t("No skill selected")}</span>
-              <small>{t("Adjust search or filters to inspect a skill.")}</small>
+              <small>{t("Choose Details on a row to inspect source, policy, and raw evidence.")}</small>
             </div>
           )}
         </aside>

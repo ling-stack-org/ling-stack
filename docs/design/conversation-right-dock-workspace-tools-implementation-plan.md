@@ -42,6 +42,103 @@ The first shared dock slice is now package-backed rather than Web-local:
 - `apps/web/src/features/workspace/right-dock/WorkspaceRightDock.tsx` is the Web adapter
   for channel, normal conversation, and teammate private chat.
 
+## Toolbar Parity Slice
+
+Current follow-up work should make the already-shared dock discoverable in all three
+conversation surfaces without copying channel-only semantics.
+
+- Add a small shared `WorkspaceDockToolbar` in the Web adapter layer.
+- Keep channel's existing toolbar behavior intact in the first pass.
+- Make normal conversation show the toolbar after a real thread/message exists; the
+  dock stays closed until the user opens `Details` or a counted page.
+- Replace teammate private chat's old independent context column with a `Context` dock
+  page, then use the shared toolbar to open details or counted pages.
+- Do not expose teammate stack or channel activity controls on normal conversation or
+  private chat. Bottom terminal is shared only through the real workspace terminal flow
+  added in P12b; do not fake terminal data.
+
+P12 correction:
+
+- Channel is the visual baseline. Add shared toolbar primitives for the top-right
+  container, channel-style icon buttons, and count badges.
+- Render normal conversation and teammate private chat through the same channel-style
+  primitives instead of forcing every surface into an unrelated dock toolbar.
+- Keep channel-only controls in channel slots only: teammate avatar stack, governance
+  review, progress, and bottom terminal. Do not shrink the channel teammate stack into a
+  32px icon just to match private/normal conversation.
+- Preserve existing channel test hooks such as `.task-toolbar-panel` while moving shared
+  sizing, chip, badge, and focus behavior to the shared toolbar CSS.
+
+P12b behavior parity:
+
+- Replace the private chat and normal conversation top toolbar model with
+  `Search / Refresh / Summary / Terminal / Details`.
+- Move `Review`, `Evidence`, `Files`, and private `Context` out of the top toolbar and
+  into the right dock launcher/page stack.
+- Add a presentational `ConversationTopToolbar` for the five shared actions. Surface
+  adapters supply labels, active/disabled state, and callbacks.
+- Add a compact `ConversationSummaryPopover` for normal/private summaries. Channel may
+  continue to use the existing `ProgressPopover` component while the visible label moves
+  to `Summary`.
+- Generalize the channel right-dock and bottom-terminal resize controllers for normal
+  conversation and private chat. Keep channel wrappers compatible to avoid regressing the
+  channel baseline.
+- Normal conversation adds message search, refresh, summary popover, bottom terminal,
+  and a horizontally resizable details dock.
+- Private chat keeps its existing message search/filter behavior, adds summary and bottom
+  terminal, and makes its details dock horizontally resizable.
+- Do not add new daemon APIs, routes, state machines, or fake terminal/browser data.
+
+P12c channel visual baseline:
+
+- Treat `ChannelHeaderToolbar` as the visual baseline. `ConversationTopToolbar` must render
+  the five shared actions with channel-style icon buttons only. It must not render
+  `visibleLabel` text in the top-right toolbar.
+- Keep the shared order as `Search / Refresh / Summary / Terminal / Details`. The labels
+  remain available through `aria-label`, `title`, and tooltip text; no visible header text
+  is shown for those five actions.
+- Normal conversation and private chat should reuse the same icon button dimensions,
+  radius, hover/focus, active state, disabled state, and spacing as channel
+  `task-toolbar-progress`, `task-toolbar-bottom-panel`, and `task-toolbar-panel`.
+- Fix the expanded search field as a contained header control: fixed height, stable
+  line-height, `box-sizing: border-box`, no focus-driven layout growth, and no overflow
+  outside the header lane.
+- Replace the normal/private summary placement with a channel-matched popover contract:
+  one popover instance, anchored under the toolbar, same width/shadow/z-index rhythm as
+  the channel Summary/Progress popover, and closed by Esc, repeated Summary click, Search,
+  Terminal, or Details.
+- Align normal conversation and private chat message/feed plus composer width to the
+  channel conversation width token/pattern. Verify against the channel visual width rather
+  than keeping independent `920px` or unconstrained feed values.
+- Keep `Review`, `Evidence`, `Files`, and private `Context` inside the right dock launcher
+  and page stack. They must not reappear as top-right toolbar actions.
+- Use the channel launcher as the right dock baseline for normal conversation and private
+  chat: `Workspace tools` title, current surface subtitle, and launcher order
+  `Review / Plans / Evidence / Files / Activity / Browser / Terminal`.
+- Do not pass private conversation context as a separate launcher page. Re-home it under
+  `Activity` so the launcher does not diverge from channel.
+- Implementation should stay in the Web presentation layer: toolbar components, focused
+  conversation CSS, and surface adapter props only. Do not change daemon APIs, routes,
+  database schema, state machines, or main navigation IA.
+
+P12c tests and browser acceptance:
+
+- Update `app.spec.ts`, `channel.spec.ts`, `teammates.spec.ts`, and `dark-mode.spec.ts`
+  only where needed for the changed toolbar contract.
+- Assert private chat and normal conversation top-right toolbars contain icon buttons for
+  Search, Refresh, Summary, Terminal, and Details, and no `.workspace-toolbar-action-label`
+  or visible text labels.
+- Assert focusing the search input does not make its bounding box exceed the containing
+  header/search control.
+- Assert Summary opens one popover, closes on the expected toggles, and does not overlap
+  the toolbar/header text in a stacked state.
+- Assert normal conversation and private chat message-column widths match the channel
+  baseline within a small pixel tolerance at `1440x960` and `1280x800`.
+- Run `git diff --check`, `corepack pnpm --filter @ling-stack/web typecheck`,
+  `corepack pnpm --filter @ling-stack/web check:i18n`, and
+  `corepack pnpm --filter @ling-stack/web test:e2e -- app.spec.ts channel.spec.ts
+  teammates.spec.ts dark-mode.spec.ts`.
+
 Current review workbench behavior:
 
 - review rows are compact: title, severity dot, and one short status/action pill;

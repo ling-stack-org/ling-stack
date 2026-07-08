@@ -2322,6 +2322,7 @@ export function AppShell(): JSX.Element {
                   workspaceCwd={form.cwd}
                   sending={conversationStreamBusy}
                   onOpenRun={(runId) => void openRunFromWorkspace(runId)}
+                  onRefreshConversation={() => refreshConversationThreads(form.cwd.trim())}
                   onSendConversation={async (input) => {
                     await sendConversationMessage({
                       message: input.message,

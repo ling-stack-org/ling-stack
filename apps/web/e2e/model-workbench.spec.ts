@@ -691,7 +691,7 @@ test("model workbench creates custom OpenAI-compatible presets and surfaces read
   await expect(readyLocalRelayRow).toHaveClass(/selected/);
   await expect(readyLocalRelayRow).toContainText("Current default");
   await expect(readyLocalRelayRow.getByRole("button", { name: "Clear default" })).toBeVisible();
-  const readyLocalRelayActionCell = readyLocalRelayRow.locator("td").nth(6);
+  const readyLocalRelayActionCell = readyLocalRelayRow.locator("td").nth(4);
   await expect(readyLocalRelayActionCell).toHaveCSS("border-left-color", "rgb(229, 229, 229)");
   await expect(readyLocalRelayActionCell).toHaveCSS("box-shadow", "none");
   await readyLocalRelayRow.getByRole("button", { name: "Clear default" }).focus();
@@ -818,7 +818,7 @@ test("model workbench creates custom OpenAI-compatible presets and surfaces read
   await expect(customProviderRow.first()).toContainText("key ready");
   await expect(customProviderRow).toContainText("check ready");
   await expect(customDoubaoRow).toBeVisible();
-  await expect(customProviderRow.locator(".provider-model-name")).toContainText("cliproxy-gpt-4o");
+  await expect(customProviderRow.locator(".provider-name-copy small")).toContainText("cliproxy-gpt-4o");
   await expect(customProviderRow.locator(".provider-meta-line").first()).toContainText("Capabilities:");
   await expect(customProviderRow.locator(".provider-meta-line").first()).not.toContainText("custom-openai-compatible");
   await expect(customProviderRow).not.toContainText("Current default");

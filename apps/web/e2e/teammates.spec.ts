@@ -22,6 +22,13 @@ async function openChannelTeammateManager(page: Page): Promise<void> {
   await page.locator(".channel-header-actions").getByRole("button", { name: /channel teammates|AI teammate management/ }).click();
 }
 
+async function openPrivateChatSettings(page: Page): Promise<void> {
+  if (await page.getByLabel("Private chat workspace dock").count() === 0) {
+    await page.getByLabel("AI teammate private chat").getByRole("button", { name: "Show details" }).click();
+  }
+  await page.getByLabel("Private chat workspace dock").getByRole("button", { name: "Settings" }).click();
+}
+
 async function openSidebarSectionMenu(page: Page, label: string): Promise<void> {
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: label }).click();
 }
@@ -187,7 +194,9 @@ test("AI teammates page creates a durable teammate and opens its private workspa
   await expect(creator.getByLabel("Join channels")).toHaveValue("channel_engineering");
   await expect(creator.getByLabel("Base model")).toBeVisible();
   await creator.getByLabel("Base model").selectOption("provider_local");
-  await creator.getByText("Advanced settings").click();
+  await expect(creator.getByText("Advanced settings")).toHaveCount(0);
+  await expect(creator.getByText("Default memory scopes")).toHaveCount(0);
+  await expect(creator.getByRole("button", { name: "Private chat summary" })).toHaveCount(0);
   await expect(page.getByLabel("Channel choices")).toHaveCount(0);
   await page.getByRole("button", { name: "Create teammate" }).click();
 
@@ -747,9 +756,55 @@ test("AI teammate private workspace sends blocked chat replies and persists sett
   const linkedRunPrivateRow = page.locator(".teammate-message-row.ai-teammate").filter({ hasText: "Private acceptance criteria summary." });
   await expect(linkedRunPrivateRow.locator(".conversation-work-cell")).toHaveCount(1);
   await expect(linkedRunPrivateRow.locator(".message-reply-button")).toHaveCount(0);
+  const privateToolbar = page.getByLabel("Private chat actions");
+  await expect(privateToolbar).toHaveClass(/workspace-top-right-toolbar/);
+  await expect(privateToolbar.locator(".workspace-toolbar-action-label")).toHaveCount(0);
+  await expect(privateToolbar.getByRole("button", { name: "Search" })).toHaveClass(/workspace-toolbar-icon-button/);
+  await expect(privateToolbar.getByRole("button", { name: "Refresh" })).toHaveClass(/workspace-toolbar-icon-button/);
+  await expect(privateToolbar.getByRole("button", { name: "Summary" })).toHaveClass(/workspace-toolbar-icon-button/);
+  await expect(privateToolbar.getByRole("button", { name: "Terminal" })).toHaveClass(/workspace-toolbar-icon-button/);
+  await expect(privateToolbar.getByRole("button", { name: "Settings" })).toHaveCount(0);
+  await expect(privateToolbar.getByRole("button", { name: /^Review/ })).toHaveCount(0);
+  await expect(privateToolbar.getByRole("button", { name: /^Evidence/ })).toHaveCount(0);
+  await expect(privateToolbar.getByRole("button", { name: /^Files/ })).toHaveCount(0);
+  await privateToolbar.getByRole("button", { name: "Summary" }).click();
+  await expect(page.locator(".teammate-chat-summary-popover")).toContainText("Private workspace");
   await expect(page.getByLabel("Conversation context")).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Show details" })).toBeVisible();
   await page.getByRole("button", { name: "Show details" }).click();
+  const privateDock = page.getByLabel("Private chat workspace dock");
+  const privateSummaryPanel = page.locator(".teammate-private-summary-panel");
+  const privateChatSurface = page.locator(".teammate-private-chat");
+  await expect(privateSummaryPanel).toBeVisible();
+  await expect(privateSummaryPanel).toHaveAttribute("data-summary-placement-motion", "header->main");
+  await expect(privateDock).toContainText("Workspace tools");
+  await expect(privateSummaryPanel).toContainText("Environment");
+  await expect(privateChatSurface).toHaveClass(/summary-panel-expanded/);
+  await expect(privateSummaryPanel).toHaveClass(/is-popover-expanded/);
+  await expect.poll(async () => {
+    const summaryBox = await privateSummaryPanel.boundingBox();
+    const dockFrameBox = await page.locator(".teammate-private-right-dock-frame").boundingBox();
+    return summaryBox && dockFrameBox ? summaryBox.x + summaryBox.width <= dockFrameBox.x + 1 : false;
+  }).toBe(true);
+  await privateToolbar.getByRole("button", { name: "Summary" }).click();
+  await expect(privateChatSurface).toHaveClass(/summary-panel-collapsed/);
+  await expect(privateSummaryPanel).toHaveClass(/is-popover-collapsed/);
+  await expect(privateSummaryPanel).toHaveCount(0);
+  await privateToolbar.getByRole("button", { name: "Summary" }).click();
+  await expect(privateSummaryPanel).toBeVisible();
+  await privateToolbar.getByRole("button", { name: "Hide details" }).click();
+  const privateTopSummary = page.locator(".teammate-chat-summary-popover");
+  await expect(privateTopSummary).toBeVisible();
+  await expect(privateTopSummary).toHaveAttribute("data-summary-placement-motion", "main->header");
+  await expect(privateDock).toHaveCount(0);
+  await expect(privateTopSummary).toContainText("Private workspace");
+  await privateToolbar.getByRole("button", { name: "Summary" }).click();
+  await privateToolbar.getByRole("button", { name: "Terminal" }).click();
+  await expect(page.getByLabel("Terminal session")).toBeVisible();
+  await page.getByRole("button", { name: "Close terminal panel" }).click();
+  await page.getByRole("button", { name: "Show details" }).click();
+  await expect(privateDock).toContainText("Workspace tools");
+  await page.getByRole("button", { name: "Activity" }).click();
   await expect(page.getByLabel("Conversation context")).toBeVisible();
   const privateContextDarkSurfaces = await page.evaluate(() => {
     const selectors = [".teammate-context-panel", ".teammate-context-row"];
@@ -784,7 +839,7 @@ test("AI teammate private workspace sends blocked chat replies and persists sett
   await page.getByPlaceholder("Message this AI teammate privately").fill("Please refine the private workspace acceptance criteria.");
   await page.getByPlaceholder("Message this AI teammate privately").press("Enter");
   await expect(page.getByText("Please refine the private workspace acceptance criteria.")).toBeVisible();
-  await expect(page.getByLabel("Private chat", { exact: true }).getByText("AI teammate is blocked: No provider preset is selected for this teammate.")).toBeVisible();
+  await expect(privateFeed.getByText("AI teammate is blocked: No provider preset is selected for this teammate.")).toBeVisible();
   const privateMessageRow = page.locator(".teammate-message-row").filter({ hasText: "Please refine the private workspace acceptance criteria." });
   await expect(privateMessageRow).toHaveClass(/message-bubble-inline/);
   await expect(privateMessageRow).toHaveClass(/message-bubble-own/);
@@ -826,7 +881,7 @@ test("AI teammate private workspace sends blocked chat replies and persists sett
     return isRecord(created) ? created.channelId : undefined;
   }).toBe("channel_engineering");
 
-  await page.getByLabel("AI teammate private chat").getByRole("button", { name: "Settings" }).click();
+  await openPrivateChatSettings(page);
   const settingsSections = page.getByLabel("Settings sections");
   await expect(settingsSections).toBeVisible();
   await settingsSections.getByRole("button", { name: /Channels/ }).click();
@@ -986,7 +1041,7 @@ test("AI teammate private workspace sends blocked chat replies and persists sett
   await expect(page.getByRole("heading", { name: "Renamed Engineer", level: 1 })).toBeVisible();
   await expect(page.getByLabel("Private chat", { exact: true }).getByText("AI teammate is blocked: No provider preset is selected for this teammate.")).toBeVisible();
 
-  await page.getByLabel("AI teammate private chat").getByRole("button", { name: "Settings" }).click();
+  await openPrivateChatSettings(page);
   const personaPanel = page.getByLabel("Persona import");
   await personaPanel.getByLabel("Source path").fill("AGENTS.md");
   await personaPanel.getByLabel("Persona content").fill([
@@ -1030,7 +1085,7 @@ test("AI teammate private workspace sends blocked chat replies and persists sett
   await expect(channelChipWithAvatar).not.toHaveClass(/default/);
 
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Imported QA Persona" }).click();
-  await page.getByLabel("AI teammate private chat").getByRole("button", { name: "Settings" }).click();
+  await openPrivateChatSettings(page);
 
   await page.getByRole("button", { name: "Remove avatar" }).click();
   await expect.poll(() => {
@@ -1090,7 +1145,7 @@ test("AI teammate memory tab imports Markdown as review candidates", async ({ pa
   await page.goto("/");
 
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Ling Engineer" }).click();
-  await page.getByLabel("AI teammate private chat").getByRole("button", { name: "Settings" }).click();
+  await openPrivateChatSettings(page);
   await page.getByLabel("Settings sections").getByRole("button", { name: /Memory/ }).click();
 
   const memoryPanel = page.locator(".teammate-memory-panel");
@@ -1157,7 +1212,7 @@ test("AI teammate settings save status and visibility fields", async ({ page }) 
   await page.goto("/");
 
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Ling Engineer" }).click();
-  await page.getByLabel("AI teammate private chat").getByRole("button", { name: "Settings" }).click();
+  await openPrivateChatSettings(page);
   await page.getByLabel("Settings sections").getByRole("button", { name: /Profile/ }).click();
   const profilePanel = page.getByLabel("Teammate settings");
   await profilePanel.getByLabel("Status").selectOption("paused");
@@ -1258,10 +1313,16 @@ test("AI teammate private chat opens latest messages and loads older history fro
 
   const feed = page.locator(".teammate-message-list");
   await feed.evaluate((element) => {
+    element.dispatchEvent(new WheelEvent("wheel", { bubbles: true, deltaY: -600 }));
+  });
+  await feed.evaluate((element) => {
     element.scrollTop = 0;
     element.dispatchEvent(new Event("scroll", { bubbles: true }));
   });
-  await expect.poll(() => page.locator(".teammate-message-row", { hasText: "private history 1" }).count()).toBeGreaterThan(0);
+  await expect.poll(() => privateChat.getByText("private history 1", { exact: true }).count()).toBeGreaterThan(0);
+  await page.evaluate(() => new Promise<void>((resolve) => {
+    requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+  }));
   await feed.evaluate((element) => {
     element.scrollTop = 0;
     element.dispatchEvent(new Event("scroll", { bubbles: true }));

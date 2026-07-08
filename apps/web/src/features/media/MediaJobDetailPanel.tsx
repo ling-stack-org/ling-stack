@@ -113,7 +113,7 @@ function MediaJobDetail({
   return (
     <div className="media-job-detail-content">
       <div className="media-job-detail-head">
-        <span className="media-job-detail-kicker">TASK · {job.id.slice(0, 8).toUpperCase()}</span>
+        <span className="media-job-detail-kicker">{t("Generation task")}</span>
         <span className="media-job-detail-tools">
           <button className="ghost-icon-button" type="button" onClick={onCopy} aria-label={t("Copy prompt")} title={t("Copy prompt")}>
             <Copy size={16} />
@@ -224,6 +224,16 @@ function MediaJobDetail({
         <span>{t("Created")}<strong>{formatDateTime(job.createdAt)}</strong></span>
         <span>{t("Updated")}<strong>{formatDateTime(job.updatedAt)}</strong></span>
       </div>
+
+      <details className="media-job-detail-disclosure media-job-raw-diagnostics">
+        <summary>{t("Raw diagnostics")}</summary>
+        <div className="media-job-detail-meta runtime-meta">
+          <span>{t("Task ID")}<strong>{job.id}</strong></span>
+          <span>{t("Provider route")}<strong>{job.providerPresetId}</strong></span>
+          <span>{t("Operation")}<strong>{job.operation}</strong></span>
+          <span>{t("Status")}<strong>{job.status}</strong></span>
+        </div>
+      </details>
 
       {artifacts.length > 0 ? (
         <div className="media-job-detail-artifacts artifact-list" aria-label={t("Artifacts")}>

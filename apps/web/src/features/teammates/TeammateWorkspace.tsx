@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent, type UIEvent } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { ArrowLeft, Loader2, Save } from "lucide-react";
+import { ArrowLeft, Brain, FileText, Folder, Loader2, MessageSquare, Save, Search, Settings } from "lucide-react";
 import type { SkillPack } from "@ling-stack/core/skill-types";
 import {
   archiveSkill,
@@ -108,6 +108,8 @@ import type {
 import { TeammateActivityTab } from "./TeammateActivityTab.js";
 import { TeammateChatContextPanel } from "./TeammateChatContextPanel.js";
 import { TeammateChatHeader } from "./TeammateChatHeader.js";
+import { type ConversationSummaryRow, type WorkspaceRightDockPageRequest } from "../workspace/right-dock/index.js";
+import { buildTeammatePrivateDockContent } from "./teammate-private-dock.js";
 import { TeammateChannelsTab } from "./TeammateChannelsTab.js";
 import { TeammateDangerTab } from "./TeammateDangerTab.js";
 import { TeammateMemoryTab, type MemoryReviewEditForm } from "./TeammateMemoryTab.js";
@@ -119,8 +121,11 @@ import { TeammatePrivateChatSurface } from "./TeammatePrivateChatSurface.js";
 import { TeammateSettingsSummaryPanel } from "./TeammateSettingsSummaryPanel.js";
 import { TeammateSkillsTab, type SkillImportForm, type TeammateSkillRowModel } from "./TeammateSkillsTab.js";
 import { TeammateTasksTab, type TeammateTaskCreateForm as ExtractedTeammateTaskCreateForm } from "./TeammateTasksTab.js";
+import { useConversationSummaryPanelController, useConversationSummaryPlacementMotion } from "../workspace/useConversationSummaryPanelController.js";
 import {
   directComposerFileRefs,
+  directWorkspacePathLabel,
+  directWorkspaceStatusLabel,
   directGuidanceDraftText,
   downloadTextFile,
   extractUrls,
@@ -131,6 +136,7 @@ import {
   splitAdditionalInstructions,
   summarizeDirectGuidancePayload,
   teammateToSettingsForm,
+  truncateText,
   uniqueDirectLinkPreviews,
   upsertDirectMessages,
   type SkillBindingFilter,
@@ -214,7 +220,10 @@ export function TeammateWorkspace({
   const [directGuidancePromotingId, setDirectGuidancePromotingId] = useState("");
   const [messageSearchOpen, setMessageSearchOpen] = useState(false);
   const [messageSearchQuery, setMessageSearchQuery] = useState("");
-  const [chatContextPanelOpen, setChatContextPanelOpen] = useState(false);
+  const [chatDockOpen, setChatDockOpen] = useState(false);
+  const [chatDockPageRequest, setChatDockPageRequest] = useState<WorkspaceRightDockPageRequest>();
+  const [chatSummaryOpen, setChatSummaryOpen] = useState(false);
+  const [chatTerminalOpen, setChatTerminalOpen] = useState(false);
   const [privateAttachments, setPrivateAttachments] = useState<readonly TeammatePrivateAttachment[]>([]);
   const [pendingAttachments, setPendingAttachments] = useState<readonly PendingAttachmentItem<TeammatePrivateAttachment>[]>([]);
   const [directLinkPreviews, setDirectLinkPreviews] = useState<readonly TeammateDirectLinkPreview[]>([]);
@@ -449,6 +458,98 @@ export function TeammateWorkspace({
     () => [...messages].reverse().find((message) => message.authorType === "ai-teammate"),
     [messages],
   );
+  const privateDockContent = useMemo(
+    () => buildTeammatePrivateDockContent({
+      messages: visibleMessages,
+      attachments: directAttachments,
+      runs,
+      teammateDisplayName: teammate.displayName,
+      t,
+    }),
+    [directAttachments, runs, t, teammate.displayName, visibleMessages],
+  );
+  const privateContextCount = [
+    directWorkspace,
+    lastAiMessage,
+    directAttachments.length > 0 ? directAttachments : undefined,
+    recentUsedMemoryEvents.length > 0 ? recentUsedMemoryEvents : undefined,
+    recentMemoryObjects.length > 0 ? recentMemoryObjects : undefined,
+  ].filter(Boolean).length;
+  const privateContextNode = (
+    <TeammateChatContextPanel
+      cwd={cwd}
+      lastAiMessage={lastAiMessage}
+      directWorkspace={directWorkspace}
+      directAttachments={directAttachments}
+      recentUsedMemoryEvents={recentUsedMemoryEvents}
+      recentMemoryObjects={recentMemoryObjects}
+    />
+  );
+  const privateSummaryRows = useMemo<readonly ConversationSummaryRow[]>(() => [
+    {
+      id: "teammate",
+      icon: <Brain size={18} />,
+      primary: t("AI teammate"),
+      secondary: `${teammate.displayName} · ${t(`role.${teammate.roleKey}`)}`,
+    },
+    {
+      id: "workspace",
+      icon: <Folder size={18} />,
+      tone: directWorkspace?.binding.errorMessage ? "failed" : "neutral",
+      primary: t("Private workspace"),
+      secondary: `${directWorkspacePathLabel(directWorkspace, t)} · ${directWorkspaceStatusLabel(directWorkspace, t)}`,
+      onOpen: () => openChatDockPage("context"),
+    },
+    {
+      id: "latest-reply",
+      icon: <MessageSquare size={18} />,
+      primary: t("Latest reply"),
+      secondary: lastAiMessage?.body ? truncateText(lastAiMessage.body, 96) : t("No AI reply summary yet."),
+      onOpen: () => openChatDockPage("context"),
+    },
+    {
+      id: "files",
+      icon: <FileText size={18} />,
+      primary: t("Files"),
+      secondary: t("{count} files", { count: privateDockContent.fileItems.length }),
+      onOpen: () => openChatDockPage("files"),
+    },
+    {
+      id: "memory",
+      icon: <Brain size={18} />,
+      primary: t("Memory"),
+      secondary: recentUsedMemoryEvents.length === 1 ? t("1 item") : t("{count} items", { count: recentUsedMemoryEvents.length }),
+      onOpen: () => openChatDockPage("context"),
+    },
+    {
+      id: "evidence",
+      icon: <Search size={18} />,
+      primary: t("Evidence"),
+      secondary: privateDockContent.evidenceCount === 1 ? t("1 item") : t("{count} items", { count: privateDockContent.evidenceCount }),
+      onOpen: () => openChatDockPage("evidence"),
+    },
+  ], [
+    directWorkspace,
+    lastAiMessage,
+    privateDockContent.evidenceCount,
+    privateDockContent.fileItems.length,
+    recentUsedMemoryEvents.length,
+    t,
+    teammate.displayName,
+    teammate.roleKey,
+  ]);
+  const chatSummaryPanel = useConversationSummaryPanelController(chatSummaryOpen);
+  const chatSummaryInMainLayout = chatSummaryPanel.rendered && chatDockOpen;
+  const chatSummaryPlacementRef = useConversationSummaryPlacementMotion(
+    chatSummaryOpen && chatSummaryPanel.rendered,
+    chatSummaryInMainLayout ? "main" : "header",
+  );
+
+  function openChatDockPage(page: WorkspaceRightDockPageRequest["page"]): void {
+    setChatSummaryOpen(false);
+    setChatDockOpen(true);
+    setChatDockPageRequest({ page, nonce: Date.now() });
+  }
   const directLinkPreviewById = useMemo(() => new Map(directLinkPreviews.map((preview) => [preview.id, preview])), [directLinkPreviews]);
   const pendingDirectLinkPreviews = useMemo(
     () => pendingDirectLinkPreviewIds.map((id) => directLinkPreviewById.get(id)).filter((preview): preview is TeammateDirectLinkPreview => Boolean(preview)),
@@ -519,7 +620,10 @@ export function TeammateWorkspace({
     setSkillImportOpen(false);
     setMessageSearchOpen(false);
     setMessageSearchQuery("");
-    setChatContextPanelOpen(false);
+    setChatDockOpen(false);
+    setChatDockPageRequest(undefined);
+    setChatSummaryOpen(false);
+    setChatTerminalOpen(false);
     setMessages([]);
     setHasMoreDirectMessages(false);
     setNextDirectBeforeMessageId(undefined);
@@ -1863,7 +1967,6 @@ export function TeammateWorkspace({
     <div className={[
       "teammate-workspace",
       workspaceView === "settings" ? "settings-mode" : "chat-mode",
-      workspaceView === "chat" && !chatContextPanelOpen ? "context-collapsed" : "",
     ].filter(Boolean).join(" ")}>
       {workspaceView === "chat" ? (
         <TeammateChatHeader
@@ -1875,16 +1978,33 @@ export function TeammateWorkspace({
           loading={loading}
           searchOpen={messageSearchOpen}
           searchQuery={messageSearchQuery}
-          contextPanelOpen={chatContextPanelOpen}
-          onToggleSearch={() => setMessageSearchOpen((current) => !current)}
+          summaryOpen={chatSummaryOpen}
+          summaryShouldRender={chatSummaryPanel.rendered}
+          summaryMotionClass={chatSummaryPanel.motionClass}
+          summaryPlacementRef={chatSummaryPlacementRef}
+          summaryRows={privateSummaryRows}
+          terminalOpen={chatTerminalOpen}
+          terminalDisabled={!cwd.trim()}
+          detailsOpen={chatDockOpen}
+          onToggleSearch={() => {
+            setChatSummaryOpen(false);
+            setMessageSearchOpen((current) => !current);
+          }}
           onSearchQueryChange={setMessageSearchQuery}
           onClearSearch={() => setMessageSearchQuery("")}
           onRefresh={refreshTeammateWorkspace}
-          onOpenSettings={() => {
-            setWorkspaceView("settings");
-            setActiveTab("profile");
+          onToggleSummary={() => {
+            setMessageSearchOpen(false);
+            setChatSummaryOpen((current) => !current);
           }}
-          onToggleContextPanel={() => setChatContextPanelOpen((current) => !current)}
+          onCloseSummary={() => setChatSummaryOpen(false)}
+          onToggleTerminal={() => {
+            setChatSummaryOpen(false);
+            setChatTerminalOpen((current) => !current);
+          }}
+          onToggleDetails={() => {
+            setChatDockOpen((current) => !current);
+          }}
         />
       ) : (
         <section className="teammate-settings-header" aria-label={t("Single agent settings")}>
@@ -1997,17 +2117,36 @@ export function TeammateWorkspace({
           onRemovePendingAttachment={removePendingAttachment}
           defaultPermissionMode={defaultPermissionMode}
           defaultPermissionPreset={defaultPermissionPreset}
-        />
-      ) : null}
-
-      {workspaceView === "chat" && chatContextPanelOpen ? (
-        <TeammateChatContextPanel
-          cwd={cwd}
-          lastAiMessage={lastAiMessage}
-          directWorkspace={directWorkspace}
-          directAttachments={directAttachments}
-          recentUsedMemoryEvents={recentUsedMemoryEvents}
-          recentMemoryObjects={recentMemoryObjects}
+          dockOpen={chatDockOpen}
+          dockPageRequest={chatDockPageRequest}
+          dockActions={(
+            <button
+              className="right-dock-icon-button"
+              type="button"
+              onClick={() => {
+                setWorkspaceView("settings");
+                setActiveTab("profile");
+              }}
+              aria-label={t("Settings")}
+              title={t("Settings")}
+            >
+              <Settings size={15} />
+            </button>
+          )}
+          terminalOpen={chatTerminalOpen}
+          summaryRendered={chatSummaryPanel.rendered}
+          summaryExpanded={chatSummaryPanel.expanded}
+          summaryMotionClass={chatSummaryPanel.motionClass}
+          summaryPlacementRef={chatSummaryPlacementRef}
+          summaryRows={privateSummaryRows}
+          contextNode={privateContextNode}
+          contextCount={privateContextCount}
+          onSummaryClose={() => setChatSummaryOpen(false)}
+          onDockPageRequestConsumed={(nonce) => {
+            setChatDockPageRequest((current) => current?.nonce === nonce ? undefined : current);
+          }}
+          onDockClose={() => setChatDockOpen(false)}
+          onTerminalClose={() => setChatTerminalOpen(false)}
         />
       ) : null}
 

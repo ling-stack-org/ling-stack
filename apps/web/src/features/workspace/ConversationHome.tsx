@@ -8,11 +8,14 @@ import {
   Copy,
   File,
   FileText,
+  Folder,
   Loader2,
+  MessageSquare,
   PackagePlus,
   Plus,
   Presentation,
   Search,
+  SquareTerminal,
   Table2,
   ThumbsDown,
   ThumbsUp,
@@ -50,6 +53,8 @@ import { conversationPermissionPresetMenuOptions, inferPermissionPreset, permiss
 import { buildConversationWorkCellViewModel } from "../../lib/conversation-work-cell.js";
 import { attachmentCanPreview, loadPreviewContent } from "../../lib/previews.js";
 import {
+  ConversationSummaryPopover,
+  ConversationTopToolbar,
   WorkspaceRightDock,
   mergeDockFileItems,
   mergeEvidenceGroups,
@@ -61,6 +66,10 @@ import {
   projectRunsToReviewItems,
   type RightDockMessageProjectionInput,
 } from "./right-dock/index.js";
+import { useWorkspaceBottomPanelResizeController } from "./useWorkspaceBottomPanelResizeController.js";
+import { useConversationSummaryPanelController, useConversationSummaryPlacementMotion } from "./useConversationSummaryPanelController.js";
+import { useWorkspaceRightDockController } from "./useWorkspaceRightDockController.js";
+import { useWorkspaceTerminalSession, WorkspaceTerminalPanel } from "./WorkspaceTerminalPanel.js";
 
 export interface ConversationHomeProjectSelection {
   readonly projectPath?: string;
@@ -133,6 +142,7 @@ export function ConversationHome({
   workspaceCwd,
   sending = false,
   onOpenRun,
+  onRefreshConversation,
   onSendConversation,
 }: {
   readonly initialDraft?: string;
@@ -151,6 +161,7 @@ export function ConversationHome({
   readonly workspaceCwd: string;
   readonly sending?: boolean;
   readonly onOpenRun?: (runId: string) => void;
+  readonly onRefreshConversation?: () => void | Promise<void>;
   readonly onSendConversation: (input: ConversationHomeSendInput) => Promise<void>;
 }): JSX.Element {
   const { t } = useI18n();
@@ -168,6 +179,12 @@ export function ConversationHome({
   const [selectedPermissionPreset, setSelectedPermissionPreset] = useState<PermissionPreset>(() => initialPermissionPreset ?? inferPermissionPreset(initialPermissionMode));
   const [messageFeedbackById, setMessageFeedbackById] = useState<Record<string, "up" | "down">>({});
   const [pendingAttachments, setPendingAttachments] = useState<readonly PendingAttachmentItem<ConversationAttachment>[]>([]);
+  const [messageSearchOpen, setMessageSearchOpen] = useState(false);
+  const [messageSearchQuery, setMessageSearchQuery] = useState("");
+  const [conversationDockOpen, setConversationDockOpen] = useState(false);
+  const [conversationSummaryOpen, setConversationSummaryOpen] = useState(false);
+  const [conversationTerminalOpen, setConversationTerminalOpen] = useState(false);
+  const [conversationRefreshing, setConversationRefreshing] = useState(false);
   const [project, setProject] = useState<ConversationHomeProjectSelection>(() => ({
     projectPath: initialProjectPath.trim() || undefined,
     projectLabel: initialProjectLabel.trim() || undefined,
@@ -176,6 +193,17 @@ export function ConversationHome({
   const thinkingPickerRef = useRef<HTMLDivElement>(null);
   const composerInputRef = useRef<TokenizedComposerInputHandle | null>(null);
   const pendingAttachmentsRef = useRef<readonly PendingAttachmentItem<ConversationAttachment>[]>([]);
+  const conversationDockController = useWorkspaceRightDockController({
+    initialOpen: false,
+    intentOpen: conversationDockOpen,
+    resizeObserverKey: detailContext?.threadId ?? workspaceCwd.trim(),
+  });
+  const conversationSummaryPanel = useConversationSummaryPanelController(conversationSummaryOpen);
+  const conversationBottomPanelResize = useWorkspaceBottomPanelResizeController({
+    containerRef: conversationDockController.containerRef,
+    resizeObserverKey: detailContext?.threadId ?? workspaceCwd.trim(),
+  });
+  const workspaceTerminalSession = useWorkspaceTerminalSession(workspaceCwd.trim());
   const readyAttachmentIds = useMemo(
     () => pendingAttachments
       .filter((item) => item.state === "ready" && item.attachment)
@@ -201,8 +229,27 @@ export function ConversationHome({
     () => new Map((detailContext?.runs ?? []).map((run) => [run.id, run])),
     [detailContext?.runs],
   );
+  const normalizedMessageSearchQuery = messageSearchQuery.trim().toLowerCase();
+  const visibleMessages = useMemo(() => {
+    if (!normalizedMessageSearchQuery) {
+      return messages;
+    }
+    return messages.filter((message) => {
+      const attachmentText = (message.attachments ?? []).map((attachment) => attachment.fileName).join(" ");
+      const linkedRun = message.runId ? runById.get(message.runId) : undefined;
+          const runText = linkedRun
+            ? [
+                linkedRun.status,
+                runTaskSnapshotTitle(linkedRun),
+                linkedRun.providerName,
+                linkedRun.providerModel,
+              ].filter(Boolean).join(" ")
+        : "";
+      return `${message.content} ${attachmentText} ${runText}`.toLowerCase().includes(normalizedMessageSearchQuery);
+    });
+  }, [messages, normalizedMessageSearchQuery, runById]);
   const conversationDockMessages = useMemo<readonly RightDockMessageProjectionInput[]>(
-    () => messages.map((message) => ({
+    () => visibleMessages.map((message) => ({
       id: message.id,
       title: message.role === "assistant" ? t("Assistant message") : message.role === "user" ? t("User message") : t("System message"),
       body: message.content,
@@ -212,13 +259,13 @@ export function ConversationHome({
       createdAt: message.createdAt,
       updatedAt: message.updatedAt,
     })),
-    [messages, runById, t],
+    [runById, t, visibleMessages],
   );
   const conversationDockFileItems = useMemo(
     () => mergeDockFileItems(
-      projectAttachmentsToFileItems(messages.flatMap((message) => message.attachments ?? []), t),
+      projectAttachmentsToFileItems(visibleMessages.flatMap((message) => message.attachments ?? []), t),
     ),
-    [messages, t],
+    [t, visibleMessages],
   );
   const conversationDockEvidenceGroups = useMemo(
     () => mergeEvidenceGroups(
@@ -235,6 +282,70 @@ export function ConversationHome({
     ],
     [conversationDockFileItems, conversationDockMessages, detailContext?.runs, t],
   );
+  const conversationDockEvidenceCount = conversationDockEvidenceGroups.reduce((count, group) => count + group.items.length, 0);
+  const latestRun = useMemo(() => {
+    const runs = detailContext?.runs ?? [];
+    return [...runs].sort((left, right) => (right.updatedAt ?? right.createdAt).localeCompare(left.updatedAt ?? left.createdAt))[0];
+  }, [detailContext?.runs]);
+  const conversationSummaryRows = useMemo(() => [
+    {
+      id: "workspace",
+      icon: <Folder size={18} />,
+      primary: t("Workspace"),
+      secondary: workspaceDisplayLabel(workspaceCwd.trim()),
+    },
+    {
+      id: "messages",
+      icon: <MessageSquare size={18} />,
+      primary: t("Thread"),
+      secondary: visibleMessages.length === 1 ? t("1 item") : t("{count} items", { count: visibleMessages.length }),
+    },
+    ...(latestRun ? [{
+      id: "latest-run",
+      icon: <SquareTerminal size={18} />,
+      tone: latestRun.status === "failed" ? "failed" as const : latestRun.status === "running" ? "running" as const : "neutral" as const,
+      primary: t("Latest run"),
+      secondary: runTaskSnapshotTitle(latestRun) ?? latestRun.status,
+    }] : []),
+    {
+      id: "files",
+      icon: <FileText size={18} />,
+      primary: t("Files"),
+      secondary: t("{count} files", { count: conversationDockFileItems.length }),
+    },
+    {
+      id: "evidence",
+      icon: <Search size={18} />,
+      primary: t("Evidence"),
+      secondary: conversationDockEvidenceCount === 1 ? t("1 item") : t("{count} items", { count: conversationDockEvidenceCount }),
+    },
+  ], [conversationDockEvidenceCount, conversationDockFileItems.length, latestRun, t, visibleMessages.length, workspaceCwd]);
+  const conversationSummaryShouldRender = conversationSummaryPanel.rendered;
+  const conversationSummaryInMainLayout = conversationSummaryShouldRender && conversationDockOpen;
+  const conversationSummaryPlacementRef = useConversationSummaryPlacementMotion(
+    conversationSummaryOpen && conversationSummaryShouldRender,
+    conversationSummaryInMainLayout ? "main" : "header",
+  );
+  const conversationSummaryNode = (
+    <ConversationSummaryPopover
+      title={t("Environment")}
+      subtitle={workspaceDisplayLabel(workspaceCwd.trim())}
+      rows={conversationSummaryRows}
+      onClose={() => setConversationSummaryOpen(false)}
+    />
+  );
+
+  async function refreshConversation(): Promise<void> {
+    if (!onRefreshConversation || conversationRefreshing) {
+      return;
+    }
+    setConversationRefreshing(true);
+    try {
+      await onRefreshConversation();
+    } finally {
+      setConversationRefreshing(false);
+    }
+  }
   const thinkingButtonLabel = thinkingOff
     ? t("Thinking off")
     : t("Thinking {label}", { label: activeThinkingLabel });
@@ -282,6 +393,9 @@ export function ConversationHome({
 
   useEffect(() => {
     setMessages(initialMessages);
+    if (initialMessages.length === 0) {
+      setConversationDockOpen(false);
+    }
   }, [initialMessages]);
 
   useEffect(() => {
@@ -794,13 +908,81 @@ export function ConversationHome({
   if (messages.length > 0) {
     return (
       <ConversationShell
-        className="normal-conversation-page with-right-dock"
+        rootRef={conversationDockController.containerRef}
+        style={{
+          ...conversationDockController.containerStyle,
+          ...conversationBottomPanelResize.panelStyle,
+        }}
+        className={[
+          "normal-conversation-page",
+          conversationDockController.visible ? "with-right-dock" : "",
+          conversationSummaryInMainLayout ? "with-conversation-summary-panel" : "",
+          conversationSummaryInMainLayout ? (conversationSummaryPanel.expanded ? "summary-panel-expanded" : "summary-panel-collapsed") : "",
+          conversationDockController.visible && !conversationDockController.expanded ? "workspace-right-dock-collapsed" : "",
+          conversationTerminalOpen ? "with-bottom-terminal" : "",
+          conversationDockController.resizing ? "is-resizing-workspace-right-dock" : "",
+          conversationBottomPanelResize.resizing ? "is-resizing-workspace-bottom-panel" : "",
+        ].filter(Boolean).join(" ")}
         ariaLabel={t("Conversation page")}
+        headerNode={(
+          <header className={messageSearchOpen ? "normal-conversation-header searching" : "normal-conversation-header"}>
+            <ConversationTopToolbar
+              ariaLabel={t("Conversation workspace toolbar")}
+              searchActive={messageSearchOpen}
+              searchLabel={t("Search")}
+              refreshDisabled={!onRefreshConversation}
+              refreshLabel={t("Refresh")}
+              refreshLoading={conversationRefreshing}
+              summaryActive={conversationSummaryOpen}
+              summaryLabel={t("Summary")}
+              terminalActive={conversationTerminalOpen}
+              terminalDisabled={!workspaceCwd.trim()}
+              terminalLabel={t("Terminal")}
+              detailsActive={conversationDockOpen}
+              detailsLabel={conversationDockOpen ? t("Hide details") : t("Show details")}
+              onToggleSearch={() => {
+                setConversationSummaryOpen(false);
+                setMessageSearchOpen((current) => !current);
+              }}
+              onRefresh={() => void refreshConversation()}
+              onToggleSummary={() => {
+                setMessageSearchOpen(false);
+                setConversationSummaryOpen((current) => !current);
+              }}
+              onToggleTerminal={() => {
+                setConversationSummaryOpen(false);
+                setConversationTerminalOpen((current) => !current);
+              }}
+              onToggleDetails={() => {
+                setConversationDockOpen((current) => !current);
+              }}
+            />
+            {messageSearchOpen ? (
+              <label className="conversation-top-search normal-conversation-search">
+                <Search size={14} />
+                <input value={messageSearchQuery} onChange={(event) => setMessageSearchQuery(event.target.value)} placeholder={t("Search conversation messages")} />
+                {messageSearchQuery ? (
+                  <button type="button" onClick={() => setMessageSearchQuery("")} aria-label={t("Clear search")}>
+                    <X size={14} />
+                  </button>
+                ) : null}
+              </label>
+            ) : null}
+            {conversationSummaryShouldRender && !conversationSummaryInMainLayout ? (
+              <div
+                ref={conversationSummaryPlacementRef}
+                className={`channel-progress-popover conversation-summary-popover-wrap normal-conversation-summary-popover ${conversationSummaryPanel.motionClass}`}
+              >
+                {conversationSummaryNode}
+              </div>
+            ) : null}
+          </header>
+        )}
         feedNode={(
           <ConversationFeed
             className="normal-conversation-feed"
             ariaLabel={t("Conversation messages")}
-            items={messages}
+            items={visibleMessages}
             emptyLabel={t("No conversation messages yet")}
             getItemId={(message) => message.id}
             renderItem={(message) => {
@@ -895,18 +1077,77 @@ export function ConversationHome({
         )}
         composerNode={<div className="normal-conversation-composer-stack">{composerNode}</div>}
         sideNode={(
-          <WorkspaceRightDock
-            surface="normal_conversation"
-            open
-            ariaLabel={t("Conversation workspace dock")}
-            className="normal-conversation-right-dock"
-            cwd={workspaceCwd.trim()}
-            launcherTitle={t("Conversation tools")}
-            launcherSubtitle={t("Review, evidence, and files")}
-            reviewItems={conversationDockReviewItems}
-            evidenceGroups={conversationDockEvidenceGroups}
-            fileItems={conversationDockFileItems}
-          />
+          <>
+            {conversationSummaryInMainLayout ? (
+              <aside
+                ref={conversationSummaryPlacementRef}
+                className={`channel-progress-popover channel-progress-panel conversation-summary-side-panel normal-conversation-summary-panel ${conversationSummaryPanel.motionClass}`}
+                aria-label={t("Summary")}
+              >
+                {conversationSummaryNode}
+              </aside>
+            ) : null}
+            {conversationDockController.visible ? (
+              <button
+                className="workspace-right-dock-resize-handle"
+                type="button"
+                role="separator"
+                aria-orientation="vertical"
+                aria-label={t("Resize workspace dock")}
+                title={t("Drag to resize workspace dock")}
+                onPointerDown={conversationDockController.handleResizePointerDown}
+                onPointerMove={conversationDockController.handleResizePointerMove}
+                onPointerUp={conversationDockController.handleResizePointerEnd}
+                onPointerCancel={conversationDockController.handleResizePointerEnd}
+                onLostPointerCapture={conversationDockController.handleResizePointerEnd}
+              />
+            ) : null}
+            {conversationDockController.visible ? (
+              <div className="workspace-right-dock-frame normal-conversation-right-dock-frame">
+                <WorkspaceRightDock
+                  surface="normal_conversation"
+                  open={conversationDockOpen}
+                  ariaLabel={t("Conversation workspace dock")}
+                  className="normal-conversation-right-dock"
+                  cwd={workspaceCwd.trim()}
+                  launcherTitle={t("Workspace tools")}
+                  launcherSubtitle={workspaceDisplayLabel(workspaceCwd.trim())}
+                  reviewItems={conversationDockReviewItems}
+                  evidenceGroups={conversationDockEvidenceGroups}
+                  fileItems={conversationDockFileItems}
+                  terminalSession={workspaceTerminalSession}
+                  includeActivity
+                  pageRequest={conversationDockController.pageRequest}
+                  onPageRequestConsumed={conversationDockController.consumePageRequest}
+                  onClose={() => setConversationDockOpen(false)}
+                />
+              </div>
+            ) : null}
+            {conversationTerminalOpen ? (
+              <WorkspaceTerminalPanel
+                cwd={workspaceCwd.trim()}
+                className="workspace-bottom-terminal normal-conversation-bottom-terminal"
+                session={workspaceTerminalSession}
+                style={conversationBottomPanelResize.panelStyle}
+                resizeHandleNode={(
+                  <button
+                    className="workspace-bottom-panel-resize-handle"
+                    type="button"
+                    role="separator"
+                    aria-orientation="horizontal"
+                    aria-label={t("Resize terminal panel")}
+                    title={t("Drag to resize terminal panel")}
+                    onPointerDown={conversationBottomPanelResize.handleResizePointerDown}
+                    onPointerMove={conversationBottomPanelResize.handleResizePointerMove}
+                    onPointerUp={conversationBottomPanelResize.handleResizePointerEnd}
+                    onPointerCancel={conversationBottomPanelResize.handleResizePointerEnd}
+                    onLostPointerCapture={conversationBottomPanelResize.handleResizePointerEnd}
+                  />
+                )}
+                onClose={() => setConversationTerminalOpen(false)}
+              />
+            ) : null}
+          </>
         )}
       />
     );
@@ -916,10 +1157,7 @@ export function ConversationHome({
     <section className="conversation-home" aria-label={t("Conversation home")}>
       <div className="conversation-home-center">
         <div className="conversation-home-mark" aria-hidden="true">
-          <svg viewBox="0 0 32 32" focusable="false">
-            <path d="M7 21V11.5L13 7h12v14H7Z" />
-            <path d="M12 21v-5.5M17 21v-8M22 21v-11" />
-          </svg>
+          <img src="/icons/ling-stack-gpt-image-2-icon.png" alt="" />
         </div>
         <h1>{t("Ling Stack, make work easier.")}</h1>
 
@@ -1059,6 +1297,23 @@ function conversationDockMessageStatus(
     case undefined:
       return undefined;
   }
+}
+
+function workspaceDisplayLabel(cwd: string): string {
+  const normalized = cwd.trim().replace(/\/+$/, "");
+  if (!normalized) {
+    return "-";
+  }
+  return normalized.split("/").filter(Boolean).at(-1) ?? normalized;
+}
+
+function runTaskSnapshotTitle(run: RunSession): string | undefined {
+  const snapshot = run.taskSnapshot;
+  if (!snapshot || typeof snapshot !== "object" || !("title" in snapshot)) {
+    return undefined;
+  }
+  const title = snapshot.title;
+  return typeof title === "string" && title.trim() ? title : undefined;
 }
 
 function normalConversationMessageErrorText(message: ConversationHomeMessage, runStatus?: RunSession["status"]): string {

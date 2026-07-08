@@ -21,13 +21,6 @@ import { roleLabel } from "./helpers.js";
 import { selectDefaultTeammateProvider, selectDefaultTeammateTemplate } from "./teammate-create-defaults.js";
 import type { LocalTeammateCreateInput } from "./types.js";
 
-const defaultMemoryScopeLabels: readonly string[] = [
-  "private-chat-summary",
-  "private-notes",
-  "channel-brief",
-  "channel-decisions",
-];
-
 export function TeammateCreateDrawer({
   open,
   initialTemplateId,
@@ -236,33 +229,6 @@ export function TeammateCreateDrawer({
                 <button className="secondary-button" type="button" onClick={openProvidersAndClose}>{t("Configure model")}</button>
               </div>
             ) : null}
-          </DialogSection>
-
-          <DialogSection
-            className="teammate-create-section teammate-create-advanced"
-            title={t("Advanced settings")}
-            description={t("Memory, skills, MCP, permissions and prompt")}
-            collapsible
-          >
-            <div className="teammate-create-advanced-body">
-              <section>
-                <h3>{t("Memory")}</h3>
-                <div className="provider-run-notice neutral">
-                  <ShieldCheck size={15} />
-                  <span>{t("Memory is always on for each teammate.")}</span>
-                </div>
-                <div className="teammate-memory-list compact">
-                  {defaultMemoryScopeLabels.map((scope) => (
-                    <span key={scope} className="teammate-toggle static">
-                      <FileText size={15} />
-                      <span>
-                        <strong>{t(scope)}</strong>
-                      </span>
-                    </span>
-                  ))}
-                </div>
-              </section>
-            </div>
           </DialogSection>
 
     </CreateDialogShell>

@@ -65,7 +65,7 @@ test("automations page uses Codex-style inbox, manual composer, templates, and p
   const schedulerStrip = automationsPage.locator(".automation-scheduler-strip");
   await expect(schedulerStrip.getByText("调度已启动")).toBeVisible();
   await expect(schedulerStrip.getByText("还没有启用的定时自动化。")).toBeVisible();
-  await expect(schedulerStrip.getByRole("button", { name: "停止调度" })).toBeVisible();
+  await expect(schedulerStrip.getByRole("button")).toHaveCount(0);
   await expect(headerActions.getByRole("button", { name: "暂停自动触发" })).toHaveCount(0);
   await expect(headerActions.getByRole("button", { name: "恢复自动触发" })).toHaveCount(0);
   await expect(headerActions.getByRole("button", { name: "使用模板" })).toBeVisible();
@@ -121,9 +121,10 @@ test("automations page uses Codex-style inbox, manual composer, templates, and p
 
   await headerActions.getByRole("button", { name: "使用模板" }).click();
   const templateDialog = page.getByRole("dialog", { name: "自动化模板" });
-  await expect(templateDialog.getByRole("button", { name: /Bug 扫描/ })).toBeVisible();
-  await expect(templateDialog.getByRole("button", { name: /站会 \/ 周总结/ })).toBeVisible();
-  await templateDialog.getByRole("button", { name: /站会 \/ 周总结/ }).click();
+  await expect(templateDialog.getByRole("option", { name: /Bug 扫描/ })).toBeVisible();
+  await expect(templateDialog.getByRole("option", { name: /站会 \/ 周总结/ })).toBeVisible();
+  await templateDialog.getByRole("option", { name: /站会 \/ 周总结/ }).click();
+  await templateDialog.getByRole("button", { name: "使用此模板" }).click();
   const filledManualDialog = page.getByRole("dialog", { name: "手动创建" });
   await expect(filledManualDialog.getByPlaceholder("自动化功能标题")).toHaveValue("站会 / 周总结");
   await expect(filledManualDialog.getByRole("button", { name: /Launch planning thread/ })).toBeVisible();

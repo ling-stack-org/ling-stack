@@ -1,5 +1,6 @@
 import { type ChangeEvent, type FormEvent, type RefObject } from "react";
 import { Bot, Camera, Check, MessageSquare, RefreshCw, RotateCcw, ShieldCheck, Sparkles, UserRound } from "lucide-react";
+import { useI18n } from "../../i18n.js";
 
 export type ActivityMode = "day" | "week" | "total";
 
@@ -72,28 +73,30 @@ export function ProfileSettingsSurface({
   formatCompactNumber,
   formatDuration,
 }: ProfileSettingsSurfaceProps): JSX.Element {
+  const { t } = useI18n();
   const resolvedName = displayName.trim() || "Ling User";
+  const isSuccessMessage = message.includes(t("Saved")) || message.includes(t("Profile saved")) || message.includes(t("Avatar adjusted. Save to apply."));
 
   return (
-    <div className="profile-settings-surface" aria-label="个人资料">
+    <div className="profile-settings-surface" aria-label={t("User profile")}>
       <header className="profile-settings-head">
         <div>
-          <h1>个人资料</h1>
-          <p>设置你在频道、私聊和审批记录中的显示身份。</p>
+          <h1>{t("User profile")}</h1>
+          <p>{t("Set the identity shown in channels, private chats, and approval records.")}</p>
         </div>
         <button className="secondary-button compact-button" type="button" onClick={onRefresh} disabled={loading}>
           <RefreshCw size={14} />
-          <span>{loading ? "刷新中" : "刷新"}</span>
+          <span>{loading ? t("Refreshing") : t("Refresh")}</span>
         </button>
       </header>
 
       <div className="profile-settings-primary-grid">
-        <section className="profile-settings-card profile-identity-card" aria-label="身份信息">
+        <section className="profile-settings-card profile-identity-card" aria-label={t("Identity information")}>
           <div className="profile-settings-card-head">
             <span className="profile-settings-card-icon"><UserRound size={16} /></span>
             <div>
-              <h2>身份信息</h2>
-              <p>这些信息仅用于当前本地工作区显示。</p>
+              <h2>{t("Identity information")}</h2>
+              <p>{t("Only used for display in this local workspace.")}</p>
             </div>
           </div>
 
@@ -103,8 +106,8 @@ export function ProfileSettingsSurface({
                 className={avatarDataUrl ? "profile-avatar-button profile-settings-avatar has-avatar" : "profile-avatar-button profile-settings-avatar"}
                 type="button"
                 onClick={() => fileInputRef.current?.click()}
-                aria-label="更换头像"
-                title="更换头像"
+                aria-label={t("Change avatar")}
+                title={t("Change avatar")}
               >
                 {avatarDataUrl ? <img src={avatarDataUrl} alt="" /> : <span>{initials}</span>}
                 <span className="profile-avatar-edit"><Camera size={14} /></span>
@@ -113,7 +116,7 @@ export function ProfileSettingsSurface({
                 <strong>{resolvedName}</strong>
                 <span>@{visibleHandle}</span>
                 <button className="secondary-button compact-button" type="button" onClick={() => fileInputRef.current?.click()}>
-                  更换头像
+                  {t("Change avatar")}
                 </button>
               </div>
             </div>
@@ -121,27 +124,27 @@ export function ProfileSettingsSurface({
 
             <div className="profile-settings-fields">
               <label>
-                <span>昵称</span>
+                <span>{t("Display name")}</span>
                 <input value={displayName} onChange={(event) => onDisplayNameChange(event.target.value)} maxLength={80} />
               </label>
               <label>
-                <span>用户名</span>
+                <span>{t("Handle")}</span>
                 <input value={handle} onChange={(event) => onHandleChange(event.target.value)} maxLength={48} placeholder="local-user" />
               </label>
             </div>
 
             <footer className="profile-settings-actions">
-              {message ? <span className={message.includes("已") ? "profile-inline-message ok" : "profile-inline-message"}>{message}</span> : <span />}
+              {message ? <span className={isSuccessMessage ? "profile-inline-message ok" : "profile-inline-message"}>{message}</span> : <span />}
               <div>
                 {hasProfileChanges ? (
                   <button className="secondary-button compact-button" type="button" onClick={onReset} disabled={saving}>
                     <RotateCcw size={14} />
-                    <span>重置更改</span>
+                    <span>{t("Reset changes")}</span>
                   </button>
                 ) : null}
                 <button className="primary-button compact-button" type="submit" disabled={!hasProfileChanges || saving}>
                   {saving ? <RefreshCw size={14} /> : <Check size={14} />}
-                  <span>{saving ? "保存中" : "保存资料"}</span>
+                  <span>{saving ? t("Saving") : t("Save profile")}</span>
                 </button>
               </div>
             </footer>
@@ -174,29 +177,30 @@ function ProfilePreviewCard({
   readonly avatarDataUrl: string | undefined;
   readonly initials: string;
 }): JSX.Element {
+  const { t } = useI18n();
   return (
-    <section className="profile-settings-card profile-preview-card" aria-label="显示预览">
+    <section className="profile-settings-card profile-preview-card" aria-label={t("Display preview")}>
       <div className="profile-settings-card-head">
         <span className="profile-settings-card-icon"><MessageSquare size={16} /></span>
         <div>
-          <h2>显示预览</h2>
-          <p>这些位置会使用你的头像和昵称。</p>
+          <h2>{t("Display preview")}</h2>
+          <p>{t("These places use your avatar and display name.")}</p>
         </div>
       </div>
-      <div className="profile-preview-message" aria-label="个人资料显示预览">
+      <div className="profile-preview-message" aria-label={t("Profile display preview")}>
         <ProfilePreviewAvatar avatarDataUrl={avatarDataUrl} initials={initials} />
         <div>
           <header>
             <strong>{displayName}</strong>
             <span>@{visibleHandle}</span>
           </header>
-          <p>我会以这个身份出现在本地消息、私聊和审批记录中。</p>
+          <p>{t("This identity appears in local messages, private chats, and approval records.")}</p>
         </div>
       </div>
       <div className="profile-preview-usage-list">
-        <ProfilePreviewUsage icon={<MessageSquare size={14} />} label="频道消息" />
-        <ProfilePreviewUsage icon={<Bot size={14} />} label="AI 队友私聊" />
-        <ProfilePreviewUsage icon={<ShieldCheck size={14} />} label="审批记录" />
+        <ProfilePreviewUsage icon={<MessageSquare size={14} />} label={t("Channel messages")} />
+        <ProfilePreviewUsage icon={<Bot size={14} />} label={t("AI teammate private chat")} />
+        <ProfilePreviewUsage icon={<ShieldCheck size={14} />} label={t("Approval records")} />
       </div>
     </section>
   );
@@ -233,41 +237,42 @@ function ProfileUsageSummary({
   readonly formatCompactNumber: (value: number) => string;
   readonly formatDuration: (value: number) => string;
 }): JSX.Element {
+  const { t } = useI18n();
   const hasActivity = metrics.sessionCount > 0 || metrics.totalEstimatedTokens > 0 || metrics.topSkills.length > 0;
 
   return (
-    <section className="profile-settings-card profile-usage-card" aria-label="使用摘要">
+    <section className="profile-settings-card profile-usage-card" aria-label={t("Usage summary")}>
       <div className="profile-settings-card-head split">
         <span className="profile-settings-card-icon"><Sparkles size={16} /></span>
         <div>
-          <h2>使用摘要</h2>
-          <p>这里保留本地活动概览、趋势和连续使用记录。</p>
+          <h2>{t("Usage summary")}</h2>
+          <p>{t("Local activity, trends, and streaks stay here.")}</p>
         </div>
       </div>
 
       {hasActivity ? (
         <>
-          <div className="profile-usage-summary-grid" aria-label="个人资料使用摘要">
-            <ProfileUsageMetric label="会话数" value={String(metrics.sessionCount)} />
-            <ProfileUsageMetric label="任务成功率" value={`${metrics.successRate}%`} />
-            <ProfileUsageMetric label="常用模型" value={metrics.topModel} />
-            <ProfileUsageMetric label="已使用技能" value={String(metrics.exploredSkillCount)} />
+          <div className="profile-usage-summary-grid" aria-label={t("Profile usage summary")}>
+            <ProfileUsageMetric label={t("Sessions")} value={String(metrics.sessionCount)} />
+            <ProfileUsageMetric label={t("Task success rate")} value={`${metrics.successRate}%`} />
+            <ProfileUsageMetric label={t("Top model")} value={metrics.topModel} />
+            <ProfileUsageMetric label={t("Skills used")} value={String(metrics.exploredSkillCount)} />
           </div>
           <div className="profile-usage-meta-line">
-            <span>累计估算 Token <strong>{formatCompactNumber(metrics.totalEstimatedTokens)}</strong></span>
-            <span>最长任务 <strong>{formatDuration(metrics.longestDurationMs)}</strong></span>
-            <span>最长连续 <strong>{metrics.longestStreakDays} 天</strong></span>
+            <span>{t("Estimated tokens")} <strong>{formatCompactNumber(metrics.totalEstimatedTokens)}</strong></span>
+            <span>{t("Longest task")} <strong>{formatDuration(metrics.longestDurationMs)}</strong></span>
+            <span>{t("Longest streak")} <strong>{t("{count} days", { count: metrics.longestStreakDays })}</strong></span>
           </div>
           <details className="profile-usage-details" open>
-            <summary>使用洞察</summary>
+            <summary>{t("Usage insights")}</summary>
             <div className="profile-usage-details-body">
               <div className="profile-section-head">
-                <h3>Token 活动</h3>
-                <div className="profile-segmented" role="tablist" aria-label="Token 活动粒度">
+                <h3>{t("Token activity")}</h3>
+                <div className="profile-segmented" role="tablist" aria-label={t("Token activity range")}>
                   {([
-                    ["day", "每日"],
-                    ["week", "每周"],
-                    ["total", "累计"],
+                    ["day", t("Daily")],
+                    ["week", t("Weekly")],
+                    ["total", t("Cumulative")],
                   ] as const).map(([mode, label]) => (
                     <button key={mode} type="button" className={activityMode === mode ? "active" : ""} onClick={() => onActivityModeChange(mode)}>
                       {label}
@@ -276,10 +281,10 @@ function ProfileUsageSummary({
                 </div>
               </div>
               <div className="profile-activity-body">
-                <div className="profile-heatmap" role="img" aria-label="过去一年 Token 活动热力图">
+                <div className="profile-heatmap" role="img" aria-label={t("Token activity heatmap for the past year")}>
                   <div className="profile-heatmap-grid">
                     {activity.cells.map((cell) => (
-                      <span key={cell.date} className={`profile-heatmap-cell level-${cell.level}`} title={`${cell.date}: ${formatCompactNumber(cell.value)} 估算 Token`} />
+                      <span key={cell.date} className={`profile-heatmap-cell level-${cell.level}`} title={t("{date}: {value} estimated tokens", { date: cell.date, value: formatCompactNumber(cell.value) })} />
                     ))}
                   </div>
                   <div className="profile-heatmap-months" aria-hidden="true">
@@ -288,34 +293,34 @@ function ProfileUsageSummary({
                 </div>
               </div>
               <div className="profile-usage-streak-section">
-                <h3>连续使用</h3>
+                <h3>{t("Usage streak")}</h3>
                 <div className="profile-usage-streak-grid">
-                  <ProfileUsageMetric label="当前连续" value={`${metrics.currentStreakDays} 天`} />
-                  <ProfileUsageMetric label="最长连续" value={`${metrics.longestStreakDays} 天`} />
-                  <ProfileUsageMetric label="峰值 Token" value={formatCompactNumber(metrics.peakEstimatedTokens)} />
+                  <ProfileUsageMetric label={t("Current streak")} value={t("{count} days", { count: metrics.currentStreakDays })} />
+                  <ProfileUsageMetric label={t("Longest streak")} value={t("{count} days", { count: metrics.longestStreakDays })} />
+                  <ProfileUsageMetric label={t("Peak tokens")} value={formatCompactNumber(metrics.peakEstimatedTokens)} />
                 </div>
               </div>
               <div className="profile-usage-skill-section">
-                <h3>最常用的技能</h3>
+                <h3>{t("Most used skills")}</h3>
                 {metrics.topSkills.length > 0 ? (
                   <div className="profile-skill-list compact">
                     {metrics.topSkills.map((skill) => (
                       <div key={skill.id} className="profile-skill-row">
                         <span className="profile-skill-icon"><Sparkles size={14} /></span>
                         <strong>{skill.label}</strong>
-                        <span>{skill.count} 次运行</span>
+                        <span>{t("{count} runs", { count: skill.count })}</span>
                       </div>
                     ))}
                   </div>
                 ) : (
-                  <p className="profile-empty">还没有带技能的运行记录。</p>
+                  <p className="profile-empty">{t("No skill-backed runs yet.")}</p>
                 )}
               </div>
             </div>
           </details>
         </>
       ) : (
-        <p className="profile-usage-empty">还没有足够的本地活动记录。</p>
+        <p className="profile-usage-empty">{t("Not enough local activity yet.")}</p>
       )}
     </section>
   );

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent, type RefObject, type UIEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent, type ReactNode, type RefCallback, type RefObject, type UIEvent } from "react";
 import type { ReactVirtualizer, VirtualItem } from "@tanstack/react-virtual";
 import { ArrowDown, Copy, FileText, Image, Link2, Loader2, MessageSquare, Plus, Send, Square, ThumbsDown, ThumbsUp, X } from "lucide-react";
 import { artifactContentUrl, attachmentContentUrl } from "../../api.js";
@@ -59,19 +59,15 @@ import {
   teammateDirectInterventionStatusLabel,
 } from "./teammate-workspace-utils.js";
 import {
+  ConversationSummaryPopover,
   WorkspaceRightDock,
-  mergeDockFileItems,
-  mergeEvidenceGroups,
-  projectAttachmentsToFileItems,
-  projectFileRefsToFileItems,
-  projectFilesToEvidenceGroup,
-  projectFilesToReviewItems,
-  projectMessagesToReviewItems,
-  projectRunsToEvidenceGroup,
-  projectRunsToReviewItems,
-  projectWebEvidenceToEvidenceGroup,
-  type RightDockMessageProjectionInput,
+  type ConversationSummaryRow,
+  type WorkspaceRightDockPageRequest,
 } from "../workspace/right-dock/index.js";
+import { useWorkspaceBottomPanelResizeController } from "../workspace/useWorkspaceBottomPanelResizeController.js";
+import { useWorkspaceRightDockController } from "../workspace/useWorkspaceRightDockController.js";
+import { useWorkspaceTerminalSession, WorkspaceTerminalPanel } from "../workspace/WorkspaceTerminalPanel.js";
+import { buildTeammatePrivateDockContent } from "./teammate-private-dock.js";
 
 type ComposerFileReferencePart = Extract<ComposerInputPart, { readonly type: "workspace_file" }>;
 
@@ -137,6 +133,21 @@ export function TeammatePrivateChatSurface({
   onRemovePendingAttachment,
   defaultPermissionMode,
   defaultPermissionPreset,
+  dockOpen,
+  dockPageRequest,
+  dockActions,
+  terminalOpen,
+  summaryRendered,
+  summaryExpanded,
+  summaryMotionClass,
+  summaryPlacementRef,
+  summaryRows,
+  contextNode,
+  contextCount,
+  onSummaryClose,
+  onDockPageRequestConsumed,
+  onDockClose,
+  onTerminalClose,
 }: {
   readonly cwd: string;
   readonly teammate: AiTeammate;
@@ -202,6 +213,21 @@ export function TeammatePrivateChatSurface({
   readonly onRemovePendingAttachment: (localId: string) => void | Promise<void>;
   readonly defaultPermissionMode?: SessionPermissionMode;
   readonly defaultPermissionPreset?: PermissionPreset;
+  readonly dockOpen: boolean;
+  readonly dockPageRequest?: WorkspaceRightDockPageRequest;
+  readonly dockActions?: ReactNode;
+  readonly terminalOpen: boolean;
+  readonly summaryRendered: boolean;
+  readonly summaryExpanded: boolean;
+  readonly summaryMotionClass: "is-popover-expanded" | "is-popover-collapsed";
+  readonly summaryPlacementRef: RefCallback<HTMLElement>;
+  readonly summaryRows: readonly ConversationSummaryRow[];
+  readonly contextNode?: JSX.Element;
+  readonly contextCount?: number;
+  readonly onSummaryClose: () => void;
+  readonly onDockPageRequestConsumed: (nonce: number) => void;
+  readonly onDockClose: () => void;
+  readonly onTerminalClose: () => void;
 }): JSX.Element {
   const { t } = useI18n();
   const [messageFeedbackById, setMessageFeedbackById] = useState<Record<string, "up" | "down">>({});
@@ -209,6 +235,16 @@ export function TeammatePrivateChatSurface({
   const [slashPicker, setSlashPicker] = useState<ActiveSlashCommandPicker | undefined>();
   const [slashActiveIndex, setSlashActiveIndex] = useState(0);
   const composerInputRef = useRef<TokenizedComposerInputHandle | null>(null);
+  const privateDockController = useWorkspaceRightDockController({
+    initialOpen: false,
+    intentOpen: dockOpen,
+    resizeObserverKey: `${teammate.id}:${cwd.trim()}`,
+  });
+  const privateBottomPanelResize = useWorkspaceBottomPanelResizeController({
+    containerRef: privateDockController.containerRef,
+    resizeObserverKey: `${teammate.id}:${cwd.trim()}`,
+  });
+  const workspaceTerminalSession = useWorkspaceTerminalSession(cwd.trim());
   const localUserDisplayName = userProfile?.displayName.trim() || t("You");
   const privateWorkCellByMessageId = buildPrivateWorkCellMap({
     messages: visibleMessages,
@@ -216,43 +252,15 @@ export function TeammatePrivateChatSurface({
     runs,
     t,
   });
-  const privateDockMessages = useMemo<readonly RightDockMessageProjectionInput[]>(
-    () => visibleMessages.map((message) => ({
-      id: message.id,
-      title: message.authorType === "ai-teammate" ? teammate.displayName : message.authorType === "local-user" ? t("User message") : t("System message"),
-      body: message.body,
-      status: message.status,
-      errorMessage: message.errorMessage,
-      runId: message.linkedRunId,
-      createdAt: message.createdAt,
-      updatedAt: message.updatedAt,
-      webEvidence: message.webEvidence,
-      fileRefs: message.fileRefs ?? [],
-    })),
-    [teammate.displayName, t, visibleMessages],
-  );
-  const privateDockFileItems = useMemo(
-    () => mergeDockFileItems(
-      projectAttachmentsToFileItems([...privateAttachmentById.values()], t),
-      projectFileRefsToFileItems(visibleMessages.flatMap((message) => message.fileRefs ?? [])),
-    ),
-    [privateAttachmentById, t, visibleMessages],
-  );
-  const privateDockEvidenceGroups = useMemo(
-    () => mergeEvidenceGroups(
-      projectRunsToEvidenceGroup(runs, t),
-      projectWebEvidenceToEvidenceGroup(privateDockMessages, t),
-      projectFilesToEvidenceGroup(privateDockFileItems, t),
-    ),
-    [privateDockFileItems, privateDockMessages, runs, t],
-  );
-  const privateDockReviewItems = useMemo(
-    () => [
-      ...projectRunsToReviewItems(runs, t),
-      ...projectMessagesToReviewItems(privateDockMessages, t),
-      ...projectFilesToReviewItems(privateDockFileItems, t),
-    ],
-    [privateDockFileItems, privateDockMessages, runs, t],
+  const privateDockContent = useMemo(
+    () => buildTeammatePrivateDockContent({
+      messages: visibleMessages,
+      attachments: [...privateAttachmentById.values()],
+      runs,
+      teammateDisplayName: teammate.displayName,
+      t,
+    }),
+    [privateAttachmentById, runs, teammate.displayName, t, visibleMessages],
   );
   const permissionLocked = privateComposerSending || hasDirectRuntimeActivity || Boolean(directGuidanceSubmitting);
   const slashCommandPickerOptions = filterSlashCommandPickerOptions(slashCommands, slashPicker);
@@ -261,6 +269,15 @@ export function TeammatePrivateChatSurface({
     : directReplyActive && !privateComposerHasGuidancePayload
       ? <Square size={15} />
       : <Send size={15} />;
+  const summaryInMainLayout = summaryRendered && dockOpen;
+  const summaryNode = (
+    <ConversationSummaryPopover
+      title={t("Environment")}
+      subtitle={teammate.displayName}
+      rows={summaryRows}
+      onClose={onSummaryClose}
+    />
+  );
 
   useEffect(() => {
     setSelectedPermissionPreset(defaultPermissionPreset ?? inferPermissionPreset(defaultPermissionMode));
@@ -343,7 +360,21 @@ export function TeammatePrivateChatSurface({
 
   return (
     <ConversationShell
-      className="teammate-private-chat with-right-dock"
+      rootRef={privateDockController.containerRef}
+      style={{
+        ...privateDockController.containerStyle,
+        ...privateBottomPanelResize.panelStyle,
+      }}
+      className={[
+        "teammate-private-chat",
+        privateDockController.visible ? "with-right-dock" : "",
+        summaryInMainLayout ? "with-conversation-summary-panel" : "",
+        summaryInMainLayout ? (summaryExpanded ? "summary-panel-expanded" : "summary-panel-collapsed") : "",
+        privateDockController.visible && !privateDockController.expanded ? "workspace-right-dock-collapsed" : "",
+        terminalOpen ? "with-bottom-terminal" : "",
+        privateDockController.resizing ? "is-resizing-workspace-right-dock" : "",
+        privateBottomPanelResize.resizing ? "is-resizing-workspace-bottom-panel" : "",
+      ].filter(Boolean).join(" ")}
       ariaLabel={t("Private chat")}
       feedNode={(
         <ConversationViewProvider surfaceId={`teammate:${teammate.id}`}>
@@ -690,18 +721,80 @@ export function TeammatePrivateChatSurface({
         </>
       )}
       sideNode={(
-        <WorkspaceRightDock
-          surface="teammate_direct"
-          open={visibleMessages.length > 0}
-          ariaLabel={t("Private chat workspace dock")}
-          className="teammate-private-right-dock"
-          cwd={cwd.trim()}
-          launcherTitle={t("Private chat tools")}
-          launcherSubtitle={teammate.displayName}
-          reviewItems={privateDockReviewItems}
-          evidenceGroups={privateDockEvidenceGroups}
-          fileItems={privateDockFileItems}
-        />
+        <>
+          {summaryInMainLayout ? (
+            <aside
+              ref={summaryPlacementRef}
+              className={`channel-progress-popover channel-progress-panel conversation-summary-side-panel teammate-private-summary-panel ${summaryMotionClass}`}
+              aria-label={t("Summary")}
+            >
+              {summaryNode}
+            </aside>
+          ) : null}
+          {privateDockController.visible ? (
+            <button
+              className="workspace-right-dock-resize-handle"
+              type="button"
+              role="separator"
+              aria-orientation="vertical"
+              aria-label={t("Resize workspace dock")}
+              title={t("Drag to resize workspace dock")}
+              onPointerDown={privateDockController.handleResizePointerDown}
+              onPointerMove={privateDockController.handleResizePointerMove}
+              onPointerUp={privateDockController.handleResizePointerEnd}
+              onPointerCancel={privateDockController.handleResizePointerEnd}
+              onLostPointerCapture={privateDockController.handleResizePointerEnd}
+            />
+          ) : null}
+          {privateDockController.visible ? (
+            <div className="workspace-right-dock-frame teammate-private-right-dock-frame">
+              <WorkspaceRightDock
+                surface="teammate_direct"
+                open={dockOpen}
+                ariaLabel={t("Private chat workspace dock")}
+                className="teammate-private-right-dock"
+                cwd={cwd.trim()}
+                launcherTitle={t("Workspace tools")}
+                launcherSubtitle={teammate.displayName}
+                reviewItems={privateDockContent.reviewItems}
+                evidenceGroups={privateDockContent.evidenceGroups}
+                fileItems={privateDockContent.fileItems}
+                terminalSession={workspaceTerminalSession}
+                includeActivity
+                activityNode={contextNode}
+                activityCount={contextCount}
+                actions={dockActions}
+                pageRequest={dockPageRequest}
+                onPageRequestConsumed={onDockPageRequestConsumed}
+                onClose={onDockClose}
+              />
+            </div>
+          ) : null}
+          {terminalOpen ? (
+            <WorkspaceTerminalPanel
+              cwd={cwd.trim()}
+              className="workspace-bottom-terminal teammate-private-bottom-terminal"
+              session={workspaceTerminalSession}
+              style={privateBottomPanelResize.panelStyle}
+              resizeHandleNode={(
+                <button
+                  className="workspace-bottom-panel-resize-handle"
+                  type="button"
+                  role="separator"
+                  aria-orientation="horizontal"
+                  aria-label={t("Resize terminal panel")}
+                  title={t("Drag to resize terminal panel")}
+                  onPointerDown={privateBottomPanelResize.handleResizePointerDown}
+                  onPointerMove={privateBottomPanelResize.handleResizePointerMove}
+                  onPointerUp={privateBottomPanelResize.handleResizePointerEnd}
+                  onPointerCancel={privateBottomPanelResize.handleResizePointerEnd}
+                  onLostPointerCapture={privateBottomPanelResize.handleResizePointerEnd}
+                />
+              )}
+              onClose={onTerminalClose}
+            />
+          ) : null}
+        </>
       )}
     />
   );

@@ -635,25 +635,28 @@ function WorkItemDetailDrawer({
         <OperationEmptyState
           compact
           icon={<ClipboardList size={22} />}
-          title={t("Work handling guide")}
+          title={t("Select a work item")}
           description={scopedCount === 0 && activeScope === "actionable"
-            ? t("You are clear for now. This panel explains where new work will appear.")
-            : t("Use the left list to choose a work item, or use the shortcuts below to recover context.")}
+            ? t("You are clear for now.")
+            : t("Use the left list to choose a work item.")}
         />
-        <div className="work-board-guide-list">
-          <span>
-            <strong>{t("Approvals land in Inbox")}</strong>
-            <small>{t("High-risk local actions and external confirmations wait for your decision there.")}</small>
-          </span>
-          <span>
-            <strong>{t("Failures land in Needs action")}</strong>
-            <small>{t("Blocked runs and claimable durable work stay visible until handled.")}</small>
-          </span>
-          <span>
-            <strong>{t("Finished work moves to History")}</strong>
-            <small>{t("Use history when you need evidence, artifacts, or completed run context.")}</small>
-          </span>
-        </div>
+        <details className="work-board-detail-disclosure work-board-guide-disclosure">
+          <summary>{t("Where work appears")}</summary>
+          <div className="work-board-detail-disclosure-body work-board-guide-list">
+            <span>
+              <strong>{t("Approvals land in Inbox")}</strong>
+              <small>{t("High-risk local actions and external confirmations wait for your decision there.")}</small>
+            </span>
+            <span>
+              <strong>{t("Failures land in Needs action")}</strong>
+              <small>{t("Blocked runs and claimable durable work stay visible until handled.")}</small>
+            </span>
+            <span>
+              <strong>{t("Finished work moves to History")}</strong>
+              <small>{t("Use history when you need evidence, artifacts, or completed run context.")}</small>
+            </span>
+          </div>
+        </details>
         <div className="work-board-empty-actions">
           {filtersActive ? (
             <button className="secondary-button compact-button" type="button" onClick={onClearFilters}>

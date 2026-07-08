@@ -34,6 +34,7 @@ export function AutomationExecutionInspector({
   const title = automation?.title ?? draft?.title ?? t("Execution details");
   const status = latestRun?.status ?? automation?.status ?? draft?.status;
   const output = inspectorOutputText(latestRun, preview, t);
+  const rawOutput = inspectorRawOutputText(latestRun, preview);
   const latestRunFailed = latestRun?.status === "failed";
   const sourceThreadId = automation ? sourceConversationId(automation) : draft ? draftSourceConversationId(draft) : undefined;
   const sourceThreadLabel = sourceThreadId ? threadTitleById.get(sourceThreadId) ?? t("Conversation") : "--";
@@ -56,7 +57,7 @@ export function AutomationExecutionInspector({
             <h3>{t("Trigger details")}</h3>
             <div className="automation-inspector-grid">
               <span>{t("Trigger")}<strong>{automation ? automationTriggerLabel(automation.trigger, t, automation.rrule) : draft ? automationTriggerLabel(draft.trigger, t) : latestRun ? automationRunTriggerLabel(latestRun, t) : "--"}</strong></span>
-              <span>{t("Target")}<strong>{automation ? targetLabel(automation, channels) : draft?.target?.scope ?? "--"}</strong></span>
+              <span>{t("Target")}<strong>{automation ? targetLabel(automation, channels, t) : draft ? draftTargetLabel(draft, t) : "--"}</strong></span>
               <span>{t("Runtime")}<strong>{automation ? automationModeLabel(automation, t) : draft ? automationDraftSourceLabel(draft.source, t) : "--"}</strong></span>
               <span>{t("Source conversation")}<strong title={sourceThreadId}>{sourceThreadLabel}</strong></span>
               <span>{t("Automation output thread")}<strong title={outputThreadId}>{outputThreadId ? t("Automation thread") : "--"}</strong></span>
@@ -66,6 +67,12 @@ export function AutomationExecutionInspector({
           <section className="automation-inspector-section">
             <h3>{latestRunFailed ? t("Failure details") : t("Output result")}</h3>
             <pre>{output}</pre>
+            {rawOutput ? (
+              <details className="settings-compact-details automation-raw-diagnostics">
+                <summary>{t("Raw diagnostics")}</summary>
+                <pre>{rawOutput}</pre>
+              </details>
+            ) : null}
           </section>
 
           <div className="automation-inspector-actions">
@@ -98,10 +105,10 @@ function inspectorOutputText(
   t: (value: string, values?: Readonly<Record<string, string | number>>) => string,
 ): string {
   if (run?.errorMessage) {
-    return run.errorMessage;
+    return t("Recent run did not start. Check the trigger target, then retry this automation.");
   }
   if (run?.skipReason) {
-    return run.skipReason;
+    return t("This automation was skipped. Review the trigger conditions before retrying.");
   }
   if (run?.outputArtifactIds.length) {
     return t("{count} output artifact generated", { count: run.outputArtifactIds.length });
@@ -113,6 +120,22 @@ function inspectorOutputText(
     return t("Automation run is {status}.", { status: t(run.status) });
   }
   return t("No output has been recorded yet.");
+}
+
+function inspectorRawOutputText(
+  run: AutomationRun | undefined,
+  preview: AutomationContextPreview | undefined,
+): string {
+  if (run?.errorMessage) {
+    return run.errorMessage;
+  }
+  if (run?.skipReason) {
+    return run.skipReason;
+  }
+  if (preview?.contextMarkdown) {
+    return preview.contextMarkdown;
+  }
+  return "";
 }
 
 function automationModeLabel(automation: AutomationDefinition, t: (value: string) => string): string {
@@ -216,11 +239,30 @@ function automationDraftSourceLabel(source: AutomationDraft["source"], t: (value
   return t(`automation.source.${source}`);
 }
 
-function targetLabel(automation: AutomationDefinition, channels: readonly Channel[]): string {
+function targetLabel(automation: AutomationDefinition, channels: readonly Channel[], t: (value: string) => string): string {
   const channelId = automation.channelId ?? automation.target.channelId;
   const channel = channelId ? channels.find((item) => item.id === channelId) : undefined;
   if (channel) {
     return `#${channel.name}`;
   }
-  return automation.target.scope;
+  if (automation.target.scope === "channel") {
+    return t("Channel");
+  }
+  if (automation.target.scope === "thread") {
+    return t("Conversation");
+  }
+  return t("Workspace");
+}
+
+function draftTargetLabel(draft: AutomationDraft, t: (value: string) => string): string {
+  if (draft.target?.scope === "channel") {
+    return t("Channel");
+  }
+  if (draft.target?.scope === "thread") {
+    return t("Conversation");
+  }
+  if (draft.target?.scope === "workspace") {
+    return t("Workspace");
+  }
+  return "--";
 }
