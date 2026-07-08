@@ -750,11 +750,18 @@ test("settings skill library shows read-only skill health findings", async ({ pa
   await expect(panel).not.toContainText("Persona cannot grant tools");
   const sourceSyncPanel = panel.getByRole("region", { name: "gstack source sync" });
   await expect(sourceSyncPanel).toBeVisible();
+  await expect(sourceSyncPanel).toContainText("Prompt before publish");
+  const sourceSyncOptions = sourceSyncPanel.locator(".settings-skill-source-sync-options");
+  await expect(sourceSyncOptions).toBeVisible();
+  await expect(sourceSyncOptions).toContainText("Include detected roots");
+  await expect(sourceSyncOptions).toContainText("Allow new skills");
+  await expect(sourceSyncPanel).toContainText("Advanced source roots");
   await expect(sourceSyncPanel.getByLabel("Include detected roots")).toBeChecked();
   await expect(sourceSyncPanel.getByLabel("Allow new skills")).not.toBeChecked();
   await sourceSyncPanel.getByRole("button", { name: "Preview" }).click();
   await expect(sourceSyncPanel).toContainText("Attachable");
   await expect(sourceSyncPanel).toContainText("Drifted");
+  await expect(sourceSyncPanel).toContainText("New skills");
   await expect(sourceSyncPanel).toContainText("gstack-danger-demo");
   await expect(sourceSyncPanel).toContainText("Context: 1");
   await expect(sourceSyncPanel).toContainText("Selected");
