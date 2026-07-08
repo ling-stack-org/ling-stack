@@ -30,10 +30,12 @@ Implemented in the current future-hardening slice:
 
 - workflow step metadata persists and round-trips `branchGroupId`, `joinGroupId`,
   `dependencyMode`, `maxParallelSiblings`, and `templateVersion`;
-- the orchestrator tick can start multiple eligible steps when the channel runtime policy
-  is `executionMode: "parallel"` and step metadata opts in with
-  `maxParallelSiblings > 1`;
-- default serial behavior remains a single started step per tick;
+- the orchestrator tick uses smart scheduling to start multiple eligible read-only steps
+  when step metadata opts in with `maxParallelSiblings > 1` and channel
+  `maxConcurrentRuns` has budget;
+- default smart scheduling still falls back to a single started step per tick when the
+  budget is one, tools are unknown, approvals are pending, or any eligible step is
+  side-effectful;
 - `dependencyMode` supports `all_succeeded`, `all_terminal`, and `any_succeeded`;
 - dependency output refs include `branchGroupId` for downstream context packets;
 - orchestration responses can return `startedSteps` and `waitingApprovals` for UI/audit.
@@ -126,7 +128,7 @@ parallelStartBudget = 1
 Advanced templates opt into:
 
 ```ts
-parallelStartBudget = min(channel.runtimePolicy.maxConcurrentRuns, template.maxParallelSteps)
+parallelStartBudget = smartDecision.parallelLimit
 ```
 
 ### Resource Safety
@@ -356,8 +358,8 @@ POST /channels/:channelId/workflows
 1. Add custom template parser and validator with no UI. Status: implemented for inline
    `customTemplate` JSON requests.
 2. Add serial custom-template compile path. Status: implemented.
-3. Add parallel scheduling behind `orchestrator.parallelBranches` feature flag. Status:
-   implemented through channel `runtimePolicy.executionMode: "parallel"` and compiled
+3. Add parallel scheduling behind smart scheduling. Status: implemented through channel
+   `runtimePolicy.schedulingMode: "smart"`, `maxConcurrentRuns`, and compiled
    `maxParallelSiblings` metadata.
 4. Add list UI for branch status.
 5. Add authoring UI only after backend validation and tests are stable.

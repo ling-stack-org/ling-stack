@@ -886,7 +886,7 @@ test("sends mutation bodies for channel, task, provider, policy, media, and appr
     allowedTools: ["read"],
     runtimePolicy: {
       maxConcurrentRuns: 1,
-      executionMode: "serial",
+      schedulingMode: "smart",
       writeLockScope: "boundPath",
       allowReadOnlyParallel: true,
       queueOnConflict: true,
@@ -980,7 +980,7 @@ test("sends mutation bodies for channel, task, provider, policy, media, and appr
     allowedTools: ["read"],
     runtimePolicy: {
       maxConcurrentRuns: 1,
-      executionMode: "serial",
+      schedulingMode: "smart",
       writeLockScope: "boundPath",
       allowReadOnlyParallel: true,
       queueOnConflict: true,

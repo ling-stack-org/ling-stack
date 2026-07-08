@@ -54,6 +54,36 @@ test("health exposes channel auto_route capability", async () => {
   }
 });
 
+test("channel runtime policy rejects removed executionMode field", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-removed-execution-mode-"));
+  const daemon = await startDaemonForTest();
+  try {
+    const response = await fetch(`${daemon.url}/channels?cwd=${encodeURIComponent(cwd)}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: "Old runtime policy",
+        status: "active",
+        boundPath: cwd,
+        allowedTools: ["read"],
+        runtimePolicy: {
+          maxConcurrentRuns: 2,
+          executionMode: "parallel",
+          writeLockScope: "boundPath",
+          allowReadOnlyParallel: true,
+          queueOnConflict: true,
+        },
+      }),
+    });
+    assert.equal(response.status, 400);
+    const body = await response.json();
+    assert.match(body.message, /executionMode has been removed/);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("provider runtime availability mapper records transient failures only", () => {
   const providerPreset = {
     id: "provider_static",
@@ -2082,7 +2112,7 @@ test("channel messages persist and AI blocker replies do not drop the user messa
       allowedTools: ["read"],
       runtimePolicy: {
         maxConcurrentRuns: 1,
-        executionMode: "serial",
+        schedulingMode: "smart",
         writeLockScope: "boundPath",
         allowReadOnlyParallel: true,
         queueOnConflict: true,
@@ -3063,7 +3093,7 @@ test("channel intent selector creates workflow proposals for execution-shaped al
       allowedTools: ["read", "grep", "find", "ls", "bash", "edit", "write"],
       runtimePolicy: {
         maxConcurrentRuns: 1,
-        executionMode: "serial",
+        schedulingMode: "smart",
         writeLockScope: "boundPath",
         allowReadOnlyParallel: true,
         queueOnConflict: true,
@@ -6229,7 +6259,7 @@ test("autoplan-lite workflow compiles durable steps and orchestrates them throug
       allowedTools: ["read", "grep", "find", "ls", "bash", "edit", "write"],
       runtimePolicy: {
         maxConcurrentRuns: 1,
-        executionMode: "serial",
+        schedulingMode: "smart",
         writeLockScope: "boundPath",
         allowReadOnlyParallel: true,
         queueOnConflict: true,
@@ -6511,7 +6541,7 @@ test("workflow step context compacts dependency output before blocking on provid
       allowedTools: ["read"],
       runtimePolicy: {
         maxConcurrentRuns: 1,
-        executionMode: "serial",
+        schedulingMode: "smart",
         writeLockScope: "boundPath",
         allowReadOnlyParallel: true,
         queueOnConflict: true,
@@ -6976,7 +7006,7 @@ test("workflow orchestrator starts independent parallel branches within channel 
       allowedTools: ["read"],
       runtimePolicy: {
         maxConcurrentRuns: 2,
-        executionMode: "parallel",
+        schedulingMode: "smart",
         writeLockScope: "boundPath",
         allowReadOnlyParallel: true,
         queueOnConflict: true,
@@ -7001,15 +7031,24 @@ test("workflow orchestrator starts independent parallel branches within channel 
       maxParallelSiblings: 2,
       providerPresetId: provider.id,
     });
+    const thirdStep = createParallelWorkflowStep(store, workflow.id, "Branch C", {
+      branchGroupId: "branch-c",
+      maxParallelSiblings: 2,
+      providerPresetId: provider.id,
+    });
     cleanupWorkflowId = workflow.id;
 
     const tick = await postJson(`${daemon.url}/workflows/${encodeURIComponent(workflow.id)}/orchestrate?cwd=${encodeURIComponent(cwd)}`, {});
     assert.equal(tick.status, "started");
     assert.equal(tick.startedSteps.length, 2);
+    assert.equal(tick.schedulingDecision.effectiveMode, "parallel");
+    assert.equal(tick.schedulingDecision.parallelLimit, 2);
+    assert.deepEqual(tick.schedulingDecision.reasonCodes, ["smart_scheduling", "read_only_parallel_allowed"]);
     assert.deepEqual(tick.startedSteps.map((item) => item.workflowStep.id).sort(), [firstStep.id, secondStep.id].sort());
+    assert.deepEqual(tick.schedulingDecision.queuedStepIds, [thirdStep.id]);
     await runner.waitUntilStarted(2);
     const steps = await getJson(`${daemon.url}/workflows/${encodeURIComponent(workflow.id)}/steps?cwd=${encodeURIComponent(cwd)}`);
-    assert.deepEqual(steps.workflowSteps.map((step) => step.status).sort(), ["running", "running"]);
+    assert.deepEqual(steps.workflowSteps.map((step) => step.status).sort(), ["queued", "running", "running"]);
   } finally {
     try {
       runner.resolveAll("parallel cleanup");
@@ -7034,7 +7073,7 @@ test("custom workflow template compiles deterministic steps and dependencies", a
       allowedTools: ["read", "grep", "find", "ls"],
       runtimePolicy: {
         maxConcurrentRuns: 2,
-        executionMode: "parallel",
+        schedulingMode: "smart",
         writeLockScope: "boundPath",
         allowReadOnlyParallel: true,
         queueOnConflict: true,
@@ -7290,7 +7329,7 @@ test("custom workflow template parallel branches start within compiled budget", 
       allowedTools: ["read", "grep", "find", "ls"],
       runtimePolicy: {
         maxConcurrentRuns: 2,
-        executionMode: "parallel",
+        schedulingMode: "smart",
         writeLockScope: "boundPath",
         allowReadOnlyParallel: true,
         queueOnConflict: true,
@@ -7344,7 +7383,7 @@ test("custom workflow template parallel branches start within compiled budget", 
   }
 });
 
-test("workflow orchestrator keeps serial behavior without parallel runtime policy", async () => {
+test("workflow orchestrator keeps serial behavior when smart scheduling max runs is one", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-workflow-serial-budget-"));
   const runner = new ParallelDelayedRunner();
   let cleanupWorkflowId;
@@ -7394,6 +7433,8 @@ test("workflow orchestrator keeps serial behavior without parallel runtime polic
     const tick = await postJson(`${daemon.url}/workflows/${encodeURIComponent(workflow.id)}/orchestrate?cwd=${encodeURIComponent(cwd)}`, {});
     assert.equal(tick.status, "started");
     assert.equal(tick.startedSteps.length, 1);
+    assert.equal(tick.schedulingDecision.effectiveMode, "serial");
+    assert.deepEqual(tick.schedulingDecision.reasonCodes, ["smart_scheduling", "max_concurrent_runs_one"]);
     cleanupWorkflowId = workflow.id;
     await runner.waitUntilStarted(1);
     const steps = await getJson(`${daemon.url}/workflows/${encodeURIComponent(workflow.id)}/steps?cwd=${encodeURIComponent(cwd)}`);
@@ -7408,6 +7449,203 @@ test("workflow orchestrator keeps serial behavior without parallel runtime polic
       await daemon.close();
       await rm(cwd, { recursive: true, force: true });
     }
+  }
+});
+
+test("workflow smart scheduling keeps side-effectful branches serial", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-workflow-smart-write-"));
+  const runner = new ParallelDelayedRunner();
+  let cleanupWorkflowId;
+  const stores = new Map();
+  const daemon = await startDaemonForTest(runner, {
+    storeFactory: (storeCwd) => {
+      const store = createSqliteRunStore(storeCwd);
+      stores.set(storeCwd, store);
+      return store;
+    },
+  });
+  try {
+    const provider = (await createStaticChatProvider(daemon.url, cwd, {
+      capabilities: ["chat", "reasoning", "tool_call"],
+    })).provider;
+    await postJson(`${daemon.url}/providers/${encodeURIComponent(provider.id)}/check?cwd=${encodeURIComponent(cwd)}`);
+    const channel = await createWorkflowTestChannel(daemon.url, cwd, "Smart write workflow");
+    await patchJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}?cwd=${encodeURIComponent(cwd)}`, {
+      runtimePolicy: {
+        ...channel.runtimePolicy,
+        maxConcurrentRuns: 2,
+      },
+      defaultProviderPresetId: provider.id,
+    });
+    const store = stores.get(cwd);
+    assert.ok(store);
+    const workflow = store.createChannelWorkflow({
+      channelId: channel.id,
+      title: "Write branches",
+      objective: "Keep write branches serial.",
+      status: "ready",
+      createdBy: "local-user",
+    }, new Date().toISOString());
+    createParallelWorkflowStep(store, workflow.id, "Write A", {
+      branchGroupId: "branch-a",
+      maxParallelSiblings: 2,
+      providerPresetId: provider.id,
+      requiredTools: ["write"],
+    });
+    createParallelWorkflowStep(store, workflow.id, "Write B", {
+      branchGroupId: "branch-b",
+      maxParallelSiblings: 2,
+      providerPresetId: provider.id,
+      requiredTools: ["write"],
+    });
+    cleanupWorkflowId = workflow.id;
+
+    const tick = await postJson(`${daemon.url}/workflows/${encodeURIComponent(workflow.id)}/orchestrate?cwd=${encodeURIComponent(cwd)}`, {});
+    assert.equal(tick.status, "started");
+    assert.equal(tick.startedSteps.length, 1);
+    assert.equal(tick.schedulingDecision.effectiveMode, "serial");
+    assert.deepEqual(tick.schedulingDecision.reasonCodes, ["smart_scheduling", "side_effectful_step_serial"]);
+    await runner.waitUntilStarted(1);
+  } finally {
+    try {
+      runner.resolveAll("write cleanup");
+      if (cleanupWorkflowId) {
+        await settleParallelDelayedWorkflow(daemon.url, cwd, cleanupWorkflowId, runner, "write cleanup", { drainQueued: true });
+      }
+    } finally {
+      await daemon.close();
+      await rm(cwd, { recursive: true, force: true });
+    }
+  }
+});
+
+test("workflow smart scheduling keeps unknown-tool branches serial", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-workflow-smart-unknown-"));
+  const runner = new ParallelDelayedRunner();
+  let cleanupWorkflowId;
+  const stores = new Map();
+  const daemon = await startDaemonForTest(runner, {
+    storeFactory: (storeCwd) => {
+      const store = createSqliteRunStore(storeCwd);
+      stores.set(storeCwd, store);
+      return store;
+    },
+  });
+  try {
+    const provider = (await createStaticChatProvider(daemon.url, cwd, {
+      capabilities: ["chat", "reasoning", "tool_call"],
+    })).provider;
+    await postJson(`${daemon.url}/providers/${encodeURIComponent(provider.id)}/check?cwd=${encodeURIComponent(cwd)}`);
+    const channel = await createWorkflowTestChannel(daemon.url, cwd, "Smart unknown workflow");
+    await patchJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}?cwd=${encodeURIComponent(cwd)}`, {
+      runtimePolicy: {
+        ...channel.runtimePolicy,
+        maxConcurrentRuns: 2,
+      },
+      defaultProviderPresetId: provider.id,
+      allowedTools: ["read"],
+    });
+    const store = stores.get(cwd);
+    assert.ok(store);
+    const workflow = store.createChannelWorkflow({
+      channelId: channel.id,
+      title: "Unknown branches",
+      objective: "Keep unknown tools serial.",
+      status: "ready",
+      createdBy: "local-user",
+    }, new Date().toISOString());
+    createParallelWorkflowStep(store, workflow.id, "Unknown A", {
+      branchGroupId: "branch-a",
+      maxParallelSiblings: 2,
+      providerPresetId: provider.id,
+      omitRequiredTools: true,
+    });
+    createParallelWorkflowStep(store, workflow.id, "Unknown B", {
+      branchGroupId: "branch-b",
+      maxParallelSiblings: 2,
+      providerPresetId: provider.id,
+      omitRequiredTools: true,
+    });
+    cleanupWorkflowId = workflow.id;
+
+    const tick = await postJson(`${daemon.url}/workflows/${encodeURIComponent(workflow.id)}/orchestrate?cwd=${encodeURIComponent(cwd)}`, {});
+    assert.equal(tick.status, "started");
+    assert.equal(tick.startedSteps.length, 1);
+    assert.equal(tick.schedulingDecision.effectiveMode, "serial");
+    assert.equal(tick.schedulingDecision.safetyEvidence, "unknown");
+    assert.deepEqual(tick.schedulingDecision.reasonCodes, ["smart_scheduling", "unknown_tools_serial"]);
+    await runner.waitUntilStarted(1);
+  } finally {
+    try {
+      runner.resolveAll("unknown cleanup");
+      if (cleanupWorkflowId) {
+        await settleParallelDelayedWorkflow(daemon.url, cwd, cleanupWorkflowId, runner, "unknown cleanup", { drainQueued: true });
+      }
+    } finally {
+      await daemon.close();
+      await rm(cwd, { recursive: true, force: true });
+    }
+  }
+});
+
+test("workflow smart scheduling does not start sibling branches while approval is pending", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-workflow-smart-approval-"));
+  const runner = new ParallelDelayedRunner();
+  const stores = new Map();
+  const daemon = await startDaemonForTest(runner, {
+    storeFactory: (storeCwd) => {
+      const store = createSqliteRunStore(storeCwd);
+      stores.set(storeCwd, store);
+      return store;
+    },
+  });
+  try {
+    const provider = (await createStaticChatProvider(daemon.url, cwd, {
+      capabilities: ["chat", "reasoning", "tool_call"],
+    })).provider;
+    await postJson(`${daemon.url}/providers/${encodeURIComponent(provider.id)}/check?cwd=${encodeURIComponent(cwd)}`);
+    const channel = await createWorkflowTestChannel(daemon.url, cwd, "Smart approval workflow");
+    await patchJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}?cwd=${encodeURIComponent(cwd)}`, {
+      runtimePolicy: {
+        ...channel.runtimePolicy,
+        maxConcurrentRuns: 2,
+      },
+      defaultProviderPresetId: provider.id,
+      allowedTools: ["read"],
+    });
+    const store = stores.get(cwd);
+    assert.ok(store);
+    const workflow = store.createChannelWorkflow({
+      channelId: channel.id,
+      title: "Approval branches",
+      objective: "Wait for approval before siblings.",
+      status: "ready",
+      createdBy: "local-user",
+    }, new Date().toISOString());
+    createParallelWorkflowStep(store, workflow.id, "Approval A", {
+      branchGroupId: "branch-a",
+      maxParallelSiblings: 2,
+      providerPresetId: provider.id,
+      approvalGate: { mode: "standard", risk: "medium" },
+    });
+    createParallelWorkflowStep(store, workflow.id, "Approval B", {
+      branchGroupId: "branch-b",
+      maxParallelSiblings: 2,
+      providerPresetId: provider.id,
+    });
+
+    const tick = await postJson(`${daemon.url}/workflows/${encodeURIComponent(workflow.id)}/orchestrate?cwd=${encodeURIComponent(cwd)}`, {});
+    assert.equal(tick.status, "waiting_for_approval");
+    assert.equal(tick.waitingApprovals.length, 1);
+    assert.equal(tick.schedulingDecision.effectiveMode, "serial");
+    assert.deepEqual(tick.schedulingDecision.reasonCodes, ["smart_scheduling", "approval_pending"]);
+    assert.equal(runner.runs.length, 0);
+    const steps = await getJson(`${daemon.url}/workflows/${encodeURIComponent(workflow.id)}/steps?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(steps.workflowSteps.filter((step) => step.status === "waiting_for_approval").length, 1);
+    assert.equal(steps.workflowSteps.filter((step) => step.status === "queued").length, 1);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
   }
 });
 
@@ -7435,7 +7673,7 @@ test("workflow dependencyMode any_succeeded can start a fan-in after mixed termi
       allowedTools: ["read"],
       runtimePolicy: {
         maxConcurrentRuns: 2,
-        executionMode: "parallel",
+        schedulingMode: "smart",
         writeLockScope: "boundPath",
         allowReadOnlyParallel: true,
         queueOnConflict: true,
@@ -7506,7 +7744,7 @@ test("workflow fan-in creates summary artifact, memory candidate, selector decis
       allowedTools: ["read"],
       runtimePolicy: {
         maxConcurrentRuns: 2,
-        executionMode: "parallel",
+        schedulingMode: "smart",
         writeLockScope: "boundPath",
         allowReadOnlyParallel: true,
         queueOnConflict: true,
@@ -8513,7 +8751,7 @@ test("task run validates requestedSkillId and records the selected skill", async
       allowedTools: ["read", "grep", "find", "ls", "bash", "edit", "write"],
       runtimePolicy: {
         maxConcurrentRuns: 1,
-        executionMode: "serial",
+        schedulingMode: "smart",
         writeLockScope: "boundPath",
         allowReadOnlyParallel: true,
         queueOnConflict: true,
@@ -8730,7 +8968,7 @@ test("skill suggestions are visible recommendations and do not mutate run select
       allowedTools: ["read", "grep", "find", "ls", "bash", "edit", "write"],
       runtimePolicy: {
         maxConcurrentRuns: 1,
-        executionMode: "serial",
+        schedulingMode: "smart",
         writeLockScope: "boundPath",
         allowReadOnlyParallel: true,
         queueOnConflict: true,
@@ -10720,6 +10958,8 @@ function createParallelWorkflowStep(store, workflowId, title, metadata = {}) {
         fanInPolicy: metadata.fanInPolicy,
         maxParallelSiblings: metadata.maxParallelSiblings,
         providerPresetId: metadata.providerPresetId,
+        requiredTools: metadata.omitRequiredTools ? undefined : metadata.requiredTools ?? ["read"],
+        approvalGate: metadata.approvalGate,
       },
     },
     new Date().toISOString(),
@@ -10760,7 +11000,7 @@ async function createChannel(baseUrl, cwd) {
     allowedTools: ["read"],
     runtimePolicy: {
       maxConcurrentRuns: 1,
-      executionMode: "serial",
+      schedulingMode: "smart",
       writeLockScope: "boundPath",
       allowReadOnlyParallel: true,
       queueOnConflict: true,
@@ -10776,7 +11016,7 @@ async function createWorkflowTestChannel(baseUrl, cwd, name) {
     allowedTools: ["read", "grep", "find", "ls", "bash", "edit", "write"],
     runtimePolicy: {
       maxConcurrentRuns: 1,
-      executionMode: "serial",
+      schedulingMode: "smart",
       writeLockScope: "boundPath",
       allowReadOnlyParallel: true,
       queueOnConflict: true,

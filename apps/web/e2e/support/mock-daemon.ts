@@ -14,7 +14,7 @@ import type { LingApprovalCheckpoint, LingThreadGoal, LingTraceDetailResponse, L
 export const cwd = "/tmp/ling-stack-workspace";
 export const defaultRuntimePolicy = {
   maxConcurrentRuns: 1,
-  executionMode: "serial",
+  schedulingMode: "smart",
   writeLockScope: "boundPath",
   allowReadOnlyParallel: true,
   queueOnConflict: true,

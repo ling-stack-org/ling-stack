@@ -1964,6 +1964,24 @@ textarea {
   margin-bottom: 0;
 }
 
+.runtime-policy-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.runtime-policy-summary strong {
+  color: #21262a;
+  font-size: 13px;
+  line-height: 18px;
+}
+
+.runtime-policy-summary small {
+  color: #69706f;
+  font-size: 11px;
+  line-height: 15px;
+}
+
 .toggle-row {
   display: flex;
   align-items: center;

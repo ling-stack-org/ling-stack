@@ -460,7 +460,7 @@ dependencies are satisfied
 + artifact-only constraint is satisfied for test_artifact_only
 + resourceKeys do not conflict with active siblings
 + active sibling count is below maxParallelSiblings
-+ channel runtimePolicy.executionMode is parallel
++ smart scheduling effective mode is parallel
 + runtimePolicy.maxConcurrentRuns and runner/provider semaphores have budget
 + workflow is not blocked, failed, cancelled, or waiting on a global decision
 => start step through normal task/run coordinator

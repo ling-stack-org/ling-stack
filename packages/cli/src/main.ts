@@ -5575,7 +5575,7 @@ function providerCommandParserSpec(options: { readonly includeClearFlags?: boole
 
 function channelCommandParserSpec(options: { readonly includeClearFlags?: boolean } = {}): CommandParserSpec {
   return {
-    stringFlags: new Set(["name", "path", "provider", "teammate", "status", "execution-mode", "write-lock-scope", "max-concurrent-runs"]),
+    stringFlags: new Set(["name", "path", "provider", "teammate", "status", "write-lock-scope", "max-concurrent-runs"]),
     repeatableFlags: new Set(["tool"]),
     booleanFlags: new Set([
       "read-only-parallel",
@@ -5601,23 +5601,13 @@ function readChannelStatusFlag(parsed: ParsedCommandArgs): string | undefined {
 function readChannelRuntimePolicyFlags(parsed: ParsedCommandArgs): Record<string, unknown> | undefined {
   const runtimePolicy = removeUndefined({
     maxConcurrentRuns: readOptionalIntegerFlag(parsed, "max-concurrent-runs"),
-    executionMode: readChannelExecutionModeFlag(parsed),
+    schedulingMode: "smart",
     writeLockScope: readChannelWriteLockScopeFlag(parsed),
     allowReadOnlyParallel: readBooleanPair(parsed, "read-only-parallel", "no-read-only-parallel"),
     queueOnConflict: readBooleanPair(parsed, "queue-on-conflict", "no-queue-on-conflict"),
   });
-  return Object.keys(runtimePolicy).length > 0 ? runtimePolicy : undefined;
-}
-
-function readChannelExecutionModeFlag(parsed: ParsedCommandArgs): string | undefined {
-  const value = getFlag(parsed, "execution-mode");
-  if (value === undefined) {
-    return undefined;
-  }
-  if (value !== "serial" && value !== "parallel") {
-    throw new CliError(2, "bad_execution_mode", "--execution-mode must be serial or parallel");
-  }
-  return value;
+  const hasPolicyFlag = Object.keys(runtimePolicy).some((key) => key !== "schedulingMode");
+  return hasPolicyFlag ? runtimePolicy : undefined;
 }
 
 function readChannelWriteLockScopeFlag(parsed: ParsedCommandArgs): string | undefined {
@@ -6401,10 +6391,10 @@ function printChannelDetail(response: unknown): void {
 function formatChannelPolicy(channel: unknown): string {
   const policy = readField(channel, "runtimePolicy");
   if (!isRecord(policy)) {
-    return "serial/boundPath";
+    return "smart/boundPath";
   }
   return [
-    readString(policy, "executionMode") ?? "serial",
+    readString(policy, "schedulingMode") ?? "smart",
     readString(policy, "writeLockScope") ?? "boundPath",
     `max=${readNumber(policy, "maxConcurrentRuns") ?? 1}`,
   ].join("/");
@@ -7732,9 +7722,9 @@ Update-only clear flags:
 function printChannelHelp(): void {
   console.log(`Usage:
   ling-stack channel list [--limit <n>]
-  ling-stack channel create --name <name> [--path <path>] [--provider <providerPresetId>] [--status active|paused|archived] [--execution-mode serial|parallel] [--write-lock-scope boundPath|channel|workspace] [--max-concurrent-runs <n>] [--tool read --tool grep]
+  ling-stack channel create --name <name> [--path <path>] [--provider <providerPresetId>] [--status active|paused|archived] [--write-lock-scope boundPath|channel|workspace] [--max-concurrent-runs <n>] [--tool read --tool grep]
   ling-stack channel show <id>
-  ling-stack channel update <id> [--name <name>] [--path <path>|--clear-path] [--provider <id>|--clear-provider] [--status active|paused|archived] [--execution-mode serial|parallel] [--write-lock-scope boundPath|channel|workspace] [--tool <name>]
+  ling-stack channel update <id> [--name <name>] [--path <path>|--clear-path] [--provider <id>|--clear-provider] [--status active|paused|archived] [--write-lock-scope boundPath|channel|workspace] [--tool <name>]
   ling-stack channel remove <id>
 
 Default allowed tools on create:

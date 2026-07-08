@@ -133,7 +133,7 @@ export function ChannelCreateDialog({
           <DialogSection
             className="channel-create-section channel-create-advanced"
             title={t("Advanced settings")}
-            description={t("Model, language, status and run policy")}
+            description={t("Model, language, and run policy")}
             collapsible
           >
             <div className="channel-create-advanced-body">

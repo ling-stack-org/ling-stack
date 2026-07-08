@@ -1276,7 +1276,7 @@ function readOptionalChannelRuntimePolicy(
   }
   const policy: {
     maxConcurrentRuns?: number;
-    executionMode?: "serial" | "parallel";
+    schedulingMode?: "smart";
     writeLockScope?: "channel" | "boundPath" | "workspace";
     allowReadOnlyParallel?: boolean;
     queueOnConflict?: boolean;
@@ -1289,10 +1289,13 @@ function readOptionalChannelRuntimePolicy(
     policy.maxConcurrentRuns = maxConcurrentRuns;
   }
   if (value.executionMode !== undefined) {
-    if (value.executionMode !== "serial" && value.executionMode !== "parallel") {
-      throw new Error(`${key}.executionMode must be serial or parallel`);
+    throw new Error(`${key}.executionMode has been removed; use ${key}.schedulingMode=smart`);
+  }
+  if (value.schedulingMode !== undefined) {
+    if (value.schedulingMode !== "smart") {
+      throw new Error(`${key}.schedulingMode must be smart`);
     }
-    policy.executionMode = value.executionMode;
+    policy.schedulingMode = value.schedulingMode;
   }
   if (value.writeLockScope !== undefined) {
     if (value.writeLockScope !== "channel" && value.writeLockScope !== "boundPath" && value.writeLockScope !== "workspace") {

@@ -284,7 +284,6 @@ function channelOptions(): readonly OptionSpec[] {
     option("--provider", "required", "provider"),
     option("--teammate", "required"),
     option("--status", "required"),
-    option("--execution-mode", "required"),
     option("--write-lock-scope", "required"),
     option("--max-concurrent-runs", "required"),
     option("--tool", "required"),

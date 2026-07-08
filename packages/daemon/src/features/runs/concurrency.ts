@@ -251,14 +251,6 @@ function buildRunLeaseInputs(input: {
     });
   }
 
-  if (input.channel?.runtimePolicy.executionMode === "serial") {
-    leases.push({
-      ...base,
-      resourceType: "channel",
-      resourceKey: input.channel.id,
-    });
-  }
-
   if (usesSideEffectTools(input.runRequest.tools ?? [])) {
     const scope = input.channel?.runtimePolicy.writeLockScope ?? "boundPath";
     if (scope === "workspace") {

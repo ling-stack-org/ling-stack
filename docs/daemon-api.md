@@ -304,7 +304,7 @@ Response:
       "allowedTools": ["read", "grep", "find", "ls"],
       "runtimePolicy": {
         "maxConcurrentRuns": 1,
-        "executionMode": "serial",
+        "schedulingMode": "smart",
         "writeLockScope": "boundPath",
         "allowReadOnlyParallel": true,
         "queueOnConflict": true
@@ -333,7 +333,7 @@ Content-Type: application/json
   "allowedTools": ["read", "grep", "find", "ls"],
   "runtimePolicy": {
     "maxConcurrentRuns": 1,
-    "executionMode": "serial",
+    "schedulingMode": "smart",
     "writeLockScope": "boundPath",
     "allowReadOnlyParallel": true,
     "queueOnConflict": true
@@ -342,7 +342,7 @@ Content-Type: application/json
 ```
 
 `allowedTools` may contain `read`, `grep`, `find`, `ls`, `bash`, `edit`, or `write`.
-`status` may be `active`, `paused`, or `archived`. Paused channels can be edited but cannot start new runs. `runtimePolicy.writeLockScope` controls whether side-effectful runs lock the channel, bound path, or whole workspace.
+`status` may be `active`, `paused`, or `archived`. Paused channels can be edited but cannot start new runs. `runtimePolicy.schedulingMode` is always `smart`; the daemon computes the effective serial/parallel decision per workflow tick from dependency, tool, approval, lease, and `maxConcurrentRuns` evidence. `runtimePolicy.writeLockScope` controls whether side-effectful runs lock the channel, bound path, or whole workspace.
 
 ### Get, Update, Delete Channel
 

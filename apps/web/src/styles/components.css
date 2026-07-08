@@ -6795,6 +6795,10 @@ code,
   min-width: 0;
 }
 
+.channel-runtime-card .runtime-policy-grid .runtime-policy-summary {
+  grid-column: span 2;
+}
+
 .channel-runtime-card .runtime-policy-grid .toggle-row {
   min-width: 0;
   min-height: 38px;
@@ -9380,6 +9384,14 @@ code,
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.channel-side-panel .channel-management-panel .runtime-policy-grid .runtime-policy-summary {
+  grid-column: 1 / -1;
+}
+
+.channel-side-panel .channel-management-panel .runtime-policy-grid .runtime-policy-summary span {
+  white-space: normal;
 }
 
 .channel-side-panel .channel-management-panel .runtime-policy-grid .toggle-row {

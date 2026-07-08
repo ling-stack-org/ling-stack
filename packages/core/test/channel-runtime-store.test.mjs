@@ -32,7 +32,7 @@ test("sqlite channels persist default and edited runtime policy", async () => {
       {
         status: "paused",
         runtimePolicy: {
-          executionMode: "parallel",
+          schedulingMode: "smart",
           maxConcurrentRuns: 3,
           writeLockScope: "workspace",
           allowReadOnlyParallel: false,
@@ -45,7 +45,7 @@ test("sqlite channels persist default and edited runtime policy", async () => {
     assert.ok(updated);
     assert.equal(updated.status, "paused");
     assert.deepEqual(updated.runtimePolicy, {
-      executionMode: "parallel",
+      schedulingMode: "smart",
       maxConcurrentRuns: 3,
       writeLockScope: "workspace",
       allowReadOnlyParallel: false,
