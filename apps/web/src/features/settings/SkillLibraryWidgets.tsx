@@ -122,7 +122,7 @@ export function SkillSourceSyncPanel({
             disabled={disabled || !policy}
           >
             <option value="manual">{t("Manual")}</option>
-            <option value="prompt">{t("Prompt")}</option>
+            <option value="prompt">{t("Prompt before publish")}</option>
             <option value="auto-safe">{t("Auto-safe")}</option>
           </select>
         </label>
@@ -145,8 +145,18 @@ export function SkillSourceSyncPanel({
           </button>
         </div>
       </div>
+      <div className="settings-skill-source-sync-switches settings-skill-source-sync-options" aria-label={t("Sync settings")}>
+        <label className="settings-toggle">
+          <input type="checkbox" checked={includeDetectedRoots} disabled={disabled} onChange={(event) => onIncludeDetectedRootsChange(event.target.checked)} />
+          {t("Include detected roots")}
+        </label>
+        <label className="settings-toggle">
+          <input type="checkbox" checked={allowNewSkills} disabled={disabled} onChange={(event) => onAllowNewSkillsChange(event.target.checked)} />
+          {t("Allow new skills")}
+        </label>
+      </div>
       <details className="settings-compact-details settings-interaction-details settings-skill-source-config">
-        <summary>{t("Sync settings")}</summary>
+        <summary>{t("Advanced source roots")}</summary>
         <label className="field">
           <span>{t("Skill root paths")}</span>
           <textarea
@@ -156,25 +166,20 @@ export function SkillSourceSyncPanel({
             placeholder="~/.gstack/repos/gstack/.agents/skills"
           />
         </label>
-        <div className="settings-skill-source-sync-switches">
-          <label className="settings-toggle">
-            <input type="checkbox" checked={includeDetectedRoots} onChange={(event) => onIncludeDetectedRootsChange(event.target.checked)} />
-            {t("Include detected roots")}
-          </label>
-          <label className="settings-toggle">
-            <input type="checkbox" checked={allowNewSkills} onChange={(event) => onAllowNewSkillsChange(event.target.checked)} />
-            {t("Allow new skills")}
-          </label>
-        </div>
       </details>
       {preview ? (
-        <div className="settings-skill-source-sync-summary" aria-label={t("gstack source sync summary")}>
-          <span><small>{t("Attachable")}</small><strong>{preview.summary.attachable}</strong></span>
-          <span><small>{t("Drifted")}</small><strong>{preview.summary.drifted}</strong></span>
-          <span><small>{t("New")}</small><strong>{preview.summary.new}</strong></span>
-          <span><small>{t("Blocked")}</small><strong>{preview.summary.blocked}</strong></span>
-          <span><small>{t("Selected")}</small><strong>{selectedSkillIds.length}</strong></span>
-        </div>
+        <>
+          {!allowNewSkills && preview.summary.new > 0 ? (
+            <p className="settings-skill-source-sync-hint">{t("Enable Allow new skills to select new source records.")}</p>
+          ) : null}
+          <div className="settings-skill-source-sync-summary" aria-label={t("gstack source sync summary")}>
+            <span><small>{t("Attachable")}</small><strong>{preview.summary.attachable}</strong></span>
+            <span><small>{t("Drifted")}</small><strong>{preview.summary.drifted}</strong></span>
+            <span><small>{t("New skills")}</small><strong>{preview.summary.new}</strong></span>
+            <span><small>{t("Blocked")}</small><strong>{preview.summary.blocked}</strong></span>
+            <span><small>{t("Selected")}</small><strong>{selectedSkillIds.length}</strong></span>
+          </div>
+        </>
       ) : null}
       {records.length === 0 ? (
         <div className="compact-empty">{syncing ? t("Scanning source roots...") : t("No source preview loaded")}</div>

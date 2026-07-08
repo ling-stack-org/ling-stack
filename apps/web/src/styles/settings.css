@@ -2388,6 +2388,19 @@
   gap: 7px;
 }
 
+.settings-skill-source-sync-options {
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface-panel);
+}
+
+.settings-skill-source-sync-hint {
+  margin: -2px 0 0;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
 .settings-skill-source-sync-summary {
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
