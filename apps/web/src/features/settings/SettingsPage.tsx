@@ -375,6 +375,10 @@ export function SettingsPage({
       : isWorkspaceToolSection(activeSection)
         ? "personal-profile"
         : activeSection;
+  const contentStackClassName = [
+    "settings-content-stack",
+    !workspaceToolDetailOpen && !runDiagnosticsOpen ? `settings-content-stack--${visibleActiveSection}` : "",
+  ].filter(Boolean).join(" ");
   const archivedController = useArchivedSettingsController({
     cwd,
     enabled: visibleActiveSection === "archived-items",
@@ -437,7 +441,7 @@ export function SettingsPage({
         ))}
       </nav>
 
-      <div className="settings-content-stack">
+      <div className={contentStackClassName}>
         {runDiagnosticsOpen ? (
           <SettingsRunDiagnosticsPanel
             runs={runs}

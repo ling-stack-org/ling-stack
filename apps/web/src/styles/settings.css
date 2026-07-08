@@ -210,6 +210,12 @@
   min-width: 0;
 }
 
+.settings-content-stack--skill-library {
+  grid-template-columns: minmax(0, min(1560px, 100%));
+  padding-right: clamp(18px, 2.4vw, 36px);
+  padding-left: clamp(18px, 2.4vw, 36px);
+}
+
 .settings-panel,
 .settings-global-approval-card,
 .settings-plugin-manager,
@@ -2665,7 +2671,7 @@
 
 .settings-skill-library-body {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 320px;
+  grid-template-columns: minmax(0, 1fr) minmax(300px, 0.34fr);
   gap: 12px;
   align-items: stretch;
   min-width: 0;
@@ -2673,7 +2679,7 @@
 }
 
 .settings-skill-library--skills .settings-skill-library-body {
-  height: clamp(300px, calc(100vh - 570px), 540px);
+  height: clamp(420px, calc(100vh - 430px), 760px);
   overflow: hidden;
 }
 
@@ -2687,7 +2693,7 @@
 
 .settings-skill-table {
   width: 100%;
-  min-width: 920px;
+  min-width: min(760px, 100%);
   border-collapse: collapse;
   color: var(--text);
   font-size: 12px;
@@ -3216,6 +3222,22 @@
   min-height: 112px;
   border: 0;
   border-radius: 0;
+}
+
+@media (max-width: 1300px) {
+  .settings-skill-library-body {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .settings-skill-library--skills .settings-skill-library-body {
+    height: auto;
+    overflow: visible;
+  }
+
+  .settings-skill-table-wrap,
+  .settings-skill-inspector {
+    max-height: min(520px, calc(100vh - 360px));
+  }
 }
 
 @media (max-width: 760px) {

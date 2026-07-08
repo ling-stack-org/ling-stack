@@ -12,6 +12,75 @@ async function openCouncilWorkspace(page: Page): Promise<void> {
   await page.getByLabel("Settings sections").getByRole("button", { name: "Council Workspace" }).click();
 }
 
+test("Council Workspace keeps no-available-member copy compact in Chinese", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.locale", "zh-CN");
+  });
+  const state = createBaseState({ approvalStatus: "expired" });
+  state.aiTeammates = [
+    createMockTeammate({ id: "teammate_builtin_engineer", displayName: "Engineer", roleKey: "engineer" }),
+    createMockTeammate({ id: "teammate_builtin_designer", displayName: "Designer", roleKey: "designer" }),
+    createMockTeammate({ id: "teammate_builtin_qa", displayName: "QA", roleKey: "qa" }),
+  ];
+  state.aiCouncilMembers = [
+    {
+      councilId: "council_builtin_development",
+      teammateId: "teammate_builtin_engineer",
+      slotKey: "implementation",
+      label: "Implementation",
+      position: 0,
+      enabled: true,
+      createdAt: "2026-06-20T00:00:00.000Z",
+      updatedAt: "2026-06-20T00:00:00.000Z",
+    },
+    {
+      councilId: "council_builtin_development",
+      teammateId: "teammate_builtin_designer",
+      slotKey: "product_design",
+      label: "Product design",
+      position: 1,
+      enabled: true,
+      createdAt: "2026-06-20T00:00:00.000Z",
+      updatedAt: "2026-06-20T00:00:00.000Z",
+    },
+    {
+      councilId: "council_builtin_development",
+      teammateId: "teammate_builtin_qa",
+      slotKey: "verification",
+      label: "Verification",
+      position: 2,
+      enabled: true,
+      createdAt: "2026-06-20T00:00:00.000Z",
+      updatedAt: "2026-06-20T00:00:00.000Z",
+    },
+  ];
+
+  await mockDaemon(page, state);
+  await page.goto("/");
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: /Settings|设置/ }).click();
+  await page.getByLabel(/Settings sections|设置分组/).getByRole("button", { name: /Council Workspace|智囊团工作区/ }).click();
+
+  const emptyPrompt = page.locator(".council-member-add-empty");
+  await expect(emptyPrompt).toContainText("没有可添加的队友");
+  await expect(emptyPrompt).toContainText("先创建或取消隐藏队友，再添加到此智囊团。");
+  const promptLayout = await emptyPrompt.evaluate((element) => {
+    const title = element.querySelector(".operation-empty-state-copy strong");
+    const copy = element.querySelector(".operation-empty-state-copy");
+    return {
+      height: element.getBoundingClientRect().height,
+      titleWidth: title?.getBoundingClientRect().width ?? 0,
+      titleHeight: title?.getBoundingClientRect().height ?? 0,
+      copyDisplay: copy ? getComputedStyle(copy).display : "",
+      gridColumns: getComputedStyle(element).gridTemplateColumns,
+    };
+  });
+  expect(promptLayout.height).toBeLessThanOrEqual(48);
+  expect(promptLayout.titleWidth).toBeGreaterThan(90);
+  expect(promptLayout.titleHeight).toBeLessThanOrEqual(24);
+  expect(promptLayout.copyDisplay).toBe("flex");
+  expect(promptLayout.gridColumns).not.toMatch(/^24px/);
+});
+
 test("Council Workspace shows council health, members, and channel entry points", async ({ page }) => {
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");
