@@ -18,7 +18,7 @@ export type ChannelResponseLanguage = "workspace" | ResponseLanguagePreference;
 
 export type ChannelWorkflowPreference = "manual" | "architect_engineer_qa";
 
-export type ChannelExecutionMode = "serial" | "parallel";
+export type ChannelSchedulingMode = "smart";
 
 export type ChannelWriteLockScope = "channel" | "boundPath" | "workspace";
 
@@ -124,7 +124,7 @@ export type ChannelWorkspaceMutationResponse = ChannelWorkspaceResponse;
 
 export interface ChannelRuntimePolicy {
   readonly maxConcurrentRuns: number;
-  readonly executionMode: ChannelExecutionMode;
+  readonly schedulingMode: ChannelSchedulingMode;
   readonly writeLockScope: ChannelWriteLockScope;
   readonly allowReadOnlyParallel: boolean;
   readonly queueOnConflict: boolean;

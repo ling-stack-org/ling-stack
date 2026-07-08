@@ -21,6 +21,11 @@ import { getWorkflowPlanModeBlocker } from "./plan-mode-guard.js";
 import { maybeCreateWorkflowFanInEvidence } from "./workflow-fanin.js";
 import { createWorkflowStepOutputArtifact } from "./workflow-step-packets.js";
 import { ensureDeterministicWorkflowSelectorDecision } from "./workflow-selector.js";
+import {
+  resolveSmartSchedulingDecision,
+  withSmartSchedulingReason,
+  type SmartSchedulingDecision,
+} from "./smart-scheduler.js";
 
 export interface OrchestrateWorkflowInput {
   readonly store: RunStore;
@@ -51,6 +56,7 @@ export type WorkflowOrchestrationResult =
       readonly taskId: string;
       readonly runId?: string;
       readonly startedSteps?: readonly WorkflowOrchestrationStartedStep[];
+      readonly schedulingDecision?: SmartSchedulingDecision;
     }
   | {
       readonly status: "waiting_for_approval";
@@ -61,11 +67,12 @@ export type WorkflowOrchestrationResult =
         readonly workflowStep: ChannelWorkflowStep;
         readonly approval: ApprovalRequest;
       }[];
+      readonly schedulingDecision?: SmartSchedulingDecision;
     }
-  | { readonly status: "idle"; readonly workflow: ChannelWorkflow; readonly reason: string }
-  | { readonly status: "blocked"; readonly workflow: ChannelWorkflow; readonly workflowStep?: ChannelWorkflowStep; readonly blocker: string }
-  | { readonly status: "failed"; readonly workflow: ChannelWorkflow; readonly workflowStep?: ChannelWorkflowStep; readonly blocker: string }
-  | { readonly status: "completed"; readonly workflow: ChannelWorkflow };
+  | { readonly status: "idle"; readonly workflow: ChannelWorkflow; readonly reason: string; readonly schedulingDecision?: SmartSchedulingDecision }
+  | { readonly status: "blocked"; readonly workflow: ChannelWorkflow; readonly workflowStep?: ChannelWorkflowStep; readonly blocker: string; readonly schedulingDecision?: SmartSchedulingDecision }
+  | { readonly status: "failed"; readonly workflow: ChannelWorkflow; readonly workflowStep?: ChannelWorkflowStep; readonly blocker: string; readonly schedulingDecision?: SmartSchedulingDecision }
+  | { readonly status: "completed"; readonly workflow: ChannelWorkflow; readonly schedulingDecision?: SmartSchedulingDecision };
 
 export type WorkflowApprovalDecisionSyncResult =
   | { readonly status: "not_workflow_approval" }
@@ -122,27 +129,36 @@ export async function orchestrateChannelWorkflow(input: OrchestrateWorkflowInput
   }
   const currentWorkflow = input.store.getChannelWorkflow(workflow.id) ?? workflow;
   const steps = input.store.listChannelWorkflowSteps({ workflowId: workflow.id, limit: 500 });
-  const parallelStartBudget = resolveParallelStartBudget(input.store, currentWorkflow, steps);
   const activeStepCount = countActiveWorkflowSteps(steps);
-  const startBudget = Math.max(parallelStartBudget - activeStepCount, 0);
   const approvedGatedSteps = steps.filter((step) => step.status === "running" && step.metadata?.preStepApprovalId && !step.runId && !step.taskId);
-  if (parallelStartBudget <= 1 && approvedGatedSteps.length === 0 && steps.some((step) => step.status === "claimed" || step.status === "running" || step.status === "waiting_for_approval")) {
-    return { status: "idle", workflow: currentWorkflow, reason: "Workflow already has an active step." };
-  }
   const eligibleSteps = [
     ...approvedGatedSteps,
     ...steps.filter((step) => step.status === "queued" && isWorkflowStepEligible(step, steps)),
   ].sort(compareWorkflowStepForScheduling);
+  const schedulingDecision = resolveSmartSchedulingDecision({
+    store: input.store,
+    channel: input.store.getChannel(currentWorkflow.channelId),
+    workflow: currentWorkflow,
+    steps,
+    eligibleSteps,
+    activeStepCount,
+  });
+  const parallelStartBudget = schedulingDecision.parallelLimit;
+  const startBudget = schedulingDecision.runnableStepIds.length;
+  if (parallelStartBudget <= 1 && approvedGatedSteps.length === 0 && steps.some((step) => step.status === "claimed" || step.status === "running" || step.status === "waiting_for_approval")) {
+    return { status: "idle", workflow: currentWorkflow, reason: "Workflow already has an active step.", schedulingDecision };
+  }
   if (eligibleSteps.length === 0 || startBudget <= 0) {
     completeWorkflowIfStepsFinished(input.store, workflow.id, new Date().toISOString());
     const latest = input.store.getChannelWorkflow(workflow.id) ?? currentWorkflow;
     if (latest.status === "succeeded") {
-      return { status: "completed", workflow: latest };
+      return { status: "completed", workflow: latest, schedulingDecision };
     }
     return {
       status: "idle",
       workflow: latest,
-      reason: startBudget <= 0 ? "Workflow parallel start budget is exhausted." : "No eligible queued workflow step.",
+      reason: startBudget <= 0 ? "Workflow smart scheduling budget is exhausted." : "No eligible queued workflow step.",
+      schedulingDecision,
     };
   }
 
@@ -151,7 +167,7 @@ export async function orchestrateChannelWorkflow(input: OrchestrateWorkflowInput
   const blockedResults: Array<Extract<WorkflowOrchestrationResult, { status: "blocked" }>> = [];
 
   for (const candidate of eligibleSteps) {
-    if (startedSteps.length >= startBudget) {
+    if (startedSteps.length + waitingApprovals.length >= startBudget) {
       break;
     }
     let latestCandidate = input.store.getChannelWorkflowStep(candidate.id) ?? candidate;
@@ -171,9 +187,12 @@ export async function orchestrateChannelWorkflow(input: OrchestrateWorkflowInput
       if (gateResult) {
         if (gateResult.status === "waiting_for_approval") {
           waitingApprovals.push({ workflowStep: gateResult.workflowStep, approval: gateResult.approval });
+          if (parallelStartBudget <= 1) {
+            break;
+          }
           continue;
         }
-        return gateResult;
+        return { ...gateResult, schedulingDecision };
       }
     }
 
@@ -233,13 +252,14 @@ export async function orchestrateChannelWorkflow(input: OrchestrateWorkflowInput
       workflowStep: first.workflowStep,
       approval: first.approval,
       waitingApprovals,
+      schedulingDecision: withSmartSchedulingReason(schedulingDecision, "approval_pending"),
     };
   }
   if (startedSteps.length === 0 && blockedResults.length > 0) {
-    return blockedResults[0];
+    return { ...blockedResults[0], schedulingDecision };
   }
   if (startedSteps.length === 0) {
-    return { status: "idle", workflow: input.store.getChannelWorkflow(workflow.id) ?? currentWorkflow, reason: "No workflow step was started." };
+    return { status: "idle", workflow: input.store.getChannelWorkflow(workflow.id) ?? currentWorkflow, reason: "No workflow step was started.", schedulingDecision };
   }
   const firstStarted = startedSteps[0];
   return {
@@ -249,6 +269,7 @@ export async function orchestrateChannelWorkflow(input: OrchestrateWorkflowInput
     taskId: firstStarted.taskId,
     runId: firstStarted.runId,
     startedSteps,
+    schedulingDecision,
   };
 }
 
@@ -1282,20 +1303,6 @@ function isWorkflowStepEligible(step: ChannelWorkflowStep, steps: readonly Chann
     return dependencies.every((dependency) => isTerminalWorkflowStepStatus(dependency.status));
   }
   return dependencies.every((dependency) => dependency.status === "succeeded" || dependency.status === "skipped");
-}
-
-function resolveParallelStartBudget(
-  store: RunStore,
-  workflow: ChannelWorkflow,
-  steps: readonly ChannelWorkflowStep[],
-): number {
-  const channel = store.getChannel(workflow.channelId);
-  const runtimePolicy = channel?.runtimePolicy;
-  if (!runtimePolicy || runtimePolicy.executionMode !== "parallel" || runtimePolicy.maxConcurrentRuns <= 1) {
-    return 1;
-  }
-  const templateBudget = Math.max(1, ...steps.map((step) => step.metadata?.maxParallelSiblings ?? 1));
-  return Math.max(1, Math.min(runtimePolicy.maxConcurrentRuns, templateBudget));
 }
 
 function countActiveWorkflowSteps(steps: readonly ChannelWorkflowStep[]): number {

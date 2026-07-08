@@ -12,7 +12,7 @@ export const defaultChannelForm: ChannelFormState = {
   allowedTools: defaultTools,
   runtimePolicy: {
     maxConcurrentRuns: 1,
-    executionMode: "serial",
+    schedulingMode: "smart",
     writeLockScope: "boundPath",
     allowReadOnlyParallel: true,
     queueOnConflict: true,
@@ -86,7 +86,7 @@ export function channelFormPersistenceKey(form: ChannelFormState): string {
     allowedTools: [...form.allowedTools],
     runtimePolicy: {
       maxConcurrentRuns: form.runtimePolicy.maxConcurrentRuns,
-      executionMode: form.runtimePolicy.executionMode,
+      schedulingMode: form.runtimePolicy.schedulingMode,
       writeLockScope: form.runtimePolicy.writeLockScope,
       allowReadOnlyParallel: form.runtimePolicy.allowReadOnlyParallel,
       queueOnConflict: form.runtimePolicy.queueOnConflict,

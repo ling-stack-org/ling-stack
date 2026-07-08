@@ -299,7 +299,8 @@ ship
 ```
 
 The current target behavior keeps that order as the conservative fallback, but allows
-safe parallel branches when the workflow/runtime policy opts in:
+safe parallel branches when smart scheduling proves the branches are read-only,
+independent, and inside the channel runtime budget:
 
 ```text
 product-discovery

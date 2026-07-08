@@ -28,7 +28,7 @@ test("AI council API exposes Development Council and channel effective projectio
       allowedTools: ["read"],
       runtimePolicy: {
         maxConcurrentRuns: 1,
-        executionMode: "serial",
+        schedulingMode: "smart",
         writeLockScope: "boundPath",
         allowReadOnlyParallel: true,
         queueOnConflict: true,

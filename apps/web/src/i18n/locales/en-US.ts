@@ -1503,7 +1503,7 @@ export const enUS = {
     "This name appears in the sidebar and channel header.": "This name appears in the sidebar and channel header.",
     "Invite teammates": "Invite teammates",
     "Pick collaborators now or manage members later.": "Pick collaborators now or manage members later.",
-    "Model, language, status and run policy": "Model, language, status and run policy",
+    "Model, language, and run policy": "Model, language, and run policy",
     "Auto reply": "Ling reply",
     "Mentions only": "Only when mentioned",
     "Auto route": "Ling Agent decides",

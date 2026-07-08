@@ -787,6 +787,33 @@ export interface ChannelWorkflowStepStartResponse {
   readonly blocker?: string;
 }
 
+export type ChannelSmartSchedulingEffectiveMode = "serial" | "parallel";
+
+export type ChannelSmartSchedulingReasonCode =
+  | "smart_scheduling"
+  | "channel_missing_serial"
+  | "max_concurrent_runs_one"
+  | "no_eligible_steps"
+  | "eligible_step_count_one"
+  | "active_step_budget_exhausted"
+  | "read_only_parallel_disabled"
+  | "workflow_parallel_limit_one"
+  | "approval_pending"
+  | "unknown_tools_serial"
+  | "side_effectful_step_serial"
+  | "read_only_parallel_allowed";
+
+export interface ChannelSmartSchedulingDecision {
+  readonly schedulingMode: "smart";
+  readonly effectiveMode: ChannelSmartSchedulingEffectiveMode;
+  readonly parallelLimit: number;
+  readonly runnableStepIds: readonly string[];
+  readonly queuedStepIds: readonly string[];
+  readonly reasonCodes: readonly ChannelSmartSchedulingReasonCode[];
+  readonly resourceLocks: readonly string[];
+  readonly safetyEvidence: "complete" | "partial" | "unknown";
+}
+
 export type ChannelWorkflowStepRetryResponse = ChannelWorkflowOrchestrationResponse;
 
 export type ChannelWorkflowOrchestrationResponse =
@@ -801,6 +828,7 @@ export type ChannelWorkflowOrchestrationResponse =
         readonly taskId: string;
         readonly runId?: string;
       }[];
+      readonly schedulingDecision?: ChannelSmartSchedulingDecision;
     }
   | {
       readonly status: "waiting_for_approval";
@@ -811,27 +839,32 @@ export type ChannelWorkflowOrchestrationResponse =
         readonly workflowStep: ChannelWorkflowStep;
         readonly approval: ApprovalRequest;
       }[];
+      readonly schedulingDecision?: ChannelSmartSchedulingDecision;
     }
   | {
       readonly status: "idle";
       readonly workflow: ChannelWorkflow;
       readonly reason: string;
+      readonly schedulingDecision?: ChannelSmartSchedulingDecision;
     }
   | {
       readonly status: "blocked";
       readonly workflow: ChannelWorkflow;
       readonly workflowStep?: ChannelWorkflowStep;
       readonly blocker: string;
+      readonly schedulingDecision?: ChannelSmartSchedulingDecision;
     }
   | {
       readonly status: "failed";
       readonly workflow: ChannelWorkflow;
       readonly workflowStep?: ChannelWorkflowStep;
       readonly blocker: string;
+      readonly schedulingDecision?: ChannelSmartSchedulingDecision;
     }
   | {
       readonly status: "completed";
       readonly workflow: ChannelWorkflow;
+      readonly schedulingDecision?: ChannelSmartSchedulingDecision;
     };
 
 export type ResourceType =

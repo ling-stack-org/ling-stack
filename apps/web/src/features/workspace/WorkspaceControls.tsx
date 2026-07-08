@@ -52,27 +52,15 @@ export function ChannelRuntimePolicyFields({
       },
     });
   };
+  const schedulingSummary = t("Ling Agent decides when safe steps can run together. Writes, unknown tools, approvals, and resource locks stay protected.");
 
   return (
     <div className="runtime-policy-grid" aria-label={t("Channel runtime policy")}>
-      <label className="field wide">
-        <span>{t("Status")}</span>
-        <select value={form.status} onChange={(event) => onChange({ ...form, status: event.target.value as ChannelFormState["status"] })}>
-          <option value="active">{t("active")}</option>
-          <option value="paused">{t("paused")}</option>
-          <option value="archived">{t("archived")}</option>
-        </select>
-      </label>
-      <label className="field wide">
+      <div className="field wide runtime-policy-summary">
         <span>{t("Execution mode")}</span>
-        <select
-          value={form.runtimePolicy.executionMode}
-          onChange={(event) => updatePolicy({ executionMode: event.target.value as ChannelFormState["runtimePolicy"]["executionMode"] })}
-        >
-          <option value="serial">{t("serial")}</option>
-          <option value="parallel">{t("parallel")}</option>
-        </select>
-      </label>
+        <strong>{t("Smart scheduling")}</strong>
+        <small>{schedulingSummary}</small>
+      </div>
       <label className="field wide">
         <span>{t("Write lock")}</span>
         <select
@@ -83,32 +71,6 @@ export function ChannelRuntimePolicyFields({
           <option value="channel">{t("channel")}</option>
           <option value="workspace">{t("workspace")}</option>
         </select>
-      </label>
-      <label className="field wide">
-        <span>{t("Max runs")}</span>
-        <input
-          type="number"
-          min={1}
-          max={20}
-          value={form.runtimePolicy.maxConcurrentRuns}
-          onChange={(event) => updatePolicy({ maxConcurrentRuns: Number(event.target.value) || 1 })}
-        />
-      </label>
-      <label className="toggle-row">
-        <input
-          type="checkbox"
-          checked={form.runtimePolicy.allowReadOnlyParallel}
-          onChange={(event) => updatePolicy({ allowReadOnlyParallel: event.target.checked })}
-        />
-        <span>{t("Allow read-only parallel")}</span>
-      </label>
-      <label className="toggle-row">
-        <input
-          type="checkbox"
-          checked={form.runtimePolicy.queueOnConflict}
-          onChange={(event) => updatePolicy({ queueOnConflict: event.target.checked })}
-        />
-        <span>{t("Queue on conflict")}</span>
       </label>
     </div>
   );

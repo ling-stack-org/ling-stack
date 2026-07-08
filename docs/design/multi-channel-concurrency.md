@@ -60,7 +60,7 @@ type ChannelStatus = "active" | "paused" | "archived";
 
 interface ChannelRuntimePolicy {
   maxConcurrentRuns: number;
-  executionMode: "serial" | "parallel";
+  schedulingMode: "smart";
   writeLockScope: "channel" | "boundPath" | "workspace";
   allowReadOnlyParallel: boolean;
   queueOnConflict: boolean;
@@ -72,7 +72,7 @@ Default:
 ```ts
 {
   maxConcurrentRuns: 1,
-  executionMode: "serial",
+  schedulingMode: "smart",
   writeLockScope: "boundPath",
   allowReadOnlyParallel: true,
   queueOnConflict: true
@@ -85,10 +85,17 @@ Status behavior:
 - `paused`: tasks can be viewed and edited, but new runs are rejected.
 - `archived`: read-only channel history; new tasks and runs are rejected.
 
-Execution behavior:
+Scheduling behavior:
 
-- `serial`: one active run per channel because the coordinator locks `channel:<channelId>`.
-- `parallel`: future mode; v0.1 still protects task and write scopes, but `maxConcurrentRuns` enforcement is a follow-up.
+- Users only see `smart` scheduling. The channel UI must not expose a serial/parallel
+  selector.
+- The daemon computes an internal effective mode on each scheduling tick:
+  `serial` when the safe budget is one, when candidate steps are write-capable, when
+  tools are unknown, when approvals are pending, or when resource leases would conflict;
+  `parallel` only for independent read-only candidates inside `maxConcurrentRuns`.
+- The smart scheduling decision is evidence. Responses should include reason codes such
+  as `max_concurrent_runs_one`, `read_only_parallel_allowed`,
+  `side_effectful_step_serial`, `approval_pending`, or `unknown_tools_serial`.
 - `boundPath`: write/bash/edit runs lock the canonical repo path.
 - `workspace`: write/bash/edit runs lock the whole local workspace.
 - `channel`: write/bash/edit runs only conflict inside the same channel.
@@ -153,7 +160,7 @@ Channel payload includes:
   "status": "active",
   "runtimePolicy": {
     "maxConcurrentRuns": 1,
-    "executionMode": "serial",
+    "schedulingMode": "smart",
     "writeLockScope": "boundPath",
     "allowReadOnlyParallel": true,
     "queueOnConflict": true
@@ -214,6 +221,5 @@ Deferred:
 - Distributed locks.
 - Cross-machine runner recovery.
 - Full queued attempt scheduling for `queueOnConflict=true`.
-- `maxConcurrentRuns` semaphore enforcement for parallel channels.
 - External source adapters.
 - Workflow persistence for real multi-agent plans.

@@ -17,7 +17,7 @@ import type {
 
 const runtimePolicy = {
   maxConcurrentRuns: 2,
-  executionMode: "parallel",
+  schedulingMode: "smart",
   writeLockScope: "workspace",
   allowReadOnlyParallel: true,
   queueOnConflict: false,

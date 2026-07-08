@@ -61,7 +61,7 @@ function parseChannelRuntimePolicy(value: string): ChannelRuntimePolicy {
   const parsed = parseJsonObject(value);
   return normalizeChannelRuntimePolicy({
     maxConcurrentRuns: typeof parsed.maxConcurrentRuns === "number" ? parsed.maxConcurrentRuns : undefined,
-    executionMode: parsed.executionMode === "parallel" ? "parallel" : parsed.executionMode === "serial" ? "serial" : undefined,
+    schedulingMode: parsed.schedulingMode === "smart" ? "smart" : undefined,
     writeLockScope:
       parsed.writeLockScope === "channel" || parsed.writeLockScope === "boundPath" || parsed.writeLockScope === "workspace"
         ? parsed.writeLockScope

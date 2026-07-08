@@ -767,7 +767,6 @@ ling-stack channel create \
   --path /path/to/ling-stack \
   --provider provider_local_relay \
   --status active \
-  --execution-mode serial \
   --write-lock-scope boundPath \
   --max-concurrent-runs 1
 ```
@@ -788,7 +787,6 @@ Runtime policy flags:
 
 ```text
 --status active|paused|archived
---execution-mode serial|parallel
 --write-lock-scope boundPath|channel|workspace
 --max-concurrent-runs <n>
 --read-only-parallel / --no-read-only-parallel

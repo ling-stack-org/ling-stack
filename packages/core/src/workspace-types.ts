@@ -226,7 +226,7 @@ export interface UpdateChannelPlaybookCandidateInput {
   readonly activatedAt?: string | null;
 }
 
-export type ChannelExecutionMode = "serial" | "parallel";
+export type ChannelSchedulingMode = "smart";
 
 export type ChannelWriteLockScope = "channel" | "boundPath" | "workspace";
 
@@ -324,7 +324,7 @@ export function createDirectWorkspaceSnapshot(thread: TeammateDirectThread, work
 
 export interface ChannelRuntimePolicy {
   readonly maxConcurrentRuns: number;
-  readonly executionMode: ChannelExecutionMode;
+  readonly schedulingMode: ChannelSchedulingMode;
   readonly writeLockScope: ChannelWriteLockScope;
   readonly allowReadOnlyParallel: boolean;
   readonly queueOnConflict: boolean;
@@ -332,7 +332,7 @@ export interface ChannelRuntimePolicy {
 
 export const defaultChannelRuntimePolicy: ChannelRuntimePolicy = {
   maxConcurrentRuns: 1,
-  executionMode: "serial",
+  schedulingMode: "smart",
   writeLockScope: "boundPath",
   allowReadOnlyParallel: true,
   queueOnConflict: true,
