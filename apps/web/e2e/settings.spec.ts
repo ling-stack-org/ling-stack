@@ -690,6 +690,25 @@ test("settings skill library shows read-only skill health findings", async ({ pa
   await expect(panel.getByRole("heading", { name: "Skill library" })).toBeVisible();
   await expect(page.getByLabel("Settings sections").getByRole("button", { name: /Skill library/ })).toHaveClass(/active/);
   await expect(page.getByRole("tab", { name: /Skills list/ })).toHaveAttribute("aria-selected", "true");
+  const skillLibraryLayout = await panel.evaluate((element) => {
+    const content = element.closest(".settings-content-stack");
+    const body = element.querySelector(".settings-skill-library-body");
+    const tableWrap = element.querySelector(".settings-skill-table-wrap");
+    const inspector = element.querySelector(".settings-skill-inspector");
+    return {
+      contentExpanded: content?.classList.contains("settings-content-stack--skill-library") ?? false,
+      panelWidth: element.getBoundingClientRect().width,
+      bodyHeight: body?.getBoundingClientRect().height ?? 0,
+      tableWidth: tableWrap?.getBoundingClientRect().width ?? 0,
+      inspectorWidth: inspector?.getBoundingClientRect().width ?? 0,
+    };
+  });
+  expect(skillLibraryLayout.contentExpanded).toBe(true);
+  expect(skillLibraryLayout.panelWidth).toBeGreaterThan(1050);
+  expect(skillLibraryLayout.bodyHeight).toBeGreaterThanOrEqual(500);
+  expect(skillLibraryLayout.tableWidth).toBeGreaterThanOrEqual(740);
+  expect(skillLibraryLayout.inspectorWidth).toBeGreaterThanOrEqual(290);
+  await expect.poll(() => readHorizontalOverflow(page, ".settings-skill-library-body, .settings-skill-table-wrap, .settings-skill-inspector")).toEqual([]);
   await expect(panel.getByRole("region", { name: "Skill Health" })).toHaveCount(0);
   await expect(panel.getByRole("region", { name: "Skill Source Health" })).toHaveCount(0);
   const reviewSkillRow = panel.locator(".settings-skill-table tbody tr").filter({ hasText: "Code Review" }).first();
@@ -754,11 +773,18 @@ test("settings skill library shows read-only skill health findings", async ({ pa
   await expect(panel).not.toContainText("Persona cannot grant tools");
   const sourceSyncPanel = panel.getByRole("region", { name: "gstack source sync" });
   await expect(sourceSyncPanel).toBeVisible();
+  await expect(sourceSyncPanel).toContainText("Prompt before publish");
+  const sourceSyncOptions = sourceSyncPanel.locator(".settings-skill-source-sync-options");
+  await expect(sourceSyncOptions).toBeVisible();
+  await expect(sourceSyncOptions).toContainText("Include detected roots");
+  await expect(sourceSyncOptions).toContainText("Allow new skills");
+  await expect(sourceSyncPanel).toContainText("Advanced source roots");
   await expect(sourceSyncPanel.getByLabel("Include detected roots")).toBeChecked();
   await expect(sourceSyncPanel.getByLabel("Allow new skills")).not.toBeChecked();
   await sourceSyncPanel.getByRole("button", { name: "Preview" }).click();
   await expect(sourceSyncPanel).toContainText("Attachable");
   await expect(sourceSyncPanel).toContainText("Drifted");
+  await expect(sourceSyncPanel).toContainText("New skills");
   await expect(sourceSyncPanel).toContainText("gstack-danger-demo");
   await expect(sourceSyncPanel).toContainText("Context: 1");
   await expect(sourceSyncPanel).toContainText("Selected");

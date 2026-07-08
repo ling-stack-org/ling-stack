@@ -3090,6 +3090,15 @@ test("channel message body renders safe markdown, highlighted code, folded logs,
       "}",
       "```",
       "",
+      "```bash",
+      "<html lang=\"zh-CN\">",
+      "<head>",
+      "<style>",
+      "body{margin:0;background:#111;color:white}",
+      "</style>",
+      "</head>",
+      "```",
+      "",
       "```diff",
       "diff --git a/src/example.ts b/src/example.ts",
       "index 1111111..2222222 100644",
@@ -3174,7 +3183,8 @@ test("channel message body renders safe markdown, highlighted code, folded logs,
 
   const codeBlock = message.locator(".message-code-block").filter({ hasText: "const answer = 42;" });
   await expect(codeBlock.getByText("ts")).toBeVisible();
-  await expect(codeBlock.locator(".code-token.keyword").filter({ hasText: "const" })).toBeVisible();
+  await expect(codeBlock).toHaveAttribute("data-highlight-engine", "shiki");
+  await expect(codeBlock.locator(".code-token.shiki").filter({ hasText: "const" })).toBeVisible();
   await expect(codeBlock.getByRole("button", { name: "Copy code" })).toBeVisible();
   await expect.poll(() => codeBlock.evaluate((element) => {
     const resolveBackground = (tokenName: string): string => {
@@ -3191,6 +3201,14 @@ test("channel message body renders safe markdown, highlighted code, folded logs,
       expected: resolveBackground("--conversation-code-bg"),
     };
   })).toEqual({ actual: "rgb(247, 247, 247)", expected: "rgb(247, 247, 247)" });
+
+  const htmlInBashBlock = message.locator(".message-code-block").filter({ hasText: "<html" });
+  await expect(htmlInBashBlock.getByText("bash")).toBeVisible();
+  await expect(htmlInBashBlock).toHaveAttribute("data-highlight-engine", "shiki");
+  await expect(htmlInBashBlock.locator(".code-token.shiki").filter({ hasText: "lang" })).toBeVisible();
+  await expect(htmlInBashBlock.locator(".code-token.shiki").filter({ hasText: "zh-CN" })).toBeVisible();
+  await expect(htmlInBashBlock.locator(".code-token.shiki").filter({ hasText: "background" })).toBeVisible();
+  await expect(htmlInBashBlock.locator(".code-token.shiki").filter({ hasText: "#111" })).toBeVisible();
 
   const diffBlock = message.locator(".message-diff-block").filter({ hasText: "src/example.ts" });
   await expect(diffBlock).toHaveCount(1);
@@ -3223,6 +3241,8 @@ test("channel message body renders safe markdown, highlighted code, folded logs,
   await expect(unknownLanguageBlock.locator(".code-token")).toHaveCount(0);
 
   const foldedJson = message.locator(".message-code-block").filter({ hasText: '"item1": 1' });
+  await expect(foldedJson).toHaveAttribute("data-highlight-engine", "shiki");
+  await expect(foldedJson.locator(".code-token.shiki").filter({ hasText: '"item1"' })).toBeVisible();
   await expect(foldedJson.getByRole("button", { name: /Show full code/ })).toBeVisible();
   await expect(foldedJson).not.toContainText('"done": true');
   await foldedJson.getByRole("button", { name: /Show full code/ }).click();
@@ -3238,7 +3258,8 @@ test("channel message body renders safe markdown, highlighted code, folded logs,
   const expandedDeferredCode = message.locator(".message-code-block").filter({ hasText: "deferredLine320" });
   await expect(expandedDeferredCode).toBeVisible();
   await expect(expandedDeferredCode.locator("pre")).toBeVisible();
-  await expect(expandedDeferredCode.locator(".code-token")).toHaveCount(0);
+  await expect(expandedDeferredCode).toHaveAttribute("data-highlight-engine", "shiki");
+  await expect(expandedDeferredCode.locator(".code-token.shiki").filter({ hasText: "deferredLine320" })).toBeVisible();
   await expect(expandedDeferredCode.getByRole("button", { name: "Collapse code" })).toBeVisible();
   await expandedDeferredCode.getByRole("button", { name: "Collapse code" }).click();
   await expect(deferredCode).toContainText("Large code block deferred");
@@ -3415,10 +3436,16 @@ test("channel composer applies plan mode session commands without creating slash
   await expect.poll(planMode).toBe("plan");
   await expect(planChip).toBeVisible();
   await expect(planChip).toHaveClass(/active/);
+  await expect(composer).not.toContainText("Plan Mode enabled");
   await expect.poll(() => state.tasks).toHaveLength(0);
   await composer.getByRole("button", { name: "Add" }).click();
-  await expect(page.getByRole("menu", { name: "Add" }).getByRole("menuitem", { name: "Exit Plan Mode" })).toBeVisible();
-  await composer.getByRole("button", { name: "Add" }).click();
+  const addMenu = page.getByRole("menu", { name: "Add" });
+  await expect(addMenu.getByRole("menuitem", { name: "Plan Mode" })).toBeVisible();
+  await expect(addMenu.getByRole("menuitem", { name: "Exit Plan Mode" })).toHaveCount(0);
+  await addMenu.getByRole("menuitem", { name: "Plan Mode" }).click();
+  await expect.poll(planMode).toBe("plan");
+  await expect(planChip).toBeVisible();
+  await expect(planChip).toHaveClass(/active/);
 
   await composerInput.fill("/review apps/web");
   await composer.getByRole("button", { name: "Create task" }).click();
@@ -3446,6 +3473,7 @@ test("channel composer applies plan mode session commands without creating slash
   await expect.poll(planMode).toBe("default");
   await expect(planChip).toBeVisible();
   await expect(planChip).not.toHaveClass(/active/);
+  await expect(composer).not.toContainText("Plan Mode disabled");
 
   await composerInput.fill("/plan status");
   await composer.getByRole("button", { name: "Apply command" }).click();
@@ -3484,16 +3512,17 @@ test("channel composer manages goal lifecycle from the floating panel", async ({
   await composer.getByRole("button", { name: "Add" }).click();
   await page.getByRole("menu", { name: "Add" }).getByRole("menuitem", { name: /Goal/ }).click();
   await expect(goalChip).toBeVisible();
-  await expectComposerValue(composerInput, "/goal ");
-  await composerInput.evaluate((node) => {
-    const range = document.createRange();
-    range.selectNodeContents(node);
-    range.collapse(false);
-    const selection = window.getSelection();
-    selection?.removeAllRanges();
-    selection?.addRange(range);
-  });
-  await page.keyboard.insertText("Finish PR4 with a visible goal panel");
+  await expectComposerValue(composerInput, "");
+  await goalChip.hover();
+  await goalChip.getByRole("button", { name: "Hide goal" }).click();
+  await expect(goalChip).toHaveCount(0);
+  await expectComposerValue(composerInput, "");
+
+  await composer.getByRole("button", { name: "Add" }).click();
+  await page.getByRole("menu", { name: "Add" }).getByRole("menuitem", { name: /Goal/ }).click();
+  await expect(goalChip).toBeVisible();
+  await expectComposerValue(composerInput, "");
+  await composerInput.fill("/goal Finish PR4 with a visible goal panel");
   await expectComposerValue(composerInput, "/goal Finish PR4 with a visible goal panel");
   await composer.getByRole("button", { name: "Apply command" }).click();
 
