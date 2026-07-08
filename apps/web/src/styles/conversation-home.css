@@ -638,7 +638,22 @@
 }
 
 .normal-conversation-header.searching {
-  justify-content: space-between;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  justify-content: stretch;
+}
+
+.normal-conversation-header.searching .conversation-top-toolbar {
+  grid-column: 2;
+  grid-row: 1;
+  justify-self: end;
+}
+
+.normal-conversation-header.searching .normal-conversation-search {
+  grid-column: 1;
+  grid-row: 1;
+  justify-self: end;
+  width: min(560px, 100%);
 }
 
 .normal-conversation-page.with-right-dock > .normal-conversation-feed {
