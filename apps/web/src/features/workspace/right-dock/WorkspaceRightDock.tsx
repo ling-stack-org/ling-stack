@@ -14,6 +14,13 @@ import { useI18n } from "../../../i18n.js";
 import { useTheme } from "../../../theme.js";
 import type { ProposedPlanArtifact } from "../../../types.js";
 import {
+  normalizeShikiLanguage,
+  renderShikiCodeTokens,
+  shikiThemeForResolvedTheme,
+  useShikiHighlightedCodeLines,
+  type ShikiHighlightedToken,
+} from "../../../shared/conversation/code-highlighting/shiki.js";
+import {
   createDockPageEntry,
   EvidencePage,
   FilesPage,
@@ -830,12 +837,6 @@ type DockReviewCodeRenderRow =
     readonly note?: DockReviewInlineNote;
   };
 
-interface ShikiHighlightedToken {
-  readonly content: string;
-  readonly color?: string;
-  readonly fontStyle?: number;
-}
-
 function DockReviewCodePreview({
   item,
   preview,
@@ -921,61 +922,27 @@ function useShikiHighlightedCodeRows(
   rows: readonly DockReviewCodeRenderRow[],
 ): Readonly<Record<string, readonly ShikiHighlightedToken[]>> {
   const { resolvedTheme } = useTheme();
-  const shikiTheme = resolvedTheme === "dark" ? "github-dark-default" : "github-light-default";
+  const shikiTheme = shikiThemeForResolvedTheme(resolvedTheme);
   const language = useMemo(() => shikiLanguageForPreview(preview), [preview]);
   const source = useMemo(() => rows.map((row) => (row.type === "line" ? displayCodeLineText(row.line) : "")).join("\n"), [rows]);
   const rowIds = useMemo(() => rows.map((row) => (row.type === "line" ? row.id : "")), [rows]);
-  const [highlightedLines, setHighlightedLines] = useState<Readonly<Record<string, readonly ShikiHighlightedToken[]>>>({});
+  const highlighted = useShikiHighlightedCodeLines({
+    enabled: true,
+    language,
+    source,
+    theme: shikiTheme,
+  });
 
-  useEffect(() => {
-    const code = source.trim();
-    if (!code || language === "text") {
-      setHighlightedLines({});
-      return;
-    }
-    let cancelled = false;
-    setHighlightedLines({});
-    void tokenizeWithShiki(source, language, shikiTheme).then((tokenLines) => {
-      if (cancelled) {
-        return;
-      }
-      const next: Record<string, readonly ShikiHighlightedToken[]> = {};
-      tokenLines.forEach((tokens, index) => {
-        const rowId = rowIds[index];
-        if (rowId && tokens.length > 0) {
-          next[rowId] = tokens;
-        }
-      });
-      setHighlightedLines(next);
-    }, () => {
-      if (!cancelled) {
-        setHighlightedLines({});
+  return useMemo(() => {
+    const next: Record<string, readonly ShikiHighlightedToken[]> = {};
+    highlighted.lines.forEach((tokens, index) => {
+      const rowId = rowIds[index];
+      if (rowId && tokens.length > 0) {
+        next[rowId] = tokens;
       }
     });
-    return () => {
-      cancelled = true;
-    };
-  }, [language, rowIds, shikiTheme, source]);
-
-  return highlightedLines;
-}
-
-async function tokenizeWithShiki(
-  source: string,
-  language: string,
-  theme: "github-light-default" | "github-dark-default",
-): Promise<readonly (readonly ShikiHighlightedToken[])[]> {
-  const { codeToTokens } = await import("shiki");
-  const result = await codeToTokens(source, {
-    lang: language as Parameters<typeof codeToTokens>[1]["lang"],
-    theme,
-  });
-  const tokenLines = "tokens" in result ? result.tokens : [];
-  return tokenLines.map((line) => line.map((token) => ({
-    content: token.content,
-    color: token.color,
-    fontStyle: token.fontStyle,
-  })));
+    return next;
+  }, [highlighted.lines, rowIds]);
 }
 
 function shikiLanguageForPreview(preview: NonNullable<DockReviewItem["codePreview"]>): string {
@@ -986,35 +953,6 @@ function shikiLanguageForPreview(preview: NonNullable<DockReviewItem["codePrevie
   const source = `${preview.title} ${preview.pathLabel ?? ""}`;
   const extensionMatch = /(?:^|[^\w.-])[\w.-]+\.([a-z0-9]+)\b/iu.exec(source);
   return normalizeShikiLanguage(extensionMatch?.[1]) ?? explicit ?? "text";
-}
-
-function normalizeShikiLanguage(value: string | undefined): string | undefined {
-  const normalized = value?.trim().toLowerCase();
-  if (!normalized) {
-    return undefined;
-  }
-  const languages: Readonly<Record<string, string>> = {
-    bash: "bash",
-    css: "css",
-    diff: "diff",
-    htm: "html",
-    html: "html",
-    js: "javascript",
-    json: "json",
-    jsx: "jsx",
-    markdown: "markdown",
-    md: "markdown",
-    mjs: "javascript",
-    py: "python",
-    sh: "bash",
-    ts: "typescript",
-    tsx: "tsx",
-    txt: "text",
-    yml: "yaml",
-    yaml: "yaml",
-    zsh: "bash",
-  };
-  return languages[normalized] ?? normalized;
 }
 
 function reviewMinimapSegments(
@@ -1203,21 +1141,9 @@ function inlineNoteLabel(note: DockReviewInlineNote): string {
 }
 
 function renderCodeTokens(text: string, shikiTokens: readonly ShikiHighlightedToken[] | undefined): ReactNode {
-  if (shikiTokens && shikiTokens.length > 0) {
-    return shikiTokens.map((token, index) => (
-      <span
-        key={`${index}:${token.content}`}
-        className="right-dock-code-token shiki"
-        style={{
-          color: token.color,
-          fontStyle: token.fontStyle && (token.fontStyle & 1) ? "italic" : undefined,
-          fontWeight: token.fontStyle && (token.fontStyle & 2) ? 700 : undefined,
-          textDecoration: token.fontStyle && (token.fontStyle & 4) ? "underline" : undefined,
-        }}
-      >
-        {token.content}
-      </span>
-    ));
+  const shikiNodes = renderShikiCodeTokens(shikiTokens, "right-dock-code-token shiki");
+  if (shikiNodes) {
+    return shikiNodes;
   }
   const pattern = /("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|`(?:[^`\\]|\\.)*`|\b(?:async|await|break|case|catch|class|const|continue|default|else|export|extends|false|finally|for|from|function|if|implements|import|interface|let|new|null|readonly|return|switch|throw|true|try|type|undefined|var|while)\b|[A-Za-z_$][\w$]*(?=\s*\())/gu;
   const nodes: ReactNode[] = [];

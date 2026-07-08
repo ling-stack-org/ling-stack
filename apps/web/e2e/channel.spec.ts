@@ -3087,6 +3087,15 @@ test("channel message body renders safe markdown, highlighted code, folded logs,
       "}",
       "```",
       "",
+      "```bash",
+      "<html lang=\"zh-CN\">",
+      "<head>",
+      "<style>",
+      "body{margin:0;background:#111;color:white}",
+      "</style>",
+      "</head>",
+      "```",
+      "",
       "```diff",
       "diff --git a/src/example.ts b/src/example.ts",
       "index 1111111..2222222 100644",
@@ -3171,7 +3180,8 @@ test("channel message body renders safe markdown, highlighted code, folded logs,
 
   const codeBlock = message.locator(".message-code-block").filter({ hasText: "const answer = 42;" });
   await expect(codeBlock.getByText("ts")).toBeVisible();
-  await expect(codeBlock.locator(".code-token.keyword").filter({ hasText: "const" })).toBeVisible();
+  await expect(codeBlock).toHaveAttribute("data-highlight-engine", "shiki");
+  await expect(codeBlock.locator(".code-token.shiki").filter({ hasText: "const" })).toBeVisible();
   await expect(codeBlock.getByRole("button", { name: "Copy code" })).toBeVisible();
   await expect.poll(() => codeBlock.evaluate((element) => {
     const resolveBackground = (tokenName: string): string => {
@@ -3188,6 +3198,14 @@ test("channel message body renders safe markdown, highlighted code, folded logs,
       expected: resolveBackground("--conversation-code-bg"),
     };
   })).toEqual({ actual: "rgb(247, 247, 247)", expected: "rgb(247, 247, 247)" });
+
+  const htmlInBashBlock = message.locator(".message-code-block").filter({ hasText: "<html" });
+  await expect(htmlInBashBlock.getByText("bash")).toBeVisible();
+  await expect(htmlInBashBlock).toHaveAttribute("data-highlight-engine", "shiki");
+  await expect(htmlInBashBlock.locator(".code-token.shiki").filter({ hasText: "lang" })).toBeVisible();
+  await expect(htmlInBashBlock.locator(".code-token.shiki").filter({ hasText: "zh-CN" })).toBeVisible();
+  await expect(htmlInBashBlock.locator(".code-token.shiki").filter({ hasText: "background" })).toBeVisible();
+  await expect(htmlInBashBlock.locator(".code-token.shiki").filter({ hasText: "#111" })).toBeVisible();
 
   const diffBlock = message.locator(".message-diff-block").filter({ hasText: "src/example.ts" });
   await expect(diffBlock).toHaveCount(1);
@@ -3220,6 +3238,8 @@ test("channel message body renders safe markdown, highlighted code, folded logs,
   await expect(unknownLanguageBlock.locator(".code-token")).toHaveCount(0);
 
   const foldedJson = message.locator(".message-code-block").filter({ hasText: '"item1": 1' });
+  await expect(foldedJson).toHaveAttribute("data-highlight-engine", "shiki");
+  await expect(foldedJson.locator(".code-token.shiki").filter({ hasText: '"item1"' })).toBeVisible();
   await expect(foldedJson.getByRole("button", { name: /Show full code/ })).toBeVisible();
   await expect(foldedJson).not.toContainText('"done": true');
   await foldedJson.getByRole("button", { name: /Show full code/ }).click();
@@ -3235,7 +3255,8 @@ test("channel message body renders safe markdown, highlighted code, folded logs,
   const expandedDeferredCode = message.locator(".message-code-block").filter({ hasText: "deferredLine320" });
   await expect(expandedDeferredCode).toBeVisible();
   await expect(expandedDeferredCode.locator("pre")).toBeVisible();
-  await expect(expandedDeferredCode.locator(".code-token")).toHaveCount(0);
+  await expect(expandedDeferredCode).toHaveAttribute("data-highlight-engine", "shiki");
+  await expect(expandedDeferredCode.locator(".code-token.shiki").filter({ hasText: "deferredLine320" })).toBeVisible();
   await expect(expandedDeferredCode.getByRole("button", { name: "Collapse code" })).toBeVisible();
   await expandedDeferredCode.getByRole("button", { name: "Collapse code" }).click();
   await expect(deferredCode).toContainText("Large code block deferred");

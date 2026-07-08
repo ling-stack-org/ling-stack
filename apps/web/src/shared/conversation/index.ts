@@ -13,8 +13,6 @@ export {
   EvidencePage,
   FilesPage,
   MessageActionBar,
-  MessageBubble,
-  MessageRow,
   ReviewQueuePage,
   RightDockShell,
   SourceIconStack,
@@ -44,10 +42,6 @@ export {
   type MessageActionBarAction,
   type MessageActionBarProps,
   type MessageActionKind,
-  type MessageBubbleProps,
-  type MessageBubbleTone,
-  type MessageRowAuthorType,
-  type MessageRowProps,
   type ReviewQueuePageProps,
   type RightDockPageManifest,
   type RightDockShellProps,
@@ -107,8 +101,10 @@ export {
 } from "@ling-stack/conversation-ui-core";
 export { ConversationAttachmentStrip, type ConversationAttachmentChip, type ConversationAttachmentStripProps } from "./preview/ConversationAttachmentStrip.js";
 export { ConversationEvidenceBundlePanel, type ConversationEvidenceBundle, type ConversationEvidenceBundlePanelProps, type ConversationEvidenceItem, type ConversationEvidenceSection } from "./blocks/ConversationEvidenceBundlePanel.js";
+export { MessageBubble, type MessageBubbleProps, type MessageBubbleTone } from "./blocks/MessageBubble.js";
 export { MessageBodyRenderer, type MessageBodyRendererProps } from "./blocks/MessageBodyRenderer.js";
 export { MessageEvidencePanel } from "./blocks/MessageEvidencePanel.js";
+export { MessageRow, type MessageRowAuthorType, type MessageRowProps, type MessageRowTone } from "./blocks/MessageRow.js";
 export { ConversationSummaryRow, type ConversationSummaryMetaItem, type ConversationSummaryRowProps } from "./feedback/ConversationSummaryRow.js";
 export { ConversationVirtualFeed, type ConversationVirtualFeedProps } from "./blocks/ConversationVirtualFeed.js";
 export { ConversationWorkCell, type ConversationWorkCellDetailsState, type ConversationWorkCellProps } from "./blocks/ConversationWorkCell.js";
