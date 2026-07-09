@@ -1519,8 +1519,8 @@ test("new channel dialog shows create failures inline", async ({ page }) => {
   await useEnglishLocale(page);
   const state = createBaseState({ approvalStatus: "pending" });
   state.failNextChannelCreate = {
-    error: "not_git_repository",
-    message: "当前工作区不是 Git 仓库，无法创建独立频道工作区。",
+    error: "channel_create_failed",
+    message: "Channel creation failed.",
   };
   await mockDaemon(page, state);
   await page.goto("/");
@@ -1530,11 +1530,12 @@ test("new channel dialog shows create failures inline", async ({ page }) => {
   await navigation.getByRole("menuitem", { name: "New channel" }).click();
 
   const createChannelPanel = page.getByRole("dialog", { name: "New channel" });
+  await expect(createChannelPanel).toContainText("Git repositories use isolated channel workspaces; other folders run directly from the selected folder.");
   await createChannelPanel.getByLabel("Name").fill("Broken Repo");
   await createChannelPanel.getByRole("button", { name: "Create channel" }).click();
 
   await expect(createChannelPanel).toBeVisible();
-  await expect(createChannelPanel.getByRole("alert")).toContainText("当前工作区不是 Git 仓库，无法创建独立频道工作区。");
+  await expect(createChannelPanel.getByRole("alert")).toContainText("Channel creation failed.");
   expect(state.channels.some((channel) => isRecord(channel) && channel.name === "Broken Repo")).toBe(false);
 });
 

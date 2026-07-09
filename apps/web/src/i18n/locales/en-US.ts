@@ -176,7 +176,7 @@ export const enUS = {
     "No matching projects": "No matching projects",
     "Use existing folder": "Use existing folder",
     "Open the system folder picker": "Open the system folder picker",
-    "Ling will create an isolated channel workspace from this Git repository.": "Ling will create an isolated channel workspace from this Git repository.",
+    "Git repositories use isolated channel workspaces; other folders run directly from the selected folder.": "Git repositories use isolated channel workspaces; other folders run directly from the selected folder.",
     "Workspace default": "Workspace default",
     "Choose new project": "Choose new project",
     "Selecting project...": "Selecting project...",

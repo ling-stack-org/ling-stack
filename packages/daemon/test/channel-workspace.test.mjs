@@ -8384,7 +8384,7 @@ test("direct teammate workspace cleanup refuses dirty managed worktrees", async 
   }
 });
 
-test("channel creation fails without persisting when cwd is not a Git repository", async () => {
+test("channel creation uses local workspace binding when cwd is not a Git repository", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-worktree-nongit-"));
   const daemon = await startDaemonForTest();
   try {
@@ -8397,13 +8397,19 @@ test("channel creation fails without persisting when cwd is not a Git repository
         allowedTools: ["read"],
       }),
     });
-    assert.equal(response.status, 400);
+    assert.equal(response.status, 201);
     const body = await response.json();
-    assert.equal(body.error, "not_git_repository");
-    assert.match(body.message, /无法创建独立频道工作区/);
+    assert.equal(body.channel.name, "Engineering");
+    assert.equal(body.channel.boundPath, cwd);
+    assert.equal(body.channel.workspaceBinding?.mode, "local");
+    assert.equal(body.channel.workspaceBinding?.status, "ready");
+    assert.equal(body.channel.workspaceBinding?.executionPath, cwd);
+    assert.equal(body.channel.workspaceBinding?.worktreePath, undefined);
 
     const listed = await getJson(`${daemon.url}/channels?cwd=${encodeURIComponent(cwd)}`);
-    assert.deepEqual(listed.channels, []);
+    assert.equal(listed.channels.length, 1);
+    assert.equal(listed.channels[0].id, body.channel.id);
+    assert.equal(listed.channels[0].workspaceBinding?.mode, "local");
   } finally {
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });

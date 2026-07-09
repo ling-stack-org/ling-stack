@@ -284,6 +284,32 @@ export async function createManagedWorktreeBinding(
   };
 }
 
+export async function createInitialChannelWorkspaceBinding(
+  channel: ChannelWorktreeTarget,
+  workspaceCwd: string,
+  workspacePaths: LingStackRuntimePaths,
+): Promise<
+  | { readonly ok: true; readonly binding: ChannelWorkspaceBinding }
+  | { readonly ok: false; readonly code: string; readonly message: string }
+> {
+  const managed = await createManagedWorktreeBinding(channel, workspaceCwd, workspacePaths);
+  if (managed.ok || managed.code !== "not_git_repository") {
+    return managed;
+  }
+  const now = new Date().toISOString();
+  return {
+    ok: true,
+    binding: {
+      mode: "local",
+      status: "ready",
+      executionPath: channel.boundPath ?? workspaceCwd,
+      createdAt: channel.workspaceBinding?.createdAt ?? now,
+      checkedAt: now,
+      updatedAt: now,
+    },
+  };
+}
+
 async function cleanupManagedChannelWorktree(
   channel: Channel,
   workspaceCwd: string,

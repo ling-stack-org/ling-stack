@@ -34,7 +34,7 @@ import {
   readOptionalChannelMessageRouteDecisionStatusQuery,
   readOptionalChannelHandoffStatusQuery,
 } from "./schemas.js";
-import { createManagedWorktreeBinding } from "./workspace.js";
+import { createInitialChannelWorkspaceBinding } from "./workspace.js";
 import { hydrateProposedPlanSourceStates } from "../runs/proposed-plan-source-state.js";
 
 export async function handleChannelsCollection(
@@ -80,7 +80,7 @@ export async function handleChannelsCollection(
         return;
       }
       const channelId = createChannelId();
-      const worktreeResult = await createManagedWorktreeBinding(
+      const workspaceResult = await createInitialChannelWorkspaceBinding(
         {
           id: channelId,
           boundPath: input.boundPath,
@@ -89,15 +89,15 @@ export async function handleChannelsCollection(
         cwd,
         store.paths,
       );
-      if (!worktreeResult.ok) {
-        writeJson(response, 400, { error: worktreeResult.code, message: worktreeResult.message });
+      if (!workspaceResult.ok) {
+        writeJson(response, 400, { error: workspaceResult.code, message: workspaceResult.message });
         return;
       }
       const channel = store.createChannel(
         {
           ...input,
           id: channelId,
-          workspaceBinding: worktreeResult.binding,
+          workspaceBinding: workspaceResult.binding,
         },
         new Date().toISOString(),
       );
