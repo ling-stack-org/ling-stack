@@ -435,7 +435,7 @@ test("settings configuration entries open nested tools directly", async ({ page 
   await expect(settingsSections.getByText("Workspace tools", { exact: true })).toBeVisible();
   await expect(settingsSections.getByText("Workspace", { exact: true })).toBeVisible();
   await expect(settingsSections.getByText("Maintenance", { exact: true })).toBeVisible();
-  await expect(settingsSections.getByRole("button", { name: /^Profile$/ })).toBeVisible();
+  await expect(settingsSections.getByRole("button", { name: /^User profile$/ })).toBeVisible();
   await expect(settingsSections.getByRole("button", { name: /Interface preferences/ })).toBeVisible();
   await expect(settingsSections.getByRole("button", { name: /Personal and interface/ })).toHaveCount(0);
   await expect(settingsSections).not.toContainText("System");

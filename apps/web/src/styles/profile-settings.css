@@ -97,10 +97,44 @@
 }
 
 .profile-avatar-button.profile-settings-avatar {
+  isolation: isolate;
   width: 84px;
   height: 84px;
   flex-basis: 84px;
   font-size: 26px;
+  transition: transform 180ms ease, box-shadow 180ms ease, border-color 180ms ease;
+}
+
+.profile-avatar-button.profile-settings-avatar::before,
+.profile-avatar-button.profile-settings-avatar::after {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+  border-radius: inherit;
+  opacity: 0;
+  content: "";
+  transition: opacity 180ms ease, transform 180ms ease;
+  pointer-events: none;
+}
+
+.profile-avatar-button.profile-settings-avatar:hover,
+.profile-avatar-button.profile-settings-avatar:focus-visible {
+  border-color: color-mix(in srgb, var(--accent) 24%, var(--border));
+  box-shadow: 0 10px 24px color-mix(in srgb, var(--shadow-color) 14%, transparent);
+  transform: translate(4px, -4px);
+}
+
+.profile-avatar-button.profile-settings-avatar:hover::before,
+.profile-avatar-button.profile-settings-avatar:focus-visible::before {
+  opacity: 0.32;
+  transform: translate(-4px, 4px);
+}
+
+.profile-avatar-button.profile-settings-avatar:hover::after,
+.profile-avatar-button.profile-settings-avatar:focus-visible::after {
+  opacity: 0.18;
+  transform: translate(-8px, 8px);
 }
 
 .profile-avatar-button.profile-settings-avatar .profile-avatar-edit {
@@ -109,6 +143,13 @@
   width: 26px;
   height: 26px;
   box-shadow: 0 0 0 3px var(--surface-panel);
+  transition: transform 180ms ease, box-shadow 180ms ease;
+}
+
+.profile-avatar-button.profile-settings-avatar:hover .profile-avatar-edit,
+.profile-avatar-button.profile-settings-avatar:focus-visible .profile-avatar-edit {
+  box-shadow: 0 0 0 3px var(--surface-panel), 0 8px 18px color-mix(in srgb, var(--shadow-color) 16%, transparent);
+  transform: translate(2px, -2px);
 }
 
 .profile-settings-name-stack {

@@ -120,7 +120,7 @@ const settingsSectionGroups: readonly {
     items: [
       {
         id: "personal-profile",
-        label: "Profile",
+        label: "User profile",
         icon: UserCircle,
       },
       {

@@ -87,6 +87,22 @@ Product states are not raw storage states.
 - Success feedback can be brief; destructive or blocking failures persist until
   resolved or dismissed.
 
+## Feedback And Toasts
+
+Use [Global Feedback Toast System](global-feedback-toast-system.md) for transient
+action feedback.
+
+- Lightweight save, copy, apply, created, and queued confirmations use the
+  shared top-center `Ling Toast`.
+- Toasts use a neutral elevated surface with a small tone bead; never use a
+  large colored success pill.
+- Feature pages should not define one-off toast styles or browser `alert()`
+  calls for product feedback.
+- Blocking errors, field validation, destructive warnings, readiness blockers,
+  approval states, and diagnostics remain inline near the object they affect.
+- A toast is correct only when the user does not need the message to complete
+  the next action.
+
 ## Buttons, Icons, And Menus
 
 - Primary actions are visually unique and task-level.

@@ -5,6 +5,7 @@
 - [Settings Visual Density Follow-up](settings-visual-density-followup.md)
 - [Settings Semantic Convergence P3](settings-semantic-convergence-p3.md)
 - [Settings Full-Surface Productization P10](settings-full-surface-productization-p10.md)
+- [Global Feedback Toast System](global-feedback-toast-system.md)
 
 ## Summary
 
@@ -102,8 +103,8 @@ This is the main task surface.
 - Feedback:
   - Saving, success, and error feedback appear in a top-center transient toast, not under
     the avatar/name block.
-  - Toast styling should follow a Sonner-like neutral panel: subtle border, light shadow,
-    small state dot, and no large success-colored pill.
+  - Toast styling follows the global `Ling Toast` pattern: porcelain neutral panel,
+    subtle border, light shadow, small status bead, and no large success-colored pill.
   - Toast duration is 3 seconds. Motion is a soft slide/fade; reduced-motion users get a
     fade-only variant.
 
