@@ -531,8 +531,14 @@ test("sidebar text entries route to context-aware inspectors", async ({ page }) 
   await expect(settingsSections.getByRole("button", { name: /Profile/ })).toBeVisible();
   await expect(settingsSections.getByRole("button", { name: /Interface preferences/ })).toBeVisible();
   await settingsSections.getByRole("button", { name: /Profile/ }).click();
-  await expect(page.getByRole("heading", { name: "User profile", level: 1 })).toBeVisible();
-  await expect(page.getByLabel("Profile display preview")).toContainText("Ling User");
+  await expect(page.getByRole("heading", { name: "User profile", level: 1 })).toHaveCount(0);
+  await expect(page.locator(".profile-settings-identity-block")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Identity information" })).toHaveCount(0);
+  await expect(page.getByLabel("Handle")).toHaveCount(0);
+  await expect(page.getByLabel("Display name", { exact: true })).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "Display preview" })).toHaveCount(0);
+  await expect(page.getByLabel("Profile display preview")).toHaveCount(0);
+  await expect(page.getByRole("region", { name: "Usage summary" })).toBeVisible();
   await expect(page.getByLabel("Run context")).toHaveCount(0);
   await expect(settingsSections.getByRole("button", { name: "Model Workbench" })).toBeVisible();
   await expect(settingsSections.getByRole("button", { name: "Work Board" })).toBeVisible();

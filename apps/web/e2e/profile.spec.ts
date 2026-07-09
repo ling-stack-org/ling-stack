@@ -14,14 +14,33 @@ test("profile avatar crop exports a transparent circular image", async ({ page }
 
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
   await page.getByLabel("Settings sections").getByRole("button", { name: /Profile/ }).click();
-  await expect(page.getByRole("heading", { name: "个人资料", level: 1 })).toBeVisible();
-  await expect(page.locator(".profile-settings-head > span")).toHaveCount(0);
-  await expect(page.getByRole("heading", { name: "身份信息" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "显示预览" })).toBeVisible();
-  await expect(page.getByLabel("个人资料显示预览")).toContainText("Ling User");
-  await expect(page.getByRole("heading", { name: "Token 活动" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "连续使用" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "User profile", level: 1 })).toHaveCount(0);
+  await expect(page.locator(".profile-settings-identity-block")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Refresh" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Save profile" })).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "Identity information" })).toHaveCount(0);
+  await expect(page.getByLabel("Handle")).toHaveCount(0);
+  await expect(page.getByLabel("Display name", { exact: true })).toHaveCount(0);
+  await expect(page.getByText(`@${state.userProfile.handle ?? "local-user"}`)).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Display preview" })).toHaveCount(0);
+  await expect(page.getByLabel("Profile display preview")).toHaveCount(0);
+  await expect(page.locator(".profile-preview-card")).toHaveCount(0);
+  await expect(page.locator(".profile-usage-details summary")).toHaveCount(0);
+  await expect(page.locator(".profile-usage-details .profile-heatmap")).toBeVisible();
   await expect(page.locator(".profile-usage-streak-grid .profile-usage-metric")).toHaveCount(3);
+
+  await page.getByRole("button", { name: "Edit display name" }).click();
+  const displayNameInput = page.getByLabel("Display name", { exact: true });
+  await expect(displayNameInput).toBeVisible();
+  await displayNameInput.fill("Tian Xiao");
+  await page.locator(".profile-usage-card").click();
+  await expect.poll(() => state.userProfile.displayName).toBe("Tian Xiao");
+  await expect(page.getByLabel("Display name", { exact: true })).toHaveCount(0);
+  await expect(page.locator(".profile-settings-name-row", { hasText: "Tian Xiao" })).toBeVisible();
+  const profileSavedTip = page.locator(".profile-settings-tip.ok", { hasText: "Profile saved" });
+  await expect(profileSavedTip).toBeVisible();
+  await expect(page.locator(".profile-settings-identity-block .profile-settings-tip")).toHaveCount(0);
+  await expect(profileSavedTip).toHaveCount(0, { timeout: 5000 });
 
   await page.locator('input[type="file"][accept="image/*"]').setInputFiles({
     name: "avatar.svg",
@@ -87,7 +106,6 @@ test("profile avatar crop exports a transparent circular image", async ({ page }
   expect(alpha.corner).toBe(0);
   expect(alpha.center).toBeGreaterThan(240);
 
-  await page.getByRole("button", { name: "保存资料" }).click();
   await expect.poll(() => state.userProfile.avatarDataUrl ?? "").toMatch(/^data:image\/(?:webp|png);base64,/);
 });
 

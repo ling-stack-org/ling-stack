@@ -18,10 +18,9 @@ insight second**:
 
 - Primary job: edit the local user identity shown in channel messages, private chats, and
   approval records.
-- Secondary job: show a light usage summary that reassures the user the profile is tied
-  to local activity.
-- Supporting job: show usage insight by default, but keep it compact and clearly
-  secondary to identity editing.
+- Secondary job: show a light, data-first usage summary after the identity task.
+- Removed job: do not show a separate display preview card. The page should not explain
+  profile usage through static message previews or muted usage chips.
 
 No daemon API, storage, schema, or profile semantics should change.
 
@@ -47,10 +46,12 @@ No daemon API, storage, schema, or profile semantics should change.
 Settings `Profile` should answer three questions in order:
 
 1. **Who will I appear as?**
-2. **Where will this identity be used?**
+2. **Can I edit the visible name and avatar in place?**
 3. **Is there any useful local activity summary attached to this profile?**
 
 The page should not make the user interpret analytics before they can edit identity.
+It should also not ask the user to read a preview card to understand why profile fields
+exist; labels and the surrounding Settings context are enough.
 
 ## Detailed Design
 
@@ -59,51 +60,68 @@ The page should not make the user interpret analytics before they can edit ident
 Use a Settings-native layout, not a profile hero layout:
 
 1. Page header:
-   - Title: `个人资料`
-   - Description: `设置你在频道、私聊和审批记录中的显示身份。`
+   - The Settings left navigation already says `个人资料`; the right content does not
+     repeat a large `个人资料` title or show a refresh button.
+   - No persistent explanatory paragraph by default.
    - No extra top-level `Profile identity` card title above the same content.
 
 2. Primary area:
-   - Two-column desktop grid.
-   - Left column: `身份信息` card.
-   - Right column: `显示预览` card.
-   - Columns stay visually balanced; neither side should span the full page unless the
-     viewport is narrow.
+   - A centered identity block: avatar, display name, edit icon, and read-only `@handle`.
+   - No visible card title, no username field, no permanent display-name input, no save
+     footer.
+   - The avatar corner camera icon is the avatar edit trigger; do not show a separate
+     `更换头像` text button.
+   - Handle is read-only in Settings and appears only as the compact `@handle` identity
+     marker near the avatar.
 
 3. Secondary area:
-   - `使用摘要` as a compact Settings card under the primary area.
+   - Usage metrics sit under the primary identity section without a duplicate `使用摘要`
+     heading.
    - Show a short row of metrics first.
-   - `使用洞察` is expanded by default, but must remain compact: token heatmap, horizontal
-     continuous-use metrics, and a compact skill list/empty state.
+   - `使用洞察` renders directly after the metric row: token heatmap, continuous-use
+     metrics, and skill usage should stay compact and secondary.
 
-### Identity Information Card
+### Identity Editing Section
 
 This is the main task surface.
 
-- Avatar size: 72-80px, left aligned with the form, not a centered 112px hero.
-- Avatar action: icon button overlay or adjacent `更换头像`; keep existing crop dialog.
+- Avatar size: about 90px, centered with the name block, but not wrapped in a hero card.
+- Avatar action: corner camera icon only; keep existing crop dialog.
 - Fields:
-  - `昵称`
-  - `用户名`
-  - Inline helper: `仅用于本地工作区显示。`
+   - No field is visible by default.
+   - Clicking the low-emphasis edit icon beside the name turns the name text into an
+     inline input.
+   - The edit icon is a ghost inline action: it stays visually quiet by default and
+     becomes clear on row hover, button hover, or keyboard focus.
+   - Blur or Enter saves the name and exits editing; Escape cancels.
+- Read-only identity:
+   - `@用户名` appears near the avatar and cannot be edited in Settings.
 - Actions:
-  - Primary: `保存资料`, right aligned in the card footer.
-  - Secondary: `重置更改` only when there are unsaved edits.
+   - No persistent `保存资料` or `重置更改` buttons in Settings.
+   - Avatar crop confirmation saves immediately.
 - Feedback:
-  - Success is lightweight and temporary near the footer.
-  - Save errors remain visible until another edit or retry.
+  - Saving, success, and error feedback appear in a top-center transient toast, not under
+    the avatar/name block.
+  - Toast styling should follow a Sonner-like neutral panel: subtle border, light shadow,
+    small state dot, and no large success-colored pill.
+  - Toast duration is 3 seconds. Motion is a soft slide/fade; reduced-motion users get a
+    fade-only variant.
 
-### Display Preview Card
+### Removed Display Preview
 
-This card explains why the profile matters.
+The display preview area should be removed entirely.
 
-- Show a compact message preview using the current avatar, display name, and handle.
-- Include three muted usage chips or rows:
-  - `频道消息`
-  - `AI 队友私聊`
-  - `审批记录`
-- Copy should be concrete: `这些位置会使用你的头像和昵称。`
-- Do not add new behavior; this is a static preview derived from current form state.
+- Do not render a `显示预览` / `Display preview` card.
+- Do not render static message previews for the profile.
+- Do not render usage chips such as `频道消息`, `AI 队友私聊`, or `审批记录`.
+- Do not keep a muted paragraph explaining that these places use the avatar and display
+  name.
+- Remove unused preview-only components, styles, tests, and i18n keys once the
+  implementation no longer references them.
+
+Rationale: Settings `Profile` is an editing task. The preview repeats what the labels
+already imply, adds gray explanatory copy, and makes the page feel like a personal
+dashboard rather than a calm management surface.
 
 ### Usage Summary Card
 
@@ -116,8 +134,8 @@ Usage data should be summary-first.
   - `已使用技能`
 - Token totals and streaks may appear as inline secondary metadata, not as five equal
   large tiles.
-- `使用洞察` should be expanded by default. The heatmap may be visible there, but it must
-  use a fixed-height compact area so it does not dominate the page.
+- `使用洞察` is visible by default, but it must use a fixed-height area so it does not
+  dominate the page.
 - Continuous-use details are needed, but they should be a horizontal compact metric row,
   not a right-side vertical stack.
 - If there is no meaningful activity, show one compact empty row:
@@ -127,8 +145,19 @@ Usage data should be summary-first.
 
 - Use Settings-specific classes and tokens; do not rely on profile homepage styling for
   the embedded Settings page.
-- No centered avatar hero.
+- No profile homepage header, refresh button, or save footer in Settings.
+- The centered avatar/name block is the page task, not a decorative hero.
 - No full-width stat strip as the first content after identity fields.
+- No `显示预览` card or static profile preview.
+- No duplicate `身份信息` or `使用摘要` section title under the `个人资料` page title.
+- No editable username field in Settings.
+- No permanent display-name input in Settings.
+- No text `更换头像` button; the camera icon changes the avatar.
+- Name edit affordance must stay low-emphasis by default; do not render it as a visible
+  standalone round button.
+- Save/saving/error feedback must not occupy the identity block. Use the top-center
+  toast pattern instead.
+- No usage-insight disclosure toggle; compact insight content is directly visible.
 - No large gray field walls; neutral background is only for cards, selected rows, empty
   states, or warnings.
 - Keep row height and spacing close to other Settings cards: compact, scannable, and
@@ -140,9 +169,10 @@ Usage data should be summary-first.
 - `ProfilePage` should stop being both the Settings page and the analytics page.
 - Extract profile-specific UI into small components:
   - `ProfileIdentityCard`
-  - `ProfilePreviewCard`
   - `ProfileUsageSummary`
   - optional `ProfileUsageDetails`
+- Remove `ProfilePreviewCard`, `ProfilePreviewAvatar`, and `ProfilePreviewUsage` when no
+  longer referenced.
 - Keep profile data loading in a small controller or the existing page until extraction is
   needed; do not move profile logic into `SettingsPage`.
 - `PersonalInterfaceSettingsPanel` should render the Settings-oriented profile surface,
@@ -164,8 +194,17 @@ Usage data should be summary-first.
 
 ## Acceptance Criteria
 
-- A user can identify the main task within one glance: edit avatar, nickname, and handle.
-- The page explains where the identity appears without needing long explanatory copy.
+- A user can identify the main task within one glance: edit avatar and nickname.
+- Username/handle is not editable in Settings.
+- The right content does not repeat a large `个人资料` heading and does not show a
+  refresh button.
+- Nickname editing is inline, saved on blur/Enter, and cancellable with Escape.
+- Edit icon is subtle by default and only becomes prominent on hover/focus.
+- Save/saving/error feedback uses the top-center neutral toast and disappears
+  automatically.
+- Avatar crop confirmation saves without a separate `保存资料` click.
+- No `显示预览` / `Display preview` section is visible.
+- The page does not rely on gray explanatory copy to justify profile fields.
 - Usage analytics are visible but clearly secondary.
 - Settings visual language matches the surrounding Settings pages.
 - No duplicate `Profile identity` / `个人资料` heading stack.
@@ -175,7 +214,8 @@ Usage data should be summary-first.
 ## Assumptions
 
 - `Profile` remains a Settings entry.
-- Detailed usage analytics are useful enough to show by default, but they remain
-  secondary to identity editing and must not use a dashboard-style layout.
+- Detailed usage analytics are useful enough to keep available, but they remain secondary
+  to identity editing and must not use a dashboard-style layout.
 - The existing avatar crop dialog is functionally acceptable and should be retained.
 - This pass should not create a new global analytics page.
+- Removing display preview does not change where the saved profile identity is used.
