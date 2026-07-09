@@ -151,7 +151,7 @@ export function ChannelCreateDialog({
           </button>
           <button className="primary-button compact-button" type="button" onClick={onCreateChannel} disabled={creating}>
             {creating ? <Loader2 className="spin" size={14} /> : <Plus size={14} />}
-            {creating ? t("Creating isolated workspace...") : t("Create channel")}
+            {creating ? t("Creating channel...") : t("Create channel")}
           </button>
         </>
       )}
@@ -237,7 +237,7 @@ export function ChannelCreateDialog({
                   ) : null}
                 </div>
                 <small className={projectError ? "channel-create-project-note error" : "channel-create-project-note"}>
-                  {projectError || t("Ling will create an isolated channel workspace from this Git repository.")}
+                  {projectError || t("Git repositories use isolated channel workspaces; other folders run directly from the selected folder.")}
                 </small>
               </div>
             </div>
