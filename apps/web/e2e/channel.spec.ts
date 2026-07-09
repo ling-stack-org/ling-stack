@@ -1482,6 +1482,62 @@ test("empty channel drawer opens the new channel dialog", async ({ page }) => {
   await expect(navigation.getByRole("button", { name: "Launch Ops" })).toBeVisible();
 });
 
+test("new channel dialog selects a project folder before create", async ({ page }) => {
+  await useEnglishLocale(page);
+  const state = createBaseState({ approvalStatus: "pending" });
+  await mockDaemon(page, state);
+  await page.goto("/");
+
+  const navigation = page.getByLabel("Ling Stack navigation");
+  await navigation.getByRole("button", { name: "Channel actions" }).click();
+  await navigation.getByRole("menuitem", { name: "New channel" }).click();
+
+  const createChannelPanel = page.getByRole("dialog", { name: "New channel" });
+  const selectedPath = "/Users/gsx/minimax-agent-cn/projects";
+  const projectTrigger = createChannelPanel.getByRole("button", { name: "Project directory" });
+  await expect(projectTrigger).toContainText("ling-stack-workspace");
+  await projectTrigger.click();
+
+  const projectMenu = createChannelPanel.getByRole("menu", { name: "Project folder options" });
+  await expect(projectMenu).toBeVisible();
+  await expect(projectMenu.getByRole("menuitemradio", { name: /ling-stack-workspace/ })).toBeVisible();
+  await projectMenu.getByRole("menuitem", { name: /Use existing folder/ }).click();
+
+  await expect(projectTrigger).toContainText("projects");
+  await expect(projectTrigger).toContainText(selectedPath);
+  await createChannelPanel.getByLabel("Name").fill("Project Source");
+  await createChannelPanel.getByRole("button", { name: "Create channel" }).click();
+
+  await expect.poll(() => {
+    const channel = state.channels.find((item) => isRecord(item) && item.name === "Project Source");
+    return isRecord(channel) ? channel.boundPath : "";
+  }).toBe(selectedPath);
+  await expect(createChannelPanel).toHaveCount(0);
+});
+
+test("new channel dialog shows create failures inline", async ({ page }) => {
+  await useEnglishLocale(page);
+  const state = createBaseState({ approvalStatus: "pending" });
+  state.failNextChannelCreate = {
+    error: "not_git_repository",
+    message: "当前工作区不是 Git 仓库，无法创建独立频道工作区。",
+  };
+  await mockDaemon(page, state);
+  await page.goto("/");
+
+  const navigation = page.getByLabel("Ling Stack navigation");
+  await navigation.getByRole("button", { name: "Channel actions" }).click();
+  await navigation.getByRole("menuitem", { name: "New channel" }).click();
+
+  const createChannelPanel = page.getByRole("dialog", { name: "New channel" });
+  await createChannelPanel.getByLabel("Name").fill("Broken Repo");
+  await createChannelPanel.getByRole("button", { name: "Create channel" }).click();
+
+  await expect(createChannelPanel).toBeVisible();
+  await expect(createChannelPanel.getByRole("alert")).toContainText("当前工作区不是 Git 仓库，无法创建独立频道工作区。");
+  expect(state.channels.some((channel) => isRecord(channel) && channel.name === "Broken Repo")).toBe(false);
+});
+
 test("channel drawer uses unread dots instead of count badges and clears on channel open", async ({ page }) => {
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");

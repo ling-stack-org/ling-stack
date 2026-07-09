@@ -42,7 +42,7 @@ import type { DomainEvent } from "./domain-events.js";
 import type { ApprovalResolution } from "../features/approvals/types.js";
 import { PageInspector } from "../features/inspector/PageInspector.js";
 import { SidebarNavigation, type SidebarRecentConversation } from "../features/navigation/SidebarNavigation.js";
-import { ChannelCreateDialog } from "../features/workspace/ChannelCreateDialog.js";
+import { ChannelCreateDialog, type ChannelCreateProjectOption } from "../features/workspace/ChannelCreateDialog.js";
 import { ConversationHome, type ConversationHomeMessage } from "../features/workspace/ConversationHome.js";
 import {
   LazyAutomationsPage as AutomationsPage,
@@ -891,6 +891,7 @@ export function AppShell(): JSX.Element {
   function openChannelCreatePanel(): void {
     const workspaceCwd = form.cwd.trim();
     const selectedChannel = channels.find((channel) => channel.id === selectedChannelId);
+    setErrorMessage("");
     setChannelForm((current) => ({
       ...defaultChannelCreateForm,
       ...current,
@@ -2830,10 +2831,12 @@ export function AppShell(): JSX.Element {
         <ChannelCreateDialog
           cwd={form.cwd}
           form={channelForm}
+          projectOptions={buildChannelCreateProjectOptions(form.cwd, channels)}
           providers={providers}
           providersLoading={providersLoading}
           teammates={localTeammates}
           creating={channelsLoading}
+          errorMessage={errorMessage}
           onFormChange={setChannelForm}
           onCreateChannel={() => void saveChannel()}
           onClose={() => setChannelCreateOpen(false)}
@@ -2882,6 +2885,27 @@ export function AppShell(): JSX.Element {
       ) : null}
     </main>
   );
+}
+
+function buildChannelCreateProjectOptions(
+  workspaceCwd: string,
+  channels: readonly Channel[],
+): readonly ChannelCreateProjectOption[] {
+  const paths = [
+    workspaceCwd.trim(),
+    ...channels.map((channel) => channel.boundPath?.trim() ?? ""),
+  ].filter((path): path is string => Boolean(path));
+  const seen = new Set<string>();
+  return paths.flatMap((path) => {
+    if (seen.has(path)) {
+      return [];
+    }
+    seen.add(path);
+    return [{
+      path,
+      label: summarizeConversationProjectPath(path),
+    }];
+  });
 }
 
 function readRequestPermissionMode(requestBody: unknown): SessionPermissionMode | undefined {

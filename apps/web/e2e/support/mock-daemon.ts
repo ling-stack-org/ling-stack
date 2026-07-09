@@ -52,6 +52,7 @@ export interface MockState {
   mcpTools: MockMcpTool[];
   teammateMcpBindings: MockTeammateMcpBinding[];
   channels: unknown[];
+  failNextChannelCreate?: { readonly error: string; readonly message: string; readonly status?: number };
   channelBranches: unknown[];
   channelWorkspaceGitStatusByChannel: Record<string, WorkspaceGitStatus | MockWorkspaceGitStatusFailure>;
   channelMessages: unknown[];
@@ -8586,6 +8587,15 @@ export async function handleDaemonRoute(
   }
   if (request.method() === "POST" && path === "/channels") {
     const body = await request.postDataJSON() as Record<string, unknown>;
+    if (state.failNextChannelCreate) {
+      const failure = state.failNextChannelCreate;
+      state.failNextChannelCreate = undefined;
+      await route.fulfill({
+        status: failure.status ?? 400,
+        json: { error: failure.error, message: failure.message },
+      });
+      return;
+    }
     const channelId = `channel_created_${state.channels.length + 1}`;
     const channel = {
       ...createChannelFromBody(body, channelId),
