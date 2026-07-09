@@ -56,8 +56,9 @@ No daemon API, contracts, SQLite schema, or profile persistence behavior changes
    - Name edit icon is a low-emphasis inline ghost action by default; hover/focus may
      reveal a subtle background.
    - Avatar edit is the corner camera icon only.
-   - Profile save/saving/error feedback uses a top-center Sonner-like toast: neutral
-     panel, subtle shadow, small state dot, 3-second auto-dismiss, reduced-motion fade.
+   - Profile save/saving/error feedback uses the shared `Ling Toast` from
+     [Global Feedback Toast System](global-feedback-toast-system.md): porcelain neutral
+     panel, subtle shadow, small status bead, 3-second auto-dismiss, reduced-motion fade.
    - Secondary layout: compact usage metrics plus directly visible insight content.
    - Remove `.profile-preview-*` styles after deleting the preview surface.
 
@@ -125,8 +126,9 @@ No daemon API, contracts, SQLite schema, or profile persistence behavior changes
 - Added inline display-name editing with blur/Enter auto-save and Escape cancel.
 - Tuned the display-name edit icon into a low-emphasis inline ghost action.
 - Settings avatar crop confirmation now saves immediately.
-- Replaced the profile status line with a Sonner-like top-center toast that auto-dismisses
-  and stays outside the identity block.
+- Replaced the profile status line with a top-center toast that auto-dismisses and stays
+  outside the identity block. Follow-up: route it through the shared `Ling Toast`
+  provider when the global feedback component ships.
 - Kept standalone profile save/reset-style behavior, avatar crop, and profile usage
   summary working.
 - Usage insights now render directly without a disclosure toggle.

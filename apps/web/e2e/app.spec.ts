@@ -528,9 +528,9 @@ test("sidebar text entries route to context-aware inspectors", async ({ page }) 
   await expect(page.locator(".council-workspace-page[aria-label='Council Workspace']")).toBeVisible();
   await expect(settingsSections.getByRole("button", { name: "Council Workspace" })).toHaveClass(/active/);
   await expect(page.locator(".settings-tool-return-row")).toHaveCount(0);
-  await expect(settingsSections.getByRole("button", { name: /Profile/ })).toBeVisible();
+  await expect(settingsSections.getByRole("button", { name: /^User profile$/ })).toBeVisible();
   await expect(settingsSections.getByRole("button", { name: /Interface preferences/ })).toBeVisible();
-  await settingsSections.getByRole("button", { name: /Profile/ }).click();
+  await settingsSections.getByRole("button", { name: /^User profile$/ }).click();
   await expect(page.getByRole("heading", { name: "User profile", level: 1 })).toHaveCount(0);
   await expect(page.locator(".profile-settings-identity-block")).toBeVisible();
   await expect(page.getByRole("heading", { name: "Identity information" })).toHaveCount(0);
