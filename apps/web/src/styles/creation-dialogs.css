@@ -205,6 +205,171 @@
   grid-column: 1 / -1;
 }
 
+.channel-create-project-field {
+  position: relative;
+}
+
+.channel-create-project-picker {
+  position: relative;
+}
+
+.channel-create-project-trigger,
+.channel-create-project-option {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  color: var(--text-primary);
+  text-align: left;
+}
+
+.channel-create-project-trigger {
+  min-height: 52px;
+  padding: 8px 10px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  background: var(--surface-panel-strong);
+  transition: border-color 140ms ease, background 140ms ease, box-shadow 140ms ease;
+}
+
+.channel-create-project-trigger:hover:not(:disabled),
+.channel-create-project-trigger[aria-expanded="true"] {
+  border-color: var(--accent-border);
+  background: var(--surface-panel);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.channel-create-project-trigger:disabled {
+  cursor: not-allowed;
+  opacity: 0.68;
+}
+
+.channel-create-project-trigger svg,
+.channel-create-project-option svg {
+  color: var(--text-secondary);
+}
+
+.channel-create-project-trigger .expanded {
+  transform: rotate(180deg);
+}
+
+.channel-create-project-label,
+.channel-create-project-option span {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.channel-create-project-label strong,
+.channel-create-project-option strong {
+  overflow: hidden;
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 800;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.channel-create-project-label small,
+.channel-create-project-option small,
+.channel-create-project-note {
+  overflow: hidden;
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.channel-create-project-note.error {
+  color: var(--danger);
+}
+
+.channel-create-project-menu {
+  position: absolute;
+  z-index: 30;
+  top: calc(100% + 6px);
+  left: 0;
+  display: grid;
+  gap: 8px;
+  width: min(430px, 100%);
+  padding: 8px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 10px;
+  background: var(--surface-panel-strong);
+  box-shadow: 0 18px 42px rgba(17, 17, 17, 0.14);
+}
+
+.channel-create-project-search {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  padding: 0 8px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  background: var(--surface-panel);
+}
+
+.channel-create-project-search svg {
+  color: var(--text-secondary);
+}
+
+.channel-create-project-search input {
+  min-height: 34px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.channel-create-project-options {
+  display: grid;
+  gap: 3px;
+  max-height: 190px;
+  overflow: auto;
+}
+
+.channel-create-project-option {
+  min-height: 42px;
+  padding: 7px 8px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+}
+
+.channel-create-project-option:hover:not(:disabled),
+.channel-create-project-option:focus-visible,
+.channel-create-project-option.selected {
+  background: var(--surface-hover);
+}
+
+.channel-create-project-option.selected strong {
+  color: var(--accent);
+}
+
+.channel-create-project-option.action {
+  grid-template-columns: auto minmax(0, 1fr);
+}
+
+.channel-create-project-option:disabled {
+  cursor: wait;
+  opacity: 0.7;
+}
+
+.channel-create-project-divider {
+  height: 1px;
+  background: var(--border-subtle);
+}
+
+.channel-create-project-empty {
+  padding: 10px 8px;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
 .channel-create-dialog-clean input,
 .channel-create-dialog-clean select,
 .teammate-create-dialog input,
@@ -227,6 +392,17 @@
   padding: 9px 10px;
   border-radius: 8px;
   transition: border-color 140ms ease, background 140ms ease, box-shadow 140ms ease;
+}
+
+.channel-create-error {
+  padding: 10px 12px;
+  border: 1px solid var(--danger-border);
+  border-radius: 8px;
+  background: var(--danger-soft);
+  color: var(--danger);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.45;
 }
 
 .channel-create-dialog-clean .channel-create-teammate:hover,
