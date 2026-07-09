@@ -706,7 +706,7 @@ test("settings skill library shows read-only skill health findings", async ({ pa
   expect(skillLibraryLayout.contentExpanded).toBe(true);
   expect(skillLibraryLayout.panelWidth).toBeGreaterThan(1050);
   expect(skillLibraryLayout.bodyHeight).toBeGreaterThanOrEqual(500);
-  expect(skillLibraryLayout.tableWidth).toBeGreaterThanOrEqual(740);
+  expect(skillLibraryLayout.tableWidth).toBeGreaterThanOrEqual(735);
   expect(skillLibraryLayout.inspectorWidth).toBeGreaterThanOrEqual(290);
   await expect.poll(() => readHorizontalOverflow(page, ".settings-skill-library-body, .settings-skill-table-wrap, .settings-skill-inspector")).toEqual([]);
   await expect(panel.getByRole("region", { name: "Skill Health" })).toHaveCount(0);

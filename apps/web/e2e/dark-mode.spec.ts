@@ -90,8 +90,9 @@ test("main pages and workspace tools follow dark theme tokens", async ({ page })
   await expect(page.locator(".profile-settings-surface")).toBeVisible();
   await assertDarkPage(page, "account profile settings", [
     ".profile-settings-surface",
-    ".profile-settings-head",
-    ".profile-settings-card",
+    ".profile-settings-identity-block",
+    ".profile-settings-name-row",
+    ".profile-settings-section",
     ".profile-usage-summary-grid",
   ]);
 

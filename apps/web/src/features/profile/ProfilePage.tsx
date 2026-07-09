@@ -69,18 +69,25 @@ export function ProfilePage({
     }
   }
 
-  async function saveProfile(event?: FormEvent<HTMLFormElement>): Promise<void> {
-    event?.preventDefault();
+  async function saveProfilePatch({
+    displayName: nextDisplayName = displayName,
+    handle: nextHandle = normalizeHandle(handle) || null,
+    avatarDataUrl: nextAvatarDataUrl = avatarDataUrl ?? null,
+  }: {
+    readonly displayName?: string;
+    readonly handle?: string | null;
+    readonly avatarDataUrl?: string | null;
+  }): Promise<UserProfile | undefined> {
     if (!cwd.trim() || saving) {
-      return;
+      return undefined;
     }
     setSaving(true);
     setMessage("");
     try {
       const response = await updateUserProfile(cwd, {
-        displayName,
-        handle: normalizeHandle(handle) || null,
-        avatarDataUrl: avatarDataUrl ?? null,
+        displayName: nextDisplayName,
+        handle: nextHandle,
+        avatarDataUrl: nextAvatarDataUrl,
       });
       setProfile(response.profile);
       onProfileChange?.(response.profile);
@@ -88,10 +95,55 @@ export function ProfilePage({
       setHandle(response.profile.handle ?? "");
       setAvatarDataUrl(response.profile.avatarDataUrl);
       setMessage(t("Profile saved"));
+      return response.profile;
     } catch (caught) {
       setMessage(caught instanceof Error ? caught.message : String(caught));
+      return undefined;
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function saveProfile(event?: FormEvent<HTMLFormElement>): Promise<void> {
+    event?.preventDefault();
+    await saveProfilePatch({
+      displayName,
+      handle: normalizeHandle(handle) || null,
+      avatarDataUrl: avatarDataUrl ?? null,
+    });
+  }
+
+  async function commitSettingsDisplayName(value: string): Promise<void> {
+    const nextDisplayName = value.trim();
+    const previousDisplayName = profile?.displayName ?? displayName;
+    if (!nextDisplayName || nextDisplayName === previousDisplayName) {
+      setDisplayName(previousDisplayName);
+      return;
+    }
+    const currentHandle = profile?.handle ?? normalizeHandle(handle);
+    setDisplayName(nextDisplayName);
+    const savedProfile = await saveProfilePatch({
+      displayName: nextDisplayName,
+      handle: currentHandle || null,
+      avatarDataUrl: avatarDataUrl ?? null,
+    });
+    if (!savedProfile) {
+      setDisplayName(previousDisplayName);
+    }
+  }
+
+  async function commitSettingsAvatar(avatarDataUrlPatch: string): Promise<void> {
+    const previousAvatarDataUrl = avatarDataUrl;
+    const currentHandle = profile?.handle ?? normalizeHandle(handle);
+    setAvatarCropSource(undefined);
+    setAvatarDataUrl(avatarDataUrlPatch);
+    const savedProfile = await saveProfilePatch({
+      displayName: displayName || profile?.displayName || "Ling User",
+      handle: currentHandle || null,
+      avatarDataUrl: avatarDataUrlPatch,
+    });
+    if (!savedProfile) {
+      setAvatarDataUrl(previousAvatarDataUrl);
     }
   }
 
@@ -118,39 +170,22 @@ export function ProfilePage({
   const initials = initialsFromName(displayName || profile?.displayName || "Ling User");
   const visibleHandle = normalizeHandle(handle) || profile?.handle || "local-user";
 
-  function resetProfileChanges(): void {
-    if (!profile) {
-      return;
-    }
-    setDisplayName(profile.displayName);
-    setHandle(profile.handle ?? "");
-    setAvatarDataUrl(profile.avatarDataUrl);
-    setMessage("");
-  }
-
   if (variant === "settings") {
     return (
       <>
         <ProfileSettingsSurface
           displayName={displayName}
-          handle={handle}
           visibleHandle={visibleHandle}
           avatarDataUrl={avatarDataUrl}
           initials={initials}
           metrics={metrics}
           activity={activity}
           activityMode={activityMode}
-          loading={loading}
           saving={saving}
-          hasProfileChanges={hasProfileChanges}
           message={message}
           fileInputRef={fileInputRef}
-          onRefresh={() => void refresh()}
-          onSave={(event) => void saveProfile(event)}
-          onReset={resetProfileChanges}
           onAvatarChange={(event) => void handleAvatarChange(event)}
-          onDisplayNameChange={setDisplayName}
-          onHandleChange={setHandle}
+          onCommitDisplayName={(value) => void commitSettingsDisplayName(value)}
           onActivityModeChange={setActivityMode}
           formatCompactNumber={formatCompactNumber}
           formatDuration={formatDuration}
@@ -159,11 +194,7 @@ export function ProfilePage({
           <AvatarCropDialog
             sourceDataUrl={avatarCropSource}
             onCancel={() => setAvatarCropSource(undefined)}
-            onConfirm={(croppedAvatarDataUrl) => {
-              setAvatarDataUrl(croppedAvatarDataUrl);
-              setAvatarCropSource(undefined);
-              setMessage(t("Avatar adjusted. Save to apply."));
-            }}
+            onConfirm={(croppedAvatarDataUrl) => void commitSettingsAvatar(croppedAvatarDataUrl)}
           />
         ) : null}
       </>

@@ -1,5 +1,5 @@
-import { type ChangeEvent, type FormEvent, type RefObject } from "react";
-import { Bot, Camera, Check, MessageSquare, RefreshCw, RotateCcw, ShieldCheck, Sparkles, UserRound } from "lucide-react";
+import { useEffect, useRef, useState, type ChangeEvent, type KeyboardEvent, type RefObject } from "react";
+import { Camera, Pencil, Sparkles } from "lucide-react";
 import { useI18n } from "../../i18n.js";
 
 export type ActivityMode = "day" | "week" | "total";
@@ -26,24 +26,17 @@ export interface ProfileActivityCalendar {
 
 interface ProfileSettingsSurfaceProps {
   readonly displayName: string;
-  readonly handle: string;
   readonly visibleHandle: string;
   readonly avatarDataUrl: string | undefined;
   readonly initials: string;
   readonly metrics: ProfileMetrics;
   readonly activity: ProfileActivityCalendar;
   readonly activityMode: ActivityMode;
-  readonly loading: boolean;
   readonly saving: boolean;
-  readonly hasProfileChanges: boolean;
   readonly message: string;
   readonly fileInputRef: RefObject<HTMLInputElement>;
-  readonly onRefresh: () => void;
-  readonly onSave: (event?: FormEvent<HTMLFormElement>) => void;
-  readonly onReset: () => void;
   readonly onAvatarChange: (event: ChangeEvent<HTMLInputElement>) => void;
-  readonly onDisplayNameChange: (value: string) => void;
-  readonly onHandleChange: (value: string) => void;
+  readonly onCommitDisplayName: (value: string) => void | Promise<void>;
   readonly onActivityModeChange: (mode: ActivityMode) => void;
   readonly formatCompactNumber: (value: number) => string;
   readonly formatDuration: (value: number) => string;
@@ -51,108 +44,152 @@ interface ProfileSettingsSurfaceProps {
 
 export function ProfileSettingsSurface({
   displayName,
-  handle,
   visibleHandle,
   avatarDataUrl,
   initials,
   metrics,
   activity,
   activityMode,
-  loading,
   saving,
-  hasProfileChanges,
   message,
   fileInputRef,
-  onRefresh,
-  onSave,
-  onReset,
   onAvatarChange,
-  onDisplayNameChange,
-  onHandleChange,
+  onCommitDisplayName,
   onActivityModeChange,
   formatCompactNumber,
   formatDuration,
 }: ProfileSettingsSurfaceProps): JSX.Element {
   const { t } = useI18n();
+  const nameInputRef = useRef<HTMLInputElement | null>(null);
+  const skipBlurCommitRef = useRef(false);
+  const [editingName, setEditingName] = useState(false);
+  const [draftName, setDraftName] = useState(displayName);
+  const [toast, setToast] = useState<{ readonly message: string; readonly tone: "ok" | "danger" } | undefined>();
   const resolvedName = displayName.trim() || "Ling User";
-  const isSuccessMessage = message.includes(t("Saved")) || message.includes(t("Profile saved")) || message.includes(t("Avatar adjusted. Save to apply."));
+  const statusMessage = saving ? t("Saving") : message;
+  const isSuccessMessage = message.includes(t("Saved")) || message.includes(t("Profile saved"));
+  const isOkStatus = saving || isSuccessMessage;
+
+  useEffect(() => {
+    if (!editingName) {
+      setDraftName(displayName);
+    }
+  }, [displayName, editingName]);
+
+  useEffect(() => {
+    if (!editingName) {
+      return;
+    }
+    const frameId = window.requestAnimationFrame(() => {
+      nameInputRef.current?.focus();
+      nameInputRef.current?.select();
+    });
+    return () => window.cancelAnimationFrame(frameId);
+  }, [editingName]);
+
+  useEffect(() => {
+    if (!statusMessage.trim()) {
+      return;
+    }
+    setToast({ message: statusMessage, tone: isOkStatus ? "ok" : "danger" });
+    const timeoutId = window.setTimeout(() => setToast(undefined), 3000);
+    return () => window.clearTimeout(timeoutId);
+  }, [isOkStatus, statusMessage]);
+
+  function startNameEdit(): void {
+    setDraftName(resolvedName);
+    setEditingName(true);
+  }
+
+  function cancelNameEdit(): void {
+    skipBlurCommitRef.current = true;
+    setDraftName(displayName);
+    setEditingName(false);
+  }
+
+  async function commitNameEdit(): Promise<void> {
+    const nextName = draftName.trim();
+    setEditingName(false);
+    if (!nextName || nextName === resolvedName) {
+      setDraftName(displayName);
+      return;
+    }
+    await onCommitDisplayName(nextName);
+  }
+
+  function handleNameBlur(): void {
+    if (skipBlurCommitRef.current) {
+      skipBlurCommitRef.current = false;
+      return;
+    }
+    void commitNameEdit();
+  }
+
+  function handleNameKeyDown(event: KeyboardEvent<HTMLInputElement>): void {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      void commitNameEdit();
+      return;
+    }
+    if (event.key === "Escape") {
+      event.preventDefault();
+      cancelNameEdit();
+    }
+  }
 
   return (
     <div className="profile-settings-surface" aria-label={t("User profile")}>
-      <header className="profile-settings-head">
-        <div>
-          <h1>{t("User profile")}</h1>
-          <p>{t("Set the identity shown in channels, private chats, and approval records.")}</p>
+      {toast ? (
+        <div className={`profile-settings-tip ${toast.tone}`} role={toast.tone === "ok" ? "status" : "alert"} aria-live={toast.tone === "ok" ? "polite" : "assertive"}>
+          {toast.message}
         </div>
-        <button className="secondary-button compact-button" type="button" onClick={onRefresh} disabled={loading}>
-          <RefreshCw size={14} />
-          <span>{loading ? t("Refreshing") : t("Refresh")}</span>
+      ) : null}
+
+      <section className="profile-settings-section profile-settings-identity-block" aria-label={t("User profile")}>
+        <button
+          className={avatarDataUrl ? "profile-avatar-button profile-settings-avatar has-avatar" : "profile-avatar-button profile-settings-avatar"}
+          type="button"
+          onClick={() => fileInputRef.current?.click()}
+          aria-label={t("Change avatar")}
+          title={t("Change avatar")}
+        >
+          {avatarDataUrl ? <img src={avatarDataUrl} alt="" /> : <span>{initials}</span>}
+          <span className="profile-avatar-edit"><Camera size={15} /></span>
         </button>
-      </header>
+        <input ref={fileInputRef} type="file" accept="image/*" hidden onChange={onAvatarChange} />
 
-      <div className="profile-settings-primary-grid">
-        <section className="profile-settings-card profile-identity-card" aria-label={t("Identity information")}>
-          <div className="profile-settings-card-head">
-            <span className="profile-settings-card-icon"><UserRound size={16} /></span>
-            <div>
-              <h2>{t("Identity information")}</h2>
-              <p>{t("Only used for display in this local workspace.")}</p>
-            </div>
-          </div>
-
-          <form className="profile-settings-form" onSubmit={onSave}>
-            <div className="profile-settings-avatar-row">
+        <div className="profile-settings-name-stack">
+          {editingName ? (
+            <input
+              ref={nameInputRef}
+              className="profile-settings-name-input"
+              aria-label={t("Display name")}
+              value={draftName}
+              maxLength={80}
+              disabled={saving}
+              onChange={(event) => setDraftName(event.target.value)}
+              onBlur={handleNameBlur}
+              onKeyDown={handleNameKeyDown}
+            />
+          ) : (
+            <div className="profile-settings-name-row">
+              <strong title={resolvedName}>{resolvedName}</strong>
               <button
-                className={avatarDataUrl ? "profile-avatar-button profile-settings-avatar has-avatar" : "profile-avatar-button profile-settings-avatar"}
+                className="profile-settings-name-edit"
                 type="button"
-                onClick={() => fileInputRef.current?.click()}
-                aria-label={t("Change avatar")}
-                title={t("Change avatar")}
+                onClick={startNameEdit}
+                disabled={saving}
+                aria-label={t("Edit display name")}
+                title={t("Edit display name")}
               >
-                {avatarDataUrl ? <img src={avatarDataUrl} alt="" /> : <span>{initials}</span>}
-                <span className="profile-avatar-edit"><Camera size={14} /></span>
+                <Pencil size={13} />
               </button>
-              <div>
-                <strong>{resolvedName}</strong>
-                <span>@{visibleHandle}</span>
-                <button className="secondary-button compact-button" type="button" onClick={() => fileInputRef.current?.click()}>
-                  {t("Change avatar")}
-                </button>
-              </div>
             </div>
-            <input ref={fileInputRef} type="file" accept="image/*" hidden onChange={onAvatarChange} />
+          )}
+          <span>@{visibleHandle}</span>
+        </div>
 
-            <div className="profile-settings-fields">
-              <label>
-                <span>{t("Display name")}</span>
-                <input value={displayName} onChange={(event) => onDisplayNameChange(event.target.value)} maxLength={80} />
-              </label>
-              <label>
-                <span>{t("Handle")}</span>
-                <input value={handle} onChange={(event) => onHandleChange(event.target.value)} maxLength={48} placeholder="local-user" />
-              </label>
-            </div>
-
-            <footer className="profile-settings-actions">
-              {message ? <span className={isSuccessMessage ? "profile-inline-message ok" : "profile-inline-message"}>{message}</span> : <span />}
-              <div>
-                {hasProfileChanges ? (
-                  <button className="secondary-button compact-button" type="button" onClick={onReset} disabled={saving}>
-                    <RotateCcw size={14} />
-                    <span>{t("Reset changes")}</span>
-                  </button>
-                ) : null}
-                <button className="primary-button compact-button" type="submit" disabled={!hasProfileChanges || saving}>
-                  {saving ? <RefreshCw size={14} /> : <Check size={14} />}
-                  <span>{saving ? t("Saving") : t("Save profile")}</span>
-                </button>
-              </div>
-            </footer>
-          </form>
-        </section>
-
-        <ProfilePreviewCard displayName={resolvedName} visibleHandle={visibleHandle} avatarDataUrl={avatarDataUrl} initials={initials} />
-      </div>
+      </section>
 
       <ProfileUsageSummary
         metrics={metrics}
@@ -163,62 +200,6 @@ export function ProfileSettingsSurface({
         formatDuration={formatDuration}
       />
     </div>
-  );
-}
-
-function ProfilePreviewCard({
-  displayName,
-  visibleHandle,
-  avatarDataUrl,
-  initials,
-}: {
-  readonly displayName: string;
-  readonly visibleHandle: string;
-  readonly avatarDataUrl: string | undefined;
-  readonly initials: string;
-}): JSX.Element {
-  const { t } = useI18n();
-  return (
-    <section className="profile-settings-card profile-preview-card" aria-label={t("Display preview")}>
-      <div className="profile-settings-card-head">
-        <span className="profile-settings-card-icon"><MessageSquare size={16} /></span>
-        <div>
-          <h2>{t("Display preview")}</h2>
-          <p>{t("These places use your avatar and display name.")}</p>
-        </div>
-      </div>
-      <div className="profile-preview-message" aria-label={t("Profile display preview")}>
-        <ProfilePreviewAvatar avatarDataUrl={avatarDataUrl} initials={initials} />
-        <div>
-          <header>
-            <strong>{displayName}</strong>
-            <span>@{visibleHandle}</span>
-          </header>
-          <p>{t("This identity appears in local messages, private chats, and approval records.")}</p>
-        </div>
-      </div>
-      <div className="profile-preview-usage-list">
-        <ProfilePreviewUsage icon={<MessageSquare size={14} />} label={t("Channel messages")} />
-        <ProfilePreviewUsage icon={<Bot size={14} />} label={t("AI teammate private chat")} />
-        <ProfilePreviewUsage icon={<ShieldCheck size={14} />} label={t("Approval records")} />
-      </div>
-    </section>
-  );
-}
-
-function ProfilePreviewAvatar({ avatarDataUrl, initials }: { readonly avatarDataUrl: string | undefined; readonly initials: string }): JSX.Element {
-  if (avatarDataUrl) {
-    return <img className="profile-preview-avatar" src={avatarDataUrl} alt="" />;
-  }
-  return <span className="profile-preview-avatar profile-preview-avatar-fallback">{initials}</span>;
-}
-
-function ProfilePreviewUsage({ icon, label }: { readonly icon: JSX.Element; readonly label: string }): JSX.Element {
-  return (
-    <span>
-      {icon}
-      {label}
-    </span>
   );
 }
 
@@ -241,15 +222,7 @@ function ProfileUsageSummary({
   const hasActivity = metrics.sessionCount > 0 || metrics.totalEstimatedTokens > 0 || metrics.topSkills.length > 0;
 
   return (
-    <section className="profile-settings-card profile-usage-card" aria-label={t("Usage summary")}>
-      <div className="profile-settings-card-head split">
-        <span className="profile-settings-card-icon"><Sparkles size={16} /></span>
-        <div>
-          <h2>{t("Usage summary")}</h2>
-          <p>{t("Local activity, trends, and streaks stay here.")}</p>
-        </div>
-      </div>
-
+    <section className="profile-settings-section profile-usage-card" aria-label={t("Usage summary")}>
       {hasActivity ? (
         <>
           <div className="profile-usage-summary-grid" aria-label={t("Profile usage summary")}>
@@ -263,8 +236,7 @@ function ProfileUsageSummary({
             <span>{t("Longest task")} <strong>{formatDuration(metrics.longestDurationMs)}</strong></span>
             <span>{t("Longest streak")} <strong>{t("{count} days", { count: metrics.longestStreakDays })}</strong></span>
           </div>
-          <details className="profile-usage-details" open>
-            <summary>{t("Usage insights")}</summary>
+          <div className="profile-usage-details" aria-label={t("Usage insights")}>
             <div className="profile-usage-details-body">
               <div className="profile-section-head">
                 <h3>{t("Token activity")}</h3>
@@ -317,7 +289,7 @@ function ProfileUsageSummary({
                 )}
               </div>
             </div>
-          </details>
+          </div>
         </>
       ) : (
         <p className="profile-usage-empty">{t("Not enough local activity yet.")}</p>
