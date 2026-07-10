@@ -129,6 +129,7 @@ test("AI teammates page creates a durable teammate and opens its private workspa
       updatedAt: "2026-05-22T00:00:00.000Z",
     },
   ];
+  state.providerCheckDelayMs = 120;
   await mockDaemon(page, state);
   await page.goto("/");
 
@@ -199,6 +200,16 @@ test("AI teammates page creates a durable teammate and opens its private workspa
   await expect(creator.getByRole("button", { name: "Private chat summary" })).toHaveCount(0);
   await expect(page.getByLabel("Channel choices")).toHaveCount(0);
   await page.getByRole("button", { name: "Create teammate" }).click();
+  const templateProgress = page.getByLabel("Teammate setup progress");
+  await expect(templateProgress).toBeVisible();
+  await expect(templateProgress).toContainText("Workspace");
+  await expect(templateProgress).toContainText("Model check");
+  await expect(templateProgress).toContainText("Create teammate");
+  await expect(templateProgress).toContainText("Upload avatar");
+  await expect(templateProgress).toContainText("Join channel");
+  await expect(templateProgress).toContainText("Prepare memory");
+  await expect(templateProgress).toContainText("Refresh workspace");
+  await expect(creator).toHaveCount(0);
 
   await expect(page.getByRole("heading", { name: "Ling Engineer", level: 1 })).toBeVisible();
   await expect(page.getByLabel("Ling Stack navigation").locator(".sidebar-row-shell.selected")).toContainText("Ling Engineer");
@@ -248,7 +259,7 @@ test("AI teammates page creates a durable teammate and opens its private workspa
   await expect(page.getByLabel("Workspace teammates")).toContainText("No workspace teammates");
 });
 
-test("sidebar new teammate action opens a prefilled dialog before creating", async ({ page }) => {
+test("sidebar new teammate action supports custom setup with verified progress", async ({ page }) => {
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");
   });
@@ -259,6 +270,7 @@ test("sidebar new teammate action opens a prefilled dialog before creating", asy
     model: "gpt-5.5",
     lastCheck: { ok: true, message: "ok", checkedAt: "2026-05-22T00:00:00.000Z" },
   })];
+  state.providerCheckDelayMs = 120;
   await mockDaemon(page, state);
   await page.goto("/");
 
@@ -276,15 +288,79 @@ test("sidebar new teammate action opens a prefilled dialog before creating", asy
   await expect(creator.getByLabel("Base model")).toHaveValue("provider_local");
   await expect.poll(() => state.aiTeammates.length).toBe(initialTeammateCount);
 
-  await creator.getByRole("button", { name: "Create teammate" }).click();
-  await expect(page.getByRole("heading", { name: "Engineer", level: 1 })).toBeVisible();
+  await creator.getByRole("button", { name: /Start from blank/ }).click();
+  await expect(creator.getByLabel("Custom teammate setup")).toBeVisible();
+  await expect(creator.getByRole("button", { name: "Back" })).toBeVisible();
+  await expect(creator.getByLabel("Avatar color", { exact: true })).toBeVisible();
+  await creator.getByRole("button", { name: "Back" }).click();
+  await expect(page.getByLabel("Teammate template chooser")).toBeVisible();
+  await creator.getByRole("button", { name: /Start from blank/ }).click();
+  await creator.getByLabel("Upload avatar").setInputFiles({
+    name: "custom-avatar.png",
+    mimeType: "image/png",
+    buffer: Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=", "base64"),
+  });
+  await expect(creator.getByText("custom-avatar.png")).toBeVisible();
+  await expect(creator.getByRole("button", { name: "Remove avatar" })).toBeVisible();
+  await creator.getByLabel("Teammate name").fill("Custom Researcher");
+  await creator.getByLabel("Brief description").fill("Researches product questions and keeps notes short.");
+  await creator.getByLabel("Base model").selectOption("provider_local");
+  await creator.getByRole("button", { name: "Create and verify" }).click();
+
+  const progress = page.getByLabel("Teammate setup progress");
+  await expect(progress).toBeVisible();
+  await expect(progress).toContainText("Model check");
+  await expect(progress).toContainText("Upload avatar");
+  await expect(creator).toHaveCount(0);
+
+  await expect(page.getByRole("heading", { name: "Custom Researcher", level: 1 })).toBeVisible();
   await expect(page.getByLabel("Private chat", { exact: true })).toBeVisible();
   await expect.poll(() => state.aiTeammates.some((item) =>
     isRecord(item) &&
-    item.displayName === "Engineer" &&
-    item.templateId === "engineer" &&
-    item.providerPresetId === "provider_local",
+    item.displayName === "Custom Researcher" &&
+    item.roleKey === "custom" &&
+    item.providerPresetId === "provider_local" &&
+    typeof item.avatarImageAttachmentId === "string",
   )).toBe(true);
+  await expect.poll(() => state.teammatePrivateAttachments.some((item) =>
+    isRecord(item) &&
+    item.teammateId === "teammate_created_1" &&
+    item.scope === "teammate_profile_avatar" &&
+    item.fileName === "custom-avatar.png",
+  )).toBe(true);
+});
+
+test("custom teammate model check failure stops before teammate creation", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.locale", "en-US");
+  });
+  const state = createBaseState({ approvalStatus: "expired" });
+  state.providers = [createChatProvider({
+    id: "provider_broken",
+    displayName: "Broken Relay",
+    providerId: "broken-relay",
+    model: "gpt-5.5",
+    lastCheck: { ok: true, message: "ok", checkedAt: "2026-05-22T00:00:00.000Z" },
+  })];
+  await mockDaemon(page, state, { providerCheckModelUnsupportedProviderIds: ["broken-relay"] });
+  await page.goto("/");
+
+  const initialTeammateCount = state.aiTeammates.length;
+  await openSidebarSectionMenu(page, "Teammate actions");
+  await page.getByLabel("Ling Stack navigation").getByRole("menuitem", { name: /New AI teammate/ }).click();
+  const creator = page.getByRole("dialog", { name: "Create AI teammate" });
+  await creator.getByRole("button", { name: /Start from blank/ }).click();
+  await creator.getByLabel("Teammate name").fill("Blocked Custom");
+  await creator.getByLabel("Base model").selectOption("provider_broken");
+  await creator.getByRole("button", { name: "Create and verify" }).click();
+
+  const progress = page.getByLabel("Teammate setup progress");
+  await expect(progress).toBeVisible();
+  await expect(progress).toContainText("Setup needs attention");
+  await expect(progress).toContainText("Provider rejected the endpoint or model");
+  await expect.poll(() => state.aiTeammates.length).toBe(initialTeammateCount);
+  await creator.getByRole("button", { name: "Back to setup" }).click();
+  await expect(creator.getByLabel("Custom teammate setup")).toBeVisible();
 });
 
 test("sidebar teammate create offers model workbench when no ready model exists", async ({ page }) => {
@@ -1311,15 +1387,16 @@ test("AI teammate private chat opens latest messages and loads older history fro
   await expect(privateChat.getByText("private history 106", { exact: true })).toBeVisible();
   await expect(privateChat.getByText("private history 1", { exact: true })).toHaveCount(0);
 
-  const feed = page.locator(".teammate-message-list");
-  await feed.evaluate((element) => {
-    element.dispatchEvent(new WheelEvent("wheel", { bubbles: true, deltaY: -600 }));
-  });
-  await feed.evaluate((element) => {
-    element.scrollTop = 0;
-    element.dispatchEvent(new Event("scroll", { bubbles: true }));
-  });
-  await expect.poll(() => privateChat.getByText("private history 1", { exact: true }).count()).toBeGreaterThan(0);
+  const feed = privateChat.getByLabel("Private message feed");
+  await feed.hover();
+  await expect.poll(async () => {
+    await page.mouse.wheel(0, -1800);
+    await feed.evaluate((element) => {
+      element.scrollTop = 0;
+      element.dispatchEvent(new Event("scroll", { bubbles: true }));
+    });
+    return privateChat.getByText("private history 1", { exact: true }).count();
+  }, { timeout: 10_000 }).toBeGreaterThan(0);
   await page.evaluate(() => new Promise<void>((resolve) => {
     requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
   }));

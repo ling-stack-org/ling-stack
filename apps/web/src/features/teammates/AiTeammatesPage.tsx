@@ -44,6 +44,8 @@ import { TeammateCreateDrawer } from "./TeammateCreateDrawer.js";
 import type {
   LocalTeammateCreateInput,
   LocalTeammateDraft,
+  TeammateCreateProgressEvent,
+  TeammateCreateResult,
 } from "./types.js";
 
 export function AiTeammatesPage({
@@ -67,7 +69,10 @@ export function AiTeammatesPage({
   readonly providers: readonly ProviderPreset[];
   readonly channels: readonly Channel[];
   readonly localTeammates: readonly LocalTeammateDraft[];
-  readonly onCreateTeammate: (teammate: LocalTeammateCreateInput) => void;
+  readonly onCreateTeammate: (
+    teammate: LocalTeammateCreateInput,
+    onProgress?: (event: TeammateCreateProgressEvent) => void,
+  ) => Promise<TeammateCreateResult>;
   readonly onRemoveTeammate: (teammateId: string) => void;
   readonly onToggleTeammatePinned: (teammateId: string) => void;
   readonly onToggleTeammateHidden: (teammateId: string) => void;
@@ -177,6 +182,7 @@ export function AiTeammatesPage({
         defaultProviderId={defaultProviderId}
         onCreate={onCreateTeammate}
         onClose={() => setCreateOpen(false)}
+        onOpenCreated={onOpenTeammate}
         onOpenProviders={onOpenProviders}
       />
 

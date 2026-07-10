@@ -509,10 +509,6 @@ export function AppShell(): JSX.Element {
     setErrorMessage,
     t,
     refreshChannels,
-    openTeammate: (teammateId) => {
-      setActiveView("teammates");
-      setActiveSidebarTarget(teammateSidebarTarget(teammateId));
-    },
     closeTeammateIfActive: (teammateId) => {
       if (activeSidebarTarget === teammateSidebarTarget(teammateId)) {
         openSettingsWorkspaceTool("teammates");
@@ -1937,7 +1933,7 @@ export function AppShell(): JSX.Element {
         channels={channels}
         localTeammates={localTeammates}
         defaultProviderId={workspaceDefaultProviderPresetId}
-        onCreateTeammate={(input) => void addAiTeammate(input)}
+        onCreateTeammate={addAiTeammate}
         onRemoveTeammate={(teammateId) => void removeAiTeammate(teammateId)}
         onToggleTeammatePinned={(teammateId) => void toggleAiTeammatePinned(teammateId)}
         onToggleTeammateHidden={(teammateId) => void toggleAiTeammateHidden(teammateId)}
@@ -2400,7 +2396,7 @@ export function AppShell(): JSX.Element {
                     channels={channels}
                     localTeammates={localTeammates}
                     defaultProviderId={workspaceDefaultProviderPresetId}
-                    onCreateTeammate={(input) => void addAiTeammate(input)}
+                    onCreateTeammate={addAiTeammate}
                     onRemoveTeammate={(teammateId) => void removeAiTeammate(teammateId)}
                     onToggleTeammatePinned={(teammateId) => void toggleAiTeammatePinned(teammateId)}
                     onToggleTeammateHidden={(teammateId) => void toggleAiTeammateHidden(teammateId)}
@@ -2849,8 +2845,9 @@ export function AppShell(): JSX.Element {
           providers={providers}
           channels={channels}
           defaultProviderId={workspaceDefaultProviderPresetId}
-          onCreate={(input) => void addAiTeammate(input)}
+          onCreate={addAiTeammate}
           onClose={() => setTeammateCreateOpen(false)}
+          onOpenCreated={selectAiTeammate}
           onOpenProviders={() => openSettingsWorkspaceTool("providers")}
         />
       ) : null}

@@ -1,13 +1,16 @@
 import { useState } from "react";
 import {
+  checkProvider,
   createAiTeammate,
   disableAiTeammate,
   hardDeleteAiTeammate,
   listAiTeammates,
   listTeammateChannels,
+  listTeammateMemoryScopes,
   replaceTeammateChannels,
   replaceTeammateSkills,
   updateAiTeammate,
+  uploadTeammateAvatar,
 } from "../../api.js";
 import type { DomainController, DomainError } from "../../app/domain-controller.js";
 import type {
@@ -16,11 +19,14 @@ import type {
   TeammateChannelMembership,
   UpdateAiTeammateRequest,
 } from "../../types.js";
+import type { TeammateCreateProgressEvent, TeammateCreateResult, TeammateCreateSetupStep } from "../../features/teammates/types.js";
 
 export interface TeammateCreateInput {
   readonly templateId?: string;
   readonly displayName: string;
   readonly description: string;
+  readonly avatarTone?: string;
+  readonly avatarFile?: File;
   readonly providerPresetId?: string;
   readonly modelLabel: string;
   readonly channelIds: readonly string[];
@@ -53,7 +59,7 @@ export interface TeammatesState {
 export interface TeammatesActions {
   readonly refreshAiTeammates: (cwd?: string) => Promise<void>;
   readonly refreshTeammateChannelMemberships: (cwd?: string, teammates?: readonly AiTeammate[]) => Promise<void>;
-  readonly addAiTeammate: (input: TeammateCreateInput) => Promise<void>;
+  readonly addAiTeammate: (input: TeammateCreateInput, onProgress?: (event: TeammateCreateProgressEvent) => void) => Promise<TeammateCreateResult>;
   readonly removeAiTeammate: (teammateId: string) => Promise<void>;
   readonly hardDeleteAiTeammateAndRefresh: (teammateId: string, reason?: string) => Promise<void>;
   readonly updateAiTeammateSettings: (teammateId: string, input: UpdateAiTeammateRequest) => Promise<AiTeammate>;
@@ -75,7 +81,6 @@ export function useTeammatesDomain(input: {
   readonly builtinTeammateTemplates: readonly BuiltinTeammateTemplate[];
   readonly setErrorMessage: (message: string) => void;
   readonly t: (value: string, values?: Record<string, string | number>) => string;
-  readonly openTeammate: (teammateId: string) => void;
   readonly closeTeammateIfActive: (teammateId: string) => void;
   readonly refreshChannels: (cwd?: string) => Promise<void>;
 }): TeammatesController {
@@ -86,11 +91,26 @@ export function useTeammatesDomain(input: {
   const [channelTeammateSavingId, setChannelTeammateSavingId] = useState("");
   const [error, setError] = useState<DomainError | undefined>();
 
-  async function addAiTeammate(createInput: TeammateCreateInput): Promise<void> {
+  async function addAiTeammate(
+    createInput: TeammateCreateInput,
+    onProgress: (event: TeammateCreateProgressEvent) => void = () => undefined,
+  ): Promise<TeammateCreateResult> {
+    const emit = (event: TeammateCreateProgressEvent): void => onProgress(event);
     const cwd = input.cwd.trim();
     if (!cwd) {
       input.setErrorMessage("本地工作区未就绪");
-      return;
+      emit({ step: "workspace", state: "failed", message: input.t("Workspace is not ready.") });
+      return { ok: false, message: input.t("Workspace is not ready.") };
+    }
+
+    emit({ step: "workspace", state: "running" });
+    emit({ step: "workspace", state: "success", message: input.t("Workspace ready") });
+
+    if (!createInput.providerPresetId) {
+      const message = input.t("Choose a model before creating.");
+      input.setErrorMessage(message);
+      emit({ step: "model", state: "failed", message });
+      return { ok: false, message };
     }
 
     const template = createInput.templateId ? input.builtinTeammateTemplates.find((item) => item.id === createInput.templateId) : undefined;
@@ -100,6 +120,7 @@ export function useTeammatesDomain(input: {
         roleKey: toContractRoleKey(template.roleKey),
         displayName: createInput.displayName.trim() || template.name,
         description: createInput.description.trim() || template.summary,
+        avatarTone: createInput.avatarTone,
         providerPresetId: createInput.providerPresetId,
         systemPrompt: template.systemPrompt,
         allowedTools: template.allowedTools.filter(isContractToolName),
@@ -110,6 +131,7 @@ export function useTeammatesDomain(input: {
         roleKey: "custom",
         displayName: createInput.displayName.trim() || "Custom teammate",
         description: createInput.description.trim(),
+        avatarTone: createInput.avatarTone,
         providerPresetId: createInput.providerPresetId,
         systemPrompt: `You are ${createInput.displayName.trim() || "a custom AI teammate"}. ${createInput.description.trim()}`,
         allowedTools: ["read", "grep", "find", "ls"],
@@ -121,34 +143,95 @@ export function useTeammatesDomain(input: {
     try {
       input.setErrorMessage("");
       setError(undefined);
+
+      emit({ step: "model", state: "running", message: input.t("Checking model") });
+      const providerCheck = await checkProvider(cwd, createInput.providerPresetId);
+      if (!providerCheck.ok) {
+        const message = input.t("Model check failed. Repair this model in Model Workbench.");
+        input.setErrorMessage(providerCheck.message || message);
+        emit({ step: "model", state: "failed", message: providerCheck.message || message });
+        return { ok: false, message: providerCheck.message || message };
+      }
+      emit({ step: "model", state: "success", message: input.t("Model ready") });
+
+      emit({ step: "record", state: "running", message: input.t("Creating teammate") });
       const response = await createAiTeammate(cwd, payload);
       const teammateId = response.teammate.id;
-      const setupCalls: Promise<unknown>[] = [];
+      if (template && template.defaultSkillIds.length > 0) {
+        await replaceTeammateSkills(
+          cwd,
+          teammateId,
+          template.defaultSkillIds.map((skillId) => ({ skillId, source: "template", enabled: true })),
+        );
+      }
+      emit({ step: "record", state: "success", teammateId, message: input.t("Teammate created") });
+
+      let partial = false;
+      let partialMessage = "";
+      if (createInput.avatarFile) {
+        emit({ step: "avatar", state: "running", teammateId, message: input.t("Uploading avatar") });
+        try {
+          await uploadTeammateAvatar(cwd, teammateId, createInput.avatarFile);
+          emit({ step: "avatar", state: "success", teammateId, message: input.t("Avatar uploaded") });
+        } catch (caught) {
+          partial = true;
+          partialMessage = caught instanceof Error ? caught.message : String(caught);
+          emit({ step: "avatar", state: "failed", teammateId, partial: true, message: partialMessage || input.t("Avatar setup needs attention") });
+        }
+      } else {
+        emit({ step: "avatar", state: "skipped", teammateId, message: input.t("No avatar selected") });
+      }
+
       if (createInput.channelIds.length > 0) {
-        setupCalls.push(
-          replaceTeammateChannels(
+        emit({ step: "channels", state: "running", teammateId, message: input.t("Joining channel") });
+        try {
+          await replaceTeammateChannels(
             cwd,
             teammateId,
             createInput.channelIds.map((channelId, index) => ({ channelId, isDefault: index === 0 })),
-          ),
-        );
+          );
+          emit({ step: "channels", state: "success", teammateId, message: input.t("Channel joined") });
+        } catch (caught) {
+          partial = true;
+          partialMessage = caught instanceof Error ? caught.message : String(caught);
+          emit({ step: "channels", state: "failed", teammateId, partial: true, message: partialMessage || input.t("Channel setup needs attention") });
+        }
+      } else {
+        emit({ step: "channels", state: "skipped", teammateId, message: input.t("No channel selected") });
       }
-      if (template && template.defaultSkillIds.length > 0) {
-        setupCalls.push(
-          replaceTeammateSkills(
-            cwd,
-            teammateId,
-            template.defaultSkillIds.map((skillId) => ({ skillId, source: "template", enabled: true })),
-          ),
-        );
+
+      emit({ step: "memory", state: "running", teammateId, message: input.t("Preparing memory") });
+      try {
+        await listTeammateMemoryScopes(cwd, teammateId);
+        emit({ step: "memory", state: "success", teammateId, message: input.t("Memory ready") });
+      } catch (caught) {
+        partial = true;
+        partialMessage ||= caught instanceof Error ? caught.message : String(caught);
+        emit({ step: "memory", state: "failed", teammateId, partial: true, message: partialMessage || input.t("Memory setup needs attention") });
       }
-      await Promise.all(setupCalls);
-      await refreshAiTeammates(cwd);
-      input.openTeammate(teammateId);
+
+      emit({ step: "refresh", state: "running", teammateId, message: input.t("Refreshing workspace") });
+      try {
+        await refreshAiTeammates(cwd);
+        emit({ step: "refresh", state: "success", teammateId, partial, message: partial ? input.t("Teammate created with setup warnings") : input.t("Teammate ready") });
+      } catch (caught) {
+        partial = true;
+        partialMessage ||= caught instanceof Error ? caught.message : String(caught);
+        emit({ step: "refresh", state: "failed", teammateId, partial: true, message: partialMessage || input.t("Refresh failed. Open teammate management to review.") });
+      }
+
+      return {
+        ok: !partial,
+        teammateId,
+        partial,
+        message: partial ? partialMessage || input.t("Teammate created with setup warnings") : input.t("Teammate ready"),
+      };
     } catch (caught) {
       const message = caught instanceof Error ? caught.message : String(caught);
       setError({ scope: "mutation", message });
       input.setErrorMessage(message);
+      emit({ step: inferFailedCreateStep(message), state: "failed", message });
+      return { ok: false, message };
     } finally {
       setAiTeammatesLoading(false);
     }
@@ -439,6 +522,23 @@ export function useTeammatesDomain(input: {
     error,
     clearError: () => setError(undefined),
   };
+}
+
+function inferFailedCreateStep(message: string): TeammateCreateSetupStep {
+  const normalized = message.toLocaleLowerCase();
+  if (normalized.includes("provider") || normalized.includes("model") || normalized.includes("api key")) {
+    return "model";
+  }
+  if (normalized.includes("channel")) {
+    return "channels";
+  }
+  if (normalized.includes("avatar") || normalized.includes("image") || normalized.includes("attachment")) {
+    return "avatar";
+  }
+  if (normalized.includes("memory")) {
+    return "memory";
+  }
+  return "record";
 }
 
 function upsertAiTeammate(current: readonly AiTeammate[], teammate: AiTeammate): readonly AiTeammate[] {
