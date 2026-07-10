@@ -36,7 +36,28 @@ export interface LocalTeammateCreateInput {
   readonly templateId?: string;
   readonly displayName: string;
   readonly description: string;
+  readonly avatarTone?: string;
+  readonly avatarFile?: File;
   readonly providerPresetId?: string;
   readonly modelLabel: string;
   readonly channelIds: readonly string[];
+}
+
+export type TeammateCreateMode = "role_select" | "custom_setup" | "setup_progress";
+export type TeammateCreateSetupStep = "workspace" | "model" | "record" | "avatar" | "channels" | "memory" | "refresh";
+export type TeammateCreateStepState = "pending" | "running" | "success" | "failed" | "skipped";
+
+export interface TeammateCreateProgressEvent {
+  readonly step: TeammateCreateSetupStep;
+  readonly state: TeammateCreateStepState;
+  readonly message?: string;
+  readonly teammateId?: string;
+  readonly partial?: boolean;
+}
+
+export interface TeammateCreateResult {
+  readonly ok: boolean;
+  readonly teammateId?: string;
+  readonly partial?: boolean;
+  readonly message?: string;
 }
