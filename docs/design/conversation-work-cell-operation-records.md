@@ -115,6 +115,8 @@ summary. It separates produced files from source changes:
 - the expanded list shows at most three files initially, followed by `Show N more files`
   when additional files exist;
 - each changed-file row shows its exact additions and deletions when available;
+- the changed-files group itself is always open and has no outer disclosure control;
+- only the bounded `Show N more files` row may expand or collapse additional files;
 - hovering a previewable output or changed-file row for two seconds opens a bounded
   floating preview;
 - keyboard focus or clicking the row opens the same compact preview immediately;
