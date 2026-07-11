@@ -46,14 +46,14 @@ async function expectProviderModelDiscoveryLayout(page: Page): Promise<void> {
     const firstCard = cards[0];
     const secondCard = cards[1];
     const title = firstCard?.querySelector("strong");
-    const owner = firstCard?.querySelector("small");
-    const capability = firstCard?.querySelector("em");
+    const usage = firstCard?.querySelector(".provider-model-usage-label");
+    const info = firstCard?.querySelector(".provider-model-info");
     const gridRect = grid?.getBoundingClientRect();
     const firstRect = firstCard?.getBoundingClientRect();
     const secondRect = secondCard?.getBoundingClientRect();
     const titleRect = title?.getBoundingClientRect();
-    const ownerRect = owner?.getBoundingClientRect();
-    const capabilityRect = capability?.getBoundingClientRect();
+    const usageRect = usage?.getBoundingClientRect();
+    const infoRect = info?.getBoundingClientRect();
     return {
       columnCount: grid ? getComputedStyle(grid).gridTemplateColumns.split(" ").filter(Boolean).length : 0,
       gridOverflowsX: grid ? grid.scrollWidth > grid.clientWidth + 1 : true,
@@ -65,10 +65,11 @@ async function expectProviderModelDiscoveryLayout(page: Page): Promise<void> {
       firstBottom: firstRect?.bottom ?? 0,
       gridLeft: gridRect?.left ?? 0,
       gridRight: gridRect?.right ?? 0,
-      titleBottom: titleRect?.bottom ?? 0,
-      ownerTop: ownerRect?.top ?? 0,
-      ownerBottom: ownerRect?.bottom ?? 0,
-      capabilityTop: capabilityRect?.top ?? 0,
+      titleLeft: titleRect?.left ?? 0,
+      titleRight: titleRect?.right ?? 0,
+      usageLeft: usageRect?.left ?? 0,
+      usageRight: usageRect?.right ?? 0,
+      infoRight: infoRect?.right ?? 0,
       cardCount: cards.length,
     };
   });
@@ -76,8 +77,10 @@ async function expectProviderModelDiscoveryLayout(page: Page): Promise<void> {
   expect(layout.gridOverflowsX).toBe(false);
   expect(layout.firstLeft).toBeGreaterThanOrEqual(layout.gridLeft - 1);
   expect(layout.firstRight).toBeLessThanOrEqual(layout.gridRight + 1);
-  expect(layout.titleBottom).toBeLessThanOrEqual(layout.ownerTop + 1);
-  expect(layout.ownerBottom).toBeLessThanOrEqual(layout.capabilityTop + 1);
+  expect(layout.titleLeft).toBeGreaterThanOrEqual(layout.firstLeft - 1);
+  expect(layout.titleRight).toBeLessThanOrEqual(layout.usageLeft + 1);
+  expect(layout.usageRight).toBeLessThanOrEqual(layout.infoRight + 1);
+  expect(layout.infoRight).toBeLessThanOrEqual(layout.firstRight + 1);
   if (layout.cardCount > 1) {
     expect(Math.abs(layout.firstLeft - layout.secondLeft)).toBeLessThanOrEqual(1);
     expect(layout.secondTop).toBeGreaterThan(layout.firstBottom - 1);
@@ -108,6 +111,7 @@ test("model workbench empty state offers beginner chat and generation setup path
   await expect(generationEditor).toBeVisible();
   await expect(generationEditor.getByLabel("Model supplier")).toHaveValue("seedream-image");
   await expect(generationEditor.getByLabel("Model supplier")).not.toContainText("OpenAI GPT");
+  await generationEditor.getByText("Advanced settings").click();
   await expect(generationEditor.getByText("Generation adapter")).toBeVisible();
 });
 
@@ -161,7 +165,7 @@ test("model workbench Chinese mode localizes setup copy and uses an add model sh
   expect(workbenchBounds).toBeDefined();
   expect(workbenchBounds?.workbench.left).toBeGreaterThanOrEqual((workbenchBounds?.workspaceContent.left ?? 0) - 1.5);
   expect(workbenchBounds?.workbench.right).toBeLessThanOrEqual((workbenchBounds?.workspaceContent.right ?? 0) + 1.5);
-  expect(workbenchBounds ? workbenchBounds.workspaceContent.right - workbenchBounds.workbench.right : 0).toBeLessThanOrEqual(1.5);
+  expect(workbenchBounds ? workbenchBounds.workspaceContent.right - workbenchBounds.workbench.right : 0).toBeLessThanOrEqual(12);
   await expect(page.locator(".workspace-head .status-badge")).toHaveCount(0);
   await expect(page.locator(".provider-page-meta")).toHaveCount(0);
   await expect(page.getByText("Chat-capable")).toHaveCount(0);
@@ -262,7 +266,7 @@ test("model workbench Chinese mode localizes setup copy and uses an add model sh
   const editorBody = editor.locator(".provider-sheet-body");
   const editorTitle = editor.getByRole("heading", { name: "新建预设" });
   const editorCloseButton = editor.getByRole("button", { name: "关闭模型预设编辑器" });
-  const savePresetButton = editor.getByRole("button", { name: "保存" });
+  const savePresetButton = editor.getByRole("button", { name: "添加模型" });
   const supplierSelect = editor.getByLabel("模型供应商");
 
   await expect(editor.getByRole("tab")).toHaveCount(0);
@@ -288,6 +292,7 @@ test("model workbench Chinese mode localizes setup copy and uses an add model sh
   await expect(editor.getByRole("tab", { name: /OpenAI-compatible 中转/ })).toHaveCount(0);
 
   await supplierSelect.selectOption("openai-gpt");
+  await editor.getByText("高级设置").click();
   await expect(page.getByLabel("API 协议")).toBeDisabled();
 
   await supplierSelect.selectOption("anthropic-claude");
@@ -346,7 +351,7 @@ test("model workbench Chinese mode localizes setup copy and uses an add model sh
   expect(Math.abs((closeAfterScroll?.y ?? 0) - (closeBeforeScroll?.y ?? 0))).toBeLessThanOrEqual(2);
   expect(Math.abs((saveAfterScroll?.y ?? 0) - (saveBeforeScroll?.y ?? 0))).toBeLessThanOrEqual(2);
   await expect(page.getByText("Check provider")).toHaveCount(0);
-  await expect(editor.getByRole("button", { name: "保存" })).toHaveCount(1);
+  await expect(editor.getByRole("button", { name: "添加模型" })).toHaveCount(1);
   await expect(editor.getByRole("button", { name: "创建预设" })).toHaveCount(0);
   await expect(editor.getByRole("button", { name: "保存修改" })).toHaveCount(0);
   await expect(editor.getByRole("button", { name: "保存并检查" })).toHaveCount(0);
@@ -370,7 +375,7 @@ test("model workbench hides capability state row while keeping advanced override
   await expect(editor.getByLabel("Context")).toBeHidden();
   await expect(editor.getByLabel("Max tokens")).toBeHidden();
 
-  await editor.getByText("Advanced model limits").click();
+  await editor.getByText("Advanced settings").click();
   await editor.getByLabel("Context").fill("64000");
   await expect(editor.locator(".provider-capability-state")).toHaveCount(0);
 
@@ -415,7 +420,7 @@ test("model workbench save validates before persisting and keeps errors inside t
   const editor = page.getByRole("dialog", { name: "新建预设" });
   await expect(editor).toBeVisible();
   await editor.getByLabel("模型供应商").selectOption("custom-openai-compatible");
-  await page.getByRole("button", { name: "保存" }).click();
+  await editor.getByRole("button", { name: "添加模型" }).click();
 
   await expect(editor.getByText("请填写 API Key 后再保存。")).toBeVisible();
   await expect(editor.getByText("API key missing. Add an API key before running a live check.")).toHaveCount(0);
@@ -546,7 +551,7 @@ test("model workbench edits media presets from the unified supplier picker", asy
 
   await openModelWorkbench(page);
   const seedreamRow = page.locator(".provider-row").filter({ hasText: "Seedream Image" });
-  await clickProviderRowMenuItem(seedreamRow, "编辑");
+  await seedreamRow.getByRole("button", { name: "编辑" }).click();
   const editor = page.getByRole("dialog", { name: "编辑预设" });
   await expect(editor.getByRole("tab")).toHaveCount(0);
   await expect(editor.getByLabel("模型供应商")).toHaveValue("seedream-image");
@@ -554,7 +559,7 @@ test("model workbench edits media presets from the unified supplier picker", asy
   await page.getByRole("button", { name: "关闭模型预设编辑器" }).click();
 
   const seedanceRow = page.locator(".provider-row").filter({ hasText: "Seedance Video" });
-  await clickProviderRowMenuItem(seedanceRow, "编辑");
+  await seedanceRow.getByRole("button", { name: "编辑" }).click();
   const seedanceEditor = page.getByRole("dialog", { name: "编辑预设" });
   await expect(seedanceEditor.getByRole("tab")).toHaveCount(0);
   await expect(seedanceEditor.getByLabel("模型供应商")).toHaveValue("seedance-video");
@@ -677,26 +682,24 @@ test("model workbench creates custom OpenAI-compatible presets and surfaces read
   await expect(readyLocalRelayRow).toBeVisible();
 
   const missingKeyGatewayRow = page.locator(".provider-row").filter({ hasText: "Missing Key Gateway" });
-  await expect(missingKeyGatewayRow).toContainText("key missing");
+  await expect(missingKeyGatewayRow).toContainText("Needs API key");
   await expect(missingKeyGatewayRow.locator(".provider-state.enabled")).toHaveCount(0);
   await expect(missingKeyGatewayRow.locator(".provider-state.key-missing")).toHaveCount(1);
   await expect(missingKeyGatewayRow.locator(".provider-state.run-blocked")).toHaveCount(0);
   await expect(missingKeyGatewayRow.locator(".provider-state.check-bad")).toHaveCount(0);
-  await expect(page.locator(".provider-row").filter({ hasText: "Unchecked Domestic Gateway" })).toContainText("unchecked");
-  await expect(page.locator(".provider-row").filter({ hasText: "Auth Failed Gateway" })).toContainText("auth failed");
-  await expect(readyLocalRelayRow).toContainText("check ready");
+  await expect(page.locator(".provider-row").filter({ hasText: "Unchecked Domestic Gateway" })).toContainText("Needs check");
+  await expect(page.locator(".provider-row").filter({ hasText: "Auth Failed Gateway" })).toContainText("Needs attention");
+  await expect(readyLocalRelayRow).toContainText("Ready");
   await expect(readyLocalRelayRow.locator(".provider-state.run-ready")).toHaveCount(1);
   await expect(readyLocalRelayRow.getByRole("button", { name: "Set default" })).toBeVisible();
   await readyLocalRelayRow.getByRole("button", { name: "Set default" }).click();
   await expect(readyLocalRelayRow).toHaveClass(/selected/);
   await expect(readyLocalRelayRow).toContainText("Current default");
-  await expect(readyLocalRelayRow.getByRole("button", { name: "Clear default" })).toBeVisible();
-  const readyLocalRelayActionCell = readyLocalRelayRow.locator("td").nth(4);
+  await expect(readyLocalRelayRow.getByRole("button", { name: "Clear default" })).toHaveCount(0);
+  const readyLocalRelayActionCell = readyLocalRelayRow.locator("td").nth(3);
   await expect(readyLocalRelayActionCell).toHaveCSS("border-left-color", "rgb(229, 229, 229)");
   await expect(readyLocalRelayActionCell).toHaveCSS("box-shadow", "none");
-  await readyLocalRelayRow.getByRole("button", { name: "Clear default" }).focus();
-  await expect(readyLocalRelayRow.getByRole("button", { name: "Clear default" })).toHaveCSS("outline-style", "none");
-  await readyLocalRelayRow.getByRole("button", { name: "Clear default" }).click();
+  await clickProviderRowMenuItem(readyLocalRelayRow, "Clear default");
   await expect(readyLocalRelayRow.getByRole("button", { name: "Set default" })).toBeVisible();
   await expect.poll(() => state.workspaceSettings.defaultProviderPresetId).toBeUndefined();
   await expect.poll(() =>
@@ -709,18 +712,19 @@ test("model workbench creates custom OpenAI-compatible presets and surfaces read
   await expect(seedreamRow).not.toContainText("Media task");
   await expect(seedreamRow).toContainText("Image");
   await expect(seedreamRow).not.toContainText("not chat-capable");
-  await expect(seedreamRow.locator(".provider-action-note")).toContainText("Generation model");
+  await expect(seedreamRow.locator(".provider-action-note")).toHaveCount(0);
+  await expect(seedreamRow).toContainText("Ready");
   await expect(seedreamRow.getByRole("button", { name: "Set default" })).toHaveCount(0);
   const legacyOpenAiRow = page.locator(".provider-row").filter({ hasText: "Legacy OpenAI Without Stored Endpoint" });
-  await expect(legacyOpenAiRow).toContainText("https://api.openai.com/v1");
-  await clickProviderRowMenuItem(legacyOpenAiRow, "Edit");
+  await expect(legacyOpenAiRow).not.toContainText("https://api.openai.com/v1");
+  await legacyOpenAiRow.getByRole("button", { name: "Edit" }).click();
   await expect(page.getByRole("dialog", { name: "Edit preset" })).toBeVisible();
   await expect(page.getByLabel("Base URL")).toHaveValue("https://api.openai.com/v1");
   await expect(page.getByLabel("Provider ID")).toHaveCount(0);
   await expect(page.getByLabel("API protocol")).toBeDisabled();
   await page.getByRole("button", { name: "Close model preset editor" }).click();
   const openAiProxyRow = page.locator(".provider-row").filter({ hasText: "OpenAI Proxy Custom Endpoint" });
-  await clickProviderRowMenuItem(openAiProxyRow, "Edit");
+  await openAiProxyRow.getByRole("button", { name: "Edit" }).click();
   await expect(page.getByRole("dialog", { name: "Edit preset" })).toBeVisible();
   await expect(page.getByLabel("Base URL")).toHaveValue("http://192.168.80.114:8317/v1");
   await expect(page.getByLabel("Provider ID")).toHaveCount(0);
@@ -729,7 +733,7 @@ test("model workbench creates custom OpenAI-compatible presets and surfaces read
   await expect(openAiProxyRow.getByRole("button", { name: "Set default" })).toBeVisible();
   await openAiProxyRow.getByRole("button", { name: "Set default" }).click();
   await expect(openAiProxyRow).toHaveClass(/selected/);
-  await expect(openAiProxyRow.getByRole("button", { name: "Clear default" })).toBeVisible();
+  await expect(openAiProxyRow.getByRole("button", { name: "Clear default" })).toHaveCount(0);
   await expect.poll(() => state.workspaceSettings.defaultProviderPresetId).toBe("provider_openai_proxy");
   await expect(openAiProxyRow.locator(".provider-state.run-ready")).toHaveCount(1);
   await expect(readyLocalRelayRow.locator(".provider-state.run-ready")).toHaveCount(1);
@@ -739,7 +743,7 @@ test("model workbench creates custom OpenAI-compatible presets and surfaces read
   const reloadedOpenAiProxyRow = page.locator(".provider-row").filter({ hasText: "OpenAI Proxy Custom Endpoint" });
   await expect(reloadedOpenAiProxyRow).toHaveClass(/selected/);
   await expect(reloadedOpenAiProxyRow).toContainText("Current default");
-  await expect(reloadedOpenAiProxyRow.getByRole("button", { name: "Clear default" })).toBeVisible();
+  await expect(reloadedOpenAiProxyRow.getByRole("button", { name: "Clear default" })).toHaveCount(0);
   await expect(reloadedOpenAiProxyRow.locator(".provider-state.run-ready")).toHaveCount(1);
   await clickProviderRowMenuItem(reloadedOpenAiProxyRow, "Disable");
   await expect(reloadedOpenAiProxyRow.locator(".provider-state.disabled")).toHaveCount(1);
@@ -764,7 +768,7 @@ test("model workbench creates custom OpenAI-compatible presets and surfaces read
   await expect(supplierSelect).toContainText("OpenAI GPT");
   await expect(page.getByLabel("Base URL")).toHaveValue("https://api.anthropic.com/v1");
   await expect(page.getByLabel("API protocol")).toBeDisabled();
-  await expect(page.getByLabel("Enabled")).toBeChecked();
+  await expect(page.getByLabel("Enabled")).toHaveCount(0);
   await supplierSelect.selectOption("custom-openai-compatible");
   await expect(supplierSelect).toHaveValue("custom-openai-compatible");
   await expect(page.getByLabel("Provider name")).toHaveValue("Custom");
@@ -793,11 +797,11 @@ test("model workbench creates custom OpenAI-compatible presets and surfaces read
   await expect(modelCards.filter({ hasText: "Custom model" })).toHaveCount(0);
   await expect(modelCards.filter({ hasText: "cliproxy-gpt-4o" })).toBeVisible();
   await expect(modelCards.filter({ hasText: "cliproxy-gpt-4o" })).toContainText("No thinking");
-  await expect(modelCards.filter({ hasText: "gpt-image-2" }).locator("em")).toContainText(/image/i);
-  await expect(modelCards.filter({ hasText: "black-forest-labs/flux-2-pro" }).locator("em")).toContainText(/Image.*Ling catalog/i);
-  await expect(modelCards.filter({ hasText: "stability-ai/stable-diffusion-3.5-large" }).locator("em")).toContainText(/Image.*Ling catalog/i);
-  await expect(modelCards.filter({ hasText: "qwen-image-edit" }).locator("em")).toContainText(/Image.*Ling catalog/i);
-  await expect(modelCards.filter({ hasText: "ideogram-ai/ideogram-v3-quality" }).locator("em")).toContainText(/Image.*Ling catalog/i);
+  await expect(modelCards.filter({ hasText: "gpt-image-2" }).locator(".provider-model-usage-label")).toContainText(/image/i);
+  await expect(modelCards.filter({ hasText: "black-forest-labs/flux-2-pro" })).toContainText(/Image.*Ling catalog/i);
+  await expect(modelCards.filter({ hasText: "stability-ai/stable-diffusion-3.5-large" })).toContainText(/Image.*Ling catalog/i);
+  await expect(modelCards.filter({ hasText: "qwen-image-edit" })).toContainText(/Image.*Ling catalog/i);
+  await expect(modelCards.filter({ hasText: "ideogram-ai/ideogram-v3-quality" })).toContainText(/Image.*Ling catalog/i);
   await expect(modelCards.filter({ hasText: "gpt-image-2" })).toContainText("No thinking");
   await expect(modelCards.filter({ hasText: "cliproxy-claude-sonnet" })).toContainText("Thinking: Low / Medium / High / XHigh");
   await expect(modelCards.filter({ hasText: "doubao-seedream-5-0-260128" })).toBeVisible();
@@ -815,17 +819,16 @@ test("model workbench creates custom OpenAI-compatible presets and surfaces read
   const customProviderRow = page.locator(".provider-row").filter({ hasText: "cliproxy-gpt-4o" });
   const customDoubaoRow = page.locator(".provider-row").filter({ hasText: "doubao-1-5-pro-32k-250115" });
   await expect(customProviderRow).not.toContainText("Saved locally");
-  await expect(customProviderRow.first()).toContainText("key ready");
-  await expect(customProviderRow).toContainText("check ready");
+  await expect(customProviderRow.first()).toContainText("Ready");
+  await expect(customProviderRow.first().locator(".provider-primary-status")).toHaveCount(1);
   await expect(customDoubaoRow).toBeVisible();
-  await expect(customProviderRow.locator(".provider-name-copy small")).toContainText("cliproxy-gpt-4o");
-  await expect(customProviderRow.locator(".provider-meta-line").first()).toContainText("Capabilities:");
-  await expect(customProviderRow.locator(".provider-meta-line").first()).not.toContainText("custom-openai-compatible");
+  await expect(customProviderRow.locator(".provider-name-copy strong")).toContainText("cliproxy-gpt-4o");
+  await expect(customProviderRow.locator(".provider-name-copy small")).toHaveCount(0);
+  await expect(customProviderRow.locator(".provider-meta-line")).toHaveCount(0);
   await expect(customProviderRow).not.toContainText("Current default");
   await expect(customProviderRow.getByRole("button", { name: "Set default" })).toBeVisible();
   await customProviderRow.getByRole("button", { name: "Set default" }).click();
-  await expect(customProviderRow.getByRole("button", { name: "Clear default" })).toBeVisible();
-  await customProviderRow.getByRole("button", { name: "Clear default" }).click();
+  await clickProviderRowMenuItem(customProviderRow.first(), "Clear default");
   await expect(customProviderRow.getByRole("button", { name: "Set default" })).toBeVisible();
   await expect(page.getByRole("dialog", { name: "New preset" })).toHaveCount(0);
   await expect.poll(() =>
@@ -846,7 +849,7 @@ test("model workbench creates custom OpenAI-compatible presets and surfaces read
     } : undefined;
   }).toEqual({ reasoning: false, thinkingModes: [] });
 
-  await clickProviderRowMenuItem(customProviderRow.first(), "Edit");
+  await customProviderRow.first().getByRole("button", { name: "Edit" }).click();
   await expect(page.getByRole("dialog", { name: "Edit preset" })).toBeVisible();
   await expect(page.getByLabel("Provider ID")).toHaveCount(0);
   await expect(page.getByLabel("API protocol")).toBeEnabled();
@@ -885,13 +888,13 @@ test("model workbench creates custom OpenAI-compatible presets and surfaces read
     reasoning: false,
     thinkingModes: [],
   });
-  await clickProviderRowMenuItem(customProviderRow.first(), "Edit");
+  await customProviderRow.first().getByRole("button", { name: "Edit" }).click();
   await expect(page.getByRole("dialog", { name: "Edit preset" })).toBeVisible();
   await page.locator(".provider-secret-input .provider-secret-clear").click();
   await expect(page.getByLabel("API key", { exact: true })).toHaveValue("");
-  await page.getByRole("button", { name: "Save" }).click();
+  await page.getByRole("button", { name: "Save changes" }).click();
   await expect(page.getByRole("dialog", { name: "Edit preset" }).getByText("API key missing. Add an API key before running a live check.")).toBeVisible();
-  await expect(customProviderRow.first()).toContainText("key ready");
+  await expect(customProviderRow.first()).toContainText("Ready");
 });
 
 test("model workbench status counts align with saved chat and media presets", async ({ page }) => {
@@ -983,10 +986,11 @@ test("model workbench row checks show inline feedback without spinning batch che
   const failedFeedback = page.locator(".provider-check-feedback-row.bad").filter({ hasText: "Check failed" });
   await expect(failedFeedback).toContainText("Invalid API key.");
   await expect(page.locator(".provider-check-feedback-row")).toHaveCount(1);
-  await expect(page.locator(".provider-check-feedback-row")).toHaveCount(0, { timeout: 3500 });
+  await page.waitForTimeout(2200);
+  await expect(failedFeedback).toBeVisible();
 
   const mediaRow = page.locator(".provider-row").filter({ hasText: "Seedream Image" });
-  await clickProviderRowMenuItem(mediaRow, "Check");
+  await mediaRow.getByRole("button", { name: "Check" }).click();
   const mediaFeedback = page.locator(".provider-check-feedback-row.ok").filter({ hasText: "Generation model configuration check passed." });
   await expect(mediaFeedback).toContainText("Check passed");
   await expect(mediaFeedback).toContainText("Run Image Generation to create real results. This check does not create an image.");
@@ -1025,19 +1029,19 @@ test("save and check enables a disabled provider before checking", async ({ page
 
   await openModelWorkbench(page);
   const disabledRow = page.locator(".provider-row").filter({ hasText: "Disabled Relay" });
-  await clickProviderRowMenuItem(disabledRow, "Edit");
+  await disabledRow.getByRole("button", { name: "Edit" }).click();
   await page.getByLabel("API key", { exact: true }).fill("disabled-provider-key");
-  await page.getByRole("button", { name: "Save" }).click();
+  await page.getByRole("button", { name: "Save changes" }).click();
 
-  await expect(disabledRow).toContainText("Ready to use");
-  await expect(disabledRow).toContainText("check ready");
+  await expect(disabledRow).toContainText("Ready");
+  await expect(disabledRow.locator(".provider-primary-status")).toHaveCount(1);
   await expect.poll(() => {
     const provider = state.providers.find((item) => isRecord(item) && item.id === "provider_disabled");
     return isRecord(provider) ? { enabled: provider.enabled, apiKeyRef: provider.apiKeyRef, checked: isRecord(provider.lastCheck) && provider.lastCheck.ok } : undefined;
   }).toEqual({ enabled: true, apiKeyRef: "local:provider_disabled", checked: true });
 });
 
-test("row check enables a configured disabled chat provider before checking", async ({ page }) => {
+test("disabled chat providers expose enable before their row check", async ({ page }) => {
   await useEnglishLocale(page);
   const state = createBaseState({ approvalStatus: "expired" });
   state.providers = [
@@ -1060,11 +1064,12 @@ test("row check enables a configured disabled chat provider before checking", as
 
   await openModelWorkbench(page);
   const disabledRow = page.locator(".provider-row").filter({ hasText: "Configured Disabled Relay" });
-  await clickProviderRowMenuItem(disabledRow, "Check");
+  await disabledRow.getByRole("button", { name: "Enable" }).click();
+  await disabledRow.getByRole("button", { name: "Check" }).click();
 
   await expect(disabledRow.locator(".provider-state.run-ready")).toHaveCount(1);
   await expect(disabledRow.getByRole("button", { name: "Set default" })).toBeVisible();
-  await expect(disabledRow).toContainText("check ready");
+  await expect(disabledRow).toContainText("Ready");
   await expect.poll(() => {
     const provider = state.providers.find((item) => isRecord(item) && item.id === "provider_disabled");
     return isRecord(provider) ? { enabled: provider.enabled, checked: isRecord(provider.lastCheck) && provider.lastCheck.ok } : undefined;

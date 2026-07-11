@@ -224,7 +224,7 @@ export function ProviderSettings({
   }, [editingProviderId, repairRun]);
 
   useEffect(() => {
-    if (checkScope !== "row" || !checkedProviderId || !checkResult) {
+    if (checkScope !== "row" || !checkedProviderId || !checkResult?.ok) {
       return undefined;
     }
     const timeout = window.setTimeout(() => onClearCheckFeedback(checkedProviderId), 2000);
@@ -463,7 +463,6 @@ export function ProviderSettings({
         <ProviderRouteList
           providers={providers}
           filteredProviders={filteredProviders}
-          templates={templates}
           selectedProviderId={selectedProviderId}
           isLoading={isLoading}
           isCheckingProviders={isCheckingProviders}
