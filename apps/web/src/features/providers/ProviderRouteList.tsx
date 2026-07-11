@@ -2,21 +2,14 @@ import { Fragment, useState, type CSSProperties } from "react";
 import { CheckCircle2, CircleAlert, Loader2, MoreHorizontal, Pencil, Play, PlugZap, Search, Trash2, X } from "lucide-react";
 import { useI18n } from "../../i18n.js";
 import {
-  canUseProviderForRun,
   providerCheckDisplayGuidance,
   providerCheckDisplayMessage,
   providerCheckStatusLabel,
-  providerLastCheckClass,
-  providerLastCheckLabel,
-  providerLastCheckTitle,
-  providerModelRouteLabel,
-  providerSecretStatusClass,
-  providerSecretStatusLabel,
 } from "../../lib/providers.js";
 import { ActionMenuItem, OperationEmptyState } from "../../shared/components/index.js";
-import type { ProviderCheckResult, ProviderPreset, ProviderTemplate } from "../../types.js";
+import type { ProviderCheckResult, ProviderPreset } from "../../types.js";
 import type { ProviderCheckScope } from "./types.js";
-import { providerInitial, readProviderRouteRowView } from "./provider-workbench-view-models.js";
+import { readProviderRouteRowView } from "./provider-workbench-view-models.js";
 import type { ProviderSetupIntent } from "./provider-workbench-view-models.js";
 
 type ProviderMenuAnchor = { readonly id: string; readonly top: number; readonly right: number };
@@ -26,7 +19,6 @@ const providerRowMenuEstimatedHeight = 132;
 export function ProviderRouteList({
   providers,
   filteredProviders,
-  templates,
   selectedProviderId,
   isLoading,
   isCheckingProviders,
@@ -44,7 +36,6 @@ export function ProviderRouteList({
 }: {
   readonly providers: readonly ProviderPreset[];
   readonly filteredProviders: readonly ProviderPreset[];
-  readonly templates: readonly ProviderTemplate[];
   readonly selectedProviderId: string;
   readonly isLoading: boolean;
   readonly isCheckingProviders: boolean;
@@ -88,7 +79,6 @@ export function ProviderRouteList({
           compact
           icon={isLoading ? <Loader2 className="spin" /> : <PlugZap />}
           title={isLoading ? t("Loading providers...") : t("Add a model route to start using Ling.")}
-          description={!isLoading ? t("Choose a chat model for conversations or a generation model for image tasks.") : undefined}
           action={!isLoading ? (
             <span className="provider-empty-actions">
               <button className="primary-button compact-button" type="button" onClick={() => onAddModel("chat")}>
@@ -108,8 +98,7 @@ export function ProviderRouteList({
             <tr>
               <th>{t("Model")}</th>
               <th>{t("Usage")}</th>
-              <th>{t("Availability")}</th>
-              <th>{t("Default and status")}</th>
+              <th>{t("Status")}</th>
               <th className="provider-table-action-head">{t("Actions")}</th>
             </tr>
           </thead>
@@ -121,50 +110,57 @@ export function ProviderRouteList({
               const rowCheckGuidance = rowCheckResult ? providerCheckDisplayGuidance(rowCheckResult, provider, t) : "";
               const row = readProviderRouteRowView({
                 provider,
-                templates,
                 selectedProviderId,
                 rowCheckGuidance,
                 t,
               });
+              const primaryAction = row.primaryAction === "add_api_key" ? (
+                <button className="secondary-button compact-button provider-main-action" type="button" onClick={() => onEdit(provider)}>
+                  <Pencil size={14} />
+                  {t("Add API key")}
+                </button>
+              ) : row.primaryAction === "check" ? (
+                <button className="secondary-button compact-button provider-main-action" type="button" disabled={isCheckingProviders} onClick={() => onCheck(provider.id)}>
+                  {providerIsChecking && checkScope === "row" ? <Loader2 className="spin" size={14} /> : <CheckCircle2 size={14} />}
+                  {t("Check")}
+                </button>
+              ) : row.primaryAction === "set_default" ? (
+                <button className="secondary-button compact-button provider-main-action" type="button" onClick={() => onUse(provider)}>
+                  <Play size={14} />
+                  {t("Set default")}
+                </button>
+              ) : row.primaryAction === "enable" ? (
+                <button className="secondary-button compact-button provider-main-action" type="button" disabled={isCheckingProviders} onClick={() => onToggleEnabled(provider, true)}>
+                  <CheckCircle2 size={14} />
+                  {t("Enable")}
+                </button>
+              ) : null;
 
               return (
                 <Fragment key={provider.id}>
                   <tr className={row.selectedForRun ? "provider-row selected" : "provider-row"}>
                     <td className="provider-name-cell">
                       <span className="provider-name-main">
-                        <span className="provider-avatar" aria-hidden="true">{providerInitial(provider.displayName)}</span>
+                        <span
+                          className="provider-avatar"
+                          role="img"
+                          aria-label={row.sourceLabel}
+                          title={row.sourceLabel}
+                          data-tooltip={row.sourceLabel}
+                        >
+                          {row.sourceInitial}
+                        </span>
                         <span className="provider-name-copy">
-                          <strong>{provider.displayName}</strong>
-                          <small>{providerModelRouteLabel(provider, templates)}</small>
+                          <strong>{row.modelLabel}</strong>
+                          {row.secondaryLabel ? <small>{row.secondaryLabel}</small> : null}
                         </span>
                       </span>
                     </td>
-                    <td>
-                      <div className="provider-meta-line provider-table-compat-line">
-                        <span>{t("Capabilities")}: {row.capabilitySummary}</span>
-                      </div>
-                      {row.generationRuntimeSummary ? (
-                        <div className="provider-meta-line provider-generation-status-line">
-                          <span>{row.generationRuntimeSummary}</span>
-                        </div>
-                      ) : null}
-                      <details className="settings-compact-details provider-row-technical-details">
-                        <summary>{t("Technical details")}</summary>
-                        <div className="provider-row-technical-grid">
-                          <span><small>{t("Base URL")}</small><code>{row.effectiveBaseUrl}</code></span>
-                          <span><small>{t("Model route")}</small><code>{provider.model}</code></span>
-                          <span><small>{t("Provider route")}</small><code>{provider.id}</code></span>
-                        </div>
-                      </details>
-                    </td>
-                    <td>
-                      <span className="provider-key-status-stack">
-                        <span className={providerSecretStatusClass(provider)}>{providerSecretStatusLabel(provider, t)}</span>
-                        <span className={providerLastCheckClass(provider)} title={providerLastCheckTitle(provider, t)}>
-                          {providerLastCheckLabel(provider, t)}
-                        </span>
-                        {row.secretHeaderSummary ? <small>{row.secretHeaderSummary}</small> : null}
-                        <small>{row.lastCheckSummary}</small>
+                    <td className="provider-usage-cell">
+                      <span className="provider-usage-labels">
+                        {(row.usageLabels.length > 0 ? row.usageLabels : [t("General")]).map((label) => (
+                          <span className="provider-usage-label" key={label}>{label}</span>
+                        ))}
                       </span>
                     </td>
                     <td className="provider-status-cell">
@@ -185,37 +181,34 @@ export function ProviderRouteList({
                     </td>
                     <td>
                       <div className="provider-actions">
-                        {row.missingApiKey ? (
-                          <button className="secondary-button compact-button provider-main-action" type="button" onClick={() => onEdit(provider)}>
-                            <Pencil size={14} />
-                            {t("Add API key")}
-                          </button>
-                        ) : !row.ready && canUseProviderForRun(provider) ? (
-                          <button className="secondary-button compact-button provider-main-action" type="button" disabled={isCheckingProviders} onClick={() => onCheck(provider.id)}>
-                            {providerIsChecking && checkScope === "row" ? <Loader2 className="spin" size={14} /> : <CheckCircle2 size={14} />}
-                            {t("Check")}
-                          </button>
-                        ) : row.chatCapable ? (
+                        {primaryAction}
+                        {row.showInlineCheck ? (
                           <button
-                            className="secondary-button compact-button provider-main-action"
+                            className="provider-row-icon-action"
                             type="button"
-                            disabled={!row.selectedForRun && !row.canBeDefault}
-                            onClick={() => {
-                              if (row.selectedForRun) {
-                                onStopUse(provider);
-                                return;
-                              }
-                              onUse(provider);
-                            }}
+                            aria-label={t("Check")}
+                            title={t("Check")}
+                            data-tooltip={t("Check")}
+                            disabled={isCheckingProviders}
+                            onClick={() => onCheck(provider.id)}
                           >
-                            {row.selectedForRun ? <X size={14} /> : <Play size={14} />}
-                            {row.selectedForRun ? t("Clear default") : t("Set default")}
+                            {providerIsChecking && checkScope === "row"
+                              ? <Loader2 className="spin" size={15} />
+                              : <CheckCircle2 size={15} />}
                           </button>
-                        ) : (
-                          <span className={row.generationCapable ? "provider-action-note" : "provider-action-note muted"}>
-                            {row.generationCapable ? t("Generation model") : t("Not for chat")}
-                          </span>
-                        )}
+                        ) : null}
+                        {row.showInlineEdit ? (
+                          <button
+                            className="provider-row-icon-action"
+                            type="button"
+                            aria-label={t("Edit")}
+                            title={t("Edit")}
+                            data-tooltip={t("Edit")}
+                            onClick={() => onEdit(provider)}
+                          >
+                            <Pencil size={15} />
+                          </button>
+                        ) : null}
                         <span
                           className={openProviderMenuId === provider.id ? "provider-row-menu hover-action-menu open" : "provider-row-menu hover-action-menu"}
                           onMouseEnter={(event) => openProviderRowMenu(provider.id, event.currentTarget)}
@@ -246,31 +239,24 @@ export function ProviderRouteList({
                               "--provider-row-menu-right": `${openProviderMenu.right}px`,
                             } as CSSProperties}
                           >
-                            <ActionMenuItem
-                              icon={<Pencil size={14} />}
-                              label={t("Edit")}
-                              onSelect={() => {
-                                closeProviderRowMenu();
-                                onEdit(provider);
-                              }}
-                            />
-                            <ActionMenuItem
-                              icon={provider.enabled ? <X size={14} /> : <CheckCircle2 size={14} />}
-                              label={provider.enabled ? t("Disable") : t("Enable")}
-                              disabled={isCheckingProviders}
-                              onSelect={() => {
-                                closeProviderRowMenu();
-                                onToggleEnabled(provider, !provider.enabled);
-                              }}
-                            />
-                            {!row.mainActionIsCheck ? (
+                            {row.selectedForRun ? (
                               <ActionMenuItem
-                                icon={providerIsChecking && checkScope === "row" ? <Loader2 className="spin" size={14} /> : <CheckCircle2 size={14} />}
-                                label={t("Check")}
-                                disabled={isCheckingProviders || row.missingApiKey}
+                                icon={<X size={14} />}
+                                label={t("Clear default")}
                                 onSelect={() => {
                                   closeProviderRowMenu();
-                                  onCheck(provider.id);
+                                  onStopUse(provider);
+                                }}
+                              />
+                            ) : null}
+                            {row.showDisableMenuAction ? (
+                              <ActionMenuItem
+                                icon={<X size={14} />}
+                                label={t("Disable")}
+                                disabled={isCheckingProviders}
+                                onSelect={() => {
+                                  closeProviderRowMenu();
+                                  onToggleEnabled(provider, false);
                                 }}
                               />
                             ) : null}
@@ -290,20 +276,17 @@ export function ProviderRouteList({
                   </tr>
                   {rowCheckResult ? (
                     <tr className={rowCheckResult.ok ? "provider-check-feedback-row ok" : "provider-check-feedback-row bad"}>
-                      <td colSpan={5}>
+                      <td colSpan={4}>
                         <div className="provider-check-feedback">
                           {rowCheckResult.ok ? <CheckCircle2 size={15} /> : <CircleAlert size={15} />}
                           <div className="provider-check-feedback-copy">
-                            <span>
-                              <strong>{t(rowCheckResult.ok ? "Check passed" : "Check failed")}</strong>
-                              <em>{providerCheckStatusLabel(rowCheckResult, t)}</em>
-                            </span>
+                            <strong>{t(rowCheckResult.ok ? "Check passed" : "Check failed")}</strong>
                             <p>{rowCheckMessage}</p>
                             {rowCheckGuidance ? <small>{rowCheckGuidance}</small> : null}
                             {rowCheckResult.message ? (
                               <details className="provider-check-raw-details">
                                 <summary>{t("Check details")}</summary>
-                                <small>{t("Provider response")}: {t(rowCheckResult.message)}</small>
+                                <small>{providerCheckStatusLabel(rowCheckResult, t)}: {t(rowCheckResult.message)}</small>
                               </details>
                             ) : null}
                           </div>

@@ -1,18 +1,11 @@
-import { formatDateTime } from "../../lib/formatting.js";
 import {
   canWorkbenchBatchCheckProvider,
   canUseGenerationProviderForOperation,
-  canUseProviderForRun,
   isWorkbenchNeedsConfigProvider,
   isWorkbenchReadyProvider,
-  providerCapabilityChipLabels,
-  providerEffectiveBaseUrl,
-  providerGenerationRuntimeSummary,
   providerNeedsSecret,
   providerPreflightReady,
-  providerRunBlockerLabel,
   providerRunPreflightBlocker,
-  providerSecretHeaderSummary,
   sortProvidersForWorkbench,
 } from "../../lib/providers.js";
 import type {
@@ -25,6 +18,15 @@ import type {
 
 export type ProviderStatusFilter = "all" | "ready" | "needsAttention" | "missingKey" | "disabled";
 export type ProviderSetupIntent = "chat" | "generation";
+export type ProviderPrimaryState =
+  | "disabled"
+  | "missing_api_key"
+  | "check_failed"
+  | "needs_check"
+  | "current_default"
+  | "ready";
+export type ProviderPrimaryAction = "enable" | "add_api_key" | "check" | "set_default" | undefined;
+export type ProviderStatusTone = "neutral" | "success" | "attention" | "danger";
 
 export type ProviderWorkbenchTranslate = (
   key: string,
@@ -50,15 +52,20 @@ export interface ProviderRouteRowView {
   readonly generationCapable: boolean;
   readonly canGenerate: boolean;
   readonly ready: boolean;
-  readonly effectiveBaseUrl: string;
+  readonly usageLabels: readonly string[];
+  readonly primaryState: ProviderPrimaryState;
+  readonly primaryAction: ProviderPrimaryAction;
   readonly primaryStatusLabel: string;
   readonly primaryStatusClass: string;
+  readonly primaryStatusTone: ProviderStatusTone;
   readonly statusHint: string;
-  readonly mainActionIsCheck: boolean;
-  readonly generationRuntimeSummary: string;
-  readonly secretHeaderSummary: string;
-  readonly capabilitySummary: string;
-  readonly lastCheckSummary: string;
+  readonly modelLabel: string;
+  readonly sourceLabel: string;
+  readonly sourceInitial: string;
+  readonly secondaryLabel: string;
+  readonly showInlineCheck: boolean;
+  readonly showInlineEdit: boolean;
+  readonly showDisableMenuAction: boolean;
 }
 
 export function providerTemplateMatchesSetupIntent(
@@ -157,13 +164,11 @@ export function filterProviderWorkbenchRoutes({
 
 export function readProviderRouteRowView({
   provider,
-  templates,
   selectedProviderId,
   rowCheckGuidance,
   t,
 }: {
   readonly provider: ProviderPreset;
-  readonly templates: readonly ProviderTemplate[];
   readonly selectedProviderId: string;
   readonly rowCheckGuidance: string;
   readonly t: ProviderWorkbenchTranslate;
@@ -178,39 +183,75 @@ export function readProviderRouteRowView({
   const canGenerate = (["image_generate", "image_edit", "video_generate"] as const).some((operation) =>
     canUseGenerationProviderForOperation(provider, operation)
   );
-  const ready = providerPreflightReady(provider);
-  const primaryStatusLabel = missingApiKey
-    ? t("Needs config")
-    : !provider.enabled
-      ? t("disabled")
-      : selectedForRun
-        ? t("Current default")
-        : ready
-          ? t("Ready to use")
-          : generationCapable && !chatCapable
-            ? canGenerate ? t("Ready to generate") : t("Generation model")
-            : canUseProviderForRun(provider)
-              ? t("needs check")
-              : providerRunBlockerLabel(provider, t);
-  const primaryStatusClass = missingApiKey
-    ? "provider-state check-unknown"
-    : selectedForRun || ready || (generationCapable && !chatCapable && canGenerate)
-      ? "provider-state run-ready"
-      : generationCapable && !chatCapable
-        ? "provider-state check-unknown"
-        : provider.enabled
-          ? "provider-state run-blocked"
-          : "provider-state disabled";
-  const statusHint =
-    missingApiKey || !provider.enabled || (!ready && chatCapable)
-      ? (providerRunPreflightBlocker(provider, t) ?? rowCheckGuidance)
-      : generationCapable && !canGenerate
-        ? t("Real generation is not connected yet.")
-        : "";
-  const capabilitySummary = providerCapabilityChipLabels(provider, t).join(" / ");
-  const lastCheckSummary = provider.lastCheck
-    ? t("last check {time}", { time: formatDateTime(provider.lastCheck.checkedAt) })
-    : t("not checked");
+  const ready = providerPreflightReady(provider) || canGenerate;
+  const primaryState: ProviderPrimaryState = !provider.enabled
+    ? "disabled"
+    : missingApiKey
+      ? "missing_api_key"
+      : provider.lastCheck && !provider.lastCheck.ok
+        ? "check_failed"
+        : !ready
+          ? "needs_check"
+          : selectedForRun
+            ? "current_default"
+            : "ready";
+  const primaryStatusLabel = primaryState === "disabled"
+    ? t("Disabled")
+    : primaryState === "missing_api_key"
+      ? t("Needs API key")
+      : primaryState === "check_failed"
+        ? t("Needs attention")
+        : primaryState === "needs_check"
+          ? t("Needs check")
+          : primaryState === "current_default"
+            ? t("Current default")
+            : t("Ready");
+  const primaryStatusTone: ProviderStatusTone = primaryState === "check_failed"
+    ? "danger"
+    : primaryState === "missing_api_key" || primaryState === "needs_check"
+      ? "attention"
+      : primaryState === "ready"
+        ? "success"
+        : "neutral";
+  const primaryStatusClass = [
+    "provider-state",
+    "provider-primary-status",
+    `status-${primaryStatusTone}`,
+    primaryState === "disabled"
+      ? "disabled"
+      : primaryState === "missing_api_key"
+        ? "key-missing"
+        : primaryState === "check_failed"
+          ? "check-bad"
+          : primaryState === "needs_check"
+            ? "check-unknown"
+            : "run-ready",
+  ].join(" ");
+  const primaryAction: ProviderPrimaryAction = primaryState === "disabled"
+    ? "enable"
+    : primaryState === "missing_api_key"
+      ? "add_api_key"
+      : primaryState === "check_failed" || primaryState === "needs_check"
+        ? "check"
+        : primaryState === "ready" && chatCapable && canBeDefault
+          ? "set_default"
+          : undefined;
+  const usageLabels = [
+    chatCapable ? t("Chat") : "",
+    provider.capabilities.some((capability) => capability === "image_generate" || capability === "image_edit") ? t("Image") : "",
+    provider.capabilities.includes("video_generate") ? t("Video") : "",
+  ].filter(Boolean);
+  const statusHint = primaryState === "ready" || primaryState === "current_default"
+    ? ""
+    : providerRunPreflightBlocker(provider, t) ?? rowCheckGuidance;
+  const isCustomRoute = provider.providerId === "custom-openai-compatible";
+  const sourceLabel = isCustomRoute
+    ? t("Custom access")
+    : providerDisplaySourceLabel(provider.displayName, provider.model);
+  const modelLabel = provider.model.trim() || provider.displayName.trim();
+  const secondaryLabel = isCustomRoute || !sourceLabel || sourceLabel.toLowerCase() === modelLabel.toLowerCase()
+    ? ""
+    : sourceLabel;
 
   return {
     missingApiKey,
@@ -220,16 +261,36 @@ export function readProviderRouteRowView({
     generationCapable,
     canGenerate,
     ready,
-    effectiveBaseUrl: providerEffectiveBaseUrl(provider, templates) || t("default endpoint"),
+    usageLabels,
+    primaryState,
+    primaryAction,
     primaryStatusLabel,
     primaryStatusClass,
+    primaryStatusTone,
     statusHint,
-    mainActionIsCheck: !missingApiKey && !ready && canUseProviderForRun(provider),
-    generationRuntimeSummary: providerGenerationRuntimeSummary(provider, t) ?? "",
-    secretHeaderSummary: providerSecretHeaderSummary(provider, t) ?? "",
-    capabilitySummary,
-    lastCheckSummary,
+    modelLabel,
+    sourceLabel,
+    sourceInitial: providerInitial(sourceLabel || provider.displayName),
+    secondaryLabel,
+    showInlineCheck: provider.enabled && !missingApiKey && primaryAction !== "check",
+    showInlineEdit: primaryAction !== "add_api_key",
+    showDisableMenuAction: provider.enabled,
   };
+}
+
+function providerDisplaySourceLabel(displayName: string, model: string): string {
+  const normalizedDisplayName = displayName.trim();
+  const normalizedModel = model.trim();
+  if (!normalizedDisplayName || !normalizedModel) {
+    return normalizedDisplayName;
+  }
+  const suffixes = [` · ${normalizedModel}`, ` / ${normalizedModel}`, ` - ${normalizedModel}`];
+  const matchingSuffix = suffixes.find((suffix) =>
+    normalizedDisplayName.toLowerCase().endsWith(suffix.toLowerCase())
+  );
+  return matchingSuffix
+    ? normalizedDisplayName.slice(0, -matchingSuffix.length).trim()
+    : normalizedDisplayName;
 }
 
 export function providerModelSourceLabel(source: string, t: ProviderWorkbenchTranslate): string {

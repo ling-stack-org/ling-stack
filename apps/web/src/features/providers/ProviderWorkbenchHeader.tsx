@@ -40,23 +40,16 @@ export function ProviderWorkbenchHeader({
     </div>
   );
   const readinessSummary = (
-    <div className="provider-readiness-strip" aria-label={t("Model readiness summary")}>
-      <span className={summary.chatReadyCount > 0 ? "ready" : "attention"}>
-        <strong>{summary.chatReadyCount}</strong>
-        <small>{t("Chat ready")}</small>
-      </span>
-      <span className={summary.generationReadyCount > 0 ? "ready" : "attention"}>
-        <strong>{summary.generationReadyCount}</strong>
-        <small>{t("Image generation ready")}</small>
-      </span>
-      <span className={summary.missingSecretCount > 0 ? "attention" : "quiet"}>
-        <strong>{summary.missingSecretCount}</strong>
-        <small>{t("Need API key")}</small>
-      </span>
-      <span className={summary.disabledCount > 0 ? "quiet" : "ready"}>
-        <strong>{summary.disabledCount}</strong>
-        <small>{t("Disabled")}</small>
-      </span>
+    <div className="provider-readiness-summary" aria-label={t("Model readiness summary")}>
+      <span>{t("{count} models", { count: summary.totalCount })}</span>
+      <span>{t("{count} chat ready", { count: summary.chatReadyCount })}</span>
+      <span>{t("{count} image ready", { count: summary.generationReadyCount })}</span>
+      {summary.missingSecretCount > 0 ? (
+        <span className="attention">{t("{count} need API key", { count: summary.missingSecretCount })}</span>
+      ) : null}
+      {summary.disabledCount > 0 ? (
+        <span className="quiet">{t("{count} disabled", { count: summary.disabledCount })}</span>
+      ) : null}
     </div>
   );
   const secondaryActions = (
@@ -65,9 +58,15 @@ export function ProviderWorkbenchHeader({
         {isBatchChecking ? <Loader2 className="spin" size={15} /> : <CheckCircle2 size={15} />}
         {t("Check all")}
       </button>
-      <button className="secondary-button compact-button" type="button" onClick={onRefresh} disabled={isLoading || isCheckingProviders}>
+      <button
+        className="secondary-button compact-button provider-refresh-button"
+        type="button"
+        onClick={onRefresh}
+        disabled={isLoading || isCheckingProviders}
+        aria-label={t("Refresh")}
+        title={t("Refresh")}
+      >
         {isLoading ? <Loader2 className="spin" size={15} /> : <RefreshCw size={15} />}
-        {t("Refresh")}
       </button>
     </>
   );

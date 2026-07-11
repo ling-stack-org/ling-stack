@@ -1,10 +1,9 @@
-import { CircleAlert, Loader2, RefreshCw, Search } from "lucide-react";
+import { CircleAlert, Info, Loader2, RefreshCw, Search } from "lucide-react";
 import { useI18n } from "../../i18n.js";
 import { providerCapabilityChipLabels } from "../../lib/providers.js";
 import { OperationEmptyState } from "../../shared/components/index.js";
 import type { ProviderModelOption } from "../../types.js";
 import {
-  modelThinkingModes,
   providerModelCapabilitySourceLabel,
   providerModelThinkingLabel,
 } from "./provider-workbench-view-models.js";
@@ -49,10 +48,7 @@ export function ProviderModelImportPanel({
   return (
     <div className="provider-model-discovery">
       <div className="provider-model-discovery-header">
-        <span>
-          <strong>{t("Available models")}</strong>
-          <small>{modelOptionsSource ? t("Loaded from {source}", { source: modelOptionsSource }) : t("Fetch models from the configured supplier endpoint.")}</small>
-        </span>
+        <strong>{t("Available models")}</strong>
         <span className="provider-model-actions">
           <button
             className="secondary-button compact-button"
@@ -65,6 +61,12 @@ export function ProviderModelImportPanel({
           </button>
         </span>
       </div>
+      {modelOptionsSource ? (
+        <details className="provider-model-source-details">
+          <summary>{t("Source")}</summary>
+          <small>{t("Loaded from {source}", { source: modelOptionsSource })}</small>
+        </details>
+      ) : null}
       {modelOptions.length > 0 ? (
         <div className="provider-model-search-row">
           <label className="provider-model-search">
@@ -98,6 +100,12 @@ export function ProviderModelImportPanel({
               modelSelected ? "selected" : "",
               editingProviderId && importSelected ? "import-selected" : "",
             ].filter(Boolean).join(" ");
+            const capabilityLabel = providerCapabilityChipLabels(model, t).join(" / ");
+            const modelInfo = [
+              model.ownedBy,
+              providerModelCapabilitySourceLabel(model, t),
+              providerModelThinkingLabel(model, t),
+            ].filter(Boolean).join(" · ");
             const activateModelRow = (): void => {
               if (editingProviderId) {
                 onSelectProviderModel(model);
@@ -130,11 +138,12 @@ export function ProviderModelImportPanel({
                 </label>
                 <span className="provider-model-card-copy">
                   <strong>{model.displayName ?? model.id}</strong>
-                  <small>{model.ownedBy ?? model.id}</small>
-                  <em>{`${providerCapabilityChipLabels(model, t).join(" / ")} · ${providerModelCapabilitySourceLabel(model, t)}`}</em>
+                  {model.displayName && model.displayName !== model.id ? <small>{model.id}</small> : null}
                 </span>
-                <span className={modelThinkingModes(model).length > 0 ? "provider-model-thinking-chip" : "provider-model-thinking-chip unsupported"}>
-                  {providerModelThinkingLabel(model, t)}
+                <span className="provider-model-usage-label">{capabilityLabel}</span>
+                <span className="provider-model-info" aria-label={modelInfo} title={modelInfo}>
+                  <Info size={14} />
+                  <span className="sr-only">{modelInfo}</span>
                 </span>
               </div>
             );

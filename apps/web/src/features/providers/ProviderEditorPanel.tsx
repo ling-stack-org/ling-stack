@@ -8,6 +8,7 @@ import type {
   ProviderPreset,
   ProviderTemplate,
 } from "../../types.js";
+import { ProviderAdvancedSettings } from "./ProviderAdvancedSettings.js";
 import type { ProviderSetupIntent } from "./provider-workbench-view-models.js";
 
 export function ProviderEditorPanel({
@@ -72,12 +73,7 @@ export function ProviderEditorPanel({
         : editingProviderId
           ? t("Edit preset")
           : t("New preset");
-  const setupDescription =
-    !editingProviderId && setupIntent === "chat"
-      ? t("Choose a chat-capable supplier and add its API key.")
-      : !editingProviderId && setupIntent === "generation"
-        ? t("Choose a generation-capable supplier and add its API key.")
-        : "";
+  const isCustomProvider = selectedTemplateId === "custom-openai-compatible";
 
   return (
     <div className="provider-sheet-backdrop" role="presentation">
@@ -85,7 +81,6 @@ export function ProviderEditorPanel({
         <div className="panel-title split provider-sheet-header">
           <span>
             <h2 id="provider-form-title">{setupTitle}</h2>
-            {setupDescription ? <small>{setupDescription}</small> : null}
           </span>
           <button className="icon-button" type="button" onClick={onClose} aria-label={t("Close model preset editor")}>
             <X size={16} />
@@ -121,88 +116,58 @@ export function ProviderEditorPanel({
               </label>
             )}
           </div>
-          <div className="field-row provider-identity-row">
-            <label className="field">
-              <span>{t("Provider name")}</span>
-              <input value={form.displayName} onChange={(event) => onFormChange({ ...form, displayName: event.target.value })} />
-            </label>
-            <label className="field">
-              <span>{t("Model")}</span>
-              <input value={form.model} onChange={(event) => onFormChange({ ...form, model: event.target.value })} />
-            </label>
-          </div>
-
-          <div className="field-row provider-connection-row">
-            <label className="field">
-              <span>{t("Base URL")}</span>
-              <input value={form.baseUrl} onChange={(event) => onFormChange({ ...form, baseUrl: event.target.value })} />
-            </label>
-            <div className="field provider-api-key-field">
-              <span>{t("API key")}</span>
-              <div className="provider-secret-input">
-                <input
-                  aria-label={t("API key")}
-                  type={showApiKey ? "text" : "password"}
-                  autoComplete="new-password"
-                  value={form.apiKey}
-                  placeholder={t("Paste API key")}
-                  onChange={(event) => onFormChange({ ...form, apiKey: event.target.value, clearApiKey: false })}
+          {isCustomProvider ? (
+            <div className="field-row provider-identity-row">
+              <label className="field">
+                <span>{t("Provider name")}</span>
+                <input value={form.displayName} onChange={(event) => onFormChange({ ...form, displayName: event.target.value })} />
+              </label>
+              <label className="field">
+                <span>{t("Model")}</span>
+                <input value={form.model} onChange={(event) => onFormChange({ ...form, model: event.target.value })} />
+              </label>
+            </div>
+          ) : (
+            <div className="field-row provider-core-row">
+              <label className="field">
+                <span>{t("Model")}</span>
+                <input value={form.model} onChange={(event) => onFormChange({ ...form, model: event.target.value })} />
+              </label>
+              <div className="field provider-api-key-field">
+                <span>{t("API key")}</span>
+                <ProviderSecretInput
+                  form={form}
+                  editingProvider={editingProvider}
+                  showApiKey={showApiKey}
+                  onFormChange={onFormChange}
+                  onShowApiKeyChange={onShowApiKeyChange}
                 />
-                {form.apiKey ? (
-                  <span className="provider-secret-actions">
-                    <button
-                      className="icon-button provider-secret-toggle"
-                      type="button"
-                      aria-label={showApiKey ? t("Hide API key") : t("Show API key")}
-                      onClick={() => onShowApiKeyChange(!showApiKey)}
-                    >
-                      {showApiKey ? <Eye size={15} /> : <EyeOff size={15} />}
-                    </button>
-                    <button
-                      className="icon-button provider-secret-clear"
-                      type="button"
-                      aria-label={t("Clear input")}
-                      onClick={() => onFormChange({ ...form, apiKey: "", clearApiKey: Boolean(editingProvider?.apiKeyConfigured) })}
-                    >
-                      <X size={15} />
-                    </button>
-                  </span>
-                ) : null}
               </div>
             </div>
-          </div>
+          )}
 
-          <details className="provider-secret-headers-detail">
-            <summary>
-              <span>{t("Secret headers")}</span>
-              <small>{t("Optional header refs")}</small>
-            </summary>
-            <label className="field wide provider-secret-headers-field">
-              <span>{t("Header secret refs")}</span>
-              <textarea
-                rows={3}
-                spellCheck={false}
-                value={form.secretHeaderRefsText}
-                placeholder={"X-Api-Token: env:PROVIDER_TOKEN"}
-                onChange={(event) => onFormChange({ ...form, secretHeaderRefsText: event.target.value })}
-              />
-              <small>{t("One per line. Store env: or keychain: refs only, not secret values.")}</small>
-            </label>
-          </details>
-
-          <div className="field-row provider-number-row">
-            {form.api === "media-job" ? (
-              <div className="field provider-readonly-field">
-                <span>{t("Runtime adapter")}</span>
-                <strong>{t("Generation adapter")}</strong>
-                <small>{t("Selected automatically from this model capability.")}</small>
+          {isCustomProvider ? (
+            <>
+              <div className="field-row provider-connection-row">
+                <label className="field">
+                  <span>{t("Base URL")}</span>
+                  <input value={form.baseUrl} onChange={(event) => onFormChange({ ...form, baseUrl: event.target.value })} />
+                </label>
+                <div className="field provider-api-key-field">
+                  <span>{t("API key")}</span>
+                  <ProviderSecretInput
+                    form={form}
+                    editingProvider={editingProvider}
+                    showApiKey={showApiKey}
+                    onFormChange={onFormChange}
+                    onShowApiKeyChange={onShowApiKeyChange}
+                  />
+                </div>
               </div>
-            ) : (
               <label className="field">
                 <span>{t("API protocol")}</span>
                 <select
                   value={form.api}
-                  disabled={!canEditCustomProviderFields}
                   onChange={(event) => {
                     const api = event.target.value as ProviderFormState["api"];
                     onFormChange({ ...form, api, providerTransport: api === "openai-codex-responses" ? form.providerTransport || "auto" : "" });
@@ -216,62 +181,18 @@ export function ProviderEditorPanel({
                   <option value="mistral-conversations">{t("Mistral conversations")}</option>
                 </select>
               </label>
-            )}
-            {form.api === "openai-codex-responses" ? (
-              <label className="field">
-                <span>{t("Transport")}</span>
-                <select
-                  value={form.providerTransport || "auto"}
-                  disabled={!canEditCustomProviderFields}
-                  onChange={(event) => onFormChange({ ...form, providerTransport: event.target.value as ProviderFormState["providerTransport"] })}
-                >
-                  <option value="auto">{t("Auto")}</option>
-                  <option value="websocket">{t("WebSocket")}</option>
-                  <option value="websocket-cached">{t("WebSocket cached")}</option>
-                  <option value="sse">{t("SSE")}</option>
-                </select>
-              </label>
-            ) : null}
-          </div>
-
-          <details className="provider-advanced-detail">
-            <summary>
-              <span>{t("Advanced model limits")}</span>
-              <small>{t("Optional manual override")}</small>
-            </summary>
-            <div className="provider-advanced-grid">
-              <label className="field">
-                <span>{t("Context")}</span>
-                <input value={form.contextWindow} inputMode="numeric" placeholder={t("Auto")} onChange={(event) => onFormChange({ ...form, contextWindow: event.target.value })} />
-              </label>
-              <label className="field">
-                <span>{t("Max tokens")}</span>
-                <input value={form.maxTokens} inputMode="numeric" placeholder={t("Auto")} onChange={(event) => onFormChange({ ...form, maxTokens: event.target.value })} />
-              </label>
-            </div>
-          </details>
-
-          <label className="field wide">
-            <span>{t("Capabilities")}</span>
-            <input value={form.capabilitiesText} onChange={(event) => onFormChange({ ...form, capabilitiesText: event.target.value })} />
-          </label>
+            </>
+          ) : null}
 
           {modelImportPanel}
 
-          <div className="provider-toggle-row">
-            <label className="settings-toggle">
-              <input type="checkbox" checked={form.enabled} onChange={(event) => onFormChange({ ...form, enabled: event.target.checked })} />
-              <span>{t("Enabled")}</span>
-            </label>
-            <label className="settings-toggle">
-              <input type="checkbox" checked={form.authHeader} onChange={(event) => onFormChange({ ...form, authHeader: event.target.checked })} />
-              <span>{t("Auth header")}</span>
-            </label>
-            <label className="settings-toggle">
-              <input type="checkbox" checked={form.reasoning} onChange={(event) => onFormChange({ ...form, reasoning: event.target.checked })} />
-              <span>{t("Reasoning")}</span>
-            </label>
-          </div>
+          <ProviderAdvancedSettings
+            form={form}
+            editingProviderId={editingProviderId}
+            isCustomProvider={isCustomProvider}
+            canEditCustomProviderFields={canEditCustomProviderFields}
+            onFormChange={onFormChange}
+          />
 
           {editorErrorMessage ? (
             <div className="inline-error provider-editor-error">
@@ -330,11 +251,61 @@ export function ProviderEditorPanel({
               {isSaveChecking ? <Loader2 className="spin" size={16} /> : selectedImportCount > 0 ? <Plus size={16} /> : <Save size={16} />}
               {selectedImportCount > 0
                 ? t("Import selected models ({count})", { count: selectedImportCount })
-                : t("Save")}
+                : editingProviderId
+                  ? t("Save changes")
+                  : t("Add model")}
             </button>
           </div>
         </div>
       </section>
+    </div>
+  );
+}
+
+function ProviderSecretInput({
+  form,
+  editingProvider,
+  showApiKey,
+  onFormChange,
+  onShowApiKeyChange,
+}: {
+  readonly form: ProviderFormState;
+  readonly editingProvider: ProviderPreset | undefined;
+  readonly showApiKey: boolean;
+  readonly onFormChange: (form: ProviderFormState) => void;
+  readonly onShowApiKeyChange: (value: boolean) => void;
+}): JSX.Element {
+  const { t } = useI18n();
+  return (
+    <div className="provider-secret-input">
+      <input
+        aria-label={t("API key")}
+        type={showApiKey ? "text" : "password"}
+        autoComplete="new-password"
+        value={form.apiKey}
+        placeholder={t("Paste API key")}
+        onChange={(event) => onFormChange({ ...form, apiKey: event.target.value, clearApiKey: false })}
+      />
+      {form.apiKey ? (
+        <span className="provider-secret-actions">
+          <button
+            className="icon-button provider-secret-toggle"
+            type="button"
+            aria-label={showApiKey ? t("Hide API key") : t("Show API key")}
+            onClick={() => onShowApiKeyChange(!showApiKey)}
+          >
+            {showApiKey ? <Eye size={15} /> : <EyeOff size={15} />}
+          </button>
+          <button
+            className="icon-button provider-secret-clear"
+            type="button"
+            aria-label={t("Clear input")}
+            onClick={() => onFormChange({ ...form, apiKey: "", clearApiKey: Boolean(editingProvider?.apiKeyConfigured) })}
+          >
+            <X size={15} />
+          </button>
+        </span>
+      ) : null}
     </div>
   );
 }
