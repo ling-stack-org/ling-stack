@@ -244,10 +244,26 @@ export function projectWebEvidenceToEvidenceGroup(
   const items: DockEvidenceItem[] = [];
   for (const message of messages) {
     const evidence = message.webEvidence;
-    if (!evidence || (evidence.sources.length === 0 && evidence.readUrls.length === 0)) {
+    if (!evidence) {
       continue;
     }
     const queryLabel = evidence.queries?.[0] ?? evidence.query ?? message.title;
+    if (evidence.sources.length === 0 && evidence.readUrls.length === 0) {
+      if (evidence.reason) {
+        items.push({
+          id: `web-diagnostic:${message.id}`,
+          kind: "browser",
+          title: queryLabel,
+          summary: evidence.reason,
+          status: "failed",
+          statusLabel: webEvidenceStatusLabel(evidence.status, t),
+          sourceLabel: "web_search",
+          failureReason: evidence.reason,
+          timestampLabel: formatMaybeDate(evidence.updatedAt),
+        });
+      }
+      continue;
+    }
     evidence.sources.forEach((source, index) => {
       items.push({
         id: `web-source:${message.id}:${index}`,

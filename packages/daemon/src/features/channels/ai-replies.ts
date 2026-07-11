@@ -268,6 +268,7 @@ async function completeAiChannelReply(input: {
       planModeActive ? renderPlanModeInstruction() : undefined,
       "Use only attachment/link metadata and preview/extraction text that is explicitly included in the turn envelope. Do not claim to inspect unavailable attachment bodies or web page bodies.",
       "If Ling web context is included, you may use only those web_search/open_url results and must keep cited source URLs visible in the reply.",
+      "If Ling web context is blocked, degraded, or has no usable source URLs, explain the limitation briefly in user-facing language and do not repeat provider, relay, or protocol diagnostics verbatim.",
       "Do not perform tool use or side effects.",
       ...(!proposalBlocksAllowed
         ? [

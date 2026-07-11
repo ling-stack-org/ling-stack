@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { Globe2, Link2, Search, ShieldAlert } from "lucide-react";
+import { Globe2, Link2 } from "lucide-react";
 import { useI18n } from "../../../i18n.js";
 import type { MessageWebEvidence } from "../../../types.js";
 import { SourceIconStack, type SourceIconStackItem } from "../identity/SourceIconStack.js";
@@ -24,7 +24,7 @@ export function MessageEvidencePanel({
   defaultOpen,
 }: MessageEvidencePanelProps): JSX.Element | null {
   const { t } = useI18n();
-  const renderableWebEvidence = hasRenderableWebEvidence(webEvidence) ? webEvidence : undefined;
+  const renderableWebEvidence = projectConversationWebEvidence(webEvidence);
   const sections: ConversationEvidenceSection[] = [];
   if (memoryContent) {
     sections.push({
@@ -40,7 +40,6 @@ export function MessageEvidencePanel({
   if (sections.length === 0) {
     return null;
   }
-  const resolvedDefaultOpen = defaultOpen ?? shouldOpenMessageEvidenceByDefault(renderableWebEvidence);
   return (
     <ConversationEvidenceBundlePanel
       label={t("Message evidence")}
@@ -48,7 +47,7 @@ export function MessageEvidencePanel({
         summary: messageEvidenceSummary(memoryContent ? memorySummary ?? t("Used memory") : undefined, renderableWebEvidence, t),
         sections,
       }}
-      defaultOpen={resolvedDefaultOpen}
+      defaultOpen={defaultOpen ?? false}
     />
   );
 }
@@ -58,22 +57,6 @@ function buildWebEvidenceSections(webEvidence: MessageWebEvidence | undefined, t
     return [];
   }
   const sections: ConversationEvidenceSection[] = [];
-  if (webEvidence.reason) {
-    sections.push({
-      id: "web-reason",
-      label: webEvidence.status === "blocked" ? t("Blocked reason") : t("Degraded reason"),
-      className: "conversation-evidence-section-reason-only",
-      icon: <ShieldAlert size={13} />,
-      items: [{
-        id: "blocked-reason",
-        label: webEvidence.status === "blocked" ? t("Blocked reason") : t("Degraded reason"),
-        className: "conversation-evidence-item-wide",
-        value: <span className="conversation-evidence-reason">{webEvidence.reason}</span>,
-        icon: <ShieldAlert size={12} />,
-      }],
-    });
-  }
-
   if (webEvidence.sources.length > 0) {
     sections.push({
       id: "web-sources",
@@ -111,7 +94,7 @@ function buildWebEvidenceSections(webEvidence: MessageWebEvidence | undefined, t
         ),
         meta: item.reason,
         status: <span className={`conversation-evidence-status ${item.status}`}>{item.status}</span>,
-        icon: item.status === "blocked" ? <ShieldAlert size={12} /> : <Globe2 size={12} />,
+        icon: <Globe2 size={12} />,
       })),
     });
   }
@@ -119,8 +102,17 @@ function buildWebEvidenceSections(webEvidence: MessageWebEvidence | undefined, t
   return sections;
 }
 
-function hasRenderableWebEvidence(webEvidence: MessageWebEvidence | undefined): webEvidence is MessageWebEvidence {
-  return Boolean(webEvidence?.reason || webEvidence?.sources.length || webEvidence?.readUrls.length);
+function projectConversationWebEvidence(webEvidence: MessageWebEvidence | undefined): MessageWebEvidence | undefined {
+  if (!webEvidence) {
+    return undefined;
+  }
+  const readUrls = webEvidence.readUrls.filter((item) => item.status === "available");
+  if (webEvidence.sources.length === 0 && readUrls.length === 0) {
+    return undefined;
+  }
+  return readUrls.length === webEvidence.readUrls.length
+    ? webEvidence
+    : { ...webEvidence, readUrls };
 }
 
 function messageEvidenceSummary(memorySummary: ReactNode | undefined, webEvidence: MessageWebEvidence | undefined, t: Translate): ReactNode {
@@ -149,31 +141,25 @@ function messageEvidenceSummary(memorySummary: ReactNode | undefined, webEvidenc
 
 function webEvidenceSummaryNode(webEvidence: MessageWebEvidence, t: Translate): ReactNode {
   const fallback = webEvidenceSummaryText(webEvidence, t);
-  if (webEvidence.status === "available" && webEvidence.sources.length > 0) {
+  if (webEvidence.sources.length > 0) {
     return <SourceIconStack sources={webSourceIconItems(webEvidence)} label={fallback} />;
   }
-  return <WebEvidenceStatusIcon webEvidence={webEvidence} label={fallback} />;
+  return (
+    <span className="message-evidence-web-status available" title={fallback} aria-label={fallback}>
+      <Globe2 size={12} />
+    </span>
+  );
 }
 
 function webEvidenceSummaryText(webEvidence: MessageWebEvidence, t: Translate): string {
   const webParts: string[] = [];
-  if (webEvidence.query || webEvidence.reason || webEvidence.sources.length > 0 || webEvidence.queries?.length) {
-    if (webEvidence.status === "blocked") {
-      webParts.push(webEvidence.reason ? `web_search blocked: ${shortReason(webEvidence.reason)}` : "web_search blocked");
-    } else if (webEvidence.status === "degraded") {
-      webParts.push(webEvidence.reason ? `web_search degraded: ${shortReason(webEvidence.reason)}` : "web_search degraded");
-    } else {
-      webParts.push(`web_search ${t("{count} sources", { count: webEvidence.sources.length })}`);
-    }
+  if (webEvidence.sources.length > 0) {
+    webParts.push(`web_search ${t("{count} sources", { count: webEvidence.sources.length })}`);
   }
   if (webEvidence.readUrls.length > 0) {
     webParts.push(`open_url ${webEvidence.readUrls.length} URLs`);
   }
   return webParts.join(" / ") || "web evidence";
-}
-
-function shouldOpenMessageEvidenceByDefault(webEvidence: MessageWebEvidence | undefined): boolean {
-  return webEvidence?.status === "blocked" || webEvidence?.status === "degraded";
 }
 
 function webSourceIconItems(webEvidence: MessageWebEvidence): readonly SourceIconStackItem[] {
@@ -187,25 +173,6 @@ function webSourceIconItems(webEvidence: MessageWebEvidence): readonly SourceIco
       status: webEvidence.status,
     };
   });
-}
-
-function WebEvidenceStatusIcon({
-  webEvidence,
-  label,
-}: {
-  readonly webEvidence: MessageWebEvidence;
-  readonly label: string;
-}): JSX.Element {
-  return (
-    <span className={`message-evidence-web-status ${webEvidence.status}`} title={label} aria-label={label}>
-      {webEvidence.status === "available" ? <Search size={12} /> : <ShieldAlert size={12} />}
-    </span>
-  );
-}
-
-function shortReason(value: string): string {
-  const normalized = value.replace(/\s+/gu, " ").trim();
-  return normalized.length > 96 ? `${normalized.slice(0, 93)}...` : normalized;
 }
 
 function sourceHost(url: string): string {

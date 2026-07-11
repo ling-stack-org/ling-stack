@@ -1848,7 +1848,6 @@ export const zhCN = {
     "Decision {id}": "决策 {id}",
     "Source ref": "来源引用",
     "Blocked reason": "阻塞原因",
-    "Degraded reason": "证据不足原因",
     "Local user": "本地用户",
     "Rejected": "已拒绝",
     "{count} sources": "{count} 个来源",
