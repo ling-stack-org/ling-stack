@@ -119,6 +119,8 @@ summary. It separates produced files from source changes:
 - only the bounded `Show N more files` row may expand or collapse additional files;
 - hovering a previewable output or changed-file row for two seconds opens a bounded
   floating preview;
+- the floating preview prefers the space immediately above its source row and only falls
+  back below when the viewport does not have enough room above;
 - keyboard focus or clicking the row opens the same compact preview immediately;
 - moving the pointer outside both the source row and floating preview hides it;
 - the default preview does not open the full-page artifact lightbox or duplicate its

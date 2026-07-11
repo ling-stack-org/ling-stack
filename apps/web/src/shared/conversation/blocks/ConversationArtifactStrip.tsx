@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { ChevronDown, FilePenLine, FileText, Image as ImageIcon } from "lucide-react";
 import { useI18n, type Translate } from "../../../i18n.js";
@@ -301,7 +301,7 @@ type HoverPreviewTarget =
 
 interface HoverPreviewState {
   readonly target: HoverPreviewTarget;
-  readonly position: { readonly left: number; readonly top: number; readonly width: number };
+  readonly position: CSSProperties;
 }
 
 function useArtifactHoverPreview(input: {
@@ -518,16 +518,18 @@ function compactPreviewText(value: string): string {
   return lines.slice(0, 18).join("\n").slice(0, 8_000);
 }
 
-function hoverPreviewPosition(rect: DOMRect): { readonly left: number; readonly top: number; readonly width: number } {
+function hoverPreviewPosition(rect: DOMRect): CSSProperties {
   const margin = 12;
   const gap = 8;
   const width = Math.min(560, Math.max(0, globalThis.innerWidth - margin * 2));
   const left = Math.max(margin, Math.min(rect.left, globalThis.innerWidth - width - margin));
   const estimatedHeight = 240;
-  const top = rect.bottom + gap + estimatedHeight <= globalThis.innerHeight
-    ? rect.bottom + gap
-    : Math.max(margin, rect.top - estimatedHeight - gap);
-  return { left, top, width };
+  const fitsAbove = rect.top - gap - estimatedHeight >= margin;
+  if (fitsAbove) {
+    return { left, top: rect.top - gap, width, transform: "translateY(-100%)" };
+  }
+  const maxTop = Math.max(margin, globalThis.innerHeight - estimatedHeight - margin);
+  return { left, top: Math.min(rect.bottom + gap, maxTop), width };
 }
 
 function artifactItemMeta(item: ConversationArtifactStripItem, t: Translate): string | undefined {

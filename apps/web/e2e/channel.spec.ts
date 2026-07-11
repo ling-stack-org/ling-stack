@@ -7989,6 +7989,11 @@ test("local channel work-cell demo fixture renders a realistic multi-agent opera
   await expect(hoverPreview).toContainText("ConversationWorkCell.tsx");
   await expect(hoverPreview.locator(".diff-line.add")).toHaveCount(5);
   await expect(hoverPreview.locator(".diff-line.delete")).toHaveCount(1);
+  const sourceRowBox = await changedFiles.nth(0).boundingBox();
+  const hoverPreviewBox = await hoverPreview.boundingBox();
+  expect(sourceRowBox).not.toBeNull();
+  expect(hoverPreviewBox).not.toBeNull();
+  expect(hoverPreviewBox!.y + hoverPreviewBox!.height).toBeLessThanOrEqual(sourceRowBox!.y - 6);
   await hoverPreview.hover();
   await expect(hoverPreview).toBeVisible();
   await page.mouse.move(0, 0);
