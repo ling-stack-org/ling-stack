@@ -13,6 +13,7 @@ import { taskEndpoints, type TaskEndpoints } from "./endpoints/tasks.js";
 import { adminEndpoints, type AdminEndpoints } from "./endpoints/admin.js";
 import { externalWorkEndpoints, type ExternalWorkEndpoints } from "./endpoints/external-work.js";
 import { operationEndpoints, type OperationEndpoints } from "./endpoints/operations.js";
+import { terminalReportEndpoints, type TerminalReportEndpoints } from "./endpoints/terminal-reports.js";
 import { LingDaemonTransport } from "./transport.js";
 
 export { daemonBaseUrlFromEnv, type LingDaemonClientOptions } from "./transport.js";
@@ -32,7 +33,8 @@ export interface LingDaemonClient extends
   TaskEndpoints,
   AdminEndpoints,
   ExternalWorkEndpoints,
-  OperationEndpoints {}
+  OperationEndpoints,
+  TerminalReportEndpoints {}
 
 export class LingDaemonClient extends LingDaemonTransport {}
 
@@ -53,4 +55,5 @@ Object.assign(
   adminEndpoints,
   externalWorkEndpoints,
   operationEndpoints,
+  terminalReportEndpoints,
 );

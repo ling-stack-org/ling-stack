@@ -18,6 +18,7 @@ Related docs:
 - [AI Teammate Private Workspace](ai-teammate-private-workspace.md)
 - [Ling Agent Operation Cell UI](ling-agent-operation-cell-ui.md)
 - [Conversation Right Dock Workspace Tools](conversation-right-dock-workspace-tools.md)
+- [Ling Agent TerminalReport Protocol](ling-agent-terminal-report-protocol.md)
 
 ## Purpose
 
@@ -147,6 +148,8 @@ message/composer/evidence model.
 13. Right-side workspace tools must use the shared Right Dock model. Channel, normal
     conversation, and teammate private chat may expose different pages, but they must not
     fork separate drawer, review, or evidence UI systems.
+14. Executed-work final results consume the shared `TerminalReport` contract. Surfaces
+    must not derive outcome, verification, participants, or artifacts from assistant copy.
 
 ## Surface Capability Matrix
 

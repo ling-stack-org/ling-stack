@@ -340,6 +340,7 @@ function mergeConversationMessages(
     thread: thread ?? current?.thread ?? messagesThreadFallback(messages),
     turns: current?.turns ?? [],
     runs: current?.runs ?? [],
+    terminalReports: current?.terminalReports ?? [],
     messages: [...byId.values()].sort((left, right) => left.createdAt.localeCompare(right.createdAt)),
     defaults: current?.defaults ?? {},
   };

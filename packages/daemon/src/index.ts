@@ -25,6 +25,10 @@ import type { DaemonContext, DaemonDependencies, RunnerAdapter } from "./context
 import { AutomationSchedulerRegistry } from "./features/automations/scheduler.js";
 import { ExternalWorkBackgroundSchedulerRegistry } from "./features/external-work/background-scheduler.js";
 import { appendControlPlaneEvent, ControlPlaneEventHub } from "./features/control-plane/events.js";
+import {
+  configureTerminalReportStore,
+  recoverTerminalReports,
+} from "./features/channels/terminal-report-coordinator.js";
 import { createDefaultMcpBroker } from "./features/mcp/broker.js";
 import { createSystemKeychainSecretStore } from "./features/providers/keychain-secret-store.js";
 import { ProviderStartupRefreshService } from "./features/providers/startup-refresh.js";
@@ -94,7 +98,15 @@ export function createDaemonServer(
   let startupOptionalWarmups: StartupOptionalWarmupCoordinator;
   const storeRegistry = new RunStoreRegistry(dependencies.storeFactory ?? createDefaultRunStore, {
     onStoreInitialized: (cwd, store) => {
+      configureTerminalReportStore(store, {
+        enabled: resolvedConfig.channels.terminalReports === true,
+        runnerRegistry,
+        secretResolver,
+      });
       startupOptionalWarmups?.start(cwd, store);
+      if (resolvedConfig.channels.terminalReports === true) {
+        void recoverTerminalReports(store).catch(() => undefined);
+      }
     },
   });
   const backgroundSchedulers = new ExternalWorkBackgroundSchedulerRegistry(storeRegistry, secretResolver, externalWorkFetch);

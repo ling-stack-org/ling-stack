@@ -2311,6 +2311,7 @@ export function AppShell(): JSX.Element {
                     threadId: selectedConversationDetail.thread.id,
                     turns: selectedConversationDetail.turns,
                     runs: selectedConversationDetail.runs,
+                    terminalReports: selectedConversationDetail.terminalReports,
                   } : undefined}
                   defaultProviderLabel={defaultConversationProviderLabel}
                   defaultProviderPresetId={defaultConversationProviderPresetId}

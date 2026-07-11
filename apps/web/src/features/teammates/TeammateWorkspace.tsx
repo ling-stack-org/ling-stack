@@ -35,6 +35,7 @@ import {
   listTeammateMemoryScopes,
   listTeammateSkills,
   listTeammateTasks,
+  listTerminalReports,
   promoteTeammateDirectIntervention,
   publishSkillImportDraft,
   replaceTeammateChannels,
@@ -104,6 +105,7 @@ import type {
   UpdateAiTeammateRequest,
   UsedMemoryEvent,
   UserProfile,
+  TerminalReportDto,
 } from "../../types.js";
 import { TeammateActivityTab } from "./TeammateActivityTab.js";
 import { TeammateChatContextPanel } from "./TeammateChatContextPanel.js";
@@ -212,6 +214,7 @@ export function TeammateWorkspace({
   const [hasMoreDirectMessages, setHasMoreDirectMessages] = useState(false);
   const [nextDirectBeforeMessageId, setNextDirectBeforeMessageId] = useState<string | undefined>();
   const [loadingOlderDirectMessages, setLoadingOlderDirectMessages] = useState(false);
+  const [terminalReports, setTerminalReports] = useState<readonly TerminalReportDto[]>([]);
   const [directRuntime, setDirectRuntime] = useState<TeammateDirectRuntimeResponse | undefined>();
   const [directWorkspace, setDirectWorkspace] = useState<DirectWorkspaceResponse | undefined>();
   const [directReplyOptimisticActive, setDirectReplyOptimisticActive] = useState(false);
@@ -417,6 +420,34 @@ export function TeammateWorkspace({
       return `${message.body} ${attachmentText}`.toLowerCase().includes(normalizedMessageSearchQuery);
     });
   }, [messages, normalizedMessageSearchQuery, privateAttachmentById]);
+
+  useEffect(() => {
+    const workspaceCwd = cwd.trim();
+    const runThreadIdById = new Map(runs.map((run) => [run.id, run.threadId]));
+    const threadIds = [...new Set(visibleMessages.flatMap((message) => [
+      message.threadId,
+      message.linkedRunId ? runThreadIdById.get(message.linkedRunId) : undefined,
+    ]).filter((threadId): threadId is string => Boolean(threadId)))];
+    if (!workspaceCwd || threadIds.length === 0) {
+      setTerminalReports([]);
+      return;
+    }
+    let cancelled = false;
+    void Promise.all(threadIds.map((threadId) => listTerminalReports(workspaceCwd, { threadId, limit: 100 })))
+      .then((responses) => {
+        if (!cancelled) {
+          setTerminalReports(responses.flatMap((response) => response.reports));
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setTerminalReports([]);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [cwd, runs, visibleMessages]);
 
   useEffect(() => {
     if (isProtectedSystemTeammate && (activeTab === "skills" || activeTab === "mcp" || activeTab === "danger")) {
@@ -2068,6 +2099,7 @@ export function TeammateWorkspace({
           usedMemoryEvents={usedMemoryEvents}
           memoryById={memoryById}
           runs={runs}
+          terminalReports={terminalReports}
           providerRecovered={providerRecovered}
           privateAttachmentById={privateAttachmentById}
           creatingTask={creatingTask}

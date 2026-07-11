@@ -196,6 +196,8 @@ const SKILL_COMPILED_RUNTIME_VIEWS_MIGRATION_VERSION = 92;
 const SKILL_COMPILED_RUNTIME_VIEWS_MIGRATION_NAME = "create_skill_compiled_runtime_views";
 const SKILL_REGRESSION_RUNS_MIGRATION_VERSION = 93;
 const SKILL_REGRESSION_RUNS_MIGRATION_NAME = "create_skill_regression_runs";
+const LING_TERMINAL_REPORTS_MIGRATION_VERSION = 94;
+const LING_TERMINAL_REPORTS_MIGRATION_NAME = "create_ling_terminal_reports";
 
 export function configureSqliteRunStoreDatabase(database: DatabaseSync): void {
   database.exec(`
@@ -4463,6 +4465,51 @@ export function applySqliteRunStoreMigrations(context: SqliteRunStoreMigrationCo
       `);
       if (!hasSkillRegressionRunsMigration) {
         context.recordMigration(SKILL_REGRESSION_RUNS_MIGRATION_VERSION, SKILL_REGRESSION_RUNS_MIGRATION_NAME);
+      }
+    }
+    const hasLingTerminalReportsMigration = context.hasMigration(LING_TERMINAL_REPORTS_MIGRATION_VERSION);
+    if (
+      !hasLingTerminalReportsMigration ||
+      !context.hasTable("ling_terminal_reports")
+    ) {
+      database.exec(`
+        CREATE TABLE IF NOT EXISTS ling_terminal_reports (
+          id TEXT PRIMARY KEY,
+          workspace_id TEXT NOT NULL,
+          channel_id TEXT,
+          thread_id TEXT,
+          turn_id TEXT,
+          source_message_id TEXT,
+          source_kind TEXT NOT NULL,
+          source_id TEXT NOT NULL,
+          generation INTEGER NOT NULL,
+          status TEXT NOT NULL,
+          outcome_status TEXT,
+          language TEXT NOT NULL,
+          evidence_snapshot_json TEXT NOT NULL,
+          evidence_fingerprint TEXT NOT NULL,
+          report_json TEXT,
+          synthesis_mode TEXT,
+          prompt_version TEXT,
+          attempt_count INTEGER NOT NULL DEFAULT 0,
+          validation_codes_json TEXT NOT NULL DEFAULT '[]',
+          published_message_id TEXT,
+          error_code TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          committed_at TEXT,
+          UNIQUE (workspace_id, source_kind, source_id, generation),
+          FOREIGN KEY(workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_ling_terminal_reports_channel_thread
+        ON ling_terminal_reports(workspace_id, channel_id, thread_id, created_at);
+
+        CREATE INDEX IF NOT EXISTS idx_ling_terminal_reports_fingerprint
+        ON ling_terminal_reports(workspace_id, evidence_fingerprint);
+      `);
+      if (!hasLingTerminalReportsMigration) {
+        context.recordMigration(LING_TERMINAL_REPORTS_MIGRATION_VERSION, LING_TERMINAL_REPORTS_MIGRATION_NAME);
       }
     }
     const hasTaskAttachmentIdsMigration = context.hasMigration(TASK_ATTACHMENT_IDS_MIGRATION_VERSION);

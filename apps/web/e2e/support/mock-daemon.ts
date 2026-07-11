@@ -97,6 +97,7 @@ export interface MockState {
   teammateDirectLinkPreviews: unknown[];
   teammatePrivateAttachments: unknown[];
   conversationAttachments: unknown[];
+  terminalReports: unknown[];
   retentionTombstones: unknown[];
   tasks: unknown[];
   runs: MockRun[];
@@ -1066,6 +1067,7 @@ export function createBaseState(options: { approvalStatus: "pending" | "expired"
     teammateDirectLinkPreviews: [],
     teammatePrivateAttachments: [],
     conversationAttachments: [],
+    terminalReports: [],
     retentionTombstones: [],
     tasks: [
       {
@@ -5876,6 +5878,7 @@ function buildMockConversationDetail(state: MockState, cwd: string, thread: Mock
     thread,
     turns,
     runs,
+    terminalReports: state.terminalReports.filter((report) => isRecord(report) && report.threadId === thread.id),
     messages,
     defaults: {
       projectPath: typeof requestSnapshot.projectPath === "string" ? requestSnapshot.projectPath : latestProjectPath,
@@ -10479,6 +10482,21 @@ export async function handleDaemonRoute(
         "",
       ].join("\n\n"),
     });
+    return;
+  }
+  if (request.method() === "GET" && path === "/terminal-reports") {
+    const threadId = url.searchParams.get("threadId");
+    const sourceKind = url.searchParams.get("sourceKind");
+    const sourceId = url.searchParams.get("sourceId");
+    const reports = state.terminalReports.filter((report) => {
+      if (!isRecord(report)) return false;
+      if (threadId && report.threadId !== threadId) return false;
+      const source = isRecord(report.source) ? report.source : {};
+      if (sourceKind && source.kind !== sourceKind) return false;
+      if (sourceId && source.id !== sourceId) return false;
+      return true;
+    });
+    await route.fulfill({ json: { reports } });
     return;
   }
   const conversationRouteMatch = /^\/conversations\/([^/]+)$/.exec(path);

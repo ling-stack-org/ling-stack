@@ -728,6 +728,47 @@ test("AI teammate private workspace sends blocked chat replies and persists sett
     },
     ...state.runs,
   ];
+  state.terminalReports = [{
+    schemaVersion: 1,
+    id: "terminal_report_private_acceptance",
+    workspaceId: "workspace_default",
+    threadId: "thread_private_acceptance",
+    source: { kind: "run", id: "run_private_acceptance" },
+    status: "committed",
+    language: "en-US",
+    outcome: {
+      status: "succeeded",
+      title: "Private acceptance criteria verified",
+      summary: "The run completed with a structured result and retained its operation history.",
+      corrections: [],
+      sourceRefs: [{ kind: "run", id: "run_private_acceptance", visibility: "conversation" }],
+    },
+    changes: [{
+      id: "change_private_acceptance",
+      kind: "documentation",
+      title: "Refined private acceptance criteria",
+      summary: "Updated the private workspace acceptance notes.",
+      paths: ["docs/private-acceptance.md"],
+      addedLines: 8,
+      deletedLines: 1,
+      sourceRefs: [],
+    }],
+    verification: [{
+      id: "check_private_acceptance",
+      title: "Acceptance review",
+      status: "passed",
+      sourceRefs: [],
+    }],
+    participants: [],
+    artifacts: [],
+    risks: [],
+    references: [],
+    evidenceSnapshotId: "snapshot_private_acceptance",
+    evidenceFingerprint: "fingerprint_private_acceptance",
+    synthesis: { mode: "deterministic_fallback", promptVersion: "terminal-report-v1", attemptCount: 0, validationCodes: [] },
+    createdAt: "2026-05-29T00:09:30.000Z",
+    committedAt: "2026-05-29T00:09:30.000Z",
+  }];
   state.teammateDirectMessages = [
     {
       id: "tdmsg_2",
@@ -829,8 +870,16 @@ test("AI teammate private workspace sends blocked chat replies and persists sett
   const privateFeed = page.getByLabel("Private message feed", { exact: true });
   await expect(privateFeed).toBeVisible();
   await expect(privateFeed.locator(".message-feed-virtualizer")).toBeVisible();
-  const linkedRunPrivateRow = page.locator(".teammate-message-row.ai-teammate").filter({ hasText: "Private acceptance criteria summary." });
+  const linkedRunPrivateRow = page.locator(".teammate-message-row.ai-teammate").filter({ hasText: "Private acceptance criteria verified" });
   await expect(linkedRunPrivateRow.locator(".conversation-work-cell")).toHaveCount(1);
+  await expect(linkedRunPrivateRow.getByText("Private acceptance criteria summary.")).toHaveCount(0);
+  const privateTerminalReport = linkedRunPrivateRow.locator(".terminal-report-block");
+  await expect(privateTerminalReport).toBeVisible();
+  await privateTerminalReport.locator(".terminal-report-summary").click();
+  await expect(privateTerminalReport).toContainText("Refined private acceptance criteria");
+  await expect(privateTerminalReport).toContainText("1 file");
+  await expect(privateTerminalReport).toContainText("passed");
+  await expect(privateTerminalReport.locator(".terminal-report-participants")).toHaveCount(0);
   await expect(linkedRunPrivateRow.locator(".message-reply-button")).toHaveCount(0);
   const privateToolbar = page.getByLabel("Private chat actions");
   await expect(privateToolbar).toHaveClass(/workspace-top-right-toolbar/);

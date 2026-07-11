@@ -49,6 +49,7 @@ import type {
   UserProfile,
   PermissionPreset,
   SessionPermissionMode,
+  TerminalReportDto,
 } from "../../types.js";
 import { conversationPermissionPresetMenuOptions, inferPermissionPreset } from "../../lib/session-permissions.js";
 import { TeammateAvatarView } from "./TeammateAvatarView.js";
@@ -85,6 +86,7 @@ export function TeammatePrivateChatSurface({
   usedMemoryEvents,
   memoryById,
   runs,
+  terminalReports,
   providerRecovered,
   privateAttachmentById,
   creatingTask,
@@ -162,6 +164,7 @@ export function TeammatePrivateChatSurface({
   readonly usedMemoryEvents: readonly UsedMemoryEvent[];
   readonly memoryById: ReadonlyMap<string, MemoryObject>;
   readonly runs: readonly RunSession[];
+  readonly terminalReports: readonly TerminalReportDto[];
   readonly providerRecovered: boolean;
   readonly privateAttachmentById: ReadonlyMap<string, TeammatePrivateAttachment>;
   readonly creatingTask: boolean;
@@ -251,6 +254,7 @@ export function TeammatePrivateChatSurface({
     messages: visibleMessages,
     teammateId: teammate.id,
     runs,
+    terminalReports,
     t,
   });
   const privateDockContent = useMemo(
@@ -403,14 +407,17 @@ export function TeammatePrivateChatSurface({
               const blockedMessage = message.status === "blocked" || message.status === "failed" || message.status === "cancelled";
               const recoveredHistoricalProviderFailure = providerRecovered && isHistoricalProviderPreflightMessage(message);
               const authorName = message.authorType === "ai-teammate" ? teammate.displayName : message.authorType === "system" ? t("System") : localUserDisplayName;
-              const messageBody = pendingAiReply && !message.body.trim()
+              const workCell = privateWorkCellByMessageId.get(message.id);
+              const hasStructuredTerminalReport = Boolean(workCell?.model.terminalReportRows.length);
+              const messageBody = hasStructuredTerminalReport
+                ? ""
+                : pendingAiReply && !message.body.trim()
                 ? t("AI teammate is replying...")
                 : message.status === "cancelled" && !message.body.trim()
                   ? t("Reply stopped")
                   : recoveredHistoricalProviderFailure
                     ? t("Historical model check failed. The model is available now; resend or continue the chat.")
                     : message.body;
-              const workCell = privateWorkCellByMessageId.get(message.id);
               const workCellRun = workCell ? runs.find((run) => run.id === workCell.model.anchorRunId) : undefined;
               const messageFeedback = messageFeedbackById[message.id];
               const feedbackActions = message.authorType === "ai-teammate" ? [
@@ -805,6 +812,7 @@ function buildPrivateWorkCellMap(input: {
   readonly messages: readonly TeammateDirectMessage[];
   readonly teammateId: string;
   readonly runs: readonly RunSession[];
+  readonly terminalReports: readonly TerminalReportDto[];
   readonly t: Translate;
 }): ReadonlyMap<string, { readonly model: ConversationWorkCellViewModel }> {
   const runById = new Map(input.runs.map((run) => [run.id, run]));
@@ -828,6 +836,10 @@ function buildPrivateWorkCellMap(input: {
       artifactsByRun: {},
       t: input.t,
       artifactHref: (artifact) => artifactContentUrl(artifact.id, run.cwd),
+      terminalReport: input.terminalReports.find((report) =>
+        (report.source.kind === "run" && report.source.id === run.id) ||
+        (Boolean(report.threadId) && report.threadId === run.threadId)
+      ),
     });
     if (model) {
       cells.set(message.id, { model });

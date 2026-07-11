@@ -3,8 +3,13 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import test from "node:test";
-import { createSqliteRunStore } from "../../core/dist/index.js";
+import {
+  buildDeterministicTerminalReport,
+  createSqliteRunStore,
+  validateTerminalReport,
+} from "../../core/dist/index.js";
 import { finalizeOrchestratedWorkflowStepRun } from "../dist/features/channels/orchestrator.js";
+import { collectWorkflowTerminalReportEvidence } from "../dist/features/channels/terminal-report-evidence.js";
 
 test("workflow terminal reply preserves full step result text", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-workflow-terminal-summary-"));
@@ -79,6 +84,16 @@ test("workflow terminal reply preserves full step result text", async () => {
     assert.match(reply.body, /完成：「Create index\.html」/u);
     assert.match(reply.body, /END_MARKER_完整结尾/u);
     assert.equal(reply.body.includes("..."), false);
+
+    const snapshot = collectWorkflowTerminalReportEvidence(store, workflow.id, {
+      generatedAt: "2026-06-25T00:05:01.000Z",
+    });
+    const report = buildDeterministicTerminalReport(snapshot, {
+      id: "terminal_report_long_summary",
+      committedAt: "2026-06-25T00:05:02.000Z",
+    });
+    assert.equal(validateTerminalReport(report, snapshot).ok, true);
+    assert.match(report.participants[0]?.contribution ?? "", /END_MARKER_完整结尾/u);
   } finally {
     store.close();
     await rm(cwd, { recursive: true, force: true });

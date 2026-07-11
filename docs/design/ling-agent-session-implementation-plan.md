@@ -13,6 +13,8 @@ Related docs:
 - [Inline Runtime Approval Detailed Design](inline-runtime-approval-detailed-design.md)
 - [Thread-First Work History v2 Detailed Design](thread-first-work-history-v2-detailed-design.md)
 - [Codex-Inspired Conversation Components v1](codex-inspired-conversation-components-v1.md)
+- [Ling Agent TerminalReport Protocol](ling-agent-terminal-report-protocol.md)
+- [Ling Agent TerminalReport Implementation Plan](ling-agent-terminal-report-implementation-plan.md)
 
 ## Summary
 
@@ -35,6 +37,9 @@ Implementation status:
   daemon session views derive `finalResult` from workflow steps, linked runs, artifacts,
   and resolved approvals; Web completed workflow cards hide raw proposal/process rows by
   default and keep evidence expandable.
+- The next terminal-report slice must follow the canonical `TerminalReport` protocol:
+  current `LingAgentFinalResultView` remains a compatibility projection, runner summaries
+  remain step evidence, and daemon/core owns validated report publication.
 - P4 initial permission UX integration is implemented on the existing proposal and
   approval surfaces: pre-execution cards use permission-oriented task confirmation copy,
   while runtime approvals still resolve through durable `ApprovalRequest` records and do

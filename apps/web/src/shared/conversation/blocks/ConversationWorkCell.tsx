@@ -7,6 +7,7 @@ import type { PreviewContentResponse } from "../../../types.js";
 import type { ArtifactPreviewLoader } from "../preview/ArtifactPreviewDrawer.js";
 import { ConversationArtifactStrip } from "./ConversationArtifactStrip.js";
 import { DiffViewer } from "./DiffViewer.js";
+import { TerminalReportBlock } from "./TerminalReportBlock.js";
 import { useConversationBlockView } from "../view-store/use-conversation-block-view.js";
 
 export type ConversationWorkCellDetailsStatus = "not_loaded" | "loading" | "loaded" | "empty" | "error";
@@ -27,6 +28,7 @@ export interface ConversationWorkCellProps {
   readonly loadPreview: ArtifactPreviewLoader;
   readonly renderAgentAvatar?: (span: ConversationAgentActivitySpan) => ReactNode;
   readonly showArtifactStrip?: boolean;
+  readonly showTerminalReport?: boolean;
 }
 
 export function ConversationWorkCell({
@@ -38,6 +40,7 @@ export function ConversationWorkCell({
   loadPreview,
   renderAgentAvatar,
   showArtifactStrip = true,
+  showTerminalReport = true,
 }: ConversationWorkCellProps): JSX.Element {
   const { t } = useI18n();
   const active = model.mode === "active";
@@ -65,7 +68,9 @@ export function ConversationWorkCell({
     ? model.artifactStripItems.filter((item) => item.kind === "artifact" || item.kind === "changed")
     : [];
   const referencesOnly = !showArtifactStrip;
-  const evidenceSummary = referencesOnly
+  const evidenceSummary = model.terminalReportRows.length > 0
+    ? buildReferenceSummary(model.evidenceLinks.length, t)
+    : referencesOnly
     ? buildReferenceSummary(model.evidenceLinks.length, t)
     : artifactStripSummary ?? buildEvidenceSummary(model, t);
   const diagnosticsHandler = model.showDiagnostics === true && !referencesOnly && !evidenceSummary ? onOpenRun : undefined;
@@ -171,14 +176,6 @@ export function ConversationWorkCell({
               </button>
             ) : null}
 
-            {visibleArtifactItems.length > 0 ? (
-              <ConversationArtifactStrip
-                items={visibleArtifactItems}
-                cwd={cwd}
-                loadPreview={loadPreview}
-              />
-            ) : null}
-
             {diagnosticsHandler ? (
               <div className="conversation-work-cell-actions">
                 <button
@@ -205,6 +202,20 @@ export function ConversationWorkCell({
           </div>
         ) : null}
       </div>
+      {showTerminalReport && model.terminalReportRows.length > 0 ? (
+        <TerminalReportBlock
+          blockId={model.id}
+          revisionKey={terminalReportRevisionKey(model)}
+          rows={model.terminalReportRows}
+        />
+      ) : null}
+      {visibleArtifactItems.length > 0 ? (
+        <ConversationArtifactStrip
+          items={visibleArtifactItems}
+          cwd={cwd}
+          loadPreview={loadPreview}
+        />
+      ) : null}
     </article>
   );
 }
@@ -357,6 +368,13 @@ function operationBubbleRevisionKey(
     model.agentSpans.length,
     model.artifactStripItems.length,
     evidenceSummary ?? "",
+  ].join("|");
+}
+
+function terminalReportRevisionKey(model: ConversationOperationCellViewModel): string {
+  return [
+    model.updatedAt,
+    ...model.terminalReportRows.map((row) => `${row.id}:${row.title}:${row.meta ?? ""}`),
   ].join("|");
 }
 

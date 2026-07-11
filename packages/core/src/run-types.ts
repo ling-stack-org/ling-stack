@@ -37,6 +37,16 @@ import type {
   ListChannelInputMaterializationsOptions,
 } from "./input-materialization-types.js";
 import type {
+  CommitLingTerminalReportInput,
+  CreateLingTerminalReportInput,
+  FailLingTerminalReportInput,
+  LingTerminalReportRecord,
+  ListLingTerminalReportsOptions,
+  MarkLingTerminalReportPublishedInput,
+  TerminalReportSourceKind,
+  UpdateLingTerminalReportDraftInput,
+} from "./terminal-report-types.js";
+import type {
   AvailabilityIncident,
   ChannelTeamEvidenceItem,
   ChannelTeamPattern,
@@ -1228,6 +1238,19 @@ export interface RunStore {
   getLingTurnForRun(runId: string): LingTurn | undefined;
   listLingTurnRuns(turnId: string): LingTurnRun[];
   reconcileLingTurnStatus(turnId: string, now: string): LingTurn | undefined;
+  createTerminalReportDraft(input: CreateLingTerminalReportInput, now: string): LingTerminalReportRecord;
+  getTerminalReport(id: string): LingTerminalReportRecord | undefined;
+  getTerminalReportForSource(
+    sourceKind: TerminalReportSourceKind,
+    sourceId: string,
+    generation?: number,
+    workspaceId?: string,
+  ): LingTerminalReportRecord | undefined;
+  listTerminalReports(options?: ListLingTerminalReportsOptions): LingTerminalReportRecord[];
+  updateTerminalReportDraft(input: UpdateLingTerminalReportDraftInput): LingTerminalReportRecord;
+  commitTerminalReport(input: CommitLingTerminalReportInput): LingTerminalReportRecord;
+  markTerminalReportPublished(input: MarkLingTerminalReportPublishedInput): LingTerminalReportRecord;
+  failTerminalReport(input: FailLingTerminalReportInput): LingTerminalReportRecord;
   createRun(input: CreateRunInput): RunSession;
   markRunStarted(runId: string, startedAt: string): void;
   markRunWaitingForApproval(runId: string, updatedAt: string): void;
@@ -1801,6 +1824,17 @@ export type LingThreadStoreFacet = RunStoreFacet<
   | "getLingTurnForRun"
   | "listLingTurnRuns"
   | "reconcileLingTurnStatus"
+>;
+
+export type TerminalReportStoreFacet = RunStoreFacet<
+  | "createTerminalReportDraft"
+  | "getTerminalReport"
+  | "getTerminalReportForSource"
+  | "listTerminalReports"
+  | "updateTerminalReportDraft"
+  | "commitTerminalReport"
+  | "markTerminalReportPublished"
+  | "failTerminalReport"
 >;
 
 export type RunExecutionStoreFacet = RunStoreFacet<

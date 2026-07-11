@@ -33,6 +33,11 @@ export type {
 } from "./work-cell-view-model.js";
 export { normalizeConversationOperationCell } from "./work-cell-view-model.js";
 export type {
+  TerminalReportViewInput,
+  TerminalReportViewModel,
+} from "./terminal-report-view-model.js";
+export { terminalReportToViewModel } from "./terminal-report-view-model.js";
+export type {
   ConversationEvidenceMode,
   ConversationRawDetailMode,
   ConversationSurfaceKind,

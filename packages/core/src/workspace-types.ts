@@ -1258,6 +1258,7 @@ export interface ChannelMessage {
 }
 
 export interface CreateChannelMessageInput {
+  readonly id?: string;
   readonly channelId: string;
   readonly threadId?: string;
   readonly kind?: ChannelMessageKind;

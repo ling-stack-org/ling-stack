@@ -1,5 +1,6 @@
 import {
   normalizeConversationOperationCell,
+  terminalReportToViewModel,
   type ConversationAgentActivitySpan,
   type ConversationArtifactStripChangeArtifact,
   type ConversationArtifactStripItem,
@@ -18,7 +19,7 @@ import {
   type ConversationWorkCellRowTone,
   type ConversationWorkCellViewModel,
 } from "@ling-stack/conversation-ui-core";
-import type { ApprovalRequest, ExecutionAction, LingApprovalCheckpoint, LingThreadEvidenceResponse, LingTraceDetailResponse, LingTraceSpan, LingTurn, LingTurnRun, RunArtifact, RunSession } from "../types.js";
+import type { ApprovalRequest, ExecutionAction, LingApprovalCheckpoint, LingThreadEvidenceResponse, LingTraceDetailResponse, LingTraceSpan, LingTurn, LingTurnRun, RunArtifact, RunSession, TerminalReportDto } from "../types.js";
 import type { Translate } from "../i18n.js";
 import { effectiveApprovalStatus } from "./approvals.js";
 import { truncatePreview } from "./data.js";
@@ -418,6 +419,7 @@ export interface BuildConversationWorkCellInput {
   readonly executionActions?: readonly ExecutionAction[];
   readonly t: Translate;
   readonly artifactHref?: (artifact: RunArtifact) => string;
+  readonly terminalReport?: TerminalReportDto;
 }
 
 export function buildConversationWorkCellViewModel(input: BuildConversationWorkCellInput): ConversationWorkCellViewModel | undefined {
@@ -456,6 +458,15 @@ export function buildConversationWorkCellViewModel(input: BuildConversationWorkC
     buildWorkCellGroups({ t: input.t, runs, approvals: visibleApprovals, artifacts, artifactsById, actions, failedRuns, failedActions, pendingApprovals }),
     input.t,
   );
+  const terminalReport = input.terminalReport ? terminalReportToViewModel(input.terminalReport) : undefined;
+  const mergedEvidenceLinks = uniqueBy([
+    ...evidenceLinks,
+    ...(terminalReport?.evidenceLinks ?? []),
+  ], (item) => item.id);
+  const artifactStripItems = uniqueBy([
+    ...buildConversationArtifactStripItems({ groups, evidenceLinks, artifacts, t: input.t }),
+    ...(terminalReport?.artifactStripItems ?? []),
+  ], (item) => item.artifactId ?? item.id);
 
   return normalizeConversationOperationCell({
     id: turnContext ? `work-cell:turn:${turnContext.turn.id}` : `work-cell:${input.threadId}`,
@@ -482,11 +493,13 @@ export function buildConversationWorkCellViewModel(input: BuildConversationWorkC
     elapsedMs: workCellElapsedMs(runs),
     operationRows: buildActiveRows({ t: input.t, latestRun, runs, pendingApprovals, artifacts, actions }),
     agentBranches: [],
-    terminalReportRows: [],
+    terminalReportId: terminalReport?.reportId,
+    terminalReportRevisionKey: terminalReport?.revisionKey,
+    terminalReportRows: terminalReport?.rows ?? [],
     groups,
-    evidenceLinks,
-    artifactStripItems: buildConversationArtifactStripItems({ groups, evidenceLinks, artifacts, t: input.t }),
-    updatedAt: turnContext?.turn.updatedAt ?? latestRun.endedAt ?? latestRun.startedAt ?? latestRun.updatedAt,
+    evidenceLinks: mergedEvidenceLinks,
+    artifactStripItems,
+    updatedAt: terminalReport?.updatedAt ?? turnContext?.turn.updatedAt ?? latestRun.endedAt ?? latestRun.startedAt ?? latestRun.updatedAt,
   });
 }
 

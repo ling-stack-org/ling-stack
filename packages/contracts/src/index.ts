@@ -31,5 +31,6 @@ export type * from "./ai-councils.js";
 export type * from "./settings.js";
 export type * from "./workspace-directory.js";
 export type * from "./workspace-terminal.js";
+export type * from "./terminal-reports.js";
 export type * from "./startup.js";
 export type * from "./profile.js";

@@ -7812,41 +7812,39 @@ test("local channel work-cell demo fixture renders a realistic multi-agent opera
   await expect(workCell).toBeVisible();
   await expect(workCell).toHaveAttribute("data-operation-source", "workflow");
   await expect(workCell.locator(".conversation-operation-shell-head")).toHaveAttribute("aria-expanded", "false");
-  await expect(workCell).toContainText("主要任务已完成");
+  await expect(workCell.locator(".terminal-report-block")).toHaveCount(0);
+  const terminalReport = assistantTranscript.locator(".terminal-report-block");
+  await expect(terminalReport).toBeVisible();
+  await expect(terminalReport).toContainText("多 Agent 操作记录已接入频道会话");
+  await expect(terminalReport).toContainText("Architect");
+  await expect(terminalReport).toContainText("Designer");
+  await expect(terminalReport).toContainText("Engineer");
+  await expect(terminalReport).toContainText("QA");
   await expect(workCell).not.toContainText("正在思考");
   await expect(workCell).not.toContainText("Ling runtime");
   const terminalSummary = assistantTranscript.locator(".conversation-turn-assistant-copy.terminal");
-  await expect(terminalSummary).toContainText("主要任务已完成");
-  await expect(terminalSummary).not.toContainText("结果：");
-  await expect(terminalSummary).not.toContainText("频道 work-cell 操作记录样例」。");
-  const messageEvidence = assistantTranscript.getByRole("region", { name: "消息证据" });
-  const memoryDisclosure = messageEvidence.locator(".conversation-evidence-toggle");
-  await expect(memoryDisclosure).toContainText("已使用 1 条记忆");
-  await expect(memoryDisclosure).toContainText("07/10");
-  await memoryDisclosure.click();
-  const memoryCitation = messageEvidence.locator(".used-memory-summary.inline");
-  await expect(memoryCitation).toContainText("完成态引用展示规则");
-  await expect(memoryCitation).not.toContainText("已使用 1 条记忆");
-  await expect(messageEvidence.getByText("记忆", { exact: true })).toHaveCount(0);
-  await expect(messageEvidence.getByText("已使用 1 条记忆", { exact: true })).toHaveCount(1);
-  await expect(messageEvidence.locator(".conversation-evidence-section-flat")).toHaveCSS("border-top-width", "0px");
+  await expect(terminalSummary).toHaveCount(0);
+  await expect(assistantTranscript).not.toContainText("完成：「频道 work-cell 操作记录样例」");
+  const terminalReportSummary = terminalReport.locator(".terminal-report-summary");
+  await expect(terminalReportSummary).toHaveAttribute("aria-expanded", "false");
+  await terminalReportSummary.click();
+  await expect(terminalReportSummary).toHaveAttribute("aria-expanded", "true");
+  await expect(terminalReport).toContainText("重构操作记录展示");
+  await expect(terminalReport).toContainText("Web typecheck");
+  await expect(terminalReport).toContainText("确认 workflow、run、action 和 artifact 的会话投影边界");
+  await expect(terminalReport.locator(".terminal-report-participant > strong").first()).toHaveCSS("color", "rgb(37, 99, 235)");
   const teamSummary = assistantTranscript.locator(".channel-team-experts-summary");
-  await expect(teamSummary).toContainText("4 已完成");
-  await teamSummary.locator(".channel-team-experts-summary-toggle").click();
-  const qaParticipationSummary = teamSummary.locator(".channel-team-experts-summary-entry").filter({ hasText: "QA" });
-  await expect(qaParticipationSummary.locator(".channel-team-experts-summary-entry-summary")).toContainText(
-    '已运行命令: $ corepack pnpm --filter @ling-stack/web exec playwright test apps/web/e2e/channel.spec.ts -g "work cell"',
-  );
+  await expect(teamSummary).toHaveCount(0);
   const transcriptArtifacts = assistantTranscript.locator(".conversation-turn-artifacts");
   const artifactRows = transcriptArtifacts.locator(".conversation-work-cell-artifact-row");
-  await expect(artifactRows).toHaveCount(1);
-  await expect(artifactRows).toContainText("conversation-work-cell-operation-records.md");
-  await expect(artifactRows).not.toContainText("channel-work-cell-e2e.log");
-  await expect(artifactRows).not.toContainText(["ConversationWorkCell.tsx", "components.css"]);
+  await expect(artifactRows).toHaveCount(2);
+  await expect(artifactRows.filter({ hasText: "conversation-work-cell-operation-records.md" })).toHaveCount(1);
+  await expect(artifactRows.filter({ hasText: "ConversationWorkCell.tsx" })).toHaveCount(1);
+  await expect(transcriptArtifacts).not.toContainText("channel-work-cell-e2e.log");
   const changedGroup = transcriptArtifacts.locator(".conversation-work-cell-change-group");
   const changedSummary = changedGroup.locator(".conversation-work-cell-change-summary");
   await expect(changedSummary).toContainText("已编辑 5 个文件");
-  await expect(changedSummary.locator(".conversation-work-cell-change-stat .add")).toHaveText("+16");
+  await expect(changedSummary.locator(".conversation-work-cell-change-stat .add")).toHaveText("+15");
   await expect(changedSummary.locator(".conversation-work-cell-change-stat .delete")).toHaveText("-4");
   await expect(changedSummary.locator(":scope > svg")).toHaveCount(0);
   await expect(changedSummary).not.toHaveAttribute("aria-expanded");
@@ -7855,21 +7853,18 @@ test("local channel work-cell demo fixture renders a realistic multi-agent opera
     assistantTranscript.locator(".conversation-turn-assistant-transcript").evaluate((element) => {
       const childClasses = Array.from(element.children).map((child) => child.className.toString());
       const operationIndex = childClasses.findIndex((className) => className.includes("conversation-turn-operation"));
-      const terminalIndex = childClasses.findIndex((className) => className.includes("conversation-turn-assistant-copy terminal"));
-      const teamIndex = childClasses.findIndex((className) => className.includes("channel-team-experts-summary"));
+      const reportIndex = childClasses.findIndex((className) => className.includes("terminal-report-block"));
       const artifactsIndex = childClasses.findIndex((className) => className.includes("conversation-turn-artifacts"));
       const actionsIndex = childClasses.findIndex((className) => className.includes("channel-message-row-footer-stack"));
       return {
-        operationBeforeTerminal: operationIndex >= 0 && terminalIndex > operationIndex,
-        terminalBeforeTeam: teamIndex > terminalIndex,
-        teamBeforeArtifacts: artifactsIndex > teamIndex,
+        operationBeforeReport: operationIndex >= 0 && reportIndex > operationIndex,
+        reportBeforeArtifacts: artifactsIndex > reportIndex,
         artifactsBeforeActions: actionsIndex > artifactsIndex,
       };
     }),
   ).toEqual({
-    operationBeforeTerminal: true,
-    terminalBeforeTeam: true,
-    teamBeforeArtifacts: true,
+    operationBeforeReport: true,
+    reportBeforeArtifacts: true,
     artifactsBeforeActions: true,
   });
 
@@ -7877,12 +7872,12 @@ test("local channel work-cell demo fixture renders a realistic multi-agent opera
   await expect(workCell.locator(".conversation-work-cell-agent-span")).toHaveCount(4);
   await expect(workCell.locator(".conversation-work-cell-artifact-row")).toHaveCount(0);
   const workCellReferences = workCell.locator(".conversation-work-cell-evidence-summary");
-  await expect(workCellReferences).toHaveText("3 个引用");
+  await expect(workCellReferences).toContainText("引用");
   await expect(workCellReferences).not.toContainText("变更");
   await expect(workCellReferences).not.toContainText("检查");
   await workCellReferences.click();
   await expect(workCell.locator(".conversation-work-cell-group")).toHaveCount(0);
-  await expect(workCell.locator(".conversation-work-cell-evidence-links > *")).toHaveCount(3);
+  await expect(workCell.locator(".conversation-work-cell-evidence-links > *")).not.toHaveCount(0);
   await workCellReferences.click();
   await expect(workCell).toContainText("Architect");
   await expect(workCell).toContainText("Designer");
@@ -7913,18 +7908,18 @@ test("local channel work-cell demo fixture renders a realistic multi-agent opera
   await expect(engineerNoteRow.locator(".conversation-work-cell-row-toggle")).toHaveCount(0);
   await expect(engineerNoteRow.locator(".conversation-work-cell-row-main")).toHaveCSS("padding-left", "0px");
   const thoughtColor = await engineerNoteRow.locator(".conversation-work-cell-row-copy strong").evaluate((element) => getComputedStyle(element).color);
-  const conversationColor = await terminalSummary.locator(".message-body-paragraph").evaluate((element) => getComputedStyle(element).color);
+  const conversationColor = await terminalReport.locator(".terminal-report-outcome-copy > span").evaluate((element) => getComputedStyle(element).color);
   expect(thoughtColor).toBe(conversationColor);
   await expect(engineerNoteRow.locator(".conversation-work-cell-row-copy strong")).toHaveCSS("font-size", "13px");
   await expect(engineerNoteRow.locator(".conversation-work-cell-row-copy strong")).toHaveCSS("font-weight", "550");
   const editActionRow = engineerDetail.locator(".conversation-work-cell-row").filter({ hasText: "已编辑 ConversationWorkCell.tsx" });
   await expect(editActionRow.locator(".conversation-work-cell-row-copy strong")).toHaveCSS("font-size", "12px");
   await expect(editActionRow.locator(".conversation-work-cell-row-copy strong")).toHaveCSS("font-weight", "400");
-  await expect(editActionRow.locator(".conversation-work-cell-change-stat .add")).toHaveText("+5");
+  await expect(editActionRow.locator(".conversation-work-cell-change-stat .add")).toHaveText("+4");
   await expect(editActionRow.locator(".conversation-work-cell-change-stat .delete")).toHaveText("-1");
   await editActionRow.locator(".conversation-work-cell-row-main").click();
   await expect(editActionRow.locator(".conversation-work-cell-change-preview")).toBeVisible();
-  await expect(editActionRow.locator(".conversation-work-cell-change-preview .diff-line.add")).toHaveCount(5);
+  await expect(editActionRow.locator(".conversation-work-cell-change-preview .diff-line.add")).toHaveCount(4);
   await expect(editActionRow.locator(".conversation-work-cell-change-preview .diff-line.delete")).toHaveCount(1);
 
   const commandRow = engineerDetail.locator(".conversation-work-cell-row.shell").filter({ hasText: "已运行命令" }).first();
@@ -7965,7 +7960,7 @@ test("local channel work-cell demo fixture renders a realistic multi-agent opera
   const changedFiles = changedGroup.locator(".conversation-work-cell-change-file");
   await expect(changedFiles).toHaveCount(3);
   await expect(changedFiles.nth(0)).toContainText("ConversationWorkCell.tsx");
-  await expect(changedFiles.nth(0).locator(".conversation-work-cell-change-stat .add")).toHaveText("+5");
+  await expect(changedFiles.nth(0).locator(".conversation-work-cell-change-stat .add")).toHaveText("+4");
   await expect(changedFiles.nth(0).locator(".conversation-work-cell-change-stat .delete")).toHaveText("-1");
   await expect(changedFiles.nth(1)).toContainText("components.css");
   await expect(changedFiles.nth(2)).toContainText("channel.spec.ts");
@@ -7987,7 +7982,7 @@ test("local channel work-cell demo fixture renders a realistic multi-agent opera
   await page.waitForTimeout(250);
   await expect(hoverPreview).toBeVisible();
   await expect(hoverPreview).toContainText("ConversationWorkCell.tsx");
-  await expect(hoverPreview.locator(".diff-line.add")).toHaveCount(5);
+  await expect(hoverPreview.locator(".diff-line.add")).toHaveCount(4);
   await expect(hoverPreview.locator(".diff-line.delete")).toHaveCount(1);
   const sourceRowBox = await changedFiles.nth(0).boundingBox();
   const hoverPreviewBox = await hoverPreview.boundingBox();

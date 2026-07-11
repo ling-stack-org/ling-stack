@@ -14,7 +14,7 @@ export type ConversationTurnOperationRef =
   | { readonly kind: "workflow"; readonly workflowId: string }
   | { readonly kind: "run_thread"; readonly threadId: string };
 
-type ConversationGenericTranscriptBlockKind = Exclude<TranscriptBlockKind, "coordinator_message" | "operation">;
+type ConversationGenericTranscriptBlockKind = Exclude<TranscriptBlockKind, "coordinator_message" | "operation" | "final_result">;
 type ConversationGenericTranscriptBlock = {
   readonly [Kind in ConversationGenericTranscriptBlockKind]: TranscriptBlockBase<Kind>;
 }[ConversationGenericTranscriptBlockKind];
@@ -29,6 +29,7 @@ type WorkflowPacketTarget = {
 export type ConversationTranscriptBlock =
   | ConversationCoordinatorMessageBlock
   | ConversationOperationBlock
+  | ConversationFinalResultBlock
   | ConversationGenericTranscriptBlock;
 
 export interface ConversationCoordinatorMessageBlock extends TranscriptBlockBase<"coordinator_message"> {
@@ -44,6 +45,14 @@ export interface ConversationOperationBlock extends TranscriptBlockBase<"operati
   readonly kind: "operation";
   readonly operationCell: ConversationWorkCellViewModel;
   readonly operationRef: ConversationTurnOperationRef;
+}
+
+export interface ConversationFinalResultBlock extends TranscriptBlockBase<"final_result"> {
+  readonly id: string;
+  readonly kind: "final_result";
+  readonly terminalReportId: string;
+  readonly terminalReportRevisionKey: string;
+  readonly rows: ConversationWorkCellViewModel["terminalReportRows"];
 }
 
 export interface ConversationTurnViewModel extends ConversationTurn<ConversationTranscriptBlock> {
@@ -76,6 +85,7 @@ export interface BuildConversationTurnProjectionInput {
   readonly operationCellByWorkflowId: ReadonlyMap<string, ConversationWorkCellViewModel>;
   readonly operationCellByThreadId: ReadonlyMap<string, ConversationWorkCellViewModel>;
   readonly lingAgentAuthorId: string;
+  readonly terminalReportMessageIds?: ReadonlySet<string>;
 }
 
 export function buildConversationTurnProjection(input: BuildConversationTurnProjectionInput): ConversationTurnProjection {
@@ -116,7 +126,8 @@ export function buildConversationTurnProjection(input: BuildConversationTurnProj
       operationCellByThreadId: input.operationCellByThreadId,
     });
     const childMessages = (childMessagesByThreadId.get(sourceMessage.id) ?? []).sort(compareByCreatedAtThenId);
-    const coordinatorMessages = childMessages.filter((message) => isLingAgentMessage(message, input.lingAgentAuthorId));
+    const allCoordinatorMessages = childMessages.filter((message) => isLingAgentMessage(message, input.lingAgentAuthorId));
+    const coordinatorMessages = allCoordinatorMessages.filter((message) => !input.terminalReportMessageIds?.has(message.id));
     const { startMessages, terminalMessages } = splitCoordinatorMessages(coordinatorMessages, operation?.cell);
     const turnId = `conversation-turn:${sourceMessage.id}`;
     const blocks = buildTranscriptBlocks({
@@ -134,13 +145,13 @@ export function buildConversationTurnProjection(input: BuildConversationTurnProj
       ...input.workflowSteps
         .filter((step) => operation?.ref.kind === "workflow" && step.workflowId === operation.ref.workflowId)
         .map((step) => step.updatedAt),
-      ...coordinatorMessages.map((message) => message.updatedAt),
-      ...coordinatorMessages.flatMap((message) => (usedMemoryEventsByResponseId.get(message.id) ?? []).map((event) => event.createdAt)),
+      ...allCoordinatorMessages.map((message) => message.updatedAt),
+      ...allCoordinatorMessages.flatMap((message) => (usedMemoryEventsByResponseId.get(message.id) ?? []).map((event) => event.createdAt)),
       operation?.cell.updatedAt,
     ]);
 
     hiddenActivityIds.add(`message:${sourceMessage.id}`);
-    for (const message of coordinatorMessages) {
+    for (const message of allCoordinatorMessages) {
       hiddenActivityIds.add(`message:${message.id}`);
     }
     if (operation?.ref.kind === "workflow") {
@@ -312,6 +323,29 @@ function buildTranscriptBlocks(input: {
         workflowId: input.operation.ref.workflowId,
         workflowSteps: input.workflowSteps,
       }));
+    }
+    if (
+      input.operation.cell.terminalReportId &&
+      input.operation.cell.terminalReportRevisionKey &&
+      input.operation.cell.terminalReportRows.length > 0
+    ) {
+      const outcome = input.operation.cell.terminalReportRows.find((row) => row.reportSection === "outcome");
+      blocks.push({
+        id: `final-result:${input.operation.cell.terminalReportId}`,
+        turnId: input.turnId,
+        kind: "final_result",
+        status: transcriptStatusFromOperation(input.operation.cell.status),
+        revision: 1,
+        updatedAt: input.operation.cell.updatedAt,
+        display: [{
+          id: `display:${input.operation.cell.terminalReportId}:outcome`,
+          text: outcome?.title ?? input.operation.cell.title,
+          meta: outcome?.description,
+        }],
+        terminalReportId: input.operation.cell.terminalReportId,
+        terminalReportRevisionKey: input.operation.cell.terminalReportRevisionKey,
+        rows: input.operation.cell.terminalReportRows,
+      });
     }
   }
   for (const message of input.terminalMessages) {

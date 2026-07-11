@@ -1,4 +1,4 @@
-import type { ChannelMessage, ChannelWorkflow, ChannelWorkflowStep, ExecutionAction, MemoryObject, PreviewContentKind, PreviewContentResponse, RunArtifact, RunSession, UsedMemoryEvent } from "../types.js";
+import type { ChannelMessage, ChannelWorkflow, ChannelWorkflowStep, ExecutionAction, MemoryObject, PreviewContentKind, PreviewContentResponse, RunArtifact, RunSession, TerminalReportDto, UsedMemoryEvent } from "../types.js";
 import type { PreviewRequest } from "./previews.js";
 
 export const channelWorkCellDemoStorageKey = "ling-stack.workCellDemo";
@@ -12,6 +12,7 @@ export interface ChannelWorkCellDemoFixture {
   readonly artifactsByRun: Readonly<Record<string, readonly RunArtifact[]>>;
   readonly memoryObjects: readonly MemoryObject[];
   readonly usedMemoryEvents: readonly UsedMemoryEvent[];
+  readonly terminalReports: readonly TerminalReportDto[];
 }
 
 const channelWorkCellDemoArtifactPrefix = "demo_work_cell_";
@@ -42,7 +43,8 @@ export function createChannelWorkCellDemoFixture(input: {
   const workspaceId = "workspace_default";
   const idPrefix = `${channelWorkCellDemoArtifactPrefix}${safeId(channelId)}`;
   const sourceMessageId = `${idPrefix}_message_request`;
-  const terminalMessageId = `${idPrefix}_message_done`;
+  const terminalReportId = `${idPrefix}_terminal_report`;
+  const terminalMessageId = `message_${terminalReportId}`;
   const workflowId = `${idPrefix}_workflow`;
   const runArchitectId = `${idPrefix}_run_architect`;
   const runDesignerId = `${idPrefix}_run_designer`;
@@ -295,11 +297,87 @@ export function createChannelWorkCellDemoFixture(input: {
     sizeBytes: 386,
     createdAt: "2026-07-10T09:14:16.000Z",
   };
+  const terminalReport: TerminalReportDto = {
+    schemaVersion: 1,
+    id: terminalReportId,
+    workspaceId,
+    channelId,
+    threadId: sourceMessageId,
+    sourceMessageId,
+    source: { kind: "workflow", id: workflowId },
+    status: "committed",
+    language: "zh-CN",
+    outcome: {
+      status: "succeeded",
+      title: "多 Agent 操作记录已接入频道会话",
+      summary: "频道现在会保留 Architect、Designer、Engineer 和 QA 的真实操作过程，并在完成后展示结构化总结。",
+      corrections: [],
+      sourceRefs: [{ kind: "workflow", id: workflowId, label: workflow.title, visibility: "conversation" }],
+    },
+    changes: [
+      {
+        id: `${terminalReportId}_change_ui`,
+        kind: "behavior",
+        title: "重构操作记录展示",
+        summary: "过程记录逐行流式展示，完成总结位于过程 shell 外部，artifact 位于总结下方。",
+        paths: ["apps/web/src/shared/conversation/blocks/ConversationWorkCell.tsx", "apps/web/src/styles/components.css"],
+        addedLines: 142,
+        deletedLines: 18,
+        sourceRefs: [{ kind: "artifact", id: artifactEngineerDiff.id, label: artifactEngineerDiff.title, visibility: "conversation" }],
+      },
+      {
+        id: `${terminalReportId}_change_docs`,
+        kind: "documentation",
+        title: "记录会话组件规则",
+        summary: "补充完成态、引用和第二轮 Agent 操作的展示约束。",
+        paths: ["docs/design/conversation-work-cell-operation-records.md"],
+        addedLines: 36,
+        deletedLines: 0,
+        sourceRefs: [{ kind: "artifact", id: artifactDoc.id, label: artifactDoc.title, visibility: "conversation" }],
+      },
+    ],
+    verification: [
+      {
+        id: `${terminalReportId}_check_typecheck`,
+        title: "Web typecheck",
+        status: "passed",
+        command: "corepack pnpm --filter @ling-stack/web typecheck",
+        summary: "会话投影与组件类型检查通过。",
+        sourceRefs: [],
+      },
+      {
+        id: `${terminalReportId}_check_e2e`,
+        title: "频道 work-cell E2E",
+        status: "passed",
+        command: "playwright test apps/web/e2e/channel.spec.ts -g work-cell",
+        summary: "完成态、逐项展开和 artifact 预览通过。",
+        sourceRefs: [{ kind: "artifact", id: artifactQaLog.id, label: artifactQaLog.title, visibility: "folded_evidence" }],
+      },
+    ],
+    participants: [
+      { agentId: "architect", displayName: "Architect", status: "completed", contribution: "确认 workflow、run、action 和 artifact 的会话投影边界。", sourceRefs: [] },
+      { agentId: "designer", displayName: "Designer", status: "completed", contribution: "收紧无气泡、低噪音和悬停反馈的视觉规则。", sourceRefs: [] },
+      { agentId: "engineer", displayName: "Engineer", status: "completed", contribution: "完成组件、样式和第二轮文档收口。", sourceRefs: [] },
+      { agentId: "qa", displayName: "QA", status: "completed", contribution: "验证频道真实路径、完成态折叠和 artifact 预览。", sourceRefs: [] },
+    ],
+    artifacts: [
+      { id: artifactEngineerDiff.id, kind: "diff", title: artifactEngineerDiff.title ?? "ConversationWorkCell.tsx", path: artifactEngineerDiff.path, addedLines: 142, deletedLines: 18, sourceRefs: [] },
+      { id: artifactDoc.id, kind: "document", title: artifactDoc.title ?? "conversation-work-cell-operation-records.md", path: artifactDoc.path, sourceRefs: [] },
+    ],
+    risks: [],
+    references: [{ kind: "memory", id: memoryObjects[0].id, label: memoryObjects[0].title, visibility: "conversation" }],
+    evidenceSnapshotId: `${terminalReportId}_snapshot`,
+    evidenceFingerprint: `${terminalReportId}_fingerprint`,
+    synthesis: { mode: "model", promptVersion: "terminal-report-v1", attemptCount: 1, validationCodes: [] },
+    createdAt: completedAt,
+    committedAt: "2026-07-10T09:14:19.000Z",
+  };
 
   return {
     channelMessages,
     memoryObjects,
     usedMemoryEvents,
+    terminalReports: [terminalReport],
     workflows: [workflow],
     workflowSteps,
     runs,
