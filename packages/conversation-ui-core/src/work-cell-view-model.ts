@@ -23,13 +23,21 @@ export interface ConversationWorkCellStat {
 export interface ConversationWorkCellRow {
   readonly id: string;
   readonly kind?: ConversationOperationKind;
-  readonly presentation?: "default" | "shell";
+  readonly presentation?: "default" | "shell" | "note";
   readonly title: string;
   readonly description?: string;
   readonly meta?: string;
   readonly commandText?: string;
+  readonly changePreview?: ConversationWorkCellChangePreview;
   readonly detailLines?: readonly ConversationWorkCellRowDetailLine[];
   readonly tone?: ConversationWorkCellRowTone;
+}
+
+export interface ConversationWorkCellChangePreview {
+  readonly artifactId: string;
+  readonly path?: string;
+  readonly contentType?: string;
+  readonly sizeBytes?: number;
 }
 
 export interface ConversationWorkCellRowDetailLine {
@@ -70,6 +78,17 @@ export interface ConversationWorkCellEvidenceLink {
 
 export type ConversationArtifactStripItemKind = "artifact" | "changed" | "checked" | "attention" | "approval";
 
+export interface ConversationArtifactStripChangeArtifact {
+  readonly id: string;
+  readonly label: string;
+  readonly artifactId?: string;
+  readonly path?: string;
+  readonly href?: string;
+  readonly contentType?: string;
+  readonly sizeBytes?: number;
+  readonly previewable?: boolean;
+}
+
 export interface ConversationArtifactStripItem {
   readonly id: string;
   readonly kind: ConversationArtifactStripItemKind;
@@ -82,6 +101,7 @@ export interface ConversationArtifactStripItem {
   readonly sizeBytes?: number;
   readonly previewKind?: "file" | "image";
   readonly previewable?: boolean;
+  readonly changeArtifacts?: readonly ConversationArtifactStripChangeArtifact[];
 }
 
 export interface ConversationWorkCellGroup {
@@ -106,6 +126,7 @@ export interface ConversationOperationCellViewModel {
   readonly title: string;
   readonly summary: string;
   readonly stats: readonly ConversationWorkCellStat[];
+  readonly elapsedMs?: number;
   readonly operationRows: readonly ConversationWorkCellRow[];
   readonly agentSpans: readonly ConversationAgentActivitySpan[];
   /** @deprecated Use agentSpans. Kept while call sites migrate. */

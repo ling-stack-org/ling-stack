@@ -83,7 +83,7 @@ import { buildConversationWorkCellDetailsFromWorkflowEvidence, buildWorkflowProg
 import { deriveChannelRuns } from "../../lib/channel-artifacts.js";
 import { truncatePreview } from "../../lib/data.js";
 import { formatDateTime } from "../../lib/formatting.js";
-import { attachmentCanPreview, loadPreviewContent } from "../../lib/previews.js";
+import { attachmentCanPreview, loadPreviewContent, type PreviewRequest } from "../../lib/previews.js";
 import {
   buildRunRepairHint,
   readRunWorkspaceCwd,
@@ -105,6 +105,11 @@ import {
   channelFormPersistenceKey,
   channelToForm,
 } from "../../lib/channels.js";
+import {
+  channelWorkCellDemoFixtureEnabled,
+  createChannelWorkCellDemoFixture,
+  resolveChannelWorkCellDemoPreview,
+} from "../../lib/work-cell-demo-fixture.js";
 import {
   canUseProviderForRun,
   isMediaProvider,
@@ -921,7 +926,63 @@ export function WorkspaceClientView({
   const channelEditFormKey = useMemo(() => channelFormPersistenceKey(channelEditForm), [channelEditForm]);
   const taskById = useMemo(() => new Map(tasks.map((task) => [task.id, task])), [tasks]);
   const taskChannelById = useMemo(() => new Map(tasks.map((task) => [task.id, task.channelId])), [tasks]);
-  const workflowStepById = useMemo(() => new Map(channelWorkflowSteps.map((step) => [step.id, step])), [channelWorkflowSteps]);
+  const channelWorkCellDemoFixture = useMemo(
+    () => channelWorkCellDemoFixtureEnabled() ? createChannelWorkCellDemoFixture({ channelId: selectedChannelId, cwd }) : undefined,
+    [cwd, selectedChannelId],
+  );
+  const channelMessagesForDisplay = useMemo(
+    () => channelWorkCellDemoFixture ? [...channelMessages, ...channelWorkCellDemoFixture.channelMessages] : channelMessages,
+    [channelMessages, channelWorkCellDemoFixture],
+  );
+  const memoryByIdForDisplay = useMemo(() => {
+    if (!channelWorkCellDemoFixture) {
+      return memoryById;
+    }
+    const next = new Map(memoryById);
+    for (const memory of channelWorkCellDemoFixture.memoryObjects) {
+      next.set(memory.id, memory);
+    }
+    return next;
+  }, [channelWorkCellDemoFixture, memoryById]);
+  const usedMemoryEventsForDisplay = useMemo(
+    () => channelWorkCellDemoFixture ? [...usedMemoryEvents, ...channelWorkCellDemoFixture.usedMemoryEvents] : usedMemoryEvents,
+    [channelWorkCellDemoFixture, usedMemoryEvents],
+  );
+  const channelWorkflowsForDisplay = useMemo(
+    () => channelWorkCellDemoFixture ? [...channelWorkflows, ...channelWorkCellDemoFixture.workflows] : channelWorkflows,
+    [channelWorkCellDemoFixture, channelWorkflows],
+  );
+  const channelWorkflowStepsForDisplay = useMemo(
+    () => channelWorkCellDemoFixture ? [...channelWorkflowSteps, ...channelWorkCellDemoFixture.workflowSteps] : channelWorkflowSteps,
+    [channelWorkCellDemoFixture, channelWorkflowSteps],
+  );
+  const runsForDisplay = useMemo(
+    () => channelWorkCellDemoFixture ? [...runs, ...channelWorkCellDemoFixture.runs] : runs,
+    [channelWorkCellDemoFixture, runs],
+  );
+  const channelArtifactsByRunForDisplay = useMemo(
+    () => channelWorkCellDemoFixture
+      ? { ...channelArtifactsByRun, ...channelWorkCellDemoFixture.artifactsByRun }
+      : channelArtifactsByRun,
+    [channelArtifactsByRun, channelWorkCellDemoFixture],
+  );
+  const channelExecutionActionsForDisplay = useMemo(
+    () => channelWorkCellDemoFixture ? [...channelExecutionActions, ...channelWorkCellDemoFixture.executionActions] : channelExecutionActions,
+    [channelExecutionActions, channelWorkCellDemoFixture],
+  );
+  const channelWorkCellPreviewLoader = useMemo(
+    () => async (request: PreviewRequest) => {
+      const demoPreview = channelWorkCellDemoFixture
+        ? resolveChannelWorkCellDemoPreview({
+          artifactsByRun: channelWorkCellDemoFixture.artifactsByRun,
+          request,
+        })
+        : undefined;
+      return demoPreview ?? loadPreviewContent(request);
+    },
+    [channelWorkCellDemoFixture],
+  );
+  const workflowStepById = useMemo(() => new Map(channelWorkflowStepsForDisplay.map((step) => [step.id, step])), [channelWorkflowStepsForDisplay]);
   const channelAttachmentById = useMemo(
     () => new Map(channelAttachments.map((attachment) => [attachment.id, attachment])),
     [channelAttachments],
@@ -931,20 +992,20 @@ export function WorkspaceClientView({
     [channelLinkPreviews],
   );
   const channelRuns = useMemo(
-    () => deriveChannelRuns(selectedChannelId, tasks, runs, activeRun),
-    [activeRun, runs, selectedChannelId, tasks],
+    () => deriveChannelRuns(selectedChannelId, tasks, runsForDisplay, activeRun),
+    [activeRun, runsForDisplay, selectedChannelId, tasks],
   );
   const selectedChannelTasks = useMemo(
     () => tasks.filter((task) => task.channelId === selectedChannelId),
     [selectedChannelId, tasks],
   );
   const selectedChannelWorkflows = useMemo(
-    () => channelWorkflows.filter((workflow) => workflow.channelId === selectedChannelId),
-    [channelWorkflows, selectedChannelId],
+    () => channelWorkflowsForDisplay.filter((workflow) => workflow.channelId === selectedChannelId),
+    [channelWorkflowsForDisplay, selectedChannelId],
   );
   const selectedChannelWorkflowSteps = useMemo(
-    () => channelWorkflowSteps.filter((step) => step.channelId === selectedChannelId),
-    [channelWorkflowSteps, selectedChannelId],
+    () => channelWorkflowStepsForDisplay.filter((step) => step.channelId === selectedChannelId),
+    [channelWorkflowStepsForDisplay, selectedChannelId],
   );
   const channelCollaborationCardRefreshSignature = useMemo(() => {
     const workflowsSignature = channelWorkflows
@@ -1049,8 +1110,8 @@ export function WorkspaceClientView({
         turns: turnState?.status === "loaded" ? turnState.turns : undefined,
         turnRunLinks: turnState?.status === "loaded" ? turnState.runLinks : undefined,
         approvals,
-        artifactsByRun: channelArtifactsByRun,
-        executionActions: channelExecutionActions,
+        artifactsByRun: channelArtifactsByRunForDisplay,
+        executionActions: channelExecutionActionsForDisplay,
         t,
         artifactHref: (artifact) => artifactContentUrl(artifact.id, cwd),
       });
@@ -1059,11 +1120,11 @@ export function WorkspaceClientView({
       }
     }
     return cells;
-  }, [approvals, channelArtifactsByRun, channelExecutionActions, channelRuns, channelRunsByThreadId, conversationThreadTurnsByKey, cwd, t]);
+  }, [approvals, channelArtifactsByRunForDisplay, channelExecutionActionsForDisplay, channelRuns, channelRunsByThreadId, conversationThreadTurnsByKey, cwd, t]);
   const workflowProgressByWorkflowId = useMemo(() => {
     const cells = new Map<string, WorkflowProgressModel>();
-    for (const workflow of channelWorkflows.filter((item) => item.channelId === selectedChannelId)) {
-      const steps = channelWorkflowSteps.filter((step) => step.workflowId === workflow.id);
+    for (const workflow of channelWorkflowsForDisplay.filter((item) => item.channelId === selectedChannelId)) {
+      const steps = channelWorkflowStepsForDisplay.filter((step) => step.workflowId === workflow.id);
       if (steps.length === 0) {
         continue;
       }
@@ -1072,20 +1133,20 @@ export function WorkspaceClientView({
         steps,
         runs: channelRuns,
         approvals,
-        artifactsByRun: channelArtifactsByRun,
-        executionActions: channelExecutionActions,
+        artifactsByRun: channelArtifactsByRunForDisplay,
+        executionActions: channelExecutionActionsForDisplay,
         t,
         artifactHref: (artifact) => artifactContentUrl(artifact.id, cwd),
       }));
     }
     return cells;
-  }, [approvals, channelArtifactsByRun, channelExecutionActions, channelRuns, channelWorkflowSteps, channelWorkflows, cwd, selectedChannelId, t]);
+  }, [approvals, channelArtifactsByRunForDisplay, channelExecutionActionsForDisplay, channelRuns, channelWorkflowStepsForDisplay, channelWorkflowsForDisplay, cwd, selectedChannelId, t]);
   const localCollaborationTaskCardByWorkflowId = useMemo(() => {
     const cards = new Map<string, CollaborationTaskCardModel>();
-    for (const workflow of channelWorkflows.filter((item) => item.channelId === selectedChannelId)) {
+    for (const workflow of channelWorkflowsForDisplay.filter((item) => item.channelId === selectedChannelId)) {
       const card = buildCollaborationTaskCardModel({
         workflow,
-        steps: channelWorkflowSteps.filter((step) => step.workflowId === workflow.id),
+        steps: channelWorkflowStepsForDisplay.filter((step) => step.workflowId === workflow.id),
         runs: channelRuns,
         approvals,
         t,
@@ -1095,7 +1156,7 @@ export function WorkspaceClientView({
       }
     }
     return cards;
-  }, [approvals, channelRuns, channelWorkflowSteps, channelWorkflows, selectedChannelId, t]);
+  }, [approvals, channelRuns, channelWorkflowStepsForDisplay, channelWorkflowsForDisplay, selectedChannelId, t]);
   const collaborationTaskCardByWorkflowId = useMemo(() => {
     const cards = new Map(localCollaborationTaskCardByWorkflowId);
     if (
@@ -1130,10 +1191,10 @@ export function WorkspaceClientView({
     [selectedChannelId, tasks],
   );
   const blockedWorkflowStepIds = useMemo(
-    () => channelWorkflowSteps
+    () => channelWorkflowStepsForDisplay
       .filter((step) => step.channelId === selectedChannelId && (step.status === "waiting_for_approval" || step.status === "blocked"))
       .map((step) => step.id),
-    [channelWorkflowSteps, selectedChannelId],
+    [channelWorkflowStepsForDisplay, selectedChannelId],
   );
   const latestRun = channelRuns[0];
   const {
@@ -1169,16 +1230,16 @@ export function WorkspaceClientView({
   } = useChannelActivityController({
     cwd,
     selectedChannelId,
-    channelMessages,
+    channelMessages: channelMessagesForDisplay,
     tasks,
-    runs,
+    runs: runsForDisplay,
     approvals,
     channelStateTransitions,
     channelDecisions,
     channelHandoffs,
     channelContextSummaries,
-    channelWorkflows,
-    channelWorkflowSteps,
+    channelWorkflows: channelWorkflowsForDisplay,
+    channelWorkflowSteps: channelWorkflowStepsForDisplay,
     latestRun,
     workspaceSettings,
     onWorkspaceSettingsPatch,
@@ -1238,7 +1299,7 @@ export function WorkspaceClientView({
   useEffect(() => {
     conversationWorkCellEvidenceLoadsRef.current.clear();
     setConversationWorkCellDetailsByKey((current) => Object.keys(current).length === 0 ? current : {});
-  }, [approvals, channelArtifactsByRun, channelWorkflowSteps, channelWorkflows, conversationWorkCellByThreadId, cwd, runs]);
+  }, [approvals, channelArtifactsByRunForDisplay, channelWorkflowStepsForDisplay, channelWorkflowsForDisplay, conversationWorkCellByThreadId, cwd, runsForDisplay]);
   const pendingChannelApprovals = useMemo(() => {
     return approvals.filter((approval) => {
       if (effectiveApprovalStatus(approval) !== "pending") {
@@ -1444,13 +1505,13 @@ export function WorkspaceClientView({
   const conversationTurnProjection = useMemo(
     () => buildConversationTurnProjection({
       channelId: selectedChannelId,
-      messages: channelMessages,
+      messages: channelMessagesForDisplay,
       proposals: channelExecutionProposals,
       intentDecisions: channelIntentDecisions,
-      workflows: channelWorkflows,
-      workflowSteps: channelWorkflowSteps,
+      workflows: channelWorkflowsForDisplay,
+      workflowSteps: channelWorkflowStepsForDisplay,
       runs: channelRuns,
-      usedMemoryEvents,
+      usedMemoryEvents: usedMemoryEventsForDisplay,
       operationCellByWorkflowId: conversationWorkCellByWorkflowId,
       operationCellByThreadId: conversationWorkCellByThreadId,
       lingAgentAuthorId: LING_AGENT_AUTHOR_ID,
@@ -1458,14 +1519,14 @@ export function WorkspaceClientView({
     [
       channelExecutionProposals,
       channelIntentDecisions,
-      channelMessages,
+      channelMessagesForDisplay,
       channelRuns,
-      channelWorkflowSteps,
-      channelWorkflows,
+      channelWorkflowStepsForDisplay,
+      channelWorkflowsForDisplay,
       conversationWorkCellByThreadId,
       conversationWorkCellByWorkflowId,
       selectedChannelId,
-      usedMemoryEvents,
+      usedMemoryEventsForDisplay,
     ],
   );
   const channelTeamExpertsTurnTargets = useMemo<readonly ChannelTeamExpertsTurnTarget[]>(
@@ -1573,7 +1634,7 @@ export function WorkspaceClientView({
       return undefined;
     }
     const messageIds = new Set(
-      channelMessages
+      channelMessagesForDisplay
         .filter((message) => message.threadId === selectedChannelBranchRootThreadId)
         .map((message) => message.id),
     );
@@ -1588,12 +1649,12 @@ export function WorkspaceClientView({
         .map((task) => task.id),
     );
     const workflowIds = new Set(
-      channelWorkflows
+      channelWorkflowsForDisplay
         .filter((workflow) => workflow.metadata?.sourceMessageId && messageIds.has(workflow.metadata.sourceMessageId))
         .map((workflow) => workflow.id),
     );
     const workflowStepIds = new Set<string>();
-    for (const step of channelWorkflowSteps) {
+    for (const step of channelWorkflowStepsForDisplay) {
       const belongsToBranch = (
         workflowIds.has(step.workflowId) ||
         Boolean(step.runId && runIds.has(step.runId)) ||
@@ -1612,7 +1673,7 @@ export function WorkspaceClientView({
       workflowIds,
       workflowStepIds,
     };
-  }, [channelMessages, channelRuns, channelWorkflowSteps, channelWorkflows, selectedChannelBranchRootThreadId, tasks]);
+  }, [channelMessagesForDisplay, channelRuns, channelWorkflowStepsForDisplay, channelWorkflowsForDisplay, selectedChannelBranchRootThreadId, tasks]);
   const visibleActivityItems = useMemo(
     () => {
       const baseItems = auditActivityVisible
@@ -1668,7 +1729,7 @@ export function WorkspaceClientView({
     activeWorkThreadId,
     activityFiltersActive,
     auditActivityVisible,
-    channelMessages,
+    channelMessages: channelMessagesForDisplay,
     channelMessagesHasOlder,
     channelMessagesLoading,
     channelProtocolLoading,
@@ -3229,14 +3290,14 @@ export function WorkspaceClientView({
     approvals,
     attachmentContentUrl,
     auditActivityVisible,
-    channelArtifactsByRun,
+    channelArtifactsByRun: channelArtifactsByRunForDisplay,
     channelAttachmentById,
     channelMessageFeedbackById,
     channelMessagesLoadingOlder,
     channelTeamExpertsByTurn,
     channelTeamExpertsExpandedByTurn,
-    channelWorkflowSteps,
-    channelWorkflows,
+    channelWorkflowSteps: channelWorkflowStepsForDisplay,
+    channelWorkflows: channelWorkflowsForDisplay,
     conversationWorkCellByThreadId,
     conversationWorkCellByWorkflowId,
     conversationWorkCellDetailsByKey,
@@ -3244,8 +3305,9 @@ export function WorkspaceClientView({
     executionProposalsByMessageId,
     formatBytes,
     latestStatus,
+    loadPreview: channelWorkCellPreviewLoader,
     localUserDisplayName,
-    memoryById,
+    memoryById: memoryByIdForDisplay,
     orchestratingWorkflowId,
     proposedPlanArtifactsById,
     runningWorkflowStepId,
@@ -3254,7 +3316,7 @@ export function WorkspaceClientView({
     selectedChannelId,
     teammateOptions,
     t,
-    usedMemoryEvents,
+    usedMemoryEvents: usedMemoryEventsForDisplay,
     userProfile,
     workflowProgressByWorkflowId,
     activityActionRow,
@@ -3404,7 +3466,7 @@ export function WorkspaceClientView({
     />
   );
 
-  const channelHasChatContent = channelMessages.length > 0 || channelContextSummaries.length > 0;
+  const channelHasChatContent = channelMessagesForDisplay.length > 0 || channelContextSummaries.length > 0;
   const collaborationTaskCards = useMemo(
     () => [...collaborationTaskCardByWorkflowId.values()],
     [collaborationTaskCardByWorkflowId],
@@ -3416,7 +3478,7 @@ export function WorkspaceClientView({
     pendingApprovalCount,
     selectedApproval,
     contextSummaries: channelContextSummaries,
-    workflowSteps: channelWorkflowSteps,
+    workflowSteps: channelWorkflowStepsForDisplay,
     runningWorkflowStepId,
     t,
     onOpenTask: selectTask,
@@ -3776,9 +3838,9 @@ export function WorkspaceClientView({
     runById,
     taskChannelById,
     channelRuns,
-    channelMessages,
+    channelMessages: channelMessagesForDisplay,
     channelAttachments,
-    channelArtifactsByRun,
+    channelArtifactsByRun: channelArtifactsByRunForDisplay,
     channelTasks: selectedChannelTasks,
     channelWorkflows: selectedChannelWorkflows,
     channelWorkflowSteps: selectedChannelWorkflowSteps,
@@ -3830,7 +3892,7 @@ export function WorkspaceClientView({
       ) : (
         <ChannelSourceDetailPanel
           detail={selectedSourceDetail}
-          messages={channelMessages}
+          messages={channelMessagesForDisplay}
           decisions={channelDecisions}
         />
       )}
@@ -4278,12 +4340,12 @@ export function WorkspaceClientView({
             onClearFilters: clearActivityFilters,
             channel: selectedChannel,
             tasks,
-            runs,
+            runs: runsForDisplay,
             approvals,
-            workflowSteps: channelWorkflowSteps,
+            workflowSteps: channelWorkflowStepsForDisplay,
             externalActionDetails,
             externalWorkCiTriage,
-            artifactsByRun: channelArtifactsByRun,
+            artifactsByRun: channelArtifactsByRunForDisplay,
             durableWorkItems,
             workBoardLoading: tasksLoading || approvalsLoading || channelActivityTransitionsLoading || durableWorkItemsLoading,
             onOpenTask: openTaskFromActivity,
@@ -4334,7 +4396,6 @@ export function WorkspaceClientView({
                 : selectedChannel
                   ? t("No channel messages yet")
                   : t("Create a default channel to start the workspace loop."),
-            title: t("Alt+Up/Down focuses adjacent blocks. Ctrl+Shift+C copies the focused block."),
             items: messageFeedItems,
             renderItem: messageRenderers.renderMessageFeedItem,
             onKeyDown: handleMessageFeedKeyDown,

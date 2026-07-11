@@ -15,6 +15,7 @@ export interface ConversationEvidenceSection {
   readonly id: string;
   readonly label: string;
   readonly className?: string;
+  readonly hideHeader?: boolean;
   readonly summary?: string;
   readonly icon?: ReactNode;
   readonly items?: readonly ConversationEvidenceItem[];
@@ -55,13 +56,15 @@ export function ConversationEvidenceBundlePanel({
             className={["conversation-evidence-section", section.className].filter(Boolean).join(" ")}
             aria-label={section.label}
           >
-            <header>
-              <span>
-                {section.icon}
-                <strong>{section.label}</strong>
-              </span>
-              {section.summary ? <small>{section.summary}</small> : null}
-            </header>
+            {!section.hideHeader ? (
+              <header>
+                <span>
+                  {section.icon}
+                  <strong>{section.label}</strong>
+                </span>
+                {section.summary ? <small>{section.summary}</small> : null}
+              </header>
+            ) : null}
             {section.items && section.items.length > 0 ? (
               <ul>
                 {section.items.map((item) => (

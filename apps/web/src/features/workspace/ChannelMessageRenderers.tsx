@@ -22,11 +22,11 @@ import {
 } from "lucide-react";
 import { effectiveApprovalStatus } from "../../lib/approvals.js";
 import type { ChannelActivityItem } from "../../lib/channel-activity.js";
-import type { ConversationAgentActivitySpan, ConversationWorkCellViewModel } from "../../lib/conversation-work-cell.js";
+import { conversationAgentActivitySummary, type ConversationAgentActivitySpan, type ConversationWorkCellViewModel } from "../../lib/conversation-work-cell.js";
 import type { ConversationTranscriptBlock, ConversationTurnViewModel } from "../../lib/conversation-turn-projector.js";
 import { truncatePreview } from "../../lib/data.js";
 import { formatDateTime } from "../../lib/formatting.js";
-import { attachmentCanPreview, loadPreviewContent } from "../../lib/previews.js";
+import { attachmentCanPreview, type PreviewRequest } from "../../lib/previews.js";
 import { filterUsedMemoryEventsByResponse } from "../../shared/components/index.js";
 import {
   AvatarInitial,
@@ -34,6 +34,7 @@ import {
   UserProfileAvatar,
 } from "../../shared/components/index.js";
 import {
+  ConversationArtifactStripPanel,
   ConversationAttachmentStrip,
   ConversationWorkCell,
   FileRefChip,
@@ -58,6 +59,7 @@ import type {
   ChannelHandoffStatus,
   ChannelMention,
   ChannelMessage,
+  ChannelTeamEvidenceStatus,
   ChannelMessageFileRef,
   ChannelWorkflow,
   ChannelWorkflowStep,
@@ -66,6 +68,7 @@ import type {
   RunArtifact,
   RunSession,
   ProposedPlanArtifact,
+  PreviewContentResponse,
   StateTransitionEvent,
   UsedMemoryEvent,
   UpdateChannelExecutionProposalRequest,
@@ -112,6 +115,7 @@ export interface ChannelMessageRenderersInput {
   readonly formatBytes: (value: number) => string;
   readonly latestStatus: string;
   readonly localUserDisplayName: string;
+  readonly loadPreview: (request: PreviewRequest) => Promise<PreviewContentResponse>;
   readonly memoryById: ReadonlyMap<string, MemoryObject>;
   readonly orchestratingWorkflowId: string;
   readonly runningWorkflowStepId: string;
@@ -194,6 +198,84 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
     return teammate ? <TeammateAvatarView teammate={teammate} cwd={input.cwd} compact /> : undefined;
   }
 
+  function renderConversationTurnAgentParticipationSummary(
+    spans: readonly ConversationAgentActivitySpan[],
+    operationStatus: string | undefined,
+    expanded: boolean,
+    onToggleExpanded: () => void,
+  ): ReactNode {
+    const entries = spans.map((span, index) => ({
+      span,
+      index,
+      status: conversationAgentParticipationStatus(span, operationStatus),
+      summary: conversationAgentActivitySummary(span),
+    }));
+    const activeCount = entries.filter((entry) => entry.status === "pending").length;
+    const completedCount = entries.filter((entry) => entry.status === "completed" || entry.status === "adopted").length;
+    const delayedCount = entries.filter((entry) => entry.status === "timeout" || entry.status === "expired").length;
+    const unavailableCount = entries.filter((entry) => entry.status === "unavailable" || entry.status === "rejected").length;
+    const summaryItems = [
+      activeCount > 0 ? { label: `${activeCount} ${input.t("active")}`, tone: "active" as const } : undefined,
+      completedCount > 0 ? { label: `${completedCount} ${input.t("done")}`, tone: "done" as const } : undefined,
+      delayedCount > 0 ? { label: `${delayedCount} ${input.t("delayed")}`, tone: "delayed" as const } : undefined,
+      unavailableCount > 0 ? { label: `${unavailableCount} ${input.t("unavailable")}`, tone: "unavailable" as const } : undefined,
+    ].filter((item): item is { readonly label: string; readonly tone: "active" | "done" | "delayed" | "unavailable" } => Boolean(item));
+    const ariaLabel = `${input.t("Teammates")}: ${summaryItems.map((item) => item.label).join(", ") || `${entries.length} ${input.t("done")}`}`;
+
+    return (
+      <section className="channel-team-experts-summary" aria-label={input.t("Teammates")}>
+        <button
+          type="button"
+          className="channel-team-experts-summary-toggle"
+          aria-expanded={expanded}
+          aria-label={ariaLabel}
+          onClick={onToggleExpanded}
+        >
+          <span className="channel-team-experts-summary-chips" aria-hidden="true">
+            {entries.slice(0, 4).map((entry) => {
+              const avatar = renderConversationAgentAvatar(entry.span);
+              const title = entry.summary ? `${entry.span.label}: ${entry.summary}` : entry.span.label;
+              return avatar ? (
+                <span className={`channel-team-experts-chip status-${entry.status} has-avatar`} title={title} key={entry.span.id}>
+                  {avatar}
+                </span>
+              ) : (
+                <span className={`channel-team-experts-chip status-${entry.status} tone-${entry.index % 6}`} title={title} key={entry.span.id}>
+                  {conversationAgentInitials(entry.span.label)}
+                </span>
+              );
+            })}
+            {entries.length > 4 ? (
+              <span className="channel-team-experts-chip more">+{entries.length - 4}</span>
+            ) : null}
+          </span>
+          <span className="channel-team-experts-summary-meta">
+            {summaryItems.map((item, index) => (
+              <span className={`channel-team-experts-summary-meta-item tone-${item.tone}`} key={item.tone}>
+                {item.label}
+                {index < summaryItems.length - 1 ? <span className="channel-team-experts-summary-meta-separator">,</span> : null}
+              </span>
+            ))}
+          </span>
+        </button>
+        {expanded ? (
+          <div className="channel-team-experts-summary-panel">
+            {entries.map((entry) => (
+              <article className={`channel-team-experts-summary-entry status-${entry.status}`} aria-label={`${entry.span.label}: ${entry.summary}`} key={entry.span.id}>
+                <span className="channel-team-experts-summary-entry-dot" aria-hidden="true" />
+                <span className="channel-team-experts-summary-entry-avatar" aria-hidden="true">
+                  {renderConversationAgentAvatar(entry.span) ?? conversationAgentInitials(entry.span.label)}
+                </span>
+                <strong className="channel-team-experts-summary-entry-agent">{entry.span.label}</strong>
+                <p className="channel-team-experts-summary-entry-summary">{entry.summary}</p>
+              </article>
+            ))}
+          </div>
+        ) : null}
+      </section>
+    );
+  }
+
   const conversationTranscriptBlockRenderers = createTranscriptBlockRendererRegistry<
     ConversationTurnViewModel,
     ConversationTranscriptBlock,
@@ -253,13 +335,21 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
     const teamExperts = teamExpertsState?.channelId === input.selectedChannelId && teamExpertsState.turnId === turn.sourceMessage.id
       ? teamExpertsState.experts
       : undefined;
+    const terminalSummaryRendered = conversationTurnHasTerminalSummary(turn);
+    const hasTeamExpertsSummary = Boolean(teamExperts && teamExperts.totalCount > 1);
+    const fallbackParticipationSpans = terminalSummaryRendered && !hasTeamExpertsSummary
+      ? uniqueAgentParticipationSpans(turn.operationCell?.agentSpans ?? [])
+      : [];
     const teamExpertsExpanded = input.channelTeamExpertsExpandedByTurn[turn.sourceMessage.id] ?? false;
+    const externalArtifactItems = terminalSummaryRendered
+      ? turn.operationCell?.artifactStripItems ?? []
+      : [];
 
     return (
       <MessageRow
         className={[
           "channel-message-row conversation-turn-assistant-row",
-          teamExperts ? "has-team-experts" : "",
+          hasTeamExpertsSummary || fallbackParticipationSpans.length > 1 ? "has-team-experts" : "",
         ].filter(Boolean).join(" ")}
         authorType="ai-teammate"
         avatar={anchorMessage ? renderChannelMessageAvatar(anchorMessage) : <AvatarInitial label="L" tone="violet" />}
@@ -272,7 +362,7 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
               block,
               context: transcriptContext,
             }))}
-            {teamExperts ? (
+            {teamExperts && hasTeamExpertsSummary ? (
               <ChannelTeamExpertsSummary
                 experts={teamExperts}
                 expanded={teamExpertsExpanded}
@@ -287,6 +377,22 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
                   unavailable: input.t("unavailable"),
                 }}
               />
+            ) : fallbackParticipationSpans.length > 1 ? (
+              renderConversationTurnAgentParticipationSummary(
+                fallbackParticipationSpans,
+                turn.operationCell?.status,
+                teamExpertsExpanded,
+                () => input.onToggleChannelTeamExpertsExpanded(turn.sourceMessage.id),
+              )
+            ) : null}
+            {externalArtifactItems.length > 0 ? (
+              <div className="conversation-turn-artifacts">
+                <ConversationArtifactStripPanel
+                  items={externalArtifactItems}
+                  cwd={input.cwd}
+                  loadPreview={input.loadPreview}
+                />
+              </div>
             ) : null}
             {renderChannelAiMessageActions(turn.sourceMessage, copyText)}
           </div>
@@ -355,7 +461,7 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
       <MessageEvidencePanel
         memoryContent={block.memoryCitationEvents.length > 0 ? (
           <UsedMemorySummary
-            variant="footer"
+            variant="inline"
             events={block.memoryCitationEvents}
             memoryById={input.memoryById}
           />
@@ -383,6 +489,7 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
   }
 
   function renderOperationTranscriptBlock({
+    turn,
     block,
     context,
   }: {
@@ -398,8 +505,9 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
           detailsState={context.detailsState}
           onOpenRun={block.operationCell.anchorRunId.startsWith("workflow:") ? undefined : input.onOpenRun}
           onLoadDetails={context.onLoadDetails}
-          loadPreview={loadPreviewContent}
+          loadPreview={input.loadPreview}
           renderAgentAvatar={renderConversationAgentAvatar}
+          showArtifactStrip={!conversationTurnHasTerminalSummary(turn)}
         />
       </div>
     );
@@ -587,7 +695,7 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
       .filter((proposal) => input.auditActivityVisible || !proposalShouldHideInDefaultFeed(proposal, input.channelWorkflows));
     const messageUsedMemoryEvents = filterUsedMemoryEventsByResponse(input.usedMemoryEvents, message.id);
     const usedMemorySummary = messageUsedMemoryEvents.length > 0 ? (
-      <UsedMemorySummary compact events={messageUsedMemoryEvents} memoryById={input.memoryById} />
+      <UsedMemorySummary variant="inline" events={messageUsedMemoryEvents} memoryById={input.memoryById} />
     ) : undefined;
     const messageFileRefs = message.fileRefs ?? [];
     const nonChatAction = message.linkedTaskId
@@ -700,7 +808,7 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
           detailsState={input.conversationWorkCellDetailsByKey[detailsKey] ?? { status: "not_loaded" }}
           onOpenRun={workCell.anchorRunId.startsWith("workflow:") ? undefined : input.onOpenRun}
           onLoadDetails={input.onLoadWorkflowWorkCellDetails}
-          loadPreview={loadPreviewContent}
+          loadPreview={input.loadPreview}
           renderAgentAvatar={renderConversationAgentAvatar}
         />
       );
@@ -812,7 +920,7 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
           detailsState={input.conversationWorkCellDetailsByKey[input.conversationWorkCellDetailsCacheKey(workCell.threadId)] ?? { status: "not_loaded" }}
           onOpenRun={input.onOpenRun}
           onLoadDetails={input.onLoadConversationWorkCellDetails}
-          loadPreview={loadPreviewContent}
+          loadPreview={input.loadPreview}
           renderAgentAvatar={renderConversationAgentAvatar}
         />
       );
@@ -941,7 +1049,7 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
     return (
       <>
         <ConversationAttachmentStrip
-          loadPreview={loadPreviewContent}
+          loadPreview={input.loadPreview}
           attachments={attachments.map((attachment) => ({
             id: attachment.id,
             label: attachment.fileName,
@@ -1175,7 +1283,81 @@ function shouldSanitizeGeneratedCoordinatorBody(body: string): boolean {
 }
 
 function isGeneratedWorkflowCoordinatorBody(body: string): boolean {
-  return /Smoke ID\s*:/iu.test(body) || /开始\s*workflow\s*[:：]/iu.test(body);
+  return /Smoke ID\s*:/iu.test(body) ||
+    /开始\s*workflow\s*[:：]/iu.test(body) ||
+    /^(Done|Stopped|Not completed):\s*"/iu.test(body.trim()) ||
+    /^(完成|已停止|未完成)\s*[:：]/u.test(body.trim());
+}
+
+function conversationTurnHasTerminalSummary(turn: ConversationTurnViewModel): boolean {
+  return turn.blocks.some((block) => block.kind === "coordinator_message" && block.phase === "terminal");
+}
+
+function uniqueAgentParticipationSpans(spans: readonly ConversationAgentActivitySpan[]): readonly ConversationAgentActivitySpan[] {
+  const byKey = new Map<string, ConversationAgentActivitySpan>();
+  for (const span of spans) {
+    if (span.kind === "overflow") {
+      continue;
+    }
+    const key = (span.participantId?.trim() || span.label.trim()).toLowerCase();
+    if (!key) {
+      continue;
+    }
+    const existing = byKey.get(key);
+    if (!existing) {
+      byKey.set(key, span);
+      continue;
+    }
+    byKey.set(key, {
+      ...existing,
+      summary: span.summary ?? existing.summary,
+      meta: span.meta ?? existing.meta,
+      tone: span.tone ?? existing.tone,
+      stateLabel: span.stateLabel ?? existing.stateLabel,
+      latestRow: span.latestRow ?? existing.latestRow,
+      rows: [...existing.rows, ...span.rows],
+    });
+  }
+  return [...byKey.values()];
+}
+
+function conversationAgentParticipationStatus(
+  span: ConversationAgentActivitySpan,
+  operationStatus: string | undefined,
+): ChannelTeamEvidenceStatus {
+  const tone = span.tone ?? span.latestRow?.tone;
+  if (tone === "running") {
+    return "pending";
+  }
+  if (tone === "waiting") {
+    return "timeout";
+  }
+  if (tone === "failed") {
+    return "unavailable";
+  }
+  if (tone === "success") {
+    return "completed";
+  }
+  if (operationStatus === "active" || operationStatus === "running" || operationStatus === "waiting_for_approval") {
+    return "pending";
+  }
+  if (operationStatus === "blocked" || operationStatus === "cancelled" || operationStatus === "superseded") {
+    return "timeout";
+  }
+  if (operationStatus === "failed") {
+    return "unavailable";
+  }
+  return "completed";
+}
+
+function conversationAgentInitials(value: string): string {
+  const normalized = value.trim();
+  return normalized
+    .split(/[\s_-]+/u)
+    .filter(Boolean)
+    .slice(-2)
+    .map((part) => part.slice(0, 1).toUpperCase())
+    .join("") || normalized.slice(0, 2).toUpperCase();
 }
 
 function conversationCoordinatorStartFallback(
@@ -1267,7 +1449,7 @@ function ensureSentenceEnding(value: string): string {
   if (!text) {
     return "";
   }
-  return /[。.!?！？]$/u.test(text) ? text : `${text}.`;
+  return /[。.!?！？]$/u.test(text) ? text : /[\u3400-\u9fff]/u.test(text) ? `${text}。` : `${text}.`;
 }
 
 function isDuplicateCoordinatorDisplayBody(turn: ConversationTurnViewModel, value: string): boolean {

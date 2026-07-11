@@ -14,7 +14,7 @@ export function UsedMemorySummary({
   readonly memoryById: ReadonlyMap<string, MemoryObject>;
   readonly maxItems?: number;
   readonly compact?: boolean;
-  readonly variant?: "panel" | "footer";
+  readonly variant?: "panel" | "footer" | "inline";
 }): JSX.Element | null {
   const { t } = useI18n();
   const allMemoryIds = uniqueMemoryIds(events);
@@ -25,7 +25,27 @@ export function UsedMemorySummary({
 
   const overflowCount = Math.max(0, allMemoryIds.length - memoryIds.length);
   const latestEvent = latestUsedMemoryEvent(events);
-  const className = `used-memory-summary${compact ? " compact" : ""}${variant === "footer" ? " footer" : ""}`;
+  const className = `used-memory-summary${compact ? " compact" : ""}${variant === "footer" ? " footer" : ""}${variant === "inline" ? " inline" : ""}`;
+  if (variant === "inline") {
+    return (
+      <div className={className} aria-label={t("Used memory")}>
+        <ul>
+          {memoryIds.map((memoryId) => {
+            const memory = memoryById.get(memoryId);
+            const sourceSummary = memory ? formatSourceRefs(memory) : "";
+            return (
+              <li key={memoryId}>
+                <span>{memory?.title ?? shortMemoryId(memoryId)}</span>
+                {memory ? <small>{`${t("Scope")}: ${formatMemoryScope(memory)}`}</small> : null}
+                {sourceSummary ? <small>{`${t("Source")}: ${sourceSummary}`}</small> : null}
+              </li>
+            );
+          })}
+        </ul>
+        {overflowCount > 0 ? <small className="used-memory-overflow">{t("+{count} more memory items", { count: overflowCount })}</small> : null}
+      </div>
+    );
+  }
   if (variant === "footer") {
     const recallQueries = uniqueStrings(events.map((event) => event.recallQuery.trim()).filter(Boolean)).slice(0, 2);
     return (

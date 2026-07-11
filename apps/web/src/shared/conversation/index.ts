@@ -107,7 +107,7 @@ export { MessageEvidencePanel } from "./blocks/MessageEvidencePanel.js";
 export { MessageRow, type MessageRowAuthorType, type MessageRowProps, type MessageRowTone } from "./blocks/MessageRow.js";
 export { ConversationSummaryRow, type ConversationSummaryMetaItem, type ConversationSummaryRowProps } from "./feedback/ConversationSummaryRow.js";
 export { ConversationVirtualFeed, type ConversationVirtualFeedProps } from "./blocks/ConversationVirtualFeed.js";
-export { ConversationWorkCell, type ConversationWorkCellDetailsState, type ConversationWorkCellProps } from "./blocks/ConversationWorkCell.js";
+export { ConversationArtifactStripPanel, ConversationWorkCell, type ConversationWorkCellDetailsState, type ConversationWorkCellProps } from "./blocks/ConversationWorkCell.js";
 export { ConversationViewProvider, useOptionalConversationViewStore, type ConversationViewProviderProps } from "./view-store/conversation-view-provider.js";
 export { TranscriptBlockView, transcriptBlockViewKey, type TranscriptBlockViewProps } from "./blocks/TranscriptBlockView.js";
 export { EvidenceDisclosure, type EvidenceDisclosureProps } from "./blocks/EvidenceDisclosure.js";

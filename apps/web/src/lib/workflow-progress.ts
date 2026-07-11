@@ -35,6 +35,7 @@ export interface WorkflowProgressModel {
   readonly currentRows: readonly ConversationWorkCellRow[];
   readonly agentSpans: readonly ConversationAgentActivitySpan[];
   readonly stats: readonly WorkflowProgressStat[];
+  readonly elapsedMs?: number;
   readonly groups: readonly ConversationWorkCellGroup[];
   readonly evidenceLinks: readonly ConversationWorkCellEvidenceLink[];
   readonly artifactStripItems: readonly ConversationArtifactStripItem[];
@@ -135,9 +136,10 @@ export function buildWorkflowProgressModel(input: BuildWorkflowProgressInput): W
       { id: "evidence", label: input.t("Evidence"), value: String(artifacts.length) },
       { id: "approvals", label: input.t("Approvals"), value: String(mode === "completed" ? workflowApprovals.length : pendingApprovals.length) },
     ],
+    elapsedMs: workflowElapsedMs(input.workflow, orderedSteps, workflowRuns),
     groups,
     evidenceLinks,
-    artifactStripItems: buildConversationArtifactStripItems({ groups, evidenceLinks, t: input.t }),
+    artifactStripItems: buildConversationArtifactStripItems({ groups, evidenceLinks, artifacts, t: input.t }),
     attention,
     updatedAt: input.workflow.updatedAt,
   };
@@ -155,6 +157,7 @@ export function workflowProgressToConversationWorkCell(model: WorkflowProgressMo
     title: model.title,
     summary: model.summary,
     stats: model.stats,
+    elapsedMs: model.elapsedMs,
     operationRows: model.agentSpans.length > 0 ? [] : model.currentRows,
     agentSpans: model.agentSpans,
     agentBranches: model.agentSpans,
@@ -382,7 +385,7 @@ function buildWorkflowProgressSummary(input: {
   readonly finalResultSummary?: string;
 }): string {
   if (input.workflow.status === "succeeded") {
-    return input.finalResultSummary ?? input.workflow.title;
+    return input.finalResultSummary ?? (input.workflow.objective.trim() || input.workflow.title);
   }
   if (input.workflow.status === "failed" || input.workflow.status === "cancelled") {
     if (input.finalResultSummary) {
@@ -651,6 +654,7 @@ function workflowStepToAgentRow(
   return {
     id: `${scope}:workflow-step:${step.id}`,
     kind: workflowStepOperationKind(step),
+    presentation: step.status === "succeeded" ? "note" : undefined,
     title,
     description: workflowStepOperationSummary(step, 160, title),
     meta: [workflowStepStatusMeta(step.status, t), sourceLabel].filter(Boolean).join(" · "),
@@ -1037,6 +1041,37 @@ function workflowStepStatusMeta(status: ChannelWorkflowStep["status"], t: Transl
     return t("Stopped");
   }
   return undefined;
+}
+
+function workflowElapsedMs(
+  workflow: ChannelWorkflow,
+  steps: readonly ChannelWorkflowStep[],
+  runs: readonly RunSession[],
+): number | undefined {
+  const starts = [
+    parseIsoMs(workflow.createdAt),
+    ...steps.map((step) => parseIsoMs(step.createdAt)),
+    ...runs.map((run) => parseIsoMs(run.startedAt ?? run.createdAt)),
+  ].filter((value): value is number => value !== undefined);
+  const ends = [
+    parseIsoMs(workflow.updatedAt),
+    ...steps.map((step) => parseIsoMs(step.updatedAt)),
+    ...runs.map((run) => parseIsoMs(run.endedAt ?? run.updatedAt)),
+  ].filter((value): value is number => value !== undefined);
+  if (starts.length === 0 || ends.length === 0) {
+    return undefined;
+  }
+  const startedAt = Math.min(...starts);
+  const endedAt = Math.max(...ends);
+  return endedAt > startedAt ? endedAt - startedAt : undefined;
+}
+
+function parseIsoMs(value: string | undefined): number | undefined {
+  if (!value) {
+    return undefined;
+  }
+  const ms = Date.parse(value);
+  return Number.isFinite(ms) ? ms : undefined;
 }
 
 function approvalStatusTone(status: ApprovalRequest["status"]): ConversationWorkCellRowTone {

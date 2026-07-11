@@ -1,14 +1,13 @@
 import { useEffect, useState, type ReactNode } from "react";
-import { CheckCircle2, ChevronDown, CircleAlert, Clock3, Eye, FileText, History, Image as ImageIcon, Loader2, RefreshCw, ShieldCheck } from "lucide-react";
+import { BookOpen, CheckCircle2, ChevronDown, CircleAlert, Clock3, FilePenLine, FileText, GitBranch, History, ListChecks, Loader2, RefreshCw, Search, ShieldCheck, SquareTerminal } from "lucide-react";
 import { useI18n, type Translate } from "../../../i18n.js";
+import { parseUnifiedDiff, summarizeFileChanges, type ConversationFileChange } from "../../../lib/diff-summary.js";
 import type { ConversationAgentActivitySpan, ConversationArtifactStripItem, ConversationOperationCellViewModel, ConversationWorkCellEvidenceLink, ConversationWorkCellGroup, ConversationWorkCellRow } from "../../../lib/conversation-work-cell.js";
-import { ArtifactPreviewDrawer, type ArtifactPreviewLoader } from "../preview/ArtifactPreviewDrawer.js";
-import { OperationBubble } from "./OperationBubble.js";
-import { OperationBubbleActions } from "./OperationBubbleActions.js";
-import { OperationBubbleBody } from "./OperationBubbleBody.js";
-import { OperationBubbleCopyAction } from "./OperationBubbleCopyAction.js";
+import type { PreviewContentResponse } from "../../../types.js";
+import type { ArtifactPreviewLoader } from "../preview/ArtifactPreviewDrawer.js";
+import { ConversationArtifactStrip } from "./ConversationArtifactStrip.js";
+import { DiffViewer } from "./DiffViewer.js";
 import { useConversationBlockView } from "../view-store/use-conversation-block-view.js";
-import { useConversationSpanView } from "../view-store/use-conversation-span-view.js";
 
 export type ConversationWorkCellDetailsStatus = "not_loaded" | "loading" | "loaded" | "empty" | "error";
 
@@ -27,6 +26,7 @@ export interface ConversationWorkCellProps {
   readonly onLoadDetails?: (threadId: string) => void;
   readonly loadPreview: ArtifactPreviewLoader;
   readonly renderAgentAvatar?: (span: ConversationAgentActivitySpan) => ReactNode;
+  readonly showArtifactStrip?: boolean;
 }
 
 export function ConversationWorkCell({
@@ -37,10 +37,13 @@ export function ConversationWorkCell({
   onLoadDetails,
   loadPreview,
   renderAgentAvatar,
+  showArtifactStrip = true,
 }: ConversationWorkCellProps): JSX.Element {
   const { t } = useI18n();
-  const [previewItem, setPreviewItem] = useState<ConversationArtifactStripItem | undefined>();
   const active = model.mode === "active";
+  const singleAgentSpan = model.agentSpans.length === 1 ? model.agentSpans[0] : undefined;
+  const visibleAgentSpans = model.agentSpans.length > 1 ? model.agentSpans : [];
+  const singleAgentRows = singleAgentSpan?.rows ?? [];
   const fallbackRows: readonly ConversationWorkCellRow[] = model.operationRows.length === 0 && model.agentSpans.length === 0
     ? [{
       id: "operation:fallback",
@@ -50,14 +53,22 @@ export function ConversationWorkCell({
       tone: active ? "running" : model.status === "succeeded" ? "success" : model.status === "failed" ? "failed" : "neutral",
     }]
     : [];
-  const operationRows = model.operationRows.length > 0 ? model.operationRows : fallbackRows;
-  const agentSpans = model.agentSpans;
+  const operationRows = model.operationRows.length > 0
+    ? model.operationRows
+    : singleAgentRows.length > 0
+      ? singleAgentRows
+      : fallbackRows;
   const showOperationRows = operationRows.length > 0;
   const statusLabel = model.kicker ?? workCellStatusLabel(model.status, active, t);
-  const artifactStripSummary = buildArtifactStripSummary(model.artifactStripItems, t);
-  const visibleArtifactItems = model.artifactStripItems.filter((item) => item.kind === "artifact");
-  const evidenceSummary = artifactStripSummary ?? buildEvidenceSummary(model, t);
-  const diagnosticsHandler = model.showDiagnostics === true && !evidenceSummary ? onOpenRun : undefined;
+  const artifactStripSummary = showArtifactStrip ? buildArtifactStripSummary(model.artifactStripItems, t) : undefined;
+  const visibleArtifactItems = showArtifactStrip
+    ? model.artifactStripItems.filter((item) => item.kind === "artifact" || item.kind === "changed")
+    : [];
+  const referencesOnly = !showArtifactStrip;
+  const evidenceSummary = referencesOnly
+    ? buildReferenceSummary(model.evidenceLinks.length, t)
+    : artifactStripSummary ?? buildEvidenceSummary(model, t);
+  const diagnosticsHandler = model.showDiagnostics === true && !referencesOnly && !evidenceSummary ? onOpenRun : undefined;
   const rootClassName = [
     "conversation-work-cell",
     "conversation-operation-cell",
@@ -66,18 +77,23 @@ export function ConversationWorkCell({
     "no-rail",
     model.presentation ? `presentation-${model.presentation}` : "",
   ].filter(Boolean).join(" ");
-  const currentDetailsState: ConversationWorkCellDetailsState = detailsState ?? {
-    status: onLoadDetails ? "not_loaded" : "loaded",
-    groups: model.groups,
-    evidenceLinks: model.evidenceLinks,
-  };
+  const currentDetailsState: ConversationWorkCellDetailsState = referencesOnly
+    ? {
+      status: "loaded",
+      groups: [],
+      evidenceLinks: model.evidenceLinks,
+    }
+    : detailsState ?? {
+      status: onLoadDetails ? "not_loaded" : "loaded",
+      groups: model.groups,
+      evidenceLinks: model.evidenceLinks,
+    };
   const detailsDisclosure = useConversationBlockView({
     blockId: `operation-details:${model.id}`,
     revisionKey: operationBubbleRevisionKey(model, evidenceSummary),
     defaultExpanded: operationDetailsDefaultExpanded(model.status),
   });
   const detailsExpanded = Boolean(evidenceSummary && detailsDisclosure.expanded);
-  const bubbleCopyText = operationBubbleCopyText(model, evidenceSummary, statusLabel);
   const shellExpandable = operationShellExpandable(model.status, active);
   const shellDisclosure = useConversationBlockView({
     blockId: operationShellViewKey(model.id),
@@ -85,6 +101,16 @@ export function ConversationWorkCell({
     defaultExpanded: !shellExpandable,
   });
   const shellExpanded = !shellExpandable || shellDisclosure.expanded;
+  const shellStatusLabel = operationShellStatusLabel(model, active, t);
+  const shellSummary = operationShellSummary(model, evidenceSummary);
+  const shellClassName = [
+    "conversation-operation-shell",
+    "conversation-operation-bubble",
+    active ? "active" : "completed",
+    `tone-${operationShellTone(model.status, active)}`,
+    shellExpandable ? "expandable" : "",
+    shellExpanded ? "expanded" : "collapsed",
+  ].filter(Boolean).join(" ");
 
   useEffect(() => {
     if (detailsExpanded && currentDetailsState.status === "not_loaded") {
@@ -103,36 +129,38 @@ export function ConversationWorkCell({
   return (
     <article className={rootClassName} data-thread-id={model.threadId} data-operation-source={model.sourceKind} aria-label={statusLabel}>
       <span className="visually-hidden" role="status" aria-live="polite" aria-label={statusLabel} />
-      <OperationBubble
-        status={model.status}
-        active={active}
-        sourceLabel={operationBubbleSourceLabel(model.sourceKind, t)}
-        statusLabel={operationBubbleStatusChipLabel(model.status, active, t)}
-        ariaLabel={statusLabel}
-        expandable={shellExpandable}
-        expanded={shellExpanded}
-        toggleLabel={shellExpanded ? t("Collapse operation") : t("Expand operation")}
-        onToggleExpanded={shellDisclosure.toggleExpanded}
-        actions={(
-          <OperationBubbleActions>
-            <OperationBubbleCopyAction
-              actionId={`operation-copy:${model.id}`}
-              text={bubbleCopyText}
-              label={t("Copy summary")}
-              className="conversation-operation-bubble-action"
-              iconSize={13}
-            />
-          </OperationBubbleActions>
-        )}
-      >
-        <OperationBubbleBody>
+      <div className={shellClassName} aria-label={statusLabel}>
+        {shellExpandable ? (
+          <button
+            className="conversation-operation-shell-head conversation-operation-bubble-header"
+            type="button"
+            aria-expanded={shellExpanded}
+            aria-label={shellExpanded ? t("Collapse operation") : t("Expand operation")}
+            onClick={shellDisclosure.toggleExpanded}
+          >
+            <span className="conversation-operation-shell-toggle conversation-operation-bubble-toggle" aria-hidden="true">
+              <ChevronDown size={13} />
+            </span>
+            <span className="conversation-operation-shell-status conversation-operation-bubble-status">{shellStatusLabel}</span>
+            {!shellExpanded && shellSummary ? (
+              <span className="conversation-operation-shell-summary">{shellSummary}</span>
+            ) : null}
+          </button>
+        ) : null}
+        {shellExpanded ? (
+          <div className="conversation-operation-shell-body conversation-operation-bubble-body">
           <div className="conversation-work-cell-body">
-            {agentSpans.length > 0 ? (
-              <AgentActivitySpans spans={agentSpans} renderAgentAvatar={renderAgentAvatar} />
+            {visibleAgentSpans.length > 0 ? (
+              <AgentActivitySpans
+                spans={visibleAgentSpans}
+                cwd={cwd}
+                loadPreview={loadPreview}
+                renderAgentAvatar={renderAgentAvatar}
+              />
             ) : null}
 
             {showOperationRows ? (
-              <ActiveTurnItemStream rows={operationRows} />
+              <ActiveTurnItemStream rows={operationRows} cwd={cwd} loadPreview={loadPreview} />
             ) : null}
 
             {evidenceSummary ? (
@@ -151,7 +179,7 @@ export function ConversationWorkCell({
               <ConversationArtifactStrip
                 items={visibleArtifactItems}
                 cwd={cwd}
-                onPreview={setPreviewItem}
+                loadPreview={loadPreview}
               />
             ) : null}
 
@@ -171,27 +199,39 @@ export function ConversationWorkCell({
             {detailsExpanded ? (
               <WorkCellDetails
                 state={currentDetailsState}
+                cwd={cwd}
+                loadPreview={loadPreview}
+                showGroups={!referencesOnly}
                 onRetry={() => onLoadDetails?.(model.threadId)}
               />
             ) : null}
-
-            <ArtifactPreviewDrawer
-              request={previewItem?.artifactId && cwd ? {
-                source: "artifact",
-                cwd,
-                artifactId: previewItem.artifactId,
-              } : undefined}
-              loadPreview={loadPreview}
-              openHref={previewItem?.href}
-              downloadHref={previewItem?.href}
-              downloadName={previewItem?.label}
-              variant="lightbox"
-              onClose={() => setPreviewItem(undefined)}
-            />
           </div>
-        </OperationBubbleBody>
-      </OperationBubble>
+          </div>
+        ) : null}
+      </div>
     </article>
+  );
+}
+
+export function ConversationArtifactStripPanel({
+  items,
+  cwd,
+  loadPreview,
+}: {
+  readonly items: readonly ConversationArtifactStripItem[];
+  readonly cwd?: string;
+  readonly loadPreview: ArtifactPreviewLoader;
+}): JSX.Element | null {
+  const visibleItems = items.filter((item) => item.kind === "artifact" || item.kind === "changed");
+  if (visibleItems.length === 0) {
+    return null;
+  }
+  return (
+    <ConversationArtifactStrip
+      items={visibleItems}
+      cwd={cwd}
+      loadPreview={loadPreview}
+    />
   );
 }
 
@@ -212,95 +252,6 @@ function buildArtifactStripSummary(items: readonly ConversationArtifactStripItem
     approvalItem?.label,
   ].filter((piece): piece is string => Boolean(piece));
   return pieces.join(" · ");
-}
-
-function ConversationArtifactStrip({
-  items,
-  cwd,
-  onPreview,
-}: {
-  readonly items: readonly ConversationArtifactStripItem[];
-  readonly cwd?: string;
-  readonly onPreview: (item: ConversationArtifactStripItem) => void;
-}): JSX.Element | null {
-  const { t } = useI18n();
-  if (items.length === 0) {
-    return null;
-  }
-  return (
-    <div className="conversation-work-cell-artifacts" aria-label={t("Artifacts")}>
-      {items.map((item) => {
-        const previewable = Boolean(item.previewable && item.artifactId && cwd);
-        const meta = artifactItemMeta(item, t);
-        const icon = item.previewKind === "image" ? <ImageIcon size={13} aria-hidden="true" /> : <FileText size={13} aria-hidden="true" />;
-        const content = (
-          <>
-            <span className="conversation-work-cell-artifact-thumb" aria-hidden="true">
-              {item.previewKind === "image" && item.href ? <img src={item.href} alt="" loading="lazy" /> : icon}
-            </span>
-            <span className="conversation-work-cell-artifact-copy">
-              <strong>{item.label}</strong>
-              {meta ? <small>{meta}</small> : null}
-            </span>
-          </>
-        );
-        return previewable ? (
-          <button
-            key={item.id}
-            className="conversation-work-cell-artifact-row"
-            type="button"
-            onClick={() => onPreview(item)}
-            aria-label={`${t("Preview")}: ${item.label}`}
-          >
-            {content}
-            <Eye size={13} aria-hidden="true" />
-          </button>
-        ) : item.href ? (
-          <a
-            key={item.id}
-            className="conversation-work-cell-artifact-row"
-            href={item.href}
-            target="_blank"
-            rel="noreferrer"
-            title={item.label}
-          >
-            {content}
-          </a>
-        ) : (
-          <span key={item.id} className="conversation-work-cell-artifact-row">
-            {content}
-          </span>
-        );
-      })}
-    </div>
-  );
-}
-
-function artifactItemMeta(item: ConversationArtifactStripItem, t: Translate): string | undefined {
-  return [
-    artifactTypeLabel(item, t),
-    item.sizeBytes !== undefined ? formatArtifactSize(item.sizeBytes) : undefined,
-  ].filter(Boolean).join(" · ") || undefined;
-}
-
-function artifactTypeLabel(item: ConversationArtifactStripItem, t: Translate): string | undefined {
-  if (item.previewKind === "image") {
-    return t("Image");
-  }
-  if (item.artifactType) {
-    return item.artifactType.toUpperCase();
-  }
-  return undefined;
-}
-
-function formatArtifactSize(sizeBytes: number): string {
-  if (sizeBytes < 1024) {
-    return `${sizeBytes} B`;
-  }
-  if (sizeBytes < 1024 * 1024) {
-    return `${(sizeBytes / 1024).toFixed(1)} KB`;
-  }
-  return `${(sizeBytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 function buildEvidenceSummary(model: ConversationOperationCellViewModel, t: Translate): string | undefined {
@@ -334,54 +285,84 @@ function buildEvidenceSummary(model: ConversationOperationCellViewModel, t: Tran
   return pieces.length > 0 ? pieces.join(" · ") : undefined;
 }
 
-function operationBubbleSourceLabel(
-  sourceKind: ConversationOperationCellViewModel["sourceKind"],
-  t: Translate,
-): string {
-  if (sourceKind === "workflow") {
-    return t("Workflow");
+function buildReferenceSummary(referenceCount: number, t: Translate): string | undefined {
+  if (referenceCount === 1) {
+    return t("1 reference");
   }
-  if (sourceKind === "collaboration_task") {
-    return t("Collaboration");
-  }
-  return t("Run");
+  return referenceCount > 1 ? t("{count} references", { count: referenceCount }) : undefined;
 }
 
-function operationBubbleStatusChipLabel(
-  status: ConversationOperationCellViewModel["status"],
+function operationShellTone(status: ConversationOperationCellViewModel["status"], active: boolean): "running" | "waiting" | "success" | "failed" | "neutral" {
+  if (status === "waiting_for_approval") {
+    return "waiting";
+  }
+  if (status === "failed" || status === "blocked") {
+    return "failed";
+  }
+  if (status === "cancelled" || status === "superseded") {
+    return "neutral";
+  }
+  if (status === "succeeded") {
+    return "success";
+  }
+  return active ? "running" : "neutral";
+}
+
+function operationShellStatusLabel(
+  model: ConversationOperationCellViewModel,
   active: boolean,
   t: Translate,
 ): string {
-  if (status === "succeeded") {
-    return t("Done");
+  const elapsed = formatElapsedDuration(model.elapsedMs);
+  const suffix = elapsed ? ` ${elapsed}` : "";
+  if (model.status === "succeeded") {
+    return t("Processed{duration}", { duration: suffix });
   }
-  if (status === "failed") {
-    return t("Failed");
+  if (model.status === "failed") {
+    return t("Failed{duration}", { duration: suffix });
   }
-  if (status === "blocked") {
+  if (model.status === "blocked") {
     return t("Blocked");
   }
-  if (status === "waiting_for_approval") {
-    return t("Approval");
+  if (model.status === "waiting_for_approval") {
+    return t("Waiting for approval");
   }
-  if (status === "cancelled" || status === "superseded") {
-    return t("Stopped");
+  if (model.status === "cancelled" || model.status === "superseded") {
+    return t("Stopped{duration}", { duration: suffix });
   }
-  return active ? t("Running") : t("Idle");
+  return active ? t("Processing") : t("Processed{duration}", { duration: suffix });
 }
 
-function operationBubbleCopyText(
+function operationShellSummary(
   model: ConversationOperationCellViewModel,
   evidenceSummary: string | undefined,
-  statusLabel: string,
-): string {
-  return [
-    model.kicker,
-    model.summary,
-    evidenceSummary,
-    model.title,
-    statusLabel,
-  ].map((value) => value?.trim()).find((value): value is string => Boolean(value)) ?? statusLabel;
+): string | undefined {
+  const summary = model.summary.trim();
+  if (summary) {
+    return summary;
+  }
+  const title = model.title.trim();
+  if (title) {
+    return title;
+  }
+  return evidenceSummary;
+}
+
+function formatElapsedDuration(elapsedMs: number | undefined): string | undefined {
+  if (!elapsedMs || elapsedMs < 1000) {
+    return undefined;
+  }
+  const totalSeconds = Math.max(1, Math.round(elapsedMs / 1000));
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  if (hours > 0) {
+    return `${hours}h ${minutes}m`;
+  }
+  if (minutes > 0) {
+    return `${minutes}m ${seconds}s`;
+  }
+  return `${seconds}s`;
 }
 
 function operationBubbleRevisionKey(
@@ -432,9 +413,13 @@ function operationDetailsDefaultExpanded(status: ConversationOperationCellViewMo
 
 function AgentActivitySpans({
   spans,
+  cwd,
+  loadPreview,
   renderAgentAvatar,
 }: {
   readonly spans: readonly ConversationAgentActivitySpan[];
+  readonly cwd?: string;
+  readonly loadPreview: ArtifactPreviewLoader;
   readonly renderAgentAvatar?: (span: ConversationAgentActivitySpan) => ReactNode;
 }): JSX.Element {
   const { t } = useI18n();
@@ -445,6 +430,8 @@ function AgentActivitySpans({
           <AgentActivitySpanItem
             key={span.id}
             span={span}
+            cwd={cwd}
+            loadPreview={loadPreview}
             renderAgentAvatar={renderAgentAvatar}
           />
         ))}
@@ -455,21 +442,17 @@ function AgentActivitySpans({
 
 function AgentActivitySpanItem({
   span,
+  cwd,
+  loadPreview,
   renderAgentAvatar,
 }: {
   readonly span: ConversationAgentActivitySpan;
+  readonly cwd?: string;
+  readonly loadPreview: ArtifactPreviewLoader;
   readonly renderAgentAvatar?: (span: ConversationAgentActivitySpan) => ReactNode;
 }): JSX.Element {
   const { t } = useI18n();
   const hasDetail = span.rows.length > 0;
-  const disclosure = useConversationSpanView({
-    spanId: span.id,
-    revisionKey: agentActivitySpanRevisionKey(span),
-    defaultExpanded: hasDetail && shouldAutoExpandAgentActivitySpan(span),
-  });
-  const expanded = hasDetail && disclosure.expanded;
-  const latestRow = span.latestRow;
-  const currentSummary = agentActivityCurrentSummary(latestRow, span.summary);
   const avatar = renderAgentAvatar?.(span);
   const headContent = (
     <>
@@ -478,65 +461,30 @@ function AgentActivitySpanItem({
       </span>
       <span className="conversation-work-cell-agent-span-copy">
         <strong>{span.label}</strong>
-        {currentSummary ? <small>{currentSummary}</small> : null}
       </span>
       {span.stateLabel ? <span className="conversation-work-cell-agent-span-state">{span.stateLabel}</span> : null}
-      {hasDetail ? (
-        <span className="conversation-work-cell-agent-span-toggle" aria-hidden="true">
-          <ChevronDown size={13} aria-hidden="true" />
-        </span>
-      ) : null}
     </>
   );
   return (
     <div
-      className={["conversation-work-cell-agent-span", `kind-${span.kind ?? "agent"}`, span.tone ?? "neutral", expanded ? "expanded" : ""].filter(Boolean).join(" ")}
+      className={["conversation-work-cell-agent-span", `kind-${span.kind ?? "agent"}`, span.tone ?? "neutral"].filter(Boolean).join(" ")}
       data-agent-span-kind={span.kind ?? "agent"}
+      data-agent-participant-id={span.participantId}
     >
+      <div className="conversation-work-cell-agent-span-head">
+        {headContent}
+      </div>
       {hasDetail ? (
-        <button
-          className="conversation-work-cell-agent-span-head"
-          type="button"
-          aria-expanded={expanded}
-          aria-label={expanded ? t("Collapse agent activity") : t("Expand agent activity")}
-          onClick={disclosure.toggleExpanded}
-        >
-          {headContent}
-        </button>
-      ) : (
-        <div className="conversation-work-cell-agent-span-head static">
-          {headContent}
-        </div>
-      )}
-      {expanded && hasDetail ? (
         <div className="conversation-work-cell-agent-span-detail" aria-label={t("Agent activity detail")}>
           <div className="conversation-work-cell-row-list">
-            {span.rows.map((row) => <WorkCellRow key={row.id} row={row} compact showIcon={false} />)}
+            {span.rows.map((row) => (
+              <WorkCellRow key={row.id} row={row} compact cwd={cwd} loadPreview={loadPreview} />
+            ))}
           </div>
         </div>
       ) : null}
     </div>
   );
-}
-
-function shouldAutoExpandAgentActivitySpan(span: ConversationAgentActivitySpan): boolean {
-  return span.tone === "waiting" ||
-    span.tone === "failed" ||
-    span.latestRow?.tone === "waiting" ||
-    span.latestRow?.tone === "failed" ||
-    span.rows.some((row) => row.tone === "waiting" || row.tone === "failed");
-}
-
-function agentActivitySpanRevisionKey(span: ConversationAgentActivitySpan): string {
-  return [
-    span.tone ?? "",
-    span.stateLabel ?? "",
-    span.summary ?? "",
-    span.latestRow?.id ?? "",
-    span.latestRow?.tone ?? "",
-    span.latestRow?.title ?? "",
-    span.rows.length,
-  ].join("|");
 }
 
 function workCellStatusLabel(
@@ -564,9 +512,15 @@ function workCellStatusLabel(
 
 function WorkCellDetails({
   state,
+  cwd,
+  loadPreview,
+  showGroups,
   onRetry,
 }: {
   readonly state: ConversationWorkCellDetailsState;
+  readonly cwd?: string;
+  readonly loadPreview: ArtifactPreviewLoader;
+  readonly showGroups: boolean;
   readonly onRetry: () => void;
 }): JSX.Element {
   const { t } = useI18n();
@@ -605,7 +559,7 @@ function WorkCellDetails({
     );
   }
 
-  const groups = state.groups ?? [];
+  const groups = showGroups ? state.groups ?? [] : [];
   const visibleGroups = groups.filter((group) => group.rows.length > 0);
   const evidenceLinks = state.evidenceLinks ?? [];
   const empty = state.status === "empty" || (visibleGroups.length === 0 && evidenceLinks.length === 0);
@@ -624,7 +578,9 @@ function WorkCellDetails({
             <small>{group.summary}</small>
           </header>
           <div className="conversation-work-cell-row-list">
-            {group.rows.map((row) => <WorkCellRow key={row.id} row={row} showIcon={false} />)}
+            {group.rows.map((row) => (
+              <WorkCellRow key={row.id} row={row} showIcon={false} cwd={cwd} loadPreview={loadPreview} />
+            ))}
           </div>
         </section>
       ))}
@@ -651,37 +607,15 @@ function WorkCellDetails({
   );
 }
 
-function agentActivityCurrentSummary(row: ConversationWorkCellRow | undefined, fallback: string | undefined): string | undefined {
-  if (!row) {
-    return fallback;
-  }
-  const title = row.title.trim();
-  if (!isExecutionActionRow(row)) {
-    return title || fallback;
-  }
-  const detailLines = displayableRowDetailLines(row.detailLines);
-  const primaryDetail = row.kind === "run_command"
-    ? detailLines.find((line) => line.kind === "code")?.text ?? displayableRowDescription(title, row.description)
-    : displayableRowDescription(title, row.description) ?? detailLines[0]?.text;
-  if (!primaryDetail || sameVisibleRowText(title, primaryDetail)) {
-    return title || fallback;
-  }
-  return truncateVisibleSummary(`${title}: ${primaryDetail}`);
-}
-
-function isExecutionActionRow(row: ConversationWorkCellRow): boolean {
-  return /(?:^|:)action:/u.test(row.id);
-}
-
-function truncateVisibleSummary(value: string, maxLength = 180): string {
-  const normalized = value.replace(/\s+/gu, " ").trim();
-  if (normalized.length <= maxLength) {
-    return normalized;
-  }
-  return `${normalized.slice(0, Math.max(0, maxLength - 3)).trimEnd()}...`;
-}
-
-function ActiveTurnItemStream({ rows }: { readonly rows: readonly ConversationWorkCellRow[] }): JSX.Element {
+function ActiveTurnItemStream({
+  rows,
+  cwd,
+  loadPreview,
+}: {
+  readonly rows: readonly ConversationWorkCellRow[];
+  readonly cwd?: string;
+  readonly loadPreview: ArtifactPreviewLoader;
+}): JSX.Element {
   const { t } = useI18n();
   if (rows.length === 0) {
     return (
@@ -693,7 +627,7 @@ function ActiveTurnItemStream({ rows }: { readonly rows: readonly ConversationWo
   }
   return (
     <div className="conversation-work-cell-active-stream" aria-label={t("Active work stream")}>
-      {rows.map((row) => <WorkCellRow key={row.id} row={row} compact showIcon={false} />)}
+      {rows.map((row) => <WorkCellRow key={row.id} row={row} compact cwd={cwd} loadPreview={loadPreview} />)}
     </div>
   );
 }
@@ -702,85 +636,82 @@ function WorkCellRow({
   row,
   compact = false,
   showIcon = true,
+  cwd,
+  loadPreview,
 }: {
   readonly row: ConversationWorkCellRow;
   readonly compact?: boolean;
   readonly showIcon?: boolean;
+  readonly cwd?: string;
+  readonly loadPreview?: ArtifactPreviewLoader;
 }): JSX.Element {
-  const { t } = useI18n();
   const [expanded, setExpanded] = useState(false);
+  const [changePreview, setChangePreview] = useState<InlineChangePreviewState>({ status: "idle", changes: [] });
   const displayDescription = displayableRowDescription(row.title, row.description);
   const displayMeta = displayableRowMeta(row.meta);
-  const detailLines = displayableRowDetailLines(row.detailLines);
-  const hasDetail = Boolean(displayDescription || detailLines.length > 0);
+  const baseDetailLines = displayableRowDetailLines(row.detailLines);
+  const shellCommand = row.presentation === "shell" ? shellCommandText(row, baseDetailLines) : undefined;
+  const detailLines = shellCommand
+    ? baseDetailLines.filter((line) => stripShellPrompt(line.text) !== shellCommand)
+    : baseDetailLines;
+  const changeSummary = changePreview.status === "loaded" && !changePreview.truncated
+    ? summarizeFileChanges(changePreview.changes)
+    : undefined;
+  const hasDetail = Boolean(shellCommand || displayDescription || detailLines.length > 0 || changePreview.changes.length > 0);
+  const showRowIcon = showIcon && row.presentation !== "note";
   const rowClassName = [
     "conversation-work-cell-row",
     row.presentation === "shell" ? "shell" : "",
+    row.presentation === "note" ? "note" : "",
     row.tone ?? "neutral",
     compact ? "compact" : "",
-    showIcon ? "" : "iconless",
+    showRowIcon ? "" : "iconless",
     expanded ? "expanded" : "",
   ].filter(Boolean).join(" ");
-  if (row.presentation === "shell") {
-    const shellCommand = shellCommandText(row, detailLines);
-    const shellMain = (
-      <>
-        <span className="conversation-work-cell-shell-card">
-          <span className="conversation-work-cell-shell-topline">
-            <span className="conversation-work-cell-shell-label">{t("Shell")}</span>
-            <span className={`conversation-work-cell-shell-state ${row.tone ?? "neutral"}`} aria-hidden="true" />
-            <strong className="conversation-work-cell-shell-title">{row.title}</strong>
-            {displayMeta ? <small className="conversation-work-cell-shell-status">{displayMeta}</small> : null}
-          </span>
-          {shellCommand ? <code className="conversation-work-cell-shell-command">$ {shellCommand}</code> : null}
-          {displayDescription ? <small className="conversation-work-cell-shell-output">{displayDescription}</small> : null}
-        </span>
-        {hasDetail ? (
-          <span className="conversation-work-cell-row-toggle" aria-hidden="true">
-            <ChevronDown size={13} />
-          </span>
-        ) : null}
-      </>
-    );
-    return (
-      <div className={rowClassName}>
-        {hasDetail ? (
-          <button
-            className="conversation-work-cell-row-main conversation-work-cell-shell-main"
-            type="button"
-            aria-expanded={expanded}
-            aria-label={shellCommand ? `${row.title}: $ ${shellCommand}` : row.title}
-            onClick={() => setExpanded((value) => !value)}
-          >
-            {shellMain}
-          </button>
-        ) : (
-          <div className="conversation-work-cell-row-main conversation-work-cell-shell-main static">
-            {shellMain}
-          </div>
-        )}
-        {expanded && hasDetail ? (
-          <div className="conversation-work-cell-row-detail conversation-work-cell-shell-detail">
-            {displayDescription ? <small>{displayDescription}</small> : null}
-            {detailLines.map((line, index) => (
-              line.kind === "code"
-                ? <code key={`${line.kind}:${index}`}>{line.text}</code>
-                : <small key={`${line.kind ?? "text"}:${index}`}>{line.text}</small>
-            ))}
-          </div>
-        ) : null}
-      </div>
-    );
-  }
+
+  useEffect(() => {
+    const preview = row.changePreview;
+    if (!preview || !cwd || !loadPreview) {
+      setChangePreview({ status: "idle", changes: [] });
+      return;
+    }
+    let cancelled = false;
+    setChangePreview({ status: "loading", changes: [] });
+    void loadPreview({
+      source: "artifact",
+      cwd,
+      artifactId: preview.artifactId,
+      maxBytes: 64 * 1024,
+    }).then((response) => {
+      if (cancelled) {
+        return;
+      }
+      setChangePreview(inlineChangePreviewState(response, preview.path, preview.artifactId));
+    }, () => {
+      if (!cancelled) {
+        setChangePreview({ status: "error", changes: [] });
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [cwd, loadPreview, row.changePreview?.artifactId, row.changePreview?.path]);
+
   const rowMain = (
     <>
-      {showIcon ? (
+      {showRowIcon ? (
         <span className="conversation-work-cell-row-icon" aria-hidden="true">
-          <WorkCellRowIcon tone={row.tone ?? "neutral"} />
+          <WorkCellRowIcon kind={row.kind} tone={row.tone ?? "neutral"} />
         </span>
       ) : null}
       <span className="conversation-work-cell-row-copy">
         <strong>{row.title}</strong>
+        {changeSummary ? (
+          <span className="conversation-work-cell-change-stat" aria-label={`+${changeSummary.additions} -${changeSummary.deletions}`}>
+            <span className="add">+{changeSummary.additions}</span>
+            <span className="delete">-{changeSummary.deletions}</span>
+          </span>
+        ) : null}
         {displayMeta ? <small>{displayMeta}</small> : null}
       </span>
       {hasDetail ? (
@@ -807,15 +738,64 @@ function WorkCellRow({
         </div>
       )}
       {expanded && hasDetail ? (
-        <div className="conversation-work-cell-row-detail">
+        <div className={row.presentation === "shell" ? "conversation-work-cell-row-detail conversation-work-cell-shell-detail" : "conversation-work-cell-row-detail"}>
+          {shellCommand ? <code className="conversation-work-cell-shell-command">$ {shellCommand}</code> : null}
           {displayDescription ? <small>{displayDescription}</small> : null}
           {detailLines.map((line, index) => (
             line.kind === "code"
               ? <code key={`${line.kind}:${index}`}>{line.text}</code>
               : <small key={`${line.kind ?? "text"}:${index}`}>{line.text}</small>
           ))}
+          {changePreview.changes.length > 0 ? (
+            <InlineChangePreview changes={changePreview.changes} />
+          ) : null}
         </div>
       ) : null}
+    </div>
+  );
+}
+
+interface InlineChangePreviewState {
+  readonly status: "idle" | "loading" | "loaded" | "error";
+  readonly changes: readonly ConversationFileChange[];
+  readonly truncated?: boolean;
+}
+
+function inlineChangePreviewState(
+  response: PreviewContentResponse,
+  fallbackPath: string | undefined,
+  artifactId: string,
+): InlineChangePreviewState {
+  if (response.kind !== "diff" || !response.text?.trim()) {
+    return { status: "error", changes: [] };
+  }
+  return {
+    status: "loaded",
+    changes: parseUnifiedDiff(response.text, {
+      idPrefix: `work-cell:${artifactId}`,
+      fallbackPath: fallbackPath || response.ref.displayPath || response.ref.label || "change.diff",
+      status: "completed",
+      artifactId,
+    }),
+    truncated: response.truncated,
+  };
+}
+
+function InlineChangePreview({ changes }: { readonly changes: readonly ConversationFileChange[] }): JSX.Element {
+  const visibleChanges = changes.slice(0, 2);
+  return (
+    <div className="conversation-work-cell-change-preview">
+      {visibleChanges.map((change) => (
+        <section className="conversation-work-cell-change-preview-file" key={change.id}>
+          {changes.length > 1 ? (
+            <div className="conversation-work-cell-change-preview-file-head">
+              <code>{change.path}</code>
+              <span>+{change.additions ?? 0} -{change.deletions ?? 0}</span>
+            </div>
+          ) : null}
+          <DiffViewer change={change} maxCollapsedLines={12} />
+        </section>
+      ))}
     </div>
   );
 }
@@ -917,18 +897,39 @@ function agentAvatarLabel(label: string): string {
   return Array.from(normalized)[0] ?? "A";
 }
 
-function WorkCellRowIcon({ tone }: { readonly tone: ConversationWorkCellRow["tone"] | "neutral" }): JSX.Element {
-  if (tone === "running") {
-    return <Loader2 className="spin" size={13} />;
-  }
-  if (tone === "waiting") {
-    return <ShieldCheck size={13} />;
-  }
+function WorkCellRowIcon({
+  kind,
+  tone,
+}: {
+  readonly kind: ConversationWorkCellRow["kind"];
+  readonly tone: ConversationWorkCellRow["tone"] | "neutral";
+}): JSX.Element {
   if (tone === "failed") {
     return <CircleAlert size={13} />;
   }
-  if (tone === "success") {
+  if (tone === "waiting" || kind === "approval") {
+    return <ShieldCheck size={13} />;
+  }
+  if (kind === "read") {
+    return <BookOpen size={13} />;
+  }
+  if (kind === "edit") {
+    return <FilePenLine size={13} />;
+  }
+  if (kind === "run_command") {
+    return <SquareTerminal size={13} />;
+  }
+  if (kind === "search") {
+    return <Search size={13} />;
+  }
+  if (kind === "verify") {
     return <CheckCircle2 size={13} />;
+  }
+  if (kind === "handoff") {
+    return <GitBranch size={13} />;
+  }
+  if (kind === "plan") {
+    return <ListChecks size={13} />;
   }
   return <Clock3 size={13} />;
 }

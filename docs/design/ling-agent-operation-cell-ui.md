@@ -15,6 +15,7 @@ Related docs:
 - [Multi-Agent App Detailed Design](multi-agent-app-detailed-design.md)
 - [Conversation UI Framework And Copy Canon Implementation Plan](conversation-ui-framework-copy-implementation-plan.md)
 - [Conversation UI Framework Temporary Implementation Checklist](conversation-ui-framework-implementation-checklist.md)
+- [Conversation Work Cell Operation Records](conversation-work-cell-operation-records.md)
 - [Conversation Operation Bubble And Performance Store](conversation-operation-bubble-and-performance-store.md)
 - [Conversation Performance Deferral And Virtualization](conversation-performance-deferral-and-virtualization.md)
 
@@ -327,7 +328,7 @@ Recommended motion map:
 | operation updates in place | content crossfade or text replacement without row remount | 100-160ms | immediate text replacement |
 | operation succeeds/fails/blocks | active shimmer stops; status tone settles | 120-200ms | immediate tone change |
 | agent span appears | compact row fades in under coordinator context | 120-180ms | immediate row |
-| agent span expands/collapses | height + opacity transition with preserved scroll anchor | 160-220ms | instant expand/collapse |
+| parent work cell expands/collapses | height + opacity transition with preserved scroll anchor | 160-220ms | instant expand/collapse |
 | approval appears | blocking row enters with stronger focus ring and no decorative bounce | 120-180ms | static focus ring |
 | artifact/image thumbnail appears | placeholder crossfades into thumbnail after load | 120-200ms | immediate image |
 | code block commits | syntax color fades in after streaming completes | 100-160ms | immediate highlight |
@@ -802,8 +803,9 @@ QA
   正在准备检查清单
 ```
 
-The user's default reading path is the coordinator narrative and the latest state. Older
-per-agent rows remain folded under the corresponding `AgentActivitySpan`.
+The user's default reading path is the coordinator narrative and the latest state. When
+the owning work cell is open, each participating agent's semantic operation rows remain
+visible under the corresponding `AgentActivitySpan` without a second disclosure layer.
 
 These examples are illustrative only. They must not become string templates or parser
 rules. The UI structure comes from the semantic projection, not from matching phrases
@@ -885,10 +887,10 @@ Preservation rules:
 - Do not move command/file/check/approval evidence exclusively into the right drawer.
   Normal audit must remain available through inline expansion in the owning conversation
   cell.
-- Running, waiting-for-approval, and blocked agent spans default to expanded enough to
-  show the current operation, approval, command, check, or artifact row.
-- Terminal agent spans may collapse after completion, but the collapsed row must preserve
-  a count/summary and an inline expand affordance that restores the operation rows.
+- Running, waiting-for-approval, and blocked work cells stay expanded enough to show each
+  participating agent's current operation, approval, command, check, or artifact row.
+- Terminal work cells may collapse after completion, but expanding the parent shell must
+  restore every participating agent's operation rows without another agent-level click.
 - Completed operation rows may be summarized, but their generated artifacts, approvals,
   checks, and bounded command output remain reachable inline from the same turn.
 - Agent labels and ownership must remain visible. If `Docs` requested a file edit and
@@ -903,11 +905,11 @@ Disclosure policy:
 
 ```text
 running / waiting_for_approval / blocked
-  -> keep active agent operation detail visible inline
+  -> keep participating agent operation rows visible inline
 
 succeeded / failed / cancelled
-  -> collapse to summary by default
-  -> preserve inline expansion for operation rows, artifacts, approvals, checks, output
+  -> collapse the parent work cell to summary by default
+  -> parent expansion restores agent rows, artifacts, approvals, checks, and output
 ```
 
 This is different from hiding raw internal agent chatter. The UI should filter private
@@ -1661,7 +1663,7 @@ Visual rules:
 - Use a faint vertical lane line only when two or more agent spans are visible.
 - Agent rows are not cards and do not have individual backgrounds.
 - Avatar size is 20px; name uses label text; latest action is body text.
-- Completed agents collapse to one result line unless expanded.
+- Agent headers remain static while the parent work cell body is visible.
 - Failed or blocked agents remain visible until coordinator summary resolves the task.
 
 Display variants:
@@ -1669,9 +1671,9 @@ Display variants:
 | Variant | Default display | Detail behavior |
 | --- | --- | --- |
 | single delegated agent | show agent label only if delegation matters | operation rows remain primary |
-| serial agents | show completed prior agent and active current agent | prior history folded under each agent |
-| parallel agents | show one latest-action row per active agent | each row expands independently |
-| completed collaboration | show names in final coordinator summary and artifact strip | branch details stay folded |
+| serial agents | show completed prior agent and active current agent | all emitted operation rows stay visible in order |
+| parallel agents | show participating agents in stable order | all emitted operation rows stay visible under each agent |
+| completed collaboration | parent shell collapses to the final summary | parent expansion restores every agent history |
 | direct teammate chat | teammate owns the conversation surface | not an `AgentActivitySpan` |
 
 Ordering rules:
@@ -1692,7 +1694,7 @@ State table:
 | blocked | `{agent} · 阻塞：{reason}` | visible and emphasized |
 | failed | `{agent} · 失败：{summary}` | visible until coordinator handles it |
 | cancelled | `{agent} · 已取消` | visible only if user initiated or affects result |
-| succeeded | `{agent} · {result summary}` | collapses after coordinator summary |
+| succeeded | `{agent} · {result summary}` | visible whenever the parent work cell is expanded |
 
 Latest-action update rules:
 
@@ -1702,8 +1704,9 @@ Latest-action update rules:
 - If an agent emits a useful assistant summary, use that as `resultSummary`.
 - If an agent only emits tool activity, synthesize a semantic action from the tool kind.
 - Do not show raw agent internal reasoning by default.
-- Completion changes the default row state; it does not delete the agent's process.
-  Historical semantic actions remain available behind that agent row.
+- Completion changes the row state; it does not delete or independently fold the agent's
+  process. Historical semantic actions remain visible whenever the parent work cell is
+  expanded.
 - Do not surface generic internal step verbs as user-facing latest actions. `Consult`,
   `Review`, `Coordinate`, `Coordinated`, `Reviewed`, and `flagged_risk` are fallback
   implementation labels, not conversation copy.
@@ -1724,11 +1727,10 @@ running:
 Engineer
   正在修改 login.html
 
-completed, default:
-Engineer
-  修改 login.html 完成
+completed, parent collapsed:
+已处理 2m 18s
 
-completed, expanded:
+completed, parent expanded:
 Engineer
   查看项目结构
   修改 login.html
@@ -1745,12 +1747,12 @@ Coordinator message projection:
 - Raw coordinator message text can remain reachable through audit/detail surfaces, but
   not in the default conversation reading path.
 
-Folded history limits:
+History limits:
 
-- show latest 3 semantic actions by default;
+- show all bounded semantic actions emitted for the visible work cell;
 - keep failed/blocked action pinned even if older;
 - show changed files and checks before raw tool events;
-- semantic sub-agent history expands inline under the agent row;
+- each operation row expands only its own bounded detail;
 - raw sub-thread transcript is raw/debug access only.
 
 Parallel behavior:
@@ -2090,8 +2092,10 @@ Placement:
   in-turn preview. It must not live in a conversation drawer, and it must not repeat the
   main transcript, OperationCell rows, AgentActivitySpan history, or final coordinator
   result.
-- Used-memory detail belongs to the owning message's memory citation footer first. Source
-  summary may count memory as a source group, but must not duplicate the footer contents.
+- Used-memory detail belongs to the owning message's single memory citation disclosure
+  first. Its expanded content is an unframed reference list: no nested card, repeated
+  heading, repeated count, or second disclosure. Source summary may count memory as a
+  source group, but must not duplicate the disclosure contents.
 
 ## User Input During Active Work
 
@@ -2196,7 +2200,8 @@ cell.
 Acceptance:
 
 - multi-agent work shows agent status without separate teammate chat spam;
-- agent detail expands inline with semantic process rows;
+- expanding the parent work cell shows every agent's semantic process rows inline;
+- agent headers do not create a second disclosure layer;
 - final Ling Agent summary synthesizes the result.
 
 ### P4. Evidence Detail Boundary
