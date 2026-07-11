@@ -129,7 +129,6 @@ function ChangedFilesGroup({
   readonly onPreviewNow: (change: LoadedChangeFile, element: HTMLElement) => void;
 }): JSX.Element {
   const { t } = useI18n();
-  const [expanded, setExpanded] = useState(false);
   const [showAll, setShowAll] = useState(false);
   const [loadedChanges, setLoadedChanges] = useState<readonly LoadedChangeFile[]>(() => fallbackChangeFiles(item.changeArtifacts ?? []));
 
@@ -162,12 +161,7 @@ function ChangedFilesGroup({
 
   return (
     <section className="conversation-work-cell-change-group">
-      <button
-        className="conversation-work-cell-change-summary"
-        type="button"
-        aria-expanded={expanded}
-        onClick={() => setExpanded((current) => !current)}
-      >
+      <div className="conversation-work-cell-change-summary">
         <span className="conversation-work-cell-artifact-thumb" aria-hidden="true">
           <FilePenLine size={14} />
         </span>
@@ -175,50 +169,47 @@ function ChangedFilesGroup({
           <strong>{title}</strong>
           {summary ? <ChangeStat additions={summary.additions} deletions={summary.deletions} /> : null}
         </span>
-        <ChevronDown size={14} aria-hidden="true" />
-      </button>
-      {expanded ? (
-        <div className="conversation-work-cell-change-files">
-          {visibleChanges.map((entry) => {
-            const previewable = Boolean(entry.change);
-            const content = (
-              <>
-                <code>{entry.path}</code>
-                {entry.change && entry.exact ? (
-                  <ChangeStat additions={entry.change.additions ?? 0} deletions={entry.change.deletions ?? 0} />
-                ) : null}
-              </>
-            );
-            return previewable ? (
-              <button
-                className="conversation-work-cell-change-file"
-                type="button"
-                key={entry.id}
-                onPointerEnter={(event) => onPreviewEnter(entry, event.currentTarget)}
-                onPointerLeave={onPreviewLeave}
-                onFocus={(event) => onPreviewNow(entry, event.currentTarget)}
-                onBlur={onPreviewLeave}
-                onClick={(event) => onPreviewNow(entry, event.currentTarget)}
-              >
-                {content}
-              </button>
-            ) : (
-              <div className="conversation-work-cell-change-file static" key={entry.id}>{content}</div>
-            );
-          })}
-          {hiddenCount > 0 ? (
-            <button className="conversation-work-cell-change-more" type="button" onClick={() => setShowAll(true)}>
-              {t("Show {count} more files", { count: hiddenCount })}
-              <ChevronDown size={13} aria-hidden="true" />
+      </div>
+      <div className="conversation-work-cell-change-files">
+        {visibleChanges.map((entry) => {
+          const previewable = Boolean(entry.change);
+          const content = (
+            <>
+              <code>{entry.path}</code>
+              {entry.change && entry.exact ? (
+                <ChangeStat additions={entry.change.additions ?? 0} deletions={entry.change.deletions ?? 0} />
+              ) : null}
+            </>
+          );
+          return previewable ? (
+            <button
+              className="conversation-work-cell-change-file"
+              type="button"
+              key={entry.id}
+              onPointerEnter={(event) => onPreviewEnter(entry, event.currentTarget)}
+              onPointerLeave={onPreviewLeave}
+              onFocus={(event) => onPreviewNow(entry, event.currentTarget)}
+              onBlur={onPreviewLeave}
+              onClick={(event) => onPreviewNow(entry, event.currentTarget)}
+            >
+              {content}
             </button>
-          ) : showAll && loadedChanges.length > collapsedChangeFileCount ? (
-            <button className="conversation-work-cell-change-more" type="button" onClick={() => setShowAll(false)}>
-              {t("Show fewer files")}
-              <ChevronDown className="expanded" size={13} aria-hidden="true" />
-            </button>
-          ) : null}
-        </div>
-      ) : null}
+          ) : (
+            <div className="conversation-work-cell-change-file static" key={entry.id}>{content}</div>
+          );
+        })}
+        {hiddenCount > 0 ? (
+          <button className="conversation-work-cell-change-more" type="button" onClick={() => setShowAll(true)}>
+            {t("Show {count} more files", { count: hiddenCount })}
+            <ChevronDown size={13} aria-hidden="true" />
+          </button>
+        ) : showAll && loadedChanges.length > collapsedChangeFileCount ? (
+          <button className="conversation-work-cell-change-more" type="button" onClick={() => setShowAll(false)}>
+            {t("Show fewer files")}
+            <ChevronDown className="expanded" size={13} aria-hidden="true" />
+          </button>
+        ) : null}
+      </div>
     </section>
   );
 }

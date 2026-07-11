@@ -7848,6 +7848,8 @@ test("local channel work-cell demo fixture renders a realistic multi-agent opera
   await expect(changedSummary).toContainText("已编辑 5 个文件");
   await expect(changedSummary.locator(".conversation-work-cell-change-stat .add")).toHaveText("+16");
   await expect(changedSummary.locator(".conversation-work-cell-change-stat .delete")).toHaveText("-4");
+  await expect(changedSummary.locator(":scope > svg")).toHaveCount(0);
+  await expect(changedSummary).not.toHaveAttribute("aria-expanded");
   await expect(transcriptArtifacts.locator(".conversation-work-cell-artifacts").locator(":scope > *").last()).toHaveClass(/conversation-work-cell-change-group/);
   await expect.poll(() =>
     assistantTranscript.locator(".conversation-turn-assistant-transcript").evaluate((element) => {
@@ -7960,8 +7962,6 @@ test("local channel work-cell demo fixture renders a realistic multi-agent opera
       demoPreviewRequests.push(url);
     }
   });
-  await changedSummary.click();
-  await expect(changedSummary).toHaveAttribute("aria-expanded", "true");
   const changedFiles = changedGroup.locator(".conversation-work-cell-change-file");
   await expect(changedFiles).toHaveCount(3);
   await expect(changedFiles.nth(0)).toContainText("ConversationWorkCell.tsx");
@@ -8216,9 +8216,9 @@ test("durable Ling thread runs render as collapsed conversation work cells", asy
   await expect(workCell.getByRole("button", { name: /Preview: channel-transcript\.png/ })).toBeVisible();
   await expect(workCell.locator(".conversation-work-cell-artifact-thumb img")).toHaveCount(1);
   const changedSummary = artifactStrip.locator(".conversation-work-cell-change-summary");
-  await changedSummary.click();
+  await expect(changedSummary.locator(":scope > svg")).toHaveCount(0);
+  await expect(changedSummary).not.toHaveAttribute("aria-expanded");
   await expect(artifactStrip.locator(".conversation-work-cell-change-file")).toContainText("WorkspaceClientView.tsx");
-  await changedSummary.click();
   const defaultOperationStream = workCell.locator(".conversation-work-cell-active-stream");
   await expect(defaultOperationStream).toContainText("Edited WorkspaceClientView.tsx");
   await expect(defaultOperationStream).toContainText("Ran command");

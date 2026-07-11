@@ -7895,7 +7895,7 @@ code,
 
 .conversation-work-cell-change-summary {
   display: grid;
-  grid-template-columns: 38px minmax(0, 1fr) 16px;
+  grid-template-columns: 38px minmax(0, 1fr);
   align-items: center;
   gap: 7px;
   width: 100%;
@@ -7906,12 +7906,9 @@ code,
   border-radius: 6px;
   background: transparent;
   color: var(--conversation-text);
-  cursor: pointer;
   text-align: left;
 }
 
-.conversation-work-cell-change-summary:hover,
-.conversation-work-cell-change-summary:focus-visible,
 .conversation-work-cell-change-file:hover,
 .conversation-work-cell-change-file:focus-visible,
 .conversation-work-cell-change-more:hover,
@@ -7919,19 +7916,9 @@ code,
   background: var(--conversation-bg-muted);
 }
 
-.conversation-work-cell-change-summary:focus,
 .conversation-work-cell-change-file:focus,
 .conversation-work-cell-change-more:focus {
   outline: none;
-}
-
-.conversation-work-cell-change-summary > svg {
-  color: var(--conversation-text-muted);
-  transition: transform 140ms ease;
-}
-
-.conversation-work-cell-change-summary[aria-expanded="true"] > svg {
-  transform: rotate(180deg);
 }
 
 .conversation-work-cell-change-summary-copy {
