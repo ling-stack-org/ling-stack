@@ -704,6 +704,7 @@ export class SqliteRunStore implements RunStore {
       listRecoverableChannelWorkflows: () => this.channelWorkflows.listRecoverableChannelWorkflows(),
       listChannelWorkflowSteps: (options) => this.listChannelWorkflowSteps(options),
       getApprovalRequest: (id) => this.getApprovalRequest(id),
+      listApprovalRequests: (options) => this.listApprovalRequests(options),
       transitionChannelWorkflowStepStatus: (input) => this.transitionChannelWorkflowStepStatus(input),
       getChannelWorkflow: (workflowId) => this.getChannelWorkflow(workflowId),
       transitionChannelWorkflowStatus: (input) => this.transitionChannelWorkflowStatus(input),

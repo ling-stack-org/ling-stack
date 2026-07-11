@@ -76,9 +76,15 @@ Design rules:
 
 - Approval remains the durable decision object.
 - Workflow and workflow-step remain the durable execution state.
+- Pending approval is an inline active-turn interaction. After resolution, normal
+  conversation history renders the final command, edit, workflow-step, or run result;
+  it does not add a separate successful approval checkpoint row. Resolved approval
+  objects remain available to dedicated audit and review surfaces.
 - Web must not infer owner status from approval status.
 - The closure hook must be idempotent. Re-running it after restart or a later orchestrate
   tick must be harmless.
+- Legacy approval-only workflow steps without pre/post gate metadata close as succeeded
+  when approved, and startup recovery repairs already-resolved persisted owners.
 - Existing media job approval sync remains supported through the same route callback.
 
 Tests:

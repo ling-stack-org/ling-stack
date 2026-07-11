@@ -5811,7 +5811,8 @@ test("workflow context inspect details stay out of main feed expansion", async (
   await expect(evidenceRegion).toContainText("Edited workflow-progress.ts");
   await expect(evidenceRegion).toContainText("Ran command");
   await expect(evidenceRegion).toContainText("Handoff: Engineer -> Reviewer");
-  await expect(evidenceRegion).toContainText("Approval checkpoint: Resume workflow execution");
+  await expect(evidenceRegion).not.toContainText("Approval checkpoint: Resume workflow execution");
+  await expect(evidenceRegion).not.toContainText("Resume workflow execution");
   await expect(evidenceRegion).not.toContainText("execution_action_workflow_edit");
   await expect(evidenceRegion).not.toContainText("handoff_intent_context");
   await expect(evidenceRegion).not.toContainText("checkpoint_context_resume");
@@ -5827,12 +5828,6 @@ test("workflow context inspect details stay out of main feed expansion", async (
   await expect(handoffRow.locator(".conversation-work-cell-row-detail")).toContainText("Required input: Inspect the workflow evidence rows");
   await expect(handoffRow.locator(".conversation-work-cell-row-detail")).toContainText("Expected output: A reviewer verdict");
   await expect(handoffRow.locator(".conversation-work-cell-row-detail")).toContainText("Risk: Requires reviewer confirmation before shipping.");
-  const checkpointRow = evidenceRegion.locator(".conversation-work-cell-row").filter({ hasText: "Approval checkpoint: Resume workflow execution" });
-  await checkpointRow.locator(".conversation-work-cell-row-main").click();
-  await expect(checkpointRow.locator(".conversation-work-cell-row-detail")).toContainText("Action: bash");
-  await expect(checkpointRow.locator(".conversation-work-cell-row-detail")).toContainText("Resume handle: verified");
-  await expect(checkpointRow.locator(".conversation-work-cell-row-detail")).not.toContainText("runner_handle_context_secret");
-  await expect(checkpointRow.locator(".conversation-work-cell-row-detail")).not.toContainText("raw_resume_payload");
   const commandActionRow = evidenceRegion.locator(".conversation-work-cell-row.shell").filter({ hasText: "Ran command" });
   await expect(commandActionRow.locator(".conversation-work-cell-shell-card")).toHaveCount(0);
   await commandActionRow.locator(".conversation-work-cell-row-main").click();
@@ -8260,7 +8255,8 @@ test("durable Ling thread runs render as collapsed conversation work cells", asy
   await expect(evidenceRegion).toContainText("Ran command");
   await expect(evidenceRegion).toContainText("Trace: Agent run");
   await expect(evidenceRegion).toContainText("Trace: Tool call");
-  await expect(evidenceRegion).toContainText("Approval checkpoint: Approve typecheck");
+  await expect(evidenceRegion).not.toContainText("Approval checkpoint: Approve typecheck");
+  await expect(evidenceRegion).not.toContainText("Approve typecheck");
   await expect(evidenceRegion).not.toContainText("artifact_thread_diff");
   await expect(evidenceRegion).not.toContainText("trace_thread_thread_inspect");
   await expect(evidenceRegion).not.toContainText("span_trace_thread_thread_inspect");
@@ -8278,13 +8274,6 @@ test("durable Ling thread runs render as collapsed conversation work cells", asy
   await commandActionRow.locator(".conversation-work-cell-row-main").click();
   await expect(commandActionRow.locator(".conversation-work-cell-row-detail")).toContainText("Run typecheck");
   await expect(commandActionRow.locator(".conversation-work-cell-row-detail")).toContainText("$ pnpm typecheck");
-  const checkpointRow = evidenceRegion.locator(".conversation-work-cell-row").filter({ hasText: "Approval checkpoint: Approve typecheck" });
-  await checkpointRow.locator(".conversation-work-cell-row-main").click();
-  await expect(checkpointRow.locator(".conversation-work-cell-row-detail")).toContainText("Action: bash");
-  await expect(checkpointRow.locator(".conversation-work-cell-row-detail")).toContainText("Status: Resumed");
-  await expect(checkpointRow.locator(".conversation-work-cell-row-detail")).toContainText("Resume handle: verified");
-  await expect(checkpointRow.locator(".conversation-work-cell-row-detail")).not.toContainText("runner_handle_thread_secret");
-  await expect(checkpointRow.locator(".conversation-work-cell-row-detail")).not.toContainText("raw_thread_resume_payload");
   const traceToolRow = evidenceRegion.locator(".conversation-work-cell-row").filter({ hasText: "Trace: Tool call" }).first();
   await traceToolRow.locator(".conversation-work-cell-row-main").click();
   await expect(traceToolRow.locator(".conversation-work-cell-row-detail")).toContainText("Tool namespace: core");

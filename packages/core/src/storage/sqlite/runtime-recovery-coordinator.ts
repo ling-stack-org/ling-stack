@@ -1,4 +1,4 @@
-import type { ApprovalRequest } from "../../approval-types.js";
+import type { ApprovalRequest, ListApprovalRequestsOptions } from "../../approval-types.js";
 import {
   type LingThread,
   type RunEventType,
@@ -33,6 +33,7 @@ export interface SqliteRuntimeRecoveryCoordinatorPorts {
   readonly listRecoverableChannelWorkflows: () => ChannelWorkflow[];
   readonly listChannelWorkflowSteps: (options: ListChannelWorkflowStepsOptions) => ChannelWorkflowStep[];
   readonly getApprovalRequest: (id: string) => ApprovalRequest | undefined;
+  readonly listApprovalRequests: (options: ListApprovalRequestsOptions) => ApprovalRequest[];
   readonly transitionChannelWorkflowStepStatus: (input: {
     readonly workflowStepId: string;
     readonly expectedStatus?: ChannelWorkflowStepStatus;
@@ -114,10 +115,10 @@ export class SqliteRuntimeRecoveryCoordinator {
           recovered += this.recoverWorkflowClaimedStepBlocked(step, "Daemon restarted after workflow step was claimed; retry required.", now) ? 1 : 0;
           continue;
         }
-        if (step.status === "waiting_for_approval" && step.metadata?.preStepApprovalId) {
-          const approval = this.ports.getApprovalRequest(step.metadata.preStepApprovalId);
+        if (step.status === "waiting_for_approval") {
+          const approval = this.findWorkflowStepApproval(step);
           if (approval?.status === "approved") {
-            recovered += this.recoverWorkflowStepBlocked(step, "Daemon restarted after approval but before workflow step run started; retry required.", now) ? 1 : 0;
+            recovered += this.recoverApprovedWorkflowStep(step, approval, now);
           } else if (approval && approval.status !== "pending") {
             recovered += this.recoverWorkflowStepApprovalFailed(step, approval.status, approval.decisionReason ?? `Workflow step approval ${approval.status}.`, now) ? 1 : 0;
           }
@@ -127,6 +128,55 @@ export class SqliteRuntimeRecoveryCoordinator {
     }
 
     return recovered;
+  }
+
+  private findWorkflowStepApproval(step: ChannelWorkflowStep): ApprovalRequest | undefined {
+    const checkpointIds = [step.metadata?.postStepApprovalId, step.metadata?.preStepApprovalId]
+      .filter((id): id is string => Boolean(id));
+    for (const approvalId of checkpointIds) {
+      const approval = this.ports.getApprovalRequest(approvalId);
+      if (approval) {
+        return approval;
+      }
+    }
+    return this.ports.listApprovalRequests({ workflowStepId: step.id, limit: 1 })[0];
+  }
+
+  private recoverApprovedWorkflowStep(step: ChannelWorkflowStep, approval: ApprovalRequest, now: string): number {
+    const approvalOnlyStep = !step.taskId && !step.runId && !step.metadata?.preStepApprovalId;
+    const postStepApproval = step.metadata?.postStepApprovalId === approval.id || step.metadata?.activeGateStage === "post";
+    if (!approvalOnlyStep && !postStepApproval) {
+      return this.recoverWorkflowStepBlocked(
+        step,
+        "Daemon restarted after approval but before workflow step run started; retry required.",
+        now,
+      ) ? 1 : 0;
+    }
+    const approved = this.ports.transitionChannelWorkflowStepStatus({
+      workflowStepId: step.id,
+      expectedStatus: "waiting_for_approval",
+      event: "approval_approved",
+      actor: "system",
+      reason: `startup_recovery:${approval.id}`,
+      now,
+      blocker: null,
+    });
+    if (!approved.ok) {
+      return 0;
+    }
+    const succeeded = this.ports.transitionChannelWorkflowStepStatus({
+      workflowStepId: step.id,
+      expectedStatus: "running",
+      event: "succeed",
+      actor: "system",
+      reason: `startup_recovery:${approval.id}`,
+      now,
+      blocker: null,
+      resultSummary: postStepApproval
+        ? "Recovered completed post-step approval."
+        : "Recovered completed approval-only workflow step.",
+    });
+    return succeeded.ok ? 2 : 1;
   }
 
   private recoverWorkflowStepSucceeded(step: ChannelWorkflowStep, run: RunSession, now: string): boolean {

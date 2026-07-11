@@ -440,19 +440,20 @@ export function buildConversationWorkCellViewModel(input: BuildConversationWorkC
   const approvals = input.approvals
     .filter((approval) => approval.runId ? runIdSet.has(approval.runId) : false)
     .sort((left, right) => (right.resolvedAt ?? right.createdAt).localeCompare(left.resolvedAt ?? left.createdAt));
+  const visibleApprovals = approvals.filter((approval) => effectiveApprovalStatus(approval) !== "approved");
   const artifacts = runIds.flatMap((runId) => input.artifactsByRun[runId] ?? []);
   const artifactsById = artifactsByIdMap(artifacts);
   const actions = (input.executionActions ?? [])
     .filter((action) => action.threadId === input.threadId || (action.runId ? runIdSet.has(action.runId) : false))
     .sort((left, right) => (right.completedAt ?? right.executedAt ?? right.resolvedAt ?? right.createdAt).localeCompare(left.completedAt ?? left.executedAt ?? left.resolvedAt ?? left.createdAt));
-  const pendingApprovals = approvals.filter((approval) => effectiveApprovalStatus(approval) === "pending");
+  const pendingApprovals = visibleApprovals.filter((approval) => effectiveApprovalStatus(approval) === "pending");
   const failedRuns = runs.filter((run) => run.status === "failed");
   const failedActions = actions.filter((action) => action.status === "failed" || action.status === "denied" || action.status === "expired");
   const mode: ConversationWorkCellMode = isWorkCellStatusActive(status) ? "active" : "completed";
   const title = turnContext?.turn.title || readRunTitle(latestRun);
   const evidenceLinks = mainFeedArtifactEvidenceLinks(artifacts, input.artifactHref);
   const groups = mainFeedEvidenceGroups(
-    buildWorkCellGroups({ t: input.t, runs, approvals, artifacts, artifactsById, actions, failedRuns, failedActions, pendingApprovals }),
+    buildWorkCellGroups({ t: input.t, runs, approvals: visibleApprovals, artifacts, artifactsById, actions, failedRuns, failedActions, pendingApprovals }),
     input.t,
   );
 
@@ -476,7 +477,7 @@ export function buildConversationWorkCellViewModel(input: BuildConversationWorkC
     stats: [
       { id: "tries", label: input.t("Tries"), value: String(runs.length) },
       { id: "artifacts", label: input.t("Artifacts"), value: String(artifacts.length) },
-      { id: "approvals", label: input.t("Approvals"), value: String(approvals.length) },
+      { id: "approvals", label: input.t("Approvals"), value: String(visibleApprovals.length) },
     ],
     elapsedMs: workCellElapsedMs(runs),
     operationRows: buildActiveRows({ t: input.t, latestRun, runs, pendingApprovals, artifacts, actions }),
@@ -557,7 +558,8 @@ export function buildConversationApprovalCheckpointRows(input: {
 }): { readonly evidenceRows: readonly ConversationWorkCellRow[]; readonly attentionRows: readonly ConversationWorkCellRow[] } {
   const evidenceRows: ConversationWorkCellRow[] = [];
   const attentionRows: ConversationWorkCellRow[] = [];
-  for (const checkpoint of input.checkpoints.slice(0, 12)) {
+  const visibleCheckpoints = input.checkpoints.filter((checkpoint) => checkpoint.status !== "approved" && checkpoint.status !== "resumed");
+  for (const checkpoint of visibleCheckpoints.slice(0, 12)) {
     const row = approvalCheckpointRow(checkpoint, input.t);
     if (isApprovalCheckpointAttentionStatus(checkpoint.status)) {
       attentionRows.push(row);

@@ -529,6 +529,59 @@ test("channel team metrics exposes visible evidence total separately from team e
   }
 });
 
+test("approval-only workflow owner closes immediately after approval", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-workflow-approval-owner-"));
+  const store = createSqliteRunStore(cwd);
+  let workflow;
+  let step;
+  let approval;
+  try {
+    const channel = store.createChannel({ name: "Approval owner", boundPath: cwd }, "2026-06-11T00:00:00.000Z");
+    workflow = store.createChannelWorkflow({
+      channelId: channel.id,
+      title: "Review risky command",
+      objective: "Close the approval-only workflow owner.",
+      status: "waiting_for_approval",
+      createdBy: "system",
+    }, "2026-06-11T00:01:00.000Z");
+    step = store.createChannelWorkflowStep({
+      workflowId: workflow.id,
+      title: "Review risky shell command",
+      prompt: "Review the proposed command.",
+      toParticipantId: "ling_agent",
+      toParticipantLabel: "Ling Agent",
+      status: "waiting_for_approval",
+    }, "2026-06-11T00:01:10.000Z");
+    approval = store.createApprovalRequest({
+      workflowStepId: step.id,
+      channelId: channel.id,
+      actionType: "bash",
+      risk: "high",
+      title: "Review risky shell command",
+      description: "Approval-only legacy workflow step.",
+      payload: { type: "bash", cwd, command: "git status --short", riskFlags: ["requires_user_review"] },
+    }, "2026-06-11T00:01:20.000Z");
+    store.close();
+
+    const daemon = await startDaemonForTest();
+    try {
+      const resolved = await postJson(`${daemon.url}/approvals/${encodeURIComponent(approval.id)}/approve?cwd=${encodeURIComponent(cwd)}`, {
+        reason: "Reviewed.",
+      });
+      assert.equal(resolved.approval.status, "approved");
+
+      const workflowResponse = await getJson(`${daemon.url}/workflows/${encodeURIComponent(workflow.id)}?cwd=${encodeURIComponent(cwd)}`);
+      assert.equal(workflowResponse.workflow.status, "succeeded");
+      const stepsResponse = await getJson(`${daemon.url}/workflows/${encodeURIComponent(workflow.id)}/steps?cwd=${encodeURIComponent(cwd)}`);
+      assert.equal(stepsResponse.workflowSteps.find((candidate) => candidate.id === step.id)?.status, "succeeded");
+    } finally {
+      await daemon.close();
+    }
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("ling agent session view projects active workflow approval wait", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-ling-agent-session-approval-"));
   const store = createSqliteRunStore(cwd);
