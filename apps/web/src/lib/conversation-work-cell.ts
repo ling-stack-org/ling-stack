@@ -1202,13 +1202,9 @@ function executionActionEvidenceRow(
     kind: operationKindForExecutionAction(action),
     presentation: commandText ? "shell" : undefined,
     title: executionActionDisplayTitle(action, artifactsById, t),
-    description: action.summary,
     commandText,
     changePreview: executionActionChangePreview(action, artifactsById),
-    detailLines: [
-      ...(action.title.trim() && action.title.trim() !== action.summary.trim() ? [{ text: action.title.trim() }] : []),
-      ...detailLines,
-    ],
+    detailLines,
     meta: operationStatusMeta(action.status, t),
     tone: executionActionTone(action),
   };
@@ -1380,10 +1376,6 @@ function executionActionDetailLines(
     .filter((artifact) => isMainFeedSafeText([mainFeedArtifactLabel(artifact), artifact.path].join(" ")));
   if (outputArtifacts.length > 0) {
     push({ text: outputArtifacts.length === 1 ? t("1 output recorded") : t("{count} outputs recorded", { count: outputArtifacts.length }) });
-  }
-
-  if (lines.length === 0 && action.scopeSummary?.trim()) {
-    push({ text: action.scopeSummary });
   }
 
   return lines.slice(0, 5);

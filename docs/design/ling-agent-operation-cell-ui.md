@@ -1136,6 +1136,7 @@ Default conversation feed rules:
 - Command output may use one compact code block because it is evidence output.
 - Active cells update in place; they do not append a new card or toast for every event.
 - Agent spans use small labels, avatars, and faint lane lines, not cards.
+- Reasoning, intent, and action narration render as separate outer note rows. Operation titles stay compact, while expanded operation detail is reserved for paths, commands, output counts, and local diffs; it must not repeat action `title`, `summary`, or scope narration.
 - Artifact strips may have a very light product affordance; operation logs may not.
 - Conversation-owned result review, file/diff/artifact preview, source metadata, checks,
   approvals, attachments, and links stay in the main conversation through inline

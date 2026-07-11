@@ -2982,9 +2982,10 @@ test("channel activity supports mentions, messages, files, links, and topic repl
   });
   expect(sentMessageTypography.bodyColor).not.toBe("");
   expect(sentMessageTypography.bodyFontWeight).toBeGreaterThanOrEqual(550);
-  await expect(sentMessageContent).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+  await expect(sentMessageContent).not.toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
   await expect(sentMessageContent).toHaveCSS("border-top-color", "rgba(0, 0, 0, 0)");
-  await expect(sentMessageContent).toHaveCSS("padding-top", "0px");
+  await expect(sentMessageContent).toHaveCSS("padding-top", "8px");
+  await expect(sentMessageContent).toHaveCSS("border-radius", "8px");
   await teammateReply.hover();
   await expect(teammateReplyContent).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
   await expect(teammateReplyContent).toHaveCSS("border-top-color", "rgba(0, 0, 0, 0)");
@@ -5762,9 +5763,9 @@ test("workflow context inspect details stay out of main feed expansion", async (
   const engineerShellRow = activeStream.locator(".conversation-work-cell-row.shell").filter({ hasText: "Ran command" });
   await expect(engineerShellRow.locator(".conversation-work-cell-shell-card")).toHaveCount(0);
   await engineerShellRow.locator(".conversation-work-cell-row-main").click();
-  await expect(engineerShellRow.locator(".conversation-work-cell-row-detail")).toContainText("Run focused workflow UI test");
+  await expect(engineerShellRow.locator(".conversation-work-cell-row-detail")).not.toContainText("Run focused workflow UI test");
   await expect(engineerShellRow.locator(".conversation-work-cell-row-detail")).toContainText("$ pnpm --filter @ling-stack/web exec playwright test e2e/channel.spec.ts -g workflow");
-  await expect(engineerShellRow.locator(".conversation-work-cell-row-detail")).toContainText("Validate workflow detail rows.");
+  await expect(engineerShellRow.locator(".conversation-work-cell-row-detail")).not.toContainText("Validate workflow detail rows.");
 
   await workCell.locator(".conversation-work-cell-evidence-summary").click();
   await expect(workCell.getByLabel("Checks")).toContainText("Engineer: Implement inspect summary");
@@ -5797,7 +5798,7 @@ test("workflow context inspect details stay out of main feed expansion", async (
   await expect(evidenceRegion).not.toContainText("approval_context_checkpoint");
   const editActionRow = evidenceRegion.locator(".conversation-work-cell-row").filter({ hasText: "Edited workflow-progress.ts" });
   await editActionRow.locator(".conversation-work-cell-row-main").click();
-  await expect(editActionRow.locator(".conversation-work-cell-row-detail")).toContainText("Update workflow evidence projection");
+  await expect(editActionRow.locator(".conversation-work-cell-row-detail")).not.toContainText("Update workflow evidence projection");
   await expect(editActionRow.locator(".conversation-work-cell-row-detail")).toContainText("apps/web/src/lib/workflow-progress.ts");
   await expect(editActionRow.locator(".conversation-work-cell-row-detail")).toContainText("1 output recorded");
   await expect(editActionRow.locator(".conversation-work-cell-row-detail")).not.toContainText("artifact_context_inspect_file");
@@ -5809,7 +5810,7 @@ test("workflow context inspect details stay out of main feed expansion", async (
   const commandActionRow = evidenceRegion.locator(".conversation-work-cell-row.shell").filter({ hasText: "Ran command" });
   await expect(commandActionRow.locator(".conversation-work-cell-shell-card")).toHaveCount(0);
   await commandActionRow.locator(".conversation-work-cell-row-main").click();
-  await expect(commandActionRow.locator(".conversation-work-cell-row-detail")).toContainText("Run focused workflow UI test");
+  await expect(commandActionRow.locator(".conversation-work-cell-row-detail")).not.toContainText("Run focused workflow UI test");
   await expect(commandActionRow.locator(".conversation-work-cell-row-detail")).toContainText("$ pnpm --filter @ling-stack/web exec playwright test e2e/channel.spec.ts -g workflow");
   await maybeCaptureR32Screenshot(page, "workflow-action-details-expanded");
   expect(workflowEvidenceRequests).toHaveLength(1);
@@ -6440,7 +6441,7 @@ test("completed multi-agent transcript reveals all agent process rows from the p
   await expect(productSpan.locator(".conversation-work-cell-agent-span-detail")).toContainText("已读取 login-smoke-scope.md");
   const productActionRow = productSpan.locator(".conversation-work-cell-row").filter({ hasText: "已读取 login-smoke-scope.md" });
   await productActionRow.locator(".conversation-work-cell-row-main").click();
-  await expect(productActionRow.locator(".conversation-work-cell-row-detail")).toContainText("读取 smoke 范围笔记");
+  await expect(productActionRow.locator(".conversation-work-cell-row-detail")).not.toContainText("读取 smoke 范围笔记");
   await expect(productActionRow.locator(".conversation-work-cell-row-detail")).toContainText("docs/login-smoke-scope.md");
 
   const qaSpan = workCell.locator(".conversation-work-cell-agent-span").filter({ hasText: "QA" });
@@ -6450,7 +6451,7 @@ test("completed multi-agent transcript reveals all agent process rows from the p
   await expect(qaSpan.locator(".conversation-work-cell-agent-span-detail")).toContainText("已运行命令");
   const qaActionRow = qaSpan.locator(".conversation-work-cell-row").filter({ hasText: "已运行命令" });
   await qaActionRow.locator(".conversation-work-cell-row-main").click();
-  await expect(qaActionRow.locator(".conversation-work-cell-row-detail")).toContainText("运行 smoke 验收检查");
+  await expect(qaActionRow.locator(".conversation-work-cell-row-detail")).not.toContainText("运行 smoke 验收检查");
   await expect(qaActionRow.locator(".conversation-work-cell-row-detail")).toContainText("$ pnpm --filter @ling-stack/web test:e2e -- login-smoke");
   await maybeCaptureR32Screenshot(page, "serial-multi-agent-expanded");
 });
@@ -7793,6 +7794,7 @@ test("local channel work-cell demo fixture renders a realistic multi-agent opera
   state.executionActions = [];
   state.artifactsByRun = {};
   state.aiTeammates = [
+    createMockTeammate({ id: "ling_agent", templateId: "ling_agent", kind: "system_teammate", systemRole: "ling_agent", roleKey: "custom", displayName: "Ling Agent", avatarTone: "violet" }),
     createMockTeammate({ id: "teammate_builtin_architect", templateId: "architect", roleKey: "architect", displayName: "Ling Architect" }),
     createMockTeammate({ id: "teammate_builtin_designer", templateId: "designer", roleKey: "designer", displayName: "Ling Designer" }),
     createMockTeammate({ id: "teammate_builtin_engineer", templateId: "engineer", roleKey: "engineer", displayName: "Ling Engineer" }),
@@ -7817,9 +7819,33 @@ test("local channel work-cell demo fixture renders a realistic multi-agent opera
   await expect(discussionReplies.locator(".terminal-report-block")).toHaveCount(0);
   const demoTurn = feed.locator(".conversation-turn").filter({ hasText: "把频道里的多 agent 操作记录按我们讨论的最终效果接进去" });
   await expect(demoTurn).toHaveCount(1);
+  const sourceMessage = demoTurn.locator(".channel-message-row.local-user");
+  await expect(sourceMessage).toHaveCount(1);
+  const sourceMessageSpacing = await sourceMessage.evaluate((element) => {
+    const paragraph = element.querySelector<HTMLElement>(".message-body-paragraph");
+    const avatar = element.querySelector<HTMLElement>(":scope > .user-profile-avatar, :scope > .avatar-initial");
+    const shell = element.querySelector<HTMLElement>(".message-body-shell");
+    if (!paragraph || !avatar || !shell) {
+      return null;
+    }
+    return {
+      textToAvatar: Math.round(avatar.getBoundingClientRect().left - paragraph.getBoundingClientRect().right),
+      paragraphPaddingRight: getComputedStyle(paragraph).paddingRight,
+      shellPaddingRight: getComputedStyle(shell).paddingRight,
+    };
+  });
+  expect(sourceMessageSpacing).not.toBeNull();
+  expect(sourceMessageSpacing?.textToAvatar).toBeLessThanOrEqual(24);
+  expect(sourceMessageSpacing?.paragraphPaddingRight).toBe("0px");
+  expect(sourceMessageSpacing?.shellPaddingRight).toBe("0px");
   const assistantTranscript = demoTurn.locator(".conversation-turn-assistant-row");
+  await expect(assistantTranscript.locator(":scope > .teammate-avatar-image-default")).toHaveAttribute("src", "/avatars/teammates/ling-agent.png");
+  await expect(assistantTranscript.locator(":scope > .avatar-initial")).toHaveCount(0);
   const workCell = assistantTranscript.locator(".conversation-work-cell").first();
   await expect(workCell).toBeVisible();
+  const operationWidth = await assistantTranscript.locator(".conversation-turn-operation").evaluate((element) => Math.round(element.getBoundingClientRect().width));
+  expect(operationWidth).toBeGreaterThan(680);
+  await expect.poll(async () => Math.round((await workCell.boundingBox())?.width ?? 0)).toBe(operationWidth);
   await expect(workCell).toHaveAttribute("data-operation-source", "workflow");
   await expect(workCell.locator(".conversation-operation-shell-head")).toHaveAttribute("aria-expanded", "false");
   await expect(workCell.locator(".terminal-report-block")).toHaveCount(0);
@@ -7830,6 +7856,7 @@ test("local channel work-cell demo fixture renders a realistic multi-agent opera
   await expect(terminalReport).toContainText("Designer");
   await expect(terminalReport).toContainText("Engineer");
   await expect(terminalReport).toContainText("QA");
+  await expect(terminalReport.locator(".terminal-report-participants.compact .terminal-report-participant-avatar .teammate-avatar-image-default")).toHaveCount(4);
   await expect(workCell).not.toContainText("正在思考");
   await expect(workCell).not.toContainText("Ling runtime");
   const terminalSummary = assistantTranscript.locator(".conversation-turn-assistant-copy.terminal");
@@ -7842,16 +7869,20 @@ test("local channel work-cell demo fixture renders a realistic multi-agent opera
   await expect(terminalReport).toContainText("重构操作记录展示");
   await expect(terminalReport).toContainText("Web typecheck");
   await expect(terminalReport).toContainText("确认 workflow、run、action 和 artifact 的会话投影边界");
-  await expect(terminalReport.locator(".terminal-report-participant > strong").first()).toHaveCSS("color", "rgb(37, 99, 235)");
+  await expect(terminalReport.locator(".terminal-report-participant-copy > strong").first()).toHaveCSS("color", "rgb(37, 99, 235)");
   const teamSummary = assistantTranscript.locator(".channel-team-experts-summary");
   await expect(teamSummary).toHaveCount(0);
   const transcriptArtifacts = assistantTranscript.locator(".conversation-turn-artifacts");
   const artifactRows = transcriptArtifacts.locator(".conversation-work-cell-artifact-row");
   await expect(artifactRows).toHaveCount(2);
+  const artifactSurfaceWidth = await transcriptArtifacts.evaluate((element) => Math.round(element.getBoundingClientRect().width));
+  expect(artifactSurfaceWidth).toBeGreaterThan(680);
+  await expect.poll(async () => Math.round((await artifactRows.first().boundingBox())?.width ?? 0)).toBe(artifactSurfaceWidth);
   await expect(artifactRows.filter({ hasText: "conversation-work-cell-operation-records.md" })).toHaveCount(1);
   await expect(artifactRows.filter({ hasText: "ConversationWorkCell.tsx" })).toHaveCount(1);
   await expect(transcriptArtifacts).not.toContainText("channel-work-cell-e2e.log");
   const changedGroup = transcriptArtifacts.locator(".conversation-work-cell-change-group");
+  await expect.poll(async () => Math.round((await changedGroup.boundingBox())?.width ?? 0)).toBe(artifactSurfaceWidth);
   const changedSummary = changedGroup.locator(".conversation-work-cell-change-summary");
   await expect(changedSummary).toContainText("已编辑 5 个文件");
   await expect(changedSummary.locator(".conversation-work-cell-change-stat .add")).toHaveText("+15");
@@ -7900,6 +7931,7 @@ test("local channel work-cell demo fixture renders a realistic multi-agent opera
   await expect(engineerSpan.locator(".conversation-work-cell-agent-span-toggle")).toHaveCount(0);
   await expect(engineerSpan.locator("button.conversation-work-cell-agent-span-head")).toHaveCount(0);
   const engineerDetail = engineerSpan.locator(".conversation-work-cell-agent-span-detail");
+  await expect(engineerDetail).toHaveCSS("padding-left", "0px");
   await expect(engineerDetail).toContainText("完成频道 work-cell 操作记录投影");
   await expect(engineerDetail).toContainText("主要任务已完成");
   await expect(engineerDetail).toContainText("先把 agent 内部工作流拆成可扫描的步骤");
@@ -7927,7 +7959,18 @@ test("local channel work-cell demo fixture renders a realistic multi-agent opera
   await expect(editActionRow.locator(".conversation-work-cell-row-copy strong")).toHaveCSS("font-weight", "400");
   await expect(editActionRow.locator(".conversation-work-cell-change-stat .add")).toHaveText("+4");
   await expect(editActionRow.locator(".conversation-work-cell-change-stat .delete")).toHaveText("-1");
+  const editIconColor = await editActionRow.locator(".conversation-work-cell-row-icon").evaluate((element) => getComputedStyle(element).color);
+  const editTitleColor = await editActionRow.locator(".conversation-work-cell-row-copy strong").evaluate((element) => getComputedStyle(element).color);
+  expect(editIconColor).toBe(editTitleColor);
+  await editActionRow.locator(".conversation-work-cell-row-main").hover();
+  const editHoverIconColor = await editActionRow.locator(".conversation-work-cell-row-icon").evaluate((element) => getComputedStyle(element).color);
+  const editHoverTitleColor = await editActionRow.locator(".conversation-work-cell-row-copy strong").evaluate((element) => getComputedStyle(element).color);
+  expect(editHoverIconColor).toBe(editHoverTitleColor);
+  expect(editHoverIconColor).not.toBe(editIconColor);
   await editActionRow.locator(".conversation-work-cell-row-main").click();
+  await expect(editActionRow.locator(".conversation-work-cell-row-detail")).toHaveCSS("padding-left", "0px");
+  await expect(editActionRow.locator(".conversation-work-cell-row-detail")).not.toContainText("Engineer 修改 work-cell 行展示");
+  await expect(editActionRow.locator(".conversation-work-cell-row-detail")).not.toContainText("接入 agent 操作记录行");
   await expect(editActionRow.locator(".conversation-work-cell-change-preview")).toBeVisible();
   await expect(editActionRow.locator(".conversation-work-cell-change-preview .diff-line.add")).toHaveCount(4);
   await expect(editActionRow.locator(".conversation-work-cell-change-preview .diff-line.delete")).toHaveCount(1);
@@ -7941,7 +7984,7 @@ test("local channel work-cell demo fixture renders a realistic multi-agent opera
   await expect(commandRowToggle).toHaveCSS("opacity", "1");
   await commandRowMain.click();
   await expect(commandRowToggle).toHaveCSS("opacity", "1");
-  await expect(commandRow.locator(".conversation-work-cell-row-detail")).toContainText("运行 Web typecheck");
+  await expect(commandRow.locator(".conversation-work-cell-row-detail")).not.toContainText("运行 Web typecheck");
   await expect(commandRow.locator(".conversation-work-cell-row-detail")).toContainText("$ corepack pnpm --filter @ling-stack/web typecheck");
 
   const docEditActionRow = engineerDetail.locator(".conversation-work-cell-row").filter({ hasText: "已编辑 conversation-work-cell-operation-records.md" });
@@ -7958,7 +8001,8 @@ test("local channel work-cell demo fixture renders a realistic multi-agent opera
   await expect(qaDetail).toContainText("通过频道工作记录样例回归");
   const qaCommandRow = qaDetail.locator(".conversation-work-cell-row.shell").filter({ hasText: "已运行命令" });
   await qaCommandRow.locator(".conversation-work-cell-row-main").click();
-  await expect(qaCommandRow.locator(".conversation-work-cell-row-detail")).toContainText("运行频道 work-cell 回归");
+  await expect(qaCommandRow.locator(".conversation-work-cell-row-detail")).not.toContainText("运行频道 work-cell 回归");
+  await expect(qaCommandRow.locator(".conversation-work-cell-row-detail")).toContainText("$ corepack pnpm --filter @ling-stack/web exec playwright test");
 
   const demoPreviewRequests: string[] = [];
   page.on("request", (request) => {
@@ -8235,9 +8279,9 @@ test("durable Ling thread runs render as collapsed conversation work cells", asy
   const defaultCommandActionRow = defaultOperationStream.locator(".conversation-work-cell-row.shell").filter({ hasText: "Ran command" });
   await expect(defaultCommandActionRow.locator(".conversation-work-cell-shell-card")).toHaveCount(0);
   await defaultCommandActionRow.locator(".conversation-work-cell-row-main").click();
-  await expect(defaultCommandActionRow.locator(".conversation-work-cell-row-detail")).toContainText("Run typecheck");
+  await expect(defaultCommandActionRow.locator(".conversation-work-cell-row-detail")).not.toContainText("Run typecheck");
   await expect(defaultCommandActionRow.locator(".conversation-work-cell-row-detail")).toContainText("$ pnpm typecheck");
-  await expect(defaultCommandActionRow.locator(".conversation-work-cell-row-detail")).toContainText("Validate the workspace client rendering.");
+  await expect(defaultCommandActionRow.locator(".conversation-work-cell-row-detail")).not.toContainText("Validate the workspace client rendering.");
   await expect(workCell.locator(".conversation-work-cell-group")).toHaveCount(0);
   await expect(workCell).not.toContainText(".ling-stack/sessions/run_failed.jsonl");
   await expect(workCell).not.toContainText("Context Pack");
@@ -8271,14 +8315,14 @@ test("durable Ling thread runs render as collapsed conversation work cells", asy
   await expect(evidenceRegion).not.toContainText("run_failed");
   const editActionRow = evidenceRegion.locator(".conversation-work-cell-row").filter({ hasText: "Edited WorkspaceClientView.tsx" });
   await editActionRow.locator(".conversation-work-cell-row-main").click();
-  await expect(editActionRow.locator(".conversation-work-cell-row-detail")).toContainText("Render conversation work cell");
+  await expect(editActionRow.locator(".conversation-work-cell-row-detail")).not.toContainText("Render conversation work cell");
   await expect(editActionRow.locator(".conversation-work-cell-row-detail")).toContainText("apps/web/src/features/workspace/WorkspaceClientView.tsx");
   await expect(editActionRow.locator(".conversation-work-cell-row-detail")).toContainText("1 output recorded");
   await expect(editActionRow.locator(".conversation-work-cell-row-detail")).not.toContainText("artifact_thread_diff");
   const commandActionRow = evidenceRegion.locator(".conversation-work-cell-row.shell").filter({ hasText: "Ran command" });
   await expect(commandActionRow.locator(".conversation-work-cell-shell-card")).toHaveCount(0);
   await commandActionRow.locator(".conversation-work-cell-row-main").click();
-  await expect(commandActionRow.locator(".conversation-work-cell-row-detail")).toContainText("Run typecheck");
+  await expect(commandActionRow.locator(".conversation-work-cell-row-detail")).not.toContainText("Run typecheck");
   await expect(commandActionRow.locator(".conversation-work-cell-row-detail")).toContainText("$ pnpm typecheck");
   const traceToolRow = evidenceRegion.locator(".conversation-work-cell-row").filter({ hasText: "Trace: Tool call" }).first();
   await traceToolRow.locator(".conversation-work-cell-row-main").click();
@@ -8302,7 +8346,7 @@ test("durable Ling thread runs render as collapsed conversation work cells", asy
   await expect(page.locator(".artifact-preview-lightbox")).toHaveCount(0);
   await page.mouse.move(0, 0);
   await expect(compactPreview).toHaveCount(0);
-  await expect(workCell).toContainText("Run typecheck");
+  await expect(workCell).not.toContainText("Run typecheck");
   expect(threadEvidenceRequests).toHaveLength(1);
   expect(traceListRequests).toHaveLength(1);
   expect(traceDetailRequests).toHaveLength(1);

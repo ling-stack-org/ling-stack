@@ -844,7 +844,7 @@ The default terminal turn shows:
 
 - natural outcome text;
 - selected change and verification details when useful;
-- a compact participant line only when specialists participated;
+- a compact participant line only when specialists participated, with 18px teammate profile avatars resolved from `agentId` and role/template fallback;
 - important references when the report cites them;
 - the artifact strip below the summary;
 - the completed process cell folded, but not removed.
@@ -855,7 +855,7 @@ Expanding the report reveals only report-owned semantic detail:
 
 - complete selected changes;
 - complete verification list;
-- participant contributions;
+- participant contributions with the same teammate identity and avatar mapping as the collapsed line;
 - residual risks;
 - evidence links.
 

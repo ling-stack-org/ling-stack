@@ -2952,7 +2952,7 @@ button.message-local-file-link {
 
 .channel-message-row.local-user .message-body-shell,
 .channel-message-row.local-user > .message-content > .message-body-renderer {
-  padding-right: 26px;
+  padding-right: 0;
   color: var(--text-strong);
   text-align: right;
 }
@@ -3686,7 +3686,7 @@ button.message-local-file-link {
   grid-template-columns: 38px minmax(0, 1fr);
   align-items: center;
   gap: 7px;
-  width: min(560px, 100%);
+  width: 100%;
   min-width: 0;
   min-height: 36px;
   padding: 3px 6px;
@@ -3962,7 +3962,7 @@ button.message-local-file-link {
   display: grid;
   gap: 5px;
   min-width: 0;
-  padding-left: 23px;
+  padding-left: 0;
 }
 
 .conversation-work-cell-final-report {
@@ -4056,8 +4056,33 @@ button.message-local-file-link {
   line-height: 1.5;
 }
 
+.terminal-report-participant-compact {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.terminal-report-participant-avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  overflow: hidden;
+  border-radius: 50%;
+}
+
+.terminal-report-participant-avatar > .avatar-initial,
+.terminal-report-participant-avatar > .teammate-avatar-image.compact {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 auto;
+  font-size: 9px;
+}
+
 .terminal-report-participants strong,
-.terminal-report-participant > strong {
+.terminal-report-participant-copy > strong {
   color: var(--info, #2563eb);
   font-weight: 600;
 }
@@ -4143,14 +4168,17 @@ button.message-local-file-link {
 
 .terminal-report-participant {
   display: grid;
-  grid-template-columns: max-content minmax(0, 1fr);
+  grid-template-columns: 18px minmax(0, 1fr);
+  align-items: start;
   gap: 8px;
   min-width: 0;
   font-size: 12px;
   line-height: 1.5;
 }
 
-.terminal-report-participant > span {
+.terminal-report-participant-copy {
+  display: grid;
+  gap: 2px;
   min-width: 0;
 }
 
@@ -4217,10 +4245,6 @@ button.message-local-file-link {
   height: 13px;
 }
 
-.conversation-work-cell-row.running .conversation-work-cell-row-icon {
-  color: var(--conversation-status-running);
-}
-
 .conversation-work-cell.active .conversation-work-cell-row.running .conversation-work-cell-row-copy strong,
 .conversation-work-cell.active .conversation-work-cell-evidence-summary span {
   background: linear-gradient(
@@ -4245,18 +4269,6 @@ button.message-local-file-link {
 
 .conversation-work-cell.completed.conversation-work-cell-locate-pulse {
   animation: conversation-locate-pulse 1400ms ease-out 1;
-}
-
-.conversation-work-cell-row.waiting .conversation-work-cell-row-icon {
-  color: var(--conversation-status-waiting);
-}
-
-.conversation-work-cell-row.success .conversation-work-cell-row-icon {
-  color: var(--conversation-status-success);
-}
-
-.conversation-work-cell-row.failed .conversation-work-cell-row-icon {
-  color: var(--conversation-status-danger);
 }
 
 .conversation-work-cell-row-copy {
@@ -4309,6 +4321,11 @@ button.message-local-file-link {
 
 .conversation-work-cell-row-main:hover .conversation-work-cell-row-copy strong,
 .conversation-work-cell-row-main:focus-visible .conversation-work-cell-row-copy strong {
+  color: var(--conversation-text-strong);
+}
+
+.conversation-work-cell-row-main:hover .conversation-work-cell-row-icon,
+.conversation-work-cell-row-main:focus-visible .conversation-work-cell-row-icon {
   color: var(--conversation-text-strong);
 }
 
@@ -4365,7 +4382,7 @@ button.message-local-file-link {
   display: grid;
   gap: 2px;
   min-width: 0;
-  padding-left: 23px;
+  padding-left: 0;
 }
 
 .conversation-work-cell-row-copy small,
@@ -8028,7 +8045,7 @@ code,
 
 .conversation-work-cell-change-group {
   display: grid;
-  width: min(560px, 100%);
+  width: 100%;
   min-width: 0;
   margin-top: 3px;
   padding-top: 3px;
@@ -10299,9 +10316,13 @@ code,
   min-width: 0;
 }
 
-.conversation-turn-assistant-row .message-content {
-  width: min(820px, calc(100% - 44px));
-  max-width: min(820px, calc(100% - 44px));
+.conversation-turn-assistant-row {
+  grid-template-columns: 30px minmax(0, 1fr);
+}
+
+.message-bubble-inline.conversation-turn-assistant-row .message-content {
+  width: 100%;
+  max-width: 100%;
 }
 
 .conversation-turn-assistant-transcript {
@@ -10322,7 +10343,7 @@ code,
 .conversation-turn-artifacts {
   display: grid;
   gap: 6px;
-  width: min(680px, 100%);
+  width: 100%;
   min-width: 0;
 }
 
@@ -10341,7 +10362,7 @@ code,
 }
 
 .conversation-turn-operation .conversation-work-cell {
-  width: min(680px, 100%);
+  width: 100%;
 }
 
 .transcript-block-view {
@@ -10601,9 +10622,10 @@ code,
 .message-bubble-chat.message-bubble-own .message-content,
 .message-bubble-chat.message-bubble-own:hover .message-content,
 .message-bubble-chat.message-bubble-own:focus-within .message-content {
-  padding: 0 2px 0 0;
+  padding: 8px 12px;
   border-color: transparent;
-  background: transparent;
+  border-radius: 8px;
+  background: var(--conversation-bg-muted);
   box-shadow: none;
 }
 
@@ -10621,7 +10643,7 @@ code,
 
 .message-content.has-floating-action > p,
 .message-bubble-own .message-content p {
-  padding-right: 26px;
+  padding-right: 0;
 }
 
 .message-bubble-inline .message-content p {

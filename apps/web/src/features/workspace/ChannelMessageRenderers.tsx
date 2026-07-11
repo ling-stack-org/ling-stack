@@ -165,13 +165,31 @@ export interface ChannelMessageRenderers {
 }
 
 export function createChannelMessageRenderers(input: ChannelMessageRenderersInput): ChannelMessageRenderers {
+  function renderLingAgentAvatar(): ReactNode {
+    const teammate = input.allLocalTeammateById.get(LING_AGENT_AUTHOR_ID);
+    return (
+      <TeammateAvatarView
+        teammate={teammate ?? {
+          displayName: LING_AGENT_AUTHOR_LABEL,
+          templateId: LING_AGENT_AUTHOR_ID,
+          kind: "system_teammate",
+          systemRole: "ling_agent",
+          roleKey: "custom",
+          avatarTone: "violet",
+        }}
+        cwd={input.cwd}
+        compact
+      />
+    );
+  }
+
   function renderChannelMessageAvatar(message: ChannelMessage): ReactNode {
     if (message.authorType === "ai-teammate") {
       const teammate = input.allLocalTeammateById.get(message.authorId ?? "");
       return teammate
         ? <TeammateAvatarView teammate={teammate} cwd={input.cwd} compact />
         : message.authorId === LING_AGENT_AUTHOR_ID
-          ? <AvatarInitial label="L" tone="violet" />
+          ? renderLingAgentAvatar()
           : <AvatarInitial label="A" tone="teal" />;
     }
     if (message.authorType === "system") {
@@ -180,11 +198,21 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
     return <UserProfileAvatar profile={input.userProfile} fallbackLabel={input.localUserDisplayName} />;
   }
 
-  function renderConversationAgentAvatar(span: ConversationAgentActivitySpan): ReactNode {
-    const participantId = span.participantId?.trim();
-    const teammate = (participantId ? input.allLocalTeammateById.get(participantId) : undefined) ??
-      input.allLocalTeammateByName.get(span.label.trim().toLowerCase());
+  function renderConversationParticipantAvatar(participantId: string | undefined, label: string): ReactNode {
+    const normalizedParticipantId = participantId?.trim();
+    const normalizedLabel = normalizeAgentLabel(label);
+    const teammate = (normalizedParticipantId ? input.allLocalTeammateById.get(normalizedParticipantId) : undefined) ??
+      input.allLocalTeammateByName.get(label.trim().toLowerCase()) ??
+      [...input.allLocalTeammateById.values()].find((candidate) =>
+        candidate.templateId === normalizedParticipantId ||
+        candidate.roleKey === normalizedParticipantId ||
+        normalizeAgentLabel(candidate.displayName) === normalizedLabel,
+      );
     return teammate ? <TeammateAvatarView teammate={teammate} cwd={input.cwd} compact /> : undefined;
+  }
+
+  function renderConversationAgentAvatar(span: ConversationAgentActivitySpan): ReactNode {
+    return renderConversationParticipantAvatar(span.participantId, span.label);
   }
 
   const conversationTranscriptBlockRenderers = createTranscriptBlockRendererRegistry<
@@ -251,7 +279,7 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
       <MessageRow
         className="channel-message-row conversation-turn-assistant-row"
         authorType="ai-teammate"
-        avatar={anchorMessage ? renderChannelMessageAvatar(anchorMessage) : <AvatarInitial label="L" tone="violet" />}
+        avatar={anchorMessage ? renderChannelMessageAvatar(anchorMessage) : renderLingAgentAvatar()}
         authorName={authorName}
         createdAtLabel={formatDateTime(createdAt)}
         bodyNode={(
@@ -383,6 +411,7 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
           onLoadDetails={context.onLoadDetails}
           loadPreview={input.loadPreview}
           renderAgentAvatar={renderConversationAgentAvatar}
+          renderParticipantAvatar={renderConversationParticipantAvatar}
           showArtifactStrip={!conversationTurnHasTerminalSummary(turn)}
           showTerminalReport={!turn.blocks.some((item) => item.kind === "final_result")}
         />
@@ -403,6 +432,7 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
         blockId={block.terminalReportId}
         revisionKey={block.terminalReportRevisionKey}
         rows={block.rows}
+        renderParticipantAvatar={renderConversationParticipantAvatar}
       />
     );
   }
@@ -704,6 +734,7 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
           onLoadDetails={input.onLoadWorkflowWorkCellDetails}
           loadPreview={input.loadPreview}
           renderAgentAvatar={renderConversationAgentAvatar}
+          renderParticipantAvatar={renderConversationParticipantAvatar}
         />
       );
     }
@@ -816,6 +847,7 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
           onLoadDetails={input.onLoadConversationWorkCellDetails}
           loadPreview={input.loadPreview}
           renderAgentAvatar={renderConversationAgentAvatar}
+          renderParticipantAvatar={renderConversationParticipantAvatar}
         />
       );
     }
@@ -982,6 +1014,10 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
 
 export const LING_AGENT_AUTHOR_ID = "ling_agent";
 const LING_AGENT_AUTHOR_LABEL = "Ling Agent";
+
+function normalizeAgentLabel(value: string): string {
+  return value.trim().toLowerCase().replace(/^ling\s+/u, "");
+}
 
 export function messageAuthorLabel(
   message: ChannelMessage,
