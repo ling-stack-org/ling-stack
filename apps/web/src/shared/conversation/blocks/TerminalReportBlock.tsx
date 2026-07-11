@@ -1,4 +1,5 @@
 import { CheckCircle2, ChevronDown, CircleAlert, FilePenLine } from "lucide-react";
+import type { ReactNode } from "react";
 import type { ConversationWorkCellRow } from "../../../lib/conversation-work-cell.js";
 import { useConversationBlockView } from "../view-store/use-conversation-block-view.js";
 import { TerminalReportParticipants } from "./TerminalReportParticipants.js";
@@ -7,10 +8,12 @@ export function TerminalReportBlock({
   blockId,
   revisionKey,
   rows,
+  renderParticipantAvatar,
 }: {
   readonly blockId: string;
   readonly revisionKey: string;
   readonly rows: readonly ConversationWorkCellRow[];
+  readonly renderParticipantAvatar?: (participantId: string | undefined, label: string) => ReactNode;
 }): JSX.Element | null {
   const outcome = rows.find((row) => row.reportSection === "outcome");
   if (!outcome) {
@@ -49,7 +52,7 @@ export function TerminalReportBlock({
         ) : null}
       </button>
 
-      <TerminalReportParticipants rows={participants} expanded={expanded} />
+      <TerminalReportParticipants rows={participants} expanded={expanded} renderParticipantAvatar={renderParticipantAvatar} />
 
       {expanded ? (
         <div className="terminal-report-detail">

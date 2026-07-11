@@ -1,11 +1,15 @@
+import { Fragment, type ReactNode } from "react";
 import type { ConversationWorkCellRow } from "../../../lib/conversation-work-cell.js";
+import { AvatarInitial } from "../../components/index.js";
 
 export function TerminalReportParticipants({
   rows,
   expanded,
+  renderParticipantAvatar,
 }: {
   readonly rows: readonly ConversationWorkCellRow[];
   readonly expanded: boolean;
+  readonly renderParticipantAvatar?: (participantId: string | undefined, label: string) => ReactNode;
 }): JSX.Element | null {
   if (rows.length === 0) {
     return null;
@@ -14,10 +18,13 @@ export function TerminalReportParticipants({
     return (
       <div className="terminal-report-participants compact" aria-label="Participants">
         {rows.map((row, index) => (
-          <span key={row.id}>
-            <strong>{row.title}</strong>
+          <Fragment key={row.id}>
+            <span className="terminal-report-participant-compact">
+              <ParticipantAvatar row={row} renderParticipantAvatar={renderParticipantAvatar} />
+              <strong>{row.title}</strong>
+            </span>
             {index < rows.length - 1 ? <span className="terminal-report-participant-separator">、</span> : null}
-          </span>
+          </Fragment>
         ))}
       </div>
     );
@@ -27,11 +34,28 @@ export function TerminalReportParticipants({
       <div className="terminal-report-participant-list">
         {rows.map((row) => (
           <div className={`terminal-report-participant tone-${row.tone ?? "neutral"}`} key={row.id} data-participant-id={row.participantId}>
-            <strong>{row.title}</strong>
-            {row.description ? <span>{row.description}</span> : null}
+            <ParticipantAvatar row={row} renderParticipantAvatar={renderParticipantAvatar} />
+            <span className="terminal-report-participant-copy">
+              <strong>{row.title}</strong>
+              {row.description ? <span>{row.description}</span> : null}
+            </span>
           </div>
         ))}
       </div>
     </section>
+  );
+}
+
+function ParticipantAvatar({
+  row,
+  renderParticipantAvatar,
+}: {
+  readonly row: ConversationWorkCellRow;
+  readonly renderParticipantAvatar?: (participantId: string | undefined, label: string) => ReactNode;
+}): JSX.Element {
+  return (
+    <span className="terminal-report-participant-avatar" aria-hidden="true">
+      {renderParticipantAvatar?.(row.participantId, row.title) ?? <AvatarInitial label={row.title.trim().charAt(0).toUpperCase() || "A"} tone="gray" />}
+    </span>
   );
 }

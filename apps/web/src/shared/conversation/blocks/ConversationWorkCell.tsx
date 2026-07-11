@@ -27,6 +27,7 @@ export interface ConversationWorkCellProps {
   readonly onLoadDetails?: (threadId: string) => void;
   readonly loadPreview: ArtifactPreviewLoader;
   readonly renderAgentAvatar?: (span: ConversationAgentActivitySpan) => ReactNode;
+  readonly renderParticipantAvatar?: (participantId: string | undefined, label: string) => ReactNode;
   readonly showArtifactStrip?: boolean;
   readonly showTerminalReport?: boolean;
 }
@@ -39,6 +40,7 @@ export function ConversationWorkCell({
   onLoadDetails,
   loadPreview,
   renderAgentAvatar,
+  renderParticipantAvatar,
   showArtifactStrip = true,
   showTerminalReport = true,
 }: ConversationWorkCellProps): JSX.Element {
@@ -207,6 +209,7 @@ export function ConversationWorkCell({
           blockId={model.id}
           revisionKey={terminalReportRevisionKey(model)}
           rows={model.terminalReportRows}
+          renderParticipantAvatar={renderParticipantAvatar}
         />
       ) : null}
       {visibleArtifactItems.length > 0 ? (
