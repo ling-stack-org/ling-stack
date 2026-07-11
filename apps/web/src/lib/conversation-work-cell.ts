@@ -1,6 +1,7 @@
 import {
   normalizeConversationOperationCell,
   type ConversationAgentActivitySpan,
+  type ConversationArtifactStripChangeArtifact,
   type ConversationArtifactStripItem,
   type ConversationOperationCellMode,
   type ConversationOperationCellSourceKind,
@@ -8,6 +9,7 @@ import {
   type ConversationOperationCellViewModel,
   type ConversationOperationKind,
   type ConversationWorkCellDetailsModel,
+  type ConversationWorkCellChangePreview,
   type ConversationWorkCellEvidenceLink,
   type ConversationWorkCellGroup,
   type ConversationWorkCellGroupKind,
@@ -20,6 +22,7 @@ import type { ApprovalRequest, ExecutionAction, LingApprovalCheckpoint, LingThre
 import type { Translate } from "../i18n.js";
 import { effectiveApprovalStatus } from "./approvals.js";
 import { truncatePreview } from "./data.js";
+import { artifactLooksLikeDiff } from "./diff-summary.js";
 
 export {
   normalizeConversationOperationCell,
@@ -27,6 +30,7 @@ export {
 export type {
   ConversationAgentActivitySpan,
   ConversationAgentActivitySpanKind,
+  ConversationArtifactStripChangeArtifact,
   ConversationArtifactStripItem,
   ConversationArtifactStripItemKind,
   ConversationOperationCellMode,
@@ -35,6 +39,7 @@ export type {
   ConversationOperationCellViewModel,
   ConversationOperationKind,
   ConversationWorkCellBranch,
+  ConversationWorkCellChangePreview,
   ConversationWorkCellDetailsModel,
   ConversationWorkCellEvidenceLink,
   ConversationWorkCellGroup,
@@ -51,19 +56,129 @@ export type ConversationWorkCellMode = ConversationOperationCellMode;
 /** @deprecated Use ConversationOperationCellStatus from @ling-stack/conversation-ui-core. */
 export type ConversationWorkCellStatus = ConversationOperationCellStatus;
 
+export function conversationAgentActivitySummary(span: ConversationAgentActivitySpan): string {
+  const fallback = span.summary?.trim() || span.stateLabel?.trim() || span.label.trim();
+  const row = span.latestRow;
+  if (!row) {
+    return fallback;
+  }
+  const title = row.title.trim();
+  if (!/(?:^|:)action:/u.test(row.id)) {
+    return title || fallback;
+  }
+  const detailLines = conversationAgentSummaryDetailLines(row.detailLines);
+  const description = conversationAgentSummaryDescription(title, row.description);
+  const primaryDetail = row.kind === "run_command"
+    ? detailLines.find((line) => line.kind === "code")?.text ?? description
+    : description ?? detailLines[0]?.text;
+  if (!primaryDetail || sameConversationAgentSummaryText(title, primaryDetail)) {
+    return title || fallback;
+  }
+  return truncateConversationAgentSummary(`${title}: ${primaryDetail}`);
+}
+
+function conversationAgentSummaryDetailLines(
+  lines?: readonly ConversationWorkCellRowDetailLine[],
+): readonly ConversationWorkCellRowDetailLine[] {
+  if (!lines || lines.length === 0) {
+    return [];
+  }
+  const result: ConversationWorkCellRowDetailLine[] = [];
+  const seen = new Set<string>();
+  for (const line of lines) {
+    const text = line.text.trim();
+    if (!text || isLowSignalConversationAgentSummary(text) || seen.has(text)) {
+      continue;
+    }
+    seen.add(text);
+    result.push({ kind: line.kind, text });
+    if (result.length >= 5) {
+      break;
+    }
+  }
+  return result;
+}
+
+function conversationAgentSummaryDescription(title: string, description?: string): string | undefined {
+  const trimmed = description?.trim();
+  if (!trimmed || sameConversationAgentSummaryText(title, trimmed)) {
+    return undefined;
+  }
+  return trimmed;
+}
+
+function sameConversationAgentSummaryText(title: string, description: string): boolean {
+  const normalizedTitle = normalizeConversationAgentSummaryText(title);
+  const normalizedDescription = normalizeConversationAgentSummaryText(description);
+  return normalizedTitle === normalizedDescription || normalizedTitle.endsWith(` ${normalizedDescription}`);
+}
+
+function normalizeConversationAgentSummaryText(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/^[^:：]{1,32}\s*[:：]\s*/u, "")
+    .replace(/[。.!！?？]+$/u, "")
+    .replace(/\s+/gu, " ");
+}
+
+function isLowSignalConversationAgentSummary(value: string): boolean {
+  return /^(file|diff|json|log|artifact|text|markdown|patch|succeeded|completed|success)$/iu.test(value) ||
+    /^(text\/|application\/json|text\/x-diff)/iu.test(value) ||
+    /\.jsonl?$/iu.test(value) ||
+    /\.log$/iu.test(value);
+}
+
+function truncateConversationAgentSummary(value: string, maxLength = 180): string {
+  const normalized = value.replace(/\s+/gu, " ").trim();
+  if (normalized.length <= maxLength) {
+    return normalized;
+  }
+  return `${normalized.slice(0, Math.max(0, maxLength - 3)).trimEnd()}...`;
+}
+
 export function buildConversationArtifactStripItems(input: {
   readonly groups: readonly ConversationWorkCellGroup[];
   readonly evidenceLinks: readonly ConversationWorkCellEvidenceLink[];
+  readonly artifacts?: readonly RunArtifact[];
   readonly t: Translate;
 }): readonly ConversationArtifactStripItem[] {
   const changedRows = input.groups.find((group) => group.id === "changed")?.rows ?? [];
   const checkedRows = input.groups.find((group) => group.id === "checked")?.rows ?? [];
   const attentionRows = input.groups.find((group) => group.id === "attention")?.rows ?? [];
   const items: ConversationArtifactStripItem[] = [];
-  const artifactLinks = input.evidenceLinks.filter((link) => link.label.trim()).slice(0, 4);
+  const evidenceLinkByArtifactId = new Map(input.evidenceLinks
+    .filter((link) => link.artifactId)
+    .map((link) => [link.artifactId as string, link]));
+  const sourceArtifacts = input.artifacts ?? [];
+  const mainFeedArtifacts = sourceArtifacts.filter((artifact) => isMainFeedSafeText([
+    mainFeedArtifactLabel(artifact),
+    artifact.path,
+  ].filter(Boolean).join(" ")));
+  const changeArtifacts = mainFeedArtifacts.filter(artifactLooksLikeDiff).slice(0, 12);
+  const outputArtifacts = mainFeedArtifacts.filter((artifact) => !artifactLooksLikeDiff(artifact)).slice(0, 4);
+  const fallbackArtifactLinks = input.evidenceLinks
+    .filter((link) => link.label.trim() && !conversationEvidenceLinkLooksLikeDiff(link))
+    .slice(0, 4);
 
-  for (const artifactLink of artifactLinks) {
-    items.push({
+  const outputItems = outputArtifacts.length > 0
+    ? outputArtifacts.map((artifact): ConversationArtifactStripItem => {
+      const evidenceLink = evidenceLinkByArtifactId.get(artifact.id);
+      return {
+        id: `artifact:${artifact.id}`,
+        kind: "artifact",
+        label: mainFeedArtifactLabel(artifact),
+        href: evidenceLink?.href,
+        artifactId: artifact.id,
+        artifactType: artifact.type,
+        contentType: artifact.contentType,
+        sizeBytes: artifact.sizeBytes,
+        previewKind: isImageArtifact(artifact) ? "image" : "file",
+        previewable: artifact.type !== "video",
+        tone: "neutral",
+      };
+    })
+    : fallbackArtifactLinks.map((artifactLink): ConversationArtifactStripItem => ({
       id: `artifact:${artifactLink.id}`,
       kind: "artifact",
       label: artifactLink.label,
@@ -75,17 +190,8 @@ export function buildConversationArtifactStripItems(input: {
       previewKind: artifactLink.previewKind,
       previewable: artifactLink.previewable,
       tone: "neutral",
-    });
-  }
-
-  if (changedRows.length > 0) {
-    items.push({
-      id: "changed",
-      kind: "changed",
-      label: changedRows.length === 1 ? input.t("Changed 1 file") : input.t("Changed {count} files", { count: changedRows.length }),
-      tone: "neutral",
-    });
-  }
+    }));
+  items.push(...outputItems);
 
   if (checkedRows.length > 0) {
     const failedCount = checkedRows.filter((row) => row.tone === "failed").length;
@@ -110,7 +216,45 @@ export function buildConversationArtifactStripItems(input: {
     });
   }
 
-  return items.slice(0, 4);
+  const changeEntries: ConversationArtifactStripChangeArtifact[] = changeArtifacts.length > 0
+    ? changeArtifacts.map((artifact) => ({
+      id: artifact.id,
+      label: mainFeedArtifactLabel(artifact),
+      artifactId: artifact.id,
+      path: artifact.path,
+      href: evidenceLinkByArtifactId.get(artifact.id)?.href,
+      contentType: artifact.contentType,
+      sizeBytes: artifact.sizeBytes,
+      previewable: true,
+    }))
+    : changedRows.map((row) => ({
+      id: row.id,
+      label: row.title,
+      path: row.description,
+      previewable: false,
+    }));
+  if (changeEntries.length > 0) {
+    items.push({
+      id: "changed",
+      kind: "changed",
+      label: changeEntries.length === 1 ? input.t("Edited 1 file") : input.t("Edited {count} files", { count: changeEntries.length }),
+      changeArtifacts: changeEntries,
+      tone: "neutral",
+    });
+  }
+
+  return items;
+}
+
+function conversationEvidenceLinkLooksLikeDiff(link: ConversationWorkCellEvidenceLink): boolean {
+  const artifactType = link.artifactType?.toLowerCase() ?? "";
+  const contentType = link.contentType?.toLowerCase() ?? "";
+  const label = link.label.toLowerCase();
+  return artifactType === "diff" ||
+    contentType.includes("x-diff") ||
+    contentType.includes("patch") ||
+    label.endsWith(".diff") ||
+    label.endsWith(".patch");
 }
 
 const MAIN_FEED_GROUP_IDS = new Set<ConversationWorkCellGroupKind>(["changed", "checked", "evidence", "attention"]);
@@ -334,12 +478,13 @@ export function buildConversationWorkCellViewModel(input: BuildConversationWorkC
       { id: "artifacts", label: input.t("Artifacts"), value: String(artifacts.length) },
       { id: "approvals", label: input.t("Approvals"), value: String(approvals.length) },
     ],
+    elapsedMs: workCellElapsedMs(runs),
     operationRows: buildActiveRows({ t: input.t, latestRun, runs, pendingApprovals, artifacts, actions }),
     agentBranches: [],
     terminalReportRows: [],
     groups,
     evidenceLinks,
-    artifactStripItems: buildConversationArtifactStripItems({ groups, evidenceLinks, t: input.t }),
+    artifactStripItems: buildConversationArtifactStripItems({ groups, evidenceLinks, artifacts, t: input.t }),
     updatedAt: turnContext?.turn.updatedAt ?? latestRun.endedAt ?? latestRun.startedAt ?? latestRun.updatedAt,
   });
 }
@@ -853,7 +998,7 @@ function buildActiveRows(input: {
   const actionRows = [...input.actions]
     .filter(isMainFeedActionRow)
     .sort(compareExecutionActionTranscriptOrder)
-    .map((action) => executionActionEvidenceRow(action, artifactsById, input.t));
+    .flatMap((action) => executionActionTranscriptRows(action, artifactsById, input.t));
 
   if (actionRows.length > 0) {
     rows.push(...actionRows);
@@ -1014,7 +1159,7 @@ export function buildConversationExecutionActionEvidenceRows(input: {
   return input.actions
     .filter(isMainFeedActionRow)
     .slice(0, input.limit ?? 8)
-    .map((action) => executionActionEvidenceRow(action, artifactsById, input.t));
+    .flatMap((action) => executionActionTranscriptRows(action, artifactsById, input.t));
 }
 
 function artifactsByIdMap(artifacts: readonly RunArtifact[]): ReadonlyMap<string, RunArtifact> {
@@ -1036,17 +1181,138 @@ function executionActionEvidenceRow(
   t: Translate,
 ): ConversationWorkCellRow {
   const commandText = executionActionCommandText(action);
+  const detailLines = executionActionDetailLines(action, artifactsById, t);
   return {
     id: `action:${action.id}`,
     kind: operationKindForExecutionAction(action),
     presentation: commandText ? "shell" : undefined,
-    title: action.title,
+    title: executionActionDisplayTitle(action, artifactsById, t),
     description: action.summary,
     commandText,
-    detailLines: executionActionDetailLines(action, artifactsById, t),
+    changePreview: executionActionChangePreview(action, artifactsById),
+    detailLines: [
+      ...(action.title.trim() && action.title.trim() !== action.summary.trim() ? [{ text: action.title.trim() }] : []),
+      ...detailLines,
+    ],
     meta: operationStatusMeta(action.status, t),
     tone: executionActionTone(action),
   };
+}
+
+function executionActionChangePreview(
+  action: ExecutionAction,
+  artifactsById: ReadonlyMap<string, RunArtifact>,
+): ConversationWorkCellChangePreview | undefined {
+  if (operationKindForExecutionAction(action) !== "edit") {
+    return undefined;
+  }
+  const artifact = action.resultArtifactIds
+    .map((artifactId) => artifactsById.get(artifactId))
+    .find((candidate): candidate is RunArtifact => Boolean(candidate && artifactLooksLikeDiff(candidate)));
+  if (!artifact) {
+    return undefined;
+  }
+  return {
+    artifactId: artifact.id,
+    path: artifact.path,
+    contentType: artifact.contentType,
+    sizeBytes: artifact.sizeBytes,
+  };
+}
+
+function executionActionTranscriptRows(
+  action: ExecutionAction,
+  artifactsById: ReadonlyMap<string, RunArtifact>,
+  t: Translate,
+): readonly ConversationWorkCellRow[] {
+  const rows: ConversationWorkCellRow[] = [];
+  const scopeSummary = action.scopeSummary?.trim();
+  if (scopeSummary) {
+    rows.push({
+      id: `action-note:${action.id}`,
+      kind: "plan",
+      presentation: "note",
+      title: truncatePreview(scopeSummary, 260),
+      tone: "neutral",
+    });
+  }
+  rows.push(executionActionEvidenceRow(action, artifactsById, t));
+  return rows;
+}
+
+function executionActionDisplayTitle(
+  action: ExecutionAction,
+  artifactsById: ReadonlyMap<string, RunArtifact>,
+  t: Translate,
+): string {
+  const kind = operationKindForExecutionAction(action);
+  const targetSummary = executionActionTargetSummary(action, artifactsById, t);
+  if (kind === "read") {
+    return action.status === "executing"
+      ? targetSummary ? t("Reading action {target}", { target: targetSummary }) : t("Reading action")
+      : targetSummary ? t("Read action {target}", { target: targetSummary }) : t("Read action");
+  }
+  if (kind === "edit") {
+    return action.status === "executing"
+      ? targetSummary ? t("Editing {target}", { target: targetSummary }) : t("Editing")
+      : targetSummary ? t("Edited {target}", { target: targetSummary }) : t("Edited");
+  }
+  if (kind === "run_command") {
+    return action.status === "executing" ? t("Running command") : t("Ran command");
+  }
+  if (kind === "search") {
+    return action.status === "executing"
+      ? targetSummary ? t("Searching {target}", { target: targetSummary }) : t("Searching")
+      : targetSummary ? t("Searched {target}", { target: targetSummary }) : t("Searched");
+  }
+  if (kind === "verify") {
+    return action.status === "executing" ? t("Checking action") : t("Checked action");
+  }
+  if (kind === "approval") {
+    return action.status === "waiting_for_approval" ? t("Waiting for approval") : t("Approval recorded");
+  }
+  return action.title;
+}
+
+function executionActionTargetSummary(
+  action: ExecutionAction,
+  artifactsById: ReadonlyMap<string, RunArtifact>,
+  t: Translate,
+): string | undefined {
+  const fileTargets = action.targetRefs
+    .filter((ref) => ref.type === "file")
+    .map(userFacingTargetRefText)
+    .filter((value): value is string => Boolean(value));
+  if (fileTargets.length === 1) {
+    return basename(fileTargets[0]);
+  }
+  if (fileTargets.length > 1) {
+    return t("{count} files", { count: fileTargets.length });
+  }
+
+  const toolTargets = action.targetRefs
+    .filter((ref) => ref.type === "mcp_tool")
+    .map(userFacingTargetRefText)
+    .filter((value): value is string => Boolean(value));
+  if (toolTargets.length === 1) {
+    return toolTargets[0];
+  }
+  if (toolTargets.length > 1) {
+    return t("{count} tools", { count: toolTargets.length });
+  }
+
+  const outputArtifacts = action.resultArtifactIds
+    .map((artifactId) => artifactsById.get(artifactId))
+    .filter((artifact): artifact is RunArtifact => Boolean(artifact));
+  const fileArtifacts = outputArtifacts.filter((artifact) => artifact.path || artifact.type === "file" || artifact.type === "diff");
+  if (fileArtifacts.length === 1) {
+    return basename(fileArtifacts[0].path || fileArtifacts[0].title || fileArtifacts[0].id);
+  }
+  if (fileArtifacts.length > 1) {
+    return t("{count} files", { count: fileArtifacts.length });
+  }
+
+  return undefined;
 }
 
 function compareExecutionActionTranscriptOrder(left: ExecutionAction, right: ExecutionAction): number {
@@ -1302,6 +1568,34 @@ function formatBytes(value: number): string {
     return `${(value / 1024).toFixed(1)} KB`;
   }
   return `${(value / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function workCellElapsedMs(runs: readonly RunSession[]): number | undefined {
+  const starts = runs
+    .map((run) => parseIsoMs(run.startedAt ?? run.createdAt))
+    .filter((value): value is number => value !== undefined);
+  const ends = runs
+    .map((run) => parseIsoMs(run.endedAt ?? run.updatedAt))
+    .filter((value): value is number => value !== undefined);
+  if (starts.length === 0 || ends.length === 0) {
+    return undefined;
+  }
+  const startedAt = Math.min(...starts);
+  const endedAt = Math.max(...ends);
+  return endedAt > startedAt ? endedAt - startedAt : undefined;
+}
+
+function parseIsoMs(value: string | undefined): number | undefined {
+  if (!value) {
+    return undefined;
+  }
+  const ms = Date.parse(value);
+  return Number.isFinite(ms) ? ms : undefined;
+}
+
+function basename(value: string): string {
+  const normalized = value.trim().replace(/\\/gu, "/");
+  return normalized.split("/").filter(Boolean).at(-1) ?? normalized;
 }
 
 function uniqueBy<T>(items: readonly T[], keyOf: (item: T) => string): readonly T[] {

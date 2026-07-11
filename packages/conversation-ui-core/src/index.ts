@@ -10,6 +10,7 @@ export type {
 export type {
   ConversationAgentActivitySpan,
   ConversationAgentActivitySpanKind,
+  ConversationArtifactStripChangeArtifact,
   ConversationArtifactStripItem,
   ConversationArtifactStripItemKind,
   ConversationOperationCellDraft,
@@ -19,6 +20,7 @@ export type {
   ConversationOperationCellViewModel,
   ConversationOperationKind,
   ConversationWorkCellBranch,
+  ConversationWorkCellChangePreview,
   ConversationWorkCellDetailsModel,
   ConversationWorkCellEvidenceLink,
   ConversationWorkCellGroup,

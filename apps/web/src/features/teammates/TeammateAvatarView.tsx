@@ -25,17 +25,20 @@ export function TeammateAvatarView({
   readonly compact?: boolean;
 }): JSX.Element {
   const defaultAvatarSrc = defaultTeammateAvatarSrc(teammate);
+  const [attachmentAvatarFailed, setAttachmentAvatarFailed] = useState(false);
   const [defaultAvatarFailed, setDefaultAvatarFailed] = useState(false);
   useEffect(() => {
+    setAttachmentAvatarFailed(false);
     setDefaultAvatarFailed(false);
   }, [defaultAvatarSrc, teammate.avatarImageAttachmentId]);
 
-  if (teammate.avatarImageAttachmentId) {
+  if (teammate.avatarImageAttachmentId && !attachmentAvatarFailed) {
     return (
       <img
         className={`teammate-avatar-image ${compact ? "compact" : ""}`}
         src={attachmentContentUrlById(teammate.avatarImageAttachmentId, cwd.trim())}
         alt=""
+        onError={() => setAttachmentAvatarFailed(true)}
       />
     );
   }

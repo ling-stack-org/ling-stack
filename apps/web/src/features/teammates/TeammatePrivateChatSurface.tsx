@@ -486,7 +486,7 @@ export function TeammatePrivateChatSurface({
                   evidenceNode={(messageUsedMemoryEvents.length > 0 || message.webEvidence) ? (
                     <MessageEvidencePanel
                       memoryContent={messageUsedMemoryEvents.length > 0 ? (
-                        <UsedMemorySummary compact events={messageUsedMemoryEvents} memoryById={memoryById} />
+                        <UsedMemorySummary variant="inline" events={messageUsedMemoryEvents} memoryById={memoryById} />
                       ) : undefined}
                       memorySummary={messageUsedMemoryEvents.length > 0 ? t("Used memory") : undefined}
                       webEvidence={message.webEvidence}

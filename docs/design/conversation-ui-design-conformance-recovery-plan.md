@@ -569,9 +569,9 @@ R3.2 gate evidence:
   appearance order. Status and severity affect tone only; they do not reorder the
   transcript or coordinator teammate list.
 - 2026-06-17 local verification:
-  - `corepack pnpm --filter @ling-stack/web exec playwright test e2e/channel.spec.ts -g "phase 1 active single-agent transcript|phase 1 completed main-agent transcript|phase 1 parallel multi-agent active transcript|completed multi-agent transcript keeps folded agent process"`
+  - `corepack pnpm --filter @ling-stack/web exec playwright test e2e/channel.spec.ts -g "phase 1 active single-agent transcript|phase 1 completed main-agent transcript|phase 1 parallel multi-agent active transcript|completed multi-agent transcript reveals all agent process rows"`
   - `corepack pnpm --filter @ling-stack/web exec playwright test e2e/channel.spec.ts -g "completed single-step agent span|progress surfaces fold completed workflow steps|workflow context inspect details stay out|workflow action details stay in folded evidence|thread action details"`
-  - `LING_R32_SCREENSHOTS_DIR=/tmp/ling-r32-screens corepack pnpm --filter @ling-stack/web exec playwright test e2e/channel.spec.ts -g "phase 1 completed main-agent transcript|phase 1 parallel multi-agent active transcript|completed multi-agent transcript keeps folded agent process"`
+  - `LING_R32_SCREENSHOTS_DIR=/tmp/ling-r32-screens corepack pnpm --filter @ling-stack/web exec playwright test e2e/channel.spec.ts -g "phase 1 completed main-agent transcript|phase 1 parallel multi-agent active transcript|completed multi-agent transcript reveals all agent process rows"`
   - screenshot artifacts generated outside the repo:
     `/tmp/ling-r32-screens/completed-single-agent-expanded-{desktop,mobile}.png`,
     `/tmp/ling-r32-screens/parallel-multi-agent-active-{desktop,mobile}.png`,

@@ -30,6 +30,8 @@ export function MessageEvidencePanel({
     sections.push({
       id: "memory",
       label: t("Memory"),
+      className: "conversation-evidence-section-flat",
+      hideHeader: true,
       summary: memorySummary ?? t("Used memory"),
       content: memoryContent,
     });

@@ -1000,6 +1000,41 @@ textarea {
   padding: 7px 9px;
 }
 
+.used-memory-summary.inline {
+  width: min(100%, 560px);
+  padding: 0 0 0 18px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.used-memory-summary.inline ul {
+  display: grid;
+  gap: 5px;
+}
+
+.used-memory-summary.inline li {
+  display: grid;
+  gap: 2px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.used-memory-summary.inline li span {
+  max-width: min(420px, 100%);
+  font-size: 11px;
+  font-weight: 680;
+}
+
+.used-memory-summary.inline li small,
+.used-memory-summary.inline .used-memory-overflow {
+  color: var(--text-soft);
+  font-size: 10px;
+  line-height: 1.35;
+}
+
 .used-memory-summary-head,
 .used-memory-summary-head span {
   display: flex;

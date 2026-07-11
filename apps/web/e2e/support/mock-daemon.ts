@@ -10036,6 +10036,22 @@ export async function handleDaemonRoute(
   }
   const attachmentContentMatch = /^\/attachments\/([^/]+)\/content$/.exec(path);
   if (attachmentContentMatch && request.method() === "GET") {
+    const attachmentId = decodeURIComponent(attachmentContentMatch[1]);
+    const privateAttachment = state.teammatePrivateAttachments.find((attachment) => isRecord(attachment) && attachment.id === attachmentId);
+    if (privateAttachment || attachmentId.startsWith("tpatt_")) {
+      if (!privateAttachment) {
+        await route.fulfill({ status: 404, json: { error: "attachment_not_found" } });
+        return;
+      }
+      const contentType = typeof privateAttachment.contentType === "string" ? privateAttachment.contentType : "application/octet-stream";
+      if (contentType.startsWith("image/")) {
+        await route.fulfill({
+          body: Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLw8wAAAABJRU5ErkJggg==", "base64"),
+          contentType: "image/png",
+        });
+        return;
+      }
+    }
     await route.fulfill({ body: "mock attachment content", contentType: "text/plain" });
     return;
   }

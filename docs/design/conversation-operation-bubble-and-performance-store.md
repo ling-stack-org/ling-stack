@@ -8,11 +8,19 @@ assistant-ui-inspired tool display, and Web conversation performance
 Related docs:
 
 - [Ling Agent Operation Cell UI](ling-agent-operation-cell-ui.md)
+- [Conversation Work Cell Operation Records](conversation-work-cell-operation-records.md)
 - [Conversation UI Framework And Copy Canon Implementation Plan](conversation-ui-framework-copy-implementation-plan.md)
 - [Conversation Performance Deferral And Virtualization](conversation-performance-deferral-and-virtualization.md)
 - [Conversation UI Framework Temporary Implementation Checklist](conversation-ui-framework-implementation-checklist.md)
 - [Multi-Agent App Detailed Design](multi-agent-app-detailed-design.md)
 - [Ling Agent Session Control Plane](ling-agent-session.md)
+
+Implementation update, 2026-07-10: the main-feed operation display has been narrowed
+from a bubble/card shell to row-style `ConversationWorkCell` operation records. Use
+[Conversation Work Cell Operation Records](conversation-work-cell-operation-records.md)
+as the current UI contract. This document remains historical reference for the
+assistant-ui borrowing map, performance-store boundary, and earlier `OperationBubble`
+exploration.
 
 ## Purpose
 
@@ -208,7 +216,7 @@ Default caps:
 | Checks | 5 checks | failed checks first |
 | Artifacts | 4 artifacts | count hidden artifacts |
 | Sources | 4 sources | count hidden sources |
-| Agent history | latest 3 semantic actions per agent | older actions folded under span |
+| Agent history | all bounded semantic actions while the parent work cell is open | operation details fold per row |
 
 ## AgentActivitySpan As Operation Bubble
 
@@ -218,17 +226,18 @@ operation. It is one latest-action line per participating agent.
 Header anatomy:
 
 ```text
-[agent avatar or icon] [agent name] [status chip] [latest action] [chevron]
+[agent avatar or icon] [agent name] [status chip] [latest action]
 ```
 
 Rules:
 
 - Multiple active agents may render as a small stacked group under one parent operation
   bubble.
-- Each agent span expands independently.
+- Expanding the parent work cell reveals every participating agent's operation rows.
+- Agent headers are static and do not add another disclosure layer.
 - Parallel agent spans keep stable order by first semantic appearance.
-- Completed agent spans fold after the coordinator summary, but failed/blocked spans stay
-  open until handled.
+- Completed parent work cells fold after the coordinator summary; active, failed, or
+  blocked parent work cells stay open until handled.
 - Direct teammate private chat is not an `AgentActivitySpan`; it owns its conversation.
 
 Example:
@@ -655,8 +664,8 @@ Work:
 - Use `use-conversation-action-view.ts` for Operation Bubble copy feedback and active
   action state. Generic code/artifact copy buttons can migrate later only if needed.
 - Use `use-conversation-view-reconciliation.ts` from the owning feed to prune operation
-  details, generic transcript block disclosure, agent span disclosure, active action,
-  and copy feedback keys that are no longer present in the visible conversation surface.
+  details, generic transcript block disclosure, active action, and copy feedback keys
+  that are no longer present in the visible conversation surface.
 
 Acceptance:
 
