@@ -22,7 +22,7 @@ import {
 } from "lucide-react";
 import { effectiveApprovalStatus } from "../../lib/approvals.js";
 import type { ChannelActivityItem } from "../../lib/channel-activity.js";
-import { conversationAgentActivitySummary, type ConversationAgentActivitySpan, type ConversationWorkCellViewModel } from "../../lib/conversation-work-cell.js";
+import type { ConversationAgentActivitySpan, ConversationWorkCellViewModel } from "../../lib/conversation-work-cell.js";
 import type { ConversationTranscriptBlock, ConversationTurnViewModel } from "../../lib/conversation-turn-projector.js";
 import { truncatePreview } from "../../lib/data.js";
 import { formatDateTime } from "../../lib/formatting.js";
@@ -61,11 +61,9 @@ import type {
   ChannelHandoffStatus,
   ChannelMention,
   ChannelMessage,
-  ChannelTeamEvidenceStatus,
   ChannelMessageFileRef,
   ChannelWorkflow,
   ChannelWorkflowStep,
-  FoldedExpertsReadModel,
   MemoryObject,
   RunArtifact,
   RunSession,
@@ -78,7 +76,6 @@ import type {
 } from "../../types.js";
 import type { LocalTeammateDraft } from "../teammates/index.js";
 import { TeammateAvatarView } from "../teammates/TeammateAvatarView.js";
-import { ChannelTeamExpertsSummary } from "./ChannelTeamExpertsSummary.js";
 import {
   ChannelExecutionProposalCard,
   WorkflowFinalSummary,
@@ -105,8 +102,6 @@ export interface ChannelMessageRenderersInput {
   readonly channelAttachmentById: ReadonlyMap<string, ChannelAttachment>;
   readonly channelMessageFeedbackById: Readonly<Record<string, FeedbackValue>>;
   readonly channelMessagesLoadingOlder: boolean;
-  readonly channelTeamExpertsByTurn: Readonly<Record<string, ChannelTeamExpertsState>>;
-  readonly channelTeamExpertsExpandedByTurn: Readonly<Record<string, boolean>>;
   readonly channelWorkflowSteps: readonly ChannelWorkflowStep[];
   readonly channelWorkflows: readonly ChannelWorkflow[];
   readonly conversationWorkCellByThreadId: ReadonlyMap<string, ConversationWorkCellViewModel>;
@@ -154,23 +149,15 @@ export interface ChannelMessageRenderersInput {
   readonly onStartWorkflowFromHandoff: (handoff: ChannelHandoff) => void;
   readonly onSupersedeDecision: (decision: ChannelDecision) => void;
   readonly onToggleChannelMessageFeedback: (messageId: string, feedback: FeedbackValue) => void;
-  readonly onToggleChannelTeamExpertsExpanded: (turnId: string) => void;
   readonly onUpdateExecutionProposal: (
     proposal: ChannelExecutionProposal,
     input: UpdateChannelExecutionProposalRequest,
   ) => Promise<ChannelExecutionProposal | undefined>;
   readonly onUpdateHandoffStatus: (handoff: ChannelHandoff, status: ChannelHandoffStatus) => void;
   readonly readRunTitle: (run: RunSession) => string;
-  readonly resolveExpertTeammate: (agentId: string | undefined) => LocalTeammateDraft | undefined;
   readonly planActionBusyId: string;
   readonly proposedPlanArtifactsById: ReadonlyMap<string, ProposedPlanArtifact>;
   readonly workflowWorkCellDetailsCacheKey: (workflowId: string) => string;
-}
-
-interface ChannelTeamExpertsState {
-  readonly channelId: string;
-  readonly turnId: string;
-  readonly experts: FoldedExpertsReadModel;
 }
 
 export interface ChannelMessageRenderers {
@@ -198,84 +185,6 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
     const teammate = (participantId ? input.allLocalTeammateById.get(participantId) : undefined) ??
       input.allLocalTeammateByName.get(span.label.trim().toLowerCase());
     return teammate ? <TeammateAvatarView teammate={teammate} cwd={input.cwd} compact /> : undefined;
-  }
-
-  function renderConversationTurnAgentParticipationSummary(
-    spans: readonly ConversationAgentActivitySpan[],
-    operationStatus: string | undefined,
-    expanded: boolean,
-    onToggleExpanded: () => void,
-  ): ReactNode {
-    const entries = spans.map((span, index) => ({
-      span,
-      index,
-      status: conversationAgentParticipationStatus(span, operationStatus),
-      summary: conversationAgentActivitySummary(span),
-    }));
-    const activeCount = entries.filter((entry) => entry.status === "pending").length;
-    const completedCount = entries.filter((entry) => entry.status === "completed" || entry.status === "adopted").length;
-    const delayedCount = entries.filter((entry) => entry.status === "timeout" || entry.status === "expired").length;
-    const unavailableCount = entries.filter((entry) => entry.status === "unavailable" || entry.status === "rejected").length;
-    const summaryItems = [
-      activeCount > 0 ? { label: `${activeCount} ${input.t("active")}`, tone: "active" as const } : undefined,
-      completedCount > 0 ? { label: `${completedCount} ${input.t("done")}`, tone: "done" as const } : undefined,
-      delayedCount > 0 ? { label: `${delayedCount} ${input.t("delayed")}`, tone: "delayed" as const } : undefined,
-      unavailableCount > 0 ? { label: `${unavailableCount} ${input.t("unavailable")}`, tone: "unavailable" as const } : undefined,
-    ].filter((item): item is { readonly label: string; readonly tone: "active" | "done" | "delayed" | "unavailable" } => Boolean(item));
-    const ariaLabel = `${input.t("Teammates")}: ${summaryItems.map((item) => item.label).join(", ") || `${entries.length} ${input.t("done")}`}`;
-
-    return (
-      <section className="channel-team-experts-summary" aria-label={input.t("Teammates")}>
-        <button
-          type="button"
-          className="channel-team-experts-summary-toggle"
-          aria-expanded={expanded}
-          aria-label={ariaLabel}
-          onClick={onToggleExpanded}
-        >
-          <span className="channel-team-experts-summary-chips" aria-hidden="true">
-            {entries.slice(0, 4).map((entry) => {
-              const avatar = renderConversationAgentAvatar(entry.span);
-              const title = entry.summary ? `${entry.span.label}: ${entry.summary}` : entry.span.label;
-              return avatar ? (
-                <span className={`channel-team-experts-chip status-${entry.status} has-avatar`} title={title} key={entry.span.id}>
-                  {avatar}
-                </span>
-              ) : (
-                <span className={`channel-team-experts-chip status-${entry.status} tone-${entry.index % 6}`} title={title} key={entry.span.id}>
-                  {conversationAgentInitials(entry.span.label)}
-                </span>
-              );
-            })}
-            {entries.length > 4 ? (
-              <span className="channel-team-experts-chip more">+{entries.length - 4}</span>
-            ) : null}
-          </span>
-          <span className="channel-team-experts-summary-meta">
-            {summaryItems.map((item, index) => (
-              <span className={`channel-team-experts-summary-meta-item tone-${item.tone}`} key={item.tone}>
-                {item.label}
-                {index < summaryItems.length - 1 ? <span className="channel-team-experts-summary-meta-separator">,</span> : null}
-              </span>
-            ))}
-          </span>
-        </button>
-        {expanded ? (
-          <div className="channel-team-experts-summary-panel">
-            {entries.map((entry) => (
-              <article className={`channel-team-experts-summary-entry status-${entry.status}`} aria-label={`${entry.span.label}: ${entry.summary}`} key={entry.span.id}>
-                <span className="channel-team-experts-summary-entry-dot" aria-hidden="true" />
-                <span className="channel-team-experts-summary-entry-avatar" aria-hidden="true">
-                  {renderConversationAgentAvatar(entry.span) ?? conversationAgentInitials(entry.span.label)}
-                </span>
-                <strong className="channel-team-experts-summary-entry-agent">{entry.span.label}</strong>
-                <p className="channel-team-experts-summary-entry-summary">{entry.summary}</p>
-              </article>
-            ))}
-          </div>
-        ) : null}
-      </section>
-    );
   }
 
   const conversationTranscriptBlockRenderers = createTranscriptBlockRendererRegistry<
@@ -333,27 +242,14 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
     const createdAt = anchorMessage?.createdAt ?? turn.createdAt;
     const copyText = conversationTurnAssistantCopyText(turn, input.t);
     const transcriptContext: WorkspaceTranscriptRenderContext = { detailsState, onLoadDetails };
-    const teamExpertsState = input.channelTeamExpertsByTurn[turn.sourceMessage.id];
-    const teamExperts = teamExpertsState?.channelId === input.selectedChannelId && teamExpertsState.turnId === turn.sourceMessage.id
-      ? teamExpertsState.experts
-      : undefined;
     const terminalSummaryRendered = conversationTurnHasTerminalSummary(turn);
-    const hasStructuredTerminalReport = Boolean(turn.operationCell?.terminalReportRows.length);
-    const hasTeamExpertsSummary = !hasStructuredTerminalReport && Boolean(teamExperts && teamExperts.totalCount > 1);
-    const fallbackParticipationSpans = terminalSummaryRendered && !hasStructuredTerminalReport && !hasTeamExpertsSummary
-      ? uniqueAgentParticipationSpans(turn.operationCell?.agentSpans ?? [])
-      : [];
-    const teamExpertsExpanded = input.channelTeamExpertsExpandedByTurn[turn.sourceMessage.id] ?? false;
     const externalArtifactItems = terminalSummaryRendered
       ? turn.operationCell?.artifactStripItems ?? []
       : [];
 
     return (
       <MessageRow
-        className={[
-          "channel-message-row conversation-turn-assistant-row",
-          hasTeamExpertsSummary || fallbackParticipationSpans.length > 1 ? "has-team-experts" : "",
-        ].filter(Boolean).join(" ")}
+        className="channel-message-row conversation-turn-assistant-row"
         authorType="ai-teammate"
         avatar={anchorMessage ? renderChannelMessageAvatar(anchorMessage) : <AvatarInitial label="L" tone="violet" />}
         authorName={authorName}
@@ -365,29 +261,6 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
               block,
               context: transcriptContext,
             }))}
-            {teamExperts && hasTeamExpertsSummary ? (
-              <ChannelTeamExpertsSummary
-                experts={teamExperts}
-                expanded={teamExpertsExpanded}
-                onToggleExpanded={() => input.onToggleChannelTeamExpertsExpanded(turn.sourceMessage.id)}
-                cwd={input.cwd}
-                resolveExpertTeammate={input.resolveExpertTeammate}
-                labels={{
-                  experts: input.t("Teammates"),
-                  active: input.t("active"),
-                  done: input.t("done"),
-                  delayed: input.t("delayed"),
-                  unavailable: input.t("unavailable"),
-                }}
-              />
-            ) : fallbackParticipationSpans.length > 1 ? (
-              renderConversationTurnAgentParticipationSummary(
-                fallbackParticipationSpans,
-                turn.operationCell?.status,
-                teamExpertsExpanded,
-                () => input.onToggleChannelTeamExpertsExpanded(turn.sourceMessage.id),
-              )
-            ) : null}
             {externalArtifactItems.length > 0 ? (
               <div className="conversation-turn-artifacts">
                 <ConversationArtifactStripPanel
@@ -1313,73 +1186,6 @@ function isGeneratedWorkflowCoordinatorBody(body: string): boolean {
 function conversationTurnHasTerminalSummary(turn: ConversationTurnViewModel): boolean {
   return Boolean(turn.operationCell?.terminalReportRows.length) ||
     turn.blocks.some((block) => block.kind === "coordinator_message" && block.phase === "terminal");
-}
-
-function uniqueAgentParticipationSpans(spans: readonly ConversationAgentActivitySpan[]): readonly ConversationAgentActivitySpan[] {
-  const byKey = new Map<string, ConversationAgentActivitySpan>();
-  for (const span of spans) {
-    if (span.kind === "overflow") {
-      continue;
-    }
-    const key = (span.participantId?.trim() || span.label.trim()).toLowerCase();
-    if (!key) {
-      continue;
-    }
-    const existing = byKey.get(key);
-    if (!existing) {
-      byKey.set(key, span);
-      continue;
-    }
-    byKey.set(key, {
-      ...existing,
-      summary: span.summary ?? existing.summary,
-      meta: span.meta ?? existing.meta,
-      tone: span.tone ?? existing.tone,
-      stateLabel: span.stateLabel ?? existing.stateLabel,
-      latestRow: span.latestRow ?? existing.latestRow,
-      rows: [...existing.rows, ...span.rows],
-    });
-  }
-  return [...byKey.values()];
-}
-
-function conversationAgentParticipationStatus(
-  span: ConversationAgentActivitySpan,
-  operationStatus: string | undefined,
-): ChannelTeamEvidenceStatus {
-  const tone = span.tone ?? span.latestRow?.tone;
-  if (tone === "running") {
-    return "pending";
-  }
-  if (tone === "waiting") {
-    return "timeout";
-  }
-  if (tone === "failed") {
-    return "unavailable";
-  }
-  if (tone === "success") {
-    return "completed";
-  }
-  if (operationStatus === "active" || operationStatus === "running" || operationStatus === "waiting_for_approval") {
-    return "pending";
-  }
-  if (operationStatus === "blocked" || operationStatus === "cancelled" || operationStatus === "superseded") {
-    return "timeout";
-  }
-  if (operationStatus === "failed") {
-    return "unavailable";
-  }
-  return "completed";
-}
-
-function conversationAgentInitials(value: string): string {
-  const normalized = value.trim();
-  return normalized
-    .split(/[\s_-]+/u)
-    .filter(Boolean)
-    .slice(-2)
-    .map((part) => part.slice(0, 1).toUpperCase())
-    .join("") || normalized.slice(0, 2).toUpperCase();
 }
 
 function conversationCoordinatorStartFallback(

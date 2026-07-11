@@ -1594,15 +1594,6 @@ button.artifact-action-link {
   min-width: 0;
 }
 
-.channel-message-row.has-team-experts {
-  grid-template-columns: 30px minmax(0, min(920px, 92%));
-}
-
-.channel-message-row.has-team-experts > .message-content {
-  width: 100%;
-  max-width: 100%;
-}
-
 .channel-message-row.local-user {
   grid-template-columns: minmax(0, min(620px, 76%)) 30px;
   column-gap: 10px;
@@ -12497,7 +12488,6 @@ code,
   box-shadow: 0 16px 34px rgba(0, 0, 0, 0.16);
 }
 
-.conversation-background-toast,
 .conversation-block-feedback,
 .conversation-block-action-menu {
   position: absolute;
@@ -12509,27 +12499,6 @@ code,
   box-shadow: var(--shadow-panel);
 }
 
-.conversation-background-toast {
-  left: 50%;
-  bottom: 66px;
-  display: inline-grid;
-  gap: 1px;
-  min-width: min(260px, calc(100% - 32px));
-  max-width: min(360px, calc(100% - 32px));
-  padding: 8px 12px;
-  text-align: left;
-  transform: translateX(-50%);
-}
-
-.conversation-background-toast.success {
-  border-color: var(--success-border);
-}
-
-.conversation-background-toast.error {
-  border-color: var(--danger-border);
-}
-
-.conversation-background-toast span,
 .conversation-block-action-menu strong {
   color: var(--conversation-text-strong);
   font-size: 12px;
@@ -12537,7 +12506,6 @@ code,
   line-height: 16px;
 }
 
-.conversation-background-toast small,
 .conversation-block-action-menu small {
   color: var(--conversation-text-muted);
   font-size: 11px;

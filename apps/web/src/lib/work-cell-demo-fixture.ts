@@ -42,6 +42,7 @@ export function createChannelWorkCellDemoFixture(input: {
 
   const workspaceId = "workspace_default";
   const idPrefix = `${channelWorkCellDemoArtifactPrefix}${safeId(channelId)}`;
+  const discussionMessageId = `${idPrefix}_message_discussion`;
   const sourceMessageId = `${idPrefix}_message_request`;
   const terminalReportId = `${idPrefix}_terminal_report`;
   const terminalMessageId = `message_${terminalReportId}`;
@@ -73,6 +74,59 @@ export function createChannelWorkCellDemoFixture(input: {
   };
 
   const channelMessages: ChannelMessage[] = [
+    {
+      id: discussionMessageId,
+      workspaceId,
+      channelId,
+      kind: "message",
+      intent: "discuss",
+      authorType: "local-user",
+      authorId: "local-user",
+      body: "讨论一下：多 Agent 讨论问题时，应该保留每位专家的独立观点，还是只显示 Ling Agent 的统一结论？",
+      mentions: [],
+      attachmentIds: [],
+      linkPreviewIds: [],
+      fileRefs: [],
+      status: "ready",
+      createdAt: "2026-07-10T09:10:00.000Z",
+      updatedAt: "2026-07-10T09:10:00.000Z",
+    },
+    demoDiscussionReply({
+      id: `${idPrefix}_message_discussion_architect`,
+      workspaceId,
+      channelId,
+      threadId: discussionMessageId,
+      authorId: "teammate_builtin_architect",
+      body: "从信息结构看，讨论阶段应该保留各自观点。不同专家的判断依据可能冲突，这些差异本身就是讨论价值；只有进入执行决策时，才需要由 Ling Agent 收口。",
+      createdAt: "2026-07-10T09:10:08.000Z",
+    }),
+    demoDiscussionReply({
+      id: `${idPrefix}_message_discussion_designer`,
+      workspaceId,
+      channelId,
+      threadId: discussionMessageId,
+      authorId: "teammate_builtin_designer",
+      body: "界面上直接使用普通会话行最清晰：头像、名字、观点正文依次出现，不增加状态卡片。用户可以快速判断是谁提出了什么意见。",
+      createdAt: "2026-07-10T09:10:16.000Z",
+    }),
+    demoDiscussionReply({
+      id: `${idPrefix}_message_discussion_engineer`,
+      workspaceId,
+      channelId,
+      threadId: discussionMessageId,
+      authorId: "teammate_builtin_engineer",
+      body: "实现上讨论回复和普通频道消息完全一致，不创建 workflow、run 或操作记录。只有用户确认要执行后，才切换到下面这种 work-cell 展示。",
+      createdAt: "2026-07-10T09:10:24.000Z",
+    }),
+    demoDiscussionReply({
+      id: `${idPrefix}_message_discussion_qa`,
+      workspaceId,
+      channelId,
+      threadId: discussionMessageId,
+      authorId: "teammate_builtin_qa",
+      body: "我建议保留独立回复，同时限制可见参与人数。需要验证的重点是：不能把未参与的 Agent 算进去，也不能让讨论状态与执行完成状态混在一起。",
+      createdAt: "2026-07-10T09:10:32.000Z",
+    }),
     {
       id: sourceMessageId,
       workspaceId,
@@ -708,6 +762,35 @@ function demoAction(input: {
     resolvedAt: input.createdAt,
     executedAt: input.createdAt,
     completedAt: input.completedAt,
+  };
+}
+
+function demoDiscussionReply(input: {
+  readonly id: string;
+  readonly workspaceId: string;
+  readonly channelId: string;
+  readonly threadId: string;
+  readonly authorId: string;
+  readonly body: string;
+  readonly createdAt: string;
+}): ChannelMessage {
+  return {
+    id: input.id,
+    workspaceId: input.workspaceId,
+    channelId: input.channelId,
+    threadId: input.threadId,
+    kind: "ai_reply",
+    intent: "discuss",
+    authorType: "ai-teammate",
+    authorId: input.authorId,
+    body: input.body,
+    mentions: [],
+    attachmentIds: [],
+    linkPreviewIds: [],
+    fileRefs: [],
+    status: "ready",
+    createdAt: input.createdAt,
+    updatedAt: input.createdAt,
   };
 }
 

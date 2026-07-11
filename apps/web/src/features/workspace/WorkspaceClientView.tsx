@@ -54,7 +54,6 @@ import {
 import {
   createChannelWorktree,
   getChannelWorkspaceGitStatus,
-  getChannelTeamExpertsProjection,
   getChannelTeamMetricsProjection,
   handoffChannelWorkspace,
   listChannelCollaborationCards,
@@ -197,7 +196,6 @@ import type {
   GovernanceNotification,
   ExternalWorkActionView,
   ExternalWorkCiTriageView,
-  FoldedExpertsReadModel,
   MemoryObject,
   ProviderPreset,
   ProposedPlanArtifact,
@@ -241,14 +239,11 @@ import {
   type ChannelSettingsAutosaveState,
   type ChannelNotificationLevel,
 } from "./ChannelSettingsPanels.js";
-import { ChannelComposer, type ChannelComposerInlineFeedback } from "./ChannelComposer.js";
+import { ChannelComposer } from "./ChannelComposer.js";
 import { ChannelActivityWorkspace } from "./ChannelActivityWorkspace.js";
 import { useChannelRightDockController } from "./useChannelRightDockController.js";
 import { useChannelBottomPanelResizeController } from "./useChannelBottomPanelResizeController.js";
-import {
-  conversationTurnRenderSignature,
-  useChannelMessageFeed,
-} from "./ChannelMessageFeed.js";
+import { useChannelMessageFeed } from "./ChannelMessageFeed.js";
 import {
   LING_AGENT_AUTHOR_ID,
   createChannelMessageRenderers,
@@ -297,17 +292,6 @@ function channelSidePanelIcon(view: ChannelSidePanelView, size: number): JSX.Ele
 
 function channelActivityVisibleInDefaultChat(item: ChannelActivityItem): boolean {
   return item.kind === "message" || item.kind === "summary";
-}
-
-interface ChannelTeamExpertsState {
-  readonly channelId: string;
-  readonly turnId: string;
-  readonly experts: FoldedExpertsReadModel;
-}
-
-interface ChannelTeamExpertsTurnTarget {
-  readonly turnId: string;
-  readonly signature: string;
 }
 
 interface ChannelTeamMetricsState {
@@ -872,7 +856,6 @@ export function WorkspaceClientView({
     handleComposerResizePointerEnd,
     showComposerFeedback,
   } = useChannelComposerDraftController();
-  const [conversationBackgroundToast, setConversationBackgroundToast] = useState<ChannelComposerInlineFeedback | undefined>();
   const [activeChannelGoal, setActiveChannelGoal] = useState<LingThreadGoal | undefined>();
   const [channelGoalLoadingThreadId, setChannelGoalLoadingThreadId] = useState("");
   const [channelGoalBusy, setChannelGoalBusy] = useState(false);
@@ -897,14 +880,11 @@ export function WorkspaceClientView({
     readonly status: "idle" | "loaded" | "error";
     readonly cards: readonly CollaborationTaskCardModel[];
   }>({ channelId: "", signature: "", status: "idle", cards: [] });
-  const [channelTeamExpertsByTurn, setChannelTeamExpertsByTurn] = useState<Readonly<Record<string, ChannelTeamExpertsState>>>({});
-  const [channelTeamExpertsExpandedByTurn, setChannelTeamExpertsExpandedByTurn] = useState<Readonly<Record<string, boolean>>>({});
   const [channelTeamMetricsState, setChannelTeamMetricsState] = useState<ChannelTeamMetricsState | undefined>();
   const [channelTeamMetricsLoading, setChannelTeamMetricsLoading] = useState(false);
   const [channelTeamMetricsError, setChannelTeamMetricsError] = useState("");
   const [channelTeamMetricsRefreshKey, setChannelTeamMetricsRefreshKey] = useState(0);
   const [channelMessageFeedbackById, setChannelMessageFeedbackById] = useState<Record<string, "up" | "down">>({});
-  const conversationBackgroundToastTimeoutRef = useRef<number | undefined>();
   const channelMoreRef = useRef<HTMLDivElement | null>(null);
   const governanceNotificationsRef = useRef<HTMLDivElement | null>(null);
   const teammateManagerButtonRef = useRef<HTMLButtonElement | null>(null);
@@ -912,6 +892,7 @@ export function WorkspaceClientView({
   const conversationWorkCellEvidenceLoadsRef = useRef(new Set<string>());
   const conversationThreadTurnLoadsRef = useRef(new Set<string>());
   const conversationThreadTurnRunSignaturesRef = useRef(new Map<string, string>());
+  const messageFeedChannelIdRef = useRef(selectedChannelId);
   const channelWorkspaceExternalPathChannelIdRef = useRef(selectedChannelId);
   const channelSettingsAutosaveTimerRef = useRef<number | undefined>();
   const channelSettingsAutosaveInFlightRef = useRef(false);
@@ -1590,75 +1571,6 @@ export function WorkspaceClientView({
       usedMemoryEventsForDisplay,
     ],
   );
-  const channelTeamExpertsTurnTargets = useMemo<readonly ChannelTeamExpertsTurnTarget[]>(
-    () => conversationTurnProjection.turns
-      .filter((turn) => turn.blocks.length > 0)
-      .map((turn) => ({
-        turnId: turn.sourceMessage.id,
-        signature: conversationTurnRenderSignature(turn),
-      })),
-    [conversationTurnProjection.turns],
-  );
-  const channelTeamExpertsRequestSignature = useMemo(
-    () => channelTeamExpertsTurnTargets.map((turn) => `${turn.turnId}:${turn.signature}`).join("\n"),
-    [channelTeamExpertsTurnTargets],
-  );
-  useEffect(() => {
-    setChannelTeamExpertsExpandedByTurn({});
-  }, [selectedChannelId]);
-  useEffect(() => {
-    const activeTurnIds = new Set(channelTeamExpertsTurnTargets.map((turn) => turn.turnId));
-    setChannelTeamExpertsExpandedByTurn((current) => {
-      let changed = false;
-      const next: Record<string, boolean> = {};
-      for (const [turnId, expanded] of Object.entries(current)) {
-        if (activeTurnIds.has(turnId)) {
-          next[turnId] = expanded;
-        } else {
-          changed = true;
-        }
-      }
-      return changed ? next : current;
-    });
-  }, [channelTeamExpertsRequestSignature, channelTeamExpertsTurnTargets]);
-  useEffect(() => {
-    const workspaceCwd = cwd.trim();
-    if (!workspaceCwd || !selectedChannelId || channelTeamExpertsTurnTargets.length === 0) {
-      setChannelTeamExpertsByTurn({});
-      return;
-    }
-    let cancelled = false;
-    void Promise.all(channelTeamExpertsTurnTargets.map(async ({ turnId }) => {
-      try {
-        const response = await getChannelTeamExpertsProjection(workspaceCwd, selectedChannelId, turnId, { includeExpired: true, limit: 8 });
-        return {
-          turnId,
-          state: {
-            channelId: response.channelId,
-            turnId: response.turnId,
-            experts: response.experts,
-          },
-        };
-      } catch {
-        return { turnId, state: undefined };
-      }
-    }))
-      .then((results) => {
-        if (cancelled) {
-          return;
-        }
-        const next: Record<string, ChannelTeamExpertsState> = {};
-        for (const result of results) {
-          if (result.state) {
-            next[result.turnId] = result.state;
-          }
-        }
-        setChannelTeamExpertsByTurn(next);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [channelTeamExpertsRequestSignature, channelTeamExpertsTurnTargets, cwd, selectedChannelId]);
   useEffect(() => {
     const workspaceCwd = cwd.trim();
     if (!workspaceCwd || !selectedChannelId || !channelSettingsPageOpen) {
@@ -1812,8 +1724,6 @@ export function WorkspaceClientView({
     latestVisibleItemId: latestVisibleActivityItemId,
     renderableItemCount: renderableActivityItems.length,
     restoreBlockedUntilRef: channelRightDockMotionUntilRef,
-    t,
-    onBackgroundToast: showConversationBackgroundToast,
     onLoadOlder: onLoadOlderChannelMessages,
   });
   const {
@@ -2024,8 +1934,10 @@ export function WorkspaceClientView({
         clearSavedChannelNotificationLevel(cwd, selectedChannelId);
       }
     }
-    messageFeedState.reset();
-    setConversationBackgroundToast(undefined);
+    if (messageFeedChannelIdRef.current !== selectedChannelId) {
+      messageFeedChannelIdRef.current = selectedChannelId;
+      messageFeedState.reset();
+    }
     closeConversationBlockActionMenu();
   }, [closeConversationBlockActionMenu, cwd, messageFeedState.reset, selectedChannelId, selectedChannelNotificationLevel, workspaceSettingsLoaded]);
 
@@ -2744,19 +2656,6 @@ export function WorkspaceClientView({
     () => channelTeammates.filter(({ teammate }) => !teammate.hidden),
     [channelTeammates],
   );
-  const channelExpertTeammateByKey = useMemo(
-    () => {
-      const map = new Map<string, LocalTeammateDraft>();
-      for (const { teammate } of channelTeammates) {
-        indexChannelExpertTeammate(map, teammate);
-      }
-      for (const teammate of localTeammates) {
-        indexChannelExpertTeammate(map, teammate);
-      }
-      return map;
-    },
-    [channelTeammates, localTeammates],
-  );
   const channelHeaderTeammates = useMemo(
     () => visibleChannelHeaderTeammates.slice(0, 4),
     [visibleChannelHeaderTeammates],
@@ -2796,23 +2695,6 @@ export function WorkspaceClientView({
     ),
     [channelEffectiveCouncil],
   );
-
-  function showConversationBackgroundToast(feedback: ChannelComposerInlineFeedback): void {
-    if (conversationBackgroundToastTimeoutRef.current !== undefined) {
-      globalThis.clearTimeout(conversationBackgroundToastTimeoutRef.current);
-    }
-    setConversationBackgroundToast(feedback);
-    conversationBackgroundToastTimeoutRef.current = globalThis.setTimeout(() => {
-      setConversationBackgroundToast(undefined);
-      conversationBackgroundToastTimeoutRef.current = undefined;
-    }, 4_200);
-  }
-
-  useEffect(() => () => {
-    if (conversationBackgroundToastTimeoutRef.current !== undefined) {
-      globalThis.clearTimeout(conversationBackgroundToastTimeoutRef.current);
-    }
-  }, []);
 
   const activeChannelConversationThread = useMemo(
     () => selectedChannelBranchRootThreadId
@@ -3355,8 +3237,6 @@ export function WorkspaceClientView({
     channelAttachmentById,
     channelMessageFeedbackById,
     channelMessagesLoadingOlder,
-    channelTeamExpertsByTurn,
-    channelTeamExpertsExpandedByTurn,
     channelWorkflowSteps: channelWorkflowStepsForDisplay,
     channelWorkflows: channelWorkflowsForDisplay,
     conversationWorkCellByThreadId,
@@ -3405,11 +3285,9 @@ export function WorkspaceClientView({
     onStartWorkflowFromHandoff,
     onSupersedeDecision,
     onToggleChannelMessageFeedback: toggleChannelMessageFeedback,
-    onToggleChannelTeamExpertsExpanded: toggleChannelTeamExpertsExpanded,
     onUpdateExecutionProposal,
     onUpdateHandoffStatus,
     readRunTitle,
-    resolveExpertTeammate: (agentId) => channelExpertTeammateByKey.get(normalizeChannelExpertTeammateKey(agentId)),
     planActionBusyId: proposedPlanActionBusyId,
     workflowWorkCellDetailsCacheKey,
   });
@@ -3423,13 +3301,6 @@ export function WorkspaceClientView({
       }
       return { ...current, [messageId]: feedback };
     });
-  }
-
-  function toggleChannelTeamExpertsExpanded(turnId: string): void {
-    setChannelTeamExpertsExpandedByTurn((current) => ({
-      ...current,
-      [turnId]: !(current[turnId] ?? false),
-    }));
   }
 
   const channelComposerPermissionPreset = permissionPreset ?? inferPermissionPreset(permissionMode);
@@ -4483,18 +4354,6 @@ export function WorkspaceClientView({
             ),
             latestButtonNode: (
               <>
-                {conversationBackgroundToast ? (
-                  <button
-                    key={conversationBackgroundToast.id}
-                    className={`conversation-background-toast ${conversationBackgroundToast.tone}`}
-                    type="button"
-                    onClick={messageFeedState.scrollToLatest}
-                    aria-label={`${conversationBackgroundToast.message}. ${t("Jump to latest")}`}
-                  >
-                    <span role="status" aria-live="polite">{conversationBackgroundToast.message}</span>
-                    <small>{t("Jump to latest")}</small>
-                  </button>
-                ) : null}
                 {conversationBlockFeedbackNode}
                 {messageFeedState.latestButtonVisible ? (
                   <button
@@ -4693,25 +4552,6 @@ function runCanBeStoppedInComposer(
 
 function workflowStepIsTerminal(step: ChannelWorkflowStep): boolean {
   return step.status === "succeeded" || step.status === "failed" || step.status === "skipped" || step.status === "cancelled";
-}
-
-function indexChannelExpertTeammate(map: Map<string, LocalTeammateDraft>, teammate: LocalTeammateDraft): void {
-  const aliases = [
-    teammate.id,
-    teammate.displayName,
-    teammate.roleKey,
-    teammate.systemRole,
-  ];
-  for (const alias of aliases) {
-    const key = normalizeChannelExpertTeammateKey(alias);
-    if (key && !map.has(key)) {
-      map.set(key, teammate);
-    }
-  }
-}
-
-function normalizeChannelExpertTeammateKey(value: string | undefined): string {
-  return value?.trim().replace(/^@+/, "").toLowerCase() ?? "";
 }
 
 function teammateLabel(
