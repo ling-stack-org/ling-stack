@@ -519,7 +519,6 @@ function demoArtifactPreviewText(artifact: RunArtifact): string {
       "+++ b/apps/web/src/shared/conversation/blocks/ConversationWorkCell.tsx",
       "@@ -120,1 +120,5 @@",
       "+ const shellStatusLabel = operationShellStatusLabel(model, active, t);",
-      "+ const shellSummary = operationShellSummary(model, evidenceSummary);",
       "+ <div className=\"conversation-operation-shell completed tone-success collapsed\">",
       "+ <ActiveTurnItemStream rows={operationRows} />",
       "- <OperationBubble status={model.status} active={active}>",

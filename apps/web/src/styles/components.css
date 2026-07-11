@@ -3558,20 +3558,8 @@ button.message-local-file-link {
   line-height: 18px;
 }
 
-.conversation-operation-shell-summary {
-  min-width: 0;
-  overflow: hidden;
-  color: var(--conversation-text-muted);
-  font-size: 12px;
-  line-height: 18px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .conversation-operation-shell-head:hover .conversation-operation-shell-status,
-.conversation-operation-shell-head:hover .conversation-operation-shell-summary,
-.conversation-operation-shell-head:focus-visible .conversation-operation-shell-status,
-.conversation-operation-shell-head:focus-visible .conversation-operation-shell-summary {
+.conversation-operation-shell-head:focus-visible .conversation-operation-shell-status {
   color: var(--conversation-text-strong);
 }
 
