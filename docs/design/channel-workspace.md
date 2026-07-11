@@ -2822,6 +2822,8 @@ Focused e2e scenarios:
   is already at the bottom,
 - when the user scrolls away from the latest conversation item, a centered floating
   down-arrow returns the feed to the latest message without moving the composer,
+- the down-arrow is driven by the feed's real remaining scroll distance; wheel or touch
+  input at the bottom, composer resizing, and virtual-list resizing must not leave it visible,
 - task, run, approval, protocol, workflow, and state-transition cards remain actionable
   and visually distinguishable from plain chat,
 - channel English/Chinese language switching keeps tabs and composer controls readable,
