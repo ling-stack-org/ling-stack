@@ -3,6 +3,7 @@ import type { Duplex } from "node:stream";
 import { DEFAULT_WORKSPACE_ID, redactSecrets, type ControlPlaneDomain, type ControlPlaneEvent, type RunEventEnvelope, type RunSession } from "@ling-stack/core";
 import { WebSocket, WebSocketServer, type RawData } from "ws";
 import type { DaemonContext } from "../context.js";
+import { maybeScheduleRunTerminalReport } from "../features/channels/terminal-report-coordinator.js";
 import { ensureRunCancelled } from "../features/runs/cancellation.js";
 import {
   CONTROL_PLANE_POLL_DEFAULT_LIMIT,
@@ -306,6 +307,7 @@ class RpcConnection {
     if (!store) {
       return;
     }
+    maybeScheduleRunTerminalReport(store, terminalRun.id, { linkedRunId: terminalRun.id });
     const goalContinuation = maybeQueueGoalContinuation({
       terminalRun,
       store,
