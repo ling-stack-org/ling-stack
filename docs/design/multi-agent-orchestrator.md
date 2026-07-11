@@ -34,6 +34,11 @@ safe parallel defaults, isolated worktree merge protocol, and the OperationCell 
 projection. If this historical orchestrator document conflicts with that design, prefer
 the detailed design.
 
+Terminal user-facing synthesis is defined by
+[Ling Agent TerminalReport Protocol](ling-agent-terminal-report-protocol.md). The
+orchestrator owns terminal detection and evidence, but the final user result is not the
+last step `resultSummary` or a workflow-card count rollup.
+
 ## Current Implementation Status
 
 Implemented in the first backend slice:

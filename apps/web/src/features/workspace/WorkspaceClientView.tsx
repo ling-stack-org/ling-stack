@@ -58,6 +58,7 @@ import {
   getChannelTeamMetricsProjection,
   handoffChannelWorkspace,
   listChannelCollaborationCards,
+  listChannelTerminalReports,
   refreshChannelWorkspace,
 } from "../../api/channels.js";
 import { useI18n, type Translate } from "../../i18n.js";
@@ -214,6 +215,7 @@ import type {
   Task,
   TaskFormState,
   TaskRunActionState,
+  TerminalReportDto,
   TeammateChannelMembership,
   EffectiveChannelCouncilProjection,
   UpdateChannelCollaborationProtocolRequest,
@@ -325,6 +327,20 @@ interface BranchConversationActivityScope {
   readonly taskIds: ReadonlySet<string>;
   readonly workflowIds: ReadonlySet<string>;
   readonly workflowStepIds: ReadonlySet<string>;
+}
+
+function latestTerminalReportMap(
+  reports: readonly TerminalReportDto[],
+  keyOf: (report: TerminalReportDto) => string,
+): ReadonlyMap<string, TerminalReportDto> {
+  const result = new Map<string, TerminalReportDto>();
+  for (const report of [...reports].sort((left, right) => left.committedAt.localeCompare(right.committedAt))) {
+    const key = keyOf(report);
+    if (key) {
+      result.set(key, report);
+    }
+  }
+  return result;
 }
 
 function channelActivityItemBelongsToBranchConversation(
@@ -727,6 +743,7 @@ export function WorkspaceClientView({
   const [channelGitStatusState, setChannelGitStatusState] = useState<ChannelGitStatusLoadState>({ status: "idle" });
   const [selectedApprovalId, setSelectedApprovalId] = useState("");
   const [conversationWorkCellDetailsByKey, setConversationWorkCellDetailsByKey] = useState<Readonly<Record<string, ConversationWorkCellDetailsState>>>({});
+  const [channelTerminalReports, setChannelTerminalReports] = useState<readonly TerminalReportDto[]>([]);
   const [conversationThreadTurnsByKey, setConversationThreadTurnsByKey] = useState<Readonly<Record<string, ThreadTurnsLoadState>>>({});
   const [channelMoreOpen, setChannelMoreOpen] = useState(false);
   const [channelRenameOpen, setChannelRenameOpen] = useState(false);
@@ -970,6 +987,12 @@ export function WorkspaceClientView({
     () => channelWorkCellDemoFixture ? [...channelExecutionActions, ...channelWorkCellDemoFixture.executionActions] : channelExecutionActions,
     [channelExecutionActions, channelWorkCellDemoFixture],
   );
+  const terminalReportsForDisplay = useMemo(
+    () => channelWorkCellDemoFixture
+      ? [...channelTerminalReports, ...channelWorkCellDemoFixture.terminalReports]
+      : channelTerminalReports,
+    [channelTerminalReports, channelWorkCellDemoFixture],
+  );
   const channelWorkCellPreviewLoader = useMemo(
     () => async (request: PreviewRequest) => {
       const demoPreview = channelWorkCellDemoFixture
@@ -1025,6 +1048,28 @@ export function WorkspaceClientView({
       .join("|");
     return [workflowsSignature, stepsSignature, runsSignature, approvalsSignature].join("\n");
   }, [approvals, channelRuns, channelWorkflowSteps, channelWorkflows, selectedChannelId]);
+  useEffect(() => {
+    const workspaceCwd = cwd.trim();
+    if (!workspaceCwd || !selectedChannelId) {
+      setChannelTerminalReports([]);
+      return;
+    }
+    let cancelled = false;
+    void listChannelTerminalReports(workspaceCwd, selectedChannelId, { limit: 200 })
+      .then((response) => {
+        if (!cancelled) {
+          setChannelTerminalReports(response.reports);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setChannelTerminalReports([]);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [channelCollaborationCardRefreshSignature, cwd, selectedChannelId]);
   useEffect(() => {
     const workspaceCwd = cwd.trim();
     if (!workspaceCwd || !selectedChannelId) {
@@ -1087,6 +1132,18 @@ export function WorkspaceClientView({
   });
   const channelWorkThreadTreeVisible = false;
   const channelRunsByThreadId = useMemo(() => groupRunsByThreadId(channelRuns), [channelRuns]);
+  const terminalReportByWorkflowId = useMemo(
+    () => latestTerminalReportMap(terminalReportsForDisplay.filter((report) => report.source.kind === "workflow"), (report) => report.source.id),
+    [terminalReportsForDisplay],
+  );
+  const terminalReportByThreadId = useMemo(
+    () => latestTerminalReportMap(terminalReportsForDisplay.filter((report) => Boolean(report.threadId)), (report) => report.threadId ?? ""),
+    [terminalReportsForDisplay],
+  );
+  const terminalReportMessageIds = useMemo(
+    () => new Set(terminalReportsForDisplay.map((report) => `message_${report.id}`)),
+    [terminalReportsForDisplay],
+  );
   const visibleConversationThreadIds = useMemo(() => [...channelRunsByThreadId.keys()], [channelRunsByThreadId]);
   const visibleConversationThreadRunSignatures = useMemo(() => {
     const signatures = new Map<string, string>();
@@ -1114,13 +1171,14 @@ export function WorkspaceClientView({
         executionActions: channelExecutionActionsForDisplay,
         t,
         artifactHref: (artifact) => artifactContentUrl(artifact.id, cwd),
+        terminalReport: terminalReportByThreadId.get(threadId),
       });
       if (cell) {
         cells.set(threadId, cell);
       }
     }
     return cells;
-  }, [approvals, channelArtifactsByRunForDisplay, channelExecutionActionsForDisplay, channelRuns, channelRunsByThreadId, conversationThreadTurnsByKey, cwd, t]);
+  }, [approvals, channelArtifactsByRunForDisplay, channelExecutionActionsForDisplay, channelRuns, channelRunsByThreadId, conversationThreadTurnsByKey, cwd, t, terminalReportByThreadId]);
   const workflowProgressByWorkflowId = useMemo(() => {
     const cells = new Map<string, WorkflowProgressModel>();
     for (const workflow of channelWorkflowsForDisplay.filter((item) => item.channelId === selectedChannelId)) {
@@ -1137,10 +1195,11 @@ export function WorkspaceClientView({
         executionActions: channelExecutionActionsForDisplay,
         t,
         artifactHref: (artifact) => artifactContentUrl(artifact.id, cwd),
+        terminalReport: terminalReportByWorkflowId.get(workflow.id),
       }));
     }
     return cells;
-  }, [approvals, channelArtifactsByRunForDisplay, channelExecutionActionsForDisplay, channelRuns, channelWorkflowStepsForDisplay, channelWorkflowsForDisplay, cwd, selectedChannelId, t]);
+  }, [approvals, channelArtifactsByRunForDisplay, channelExecutionActionsForDisplay, channelRuns, channelWorkflowStepsForDisplay, channelWorkflowsForDisplay, cwd, selectedChannelId, t, terminalReportByWorkflowId]);
   const localCollaborationTaskCardByWorkflowId = useMemo(() => {
     const cards = new Map<string, CollaborationTaskCardModel>();
     for (const workflow of channelWorkflowsForDisplay.filter((item) => item.channelId === selectedChannelId)) {
@@ -1515,6 +1574,7 @@ export function WorkspaceClientView({
       operationCellByWorkflowId: conversationWorkCellByWorkflowId,
       operationCellByThreadId: conversationWorkCellByThreadId,
       lingAgentAuthorId: LING_AGENT_AUTHOR_ID,
+      terminalReportMessageIds,
     }),
     [
       channelExecutionProposals,
@@ -1526,6 +1586,7 @@ export function WorkspaceClientView({
       conversationWorkCellByThreadId,
       conversationWorkCellByWorkflowId,
       selectedChannelId,
+      terminalReportMessageIds,
       usedMemoryEventsForDisplay,
     ],
   );

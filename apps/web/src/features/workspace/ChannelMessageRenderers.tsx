@@ -44,6 +44,7 @@ import {
   MessageBubble,
   MessageEvidencePanel,
   MessageRow,
+  TerminalReportBlock,
   TranscriptBlockView,
   createTranscriptBlockRendererRegistry,
   renderTranscriptBlockFromRegistry,
@@ -291,7 +292,7 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
     workflow_packet_summary: renderGenericTranscriptBlock,
     requirement_shaping: renderGenericTranscriptBlock,
     decision_needed: renderGenericTranscriptBlock,
-    final_result: renderGenericTranscriptBlock,
+    final_result: renderFinalResultTranscriptBlock,
     raw_debug_ref: renderGenericTranscriptBlock,
   });
 
@@ -337,8 +338,9 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
       ? teamExpertsState.experts
       : undefined;
     const terminalSummaryRendered = conversationTurnHasTerminalSummary(turn);
-    const hasTeamExpertsSummary = Boolean(teamExperts && teamExperts.totalCount > 1);
-    const fallbackParticipationSpans = terminalSummaryRendered && !hasTeamExpertsSummary
+    const hasStructuredTerminalReport = Boolean(turn.operationCell?.terminalReportRows.length);
+    const hasTeamExpertsSummary = !hasStructuredTerminalReport && Boolean(teamExperts && teamExperts.totalCount > 1);
+    const fallbackParticipationSpans = terminalSummaryRendered && !hasStructuredTerminalReport && !hasTeamExpertsSummary
       ? uniqueAgentParticipationSpans(turn.operationCell?.agentSpans ?? [])
       : [];
     const teamExpertsExpanded = input.channelTeamExpertsExpandedByTurn[turn.sourceMessage.id] ?? false;
@@ -509,8 +511,26 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
           loadPreview={input.loadPreview}
           renderAgentAvatar={renderConversationAgentAvatar}
           showArtifactStrip={!conversationTurnHasTerminalSummary(turn)}
+          showTerminalReport={!turn.blocks.some((item) => item.kind === "final_result")}
         />
       </div>
+    );
+  }
+
+  function renderFinalResultTranscriptBlock({
+    block,
+  }: {
+    readonly turn: ConversationTurnViewModel;
+    readonly block: Extract<ConversationTranscriptBlock, { readonly kind: "final_result" }>;
+    readonly context: WorkspaceTranscriptRenderContext;
+  }): ReactNode {
+    return (
+      <TerminalReportBlock
+        key={block.id}
+        blockId={block.terminalReportId}
+        revisionKey={block.terminalReportRevisionKey}
+        rows={block.rows}
+      />
     );
   }
 
@@ -1291,7 +1311,8 @@ function isGeneratedWorkflowCoordinatorBody(body: string): boolean {
 }
 
 function conversationTurnHasTerminalSummary(turn: ConversationTurnViewModel): boolean {
-  return turn.blocks.some((block) => block.kind === "coordinator_message" && block.phase === "terminal");
+  return Boolean(turn.operationCell?.terminalReportRows.length) ||
+    turn.blocks.some((block) => block.kind === "coordinator_message" && block.phase === "terminal");
 }
 
 function uniqueAgentParticipationSpans(spans: readonly ConversationAgentActivitySpan[]): readonly ConversationAgentActivitySpan[] {

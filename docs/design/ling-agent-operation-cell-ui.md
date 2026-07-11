@@ -18,6 +18,7 @@ Related docs:
 - [Conversation Work Cell Operation Records](conversation-work-cell-operation-records.md)
 - [Conversation Operation Bubble And Performance Store](conversation-operation-bubble-and-performance-store.md)
 - [Conversation Performance Deferral And Virtualization](conversation-performance-deferral-and-virtualization.md)
+- [Ling Agent TerminalReport Protocol](ling-agent-terminal-report-protocol.md)
 
 ## Summary
 
@@ -41,6 +42,10 @@ Ling Agent transcript
     OperationCell / AgentActivitySpan / ArtifactStrip as needed
     terminal result text, when there is a result to summarize
 ```
+
+Terminal result content must consume the structured `TerminalReport` contract. The UI
+must not reconstruct outcome, changes, verification, participants, artifacts, or risks
+from final prose or from the last workflow-step summary.
 
 It should not read like this:
 

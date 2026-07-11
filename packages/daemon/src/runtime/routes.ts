@@ -629,7 +629,9 @@ function isWorkUnitStatus(value: string): value is WorkUnitStatus {
 function isWorkUnitKind(value: string): value is WorkUnitKind {
   return (
     value === "task_run" ||
+    value === "conversation_run" ||
     value === "channel_ai_reply" ||
+    value === "channel_terminal_report" ||
     value === "teammate_direct_reply" ||
     value === "external_work_step" ||
     value === "external_work_action" ||

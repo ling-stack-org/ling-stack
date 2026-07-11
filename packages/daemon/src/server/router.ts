@@ -38,6 +38,8 @@ import { handleChannelMessagesCollection, handleChannelMessageStream } from "../
 import { confirmChannelExecutionProposalWorkflow } from "../features/channels/proposal-workflows.js";
 import { handleChannelTeamExpertsProjection } from "../features/channels/team-experts.js";
 import { handleChannelTeamMetricsProjection } from "../features/channels/team-metrics.js";
+import { handleChannelTerminalReports, handleTerminalReportItem, handleTerminalReportsCollection } from "../features/channels/terminal-report-routes.js";
+import { maybeScheduleRunTerminalReport } from "../features/channels/terminal-report-coordinator.js";
 import { handleChannelTeamAuthorityLedger } from "../features/channels/team-authority-ledger.js";
 import { handleChannelTeamPatterns } from "../features/channels/team-patterns.js";
 import {
@@ -274,6 +276,7 @@ import {
   parseTeammateDirectInterventionRoute,
   parseTeammateDirectReplyRoute,
   parseTeammateRoute,
+  parseTerminalReportRoute,
   parseTraceRoute,
   parseWorkItemRoute,
   parseWorkUnitRoute,
@@ -331,6 +334,7 @@ export async function routeRequest(
     if (!store) {
       return;
     }
+    maybeScheduleRunTerminalReport(store, terminalRun.id, { linkedRunId: terminalRun.id });
     const goalContinuation = maybeQueueGoalContinuation({
       terminalRun,
       store,
@@ -361,6 +365,7 @@ export async function routeRequest(
           autoRoute: config.channels.autoRoute === true,
           intentSelector: config.channels.intentSelector === true,
           teamObserverBus: config.channels.teamObserverBus === true,
+          terminalReports: config.channels.terminalReports === true,
         },
         transports: {
           providerWebSocketFallback: config.transports.providerWebSocketFallback === true,
@@ -387,6 +392,17 @@ export async function routeRequest(
 
   if (url.pathname === "/channels") {
     await handleChannelsCollection(request, response, config, storeRegistry);
+    return;
+  }
+
+  if (url.pathname === "/terminal-reports") {
+    await handleTerminalReportsCollection(request, response, config, storeRegistry);
+    return;
+  }
+
+  const terminalReportRoute = parseTerminalReportRoute(url.pathname);
+  if (terminalReportRoute) {
+    await handleTerminalReportItem(request, response, config, storeRegistry, terminalReportRoute.reportId);
     return;
   }
 
@@ -1662,6 +1678,10 @@ export async function routeRequest(
     }
     if (channelRoute.action === "collaboration-cards") {
       await handleChannelCollaborationCardsCollection(request, response, config, storeRegistry, channelRoute.channelId);
+      return;
+    }
+    if (channelRoute.action === "terminal-reports") {
+      await handleChannelTerminalReports(request, response, config, storeRegistry, channelRoute.channelId);
       return;
     }
     if (channelRoute.action === "team-experts") {

@@ -24,6 +24,8 @@ export interface ConversationWorkCellRow {
   readonly id: string;
   readonly kind?: ConversationOperationKind;
   readonly presentation?: "default" | "shell" | "note";
+  readonly reportSection?: "outcome" | "correction" | "change" | "verification" | "participant" | "risk";
+  readonly participantId?: string;
   readonly title: string;
   readonly description?: string;
   readonly meta?: string;
@@ -131,6 +133,8 @@ export interface ConversationOperationCellViewModel {
   readonly agentSpans: readonly ConversationAgentActivitySpan[];
   /** @deprecated Use agentSpans. Kept while call sites migrate. */
   readonly agentBranches: readonly ConversationWorkCellBranch[];
+  readonly terminalReportId?: string;
+  readonly terminalReportRevisionKey?: string;
   readonly terminalReportRows: readonly ConversationWorkCellRow[];
   /** @deprecated Use operationRows. Kept while call sites migrate. */
   readonly activeRows: readonly ConversationWorkCellRow[];

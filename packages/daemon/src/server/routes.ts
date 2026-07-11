@@ -326,7 +326,7 @@ export function parseChannelRoute(
   pathname: string,
 ): {
   readonly channelId: string;
-  readonly action?: "brief" | "messages" | "messages-stream" | "message-route-decisions" | "intent-decisions" | "proposals" | "attachments" | "link-previews" | "decisions" | "handoffs" | "context-summaries" | "workflows" | "collaboration-cards" | "team-experts" | "team-metrics" | "team-authority-ledger" | "team-patterns" | "team-snapshots" | "team-evaluations" | "workspace" | "protocol" | "playbooks" | "branches" | "council-policy" | "effective-council" | "proposed-plans";
+  readonly action?: "brief" | "messages" | "messages-stream" | "message-route-decisions" | "intent-decisions" | "proposals" | "attachments" | "link-previews" | "decisions" | "handoffs" | "context-summaries" | "workflows" | "collaboration-cards" | "terminal-reports" | "team-experts" | "team-metrics" | "team-authority-ledger" | "team-patterns" | "team-snapshots" | "team-evaluations" | "workspace" | "protocol" | "playbooks" | "branches" | "council-policy" | "effective-council" | "proposed-plans";
   readonly branchId?: string;
   readonly protocolAction?: "revert" | "drafts" | "apply-draft" | "candidates" | "review-candidate" | "candidate-from-cluster" | "canvas";
   readonly protocolDraftId?: string;
@@ -351,6 +351,9 @@ export function parseChannelRoute(
   }
   if (segments.length === 3 && segments[0] === "channels" && segments[2] === "proposed-plans") {
     return { channelId: segments[1], action: "proposed-plans" };
+  }
+  if (segments.length === 3 && segments[0] === "channels" && segments[2] === "terminal-reports") {
+    return { channelId: segments[1], action: "terminal-reports" };
   }
   if (segments.length === 4 && segments[0] === "channels" && segments[2] === "messages" && segments[3] === "stream") {
     return { channelId: segments[1], action: "messages-stream" };
@@ -595,6 +598,14 @@ export function parseChannelDecisionRoute(pathname: string): { readonly decision
   const segments = pathname.split("/").filter(Boolean).map(decodeURIComponent);
   if (segments.length === 2 && segments[0] === "decisions") {
     return { decisionId: segments[1] };
+  }
+  return undefined;
+}
+
+export function parseTerminalReportRoute(pathname: string): { readonly reportId: string } | undefined {
+  const segments = pathname.split("/").filter(Boolean).map(decodeURIComponent);
+  if (segments.length === 2 && segments[0] === "terminal-reports") {
+    return { reportId: segments[1] };
   }
   return undefined;
 }

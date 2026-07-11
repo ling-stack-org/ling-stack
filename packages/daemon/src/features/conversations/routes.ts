@@ -39,6 +39,7 @@ import type { RunExecutionSink } from "../runs/orchestrator.js";
 import type { RunRequest } from "../runs/schemas.js";
 import { materializeInlineConversationAttachments, type ConversationAttachmentMaterialization } from "./materialization.js";
 import { lingConversationToneInstruction } from "./conversation-tone.js";
+import { projectTerminalReportDto } from "../channels/terminal-report-routes.js";
 
 type StartConversationRun = (runRequest: RunRequest, sink: RunExecutionSink) => Promise<string | undefined>;
 
@@ -304,6 +305,9 @@ export function buildConversationDetail(store: RunStore, cwd: string, thread: Li
     thread,
     turns,
     runs,
+    terminalReports: store.listTerminalReports({ threadId: thread.id, limit: 200 })
+      .filter((record) => Boolean(record.report) && (record.status === "committed" || record.status === "fallback"))
+      .map((record) => projectTerminalReportDto(record.report!)),
     messages,
     defaults: {
       projectPath: readOptionalRecordString(latestSnapshot, "projectPath") || latestProjectPath,

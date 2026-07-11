@@ -9,9 +9,12 @@ import type {
   RunExecutionStoreFacet,
   RunIntervention,
   RunSession,
+  TerminalReportCheckStatus,
+  TerminalReportStoreFacet,
+  LingTerminalReportRecord,
 } from "@ling-stack/core";
 
-type LingAgentSessionViewStore = ChannelStoreFacet & RunExecutionStoreFacet & ApprovalStoreFacet;
+type LingAgentSessionViewStore = ChannelStoreFacet & RunExecutionStoreFacet & ApprovalStoreFacet & TerminalReportStoreFacet;
 
 export type LingAgentSessionViewStatus =
   | "open"
@@ -112,6 +115,7 @@ interface LingAgentSessionViewSource {
   readonly approvals: readonly ApprovalRequest[];
   readonly interventions: readonly RunIntervention[];
   readonly artifactsByRun?: Readonly<Record<string, readonly RunArtifact[]>>;
+  readonly terminalReports?: readonly LingTerminalReportRecord[];
 }
 
 export function buildLingAgentSessionViewForChannel(input: {
@@ -141,6 +145,7 @@ export function buildLingAgentSessionViewForChannel(input: {
   );
   const interventions = runs.flatMap((run) => input.store.listRunInterventions({ sourceRunId: run.id, limit: 100 }));
   const artifactsByRun = Object.fromEntries(runs.map((run) => [run.id, input.store.listArtifacts(run.id)]));
+  const terminalReports = input.store.listTerminalReports({ channelId: input.channelId, limit: 100 });
   return buildLingAgentSessionView({
     channelId: input.channelId,
     workspaceId: proposals[0]?.workspaceId ?? workflows[0]?.workspaceId ?? interventions[0]?.workspaceId,
@@ -151,6 +156,7 @@ export function buildLingAgentSessionViewForChannel(input: {
     approvals,
     interventions,
     artifactsByRun,
+    terminalReports,
   });
 }
 
@@ -172,9 +178,17 @@ export function buildLingAgentSessionView(input: LingAgentSessionViewSource): Li
   const workflowApprovals = primaryWorkflow ? approvalsForWorkflow(input.approvals, workflowSteps) : [];
   const runApprovals = primaryRun ? approvalsForRun(input.approvals, primaryRun.id) : [];
   const artifactsByRun = input.artifactsByRun ?? {};
+  const terminalReport = terminalWorkflow
+    ? latestTerminalReportForSource(input.terminalReports ?? [], "workflow", terminalWorkflow.id)
+    : terminalRun
+      ? latestTerminalReportForSource(input.terminalReports ?? [], "run", terminalRun.id)
+      : undefined;
+  const terminalReportPending = terminalReport?.status === "draft" || terminalReport?.status === "validating";
   const finalResult = activeWorkflow || activeRun
     ? undefined
-    : terminalWorkflow
+    : terminalReport?.report
+      ? buildTerminalReportFinalResult(terminalReport)
+      : terminalWorkflow
       ? buildWorkflowFinalResult(terminalWorkflow, workflowSteps, workflowRuns, workflowApprovals, artifactsByRun)
       : terminalRun
         ? buildRunFinalResult(terminalRun, runApprovals, artifactsByRun[terminalRun.id] ?? [])
@@ -187,6 +201,7 @@ export function buildLingAgentSessionView(input: LingAgentSessionViewSource): Li
     terminalRun,
     pendingApprovals,
     finalResult,
+    terminalReportPending,
   });
   const confirmation = draftProposal ? buildConfirmationView(draftProposal) : undefined;
   const progress = activeWorkflow
@@ -230,6 +245,7 @@ function resolveSessionStatus(input: {
   readonly terminalRun?: RunSession;
   readonly pendingApprovals: readonly ApprovalRequest[];
   readonly finalResult?: LingAgentFinalResultView;
+  readonly terminalReportPending?: boolean;
 }): LingAgentSessionViewStatus {
   if (input.pendingApprovals.length > 0 || input.activeWorkflow?.status === "waiting_for_approval" || input.activeRun?.status === "waiting_for_approval") {
     return "waiting_for_approval";
@@ -240,6 +256,9 @@ function resolveSessionStatus(input: {
   if (input.draftProposal) {
     return "ready_for_confirmation";
   }
+  if (input.terminalReportPending) {
+    return "reporting";
+  }
   if (input.finalResult) {
     return input.finalResult.outcome;
   }
@@ -247,6 +266,68 @@ function resolveSessionStatus(input: {
     return "reporting";
   }
   return "open";
+}
+
+function buildTerminalReportFinalResult(record: LingTerminalReportRecord): LingAgentFinalResultView {
+  const report = record.report;
+  if (!report) {
+    throw new Error(`Terminal report content is missing: ${record.id}`);
+  }
+  return {
+    title: report.outcome.title,
+    summary: report.outcome.summary,
+    outcome: report.outcome.status === "partially_succeeded" ? "blocked" : report.outcome.status,
+    changedPaths: uniqueStrings(report.changes.flatMap((change) => change.paths)),
+    artifactIds: uniqueStrings(report.artifacts.map((artifact) => artifact.id)),
+    checks: report.verification.map((verification) => ({
+      id: verification.id,
+      title: verification.title,
+      status: terminalReportCheckStatus(verification.status),
+      summary: verification.summary,
+    })),
+    approvals: record.evidenceSnapshot.approvals.map((approval) => ({
+      approvalId: approval.id,
+      actionType: approval.actionType as ApprovalRequest["actionType"],
+      status: approval.status,
+      title: approval.title,
+    })),
+    nextActions: uniqueStrings(report.risks
+      .filter((risk) => risk.status === "unresolved" || risk.status === "unverified")
+      .map((risk) => risk.nextAction ?? risk.summary)),
+    evidenceRefs: uniqueEvidenceRefs([
+      { type: report.source.kind === "workflow" ? "workflow" : "run", id: report.source.id, label: report.outcome.title },
+      ...record.evidenceSnapshot.steps.map((step) => ({ type: "workflow_step" as const, id: step.id, label: step.title })),
+      ...record.evidenceSnapshot.participants.flatMap((participant) => participant.runIds.map((runId) => ({ type: "run" as const, id: runId, label: participant.displayName }))),
+    ]),
+  };
+}
+
+function terminalReportCheckStatus(
+  status: TerminalReportCheckStatus,
+): LingAgentResultCheck["status"] {
+  if (status === "passed") {
+    return "succeeded";
+  }
+  if (status === "failed") {
+    return "failed";
+  }
+  if (status === "cancelled") {
+    return "cancelled";
+  }
+  if (status === "skipped") {
+    return "skipped";
+  }
+  return "blocked";
+}
+
+function latestTerminalReportForSource(
+  reports: readonly LingTerminalReportRecord[],
+  sourceKind: LingTerminalReportRecord["sourceKind"],
+  sourceId: string,
+): LingTerminalReportRecord | undefined {
+  return reports
+    .filter((report) => report.sourceKind === sourceKind && report.sourceId === sourceId)
+    .sort((left, right) => right.generation - left.generation)[0];
 }
 
 function buildConfirmationView(proposal: ChannelExecutionProposal): LingAgentConfirmationView {

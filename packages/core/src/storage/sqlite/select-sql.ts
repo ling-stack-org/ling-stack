@@ -226,6 +226,38 @@ export function lingTurnSelectSql(whereClause: string): string {
   `;
 }
 
+export function terminalReportSelectSql(whereClause: string): string {
+  return `
+    SELECT
+      id,
+      workspace_id,
+      channel_id,
+      thread_id,
+      turn_id,
+      source_message_id,
+      source_kind,
+      source_id,
+      generation,
+      status,
+      outcome_status,
+      language,
+      evidence_snapshot_json,
+      evidence_fingerprint,
+      report_json,
+      synthesis_mode,
+      prompt_version,
+      attempt_count,
+      validation_codes_json,
+      published_message_id,
+      error_code,
+      created_at,
+      updated_at,
+      committed_at
+    FROM ling_terminal_reports
+    ${whereClause}
+  `;
+}
+
 export function automationDefinitionSelectSql(whereClause: string): string {
   return `
     SELECT

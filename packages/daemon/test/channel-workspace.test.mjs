@@ -10960,7 +10960,7 @@ function testDaemonConfig(cwd) {
     defaultWorkspaceCwd: cwd,
     runners: {},
     runtimeTools: {},
-    channels: { autoRoute: false, intentSelector: false },
+    channels: { autoRoute: false, intentSelector: false, terminalReports: false },
   };
 }
 
@@ -10984,7 +10984,7 @@ async function startDaemonForTest(runner, dependencies = {}, config = {}) {
     host: "127.0.0.1",
     port: 0,
     ...restConfig,
-    channels: { intentSelector: false, ...channels },
+    channels: { intentSelector: false, terminalReports: false, ...channels },
   }, {
     ...dependencies,
     ...(runner ? { runner } : {}),

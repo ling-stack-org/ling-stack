@@ -30,6 +30,16 @@ import {
   type ListChannelInputMaterializationsOptions,
 } from "../input-materialization-types.js";
 import type {
+  CommitLingTerminalReportInput,
+  CreateLingTerminalReportInput,
+  FailLingTerminalReportInput,
+  LingTerminalReportRecord,
+  ListLingTerminalReportsOptions,
+  MarkLingTerminalReportPublishedInput,
+  TerminalReportSourceKind,
+  UpdateLingTerminalReportDraftInput,
+} from "../terminal-report-types.js";
+import type {
   AvailabilityIncident,
   ChannelTeamEvidenceItem,
   ChannelTeamEvaluationRun,
@@ -457,6 +467,7 @@ import { SqliteLingThreadMetadataCoordinator } from "./sqlite/ling-thread-metada
 import { SqliteLingThreadSearchStore } from "./sqlite/ling-thread-search-store.js";
 import { SqliteLingThreadStore } from "./sqlite/ling-thread-store.js";
 import { SqliteLingTurnStore } from "./sqlite/ling-turn-store.js";
+import { SqliteTerminalReportStore } from "./sqlite/terminal-report-store.js";
 import { SqliteStateTransitionStore } from "./sqlite/state-transition-store.js";
 import { SqliteResourceLeaseStore } from "./sqlite/resource-lease-store.js";
 import { SqliteRuntimeSemaphoreStore } from "./sqlite/runtime-semaphore-store.js";
@@ -529,6 +540,7 @@ export class SqliteRunStore implements RunStore {
   private readonly lingThreadSearch: SqliteLingThreadSearchStore;
   private readonly lingThreads: SqliteLingThreadStore;
   private readonly lingTurns: SqliteLingTurnStore;
+  private readonly terminalReports: SqliteTerminalReportStore;
   private readonly stateTransitions: SqliteStateTransitionStore;
   private readonly resourceLeases: SqliteResourceLeaseStore;
   private readonly runtimeSemaphores: SqliteRuntimeSemaphoreStore;
@@ -645,6 +657,7 @@ export class SqliteRunStore implements RunStore {
         rebuildLingThreadMetadataForTurn: (turnId, now) => this.tryRebuildLingThreadMetadataForTurn(turnId, now),
       },
     );
+    this.terminalReports = new SqliteTerminalReportStore({ database: this.database });
     this.lingThreadMetadata = new SqliteLingThreadMetadataCoordinator(
       { database: this.database },
       {
@@ -1065,6 +1078,43 @@ export class SqliteRunStore implements RunStore {
 
   reconcileLingTurnStatus(turnId: string, now: string): LingTurn | undefined {
     return this.lingTurns.reconcileLingTurnStatus(turnId, now);
+  }
+
+  createTerminalReportDraft(input: CreateLingTerminalReportInput, now: string): LingTerminalReportRecord {
+    return this.terminalReports.createTerminalReportDraft(input, now);
+  }
+
+  getTerminalReport(id: string): LingTerminalReportRecord | undefined {
+    return this.terminalReports.getTerminalReport(id);
+  }
+
+  getTerminalReportForSource(
+    sourceKind: TerminalReportSourceKind,
+    sourceId: string,
+    generation = 1,
+    workspaceId?: string,
+  ): LingTerminalReportRecord | undefined {
+    return this.terminalReports.getTerminalReportForSource(sourceKind, sourceId, generation, workspaceId);
+  }
+
+  listTerminalReports(options: ListLingTerminalReportsOptions = {}): LingTerminalReportRecord[] {
+    return this.terminalReports.listTerminalReports(options);
+  }
+
+  updateTerminalReportDraft(input: UpdateLingTerminalReportDraftInput): LingTerminalReportRecord {
+    return this.terminalReports.updateTerminalReportDraft(input);
+  }
+
+  commitTerminalReport(input: CommitLingTerminalReportInput): LingTerminalReportRecord {
+    return this.terminalReports.commitTerminalReport(input);
+  }
+
+  markTerminalReportPublished(input: MarkLingTerminalReportPublishedInput): LingTerminalReportRecord {
+    return this.terminalReports.markTerminalReportPublished(input);
+  }
+
+  failTerminalReport(input: FailLingTerminalReportInput): LingTerminalReportRecord {
+    return this.terminalReports.failTerminalReport(input);
   }
 
   createRun(input: CreateRunInput): RunSession {

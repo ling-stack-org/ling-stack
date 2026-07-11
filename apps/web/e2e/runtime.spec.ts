@@ -444,7 +444,7 @@ test("failed provider runs route repair back to Model Workbench", async ({ page 
   await expect(page.getByRole("heading", { name: "Model Workbench", level: 1 })).toBeVisible();
   await expect(page.getByText("Next: repair Auth Failed Gateway check failure")).toBeVisible();
   const failedProviderRow = page.getByRole("row").filter({ hasText: "Auth Failed Gateway" });
-  await expect(failedProviderRow).toContainText("auth failed");
+  await expect(failedProviderRow).toContainText(/auth failed/i);
   await expect(failedProviderRow.getByRole("button", { name: "Check" })).toBeVisible();
   await expect(failedProviderRow.getByRole("button", { name: "More" })).toBeVisible();
 });

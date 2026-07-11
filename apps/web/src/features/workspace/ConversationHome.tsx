@@ -23,7 +23,7 @@ import {
 } from "lucide-react";
 import { attachmentContentUrl, deleteAttachment, uploadConversationAttachment } from "../../api.js";
 import { useI18n } from "../../i18n.js";
-import type { ConversationAttachment, ConversationTranscriptStatus, LingTurn, PermissionPreset, ProviderThinkingMode, RunSession, SessionPermissionMode } from "../../types.js";
+import type { ConversationAttachment, ConversationTranscriptStatus, LingTurn, PermissionPreset, ProviderThinkingMode, RunSession, SessionPermissionMode, TerminalReportDto } from "../../types.js";
 import {
   createAttachmentPreviewUrl,
   createLocalComposerAssetId,
@@ -109,6 +109,7 @@ export interface ConversationHomeDetailContext {
   readonly threadId?: string;
   readonly turns: readonly LingTurn[];
   readonly runs: readonly RunSession[];
+  readonly terminalReports: readonly TerminalReportDto[];
 }
 
 export interface ConversationHomeSendInput {
@@ -988,6 +989,10 @@ export function ConversationHome({
             renderItem={(message) => {
               const messageFeedback = messageFeedbackById[message.id];
               const linkedRun = message.runId ? runById.get(message.runId) : undefined;
+              const terminalReport = detailContext?.terminalReports.find((report) =>
+                (message.turnId && report.source.kind === "turn" && report.source.id === message.turnId) ||
+                (message.runId && report.source.kind === "run" && report.source.id === message.runId)
+              );
               const errorText = normalConversationMessageErrorText(message, linkedRun?.status);
               const workCell = message.role === "assistant" && message.threadId && linkedRun ? buildConversationWorkCellViewModel({
                 threadId: message.threadId,
@@ -997,14 +1002,16 @@ export function ConversationHome({
                 approvals: [],
                 artifactsByRun: {},
                 t,
+                terminalReport,
               }) : undefined;
+              const hasStructuredTerminalReport = Boolean(workCell?.terminalReportRows.length);
               return (
                 <MessageRow
                   className={normalConversationMessageClassName(message)}
                   authorType={conversationMessageAuthorType(message)}
                   authorName={conversationMessageAuthorName(message, t)}
                   createdAtLabel={formatConversationTimeLabel(message.createdAt)}
-                  body={errorText ? "" : message.content || (message.status === "running" ? t("Ling Agent is thinking...") : "")}
+                  body={errorText || hasStructuredTerminalReport ? "" : message.content || (message.status === "running" ? t("Ling Agent is thinking...") : "")}
                   bodyCompact
                   bodyStreaming={message.status === "running" || message.status === "pending"}
                   attachmentsNode={message.attachments && message.attachments.length > 0 ? (

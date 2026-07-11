@@ -4,6 +4,7 @@ import type { ResponseLanguagePreference } from "./settings.js";
 import type { RunEventEnvelope, RunSession } from "./runtime.js";
 import type { LingThread } from "./threads.js";
 import type { LingTurn } from "./turns.js";
+import type { TerminalReportDto } from "./terminal-reports.js";
 
 export type ConversationTranscriptRole = "user" | "assistant" | "system";
 export type ConversationTranscriptStatus = "pending" | "running" | "succeeded" | "failed" | "blocked" | "cancelled";
@@ -73,6 +74,7 @@ export interface ConversationDetailResponse {
   readonly thread: LingThread;
   readonly turns: readonly LingTurn[];
   readonly runs: readonly RunSession[];
+  readonly terminalReports: readonly TerminalReportDto[];
   readonly messages: readonly ConversationTranscriptMessage[];
   readonly defaults: {
     readonly projectPath?: string;

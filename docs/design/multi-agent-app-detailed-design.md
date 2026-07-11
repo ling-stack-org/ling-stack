@@ -13,6 +13,7 @@ Related docs:
 - [Channel Context Processing Layer](channel-context-processing-layer.md)
 - [Runtime Control Plane Detailed Design](runtime-control-plane-detailed-design.md)
 - [Runner Adapters](runner-adapters.md)
+- [Ling Agent TerminalReport Protocol](ling-agent-terminal-report-protocol.md)
 
 ## Purpose
 
@@ -117,6 +118,10 @@ their approval, workspace, artifact, resume, and conformance gates pass.
 | Step execution | Task/run coordinator + runner | run, events, artifacts, approvals | agent spans / progress rows |
 | Fan-in | Orchestrator | fan-in summary artifact and output packet refs | branch summary row |
 | Terminal summary | Ling coordinator | final coordinator message and evidence refs | compact final operation cell |
+
+Terminal summary uses the canonical `TerminalReport` protocol. Step-local runner text,
+fan-in summaries, and output packets are evidence inputs; the last completed step does
+not own the workflow-wide user result.
 
 The stage boundary matters because each stage has different authority. Requirement
 shaping can decide what to do. Step execution can run tools only through normal run

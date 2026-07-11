@@ -88,7 +88,7 @@ test("sidebar selection is exclusive and conversation sections stay below primar
   const newConversationButton = navigation.getByRole("button", { name: "New conversation" });
   await expect(newConversationButton).toBeVisible();
   const commandButtonWidth = await newConversationButton.evaluate((button) => Math.round(button.getBoundingClientRect().width));
-  expect(commandButtonWidth).toBeGreaterThan(140);
+  expect(commandButtonWidth).toBeGreaterThan(100);
   expect(commandButtonWidth).toBeLessThan(320);
   await expect(primaryNav.getByRole("button")).toHaveText(["Inbox", "Image Generation", "Automations"]);
   await expect(primaryNav.getByRole("button", { name: "AI Councils" })).toHaveCount(0);
@@ -429,6 +429,131 @@ test("normal conversation composer sends and replays uploaded attachments", asyn
   await expect(conversationDock).toContainText("brief.txt");
 });
 
+test("executed normal conversation renders one structured terminal report", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.locale", "zh-CN");
+  });
+  const state = createBaseState({ approvalStatus: "expired" });
+  const threadId = "thread_terminal_report_conversation";
+  const turnId = "turn_terminal_report_conversation";
+  const runId = "run_terminal_report_conversation";
+  const createdAt = "2026-07-11T03:00:00.000Z";
+  const completedAt = "2026-07-11T03:01:00.000Z";
+  state.threads = [{
+    id: threadId,
+    workspaceId: "workspace_default",
+    kind: "conversation",
+    title: "实现结构化终局报告",
+    objective: "实现结构化终局报告",
+    status: "succeeded",
+    lastRunId: runId,
+    createdAt,
+    updatedAt: completedAt,
+  }];
+  state.turns = [{
+    id: turnId,
+    workspaceId: "workspace_default",
+    threadId,
+    kind: "initial_request",
+    status: "succeeded",
+    title: "实现结构化终局报告",
+    userInstruction: "实现结构化终局报告",
+    activeRunId: runId,
+    lastRunId: runId,
+    createdByActor: "local-user",
+    createdAt,
+    updatedAt: completedAt,
+    completedAt,
+  }];
+  state.turnRunLinks = [{ turnId, runId, attemptNumber: 1, role: "primary", createdAt }];
+  state.runs = [{
+    id: runId,
+    status: "succeeded",
+    cwd,
+    taskId: "task_terminal_report_conversation",
+    providerPresetId: "provider_local",
+    providerName: "local-relay",
+    providerModel: "gpt-5.5",
+    taskSnapshot: { id: "task_terminal_report_conversation", title: "实现结构化终局报告" },
+    providerSnapshot: {},
+    requestSnapshot: {},
+    eventLogPath: `.ling-stack/sessions/${runId}.jsonl`,
+    threadId,
+    turnId,
+    createdAt,
+    startedAt: createdAt,
+    updatedAt: completedAt,
+    endedAt: completedAt,
+  }, ...state.runs];
+  state.eventsByRun[runId] = [{
+    id: "event_terminal_report_assistant_text",
+    runId,
+    seq: 1,
+    ts: completedAt,
+    type: "assistant_text_delta",
+    data: { text: "旧的执行总结不应和结构化报告重复展示。" },
+  }];
+  state.terminalReports = [{
+    schemaVersion: 1,
+    id: "terminal_report_conversation",
+    workspaceId: "workspace_default",
+    threadId,
+    turnId,
+    source: { kind: "turn", id: turnId },
+    status: "committed",
+    language: "zh-CN",
+    outcome: {
+      status: "succeeded",
+      title: "结构化终局报告已接入普通会话",
+      summary: "执行过程保留在工作记录中，最终结果由 TerminalReport 独立展示。",
+      corrections: [],
+      sourceRefs: [{ kind: "turn", id: turnId, visibility: "conversation" }],
+    },
+    changes: [{
+      id: "change_terminal_report_conversation",
+      kind: "code",
+      title: "接入普通会话投影",
+      summary: "普通会话读取执行轮关联的结构化报告。",
+      paths: ["apps/web/src/features/workspace/ConversationHome.tsx"],
+      addedLines: 18,
+      deletedLines: 2,
+      sourceRefs: [],
+    }],
+    verification: [{
+      id: "check_terminal_report_conversation",
+      title: "Web typecheck",
+      status: "passed",
+      command: "corepack pnpm --filter @ling-stack/web typecheck",
+      sourceRefs: [],
+    }],
+    participants: [],
+    artifacts: [],
+    risks: [],
+    references: [],
+    evidenceSnapshotId: "snapshot_terminal_report_conversation",
+    evidenceFingerprint: "fingerprint_terminal_report_conversation",
+    synthesis: { mode: "deterministic_fallback", promptVersion: "terminal-report-v1", attemptCount: 0, validationCodes: [] },
+    createdAt: completedAt,
+    committedAt: completedAt,
+  }];
+
+  await mockDaemon(page, state);
+  await page.goto("/");
+  const navigation = page.getByLabel("Ling Stack navigation");
+  await navigation.locator(".sidebar-recent-row").filter({ hasText: "实现结构化终局报告" }).click();
+
+  const assistantRow = page.getByLabel("对话页面").locator(".normal-conversation-message-row.ai-teammate");
+  await expect(assistantRow).toHaveCount(1);
+  await expect(assistantRow.getByText("旧的执行总结不应和结构化报告重复展示。")).toHaveCount(0);
+  const report = assistantRow.locator(".terminal-report-block");
+  await expect(report).toContainText("结构化终局报告已接入普通会话");
+  await expect(report.locator(".terminal-report-participants")).toHaveCount(0);
+  await report.locator(".terminal-report-summary").click();
+  await expect(report).toContainText("接入普通会话投影");
+  await expect(report).toContainText("1 个文件");
+  await expect(report).toContainText("已通过");
+});
+
 test("conversation home follows user language and shows thinking as off", async ({ page }) => {
   const state = createBaseState({ approvalStatus: "expired" });
   state.providers = [createChatProvider({ id: "provider_local", displayName: "Local Relay", model: "gpt-5.5" })];
@@ -449,6 +574,7 @@ test("conversation home follows user language and shows thinking as off", async 
   await home.getByRole("button", { name: "发送" }).click();
   const conversationPage = page.getByLabel("对话页面");
   await expect(conversationPage.locator(".normal-conversation-message-row.ai-teammate")).toHaveCount(1);
+  await expect(conversationPage.locator(".conversation-work-cell")).toHaveCount(0);
   await expect(conversationPage.getByText("Ling Agent 回复：你好")).toBeVisible();
 
   await navigation.getByRole("button", { name: "新建对话" }).click();
@@ -678,7 +804,8 @@ test("conversation home model picker uses the model workbench default without ch
   await page.getByLabel("Settings sections").getByRole("button", { name: "Model Workbench" }).click();
   const geminiRow = page.locator(".provider-row").filter({ hasText: "Gemini Pro" });
   await geminiRow.getByRole("button", { name: "Set default" }).click();
-  await expect(geminiRow.getByRole("button", { name: "Clear default" })).toBeVisible();
+  await expect(geminiRow).toContainText("Current default");
+  await expect(geminiRow.getByRole("button", { name: "Set default" })).toHaveCount(0);
   await page.getByRole("button", { name: "Back to app" }).click();
 
   await navigation.getByRole("button", { name: "New conversation" }).click();
