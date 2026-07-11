@@ -17,7 +17,6 @@ import type { ConversationWorkCellViewModel } from "../../lib/conversation-work-
 import type {
   ConversationTurnViewModel,
 } from "../../lib/conversation-turn-projector.js";
-import type { Translate } from "../../i18n.js";
 import {
   ConversationVirtualFeed,
   ConversationViewProvider,
@@ -50,12 +49,6 @@ export interface PendingChannelSendPreview {
   readonly createdAt: string;
 }
 
-export interface ChannelMessageFeedToast {
-  readonly id: number;
-  readonly tone: "success" | "info" | "error";
-  readonly message: string;
-}
-
 interface MessageFeedAnchorSnapshot {
   readonly itemId: string;
   readonly offsetTop: number;
@@ -78,8 +71,6 @@ interface UseChannelMessageFeedInput {
   readonly latestVisibleItemId: string;
   readonly renderableItemCount: number;
   readonly restoreBlockedUntilRef: RefObject<number>;
-  readonly t: Translate;
-  readonly onBackgroundToast: (toast: ChannelMessageFeedToast) => void;
   readonly onLoadOlder: () => void | Promise<void>;
 }
 
@@ -126,13 +117,11 @@ export function useChannelMessageFeed({
   latestVisibleItemId,
   loading,
   loadingOlder,
-  onBackgroundToast,
   onLoadOlder,
   protocolLoading,
   renderableItemCount,
   restoreBlockedUntilRef,
   tailDependencyKey,
-  t,
 }: UseChannelMessageFeedInput): ChannelMessageFeedState {
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const pinnedToLatestRef = useRef(true);
@@ -141,8 +130,8 @@ export function useChannelMessageFeed({
   const visibleAnchorRef = useRef<MessageFeedAnchorSnapshot | undefined>();
   const olderLoadArmedRef = useRef(true);
   const olderLoadSnapshotRef = useRef<OlderLoadAnchorSnapshot | undefined>();
-  const backgroundToastLatestItemRef = useRef("");
   const [latestButtonVisible, setLatestButtonVisible] = useState(false);
+  const [resetRevision, setResetRevision] = useState(0);
 
   const virtualizer = useVirtualizer({
     count: items.length,
@@ -153,10 +142,6 @@ export function useChannelMessageFeed({
   });
   const virtualRows = virtualizer.getVirtualItems();
   const totalSize = virtualizer.getTotalSize();
-  const tailRenderSignature = useMemo(
-    () => channelMessageFeedItemRenderSignature(items.at(-1)),
-    [items],
-  );
   const renderSignature = useMemo(
     () => items.map((item) => channelMessageFeedItemRenderSignature(item)).join("\n"),
     [items],
@@ -227,11 +212,11 @@ export function useChannelMessageFeed({
   const reset = useCallback((): void => {
     pinnedToLatestRef.current = true;
     userScrollIntentRef.current = false;
-    backgroundToastLatestItemRef.current = "";
     olderLoadArmedRef.current = true;
     olderLoadSnapshotRef.current = undefined;
     visibleAnchorRef.current = undefined;
     setLatestButtonVisible(false);
+    setResetRevision((revision) => revision + 1);
   }, []);
 
   const scrollToLatest = useCallback((): void => {
@@ -329,21 +314,6 @@ export function useChannelMessageFeed({
     }
     return () => observer.disconnect();
   }, [updateScrollPositionState]);
-
-  useEffect(() => {
-    const latestItem = items.at(-1);
-    const latestItemId = latestItem?.id ?? "";
-    const previousLatestItemId = backgroundToastLatestItemRef.current;
-    backgroundToastLatestItemRef.current = latestItemId;
-    if (!latestItem || !previousLatestItemId || previousLatestItemId === latestItemId) {
-      return;
-    }
-    const toast = channelMessageFeedItemBackgroundToast(latestItem, t);
-    if (!toast || (toast.tone !== "error" && pinnedToLatestRef.current && !latestButtonVisible)) {
-      return;
-    }
-    onBackgroundToast(toast);
-  }, [items, latestButtonVisible, onBackgroundToast, t, tailRenderSignature]);
 
   const firstVirtualIndex = virtualRows[0]?.index ?? -1;
   useEffect(() => {
@@ -472,6 +442,7 @@ export function useChannelMessageFeed({
     loading,
     protocolLoading,
     renderableItemCount,
+    resetRevision,
     tailDependencyKey,
     virtualizer,
   ]);
@@ -688,33 +659,6 @@ function channelMessageFeedItemIsPending(item: ChannelMessageFeedItem | undefine
     return true;
   }
   return false;
-}
-
-function channelMessageFeedItemBackgroundToast(item: ChannelMessageFeedItem | undefined, t: Translate): ChannelMessageFeedToast | undefined {
-  if (!item || item.kind === "older-loader" || item.kind === "pending-send") {
-    return undefined;
-  }
-  const status = item.kind === "turn"
-    ? item.turn.operationCell?.status ?? readRecordStatus(item.turn.blocks.at(-1))
-    : readRecordStatus(item.item.record);
-  if (!status) {
-    return undefined;
-  }
-  if (["failed", "cancelled", "blocked"].includes(status)) {
-    return { id: Date.now(), tone: "error", message: t("Background work needs attention") };
-  }
-  if (["succeeded", "done", "completed", "approved", "skipped"].includes(status)) {
-    return { id: Date.now(), tone: "success", message: t("Background work completed") };
-  }
-  return undefined;
-}
-
-function readRecordStatus(value: unknown): string | undefined {
-  if (!value || typeof value !== "object" || !("status" in value)) {
-    return undefined;
-  }
-  const status = (value as { readonly status?: unknown }).status;
-  return typeof status === "string" ? status : undefined;
 }
 
 function operationDetailsViewKey(operationId: string): string {

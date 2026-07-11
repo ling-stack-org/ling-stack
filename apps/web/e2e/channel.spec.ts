@@ -230,7 +230,7 @@ test("terminal bottom panel runs commands in the channel workspace", async ({ pa
   await expect(sideTerminal.locator(".workspace-terminal-output")).toContainText(cwd);
 });
 
-test("channel team experts fold into latest turn and metrics stay in settings", async ({ page }) => {
+test("channel team metrics stay in settings without a conversation expert summary", async ({ page }) => {
   await useEnglishLocale(page);
   const state = createBaseState({ approvalStatus: "pending" });
   state.channelMessages = [
@@ -260,7 +260,7 @@ test("channel team experts fold into latest turn and metrics stay in settings", 
       intent: "discuss",
       authorType: "ai-teammate",
       authorId: "ling_agent",
-      body: "主回复保持干净，团队证据折叠展示。",
+      body: "主回复保持干净，团队证据不重复展示。",
       mentions: [],
       attachmentIds: [],
       linkPreviewIds: [],
@@ -391,33 +391,18 @@ test("channel team experts fold into latest turn and metrics stay in settings", 
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Engineering" }).click();
 
   const feed = page.getByLabel("Channel message feed");
-  await expect(feed.getByText("主回复保持干净，团队证据折叠展示。")).toBeVisible();
+  await expect(feed.getByText("主回复保持干净，团队证据不重复展示。")).toBeVisible();
   await expect(feed.getByText("后续回复没有团队证据。")).toBeVisible();
-  const experts = feed.locator(".channel-team-experts-summary");
-  await expect(experts).toHaveCount(1);
-  await expect(experts).toContainText("1 active");
-  await expect(experts).toContainText("2 done");
-  await expect.poll(() => state.channelTeamExpertsRequests.some((request) =>
-    request.channelId === "channel_engineering" &&
-    request.turnId === "msg_team_source" &&
-    request.includeExpired === true
-  )).toBe(true);
-  await expect.poll(() => state.channelTeamExpertsRequests.some((request) =>
-    request.channelId === "channel_engineering" &&
-    request.turnId === "msg_team_followup" &&
-    request.includeExpired === true
-  )).toBe(true);
+  await expect(feed.locator(".channel-team-experts-summary")).toHaveCount(0);
+  await expect.poll(() => state.channelTeamExpertsRequests.length).toBe(0);
   await expect(feed.getByText("Architect checked boundaries.")).toHaveCount(0);
-  const assistantTranscript = feed.locator(".conversation-turn-assistant-transcript").filter({ hasText: "主回复保持干净，团队证据折叠展示。" });
+  const assistantTranscript = feed.locator(".conversation-turn-assistant-transcript").filter({ hasText: "主回复保持干净，团队证据不重复展示。" });
   await expect(assistantTranscript.locator(".message-action-bar.channel-message-ai-actions")).toHaveCount(1);
   const assistantTurnOrder = await assistantTranscript.evaluate((element) =>
     Array.from(element.children).map((child) => (child as HTMLElement).className)
   );
-  expect(assistantTurnOrder.some((className) => className.includes("channel-team-experts-summary"))).toBe(true);
+  expect(assistantTurnOrder.some((className) => className.includes("channel-team-experts-summary"))).toBe(false);
   expect(assistantTurnOrder.at(-1)).toContain("channel-message-row-footer-stack");
-
-  await experts.getByRole("button", { name: /Teammates/ }).click();
-  await expect(feed.getByText("Architect checked boundaries.")).toBeVisible();
 
   await page.getByRole("button", { name: "More channel views" }).click();
   await page.getByRole("menuitem", { name: "Settings" }).click();
@@ -6416,28 +6401,24 @@ test("completed multi-agent transcript reveals all agent process rows from the p
   await expect(assistantTranscript).toHaveCount(1);
   await expect(assistantTranscript).toContainText("分析登录页 smoke 的目标范围，仅输出结论");
   await expect(assistantTranscript).toContainText("协作队友：产品策略、QA");
-  const expertSummary = assistantTranscript.locator(".channel-team-experts-summary");
-  await expect(expertSummary).toContainText("2 已完成");
+  await expect(assistantTranscript.locator(".channel-team-experts-summary")).toHaveCount(0);
   const transcriptArtifacts = assistantTranscript.locator(".conversation-turn-artifacts");
   await expect(transcriptArtifacts).toContainText("login-smoke-scope.md");
   await expect.poll(() =>
     assistantTranscript.locator(".conversation-turn-assistant-transcript").evaluate((element) => {
       const childClasses = Array.from(element.children).map((child) => child.className.toString());
       const terminalIndex = childClasses.findIndex((className) => className.includes("conversation-turn-assistant-copy terminal"));
-      const expertIndex = childClasses.findIndex((className) => className.includes("channel-team-experts-summary"));
       const artifactsIndex = childClasses.findIndex((className) => className.includes("conversation-turn-artifacts"));
       const actionsIndex = childClasses.findIndex((className) => className.includes("channel-message-row-footer-stack"));
       return {
         actionsIsLast: actionsIndex === childClasses.length - 1,
-        terminalBeforeExpert: terminalIndex >= 0 && expertIndex > terminalIndex,
-        expertBeforeArtifacts: artifactsIndex > expertIndex,
+        terminalBeforeArtifacts: terminalIndex >= 0 && artifactsIndex > terminalIndex,
         artifactsBeforeActions: actionsIndex > artifactsIndex,
       };
     }),
   ).toEqual({
     actionsIsLast: true,
-    terminalBeforeExpert: true,
-    expertBeforeArtifacts: true,
+    terminalBeforeArtifacts: true,
     artifactsBeforeActions: true,
   });
   await expect(feed).not.toContainText("确认需求：");
@@ -6992,6 +6973,19 @@ test("channel activity keeps the composer visible while the message feed scrolls
     createdAt: "2026-05-25T00:40:00.000Z",
     updatedAt: "2026-05-25T00:40:00.000Z",
   });
+  state.channels.push({
+    id: "channel_general",
+    workspaceId: "workspace_default",
+    name: "General",
+    status: "active",
+    boundPath: cwd,
+    defaultTeammateId: "engineer",
+    autoReplyMode: "mentions_only",
+    allowedTools: ["read", "grep", "find", "ls"],
+    runtimePolicy: defaultRuntimePolicy,
+    createdAt: "2026-05-25T00:41:00.000Z",
+    updatedAt: "2026-05-25T00:41:00.000Z",
+  });
   await mockDaemon(page, state);
   await page.goto("/");
   await openEngineeringChannel(page);
@@ -7001,9 +6995,6 @@ test("channel activity keeps the composer visible while the message feed scrolls
   await expect(page.locator('[aria-label="Channel activity"] > .panel-title')).toHaveCount(0);
   const scrollState = await readScrollState(page, ".activity-shell .message-feed");
   expect(scrollState.max).toBeGreaterThan(0);
-  await page.locator(".activity-shell .message-feed").evaluate((element) => {
-    element.scrollTop = element.scrollHeight;
-  });
   await expect.poll(() => readScrollState(page, ".activity-shell .message-feed")).toMatchObject({ atBottom: true });
   const latestButton = page.getByRole("button", { name: "Jump to latest message" });
   await expect(latestButton).toHaveCount(0);
@@ -7041,6 +7032,17 @@ test("channel activity keeps the composer visible while the message feed scrolls
       height: Math.round(latestButtonBox?.height ?? 0),
     };
   }).toMatchObject({ width: 42, height: 42 });
+  await page.getByRole("button", { name: "General", exact: true }).click();
+  await page.getByRole("button", { name: "Engineering", exact: true }).click();
+  await expect.poll(() => readScrollState(page, ".activity-shell .message-feed")).toMatchObject({ atBottom: true });
+  await expect(latestButton).toHaveCount(0);
+  await page.waitForTimeout(1_100);
+  await page.locator(".activity-shell .message-feed").evaluate((element) => {
+    element.dispatchEvent(new WheelEvent("wheel", { bubbles: true, deltaY: -120 }));
+    element.scrollTop = 0;
+    element.dispatchEvent(new Event("scroll"));
+  });
+  await expect(latestButton).toBeVisible();
   state.channelMessages.push({
     id: "msg_scroll_background_failed",
     workspaceId: "workspace_default",
@@ -7057,10 +7059,9 @@ test("channel activity keeps the composer visible while the message feed scrolls
     createdAt: "2026-05-25T01:00:00.000Z",
     updatedAt: "2026-05-25T01:00:00.000Z",
   });
-  const backgroundToast = page.getByRole("button", { name: /Background work needs attention/ });
-  await expect(backgroundToast).toBeVisible();
-  await expect(backgroundToast).toContainText("Jump to latest");
-  await backgroundToast.click();
+  await expect(page.getByRole("button", { name: /Background work needs attention/ })).toHaveCount(0);
+  await expect(latestButton).toBeVisible();
+  await latestButton.click();
   await expect.poll(() => readScrollState(page, ".activity-shell .message-feed")).toMatchObject({ atBottom: true });
   await expect(latestButton).toHaveCount(0);
   await expect(page.getByLabel("Channel composer")).toBeVisible();
@@ -7799,12 +7800,29 @@ test("local channel work-cell demo fixture renders a realistic multi-agent opera
   state.channelWorkflowSteps = [];
   state.executionActions = [];
   state.artifactsByRun = {};
+  state.aiTeammates = [
+    createMockTeammate({ id: "teammate_builtin_architect", templateId: "architect", roleKey: "architect", displayName: "Ling Architect" }),
+    createMockTeammate({ id: "teammate_builtin_designer", templateId: "designer", roleKey: "designer", displayName: "Ling Designer" }),
+    createMockTeammate({ id: "teammate_builtin_engineer", templateId: "engineer", roleKey: "engineer", displayName: "Ling Engineer" }),
+    createMockTeammate({ id: "teammate_builtin_qa", templateId: "qa", roleKey: "qa", displayName: "Ling QA" }),
+  ];
 
   await mockDaemon(page, state);
   await page.goto("/");
   await openEngineeringChannel(page);
 
   const feed = page.locator(".message-feed");
+  await expect(feed).toContainText("讨论一下：多 Agent 讨论问题时");
+  const discussionReplies = feed.locator(".channel-message-row.ai-teammate").filter({ hasText: /讨论阶段应该保留|普通会话行最清晰|不创建 workflow|限制可见参与人数/u });
+  await expect(discussionReplies).toHaveCount(4);
+  for (const name of ["Ling Architect", "Ling Designer", "Ling Engineer", "Ling QA"]) {
+    const reply = discussionReplies.filter({ has: page.locator("strong", { hasText: name }) });
+    await expect(reply).toHaveCount(1);
+    await expect(reply.locator(".teammate-avatar-image.compact")).toHaveCount(1);
+    await expect(reply).not.toContainText("已处理");
+  }
+  await expect(discussionReplies.locator(".conversation-work-cell")).toHaveCount(0);
+  await expect(discussionReplies.locator(".terminal-report-block")).toHaveCount(0);
   const demoTurn = feed.locator(".conversation-turn").filter({ hasText: "把频道里的多 agent 操作记录按我们讨论的最终效果接进去" });
   await expect(demoTurn).toHaveCount(1);
   const assistantTranscript = demoTurn.locator(".conversation-turn-assistant-row");
