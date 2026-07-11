@@ -7011,6 +7011,10 @@ test("channel activity keeps the composer visible while the message feed scrolls
   await expect.poll(() => readScrollState(page, ".activity-shell .message-feed")).toMatchObject({ atBottom: true });
   const latestButton = page.getByRole("button", { name: "Jump to latest message" });
   await expect(latestButton).toHaveCount(0);
+  await page.locator(".activity-shell .message-feed").evaluate((element) => {
+    element.dispatchEvent(new WheelEvent("wheel", { bubbles: true, deltaY: 120 }));
+  });
+  await expect(latestButton).toHaveCount(0);
   const feedChrome = await page.locator(".activity-shell .message-feed").evaluate((element) => {
     const style = getComputedStyle(element);
     return {

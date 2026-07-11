@@ -254,11 +254,18 @@ export function useChannelMessageFeed({
     const feed = scrollRef.current;
     autoFollowUntilRef.current = 0;
     userScrollIntentRef.current = true;
-    pinnedToLatestRef.current = false;
-    if (feed && feed.scrollHeight > feed.clientHeight) {
-      setLatestButtonVisible(true);
+    if (!feed) {
+      pinnedToLatestRef.current = false;
+      return;
     }
-    rememberVisibleAnchor();
+    const pinnedToLatest = channelMessageFeedIsPinnedToLatest(feed);
+    pinnedToLatestRef.current = pinnedToLatest;
+    if (pinnedToLatest) {
+      visibleAnchorRef.current = undefined;
+    } else {
+      rememberVisibleAnchor();
+    }
+    setLatestButtonVisible(!pinnedToLatest && feed.scrollHeight > feed.clientHeight);
   }, [rememberVisibleAnchor]);
 
   const updateScrollPositionState = useCallback((): void => {
@@ -267,7 +274,7 @@ export function useChannelMessageFeed({
       return;
     }
     const maxScrollTop = feed.scrollHeight - feed.clientHeight;
-    const pinnedToLatest = maxScrollTop <= 0 || maxScrollTop - feed.scrollTop <= 24;
+    const pinnedToLatest = channelMessageFeedIsPinnedToLatest(feed);
     const latestItem = items.at(-1);
     const latestItemPending = channelMessageFeedItemIsPending(latestItem);
     const preserveAutoFollow =
@@ -287,6 +294,7 @@ export function useChannelMessageFeed({
     if (!pinnedToLatest) {
       rememberVisibleAnchor();
     } else {
+      userScrollIntentRef.current = false;
       visibleAnchorRef.current = undefined;
     }
     setLatestButtonVisible((visible) => {
@@ -306,6 +314,20 @@ export function useChannelMessageFeed({
     }
     feed.addEventListener("scroll", updateScrollPositionState, { passive: true });
     return () => feed.removeEventListener("scroll", updateScrollPositionState);
+  }, [updateScrollPositionState]);
+
+  useEffect(() => {
+    const feed = scrollRef.current;
+    if (!feed || typeof ResizeObserver === "undefined") {
+      return undefined;
+    }
+    const observer = new ResizeObserver(() => updateScrollPositionState());
+    observer.observe(feed);
+    const virtualizerElement = feed.querySelector<HTMLElement>(".message-feed-virtualizer");
+    if (virtualizerElement) {
+      observer.observe(virtualizerElement);
+    }
+    return () => observer.disconnect();
   }, [updateScrollPositionState]);
 
   useEffect(() => {
@@ -491,6 +513,11 @@ export function useChannelMessageFeed({
     onScroll,
     onUserScrollIntent,
   };
+}
+
+function channelMessageFeedIsPinnedToLatest(feed: HTMLDivElement): boolean {
+  const maxScrollTop = feed.scrollHeight - feed.clientHeight;
+  return maxScrollTop <= 0 || maxScrollTop - feed.scrollTop <= 24;
 }
 
 export function ChannelMessageFeed({
