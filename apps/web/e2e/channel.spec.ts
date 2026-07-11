@@ -7820,12 +7820,15 @@ test("local channel work-cell demo fixture renders a realistic multi-agent opera
   await expect(terminalSummary).not.toContainText("结果：");
   await expect(terminalSummary).not.toContainText("频道 work-cell 操作记录样例」。");
   const messageEvidence = assistantTranscript.getByRole("region", { name: "消息证据" });
-  await expect(messageEvidence.getByRole("button", { name: "已使用记忆" })).toBeVisible();
-  await messageEvidence.getByRole("button", { name: "已使用记忆" }).click();
+  const memoryDisclosure = messageEvidence.locator(".conversation-evidence-toggle");
+  await expect(memoryDisclosure).toContainText("已使用 1 条记忆");
+  await expect(memoryDisclosure).toContainText("07/10");
+  await memoryDisclosure.click();
   const memoryCitation = messageEvidence.locator(".used-memory-summary.inline");
   await expect(memoryCitation).toContainText("完成态引用展示规则");
+  await expect(memoryCitation).not.toContainText("已使用 1 条记忆");
   await expect(messageEvidence.getByText("记忆", { exact: true })).toHaveCount(0);
-  await expect(messageEvidence.getByText("已使用 1 条记忆", { exact: true })).toHaveCount(0);
+  await expect(messageEvidence.getByText("已使用 1 条记忆", { exact: true })).toHaveCount(1);
   await expect(messageEvidence.locator(".conversation-evidence-section-flat")).toHaveCSS("border-top-width", "0px");
   const teamSummary = assistantTranscript.locator(".channel-team-experts-summary");
   await expect(teamSummary).toContainText("4 已完成");

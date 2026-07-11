@@ -31,6 +31,7 @@ import { filterUsedMemoryEventsByResponse } from "../../shared/components/index.
 import {
   AvatarInitial,
   UsedMemorySummary,
+  UsedMemorySummaryLabel,
   UserProfileAvatar,
 } from "../../shared/components/index.js";
 import {
@@ -466,7 +467,7 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
             memoryById={input.memoryById}
           />
         ) : undefined}
-        memorySummary={block.memoryCitationEvents.length > 0 ? input.t("Used memory") : undefined}
+        memorySummary={block.memoryCitationEvents.length > 0 ? <UsedMemorySummaryLabel events={block.memoryCitationEvents} /> : undefined}
         webEvidence={block.message.webEvidence}
       />
     ) : null;
@@ -739,7 +740,7 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
             evidenceNode={(messageUsedMemoryEvents.length > 0 || message.webEvidence) ? (
               <MessageEvidencePanel
                 memoryContent={usedMemorySummary}
-                memorySummary={messageUsedMemoryEvents.length > 0 ? input.t("Used memory") : undefined}
+                memorySummary={messageUsedMemoryEvents.length > 0 ? <UsedMemorySummaryLabel events={messageUsedMemoryEvents} /> : undefined}
                 webEvidence={message.webEvidence}
               />
             ) : null}

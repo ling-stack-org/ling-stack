@@ -1035,6 +1035,19 @@ textarea {
   line-height: 1.35;
 }
 
+.used-memory-summary-label {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  gap: 6px;
+}
+
+.used-memory-summary-label small {
+  color: var(--text-muted);
+  font-size: 10px;
+  font-weight: 560;
+}
+
 .used-memory-summary-head,
 .used-memory-summary-head span {
   display: flex;

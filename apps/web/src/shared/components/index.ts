@@ -15,7 +15,7 @@ export { RunRepairHintBanner } from "./RunRepairHintBanner.js";
 export { StatusActionRow } from "./StatusActionRow.js";
 export { StatusBadge } from "./StatusBadge.js";
 export { TokenizedComposerInput, type TokenizedComposerInputHandle, type TokenizedComposerInputProps } from "@ling-stack/conversation-ui-react";
-export { UsedMemorySummary, filterUsedMemoryEventsByResponse } from "./UsedMemorySummary.js";
+export { UsedMemorySummary, UsedMemorySummaryLabel, filterUsedMemoryEventsByResponse } from "./UsedMemorySummary.js";
 export { UserProfileAvatar } from "./UserProfileAvatar.js";
 export { composerSlashCommandParts, composerUrlReferenceParts, composerWorkspaceFileParts, parseComposerInputParts, removeComposerInputRawToken, serializeComposerInputParts, type ComposerInputPart } from "@ling-stack/conversation-ui-core";
 export { filterSlashCommandPickerOptions, findActiveSlashCommand, insertSlashCommandToken, type ActiveSlashCommandPicker } from "@ling-stack/conversation-ui-core";

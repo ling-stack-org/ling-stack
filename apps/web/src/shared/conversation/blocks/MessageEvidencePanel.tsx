@@ -10,7 +10,7 @@ import {
 
 interface MessageEvidencePanelProps {
   readonly memoryContent?: ReactNode;
-  readonly memorySummary?: string;
+  readonly memorySummary?: ReactNode;
   readonly webEvidence?: MessageWebEvidence;
   readonly defaultOpen?: boolean;
 }
@@ -32,7 +32,7 @@ export function MessageEvidencePanel({
       label: t("Memory"),
       className: "conversation-evidence-section-flat",
       hideHeader: true,
-      summary: memorySummary ?? t("Used memory"),
+      summary: typeof memorySummary === "string" ? memorySummary : t("Used memory"),
       content: memoryContent,
     });
   }
@@ -45,7 +45,7 @@ export function MessageEvidencePanel({
     <ConversationEvidenceBundlePanel
       label={t("Message evidence")}
       bundle={{
-        summary: messageEvidenceSummary(Boolean(memoryContent), renderableWebEvidence, t),
+        summary: messageEvidenceSummary(memoryContent ? memorySummary ?? t("Used memory") : undefined, renderableWebEvidence, t),
         sections,
       }}
       defaultOpen={resolvedDefaultOpen}
@@ -123,10 +123,10 @@ function hasRenderableWebEvidence(webEvidence: MessageWebEvidence | undefined): 
   return Boolean(webEvidence?.reason || webEvidence?.sources.length || webEvidence?.readUrls.length);
 }
 
-function messageEvidenceSummary(hasMemory: boolean, webEvidence: MessageWebEvidence | undefined, t: Translate): ReactNode {
+function messageEvidenceSummary(memorySummary: ReactNode | undefined, webEvidence: MessageWebEvidence | undefined, t: Translate): ReactNode {
   const parts: ReactNode[] = [];
-  if (hasMemory) {
-    parts.push(<span key="memory">{t("Used memory")}</span>);
+  if (memorySummary) {
+    parts.push(<span key="memory">{memorySummary}</span>);
   }
   const webSummary = webEvidence ? webEvidenceSummaryNode(webEvidence, t) : undefined;
   if (webSummary) {
