@@ -102,7 +102,6 @@ export function ConversationWorkCell({
   });
   const shellExpanded = !shellExpandable || shellDisclosure.expanded;
   const shellStatusLabel = operationShellStatusLabel(model, active, t);
-  const shellSummary = operationShellSummary(model, evidenceSummary);
   const shellClassName = [
     "conversation-operation-shell",
     "conversation-operation-bubble",
@@ -142,9 +141,6 @@ export function ConversationWorkCell({
               <ChevronDown size={13} />
             </span>
             <span className="conversation-operation-shell-status conversation-operation-bubble-status">{shellStatusLabel}</span>
-            {!shellExpanded && shellSummary ? (
-              <span className="conversation-operation-shell-summary">{shellSummary}</span>
-            ) : null}
           </button>
         ) : null}
         {shellExpanded ? (
@@ -331,21 +327,6 @@ function operationShellStatusLabel(
     return t("Stopped{duration}", { duration: suffix });
   }
   return active ? t("Processing") : t("Processed{duration}", { duration: suffix });
-}
-
-function operationShellSummary(
-  model: ConversationOperationCellViewModel,
-  evidenceSummary: string | undefined,
-): string | undefined {
-  const summary = model.summary.trim();
-  if (summary) {
-    return summary;
-  }
-  const title = model.title.trim();
-  if (title) {
-    return title;
-  }
-  return evidenceSummary;
 }
 
 function formatElapsedDuration(elapsedMs: number | undefined): string | undefined {
