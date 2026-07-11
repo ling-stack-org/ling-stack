@@ -128,8 +128,9 @@ because the operation stream and final changed-files group already own those fac
 Expanding this reference disclosure renders only the reference links, not duplicated
 change/check groups. Message-level used-memory citations remain a separate disclosure
 below the Ling response and must still render when memory was used. The collapsed row is
-the only `Used memory` label; expanding it renders the memory references directly without
-a nested card, repeated heading, repeated count, or second disclosure.
+the only memory summary and shows the real memory count plus latest usage time; expanding
+it renders the memory references directly without a nested card, repeated heading,
+repeated count, or second disclosure.
 
 File counts may come from structured changed-file evidence. Addition and deletion totals
 must come from complete diff artifacts; prose and filenames are never used to fabricate

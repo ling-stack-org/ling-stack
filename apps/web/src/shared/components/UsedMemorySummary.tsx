@@ -3,6 +3,25 @@ import { useI18n } from "../../i18n.js";
 import { formatDateTime } from "../../lib/formatting.js";
 import type { MemoryObject, UsedMemoryEvent } from "../../types.js";
 
+export function UsedMemorySummaryLabel({
+  events,
+}: {
+  readonly events: readonly UsedMemoryEvent[];
+}): JSX.Element | null {
+  const { t } = useI18n();
+  const memoryCount = uniqueMemoryIds(events).length;
+  if (events.length === 0 || memoryCount === 0) {
+    return null;
+  }
+  return (
+    <span className="used-memory-summary-label">
+      <Database size={12} />
+      <span>{formatUsedMemoryCount(t, memoryCount)}</span>
+      <small>{formatDateTime(latestUsedMemoryEvent(events).createdAt)}</small>
+    </span>
+  );
+}
+
 export function UsedMemorySummary({
   events,
   memoryById,

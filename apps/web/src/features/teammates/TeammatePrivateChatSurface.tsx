@@ -10,6 +10,7 @@ import {
   AvatarInitial,
   ComposerFileReferenceToken,
   UsedMemorySummary,
+  UsedMemorySummaryLabel,
   UserProfileAvatar,
   filterUsedMemoryEventsByResponse,
   pendingAssetLabel,
@@ -488,7 +489,7 @@ export function TeammatePrivateChatSurface({
                       memoryContent={messageUsedMemoryEvents.length > 0 ? (
                         <UsedMemorySummary variant="inline" events={messageUsedMemoryEvents} memoryById={memoryById} />
                       ) : undefined}
-                      memorySummary={messageUsedMemoryEvents.length > 0 ? t("Used memory") : undefined}
+                      memorySummary={messageUsedMemoryEvents.length > 0 ? <UsedMemorySummaryLabel events={messageUsedMemoryEvents} /> : undefined}
                       webEvidence={message.webEvidence}
                     />
                   ) : null}
