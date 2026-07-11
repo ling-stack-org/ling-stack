@@ -792,13 +792,11 @@ button.artifact-action-link {
   font-size: 11px;
 }
 
-.source-icon-stack-item.status-degraded,
-.message-evidence-web-status.degraded {
+.source-icon-stack-item.status-degraded {
   color: var(--warning);
 }
 
-.source-icon-stack-item.status-blocked,
-.message-evidence-web-status.blocked {
+.source-icon-stack-item.status-blocked {
   color: var(--danger);
 }
 
@@ -888,12 +886,6 @@ button.artifact-action-link {
   color: #ffffff;
 }
 
-.message-evidence-web-status.blocked,
-.message-evidence-web-status.degraded {
-  background: #fff3d8;
-  color: #8a5a00;
-}
-
 .message-evidence-web-status svg {
   width: 12px;
   height: 12px;
@@ -940,10 +932,6 @@ button.artifact-action-link {
 }
 
 .conversation-evidence-section.conversation-evidence-section-compact-list > header {
-  display: none;
-}
-
-.conversation-evidence-section.conversation-evidence-section-reason-only > header {
   display: none;
 }
 
@@ -1035,10 +1023,6 @@ button.artifact-action-link {
   line-height: 17px;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
-}
-
-.conversation-evidence-reason {
-  color: var(--text);
 }
 
 .conversation-evidence-section-content {

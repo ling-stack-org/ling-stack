@@ -2435,7 +2435,7 @@ test("channel message feed renders AI teammate avatar images", async ({ page }) 
   await expect(engineerReply.locator(".avatar-initial")).toHaveCount(0);
 });
 
-test("channel message feed renders web evidence inline with sources and blocked reasons", async ({ page }) => {
+test("channel message feed shows usable web sources and keeps diagnostics in the right dock", async ({ page }) => {
   await useEnglishLocale(page);
   const state = createBaseState({ approvalStatus: "pending" });
   state.aiTeammates = [createMockTeammate({ id: "engineer", displayName: "Ling Engineer" })];
@@ -2591,25 +2591,12 @@ test("channel message feed renders web evidence inline with sources and blocked 
   await expect(sourcedEvidence).not.toContainText("OpenAI Responses + Web Search");
 
   const degradedReply = feed.locator(".channel-message-row").filter({ hasText: "Degraded web reply." });
-  const degradedEvidence = degradedReply.getByLabel("Message evidence");
-  const degradedToggle = degradedEvidence.getByRole("button");
-  await expect(degradedToggle).toBeVisible();
-  await expect(degradedToggle).toHaveAttribute("aria-expanded", "true");
-  await expect(degradedEvidence).toContainText("Degraded reason");
-  await expect(degradedEvidence).toContainText("web_search backend returned a summary but no source URLs.");
-  await expect(degradedEvidence).not.toContainText("Search queries");
-  await expect(degradedEvidence).not.toContainText("AI news today");
-  await expect(degradedEvidence).not.toContainText("Provider");
-  await expect(degradedEvidence).not.toContainText("Chat Completions Search Relay");
+  await expect(degradedReply.getByLabel("Message evidence")).toHaveCount(0);
+  await expect(degradedReply).not.toContainText("web_search backend returned a summary but no source URLs.");
 
   const blockedReply = feed.locator(".channel-message-row").filter({ hasText: "Blocked web reply." });
-  const blockedEvidence = blockedReply.getByLabel("Message evidence");
-  const blockedToggle = blockedEvidence.getByRole("button");
-  await expect(blockedToggle).toBeVisible();
-  await expect(blockedToggle).toHaveAttribute("aria-expanded", "true");
-  await expect(blockedEvidence).toContainText("Blocked reason");
-  await expect(blockedEvidence).toContainText("Current selected Ling provider does not support realtime web search.");
-  await expect(blockedEvidence).not.toContainText("latest Ling Stack release");
+  await expect(blockedReply.getByLabel("Message evidence")).toHaveCount(0);
+  await expect(blockedReply).not.toContainText("Current selected Ling provider does not support realtime web search.");
 
   const configuredOnlyReply = feed.locator(".channel-message-row").filter({ hasText: "Configured web search but no actual evidence." });
   await expect(configuredOnlyReply).toBeVisible();
@@ -2618,6 +2605,19 @@ test("channel message feed renders web evidence inline with sources and blocked 
   await expect(configuredOnlyReply).not.toContainText("OpenAI news today");
   await expect(configuredOnlyReply).not.toContainText("Custom OpenAI-compatible");
   await expect(configuredOnlyReply).not.toContainText("openai-chat-completions-web-search");
+
+  await page.getByRole("button", { name: "Show details" }).click();
+  const dock = page.locator(".channel-side-panel.right-dock");
+  await expect(dock).toBeVisible();
+  await dock.getByRole("button", { name: "Browser" }).click();
+  const degradedDiagnostic = dock.locator(".right-dock-evidence-row").filter({ hasText: "web_search backend returned a summary but no source URLs." });
+  await expect(degradedDiagnostic).toBeVisible();
+  await expect(degradedDiagnostic).toContainText("Degraded");
+  await degradedDiagnostic.click();
+  const degradedDetail = dock.locator(".right-dock-detail-list");
+  await expect(degradedDetail).toContainText("Failure reason");
+  await expect(degradedDetail).toContainText("web_search backend returned a summary but no source URLs.");
+  await expect(degradedDetail).toContainText("web_search");
 });
 
 test("right dock browser evidence exposes failed read URL detail", async ({ page }) => {
@@ -2687,7 +2687,7 @@ test("right dock browser evidence exposes failed read URL detail", async ({ page
   await expect(detail.locator("a.right-dock-evidence-link")).toHaveAttribute("href", "https://example.com/private-report");
 });
 
-test("conversation turn transcript renders coordinator web evidence in the main chat", async ({ page }) => {
+test("conversation turn transcript omits web diagnostics without usable sources", async ({ page }) => {
   await useEnglishLocale(page);
   const state = createBaseState({ approvalStatus: "pending" });
   state.channelMessages = [
@@ -2748,16 +2748,8 @@ test("conversation turn transcript renders coordinator web evidence in the main 
   const turn = page.locator('[data-conversation-turn-id="conversation-turn:msg_web_turn_user"]');
   await expect(turn).toBeVisible();
   await expect(turn).toContainText("Here is the AI news summary.");
-  const evidence = turn.getByLabel("Message evidence");
-  const toggle = evidence.getByRole("button");
-  await expect(toggle).toHaveAttribute("aria-expanded", "true");
-  await expect(evidence).toContainText("Degraded reason");
-  await expect(evidence).toContainText("web_search backend returned text but no citation/source metadata.");
-  await expect(evidence).not.toContainText("Search queries");
-  await expect(evidence).not.toContainText("AI latest news");
-  await expect(evidence).not.toContainText("Provider");
-  await expect(evidence).not.toContainText("Chat Completions Search Relay");
-  await expect(evidence).not.toContainText("0 sources");
+  await expect(turn.getByLabel("Message evidence")).toHaveCount(0);
+  await expect(turn).not.toContainText("web_search backend returned text but no citation/source metadata.");
 });
 
 test("channel settings manage workspace binding", async ({ page }) => {

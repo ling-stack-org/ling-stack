@@ -1296,7 +1296,6 @@ export const enUS = {
     "Decision {id}": "Decision {id}",
     "Source ref": "Source ref",
     "Blocked reason": "Blocked reason",
-    "Degraded reason": "Degraded reason",
     "Local user": "Local user",
     "AI teammate": "AI teammate",
     "System": "System",

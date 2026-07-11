@@ -2644,6 +2644,8 @@ test("channel discussion injects web search context before runner reply", async 
     assert.match(runner.runs[0].task.prompt, /Ling web context:/);
     assert.match(runner.runs[0].task.prompt, /Fresh web evidence summary/);
     assert.match(runner.runs[0].task.prompt, /https:\/\/example\.com\/fresh/);
+    assert.match(runner.runs[0].systemPrompt, /explain the limitation briefly in user-facing language/);
+    assert.match(runner.runs[0].systemPrompt, /do not repeat provider, relay, or protocol diagnostics verbatim/);
     assert.doesNotMatch(runner.runs[0].task.prompt, /sk-test-secret-value/);
   } finally {
     await daemon.close();
@@ -10195,6 +10197,8 @@ test("teammate direct reply injects web search context before runner reply", asy
     assert.match(runner.runs[0].task.prompt, /Private fresh web evidence summary/);
     assert.match(runner.runs[0].task.prompt, /https:\/\/example\.com\/private-fresh/);
     assert.match(runner.runs[0].systemPrompt, /If Ling web context is included/);
+    assert.match(runner.runs[0].systemPrompt, /explain the limitation briefly in user-facing language/);
+    assert.match(runner.runs[0].systemPrompt, /do not repeat provider, relay, or protocol diagnostics verbatim/);
     assert.doesNotMatch(runner.runs[0].task.prompt, /sk-test-secret-value/);
   } finally {
     await daemon.close();
