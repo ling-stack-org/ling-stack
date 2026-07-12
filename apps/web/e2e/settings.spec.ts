@@ -775,7 +775,7 @@ test("settings skill library shows read-only skill health findings", async ({ pa
   await expect(page.getByRole("tablist", { name: "Skill sections" })).toHaveCount(0);
   await expect(page.getByRole("tab", { name: "Skill Governance" })).toHaveCount(0);
   const panel = page.locator(".settings-skill-library");
-  await expect(panel.getByRole("heading", { name: "Skill library" })).toBeVisible();
+  await expect(panel).toHaveAttribute("aria-label", "Skill library");
   await expect(page.getByLabel("Settings sections").getByRole("button", { name: /Skill library/ })).toHaveClass(/active/);
   await expect(page.getByRole("tab", { name: /My skills/ })).toHaveAttribute("aria-selected", "true");
   const skillLibraryLayout = await panel.evaluate((element) => {
