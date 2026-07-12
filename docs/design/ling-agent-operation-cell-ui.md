@@ -1138,6 +1138,16 @@ Default conversation feed rules:
 - Agent spans use small labels, avatars, and faint lane lines, not cards.
 - Reasoning, intent, and action narration render as separate outer note rows. Operation titles stay compact, while expanded operation detail is reserved for paths, commands, output counts, and local diffs; it must not repeat action `title`, `summary`, or scope narration.
 - Artifact strips may have a very light product affordance; operation logs may not.
+- Workflow packet metadata is audit evidence, not conversation content. Context packets,
+  output packets, fan-in summaries, packet counts, and packet ids stay out of the default
+  transcript and remain available only through explicit workflow evidence or developer
+  diagnostics. Real user-facing files still render in the artifact strip below the final
+  report.
+- A resolved approval-only workflow is also audit evidence when every step is terminal,
+  every step is backed only by a resolved workflow-step approval, no run was created, and
+  no TerminalReport exists. The conversation must not render a Work Cell, elapsed time,
+  recovery summary, checks, or attention rows for that workflow. Pending approvals remain
+  visible and actionable until the user resolves them.
 - Conversation-owned result review, file/diff/artifact preview, source metadata, checks,
   approvals, attachments, and links stay in the main conversation through inline
   expansion or in-turn previews. A right-side workspace utility, if present, is not a
@@ -1212,6 +1222,10 @@ Rules:
   cards.
 - Changed-file rows can show path, action, and concise diff stats.
 - Check rows can show status and command/check name.
+- Diff artifacts are generated with at most three unchanged lines before and after each
+  changed range. Ranges separated by six or fewer unchanged lines merge; wider gaps stay
+  separate and show the number of omitted unmodified lines. Context lines remain neutral
+  and do not affect `+additions -deletions` counts.
 - Full file preview, diff review, generated artifact preview, and audit/review detail
   open from the owning conversation row as inline expanded detail, an in-turn preview, or
   a lightbox. They must not move the user into a right drawer to understand the result.

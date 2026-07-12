@@ -97,6 +97,11 @@ Edit rows use their linked diff artifact as the authority:
   diff preview is available;
 - clicking the edit row reveals a bounded inline diff excerpt with line numbers and
   add/delete highlighting;
+- each changed hunk includes at most three unchanged source lines before and after the
+  actual edit so the user can understand the surrounding code without opening the file;
+- hunks separated by no more than six unchanged lines merge into one preview range;
+  wider gaps remain separate and render an explicit `N unmodified lines` fold marker;
+- context lines use neutral styling and never contribute to the addition/deletion totals;
 - large or truncated previews remain partial and must not claim an exact change count;
 - edit actions without a diff artifact keep the normal row treatment and do not invent
   counts from filenames or prose.
@@ -119,6 +124,8 @@ summary. It separates produced files from source changes:
 - only the bounded `Show N more files` row may expand or collapse additional files;
 - hovering a previewable output or changed-file row for two seconds opens a bounded
   floating preview;
+- the floating diff preview uses the same three-line hunk context contract as inline
+  edit-row detail and keeps a bounded internal line limit;
 - the floating preview prefers the space immediately above its source row and only falls
   back below when the viewport does not have enough room above;
 - keyboard focus or clicking the row opens the same compact preview immediately;

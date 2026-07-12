@@ -226,7 +226,6 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
     approval: renderGenericTranscriptBlock,
     artifact_strip: renderGenericTranscriptBlock,
     source_summary: renderGenericTranscriptBlock,
-    workflow_packet_summary: renderGenericTranscriptBlock,
     requirement_shaping: renderGenericTranscriptBlock,
     decision_needed: renderGenericTranscriptBlock,
     final_result: renderFinalResultTranscriptBlock,

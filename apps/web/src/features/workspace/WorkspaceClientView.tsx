@@ -1213,6 +1213,9 @@ export function WorkspaceClientView({
   const conversationWorkCellByWorkflowId = useMemo(() => {
     const cells = new Map<string, ConversationWorkCellViewModel>();
     for (const [workflowId, progressModel] of workflowProgressByWorkflowId) {
+      if (progressModel.conversationVisibility === "audit_only") {
+        continue;
+      }
       cells.set(workflowId, workflowProgressToConversationWorkCell(progressModel));
     }
     return cells;

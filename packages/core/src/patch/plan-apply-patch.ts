@@ -80,12 +80,60 @@ function planOperation(operation: PatchOperation, readFile: PlanApplyPatchInput[
     });
   }
 
-  const next = applyOperationToCurrentContent(operation, current);
+  const plannedUpdate = operation.kind === "update" && current !== undefined
+    ? planUpdateHunks(operation.path, current, operation.hunks)
+    : undefined;
+  const next = plannedUpdate?.content ?? applyOperationToCurrentContent(operation, current);
   return {
     ...operation,
-    hunks: operation.kind === "delete" && current !== undefined ? createDeleteHunks(current) : operation.hunks,
+    hunks: operation.kind === "delete" && current !== undefined
+      ? createDeleteHunks(current)
+      : plannedUpdate?.hunks ?? operation.hunks,
     oldSha256: current === undefined ? undefined : sha256Text(current),
     newSha256: next === undefined ? undefined : sha256Text(next),
+  };
+}
+
+function planUpdateHunks(
+  path: string,
+  current: string,
+  hunks: readonly PatchHunk[],
+): { readonly content: string; readonly hunks: readonly PatchHunk[] } {
+  const { lines: originalLines, trailingNewline } = splitContentLines(current);
+  let cursor = 0;
+  let nextLines = [...originalLines];
+  const plannedHunks: PatchHunk[] = [];
+
+  for (const hunk of hunks) {
+    const oldLines = hunk.lines.filter((line) => line.kind !== "add").map((line) => line.text);
+    const newLines = hunk.lines.filter((line) => line.kind !== "remove").map((line) => line.text);
+    const preferredStart = hunk.newStart ?? hunk.oldStart;
+    const preferredIndex = preferredStart !== undefined ? Math.max(0, preferredStart - 1) : undefined;
+    const matchIndex = findHunkIndex(nextLines, oldLines, preferredIndex, cursor);
+    if (matchIndex < 0) {
+      throw new ApplyPatchError(`Patch hunk does not match current content: ${path}`, { path });
+    }
+    const lineDeltaBeforeHunk = nextLines.length - originalLines.length;
+    const oldStart = matchIndex - lineDeltaBeforeHunk + 1;
+    const newStart = matchIndex + 1;
+    plannedHunks.push({
+      ...hunk,
+      oldStart,
+      oldLines: oldLines.length,
+      newStart,
+      newLines: newLines.length,
+    });
+    nextLines = [
+      ...nextLines.slice(0, matchIndex),
+      ...newLines,
+      ...nextLines.slice(matchIndex + oldLines.length),
+    ];
+    cursor = matchIndex + newLines.length;
+  }
+
+  return {
+    content: stringifyLines(nextLines, trailingNewline),
+    hunks: plannedHunks,
   };
 }
 
@@ -110,7 +158,8 @@ function applyUpdateHunks(path: string, current: string, hunks: readonly PatchHu
   for (const hunk of hunks) {
     const oldLines = hunk.lines.filter((line) => line.kind !== "add").map((line) => line.text);
     const newLines = hunk.lines.filter((line) => line.kind !== "remove").map((line) => line.text);
-    const preferredIndex = hunk.oldStart !== undefined ? Math.max(0, hunk.oldStart - 1) : undefined;
+    const preferredStart = hunk.newStart ?? hunk.oldStart;
+    const preferredIndex = preferredStart !== undefined ? Math.max(0, preferredStart - 1) : undefined;
     const matchIndex = findHunkIndex(nextLines, oldLines, preferredIndex, cursor);
     if (matchIndex < 0) {
       throw new ApplyPatchError(`Patch hunk does not match current content: ${path}`, { path });

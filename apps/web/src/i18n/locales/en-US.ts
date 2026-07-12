@@ -882,7 +882,6 @@ export const enUS = {
     "Branch steps": "Branch steps",
     "Requirement shaping": "Requirement shaping",
     "Decision needed": "Decision needed",
-    "Workflow packet summary": "Workflow packet summary",
     "Final result": "Final result",
     "Transcript block": "Transcript block",
     "Preview targets": "Preview targets",
