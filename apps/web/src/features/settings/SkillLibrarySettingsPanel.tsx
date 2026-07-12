@@ -584,15 +584,10 @@ export function SkillLibrarySettingsPanel({ cwd, refreshToken = 0 }: { readonly 
         builtinCount={ownershipPartition.builtin.length}
         reviewCount={reviewQueueCount}
         sourceAttentionCount={sourceAttentionCount}
-        loading={loading}
         onSectionChange={(section) => {
           setActiveSubsection(section);
           setSelectedSkillId("");
         }}
-        onImport={skillImport.openImport}
-        onNewDraft={skillImport.openDraft}
-        onRefresh={() => void refresh()}
-        t={t}
       />
 
       {error ? <div className="inline-error">{error}</div> : null}
@@ -709,7 +704,6 @@ export function SkillLibrarySettingsPanel({ cwd, refreshToken = 0 }: { readonly 
           onRollbackSource={(snapshotId) => void rollbackSelectedSkillSource(snapshotId)}
           onImport={skillImport.openImport}
           onNewDraft={skillImport.openDraft}
-          onRefresh={() => void refresh()}
           t={t}
         />
       ) : null}

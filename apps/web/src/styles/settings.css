@@ -296,7 +296,6 @@
 
 .settings-content-stack .panel-title,
 .settings-plugin-manager-head,
-.settings-skill-library-head,
 .settings-skill-governance-head,
 .settings-skill-health-head,
 .settings-skill-candidate-head {
@@ -310,9 +309,7 @@
 .settings-content-stack .panel-title,
 .settings-content-stack .panel-title > span,
 .settings-plugin-manager-head,
-.settings-plugin-manager-actions,
-.settings-skill-library-head,
-.settings-skill-library-actions {
+.settings-plugin-manager-actions {
   display: flex;
 }
 
@@ -326,22 +323,19 @@
 }
 
 .settings-content-stack .panel-title.split,
-.settings-plugin-manager-head,
-.settings-skill-library-head {
+.settings-plugin-manager-head {
   justify-content: space-between;
 }
 
 .settings-content-stack .panel-title > span,
-.settings-plugin-manager-actions,
-.settings-skill-library-actions {
+.settings-plugin-manager-actions {
   align-items: center;
   gap: 8px;
   min-width: 0;
 }
 
 .settings-content-stack .panel-title h2,
-.settings-plugin-manager-head h2,
-.settings-skill-library-head h2 {
+.settings-plugin-manager-head h2 {
   margin: 0;
   color: var(--text-strong);
   font-size: 18px;
@@ -370,7 +364,6 @@
 }
 
 .settings-plugin-manager-head p,
-.settings-skill-library-head p,
 .settings-skill-audit-note {
   margin: 3px 0 0;
   color: var(--text-muted);
@@ -1603,9 +1596,7 @@
   min-width: 0;
 }
 
-.settings-skill-library-head,
 .settings-skill-library-toolbar,
-.settings-skill-library-actions,
 .settings-skill-import-actions,
 .settings-skill-row-actions,
 .settings-skill-inspector-head {
@@ -1614,34 +1605,11 @@
   gap: 8px;
 }
 
-.settings-skill-library-head {
-  justify-content: flex-end;
-  gap: 16px;
-}
-
-.settings-skill-library-head h2,
-.settings-skill-library-head p {
-  margin: 0;
-}
-
-.settings-skill-library-head h2 {
-  color: var(--text-strong);
-  font-size: 17px;
-  font-weight: 720;
-  line-height: 22px;
-}
-
-.settings-skill-library-head p,
 .settings-skill-audit-note {
   margin: 3px 0 0;
   color: var(--text-muted);
   font-size: 12px;
   line-height: 18px;
-}
-
-.settings-skill-library-actions {
-  justify-content: flex-end;
-  flex-wrap: wrap;
 }
 
 .settings-skill-library-stats {
@@ -2284,6 +2252,14 @@
   grid-template-columns: minmax(220px, 0.9fr) minmax(0, 1fr);
 }
 
+.settings-skill-library-toolbar-actions {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  min-width: 0;
+}
+
 .settings-skill-ownership-empty {
   display: grid;
   place-items: center;
@@ -2431,12 +2407,7 @@
   line-height: 19px;
 }
 
-.settings-skill-file-button {
-  position: relative;
-  overflow: hidden;
-}
-
-.settings-skill-file-button input {
+.settings-skill-file-picker input {
   position: absolute;
   width: 1px;
   height: 1px;
@@ -2445,20 +2416,32 @@
 }
 
 .settings-skill-selected-file {
+  display: flex;
+  align-items: center;
   width: 100%;
   gap: 7px;
   min-width: 0;
   min-height: 48px;
 }
 
-.settings-skill-selected-file strong {
+.settings-skill-selected-file > span {
+  display: grid;
+  gap: 2px;
   flex: 1;
   min-width: 0;
+}
+
+.settings-skill-selected-file strong {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--text-strong);
   font-size: 13px;
+}
+
+.settings-skill-selected-file small {
+  color: var(--text-muted);
+  font-size: 12px;
 }
 
 .settings-skill-file-picker {
@@ -2470,6 +2453,7 @@
   border: 1px dashed var(--border-strong);
   border-radius: 8px;
   background: var(--surface-panel);
+  cursor: pointer;
 }
 
 .settings-skill-file-picker.has-file {
@@ -2477,6 +2461,16 @@
   justify-items: stretch;
   padding: 14px;
   border-style: solid;
+}
+
+.settings-skill-file-picker:hover,
+.settings-skill-file-picker:focus-within {
+  border-color: var(--border-strong);
+  background: var(--surface-selected);
+}
+
+.settings-skill-file-picker.is-busy {
+  cursor: wait;
 }
 
 .settings-skill-file-empty {
@@ -2497,8 +2491,8 @@
   font-size: 12px;
 }
 
-.settings-skill-file-picker.has-file .settings-skill-file-button {
-  justify-self: start;
+.settings-skill-file-picker-loading {
+  color: var(--text-muted);
 }
 
 .settings-skill-import-problems {

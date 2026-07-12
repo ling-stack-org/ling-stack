@@ -50,10 +50,11 @@ test("skill library defaults to user-owned skills and keeps built-ins read-only"
   const mySkillsTab = page.getByRole("tab", { name: /My skills/ });
   const builtInSkillsTab = page.getByRole("tab", { name: /Built-in skills/ });
   await expect(mySkillsTab).toHaveAttribute("aria-selected", "true");
-  await expect(panel.getByRole("button", { name: "Import skill" })).toBeVisible();
-  await expect(panel.getByRole("button", { name: "New draft" })).toBeVisible();
+  const mySkillsToolbar = panel.locator(".settings-skill-library-toolbar--user");
+  await expect(mySkillsToolbar.getByRole("button", { name: "Import skill" })).toBeVisible();
+  await expect(mySkillsToolbar.getByRole("button", { name: "New draft" })).toBeVisible();
   await expect(panel.getByText("Skill library refreshed", { exact: true })).toHaveCount(0);
-  await expect(panel.locator(".settings-skill-library-head h2")).toHaveCount(0);
+  await expect(panel.locator(".settings-skill-library-head")).toHaveCount(0);
 
   for (const name of ["User Custom", "Workspace Skill", "Directory Skill", "Agents Skill", "Synced Skill"]) {
     await expect(panel.locator(".settings-skill-table tbody tr").filter({ hasText: name })).toBeVisible();

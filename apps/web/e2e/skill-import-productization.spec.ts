@@ -15,7 +15,7 @@ test("skill import chooses one file and imports it with one action", async ({ pa
   await mockDaemon(page, state);
   await openSkillLibrary(page);
 
-  await page.locator(".settings-skill-library-head").getByRole("button", { name: "Import skill" }).click();
+  await page.locator(".settings-skill-ownership-empty").getByRole("button", { name: "Import skill" }).click();
   const dialog = page.getByRole("dialog", { name: "Import skill" });
   await expect(dialog).toBeVisible();
   await expect(dialog.getByText("Source", { exact: true })).toHaveCount(0);
@@ -26,6 +26,8 @@ test("skill import chooses one file and imports it with one action", async ({ pa
   await expect(dialog.getByRole("button", { name: "Publish", exact: true })).toHaveCount(0);
   await expect(dialog.getByRole("button", { name: "Preview optimization" })).toHaveCount(0);
   await expect(dialog.getByRole("button", { name: "Publish to registry" })).toHaveCount(0);
+  await expect(dialog.getByText("Choose one skill file. Ling will check it automatically before importing.")).toHaveCount(0);
+  await expect(dialog.getByRole("button", { name: "Choose skill file" })).toHaveCount(0);
 
   const content = [
     "# Productized Import",
@@ -56,7 +58,7 @@ test("blocked skill import shows only actionable problems and creates no draft",
   await mockDaemon(page, state);
   await openSkillLibrary(page);
 
-  await page.locator(".settings-skill-library-head").getByRole("button", { name: "Import skill" }).click();
+  await page.locator(".settings-skill-ownership-empty").getByRole("button", { name: "Import skill" }).click();
   const dialog = page.getByRole("dialog", { name: "Import skill" });
   const draftCountBeforeImport = state.skillImportDrafts.length;
   const duplicateSkillId = (state.skillRegistryEntries[0] as { id: string }).id;

@@ -131,15 +131,16 @@ function FileImportContent({
 }): JSX.Element {
   return (
     <>
-      <p className="settings-skill-import-intro">{t("Choose one skill file. Ling will check it automatically before importing.")}</p>
-
       {error ? <div className="inline-error">{error}</div> : null}
 
-      <div className={`settings-skill-file-picker${form.fileName ? " has-file" : ""}`}>
+      <label className={`settings-skill-file-picker${form.fileName ? " has-file" : ""}${busy ? " is-busy" : ""}`}>
         {form.fileName ? (
           <div className="settings-skill-selected-file">
             <FileText size={18} />
-            <strong>{form.fileName}</strong>
+            <span>
+              <strong>{form.fileName}</strong>
+              <small>{t("Choose another file")}</small>
+            </span>
           </div>
         ) : (
           <span className="settings-skill-file-empty">
@@ -149,21 +150,18 @@ function FileImportContent({
           </span>
         )}
 
-        <label className="secondary-button compact-button settings-skill-file-button">
-          {busy === "reading" ? <Loader2 className="spin" size={15} /> : <Upload size={15} />}
-          {t(form.fileName ? "Choose another file" : "Choose skill file")}
-          <input
-            type="file"
-            accept=".md,.markdown,.json,.txt,text/markdown,text/plain,application/json"
-            onChange={(event) => {
-              const file = event.currentTarget.files?.[0];
-              event.currentTarget.value = "";
-              onLoadFile(file);
-            }}
-            disabled={Boolean(busy)}
-          />
-        </label>
-      </div>
+        {busy === "reading" ? <Loader2 className="settings-skill-file-picker-loading spin" size={16} aria-label={t("Reading file...")} /> : null}
+        <input
+          type="file"
+          accept=".md,.markdown,.json,.txt,text/markdown,text/plain,application/json"
+          onChange={(event) => {
+            const file = event.currentTarget.files?.[0];
+            event.currentTarget.value = "";
+            onLoadFile(file);
+          }}
+          disabled={Boolean(busy)}
+        />
+      </label>
 
       {blockingIssues.length > 0 ? (
         <div className="settings-skill-import-problems" role="alert">

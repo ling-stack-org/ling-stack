@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { BookOpen, Plus, RefreshCw, Search, Upload, X } from "lucide-react";
+import { BookOpen, Plus, Search, Upload, X } from "lucide-react";
 import { RightDrawer } from "../../shared/conversation/index.js";
 import type {
   SkillOptimizationPreview,
@@ -42,7 +42,6 @@ export function SkillLibraryRegistrySection({
   onRollbackSource,
   onImport,
   onNewDraft,
-  onRefresh,
   t,
 }: {
   readonly mode: "user" | "builtin";
@@ -65,7 +64,6 @@ export function SkillLibraryRegistrySection({
   readonly onRollbackSource: (snapshotId: string) => void;
   readonly onImport: () => void;
   readonly onNewDraft: () => void;
-  readonly onRefresh: () => void;
   readonly t: SettingsTranslator;
 }): JSX.Element {
   const [userSearchQuery, setUserSearchQuery] = useState("");
@@ -131,7 +129,7 @@ export function SkillLibraryRegistrySection({
         <strong>{t(mode === "user" ? "No user skills yet" : "No built-in skills available")}</strong>
         <small>{t(mode === "user"
           ? "Import a skill or create a draft to start building your workspace library."
-          : "Refresh the library to load Ling built-in skills.")}</small>
+          : "Built-in skills are loaded with the workspace library.")}</small>
         <span>
           {mode === "user" ? (
             <>
@@ -145,10 +143,6 @@ export function SkillLibraryRegistrySection({
               </button>
             </>
           ) : null}
-          <button className="secondary-button compact-button" type="button" onClick={onRefresh} disabled={loading}>
-            <RefreshCw size={14} className={loading ? "spin" : undefined} />
-            {t("Refresh")}
-          </button>
         </span>
       </div>
     );
@@ -188,10 +182,20 @@ export function SkillLibraryRegistrySection({
           </div>
         ) : null}
         {mode === "user" ? (
-          <select value={userSortMode} onChange={(event) => setUserSortMode(event.target.value === "name" ? "name" : "updated")} aria-label={t("Sort skills")}>
-            <option value="updated">{t("Sort by updated")}</option>
-            <option value="name">{t("Sort by name")}</option>
-          </select>
+          <div className="settings-skill-library-toolbar-actions">
+            <select value={userSortMode} onChange={(event) => setUserSortMode(event.target.value === "name" ? "name" : "updated")} aria-label={t("Sort skills")}>
+              <option value="updated">{t("Sort by updated")}</option>
+              <option value="name">{t("Sort by name")}</option>
+            </select>
+            <button className="primary-button compact-button" type="button" onClick={onImport}>
+              <Upload size={14} />
+              {t("Import skill")}
+            </button>
+            <button className="secondary-button compact-button" type="button" onClick={onNewDraft}>
+              <Plus size={14} />
+              {t("New draft")}
+            </button>
+          </div>
         ) : null}
       </div>
 
