@@ -149,3 +149,112 @@ test("apply-patch renders bounded previews with truncation metadata", () => {
   assert.equal(preview.length < 160, true);
   assert.match(preview, /truncated patch preview/);
 });
+
+test("apply-patch preview adds three context lines around a resolved hunk", () => {
+  const source = Array.from({ length: 12 }, (_, index) => `line ${index + 1}`).join("\n") + "\n";
+  const plan = planApplyPatch({
+    patchText: `*** Begin Patch
+*** Update File: src/context.txt
+@@ -6,1 +6,1 @@
+-line 6
++changed 6
+*** End Patch`,
+    readFile: () => source,
+  });
+
+  const preview = renderPatchPreview(plan, {
+    readFile: () => source,
+    contextLines: 3,
+  });
+
+  assert.match(preview, /@@ -3,7 \+3,7 @@/);
+  assert.match(preview, / line 3\n line 4\n line 5\n-line 6\n\+changed 6\n line 7\n line 8\n line 9/);
+  assert.doesNotMatch(preview, / line 2\n/);
+  assert.doesNotMatch(preview, / line 10\n/);
+});
+
+test("apply-patch preview adds three context lines around a pure insertion", () => {
+  const source = Array.from({ length: 12 }, (_, index) => `line ${index + 1}`).join("\n") + "\n";
+  const plan = planApplyPatch({
+    patchText: `*** Begin Patch
+*** Update File: src/context.txt
+@@ -6,0 +7,2 @@
++inserted one
++inserted two
+*** End Patch`,
+    readFile: () => source,
+  });
+
+  const preview = renderPatchPreview(plan, {
+    readFile: () => source,
+    contextLines: 3,
+  });
+
+  assert.match(preview, /@@ -4,6 \+4,8 @@/);
+  assert.match(preview, / line 4\n line 5\n line 6\n\+inserted one\n\+inserted two\n line 7\n line 8\n line 9/);
+});
+
+test("apply-patch preview merges nearby context windows and keeps distant hunks separate", () => {
+  const source = Array.from({ length: 30 }, (_, index) => `line ${index + 1}`).join("\n") + "\n";
+  const nearbyPlan = planApplyPatch({
+    patchText: `*** Begin Patch
+*** Update File: src/context.txt
+@@ -6,1 +6,1 @@
+-line 6
++changed 6
+@@ -11,1 +11,1 @@
+-line 11
++changed 11
+*** End Patch`,
+    readFile: () => source,
+  });
+  const nearbyPreview = renderPatchPreview(nearbyPlan, {
+    readFile: () => source,
+    contextLines: 3,
+  });
+  assert.equal((nearbyPreview.match(/^@@/gmu) ?? []).length, 1);
+  assert.match(nearbyPreview, /-line 6/);
+  assert.match(nearbyPreview, /-line 11/);
+
+  const distantPlan = planApplyPatch({
+    patchText: `*** Begin Patch
+*** Update File: src/context.txt
+@@ -6,1 +6,1 @@
+-line 6
++changed 6
+@@ -22,1 +22,1 @@
+-line 22
++changed 22
+*** End Patch`,
+    readFile: () => source,
+  });
+  const distantPreview = renderPatchPreview(distantPlan, {
+    readFile: () => source,
+    contextLines: 3,
+  });
+  assert.equal((distantPreview.match(/^@@/gmu) ?? []).length, 2);
+});
+
+test("apply-patch keeps later insertion coordinates stable after an earlier expansion", async () => {
+  const files = new Map([["src/insertions.txt", "alpha\nbeta\ngamma\ndelta\n"]]);
+  const plan = planApplyPatch({
+    patchText: `*** Begin Patch
+*** Update File: src/insertions.txt
+@@ -2,1 +2,2 @@
+ beta
++beta extra
+@@ -4,0 +5,1 @@
++before delta
+*** End Patch`,
+    readFile: (path) => files.get(path),
+  });
+
+  await applyPatchPlan({
+    plan,
+    readFile: (path) => files.get(path),
+    writeFile: (path, content) => files.set(path, content),
+    deleteFile: (path) => files.delete(path),
+  });
+
+  assert.equal(files.get("src/insertions.txt"), "alpha\nbeta\nbeta extra\ngamma\nbefore delta\ndelta\n");
+});

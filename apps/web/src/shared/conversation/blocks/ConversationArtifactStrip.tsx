@@ -482,7 +482,7 @@ function ArtifactHoverPreview({
       </header>
       <div className="conversation-artifact-hover-preview-body">
         {change ? (
-          <DiffViewer change={change} maxCollapsedLines={10} />
+          <DiffViewer change={change} maxCollapsedLines={18} />
         ) : target.kind === "artifact" ? (
           <CompactArtifactPreview preview={target.preview} />
         ) : null}

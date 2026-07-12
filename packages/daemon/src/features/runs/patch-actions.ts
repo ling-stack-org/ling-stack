@@ -65,7 +65,10 @@ export function createPatchActionDraft(input: {
     patchText: input.patchText,
     readFile: (path) => readWorkspaceTextFile(input.request.cwd, path),
   });
-  const diffPreview = renderPatchPreview(plan);
+  const diffPreview = renderPatchPreview(plan, {
+    contextLines: 3,
+    readFile: (path) => readWorkspaceTextFile(input.request.cwd, path),
+  });
   return {
     patchText: input.patchText,
     plan,

@@ -2873,7 +2873,6 @@ export const zhCN = {
     "Branch steps": "分支步骤",
     "Requirement shaping": "需求塑形",
     "Decision needed": "需要决策",
-    "Workflow packet summary": "Workflow packet 摘要",
     "Final result": "最终结果",
     "Transcript block": "会话块",
     "Preview targets": "预览目标",

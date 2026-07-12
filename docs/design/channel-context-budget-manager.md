@@ -463,7 +463,7 @@ Compaction destinations:
 | --- | --- |
 | Temporary pack summary | May be created in memory for one request/run. |
 | `ChannelContextSummary` | May be created automatically when source refs are explicit and the summary is visible in context surfaces. |
-| Workflow packet summary | May be created inside workflow artifacts and linked to the workflow/step. |
+| Workflow packet summary | May be created inside workflow artifacts and linked to the workflow/step. It is audit evidence, not a default conversation transcript block. |
 | `ChannelDecision` | Draft only; final decisions require user or policy confirmation. |
 | `ChannelHandoff` | Allowed during orchestrated transitions when source/target/expected output are explicit. |
 | Memory candidate | Candidate only; never active memory without review. |
@@ -1319,6 +1319,11 @@ details:
 - Work progress rows can link to the Context Pack snapshot or selected source refs.
 - Ordinary chat should not display token counts, raw prompt text, selector JSON, or
   confidence values by default.
+- Workflow context packets, output packets, fan-in summaries, packet counts, and packet
+  artifact ids must not render as standalone transcript cards in the normal conversation.
+  They remain durable workflow evidence and may appear only after an explicit evidence or
+  developer-diagnostics action. User-facing output files continue to render through the
+  normal artifact strip below the terminal report.
 
 ## Implementation Slices
 

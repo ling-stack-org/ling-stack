@@ -43,6 +43,7 @@ export interface WorkflowProgressModel {
   readonly attention: WorkflowProgressAttention;
   readonly updatedAt: string;
   readonly terminalReport?: TerminalReportDto;
+  readonly conversationVisibility: "default" | "audit_only";
 }
 
 export interface BuildWorkflowProgressInput {
@@ -149,7 +150,38 @@ export function buildWorkflowProgressModel(input: BuildWorkflowProgressInput): W
       ? input.terminalReport.committedAt
       : input.workflow.updatedAt,
     terminalReport: input.terminalReport,
+    conversationVisibility: isResolvedApprovalOnlyWorkflow(input.workflow, orderedSteps, workflowRuns, workflowApprovals, input.terminalReport)
+      ? "audit_only"
+      : "default",
   };
+}
+
+function isResolvedApprovalOnlyWorkflow(
+  workflow: ChannelWorkflow,
+  steps: readonly ChannelWorkflowStep[],
+  runs: readonly RunSession[],
+  approvals: readonly ApprovalRequest[],
+  terminalReport: TerminalReportDto | undefined,
+): boolean {
+  if (terminalReport || !isTerminalWorkflowStatus(workflow.status) || steps.length === 0 || runs.length > 0) {
+    return false;
+  }
+  const approvalStepIds = new Set(
+    approvals
+      .filter((approval) => approval.status !== "pending" && approval.workflowStepId)
+      .map((approval) => approval.workflowStepId as string),
+  );
+  return approvals.length > 0 &&
+    approvals.every((approval) => approval.status !== "pending") &&
+    steps.every((step) => !step.runId && isTerminalWorkflowStepStatus(step.status) && approvalStepIds.has(step.id));
+}
+
+function isTerminalWorkflowStatus(status: ChannelWorkflow["status"]): boolean {
+  return status === "succeeded" || status === "failed" || status === "cancelled";
+}
+
+function isTerminalWorkflowStepStatus(status: ChannelWorkflowStep["status"]): boolean {
+  return status === "succeeded" || status === "failed" || status === "skipped" || status === "cancelled";
 }
 
 export function workflowProgressToConversationWorkCell(model: WorkflowProgressModel): ConversationWorkCellViewModel {

@@ -5739,13 +5739,7 @@ test("workflow context inspect details stay out of main feed expansion", async (
   await expect(operationBubble).toHaveClass(/collapsed/);
   await expect(operationBubble.getByRole("button", { name: "Expand operation" })).toHaveCount(1);
   const packetSummary = feed.locator(".transcript-block-view.kind-workflow_packet_summary");
-  await expect(packetSummary).toBeVisible();
-  await expect(packetSummary).toContainText("Workflow packet summary");
-  await expect(packetSummary).toContainText("1 context · 2 output · 1 summary");
-  await packetSummary.locator(".transcript-block-view-head").click();
-  await expect(packetSummary).toContainText("Context packet");
-  await expect(packetSummary).toContainText("Output packet");
-  await expect(packetSummary).toContainText("Fan-in summary");
+  await expect(packetSummary).toHaveCount(0);
   await expect(workCell).not.toContainText("Context inspect workflow");
   await expect(workCell).not.toContainText("workflow_runtime_boundary");
   await expect(workCell).not.toContainText("old_verbose_log_tail");
@@ -5914,6 +5908,106 @@ test("blocked workflow hides accepted proposal and leaves blocker report in defa
 
   await openChannelChatTools(page);
   await expect(feed.getByLabel("Task confirmation")).toContainText("Create README.md");
+});
+
+test("resolved approval-only workflow stays out of the conversation", async ({ page }) => {
+  await useEnglishLocale(page);
+  const state = createBaseState({ approvalStatus: "expired" });
+  state.channelMessages = [
+    {
+      id: "msg_approval_only_recovery",
+      workspaceId: "workspace_default",
+      channelId: "channel_engineering",
+      kind: "message",
+      intent: "discuss",
+      authorType: "local-user",
+      authorId: "tian",
+      body: "Review the high-risk shell command.",
+      mentions: [],
+      attachmentIds: [],
+      linkPreviewIds: [],
+      status: "ready",
+      createdAt: "2026-06-29T07:55:00.000Z",
+      updatedAt: "2026-06-29T07:55:00.000Z",
+    },
+  ];
+  state.channelExecutionProposals = [
+    {
+      id: "proposal_approval_only_recovery",
+      workspaceId: "workspace_default",
+      channelId: "channel_engineering",
+      sourceMessageId: "msg_approval_only_recovery",
+      proposedByTeammateId: "ling_agent",
+      title: "Review shell command",
+      prompt: "Review the high-risk shell command.",
+      assigneeTeammateId: "ling_agent",
+      acceptanceCriteria: ["The approval decision is recorded."],
+      collaborationSteps: [{ teammateId: "ling_agent", action: "coordinated", summary: "Request approval." }],
+      requiredTools: ["bash"],
+      status: "accepted",
+      linkedWorkflowId: "workflow_approval_only_recovery",
+      createdAt: "2026-06-29T07:55:01.000Z",
+      updatedAt: "2026-06-29T07:55:02.000Z",
+    },
+  ];
+  state.runs = [];
+  state.tasks = [];
+  state.channelWorkflows = [
+    {
+      id: "workflow_approval_only_recovery",
+      workspaceId: "workspace_default",
+      channelId: "channel_engineering",
+      title: "Review shell command",
+      objective: "Review the high-risk shell command.",
+      status: "succeeded",
+      createdBy: "local-user",
+      createdAt: "2026-06-29T07:55:02.527Z",
+      updatedAt: "2026-07-11T05:29:19.652Z",
+    },
+  ];
+  state.channelWorkflowSteps = [
+    {
+      id: "workflow_step_approval_only_recovery",
+      workspaceId: "workspace_default",
+      channelId: "channel_engineering",
+      workflowId: "workflow_approval_only_recovery",
+      position: 1,
+      title: "Review high-risk shell command",
+      prompt: "Review the high-risk shell command.",
+      toParticipantId: "ling_agent",
+      toParticipantLabel: "Ling Agent",
+      status: "succeeded",
+      resultSummary: "Recovered completed approval-only workflow step.",
+      createdAt: "2026-06-29T07:55:02.620Z",
+      updatedAt: "2026-07-11T05:29:19.652Z",
+    },
+  ];
+  state.approvals = [
+    {
+      id: "approval_approval_only_recovery",
+      workflowStepId: "workflow_step_approval_only_recovery",
+      channelId: "channel_engineering",
+      actionType: "workflow_step",
+      risk: "high",
+      title: "Review high-risk shell command",
+      description: "Review the high-risk shell command.",
+      payload: { type: "workflow_step" },
+      status: "approved",
+      createdAt: "2026-06-29T07:55:02.000Z",
+      resolvedAt: "2026-06-29T08:32:58.247Z",
+      resolvedBy: "local-user",
+    },
+  ];
+
+  await mockDaemon(page, state);
+  await page.goto("/");
+  await openEngineeringChannel(page);
+
+  const feed = page.getByLabel("Channel message feed");
+  await expect(feed.getByText("Review the high-risk shell command.", { exact: true })).toBeVisible();
+  await expect(feed.locator(".conversation-work-cell")).toHaveCount(0);
+  await expect(feed).not.toContainText("285h 34m");
+  await expect(feed).not.toContainText("Recovered completed approval-only workflow step.");
 });
 
 test("progress popover owns workflow status while the right drawer avoids duplicate progress cards", async ({ page }) => {
@@ -7974,6 +8068,8 @@ test("local channel work-cell demo fixture renders a realistic multi-agent opera
   await expect(editActionRow.locator(".conversation-work-cell-change-preview")).toBeVisible();
   await expect(editActionRow.locator(".conversation-work-cell-change-preview .diff-line.add")).toHaveCount(4);
   await expect(editActionRow.locator(".conversation-work-cell-change-preview .diff-line.delete")).toHaveCount(1);
+  await expect(editActionRow.locator(".conversation-work-cell-change-preview .diff-line.context")).toHaveCount(6);
+  await expect(editActionRow.locator(".conversation-work-cell-change-preview")).toContainText("const operationRows = visibleOperationRows(model);");
 
   const commandRow = engineerDetail.locator(".conversation-work-cell-row.shell").filter({ hasText: "已运行命令" }).first();
   const commandRowMain = commandRow.locator(".conversation-work-cell-row-main");
@@ -8038,7 +8134,17 @@ test("local channel work-cell demo fixture renders a realistic multi-agent opera
   await expect(hoverPreview).toContainText("ConversationWorkCell.tsx");
   await expect(hoverPreview.locator(".diff-line.add")).toHaveCount(4);
   await expect(hoverPreview.locator(".diff-line.delete")).toHaveCount(1);
-  const sourceRowBox = await changedFiles.nth(0).boundingBox();
+  await expect(hoverPreview.locator(".diff-line.context")).toHaveCount(6);
+  await expect(hoverPreview).toContainText("const operationRows = visibleOperationRows(model);");
+  await expect(hoverPreview).toContainText("{operationBody}");
+  await changedFiles.nth(1).click();
+  await expect(hoverPreview).toContainText("components.css");
+  await expect(hoverPreview.locator(".diff-line.add")).toHaveCount(4);
+  await expect(hoverPreview.locator(".diff-line.delete")).toHaveCount(0);
+  await expect(hoverPreview.locator(".diff-line.context")).toHaveCount(6);
+  await expect(hoverPreview).toContainText("transition: color 120ms ease;");
+  await expect(hoverPreview).toContainText("min-width: 0;");
+  const sourceRowBox = await changedFiles.nth(1).boundingBox();
   const hoverPreviewBox = await hoverPreview.boundingBox();
   expect(sourceRowBox).not.toBeNull();
   expect(hoverPreviewBox).not.toBeNull();
