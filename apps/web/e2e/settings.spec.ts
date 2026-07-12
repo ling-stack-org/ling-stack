@@ -65,12 +65,12 @@ function createArchivedBranch(index: number): Record<string, unknown> {
   };
 }
 
-async function archivedGroupMetrics(page: Page, title: string): Promise<{
+async function archivedListMetrics(page: Page): Promise<{
   readonly scrollHeight: number;
   readonly clientHeight: number;
   readonly overflowY: string;
 }> {
-  return await page.locator(".archived-item-group").filter({ hasText: title }).locator(".archived-item-list").evaluate((element) => ({
+  return await page.locator(".archived-item-list").evaluate((element) => ({
     scrollHeight: element.scrollHeight,
     clientHeight: element.clientHeight,
     overflowY: getComputedStyle(element).overflowY,
@@ -342,12 +342,12 @@ test("settings developer section contains startup readiness", async ({ page }) =
   await expect(developerPanel.getByRole("heading", { name: "Startup readiness" })).toBeVisible();
 });
 
-test("settings archived items keep rules compact, lists scrollable, and actions aligned", async ({ page }) => {
+test("settings archived items use one remembered category list with scoped search", async ({ page }) => {
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");
   });
   const state = createBaseState({ approvalStatus: "expired" });
-  state.threads = Array.from({ length: 9 }, (_, index) => createArchivedConversation(index));
+  state.threads = Array.from({ length: 12 }, (_, index) => createArchivedConversation(index));
   state.aiTeammates = Array.from({ length: 6 }, (_, index) =>
     createMockTeammate({
       id: `teammate_archived_visual_${index}`,
@@ -357,29 +357,84 @@ test("settings archived items keep rules compact, lists scrollable, and actions 
       updatedAt: archivedTimestamp(index),
     })
   );
-  state.channels.push(...Array.from({ length: 6 }, (_, index) => createArchivedChannel(index)));
-  state.channelBranches = Array.from({ length: 6 }, (_, index) => createArchivedBranch(index));
+  state.channels.push(...Array.from({ length: 12 }, (_, index) => createArchivedChannel(index)));
+  state.channelBranches = Array.from({ length: 12 }, (_, index) => createArchivedBranch(index));
   await mockDaemon(page, state);
   await page.goto("/");
 
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
   await page.getByLabel("Settings sections").getByRole("button", { name: /Archived items/ }).click();
   const panel = page.locator(".archived-items-settings-panel");
-  await expect(panel.getByRole("heading", { name: "Archived items" })).toBeVisible();
+  await expect(panel).toBeVisible();
   await expect(panel.locator(".archived-items-rules-footer")).toHaveCount(0);
   await expect(panel.locator(".archived-items-rule-note")).toHaveCount(0);
-  const hint = panel.locator(".archived-items-hint");
-  await expect(hint).toBeVisible();
-  await expect(hint).toHaveText("Restored items return to their lists; deleting any archived item is permanent.");
+  await expect(panel.locator(".archived-items-hint")).toHaveCount(0);
   await expect(panel.getByText("Restore and delete rules")).toHaveCount(0);
+  await expect(panel.getByRole("tab")).toHaveCount(4);
+  await expect(panel.locator(".settings-subnav-item small")).toHaveText(["12", "6", "12", "12"]);
+  await expect(panel.getByRole("tab", { name: /Conversations 12/ })).toHaveAttribute("aria-selected", "true");
+  await expect(panel.getByRole("tabpanel", { name: "Conversations" })).toBeVisible();
+  await expect(panel.locator(".archived-item-list")).toHaveCount(1);
+  await expect(panel.locator(".archived-item-main small")).toHaveCount(0);
+  await expect(panel.locator(".archived-item-main svg")).toHaveCount(0);
+  await expect(panel.getByText("Parent channel archived")).toHaveCount(0);
+  await expect(panel.getByText("Parent channel active")).toHaveCount(0);
 
-  await expect(panel.getByRole("button", { name: "Delete conversation" })).toHaveCount(9);
+  const rowLayout = await panel.locator(".archived-item-row").evaluateAll((rows) =>
+    rows.map((row) => {
+      const title = row.querySelector(".archived-item-main strong");
+      const time = row.querySelector(".archived-item-time");
+      const rowRect = row.getBoundingClientRect();
+      const titleRect = title?.getBoundingClientRect();
+      const timeRect = time?.getBoundingClientRect();
+      return {
+        height: rowRect.height,
+        centerDelta: titleRect && timeRect
+          ? Math.abs((titleRect.top + titleRect.height / 2) - (timeRect.top + timeRect.height / 2))
+          : 99,
+      };
+    })
+  );
+  expect(Math.max(...rowLayout.map(({ height }) => height))).toBeLessThanOrEqual(56);
+  expect(Math.max(...rowLayout.map(({ centerDelta }) => centerDelta))).toBeLessThanOrEqual(2);
+
+  await expect(panel.getByRole("button", { name: "Delete conversation" })).toHaveCount(12);
+  await expect(panel.getByRole("button", { name: "Delete AI teammate" })).toHaveCount(0);
+
+  const conversationMetrics = await archivedListMetrics(page);
+  expect(conversationMetrics.overflowY).toBe("auto");
+  expect(conversationMetrics.scrollHeight).toBeGreaterThan(conversationMetrics.clientHeight + 2);
+
+  const searchInput = panel.getByRole("searchbox", { name: "Search archived items" });
+  await expect(searchInput).toBeVisible();
+  await searchInput.fill("does not exist");
+  await expect(panel.locator(".archived-item-row")).toHaveCount(0);
+  await expect(panel.getByText("No matching archived items")).toBeVisible();
+  await searchInput.fill("conversation 12");
+  await expect(panel.locator(".archived-item-row")).toHaveCount(1);
+  await expect(panel.getByText("Archived conversation 12", { exact: true })).toBeVisible();
+  await searchInput.press("Escape");
+  await expect(searchInput).toHaveValue("");
+  await expect(searchInput).toBeVisible();
+  await expect(panel.locator(".archived-item-row")).toHaveCount(12);
+
+  await searchInput.fill("conversation 1");
+  await panel.getByRole("tab", { name: /AI Teammates 6/ }).click();
+  await expect(panel.getByRole("tabpanel", { name: "AI Teammates" })).toBeVisible();
+  await expect(searchInput).toHaveValue("");
+  await expect(searchInput).toBeVisible();
+  await expect(panel.getByRole("button", { name: "Search archived items" })).toHaveCount(0);
   await expect(panel.getByRole("button", { name: "Delete AI teammate" })).toHaveCount(6);
-  await expect(panel.getByRole("button", { name: "Delete channel" })).toHaveCount(6);
-  await expect(panel.getByRole("button", { name: "Delete branch" })).toHaveCount(6);
+  await expect(panel.getByRole("button", { name: "Delete conversation" })).toHaveCount(0);
 
-  for (const title of ["Conversations", "AI Teammates", "Channels", "Branches"]) {
-    const metrics = await archivedGroupMetrics(page, title);
+  for (const category of [
+    { name: /Channels 12/, panel: "Channels" },
+    { name: /Branches 12/, panel: "Branches" },
+    { name: /Conversations 12/, panel: "Conversations" },
+  ]) {
+    await panel.getByRole("tab", { name: category.name }).click();
+    await expect(panel.getByRole("tabpanel", { name: category.panel })).toBeVisible();
+    const metrics = await archivedListMetrics(page);
     expect(metrics.overflowY).toBe("auto");
     expect(metrics.scrollHeight).toBeGreaterThan(metrics.clientHeight + 2);
   }
@@ -413,7 +468,7 @@ test("settings archived items keep rules compact, lists scrollable, and actions 
   );
   expect(Math.max(...iconActionAlignment)).toBeLessThanOrEqual(2);
 
-  const conversationRow = panel.locator(".archived-item-row").filter({ hasText: "Archived conversation 9" });
+  const conversationRow = panel.locator(".archived-item-row").filter({ hasText: "Archived conversation 12" });
   let cancelledDialogMessage = "";
   page.once("dialog", async (dialog) => {
     cancelledDialogMessage = dialog.message();
@@ -427,8 +482,10 @@ test("settings archived items keep rules compact, lists scrollable, and actions 
     await dialog.accept();
   });
   await conversationRow.getByRole("button", { name: "Delete conversation" }).click();
-  await expect(panel.getByText("Archived conversation 9", { exact: true })).toHaveCount(0);
+  await expect(panel.getByText("Archived conversation 12", { exact: true })).toHaveCount(0);
+  await expect(panel.getByRole("tab", { name: /Conversations 11/ })).toBeVisible();
 
+  await panel.getByRole("tab", { name: /AI Teammates 6/ }).click();
   const teammateRow = panel.locator(".archived-item-row").filter({ hasText: "Archived teammate 6" });
   let teammateDialogMessage = "";
   page.once("dialog", async (dialog) => {
@@ -438,14 +495,22 @@ test("settings archived items keep rules compact, lists scrollable, and actions 
   await teammateRow.getByRole("button", { name: "Delete AI teammate" }).click();
   expect(teammateDialogMessage).toContain("This permanently deletes private chat, attachments, avatar, memory, and private bindings.");
   await expect(panel.getByText("Archived teammate 6", { exact: true })).toHaveCount(0);
+  await expect(panel.getByRole("tab", { name: /AI Teammates 5/ })).toBeVisible();
   await expect.poll(() => readHorizontalOverflow(page, ".archived-items-settings-panel")).toEqual([]);
+
+  await panel.getByRole("tab", { name: /Branches 12/ }).click();
+  await page.reload();
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
+  await page.getByLabel("Settings sections").getByRole("button", { name: /Archived items/ }).click();
+  await expect(panel.getByRole("tab", { name: /Branches 12/ })).toHaveAttribute("aria-selected", "true");
+  await expect(panel.getByRole("tabpanel", { name: "Branches" })).toBeVisible();
+  await expect(panel.locator(".archived-item-list")).toHaveCount(1);
 
   await page.setViewportSize({ width: 1280, height: 800 });
   await expect.poll(() => readHorizontalOverflow(page, ".archived-items-settings-panel")).toEqual([]);
-  for (const title of ["Conversations", "AI Teammates", "Channels", "Branches"]) {
-    const metrics = await archivedGroupMetrics(page, title);
-    expect(metrics.overflowY).toBe("auto");
-  }
+  const metrics = await archivedListMetrics(page);
+  expect(metrics.overflowY).toBe("auto");
+  expect(metrics.scrollHeight).toBeGreaterThan(metrics.clientHeight + 2);
 });
 
 test("settings archived conversation delete keeps loading and product error feedback local", async ({ page }) => {

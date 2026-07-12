@@ -228,11 +228,14 @@ test("main pages and workspace tools follow dark theme tokens", async ({ page })
   await page.setViewportSize({ width: 1280, height: 800 });
   await page.getByLabel("设置分组").getByRole("button", { name: /已归档项目|Archived items/ }).click();
   await expect(page.locator(".archived-items-settings-panel")).toBeVisible();
-  await expect(page.locator(".archived-delete-action")).toHaveCount(4);
+  await expect(page.locator(".archived-items-settings-panel").getByRole("tab")).toHaveCount(4);
+  await expect(page.locator(".archived-delete-action")).toHaveCount(1);
   await assertDarkPage(page, "archived items settings", [
     ".settings-layout",
     ".archived-items-settings-panel",
-    ".archived-item-group",
+    ".archived-items-toolbar",
+    ".settings-subnav",
+    ".archived-item-list",
     ".archived-item-row",
     ".archived-item-actions",
   ]);
