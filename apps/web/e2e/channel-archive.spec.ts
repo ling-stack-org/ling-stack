@@ -74,7 +74,9 @@ test("channel branch list shows real branches without default branch chrome", as
   await expect.poll(() => state.lastChannelMessageRequest?.threadId).toBe(quickSplitRootThreadId);
 
   await openArchivedItemsSettings(page);
-  const archivedPanel = page.locator(".archived-item-group").filter({ hasText: "Branches" });
+  const archivedSettings = page.locator(".archived-items-settings-panel");
+  await archivedSettings.getByRole("tab", { name: /Branches/ }).click();
+  const archivedPanel = archivedSettings.locator(".archived-item-list");
   await expect(archivedPanel).toContainText("Engineering / API cleanup");
   await expect(archivedPanel).toContainText("Engineering / Legacy split");
   await expect(archivedPanel.locator(".archived-item-row").filter({ hasText: "Engineering / API cleanup" }).getByRole("button", { name: "Restore" })).toBeVisible();
@@ -104,7 +106,8 @@ test("channel branch list shows real branches without default branch chrome", as
   await expect(navigation.getByRole("button", { name: "Engineering" })).toHaveCount(0);
 
   await openArchivedItemsSettings(page);
-  const archivedChannelsPanel = page.locator(".archived-item-group").filter({ hasText: "Channels" });
+  await archivedSettings.getByRole("tab", { name: /Channels/ }).click();
+  const archivedChannelsPanel = archivedSettings.locator(".archived-item-list");
   await expect(archivedChannelsPanel).toContainText("Engineering");
   await expect(archivedChannelsPanel.getByRole("button", { name: "Restore" })).toBeVisible();
   await expect(archivedChannelsPanel.getByRole("button", { name: "Delete" })).toBeVisible();
