@@ -2186,6 +2186,7 @@ export const zhCN = {
     "Close import dialog": "关闭导入弹窗",
     "Choose a skill file or paste content, check it, then publish.": "选择技能文件或直接粘贴内容，检查通过后即可发布。",
     "Choose one skill file. Ling will check it automatically before importing.": "选择一个技能文件，Ling 会在导入前自动检查是否可用。",
+    "Built-in skills are loaded with the workspace library.": "内置技能会随当前工作区技能库加载。",
     "Choose skill file": "选择技能文件",
     "Choose another file": "更换文件",
     "Reading file...": "正在读取文件...",

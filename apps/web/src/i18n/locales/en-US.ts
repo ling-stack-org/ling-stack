@@ -2470,6 +2470,7 @@ export const enUS = {
     "Close import dialog": "Close import dialog",
     "Choose a skill file or paste content, check it, then publish.": "Choose a skill file or paste content, check it, then publish.",
     "Choose one skill file. Ling will check it automatically before importing.": "Choose one skill file. Ling will check it automatically before importing.",
+    "Built-in skills are loaded with the workspace library.": "Built-in skills are loaded with the workspace library.",
     "Choose skill file": "Choose skill file",
     "Choose another file": "Choose another file",
     "Reading file...": "Reading file...",
