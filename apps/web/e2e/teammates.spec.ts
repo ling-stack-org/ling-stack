@@ -903,7 +903,9 @@ test("AI teammate private workspace sends blocked chat replies and persists sett
   await expect(privateSummaryPanel).toBeVisible();
   await expect(privateSummaryPanel).toHaveAttribute("data-summary-placement-motion", "header->main");
   await expect(privateDock).toContainText("Workspace tools");
+  await expect(privateDock.getByRole("button", { name: "Evidence", exact: true })).toHaveCount(0);
   await expect(privateSummaryPanel).toContainText("Environment");
+  await expect(privateSummaryPanel.getByText("Evidence", { exact: true })).toHaveCount(0);
   await expect(privateChatSurface).toHaveClass(/summary-panel-expanded/);
   await expect(privateSummaryPanel).toHaveClass(/is-popover-expanded/);
   await expect.poll(async () => {

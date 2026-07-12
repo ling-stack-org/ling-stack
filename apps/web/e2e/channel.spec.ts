@@ -1200,6 +1200,27 @@ test("channel environment surface shows read-only context and opens review", asy
   await expect(environmentPage).toContainText("No browser evidence");
   await expect(environmentPage).toContainText("No sources");
 
+  const selectedEnvironmentPath = "/Users/gsx/minimax-agent-cn/projects";
+  await environmentPage.getByRole("button", { name: "Change directory" }).click();
+  await expect.poll(() => {
+    const channel = state.channels.find((item) => isRecord(item) && item.id === "channel_engineering");
+    if (!isRecord(channel) || !isRecord(channel.workspaceBinding)) {
+      return undefined;
+    }
+    return {
+      boundPath: channel.boundPath,
+      mode: channel.workspaceBinding.mode,
+      executionPath: channel.workspaceBinding.executionPath,
+    };
+  }).toEqual({
+    boundPath: selectedEnvironmentPath,
+    mode: "local",
+    executionPath: selectedEnvironmentPath,
+  });
+  const localEnvironment = environmentPage.getByLabel("Local environment");
+  await expect(localEnvironment).toContainText("Local");
+  await expect(localEnvironment).toContainText(selectedEnvironmentPath);
+
   await environmentPage.locator(".channel-environment-section.commit").getByRole("button", { name: "Open" }).click();
   const dialog = page.getByRole("dialog", { name: "Commit or push" });
   await expect(dialog).toBeVisible();
@@ -2171,6 +2192,10 @@ test("channel settings can add and remove teammates without preferred specialist
   await page.getByRole("button", { name: "AI teammate management" }).click();
   let manager = page.getByLabel("Channel teammates");
   await expect(manager).toContainText("No teammates in this channel");
+  const teammateDock = page.locator(".channel-teammate-dock");
+  await expect.poll(async () => Math.round((await teammateDock.boundingBox())?.width ?? 0)).toBeGreaterThanOrEqual(760);
+  await expect(manager).toHaveCSS("padding-left", "18px");
+  await expect(manager).toHaveCSS("padding-right", "18px");
   await page.getByRole("button", { name: "AI teammate management" }).click();
   await expect(manager).toHaveCount(0);
   await page.getByRole("button", { name: "AI teammate management" }).click();
@@ -6234,7 +6259,7 @@ test("progress popover owns workflow status while the right drawer avoids duplic
   await expect(panel).toHaveAttribute("aria-label", "Channel workspace dock");
   await expect(panel).toContainText("Workspace tools");
   await expect(panel).toContainText("Review");
-  await expect(panel).toContainText("Evidence");
+  await expect(panel.getByRole("button", { name: "Evidence", exact: true })).toHaveCount(0);
   await expect(panel).toContainText("Files");
   await expect(panel).not.toContainText("Settings");
   await expect(panel.locator(".collaboration-task-card")).toHaveCount(0);
@@ -7896,8 +7921,15 @@ test("local channel work-cell demo fixture renders a realistic multi-agent opera
   ];
 
   await mockDaemon(page, state);
+  await page.route(/\/channels\/channel_engineering\/protocol(?:\?.*)?$/, async (route) => {
+    await new Promise((resolve) => setTimeout(resolve, 350));
+    await route.fallback();
+  });
   await page.goto("/");
   await openEngineeringChannel(page);
+
+  await expect.poll(() => readScrollState(page, ".activity-shell .message-feed")).toMatchObject({ atBottom: true });
+  await expect(page.getByRole("button", { name: "Jump to latest message" })).toHaveCount(0);
 
   const feed = page.locator(".message-feed");
   await expect(feed).toContainText("讨论一下：多 Agent 讨论问题时");

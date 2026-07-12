@@ -1,4 +1,4 @@
-import { useEffect, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import {
   Archive,
   Command,
@@ -6,10 +6,12 @@ import {
   FolderOpen,
   GitBranch,
   ListChecks,
+  Loader2,
   Search,
   SquareTerminal,
   X,
 } from "lucide-react";
+import { selectWorkspaceDirectory } from "../../api/workspace-directory.js";
 import { useI18n, type Translate } from "../../i18n.js";
 import type {
   ChannelWorkspaceBinding,
@@ -96,15 +98,47 @@ export interface ChannelEnvironmentSummary {
 export function ChannelEnvironmentPage({
   summary,
   channelName,
+  workspacePickerCwd,
+  onChangeWorkspacePath,
   onOpenReview,
   onOpenCommit,
 }: {
   readonly summary: ChannelEnvironmentSummary;
   readonly channelName?: string;
+  readonly workspacePickerCwd: string;
+  readonly onChangeWorkspacePath: (path: string) => Promise<void>;
   readonly onOpenReview: () => void;
   readonly onOpenCommit: () => void;
 }): JSX.Element {
   const { t } = useI18n();
+  const [selectingDirectory, setSelectingDirectory] = useState(false);
+  const [directoryError, setDirectoryError] = useState("");
+
+  async function changeWorkspaceDirectory(): Promise<void> {
+    if (selectingDirectory) {
+      return;
+    }
+    const pickerCwd = summary.workspace?.path.trim() || workspacePickerCwd.trim();
+    if (!pickerCwd) {
+      setDirectoryError(t("Workspace folder unavailable"));
+      return;
+    }
+    setSelectingDirectory(true);
+    setDirectoryError("");
+    try {
+      const result = await selectWorkspaceDirectory(pickerCwd);
+      if (result.cancelled) {
+        return;
+      }
+      await onChangeWorkspacePath(result.path);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setDirectoryError(message || t("Folder picker unavailable."));
+    } finally {
+      setSelectingDirectory(false);
+    }
+  }
+
   return (
     <section className="channel-environment-page" aria-label={t("Environment")}>
       <div className="channel-environment-stack">
@@ -117,7 +151,7 @@ export function ChannelEnvironmentPage({
             <small>{channelName ? `#${channelName}` : t("Current channel")}</small>
           </header>
           {summary.workspace ? (
-            <div className="channel-environment-row">
+            <div className="channel-environment-row interactive">
               <span className={`channel-environment-row-icon ${summary.workspace.status}`}>
                 <FolderOpen size={16} />
               </span>
@@ -126,10 +160,15 @@ export function ChannelEnvironmentPage({
                 <small title={summary.workspace.path}>{summary.workspace.path || t("No workspace path")}</small>
                 {summary.workspace.errorMessage ? <small className="danger-text">{summary.workspace.errorMessage}</small> : null}
               </span>
+              <button className="secondary-button compact-button" type="button" onClick={() => void changeWorkspaceDirectory()} disabled={selectingDirectory}>
+                {selectingDirectory ? <Loader2 className="spin" size={14} /> : <FolderOpen size={14} />}
+                {selectingDirectory ? t("Selecting project...") : t("Change directory")}
+              </button>
             </div>
           ) : (
             <div className="channel-environment-empty">{t("No local workspace is bound to this channel.")}</div>
           )}
+          {directoryError ? <small className="channel-environment-directory-error danger-text" role="alert">{directoryError}</small> : null}
         </section>
 
         <section className="channel-environment-section changes" aria-label={t("Changes")}>

@@ -283,7 +283,6 @@ export function ConversationHome({
     ],
     [conversationDockFileItems, conversationDockMessages, detailContext?.runs, t],
   );
-  const conversationDockEvidenceCount = conversationDockEvidenceGroups.reduce((count, group) => count + group.items.length, 0);
   const latestRun = useMemo(() => {
     const runs = detailContext?.runs ?? [];
     return [...runs].sort((left, right) => (right.updatedAt ?? right.createdAt).localeCompare(left.updatedAt ?? left.createdAt))[0];
@@ -314,13 +313,7 @@ export function ConversationHome({
       primary: t("Files"),
       secondary: t("{count} files", { count: conversationDockFileItems.length }),
     },
-    {
-      id: "evidence",
-      icon: <Search size={18} />,
-      primary: t("Evidence"),
-      secondary: conversationDockEvidenceCount === 1 ? t("1 item") : t("{count} items", { count: conversationDockEvidenceCount }),
-    },
-  ], [conversationDockEvidenceCount, conversationDockFileItems.length, latestRun, t, visibleMessages.length, workspaceCwd]);
+  ], [conversationDockFileItems.length, latestRun, t, visibleMessages.length, workspaceCwd]);
   const conversationSummaryShouldRender = conversationSummaryPanel.rendered;
   const conversationSummaryInMainLayout = conversationSummaryShouldRender && conversationDockOpen;
   const conversationSummaryPlacementRef = useConversationSummaryPlacementMotion(

@@ -316,7 +316,9 @@ test("recent conversations only show records created from the conversation home"
   await expect(conversationDock).toBeVisible();
   await expect(conversationDock).toContainText("Workspace tools");
   await expect(conversationDock.getByRole("button", { name: "Activity" })).toBeVisible();
+  await expect(conversationDock.getByRole("button", { name: "Evidence", exact: true })).toHaveCount(0);
   await expect(conversationSummaryPanel).toContainText("Environment");
+  await expect(conversationSummaryPanel.getByText("Evidence", { exact: true })).toHaveCount(0);
   await expect(conversationPage).toHaveClass(/summary-panel-expanded/);
   await expect(conversationSummaryPanel).toHaveClass(/is-popover-expanded/);
   await expect.poll(async () => {

@@ -6,7 +6,6 @@ import {
   Globe2,
   History,
   MessageSquare,
-  Search,
   ShieldCheck,
   SquareTerminal,
 } from "lucide-react";
@@ -157,7 +156,6 @@ export function WorkspaceRightDock({
   const terminalEvidenceCount = terminalGroups.reduce((count, group) => count + group.items.length, 0);
   const hasTerminalSession = Boolean(terminalSession);
   const hasContextPage = Boolean(contextNode);
-  const evidenceCount = evidenceGroups.reduce((count, group) => count + group.items.length, 0);
   const visiblePlanCount = proposedPlans.filter((plan) => plan.status !== "archived").length;
   const enrichedReviewItems = useMemo(() => reviewItems.map((item) => {
     const preview = artifactPreviewByReviewId[item.id];
@@ -408,30 +406,6 @@ export function WorkspaceRightDock({
       ),
     },
     {
-      id: "evidence",
-      label: t("Evidence"),
-      icon: <Search size={16} />,
-      launcherItem: {
-        description: t("Runs, approvals, files, and source evidence"),
-        count: evidenceCount,
-        statusLabel: evidenceCount > 0 ? t("{count} evidence items", { count: evidenceCount }) : t("No evidence yet"),
-        severity: evidenceCount > 0 ? "info" : "neutral",
-      },
-      render: () => (
-        <EvidencePage
-          groups={evidenceGroups}
-          emptyTitle={t("No evidence yet")}
-          emptyDescription={t("Real run, approval, file, and source evidence will appear here.")}
-          onOpenItem={(itemId) => {
-            const item = evidenceGroups.flatMap((group) => group.items).find((candidate) => candidate.id === itemId);
-            if (item) {
-              pushDetail(`evidence:${item.id}`, item.title, item.sourceLabel);
-            }
-          }}
-        />
-      ),
-    },
-    {
       id: "files",
       label: t("Files"),
       icon: <FileText size={16} />,
@@ -576,7 +550,6 @@ export function WorkspaceRightDock({
     contextLabel,
     contextNode,
     detailNodeById,
-    evidenceCount,
     evidenceGroups,
     fileItems,
     hasTerminalSession,

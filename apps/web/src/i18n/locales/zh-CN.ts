@@ -55,6 +55,7 @@ export const zhCN = {
     "Selected folder {label}": "已选择文件夹 {label}",
     "Project folder options": "项目文件夹选项",
     "Project directory": "项目目录",
+    "Change directory": "更改目录",
     "Search projects": "搜索项目",
     "No matching projects": "没有匹配的项目",
     "Use existing folder": "使用现有文件夹",

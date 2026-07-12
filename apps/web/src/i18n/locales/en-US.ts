@@ -168,6 +168,7 @@ export const enUS = {
     "Selected folder {label}": "Selected folder {label}",
     "Project folder options": "Project folder options",
     "Project directory": "Project directory",
+    "Change directory": "Change directory",
     "Search projects": "Search projects",
     "No matching projects": "No matching projects",
     "Use existing folder": "Use existing folder",
