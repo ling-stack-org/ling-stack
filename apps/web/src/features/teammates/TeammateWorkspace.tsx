@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent, type UIEvent } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { ArrowLeft, Brain, FileText, Folder, Loader2, MessageSquare, Save, Search, Settings } from "lucide-react";
+import { ArrowLeft, Brain, FileText, Folder, Loader2, MessageSquare, Save, Settings } from "lucide-react";
 import type { SkillPack } from "@ling-stack/core/skill-types";
 import {
   archiveSkill,
@@ -552,17 +552,9 @@ export function TeammateWorkspace({
       secondary: recentUsedMemoryEvents.length === 1 ? t("1 item") : t("{count} items", { count: recentUsedMemoryEvents.length }),
       onOpen: () => openChatDockPage("context"),
     },
-    {
-      id: "evidence",
-      icon: <Search size={18} />,
-      primary: t("Evidence"),
-      secondary: privateDockContent.evidenceCount === 1 ? t("1 item") : t("{count} items", { count: privateDockContent.evidenceCount }),
-      onOpen: () => openChatDockPage("evidence"),
-    },
   ], [
     directWorkspace,
     lastAiMessage,
-    privateDockContent.evidenceCount,
     privateDockContent.fileItems.length,
     recentUsedMemoryEvents.length,
     t,

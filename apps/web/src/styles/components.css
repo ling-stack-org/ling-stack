@@ -6188,9 +6188,13 @@ code,
   top: 54px;
   left: 50%;
   z-index: 35;
-  width: min(640px, calc(100% - 108px));
+  width: min(780px, calc(100% - 72px));
+  max-height: min(620px, calc(100dvh - 76px));
+  overflow: auto;
+  overscroll-behavior: contain;
   padding: 0;
   border: 0;
+  border-radius: 8px;
   background: transparent;
   box-shadow: 0 22px 54px rgba(0, 0, 0, 0.1);
   transform: translateX(-50%);
@@ -6199,9 +6203,36 @@ code,
 @media (min-width: 901px) {
   .task-workbench-window.with-channel-side-panel > .workbench-settings-panel.channel-teammate-dock {
     left: calc((100% - min(340px, calc(100vw - 320px))) / 2);
-    width: min(640px, calc(100% - min(340px, calc(100vw - 320px)) - 108px));
+    width: min(780px, calc(100% - min(340px, calc(100vw - 320px)) - 72px));
     margin-right: 0;
   }
+}
+
+.channel-teammate-dock .channel-settings-card {
+  gap: 14px;
+  padding: 16px 18px;
+}
+
+.channel-teammate-dock .channel-teammate-list {
+  gap: 10px 12px;
+}
+
+.channel-teammate-dock .channel-teammate-chip {
+  height: 40px;
+  max-width: 240px;
+}
+
+.channel-teammate-dock .channel-teammate-add-row {
+  gap: 10px;
+}
+
+.channel-teammate-dock .channel-teammate-select {
+  min-width: min(260px, 100%);
+}
+
+.channel-teammate-dock .channel-teammate-select select,
+.channel-teammate-dock .compact-button {
+  min-height: 40px;
 }
 
 .channel-settings-card {
@@ -6821,6 +6852,13 @@ code,
   line-height: 17px;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.channel-environment-directory-error {
+  display: block;
+  margin-left: 34px;
+  font-size: 12px;
+  line-height: 17px;
 }
 
 .channel-environment-empty {

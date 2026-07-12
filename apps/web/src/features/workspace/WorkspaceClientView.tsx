@@ -3480,6 +3480,34 @@ export function WorkspaceClientView({
     setChannelEnvironmentPageOpen(false);
   }
 
+  async function changeChannelEnvironmentWorkspacePath(path: string): Promise<void> {
+    const nextPath = path.trim();
+    if (!selectedChannelId || !nextPath) {
+      return;
+    }
+    const previousForm = channelEditForm;
+    const now = new Date().toISOString();
+    const nextForm: ChannelFormState = {
+      ...channelEditForm,
+      boundPath: nextPath,
+      workspaceBinding: {
+        mode: "local",
+        status: "ready",
+        executionPath: nextPath,
+        createdAt: channelEditForm.workspaceBinding?.createdAt ?? now,
+        checkedAt: now,
+        updatedAt: now,
+      },
+    };
+    onChannelEditFormChange(nextForm);
+    try {
+      await onSaveChannel(nextForm);
+    } catch (error) {
+      onChannelEditFormChange(previousForm);
+      throw error;
+    }
+  }
+
   function openEnvironmentCommitDialog(): void {
     setEnvironmentCommitDialogOpen(true);
     setProgressPopoverOpen(false);
@@ -4245,6 +4273,8 @@ export function WorkspaceClientView({
           <ChannelEnvironmentPage
             summary={channelEnvironmentSummary}
             channelName={selectedChannel?.name}
+            workspacePickerCwd={cwd}
+            onChangeWorkspacePath={changeChannelEnvironmentWorkspacePath}
             onOpenReview={() => openRightDockPage("review")}
             onOpenCommit={openEnvironmentCommitDialog}
           />

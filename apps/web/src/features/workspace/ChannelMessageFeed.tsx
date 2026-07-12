@@ -266,7 +266,7 @@ export function useChannelMessageFeed({
       !pinnedToLatest &&
       !userScrollIntentRef.current &&
       pinnedToLatestRef.current &&
-      (Date.now() < autoFollowUntilRef.current || latestItemPending);
+      (loading || protocolLoading || Date.now() < autoFollowUntilRef.current || latestItemPending);
     if (feed.scrollTop > 80) {
       olderLoadArmedRef.current = true;
     }
@@ -286,7 +286,7 @@ export function useChannelMessageFeed({
       const nextVisible = !pinnedToLatest && maxScrollTop > 0;
       return visible === nextVisible ? visible : nextVisible;
     });
-  }, [items, rememberVisibleAnchor]);
+  }, [items, loading, protocolLoading, rememberVisibleAnchor]);
 
   const onScroll = useCallback((_event: UIEvent<HTMLDivElement>): void => {
     updateScrollPositionState();
