@@ -2,6 +2,7 @@ import {
   Bot,
   Box,
   Brain,
+  Check,
   Hand,
   Kanban,
   Shield,
@@ -165,7 +166,6 @@ export function SettingsGlobalApprovalDefaultCard({
         </span>
         <div>
           <strong id="settings-global-approval-title">{t("Default authorization")}</strong>
-          <small>{t("Choose how new conversations get permission to use tools.")}</small>
         </div>
       </div>
       <div className="settings-authorization-options" aria-label={t("Authorization mode")}>
@@ -180,10 +180,6 @@ export function SettingsGlobalApprovalDefaultCard({
             }}
           />
         ))}
-      </div>
-      <div className="settings-authorization-note">
-        <strong>{t("Current default")}: {t(authorizationOption.labelKey)}</strong>
-        <span>{t(authorizationOption.descriptionKey)}</span>
       </div>
       {onOpenAdvancedPolicy ? (
         <button className="secondary-button settings-global-approval-action" type="button" onClick={onOpenAdvancedPolicy}>
@@ -266,6 +262,9 @@ function AuthorizationOptionButton({
       aria-pressed={selected}
       title={t(option.descriptionKey)}
     >
+      <span className="settings-authorization-check" aria-hidden="true">
+        {selected ? <Check size={13} /> : null}
+      </span>
       <Icon size={15} />
       <span>{t(option.labelKey)}</span>
     </button>

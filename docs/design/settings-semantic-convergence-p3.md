@@ -97,9 +97,7 @@ Settings
 
   Workspace
     Runtime and permissions
-      -> Default authorization
-      -> Tool permission policy
-      -> Execution runners
+      -> Default authorization, tool permission policy, and execution runners
     Connections
       -> Work intake
       -> Tool servers
@@ -152,7 +150,11 @@ Settings
   cards, or decorative visual treatment.
 - Configuration overview should use grouped rows. Cards are acceptable only for concrete
   controls such as default authorization, permission presets, or status summaries.
-- Settings subnavs should be a single reusable compact segmented row with stable height,
+- Settings subnavs should be reserved for genuinely mutually exclusive content, such as
+  Connections, Skills, or Data views. Runtime permission setup is a continuous workflow:
+  Default authorization, Tool permission policy, and Execution runners stay visible in
+  one vertical page.
+- Reusable Settings subnavs should be a single compact segmented row with stable height,
   consistent badge treatment, and no layout shift when badges appear.
 - Long labels and descriptions must truncate or wrap intentionally without pushing action
   buttons off-screen.
@@ -168,11 +170,13 @@ Settings
 - `apps/web/src/features/settings/SettingsPage.tsx`
   owns the section list and panel routing. It should not own nested subnav business logic.
 - `apps/web/src/features/settings/SettingsSubnav.tsx`
-  owns the compact subnav presentation shared by Runtime, Connections, Skills, and Data.
+  owns the compact subnav presentation shared by Settings panels that still have
+  mutually exclusive views.
 - `apps/web/src/features/settings/SettingsWorkspaceToolsPanel.tsx`
   owns Configuration overview grouping and workspace tool rows.
 - `apps/web/src/features/settings/ExecutionPermissionsSettingsPanel.tsx`
-  owns Runtime subnav labels and Runtime sub-surface composition.
+  owns the continuous Runtime permission flow and renders Default authorization, Tool
+  permission policy, and Execution runners together.
 - `apps/web/src/features/settings/IntegrationsSettingsPanel.tsx`
   owns Connections subnav labels and sub-surface composition.
 - `apps/web/src/features/settings/SkillsSettingsPanel.tsx`
@@ -207,6 +211,10 @@ Settings subsection click
   -> focused sub-surface
 ```
 
+Runtime and permissions is intentionally not a subsection tab flow. It reads
+top-to-bottom as: choose the default authorization, inspect or adjust the exact tool
+policy, then choose allowed execution runners.
+
 ```text
 Configuration overview tool click
   -> AppShell existing workspaceToolDetail
@@ -232,8 +240,8 @@ Configuration overview tool click
 - `corepack pnpm --filter @ling-stack/web test:e2e -- app.spec.ts dark-mode.spec.ts profile.spec.ts mcp.spec.ts runtime.spec.ts`
 - Optional browser check on the served desktop Web app:
   - Configuration overview has `Workspace setup` and `Work controls`.
-  - Runtime subnav has `Default authorization`, `Tool permission policy`, and
-    `Execution runners`.
+  - Runtime page shows `Default authorization`, `Tool permission policy`, and
+    `Execution runners` as visible vertical sections.
   - Connections subnav has `Work intake`, `Tool servers`, and `Plugin bundles`.
   - Skills subnav has `Skill policy` and `Skill library`.
   - Data subnav has `Archived data` and `System health`.
@@ -242,8 +250,8 @@ Configuration overview tool click
 ## Acceptance Checklist
 
 - [x] Configuration overview shows `Workspace setup` and `Work controls` groups.
-- [x] Runtime subsections read `Default authorization`, `Tool permission policy`, and
-      `Execution runners`.
+- [x] Runtime sections read `Default authorization`, `Tool permission policy`, and
+      `Execution runners`, and are visible together without a nested tab.
 - [x] Connections subsections read `Work intake`, `Tool servers`, and `Plugin bundles`.
 - [x] Skills subsections read `Skill policy` and `Skill library`.
 - [x] Data subsections read `Archived data` and `System health`.
@@ -256,10 +264,10 @@ Configuration overview tool click
 ## Implementation Evidence
 
 - Audit found the P3 implementation mostly present: `SettingsSubnav`, grouped
-  Configuration overview, Runtime/Connections/Skills/Data subnavs, and related i18n keys
-  already existed.
-- Added focused e2e assertions for P3 subnav aria labels, default selected tabs, and
-  visible product labels in `apps/web/e2e/settings.spec.ts`.
+  Configuration overview, Connections/Skills/Data subnavs, Runtime continuous sections,
+  and related i18n keys already existed.
+- Added focused e2e assertions for P3 Settings labels, Runtime continuous sections, and
+  remaining subnav behavior in `apps/web/e2e/settings.spec.ts`.
 - `corepack pnpm --filter @ling-stack/web typecheck`
 - `corepack pnpm --filter @ling-stack/web test:e2e -- settings.spec.ts`
 - `corepack pnpm --filter @ling-stack/web test:e2e -- app.spec.ts dark-mode.spec.ts profile.spec.ts mcp.spec.ts runtime.spec.ts`

@@ -6,6 +6,8 @@
 - [Settings Visual Density Follow-up](settings-visual-density-followup.md)
 - [Settings Diagnostic Density P8](settings-diagnostic-density-p8.md)
 - [Settings Interaction Depth P9](settings-interaction-depth-p9.md)
+- [Advanced Workspace Policy Productization Implementation Plan](settings-advanced-workspace-policy-productization-implementation-plan.md)
+- [Archived Items Category Tabs P14.2 Implementation Plan](settings-archived-items-category-tabs-p14.2-implementation-plan.md)
 - [Ling Design System](ling-design-system.md)
 - [Ling Design System P11 Implementation Plan](ling-design-system-p11-implementation-plan.md)
 
@@ -62,9 +64,12 @@ and interaction fix.
      disclosures.
 
 6. **P3 Archived and Startup**
-   - Keep Archived restore/delete rules as a single muted hint below the title.
-   - Give each archived category its own scroll boundary so long lists do not
-     stretch the Settings page.
+   - Keep permanent-delete consequences in the action confirmation instead of a
+     persistent page hint.
+   - Render archived records as compact name/time/actions rows without repeated
+     archived labels or branch-state descriptions.
+   - Replace four vertical category lists with one counted subnav, one active list,
+     and one scroll boundary.
    - Tighten Startup status and embedded diagnostics entry.
 
 ## Screenshot Task Checklist
@@ -78,7 +83,7 @@ and interaction fix.
 | Fig. 5 | `ExecutionPermissionsSettingsPanel` | Runner rows show summary first; raw defaults move into `Current runner defaults`. | Runner actions stay. | Raw runner blockers remain accessible but not first-screen default. |
 | Fig. 6 | `SkillLibraryWidgets`, `SkillLibrarySettingsPanel` | Source sync default layer hides root/path and health evidence behind details. | Sync preview/publish stay. | Source evidence details contain diff/checksum; row summary does not. |
 | Fig. 7 | `SkillReviewQueuePanels`, `SkillLibrarySettingsPanel` | Review queue and health diagnostics are folded/compact by default. | Review actions stay. | Health panels are not visible on Skills list and details are closed by default. |
-| Fig. 8 | `ArchivedSettingsPanel` | Rules become one muted hint below the title; each archived category gets an internal scroll boundary; row actions align icon/label centers. | Restore/delete stay. | Hint is visible without a disclosure/card, no footer rule block remains, all four lists scroll when long, and action icon/label center delta stays small. |
+| Fig. 8 | `ArchivedSettingsPanel` | Remove the persistent rule hint; use four counted category tabs, one single-line name/time/actions list, compact search/empty states, and one scroll boundary. | Restore/delete stay; destructive consequences appear in confirmation. | One tabpanel/list is visible, the selected category persists, search is current-category only, rows stay at or below 56px, and action alignment stays stable. |
 | Fig. 9 | `MaintenanceSettingsPanel` | Startup readiness keeps only status, blocker, refresh, and diagnostics entry visible. | Diagnostics stays in Settings. | `Open Run Diagnostics` keeps Settings shell. |
 | Fig. 10 | `SettingsRunDiagnosticsPanel`, `SettingsPage`, `AppShell` | Embedded diagnostics panel replaces main app Run History for Settings-origin runs. | Refresh/select/close stay; no implicit main shell. | `Settings sections` visible, `Ling Stack navigation` count `0`, `.run-history-layout` count `0`. |
 

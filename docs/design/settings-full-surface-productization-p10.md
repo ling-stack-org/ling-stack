@@ -5,6 +5,8 @@
 - [Settings Visual Density Follow-up](settings-visual-density-followup.md)
 - [Settings Diagnostic Density P8](settings-diagnostic-density-p8.md)
 - [Settings Interaction Depth P9](settings-interaction-depth-p9.md)
+- [Advanced Workspace Policy Productization](settings-advanced-workspace-policy-productization.md)
+- [Archived Items Category Tabs P14.2](settings-archived-items-category-tabs-p14.2.md)
 - [P10 Implementation Plan](settings-full-surface-productization-p10-implementation-plan.md)
 - [Ling Design System](ling-design-system.md)
 - [Ling Design System P11 Implementation Plan](ling-design-system-p11-implementation-plan.md)
@@ -31,7 +33,7 @@ named `Open ... in app`.
 | Fig. 5 | Default authorization / Execution runners | Raw runner ids, fallback values, and readiness internals are visible by default; rows are too tall. | Runner rows show enabled state, display name, readiness summary, and a details disclosure for ids/blockers. |
 | Fig. 6 | Skill library / Source sync | Source path, health evidence, and preview space still form a diagnostic wall. | Top layer shows sync status and primary actions; paths, checksums, diffs, and context findings stay in details. |
 | Fig. 7 | Skill library / Review queue | Large empty panels and repeated health/review frames make the empty state heavy. | Compact empty states, one queue summary, and candidate details only when work exists. |
-| Fig. 8 | Archived items | Restore/delete rule text was easy to miss at the bottom, rows could stretch the page, and action icons could drift from labels. | A single muted hint sits under the title, each archived category has an internal scroll boundary, and row actions keep icon/text centered. |
+| Fig. 8 | Archived items | Restore/delete copy, repeated metadata, and four vertical lists make the page increasingly fragmented as data grows. | Delete consequences move to confirmation; category tabs drive one compact name/time/actions list and one scroll boundary. |
 | Fig. 9 | Startup and diagnostics | The page still has technical diagnostic copy and a weak task hierarchy. | Startup status, blockers, refresh, and run diagnostics entry only; startup phases and diagnostic evidence collapsed. |
 | Fig. 10 | Run Diagnostics after opening from Settings | Settings opens the main app shell and shows the primary `Ling Stack navigation`. | Run diagnostics is embedded in Settings; Settings navigation remains visible and raw diagnostics are folded. |
 
@@ -112,6 +114,8 @@ Acceptance:
 Default layer:
 - Presets are compact choices.
 - Effective permissions summary is the visible preview.
+- Default authorization and tool permission policy are visible in the same vertical
+  page; do not hide policy behind a nested tab.
 
 Details layer:
 - Advanced workspace policy, write paths, raw tool decision lists, and policy
@@ -122,12 +126,16 @@ Buttons:
 
 Acceptance:
 - First screen does not show workspace raw ids or full policy internals.
+- `Default authorization`, `Tool permission policy`, and `Execution runners` are
+  not rendered as `role="tab"` controls.
 
 ### Fig. 5 Default Authorization / Execution Runners
 
 Default layer:
 - Runner rows show display name, enabled state, readiness summary, and primary
   action.
+- Execution runners sit below the policy section in the same Settings page, so the
+  user can scan the full authorization path without switching tabs.
 
 Details layer:
 - Raw runner id, fallback choice, readiness blockers, and runner metadata live
@@ -174,23 +182,32 @@ Acceptance:
 ### Fig. 8 Archived Items
 
 Default layer:
-- A single muted hint sits below the page title:
-  `Restored items return to their lists; channel and branch delete is permanent.`
-- Archived rows show object name, type, archived time, and restore action.
-- Conversations, AI teammates, channels, and branches each own a bounded list
-  with internal vertical scrolling.
+- Permanent-delete consequences appear in the delete tooltip and confirmation rather
+  than persistent page copy.
+- A compact subnav shows Conversations, AI teammates, Channels, and Branches with
+  numeric counts. Only the selected category is rendered.
+- Archived rows use one line for object name, archived time, restore, and an icon-only
+  delete action.
+- Row type icons, repeated archived labels, and branch parent-state descriptions are
+  omitted because the group and restore action already provide that context.
+- The active category owns the only bounded list and internal vertical scroll region.
+- Current-category name search stays directly visible beside the category tabs.
 
 Details layer:
 - Destructive delete copy appears close to confirmation.
 
 Buttons:
 - Restore/delete stay in Settings.
+- Conversation and AI teammate permanent delete follow
+  [P14](settings-archived-items-permanent-delete.md); sidebar archive remains
+  non-destructive.
 
 Acceptance:
-- Restore/delete rules do not sit at the page footer or become a separate
+- Restore/delete rules do not occupy the default page or become a separate
   disclosure/card.
-- Long archived lists scroll inside their own group instead of stretching the
-  Settings page.
+- Populated rows stay at or below 56px and keep name/time/actions on one line.
+- Exactly one archived tabpanel and list are visible at a time.
+- Long archived data scrolls inside the active list instead of stretching the page.
 - Restore/delete action icons and labels are vertically centered.
 
 ### Fig. 9 Startup And Diagnostics

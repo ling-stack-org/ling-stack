@@ -16,6 +16,7 @@ import {
 } from "./skill-library-utils.js";
 
 export function SkillLibraryTable({
+  variant,
   entries,
   loading,
   saving,
@@ -26,6 +27,7 @@ export function SkillLibraryTable({
   onArchiveSkill,
   t,
 }: {
+  readonly variant: "user" | "builtin";
   readonly entries: readonly SkillRegistryEntry[];
   readonly loading: boolean;
   readonly saving: boolean;
@@ -38,21 +40,30 @@ export function SkillLibraryTable({
 }): JSX.Element {
   return (
     <div className="settings-skill-table-wrap settings-skill-table-wrap--compact">
-      <table className="settings-skill-table settings-skill-table--compact">
+      <table className={`settings-skill-table settings-skill-table--compact settings-skill-table--${variant}`}>
         <thead>
-          <tr>
-            <th>{t("Status")}</th>
-            <th>{t("Skill")}</th>
-            <th>{t("Source")}</th>
-            <th>{t("Stage")}</th>
-            <th>{t("Bound teammates")}</th>
-            <th>{t("Actions")}</th>
-          </tr>
+          {variant === "user" ? (
+            <tr>
+              <th>{t("Status")}</th>
+              <th>{t("Skill")}</th>
+              <th>{t("Source")}</th>
+              <th>{t("Stage")}</th>
+              <th>{t("Bound teammates")}</th>
+              <th>{t("Actions")}</th>
+            </tr>
+          ) : (
+            <tr>
+              <th>{t("Skill")}</th>
+              <th>{t("Stage")}</th>
+              <th>{t("Bound teammates")}</th>
+              <th>{t("Actions")}</th>
+            </tr>
+          )}
         </thead>
         <tbody>
           {entries.length === 0 ? (
             <tr>
-              <td colSpan={6}>
+              <td colSpan={variant === "user" ? 6 : 4}>
                 <div className="compact-empty">{loading ? t("Loading skills...") : t("No skills match these filters")}</div>
               </td>
             </tr>
@@ -60,17 +71,17 @@ export function SkillLibraryTable({
             const boundTeammates = boundTeammateNames(entry.id, bindingSummaries);
             const state = skillRegistryState(entry, t);
             const selected = selectedSkillId === entry.id;
-            const canArchive = entry.source !== "builtin" && entry.reviewStatus !== "archived";
+            const canArchive = variant === "user" && entry.source !== "builtin" && entry.reviewStatus !== "archived";
             const sourceSnapshot = sourceSnapshotBySkillId.get(entry.id);
             return (
               <tr key={entry.id} className={selected ? "selected" : ""}>
-                <td><SkillStatePill label={state.label} tone={state.tone} /></td>
+                {variant === "user" ? <td><SkillStatePill label={state.label} tone={state.tone} /></td> : null}
                 <td>
                   <button className="settings-skill-name-button" type="button" onClick={() => onSelectSkill(entry.id)}>
                     <strong>{entry.definition.name}</strong>
                   </button>
                 </td>
-                <td><SkillSourceStatus source={entry.source} snapshot={sourceSnapshot} showState={false} t={t} /></td>
+                {variant === "user" ? <td><SkillSourceStatus source={entry.source} snapshot={sourceSnapshot} showState={false} t={t} /></td> : null}
                 <td><span className={`phase-token ${entry.definition.workflowPhase}`}>{workflowPhaseLabel(entry.definition.workflowPhase, t)}</span></td>
                 <td>{boundTeammates.length > 0 ? boundTeammates.join(", ") : t("Unbound")}</td>
                 <td>

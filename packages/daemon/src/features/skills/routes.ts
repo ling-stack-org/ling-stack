@@ -68,6 +68,7 @@ import { writeJson } from "../../shared/response.js";
 import { listEffectiveSkillRegistryEntries, listExecutableSkillDefinitions, refreshEffectiveSkillRegistryEntries } from "./registry.js";
 import {
   parseCreateSkillCandidateRequest,
+  buildSkillImportPreview,
   parseSkillInvocationSuggestionRequest,
   parseProcedureObservationJobRequest,
   parseProcedureObservationRequest,
@@ -585,6 +586,19 @@ export async function handleSkillRoute(
       const refreshed = refreshEffectiveSkillRegistryEntries(store);
       appendSkillRegistryChangedEvent(store, controlPlaneEvents, cwd, "refresh", "default", refreshed.registryGeneration);
       writeJson(response, 200, { cwd, ...refreshed });
+      return;
+    }
+
+    if (url.pathname === "/skills/import-preview") {
+      if (request.method !== "POST") {
+        writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for /skills/import-preview` });
+        return;
+      }
+      const body = await readJsonBody(request, config.maxBodyBytes);
+      const draftInput = parseSkillImportDraftRequest(body, listEffectiveSkillRegistryEntries(store));
+      const preview = buildSkillImportPreview(draftInput);
+      const contextFindings = buildImportDraftContextFindings(draftInput, readImportDraftContent(body));
+      writeJson(response, 200, { cwd, preview, contextFindings });
       return;
     }
 

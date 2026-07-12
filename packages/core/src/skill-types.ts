@@ -784,6 +784,8 @@ export interface SkillImportDraft {
   readonly updatedAt: string;
 }
 
+export type SkillImportPreview = Omit<SkillImportDraft, "id" | "workspaceId" | "createdAt" | "updatedAt">;
+
 export interface CreateSkillImportDraftInput {
   readonly id?: string;
   readonly source: SkillPackSource;

@@ -98,6 +98,9 @@ export interface MockState {
   teammatePrivateAttachments: unknown[];
   conversationAttachments: unknown[];
   retentionTombstones: unknown[];
+  automationDefinitions: unknown[];
+  failThreadHardDeleteForThreadIds?: string[];
+  threadHardDeleteDelayMs?: number;
   tasks: unknown[];
   runs: MockRun[];
   eventsByRun: Record<string, MockRunEvent[]>;
@@ -1067,6 +1070,7 @@ export function createBaseState(options: { approvalStatus: "pending" | "expired"
     teammatePrivateAttachments: [],
     conversationAttachments: [],
     retentionTombstones: [],
+    automationDefinitions: [],
     tasks: [
       {
         id: "task_inspect",
@@ -2046,6 +2050,10 @@ function mutateMockThreadVisibility(
 }
 
 function getMockThreadArchiveBlocker(state: MockState, thread: MockLingThread): string | undefined {
+  const activeLinkedRun = state.runs.find((run) => run.threadId === thread.id && isMockRunActive(run));
+  if (activeLinkedRun) {
+    return `Cannot archive thread with active work: ${activeLinkedRun.id}`;
+  }
   if (thread.activeRunId) {
     const activeRun = state.runs.find((run) => run.id === thread.activeRunId);
     if (!activeRun || isMockRunActive(activeRun)) {
@@ -2908,9 +2916,17 @@ export function buildMockEffectiveSkills(state: MockState, teammateId: string): 
 
 export function createMockSkillImportDraft(state: MockState, body: Record<string, unknown>): Record<string, unknown> {
   const content = typeof body.content === "string" ? body.content : "";
+  const sourcePath = typeof body.sourcePath === "string" ? body.sourcePath : undefined;
+  const sourceFileName = sourcePath?.replaceAll("\\", "/").split("/").at(-1)?.toLowerCase();
+  const inferredSource = sourceFileName === "agents.md" || sourceFileName === "agent.md"
+    ? "agents-md"
+    : sourceFileName === "skill.md" || content.includes("---\nname:")
+      ? "skill-directory"
+      : "custom";
   const skillId = content.match(/^id:\s*([a-z0-9-]+)/im)?.[1] ?? `custom-skill-${state.skillImportDrafts.length + 1}`;
   const heading = content.match(/^#\s+(.+)$/m)?.[1]?.trim();
   const summary = content.match(/^summary:\s*(.+)$/im)?.[1]?.trim() ?? "Imported workspace skill.";
+  const duplicateSkill = state.skillRegistryEntries.some((entry) => isRecord(entry) && entry.id === skillId);
   const warnings = /approval|secret|external/i.test(content)
     ? [
       {
@@ -2920,11 +2936,19 @@ export function createMockSkillImportDraft(state: MockState, body: Record<string
       },
     ]
     : [];
+  const definitionWarnings = [
+    ...warnings,
+    ...(duplicateSkill ? [{
+      code: "duplicate_skill_id",
+      severity: "error",
+      message: `Skill id already exists: ${skillId}`,
+    }] : []),
+  ];
   return {
     id: `skill_draft_${state.skillImportDrafts.length + 1}`,
     workspaceId: "workspace_default",
-    source: typeof body.source === "string" ? body.source : "custom",
-    sourcePath: typeof body.sourcePath === "string" ? body.sourcePath : undefined,
+    source: typeof body.source === "string" ? body.source : inferredSource,
+    sourcePath,
     packId: `skill_pack_${state.skillImportDrafts.length + 1}`,
     name: typeof body.name === "string" && body.name.trim() ? body.name.trim() : heading ?? "Imported skill pack",
     version: "0.1.0",
@@ -2947,7 +2971,7 @@ export function createMockSkillImportDraft(state: MockState, body: Record<string
           workspaceVisible: true,
           promotableToWorkspace: true,
         },
-        warnings,
+        warnings: definitionWarnings,
       },
     ],
     warnings: [],
@@ -7136,6 +7160,13 @@ export async function handleDaemonRoute(
       return;
     }
   }
+  if (request.method() === "POST" && path === "/skills/import-preview") {
+    const body = await request.postDataJSON() as Record<string, unknown>;
+    const draft = createMockSkillImportDraft(state, body);
+    const { id: _id, workspaceId: _workspaceId, createdAt: _createdAt, updatedAt: _updatedAt, ...preview } = draft;
+    await route.fulfill({ json: { cwd, preview, contextFindings: createMockSkillImportDraftContextFindings(draft) } });
+    return;
+  }
   if (request.method() === "POST" && path === "/skills/import-draft") {
     const body = await request.postDataJSON() as Record<string, unknown>;
     const draft = createMockSkillImportDraft(state, body);
@@ -10841,6 +10872,78 @@ export async function handleDaemonRoute(
       const turnIds = new Set(turns.map((turn) => turn.id));
       const runLinks = state.turnRunLinks.filter((link) => turnIds.has(link.turnId));
       await route.fulfill({ json: { cwd, threadId, turns, runLinks } });
+      return;
+    }
+    if (request.method() === "POST" && action === "hard-delete") {
+      if (state.threadHardDeleteDelayMs) {
+        await new Promise((resolveDelay) => setTimeout(resolveDelay, state.threadHardDeleteDelayMs));
+      }
+      if (state.failThreadHardDeleteForThreadIds?.includes(threadId)) {
+        await route.fulfill({
+          status: 409,
+          json: {
+            error: "thread_automation_target",
+            message: "Conversation is still targeted by automation: Mock follow-up",
+          },
+        });
+        return;
+      }
+      if (thread.kind !== "conversation") {
+        await route.fulfill({ status: 409, json: { error: "thread_delete_kind_unsupported", message: "Only conversation threads can be permanently deleted." } });
+        return;
+      }
+      if (!isMockThreadArchived(thread)) {
+        await route.fulfill({ status: 409, json: { error: "thread_not_archived", message: "Conversation thread must be archived before delete." } });
+        return;
+      }
+      const archiveBlock = getMockThreadArchiveBlocker(state, thread);
+      if (archiveBlock) {
+        await route.fulfill({ status: 409, json: { error: "active_thread_archive_blocked", message: archiveBlock } });
+        return;
+      }
+      const blockingAutomation = state.automationDefinitions.find((item) =>
+        isRecord(item) &&
+        item.status === "enabled" &&
+        (item.targetThreadId === threadId || (isRecord(item.target) && item.target.threadId === threadId))
+      );
+      if (blockingAutomation) {
+        await route.fulfill({ status: 409, json: { error: "thread_automation_target", message: "Conversation is still targeted by automation." } });
+        return;
+      }
+      const body = readMockPostData(request);
+      const deletedTurnIds = new Set(state.turns.filter((turn) => turn.threadId === threadId).map((turn) => turn.id));
+      const deletedCounts = {
+        lingThreads: 1,
+        lingTurns: deletedTurnIds.size,
+        conversationAttachments: state.conversationAttachments.filter((item) => isRecord(item) && item.threadId === threadId).length,
+        threadGoals: state.goals.filter((goal) => goal.threadId === threadId).length,
+        proposedPlans: state.proposedPlans.filter((plan) => plan.threadId === threadId).length,
+        automationDefinitions: state.automationDefinitions.filter((item) => isRecord(item) && item.threadId === threadId).length,
+        runsUnlinked: state.runs.filter((run) => run.threadId === threadId).length,
+        childThreadsDetached: state.threads.filter((item) => item.parentThreadId === threadId).length,
+        channelMessagesUnlinked: 0,
+      };
+      state.conversationAttachments = state.conversationAttachments.filter((item) => !isRecord(item) || item.threadId !== threadId);
+      state.goals = state.goals.filter((goal) => goal.threadId !== threadId);
+      state.proposedPlans = state.proposedPlans.filter((plan) => plan.threadId !== threadId);
+      state.turns = state.turns.filter((turn) => turn.threadId !== threadId);
+      state.turnRunLinks = state.turnRunLinks.filter((link) => !deletedTurnIds.has(link.turnId));
+      state.runs = state.runs.map((run) => run.threadId === threadId ? { ...run, threadId: undefined } : run);
+      state.automationDefinitions = state.automationDefinitions.filter((item) => !isRecord(item) || item.threadId !== threadId);
+      state.threads = state.threads
+        .filter((item) => item.id !== threadId)
+        .map((item) => item.parentThreadId === threadId ? { ...item, parentThreadId: undefined } : item);
+      const tombstone = {
+        id: `tomb_${state.retentionTombstones.length + 1}`,
+        workspaceId: thread.workspaceId,
+        entityType: "conversation-thread",
+        entityId: threadId,
+        reason: typeof body.reason === "string" ? body.reason : undefined,
+        deletedCounts,
+        createdAt: "2026-07-11T00:00:00.000Z",
+      };
+      state.retentionTombstones.push(tombstone);
+      await route.fulfill({ json: { tombstone } });
       return;
     }
     if (request.method() === "POST" && (action === "archive" || action === "unarchive" || action === "pin" || action === "unpin")) {

@@ -65,12 +65,12 @@ function createArchivedBranch(index: number): Record<string, unknown> {
   };
 }
 
-async function archivedGroupMetrics(page: Page, title: string): Promise<{
+async function archivedListMetrics(page: Page): Promise<{
   readonly scrollHeight: number;
   readonly clientHeight: number;
   readonly overflowY: string;
 }> {
-  return await page.locator(".archived-item-group").filter({ hasText: title }).locator(".archived-item-list").evaluate((element) => ({
+  return await page.locator(".archived-item-list").evaluate((element) => ({
     scrollHeight: element.scrollHeight,
     clientHeight: element.clientHeight,
     overflowY: getComputedStyle(element).overflowY,
@@ -292,13 +292,17 @@ test("settings runtime runners show daemon readiness blockers", async ({ page })
 
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
   await page.getByLabel("Settings sections").getByRole("button", { name: /Default authorization/ }).click();
-  await page.getByRole("tab", { name: /Execution runners/ }).click();
   const settingsPanel = page.locator(".runtime-runner-settings-panel");
+  await expect(page.getByRole("tab", { name: /Default authorization|Tool permission policy|Execution runners/ })).toHaveCount(0);
   await expect(page.getByRole("heading", { name: "Execution runners" })).toBeVisible();
+  await expect(settingsPanel.getByText("Current runner defaults")).toHaveCount(0);
+  await expect(settingsPanel.locator(".runtime-runner-row .status-badge")).toHaveCount(0);
   await expect(settingsPanel).toContainText("Pi Runner");
   await expect(settingsPanel).toContainText("readiness ready");
   await expect(settingsPanel).toContainText("Codex App Server");
   await expect(settingsPanel).toContainText("readiness blocked, 2 blockers");
+  await expect(settingsPanel.locator(".runtime-runner-row").filter({ hasText: "Pi Runner" }).locator(".runtime-runner-status-dot.ready")).toBeVisible();
+  await expect(settingsPanel.locator(".runtime-runner-row").filter({ hasText: "Codex App Server" }).locator(".runtime-runner-status-dot.attention")).toBeVisible();
   await settingsPanel.locator(".runtime-runner-row").filter({ hasText: "Codex App Server" }).getByText("Runner details").click();
   await expect(settingsPanel.getByLabel("Codex App Server readiness blockers")).toContainText("Sandbox profile has not been configured.");
   await expect(settingsPanel.getByLabel("Codex App Server readiness blockers")).toContainText("Sandbox backend has not been verified by conformance.");
@@ -334,12 +338,12 @@ test("settings developer section contains startup readiness", async ({ page }) =
   await expect(developerPanel.getByRole("heading", { name: "Startup readiness" })).toBeVisible();
 });
 
-test("settings archived items keep rules compact, lists scrollable, and actions aligned", async ({ page }) => {
+test("settings archived items use one remembered category list with scoped search", async ({ page }) => {
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");
   });
   const state = createBaseState({ approvalStatus: "expired" });
-  state.threads = Array.from({ length: 9 }, (_, index) => createArchivedConversation(index));
+  state.threads = Array.from({ length: 12 }, (_, index) => createArchivedConversation(index));
   state.aiTeammates = Array.from({ length: 6 }, (_, index) =>
     createMockTeammate({
       id: `teammate_archived_visual_${index}`,
@@ -349,29 +353,89 @@ test("settings archived items keep rules compact, lists scrollable, and actions 
       updatedAt: archivedTimestamp(index),
     })
   );
-  state.channels.push(...Array.from({ length: 6 }, (_, index) => createArchivedChannel(index)));
-  state.channelBranches = Array.from({ length: 6 }, (_, index) => createArchivedBranch(index));
+  state.channels.push(...Array.from({ length: 12 }, (_, index) => createArchivedChannel(index)));
+  state.channelBranches = Array.from({ length: 12 }, (_, index) => createArchivedBranch(index));
   await mockDaemon(page, state);
   await page.goto("/");
 
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
   await page.getByLabel("Settings sections").getByRole("button", { name: /Archived items/ }).click();
   const panel = page.locator(".archived-items-settings-panel");
-  await expect(panel.getByRole("heading", { name: "Archived items" })).toBeVisible();
+  await expect(panel).toBeVisible();
   await expect(panel.locator(".archived-items-rules-footer")).toHaveCount(0);
   await expect(panel.locator(".archived-items-rule-note")).toHaveCount(0);
-  const hint = panel.locator(".archived-items-hint");
-  await expect(hint).toBeVisible();
-  await expect(hint).toHaveText("Restored items return to their lists; channel and branch delete is permanent.");
+  await expect(panel.locator(".archived-items-hint")).toHaveCount(0);
   await expect(panel.getByText("Restore and delete rules")).toHaveCount(0);
+  await expect(panel.getByRole("tab")).toHaveCount(4);
+  await expect(panel.locator(".settings-subnav-item small")).toHaveText(["12", "6", "12", "12"]);
+  await expect(panel.getByRole("tab", { name: /Conversations 12/ })).toHaveAttribute("aria-selected", "true");
+  await expect(panel.getByRole("tabpanel", { name: "Conversations" })).toBeVisible();
+  await expect(panel.locator(".archived-item-list")).toHaveCount(1);
+  await expect(panel.locator(".archived-item-main small")).toHaveCount(0);
+  await expect(panel.locator(".archived-item-main svg")).toHaveCount(0);
+  await expect(panel.getByText("Parent channel archived")).toHaveCount(0);
+  await expect(panel.getByText("Parent channel active")).toHaveCount(0);
 
-  for (const title of ["Conversations", "AI Teammates", "Channels", "Branches"]) {
-    const metrics = await archivedGroupMetrics(page, title);
+  const rowLayout = await panel.locator(".archived-item-row").evaluateAll((rows) =>
+    rows.map((row) => {
+      const title = row.querySelector(".archived-item-main strong");
+      const time = row.querySelector(".archived-item-time");
+      const rowRect = row.getBoundingClientRect();
+      const titleRect = title?.getBoundingClientRect();
+      const timeRect = time?.getBoundingClientRect();
+      return {
+        height: rowRect.height,
+        centerDelta: titleRect && timeRect
+          ? Math.abs((titleRect.top + titleRect.height / 2) - (timeRect.top + timeRect.height / 2))
+          : 99,
+      };
+    })
+  );
+  expect(Math.max(...rowLayout.map(({ height }) => height))).toBeLessThanOrEqual(56);
+  expect(Math.max(...rowLayout.map(({ centerDelta }) => centerDelta))).toBeLessThanOrEqual(2);
+
+  await expect(panel.getByRole("button", { name: "Delete conversation" })).toHaveCount(12);
+  await expect(panel.getByRole("button", { name: "Delete AI teammate" })).toHaveCount(0);
+
+  const conversationMetrics = await archivedListMetrics(page);
+  expect(conversationMetrics.overflowY).toBe("auto");
+  expect(conversationMetrics.scrollHeight).toBeGreaterThan(conversationMetrics.clientHeight + 2);
+
+  const searchInput = panel.getByRole("searchbox", { name: "Search archived items" });
+  await expect(searchInput).toBeVisible();
+  await searchInput.fill("does not exist");
+  await expect(panel.locator(".archived-item-row")).toHaveCount(0);
+  await expect(panel.getByText("No matching archived items")).toBeVisible();
+  await searchInput.fill("conversation 12");
+  await expect(panel.locator(".archived-item-row")).toHaveCount(1);
+  await expect(panel.getByText("Archived conversation 12", { exact: true })).toBeVisible();
+  await searchInput.press("Escape");
+  await expect(searchInput).toHaveValue("");
+  await expect(searchInput).toBeVisible();
+  await expect(panel.locator(".archived-item-row")).toHaveCount(12);
+
+  await searchInput.fill("conversation 1");
+  await panel.getByRole("tab", { name: /AI Teammates 6/ }).click();
+  await expect(panel.getByRole("tabpanel", { name: "AI Teammates" })).toBeVisible();
+  await expect(searchInput).toHaveValue("");
+  await expect(searchInput).toBeVisible();
+  await expect(panel.getByRole("button", { name: "Search archived items" })).toHaveCount(0);
+  await expect(panel.getByRole("button", { name: "Delete AI teammate" })).toHaveCount(6);
+  await expect(panel.getByRole("button", { name: "Delete conversation" })).toHaveCount(0);
+
+  for (const category of [
+    { name: /Channels 12/, panel: "Channels" },
+    { name: /Branches 12/, panel: "Branches" },
+    { name: /Conversations 12/, panel: "Conversations" },
+  ]) {
+    await panel.getByRole("tab", { name: category.name }).click();
+    await expect(panel.getByRole("tabpanel", { name: category.panel })).toBeVisible();
+    const metrics = await archivedListMetrics(page);
     expect(metrics.overflowY).toBe("auto");
     expect(metrics.scrollHeight).toBeGreaterThan(metrics.clientHeight + 2);
   }
 
-  const actionAlignment = await panel.locator(".archived-item-actions .compact-button").evaluateAll((buttons) =>
+  const labeledActionAlignment = await panel.locator(".archived-item-actions .compact-button:not(.compact-icon-button)").evaluateAll((buttons) =>
     buttons.slice(0, 10).map((button) => {
       const icon = button.querySelector("svg");
       const label = button.querySelector(".archived-action-label");
@@ -383,8 +447,96 @@ test("settings archived items keep rules compact, lists scrollable, and actions 
       return Math.abs((iconRect.top + iconRect.height / 2) - (labelRect.top + labelRect.height / 2));
     })
   );
-  expect(Math.max(...actionAlignment)).toBeLessThanOrEqual(2);
+  expect(Math.max(...labeledActionAlignment)).toBeLessThanOrEqual(2);
+  const iconActionAlignment = await panel.locator(".archived-delete-action").evaluateAll((buttons) =>
+    buttons.slice(0, 10).map((button) => {
+      const icon = button.querySelector("svg");
+      const buttonRect = button.getBoundingClientRect();
+      const iconRect = icon?.getBoundingClientRect();
+      if (!iconRect) {
+        return 99;
+      }
+      return Math.max(
+        Math.abs((buttonRect.left + buttonRect.width / 2) - (iconRect.left + iconRect.width / 2)),
+        Math.abs((buttonRect.top + buttonRect.height / 2) - (iconRect.top + iconRect.height / 2)),
+      );
+    })
+  );
+  expect(Math.max(...iconActionAlignment)).toBeLessThanOrEqual(2);
+
+  const conversationRow = panel.locator(".archived-item-row").filter({ hasText: "Archived conversation 12" });
+  let cancelledDialogMessage = "";
+  page.once("dialog", async (dialog) => {
+    cancelledDialogMessage = dialog.message();
+    await dialog.dismiss();
+  });
+  await conversationRow.getByRole("button", { name: "Delete conversation" }).click();
+  expect(cancelledDialogMessage).toContain("This permanently deletes messages, attachments, goals, and plans.");
+  await expect(conversationRow).toBeVisible();
+
+  page.once("dialog", async (dialog) => {
+    await dialog.accept();
+  });
+  await conversationRow.getByRole("button", { name: "Delete conversation" }).click();
+  await expect(panel.getByText("Archived conversation 12", { exact: true })).toHaveCount(0);
+  await expect(panel.getByRole("tab", { name: /Conversations 11/ })).toBeVisible();
+
+  await panel.getByRole("tab", { name: /AI Teammates 6/ }).click();
+  const teammateRow = panel.locator(".archived-item-row").filter({ hasText: "Archived teammate 6" });
+  let teammateDialogMessage = "";
+  page.once("dialog", async (dialog) => {
+    teammateDialogMessage = dialog.message();
+    await dialog.accept();
+  });
+  await teammateRow.getByRole("button", { name: "Delete AI teammate" }).click();
+  expect(teammateDialogMessage).toContain("This permanently deletes private chat, attachments, avatar, memory, and private bindings.");
+  await expect(panel.getByText("Archived teammate 6", { exact: true })).toHaveCount(0);
+  await expect(panel.getByRole("tab", { name: /AI Teammates 5/ })).toBeVisible();
   await expect.poll(() => readHorizontalOverflow(page, ".archived-items-settings-panel")).toEqual([]);
+
+  await panel.getByRole("tab", { name: /Branches 12/ }).click();
+  await page.reload();
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
+  await page.getByLabel("Settings sections").getByRole("button", { name: /Archived items/ }).click();
+  await expect(panel.getByRole("tab", { name: /Branches 12/ })).toHaveAttribute("aria-selected", "true");
+  await expect(panel.getByRole("tabpanel", { name: "Branches" })).toBeVisible();
+  await expect(panel.locator(".archived-item-list")).toHaveCount(1);
+
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await expect.poll(() => readHorizontalOverflow(page, ".archived-items-settings-panel")).toEqual([]);
+  const metrics = await archivedListMetrics(page);
+  expect(metrics.overflowY).toBe("auto");
+  expect(metrics.scrollHeight).toBeGreaterThan(metrics.clientHeight + 2);
+});
+
+test("settings archived conversation delete keeps loading and product error feedback local", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.locale", "en-US");
+  });
+  const state = createBaseState({ approvalStatus: "expired" });
+  const conversation = createArchivedConversation(0);
+  state.threads = [conversation];
+  state.aiTeammates = [];
+  state.threadHardDeleteDelayMs = 350;
+  state.failThreadHardDeleteForThreadIds = [conversation.id];
+  await mockDaemon(page, state);
+  await page.goto("/");
+
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
+  await page.getByLabel("Settings sections").getByRole("button", { name: /Archived items/ }).click();
+  const panel = page.locator(".archived-items-settings-panel");
+  const row = panel.locator(".archived-item-row").filter({ hasText: conversation.title });
+  const deleteButton = row.getByRole("button", { name: "Delete conversation" });
+  page.once("dialog", async (dialog) => {
+    await dialog.accept();
+  });
+  await deleteButton.click();
+
+  await expect(deleteButton).toBeDisabled();
+  await expect(deleteButton.locator(".spin")).toBeVisible();
+  await expect(panel.getByText("This conversation is still used by an automation. Update the automation before deleting it.")).toBeVisible();
+  await expect(deleteButton).toBeEnabled();
+  await expect(row).toBeVisible();
 });
 
 test("settings configuration entries open nested tools directly", async ({ page }) => {
@@ -470,12 +622,17 @@ test("settings configuration entries open nested tools directly", async ({ page 
   await expect(page.locator(".settings-page-section-head")).toHaveCount(0);
   await expect(page.locator(".settings-subnav-description")).toHaveCount(0);
   await expect(page.locator(".settings-global-approval-card")).toHaveCount(1);
+  await expect(page.locator(".settings-global-approval-card")).toContainText("Default authorization");
+  await expect(page.getByRole("heading", { name: "Tool permission policy" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Execution runners" })).toBeVisible();
+  await expect(page.getByRole("tab", { name: /Default authorization|Tool permission policy|Execution runners/ })).toHaveCount(0);
   await page.locator(".settings-global-approval-card").getByRole("button", { name: "Ask first" }).click();
   await expect.poll(() => state.workspaceSettings.defaultPermissionMode).toBe("ask_everything");
   await expect.poll(() => state.workspaceSettings.defaultPermissionPreset).toBe("read_only");
 });
 
 test("settings approval policy loads, edits, and saves tool decisions and write paths", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");
   });
@@ -486,29 +643,71 @@ test("settings approval policy loads, edits, and saves tool decisions and write 
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Engineering" }).click();
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
   await page.getByLabel("Settings sections").getByRole("button", { name: /Default authorization/ }).click();
-  await page.getByRole("tab", { name: /Tool permission policy/ }).click();
   const settingsPanel = page.locator(".settings-panel").filter({ hasText: "Tool permission policy" });
+  await expect(page.getByRole("tab", { name: /Default authorization|Tool permission policy|Execution runners/ })).toHaveCount(0);
   await expect(page.getByRole("heading", { name: "Tool permission policy" })).toBeVisible();
+  await expect(settingsPanel.getByText("Preview details")).toHaveCount(0);
+  await expect(settingsPanel.locator(".policy-meta")).toHaveCount(0);
   await expect(settingsPanel).not.toContainText("workspace_default");
 
   const advancedPolicy = settingsPanel.locator("details.advanced-settings").filter({ hasText: "Advanced workspace policy" });
   await expect(advancedPolicy).toBeVisible();
   await expect.poll(() => advancedPolicy.evaluate((element) => element.hasAttribute("open"))).toBe(false);
   await advancedPolicy.getByText("Advanced workspace policy", { exact: true }).click();
-  const bashDecision = advancedPolicy.locator(".policy-tool-row").filter({ hasText: "bash" }).locator("select");
-  await expect(bashDecision).toHaveValue("ask");
-  await bashDecision.selectOption("deny");
-  await advancedPolicy.getByLabel("Allowed write paths").fill(".\n/tmp/ling-stack-workspace\n  ");
-  await settingsPanel.getByRole("button", { name: "Save policy" }).click();
+  await expect(advancedPolicy.locator(".settings-permission-group")).toHaveCount(2);
+  await expect(advancedPolicy.locator(".policy-tool-row select")).toHaveCount(0);
+  await expect(advancedPolicy.locator("textarea")).toHaveCount(0);
+
+  const readGroup = advancedPolicy.locator(".settings-permission-group").filter({ hasText: "Read and search" });
+  const executeGroup = advancedPolicy.locator(".settings-permission-group").filter({ hasText: "Execute and modify" });
+  await expect(readGroup.getByRole("group", { name: "Read and search permission decision" }).getByRole("button", { name: "Allow" })).toHaveAttribute("aria-pressed", "true");
+  await expect(executeGroup.getByRole("group", { name: "Execute and modify permission decision" }).getByRole("button", { name: "Ask" })).toHaveAttribute("aria-pressed", "true");
+
+  const saveChanges = advancedPolicy.getByRole("button", { name: "Save changes" });
+  await expect(saveChanges).toBeDisabled();
+  await executeGroup.getByRole("group", { name: "Execute and modify permission decision" }).getByRole("button", { name: "Ask" }).click();
+  await expect(saveChanges).toBeDisabled();
+  await executeGroup.getByRole("group", { name: "Execute and modify permission decision" }).getByRole("button", { name: "Block" }).click();
+  await expect(saveChanges).toBeEnabled();
+
+  await executeGroup.getByRole("button", { name: "Customize" }).click();
+  const bashTool = executeGroup.locator(".settings-permission-tool-row").filter({ hasText: "Run commands" });
+  await bashTool.getByRole("button", { name: "Ask" }).click();
+  await expect(executeGroup.getByText("Custom", { exact: true })).toBeVisible();
+
+  await expect(advancedPolicy.getByText("Current workspace", { exact: true })).toBeVisible();
+  await advancedPolicy.getByRole("button", { name: "Add path" }).click();
+  await advancedPolicy.getByLabel("Write path").fill("/tmp/ling-stack-workspace");
+  await advancedPolicy.getByRole("button", { name: "Add", exact: true }).click();
+  await expect(advancedPolicy.getByText("/tmp/ling-stack-workspace", { exact: true })).toBeVisible();
+  await advancedPolicy.getByRole("button", { name: "Add path" }).click();
+  await advancedPolicy.getByLabel("Write path").fill("/tmp/ling-stack-workspace");
+  await advancedPolicy.getByRole("button", { name: "Add", exact: true }).click();
+  await expect(advancedPolicy.getByText("/tmp/ling-stack-workspace", { exact: true })).toHaveCount(1);
+  await advancedPolicy.getByRole("button", { name: "Remove path Current workspace" }).click();
+  await expect(advancedPolicy.getByText("Current workspace", { exact: true })).toHaveCount(0);
+  await expect.poll(() => readHorizontalOverflow(page, ".settings-advanced-policy-editor")).toEqual([]);
+  await saveChanges.click();
 
   await expect.poll(() => {
     const toolDecisions = state.lastApprovalPolicyPatch?.toolDecisions;
     return isRecord(toolDecisions) ? toolDecisions.bash : undefined;
+  }).toBe("ask");
+  await expect.poll(() => {
+    const toolDecisions = state.lastApprovalPolicyPatch?.toolDecisions;
+    return isRecord(toolDecisions) ? toolDecisions.edit : undefined;
   }).toBe("deny");
-  await expect.poll(() => state.lastApprovalPolicyPatch?.allowedWritePaths).toEqual([".", "/tmp/ling-stack-workspace"]);
-  await expect.poll(() => state.approvalPolicy.toolDecisions.bash).toBe("deny");
-  await expect(bashDecision).toHaveValue("deny");
-  await expect(advancedPolicy.getByLabel("Allowed write paths")).toHaveValue(".\n/tmp/ling-stack-workspace");
+  await expect.poll(() => {
+    const toolDecisions = state.lastApprovalPolicyPatch?.toolDecisions;
+    return isRecord(toolDecisions) ? toolDecisions.write : undefined;
+  }).toBe("deny");
+  await expect.poll(() => state.lastApprovalPolicyPatch?.allowedWritePaths).toEqual(["/tmp/ling-stack-workspace"]);
+  await expect.poll(() => state.approvalPolicy.toolDecisions.bash).toBe("ask");
+  await expect(saveChanges).toBeDisabled();
+  for (const width of [1440, 1920]) {
+    await page.setViewportSize({ width, height: 960 });
+    await expect.poll(() => readHorizontalOverflow(page, ".settings-advanced-policy-editor")).toEqual([]);
+  }
 });
 
 test("settings permission preset cards update the effective preview", async ({ page }) => {
@@ -521,18 +720,63 @@ test("settings permission preset cards update the effective preview", async ({ p
 
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
   await page.getByLabel("Settings sections").getByRole("button", { name: /Default authorization/ }).click();
-  await page.getByRole("tab", { name: /Tool permission policy/ }).click();
   const settingsPanel = page.locator(".settings-panel").filter({ hasText: "Tool permission policy" });
+  await expect(page.getByRole("tab", { name: /Default authorization|Tool permission policy|Execution runners/ })).toHaveCount(0);
 
   await settingsPanel.getByRole("button", { name: /Workspace collaboration/ }).click();
-  await expect(settingsPanel.getByLabel("Effective permissions")).toContainText("Allows: read, grep, find, ls, edit, write");
-  await expect(settingsPanel.getByLabel("Effective permissions")).toContainText("Asks: bash");
-  await expect(settingsPanel.getByText("Selected preset", { exact: true })).toBeVisible();
+  const effectivePermissions = settingsPanel.getByLabel("Effective permissions");
+  await expect(effectivePermissions).toContainText("Allows: read, grep, find, ls, edit, write");
+  await expect(effectivePermissions).toContainText("Asks: bash");
+  const effectivePermissionLayout = await effectivePermissions.locator(".permission-preview-list").evaluate((element) => {
+    const style = getComputedStyle(element);
+    return { display: style.display, flexWrap: style.flexWrap };
+  });
+  expect(effectivePermissionLayout).toEqual({ display: "flex", flexWrap: "wrap" });
+  const firstChip = await effectivePermissions.locator(".permission-preview-list span").nth(0).boundingBox();
+  const secondChip = await effectivePermissions.locator(".permission-preview-list span").nth(1).boundingBox();
+  expect(firstChip).not.toBeNull();
+  expect(secondChip).not.toBeNull();
+  expect(Math.abs((firstChip?.y ?? 0) - (secondChip?.y ?? 0))).toBeLessThanOrEqual(1);
+  await expect(settingsPanel.getByText("Selected preset", { exact: true })).toHaveCount(0);
+  await expect(settingsPanel).toContainText("Current policy");
+  await expect(settingsPanel.getByText("Preview details")).toHaveCount(0);
   await expect(settingsPanel).toContainText("Workspace collaboration");
 
   await settingsPanel.getByRole("button", { name: /Full access/ }).click();
   await expect(settingsPanel.getByLabel("Effective permissions")).toContainText("Write scope: /");
   await expect(settingsPanel.getByLabel("Effective permissions")).toContainText("Allows: read, grep, find, ls, bash, edit, write");
+});
+
+test("settings advanced policy keeps unsaved edits after a save failure", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.locale", "en-US");
+  });
+  const state = createBaseState({ approvalStatus: "pending" });
+  await mockDaemon(page, state);
+  await page.route("**/approval-policy?**", async (route) => {
+    if (route.request().method() === "PATCH") {
+      await route.fulfill({ status: 500, json: { error: "Policy save unavailable" } });
+      return;
+    }
+    await route.fallback();
+  });
+  await page.goto("/");
+
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
+  await page.getByLabel("Settings sections").getByRole("button", { name: /Default authorization/ }).click();
+  const settingsPanel = page.locator(".settings-panel").filter({ hasText: "Tool permission policy" });
+  const advancedPolicy = settingsPanel.locator("details.advanced-settings").filter({ hasText: "Advanced workspace policy" });
+  await advancedPolicy.getByText("Advanced workspace policy", { exact: true }).click();
+
+  const executeDecision = advancedPolicy.getByRole("group", { name: "Execute and modify permission decision" });
+  await executeDecision.getByRole("button", { name: "Block" }).click();
+  const saveChanges = advancedPolicy.getByRole("button", { name: "Save changes" });
+  await saveChanges.click();
+
+  await expect(settingsPanel.locator(".inline-error")).toContainText("Policy save unavailable");
+  await expect(executeDecision.getByRole("button", { name: "Block" })).toHaveAttribute("aria-pressed", "true");
+  await expect(saveChanges).toBeEnabled();
+  expect(state.lastApprovalPolicyPatch).toBeUndefined();
 });
 
 test("settings plugins page applies and controls the CUA trusted-local preset without teammate authorization", async ({ page }) => {
@@ -689,7 +933,7 @@ test("settings skill library shows read-only skill health findings", async ({ pa
   const panel = page.locator(".settings-skill-library");
   await expect(panel.getByRole("heading", { name: "Skill library" })).toBeVisible();
   await expect(page.getByLabel("Settings sections").getByRole("button", { name: /Skill library/ })).toHaveClass(/active/);
-  await expect(page.getByRole("tab", { name: /Skills list/ })).toHaveAttribute("aria-selected", "true");
+  await expect(page.getByRole("tab", { name: /My skills/ })).toHaveAttribute("aria-selected", "true");
   const skillLibraryLayout = await panel.evaluate((element) => {
     const content = element.closest(".settings-content-stack");
     const body = element.querySelector(".settings-skill-library-body");
@@ -711,6 +955,7 @@ test("settings skill library shows read-only skill health findings", async ({ pa
   await expect.poll(() => readHorizontalOverflow(page, ".settings-skill-library-body, .settings-skill-table-wrap, .settings-skill-inspector")).toEqual([]);
   await expect(panel.getByRole("region", { name: "Skill Health" })).toHaveCount(0);
   await expect(panel.getByRole("region", { name: "Skill Source Health" })).toHaveCount(0);
+  await page.getByRole("tab", { name: /Built-in skills/ }).click();
   const reviewSkillRow = panel.locator(".settings-skill-table tbody tr").filter({ hasText: "Code Review" }).first();
   await expect(reviewSkillRow).not.toContainText("Source-backed");
   const inspector = panel.locator(".settings-skill-inspector");
@@ -718,7 +963,7 @@ test("settings skill library shows read-only skill health findings", async ({ pa
   await expect(inspector.locator(".settings-skill-summary-card")).toHaveCount(0);
   await reviewSkillRow.getByRole("button", { name: "Details" }).click();
   await expect(inspector.locator(".settings-skill-summary-card")).toBeVisible();
-  await expect(inspector).toContainText("Source details are available below when you need them.");
+  await expect(inspector).toContainText("Source-backed");
   const sourceDetails = inspector.locator(".settings-skill-inspector-details").filter({ hasText: "Source and raw details" });
   await expect(sourceDetails).toBeVisible();
   await expect.poll(() => sourceDetails.evaluate((element) => element.hasAttribute("open"))).toBe(false);
@@ -730,18 +975,10 @@ test("settings skill library shows read-only skill health findings", async ({ pa
   await expect(sourceDetails).toContainText("preview_on_demand");
   await expect(sourceDetails).toContainText("Compiled tokens");
   await expect(sourceDetails).toContainText("Lazy references: 1");
-  await panel.getByRole("button", { name: "Archive source snapshot" }).click();
-  await expect(panel).toContainText("Source snapshot archived");
-  await expect.poll(() => {
-    const snapshot = state.skillSourceSnapshots.find((item) => isRecord(item) && item.id === "skill_source_review_mock");
-    return isRecord(snapshot) ? snapshot.reviewStatus : "";
-  }).toBe("archived");
-  const archivedReviewSkillRow = panel.locator(".settings-skill-table tbody tr").filter({ hasText: "Code Review" }).first();
-  await expect(archivedReviewSkillRow).not.toContainText("Metadata only");
-  await expect(panel.locator(".settings-skill-inspector")).toContainText("Metadata only");
-  await expect(panel.locator(".settings-skill-inspector")).toContainText("No published SKILL.md snapshot is attached yet.");
+  await expect(panel.getByRole("button", { name: "Archive source snapshot" })).toHaveCount(0);
+  await expect(panel.getByRole("button", { name: "Rollback" })).toHaveCount(0);
 
-  await panel.getByRole("button", { name: "Sync gstack source" }).click();
+  await page.getByRole("tab", { name: /Source sync/ }).click();
   await expect(page.getByRole("tab", { name: /Source sync/ })).toHaveAttribute("aria-selected", "true");
   const sourceHealthDetails = panel.locator(".settings-skill-review-diagnostics").filter({ hasText: "Skill source health diagnostics" });
   await expect(sourceHealthDetails).toBeVisible();
@@ -806,7 +1043,7 @@ test("settings skill library shows read-only skill health findings", async ({ pa
   await sourceSyncPanel.getByRole("button", { name: "Publish selected" }).click();
   await expect(panel).toContainText("Published 2 skill sources");
   await expect.poll(() => state.skillSourceSnapshots.some((item) => isRecord(item) && item.skillId === "implement" && item.reviewStatus === "published")).toBe(true);
-  await page.getByRole("tab", { name: /Skills list/ }).click();
+  await page.getByRole("tab", { name: /Built-in skills/ }).click();
   const implementSkillRow = panel.locator(".settings-skill-table tbody tr").filter({ hasText: "Implementation" }).first();
   await expect(implementSkillRow).toBeVisible();
 
@@ -867,10 +1104,9 @@ test("settings skill library shows read-only skill health findings", async ({ pa
   await expect(candidateCard).toContainText("Approved for draft");
   await candidateCard.getByRole("button", { name: "Create registry draft" }).click();
   await expect(panel.locator(".settings-skill-import-preview")).toContainText("Channel canvas protocol skill");
-  await panel.locator(".settings-skill-import-preview").getByText("Import evidence").click();
+  await panel.locator(".settings-skill-import-preview").getByText("Check details").click();
   await expect(panel.locator(".settings-skill-import-preview")).toContainText("Weak routing description");
-  await expect(panel).toContainText("Draft ready");
-  await panel.getByRole("button", { name: "Publish to registry" }).click();
+  await panel.getByRole("button", { name: "Publish", exact: true }).click();
   await expect(panel).toContainText("Published 1 skills");
   await expect.poll(() => state.skillRegistryEntries.some((item) => isRecord(item) && item.id === "channel-canvas-protocol-skill")).toBe(true);
   await expect(panel.locator(".settings-skill-table")).toContainText("Channel canvas protocol skill");

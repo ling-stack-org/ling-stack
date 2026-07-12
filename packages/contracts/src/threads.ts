@@ -2,6 +2,7 @@ import type { ApprovalRequest, LingApprovalCheckpoint } from "./approvals.js";
 import type { RunArtifact } from "./artifacts.js";
 import type { RunEventEnvelope, RunSession, RuntimeEvent } from "./runtime.js";
 import type { ExecutionAction } from "./execution-actions.js";
+import type { RetentionTombstone } from "./retention.js";
 import type { StateTransitionEvent } from "./workflows.js";
 import type { LingTurn } from "./turns.js";
 
@@ -468,6 +469,14 @@ export interface LingThreadForkRunResponse {
 export interface LingThreadArchiveRequest {
   readonly reason?: string;
   readonly idempotencyKey?: string;
+}
+
+export interface HardDeleteLingThreadRequest {
+  readonly reason?: string;
+}
+
+export interface HardDeleteLingThreadResponse {
+  readonly tombstone: RetentionTombstone;
 }
 
 export interface LingThreadPinRequest {

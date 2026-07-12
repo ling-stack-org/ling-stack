@@ -1246,6 +1246,8 @@ export interface SkillImportDraft {
   readonly updatedAt: string;
 }
 
+export type SkillImportPreview = Omit<SkillImportDraft, "id" | "workspaceId" | "createdAt" | "updatedAt">;
+
 export interface SkillRegistryListResponse {
   readonly cwd: string;
   readonly skills: readonly SkillRegistryEntry[];
@@ -1387,6 +1389,12 @@ export interface SkillImportDraftRequest {
 export interface SkillImportDraftResponse {
   readonly cwd: string;
   readonly draft: SkillImportDraft;
+  readonly contextFindings: readonly SkillSourceContextHealthFinding[];
+}
+
+export interface SkillImportPreviewResponse {
+  readonly cwd: string;
+  readonly preview: SkillImportPreview;
   readonly contextFindings: readonly SkillSourceContextHealthFinding[];
 }
 

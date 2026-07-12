@@ -19,6 +19,7 @@ import { skillRegistryState } from "./skill-library-utils.js";
 
 export function SkillCompactInspector({
   skill,
+  readOnly = false,
   sourceSnapshot,
   sourceHistory,
   artifacts,
@@ -33,6 +34,7 @@ export function SkillCompactInspector({
   t,
 }: {
   readonly skill: SkillRegistryEntry;
+  readonly readOnly?: boolean;
   readonly sourceSnapshot: SkillSourceSnapshot | undefined;
   readonly sourceHistory: readonly SkillSourceSnapshot[];
   readonly artifacts: readonly SkillSourceArtifact[];
@@ -84,11 +86,7 @@ export function SkillCompactInspector({
         <div className="settings-skill-next-action">
           <span>
             <strong>{sourceSnapshot ? t("Source-backed") : t("Metadata only")}</strong>
-            <small>
-              {sourceSnapshot
-                ? t("Source details are available below when you need them.")
-                : t("No published SKILL.md snapshot is attached yet.")}
-            </small>
+            {!sourceSnapshot ? <small>{t("No published SKILL.md snapshot is attached yet.")}</small> : null}
           </span>
           <button className="secondary-button compact-button" type="button" onClick={onPreviewOptimization} disabled={saving || optimizationPreviewLoading}>
             <Search size={14} />
@@ -139,6 +137,7 @@ export function SkillCompactInspector({
           onPreviewOptimization={onPreviewOptimization}
           onArchive={onArchiveSource}
           onRollback={onRollbackSource}
+          allowSourceMutations={!readOnly}
           t={t}
         />
       </details>

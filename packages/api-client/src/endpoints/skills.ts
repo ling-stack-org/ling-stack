@@ -27,6 +27,7 @@ import type {
   SkillImportDraftOptimizationPreviewRequest,
   SkillImportDraftRequest,
   SkillImportDraftResponse,
+  SkillImportPreviewResponse,
   SkillImportPublishResponse,
   SkillHealthResponse,
   SkillOptimizationPreviewRequest,
@@ -356,6 +357,10 @@ export const skillEndpoints = {
 
   async createSkillImportDraft(this: LingDaemonEndpointContext, cwd: string, input: SkillImportDraftRequest): Promise<SkillImportDraftResponse> {
     return this._post("/skills/import-draft", { cwd }, input);
+  },
+
+  async previewSkillImport(this: LingDaemonEndpointContext, cwd: string, input: SkillImportDraftRequest): Promise<SkillImportPreviewResponse> {
+    return this._post("/skills/import-preview", { cwd }, input);
   },
 
   async getSkillImportDraft(this: LingDaemonEndpointContext, cwd: string, draftId: string): Promise<SkillImportDraftResponse> {

@@ -25,6 +25,7 @@ import type {
   SkillImportDraftOptimizationPreviewRequest,
   SkillImportDraftRequest,
   SkillImportDraftResponse,
+  SkillImportPreviewResponse,
   SkillImportPublishResponse,
   SkillHealthResponse,
   SkillOptimizationPreviewRequest,
@@ -231,6 +232,10 @@ export async function createSkillCandidateDraft(cwd: string, candidateId: string
 
 export async function createSkillImportDraft(cwd: string, input: SkillImportDraftRequest): Promise<SkillImportDraftResponse> {
   return daemonClient.createSkillImportDraft(cwd, input);
+}
+
+export async function previewSkillImport(cwd: string, input: SkillImportDraftRequest): Promise<SkillImportPreviewResponse> {
+  return daemonClient.previewSkillImport(cwd, input);
 }
 
 export async function previewSkillImportDraftOptimization(

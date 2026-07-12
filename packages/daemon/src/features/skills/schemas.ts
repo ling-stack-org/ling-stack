@@ -26,6 +26,7 @@ import {
   type SkillDuplicateAnalysis,
   type SkillHealthFinding,
   type SkillImportWarning,
+  type SkillImportPreview,
   type SkillOptimizationMode,
   type SkillPackSource,
   type SkillRegistryEntry,
@@ -731,6 +732,19 @@ export function parseSkillImportDraftRequest(
     description: parsed.description,
     definitions,
     warnings,
+  };
+}
+
+export function buildSkillImportPreview(input: CreateSkillImportDraftInput): SkillImportPreview {
+  return {
+    source: input.source,
+    ...(input.sourcePath ? { sourcePath: input.sourcePath } : {}),
+    ...(input.packId ? { packId: input.packId } : {}),
+    name: input.name,
+    ...(input.version ? { version: input.version } : {}),
+    description: input.description,
+    definitions: input.definitions,
+    warnings: input.warnings ?? [],
   };
 }
 

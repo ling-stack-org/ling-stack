@@ -11,6 +11,7 @@ import type {
   ChannelWorkspaceStatus,
 } from "./channels.js";
 import type { McpToolDefaultApproval } from "./mcp.js";
+import type { RetentionTombstone } from "./retention.js";
 import type { WorkUnit } from "./runtime.js";
 
 export interface TeammatePersonaDraftRequest {
@@ -125,16 +126,6 @@ export interface AiTeammateListResponse {
 
 export interface AiTeammateMutationResponse {
   readonly teammate: AiTeammate;
-}
-
-export interface RetentionTombstone {
-  readonly id: string;
-  readonly workspaceId: string;
-  readonly entityType: "ai-teammate";
-  readonly entityId: string;
-  readonly reason?: string;
-  readonly deletedCounts: Readonly<Record<string, number>>;
-  readonly createdAt: string;
 }
 
 export interface HardDeleteAiTeammateRequest {

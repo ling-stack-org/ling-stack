@@ -252,17 +252,17 @@ test("sidebar archive hides conversations and teammates without deleting data", 
 
   await navigation.getByRole("button", { name: "Settings" }).click();
   await page.getByLabel("Settings sections").getByRole("button", { name: /Archived items/ }).click();
-  await expect(page.locator(".archived-items-settings-panel").getByRole("heading", { name: "Archived items" })).toBeVisible();
+  await expect(page.locator(".archived-items-settings-panel")).toBeVisible();
 
-  const conversationGroup = page.locator(".archived-item-group").filter({ hasText: "Conversations" });
-  const teammateGroup = page.locator(".archived-item-group").filter({ hasText: "AI Teammates" });
-  await expect(conversationGroup).toContainText("Archive me");
-  await expect(teammateGroup).toContainText("Designer");
+  const archivedList = page.locator(".archived-item-list");
+  await expect(archivedList).toContainText("Archive me");
 
-  await conversationGroup.getByRole("button", { name: "Restore" }).click();
+  await archivedList.getByRole("button", { name: "Restore" }).click();
   await expect.poll(() => state.threads.find((thread) => thread.kind === "conversation" && thread.title === "Archive me")?.archivedAt ?? "").toBe("");
 
-  await teammateGroup.getByRole("button", { name: "Restore" }).click();
+  await page.locator(".archived-items-settings-panel").getByRole("tab", { name: /AI Teammates/ }).click();
+  await expect(archivedList).toContainText("Designer");
+  await archivedList.getByRole("button", { name: "Restore" }).click();
   await expect.poll(() => state.aiTeammates.find((teammate) => teammate.id === "teammate_sidebar_designer")?.hidden).toBe(false);
   await page.getByRole("button", { name: "Back to app" }).click();
   await expect(navigation.locator(".sidebar-recent-row").filter({ hasText: "Archive me" })).toBeVisible();
@@ -678,7 +678,8 @@ test("conversation home model picker uses the model workbench default without ch
   await page.getByLabel("Settings sections").getByRole("button", { name: "Model Workbench" }).click();
   const geminiRow = page.locator(".provider-row").filter({ hasText: "Gemini Pro" });
   await geminiRow.getByRole("button", { name: "Set default" }).click();
-  await expect(geminiRow.getByRole("button", { name: "Clear default" })).toBeVisible();
+  await expect(geminiRow).toHaveClass(/selected/);
+  await expect(geminiRow).toContainText("Current default");
   await page.getByRole("button", { name: "Back to app" }).click();
 
   await navigation.getByRole("button", { name: "New conversation" }).click();

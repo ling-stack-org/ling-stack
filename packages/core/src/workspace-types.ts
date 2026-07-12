@@ -1164,7 +1164,7 @@ export interface UpdateUserProfileInput {
 export interface RetentionTombstone {
   readonly id: string;
   readonly workspaceId: string;
-  readonly entityType: "ai-teammate";
+  readonly entityType: "ai-teammate" | "conversation-thread";
   readonly entityId: string;
   readonly reason?: string;
   readonly deletedCounts: Readonly<Record<string, number>>;
@@ -1176,6 +1176,15 @@ export interface HardDeleteAiTeammateInput {
 }
 
 export interface HardDeleteAiTeammateResult {
+  readonly tombstone: RetentionTombstone;
+  readonly deletedAttachmentPaths: readonly string[];
+}
+
+export interface HardDeleteLingThreadInput {
+  readonly reason?: string;
+}
+
+export interface HardDeleteLingThreadResult {
   readonly tombstone: RetentionTombstone;
   readonly deletedAttachmentPaths: readonly string[];
 }

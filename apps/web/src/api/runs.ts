@@ -2,6 +2,7 @@ import type {
   CreateLingThreadRequest,
   CreateRunInterventionRequest,
   LingThreadArchiveRequest,
+  HardDeleteLingThreadResponse,
   LingThreadDetailResponse,
   LingThreadEvidenceResponse,
   LingThreadForkRunRequest,
@@ -262,6 +263,14 @@ export async function unarchiveLingThread(
   input: LingThreadArchiveRequest = {},
 ): Promise<LingThreadMutationResponse> {
   return daemonClient.unarchiveLingThread(cwd, threadId, input);
+}
+
+export async function hardDeleteLingThread(
+  cwd: string,
+  threadId: string,
+  reason?: string,
+): Promise<HardDeleteLingThreadResponse> {
+  return daemonClient.hardDeleteLingThread(cwd, threadId, reason?.trim() ? { reason: reason.trim() } : {});
 }
 
 export async function pinLingThread(

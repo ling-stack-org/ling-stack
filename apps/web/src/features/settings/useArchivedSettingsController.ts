@@ -7,7 +7,15 @@ import {
   patchChannel,
   updateChannelBranch,
 } from "../../api/channels.js";
-import { listAiTeammates, listLingThreads, unarchiveLingThread, updateAiTeammate } from "../../api.js";
+import {
+  hardDeleteAiTeammate,
+  hardDeleteLingThread,
+  listAiTeammates,
+  listLingThreads,
+  unarchiveLingThread,
+  updateAiTeammate,
+} from "../../api.js";
+import { useI18n } from "../../i18n.js";
 import type { AiTeammate, Channel, ChannelBranch, LingThread } from "../../types.js";
 
 export interface ArchivedSettingsControllerState {
@@ -29,7 +37,9 @@ export interface ArchivedSettingsControllerActions {
   readonly restoreBranch: (branch: ChannelBranch) => Promise<void>;
   readonly deleteBranch: (branch: ChannelBranch) => Promise<void>;
   readonly restoreConversation: (threadId: string) => Promise<void>;
+  readonly deleteConversation: (thread: LingThread) => Promise<void>;
   readonly restoreTeammate: (teammateId: string) => Promise<void>;
+  readonly deleteTeammate: (teammate: AiTeammate) => Promise<void>;
 }
 
 export function useArchivedSettingsController({
@@ -44,6 +54,7 @@ export function useArchivedSettingsController({
   readonly state: ArchivedSettingsControllerState;
   readonly actions: ArchivedSettingsControllerActions;
 } {
+  const { t } = useI18n();
   const [archivedChannels, setArchivedChannels] = useState<readonly Channel[]>([]);
   const [archiveParentChannels, setArchiveParentChannels] = useState<readonly Channel[]>([]);
   const [archivedBranches, setArchivedBranches] = useState<readonly ChannelBranch[]>([]);
@@ -111,11 +122,11 @@ export function useArchivedSettingsController({
     try {
       await action();
     } catch (caught) {
-      setErrorMessage(caught instanceof Error ? caught.message : String(caught));
+      setErrorMessage(archivedDeleteErrorMessage(caught, t));
     } finally {
       setActionId("");
     }
-  }, []);
+  }, [t]);
 
   const restoreChannel = useCallback(async (channelId: string) => {
     await runAction(`channel:${channelId}:restore`, async () => {
@@ -163,9 +174,25 @@ export function useArchivedSettingsController({
     });
   }, [cwd, onChanged, refresh, runAction]);
 
+  const removeConversation = useCallback(async (thread: LingThread) => {
+    await runAction(`conversation:${thread.id}:delete`, async () => {
+      await hardDeleteLingThread(cwd, thread.id, "settings_archived_items_delete");
+      await refresh();
+      await onChanged?.();
+    });
+  }, [cwd, onChanged, refresh, runAction]);
+
   const restoreTeammate = useCallback(async (teammateId: string) => {
     await runAction(`teammate:${teammateId}:restore`, async () => {
       await updateAiTeammate(cwd, teammateId, { hidden: false });
+      await refresh();
+      await onChanged?.();
+    });
+  }, [cwd, onChanged, refresh, runAction]);
+
+  const removeTeammate = useCallback(async (teammate: AiTeammate) => {
+    await runAction(`teammate:${teammate.id}:delete`, async () => {
+      await hardDeleteAiTeammate(cwd, teammate.id, "settings_archived_items_delete");
       await refresh();
       await onChanged?.();
     });
@@ -190,9 +217,28 @@ export function useArchivedSettingsController({
       restoreBranch,
       deleteBranch: removeBranch,
       restoreConversation,
+      deleteConversation: removeConversation,
       restoreTeammate,
+      deleteTeammate: removeTeammate,
     },
   };
+}
+
+function archivedDeleteErrorMessage(caught: unknown, t: (key: string) => string): string {
+  const message = caught instanceof Error ? caught.message : String(caught);
+  if (message.includes("targeted by automation")) {
+    return t("This conversation is still used by an automation. Update the automation before deleting it.");
+  }
+  if (message.includes("active work") || message.includes("active turn")) {
+    return t("This conversation still has active work and cannot be deleted.");
+  }
+  if (message.includes("must be archived") || message.includes("Only conversation threads")) {
+    return t("Only archived conversations can be deleted.");
+  }
+  if (message.includes("Ling Agent cannot be deleted")) {
+    return t("Ling Agent cannot be deleted.");
+  }
+  return message;
 }
 
 function sortByUpdatedAtDesc<T extends { readonly updatedAt: string }>(left: T, right: T): number {

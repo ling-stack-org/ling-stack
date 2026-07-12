@@ -123,6 +123,8 @@ import type {
   EffectiveChannelCouncilProjection,
   HardDeleteAiTeammateInput,
   HardDeleteAiTeammateResult,
+  HardDeleteLingThreadInput,
+  HardDeleteLingThreadResult,
   ListAiCouncilsOptions,
   ListAiTeammatesOptions,
   ListChannelAttachmentsOptions,
@@ -1197,6 +1199,7 @@ export interface RunStore {
   readonly paths: LingStackRuntimePaths;
   createLingThread(input: CreateLingThreadInput, now: string): LingThread;
   getLingThread(threadId: string): LingThread | undefined;
+  hardDeleteLingThread(threadId: string, input: HardDeleteLingThreadInput, now: string): HardDeleteLingThreadResult | undefined;
   findLingThreadByOwner(input: {
     readonly kind: LingThreadKind;
     readonly taskId?: string;

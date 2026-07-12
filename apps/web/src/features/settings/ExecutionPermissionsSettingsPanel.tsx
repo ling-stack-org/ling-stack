@@ -1,4 +1,3 @@
-import { useState } from "react";
 import { Bot, CircleAlert, Loader2, RefreshCw, Save, Settings } from "lucide-react";
 import { useI18n } from "../../i18n.js";
 import {
@@ -10,24 +9,19 @@ import {
   permissionPresetOptions,
   summarizeEffectivePolicySnapshot,
 } from "../../lib/session-permissions.js";
-import { allTools, riskyTools } from "../../lib/tools.js";
 import { formatDateTime } from "../../lib/formatting.js";
-import { MetaRow, StatusBadge } from "../../shared/components/index.js";
 import type { RuntimeSettingsFormState } from "../../domains/settings/use-settings-domain.js";
 import type {
   ApprovalPolicy,
   ApprovalPolicyFormState,
-  ApprovalToolDecision,
   Channel,
   PermissionPreset,
   RunnerListItem,
   SessionPermissionMode,
   WorkspaceRuntimeSettings,
 } from "../../types.js";
-import { SettingsSubnav } from "./SettingsSubnav.js";
 import { SettingsGlobalApprovalDefaultCard } from "./SettingsWorkspaceToolsPanel.js";
-
-type ExecutionSubsectionId = "defaults" | "policy" | "runners";
+import { AdvancedWorkspacePolicyEditor } from "./AdvancedWorkspacePolicyEditor.js";
 
 export function ExecutionPermissionsSettingsPanel({
   policy,
@@ -81,7 +75,6 @@ export function ExecutionPermissionsSettingsPanel({
   readonly onSaveRuntimeSettings: () => void;
 }): JSX.Element {
   const { t } = useI18n();
-  const [activeSubsection, setActiveSubsection] = useState<ExecutionSubsectionId>("defaults");
   const enabledRunners = runners.filter((runner) => runner.status === "enabled");
   const resolvedPermissionPreset = permissionPreset ?? inferPermissionPreset(permissionMode);
   const policyPreview = buildLocalEffectivePolicyPreview({
@@ -94,52 +87,37 @@ export function ExecutionPermissionsSettingsPanel({
     ...summarizeEffectivePolicySnapshot(policyPreview, t),
     ...formatToolDecisionGroups(policyPreview, t),
   ];
+  const runtimeSummary = formatRuntimeRunnerSummary({
+    enabledRunnerCount: enabledRunners.length,
+    runtimeSettings,
+    runners,
+    t,
+  });
 
   return (
     <div className="settings-section-stack">
-      <SettingsSubnav
-        label="Runtime and permissions sections"
-        activeId={activeSubsection}
-        onChange={(id) => setActiveSubsection(id as ExecutionSubsectionId)}
-        options={[
-          {
-            id: "defaults",
-            label: "Default authorization",
-            description: "Choose how new conversations get permission to use tools.",
-          },
-          {
-            id: "policy",
-            label: "Tool permission policy",
-            description: "Tune tool decisions, permission previews, and write boundaries.",
-          },
-          {
-            id: "runners",
-            label: "Execution runners",
-            description: "Choose which local execution runners Ling can use.",
-            badge: String(enabledRunners.length),
-          },
-        ]}
+      <SettingsGlobalApprovalDefaultCard
+        defaultPermissionMode={workspaceDefaultPermissionMode}
+        defaultPermissionPreset={workspaceDefaultPermissionPreset}
+        onDefaultPermissionChange={onWorkspaceDefaultPermissionChange}
       />
 
-      {activeSubsection === "defaults" ? (
-        <SettingsGlobalApprovalDefaultCard
-          defaultPermissionMode={workspaceDefaultPermissionMode}
-          defaultPermissionPreset={workspaceDefaultPermissionPreset}
-          onDefaultPermissionChange={onWorkspaceDefaultPermissionChange}
-        />
-      ) : null}
-
-      {activeSubsection === "policy" ? (
-        <section className="panel settings-panel" aria-labelledby="settings-title">
+      <section className="panel settings-panel" aria-labelledby="settings-title">
         <div className="panel-title split">
           <span>
             <Settings size={18} />
             <h2 id="settings-title">{t("Tool permission policy")}</h2>
           </span>
-          <button className="secondary-button compact-button" type="button" onClick={onRefresh} disabled={isLoading}>
-            {isLoading ? <Loader2 className="spin" size={15} /> : <RefreshCw size={15} />}
-            {t("Refresh")}
-          </button>
+          <div className="settings-section-title-actions">
+            <small className="settings-section-meta">
+              {t("Current policy")}: {permissionPresetLabel(resolvedPermissionPreset, t)}
+              {policy ? ` · ${t("Updated")} ${formatDateTime(policy.updatedAt)}` : ""}
+            </small>
+            <button className="secondary-button compact-button" type="button" onClick={onRefresh} disabled={isLoading}>
+              {isLoading ? <Loader2 className="spin" size={15} /> : <RefreshCw size={15} />}
+              {t("Refresh")}
+            </button>
+          </div>
         </div>
 
         {errorMessage ? (
@@ -163,84 +141,43 @@ export function ExecutionPermissionsSettingsPanel({
           ))}
         </div>
 
-        <div className="permission-preview-card" aria-label={t("Effective permissions")}>
-          <div>
-            <strong>{t("Effective permissions")}</strong>
-            <details className="settings-compact-details settings-interaction-details">
-              <summary>{t("Preview details")}</summary>
-              <small>{t("This preview follows the selected preset and approval policy form. Save policy to apply advanced policy edits.")}</small>
-            </details>
-          </div>
+        <div className="permission-preview-card permission-preview-card--compact" aria-label={t("Effective permissions")}>
+          <strong>{t("Effective permissions")}</strong>
           <div className="permission-preview-list">
             {policyPreviewRows.map((row) => (
-              <span key={row}>{row}</span>
+              <span key={row} title={row}>{row}</span>
             ))}
           </div>
         </div>
 
-        <div className="policy-meta">
-          <MetaRow label={t("Updated")} value={policy ? formatDateTime(policy.updatedAt) : "-"} compact />
-          <MetaRow label={t("Selected preset")} value={permissionPresetLabel(resolvedPermissionPreset, t)} compact />
-        </div>
-
-        <details className="advanced-settings">
+        <details className="advanced-settings settings-policy-advanced">
           <summary>{t("Advanced workspace policy")}</summary>
-          <div className="policy-tool-grid" aria-label={t("Tool approval decisions")}>
-            {allTools.map((tool) => (
-              <label key={tool} className={`policy-tool-row${riskyTools.includes(tool) ? " risky" : ""}`}>
-                <span>{tool}</span>
-                <select
-                  value={form.toolDecisions[tool]}
-                  onChange={(event) => {
-                    onPermissionModeChange(permissionModeForPreset("custom"));
-                    onFormChange({
-                      ...form,
-                      toolDecisions: {
-                        ...form.toolDecisions,
-                        [tool]: event.target.value as ApprovalToolDecision,
-                      },
-                    });
-                  }}
-                >
-                  <option value="allow">{t("Allow")}</option>
-                  <option value="ask">{t("Ask")}</option>
-                  <option value="deny">{t("Deny")}</option>
-                </select>
-              </label>
-            ))}
-          </div>
-          <label className="field wide">
-            <span>{t("Allowed write paths")}</span>
-            <textarea
-              value={form.allowedWritePathsText}
-              onChange={(event) => {
-                onPermissionModeChange(permissionModeForPreset("custom"));
-                onFormChange({ ...form, allowedWritePathsText: event.target.value });
-              }}
-            />
-          </label>
+          <AdvancedWorkspacePolicyEditor
+            policy={policy}
+            form={form}
+            isLoading={isLoading}
+            onFormChange={(nextForm) => {
+              onPermissionModeChange(permissionModeForPreset("custom"));
+              onFormChange(nextForm);
+            }}
+            onSave={onSave}
+          />
         </details>
+      </section>
 
-        <div className="action-row">
-          <button className="primary-button" type="button" onClick={onSave} disabled={isLoading}>
-            {isLoading ? <Loader2 className="spin" size={16} /> : <Save size={16} />}
-            {t("Save policy")}
-          </button>
-        </div>
-        </section>
-      ) : null}
-
-      {activeSubsection === "runners" ? (
-        <section className="panel settings-panel runtime-runner-settings-panel" aria-labelledby="runtime-runner-settings-title">
+      <section className="panel settings-panel runtime-runner-settings-panel" aria-labelledby="runtime-runner-settings-title">
         <div className="panel-title split">
           <span>
             <Bot size={18} />
             <h2 id="runtime-runner-settings-title">{t("Execution runners")}</h2>
           </span>
-          <button className="secondary-button compact-button" type="button" onClick={onRefreshRuntimeSettings} disabled={runtimeSettingsLoading}>
-            {runtimeSettingsLoading ? <Loader2 className="spin" size={15} /> : <RefreshCw size={15} />}
-            {t("Refresh")}
-          </button>
+          <div className="settings-section-title-actions">
+            <small className="settings-section-meta">{runtimeSummary}</small>
+            <button className="secondary-button compact-button" type="button" onClick={onRefreshRuntimeSettings} disabled={runtimeSettingsLoading}>
+              {runtimeSettingsLoading ? <Loader2 className="spin" size={15} /> : <RefreshCw size={15} />}
+              {t("Refresh")}
+            </button>
+          </div>
         </div>
 
         {runtimeSettingsError ? (
@@ -249,17 +186,6 @@ export function ExecutionPermissionsSettingsPanel({
             {runtimeSettingsError}
           </div>
         ) : null}
-
-        <details className="settings-compact-details settings-interaction-details">
-          <summary>{t("Current runner defaults")}</summary>
-          <div className="settings-status-grid compact-status-grid">
-            <MetaRow label={t("Default runner")} value={runtimeSettings?.defaultRunnerId ?? "-"} compact />
-            <MetaRow label={t("Allowed runners")} value={runtimeSettings?.allowedRunnerIds.join(", ") || "-"} compact />
-            <MetaRow label={t("Explicit fallback")} value={runtimeSettings?.explicitRunnerFallback ?? "-"} compact />
-            <MetaRow label={t("Implicit fallback")} value={runtimeSettings?.implicitRunnerFallback ?? "-"} compact />
-            <MetaRow label={t("Updated")} value={runtimeSettings ? formatDateTime(runtimeSettings.updatedAt) : "-"} compact />
-          </div>
-        </details>
 
         <div className="policy-tool-grid" aria-label={t("Runner settings")}>
           <label className="policy-tool-row">
@@ -319,7 +245,7 @@ export function ExecutionPermissionsSettingsPanel({
                   onChange={(event) => onToggleAllowedRunner(runner.id, event.target.checked)}
                   disabled={runner.status !== "enabled" || runtimeSettingsAction !== undefined}
                 />
-                <StatusBadge status={runner.status} />
+                <span className={`runtime-runner-status-dot ${runnerStatusTone(runner)}`} aria-hidden="true" />
                 <span>{runner.displayName}</span>
                 <small>{runnerReadinessLabel(runner, t)}</small>
                 <details className="settings-compact-details settings-interaction-details">
@@ -349,8 +275,7 @@ export function ExecutionPermissionsSettingsPanel({
             {t("Save runtime settings")}
           </button>
         </div>
-        </section>
-      ) : null}
+      </section>
     </div>
   );
 }
@@ -365,4 +290,36 @@ function runnerReadinessLabel(runner: RunnerListItem, t: (key: string, values?: 
     return t("readiness {status}", { status: readiness.status });
   }
   return t("readiness {status}, {count} blockers", { status: readiness.status, count: blockerCount });
+}
+
+function runnerStatusTone(runner: RunnerListItem): "ready" | "attention" | "muted" {
+  if (runner.status !== "enabled") {
+    return "muted";
+  }
+  if (runner.readiness?.blockingReasons.length) {
+    return "attention";
+  }
+  return "ready";
+}
+
+function formatRuntimeRunnerSummary({
+  enabledRunnerCount,
+  runtimeSettings,
+  runners,
+  t,
+}: {
+  readonly enabledRunnerCount: number;
+  readonly runtimeSettings: WorkspaceRuntimeSettings | undefined;
+  readonly runners: readonly RunnerListItem[];
+  readonly t: (key: string, values?: Readonly<Record<string, string | number>>) => string;
+}): string {
+  const defaultRunnerId = runtimeSettings?.defaultRunnerId;
+  const defaultRunner = defaultRunnerId
+    ? runners.find((runner) => runner.id === defaultRunnerId)?.displayName ?? defaultRunnerId
+    : t("None");
+  return t("Default runner: {runner} · Available {enabled}/{total}", {
+    runner: defaultRunner,
+    enabled: enabledRunnerCount,
+    total: runners.length,
+  });
 }

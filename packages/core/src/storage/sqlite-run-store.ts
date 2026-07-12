@@ -125,6 +125,8 @@ import {
   type EffectiveChannelCouncilProjection,
   type HardDeleteAiTeammateInput,
   type HardDeleteAiTeammateResult,
+  type HardDeleteLingThreadInput,
+  type HardDeleteLingThreadResult,
   type ListAiCouncilsOptions,
   type ListAiTeammatesOptions,
   type ListChannelAttachmentsOptions,
@@ -456,6 +458,7 @@ import { SqliteRunSessionStore } from "./sqlite/run-session-store.js";
 import { SqliteLingThreadMetadataCoordinator } from "./sqlite/ling-thread-metadata-coordinator.js";
 import { SqliteLingThreadSearchStore } from "./sqlite/ling-thread-search-store.js";
 import { SqliteLingThreadStore } from "./sqlite/ling-thread-store.js";
+import { SqliteLingThreadCleanupStore } from "./sqlite/ling-thread-cleanup-store.js";
 import { SqliteLingTurnStore } from "./sqlite/ling-turn-store.js";
 import { SqliteStateTransitionStore } from "./sqlite/state-transition-store.js";
 import { SqliteResourceLeaseStore } from "./sqlite/resource-lease-store.js";
@@ -528,6 +531,7 @@ export class SqliteRunStore implements RunStore {
   private readonly lingThreadMetadata: SqliteLingThreadMetadataCoordinator;
   private readonly lingThreadSearch: SqliteLingThreadSearchStore;
   private readonly lingThreads: SqliteLingThreadStore;
+  private readonly lingThreadCleanup: SqliteLingThreadCleanupStore;
   private readonly lingTurns: SqliteLingTurnStore;
   private readonly stateTransitions: SqliteStateTransitionStore;
   private readonly resourceLeases: SqliteResourceLeaseStore;
@@ -635,6 +639,10 @@ export class SqliteRunStore implements RunStore {
     this.lingThreads = new SqliteLingThreadStore(
       { database: this.database },
       { rebuildLingThreadMetadata: (threadId, now) => this.tryRebuildLingThreadMetadata(threadId, now) },
+    );
+    this.lingThreadCleanup = new SqliteLingThreadCleanupStore(
+      { database: this.database },
+      { getLingThread: (threadId) => this.getLingThread(threadId) },
     );
     this.lingTurns = new SqliteLingTurnStore(
       { database: this.database },
@@ -957,6 +965,14 @@ export class SqliteRunStore implements RunStore {
 
   getLingThread(threadId: string): LingThread | undefined {
     return this.lingThreads.getLingThread(threadId);
+  }
+
+  hardDeleteLingThread(
+    threadId: string,
+    input: HardDeleteLingThreadInput,
+    now: string,
+  ): HardDeleteLingThreadResult | undefined {
+    return this.lingThreadCleanup.hardDeleteLingThread(threadId, input, now);
   }
 
   findLingThreadByOwner(input: {

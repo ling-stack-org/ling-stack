@@ -164,11 +164,12 @@ test("main pages and workspace tools follow dark theme tokens", async ({ page })
   ]);
 
   await page.getByLabel("设置分组").getByRole("button", { name: /技能库|Skill library/ }).click();
+  await page.getByRole("tab", { name: /内置技能|Built-in skills/ }).click();
   await expect(page.locator(".settings-skill-table")).toBeVisible();
   await assertDarkPage(page, "skill library settings", [
     ".settings-layout",
     ".settings-skill-library",
-    ".settings-skill-library-stats span",
+    ".settings-skill-ownership-meta span",
     ".settings-skill-library-toolbar",
     ".settings-skill-table-wrap",
     ".settings-skill-table",
@@ -209,6 +210,21 @@ test("main pages and workspace tools follow dark theme tokens", async ({ page })
     ".settings-run-diagnostics-detail",
   ]);
 
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.getByLabel("设置分组").getByRole("button", { name: /已归档项目|Archived items/ }).click();
+  await expect(page.locator(".archived-items-settings-panel")).toBeVisible();
+  await expect(page.locator(".archived-items-settings-panel").getByRole("tab")).toHaveCount(4);
+  await expect(page.locator(".archived-delete-action")).toHaveCount(1);
+  await assertDarkPage(page, "archived items settings", [
+    ".settings-layout",
+    ".archived-items-settings-panel",
+    ".archived-items-toolbar",
+    ".settings-subnav",
+    ".archived-item-list",
+    ".archived-item-row",
+    ".archived-item-actions",
+  ]);
+
 });
 
 function createDarkThemeState(): MockState {
@@ -232,7 +248,49 @@ function createDarkThemeState(): MockState {
       displayName: "工程队友",
       providerPresetId: "provider_local",
     }),
+    createMockTeammate({
+      id: "teammate_archived_dark",
+      displayName: "已归档队友",
+      hidden: true,
+      status: "active",
+      updatedAt: "2026-06-24T00:04:00.000Z",
+    }),
   ];
+  state.threads.push({
+    id: "thread_archived_dark",
+    workspaceId: "workspace_default",
+    kind: "conversation",
+    teammateId: "ling_agent",
+    title: "已归档会话",
+    objective: "Dark mode archived conversation",
+    status: "archived",
+    conversationMode: { mode: "default" },
+    createdAt: "2026-06-24T00:04:00.000Z",
+    updatedAt: "2026-06-24T00:04:00.000Z",
+    archivedAt: "2026-06-24T00:04:00.000Z",
+  });
+  state.channels.push({
+    id: "channel_archived_dark",
+    workspaceId: "workspace_default",
+    name: "已归档频道",
+    status: "archived",
+    boundPath: cwd,
+    autoReplyMode: "mentions_only",
+    allowedTools: ["read"],
+    runtimePolicy: {},
+    createdAt: "2026-06-24T00:04:00.000Z",
+    updatedAt: "2026-06-24T00:04:00.000Z",
+  });
+  state.channelBranches.push({
+    id: "branch_archived_dark",
+    workspaceId: "workspace_default",
+    channelId: "channel_archived_dark",
+    name: "已归档分支",
+    status: "archived",
+    createdAt: "2026-06-24T00:04:00.000Z",
+    updatedAt: "2026-06-24T00:04:00.000Z",
+    archivedAt: "2026-06-24T00:04:00.000Z",
+  });
   state.mediaJobs = [
     {
       id: "media_job_dark_succeeded",

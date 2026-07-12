@@ -440,18 +440,20 @@ export function SkillSourceHealthPanel({
 export function SkillSourceStatus({
   source,
   snapshot,
+  showSource = true,
   showState = true,
   t,
 }: {
   readonly source: SkillPackSource;
   readonly snapshot: SkillSourceSnapshot | undefined;
+  readonly showSource?: boolean;
   readonly showState?: boolean;
   readonly t: SettingsTranslator;
 }): JSX.Element {
   const sourceState = skillSourceSnapshotState(snapshot, t);
   return (
     <span className="settings-skill-source-status">
-      <span>{skillSourceLabel(source, t)}</span>
+      {showSource ? <span>{skillSourceLabel(source, t)}</span> : null}
       {showState ? <small className={sourceState.tone}>{sourceState.label}</small> : null}
     </span>
   );
@@ -464,6 +466,7 @@ export function SkillSourceInspector({
   optimizationPreview,
   optimizationPreviewLoading,
   showPreviewAction = true,
+  allowSourceMutations = true,
   cwd,
   saving,
   onPreviewOptimization,
@@ -477,6 +480,7 @@ export function SkillSourceInspector({
   readonly optimizationPreview?: SkillOptimizationPreview;
   readonly optimizationPreviewLoading: boolean;
   readonly showPreviewAction?: boolean;
+  readonly allowSourceMutations?: boolean;
   readonly cwd: string;
   readonly saving: boolean;
   readonly onPreviewOptimization: () => void;
@@ -513,10 +517,12 @@ export function SkillSourceInspector({
             {optimizationPreviewLoading ? t("Previewing...") : t("Preview optimization")}
           </button>
         ) : null}
-        <button className="secondary-button danger compact-button" type="button" onClick={onArchive} disabled={saving}>
-          <Archive size={14} />
-          {t("Archive source snapshot")}
-        </button>
+        {allowSourceMutations ? (
+          <button className="secondary-button danger compact-button" type="button" onClick={onArchive} disabled={saving}>
+            <Archive size={14} />
+            {t("Archive source snapshot")}
+          </button>
+        ) : null}
       </div>
       {optimizationPreview ? (
         <div className="settings-skill-optimization-preview" aria-label={t("Skill optimization preview")}>
@@ -570,7 +576,7 @@ export function SkillSourceInspector({
           </a>
         </p>
       ) : null}
-      {history.length > 0 ? (
+      {allowSourceMutations && history.length > 0 ? (
         <div className="settings-skill-source-warning-list">
           {history.slice(0, 4).map((archived) => (
             <small key={archived.id} className="info">

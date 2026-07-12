@@ -61,8 +61,10 @@
   flex: 0 0 auto;
 }
 
-.settings-skill-table--compact th:nth-child(2),
-.settings-skill-table--compact td:nth-child(2) {
+.settings-skill-table--user th:nth-child(2),
+.settings-skill-table--user td:nth-child(2),
+.settings-skill-table--builtin th:first-child,
+.settings-skill-table--builtin td:first-child {
   min-width: 220px;
 }
 

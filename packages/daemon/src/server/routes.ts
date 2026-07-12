@@ -141,6 +141,7 @@ export function parseLingThreadRoute(
   | { readonly kind: "fork-run"; readonly threadId: string }
   | { readonly kind: "archive"; readonly threadId: string }
   | { readonly kind: "unarchive"; readonly threadId: string }
+  | { readonly kind: "hard-delete"; readonly threadId: string }
   | { readonly kind: "pin"; readonly threadId: string }
   | { readonly kind: "unpin"; readonly threadId: string }
   | undefined {
@@ -200,6 +201,9 @@ export function parseLingThreadRoute(
   }
   if (segments.length === 3 && segments[0] === "threads" && segments[2] === "unarchive") {
     return { kind: "unarchive", threadId: segments[1] };
+  }
+  if (segments.length === 3 && segments[0] === "threads" && segments[2] === "hard-delete") {
+    return { kind: "hard-delete", threadId: segments[1] };
   }
   if (segments.length === 3 && segments[0] === "threads" && segments[2] === "pin") {
     return { kind: "pin", threadId: segments[1] };
