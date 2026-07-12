@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { useEffect, useRef, useState, type CSSProperties, type ReactNode, type RefObject } from "react";
 import { createPortal } from "react-dom";
 import { ChevronDown, FilePenLine, FileText, Image as ImageIcon } from "lucide-react";
 import { useI18n, type Translate } from "../../../i18n.js";
@@ -319,6 +319,7 @@ function useArtifactHoverPreview(input: {
   const showTimerRef = useRef<number | undefined>();
   const hideTimerRef = useRef<number | undefined>();
   const requestIdRef = useRef(0);
+  const previewRef = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
     if (!preview) {
@@ -326,11 +327,18 @@ function useArtifactHoverPreview(input: {
     }
     const scrollOptions = { capture: true, passive: true } as const;
     const hide = (): void => setPreview(undefined);
-    globalThis.addEventListener("scroll", hide, scrollOptions);
+    const handleScroll = (event: Event): void => {
+      const target = event.target;
+      if (target instanceof Node && previewRef.current?.contains(target)) {
+        return;
+      }
+      hide();
+    };
+    globalThis.addEventListener("scroll", handleScroll, scrollOptions);
     globalThis.addEventListener("resize", hide);
     globalThis.addEventListener("keydown", handleEscape);
     return () => {
-      globalThis.removeEventListener("scroll", hide, scrollOptions);
+      globalThis.removeEventListener("scroll", handleScroll, scrollOptions);
       globalThis.removeEventListener("resize", hide);
       globalThis.removeEventListener("keydown", handleEscape);
     };
@@ -439,6 +447,7 @@ function useArtifactHoverPreview(input: {
   const node = preview && typeof document !== "undefined"
     ? createPortal(
       <ArtifactHoverPreview
+        previewRef={previewRef}
         state={preview}
         onPointerEnter={cancelHide}
         onPointerLeave={leaveSource}
@@ -458,10 +467,12 @@ function useArtifactHoverPreview(input: {
 }
 
 function ArtifactHoverPreview({
+  previewRef,
   state,
   onPointerEnter,
   onPointerLeave,
 }: {
+  readonly previewRef: RefObject<HTMLElement>;
   readonly state: HoverPreviewState;
   readonly onPointerEnter: () => void;
   readonly onPointerLeave: () => void;
@@ -471,6 +482,7 @@ function ArtifactHoverPreview({
   const change = target.kind === "change" ? target.entry.change : previewDiffChange(target.preview, label);
   return (
     <aside
+      ref={previewRef}
       className="conversation-artifact-hover-preview"
       style={state.position}
       onPointerEnter={onPointerEnter}
@@ -482,7 +494,7 @@ function ArtifactHoverPreview({
       </header>
       <div className="conversation-artifact-hover-preview-body">
         {change ? (
-          <DiffViewer change={change} maxCollapsedLines={18} />
+          <DiffViewer change={change} maxCollapsedLines={18} showFoldMarkers={false} />
         ) : target.kind === "artifact" ? (
           <CompactArtifactPreview preview={target.preview} />
         ) : null}

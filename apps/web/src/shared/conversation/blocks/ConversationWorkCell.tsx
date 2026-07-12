@@ -795,7 +795,7 @@ function InlineChangePreview({ changes }: { readonly changes: readonly Conversat
               <span>+{change.additions ?? 0} -{change.deletions ?? 0}</span>
             </div>
           ) : null}
-          <DiffViewer change={change} maxCollapsedLines={12} />
+          <DiffViewer change={change} maxCollapsedLines={12} showFoldMarkers={false} />
         </section>
       ))}
     </div>
