@@ -4483,9 +4483,9 @@ button.message-local-file-link {
 
 .conversation-work-cell-shell-detail .conversation-work-cell-shell-command {
   display: block;
-  width: fit-content;
+  width: 100%;
   max-width: min(640px, 100%);
-  overflow: auto;
+  overflow: visible;
   padding: 7px 8px;
   border: 1px solid var(--conversation-code-border);
   border-radius: 8px;
@@ -4493,7 +4493,10 @@ button.message-local-file-link {
   color: var(--conversation-code-text);
   font-size: 12px;
   line-height: 1.45;
-  white-space: pre;
+  overflow-wrap: anywhere;
+  text-overflow: clip;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 .conversation-work-cell-shell-card {
@@ -4603,7 +4606,7 @@ button.message-local-file-link {
   padding-left: 0;
 }
 
-.conversation-work-cell-row.shell .conversation-work-cell-row-detail code {
+.conversation-work-cell-row.shell .conversation-work-cell-row-detail code:not(.conversation-work-cell-shell-command) {
   max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -8197,11 +8200,13 @@ code,
   min-width: 0;
   max-height: 202px;
   overflow: auto;
+  overscroll-behavior: contain;
   background: var(--conversation-code-bg);
 }
 
 .conversation-artifact-hover-preview-body .diff-viewer {
-  max-height: 202px;
+  max-height: none;
+  overflow: visible;
 }
 
 .conversation-artifact-hover-preview-text {

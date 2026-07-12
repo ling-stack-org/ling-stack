@@ -6,18 +6,20 @@ import { notifyConversationDeferredContentReady } from "./deferred-rendering.js"
 export interface DiffViewerProps {
   readonly change: ConversationFileChange;
   readonly maxCollapsedLines?: number;
+  readonly showFoldMarkers?: boolean;
 }
 
 const defaultMaxCollapsedLines = 160;
 
-export function DiffViewer({ change, maxCollapsedLines = defaultMaxCollapsedLines }: DiffViewerProps): JSX.Element {
+export function DiffViewer({ change, maxCollapsedLines = defaultMaxCollapsedLines, showFoldMarkers = true }: DiffViewerProps): JSX.Element {
   const { t } = useI18n();
   const rootRef = useRef<HTMLPreElement | null>(null);
   const [expanded, setExpanded] = useState(false);
   const diffRows = useMemo(() => parseUnifiedDiffHunkRows(change.diff), [change.diff]);
-  const shouldCollapse = diffRows.rows.length > maxCollapsedLines;
-  const visibleRows = shouldCollapse && !expanded ? diffRows.rows.slice(0, maxCollapsedLines) : diffRows.rows;
-  const hiddenLineCount = Math.max(0, diffRows.rows.length - maxCollapsedLines);
+  const displayRows = showFoldMarkers ? diffRows.rows : diffRows.rows.filter((row) => row.type !== "fold");
+  const shouldCollapse = displayRows.length > maxCollapsedLines;
+  const visibleRows = shouldCollapse && !expanded ? displayRows.slice(0, maxCollapsedLines) : displayRows;
+  const hiddenLineCount = Math.max(0, displayRows.length - maxCollapsedLines);
 
   useEffect(() => {
     const frameId = globalThis.requestAnimationFrame(() => {

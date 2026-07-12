@@ -8069,6 +8069,7 @@ test("local channel work-cell demo fixture renders a realistic multi-agent opera
   await expect(editActionRow.locator(".conversation-work-cell-change-preview .diff-line.add")).toHaveCount(4);
   await expect(editActionRow.locator(".conversation-work-cell-change-preview .diff-line.delete")).toHaveCount(1);
   await expect(editActionRow.locator(".conversation-work-cell-change-preview .diff-line.context")).toHaveCount(6);
+  await expect(editActionRow.locator(".conversation-work-cell-change-preview .diff-fold")).toHaveCount(0);
   await expect(editActionRow.locator(".conversation-work-cell-change-preview")).toContainText("const operationRows = visibleOperationRows(model);");
 
   const commandRow = engineerDetail.locator(".conversation-work-cell-row.shell").filter({ hasText: "已运行命令" }).first();
@@ -8098,7 +8099,20 @@ test("local channel work-cell demo fixture renders a realistic multi-agent opera
   const qaCommandRow = qaDetail.locator(".conversation-work-cell-row.shell").filter({ hasText: "已运行命令" });
   await qaCommandRow.locator(".conversation-work-cell-row-main").click();
   await expect(qaCommandRow.locator(".conversation-work-cell-row-detail")).not.toContainText("运行频道 work-cell 回归");
-  await expect(qaCommandRow.locator(".conversation-work-cell-row-detail")).toContainText("$ corepack pnpm --filter @ling-stack/web exec playwright test");
+  const qaCommand = qaCommandRow.locator(".conversation-work-cell-shell-command");
+  await expect(qaCommand).toHaveText('$ corepack pnpm --filter @ling-stack/web exec playwright test apps/web/e2e/channel.spec.ts -g "work cell"');
+  await expect(qaCommand).toHaveCSS("text-overflow", "clip");
+  await expect(qaCommand).toHaveCSS("white-space", "pre-wrap");
+  const qaCommandLayout = await qaCommand.evaluate((element) => {
+    const style = getComputedStyle(element);
+    return {
+      contentHeight: element.clientHeight - Number.parseFloat(style.paddingTop) - Number.parseFloat(style.paddingBottom),
+      lineHeight: Number.parseFloat(style.lineHeight),
+      overflowsHorizontally: element.scrollWidth > element.clientWidth,
+    };
+  });
+  expect(qaCommandLayout.overflowsHorizontally).toBe(false);
+  expect(qaCommandLayout.contentHeight).toBeGreaterThan(qaCommandLayout.lineHeight * 1.5);
 
   const demoPreviewRequests: string[] = [];
   page.on("request", (request) => {
@@ -8135,8 +8149,19 @@ test("local channel work-cell demo fixture renders a realistic multi-agent opera
   await expect(hoverPreview.locator(".diff-line.add")).toHaveCount(4);
   await expect(hoverPreview.locator(".diff-line.delete")).toHaveCount(1);
   await expect(hoverPreview.locator(".diff-line.context")).toHaveCount(6);
+  await expect(hoverPreview.locator(".diff-fold")).toHaveCount(0);
   await expect(hoverPreview).toContainText("const operationRows = visibleOperationRows(model);");
   await expect(hoverPreview).toContainText("{operationBody}");
+  const hoverPreviewBody = hoverPreview.locator(".conversation-artifact-hover-preview-body");
+  const hoverDiffViewer = hoverPreview.locator(".diff-viewer");
+  await expect(hoverPreviewBody).toHaveCSS("overflow-y", "auto");
+  await expect(hoverDiffViewer).toHaveCSS("overflow-y", "visible");
+  const hoverScrollRange = await hoverPreviewBody.evaluate((element) => element.scrollHeight - element.clientHeight);
+  expect(hoverScrollRange).toBeGreaterThan(0);
+  await hoverPreviewBody.hover();
+  await page.mouse.wheel(0, 120);
+  await expect.poll(() => hoverPreviewBody.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
+  await expect(hoverPreview).toBeVisible();
   await changedFiles.nth(1).click();
   await expect(hoverPreview).toContainText("components.css");
   await expect(hoverPreview.locator(".diff-line.add")).toHaveCount(4);
