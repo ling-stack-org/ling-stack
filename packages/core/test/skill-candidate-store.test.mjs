@@ -19,7 +19,6 @@ function candidateInput(overrides = {}) {
     title: overrides.title ?? "Review reusable deploy handoff",
     summary: overrides.summary ?? "Capture the deploy handoff as a reviewed candidate skill.",
     definition: {
-      workflowPhase: overrides.workflowPhase ?? "operate",
       positiveTriggers: overrides.positiveTriggers ?? ["repeated deploy handoff"],
       negativeTriggers: overrides.negativeTriggers ?? ["one-off deploy note"],
       procedureSteps: overrides.procedureSteps ?? [{ title: "Collect deploy evidence", instruction: "Read the run summary and linked approval." }],
@@ -64,6 +63,7 @@ test("sqlite skill candidates create, list, get, and survive migration idempoten
     const candidate = store.createSkillCandidate(candidateInput({ id: "skill_candidate_one" }), now);
 
     assert.equal(candidate.status, "pending");
+    assert.equal("workflowPhase" in candidate.definition, false);
     assert.equal(candidate.workspaceId, "workspace_default");
     assert.equal(store.getSkillCandidate(candidate.id)?.title, "Review reusable deploy handoff");
     assert.deepEqual(store.listSkillCandidates({ status: "pending" }).map((item) => item.id), [candidate.id]);

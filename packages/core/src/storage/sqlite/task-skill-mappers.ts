@@ -54,12 +54,18 @@ export function mapSkillRegistryEntry(row: Record<string, SQLOutputValue>): Skil
     sourcePath: readNullableString(row, "source_path"),
     version: readNullableString(row, "version"),
     checksum: readNullableString(row, "checksum"),
-    definition: parseJson(readString(row, "definition_json")) as SkillRegistryEntry["definition"],
+    definition: parseSkillDefinition(readString(row, "definition_json")),
     visibility: parseSkillVisibility(readString(row, "visibility_json")),
     reviewStatus: readString(row, "review_status") as SkillRegistryReviewStatus,
     createdAt: readString(row, "created_at"),
     updatedAt: readString(row, "updated_at"),
   });
+}
+
+function parseSkillDefinition(value: string): SkillRegistryEntry["definition"] {
+  const parsed = parseJsonObject(value);
+  const { workflowPhase: _legacyWorkflowPhase, ...definition } = parsed;
+  return definition as unknown as SkillRegistryEntry["definition"];
 }
 
 export function mapSkillImportDraft(row: Record<string, SQLOutputValue>): SkillImportDraft {
@@ -73,11 +79,23 @@ export function mapSkillImportDraft(row: Record<string, SQLOutputValue>): SkillI
     name: typeof draft.name === "string" ? draft.name : "Imported skills",
     version: typeof draft.version === "string" ? draft.version : undefined,
     description: typeof draft.description === "string" ? draft.description : "",
-    definitions: Array.isArray(draft.definitions) ? draft.definitions as SkillImportDraftDefinition[] : [],
+    definitions: Array.isArray(draft.definitions) ? draft.definitions.map(parseSkillImportDraftDefinition) : [],
     warnings: parseJson(readString(row, "warnings_json")) as SkillImportDraft["warnings"],
     createdAt: readString(row, "created_at"),
     updatedAt: readString(row, "updated_at"),
   });
+}
+
+function parseSkillImportDraftDefinition(value: unknown): SkillImportDraftDefinition {
+  if (!isRecord(value) || !isRecord(value.definition)) {
+    return value as SkillImportDraftDefinition;
+  }
+  const { workflowPhase: _legacyWorkflowPhase, ...definition } = value.definition;
+  return { ...value, definition } as unknown as SkillImportDraftDefinition;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 export function mapSkillSourceSnapshot(row: Record<string, SQLOutputValue>): SkillSourceSnapshot {

@@ -912,8 +912,13 @@ test("AI teammate private workspace sends blocked chat replies and persists sett
   });
   await expect.poll(() => state.teammatePrivateAttachments.length).toBe(1);
 
+  const privateComposer = page.locator(".teammate-direct-composer");
+  await privateComposer.getByRole("button", { name: /Selected permission preset Workspace write/ }).click();
+  await privateComposer.getByRole("menuitemradio", { name: /Read only/ }).click();
   await page.getByPlaceholder("Message this AI teammate privately").fill("Please refine the private workspace acceptance criteria.");
   await page.getByPlaceholder("Message this AI teammate privately").press("Enter");
+  await expect.poll(() => state.lastTeammateDirectMessageRequest?.authorizationMode).toBe("smart");
+  await expect.poll(() => state.lastTeammateDirectMessageRequest?.workspaceAccessMode).toBe("read_only");
   await expect(page.getByText("Please refine the private workspace acceptance criteria.")).toBeVisible();
   await expect(privateFeed.getByText("AI teammate is blocked: No provider preset is selected for this teammate.")).toBeVisible();
   const privateMessageRow = page.locator(".teammate-message-row").filter({ hasText: "Please refine the private workspace acceptance criteria." });
@@ -984,13 +989,13 @@ test("AI teammate private workspace sends blocked chat replies and persists sett
   await settingsSections.getByRole("button", { name: /Skills/ }).click();
   const skillsPanel = page.locator(".teammate-skills-panel");
   await expect(skillsPanel).toContainText("Implementation");
-  const codeReviewSkillRow = skillsPanel.getByRole("row", { name: /Code Review review/ });
+  const codeReviewSkillRow = skillsPanel.getByRole("row", { name: /Code Review/ });
   await expect(codeReviewSkillRow).toContainText("Source-backed");
   await codeReviewSkillRow.getByRole("button", { name: "Details" }).click();
   await expect(skillsPanel.locator(".teammate-skill-inspector")).toContainText("skill_source_review_mock");
   await expect(skillsPanel.locator(".teammate-skill-inspector")).toContainText("sha256:review-mock");
   const skillsDarkSurfaces = await page.evaluate(() => {
-    const selectors = [".teammate-skill-add-row", ".teammate-skill-row", ".teammate-skills-panel .phase-token"];
+    const selectors = [".teammate-skill-table-wrap", ".teammate-skill-inspector"];
     return selectors.flatMap((selector) =>
       Array.from(document.querySelectorAll(selector)).map((element) => {
         const color = getComputedStyle(element).backgroundColor.match(/\d+/g)?.slice(0, 3).map(Number) ?? [];

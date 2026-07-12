@@ -636,6 +636,24 @@ test("lists and refreshes skills through expected routes", async () => {
   assert.deepEqual(JSON.parse(mock.calls[1].body), {});
 });
 
+test("archives and permanently deletes skills through distinct routes", async () => {
+  const responses = [
+    { cwd: "/repo", skill: { id: "skill 1", reviewStatus: "archived" } },
+    { cwd: "/repo", deletedSkillId: "skill 1", deletedAt: "2026-07-12T00:00:00.000Z" },
+  ];
+  const mock = createFetchMock(responses);
+  const client = new LingDaemonClient({ baseUrl: "http://daemon.test", fetch: mock.fetch });
+
+  assert.equal(await client.archiveSkill("/repo path", "skill 1"), undefined);
+  assert.deepEqual(await client.hardDeleteSkill("/repo path", "skill 1"), responses[1]);
+
+  assert.equal(mock.calls[0].method, "DELETE");
+  assert.equal(mock.calls[0].url, "http://daemon.test/skills/skill%201?cwd=%2Frepo+path");
+  assert.equal(mock.calls[1].method, "POST");
+  assert.equal(mock.calls[1].url, "http://daemon.test/skills/skill%201/hard-delete?cwd=%2Frepo+path");
+  assert.deepEqual(JSON.parse(mock.calls[1].body), {});
+});
+
 test("reads skill source snapshots and source health through expected routes", async () => {
   const responses = [
     { cwd: "/repo", report: { workspaceId: "workspace_default" }, snapshots: [] },
@@ -687,6 +705,32 @@ test("reads skill source snapshots and source health through expected routes", a
   assert.equal(mock.calls[7].method, "POST");
   assert.equal(mock.calls[7].url, "http://daemon.test/skills/review%20skill/compiled-views/skill_compiled_1/archive?cwd=%2Frepo+path");
   assert.deepEqual(JSON.parse(mock.calls[7].body), {});
+});
+
+test("previews skill imports without using the durable draft route", async () => {
+  const response = {
+    cwd: "/repo",
+    preview: {
+      source: "skill-directory",
+      sourcePath: "SKILL.md",
+      name: "QA review",
+      description: "Review the current change.",
+      definitions: [],
+      warnings: [],
+    },
+    contextFindings: [],
+  };
+  const mock = createFetchMock([response]);
+  const client = new LingDaemonClient({ baseUrl: "http://daemon.test", fetch: mock.fetch });
+  const input = {
+    content: "---\nname: QA review\n---\n\nReview the current change.",
+    sourcePath: "SKILL.md",
+  };
+
+  assert.deepEqual(await client.previewSkillImport("/repo path", input), response);
+  assert.equal(mock.calls[0].method, "POST");
+  assert.equal(mock.calls[0].url, "http://daemon.test/skills/import-preview?cwd=%2Frepo+path");
+  assert.deepEqual(JSON.parse(mock.calls[0].body), input);
 });
 
 test("syncs gstack skill sources through expected routes", async () => {
@@ -1126,6 +1170,17 @@ test("uses expected teammate private data lifecycle routes", async () => {
   assert.equal(mock.calls[4].url, "http://daemon.test/teammates/teammate%201/avatar?cwd=%2Frepo");
   assert.equal(mock.calls[5].method, "DELETE");
   assert.equal(mock.calls[5].url, "http://daemon.test/teammates/teammate%201/avatar?cwd=%2Frepo");
+});
+
+test("uses expected archived conversation hard delete route", async () => {
+  const mock = createFetchMock({ tombstone: { entityType: "conversation-thread" } });
+  const client = new LingDaemonClient({ baseUrl: "http://daemon.test", fetch: mock.fetch });
+
+  await client.hardDeleteLingThread("/repo path", "thread 1", { reason: "owner request" });
+
+  assert.equal(mock.calls[0].method, "POST");
+  assert.equal(mock.calls[0].url, "http://daemon.test/threads/thread%201/hard-delete?cwd=%2Frepo+path");
+  assert.deepEqual(JSON.parse(mock.calls[0].body), { reason: "owner request" });
 });
 
 test("imports GitHub and Linear external work without transforming daemon responses", async () => {

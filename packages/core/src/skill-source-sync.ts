@@ -26,7 +26,6 @@ import type {
   SkillSourceSyncRecordState,
   SkillSourceWarning,
   SkillSourceWarningCode,
-  SkillWorkflowPhase,
 } from "./skill-types.js";
 
 export const MAX_SKILL_SOURCE_SNAPSHOT_BYTES = 256 * 1024;
@@ -72,18 +71,6 @@ interface ParsedFrontMatter {
 }
 
 const chatReasoningCapabilities = ["chat", "reasoning"] as const satisfies readonly ProviderCapability[];
-const knownWorkflowPhases = new Set<SkillWorkflowPhase>([
-  "discover",
-  "plan",
-  "design",
-  "implement",
-  "review",
-  "test",
-  "secure",
-  "ship",
-  "document",
-  "operate",
-]);
 
 export async function resolveSkillSourceRoots(input: ResolveSkillSourceRootsInput = {}): Promise<SkillSourceScanRoot[]> {
   const home = input.homeDir ?? homedir();
@@ -966,13 +953,11 @@ function resolveSkillIdForSource(source: DiscoveredSkillSource, skillsById: Read
 
 function normalizeDefinitionFromSource(skillId: string, source: DiscoveredSkillSource): SkillDefinition {
   const summary = source.frontMatter.description ?? source.agentMetadata?.shortDescription ?? `Source-backed skill imported from ${source.skillDirectoryName}.`;
-  const workflowPhase = inferWorkflowPhase(skillId, summary);
   return {
     id: skillId,
     name: source.frontMatter.name ?? source.agentMetadata?.displayName ?? titleizeSkillId(skillId),
     summary: firstLine(summary),
-    roleAffinity: inferRoleAffinity(skillId, workflowPhase),
-    workflowPhase,
+    roleAffinity: inferRoleAffinity(skillId, summary),
     promptFragments: [summary],
     requiredTools: inferRequiredTools(source),
     requiredProviderCapabilities: chatReasoningCapabilities,
@@ -981,65 +966,32 @@ function normalizeDefinitionFromSource(skillId: string, source: DiscoveredSkillS
       : source.warnings.some((warning) => warning.code === "host_specific_tool" || warning.code === "unsupported_tool")
         ? { mode: "standard", risk: "medium", requiredForTools: ["bash"] }
         : { mode: "none" },
-    stateEffects: workflowPhase === "plan"
-      ? ["creates_plan", "updates_plan"]
-      : workflowPhase === "ship"
-        ? ["prepares_release"]
-        : [],
+    stateEffects: [],
   };
 }
 
-function inferWorkflowPhase(skillId: string, summary: string): SkillWorkflowPhase {
+function inferRoleAffinity(skillId: string, summary: string): readonly AiTeammateRoleKey[] {
   const text = `${skillId} ${summary}`.toLowerCase();
-  const explicitPhase = [...knownWorkflowPhases].find((phase) => text.includes(phase));
-  if (explicitPhase) {
-    return explicitPhase;
-  }
-  if (text.includes("qa") || text.includes("test")) {
-    return "test";
-  }
   if (text.includes("security") || text.includes("cso")) {
-    return "secure";
-  }
-  if (text.includes("deploy") || text.includes("ship") || text.includes("release") || text.includes("land")) {
-    return "ship";
-  }
-  if (text.includes("doc")) {
-    return "document";
-  }
-  if (text.includes("design")) {
-    return "design";
-  }
-  if (text.includes("review") || text.includes("investigate") || text.includes("health")) {
-    return "review";
-  }
-  if (text.includes("office") || text.includes("discover")) {
-    return "discover";
-  }
-  if (text.includes("plan") || text.includes("spec")) {
-    return "plan";
-  }
-  return "operate";
-}
-
-function inferRoleAffinity(skillId: string, phase: SkillWorkflowPhase): readonly AiTeammateRoleKey[] {
-  if (phase === "design") {
-    return ["designer"];
-  }
-  if (phase === "secure") {
     return ["security"];
   }
-  if (phase === "ship") {
+  if (text.includes("deploy") || text.includes("ship") || text.includes("release") || text.includes("land")) {
     return ["release"];
   }
-  if (phase === "document") {
+  if (text.includes("doc")) {
     return ["docs"];
   }
-  if (phase === "test" || skillId.includes("qa")) {
+  if (text.includes("design")) {
+    return ["designer"];
+  }
+  if (text.includes("qa") || text.includes("test")) {
     return ["qa"];
   }
-  if (phase === "discover" || phase === "plan") {
+  if (text.includes("office") || text.includes("discover") || text.includes("plan") || text.includes("spec")) {
     return ["product", "architect"];
+  }
+  if (text.includes("implement") || text.includes("build") || text.includes("code") || text.includes("debug") || text.includes("investigate")) {
+    return ["engineer"];
   }
   return ["custom"];
 }

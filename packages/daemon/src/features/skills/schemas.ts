@@ -26,6 +26,7 @@ import {
   type SkillDuplicateAnalysis,
   type SkillHealthFinding,
   type SkillImportWarning,
+  type SkillImportPreview,
   type SkillOptimizationMode,
   type SkillPackSource,
   type SkillRegistryEntry,
@@ -321,14 +322,13 @@ function readSkillCandidateDraftDefinition(value: unknown): CreateSkillCandidate
     throw new Error("definition must be an object");
   }
   return {
-    workflowPhase: readString(value, "workflowPhase"),
     positiveTriggers: readRequiredStringArray(value, "positiveTriggers"),
     negativeTriggers: readOptionalStringArray(value, "negativeTriggers") ?? [],
     procedureSteps: readSkillCandidateProcedureSteps(value.procedureSteps),
     validationSteps: readSkillCandidateValidationSteps(value.validationSteps),
     requiredTools: readOptionalStringArray(value, "requiredTools") ?? [],
     requiredProviderCapabilities: readOptionalStringArray(value, "requiredProviderCapabilities") ?? [],
-    ...(isRecord(value.skillDefinition) ? { skillDefinition: value.skillDefinition as unknown as SkillDefinition } : {}),
+    ...(isRecord(value.skillDefinition) ? { skillDefinition: withoutLegacySkillWorkflowPhase(value.skillDefinition) } : {}),
   };
 }
 
@@ -734,6 +734,19 @@ export function parseSkillImportDraftRequest(
   };
 }
 
+export function buildSkillImportPreview(input: CreateSkillImportDraftInput): SkillImportPreview {
+  return {
+    source: input.source,
+    ...(input.sourcePath ? { sourcePath: input.sourcePath } : {}),
+    ...(input.packId ? { packId: input.packId } : {}),
+    name: input.name,
+    ...(input.version ? { version: input.version } : {}),
+    description: input.description,
+    definitions: input.definitions,
+    warnings: input.warnings ?? [],
+  };
+}
+
 export function parseSkillImportDraftOptimizationPreviewRequest(
   value: unknown,
   existingSkills: readonly SkillRegistryEntry[],
@@ -904,7 +917,6 @@ function normalizeJsonSkillDefinition(
       name,
       summary: readOptionalString(raw, "summary") ?? `Custom skill ${name}.`,
       roleAffinity: readStringArrayWithWarnings(raw, "roleAffinity", supportedRoleKeys(), "unsupported_section", warnings, location) ?? ["custom"],
-      workflowPhase: readSkillWorkflowPhase(raw, "workflowPhase", warnings, location),
       promptFragments: readOptionalStringArray(raw, "promptFragments") ?? [readOptionalString(raw, "prompt") ?? readOptionalString(raw, "description") ?? ""].filter(Boolean),
       requiredTools,
       requiredProviderCapabilities,
@@ -942,7 +954,6 @@ function parseMarkdownSkillImport(
         name,
         summary,
         roleAffinity: ["custom"],
-        workflowPhase: "operate",
         promptFragments: [content.slice(0, 12_000)],
         requiredTools: [...readOnlyRunTools],
         requiredProviderCapabilities: ["chat", "reasoning"],
@@ -1040,29 +1051,6 @@ function readStringArrayWithWarnings<T extends string>(
   return accepted;
 }
 
-function readSkillWorkflowPhase(
-  record: Record<string, unknown>,
-  key: string,
-  warnings: SkillImportWarning[],
-  location: string,
-): SkillDefinition["workflowPhase"] {
-  const value = readOptionalString(record, key);
-  if (!value) {
-    return "operate";
-  }
-  const allowed = supportedWorkflowPhases();
-  if (!allowed.includes(value as SkillDefinition["workflowPhase"])) {
-    warnings.push({
-      code: "unsupported_section",
-      severity: "error",
-      message: `${key} contains unsupported workflow phase: ${value}`,
-      location,
-    });
-    return "operate";
-  }
-  return value as SkillDefinition["workflowPhase"];
-}
-
 function skillPermissionWarnings(content: string): SkillImportWarning[] {
   const lower = content.toLowerCase();
   const warnings: SkillImportWarning[] = [];
@@ -1107,10 +1095,11 @@ function supportedRoleKeys(): readonly SkillDefinition["roleAffinity"][number][]
   return ["product", "architect", "engineer", "designer", "qa", "security", "release", "docs", "custom"];
 }
 
-function supportedWorkflowPhases(): readonly SkillDefinition["workflowPhase"][] {
-  return ["discover", "plan", "design", "implement", "review", "test", "secure", "ship", "document", "operate"];
-}
-
 function supportedSkillStateEffects(): readonly SkillDefinition["stateEffects"][number][] {
   return ["creates_plan", "updates_plan", "creates_task", "updates_task", "starts_run", "requests_approval", "creates_artifact", "updates_docs", "prepares_release"];
+}
+
+function withoutLegacySkillWorkflowPhase(value: Record<string, unknown>): SkillDefinition {
+  const { workflowPhase: _legacyWorkflowPhase, ...definition } = value;
+  return definition as unknown as SkillDefinition;
 }

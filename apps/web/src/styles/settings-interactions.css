@@ -205,15 +205,6 @@
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
-.permission-preset-card-grid {
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-}
-
-.permission-preset-card {
-  min-height: 52px;
-  padding: 11px 12px;
-}
-
 .settings-skill-source-config {
   margin-top: 8px;
 }
@@ -241,7 +232,4 @@
     grid-template-columns: minmax(0, 1fr);
   }
 
-  .permission-preset-card-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
 }

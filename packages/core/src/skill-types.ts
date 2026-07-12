@@ -103,7 +103,7 @@ export type AiTeammateRoleKey =
   | "docs"
   | "custom";
 
-export type SkillWorkflowPhase =
+export type WorkflowPhase =
   | "discover"
   | "plan"
   | "design"
@@ -114,6 +114,9 @@ export type SkillWorkflowPhase =
   | "ship"
   | "document"
   | "operate";
+
+/** @deprecated Use WorkflowPhase for workflow objects. Skills do not have phases. */
+export type SkillWorkflowPhase = WorkflowPhase;
 
 export type SkillStateEffect =
   | "creates_plan"
@@ -140,7 +143,6 @@ export interface SkillDefinition {
   readonly name: string;
   readonly summary: string;
   readonly roleAffinity: readonly AiTeammateRoleKey[];
-  readonly workflowPhase: SkillWorkflowPhase;
   readonly promptFragments: readonly string[];
   readonly requiredTools: readonly RunTool[];
   readonly requiredProviderCapabilities: readonly ProviderCapability[];
@@ -163,7 +165,7 @@ export interface AiTeammateTemplate {
 export interface WorkflowStepTemplate {
   readonly id: string;
   readonly name: string;
-  readonly phase: SkillWorkflowPhase;
+  readonly phase: WorkflowPhase;
   readonly teammateTemplateId: string;
   readonly councilSlotKey?: string;
   readonly skillId: string;
@@ -208,6 +210,23 @@ export interface SkillRegistryEntry {
   readonly reviewStatus: SkillRegistryReviewStatus;
   readonly createdAt: string;
   readonly updatedAt: string;
+}
+
+export type SkillHardDeleteBlockerKind = "teammate_binding" | "active_task" | "active_run" | "automation";
+
+export interface SkillHardDeleteBlocker {
+  readonly kind: SkillHardDeleteBlockerKind;
+  readonly id: string;
+}
+
+export type SkillHardDeleteResult =
+  | { readonly status: "deleted"; readonly skill: SkillRegistryEntry; readonly artifactStorageRefs: readonly string[] }
+  | { readonly status: "not_found" }
+  | { readonly status: "not_imported"; readonly skill: SkillRegistryEntry }
+  | { readonly status: "blocked"; readonly skill: SkillRegistryEntry; readonly blockers: readonly SkillHardDeleteBlocker[] };
+
+export function isManuallyImportedSkillSource(source: SkillPackSource): boolean {
+  return source === "custom" || source === "skill-directory" || source === "agents-md";
 }
 
 export interface SkillAgentMetadata {
@@ -783,6 +802,8 @@ export interface SkillImportDraft {
   readonly createdAt: string;
   readonly updatedAt: string;
 }
+
+export type SkillImportPreview = Omit<SkillImportDraft, "id" | "workspaceId" | "createdAt" | "updatedAt">;
 
 export interface CreateSkillImportDraftInput {
   readonly id?: string;

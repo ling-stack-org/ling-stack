@@ -1,5 +1,12 @@
 # Sidebar Archive for Conversations and Teammates
 
+## Settings Delete Follow-up
+
+[Settings Archived Items Permanent Delete P14](settings-archived-items-permanent-delete.md)
+supersedes this document's Settings-only prohibition on conversation and teammate delete.
+Sidebar archive remains non-destructive, and every archive action described below keeps
+its original behavior.
+
 ## Summary
 
 The left sidebar needs row-level archive actions for conversation threads and AI

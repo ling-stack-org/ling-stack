@@ -19,6 +19,7 @@ import type {
   DaemonFeatureFlags,
   ExternalWorkActionView,
   MediaJob,
+  PermissionConfirmation,
   RunArtifact,
   RunEventEnvelope,
   RunFormState,
@@ -27,6 +28,7 @@ import type {
   StartupStatusResponse,
   TaskRunActionState,
   UserProfile,
+  WorkspaceAccessMode,
 } from "../types.js";
 import {
   channelSidebarTarget,
@@ -115,7 +117,8 @@ import {
   sortProvidersForWorkbench,
 } from "../lib/providers.js";
 import { removeRecordKey } from "../lib/records.js";
-import { inferPermissionPreset } from "../lib/session-permissions.js";
+import { permissionPresetForWorkspaceAccessMode, workspaceAccessModeForPermissionPreset } from "../lib/session-permissions.js";
+import { authorizationAndAccessToLegacyPermission } from "../lib/conversation-authorization.js";
 import { StatusBadge } from "../shared/components/index.js";
 import {
   aiTeammateToLocalDraft,
@@ -149,6 +152,8 @@ const defaultForm: RunFormState = {
   apiKey: "",
   api: "openai-completions",
   tools: defaultTools,
+  authorizationMode: "smart",
+  workspaceAccessMode: "workspace_write",
   permissionMode: "balanced",
   permissionPreset: "custom",
 };
@@ -713,22 +718,10 @@ export function AppShell(): JSX.Element {
   const {
     approvalPolicy,
     approvalPolicyForm,
-    approvalPolicyLoading,
-    runners,
-    runtimeSettings,
-    runtimeSettingsForm,
-    runtimeSettingsLoading,
-    runtimeSettingsAction,
-    runtimeSettingsError,
   } = settingsDomain.state;
   const {
-    setApprovalPolicyForm,
     refreshApprovalPolicy,
-    saveApprovalPolicy,
-    setRuntimeSettingsForm,
-    toggleAllowedRunner,
     refreshRuntimeSettings,
-    saveRuntimeSettings,
     resetForCwd: resetSettingsForCwd,
   } = settingsDomain.actions;
   const runsDomain = useRunsDomain({
@@ -1723,14 +1716,12 @@ export function AppShell(): JSX.Element {
   }
 
   async function confirmFullAccessRunIfNeeded(requestBody: unknown): Promise<unknown | undefined> {
-    if (readRequestPermissionMode(requestBody) !== "full_access") {
+    const workspaceAccessMode = readRequestWorkspaceAccessMode(requestBody);
+    if (workspaceAccessMode !== "full_access" && (workspaceAccessMode !== undefined || readRequestPermissionMode(requestBody) !== "full_access")) {
       return requestBody;
     }
-    setFullAccessConfirmOpen(true);
-    const confirmed = await new Promise<boolean>((resolve) => {
-      fullAccessConfirmResolveRef.current = resolve;
-    });
-    if (!confirmed) {
+    const permissionConfirmation = await requestFullAccessConfirmation();
+    if (!permissionConfirmation) {
       return undefined;
     }
     if (!requestBody || typeof requestBody !== "object" || Array.isArray(requestBody)) {
@@ -1738,13 +1729,23 @@ export function AppShell(): JSX.Element {
     }
     return {
       ...requestBody,
-      permissionConfirmation: {
-        mode: "full_access",
-        confirmed: true,
-        confirmedAt: new Date().toISOString(),
-        reason: "user_confirmed_full_access",
-      },
+      permissionConfirmation,
     };
+  }
+
+  async function requestFullAccessConfirmation(): Promise<PermissionConfirmation | undefined> {
+    setFullAccessConfirmOpen(true);
+    const confirmed = await new Promise<boolean>((resolve) => {
+      fullAccessConfirmResolveRef.current = resolve;
+    });
+    return confirmed
+      ? {
+          mode: "full_access",
+          confirmed: true,
+          confirmedAt: new Date().toISOString(),
+          reason: "user_confirmed_full_access",
+        }
+      : undefined;
   }
 
   function resolveFullAccessConfirmation(approved: boolean): void {
@@ -2200,7 +2201,7 @@ export function AppShell(): JSX.Element {
             isCancellingRun={Boolean(cancellingRunId)}
             approvalPolicy={approvalPolicy}
             permissionMode={form.permissionMode}
-            permissionPreset={form.permissionPreset}
+            permissionPreset={permissionPresetForWorkspaceAccessMode(form.workspaceAccessMode)}
             activeTaskRunAction={activeTaskRunAction}
             runningWorkflowStepId={runningWorkflowStepId}
             orchestratingWorkflowId={orchestratingWorkflowId}
@@ -2271,7 +2272,20 @@ export function AppShell(): JSX.Element {
             onSelectTask={setSelectedTaskId}
             onCheckThenRunTask={(task) => void checkThenRunPersistedTask(task)}
             onRunTask={(task) => void runPersistedTask(task)}
-            onPermissionModeChange={(permissionMode) => setForm((current) => ({ ...current, permissionMode, permissionPreset: inferPermissionPreset(permissionMode) }))}
+            onPermissionModeChange={(permissionMode) => setForm((current) => {
+              const workspaceAccessMode = workspaceAccessModeForPermissionPreset(permissionMode === "full_access"
+                ? "full_access"
+                : permissionMode === "ask_everything"
+                  ? "read_only"
+                  : "workspace_collaboration");
+              const legacy = authorizationAndAccessToLegacyPermission(current.authorizationMode, workspaceAccessMode);
+              return {
+                ...current,
+                workspaceAccessMode,
+                permissionMode: legacy.permissionMode,
+                permissionPreset: legacy.permissionPreset,
+              };
+            })}
             onCancelActiveRun={(targetRun) => void cancelRunOrWorkUnit(targetRun)}
             onOpenRun={(runId) => void openRunFromWorkspace(runId)}
             onOpenApprovals={(runId) => openApprovalsFromWorkspace(runId)}
@@ -2305,6 +2319,8 @@ export function AppShell(): JSX.Element {
                   initialProjectLabel={selectedConversationProjectLabel}
                   initialProviderPresetId={selectedConversationDetail?.defaults.providerPresetId ?? ""}
                   initialThinkingLevel={selectedConversationDetail?.defaults.thinkingLevel ?? "off"}
+                  initialAuthorizationMode={selectedConversationDetail?.defaults.authorizationMode ?? workspaceSettings?.defaultAuthorizationMode}
+                  initialWorkspaceAccessMode={selectedConversationDetail?.defaults.workspaceAccessMode ?? workspaceSettings?.defaultWorkspaceAccessMode}
                   initialPermissionMode={selectedConversationDetail?.defaults.permissionMode ?? workspaceSettings?.defaultPermissionMode}
                   initialPermissionPreset={selectedConversationDetail?.defaults.permissionPreset ?? workspaceSettings?.defaultPermissionPreset}
                   detailContext={selectedConversationDetail ? {
@@ -2319,6 +2335,7 @@ export function AppShell(): JSX.Element {
                   workspaceCwd={form.cwd}
                   sending={conversationStreamBusy}
                   onOpenRun={(runId) => void openRunFromWorkspace(runId)}
+                  onConfirmFullAccess={requestFullAccessConfirmation}
                   onRefreshConversation={() => refreshConversationThreads(form.cwd.trim())}
                   onSendConversation={async (input) => {
                     await sendConversationMessage({
@@ -2327,8 +2344,11 @@ export function AppShell(): JSX.Element {
                       projectPath: input.project.projectPath,
                       providerPresetId: input.model.providerPresetId || defaultConversationProviderPresetId,
                       thinkingLevel: input.model.thinkingLevel,
+                      authorizationMode: input.authorization.authorizationMode,
+                      workspaceAccessMode: input.authorization.workspaceAccessMode,
                       permissionMode: input.authorization.permissionMode,
                       permissionPreset: input.authorization.permissionPreset,
+                      permissionConfirmation: input.authorization.permissionConfirmation,
                       responseLanguage: resolveConversationResponseLanguage(
                         workspaceSettings?.responseLanguage ?? effectiveConfig?.values.responseLanguage.value,
                       ),
@@ -2385,6 +2405,8 @@ export function AppShell(): JSX.Element {
                 onRefreshChannels={() => refreshChannels()}
                 onRefreshTasks={(channelId) => refreshTasks(channelId)}
                 onOpenRun={(runId) => void openRunFromWorkspace(runId)}
+                defaultAuthorizationMode={workspaceSettings?.defaultAuthorizationMode}
+                defaultWorkspaceAccessMode={workspaceSettings?.defaultWorkspaceAccessMode}
                 defaultPermissionMode={workspaceSettings?.defaultPermissionMode}
                 defaultPermissionPreset={workspaceSettings?.defaultPermissionPreset}
                   />
@@ -2621,11 +2643,6 @@ export function AppShell(): JSX.Element {
                 ) : activeView === "settings" ? (
                   <SettingsPage
                     cwd={form.cwd}
-                    policy={approvalPolicy}
-                    form={approvalPolicyForm}
-                    runners={runners}
-                    runtimeSettings={runtimeSettings}
-                    runtimeSettingsForm={runtimeSettingsForm}
                     skillLibraryRefreshToken={skillLibraryRefreshToken}
                     effectiveConfig={effectiveConfig}
                     startupStatus={startupStatus}
@@ -2645,14 +2662,10 @@ export function AppShell(): JSX.Element {
                     latestPluginRuntimePreview={latestPluginRuntimePreview}
                     latestPluginNotice={latestPluginNotice}
                     onBackToApplication={returnFromSettingsView}
+                    workspaceDefaultAuthorizationMode={workspaceSettings?.defaultAuthorizationMode}
+                    workspaceDefaultWorkspaceAccessMode={workspaceSettings?.defaultWorkspaceAccessMode}
                     workspaceDefaultPermissionMode={workspaceSettings?.defaultPermissionMode}
                     workspaceDefaultPermissionPreset={workspaceSettings?.defaultPermissionPreset}
-                    permissionMode={form.permissionMode}
-                    permissionPreset={form.permissionPreset}
-                    isLoading={approvalPolicyLoading}
-                    runtimeSettingsLoading={runtimeSettingsLoading}
-                    runtimeSettingsAction={runtimeSettingsAction}
-                    runtimeSettingsError={runtimeSettingsError}
                     startupStatusLoading={startupStatusLoading}
                     startupStatusAction={startupStatusAction}
                     startupStatusError={startupStatusError}
@@ -2661,20 +2674,10 @@ export function AppShell(): JSX.Element {
                     externalWorkSecretAction={externalWorkSecretAction}
                     externalWorkWorkflowAction={externalWorkWorkflowAction}
                     errorMessage={errorMessage}
-                    onFormChange={setApprovalPolicyForm}
-                    onPermissionModeChange={(permissionMode) => setForm((current) => ({ ...current, permissionMode, permissionPreset: inferPermissionPreset(permissionMode) }))}
-                    onWorkspaceDefaultPermissionChange={(permissionMode, permissionPreset) => patchWorkspaceSettings({
-                      defaultPermissionMode: permissionMode,
-                      defaultPermissionPreset: permissionPreset,
-                    })}
-                    onRefresh={() => void refreshApprovalPolicy()}
-                    onSave={() => void saveApprovalPolicy()}
+                    onWorkspaceDefaultAuthorizationChange={(defaultAuthorizationMode) => patchWorkspaceSettings({ defaultAuthorizationMode })}
+                    onWorkspaceDefaultWorkspaceAccessChange={(defaultWorkspaceAccessMode) => patchWorkspaceSettings({ defaultWorkspaceAccessMode })}
                     onWorkspaceResponseLanguageChange={(responseLanguage) => patchWorkspaceSettings({ responseLanguage })}
                     onRefreshStartup={() => void refreshStartupDiagnostics()}
-                    onRuntimeSettingsFormChange={setRuntimeSettingsForm}
-                    onToggleAllowedRunner={toggleAllowedRunner}
-                    onRefreshRuntimeSettings={() => void refreshRuntimeSettings()}
-                    onSaveRuntimeSettings={() => void saveRuntimeSettings()}
                     onRefreshExternalWork={() => void refreshExternalWorkStatus()}
                     onRefreshPlugins={() => void refreshPlugins()}
                     onApplyPluginPreset={(pluginId) => void applyPluginPreset(pluginId)}
@@ -2913,6 +2916,14 @@ function readRequestPermissionMode(requestBody: unknown): SessionPermissionMode 
   return value === "ask_everything" || value === "balanced" || value === "workspace_write" || value === "full_access" || value === "custom"
     ? value
     : undefined;
+}
+
+function readRequestWorkspaceAccessMode(requestBody: unknown): WorkspaceAccessMode | undefined {
+  if (!requestBody || typeof requestBody !== "object") {
+    return undefined;
+  }
+  const value = (requestBody as { readonly workspaceAccessMode?: unknown }).workspaceAccessMode;
+  return value === "read_only" || value === "workspace_write" || value === "full_access" ? value : undefined;
 }
 
 function homeMessageFromTranscript(message: ConversationTranscriptMessage): ConversationHomeMessage {

@@ -1,5 +1,5 @@
 import type { ChannelAttachmentKind } from "./channels.js";
-import type { PermissionPreset, RunThinkingLevel, RunTool, SessionPermissionMode } from "./shared.js";
+import type { AuthorizationMode, PermissionConfirmation, PermissionPreset, RunThinkingLevel, RunTool, SessionPermissionMode, WorkspaceAccessMode } from "./shared.js";
 import type { ResponseLanguagePreference } from "./settings.js";
 import type { RunEventEnvelope, RunSession } from "./runtime.js";
 import type { LingThread } from "./threads.js";
@@ -30,8 +30,11 @@ export interface ConversationStreamRequest {
   readonly projectPath?: string;
   readonly providerPresetId: string;
   readonly thinkingLevel?: RunThinkingLevel;
+  readonly authorizationMode?: AuthorizationMode;
+  readonly workspaceAccessMode?: WorkspaceAccessMode;
   readonly permissionPreset?: PermissionPreset;
   readonly permissionMode?: SessionPermissionMode;
+  readonly permissionConfirmation?: PermissionConfirmation;
   readonly responseLanguage?: ResponseLanguagePreference;
   readonly tools?: readonly RunTool[];
   readonly idempotencyKey?: string;
@@ -78,6 +81,8 @@ export interface ConversationDetailResponse {
     readonly projectPath?: string;
     readonly providerPresetId?: string;
     readonly thinkingLevel?: RunThinkingLevel;
+    readonly authorizationMode?: AuthorizationMode;
+    readonly workspaceAccessMode?: WorkspaceAccessMode;
     readonly permissionPreset?: PermissionPreset;
     readonly permissionMode?: SessionPermissionMode;
   };

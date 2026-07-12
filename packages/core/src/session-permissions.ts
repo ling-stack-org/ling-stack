@@ -31,6 +31,18 @@ export const permissionPresets = [
 
 export type PermissionPreset = (typeof permissionPresets)[number];
 
+export const authorizationModes = ["ask", "smart", "always"] as const;
+
+export type AuthorizationMode = (typeof authorizationModes)[number];
+
+export const workspaceAccessModes = ["read_only", "workspace_write", "full_access"] as const;
+
+export type WorkspaceAccessMode = (typeof workspaceAccessModes)[number];
+
+export const defaultAuthorizationMode: AuthorizationMode = "smart";
+
+export const defaultWorkspaceAccessMode: WorkspaceAccessMode = "workspace_write";
+
 export const workModes = ["coding", "daily"] as const;
 
 export type WorkMode = (typeof workModes)[number];
@@ -63,6 +75,8 @@ export interface EffectiveRunPolicyRiskNote {
 
 export interface EffectiveRunPolicySnapshot {
   readonly mode: SessionPermissionMode;
+  readonly authorizationMode?: AuthorizationMode;
+  readonly workspaceAccessMode?: WorkspaceAccessMode;
   readonly conversationMode?: ConversationModeKind;
   readonly planModeMutationPolicy?: "deny_repo_tracked_mutation";
   readonly toolDecisions: ApprovalToolDecisions;
@@ -97,6 +111,9 @@ export function applyConversationModeToEffectiveRunPolicySnapshot(
 
 export interface ResolveSessionRunPolicyInput {
   readonly workspacePolicy: ApprovalPolicy;
+  readonly authorizationMode?: AuthorizationMode;
+  readonly workspaceAccessMode?: WorkspaceAccessMode;
+  readonly permissionPreset?: PermissionPreset;
   readonly permissionMode?: SessionPermissionMode;
   readonly channelBoundPath?: string;
   readonly approvalProfile?: SkillApprovalProfile;
@@ -113,6 +130,14 @@ export function isSessionPermissionMode(value: string): value is SessionPermissi
 
 export function isPermissionPreset(value: string): value is PermissionPreset {
   return (permissionPresets as readonly string[]).includes(value);
+}
+
+export function isAuthorizationMode(value: string): value is AuthorizationMode {
+  return (authorizationModes as readonly string[]).includes(value);
+}
+
+export function isWorkspaceAccessMode(value: string): value is WorkspaceAccessMode {
+  return (workspaceAccessModes as readonly string[]).includes(value);
 }
 
 export function permissionModeForPreset(preset: PermissionPreset): SessionPermissionMode {
@@ -136,8 +161,66 @@ export function permissionPresetRequiresConfirmation(preset: PermissionPreset): 
   return permissionPresetDefinitions.find((definition) => definition.preset === preset)?.requiresConfirmation ?? false;
 }
 
+export function workspaceAccessModeRequiresConfirmation(mode: WorkspaceAccessMode | undefined): boolean {
+  return mode === "full_access";
+}
+
+export interface AuthorizationAndAccessSelection {
+  readonly authorizationMode: AuthorizationMode;
+  readonly workspaceAccessMode: WorkspaceAccessMode;
+}
+
+export function authorizationAndAccessFromLegacyPermission(
+  permissionMode: SessionPermissionMode | undefined,
+  permissionPreset: PermissionPreset | undefined,
+): AuthorizationAndAccessSelection {
+  if (
+    (permissionMode === "full_access" && (permissionPreset === undefined || permissionPreset === "full_access")) ||
+    (permissionMode === undefined && permissionPreset === "full_access")
+  ) {
+    return { authorizationMode: "always", workspaceAccessMode: "full_access" };
+  }
+  if (
+    (permissionMode === "ask_everything" && (permissionPreset === undefined || permissionPreset === "read_only")) ||
+    (permissionMode === undefined && permissionPreset === "read_only")
+  ) {
+    return { authorizationMode: "ask", workspaceAccessMode: "read_only" };
+  }
+  if (
+    ((permissionMode === "workspace_write" || permissionMode === "balanced") &&
+      (permissionPreset === undefined || permissionPreset === "workspace_collaboration")) ||
+    (permissionMode === undefined && permissionPreset === "workspace_collaboration")
+  ) {
+    return { authorizationMode: "smart", workspaceAccessMode: "workspace_write" };
+  }
+  return {
+    authorizationMode: defaultAuthorizationMode,
+    workspaceAccessMode: defaultWorkspaceAccessMode,
+  };
+}
+
+export function legacyPermissionFromAuthorizationAndAccess(
+  authorizationMode: AuthorizationMode,
+  workspaceAccessMode: WorkspaceAccessMode,
+): { readonly permissionMode: SessionPermissionMode; readonly permissionPreset: PermissionPreset } {
+  if (authorizationMode === "ask" && workspaceAccessMode === "read_only") {
+    return { permissionMode: "ask_everything", permissionPreset: "read_only" };
+  }
+  if (authorizationMode === "smart" && workspaceAccessMode === "workspace_write") {
+    return { permissionMode: "workspace_write", permissionPreset: "workspace_collaboration" };
+  }
+  if (authorizationMode === "always" && workspaceAccessMode === "full_access") {
+    return { permissionMode: "full_access", permissionPreset: "full_access" };
+  }
+  return { permissionMode: "custom", permissionPreset: "custom" };
+}
+
 export function resolveSessionRunPolicy(input: ResolveSessionRunPolicyInput): ResolveSessionRunPolicyResult {
+  if (input.authorizationMode !== undefined || input.workspaceAccessMode !== undefined) {
+    return resolveIndependentSessionRunPolicy(input);
+  }
   const mode = input.permissionMode ?? "custom";
+  const selection = authorizationAndAccessFromLegacyPermission(mode, input.permissionPreset);
   const riskNotes: EffectiveRunPolicyRiskNote[] = [];
   const toolDecisions = applyPermissionModeToToolDecisions(input.workspacePolicy.toolDecisions, mode, riskNotes);
   const profiledDecisions = applyApprovalProfileToToolDecisions(toolDecisions, input.approvalProfile, riskNotes);
@@ -153,12 +236,86 @@ export function resolveSessionRunPolicy(input: ResolveSessionRunPolicyInput): Re
     approvalPolicy,
     snapshot: {
       mode,
+      authorizationMode: selection.authorizationMode,
+      workspaceAccessMode: selection.workspaceAccessMode,
       toolDecisions: profiledDecisions,
       allowedWritePaths,
       workspacePolicyUpdatedAt: input.workspacePolicy.updatedAt,
       riskNotes,
     },
   };
+}
+
+function resolveIndependentSessionRunPolicy(input: ResolveSessionRunPolicyInput): ResolveSessionRunPolicyResult {
+  const legacySelection = authorizationAndAccessFromLegacyPermission(input.permissionMode, input.permissionPreset);
+  const authorizationMode = input.authorizationMode ?? legacySelection.authorizationMode;
+  const workspaceAccessMode = input.workspaceAccessMode ?? legacySelection.workspaceAccessMode;
+  const legacyProjection = legacyPermissionFromAuthorizationAndAccess(authorizationMode, workspaceAccessMode);
+  const riskNotes: EffectiveRunPolicyRiskNote[] = [];
+  const toolDecisions = applyAuthorizationAndAccessToToolDecisions(
+    input.workspacePolicy.toolDecisions,
+    authorizationMode,
+    workspaceAccessMode,
+    riskNotes,
+  );
+  const profiledDecisions = applyApprovalProfileToToolDecisions(toolDecisions, input.approvalProfile, riskNotes);
+  const allowedWritePaths = allowedWritePathsForWorkspaceAccess(workspaceAccessMode, input.channelBoundPath);
+  const approvalPolicy: ApprovalPolicy = {
+    ...input.workspacePolicy,
+    toolDecisions: profiledDecisions,
+    allowedWritePaths,
+  };
+  return {
+    approvalPolicy,
+    snapshot: {
+      mode: legacyProjection.permissionMode,
+      authorizationMode,
+      workspaceAccessMode,
+      toolDecisions: profiledDecisions,
+      allowedWritePaths,
+      workspacePolicyUpdatedAt: input.workspacePolicy.updatedAt,
+      riskNotes,
+    },
+  };
+}
+
+function applyAuthorizationAndAccessToToolDecisions(
+  workspaceDecisions: ApprovalToolDecisions,
+  authorizationMode: AuthorizationMode,
+  workspaceAccessMode: WorkspaceAccessMode,
+  riskNotes: EffectiveRunPolicyRiskNote[],
+): ApprovalToolDecisions {
+  const next: Partial<Record<RunTool, ApprovalToolDecision>> = {};
+  for (const tool of readOnlyRunTools) {
+    next[tool] = preserveDeny(workspaceDecisions[tool], "allow", tool, riskNotes);
+  }
+
+  if (workspaceAccessMode === "read_only") {
+    for (const tool of riskyRunTools) {
+      next[tool] = "deny";
+    }
+    return next as ApprovalToolDecisions;
+  }
+
+  if (authorizationMode === "ask") {
+    for (const tool of riskyRunTools) {
+      next[tool] = preserveDeny(workspaceDecisions[tool], "ask", tool, riskNotes);
+    }
+    return next as ApprovalToolDecisions;
+  }
+
+  next.edit = preserveDeny(workspaceDecisions.edit, "allow", "edit", riskNotes);
+  next.write = preserveDeny(workspaceDecisions.write, "allow", "write", riskNotes);
+  const bashDecision = authorizationMode === "always" && workspaceAccessMode === "full_access" ? "allow" : "ask";
+  next.bash = preserveDeny(workspaceDecisions.bash, bashDecision, "bash", riskNotes);
+  if (authorizationMode === "always" && workspaceAccessMode === "workspace_write" && next.bash !== "deny") {
+    riskNotes.push({
+      code: "workspace_command_requires_approval",
+      message: "Commands still require approval because the current Pi runner is not OS-isolated to the workspace.",
+      tool: "bash",
+    });
+  }
+  return next as ApprovalToolDecisions;
 }
 
 function applyPermissionModeToToolDecisions(
@@ -250,6 +407,19 @@ function allowedWritePathsForMode(
     return [channelBoundPath?.trim() || "."];
   }
   return workspaceAllowedWritePaths;
+}
+
+function allowedWritePathsForWorkspaceAccess(
+  workspaceAccessMode: WorkspaceAccessMode,
+  channelBoundPath: string | undefined,
+): readonly string[] {
+  if (workspaceAccessMode === "read_only") {
+    return [];
+  }
+  if (workspaceAccessMode === "full_access") {
+    return ["/"];
+  }
+  return [channelBoundPath?.trim() || "."];
 }
 
 function preserveDeny(

@@ -17,11 +17,13 @@ import type {
   ConversationStreamRequest,
   ConversationTranscriptMessage,
   ConversationTranscriptStatus,
+  AuthorizationMode,
   PermissionPreset,
   ResponseLanguagePreference,
   RunThinkingLevel,
   RunTool,
   SessionPermissionMode,
+  WorkspaceAccessMode,
 } from "@ling-stack/contracts";
 import type { ResolvedDaemonConfig } from "../../config.js";
 import { HttpError } from "../../errors.js";
@@ -47,6 +49,8 @@ const thinkingLevels: readonly RunThinkingLevel[] = ["off", "minimal", "low", "m
 const runTools: readonly RunTool[] = ["read", "grep", "find", "ls", "bash", "edit", "write"];
 const permissionPresets: readonly PermissionPreset[] = ["read_only", "workspace_collaboration", "full_access", "custom"];
 const permissionModes: readonly SessionPermissionMode[] = ["ask_everything", "balanced", "workspace_write", "full_access", "custom"];
+const authorizationModes: readonly AuthorizationMode[] = ["ask", "smart", "always"];
+const workspaceAccessModes: readonly WorkspaceAccessMode[] = ["read_only", "workspace_write", "full_access"];
 const responseLanguagePreferences: readonly ResponseLanguagePreference[] = ["follow_user", "zh-CN", "en-US"];
 
 export async function handleConversationStream(
@@ -309,6 +313,8 @@ export function buildConversationDetail(store: RunStore, cwd: string, thread: Li
       projectPath: readOptionalRecordString(latestSnapshot, "projectPath") || latestProjectPath,
       providerPresetId: latestRun?.providerPresetId ?? readOptionalRecordString(latestSnapshot, "providerPresetId"),
       thinkingLevel: readThinkingLevel(readOptionalRecordString(latestSnapshot, "thinkingLevel")),
+      authorizationMode: readAuthorizationMode(readOptionalRecordString(latestSnapshot, "authorizationMode")),
+      workspaceAccessMode: readWorkspaceAccessMode(readOptionalRecordString(latestSnapshot, "workspaceAccessMode")),
       permissionPreset: readPermissionPreset(readOptionalRecordString(latestSnapshot, "permissionPreset")),
       permissionMode: readPermissionMode(readOptionalRecordString(latestSnapshot, "permissionMode")),
     },
@@ -338,8 +344,11 @@ function parseConversationStreamRequest(value: unknown): ConversationStreamReque
     projectPath: readOptionalString(value, "projectPath")?.trim() || undefined,
     providerPresetId,
     thinkingLevel: readThinkingLevel(readOptionalString(value, "thinkingLevel")),
+    authorizationMode: readAuthorizationMode(readOptionalString(value, "authorizationMode")),
+    workspaceAccessMode: readWorkspaceAccessMode(readOptionalString(value, "workspaceAccessMode")),
     permissionPreset: readPermissionPreset(readOptionalString(value, "permissionPreset")),
     permissionMode: readPermissionMode(readOptionalString(value, "permissionMode")),
+    permissionConfirmation: readPermissionConfirmation(value.permissionConfirmation),
     responseLanguage: readResponseLanguagePreference(readOptionalString(value, "responseLanguage")),
     tools: readOptionalStringArray(value, "tools", runTools),
     idempotencyKey: readOptionalString(value, "idempotencyKey")?.trim() || undefined,
@@ -394,8 +403,11 @@ function buildConversationRunRequest(input: {
     teammateId: LING_AGENT_ID,
     providerPresetId: input.input.providerPresetId,
     tools: input.input.tools ?? defaultConversationTools,
+    authorizationMode: input.input.authorizationMode,
+    workspaceAccessMode: input.input.workspaceAccessMode,
     permissionPreset: input.input.permissionPreset,
     permissionMode: input.input.permissionMode,
+    permissionConfirmation: input.input.permissionConfirmation,
     thinkingLevel: input.input.thinkingLevel,
     lingConversationTone: input.lingConversationTone,
     appendSystemPrompt,
@@ -568,6 +580,31 @@ function readPermissionPreset(value: string | undefined): PermissionPreset | und
 
 function readPermissionMode(value: string | undefined): SessionPermissionMode | undefined {
   return value && permissionModes.includes(value as SessionPermissionMode) ? value as SessionPermissionMode : undefined;
+}
+
+function readAuthorizationMode(value: string | undefined): AuthorizationMode | undefined {
+  return value && authorizationModes.includes(value as AuthorizationMode) ? value as AuthorizationMode : undefined;
+}
+
+function readWorkspaceAccessMode(value: string | undefined): WorkspaceAccessMode | undefined {
+  return value && workspaceAccessModes.includes(value as WorkspaceAccessMode) ? value as WorkspaceAccessMode : undefined;
+}
+
+function readPermissionConfirmation(value: unknown): ConversationStreamRequest["permissionConfirmation"] {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!isRecord(value)) {
+    throw new Error("permissionConfirmation must be an object");
+  }
+  const mode = readString(value, "mode");
+  const confirmed = value.confirmed;
+  const confirmedAt = readString(value, "confirmedAt");
+  const reason = readString(value, "reason");
+  if (mode !== "full_access" || confirmed !== true || !reason.trim() || Number.isNaN(Date.parse(confirmedAt))) {
+    throw new Error("permissionConfirmation must contain a valid full access confirmation");
+  }
+  return { mode: "full_access", confirmed: true, confirmedAt, reason };
 }
 
 function readResponseLanguagePreference(value: string | undefined): ResponseLanguagePreference | undefined {

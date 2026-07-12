@@ -2698,6 +2698,8 @@ test("conversation stream materializes uploaded attachments into the run prompt"
         message: "Summarize the attached note.",
         attachmentIds: [attachment.id],
         providerPresetId: provider.id,
+        authorizationMode: "smart",
+        workspaceAccessMode: "workspace_write",
       }),
     });
 
@@ -2717,9 +2719,13 @@ test("conversation stream materializes uploaded attachments into the run prompt"
     const done = events.find((event) => event.event === "done");
     assert.ok(done);
     assert.equal(done.data.run.requestSnapshot.lingConversationTone, "friendly");
+    assert.equal(done.data.run.requestSnapshot.authorizationMode, "smart");
+    assert.equal(done.data.run.requestSnapshot.workspaceAccessMode, "workspace_write");
     assert.ok(done.data.run.requestSnapshot.appendSystemPrompt.some((instruction) => /Default conversation tone: friendly\./.test(instruction)));
 
     const detail = await getJson(`${daemon.url}/conversations/${encodeURIComponent(initialReady.data.thread.id)}?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(detail.defaults.authorizationMode, "smart");
+    assert.equal(detail.defaults.workspaceAccessMode, "workspace_write");
     const userMessage = detail.messages.find((message) => message.id === initialReady.data.userMessage.id);
     assert.equal(userMessage.attachments[0].id, attachment.id);
 
@@ -8117,6 +8123,8 @@ test("workspace settings API persists UI preferences in .ling-stack state", asyn
     assert.equal(initial.settings.schemaVersion, 1);
     assert.equal(initial.settings.workspaceCwd, undefined);
     assert.equal(initial.settings.lingConversationTone, undefined);
+    assert.equal(initial.settings.defaultAuthorizationMode, "smart");
+    assert.equal(initial.settings.defaultWorkspaceAccessMode, "workspace_write");
     assert.deepEqual(initial.settings.skillGovernancePolicy, {
       generationMode: "semi_auto",
       recordingMode: "user_initiated",
@@ -8131,6 +8139,7 @@ test("workspace settings API persists UI preferences in .ling-stack state", asyn
       locale: "zh-CN",
       lingConversationTone: "friendly",
       defaultProviderPresetId: "provider_default_chat",
+      defaultAuthorizationMode: "ask",
       channelNotifications: { channel_one: "mentions" },
       channelActivityViews: { channel_one: [{ id: "custom:review", name: "Review" }] },
       skillGovernancePolicy: {
@@ -8146,6 +8155,10 @@ test("workspace settings API persists UI preferences in .ling-stack state", asyn
     assert.equal(patched.settings.locale, "zh-CN");
     assert.equal(patched.settings.lingConversationTone, "friendly");
     assert.equal(patched.settings.defaultProviderPresetId, "provider_default_chat");
+    assert.equal(patched.settings.defaultAuthorizationMode, "ask");
+    assert.equal(patched.settings.defaultWorkspaceAccessMode, "workspace_write");
+    assert.equal(patched.settings.defaultPermissionMode, "custom");
+    assert.equal(patched.settings.defaultPermissionPreset, "custom");
     assert.equal(patched.settings.channelNotifications.channel_one, "mentions");
     assert.equal(patched.settings.skillGovernancePolicy.generationMode, "approval_only");
 
@@ -8153,6 +8166,8 @@ test("workspace settings API persists UI preferences in .ling-stack state", asyn
     assert.equal(reopened.settings.theme, "dark");
     assert.equal(reopened.settings.lingConversationTone, "friendly");
     assert.equal(reopened.settings.defaultProviderPresetId, "provider_default_chat");
+    assert.equal(reopened.settings.defaultAuthorizationMode, "ask");
+    assert.equal(reopened.settings.defaultWorkspaceAccessMode, "workspace_write");
     assert.equal(reopened.settings.channelActivityViews.channel_one[0].id, "custom:review");
     assert.equal(reopened.settings.skillGovernancePolicy.generationMode, "approval_only");
 
@@ -8165,6 +8180,14 @@ test("workspace settings API persists UI preferences in .ling-stack state", asyn
     assert.equal(reset.settings.lingConversationTone, undefined);
     assert.equal(reset.settings.skillGovernancePolicy.generationMode, "semi_auto");
 
+    const accessPatched = await patchJson(`${daemon.url}/workspace-settings?cwd=${encodeURIComponent(cwd)}`, {
+      defaultWorkspaceAccessMode: "read_only",
+    });
+    assert.equal(accessPatched.settings.defaultAuthorizationMode, "ask");
+    assert.equal(accessPatched.settings.defaultWorkspaceAccessMode, "read_only");
+    assert.equal(accessPatched.settings.defaultPermissionMode, "ask_everything");
+    assert.equal(accessPatched.settings.defaultPermissionPreset, "read_only");
+
     const invalid = await fetch(`${daemon.url}/workspace-settings?cwd=${encodeURIComponent(cwd)}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
@@ -8172,6 +8195,14 @@ test("workspace settings API persists UI preferences in .ling-stack state", asyn
     });
     assert.equal(invalid.status, 400);
     assert.match(await invalid.text(), /lingConversationTone must be friendly, pragmatic, none, or null/);
+
+    const invalidSandbox = await fetch(`${daemon.url}/workspace-settings?cwd=${encodeURIComponent(cwd)}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ defaultWorkspaceAccessMode: "trusted_local" }),
+    });
+    assert.equal(invalidSandbox.status, 400);
+    assert.match(await invalidSandbox.text(), /defaultWorkspaceAccessMode must be read_only, workspace_write, full_access, or null/);
   } finally {
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });
@@ -9322,6 +9353,7 @@ test("skill candidate API persists manual candidates and gates review approval",
     assert.equal(created.candidate.proposedAction, "create");
     assert.equal(created.candidate.status, "pending");
     assert.equal(created.candidate.duplicateAnalysis.decision, "no_overlap");
+    assert.equal("workflowPhase" in created.candidate.definition, false);
 
     const listed = await getJson(`${daemon.url}/skill-candidates?cwd=${encodeURIComponent(cwd)}&status=pending&origin=manual-draft&limit=10`);
     assert.deepEqual(listed.candidates.map((candidate) => candidate.id), [payload.id]);
@@ -9349,6 +9381,7 @@ test("skill candidate API persists manual candidates and gates review approval",
     assert.equal(draftResponse.draft.source, "custom");
     assert.equal(draftResponse.draft.sourcePath, `skill-candidates/${payload.id}`);
     assert.equal(draftResponse.draft.definitions[0].definition.id, "reusable-release-checklist");
+    assert.equal("workflowPhase" in draftResponse.draft.definitions[0].definition, false);
     assert.match(draftResponse.draft.definitions[0].definition.promptFragments[0], /repeated release checklist/);
 
     const publishedDraft = await postJson(`${daemon.url}/skills/import-drafts/${encodeURIComponent(draftResponse.draft.id)}/publish?cwd=${encodeURIComponent(cwd)}`, {});
@@ -9377,7 +9410,6 @@ test("skill candidate API persists manual candidates and gates review approval",
       title: "Weak candidate",
       summary: "Candidate without negative triggers cannot be approved.",
       definition: {
-        workflowPhase: "operate",
         positiveTriggers: ["weak repeated operation"],
         negativeTriggers: [],
         procedureSteps: [{ title: "Read evidence" }],
@@ -9424,7 +9456,6 @@ test("skill candidate API persists manual candidates and gates review approval",
       summary: "A duplicate candidate that still needs conflict review.",
       status: "approved_for_draft",
       definition: {
-        workflowPhase: "ship",
         positiveTriggers: ["release checklist"],
         negativeTriggers: ["one-off note"],
         procedureSteps: [{ title: "Read release evidence" }],

@@ -5,13 +5,16 @@ import { resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
 import {
+  authorizationAndAccessFromLegacyPermission,
   createSqliteRunStore,
   defaultAllowedWritePaths,
   defaultApprovalToolDecisions,
   inferPermissionPreset,
+  legacyPermissionFromAuthorizationAndAccess,
   permissionModeForPreset,
   permissionPresetRequiresConfirmation,
   resolveSessionRunPolicy,
+  workspaceAccessModeRequiresConfirmation,
 } from "../dist/index.js";
 
 test("sqlite store creates the default approval policy", async () => {
@@ -108,6 +111,132 @@ test("permission presets map to existing session permission modes", () => {
   assert.equal(inferPermissionPreset("balanced"), "custom");
   assert.equal(permissionPresetRequiresConfirmation("full_access"), true);
   assert.equal(permissionPresetRequiresConfirmation("workspace_collaboration"), false);
+});
+
+test("independent authorization and workspace access resolve the complete policy matrix", () => {
+  const workspacePolicy = {
+    workspaceId: "workspace_default",
+    toolDecisions: defaultApprovalToolDecisions,
+    allowedWritePaths: ["legacy-path"],
+    createdAt: "2026-07-11T00:00:00.000Z",
+    updatedAt: "2026-07-11T00:00:00.000Z",
+  };
+  const expected = {
+    read_only: {
+      ask: ["deny", "deny", "deny"],
+      smart: ["deny", "deny", "deny"],
+      always: ["deny", "deny", "deny"],
+    },
+    workspace_write: {
+      ask: ["ask", "ask", "ask"],
+      smart: ["ask", "allow", "allow"],
+      always: ["ask", "allow", "allow"],
+    },
+    full_access: {
+      ask: ["ask", "ask", "ask"],
+      smart: ["ask", "allow", "allow"],
+      always: ["allow", "allow", "allow"],
+    },
+  };
+
+  for (const workspaceAccessMode of ["read_only", "workspace_write", "full_access"]) {
+    for (const authorizationMode of ["ask", "smart", "always"]) {
+      const result = resolveSessionRunPolicy({
+        workspacePolicy,
+        authorizationMode,
+        workspaceAccessMode,
+        channelBoundPath: "/workspace/project",
+      });
+      assert.deepEqual(
+        [
+          result.approvalPolicy.toolDecisions.bash,
+          result.approvalPolicy.toolDecisions.edit,
+          result.approvalPolicy.toolDecisions.write,
+        ],
+        expected[workspaceAccessMode][authorizationMode],
+      );
+      assert.deepEqual(
+        result.snapshot.allowedWritePaths,
+        workspaceAccessMode === "read_only"
+          ? []
+          : workspaceAccessMode === "full_access"
+            ? ["/"]
+            : ["/workspace/project"],
+      );
+      assert.equal(result.snapshot.authorizationMode, authorizationMode);
+      assert.equal(result.snapshot.workspaceAccessMode, workspaceAccessMode);
+    }
+  }
+});
+
+test("independent permissions preserve hard denies and compatibility projections", () => {
+  const result = resolveSessionRunPolicy({
+    workspacePolicy: {
+      workspaceId: "workspace_default",
+      toolDecisions: { ...defaultApprovalToolDecisions, edit: "deny" },
+      allowedWritePaths: ["."],
+      createdAt: "2026-07-11T00:00:00.000Z",
+      updatedAt: "2026-07-11T00:00:00.000Z",
+    },
+    authorizationMode: "always",
+    workspaceAccessMode: "workspace_write",
+  });
+
+  assert.equal(result.approvalPolicy.toolDecisions.edit, "deny");
+  assert.equal(result.approvalPolicy.toolDecisions.bash, "ask");
+  assert.equal(result.snapshot.mode, "custom");
+  assert.ok(result.snapshot.riskNotes.some((note) => note.code === "workspace_command_requires_approval"));
+  assert.deepEqual(authorizationAndAccessFromLegacyPermission("workspace_write", "workspace_collaboration"), {
+    authorizationMode: "smart",
+    workspaceAccessMode: "workspace_write",
+  });
+  assert.deepEqual(authorizationAndAccessFromLegacyPermission("ask_everything", "full_access"), {
+    authorizationMode: "smart",
+    workspaceAccessMode: "workspace_write",
+  });
+  assert.deepEqual(authorizationAndAccessFromLegacyPermission("custom", "full_access"), {
+    authorizationMode: "smart",
+    workspaceAccessMode: "workspace_write",
+  });
+  assert.deepEqual(legacyPermissionFromAuthorizationAndAccess("always", "workspace_write"), {
+    permissionMode: "custom",
+    permissionPreset: "custom",
+  });
+  assert.equal(workspaceAccessModeRequiresConfirmation("full_access"), true);
+  assert.equal(workspaceAccessModeRequiresConfirmation("workspace_write"), false);
+});
+
+test("workspace settings persist independent defaults without cross-overwriting", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-core-workspace-permissions-"));
+  let store = createSqliteRunStore(cwd);
+  try {
+    assert.equal(store.getWorkspaceSettings().defaultAuthorizationMode, "smart");
+    assert.equal(store.getWorkspaceSettings().defaultWorkspaceAccessMode, "workspace_write");
+
+    const authorizationOnly = store.updateWorkspaceSettings({ defaultAuthorizationMode: "ask" }, "2026-07-11T00:00:00.000Z");
+    assert.equal(authorizationOnly.defaultAuthorizationMode, "ask");
+    assert.equal(authorizationOnly.defaultWorkspaceAccessMode, "workspace_write");
+    assert.equal(authorizationOnly.defaultPermissionMode, "custom");
+    assert.equal(authorizationOnly.defaultPermissionPreset, "custom");
+
+    const accessOnly = store.updateWorkspaceSettings({ defaultWorkspaceAccessMode: "read_only" }, "2026-07-11T00:01:00.000Z");
+    assert.equal(accessOnly.defaultAuthorizationMode, "ask");
+    assert.equal(accessOnly.defaultWorkspaceAccessMode, "read_only");
+    assert.equal(accessOnly.defaultPermissionMode, "ask_everything");
+    assert.equal(accessOnly.defaultPermissionPreset, "read_only");
+  } finally {
+    store.close();
+  }
+
+  store = createSqliteRunStore(cwd);
+  try {
+    const reopened = store.getWorkspaceSettings();
+    assert.equal(reopened.defaultAuthorizationMode, "ask");
+    assert.equal(reopened.defaultWorkspaceAccessMode, "read_only");
+  } finally {
+    store.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
 });
 
 test("sqlite store persists run artifacts", async () => {

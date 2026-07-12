@@ -1,5 +1,5 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { isLingAgentTeammateId, type AiTeammate, type RunStore, type TeammateDirectMessage, type TeammateDirectThread } from "@ling-stack/core";
+import { isLingAgentTeammateId, type AiTeammate, type AuthorizationMode, type RunStore, type TeammateDirectMessage, type TeammateDirectThread, type WorkspaceAccessMode } from "@ling-stack/core";
 import type { ResolvedDaemonConfig } from "../../config.js";
 import { HttpError } from "../../errors.js";
 import type { RunStoreRegistry } from "../../runtime/store-registry.js";
@@ -23,6 +23,8 @@ export type CreateTeammateDirectAiReply = (input: {
   readonly thread: TeammateDirectThread;
   readonly sourceMessage: TeammateDirectMessage;
   readonly providerPresetId?: string;
+  readonly authorizationMode?: AuthorizationMode;
+  readonly workspaceAccessMode?: WorkspaceAccessMode;
   readonly workspace?: DirectWorkspaceReady;
   readonly signal?: AbortSignal;
   readonly onWorkUnitStarted?: (handle: {
@@ -170,6 +172,8 @@ export async function handleTeammateDirectMessagesCollection(
             thread,
             sourceMessage: message,
             providerPresetId: input.providerPresetId,
+            authorizationMode: input.authorizationMode,
+            workspaceAccessMode: input.workspaceAccessMode,
             workspace: undefined,
           })
         : undefined;
@@ -257,6 +261,8 @@ export async function handleTeammateDirectMessageStream(
         thread,
         sourceMessage: message,
         providerPresetId: messageInput.providerPresetId,
+        authorizationMode: messageInput.authorizationMode,
+        workspaceAccessMode: messageInput.workspaceAccessMode,
         signal: abortController.signal,
         onWorkUnitStarted: (handle) => {
           registeredWorkUnitId = handle.workUnitId;

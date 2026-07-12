@@ -123,6 +123,8 @@ import type {
   EffectiveChannelCouncilProjection,
   HardDeleteAiTeammateInput,
   HardDeleteAiTeammateResult,
+  HardDeleteLingThreadInput,
+  HardDeleteLingThreadResult,
   ListAiCouncilsOptions,
   ListAiTeammatesOptions,
   ListChannelAttachmentsOptions,
@@ -263,6 +265,7 @@ import type {
   ListSkillRegistryOptions,
   ListSkillSourceSnapshotOptions,
   SkillCompiledRuntimeViewRecord,
+  SkillHardDeleteResult,
   SkillImportDraft,
   SkillRegressionRun,
   SkillRegistryEntry,
@@ -1197,6 +1200,7 @@ export interface RunStore {
   readonly paths: LingStackRuntimePaths;
   createLingThread(input: CreateLingThreadInput, now: string): LingThread;
   getLingThread(threadId: string): LingThread | undefined;
+  hardDeleteLingThread(threadId: string, input: HardDeleteLingThreadInput, now: string): HardDeleteLingThreadResult | undefined;
   findLingThreadByOwner(input: {
     readonly kind: LingThreadKind;
     readonly taskId?: string;
@@ -1761,6 +1765,7 @@ export interface RunStore {
   getSkillImportDraft(id: string): SkillImportDraft | undefined;
   publishSkillImportDraft(id: string, now: string): SkillRegistryEntry[];
   archiveSkillRegistryEntry(id: string, now: string): SkillRegistryEntry | undefined;
+  hardDeleteSkillRegistryEntry(id: string): SkillHardDeleteResult;
   createSkillCandidate(input: CreateSkillCandidateInput, now: string): SkillCandidate;
   getSkillCandidate(id: string): SkillCandidate | undefined;
   listSkillCandidates(options?: ListSkillCandidatesOptions): SkillCandidate[];
@@ -2185,6 +2190,7 @@ export type SkillRegistryStoreFacet = RunStoreFacet<
   | "getSkillImportDraft"
   | "publishSkillImportDraft"
   | "archiveSkillRegistryEntry"
+  | "hardDeleteSkillRegistryEntry"
 >;
 
 export type SkillCandidateStoreFacet = RunStoreFacet<

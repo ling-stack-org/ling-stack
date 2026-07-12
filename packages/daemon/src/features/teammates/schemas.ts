@@ -1,6 +1,9 @@
 import { basename } from "node:path";
 import {
+  authorizationModes,
   readOnlyRunTools,
+  workspaceAccessModes,
+  type AuthorizationMode,
   type AiTeammate,
   type AiTeammateUpdateInput,
   type ChannelMessageFileRef,
@@ -12,6 +15,7 @@ import {
   type ReplaceTeammateSkillBindingInput,
   type RunTool,
   type SkillApprovalProfile,
+  type WorkspaceAccessMode,
 } from "@ling-stack/core";
 import { parseApprovalProfileObject } from "../../shared/approval-profile.js";
 import { extractMarkdownTitle } from "../../shared/markdown.js";
@@ -37,6 +41,8 @@ export interface TeammateDirectMessageRequest {
   readonly fileRefs: readonly ChannelMessageFileRef[];
   readonly requestAiReply: boolean;
   readonly providerPresetId?: string;
+  readonly authorizationMode?: AuthorizationMode;
+  readonly workspaceAccessMode?: WorkspaceAccessMode;
 }
 
 export interface TeammatePrivateAttachmentRequest extends ChannelAttachmentRequest {
@@ -220,6 +226,8 @@ export function parseTeammateDirectMessageRequest(value: unknown): TeammateDirec
     fileRefs: readOptionalChannelMessageFileRefs(value, "fileRefs") ?? [],
     requestAiReply: readOptionalBoolean(value, "requestAiReply") ?? false,
     providerPresetId: readOptionalString(value, "providerPresetId"),
+    authorizationMode: readOptionalAuthorizationMode(value, "authorizationMode"),
+    workspaceAccessMode: readOptionalWorkspaceAccessMode(value, "workspaceAccessMode"),
   };
   if (!input.body.trim() && input.attachmentIds.length === 0 && input.linkPreviewIds.length === 0 && input.fileRefs.length === 0) {
     throw new Error("body, attachmentIds, linkPreviewIds, or fileRefs is required");
@@ -234,6 +242,28 @@ export function parseTeammateDirectMessageRequest(value: unknown): TeammateDirec
     throw new Error("A teammate direct message can reference at most 12 workspace files");
   }
   return input;
+}
+
+function readOptionalAuthorizationMode(record: Record<string, unknown>, key: string): AuthorizationMode | undefined {
+  const value = readOptionalString(record, key);
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!authorizationModes.includes(value as AuthorizationMode)) {
+    throw new Error(`${key} must be one of: ${authorizationModes.join(", ")}`);
+  }
+  return value as AuthorizationMode;
+}
+
+function readOptionalWorkspaceAccessMode(record: Record<string, unknown>, key: string): WorkspaceAccessMode | undefined {
+  const value = readOptionalString(record, key);
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!workspaceAccessModes.includes(value as WorkspaceAccessMode)) {
+    throw new Error(`${key} must be one of: ${workspaceAccessModes.join(", ")}`);
+  }
+  return value as WorkspaceAccessMode;
 }
 
 export function parseTeammatePrivateAttachmentRequest(value: unknown): TeammatePrivateAttachmentRequest {

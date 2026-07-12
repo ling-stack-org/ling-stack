@@ -1,6 +1,7 @@
 import type { DatabaseSync } from "node:sqlite";
 import { normalizeChannelRuntimePolicy } from "../../workspace-types.js";
 import { stringifyJson } from "./helpers.js";
+import { removeLegacySkillWorkflowPhaseMetadata } from "./skill-capability-migration.js";
 
 export interface SqliteRunStoreMigrationContext {
   readonly database: DatabaseSync;
@@ -196,6 +197,8 @@ const SKILL_COMPILED_RUNTIME_VIEWS_MIGRATION_VERSION = 92;
 const SKILL_COMPILED_RUNTIME_VIEWS_MIGRATION_NAME = "create_skill_compiled_runtime_views";
 const SKILL_REGRESSION_RUNS_MIGRATION_VERSION = 93;
 const SKILL_REGRESSION_RUNS_MIGRATION_NAME = "create_skill_regression_runs";
+const REMOVE_SKILL_WORKFLOW_PHASE_MIGRATION_VERSION = 94;
+const REMOVE_SKILL_WORKFLOW_PHASE_MIGRATION_NAME = "remove_skill_workflow_phase_metadata";
 
 export function configureSqliteRunStoreDatabase(database: DatabaseSync): void {
   database.exec(`
@@ -4473,5 +4476,10 @@ export function applySqliteRunStoreMigrations(context: SqliteRunStoreMigrationCo
       if (!hasTaskAttachmentIdsMigration) {
         context.recordMigration(TASK_ATTACHMENT_IDS_MIGRATION_VERSION, TASK_ATTACHMENT_IDS_MIGRATION_NAME);
       }
+    }
+
+    if (!context.hasMigration(REMOVE_SKILL_WORKFLOW_PHASE_MIGRATION_VERSION)) {
+      removeLegacySkillWorkflowPhaseMetadata(context);
+      context.recordMigration(REMOVE_SKILL_WORKFLOW_PHASE_MIGRATION_VERSION, REMOVE_SKILL_WORKFLOW_PHASE_MIGRATION_NAME);
     }
 }

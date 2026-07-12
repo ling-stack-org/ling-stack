@@ -9,6 +9,7 @@ import type {
   ChannelStatus,
   McpServerTransportType,
   MediaOperation,
+  AuthorizationMode,
   PermissionPreset,
   ProviderApi,
   ProviderKind,
@@ -17,6 +18,7 @@ import type {
   SessionPermissionMode,
   TaskStatus,
   ToolName,
+  WorkspaceAccessMode,
 } from "@ling-stack/contracts";
 
 export interface ApprovalPolicyFormState {
@@ -36,6 +38,8 @@ export interface RunFormState {
   readonly apiKey: string;
   readonly api: string;
   readonly tools: readonly ToolName[];
+  readonly authorizationMode: AuthorizationMode;
+  readonly workspaceAccessMode: WorkspaceAccessMode;
   readonly permissionMode: SessionPermissionMode;
   readonly permissionPreset?: PermissionPreset;
 }

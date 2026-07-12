@@ -57,6 +57,28 @@ test("custom preset preserves explicit legacy permission modes", () => {
   assert.equal(run.permissionMode, "balanced");
 });
 
+test("independent authorization and workspace access bypass legacy pair coupling", () => {
+  const run = parseRunRequest(runRequest({
+    authorizationMode: "always",
+    workspaceAccessMode: "workspace_write",
+    permissionPreset: "custom",
+    permissionMode: "custom",
+  }));
+  assert.equal(run.authorizationMode, "always");
+  assert.equal(run.workspaceAccessMode, "workspace_write");
+  assert.equal(run.permissionMode, "custom");
+
+  const taskRun = parseTaskRunRequest({
+    providerPresetId: "provider_openai",
+    authorizationMode: "ask",
+    workspaceAccessMode: "workspace_write",
+    permissionPreset: "custom",
+    permissionMode: "custom",
+  });
+  assert.equal(taskRun.authorizationMode, "ask");
+  assert.equal(taskRun.workspaceAccessMode, "workspace_write");
+});
+
 test("derived full access preset still requires explicit confirmation", () => {
   assert.throws(
     () => parseRunRequest(runRequest({ permissionPreset: "full_access" })),
@@ -74,4 +96,28 @@ test("derived full access preset still requires explicit confirmation", () => {
   }));
   assert.equal(confirmed.permissionPreset, "full_access");
   assert.equal(confirmed.permissionMode, "full_access");
+
+  assert.throws(
+    () => parseRunRequest(runRequest({
+      authorizationMode: "smart",
+      workspaceAccessMode: "full_access",
+      permissionMode: "custom",
+      permissionPreset: "custom",
+    })),
+    /Full access runs require explicit permission confirmation/,
+  );
+
+  const independentlyConfirmed = parseRunRequest(runRequest({
+    authorizationMode: "smart",
+    workspaceAccessMode: "full_access",
+    permissionMode: "custom",
+    permissionPreset: "custom",
+    permissionConfirmation: {
+      mode: "full_access",
+      confirmed: true,
+      confirmedAt: "2026-06-07T00:00:00.000Z",
+      reason: "Trusted workspace",
+    },
+  }));
+  assert.equal(independentlyConfirmed.workspaceAccessMode, "full_access");
 });

@@ -1,4 +1,5 @@
 export type * from "./shared.js";
+export type * from "./retention.js";
 export type * from "./approvals.js";
 export type * from "./artifacts.js";
 export type * from "./runtime.js";

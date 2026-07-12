@@ -1,4 +1,4 @@
-import { BookOpen, Search } from "lucide-react";
+import { Search } from "lucide-react";
 import { formatDateTime } from "../../lib/formatting.js";
 import type {
   SkillOptimizationPreview,
@@ -6,7 +6,7 @@ import type {
   SkillSourceArtifact,
   SkillSourceSnapshot,
 } from "../../types.js";
-import { approvalProfileText, workflowPhaseLabel } from "../teammates/helpers.js";
+import { approvalProfileText } from "../teammates/helpers.js";
 import {
   SkillInspectorSection,
   SkillSourceInspector,
@@ -19,6 +19,7 @@ import { skillRegistryState } from "./skill-library-utils.js";
 
 export function SkillCompactInspector({
   skill,
+  readOnly = false,
   sourceSnapshot,
   sourceHistory,
   artifacts,
@@ -33,6 +34,7 @@ export function SkillCompactInspector({
   t,
 }: {
   readonly skill: SkillRegistryEntry;
+  readonly readOnly?: boolean;
   readonly sourceSnapshot: SkillSourceSnapshot | undefined;
   readonly sourceHistory: readonly SkillSourceSnapshot[];
   readonly artifacts: readonly SkillSourceArtifact[];
@@ -50,27 +52,17 @@ export function SkillCompactInspector({
   const requiredToolCount = skill.definition.requiredTools.length;
   const providerCapabilityCount = skill.definition.requiredProviderCapabilities.length;
   const promptFragmentCount = skill.definition.promptFragments.length;
+  const showState = skill.reviewStatus === "draft" || skill.reviewStatus === "disabled";
 
   return (
     <div className="settings-skill-compact-inspector">
-      <div className="settings-skill-inspector-head">
-        <span>
-          <BookOpen size={15} />
-          <strong>{skill.definition.name}</strong>
-        </span>
-        <SkillStatePill label={state.label} tone={state.tone} />
-      </div>
-
       <div className="settings-skill-summary-card">
+        {showState ? <div className="settings-skill-detail-state"><SkillStatePill label={state.label} tone={state.tone} /></div> : null}
         <p>{skill.definition.summary}</p>
         <div className="settings-skill-summary-strip" aria-label={t("Skill capability summary")}>
           <span>
             <small>{t("Source")}</small>
             <SkillSourceStatus source={skill.source} snapshot={sourceSnapshot} t={t} />
-          </span>
-          <span>
-            <small>{t("Stage")}</small>
-            <strong>{workflowPhaseLabel(skill.definition.workflowPhase, t)}</strong>
           </span>
           <span>
             <small>{t("Required tools")}</small>
@@ -84,11 +76,7 @@ export function SkillCompactInspector({
         <div className="settings-skill-next-action">
           <span>
             <strong>{sourceSnapshot ? t("Source-backed") : t("Metadata only")}</strong>
-            <small>
-              {sourceSnapshot
-                ? t("Source details are available below when you need them.")
-                : t("No published SKILL.md snapshot is attached yet.")}
-            </small>
+            {!sourceSnapshot ? <small>{t("No published SKILL.md snapshot is attached yet.")}</small> : null}
           </span>
           <button className="secondary-button compact-button" type="button" onClick={onPreviewOptimization} disabled={saving || optimizationPreviewLoading}>
             <Search size={14} />
@@ -139,6 +127,7 @@ export function SkillCompactInspector({
           onPreviewOptimization={onPreviewOptimization}
           onArchive={onArchiveSource}
           onRollback={onRollbackSource}
+          allowSourceMutations={!readOnly}
           t={t}
         />
       </details>

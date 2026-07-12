@@ -37,7 +37,6 @@ import type {
 import {
   approvalProfileText,
   roleLabel,
-  workflowPhaseLabel,
 } from "./helpers.js";
 import { TeammateAvatarView } from "./TeammateAvatarView.js";
 import { TeammateCreateDrawer } from "./TeammateCreateDrawer.js";
@@ -458,7 +457,6 @@ function TemplateDetailSheet({
             <div className="teammate-skill-list">
               {skills.map((skill) => (
                 <article key={skill.id} className="teammate-skill-row">
-                  <span className={`phase-token ${skill.workflowPhase}`}>{workflowPhaseLabel(skill.workflowPhase, t)}</span>
                   <div>
                     <strong>{t(skill.name)}</strong>
                     <small>{t(skill.summary)}</small>

@@ -1,4 +1,5 @@
 import {
+  authorizationModes,
   readOnlyRunTools,
   lingConversationTones,
   permissionModeForPreset,
@@ -6,6 +7,8 @@ import {
   providerTransports,
   runContinuationReasons,
   sessionPermissionModes,
+  workspaceAccessModes,
+  type AuthorizationMode,
   type PermissionConfirmation,
   type LingConversationTone,
   type PermissionPreset,
@@ -14,6 +17,7 @@ import {
   type SessionPermissionMode,
   type SkillApprovalProfile,
   type SkillOptimizationMode,
+  type WorkspaceAccessMode,
 } from "@ling-stack/core";
 import type { PiRunnerProviderConfig, PiRunnerRunOptions } from "@ling-stack/runner-pi";
 import { HttpError } from "../../errors.js";
@@ -41,6 +45,8 @@ export interface RunRequest extends Omit<PiRunnerRunOptions, "onApprovalRequired
   readonly skillOptimizationMode?: SkillOptimizationMode;
   readonly tools?: readonly RunTool[];
   readonly approvalProfile?: SkillApprovalProfile;
+  readonly authorizationMode?: AuthorizationMode;
+  readonly workspaceAccessMode?: WorkspaceAccessMode;
   readonly permissionPreset?: PermissionPreset;
   readonly permissionMode?: SessionPermissionMode;
   readonly permissionConfirmation?: PermissionConfirmation;
@@ -72,11 +78,13 @@ export function parseRunRequest(value: unknown): RunRequest {
   const skillOptimizationMode = readOptionalSkillOptimizationMode(value, "skillOptimizationMode");
   const skipProviderPreflight = readOptionalBoolean(value, "skipProviderPreflight") ?? false;
   const idempotencyKey = readOptionalString(value, "idempotencyKey");
+  const authorizationMode = readOptionalAuthorizationMode(value, "authorizationMode");
+  const workspaceAccessMode = readOptionalWorkspaceAccessMode(value, "workspaceAccessMode");
   const permissionPreset = readOptionalPermissionPreset(value, "permissionPreset");
-  const permissionMode = resolvePermissionMode(
-    permissionPreset,
-    readOptionalSessionPermissionMode(value, "permissionMode"),
-  );
+  const rawPermissionMode = readOptionalSessionPermissionMode(value, "permissionMode");
+  const permissionMode = authorizationMode !== undefined || workspaceAccessMode !== undefined
+    ? rawPermissionMode
+    : resolvePermissionMode(permissionPreset, rawPermissionMode);
 
   if (!isRecord(task)) {
     throw new Error("task must be an object");
@@ -113,6 +121,8 @@ export function parseRunRequest(value: unknown): RunRequest {
     provider: provider ? parseInlineProvider(provider) : undefined,
     tools: readOptionalStringArray(value, "tools", ["read", "bash", "edit", "write", "grep", "find", "ls"]) ?? [...readOnlyRunTools],
     approvalProfile: readOptionalApprovalProfile(value, "approvalProfile"),
+    authorizationMode,
+    workspaceAccessMode,
     permissionPreset,
     permissionMode,
     permissionConfirmation: readOptionalPermissionConfirmation(value, "permissionConfirmation"),
@@ -157,7 +167,10 @@ function readOptionalRuntimeToolFeatures(record: Record<string, unknown>, key: s
 }
 
 function assertFullAccessPermissionConfirmed(runRequest: RunRequest): void {
-  if (runRequest.permissionMode !== "full_access") {
+  const fullAccessRequested = runRequest.workspaceAccessMode !== undefined
+    ? runRequest.workspaceAccessMode === "full_access"
+    : runRequest.permissionMode === "full_access" || runRequest.permissionPreset === "full_access";
+  if (!fullAccessRequested) {
     return;
   }
   const confirmation = runRequest.permissionConfirmation;
@@ -226,6 +239,28 @@ function readOptionalSessionPermissionMode(record: Record<string, unknown>, key:
     throw new Error(`${key} must be one of: ${sessionPermissionModes.join(", ")}`);
   }
   return value as SessionPermissionMode;
+}
+
+function readOptionalAuthorizationMode(record: Record<string, unknown>, key: string): AuthorizationMode | undefined {
+  const value = readOptionalString(record, key);
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!authorizationModes.includes(value as AuthorizationMode)) {
+    throw new Error(`${key} must be one of: ${authorizationModes.join(", ")}`);
+  }
+  return value as AuthorizationMode;
+}
+
+function readOptionalWorkspaceAccessMode(record: Record<string, unknown>, key: string): WorkspaceAccessMode | undefined {
+  const value = readOptionalString(record, key);
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!workspaceAccessModes.includes(value as WorkspaceAccessMode)) {
+    throw new Error(`${key} must be one of: ${workspaceAccessModes.join(", ")}`);
+  }
+  return value as WorkspaceAccessMode;
 }
 
 function readOptionalSkillOptimizationMode(record: Record<string, unknown>, key: string): SkillOptimizationMode | undefined {

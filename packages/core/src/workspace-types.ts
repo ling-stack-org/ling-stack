@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { RunTool } from "./approval-policy.js";
 import type { ProcedureObservationStep, ProcedureObservationValidationStep } from "./procedure-observation-types.js";
 import type { RunnerFallbackReason, RunnerRequestSource } from "./runtime-supervisor-types.js";
-import type { PermissionPreset, SessionPermissionMode } from "./session-permissions.js";
+import type { AuthorizationMode, PermissionPreset, SessionPermissionMode, WorkspaceAccessMode } from "./session-permissions.js";
 import type { SkillCandidateSourceRef } from "./skill-candidate-types.js";
 import type { AiTeammateRoleKey, SkillApprovalProfile } from "./skill-types.js";
 import type { WorkflowTerminationPolicy } from "./workflow-graph-types.js";
@@ -471,6 +471,8 @@ export interface WorkspaceSettings {
   readonly responseLanguage?: ResponseLanguagePreference;
   readonly lingConversationTone?: LingConversationTone;
   readonly defaultProviderPresetId?: string;
+  readonly defaultAuthorizationMode?: AuthorizationMode;
+  readonly defaultWorkspaceAccessMode?: WorkspaceAccessMode;
   readonly defaultPermissionMode?: SessionPermissionMode;
   readonly defaultPermissionPreset?: PermissionPreset;
   readonly channelNotifications?: Record<string, string>;
@@ -486,6 +488,8 @@ export interface UpdateWorkspaceSettingsInput {
   readonly responseLanguage?: ResponseLanguagePreference | null;
   readonly lingConversationTone?: LingConversationTone | null;
   readonly defaultProviderPresetId?: string | null;
+  readonly defaultAuthorizationMode?: AuthorizationMode | null;
+  readonly defaultWorkspaceAccessMode?: WorkspaceAccessMode | null;
   readonly defaultPermissionMode?: SessionPermissionMode | null;
   readonly defaultPermissionPreset?: PermissionPreset | null;
   readonly channelNotifications?: Record<string, string> | null;
@@ -1164,7 +1168,7 @@ export interface UpdateUserProfileInput {
 export interface RetentionTombstone {
   readonly id: string;
   readonly workspaceId: string;
-  readonly entityType: "ai-teammate";
+  readonly entityType: "ai-teammate" | "conversation-thread";
   readonly entityId: string;
   readonly reason?: string;
   readonly deletedCounts: Readonly<Record<string, number>>;
@@ -1176,6 +1180,15 @@ export interface HardDeleteAiTeammateInput {
 }
 
 export interface HardDeleteAiTeammateResult {
+  readonly tombstone: RetentionTombstone;
+  readonly deletedAttachmentPaths: readonly string[];
+}
+
+export interface HardDeleteLingThreadInput {
+  readonly reason?: string;
+}
+
+export interface HardDeleteLingThreadResult {
   readonly tombstone: RetentionTombstone;
   readonly deletedAttachmentPaths: readonly string[];
 }

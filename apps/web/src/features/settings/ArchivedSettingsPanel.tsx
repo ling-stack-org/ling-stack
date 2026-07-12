@@ -34,7 +34,7 @@ export function ArchivedSettingsPanel({
         </div>
       ) : null}
 
-      <p className="archived-items-hint">{t("Restored items return to their lists; channel and branch delete is permanent.")}</p>
+      <p className="archived-items-hint">{t("Restored items return to their lists; deleting any archived item is permanent.")}</p>
 
       <ArchivedItemGroup
         title={t("Conversations")}
@@ -47,6 +47,12 @@ export function ArchivedSettingsPanel({
             thread={thread}
             actionId={state.actionId}
             onRestore={() => void actions.restoreConversation(thread.id)}
+            onDelete={() => {
+              const title = thread.title || t("Conversation");
+              if (window.confirm(`${t("Delete conversation {title}?", { title })}\n${t("This permanently deletes messages, attachments, goals, and plans. Historical runs remain but will no longer be linked to this conversation.")}`)) {
+                void actions.deleteConversation(thread);
+              }
+            }}
           />
         ))}
       </ArchivedItemGroup>
@@ -62,6 +68,11 @@ export function ArchivedSettingsPanel({
             teammate={teammate}
             actionId={state.actionId}
             onRestore={() => void actions.restoreTeammate(teammate.id)}
+            onDelete={() => {
+              if (window.confirm(`${t("Delete AI teammate {name}?", { name: teammate.displayName })}\n${t("This permanently deletes private chat, attachments, avatar, memory, and private bindings. Channel and run history keep a deleted teammate reference.")}`)) {
+                void actions.deleteTeammate(teammate);
+              }
+            }}
           />
         ))}
       </ArchivedItemGroup>
@@ -115,10 +126,12 @@ function ArchivedConversationRow({
   thread,
   actionId,
   onRestore,
+  onDelete,
 }: {
   readonly thread: LingThread;
   readonly actionId: string;
   readonly onRestore: () => void;
+  readonly onDelete: () => void;
 }): JSX.Element {
   const { t } = useI18n();
   return (
@@ -135,6 +148,16 @@ function ArchivedConversationRow({
           {actionId === `conversation:${thread.id}:restore` ? <Loader2 className="spin" size={14} /> : <RefreshCw size={14} />}
           <span className="archived-action-label">{t("Restore")}</span>
         </button>
+        <button
+          className="ghost-icon-button danger-ghost-button compact-icon-button archived-delete-action"
+          type="button"
+          onClick={onDelete}
+          disabled={actionId !== ""}
+          aria-label={t("Delete conversation")}
+          title={t("Delete conversation")}
+        >
+          {actionId === `conversation:${thread.id}:delete` ? <Loader2 className="spin" size={14} /> : <Trash2 size={14} />}
+        </button>
       </div>
     </div>
   );
@@ -144,10 +167,12 @@ function ArchivedTeammateRow({
   teammate,
   actionId,
   onRestore,
+  onDelete,
 }: {
   readonly teammate: AiTeammate;
   readonly actionId: string;
   readonly onRestore: () => void;
+  readonly onDelete: () => void;
 }): JSX.Element {
   const { t } = useI18n();
   return (
@@ -163,6 +188,16 @@ function ArchivedTeammateRow({
         <button className="secondary-button compact-button" type="button" onClick={onRestore} disabled={actionId !== ""}>
           {actionId === `teammate:${teammate.id}:restore` ? <Loader2 className="spin" size={14} /> : <RefreshCw size={14} />}
           <span className="archived-action-label">{t("Restore")}</span>
+        </button>
+        <button
+          className="ghost-icon-button danger-ghost-button compact-icon-button archived-delete-action"
+          type="button"
+          onClick={onDelete}
+          disabled={actionId !== ""}
+          aria-label={t("Delete AI teammate")}
+          title={t("Delete AI teammate")}
+        >
+          {actionId === `teammate:${teammate.id}:delete` ? <Loader2 className="spin" size={14} /> : <Trash2 size={14} />}
         </button>
       </div>
     </div>

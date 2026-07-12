@@ -25,8 +25,10 @@ import type {
   SkillImportDraftOptimizationPreviewRequest,
   SkillImportDraftRequest,
   SkillImportDraftResponse,
+  SkillImportPreviewResponse,
   SkillImportPublishResponse,
   SkillHealthResponse,
+  SkillHardDeleteResponse,
   SkillOptimizationPreviewRequest,
   SkillOptimizationPreviewResponse,
   SkillRecordingEligibilityResponse,
@@ -233,6 +235,10 @@ export async function createSkillImportDraft(cwd: string, input: SkillImportDraf
   return daemonClient.createSkillImportDraft(cwd, input);
 }
 
+export async function previewSkillImport(cwd: string, input: SkillImportDraftRequest): Promise<SkillImportPreviewResponse> {
+  return daemonClient.previewSkillImport(cwd, input);
+}
+
 export async function previewSkillImportDraftOptimization(
   cwd: string,
   input: SkillImportDraftOptimizationPreviewRequest,
@@ -246,4 +252,8 @@ export async function publishSkillImportDraft(cwd: string, draftId: string): Pro
 
 export async function archiveSkill(cwd: string, skillId: string): Promise<SkillRegistryMutationResponse> {
   return daemonClient.archiveSkill(cwd, skillId);
+}
+
+export async function hardDeleteSkill(cwd: string, skillId: string): Promise<SkillHardDeleteResponse> {
+  return daemonClient.hardDeleteSkill(cwd, skillId);
 }

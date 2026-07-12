@@ -43,6 +43,7 @@ import { writeJson } from "../../shared/response.js";
 import { isRecord, readOptionalBoolean, readOptionalString, readString } from "../../shared/validation.js";
 import { listExecutionActions } from "./execution-actions.js";
 import { hydrateProposedPlanSourceState, hydrateProposedPlanSourceStates } from "./proposed-plan-source-state.js";
+import { handleLingThreadHardDelete } from "./thread-hard-delete-route.js";
 import type { RunRequest } from "./schemas.js";
 
 export type LingThreadRoute =
@@ -64,6 +65,7 @@ export type LingThreadRoute =
   | { readonly kind: "fork-run"; readonly threadId: string }
   | { readonly kind: "archive"; readonly threadId: string }
   | { readonly kind: "unarchive"; readonly threadId: string }
+  | { readonly kind: "hard-delete"; readonly threadId: string }
   | { readonly kind: "pin"; readonly threadId: string }
   | { readonly kind: "unpin"; readonly threadId: string };
 
@@ -202,6 +204,9 @@ export function handleLingThreadItem(
   }
   if (route.kind === "fork-run") {
     return handleLingThreadForkRun(request, response, url, storeRegistry, route.threadId, options);
+  }
+  if (route.kind === "hard-delete") {
+    return handleLingThreadHardDelete(request, response, url, storeRegistry, route.threadId, options?.maxBodyBytes);
   }
   if (route.kind === "archive" || route.kind === "unarchive" || route.kind === "pin" || route.kind === "unpin") {
     return handleLingThreadVisibilityMutation(request, response, url, storeRegistry, route);

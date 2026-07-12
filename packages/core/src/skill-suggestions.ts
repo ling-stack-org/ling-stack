@@ -67,8 +67,9 @@ function scoreSkill(queryTokens: readonly string[], skill: EffectiveTeammateSkil
     skill.skillId,
     skill.skill.name,
     skill.skill.summary,
-    skill.skill.workflowPhase,
     ...skill.skill.roleAffinity,
+    ...skill.skill.requiredTools,
+    ...skill.skill.requiredProviderCapabilities,
     ...skill.promptFragments,
   ].join(" ")));
   let score = 0;
@@ -111,7 +112,7 @@ function suggestionReason(
   blockers: readonly SkillInvocationSuggestionBlocker[],
 ): string {
   const healthNote = blockers.length > 0 ? ` Health blockers: ${blockers.join(", ")}.` : "";
-  return `Task context matches ${skill.skill.name} (${skill.skill.workflowPhase}) with score ${score}.${healthNote}`;
+  return `Task context matches ${skill.skill.name} with score ${score}.${healthNote}`;
 }
 
 function confidenceForScore(score: number): SkillInvocationSuggestion["confidence"] {

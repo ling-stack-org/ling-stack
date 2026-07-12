@@ -5,6 +5,7 @@ import {
   createChatProvider,
   createMockTeammate,
   cwd,
+  isRecord,
 } from "./support/mock-state";
 import {
   readSidebarSelection,
@@ -290,6 +291,14 @@ test("recent conversations only show records created from the conversation home"
   await expect(homeComposer.getByRole("button", { name: "Mention teammate" })).toHaveCount(0);
   await home.getByRole("textbox", { name: "Conversation message" }).fill("Plan launch");
   await home.getByRole("button", { name: "Send" }).click();
+  await expect.poll(() => {
+    const snapshot = state.runs[0]?.requestSnapshot;
+    return isRecord(snapshot) ? snapshot.authorizationMode : undefined;
+  }).toBe("smart");
+  await expect.poll(() => {
+    const snapshot = state.runs[0]?.requestSnapshot;
+    return isRecord(snapshot) ? snapshot.workspaceAccessMode : undefined;
+  }).toBe("workspace_write");
   const conversationPage = page.getByLabel("Conversation page");
   await expect(conversationPage).toBeVisible();
   const conversationToolbar = conversationPage.getByLabel("Conversation workspace toolbar");
@@ -378,6 +387,52 @@ test("recent conversations only show records created from the conversation home"
   await home.getByRole("button", { name: "Send" }).click();
   await expect(page.getByLabel("Conversation page").locator(".normal-conversation-message-row.ai-teammate")).toHaveCount(1);
   await expect(navigation.locator(".sidebar-recent-row").first()).toContainText("Second local conversation");
+});
+
+test("normal conversation full access confirms before creating the run", async ({ page }) => {
+  await useEnglishLocale(page);
+  const state = createBaseState({ approvalStatus: "expired" });
+  state.providers = [createChatProvider({ id: "provider_local", displayName: "Local Relay", model: "gpt-5.5" })];
+  state.workspaceSettings = {
+    ...state.workspaceSettings,
+    defaultAuthorizationMode: "always",
+    defaultWorkspaceAccessMode: "full_access",
+    defaultPermissionMode: "full_access",
+    defaultPermissionPreset: "full_access",
+  };
+  state.runs = [];
+  await mockDaemon(page, state);
+  await page.goto("/");
+
+  const navigation = page.getByLabel("Ling Stack navigation");
+  await navigation.getByRole("button", { name: "New conversation" }).click();
+  const home = page.getByLabel("Conversation home");
+  await expect(home.getByRole("button", { name: /Selected permission preset Full access/ })).toBeVisible();
+  await home.getByRole("textbox", { name: "Conversation message" }).fill("Inspect trusted files");
+  await home.getByRole("button", { name: "Send" }).click();
+
+  const confirmSheet = page.getByRole("dialog", { name: "Confirm full access" });
+  await expect(confirmSheet).toBeVisible();
+  await confirmSheet.getByRole("button", { name: "Cancel" }).last().click();
+  await expect(confirmSheet).toHaveCount(0);
+  expect(state.runs).toHaveLength(0);
+  await expect(home.getByRole("textbox", { name: "Conversation message" })).toHaveAttribute("data-value", "Inspect trusted files");
+
+  await home.getByRole("button", { name: "Send" }).click();
+  await page.getByRole("dialog", { name: "Confirm full access" }).getByRole("button", { name: "Start with full access" }).click();
+  await expect.poll(() => state.runs.length).toBe(1);
+  await expect.poll(() => {
+    const snapshot = state.runs[0]?.requestSnapshot;
+    return isRecord(snapshot) ? snapshot.permissionConfirmation : undefined;
+  }).toMatchObject({
+    mode: "full_access",
+    confirmed: true,
+    reason: "user_confirmed_full_access",
+  });
+  await expect.poll(() => {
+    const snapshot = state.runs[0]?.requestSnapshot;
+    return isRecord(snapshot) ? [snapshot.authorizationMode, snapshot.workspaceAccessMode] : [];
+  }).toEqual(["always", "full_access"]);
 });
 
 test("normal conversation composer sends and replays uploaded attachments", async ({ page }) => {
@@ -678,7 +733,8 @@ test("conversation home model picker uses the model workbench default without ch
   await page.getByLabel("Settings sections").getByRole("button", { name: "Model Workbench" }).click();
   const geminiRow = page.locator(".provider-row").filter({ hasText: "Gemini Pro" });
   await geminiRow.getByRole("button", { name: "Set default" }).click();
-  await expect(geminiRow.getByRole("button", { name: "Clear default" })).toBeVisible();
+  await expect(geminiRow).toHaveClass(/selected/);
+  await expect(geminiRow).toContainText("Current default");
   await page.getByRole("button", { name: "Back to app" }).click();
 
   await navigation.getByRole("button", { name: "New conversation" }).click();

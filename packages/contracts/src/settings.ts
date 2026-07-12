@@ -1,4 +1,4 @@
-import type { PermissionPreset, SessionPermissionMode } from "./shared.js";
+import type { AuthorizationMode, PermissionPreset, SessionPermissionMode, WorkspaceAccessMode } from "./shared.js";
 
 export type ResponseLanguage = "zh-CN" | "en-US";
 
@@ -26,6 +26,8 @@ export interface WorkspaceSettings {
   readonly responseLanguage?: ResponseLanguagePreference;
   readonly lingConversationTone?: LingConversationTone;
   readonly defaultProviderPresetId?: string;
+  readonly defaultAuthorizationMode?: AuthorizationMode;
+  readonly defaultWorkspaceAccessMode?: WorkspaceAccessMode;
   readonly defaultPermissionMode?: SessionPermissionMode;
   readonly defaultPermissionPreset?: PermissionPreset;
   readonly channelNotifications?: Record<string, string>;
@@ -41,6 +43,8 @@ export interface UpdateWorkspaceSettingsRequest {
   readonly responseLanguage?: ResponseLanguagePreference | null;
   readonly lingConversationTone?: LingConversationTone | null;
   readonly defaultProviderPresetId?: string | null;
+  readonly defaultAuthorizationMode?: AuthorizationMode | null;
+  readonly defaultWorkspaceAccessMode?: WorkspaceAccessMode | null;
   readonly defaultPermissionMode?: SessionPermissionMode | null;
   readonly defaultPermissionPreset?: PermissionPreset | null;
   readonly channelNotifications?: Record<string, string> | null;

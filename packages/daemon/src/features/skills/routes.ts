@@ -50,7 +50,6 @@ import {
   type SkillSourceSyncPreviewReport,
   type SkillSourceSnapshot,
   type SkillSourceWarning,
-  type SkillWorkflowPhase,
 } from "@ling-stack/core";
 import type {
   SkillRecordingEligibilityActionHint,
@@ -68,6 +67,7 @@ import { writeJson } from "../../shared/response.js";
 import { listEffectiveSkillRegistryEntries, listExecutableSkillDefinitions, refreshEffectiveSkillRegistryEntries } from "./registry.js";
 import {
   parseCreateSkillCandidateRequest,
+  buildSkillImportPreview,
   parseSkillInvocationSuggestionRequest,
   parseProcedureObservationJobRequest,
   parseProcedureObservationRequest,
@@ -90,6 +90,7 @@ import {
   type ParsedCreateSkillCandidateRequest,
 } from "./schemas.js";
 import { resolveAiTeammateReference } from "../teammates/identity.js";
+import { handleSkillHardDelete } from "./hard-delete-route.js";
 
 export async function handleSkillRoute(
   request: IncomingMessage,
@@ -588,6 +589,19 @@ export async function handleSkillRoute(
       return;
     }
 
+    if (url.pathname === "/skills/import-preview") {
+      if (request.method !== "POST") {
+        writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for /skills/import-preview` });
+        return;
+      }
+      const body = await readJsonBody(request, config.maxBodyBytes);
+      const draftInput = parseSkillImportDraftRequest(body, listEffectiveSkillRegistryEntries(store));
+      const preview = buildSkillImportPreview(draftInput);
+      const contextFindings = buildImportDraftContextFindings(draftInput, readImportDraftContent(body));
+      writeJson(response, 200, { cwd, preview, contextFindings });
+      return;
+    }
+
     if (url.pathname === "/skills/import-draft/optimization-preview") {
       if (request.method !== "POST") {
         writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for /skills/import-draft/optimization-preview` });
@@ -620,6 +634,11 @@ export async function handleSkillRoute(
 
     if (!route) {
       writeJson(response, 404, { error: "not_found", message: `No route for ${request.method} ${url.pathname}` });
+      return;
+    }
+
+    if (route.kind === "skill" && route.action === "hard-delete") {
+      await handleSkillHardDelete({ request, response, store, controlPlaneEvents, cwd, skillId: route.skillId });
       return;
     }
 
@@ -2064,7 +2083,6 @@ function skillCandidateInputFromObservation(observation: ProcedureObservation): 
     title: observation.title,
     summary: observation.summary,
     definition: {
-      workflowPhase: "operate",
       positiveTriggers: observation.positiveTriggers.length > 0 ? observation.positiveTriggers : [observation.normalizedGoal],
       negativeTriggers: observation.negativeTriggers,
       procedureSteps: observation.procedureSteps.map((step) => ({
@@ -2109,7 +2127,6 @@ function skillCandidateHealthInputFromCreateRequest(input: ParsedCreateSkillCand
     targetSkillId: input.targetSkillId,
     title: input.title,
     summary: input.summary,
-    workflowPhase: input.definition.workflowPhase,
     positiveTriggers: input.definition.positiveTriggers,
     negativeTriggers: input.definition.negativeTriggers,
     procedureSteps: input.definition.procedureSteps,
@@ -2131,7 +2148,6 @@ function skillCandidateHealthInputFromCandidate(candidate: SkillCandidate): Skil
     targetSkillId: candidate.targetSkillId,
     title: candidate.title,
     summary: candidate.summary,
-    workflowPhase: candidate.definition.workflowPhase,
     positiveTriggers: candidate.definition.positiveTriggers,
     negativeTriggers: candidate.definition.negativeTriggers,
     procedureSteps: candidate.definition.procedureSteps,
@@ -2323,7 +2339,7 @@ function createImportDraftInputFromCandidate(
   }
   const warnings: SkillImportWarning[] = [];
   const definition = candidate.definition.skillDefinition && isCompleteSkillDefinition(candidate.definition.skillDefinition)
-    ? candidate.definition.skillDefinition
+    ? withoutLegacySkillWorkflowPhase(candidate.definition.skillDefinition)
     : synthesizeSkillDefinitionFromCandidate(candidate, existingSkills, warnings);
   const definitionWarnings = skillDefinitionWarnings(definition, existingSkills);
   return {
@@ -2351,7 +2367,6 @@ function synthesizeSkillDefinitionFromCandidate(
 ): SkillDefinition {
   const requestedId = slugSkillId(candidate.title);
   const id = uniqueSkillId(requestedId, candidate.id, existingSkills);
-  const workflowPhase = normalizeWorkflowPhase(candidate.definition.workflowPhase, warnings);
   const requiredTools = normalizeRunTools(candidate.definition.requiredTools, warnings);
   const requiredProviderCapabilities = normalizeProviderCapabilities(candidate.definition.requiredProviderCapabilities, warnings);
   return {
@@ -2359,7 +2374,6 @@ function synthesizeSkillDefinitionFromCandidate(
     name: candidate.title,
     summary: candidate.summary,
     roleAffinity: ["custom"],
-    workflowPhase,
     promptFragments: [candidatePromptFragment(candidate)],
     requiredTools,
     requiredProviderCapabilities,
@@ -2436,19 +2450,6 @@ function candidatePromptFragment(candidate: SkillCandidate): string {
   return lines.join("\n").slice(0, 12_000);
 }
 
-function normalizeWorkflowPhase(value: string, warnings: SkillImportWarning[]): SkillWorkflowPhase {
-  const phases = ["discover", "plan", "design", "implement", "review", "test", "secure", "ship", "document", "operate"] as const;
-  if ((phases as readonly string[]).includes(value)) {
-    return value as SkillWorkflowPhase;
-  }
-  warnings.push({
-    code: "unsupported_section",
-    severity: "warning",
-    message: `Unsupported workflow phase "${value}" was normalized to operate.`,
-  });
-  return "operate";
-}
-
 function normalizeRunTools(values: readonly (RunTool | string)[], warnings: SkillImportWarning[]): RunTool[] {
   const supported = supportedRunTools();
   const accepted: RunTool[] = [];
@@ -2483,6 +2484,11 @@ function normalizeProviderCapabilities(
     }
   }
   return accepted.length > 0 ? [...new Set(accepted)] : ["chat", "reasoning"];
+}
+
+function withoutLegacySkillWorkflowPhase(value: SkillDefinition): SkillDefinition {
+  const { workflowPhase: _legacyWorkflowPhase, ...definition } = value as SkillDefinition & { readonly workflowPhase?: unknown };
+  return definition;
 }
 
 function supportedRunTools(): readonly RunTool[] {

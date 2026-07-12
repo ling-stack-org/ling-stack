@@ -47,10 +47,9 @@ import type {
   TeammatePrivateAttachment,
   UsedMemoryEvent,
   UserProfile,
-  PermissionPreset,
-  SessionPermissionMode,
+  WorkspaceAccessMode,
 } from "../../types.js";
-import { conversationPermissionPresetMenuOptions, inferPermissionPreset } from "../../lib/session-permissions.js";
+import { conversationPermissionPresetMenuOptions, permissionPresetForWorkspaceAccessMode, workspaceAccessModeForPermissionPreset } from "../../lib/session-permissions.js";
 import { TeammateAvatarView } from "./TeammateAvatarView.js";
 import {
   directFileRefLabel,
@@ -132,8 +131,8 @@ export function TeammatePrivateChatSurface({
   onRemoveComposerFileReference,
   onRemovePendingLinkPreview,
   onRemovePendingAttachment,
-  defaultPermissionMode,
-  defaultPermissionPreset,
+  workspaceAccessMode,
+  onWorkspaceAccessModeChange,
   dockOpen,
   dockPageRequest,
   dockActions,
@@ -212,8 +211,8 @@ export function TeammatePrivateChatSurface({
   readonly onRemoveComposerFileReference: (raw: string, occurrenceIndex: number) => void;
   readonly onRemovePendingLinkPreview: (previewId: string) => void;
   readonly onRemovePendingAttachment: (localId: string) => void | Promise<void>;
-  readonly defaultPermissionMode?: SessionPermissionMode;
-  readonly defaultPermissionPreset?: PermissionPreset;
+  readonly workspaceAccessMode: WorkspaceAccessMode;
+  readonly onWorkspaceAccessModeChange: (mode: WorkspaceAccessMode) => void;
   readonly dockOpen: boolean;
   readonly dockPageRequest?: WorkspaceRightDockPageRequest;
   readonly dockActions?: ReactNode;
@@ -232,7 +231,6 @@ export function TeammatePrivateChatSurface({
 }): JSX.Element {
   const { t } = useI18n();
   const [messageFeedbackById, setMessageFeedbackById] = useState<Record<string, "up" | "down">>({});
-  const [selectedPermissionPreset, setSelectedPermissionPreset] = useState<PermissionPreset>(() => defaultPermissionPreset ?? inferPermissionPreset(defaultPermissionMode));
   const [slashPicker, setSlashPicker] = useState<ActiveSlashCommandPicker | undefined>();
   const [slashActiveIndex, setSlashActiveIndex] = useState(0);
   const composerInputRef = useRef<TokenizedComposerInputHandle | null>(null);
@@ -279,10 +277,6 @@ export function TeammatePrivateChatSurface({
       onClose={onSummaryClose}
     />
   );
-
-  useEffect(() => {
-    setSelectedPermissionPreset(defaultPermissionPreset ?? inferPermissionPreset(defaultPermissionMode));
-  }, [defaultPermissionMode, defaultPermissionPreset]);
 
   useEffect(() => {
     if (!privateComposerSending) {
@@ -697,12 +691,12 @@ export function TeammatePrivateChatSurface({
                   />
                 </label>
                 <ComposerPermissionMenu
-                  preset={selectedPermissionPreset}
+                  preset={permissionPresetForWorkspaceAccessMode(workspaceAccessMode)}
                   options={conversationPermissionPresetMenuOptions(t)}
                   disabled={permissionLocked}
                   disabledReason={t("Permission is locked while the private reply is running.")}
                   fullAccessConfirmationMessage={t("Full access can allow broad local file, network, and tool access for the next run. Continue?")}
-                  onPresetChange={setSelectedPermissionPreset}
+                  onPresetChange={(preset) => onWorkspaceAccessModeChange(workspaceAccessModeForPermissionPreset(preset))}
                 />
               </>
             )}

@@ -6,6 +6,7 @@
 - [Settings Visual Density Follow-up](settings-visual-density-followup.md)
 - [Settings Diagnostic Density P8](settings-diagnostic-density-p8.md)
 - [Settings Interaction Depth P9](settings-interaction-depth-p9.md)
+- [Advanced Workspace Policy Productization Implementation Plan](settings-advanced-workspace-policy-productization-implementation-plan.md)
 - [Ling Design System](ling-design-system.md)
 - [Ling Design System P11 Implementation Plan](ling-design-system-p11-implementation-plan.md)
 
@@ -74,8 +75,8 @@ and interaction fix.
 | Fig. 1 | `CouncilWorkspacePanels`, `councils.css` | Compact channel empty state; selector, attach, open-channel controls stay legible. | Attach stays; channel exit is `Open channel in app`. | Channel usage button label includes `in app`; no vertical empty-state text in browser QA. |
 | Fig. 2 | `CouncilWorkspacePanels` | Settings-mode settings tab hides standalone page chrome; clone/archive move to low-frequency disclosure. | Save/clone/archive stay in Settings. | Settings Council Workspace has no H1/description; `Create council` only appears once. |
 | Fig. 3 | `GlobalWorkBoardPage`, `WorkItemRow`, `AppShell` | Row selection updates detail; run action opens Settings diagnostics; work-object exits are explicit. | Run stays; task/channel/approval leave only with `in app` label. | Work Board run action shows `.settings-run-diagnostics-panel` and no `Ling Stack navigation`. |
-| Fig. 4 | `ExecutionPermissionsSettingsPanel` | Compact presets and effective summary; advanced policy details are not forced open. | Policy save stays. | Raw workspace policy details are hidden until details expansion. |
-| Fig. 5 | `ExecutionPermissionsSettingsPanel` | Runner rows show summary first; raw defaults move into `Current runner defaults`. | Runner actions stay. | Raw runner blockers remain accessible but not first-screen default. |
+| Fig. 4 | `ExecutionPermissionsSettingsPanel`, Settings choice menu | Keep the destination name `Default authorization`; render independent Default authorization and Sandbox settings dropdown rows. | Each selection saves independently through workspace settings. | The two dropdowns persist independently; tool-policy previews and advanced policy controls are absent. |
+| Fig. 5 | `ExecutionPermissionsSettingsPanel` | Remove runner selection and readiness rows from ordinary Settings; Pi remains implicit. | No user-facing runner action. | Runner ids, blockers, and fallback controls are absent. |
 | Fig. 6 | `SkillLibraryWidgets`, `SkillLibrarySettingsPanel` | Source sync default layer hides root/path and health evidence behind details. | Sync preview/publish stay. | Source evidence details contain diff/checksum; row summary does not. |
 | Fig. 7 | `SkillReviewQueuePanels`, `SkillLibrarySettingsPanel` | Review queue and health diagnostics are folded/compact by default. | Review actions stay. | Health panels are not visible on Skills list and details are closed by default. |
 | Fig. 8 | `ArchivedSettingsPanel` | Rules become one muted hint below the title; each archived category gets an internal scroll boundary; row actions align icon/label centers. | Restore/delete stay. | Hint is visible without a disclosure/card, no footer rule block remains, all four lists scroll when long, and action icon/label center delta stays small. |
@@ -96,7 +97,8 @@ and interaction fix.
 - [x] Fig. 10 shell boundary is fixed and protected by e2e.
 - [x] Fig. 1 and Fig. 2 Council Workspace layouts are compact and legible.
 - [x] Fig. 3 Work Board does not leave Settings for row/run diagnostics.
-- [x] Fig. 4 and Fig. 5 Default authorization hides raw policy/runner internals.
+- [x] Fig. 4 exposes independent Default authorization and Sandbox settings dropdowns;
+      policy and runner controls remain internal.
 - [x] Fig. 6 and Fig. 7 Skill Library deep states are summary-first.
 - [x] Fig. 8 Archived rules do not dominate first screen.
 - [x] Fig. 9 Startup diagnostics is task-first.
@@ -122,6 +124,16 @@ and interaction fix.
   Settings Run Diagnostics. Each surface kept `Ling Stack navigation` absent,
   `Settings sections` present, horizontal overflow at `0`, and no detected
   vertical empty-state text.
+- Default authorization dual-dropdown verification on the current-source dev server
+  `http://127.0.0.1:4174/`: `1280x960`, `1440x960`, and `1920x1080` all reported
+  zero document, section, and row horizontal overflow. Both decision rows remained
+  `64px` high, both triggers remained `172x34px`, the authorization menu stayed inside
+  the viewport, and light/dark screenshots used the existing theme tokens.
+- Focused permission verification passed: Settings E2E `17/17`, cross-surface Web E2E
+  `142/143` with the only failure caused by stale Skill Library dark-mode selectors,
+  then `dark-mode.spec.ts` passed `2/2` after updating that test to the current
+  click-to-open inspector interaction. Core policy tests passed `15/15`, daemon schema
+  tests passed `5/5`, and daemon channel/workspace tests passed `172/172`.
 
 ## Remaining Verification
 

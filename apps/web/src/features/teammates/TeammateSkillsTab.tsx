@@ -11,7 +11,7 @@ import type {
   SkillSourceSnapshot,
   TeammateSkillBinding,
 } from "../../types.js";
-import { approvalProfileText, workflowPhaseLabel } from "./helpers.js";
+import { approvalProfileText } from "./helpers.js";
 import {
   skillExecutionState,
   teammateSkillFilterLabel,
@@ -255,7 +255,6 @@ export function TeammateSkillsTab({
                   <th>{t("Status")}</th>
                   <th>{t("Skill")}</th>
                   <th>{t("Source")}</th>
-                  <th>{t("Stage")}</th>
                   <th>{t("Required tools")}</th>
                   <th>{t("Approval")}</th>
                   <th>{t("Blocked reasons")}</th>
@@ -265,7 +264,7 @@ export function TeammateSkillsTab({
               <tbody>
                 {skillTableRows.length === 0 ? (
                   <tr>
-                    <td colSpan={8}>
+                    <td colSpan={7}>
                       <div className="client-empty-state teammate-empty compact">
                         <span>{t("No skills match filters")}</span>
                       </div>
@@ -298,9 +297,6 @@ export function TeammateSkillsTab({
                         </td>
                         <td>
                           <TeammateSkillSourceStatus label={sourceLabel} snapshot={sourceSnapshot} />
-                        </td>
-                        <td>
-                          <span className={`phase-token ${skill?.workflowPhase ?? "operate"}`}>{skill ? workflowPhaseLabel(skill.workflowPhase, t) : t("Custom")}</span>
                         </td>
                         <td>
                           <TeammateSkillTokenList values={skill?.requiredTools ?? []} emptyLabel={t("No tools")} />

@@ -1953,6 +1953,8 @@ export async function routeRequest(
               },
               tools: runRequest.tools ?? channel.allowedTools,
               approvalProfile: runRequest.approvalProfile,
+              authorizationMode: runRequest.authorizationMode,
+              workspaceAccessMode: runRequest.workspaceAccessMode,
               permissionPreset: runRequest.permissionPreset,
               permissionMode: runRequest.permissionMode,
               permissionConfirmation: runRequest.permissionConfirmation,

@@ -14,13 +14,17 @@ import {
   type ListSkillRegistryOptions,
   type ListSkillSourceSnapshotOptions,
   type SkillImportDraft,
+  type SkillHardDeleteBlocker,
+  type SkillHardDeleteResult,
   type SkillCompiledRuntimeViewRecord,
+  type SkillDefinition,
   type SkillRegistryEntry,
   type SkillSourceArtifact,
   type SkillSourceSnapshot,
   type SkillSourceUpgradePolicy,
   type SkillVisibility,
   type UpdateSkillSourceUpgradePolicyInput,
+  isManuallyImportedSkillSource,
 } from "../../skill-types.js";
 import { omitUndefined, stringifyJson } from "./helpers.js";
 import { mapSkillCompiledRuntimeView, mapSkillImportDraft, mapSkillRegistryEntry, mapSkillSourceArtifact, mapSkillSourceSnapshot, mapSkillSourceUpgradePolicy } from "./task-skill-mappers.js";
@@ -472,7 +476,10 @@ export class SqliteSkillRegistryStore {
       name: input.name,
       version: input.version,
       description: input.description,
-      definitions: input.definitions,
+      definitions: input.definitions.map((item) => ({
+        ...item,
+        definition: withoutLegacySkillWorkflowPhase(item.definition),
+      })),
       warnings: input.warnings ?? [],
       createdAt: now,
       updatedAt: now,
@@ -634,6 +641,110 @@ export class SqliteSkillRegistryStore {
       .run(now, DEFAULT_WORKSPACE_ID, id);
     return this.getSkillRegistryEntry(id);
   }
+
+  hardDeleteSkillRegistryEntry(id: string): SkillHardDeleteResult {
+    const existing = this.getSkillRegistryEntry(id);
+    if (!existing) {
+      return { status: "not_found" };
+    }
+    if (!isManuallyImportedSkillSource(existing.source)) {
+      return { status: "not_imported", skill: existing };
+    }
+
+    const blockers = this.listHardDeleteBlockers(id);
+    if (blockers.length > 0) {
+      return { status: "blocked", skill: existing, blockers };
+    }
+
+    const artifactStorageRefs = this.listArtifactStorageRefs(id);
+    this.context.database.exec("BEGIN");
+    try {
+      this.context.database
+        .prepare("DELETE FROM skill_source_snapshots WHERE workspace_id = ? AND skill_id = ?")
+        .run(DEFAULT_WORKSPACE_ID, id);
+      this.context.database
+        .prepare("DELETE FROM skill_definitions WHERE workspace_id = ? AND id = ?")
+        .run(DEFAULT_WORKSPACE_ID, id);
+      this.context.database
+        .prepare(`
+          DELETE FROM skill_packs
+          WHERE workspace_id = ?
+            AND id = ?
+            AND NOT EXISTS (
+              SELECT 1 FROM skill_definitions
+              WHERE skill_definitions.workspace_id = skill_packs.workspace_id
+                AND skill_definitions.pack_id = skill_packs.id
+            )
+        `)
+        .run(DEFAULT_WORKSPACE_ID, existing.packId);
+      this.context.database.exec("COMMIT");
+    } catch (error) {
+      this.context.database.exec("ROLLBACK");
+      throw error;
+    }
+    return { status: "deleted", skill: existing, artifactStorageRefs };
+  }
+
+  private listHardDeleteBlockers(skillId: string): SkillHardDeleteBlocker[] {
+    const database = this.context.database;
+    return [
+      ...deleteBlockersFromRows(
+        "teammate_binding",
+        database.prepare("SELECT teammate_id AS id FROM teammate_skill_bindings WHERE skill_id = ?").all(skillId),
+      ),
+      ...deleteBlockersFromRows(
+        "active_task",
+        database.prepare(`
+          SELECT id FROM tasks
+          WHERE workspace_id = ?
+            AND requested_skill_id = ?
+            AND status NOT IN ('done', 'failed', 'cancelled')
+        `).all(DEFAULT_WORKSPACE_ID, skillId),
+      ),
+      ...deleteBlockersFromRows(
+        "active_run",
+        database.prepare(`
+          SELECT id FROM run_sessions
+          WHERE selected_skill_id = ?
+            AND status NOT IN ('succeeded', 'failed', 'cancelled')
+        `).all(skillId),
+      ),
+      ...deleteBlockersFromRows(
+        "automation",
+        database.prepare(`
+          SELECT id FROM automation_definitions
+          WHERE workspace_id = ?
+            AND json_extract(execution_policy_json, '$.requestedSkillId') = ?
+        `).all(DEFAULT_WORKSPACE_ID, skillId),
+      ),
+    ];
+  }
+
+  private listArtifactStorageRefs(skillId: string): string[] {
+    const rows = this.context.database.prepare(`
+      SELECT artifacts.storage_ref AS storage_ref
+      FROM skill_source_artifacts AS artifacts
+      INNER JOIN skill_source_snapshots AS snapshots ON snapshots.id = artifacts.snapshot_id
+      WHERE snapshots.workspace_id = ? AND snapshots.skill_id = ?
+    `).all(DEFAULT_WORKSPACE_ID, skillId) as Record<string, SQLOutputValue>[];
+    return rows.flatMap((row) => typeof row.storage_ref === "string" ? [row.storage_ref] : []);
+  }
+}
+
+function deleteBlockersFromRows(
+  kind: SkillHardDeleteBlocker["kind"],
+  rows: unknown,
+): SkillHardDeleteBlocker[] {
+  if (!Array.isArray(rows)) {
+    return [];
+  }
+  return rows.flatMap((row) => {
+    if (!row || typeof row !== "object" || Array.isArray(row)) {
+      return [];
+    }
+    const id = (row as Record<string, unknown>).id;
+    return typeof id === "string" ? [{ kind, id }] : [];
+  });
 }
 
 function defaultSkillVisibility(): SkillVisibility {
@@ -641,4 +752,9 @@ function defaultSkillVisibility(): SkillVisibility {
     workspaceVisible: true,
     promotableToWorkspace: true,
   };
+}
+
+function withoutLegacySkillWorkflowPhase(definition: SkillDefinition): SkillDefinition {
+  const { workflowPhase: _legacyWorkflowPhase, ...currentDefinition } = definition as SkillDefinition & { readonly workflowPhase?: unknown };
+  return currentDefinition;
 }

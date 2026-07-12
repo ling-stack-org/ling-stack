@@ -2,20 +2,14 @@ import {
   Bot,
   Box,
   Brain,
-  Hand,
   Kanban,
-  Shield,
   ShieldCheck,
   type LucideIcon,
 } from "lucide-react";
 import { useI18n, type Translate } from "../../i18n.js";
-import {
-  authorizationModeToPermission,
-  permissionToAuthorizationMode,
-  type ConversationAuthorizationMode,
-} from "../../lib/conversation-authorization.js";
+import { permissionToAuthorizationMode } from "../../lib/conversation-authorization.js";
 import { StatusActionRow } from "../../shared/components/index.js";
-import type { PermissionPreset, SessionPermissionMode } from "../../types.js";
+import type { AuthorizationMode, PermissionPreset, SessionPermissionMode } from "../../types.js";
 
 export interface WorkspaceToolCounts {
   readonly readyProviderCount: number;
@@ -42,6 +36,7 @@ interface WorkspaceToolGroup {
 
 export function SettingsWorkspaceToolsPanel({
   counts,
+  defaultAuthorizationMode,
   defaultPermissionMode,
   defaultPermissionPreset,
   onOpenProviders,
@@ -51,6 +46,7 @@ export function SettingsWorkspaceToolsPanel({
   onOpenApprovalPolicy,
 }: {
   readonly counts: WorkspaceToolCounts;
+  readonly defaultAuthorizationMode?: AuthorizationMode;
   readonly defaultPermissionMode: SessionPermissionMode | undefined;
   readonly defaultPermissionPreset: PermissionPreset | undefined;
   readonly onOpenProviders: () => void;
@@ -60,8 +56,12 @@ export function SettingsWorkspaceToolsPanel({
   readonly onOpenApprovalPolicy: () => void;
 }): JSX.Element {
   const { t } = useI18n();
-  const authorizationMode = permissionToAuthorizationMode(defaultPermissionMode, defaultPermissionPreset);
-  const authorizationOption = authorizationOptions.find((option) => option.mode === authorizationMode) ?? authorizationOptions[1];
+  const authorizationMode = defaultAuthorizationMode ?? permissionToAuthorizationMode(defaultPermissionMode, defaultPermissionPreset);
+  const authorizationLabel = authorizationMode === "ask"
+    ? t("Ask first")
+    : authorizationMode === "always"
+      ? t("Always authorize")
+      : t("Smart authorization");
   const tools: readonly WorkspaceToolItem[] = [
     {
       id: "providers",
@@ -98,7 +98,7 @@ export function SettingsWorkspaceToolsPanel({
     {
       id: "approval",
       title: t("Default authorization"),
-      chipLabel: t("Default: {mode}", { mode: t(authorizationOption.labelKey) }),
+      chipLabel: t("Default: {mode}", { mode: authorizationLabel }),
       actionLabel: t("Open default authorization"),
       icon: ShieldCheck,
       onOpen: onOpenApprovalPolicy,
@@ -142,58 +142,6 @@ export function SettingsWorkspaceToolsPanel({
   );
 }
 
-export function SettingsGlobalApprovalDefaultCard({
-  defaultPermissionMode,
-  defaultPermissionPreset,
-  onDefaultPermissionChange,
-  onOpenAdvancedPolicy,
-}: {
-  readonly defaultPermissionMode: SessionPermissionMode | undefined;
-  readonly defaultPermissionPreset: PermissionPreset | undefined;
-  readonly onDefaultPermissionChange: (mode: SessionPermissionMode, preset: PermissionPreset) => void;
-  readonly onOpenAdvancedPolicy?: () => void;
-}): JSX.Element {
-  const { t } = useI18n();
-  const authorizationMode = permissionToAuthorizationMode(defaultPermissionMode, defaultPermissionPreset);
-  const authorizationOption = authorizationOptions.find((option) => option.mode === authorizationMode) ?? authorizationOptions[1];
-
-  return (
-    <aside className="settings-global-approval-card" aria-labelledby="settings-global-approval-title">
-      <div className="settings-global-approval-head">
-        <span aria-hidden="true">
-          <ShieldCheck size={18} />
-        </span>
-        <div>
-          <strong id="settings-global-approval-title">{t("Default authorization")}</strong>
-          <small>{t("Choose how new conversations get permission to use tools.")}</small>
-        </div>
-      </div>
-      <div className="settings-authorization-options" aria-label={t("Authorization mode")}>
-        {authorizationOptions.map((option) => (
-          <AuthorizationOptionButton
-            key={option.mode}
-            option={option}
-            selected={option.mode === authorizationMode}
-            onSelect={() => {
-              const selection = authorizationModeToPermission(option.mode);
-              onDefaultPermissionChange(selection.permissionMode, selection.permissionPreset);
-            }}
-          />
-        ))}
-      </div>
-      <div className="settings-authorization-note">
-        <strong>{t("Current default")}: {t(authorizationOption.labelKey)}</strong>
-        <span>{t(authorizationOption.descriptionKey)}</span>
-      </div>
-      {onOpenAdvancedPolicy ? (
-        <button className="secondary-button settings-global-approval-action" type="button" onClick={onOpenAdvancedPolicy}>
-          {t("Open advanced policy")}
-        </button>
-      ) : null}
-    </aside>
-  );
-}
-
 function WorkspaceToolRow({ tool }: { readonly tool: WorkspaceToolItem }): JSX.Element {
   const Icon = tool.icon;
   return (
@@ -216,59 +164,6 @@ function WorkspaceToolRow({ tool }: { readonly tool: WorkspaceToolItem }): JSX.E
         </button>
       )}
     />
-  );
-}
-
-interface AuthorizationOption {
-  readonly mode: ConversationAuthorizationMode;
-  readonly icon: LucideIcon;
-  readonly labelKey: string;
-  readonly descriptionKey: string;
-}
-
-const authorizationOptions: readonly AuthorizationOption[] = [
-  {
-    mode: "ask",
-    icon: Hand,
-    labelKey: "Ask first",
-    descriptionKey: "Ask before workspace changes, commands, and external actions.",
-  },
-  {
-    mode: "smart",
-    icon: Shield,
-    labelKey: "Smart authorization",
-    descriptionKey: "Allow workspace edits; ask before commands, external actions, or policy risks.",
-  },
-  {
-    mode: "always",
-    icon: ShieldCheck,
-    labelKey: "Always authorize",
-    descriptionKey: "Use full access for this conversation after explicit confirmation.",
-  },
-];
-
-function AuthorizationOptionButton({
-  option,
-  selected,
-  onSelect,
-}: {
-  readonly option: AuthorizationOption;
-  readonly selected: boolean;
-  readonly onSelect: () => void;
-}): JSX.Element {
-  const { t } = useI18n();
-  const Icon = option.icon;
-  return (
-    <button
-      className={selected ? "settings-authorization-option selected" : "settings-authorization-option"}
-      type="button"
-      onClick={onSelect}
-      aria-pressed={selected}
-      title={t(option.descriptionKey)}
-    >
-      <Icon size={15} />
-      <span>{t(option.labelKey)}</span>
-    </button>
   );
 }
 

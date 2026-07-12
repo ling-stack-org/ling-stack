@@ -15,7 +15,7 @@ export interface TeammateSkillBinding {
   readonly updatedAt: string;
 }
 
-export type SkillWorkflowPhase =
+export type WorkflowPhase =
   | "discover"
   | "plan"
   | "design"
@@ -26,6 +26,9 @@ export type SkillWorkflowPhase =
   | "ship"
   | "document"
   | "operate";
+
+/** @deprecated Use WorkflowPhase for workflow objects. Skills do not have phases. */
+export type SkillWorkflowPhase = WorkflowPhase;
 
 export type SkillStateEffect =
   | "creates_plan"
@@ -43,7 +46,6 @@ export interface SkillDefinition {
   readonly name: string;
   readonly summary: string;
   readonly roleAffinity: readonly AiTeammateRoleKey[];
-  readonly workflowPhase: SkillWorkflowPhase;
   readonly promptFragments: readonly string[];
   readonly requiredTools: readonly ToolName[];
   readonly requiredProviderCapabilities: readonly ProviderCapability[];
@@ -990,7 +992,6 @@ export interface SkillCandidateValidationStep {
 }
 
 export interface SkillCandidateDraftDefinition {
-  readonly workflowPhase: SkillWorkflowPhase | string;
   readonly positiveTriggers: readonly string[];
   readonly negativeTriggers: readonly string[];
   readonly procedureSteps: readonly SkillCandidateProcedureStep[];
@@ -1087,7 +1088,6 @@ export interface SkillCandidateHealthInput {
   readonly targetSkillId?: string;
   readonly title: string;
   readonly summary: string;
-  readonly workflowPhase: SkillWorkflowPhase | string;
   readonly positiveTriggers: readonly string[];
   readonly negativeTriggers: readonly string[];
   readonly procedureSteps?: readonly {
@@ -1246,6 +1246,8 @@ export interface SkillImportDraft {
   readonly updatedAt: string;
 }
 
+export type SkillImportPreview = Omit<SkillImportDraft, "id" | "workspaceId" | "createdAt" | "updatedAt">;
+
 export interface SkillRegistryListResponse {
   readonly cwd: string;
   readonly skills: readonly SkillRegistryEntry[];
@@ -1390,6 +1392,12 @@ export interface SkillImportDraftResponse {
   readonly contextFindings: readonly SkillSourceContextHealthFinding[];
 }
 
+export interface SkillImportPreviewResponse {
+  readonly cwd: string;
+  readonly preview: SkillImportPreview;
+  readonly contextFindings: readonly SkillSourceContextHealthFinding[];
+}
+
 export interface SkillImportPublishResponse {
   readonly cwd: string;
   readonly draftId: string;
@@ -1399,6 +1407,12 @@ export interface SkillImportPublishResponse {
 export interface SkillRegistryMutationResponse {
   readonly cwd: string;
   readonly skill: SkillRegistryEntry;
+}
+
+export interface SkillHardDeleteResponse {
+  readonly cwd: string;
+  readonly deletedSkillId: string;
+  readonly deletedAt: string;
 }
 
 export type EffectiveSkillBlockedReasonCode =

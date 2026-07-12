@@ -27,8 +27,10 @@ import type {
   SkillImportDraftOptimizationPreviewRequest,
   SkillImportDraftRequest,
   SkillImportDraftResponse,
+  SkillImportPreviewResponse,
   SkillImportPublishResponse,
   SkillHealthResponse,
+  SkillHardDeleteResponse,
   SkillOptimizationPreviewRequest,
   SkillOptimizationPreviewResponse,
   SkillRecordingEligibilityResponse,
@@ -358,6 +360,10 @@ export const skillEndpoints = {
     return this._post("/skills/import-draft", { cwd }, input);
   },
 
+  async previewSkillImport(this: LingDaemonEndpointContext, cwd: string, input: SkillImportDraftRequest): Promise<SkillImportPreviewResponse> {
+    return this._post("/skills/import-preview", { cwd }, input);
+  },
+
   async getSkillImportDraft(this: LingDaemonEndpointContext, cwd: string, draftId: string): Promise<SkillImportDraftResponse> {
     return this._get(`/skills/import-drafts/${encodeURIComponent(draftId)}`, { cwd });
   },
@@ -368,6 +374,10 @@ export const skillEndpoints = {
 
   async archiveSkill(this: LingDaemonEndpointContext, cwd: string, skillId: string): Promise<SkillRegistryMutationResponse> {
     return this._request("DELETE", `/skills/${encodeURIComponent(skillId)}`, { cwd });
+  },
+
+  async hardDeleteSkill(this: LingDaemonEndpointContext, cwd: string, skillId: string): Promise<SkillHardDeleteResponse> {
+    return this._post(`/skills/${encodeURIComponent(skillId)}/hard-delete`, { cwd }, {});
   },
 };
 

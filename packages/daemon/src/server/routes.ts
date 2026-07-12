@@ -141,6 +141,7 @@ export function parseLingThreadRoute(
   | { readonly kind: "fork-run"; readonly threadId: string }
   | { readonly kind: "archive"; readonly threadId: string }
   | { readonly kind: "unarchive"; readonly threadId: string }
+  | { readonly kind: "hard-delete"; readonly threadId: string }
   | { readonly kind: "pin"; readonly threadId: string }
   | { readonly kind: "unpin"; readonly threadId: string }
   | undefined {
@@ -201,6 +202,9 @@ export function parseLingThreadRoute(
   if (segments.length === 3 && segments[0] === "threads" && segments[2] === "unarchive") {
     return { kind: "unarchive", threadId: segments[1] };
   }
+  if (segments.length === 3 && segments[0] === "threads" && segments[2] === "hard-delete") {
+    return { kind: "hard-delete", threadId: segments[1] };
+  }
   if (segments.length === 3 && segments[0] === "threads" && segments[2] === "pin") {
     return { kind: "pin", threadId: segments[1] };
   }
@@ -212,7 +216,7 @@ export function parseLingThreadRoute(
 
 export type SkillRoute =
   | { readonly kind: "draft"; readonly draftId: string; readonly action?: "publish" }
-  | { readonly kind: "skill"; readonly skillId: string; readonly action?: "corrections" | "source" | "source-archive" | "source-rollback" | "source-artifacts" | "optimization-preview" | "compiled-views" | "compiled-view-archive"; readonly viewId?: string }
+  | { readonly kind: "skill"; readonly skillId: string; readonly action?: "corrections" | "hard-delete" | "source" | "source-archive" | "source-rollback" | "source-artifacts" | "optimization-preview" | "compiled-views" | "compiled-view-archive"; readonly viewId?: string }
   | { readonly kind: "candidate"; readonly candidateId: string; readonly action?: "review" | "draft" };
 
 export function parseSkillRoute(pathname: string): SkillRoute | undefined {
@@ -234,6 +238,9 @@ export function parseSkillRoute(pathname: string): SkillRoute | undefined {
   }
   if (segments.length === 3 && segments[0] === "skills" && segments[2] === "corrections") {
     return { kind: "skill", skillId: segments[1], action: "corrections" };
+  }
+  if (segments.length === 3 && segments[0] === "skills" && segments[2] === "hard-delete") {
+    return { kind: "skill", skillId: segments[1], action: "hard-delete" };
   }
   if (segments.length === 3 && segments[0] === "skills" && segments[2] === "source") {
     return { kind: "skill", skillId: segments[1], action: "source" };

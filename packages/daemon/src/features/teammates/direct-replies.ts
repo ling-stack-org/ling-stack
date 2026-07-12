@@ -1,4 +1,13 @@
-import type { AiTeammate, RunStore, SecretResolver, TeammateDirectMessage, TeammateDirectThread } from "@ling-stack/core";
+import {
+  authorizationAndAccessFromLegacyPermission,
+  type AiTeammate,
+  type AuthorizationMode,
+  type RunStore,
+  type SecretResolver,
+  type TeammateDirectMessage,
+  type TeammateDirectThread,
+  type WorkspaceAccessMode,
+} from "@ling-stack/core";
 import type { RunnerRegistry, RunnerResolution } from "../../runtime/runners.js";
 import type { RuntimeSupervisor } from "../../runtime/supervisor.js";
 import { startRuntimeWorkUnit, transitionWorkUnitTerminal } from "../../runtime/work-units.js";
@@ -26,6 +35,8 @@ export async function createAiTeammateDirectReply(input: {
   readonly thread: TeammateDirectThread;
   readonly sourceMessage: TeammateDirectMessage;
   readonly providerPresetId?: string;
+  readonly authorizationMode?: AuthorizationMode;
+  readonly workspaceAccessMode?: WorkspaceAccessMode;
   readonly workspace?: DirectWorkspaceReady;
   readonly runtimeSupervisor: RuntimeSupervisor;
   readonly secretResolver: SecretResolver;
@@ -48,6 +59,13 @@ export async function createAiTeammateDirectReply(input: {
 }): Promise<TeammateDirectMessage> {
   const providerPresetId = input.providerPresetId ?? input.teammate.providerPresetId;
   const workspaceCwd = input.store.paths.cwd;
+  const workspaceSettings = input.store.getWorkspaceSettings();
+  const legacyPermission = authorizationAndAccessFromLegacyPermission(
+    workspaceSettings.defaultPermissionMode,
+    workspaceSettings.defaultPermissionPreset,
+  );
+  const authorizationMode = input.authorizationMode ?? workspaceSettings.defaultAuthorizationMode ?? legacyPermission.authorizationMode;
+  const workspaceAccessMode = input.workspaceAccessMode ?? workspaceSettings.defaultWorkspaceAccessMode ?? legacyPermission.workspaceAccessMode;
   const executionCwd = input.workspace?.executionCwd ?? workspaceCwd;
   const runnerResolution = input.runnerRegistry.resolve({
     requestedRunnerId: input.teammate.runnerId,
@@ -88,6 +106,8 @@ export async function createAiTeammateDirectReply(input: {
       directWorkspaceBinding: input.workspace?.binding,
       directWorkspaceSnapshot: input.workspace?.snapshot,
       providerPresetId,
+      authorizationMode,
+      workspaceAccessMode,
       runnerResolution: toRunnerResolutionSnapshot(runnerResolution),
     },
   });

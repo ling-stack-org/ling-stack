@@ -17,13 +17,11 @@ import {
   Wrench,
   type LucideIcon,
 } from "lucide-react";
-import type { RuntimeSettingsFormState } from "../../domains/settings/use-settings-domain.js";
 import type { McpBusyAction } from "../../domains/mcp/use-mcp-domain.js";
 import type { PluginActionNotice, PluginBusyAction } from "../../domains/plugins/use-plugins-domain.js";
 import { useI18n } from "../../i18n.js";
 import type {
-  ApprovalPolicy,
-  ApprovalPolicyFormState,
+  AuthorizationMode,
   Channel,
   EffectiveConfigResponse,
   ExternalWorkStatusResponse,
@@ -35,12 +33,11 @@ import type {
   McpTool,
   PermissionPreset,
   ResponseLanguagePreference,
-  RunnerListItem,
   RunSession,
   SessionPermissionMode,
   StartupStatusResponse,
   UserProfile,
-  WorkspaceRuntimeSettings,
+  WorkspaceAccessMode,
 } from "../../types.js";
 import { McpToolsPage } from "../mcp/McpToolsPage.js";
 import { ArchivedSettingsPanel } from "./ArchivedSettingsPanel.js";
@@ -176,11 +173,6 @@ const settingsSectionGroups: readonly {
 
 export function SettingsPage({
   cwd,
-  policy,
-  form,
-  runners,
-  runtimeSettings,
-  runtimeSettingsForm,
   skillLibraryRefreshToken,
   effectiveConfig,
   startupStatus,
@@ -199,14 +191,10 @@ export function SettingsPage({
   latestPluginApplyResult,
   latestPluginRuntimePreview,
   latestPluginNotice,
+  workspaceDefaultAuthorizationMode,
+  workspaceDefaultWorkspaceAccessMode,
   workspaceDefaultPermissionMode,
   workspaceDefaultPermissionPreset,
-  permissionMode,
-  permissionPreset,
-  isLoading,
-  runtimeSettingsLoading,
-  runtimeSettingsAction,
-  runtimeSettingsError,
   startupStatusLoading,
   startupStatusAction,
   startupStatusError,
@@ -215,17 +203,10 @@ export function SettingsPage({
   externalWorkSecretAction,
   externalWorkWorkflowAction,
   errorMessage,
-  onFormChange,
-  onPermissionModeChange,
-  onWorkspaceDefaultPermissionChange,
-  onRefresh,
-  onSave,
+  onWorkspaceDefaultAuthorizationChange,
+  onWorkspaceDefaultWorkspaceAccessChange,
   onWorkspaceResponseLanguageChange,
   onRefreshStartup,
-  onRuntimeSettingsFormChange,
-  onToggleAllowedRunner,
-  onRefreshRuntimeSettings,
-  onSaveRuntimeSettings,
   onRefreshExternalWork,
   onRefreshPlugins,
   onApplyPluginPreset,
@@ -268,11 +249,6 @@ export function SettingsPage({
   onBackToApplication,
 }: {
   readonly cwd: string;
-  readonly policy: ApprovalPolicy | undefined;
-  readonly form: ApprovalPolicyFormState;
-  readonly runners: readonly RunnerListItem[];
-  readonly runtimeSettings: WorkspaceRuntimeSettings | undefined;
-  readonly runtimeSettingsForm: RuntimeSettingsFormState;
   readonly skillLibraryRefreshToken: number;
   readonly effectiveConfig: EffectiveConfigResponse | undefined;
   readonly startupStatus: StartupStatusResponse | undefined;
@@ -291,14 +267,10 @@ export function SettingsPage({
   readonly latestPluginApplyResult?: ManagedPluginApplyPresetResponse;
   readonly latestPluginRuntimePreview?: ManagedPluginRuntimePreviewResponse;
   readonly latestPluginNotice?: PluginActionNotice;
+  readonly workspaceDefaultAuthorizationMode?: AuthorizationMode;
+  readonly workspaceDefaultWorkspaceAccessMode?: WorkspaceAccessMode;
   readonly workspaceDefaultPermissionMode?: SessionPermissionMode;
   readonly workspaceDefaultPermissionPreset?: PermissionPreset;
-  readonly permissionMode: SessionPermissionMode;
-  readonly permissionPreset?: PermissionPreset;
-  readonly isLoading: boolean;
-  readonly runtimeSettingsLoading: boolean;
-  readonly runtimeSettingsAction: "save" | undefined;
-  readonly runtimeSettingsError: string;
   readonly startupStatusLoading: boolean;
   readonly startupStatusAction: "refresh" | undefined;
   readonly startupStatusError: string;
@@ -307,17 +279,10 @@ export function SettingsPage({
   readonly externalWorkSecretAction: "configure" | "delete" | undefined;
   readonly externalWorkWorkflowAction: "configure" | undefined;
   readonly errorMessage: string;
-  readonly onFormChange: (form: ApprovalPolicyFormState) => void;
-  readonly onPermissionModeChange: (mode: SessionPermissionMode) => void;
-  readonly onWorkspaceDefaultPermissionChange: (mode: SessionPermissionMode, preset: PermissionPreset) => void;
-  readonly onRefresh: () => void;
-  readonly onSave: () => void;
+  readonly onWorkspaceDefaultAuthorizationChange: (mode: AuthorizationMode) => void;
+  readonly onWorkspaceDefaultWorkspaceAccessChange: (mode: WorkspaceAccessMode) => void;
   readonly onWorkspaceResponseLanguageChange: (language: ResponseLanguagePreference) => void;
   readonly onRefreshStartup: () => void;
-  readonly onRuntimeSettingsFormChange: (form: RuntimeSettingsFormState) => void;
-  readonly onToggleAllowedRunner: (runnerId: string, allowed: boolean) => void;
-  readonly onRefreshRuntimeSettings: () => void;
-  readonly onSaveRuntimeSettings: () => void;
   readonly onRefreshExternalWork: () => void;
   readonly onRefreshPlugins: () => void;
   readonly onApplyPluginPreset: (pluginId: string) => void;
@@ -473,30 +438,12 @@ export function SettingsPage({
 
         {visibleActiveSection === "approval-strategy" && !workspaceToolDetailOpen ? (
           <ExecutionPermissionsSettingsPanel
-            policy={policy}
-            form={form}
-            runners={runners}
-            runtimeSettings={runtimeSettings}
-            runtimeSettingsForm={runtimeSettingsForm}
-            selectedChannel={selectedChannel}
+            workspaceDefaultAuthorizationMode={workspaceDefaultAuthorizationMode}
+            workspaceDefaultWorkspaceAccessMode={workspaceDefaultWorkspaceAccessMode}
             workspaceDefaultPermissionMode={workspaceDefaultPermissionMode}
             workspaceDefaultPermissionPreset={workspaceDefaultPermissionPreset}
-            permissionMode={permissionMode}
-            permissionPreset={permissionPreset}
-            isLoading={isLoading}
-            runtimeSettingsLoading={runtimeSettingsLoading}
-            runtimeSettingsAction={runtimeSettingsAction}
-            runtimeSettingsError={runtimeSettingsError}
-            errorMessage={errorMessage}
-            onFormChange={onFormChange}
-            onPermissionModeChange={onPermissionModeChange}
-            onWorkspaceDefaultPermissionChange={onWorkspaceDefaultPermissionChange}
-            onRefresh={onRefresh}
-            onSave={onSave}
-            onRuntimeSettingsFormChange={onRuntimeSettingsFormChange}
-            onToggleAllowedRunner={onToggleAllowedRunner}
-            onRefreshRuntimeSettings={onRefreshRuntimeSettings}
-            onSaveRuntimeSettings={onSaveRuntimeSettings}
+            onWorkspaceDefaultAuthorizationChange={onWorkspaceDefaultAuthorizationChange}
+            onWorkspaceDefaultWorkspaceAccessChange={onWorkspaceDefaultWorkspaceAccessChange}
           />
         ) : null}
 

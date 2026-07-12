@@ -44,6 +44,10 @@
     "./provider-media-normalization": {
       "types": "./dist/provider-media-normalization.d.ts",
       "default": "./dist/provider-media-normalization.js"
+    },
+    "./session-permissions": {
+      "types": "./dist/session-permissions.d.ts",
+      "default": "./dist/session-permissions.js"
     }
   },
   "scripts": {

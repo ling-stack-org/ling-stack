@@ -172,6 +172,8 @@ export function parseWorkspaceSettingsUpdate(value: unknown): UpdateWorkspaceSet
     responseLanguage: readNullableResponseLanguagePreference(record.responseLanguage),
     lingConversationTone: readNullableLingConversationTone(record.lingConversationTone),
     defaultProviderPresetId: readNullableString(record.defaultProviderPresetId, "defaultProviderPresetId"),
+    defaultAuthorizationMode: readNullableAuthorizationMode(record.defaultAuthorizationMode),
+    defaultWorkspaceAccessMode: readNullableWorkspaceAccessMode(record.defaultWorkspaceAccessMode),
     defaultPermissionMode: readNullableSessionPermissionMode(record.defaultPermissionMode),
     defaultPermissionPreset: readNullablePermissionPreset(record.defaultPermissionPreset),
     channelNotifications: readNullableStringRecord(record.channelNotifications, "channelNotifications"),
@@ -337,6 +339,32 @@ function readNullableLingConversationTone(value: unknown): UpdateWorkspaceSettin
   }
   if (value !== "friendly" && value !== "pragmatic" && value !== "none") {
     throw new Error("lingConversationTone must be friendly, pragmatic, none, or null");
+  }
+  return value;
+}
+
+function readNullableAuthorizationMode(value: unknown): UpdateWorkspaceSettingsInput["defaultAuthorizationMode"] {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (value === null) {
+    return null;
+  }
+  if (value !== "ask" && value !== "smart" && value !== "always") {
+    throw new Error("defaultAuthorizationMode must be ask, smart, always, or null");
+  }
+  return value;
+}
+
+function readNullableWorkspaceAccessMode(value: unknown): UpdateWorkspaceSettingsInput["defaultWorkspaceAccessMode"] {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (value === null) {
+    return null;
+  }
+  if (value !== "read_only" && value !== "workspace_write" && value !== "full_access") {
+    throw new Error("defaultWorkspaceAccessMode must be read_only, workspace_write, full_access, or null");
   }
   return value;
 }
