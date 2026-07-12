@@ -28,6 +28,7 @@ test("skill import chooses one file and imports it with one action", async ({ pa
   await expect(dialog.getByRole("button", { name: "Publish to registry" })).toHaveCount(0);
   await expect(dialog.getByText("Choose one skill file. Ling will check it automatically before importing.")).toHaveCount(0);
   await expect(dialog.getByRole("button", { name: "Choose skill file" })).toHaveCount(0);
+  await expect(dialog.locator('input[type="file"]')).toHaveCount(1);
 
   const content = [
     "# Productized Import",
