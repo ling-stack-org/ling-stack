@@ -353,7 +353,7 @@ test("recent conversations only show records created from the conversation home"
   await expect(conversationPage.getByLabel("Conversation messages", { exact: true })).toContainText("Plan launch");
   await expect(conversationPage.locator(".normal-conversation-message-row.ai-teammate")).toHaveCount(1);
   const assistantRow = conversationPage.locator(".normal-conversation-message-row.ai-teammate").first();
-  await expect(assistantRow.locator(".conversation-work-cell")).toHaveCount(1);
+  await expect(assistantRow.locator(".conversation-work-cell")).toHaveCount(0);
   const assistantActions = assistantRow.locator(".normal-conversation-message-actions.message-action-bar");
   await expect(assistantActions).toHaveCount(1);
   await expect(assistantActions.locator('[data-tooltip="Copy message"]')).toHaveCount(1);
@@ -728,6 +728,115 @@ test("executed normal conversation renders one structured terminal report", asyn
   await expect(report).toContainText("接入普通会话投影");
   await expect(report).toContainText("1 个文件");
   await expect(report).toContainText("已通过");
+});
+
+test("persisted normal conversation without work evidence renders only the assistant reply", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.locale", "zh-CN");
+  });
+  const state = createBaseState({ approvalStatus: "expired" });
+  const threadId = "thread_persisted_chat_only";
+  const turnId = "turn_persisted_chat_only";
+  const runId = "run_persisted_chat_only";
+  const createdAt = "2026-07-11T04:00:00.000Z";
+  const completedAt = "2026-07-11T04:00:09.000Z";
+  state.threads = [{
+    id: threadId,
+    workspaceId: "workspace_default",
+    kind: "conversation",
+    title: "欧哈呦",
+    objective: "欧哈呦",
+    status: "succeeded",
+    lastRunId: runId,
+    createdAt,
+    updatedAt: completedAt,
+  }];
+  state.turns = [{
+    id: turnId,
+    workspaceId: "workspace_default",
+    threadId,
+    kind: "initial_request",
+    status: "succeeded",
+    title: "欧哈呦",
+    userInstruction: "欧哈呦",
+    lastRunId: runId,
+    createdByActor: "local-user",
+    createdAt,
+    updatedAt: completedAt,
+    completedAt,
+  }];
+  state.turnRunLinks = [{ turnId, runId, attemptNumber: 1, role: "primary", createdAt }];
+  state.runs = [{
+    id: runId,
+    status: "succeeded",
+    cwd,
+    taskId: "task_persisted_chat_only",
+    providerPresetId: "provider_local",
+    providerName: "local-relay",
+    providerModel: "gpt-5.5",
+    taskSnapshot: { id: "task_persisted_chat_only", title: "欧哈呦" },
+    providerSnapshot: {},
+    requestSnapshot: {},
+    eventLogPath: `.ling-stack/sessions/${runId}.jsonl`,
+    threadId,
+    createdAt,
+    startedAt: createdAt,
+    updatedAt: completedAt,
+    endedAt: completedAt,
+  }, ...state.runs];
+  state.eventsByRun[runId] = [{
+    id: "event_persisted_chat_only_assistant_text",
+    runId,
+    seq: 1,
+    ts: completedAt,
+    type: "assistant_text_delta",
+    data: { text: "欧哈呦！需要我帮你处理什么任务？" },
+  }];
+  state.terminalReports = [{
+    schemaVersion: 1,
+    id: "terminal_report_persisted_chat_only",
+    workspaceId: "workspace_default",
+    threadId,
+    turnId,
+    source: { kind: "turn", id: turnId },
+    status: "fallback",
+    language: "zh-CN",
+    outcome: {
+      status: "succeeded",
+      title: "欧哈呦",
+      summary: "任务已完成。",
+      corrections: [],
+      sourceRefs: [{ kind: "run", id: runId, visibility: "conversation" }],
+    },
+    changes: [],
+    verification: [{
+      id: "generic_check_persisted_chat_only",
+      title: "欧哈呦",
+      status: "passed",
+      sourceRefs: [{ kind: "run", id: runId, visibility: "conversation" }],
+    }],
+    participants: [],
+    artifacts: [],
+    risks: [],
+    references: [
+      { kind: "turn", id: turnId, visibility: "conversation" },
+      { kind: "run", id: runId, visibility: "conversation" },
+    ],
+    evidenceSnapshotId: "snapshot_persisted_chat_only",
+    evidenceFingerprint: "fingerprint_persisted_chat_only",
+    synthesis: { mode: "deterministic_fallback", promptVersion: "terminal-report-v1", attemptCount: 0, validationCodes: [] },
+    createdAt: completedAt,
+    committedAt: completedAt,
+  }];
+
+  await mockDaemon(page, state);
+  await page.goto("/");
+  const navigation = page.getByLabel("Ling Stack navigation");
+  await navigation.locator(".sidebar-recent-row").filter({ hasText: "欧哈呦" }).click();
+
+  const assistantRow = page.getByLabel("对话页面").locator(".normal-conversation-message-row.ai-teammate");
+  await expect(assistantRow).toContainText("欧哈呦！需要我帮你处理什么任务？");
+  await expect(assistantRow.locator(".conversation-work-cell")).toHaveCount(0);
 });
 
 test("conversation home follows user language and shows thinking as off", async ({ page }) => {

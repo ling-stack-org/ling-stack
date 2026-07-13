@@ -1099,7 +1099,7 @@ export function ConversationHome({
                 (message.runId && report.source.kind === "run" && report.source.id === message.runId)
               );
               const errorText = normalConversationMessageErrorText(message, linkedRun?.status);
-              const workCell = message.role === "assistant" && message.threadId && linkedRun ? buildConversationWorkCellViewModel({
+              const workCell = message.role === "assistant" && message.threadId && linkedRun && normalConversationTerminalReportHasWorkEvidence(terminalReport) ? buildConversationWorkCellViewModel({
                 threadId: message.threadId,
                 runs: detailContext?.runs ?? [linkedRun],
                 turns: detailContext?.turns,
@@ -1477,6 +1477,28 @@ function runMayHaveWorkspaceChanges(run: RunSession | undefined): boolean {
   }
   const tools = "tools" in run.requestSnapshot ? run.requestSnapshot.tools : undefined;
   return Array.isArray(tools) && tools.some((tool) => tool === "edit" || tool === "write" || tool === "bash");
+}
+
+function normalConversationTerminalReportHasWorkEvidence(report: TerminalReportDto | undefined): boolean {
+  if (!report) {
+    return false;
+  }
+  if (
+    report.outcome.corrections.length > 0 ||
+    report.changes.length > 0 ||
+    report.artifacts.length > 0 ||
+    report.risks.length > 0
+  ) {
+    return true;
+  }
+  const hasExecutionReference = (refs: TerminalReportDto["references"]): boolean => refs.some((ref) =>
+    ref.visibility !== "developer_only" &&
+    ref.sensitivity !== "secret_adjacent" &&
+    ["approval", "artifact", "check", "file", "operation"].includes(ref.kind),
+  );
+  return report.verification.some((verification) =>
+    Boolean(verification.command?.trim() || verification.summary?.trim()) || hasExecutionReference(verification.sourceRefs),
+  ) || hasExecutionReference(report.references) || hasExecutionReference(report.outcome.sourceRefs);
 }
 
 function normalConversationMessageErrorText(message: ConversationHomeMessage, runStatus?: RunSession["status"]): string {
