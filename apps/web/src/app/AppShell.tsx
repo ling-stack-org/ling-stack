@@ -1487,6 +1487,7 @@ export function AppShell(): JSX.Element {
     refreshAiTeammates,
     refreshUsedMemoryAudit,
     refreshChannelRunArtifacts,
+    refreshChannelExecutionActions,
     refreshChannelActivity,
   });
 
@@ -1608,6 +1609,22 @@ export function AppShell(): JSX.Element {
       return;
     }
     void refreshChannelExecutionActions(form.cwd.trim(), selectedChannelId, channelRunsForArtifacts);
+  }, [activeView, channelRunArtifactsKey, form.cwd, selectedChannelId]);
+
+  useEffect(() => {
+    const cwd = form.cwd.trim();
+    const hasActiveVisibleRun = channelRunsForArtifacts.some((candidate) =>
+      candidate.status === "queued" || candidate.status === "running" || candidate.status === "waiting_for_approval",
+    );
+    if (activeView !== "workspace" || !cwd || !selectedChannelId || !hasActiveVisibleRun) {
+      return undefined;
+    }
+    const interval = window.setInterval(() => {
+      if (document.visibilityState === "visible") {
+        void refreshChannelExecutionActions(cwd, selectedChannelId, channelRunsForArtifacts);
+      }
+    }, 750);
+    return () => window.clearInterval(interval);
   }, [activeView, channelRunArtifactsKey, form.cwd, selectedChannelId]);
 
   useEffect(() => {
@@ -1770,6 +1787,7 @@ export function AppShell(): JSX.Element {
       refreshChannelExecutionProposals(channelId),
       refreshChannelFiles(channelId),
       refreshChannelRunArtifacts(form.cwd.trim(), channelId, channelRunsForArtifacts),
+      refreshChannelExecutionActions(form.cwd.trim(), channelId, channelRunsForArtifacts),
       refreshChannelProtocol(channelId),
       refreshChannelGovernanceNotifications(channelId),
       refreshSelectedChannelCouncil(channelId),
@@ -2315,6 +2333,7 @@ export function AppShell(): JSX.Element {
                     threadId: selectedConversationDetail.thread.id,
                     turns: selectedConversationDetail.turns,
                     runs: selectedConversationDetail.runs,
+                    executionActions: selectedConversationDetail.executionActions,
                     terminalReports: selectedConversationDetail.terminalReports,
                   } : undefined}
                   defaultProviderLabel={defaultConversationProviderLabel}

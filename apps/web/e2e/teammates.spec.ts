@@ -1,5 +1,5 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
-import { mockDaemon } from "./support/mock-daemon";
+import { mockDaemon, type MockExecutionAction } from "./support/mock-daemon";
 import {
   createBaseState,
   createChatProvider,
@@ -19,6 +19,51 @@ import {
 async function openAiTeammatesFromSettings(page: Page): Promise<void> {
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
   await page.getByLabel("Settings sections").getByRole("button", { name: "Teammate Management" }).click();
+}
+
+function mockPrivateCommandAction(
+  id: string,
+  threadId: string,
+  runId: string,
+  command: string,
+  startedAt: string,
+  durationMs: number,
+): MockExecutionAction {
+  const completedAt = new Date(Date.parse(startedAt) + durationMs).toISOString();
+  return {
+    id,
+    workspaceId: "workspace_default",
+    threadId,
+    runId,
+    toolCallId: `tool_${id}`,
+    actionType: "bash",
+    risk: "low",
+    status: "succeeded",
+    title: "Run command",
+    summary: command,
+    targetRefs: [{ type: "command", label: command }],
+    previewArtifactIds: [],
+    resultArtifactIds: [],
+    commandEvidence: {
+      command,
+      cwd,
+      startedAt,
+      completedAt,
+      durationMs,
+      exitCode: 0,
+      timedOut: false,
+      cancelled: false,
+      latestEventSeq: 3,
+      outputTail: [{ eventSeq: 2, stream: "stdout", text: "ok\n", byteCount: 3, redacted: false, ts: completedAt }],
+      outputByteCount: 3,
+      outputLineCount: 1,
+      outputTruncated: false,
+    },
+    createdAt: startedAt,
+    updatedAt: completedAt,
+    executedAt: startedAt,
+    completedAt,
+  };
 }
 
 async function openChannelTeammateManager(page: Page): Promise<void> {
@@ -975,6 +1020,12 @@ test("AI teammate private workspace sends blocked chat replies and persists sett
     },
     ...state.runs,
   ];
+  state.executionActions = [
+    mockPrivateCommandAction("private_typecheck", "thread_private_acceptance", "run_private_acceptance", "pnpm typecheck", "2026-05-29T00:09:10.000Z", 900),
+    mockPrivateCommandAction("private_lint", "thread_private_acceptance", "run_private_acceptance", "pnpm lint", "2026-05-29T00:09:12.000Z", 600),
+    mockPrivateCommandAction("private_test", "thread_private_acceptance", "run_private_acceptance", "pnpm test", "2026-05-29T00:09:14.000Z", 1500),
+    ...state.executionActions,
+  ];
   state.terminalReports = [{
     schemaVersion: 1,
     id: "terminal_report_private_acceptance",
@@ -1119,6 +1170,13 @@ test("AI teammate private workspace sends blocked chat replies and persists sett
   await expect(privateFeed.locator(".message-feed-virtualizer")).toBeVisible();
   const linkedRunPrivateRow = page.locator(".teammate-message-row.ai-teammate").filter({ hasText: "Private acceptance criteria verified" });
   await expect(linkedRunPrivateRow.locator(".conversation-work-cell")).toHaveCount(1);
+  const privateWorkCell = linkedRunPrivateRow.locator(".conversation-work-cell");
+  await privateWorkCell.locator(".conversation-operation-shell-head").click();
+  const privateCommandBatch = privateWorkCell.locator(".conversation-command-batch");
+  await expect(privateCommandBatch.locator(".conversation-command-batch-header")).toContainText("Ran 3 commands");
+  await privateCommandBatch.locator(".conversation-command-batch-header").click();
+  await expect(privateCommandBatch.locator(".conversation-command-batch-list .conversation-work-cell-row")).toHaveCount(3);
+  await expect(privateCommandBatch).toContainText("pnpm test");
   await expect(linkedRunPrivateRow.getByText("Private acceptance criteria summary.")).toHaveCount(0);
   const privateTerminalReport = linkedRunPrivateRow.locator(".terminal-report-block");
   await expect(privateTerminalReport).toBeVisible();

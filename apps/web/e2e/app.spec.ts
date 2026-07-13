@@ -1,5 +1,5 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
-import { mockDaemon } from "./support/mock-daemon";
+import { mockDaemon, type MockExecutionAction } from "./support/mock-daemon";
 import {
   createBaseState,
   createChatProvider,
@@ -18,6 +18,51 @@ async function useEnglishLocale(page: Page): Promise<void> {
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");
   });
+}
+
+function mockCommandExecutionAction(
+  id: string,
+  threadId: string,
+  runId: string,
+  command: string,
+  startedAt: string,
+  durationMs: number,
+): MockExecutionAction {
+  const completedAt = new Date(Date.parse(startedAt) + durationMs).toISOString();
+  return {
+    id,
+    workspaceId: "workspace_default",
+    threadId,
+    runId,
+    toolCallId: `tool_${id}`,
+    actionType: "bash",
+    risk: "low",
+    status: "succeeded",
+    title: "Run command",
+    summary: command,
+    targetRefs: [{ type: "command", label: command }],
+    previewArtifactIds: [],
+    resultArtifactIds: [],
+    commandEvidence: {
+      command,
+      cwd,
+      startedAt,
+      completedAt,
+      durationMs,
+      exitCode: 0,
+      timedOut: false,
+      cancelled: false,
+      latestEventSeq: 3,
+      outputTail: [{ eventSeq: 2, stream: "stdout", text: "ok\n", byteCount: 3, redacted: false, ts: completedAt }],
+      outputByteCount: 3,
+      outputLineCount: 1,
+      outputTruncated: false,
+    },
+    createdAt: startedAt,
+    updatedAt: completedAt,
+    executedAt: startedAt,
+    completedAt,
+  };
 }
 
 async function readComposerGeometry(page: Page, selector: string): Promise<{ backgroundColor: string; borderRadius: string; boxShadow: string; inputHeight: number; padding: string }> {
@@ -614,6 +659,7 @@ test("executed normal conversation renders one structured terminal report", asyn
   const threadId = "thread_terminal_report_conversation";
   const turnId = "turn_terminal_report_conversation";
   const runId = "run_terminal_report_conversation";
+  const priorRunId = "run_terminal_report_conversation_prior";
   const createdAt = "2026-07-11T03:00:00.000Z";
   const completedAt = "2026-07-11T03:01:00.000Z";
   state.threads = [{
@@ -642,7 +688,10 @@ test("executed normal conversation renders one structured terminal report", asyn
     updatedAt: completedAt,
     completedAt,
   }];
-  state.turnRunLinks = [{ turnId, runId, attemptNumber: 1, role: "primary", createdAt }];
+  state.turnRunLinks = [
+    { turnId, runId, attemptNumber: 2, role: "primary", createdAt: "2026-07-11T03:00:30.000Z" },
+    { turnId, runId: priorRunId, attemptNumber: 1, role: "retry", createdAt },
+  ];
   state.runs = [{
     id: runId,
     status: "succeeded",
@@ -661,6 +710,25 @@ test("executed normal conversation renders one structured terminal report", asyn
     startedAt: createdAt,
     updatedAt: completedAt,
     endedAt: completedAt,
+  }, {
+    id: priorRunId,
+    status: "failed",
+    cwd,
+    taskId: "task_terminal_report_conversation_prior",
+    providerPresetId: "provider_local",
+    providerName: "local-relay",
+    providerModel: "gpt-5.5",
+    taskSnapshot: { id: "task_terminal_report_conversation_prior", title: "旧尝试" },
+    providerSnapshot: {},
+    requestSnapshot: {},
+    eventLogPath: `.ling-stack/sessions/${priorRunId}.jsonl`,
+    threadId,
+    turnId,
+    createdAt,
+    startedAt: createdAt,
+    updatedAt: "2026-07-11T03:00:20.000Z",
+    endedAt: "2026-07-11T03:00:20.000Z",
+    errorMessage: "prior attempt failed",
   }, ...state.runs];
   state.eventsByRun[runId] = [{
     id: "event_terminal_report_assistant_text",
@@ -670,6 +738,13 @@ test("executed normal conversation renders one structured terminal report", asyn
     type: "assistant_text_delta",
     data: { text: "旧的执行总结不应和结构化报告重复展示。" },
   }];
+  state.executionActions = [
+    mockCommandExecutionAction("normal_typecheck", threadId, runId, "corepack pnpm --filter @ling-stack/web typecheck", "2026-07-13T04:00:10.000Z", 1200),
+    mockCommandExecutionAction("normal_i18n", threadId, runId, "corepack pnpm --filter @ling-stack/web check:i18n", "2026-07-13T04:00:12.000Z", 700),
+    mockCommandExecutionAction("normal_diff", threadId, runId, "git diff --check", "2026-07-13T04:00:14.000Z", 300),
+    mockCommandExecutionAction("normal_prior", threadId, priorRunId, "echo prior attempt", "2026-07-11T03:00:10.000Z", 200),
+    ...state.executionActions,
+  ];
   state.terminalReports = [{
     schemaVersion: 1,
     id: "terminal_report_conversation",
@@ -795,6 +870,13 @@ test("executed normal conversation renders one structured terminal report", asyn
   const reportFileIconColor = await reportFileLink.locator("svg").evaluate((element) => getComputedStyle(element).color);
   expect(reportFileIconColor).toBe(reportFileHoverColor);
   const workCell = assistantRow.locator(".conversation-work-cell");
+  await workCell.locator(".conversation-operation-shell-head").click();
+  const commandBatch = workCell.locator(".conversation-command-batch");
+  await expect(commandBatch.locator(".conversation-command-batch-header")).toContainText("已运行 3 个命令");
+  await commandBatch.locator(".conversation-command-batch-header").click();
+  await expect(commandBatch.locator(".conversation-command-batch-list .conversation-work-cell-row")).toHaveCount(3);
+  await expect(commandBatch).toContainText("git diff --check");
+  await expect(workCell).not.toContainText("echo prior attempt");
   await expect(workCell.locator(".conversation-work-cell-artifact-row")).toHaveCount(1);
   await expect(workCell).toContainText("ConversationHome.tsx");
   await expect(workCell).not.toContainText("Generated file metadata");

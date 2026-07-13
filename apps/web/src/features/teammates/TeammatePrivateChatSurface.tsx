@@ -44,6 +44,7 @@ import type {
   AiTeammate,
   Channel,
   MemoryObject,
+  ExecutionAction,
   RunSession,
   TeammateDirectLinkPreview,
   TeammateDirectMessage,
@@ -93,6 +94,7 @@ export function TeammatePrivateChatSurface({
   usedMemoryEvents,
   memoryById,
   runs,
+  executionActions,
   terminalReports,
   providerRecovered,
   privateAttachmentById,
@@ -174,6 +176,7 @@ export function TeammatePrivateChatSurface({
   readonly usedMemoryEvents: readonly UsedMemoryEvent[];
   readonly memoryById: ReadonlyMap<string, MemoryObject>;
   readonly runs: readonly RunSession[];
+  readonly executionActions: readonly ExecutionAction[];
   readonly terminalReports: readonly TerminalReportDto[];
   readonly providerRecovered: boolean;
   readonly privateAttachmentById: ReadonlyMap<string, TeammatePrivateAttachment>;
@@ -283,6 +286,7 @@ export function TeammatePrivateChatSurface({
     messages: visibleMessages,
     teammateId: teammate.id,
     runs,
+    executionActions,
     terminalReports,
     t,
   });
@@ -1059,6 +1063,7 @@ function buildPrivateWorkCellMap(input: {
   readonly messages: readonly TeammateDirectMessage[];
   readonly teammateId: string;
   readonly runs: readonly RunSession[];
+  readonly executionActions: readonly ExecutionAction[];
   readonly terminalReports: readonly TerminalReportDto[];
   readonly t: Translate;
 }): ReadonlyMap<string, { readonly model: ConversationWorkCellViewModel }> {
@@ -1081,6 +1086,7 @@ function buildPrivateWorkCellMap(input: {
       allowRunThreadFallback: true,
       approvals: [],
       artifactsByRun: {},
+      executionActions: input.executionActions.filter((action) => action.runId === run.id),
       t: input.t,
       artifactHref: (artifact) => artifactContentUrl(artifact.id, run.cwd),
       terminalReport: input.terminalReports.find((report) =>

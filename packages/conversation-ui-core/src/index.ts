@@ -10,6 +10,9 @@ export type {
 export type {
   ConversationAgentActivitySpan,
   ConversationAgentActivitySpanKind,
+  ConversationCommandBatch,
+  ConversationCommandBatchItem,
+  ConversationCommandExecutionView,
   ConversationArtifactStripChangeArtifact,
   ConversationArtifactStripItem,
   ConversationArtifactStripItemKind,
@@ -25,6 +28,7 @@ export type {
   ConversationWorkCellEvidenceLink,
   ConversationWorkCellGroup,
   ConversationWorkCellGroupKind,
+  ConversationWorkCellItem,
   ConversationWorkCellRow,
   ConversationWorkCellRowDetailLine,
   ConversationWorkCellRowTone,
@@ -32,6 +36,10 @@ export type {
   ConversationWorkCellViewModel,
 } from "./work-cell-view-model.js";
 export { normalizeConversationOperationCell } from "./work-cell-view-model.js";
+export {
+  isCommandBatchEligible,
+  projectConversationCommandBatches,
+} from "./command-batching.js";
 export type {
   TerminalReportViewInput,
   TerminalReportViewModel,

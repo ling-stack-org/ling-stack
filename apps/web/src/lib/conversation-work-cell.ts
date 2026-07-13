@@ -1,9 +1,12 @@
 import {
   normalizeConversationOperationCell,
+  projectConversationCommandBatches,
   terminalReportToViewModel,
   type ConversationAgentActivitySpan,
   type ConversationArtifactStripChangeArtifact,
   type ConversationArtifactStripItem,
+  type ConversationCommandBatch,
+  type ConversationCommandBatchItem,
   type ConversationOperationCellMode,
   type ConversationOperationCellSourceKind,
   type ConversationOperationCellStatus,
@@ -14,6 +17,7 @@ import {
   type ConversationWorkCellEvidenceLink,
   type ConversationWorkCellGroup,
   type ConversationWorkCellGroupKind,
+  type ConversationWorkCellItem,
   type ConversationWorkCellRow,
   type ConversationWorkCellRowDetailLine,
   type ConversationWorkCellRowTone,
@@ -27,6 +31,7 @@ import { artifactLooksLikeDiff } from "./diff-summary.js";
 
 export {
   normalizeConversationOperationCell,
+  projectConversationCommandBatches,
 };
 export type {
   ConversationAgentActivitySpan,
@@ -34,6 +39,8 @@ export type {
   ConversationArtifactStripChangeArtifact,
   ConversationArtifactStripItem,
   ConversationArtifactStripItemKind,
+  ConversationCommandBatch,
+  ConversationCommandBatchItem,
   ConversationOperationCellMode,
   ConversationOperationCellSourceKind,
   ConversationOperationCellStatus,
@@ -45,6 +52,7 @@ export type {
   ConversationWorkCellEvidenceLink,
   ConversationWorkCellGroup,
   ConversationWorkCellGroupKind,
+  ConversationWorkCellItem,
   ConversationWorkCellRow,
   ConversationWorkCellRowDetailLine,
   ConversationWorkCellRowTone,
@@ -1210,6 +1218,25 @@ function executionActionEvidenceRow(
     presentation: commandText ? "shell" : undefined,
     title: executionActionDisplayTitle(action, artifactsById, t),
     commandText,
+    commandExecution: commandText && action.commandEvidence ? {
+      actionId: action.id,
+      toolCallId: action.toolCallId,
+      runId: action.runId,
+      workUnitId: action.workUnitId,
+      workflowStepId: action.targetRefs.find((ref) => ref.type === "workflow_step")?.id,
+      actionType: action.actionType,
+      risk: action.risk,
+      status: action.status,
+      commandText,
+      startedAt: action.commandEvidence.startedAt,
+      completedAt: action.commandEvidence.completedAt,
+      durationMs: action.commandEvidence.durationMs,
+      exitCode: action.commandEvidence.exitCode,
+      latestEventSeq: action.commandEvidence.latestEventSeq,
+      outputTruncated: action.commandEvidence.outputTruncated,
+      stdoutArtifactId: action.commandEvidence.stdoutArtifactId,
+      stderrArtifactId: action.commandEvidence.stderrArtifactId,
+    } : undefined,
     changePreview: executionActionChangePreview(action, artifactsById),
     detailLines,
     meta: operationStatusMeta(action.status, t),
@@ -1377,6 +1404,11 @@ function executionActionDetailLines(
     }
   }
 
+  const outputTail = executionActionOutputTail(action);
+  if (outputTail) {
+    push({ kind: "code", text: outputTail });
+  }
+
   const outputArtifacts = action.resultArtifactIds
     .map((artifactId) => artifactsById.get(artifactId))
     .filter((artifact): artifact is RunArtifact => Boolean(artifact))
@@ -1398,6 +1430,10 @@ function executionActionCommandText(action: ExecutionAction): string | undefined
   if (action.actionType !== "bash" && !action.targetRefs.some((ref) => ref.type === "command")) {
     return undefined;
   }
+  const evidenceCommand = action.commandEvidence?.command.trim();
+  if (evidenceCommand) {
+    return truncatePreview(evidenceCommand, 220);
+  }
   for (const ref of action.targetRefs) {
     if (ref.type !== "command") {
       continue;
@@ -1408,6 +1444,18 @@ function executionActionCommandText(action: ExecutionAction): string | undefined
     }
   }
   return undefined;
+}
+
+function executionActionOutputTail(action: ExecutionAction): string | undefined {
+  const chunks = action.commandEvidence?.outputTail ?? [];
+  if (chunks.length === 0) {
+    return undefined;
+  }
+  const text = chunks.map((chunk) => chunk.text).join("");
+  if (!text.trim()) {
+    return undefined;
+  }
+  return text.split(/\r?\n/u).slice(-12).join("\n").trimEnd();
 }
 
 function userFacingTargetRefText(ref: ExecutionAction["targetRefs"][number]): string | undefined {

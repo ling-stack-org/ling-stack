@@ -40,6 +40,7 @@ import type { RunRequest } from "../runs/schemas.js";
 import { materializeInlineConversationAttachments, type ConversationAttachmentMaterialization } from "./materialization.js";
 import { lingConversationToneInstruction } from "./conversation-tone.js";
 import { projectTerminalReportDto } from "../channels/terminal-report-routes.js";
+import { listExecutionActions } from "../runs/execution-actions.js";
 import {
   buildConversationSupersessionProjection,
   filterSupersededLingTurns,
@@ -445,6 +446,7 @@ export function buildConversationDetail(
     thread,
     turns,
     runs,
+    executionActions: listExecutionActions(store, { threadId: thread.id, limit: 500 }),
     terminalReports: (options.includeSuperseded
       ? store.listTerminalReports({ threadId: thread.id, limit: 200 })
       : filterSupersededTerminalReports(store.listTerminalReports({ threadId: thread.id, limit: 200 }), projection))

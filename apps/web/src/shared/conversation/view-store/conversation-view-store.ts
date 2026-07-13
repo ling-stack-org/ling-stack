@@ -28,6 +28,7 @@ export interface ConversationDisclosureInput {
   readonly kind: ConversationDisclosureKind;
   readonly revisionKey: string;
   readonly defaultExpanded: boolean;
+  readonly preserveTouchedStateOnRevision?: boolean;
 }
 
 export interface ConversationViewStore {
@@ -83,9 +84,11 @@ class ConversationViewStoreImpl implements ConversationViewStore {
     }
     const next = new Map(map);
     next.set(input.id, {
-      expanded: input.defaultExpanded,
+      expanded: input.preserveTouchedStateOnRevision && current?.touched
+        ? current.expanded
+        : input.defaultExpanded,
       revisionKey: input.revisionKey,
-      touched: false,
+      touched: input.preserveTouchedStateOnRevision ? current?.touched ?? false : false,
     });
     this.replaceDisclosureMap(input.kind, next);
   }

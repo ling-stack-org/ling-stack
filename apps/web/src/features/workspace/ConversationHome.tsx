@@ -25,7 +25,7 @@ import {
 } from "lucide-react";
 import { attachmentContentUrl, deleteAttachment, editConversationMessage, uploadConversationAttachment } from "../../api.js";
 import { useI18n } from "../../i18n.js";
-import type { ConversationAttachment, ConversationPendingReplacement, ConversationTranscriptStatus, LingTurn, PermissionPreset, ProviderThinkingMode, RunSession, SessionPermissionMode, TerminalReportDto } from "../../types.js";
+import type { ConversationAttachment, ConversationPendingReplacement, ConversationTranscriptStatus, ExecutionAction, LingTurn, PermissionPreset, ProviderThinkingMode, RunSession, SessionPermissionMode, TerminalReportDto } from "../../types.js";
 import {
   createAttachmentPreviewUrl,
   createLocalComposerAssetId,
@@ -118,6 +118,7 @@ export interface ConversationHomeDetailContext {
   readonly threadId?: string;
   readonly turns: readonly LingTurn[];
   readonly runs: readonly RunSession[];
+  readonly executionActions: readonly ExecutionAction[];
   readonly terminalReports: readonly TerminalReportDto[];
 }
 
@@ -1114,13 +1115,22 @@ export function ConversationHome({
                 (message.runId && report.source.kind === "run" && report.source.id === message.runId)
               );
               const errorText = normalConversationMessageErrorText(message, linkedRun?.status);
-              const workCell = message.role === "assistant" && message.threadId && linkedRun && normalConversationTerminalReportHasWorkEvidence(terminalReport) ? buildConversationWorkCellViewModel({
+              const messageExecutionActions = linkedRun
+                ? detailContext?.executionActions.filter((action) => action.runId === linkedRun.id) ?? []
+                : [];
+              const workCell = message.role === "assistant" && message.threadId && linkedRun && (
+                normalConversationTerminalReportHasWorkEvidence(terminalReport) ||
+                messageExecutionActions.length > 0 ||
+                linkedRun.status === "queued" ||
+                linkedRun.status === "running" ||
+                linkedRun.status === "waiting_for_approval"
+              ) ? buildConversationWorkCellViewModel({
                 threadId: message.threadId,
-                runs: detailContext?.runs ?? [linkedRun],
-                turns: detailContext?.turns,
+                runs: [linkedRun],
                 allowRunThreadFallback: true,
                 approvals: [],
                 artifactsByRun: {},
+                executionActions: messageExecutionActions,
                 t,
                 terminalReport,
               }) : undefined;

@@ -1,5 +1,6 @@
 import type { ChannelAttachmentKind, ChannelMention, ChannelMessageFileRef } from "./channels.js";
 import type { ConversationPendingReplacement, PermissionConfirmation, PermissionPreset, RunThinkingLevel, RunTool, SessionPermissionMode } from "./shared.js";
+import type { ExecutionAction } from "./execution-actions.js";
 import type { ResponseLanguagePreference } from "./settings.js";
 import type { RunEventEnvelope, RunSession } from "./runtime.js";
 import type { LingThread } from "./threads.js";
@@ -77,6 +78,7 @@ export interface ConversationDetailResponse {
   readonly thread: LingThread;
   readonly turns: readonly LingTurn[];
   readonly runs: readonly RunSession[];
+  readonly executionActions: readonly ExecutionAction[];
   readonly terminalReports: readonly TerminalReportDto[];
   readonly messages: readonly ConversationTranscriptMessage[];
   readonly defaults: {
