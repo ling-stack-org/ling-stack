@@ -8382,7 +8382,31 @@ test("local channel work-cell demo fixture renders a realistic multi-agent opera
     localStorage.setItem("ling-stack.workCellDemo", "true");
   });
   const state = createBaseState({ approvalStatus: "expired" });
-  state.channelMessages = [];
+  state.channelMessages = [{
+    id: "message_after_work_cell_demo",
+    workspaceId: "workspace_default",
+    channelId: "channel_engineering",
+    kind: "message",
+    intent: "discuss",
+    authorType: "local-user",
+    authorId: "local-user",
+    body: [
+      "继续检查历史会话里的文件操作。",
+      "这一条测试消息让上面的产物记录成为历史内容。",
+      "菜单向下展开时仍然必须覆盖后续会话行。",
+      "Visual Studio Code、TextEdit 和下载入口都应该可以点击。",
+      "虚拟列表不能拦截弹层的指针事件。",
+      "滚动后菜单也不能改变消息流高度。",
+      "完成验证后继续保留简约的会话布局。",
+    ].join("\n"),
+    mentions: [],
+    attachmentIds: [],
+    linkPreviewIds: [],
+    fileRefs: [],
+    status: "ready",
+    createdAt: "2026-07-10T09:15:00.000Z",
+    updatedAt: "2026-07-10T09:15:00.000Z",
+  }];
   state.tasks = [];
   state.runs = [];
   state.approvals = [];
@@ -8521,9 +8545,58 @@ test("local channel work-cell demo fixture renders a realistic multi-agent opera
   const artifactSurfaceWidth = await transcriptArtifacts.evaluate((element) => Math.round(element.getBoundingClientRect().width));
   expect(artifactSurfaceWidth).toBeGreaterThan(680);
   await expect.poll(async () => Math.round((await artifactRows.first().boundingBox())?.width ?? 0)).toBe(artifactSurfaceWidth);
-  await expect(artifactRows.filter({ hasText: "conversation-work-cell-operation-records.md" })).toHaveCount(1);
+  const docArtifactRow = artifactRows.filter({ hasText: "conversation-work-cell-operation-records.md" });
+  await expect(docArtifactRow).toHaveCount(1);
   await expect(artifactRows.filter({ hasText: "ConversationWorkCell.tsx" })).toHaveCount(1);
-  await expect(transcriptArtifacts.getByRole("button", { name: "打开方式" })).toHaveCount(0);
+  await expect(transcriptArtifacts.getByRole("button", { name: "打开方式" })).toHaveCount(2);
+  await docArtifactRow.evaluate((element) => element.scrollIntoView({ block: "end" }));
+  const openOptionsRequest = page.waitForRequest((request) => {
+    const url = new URL(request.url());
+    return url.pathname === "/workspace-files/open-options" &&
+      url.searchParams.get("path") === "docs/design/conversation-work-cell-operation-records.md";
+  });
+  const openWithTrigger = docArtifactRow.getByRole("button", { name: "打开方式" });
+  const feedScrollHeightBeforeOpen = await feed.evaluate((element) => element.scrollHeight);
+  await openWithTrigger.click();
+  await openOptionsRequest;
+  const openMenu = docArtifactRow.locator(".workspace-file-open-popover");
+  await expect(openMenu).toContainText("Visual Studio Code");
+  await expect(openMenu).toContainText("TextEdit");
+  await expect(openMenu).not.toContainText("Default app");
+  const [openWithTriggerBox, openMenuBox] = await Promise.all([
+    openWithTrigger.boundingBox(),
+    openMenu.boundingBox(),
+  ]);
+  expect(openWithTriggerBox).not.toBeNull();
+  expect(openMenuBox).not.toBeNull();
+  expect(openMenuBox!.y + openMenuBox!.height).toBeLessThanOrEqual(openWithTriggerBox!.y - 4);
+  expect(await feed.evaluate((element) => element.scrollHeight)).toBe(feedScrollHeightBeforeOpen);
+  await openWithTrigger.click();
+  await docArtifactRow.evaluate((element) => {
+    const scrollOwner = element.closest<HTMLElement>(".message-feed");
+    if (!scrollOwner) {
+      throw new Error("Message feed scroll owner is missing.");
+    }
+    scrollOwner.scrollTop += element.getBoundingClientRect().top - scrollOwner.getBoundingClientRect().top - 48;
+  });
+  await expect.poll(async () => {
+    const [feedBox, triggerBox] = await Promise.all([feed.boundingBox(), openWithTrigger.boundingBox()]);
+    return feedBox && triggerBox ? Math.round(triggerBox.y - feedBox.y) : -1;
+  }).toBeLessThan(180);
+  await openWithTrigger.click();
+  const [downwardTriggerBox, downwardMenuBox] = await Promise.all([
+    openWithTrigger.boundingBox(),
+    openMenu.boundingBox(),
+  ]);
+  expect(downwardTriggerBox).not.toBeNull();
+  expect(downwardMenuBox).not.toBeNull();
+  expect(downwardMenuBox!.y).toBeGreaterThanOrEqual(downwardTriggerBox!.y + downwardTriggerBox!.height + 4);
+  const openWorkspaceRequest = page.waitForRequest((request) =>
+    request.method() === "POST" && new URL(request.url()).pathname === "/workspace-files/open"
+  );
+  await openMenu.getByRole("button", { name: "TextEdit", exact: true }).click();
+  await openWorkspaceRequest;
+  await expect(openMenu).toHaveCount(0);
   await expect(transcriptArtifacts).not.toContainText("channel-work-cell-e2e.log");
   const changedGroup = transcriptArtifacts.locator(".conversation-work-cell-change-group");
   await expect.poll(async () => Math.round((await changedGroup.boundingBox())?.width ?? 0)).toBe(artifactSurfaceWidth);

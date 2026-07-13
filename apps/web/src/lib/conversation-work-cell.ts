@@ -478,10 +478,10 @@ export function buildConversationWorkCellViewModel(input: BuildConversationWorkC
   ], (item) => item.id);
   const baseArtifactStripItems = buildConversationArtifactStripItems({ groups, evidenceLinks, artifacts, t: input.t });
   const hasBaseChangedItem = baseArtifactStripItems.some((item) => item.kind === "changed");
-  const artifactStripItems = uniqueBy([
-    ...baseArtifactStripItems,
-    ...(terminalReport?.artifactStripItems ?? []).filter((item) => item.kind !== "changed" || !hasBaseChangedItem),
-  ], (item) => item.artifactId ?? item.id);
+  const artifactStripItems = mergeConversationArtifactStripItems(
+    baseArtifactStripItems,
+    (terminalReport?.artifactStripItems ?? []).filter((item) => item.kind !== "changed" || !hasBaseChangedItem),
+  );
 
   return normalizeConversationOperationCell({
     id: turnContext ? `work-cell:turn:${turnContext.turn.id}` : `work-cell:${input.threadId}`,
@@ -1672,4 +1672,22 @@ function uniqueBy<T>(items: readonly T[], keyOf: (item: T) => string): readonly 
     result.push(item);
   }
   return result;
+}
+
+export function mergeConversationArtifactStripItems(
+  primary: readonly ConversationArtifactStripItem[],
+  enrichments: readonly ConversationArtifactStripItem[],
+): readonly ConversationArtifactStripItem[] {
+  const keyOf = (item: ConversationArtifactStripItem): string => item.artifactId ?? item.id;
+  const enrichmentByKey = new Map(enrichments.map((item) => [keyOf(item), item]));
+  const primaryKeys = new Set(primary.map(keyOf));
+  return [
+    ...primary.map((item) => {
+      const enrichment = enrichmentByKey.get(keyOf(item));
+      return !item.workspaceFilePath && enrichment?.workspaceFilePath
+        ? { ...item, workspaceFilePath: enrichment.workspaceFilePath }
+        : item;
+    }),
+    ...enrichments.filter((item) => !primaryKeys.has(keyOf(item))),
+  ];
 }

@@ -4027,6 +4027,23 @@ button.message-local-file-link {
 
 .conversation-work-cell-artifact-row {
   display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  min-width: 0;
+  min-height: 36px;
+  padding: 0 4px 0 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  cursor: default;
+  animation: conversation-settle-in 160ms ease-out both;
+}
+
+.conversation-work-cell-artifact-main {
+  display: grid;
   grid-template-columns: 38px minmax(0, 1fr);
   align-items: center;
   gap: 7px;
@@ -4035,31 +4052,37 @@ button.message-local-file-link {
   min-height: 36px;
   padding: 3px 6px;
   border: 0;
-  border-radius: 6px;
   background: transparent;
   color: inherit;
   cursor: default;
   text-align: left;
   text-decoration: none;
-  animation: conversation-settle-in 160ms ease-out both;
 }
 
-.conversation-work-cell-artifact-row:is(button, a) {
+.conversation-work-cell-artifact-main:is(button, a) {
   cursor: pointer;
 }
 
 .conversation-work-cell-artifact-row:hover,
-.conversation-work-cell-artifact-row:focus-visible {
+.conversation-work-cell-artifact-row:focus-within {
   background: var(--conversation-bg-muted);
 }
 
 .conversation-work-cell-artifact-row:hover .conversation-work-cell-artifact-copy strong,
-.conversation-work-cell-artifact-row:focus-visible .conversation-work-cell-artifact-copy strong {
+.conversation-work-cell-artifact-row:focus-within .conversation-work-cell-artifact-copy strong {
   color: var(--conversation-text-strong);
 }
 
-.conversation-work-cell-artifact-row:focus {
+.conversation-work-cell-artifact-main:focus {
   outline: none;
+}
+
+.conversation-work-cell-artifact-row > .workspace-file-open-menu {
+  flex: 0 0 auto;
+}
+
+.conversation-work-cell-artifact-row .workspace-file-open-popover {
+  overflow-y: auto;
 }
 
 .conversation-reference-strip {
@@ -9218,6 +9241,11 @@ code,
   box-shadow: 0 14px 32px rgba(0, 0, 0, 0.16);
 }
 
+.workspace-file-open-menu.above .workspace-file-open-popover {
+  top: auto;
+  bottom: calc(100% + 4px);
+}
+
 .workspace-file-open-popover > strong {
   padding: 3px 6px 5px;
   color: var(--text-muted);
@@ -13533,6 +13561,10 @@ code,
   width: 100%;
   padding: 0 0 12px;
   will-change: transform;
+}
+
+.message-feed-virtual-row:has(.workspace-file-open-popover) {
+  z-index: 20;
 }
 
 .message-feed-virtual-row:focus {

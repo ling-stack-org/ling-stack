@@ -38,9 +38,15 @@ test("terminal report projection keeps semantic sections and removes private dev
       sourceRefs: [],
     }],
     artifacts: [
-      { id: "artifact_1", title: "view.tsx", path: "apps/web/src/view.tsx", sourceRefs: [] },
-      { id: "artifact_metadata", title: "Generated file metadata: view.tsx", path: "run_1/metadata.txt", sourceRefs: [] },
-      { id: "artifact_preview", title: "Action preview: bash", path: "run_1/actions/approval_1/preview.json", sourceRefs: [] },
+      {
+        id: "artifact_1",
+        kind: "file",
+        title: "view.tsx",
+        path: "apps/web/src/view.tsx",
+        sourceRefs: [{ kind: "file", id: "apps/web/src/view.tsx", visibility: "conversation" }],
+      },
+      { id: "artifact_metadata", kind: "other", title: "Generated file metadata: view.tsx", path: "run_1/metadata.txt", sourceRefs: [] },
+      { id: "artifact_preview", kind: "other", title: "Action preview: bash", path: "run_1/actions/approval_1/preview.json", sourceRefs: [] },
     ],
     risks: [],
     references: [
@@ -85,5 +91,97 @@ test("terminal report projection keeps semantic sections and removes private dev
     tone: "neutral",
   });
   assert.equal(report.artifactStripItems[1]?.label, "view.tsx");
+  assert.equal(report.artifactStripItems[1]?.workspaceFilePath, "apps/web/src/view.tsx");
   assert.equal(report.revisionKey, "terminal_report_1:fingerprint_1");
+});
+
+test("terminal report artifact workspace paths require one trusted changed-file source ref", () => {
+  const report = terminalReportToViewModel({
+    id: "terminal_report_workspace_files",
+    status: "committed",
+    language: "en-US",
+    outcome: {
+      status: "succeeded",
+      title: "Workspace files updated",
+      summary: "The changed files are available for review.",
+      corrections: [],
+      sourceRefs: [],
+    },
+    changes: [{
+      id: "change_workspace_files",
+      title: "Update files",
+      summary: "Updated workspace files.",
+      paths: ["apps/web/src/view.tsx", "docs/view.tsx", "docs/notes.md", "run_1/internal.txt"],
+      sourceRefs: [],
+    }],
+    verification: [],
+    participants: [],
+    artifacts: [
+      {
+        id: "trusted_exact",
+        kind: "diff",
+        title: "view.tsx",
+        path: "apps/web/src/view.tsx",
+        sourceRefs: [{ kind: "file", id: "apps/web/src/view.tsx", visibility: "conversation" }],
+      },
+      {
+        id: "trusted_internal_copy",
+        kind: "document",
+        title: "notes.md",
+        path: "run_1/notes-output.md",
+        sourceRefs: [{ kind: "file", id: "docs/notes.md", visibility: "conversation" }],
+      },
+      {
+        id: "exact_without_file_ref",
+        kind: "file",
+        title: "view.tsx",
+        path: "apps/web/src/view.tsx",
+        sourceRefs: [],
+      },
+      {
+        id: "artifact_ref_only",
+        kind: "file",
+        title: "internal.txt",
+        path: "run_1/internal.txt",
+        sourceRefs: [{ kind: "artifact", id: "run_1/internal.txt", visibility: "conversation" }],
+      },
+      {
+        id: "ambiguous_file_refs",
+        kind: "document",
+        title: "view.tsx",
+        path: "run_1/view-output.tsx",
+        sourceRefs: [
+          { kind: "file", id: "apps/web/src/view.tsx", visibility: "conversation" },
+          { kind: "file", id: "docs/view.tsx", visibility: "conversation" },
+        ],
+      },
+      {
+        id: "developer_only_file_ref",
+        kind: "file",
+        title: "notes.md",
+        path: "docs/notes.md",
+        sourceRefs: [{ kind: "file", id: "docs/notes.md", visibility: "developer_only" }],
+      },
+      {
+        id: "unsupported_kind",
+        kind: "other",
+        title: "notes.md",
+        path: "docs/notes.md",
+        sourceRefs: [{ kind: "file", id: "docs/notes.md", visibility: "conversation" }],
+      },
+    ],
+    risks: [],
+    references: [],
+    evidenceFingerprint: "fingerprint_workspace_files",
+    committedAt: "2026-07-14T00:00:00.000Z",
+  });
+
+  const artifacts = report.artifactStripItems.filter((item) => item.kind === "artifact");
+  assert.equal(artifacts.find((item) => item.id.endsWith(":trusted_exact"))?.workspaceFilePath, "apps/web/src/view.tsx");
+  assert.equal(artifacts.find((item) => item.id.endsWith(":trusted_internal_copy"))?.workspaceFilePath, "docs/notes.md");
+  assert.equal(artifacts.find((item) => item.id.endsWith(":exact_without_file_ref"))?.workspaceFilePath, undefined);
+  assert.equal(artifacts.find((item) => item.id.endsWith(":artifact_ref_only"))?.workspaceFilePath, undefined);
+  assert.equal(artifacts.find((item) => item.id.endsWith(":ambiguous_file_refs"))?.workspaceFilePath, undefined);
+  assert.equal(artifacts.find((item) => item.id.endsWith(":developer_only_file_ref"))?.workspaceFilePath, undefined);
+  assert.equal(artifacts.find((item) => item.id.endsWith(":unsupported_kind"))?.workspaceFilePath, undefined);
 });

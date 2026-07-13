@@ -8,6 +8,7 @@ import type { ConversationArtifactStripChangeArtifact, ConversationArtifactStrip
 import type { PreviewContentResponse, RunWorkspaceChangesResponse } from "../../../types.js";
 import type { ArtifactPreviewLoader } from "../preview/ArtifactPreviewDrawer.js";
 import { DiffViewer } from "./DiffViewer.js";
+import { WorkspaceFileOpenMenu } from "./WorkspaceFileOpenMenu.js";
 
 const artifactHoverDelayMs = 2_000;
 const artifactHoverHideDelayMs = 140;
@@ -86,6 +87,7 @@ function ArtifactOutputRow({
 }): JSX.Element {
   const { t } = useI18n();
   const previewable = Boolean(item.previewable && item.artifactId && cwd);
+  const workspaceFilePath = item.workspaceFilePath?.trim();
   const meta = artifactItemMeta(item, t);
   const icon = item.previewKind === "image" ? <ImageIcon size={13} aria-hidden="true" /> : <FileText size={13} aria-hidden="true" />;
   const content = (
@@ -100,28 +102,35 @@ function ArtifactOutputRow({
     </>
   );
 
-  const row = previewable ? (
-      <button
-        className="conversation-work-cell-artifact-row"
-        type="button"
-        aria-label={`${t("Preview")}: ${item.label}`}
-        onPointerEnter={(event) => onPreviewEnter(item, event.currentTarget)}
-        onPointerLeave={onPreviewLeave}
-        onFocus={(event) => onPreviewNow(item, event.currentTarget)}
-        onBlur={onPreviewLeave}
-        onClick={(event) => onPreviewNow(item, event.currentTarget)}
-      >
-        {content}
-      </button>
-    ) : item.href ? (
-      <a className="conversation-work-cell-artifact-row" href={item.href} target="_blank" rel="noreferrer" title={item.label}>
-        {content}
-      </a>
-    ) : (
-      <span className="conversation-work-cell-artifact-row">{content}</span>
-    );
+  const main = previewable ? (
+    <button
+      className="conversation-work-cell-artifact-main"
+      type="button"
+      aria-label={`${t("Preview")}: ${item.label}`}
+      onPointerEnter={(event) => onPreviewEnter(item, event.currentTarget)}
+      onPointerLeave={onPreviewLeave}
+      onFocus={(event) => onPreviewNow(item, event.currentTarget)}
+      onBlur={onPreviewLeave}
+      onClick={(event) => onPreviewNow(item, event.currentTarget)}
+    >
+      {content}
+    </button>
+  ) : item.href ? (
+    <a className="conversation-work-cell-artifact-main" href={item.href} target="_blank" rel="noreferrer" title={item.label}>
+      {content}
+    </a>
+  ) : (
+    <span className="conversation-work-cell-artifact-main">{content}</span>
+  );
 
-  return row;
+  return (
+    <div className="conversation-work-cell-artifact-row">
+      {main}
+      {cwd && workspaceFilePath ? (
+        <WorkspaceFileOpenMenu cwd={cwd} path={workspaceFilePath} placement="auto" />
+      ) : null}
+    </div>
+  );
 }
 
 function ChangedFilesGroup({

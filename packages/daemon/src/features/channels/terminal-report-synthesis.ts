@@ -91,7 +91,10 @@ export async function synthesizeTerminalReportContent(
     }
     previousOutput = output;
     try {
-      const content = parseTerminalReportContent(parseStrictJsonObject(output, "Terminal report model output"));
+      const content = bindEvidenceArtifactFileRefs(
+        parseTerminalReportContent(parseStrictJsonObject(output, "Terminal report model output")),
+        input.snapshot,
+      );
       const validation = validateTerminalReportContent(content, input.snapshot);
       if (validation.ok) {
         return {
@@ -120,6 +123,34 @@ export async function synthesizeTerminalReportContent(
     attemptCount: 2,
     validationCodes,
   });
+}
+
+function bindEvidenceArtifactFileRefs(
+  content: TerminalReportContent,
+  snapshot: TerminalReportEvidenceSnapshot,
+): TerminalReportContent {
+  const evidenceArtifacts = new Map(snapshot.artifacts.map((artifact) => [artifact.id, artifact]));
+  return {
+    ...content,
+    artifacts: content.artifacts.map((artifact) => {
+      const trustedFileRefs = evidenceArtifacts.get(artifact.id)?.sourceRefs.filter((ref) =>
+        ref.kind === "file" && ref.visibility !== "developer_only" && ref.sensitivity !== "secret_adjacent"
+      ) ?? [];
+      if (trustedFileRefs.length === 0) {
+        return artifact;
+      }
+      return {
+        ...artifact,
+        sourceRefs: uniqueTerminalReportSourceRefs([...artifact.sourceRefs, ...trustedFileRefs]),
+      };
+    }),
+  };
+}
+
+function uniqueTerminalReportSourceRefs(
+  refs: readonly TerminalReportSourceRef[],
+): readonly TerminalReportSourceRef[] {
+  return [...new Map(refs.map((ref) => [`${ref.kind}:${ref.id}`, ref])).values()];
 }
 
 function resolveSynthesisRuntime(input: Required<Pick<TerminalReportSynthesisInput, "store" | "snapshot" | "runnerRegistry" | "secretResolver">>) {

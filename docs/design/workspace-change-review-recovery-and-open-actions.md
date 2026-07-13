@@ -151,6 +151,52 @@ the patch contains deletes.
 Workspace file detail provides an `Open with` menu. The daemon resolves and validates the
 file before launching anything.
 
+The same menu is available inline on workspace-backed output rows in the final
+conversation artifact strip. This is not a generic Artifact action. The shared
+conversation view model carries an optional `workspaceFilePath`, and the Web renderer
+shows the menu only when that field is present.
+
+Projection rules:
+
+1. Collect the structured changed paths from `TerminalReport.changes[].paths`.
+2. For each conversation-visible TerminalReport artifact, collect its user-visible
+   `sourceRefs` whose kind is `file`.
+3. Keep only file references whose normalized id exactly matches a structured changed path.
+4. Populate `ConversationArtifactStripItem.workspaceFilePath` only when exactly one trusted
+   changed path remains.
+5. Do not infer workspace authority from the Artifact path, title, basename, href, or raw
+   Run Artifact storage location. Missing or ambiguous file references leave the action
+   unavailable.
+
+The mapping is deliberately performed in `conversation-ui-core`, not in JSX. Channel,
+normal-conversation, and teammate-private projections therefore receive the same semantic
+item and cannot drift into separate UI rules.
+
+The evidence collector establishes the trusted binding before synthesis. For `edit` and
+`write` execution actions, each result Artifact inherits the action's structured file
+target references. Deterministic fallback therefore retains the same binding without
+trusting an Artifact storage path. Model synthesis may reuse only source references bound
+to that same evidence Artifact; borrowing a file reference from another operation or
+Artifact fails TerminalReport validation.
+
+The row composition is:
+
+```text
+artifact row container
+  preview button or link
+  Open with menu
+```
+
+The menu must not be nested inside the preview button. Pointer and keyboard interaction on
+the preview surface retains the existing two-second hover preview and immediate focus/click
+preview. Pointer and keyboard interaction on `Open with` owns only its menu.
+
+The wide conversation surface uses `Open with`; the right-dock file detail uses compact
+`Open`. Both reuse `WorkspaceFileOpenMenu` and the same daemon endpoints. Conversation
+rows choose above or below from the nearest clipping scroll container's available space;
+the selected side's available height also bounds the scrollable popover. Opening the menu
+must not increase feed scroll height or place menu actions outside that visible boundary.
+
 Options are derived from applications the daemon can actually launch. Ling does not show
 a generic `Default app` entry. The supported discovery set starts with:
 
@@ -254,4 +300,9 @@ Required coverage:
 - work-cell action-state rendering,
 - Review navigator open, filter, file click, and diff scroll,
 - Open-with option menu and request payload,
+- inline Open-with rendering for TerminalReport artifacts with one trusted changed-file
+  source reference,
+- no inline Open-with action for raw Artifact storage paths, exact paths without a trusted
+  file reference, or ambiguous file references,
+- menu interaction does not trigger the artifact preview,
 - channel, normal conversation, and teammate-private shared rendering.

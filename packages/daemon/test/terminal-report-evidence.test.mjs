@@ -45,7 +45,7 @@ test("workflow terminal evidence aggregates rounds, actions, checks, artifacts, 
       runId: "run_terminal_engineer_one",
       createdAt: "2026-07-11T02:01:00.000Z",
     });
-    store.createArtifact({
+    const terminalReportTypesArtifact = store.createArtifact({
       runId: engineerOne.run.id,
       type: "file",
       path: "packages/core/src/terminal-report-types.ts",
@@ -54,7 +54,7 @@ test("workflow terminal evidence aggregates rounds, actions, checks, artifacts, 
     });
     appendToolAction(store, engineerOne.run.id, "edit_core", "edit", {
       path: "packages/core/src/terminal-report-types.ts",
-    }, false, "2026-07-11T02:01:10.000Z");
+    }, false, "2026-07-11T02:01:10.000Z", terminalReportTypesArtifact.id);
 
     const qa = createWorkflowRun(store, {
       cwd,
@@ -125,6 +125,9 @@ test("workflow terminal evidence aggregates rounds, actions, checks, artifacts, 
     assert.ok(snapshot.checks.some((check) => check.command === "pnpm typecheck" && check.status === "passed"));
     assert.ok(snapshot.checks.some((check) => check.command === "pnpm typecheck" && check.status === "failed"));
     assert.ok(snapshot.artifacts.some((artifact) => artifact.path === "packages/core/src/terminal-report-types.ts"));
+    assert.ok(snapshot.artifacts.find((artifact) => artifact.id === terminalReportTypesArtifact.id)?.sourceRefs.some((ref) =>
+      ref.kind === "file" && ref.id === "packages/core/src/terminal-report-types.ts"
+    ));
     assert.ok(snapshot.risks.some((risk) => risk.id.includes("qa_typecheck") || /Typecheck failed/u.test(risk.summary)));
 
     const report = buildDeterministicTerminalReport(snapshot, {
@@ -132,6 +135,9 @@ test("workflow terminal evidence aggregates rounds, actions, checks, artifacts, 
       committedAt: "2026-07-11T02:05:01.000Z",
     });
     assert.equal(validateTerminalReport(report, snapshot).ok, true);
+    assert.ok(report.artifacts.find((artifact) => artifact.id === terminalReportTypesArtifact.id)?.sourceRefs.some((ref) =>
+      ref.kind === "file" && ref.id === "packages/core/src/terminal-report-types.ts"
+    ));
     assert.ok(report.participants.find((participant) => participant.agentId === "engineer")?.contribution.includes("完成协议和持久化实现"));
     assert.ok(report.participants.find((participant) => participant.agentId === "engineer")?.contribution.includes("修复类型问题"));
   } finally {
@@ -317,9 +323,12 @@ function createWorkflowRun(store, input) {
   return { task, step, run };
 }
 
-function appendToolAction(store, runId, toolCallId, toolName, args, isError, at) {
+function appendToolAction(store, runId, toolCallId, toolName, args, isError, at, resultArtifactId) {
   store.appendEvent(runId, "tool_start", { toolCallId, toolName, args });
   store.appendEvent(runId, "tool_end", { toolCallId, toolName, isError });
+  if (resultArtifactId) {
+    store.appendEvent(runId, "artifact_created", { toolCallId, artifactId: resultArtifactId });
+  }
 }
 
 function runInput(overrides) {

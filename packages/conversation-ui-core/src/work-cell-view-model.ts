@@ -129,6 +129,7 @@ export interface ConversationArtifactStripItem {
   readonly kind: ConversationArtifactStripItemKind;
   readonly label: string;
   readonly path?: string;
+  readonly workspaceFilePath?: string;
   readonly tone?: ConversationWorkCellRowTone;
   readonly href?: string;
   readonly artifactId?: string;
