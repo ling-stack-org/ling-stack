@@ -942,6 +942,12 @@ export type TeammateDirectMessageStatus = "pending" | "ready" | "blocked" | "fai
 
 export type TeammateDirectMessageAuthorType = "local-user" | "ai-teammate" | "system";
 
+export interface ConversationPendingReplacement {
+  readonly supersessionId: string;
+  readonly idempotencyKey: string;
+  readonly failureReason?: string;
+}
+
 export interface TeammateDirectMessage {
   readonly id: string;
   readonly workspaceId: string;
@@ -957,6 +963,9 @@ export interface TeammateDirectMessage {
   readonly errorMessage?: string;
   readonly linkedTaskId?: string;
   readonly linkedRunId?: string;
+  readonly revision?: number;
+  readonly editedAt?: string;
+  readonly pendingReplacement?: ConversationPendingReplacement;
   readonly createdAt: string;
   readonly updatedAt: string;
   readonly webEvidence?: MessageWebEvidence;
@@ -1252,6 +1261,9 @@ export interface ChannelMessage {
   readonly linkedRunId?: string;
   readonly status: "pending" | "ready" | "blocked" | "failed";
   readonly errorMessage?: string;
+  readonly revision?: number;
+  readonly editedAt?: string;
+  readonly pendingReplacement?: ConversationPendingReplacement;
   readonly webEvidence?: MessageWebEvidence;
   readonly createdAt: string;
   readonly updatedAt: string;

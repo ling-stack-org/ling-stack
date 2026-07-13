@@ -284,7 +284,7 @@ export async function executeRunRequest(
     const mcpToolAccess = resolveMcpToolAccessForRun(runStore, secretResolver, runRequest, (teammateId) =>
       resolveAiTeammateReference(runStore, teammateId)?.id);
     mcpTools = createPiRunnerMcpToolDefinitions(mcpToolAccess);
-    memoryRecall = store.recallMemory({
+    memoryRecall = runRequest.skipMemoryRecall ? undefined : store.recallMemory({
       teammateId: runRequest.teammateId,
       channelId: runRequest.task.channelId,
       taskId: runRequest.task.id,
@@ -292,7 +292,7 @@ export async function executeRunRequest(
       query: `${runRequest.task.title}\n${runRequest.task.prompt}`,
       maxResults: 6,
     });
-    const memoryPrompt = renderUsedMemoryPrompt(memoryRecall.memories);
+    const memoryPrompt = memoryRecall ? renderUsedMemoryPrompt(memoryRecall.memories) : undefined;
     const appendSystemPrompt = [
       ...(runRequest.appendSystemPrompt ?? []),
       ...(selectedSkill?.promptFragments ?? []),
@@ -392,6 +392,7 @@ export async function executeRunRequest(
       ownerId: workUnitOwner.ownerId,
       channelId: runRequest.task.channelId,
       taskId: runRequest.task.id,
+      teammateId: runRequest.teammateId,
       providerPresetId: runRequest.providerPresetId,
       runnerId: runnerResolution.effectiveRunnerId,
       requestedRunnerId: runnerResolution.requestedRunnerId,
@@ -399,6 +400,7 @@ export async function executeRunRequest(
       fallbackReason: runnerResolution.fallbackReason,
       idempotencyKey,
       createdByActor: "user",
+      linkedMessageId: runRequest.linkedMessageId,
       request: {
         ...runRequest,
         permissionMode: effectivePolicySnapshot.mode,
@@ -545,7 +547,7 @@ export async function executeRunRequest(
     store.linkRunToWorkUnit(run.id, workUnit.id, createdAt);
     markLingThreadRunActive(store, thread.id, run.id, createdAt);
     storeRegistry.rememberRun(run.id, store);
-    if (memoryRecall.memories.length > 0) {
+    if (memoryRecall && memoryRecall.memories.length > 0) {
       store.recordUsedMemoryEvent(
         {
           memoryIds: memoryRecall.memories.map((item) => item.memory.id),
@@ -1476,6 +1478,13 @@ function resolveRunWorkUnitOwner(
       kind: "conversation_run",
       ownerType: "conversation_turn",
       ownerId: turnId,
+    };
+  }
+  if (thread.kind === "teammate_direct") {
+    return {
+      kind: "teammate_direct_reply",
+      ownerType: "teammate_direct_message",
+      ownerId: runRequest.sourceMessageId ?? runRequest.task.id,
     };
   }
   return {

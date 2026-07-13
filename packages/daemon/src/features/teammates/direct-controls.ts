@@ -15,16 +15,15 @@ import type {
 import type { ResolvedDaemonConfig } from "../../config.js";
 import { HttpError } from "../../errors.js";
 import type { RunControlService } from "../../run-control.js";
-import type { RunnerRegistry } from "../../runtime/runners.js";
+import type { ActiveRunRegistry } from "../../runtime/active-runs.js";
 import type { RunStoreRegistry } from "../../runtime/store-registry.js";
-import type { RuntimeSupervisor } from "../../runtime/supervisor.js";
 import type { ProviderStartupRefreshService } from "../providers/startup-refresh.js";
 import type { LingImageVisionSummarizer } from "../channels/materialization/registry.js";
 import { readJsonBody, readOptionalJsonBody } from "../../shared/request.js";
 import { writeJson } from "../../shared/response.js";
 import { isRecord, readOptionalStringArray } from "../../shared/validation.js";
 import { readOptionalChannelMessageFileRefs } from "../channels/schemas.js";
-import { createAiTeammateDirectReply } from "./direct-replies.js";
+import { createAiTeammateDirectReply, type StartTeammateDirectRun } from "./direct-replies.js";
 import type { ActiveDirectReplyRegistry } from "./direct-reply-active-registry.js";
 import { assertDirectFileRefsWithinWorkspace, ensureDirectWorkspaceReady } from "./direct-workspace.js";
 
@@ -45,8 +44,8 @@ export interface TeammateDirectRuntimeSnapshot {
 export class DirectReplyControlService {
   constructor(
     private readonly dependencies: {
-      readonly runnerRegistry: RunnerRegistry;
-      readonly runtimeSupervisor: RuntimeSupervisor;
+      readonly startRun: StartTeammateDirectRun;
+      readonly activeRuns: ActiveRunRegistry;
       readonly secretResolver: SecretResolver;
       readonly activeDirectReplies: ActiveDirectReplyRegistry;
       readonly runControl: RunControlService;
@@ -75,11 +74,12 @@ export class DirectReplyControlService {
       throw new Error(`Direct reply work unit not found: ${input.workUnitId}`);
     }
     const active = this.dependencies.activeDirectReplies.get(workUnit.id);
+    const activeRun = workUnit.linkedRunId ? this.dependencies.activeRuns.get(workUnit.linkedRunId) : undefined;
     const cancellation = this.dependencies.runControl.cancelWorkUnit({
       store: input.store,
       workUnit,
       reason: input.reason ?? "direct_reply_cancelled",
-      activeRun: active ? { abortController: active.abortController, streamEnvelope: () => undefined } : undefined,
+      activeRun: activeRun ?? (active ? { abortController: active.abortController, streamEnvelope: () => undefined } : undefined),
     });
     this.dependencies.activeDirectReplies.delete(workUnit.id);
     const message = this.markLinkedMessageCancelled(input.store, cancellation.workUnit, "回复已停止");
@@ -283,14 +283,14 @@ export class DirectReplyControlService {
         providerPresetId: input.teammate.providerPresetId,
       });
       const reply = await createAiTeammateDirectReply({
-        runnerRegistry: this.dependencies.runnerRegistry,
+        startRun: this.dependencies.startRun,
         store: input.store,
         teammate: input.teammate,
         thread: workspace.workspace.thread,
         sourceMessage: guidance,
         providerPresetId: input.teammate.providerPresetId,
+        continuationReason: starting.mode,
         workspace: workspace.workspace,
-        runtimeSupervisor: this.dependencies.runtimeSupervisor,
         secretResolver: this.dependencies.secretResolver,
         imageVisionSummarizer: this.dependencies.imageVisionSummarizer,
         signal: abortController.signal,

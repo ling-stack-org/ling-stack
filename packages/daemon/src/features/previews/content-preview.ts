@@ -10,6 +10,9 @@ import type {
   RunArtifact,
   TeammatePrivateAttachment,
 } from "@ling-stack/core";
+import { defaultLingMaterializationBudgets } from "../channels/materialization/budgets.js";
+import { officeExtractorV1 } from "../channels/materialization/extractors/office.js";
+import { pdfExtractorV1 } from "../channels/materialization/extractors/pdf.js";
 
 const DEFAULT_PREVIEW_BYTES = 64 * 1024;
 const MAX_PREVIEW_BYTES = 64 * 1024;
@@ -24,6 +27,7 @@ export interface BuildArtifactPreviewInput {
 export interface BuildAttachmentPreviewInput {
   readonly attachment: ChannelAttachment | ConversationAttachment | TeammatePrivateAttachment;
   readonly contentPath: string;
+  readonly attachmentsDir: string;
   readonly maxBytes?: number;
   readonly imageUrl?: string;
 }
@@ -60,9 +64,10 @@ export function buildArtifactPreview(input: BuildArtifactPreviewInput): PreviewC
   });
 }
 
-export function buildAttachmentPreview(input: BuildAttachmentPreviewInput): PreviewContentResponse {
+export async function buildAttachmentPreview(input: BuildAttachmentPreviewInput): Promise<PreviewContentResponse> {
   const maxBytes = normalizePreviewMaxBytes(input.maxBytes);
   const kind = inferAttachmentPreviewKind(input.attachment);
+  const extractedDocument = await extractAttachmentDocumentPreview(input, maxBytes);
   const ref: PreviewFileRef = {
     id: input.attachment.id,
     source: "attachment",
@@ -84,6 +89,8 @@ export function buildAttachmentPreview(input: BuildAttachmentPreviewInput): Prev
     imageUrl: input.imageUrl,
     fileName: input.attachment.fileName,
     contentType: input.attachment.contentType,
+    extractedText: extractedDocument?.text,
+    extractedTextTruncated: extractedDocument?.truncated,
   });
 }
 
@@ -95,6 +102,8 @@ function buildPreviewResponse(input: {
   readonly imageUrl?: string;
   readonly fileName: string;
   readonly contentType?: string;
+  readonly extractedText?: string;
+  readonly extractedTextTruncated?: boolean;
 }): PreviewContentResponse {
   const stats = statSync(input.contentPath);
   const sizeBytes = stats.size;
@@ -117,6 +126,20 @@ function buildPreviewResponse(input: {
       truncated: false,
       sizeBytes,
       redactionNotes: ["Preview is read-only and not included in AI context."],
+    };
+  }
+
+  if ((input.kind === "pdf" || input.kind === "office") && input.extractedText?.trim()) {
+    return {
+      ref: input.ref,
+      kind: input.kind,
+      text: input.extractedText,
+      truncated: input.extractedTextTruncated ?? false,
+      sizeBytes,
+      redactionNotes: [
+        "Preview contains extracted document text and is not included in AI context.",
+        ...(input.extractedTextTruncated ? ["Preview truncated"] : []),
+      ],
     };
   }
 
@@ -153,6 +176,68 @@ function buildPreviewResponse(input: {
       "Preview is read-only and not included in AI context.",
       ...(truncated ? ["Preview truncated"] : []),
     ],
+  };
+}
+
+async function extractAttachmentDocumentPreview(
+  input: BuildAttachmentPreviewInput,
+  maxChars: number,
+): Promise<{ readonly text: string; readonly truncated: boolean } | undefined> {
+  const extractor = input.attachment.kind === "pdf"
+    ? pdfExtractorV1
+    : input.attachment.kind === "office" && extname(input.attachment.fileName).toLowerCase() === ".docx"
+      ? officeExtractorV1
+      : undefined;
+  if (!extractor) {
+    return undefined;
+  }
+  const attachment = toPreviewChannelAttachment(input.attachment);
+  const rawByteLimit = input.attachment.kind === "pdf"
+    ? defaultLingMaterializationBudgets.pdfReadBytes
+    : defaultLingMaterializationBudgets.officeReadBytes;
+  const result = await extractor.materialize({
+    workspaceId: attachment.workspaceId,
+    channelId: attachment.channelId,
+    sourceKind: "attachment",
+    sourceId: attachment.id,
+    sourceFingerprint: `preview:${attachment.id}:${attachment.sizeBytes}`,
+    requestedBy: "turn_envelope",
+    maxBytes: rawByteLimit,
+    maxChars,
+    now: new Date().toISOString(),
+    attachment,
+    attachmentsDir: input.attachmentsDir,
+  });
+  if (result.status !== "available" || !result.contentText?.trim()) {
+    return undefined;
+  }
+  return {
+    text: result.contentText,
+    truncated: result.truncated === true,
+  };
+}
+
+function toPreviewChannelAttachment(
+  attachment: ChannelAttachment | ConversationAttachment | TeammatePrivateAttachment,
+): ChannelAttachment {
+  if ("channelId" in attachment) {
+    return attachment;
+  }
+  const channelId = "teammateId" in attachment
+    ? `teammate_direct:${attachment.teammateId}:${attachment.threadId ?? "thread"}`
+    : `conversation:${attachment.threadId ?? "pending"}`;
+  const messageId = "teammateId" in attachment ? attachment.messageId : attachment.turnId;
+  return {
+    id: attachment.id,
+    workspaceId: attachment.workspaceId,
+    channelId,
+    messageId,
+    kind: attachment.kind,
+    fileName: attachment.fileName,
+    contentType: attachment.contentType,
+    sizeBytes: attachment.sizeBytes,
+    path: attachment.path,
+    createdAt: attachment.createdAt,
   };
 }
 

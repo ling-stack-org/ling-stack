@@ -2478,6 +2478,7 @@ export const enUS = {
     "Select {skill}": "Select {skill}",
     "Root": "Root",
     "Files": "Files",
+    "References": "References",
     "Warnings": "Warnings",
     "Semantic": "Semantic",
     "Artifact review": "Artifact review",
@@ -2734,4 +2735,5 @@ export const enUS = {
     "Private workspace, attachments, and memory": "Private workspace, attachments, and memory",
     "Context ready": "Context ready",
     "Step": "Step",
+    "Retry response": "Retry response",
   } as const satisfies Readonly<Record<string, string>>;

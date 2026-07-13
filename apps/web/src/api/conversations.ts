@@ -2,6 +2,8 @@ import type {
   ConversationAttachmentMutationResponse,
   ConversationDetailResponse,
   ConversationStreamRequest,
+  EditConversationMessageRequest,
+  EditConversationMessageResponse,
 } from "../types.js";
 import { daemonClient } from "./client.js";
 import { fileToBase64 } from "./file-uploads.js";
@@ -12,6 +14,10 @@ export async function getConversation(cwd: string, threadId: string): Promise<Co
 
 export async function streamConversation(cwd: string, input: ConversationStreamRequest): Promise<Response> {
   return daemonClient.streamConversation(cwd, input);
+}
+
+export async function editConversationMessage(cwd: string, input: EditConversationMessageRequest): Promise<EditConversationMessageResponse> {
+  return daemonClient.editConversationMessage(cwd, input);
 }
 
 export async function uploadConversationAttachment(

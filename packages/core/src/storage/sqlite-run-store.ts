@@ -499,6 +499,7 @@ import { SqliteChannelIntentDecisionStore } from "./sqlite/channel-intent-decisi
 import { SqliteChannelProposalStore } from "./sqlite/channel-proposal-store.js";
 import { SqliteChannelAssetStore } from "./sqlite/channel-asset-store.js";
 import { SqliteConversationAssetStore } from "./sqlite/conversation-asset-store.js";
+import { SqliteConversationRevisionStore } from "./sqlite/conversation-revision-store.js";
 import { SqliteChannelCollaborationStore } from "./sqlite/channel-collaboration-store.js";
 import { SqliteChannelProtocolStore } from "./sqlite/channel-protocol-store.js";
 import { SqliteChannelPlaybookStore } from "./sqlite/channel-playbook-store.js";
@@ -541,6 +542,7 @@ export class SqliteRunStore implements RunStore {
   private readonly lingThreads: SqliteLingThreadStore;
   private readonly lingTurns: SqliteLingTurnStore;
   private readonly terminalReports: SqliteTerminalReportStore;
+  private readonly conversationRevisions: SqliteConversationRevisionStore;
   private readonly stateTransitions: SqliteStateTransitionStore;
   private readonly resourceLeases: SqliteResourceLeaseStore;
   private readonly runtimeSemaphores: SqliteRuntimeSemaphoreStore;
@@ -658,6 +660,7 @@ export class SqliteRunStore implements RunStore {
       },
     );
     this.terminalReports = new SqliteTerminalReportStore({ database: this.database });
+    this.conversationRevisions = new SqliteConversationRevisionStore({ database: this.database });
     this.lingThreadMetadata = new SqliteLingThreadMetadataCoordinator(
       { database: this.database },
       {
@@ -967,6 +970,49 @@ export class SqliteRunStore implements RunStore {
 
   createLingThread(input: CreateLingThreadInput, now: string): LingThread {
     return this.lingThreads.createLingThread(input, now);
+  }
+
+  commitConversationMessageEdit(
+    input: import("../conversation-revision-types.js").CommitConversationMessageEditInput,
+    now: string,
+  ): import("../conversation-revision-types.js").CommitConversationMessageEditResult {
+    return this.conversationRevisions.commitConversationMessageEdit(input, now);
+  }
+
+  listConversationMessageRevisions(
+    options: import("../conversation-revision-types.js").ListConversationMessageRevisionsOptions,
+  ): import("../conversation-revision-types.js").ConversationMessageRevision[] {
+    return this.conversationRevisions.listConversationMessageRevisions(options);
+  }
+
+  getConversationTurnSupersession(
+    id: string,
+  ): import("../conversation-revision-types.js").ConversationTurnSupersession | undefined {
+    return this.conversationRevisions.getConversationTurnSupersession(id);
+  }
+
+  getConversationTurnSupersessionByIdempotency(
+    idempotencyKey: string,
+  ): import("../conversation-revision-types.js").ConversationTurnSupersession | undefined {
+    return this.conversationRevisions.getConversationTurnSupersessionByIdempotency(idempotencyKey);
+  }
+
+  listConversationTurnSupersessions(
+    options?: import("../conversation-revision-types.js").ListConversationTurnSupersessionsOptions,
+  ): import("../conversation-revision-types.js").ConversationTurnSupersession[] {
+    return this.conversationRevisions.listConversationTurnSupersessions(options);
+  }
+
+  updateConversationTurnSupersession(
+    id: string,
+    input: {
+      readonly replacementTurnId?: string | null;
+      readonly replacementStatus?: import("../conversation-revision-types.js").ConversationReplacementStatus;
+      readonly failureReason?: string | null;
+    },
+    now: string,
+  ): import("../conversation-revision-types.js").ConversationTurnSupersession | undefined {
+    return this.conversationRevisions.updateConversationTurnSupersession(id, input, now);
   }
 
   getLingThread(threadId: string): LingThread | undefined {

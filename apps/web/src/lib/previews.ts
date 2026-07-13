@@ -37,7 +37,7 @@ export function artifactCanPreview(artifact: RunArtifact): boolean {
 }
 
 export function attachmentCanPreview(attachment: ChannelAttachment | ConversationAttachment | TeammatePrivateAttachment): boolean {
-  return attachment.kind !== "office" && attachment.kind !== "pdf";
+  return attachment.kind !== "office" || attachment.fileName.toLowerCase().endsWith(".docx");
 }
 
 export function previewKindLabel(kind: PreviewContentKind): string {

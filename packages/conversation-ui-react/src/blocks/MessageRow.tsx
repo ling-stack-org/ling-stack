@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import { Loader2 } from "lucide-react";
+import type { LocalFileReference } from "@ling-stack/conversation-ui-core";
 import { MessageBodyRenderer } from "./MessageBodyRenderer.js";
 
 export type MessageRowAuthorType = "local-user" | "ai-teammate" | "system";
@@ -19,6 +20,7 @@ export interface MessageRowProps {
   readonly bodyCwd?: string;
   readonly bodyCompact?: boolean;
   readonly bodyStreaming?: boolean;
+  readonly bodyOnOpenLocalFile?: (reference: LocalFileReference) => void;
   readonly bodyNode?: ReactNode;
   readonly attachmentsNode?: ReactNode;
   readonly workCellNode?: ReactNode;
@@ -41,6 +43,7 @@ export function MessageRow({
   bodyCwd,
   bodyCompact,
   bodyStreaming = false,
+  bodyOnOpenLocalFile,
   bodyNode,
   attachmentsNode,
   workCellNode,
@@ -65,7 +68,7 @@ export function MessageRow({
   const resolvedBodyNode = bodyNode ?? (body ? (
     <div className={bodyStreaming ? "message-body-shell message-body-with-spinner" : "message-body-shell"}>
       {bodyStreaming ? <Loader2 className="message-pending-spinner spin" size={13} /> : null}
-      <MessageBodyRenderer text={body} cwd={bodyCwd} compact={bodyCompact} streaming={bodyStreaming} />
+      <MessageBodyRenderer text={body} cwd={bodyCwd} compact={bodyCompact} streaming={bodyStreaming} onOpenLocalFile={bodyOnOpenLocalFile} />
     </div>
   ) : null);
 
@@ -88,6 +91,7 @@ export function MessageRow({
           </header>
         )}
         {resolvedBodyNode}
+        {ownMessage && !showOwnAuthor && statusNode ? <span className="message-row-own-status">{statusNode}</span> : null}
         {attachmentsNode}
         {workCellNode}
         {evidenceNode}

@@ -127,6 +127,7 @@ export function useChannelMessageFeed({
   const pinnedToLatestRef = useRef(true);
   const autoFollowUntilRef = useRef(0);
   const userScrollIntentRef = useRef(false);
+  const userScrollRenderSignatureRef = useRef("");
   const visibleAnchorRef = useRef<MessageFeedAnchorSnapshot | undefined>();
   const olderLoadArmedRef = useRef(true);
   const olderLoadSnapshotRef = useRef<OlderLoadAnchorSnapshot | undefined>();
@@ -212,6 +213,7 @@ export function useChannelMessageFeed({
   const reset = useCallback((): void => {
     pinnedToLatestRef.current = true;
     userScrollIntentRef.current = false;
+    userScrollRenderSignatureRef.current = "";
     olderLoadArmedRef.current = true;
     olderLoadSnapshotRef.current = undefined;
     visibleAnchorRef.current = undefined;
@@ -226,6 +228,7 @@ export function useChannelMessageFeed({
     }
     autoFollowUntilRef.current = Date.now() + 1_000;
     userScrollIntentRef.current = false;
+    userScrollRenderSignatureRef.current = "";
     if (items.length > 0) {
       virtualizer.scrollToIndex(items.length - 1, { align: "end" });
     }
@@ -239,6 +242,7 @@ export function useChannelMessageFeed({
     const feed = scrollRef.current;
     autoFollowUntilRef.current = 0;
     userScrollIntentRef.current = true;
+    userScrollRenderSignatureRef.current = renderSignature;
     if (!feed) {
       pinnedToLatestRef.current = false;
       return;
@@ -251,7 +255,7 @@ export function useChannelMessageFeed({
       rememberVisibleAnchor();
     }
     setLatestButtonVisible(!pinnedToLatest && feed.scrollHeight > feed.clientHeight);
-  }, [rememberVisibleAnchor]);
+  }, [rememberVisibleAnchor, renderSignature]);
 
   const updateScrollPositionState = useCallback((): void => {
     const feed = scrollRef.current;
@@ -262,6 +266,16 @@ export function useChannelMessageFeed({
     const pinnedToLatest = channelMessageFeedIsPinnedToLatest(feed);
     const latestItem = items.at(-1);
     const latestItemPending = channelMessageFeedItemIsPending(latestItem);
+    const preserveUserAnchorDuringRenderChange =
+      pinnedToLatest &&
+      userScrollIntentRef.current &&
+      !pinnedToLatestRef.current &&
+      Boolean(visibleAnchorRef.current) &&
+      userScrollRenderSignatureRef.current !== renderSignature;
+    if (preserveUserAnchorDuringRenderChange) {
+      setLatestButtonVisible(maxScrollTop > 0 || items.length > 1);
+      return;
+    }
     const preserveAutoFollow =
       !pinnedToLatest &&
       !userScrollIntentRef.current &&
@@ -286,7 +300,7 @@ export function useChannelMessageFeed({
       const nextVisible = !pinnedToLatest && maxScrollTop > 0;
       return visible === nextVisible ? visible : nextVisible;
     });
-  }, [items, loading, protocolLoading, rememberVisibleAnchor]);
+  }, [items, loading, protocolLoading, rememberVisibleAnchor, renderSignature]);
 
   const onScroll = useCallback((_event: UIEvent<HTMLDivElement>): void => {
     updateScrollPositionState();
@@ -461,6 +475,7 @@ export function useChannelMessageFeed({
     }
     const frameId = globalThis.requestAnimationFrame(() => {
       restoreVisibleAnchor();
+      userScrollRenderSignatureRef.current = renderSignature;
     });
     return () => globalThis.cancelAnimationFrame(frameId);
   }, [

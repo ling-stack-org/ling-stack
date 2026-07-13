@@ -1,6 +1,11 @@
 import { CheckCircle2, ChevronDown, CircleAlert, FilePenLine } from "lucide-react";
 import type { ReactNode } from "react";
 import type { ConversationWorkCellRow } from "../../../lib/conversation-work-cell.js";
+import {
+  getTerminalReportProjectionPolicy,
+  type ConversationSurfaceKind,
+  type TerminalReportProjectionPolicy,
+} from "../tokens/conversation-surface-policy.js";
 import { useConversationBlockView } from "../view-store/use-conversation-block-view.js";
 import { TerminalReportParticipants } from "./TerminalReportParticipants.js";
 
@@ -9,17 +14,24 @@ export function TerminalReportBlock({
   revisionKey,
   rows,
   renderParticipantAvatar,
+  surface,
+  projectionPolicy,
 }: {
   readonly blockId: string;
   readonly revisionKey: string;
   readonly rows: readonly ConversationWorkCellRow[];
   readonly renderParticipantAvatar?: (participantId: string | undefined, label: string) => ReactNode;
+  readonly surface: ConversationSurfaceKind;
+  readonly projectionPolicy?: Partial<TerminalReportProjectionPolicy>;
 }): JSX.Element | null {
+  const resolvedProjectionPolicy = getTerminalReportProjectionPolicy(surface, projectionPolicy);
   const outcome = rows.find((row) => row.reportSection === "outcome");
   if (!outcome) {
     return null;
   }
-  const participants = rows.filter((row) => row.reportSection === "participant");
+  const participants = resolvedProjectionPolicy.showParticipants
+    ? rows.filter((row) => row.reportSection === "participant")
+    : [];
   const changes = rows.filter((row) => row.reportSection === "change");
   const verification = rows.filter((row) => row.reportSection === "verification");
   const corrections = rows.filter((row) => row.reportSection === "correction");

@@ -12,7 +12,10 @@ export {
   DockPageHeader,
   EvidencePage,
   FilesPage,
+  InlineMessageEditor,
   MessageActionBar,
+  MathContent,
+  MermaidBlock,
   ReviewQueuePage,
   RightDockShell,
   SourceIconStack,
@@ -39,6 +42,7 @@ export {
   type DockReviewFilter,
   type EvidencePageProps,
   type FilesPageProps,
+  type InlineMessageEditorProps,
   type MessageActionBarAction,
   type MessageActionBarProps,
   type MessageActionKind,
@@ -100,12 +104,14 @@ export {
   type MessageInlineToken,
 } from "@ling-stack/conversation-ui-core";
 export { ConversationAttachmentStrip, type ConversationAttachmentChip, type ConversationAttachmentStripProps } from "./preview/ConversationAttachmentStrip.js";
+export { ConversationReferenceStrip, type ConversationReferenceItem } from "./preview/ConversationReferenceStrip.js";
 export { ConversationEvidenceBundlePanel, type ConversationEvidenceBundle, type ConversationEvidenceBundlePanelProps, type ConversationEvidenceItem, type ConversationEvidenceSection } from "./blocks/ConversationEvidenceBundlePanel.js";
 export { MessageBubble, type MessageBubbleProps, type MessageBubbleTone } from "./blocks/MessageBubble.js";
 export { MessageBodyRenderer, type MessageBodyRendererProps } from "./blocks/MessageBodyRenderer.js";
 export { MessageEvidencePanel } from "./blocks/MessageEvidencePanel.js";
 export { MessageRow, type MessageRowAuthorType, type MessageRowProps, type MessageRowTone } from "./blocks/MessageRow.js";
 export { ConversationSummaryRow, type ConversationSummaryMetaItem, type ConversationSummaryRowProps } from "./feedback/ConversationSummaryRow.js";
+export { ConversationReplacementRetry } from "./feedback/ConversationReplacementRetry.js";
 export { ConversationVirtualFeed, type ConversationVirtualFeedProps } from "./blocks/ConversationVirtualFeed.js";
 export { ConversationArtifactStripPanel, ConversationWorkCell, type ConversationWorkCellDetailsState, type ConversationWorkCellProps } from "./blocks/ConversationWorkCell.js";
 export { TerminalReportBlock } from "./blocks/TerminalReportBlock.js";
@@ -163,9 +169,12 @@ export type {
   ConversationSurfaceKind,
   ConversationSurfacePolicy,
   ConversationWorkCellMode,
+  TerminalReportArtifactMode,
+  TerminalReportProjectionPolicy,
 } from "./tokens/conversation-surface-policy.js";
 export {
   getConversationSurfacePolicy,
+  getTerminalReportProjectionPolicy,
   mergeConversationSurfacePolicy,
 } from "./tokens/conversation-surface-policy.js";
 export type {

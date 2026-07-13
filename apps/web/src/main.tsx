@@ -4,6 +4,7 @@ import { App } from "./App.js";
 import { I18nProvider } from "./i18n.js";
 import { ThemeProvider } from "./theme.js";
 import "./styles.css";
+import "katex/dist/katex.min.css";
 
 const root = document.getElementById("root");
 if (!root) {

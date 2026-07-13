@@ -6,6 +6,7 @@ import {
   type MessageInlineToken,
 } from "@ling-stack/conversation-ui-core";
 import { CopyActionButton } from "../feedback/CopyActionButton.js";
+import { MathContent, MermaidBlock } from "./RichContent.js";
 
 export interface MessageCodeBlockRenderInput {
   readonly code: string;
@@ -35,6 +36,7 @@ export interface MessageBodyRendererProps {
   readonly renderDiffBlock?: (input: MessageDiffBlockRenderInput) => ReactNode;
   readonly renderLocalFile?: (input: MessageLocalFileRenderInput) => ReactNode;
   readonly onOpenLocalFile?: (reference: LocalFileReference) => void;
+  readonly onDeferredContentReady?: (target: Element | null) => void;
 }
 
 export function MessageBodyRenderer({
@@ -48,8 +50,9 @@ export function MessageBodyRenderer({
   renderDiffBlock,
   renderLocalFile,
   onOpenLocalFile,
+  onDeferredContentReady,
 }: MessageBodyRendererProps): JSX.Element {
-  const blocks = parseMessageBody(text, cwd, { allowMarkdown });
+  const blocks = parseMessageBody(text, cwd, { allowMarkdown, streaming });
   const rootClassName = [
     "message-body-renderer",
     compact ? "compact" : "",
@@ -68,6 +71,7 @@ export function MessageBodyRenderer({
         renderDiffBlock,
         renderLocalFile,
         streaming,
+        onDeferredContentReady,
       }))}
     </div>
   );
@@ -79,6 +83,7 @@ interface RenderBlockOptions {
   readonly renderDiffBlock?: (input: MessageDiffBlockRenderInput) => ReactNode;
   readonly renderLocalFile?: (input: MessageLocalFileRenderInput) => ReactNode;
   readonly streaming: boolean;
+  readonly onDeferredContentReady?: (target: Element | null) => void;
 }
 
 function renderBlock(
@@ -88,7 +93,7 @@ function renderBlock(
 ): ReactNode {
   switch (block.kind) {
     case "code": {
-      const highlight = !options.streaming;
+      const highlight = !options.streaming && block.complete;
       if (isDiffLanguage(block.language)) {
         return (
           <Fragment key={`diff-${index}`}>
@@ -104,12 +109,47 @@ function renderBlock(
         </Fragment>
       );
     }
+    case "mermaid":
+      return <MermaidBlock key={`mermaid-${index}`} source={block.source} complete={block.complete} onDeferredContentReady={options.onDeferredContentReady} />;
+    case "math":
+      return <MathContent key={`math-${index}`} source={block.source} display complete={block.complete} onDeferredContentReady={options.onDeferredContentReady} />;
+    case "heading": {
+      const HeadingTag = `h${block.depth}` as keyof JSX.IntrinsicElements;
+      return <HeadingTag key={`heading-${index}`} className="message-body-heading">{renderInlineTokens(block.inlines, options)}</HeadingTag>;
+    }
+    case "quote":
+      return <blockquote key={`quote-${index}`} className="message-body-quote">{block.blocks.map((child, childIndex) => renderBlock(child, childIndex, options))}</blockquote>;
+    case "table":
+      return (
+        <div key={`table-${index}`} className="message-body-table-scroll">
+          <table className="message-body-table">
+            <tbody>
+              {block.rows.map((row, rowIndex) => (
+                <tr key={`row-${rowIndex}`}>
+                  {row.map((cell, cellIndex) => {
+                    const CellTag = rowIndex === 0 ? "th" : "td";
+                    return <CellTag key={`cell-${cellIndex}`} style={{ textAlign: block.align[cellIndex] ?? undefined }}>{renderInlineTokens(cell, options)}</CellTag>;
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      );
+    case "thematic_break":
+      return <hr key={`break-${index}`} className="message-body-thematic-break" />;
     case "list": {
       const ListTag = block.ordered ? "ol" : "ul";
+      const listClassName = block.items.some((item) => item.checked !== undefined)
+        ? "message-body-list message-body-task-list"
+        : "message-body-list";
       return (
-        <ListTag key={`list-${index}`} className="message-body-list">
+        <ListTag key={`list-${index}`} className={listClassName} start={block.ordered ? block.start : undefined}>
           {block.items.map((item, itemIndex) => (
-            <li key={`item-${itemIndex}`}>{renderInlineTokens(item, options)}</li>
+            <li key={`item-${itemIndex}`} className={item.checked === undefined ? undefined : "message-body-task-item"}>
+              {item.checked === undefined ? null : <input type="checkbox" checked={item.checked} readOnly tabIndex={-1} aria-hidden="true" />}
+              <div>{item.blocks.map((child, childIndex) => renderBlock(child, childIndex, options))}</div>
+            </li>
           ))}
         </ListTag>
       );
@@ -133,8 +173,16 @@ function renderInlineTokens(
         return <span key={`mention-${index}`} className="message-mention-token">{token.text}</span>;
       case "strong":
         return <strong key={`strong-${index}`}>{renderInlineTokens(token.children, options)}</strong>;
+      case "emphasis":
+        return <em key={`emphasis-${index}`}>{renderInlineTokens(token.children, options)}</em>;
+      case "delete":
+        return <del key={`delete-${index}`}>{renderInlineTokens(token.children, options)}</del>;
       case "inline_code":
         return <code key={`code-${index}`} className="message-inline-code">{token.code}</code>;
+      case "inline_math":
+        return <MathContent key={`math-${index}`} source={token.source} display={false} onDeferredContentReady={options.onDeferredContentReady} />;
+      case "line_break":
+        return <br key={`break-${index}`} />;
       case "web_link":
         return (
           <a key={`link-${index}`} className="message-web-link" href={token.href} target="_blank" rel="noreferrer" title={token.href}>

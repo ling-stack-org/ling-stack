@@ -1,5 +1,14 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { isLingAgentTeammateId, type AiTeammate, type RunStore, type TeammateDirectMessage, type TeammateDirectThread } from "@ling-stack/core";
+import {
+  isLingAgentTeammateId,
+  type AiTeammate,
+  type PermissionConfirmation,
+  type PermissionPreset,
+  type RunStore,
+  type SkillOptimizationMode,
+  type TeammateDirectMessage,
+  type TeammateDirectThread,
+} from "@ling-stack/core";
 import type { ResolvedDaemonConfig } from "../../config.js";
 import { HttpError } from "../../errors.js";
 import type { RunStoreRegistry } from "../../runtime/store-registry.js";
@@ -16,6 +25,11 @@ import {
   enrichTeammateDirectMessageWithWebEvidence,
   enrichTeammateDirectMessagesWithWebEvidence,
 } from "../web/message-web-evidence.js";
+import {
+  buildConversationSupersessionProjection,
+  filterSupersededTeammateDirectMessages,
+  projectTeammateDirectMessageRevisionMetadata,
+} from "../conversations/supersession-projection.js";
 
 export type CreateTeammateDirectAiReply = (input: {
   readonly store: RunStore;
@@ -23,6 +37,10 @@ export type CreateTeammateDirectAiReply = (input: {
   readonly thread: TeammateDirectThread;
   readonly sourceMessage: TeammateDirectMessage;
   readonly providerPresetId?: string;
+  readonly permissionPreset?: PermissionPreset;
+  readonly permissionConfirmation?: PermissionConfirmation;
+  readonly requestedSkillId?: string;
+  readonly skillOptimizationMode?: SkillOptimizationMode;
   readonly workspace?: DirectWorkspaceReady;
   readonly signal?: AbortSignal;
   readonly onWorkUnitStarted?: (handle: {
@@ -33,6 +51,7 @@ export type CreateTeammateDirectAiReply = (input: {
   }) => void;
   readonly stream?: {
     readonly onReady: (message: TeammateDirectMessage) => void;
+    readonly onRunLinked?: (message: TeammateDirectMessage) => void;
     readonly onDelta: (message: TeammateDirectMessage, delta: string) => void;
     readonly onDone: (message: TeammateDirectMessage) => void;
     readonly onBlocked: (message: TeammateDirectMessage) => void;
@@ -128,7 +147,14 @@ export async function handleTeammateDirectMessagesCollection(
         beforeMessageId: url.searchParams.get("beforeMessageId") ?? undefined,
         limit: readOptionalIntegerQuery(url, "limit", 1),
       });
-      const messages = enrichTeammateDirectMessagesWithWebEvidence(store, page.messages);
+      const visibleMessages = url.searchParams.get("includeSuperseded") === "true"
+        ? page.messages
+        : filterSupersededTeammateDirectMessages(page.messages, buildConversationSupersessionProjection(store, {
+            surfaces: ["teammate_direct"],
+            ownerId: teammateId,
+            laneId: thread.id,
+          }));
+      const messages = enrichTeammateDirectMessagesWithWebEvidence(store, visibleMessages.map((message) => projectTeammateDirectMessageRevisionMetadata(store, message)));
       writeJson(response, 200, {
         cwd,
         teammateId,
@@ -170,6 +196,10 @@ export async function handleTeammateDirectMessagesCollection(
             thread,
             sourceMessage: message,
             providerPresetId: input.providerPresetId,
+            permissionPreset: input.permissionPreset,
+            permissionConfirmation: input.permissionConfirmation,
+            requestedSkillId: input.requestedSkillId,
+            skillOptimizationMode: input.skillOptimizationMode,
             workspace: undefined,
           })
         : undefined;
@@ -257,6 +287,10 @@ export async function handleTeammateDirectMessageStream(
         thread,
         sourceMessage: message,
         providerPresetId: messageInput.providerPresetId,
+        permissionPreset: messageInput.permissionPreset,
+        permissionConfirmation: messageInput.permissionConfirmation,
+        requestedSkillId: messageInput.requestedSkillId,
+        skillOptimizationMode: messageInput.skillOptimizationMode,
         signal: abortController.signal,
         onWorkUnitStarted: (handle) => {
           registeredWorkUnitId = handle.workUnitId;
@@ -264,7 +298,12 @@ export async function handleTeammateDirectMessageStream(
         },
         stream: {
           onReady: (aiReply) => safeWriteSse("ready", { message, aiReply }),
-          onDelta: (aiReply, delta) => safeWriteSse("delta", { messageId: aiReply.id, delta, body: aiReply.body }),
+          onRunLinked: (aiReply) => safeWriteSse("run_linked", { messageId: aiReply.id, linkedRunId: aiReply.linkedRunId }),
+          onDelta: (aiReply, delta) => safeWriteSse("delta", {
+            messageId: aiReply.id,
+            delta,
+            body: aiReply.body,
+          }),
           onDone: (aiReply) => safeWriteSse("done", { message, aiReply: enrichTeammateDirectMessageWithWebEvidence(store, aiReply) }),
           onBlocked: (aiReply) => {
             const enrichedReply = enrichTeammateDirectMessageWithWebEvidence(store, aiReply);

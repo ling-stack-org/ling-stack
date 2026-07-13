@@ -113,6 +113,8 @@ export interface MockState {
   keepChannelAiReplyPending?: boolean;
   failNextChannelMessage?: boolean;
   lastChannelMessageRequest?: Record<string, unknown>;
+  lastTeammateDirectMessageRequest?: Record<string, unknown>;
+  lastConversationMessageEditRequest?: Record<string, unknown>;
   channelMessageQueries?: Record<string, unknown>[];
   pendingChannelAiReplies?: Record<string, string>;
   failNextTaskCreate?: boolean;
@@ -214,6 +216,8 @@ export interface MockLingTurn {
   automationId?: string;
   sourceMessageId?: string;
   sourceTurnId?: string;
+  revision?: number;
+  editedAt?: string;
   interventionId?: string;
   activeRunId?: string;
   lastRunId?: string;
@@ -5855,9 +5859,255 @@ export function buildMockExternalActionView(state: MockState, action: MockExtern
   };
 }
 
+async function handleMockConversationMessageEdit(
+  route: Route,
+  state: MockState,
+  body: Record<string, unknown>,
+): Promise<void> {
+  const surface = typeof body.surface === "string" ? body.surface : "";
+  const ownerId = typeof body.ownerId === "string" ? body.ownerId : "";
+  const messageId = typeof body.messageId === "string" ? body.messageId : "";
+  const replacementBody = typeof body.body === "string" ? body.body : "";
+  const expectedRevision = typeof body.expectedRevision === "number" ? body.expectedRevision : 1;
+  const idempotencyKey = typeof body.idempotencyKey === "string" ? body.idempotencyKey : "";
+  const now = "2026-07-12T04:00:00.000Z";
+  const mentions = Array.isArray(body.mentions) ? body.mentions : [];
+  const attachmentIds = Array.isArray(body.attachmentIds) ? body.attachmentIds.filter((item): item is string => typeof item === "string") : [];
+  const linkPreviewIds = Array.isArray(body.linkPreviewIds) ? body.linkPreviewIds.filter((item): item is string => typeof item === "string") : [];
+  const fileRefs = Array.isArray(body.fileRefs) ? body.fileRefs.filter(isRecord).map(normalizeMockFileRef) : [];
+  const revision = {
+    id: `revision_${messageId}_${expectedRevision + 1}`,
+    surface,
+    ownerId,
+    laneId: ownerId,
+    messageId,
+    revision: expectedRevision + 1,
+    body: replacementBody,
+    mentions,
+    attachmentIds,
+    linkPreviewIds,
+    fileRefs,
+    createdAt: now,
+  };
+  const supersededResponseMessageIds: string[] = [];
+  const interruptedRunIds: string[] = [];
+  let supersededTurnId: string | undefined;
+  let replacementTurnId: string | undefined;
+  let replayedSupersessionId: string | undefined;
+  let idempotentReplay = false;
+
+  if (surface === "normal_conversation") {
+    const originalTurn = state.turns.find((turn) =>
+      turn.threadId === ownerId &&
+      (turn.sourceMessageId === messageId || `conversation-user:${turn.id}` === messageId) &&
+      turn.status !== "superseded"
+    );
+    const thread = state.threads.find((candidate) => candidate.id === ownerId && candidate.kind === "conversation");
+    if (!originalTurn || !thread) {
+      await route.fulfill({ status: 404, json: { error: "message_not_found", message: "Conversation message not found." } });
+      return;
+    }
+    supersededTurnId = originalTurn.id;
+    originalTurn.status = "superseded";
+    originalTurn.updatedAt = now;
+    supersededResponseMessageIds.push(`conversation-assistant:${originalTurn.id}`);
+    interruptedRunIds.push(...state.turnRunLinks.filter((link) => link.turnId === originalTurn.id).map((link) => link.runId));
+
+    replacementTurnId = `turn_conversation_edit_${state.turns.length + 1}`;
+    const replacementRunId = `run_conversation_edit_${state.runs.length + 1}`;
+    const originalRun = interruptedRunIds
+      .map((runId) => state.runs.find((run) => run.id === runId))
+      .find((run): run is MockRun => Boolean(run));
+    const replacementTurn: MockLingTurn = {
+      id: replacementTurnId,
+      workspaceId: "workspace_default",
+      threadId: ownerId,
+      kind: originalTurn.kind,
+      status: "succeeded",
+      title: summarizeMockConversationTitle(replacementBody),
+      userInstruction: replacementBody,
+      teammateId: originalTurn.teammateId ?? "ling_agent",
+      sourceMessageId: messageId,
+      sourceTurnId: originalTurn.id,
+      revision: expectedRevision + 1,
+      editedAt: now,
+      lastRunId: replacementRunId,
+      createdByActor: "local-user",
+      createdAt: now,
+      updatedAt: now,
+      completedAt: now,
+    };
+    const replacementRun: MockRun = {
+      id: replacementRunId,
+      status: "succeeded",
+      cwd: originalRun?.cwd ?? cwd,
+      taskId: `conversation:${replacementTurnId}`,
+      providerPresetId: typeof body.providerPresetId === "string" ? body.providerPresetId : originalRun?.providerPresetId,
+      providerName: originalRun?.providerName ?? "mock-provider",
+      providerModel: originalRun?.providerModel ?? "mock-model",
+      taskSnapshot: { id: `conversation:${replacementTurnId}`, title: replacementTurn.title, prompt: replacementBody },
+      providerSnapshot: originalRun?.providerSnapshot ?? {},
+      requestSnapshot: { ...(isRecord(originalRun?.requestSnapshot) ? originalRun.requestSnapshot : {}), ...body },
+      eventLogPath: `.ling-stack/sessions/${replacementRunId}.jsonl`,
+      threadId: ownerId,
+      turnId: replacementTurnId,
+      createdAt: now,
+      startedAt: now,
+      updatedAt: now,
+      endedAt: now,
+    };
+    state.turns.push(replacementTurn);
+    state.runs.unshift(replacementRun);
+    state.turnRunLinks.push({ turnId: replacementTurnId, runId: replacementRunId, attemptNumber: 1, role: "primary", createdAt: now });
+    state.eventsByRun[replacementRunId] = [{
+      id: `evt_${replacementRunId}_assistant`,
+      runId: replacementRunId,
+      seq: 0,
+      ts: now,
+      type: "assistant_text_delta",
+      data: { text: `Ling Agent response: ${replacementBody}` },
+    }, {
+      id: `evt_${replacementRunId}_end`,
+      runId: replacementRunId,
+      seq: 1,
+      ts: now,
+      type: "run_end",
+      data: { status: "succeeded" },
+    }];
+    thread.lastRunId = replacementRunId;
+    thread.updatedAt = now;
+  } else if (surface === "channel_root" || surface === "channel_branch" || surface === "topic_reply") {
+    const messageIndex = state.channelMessages.findIndex((candidate) => isRecord(candidate) && candidate.id === messageId && candidate.channelId === ownerId);
+    const current = messageIndex >= 0 && isRecord(state.channelMessages[messageIndex]) ? state.channelMessages[messageIndex] : undefined;
+    if (!current) {
+      await route.fulfill({ status: 404, json: { error: "message_not_found", message: "Channel message not found." } });
+      return;
+    }
+    const pendingReplacement = isRecord(current.pendingReplacement) && current.pendingReplacement.idempotencyKey === idempotencyKey
+      ? current.pendingReplacement
+      : undefined;
+    if (pendingReplacement) {
+      revision.revision = expectedRevision;
+      revision.id = `revision_${messageId}_${expectedRevision}`;
+      replayedSupersessionId = typeof pendingReplacement.supersessionId === "string" ? pendingReplacement.supersessionId : undefined;
+      idempotentReplay = true;
+    }
+    state.channelMessages[messageIndex] = {
+      ...current,
+      body: replacementBody,
+      revision: pendingReplacement ? expectedRevision : expectedRevision + 1,
+      editedAt: now,
+      pendingReplacement: undefined,
+      updatedAt: now,
+    };
+    for (let index = 0; index < state.channelMessages.length; index += 1) {
+      const candidate = state.channelMessages[index];
+      const matchesSupersededReply = isRecord(candidate) && candidate.authorType === "ai-teammate" && candidate.status !== "superseded" && (
+        surface === "topic_reply" || surface === "channel_branch"
+          ? candidate.threadId === current.threadId && String(candidate.createdAt ?? "") >= String(current.createdAt ?? "")
+          : candidate.threadId === messageId
+      );
+      if (matchesSupersededReply && isRecord(candidate)) {
+        supersededResponseMessageIds.push(String(candidate.id));
+        state.channelMessages[index] = { ...candidate, status: "superseded", updatedAt: now };
+      }
+    }
+    state.channelMessages.push({
+      id: `msg_edit_reply_${state.channelMessages.length + 1}`,
+      workspaceId: "workspace_default",
+      channelId: ownerId,
+      threadId: typeof current.threadId === "string" && (surface === "topic_reply" || surface === "channel_branch") ? current.threadId : messageId,
+      kind: "ai_reply",
+      intent: "discuss",
+      authorType: "ai-teammate",
+      authorId: "ling_agent",
+      body: `Edited reply: ${replacementBody}`,
+      mentions: [],
+      attachmentIds: [],
+      linkPreviewIds: [],
+      fileRefs: [],
+      status: "ready",
+      createdAt: now,
+      updatedAt: now,
+    });
+    replacementTurnId = `turn_channel_edit_${state.turns.length + 1}`;
+  } else if (surface === "teammate_direct") {
+    const messageIndex = state.teammateDirectMessages.findIndex((candidate) => isRecord(candidate) && candidate.id === messageId && candidate.teammateId === ownerId);
+    const current = messageIndex >= 0 && isRecord(state.teammateDirectMessages[messageIndex]) ? state.teammateDirectMessages[messageIndex] : undefined;
+    if (!current) {
+      await route.fulfill({ status: 404, json: { error: "message_not_found", message: "Private message not found." } });
+      return;
+    }
+    const pendingReplacement = isRecord(current.pendingReplacement) && current.pendingReplacement.idempotencyKey === idempotencyKey
+      ? current.pendingReplacement
+      : undefined;
+    if (pendingReplacement) {
+      revision.revision = expectedRevision;
+      revision.id = `revision_${messageId}_${expectedRevision}`;
+      replayedSupersessionId = typeof pendingReplacement.supersessionId === "string" ? pendingReplacement.supersessionId : undefined;
+      idempotentReplay = true;
+    }
+    state.teammateDirectMessages[messageIndex] = {
+      ...current,
+      body: replacementBody,
+      revision: pendingReplacement ? expectedRevision : expectedRevision + 1,
+      editedAt: now,
+      pendingReplacement: undefined,
+      updatedAt: now,
+    };
+    for (let index = 0; index < state.teammateDirectMessages.length; index += 1) {
+      const candidate = state.teammateDirectMessages[index];
+      if (
+        isRecord(candidate) &&
+        candidate.teammateId === ownerId &&
+        candidate.threadId === current.threadId &&
+        candidate.authorType === "ai-teammate" &&
+        String(candidate.createdAt ?? "") >= String(current.createdAt ?? "") &&
+        candidate.status !== "superseded"
+      ) {
+        supersededResponseMessageIds.push(String(candidate.id));
+        state.teammateDirectMessages[index] = { ...candidate, status: "superseded", updatedAt: now };
+      }
+    }
+    state.teammateDirectMessages.push({
+      id: `tdmsg_edit_reply_${state.teammateDirectMessages.length + 1}`,
+      workspaceId: "workspace_default",
+      threadId: current.threadId,
+      teammateId: ownerId,
+      authorType: "ai-teammate",
+      authorId: ownerId,
+      body: `Edited private reply: ${replacementBody}`,
+      attachmentIds: [],
+      linkPreviewIds: [],
+      fileRefs: [],
+      status: "ready",
+      createdAt: now,
+      updatedAt: now,
+    });
+    replacementTurnId = `turn_direct_edit_${state.turns.length + 1}`;
+  } else {
+    await route.fulfill({ status: 400, json: { error: "invalid_surface", message: "Unsupported conversation surface." } });
+    return;
+  }
+
+  await route.fulfill({
+    json: {
+      message: revision,
+      supersessionId: replayedSupersessionId ?? `supersession_${messageId}_${expectedRevision + 1}`,
+      supersededTurnId,
+      replacementTurnId,
+      interruptedRunIds,
+      supersededResponseMessageIds,
+      preservedWorkspaceChanges: true,
+      status: "replacement_started",
+      idempotentReplay,
+    },
+  });
+}
+
 function buildMockConversationDetail(state: MockState, cwd: string, thread: MockLingThread): Record<string, unknown> {
   const turns = state.turns
-    .filter((turn) => turn.threadId === thread.id)
+    .filter((turn) => turn.threadId === thread.id && turn.status !== "superseded")
     .sort((left, right) => left.createdAt.localeCompare(right.createdAt));
   const runLinks = turns.flatMap((turn) => state.turnRunLinks.filter((link) => link.turnId === turn.id));
   const runs = runLinks
@@ -5899,13 +6149,15 @@ function createMockConversationUserMessage(
 ): Record<string, unknown> {
   const resolvedAttachments = attachments ?? findMockConversationAttachmentsForTurn(state, thread.id, turn.id, run);
   return {
-    id: `conversation-user:${turn.id}`,
+    id: turn.sourceMessageId?.startsWith("conversation-user:") ? turn.sourceMessageId : `conversation-user:${turn.id}`,
     role: "user",
     content: turn.userInstruction,
     status: turn.status === "failed" ? "failed" : "succeeded",
     threadId: thread.id,
     turnId: turn.id,
     attachments: resolvedAttachments,
+    revision: turn.revision,
+    editedAt: turn.editedAt,
     createdAt: turn.createdAt,
     updatedAt: turn.updatedAt,
   };
@@ -7915,7 +8167,9 @@ export async function handleDaemonRoute(
     }
     if ((action === "direct-thread" || action === "direct-messages") && request.method() === "GET") {
       const thread = getOrCreateMockTeammateThread(state, teammateId, teammate);
-      const messages = state.teammateDirectMessages.filter((item) => isRecord(item) && item.teammateId === teammateId && item.threadId === thread.id);
+      const messages = state.teammateDirectMessages.filter((item) =>
+        isRecord(item) && item.teammateId === teammateId && item.threadId === thread.id && item.status !== "superseded"
+      );
       const url = new URL(request.url());
       const limit = Math.min(Math.max(Number.parseInt(url.searchParams.get("limit") ?? "100", 10) || 100, 1), 500);
       const beforeMessageId = url.searchParams.get("beforeMessageId") ?? undefined;
@@ -8017,6 +8271,7 @@ export async function handleDaemonRoute(
     }
     if (action === "direct-messages/stream" && request.method() === "POST") {
       const body = await request.postDataJSON() as Record<string, unknown>;
+      state.lastTeammateDirectMessageRequest = body;
       const thread = getOrCreateMockTeammateThread(state, teammateId, teammate);
       const message = {
         id: `tdmsg_${state.teammateDirectMessages.length + 1}`,
@@ -8044,6 +8299,7 @@ export async function handleDaemonRoute(
             ? "Provider preflight is not ready."
             : "";
       const directReplyBody = buildMockDirectReplyBody(state, message.attachmentIds);
+      const linkedRunId = `run_direct_${state.teammateDirectMessages.length + 1}`;
       const aiReply = {
         id: `tdmsg_${state.teammateDirectMessages.length + 1}`,
         workspaceId: "workspace_default",
@@ -8057,6 +8313,7 @@ export async function handleDaemonRoute(
         fileRefs: [],
         status: blockedReason ? "blocked" : "ready",
         errorMessage: blockedReason || undefined,
+        linkedRunId: blockedReason ? undefined : linkedRunId,
         createdAt: "2026-06-04T00:20:01.000Z",
         updatedAt: "2026-06-04T00:20:01.000Z",
       };
@@ -8069,6 +8326,7 @@ export async function handleDaemonRoute(
         ]
         : [
           { event: "ready", data: { message, aiReply: pendingReply } },
+          { event: "run_linked", data: { messageId: aiReply.id, linkedRunId } },
           { event: "delta", data: { messageId: aiReply.id, delta: aiReply.body, body: aiReply.body } },
           { event: "done", data: { message, aiReply } },
         ];
@@ -9198,6 +9456,7 @@ export async function handleDaemonRoute(
       .filter((message) =>
         isRecord(message) &&
         message.channelId === channelId &&
+        message.status !== "superseded" &&
         (!threadId || message.threadId === threadId)
       )
       .sort((left, right) => {
@@ -10304,6 +10563,12 @@ export async function handleDaemonRoute(
       ? state.tasks.filter((task) => isRecord(task) && task.channelId === channelId)
       : state.tasks;
     await route.fulfill({ json: { cwd, tasks } });
+    return;
+  }
+  if (request.method() === "POST" && path === "/conversation-message-edits") {
+    const body = await request.postDataJSON() as Record<string, unknown>;
+    state.lastConversationMessageEditRequest = body;
+    await handleMockConversationMessageEdit(route, state, body);
     return;
   }
   if (request.method() === "GET" && path === "/conversations/attachments") {

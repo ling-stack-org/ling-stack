@@ -2,6 +2,7 @@
 
 Status: active design contract for the shared conversation UI
 Date: 2026-06-28
+Updated: 2026-07-13
 Scope: normal conversation, channel root, channel branch, topic reply, teammate private
 chat, run/thread detail, and future Desktop/PC conversation renderers
 
@@ -19,6 +20,9 @@ Related docs:
 - [Ling Agent Operation Cell UI](ling-agent-operation-cell-ui.md)
 - [Conversation Right Dock Workspace Tools](conversation-right-dock-workspace-tools.md)
 - [Ling Agent TerminalReport Protocol](ling-agent-terminal-report-protocol.md)
+- [Conversation Shared Capabilities](conversation-shared-capabilities.md)
+- [Conversation Shared Capabilities Detailed Design](conversation-shared-capabilities-detailed-design.md)
+- [Conversation Shared Capabilities Implementation Plan](conversation-shared-capabilities-implementation-plan.md)
 
 ## Purpose
 
@@ -63,6 +67,11 @@ The slice does not finish the full contract. Remaining work is evidence projecti
 normal conversations, shared file/reference capability blocks, safe `turnId` or
 thread-level work projection, and the active first-wave `conversation-ui-react`
 extraction.
+
+The next approved shared-capability phase adds structured Markdown, Mermaid, math,
+latest-user-message editing, and real teammate-private execution. These capabilities
+extend the same component and policy model; they do not create a parallel conversation
+surface.
 
 ## Vocabulary
 
@@ -150,6 +159,17 @@ message/composer/evidence model.
     fork separate drawer, review, or evidence UI systems.
 14. Executed-work final results consume the shared `TerminalReport` contract. Surfaces
     must not derive outcome, verification, participants, or artifacts from assistant copy.
+15. Only the latest local-user message in the active scoped lane is editable in the first
+    implementation. Editing supersedes the latest logical turn, keeps current workspace
+    side effects, and starts again in the same thread or branch.
+16. Teammate private chat is execution-capable when effective teammate tools, skills,
+    MCP, workspace, runner, provider, authorization, and approval policy permit it. The
+    private surface remains single-agent and does not render TerminalReport participants.
+17. Rich message content uses an allowlisted structured parser and owned renderers. Raw
+    HTML, arbitrary iframes, and untrusted script execution are forbidden.
+18. Existing channel topic replies, LingThread forks, and queued run guidance remain the
+    authorities for reply, branch, and next-run continuation. Shared-capability work must
+    not introduce parallel replacements.
 
 ## Surface Capability Matrix
 
@@ -167,6 +187,10 @@ message/composer/evidence model.
 | Teammate avatar stack | No by default | Yes | Yes | No by default | Selected teammate only | Contextual |
 | `@` teammate routing | No by default | Yes | Yes | No by default | No | No by default |
 | Topic reply action | No | Yes | Yes | Nested only | No | No |
+| Edit latest own message | Yes | Yes | Yes | Yes, latest own reply | Yes | No by default |
+| Structured Markdown / Mermaid / math | Yes | Yes | Yes | Yes | Yes | Yes |
+| Tool execution | Yes | Yes | Yes | No by default; promote explicitly | Yes, single-agent | Yes |
+| TerminalReport participants | No | Yes | Yes | No by default | No | Contextual |
 | Raw runtime detail | Detail only | Developer/detail only | Developer/detail only | No by default | Detail only | Yes |
 | Right Dock shell | Yes | Yes | Yes | No by default | Yes | Optional rich detail |
 
@@ -278,8 +302,10 @@ Owns:
 
 - copy,
 - feedback,
+- edit latest local-user message where policy allows,
 - retry or regenerate where policy allows,
 - topic reply where policy allows,
+- explicit thread fork where policy allows,
 - focus/hover visibility,
 - inline success/error feedback for the action itself.
 
@@ -290,6 +316,11 @@ Rules:
 - icon-only actions require `aria-label`, `title`, and keyboard reachability,
 - duplicate page-local copy/reply buttons must be removed when the shared action bar is
   present.
+- edit is computed by the scoped surface adapter; the action bar must not infer latest
+  message ownership from DOM position,
+- editing replaces the message body with the shared inline composer without collapsing
+  work/evidence rows below it,
+- historical user messages do not show Edit in the first implementation.
 
 ### TeammateAvatarStack
 
@@ -426,6 +457,11 @@ Required behavior:
 - preserve selected teammate identity,
 - show compact evidence/work when the private teammate used memory, tools, files, or
   approvals,
+- resolve and execute the selected teammate's permitted tools, skills, MCP, provider,
+  runner, direct workspace, authorization snapshot, and approval policy,
+- render private execution with the shared operation and approval components,
+- render TerminalReport outcome, changes, verification, artifacts, risks, and references
+  without a Participants section,
 - keep private chat empty state centered.
 
 Must not:
@@ -469,6 +505,8 @@ All surfaces use the same state vocabulary:
 | `blocked` | cannot proceed without fix/confirmation | visible reason and next action |
 | `failed` | terminal failure | visible reason and retry path when safe |
 | `cancelled` | user or policy stopped it | neutral stopped state |
+| `superseded` | a newer user-message revision replaced this logical turn | hidden from default transcript; visible in audit detail |
+| `editing` | latest local-user message is in the inline editor | keep row geometry stable and lock duplicate edit actions |
 | `succeeded` | terminal success | quiet terminal state |
 
 Do not invent page-local labels such as `complete-card`, `experts-running`, or
@@ -797,6 +835,15 @@ Every future slice touching conversation UI should keep or add focused tests for
 - copy/feedback/topic actions are hover/focus reachable,
 - evidence/work cells render in compact mode outside run/thread detail,
 - reduced or missing avatar data falls back to stable initials without broken layout.
+- edit appears only on the latest local-user message in the scoped surface lane,
+- edited turns keep workspace changes while old reply/work evidence moves to audit-only
+  projection,
+- normal and teammate-private TerminalReports omit Participants while channel reports keep
+  actual participant avatars,
+- private chat can render real Read/Edit/Shell/Check operations under effective policy,
+- Mermaid and structured Markdown render through the same body renderer on channel,
+  normal, private, and topic surfaces,
+- invalid or incomplete Mermaid falls back to source without breaking the transcript.
 
 ## Implementation Slice Status
 
@@ -843,8 +890,9 @@ Acceptance:
 - private chat can show evidence/work for the selected teammate only,
 - channel still owns multi-teammate collaboration.
 
-Status: first-pass compact work is implemented. Evidence projection and file/reference
-capability parity remain follow-up work and must still obey the real-data rendering gate.
+Status: implemented. Normal conversation and private chat use exact run linkage for compact
+WorkCell projection, and shared reference/file previews preserve the real-data rendering
+gate.
 
 ### Slice 2C: Visual Regression Guard
 
@@ -902,7 +950,44 @@ Acceptance:
 - shared composer CSS owns shell, toolbar, popovers, preview chips, and send button
   tokens.
 
-Status: designed, not implemented in the current branch.
+Status: implemented. Channel, normal conversation, and teammate private chat render the
+shared composer shell, tokenized input, permission menu, and surface-specific slots while
+retaining their distinct routing capabilities.
+
+### Slice 2E: Shared Rich Content And Latest Message Edit
+
+Goal: complete shared message-body and interaction parity.
+
+Detailed design and execution plan:
+
+- [Conversation Shared Capabilities Detailed Design](conversation-shared-capabilities-detailed-design.md)
+- [Conversation Shared Capabilities Implementation Plan](conversation-shared-capabilities-implementation-plan.md)
+
+Work:
+
+- add structured Markdown, Mermaid, math, references, and streaming-safe rich blocks,
+- add latest-local-user-message Edit to the shared action bar,
+- persist revisions and supersession without deleting old work evidence,
+- rerun in the same thread and current workspace,
+- hide superseded projection rows from the default transcript.
+
+Status: implemented. Structured GFM, Mermaid, KaTeX, safe references, streaming boundaries,
+latest-message editing, revision persistence, supersession, and same-lane replacement are
+covered by package tests and surface E2E.
+
+### Slice 2F: Teammate Private Execution Parity
+
+Goal: make private chat use the shared execution UI and actual teammate runtime policy.
+
+Work:
+
+- replace the hardcoded empty tool list with effective teammate execution resolution,
+- link private runs to shared WorkCell, approval, artifact, and TerminalReport components,
+- keep the surface single-agent and suppress TerminalReport Participants.
+
+Status: implemented. Teammate private chat resolves effective tools and permissions, runs
+through the supervised runtime, projects approval/artifact/TerminalReport state through the
+shared WorkCell, and suppresses Participants.
 
 ### Slice 3: Package Extraction
 
@@ -947,3 +1032,7 @@ Deferred decisions:
   `packages/conversation-ui-react`,
 - whether screenshot regression becomes mandatory in CI or stays local/manual until the
   fixtures stabilize.
+
+The approved shared-capability phase has no implementation-blocking product decision.
+Latest-message editing retains current workspace state, stays in the same thread/branch,
+and hides superseded work from the default transcript while preserving audit evidence.

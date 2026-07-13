@@ -11,6 +11,12 @@ export type SessionPermissionMode = "ask_everything" | "balanced" | "workspace_w
 
 export type PermissionPreset = "read_only" | "workspace_collaboration" | "full_access" | "custom";
 
+export interface ConversationPendingReplacement {
+  readonly supersessionId: string;
+  readonly idempotencyKey: string;
+  readonly failureReason?: string;
+}
+
 export type WorkMode = "coding" | "daily";
 
 export interface PermissionPresetDefinition {

@@ -1,8 +1,8 @@
 # Helio-Inspired AI Teammate Private Workspace
 
-Status: Implemented durable private workspace, private data lifecycle, and chat/settings IA split; broader e2e remains follow-up
+Status: Implemented durable private workspace, private data lifecycle, chat/settings IA split, and standard tool execution parity
 Date: 2026-06-04
-Updated: 2026-06-05
+Updated: 2026-07-13
 Scope: Web UI, daemon API, workspace storage, API client, docs, and e2e coverage
 
 ## Summary
@@ -67,6 +67,17 @@ Still deferred:
 - multi-party direct messages,
 - broad browser e2e coverage beyond the focused durable workspace flows.
 
+Approved correction, 2026-07-12:
+
+- teammate private chat is not permanently discussion-only;
+- the current runtime path still hardcodes `tools: []`, which is an implementation gap;
+- the target path resolves the selected teammate's provider, runner, effective tools,
+  skills, MCP authorization, direct workspace, composer permission snapshot, and approval
+  policy;
+- private execution stays single-agent and uses the shared WorkCell, approval, artifact,
+  and TerminalReport components;
+- private and normal-conversation TerminalReports do not render Participants.
+
 The broader platform direction lives in [Ling Framework](ling-framework.md). The target
 memory design for private, channel, shared, and task/run recall lives in
 [Ling Memory v1](ling-memory-v1.md). The target skill import, persona draft, Effective
@@ -81,6 +92,9 @@ The shared Codex-style conversation, evidence folding, right drawer, and compone
 extraction direction lives in
 [Codex-Inspired Conversation Experience v1](codex-inspired-conversation-v1.md) and
 [Codex-Inspired Conversation Components v1](codex-inspired-conversation-components-v1.md).
+The approved shared UI, rich content, latest-message editing, and private execution
+correction lives in [Conversation Shared Capabilities](conversation-shared-capabilities.md)
+and [Conversation Shared Capabilities Detailed Design](conversation-shared-capabilities-detailed-design.md).
 The boundary between teammate private chat, channel root messages, channel branches, topic
 replies, and future session views lives in
 [Conversation Surface Taxonomy](conversation-surface-taxonomy.md).
@@ -88,8 +102,9 @@ replies, and future session views lives in
 ## Product Principles
 
 1. AI teammates are workspace members, not decorative model presets.
-2. Private chat is for clarification and planning. Side effects must move through tasks,
-   runs, approvals, and channel/workspace state machines.
+2. Private chat supports clarification, planning, and single-agent execution. Side
+   effects still move through supervised runs, approvals, and workspace state machines;
+   chat text, persona, and skill prose cannot bypass those authorities.
 3. Every surface or settings section must be backed by real state or clearly be out of
    scope. Avoid empty product-shaped panels that imply unsupported behavior.
 4. Each AI teammate has isolated always-on memory. Channel membership provisions that
@@ -185,7 +200,14 @@ Behavior:
 - does not include channel files, channel history, or private memory unless explicitly
   selected by a future permission model,
 - provides a direct action to create a task from a message,
-- does not run tools or mutate files from chat.
+- may run tools or mutate files when the selected teammate, direct workspace, effective
+  tool set, runner, provider, skill/MCP bindings, composer authorization snapshot, and
+  approval policy permit execution,
+- remains single-agent and never invites other teammates into the private run,
+- renders private execution through the shared operation, approval, artifact, WorkCell,
+  and TerminalReport components,
+- omits TerminalReport Participants while preserving participant data in audit records
+  when present.
 
 MVP composer:
 
@@ -789,29 +811,41 @@ GET /teammates/:id/activity?cwd=/path/to/workspace
 These endpoints are read-only composition endpoints. They should reuse existing task,
 run, approval, and channel message stores rather than introducing duplicate durable state.
 
-## AI Reply Flow
+## AI Reply And Execution Flow
 
 1. Validate teammate exists and is `active`.
 2. Validate the direct thread exists or create it.
 3. Persist the local-user message.
 4. If `requestAiReply` is false, return the message.
 5. Resolve provider preset from request override or teammate default.
-6. Require provider preflight success.
-7. Build a no-tools private chat prompt:
+6. Resolve the direct-thread workspace binding and execution cwd.
+7. Resolve the effective runner, tools, skills, MCP authorization, composer permission
+   snapshot, and approval policy.
+8. Require provider and runner preflight success.
+9. Build the private teammate prompt:
    - teammate display name,
    - role/template summary,
    - teammate description,
    - system prompt and append fragments,
    - recent private messages,
+   - effective skills and allowed capability context,
    - no channel or file content by default.
-8. Create a pending AI reply record.
-9. Run the configured runner with `tools: []`.
-10. For streaming calls, append deltas to the pending AI message and emit SSE events.
-11. Persist the AI reply with `ready`, `blocked`, or `failed`.
-12. Return both message records, or close the SSE stream after the terminal event.
+10. Create a pending AI reply record.
+11. For a conversational response, run without unnecessary tools but keep the effective
+    policy available.
+12. For an executable response, create a supervised work unit/run, link it to the private
+    reply, and invoke the runner with the effective tool set.
+13. For streaming calls, append deltas and structured runtime events to the owning
+    pending reply/run.
+14. Route approval requests through the shared approval protocol.
+15. Persist the AI reply with `ready`, `blocked`, or `failed` and commit a TerminalReport
+    for executed work.
+16. Return the linked message/run records, or close the SSE stream after terminal state.
 
-Private chat currently uses the runner/provider path without creating a durable run
-session. It persists the local message first, then stores a ready or blocked AI reply.
+Current implementation note: the direct-reply path still resolves and invokes the runner
+with `tools: []`. The shared-capability implementation replaces that hardcoded boundary
+with effective execution resolution. Plain discussion may remain message-only; executed
+work must create/link durable run evidence.
 
 ## Frontend Architecture
 
@@ -1012,6 +1046,10 @@ Work:
 - [x] Private chat can attach private files without exposing channel attachments.
 - [x] AI replies in private chat use the teammate's selected provider when one is ready.
 - [x] Provider failures create a visible blocked reply record.
+- [x] Private chat can execute real Read/Edit/Shell/Check operations under effective
+  teammate and workspace policy.
+- [x] Private executed work renders the shared WorkCell, approval state, artifacts, and
+  TerminalReport without Participants.
 - [x] Private chat does not include channel messages, files, or memory unless a future scope
   decision explicitly adds them.
 - [x] The teammate task surface only shows tasks assigned to the selected teammate.
@@ -1033,7 +1071,7 @@ Work:
 | Private chat leaks channel context | Prompt builder includes private thread only by default |
 | Built-in template ids conflict with custom teammate ids | Use deterministic `teammate_builtin_*` ids for seeded instances |
 | Disabling a seeded teammate recreates it on bootstrap | Store disabled state and make bootstrap idempotent |
-| Chat path bypasses approval policy | Private chat uses no tools; side effects require task/run path |
+| Chat path bypasses approval policy | Private execution always creates/uses supervised run authority and immutable permission snapshots; prompt text cannot grant tools |
 | Provider failure loses user message | Persist local message before provider resolution and create blocked reply |
 | Migration breaks existing workspaces | Use additive tables and no destructive schema changes |
 | Hard delete removes too much shared history | Delete only teammate private data; clear references in channel/task/run history |
@@ -1042,28 +1080,33 @@ Work:
 
 ## Open Decisions
 
-1. Should private chat create run sessions for audit, or use a lighter message-only
-   record? Recommendation: message-only first, optional `linkedRunId` when the runner
-   path already emits a session.
-2. Should memory scopes affect prompt construction immediately? Recommendation: no. First
+1. Should memory scopes affect prompt construction immediately? Recommendation: no. First
    make always-on scopes visible and reviewable; wire prompt inclusion in a later
    trust-reviewed slice.
-3. Should Files and Calendar tabs exist now? Recommendation: no. Files can appear after
+2. Should Files and Calendar tabs exist now? Recommendation: no. Files can appear after
    richer private attachment or per-teammate artifact workflows exist. Calendar should wait for a
    scheduled task/event model.
 
-## First Implementation Target
+Private execution authority is no longer an open decision. Plain discussion can remain a
+message-only response; any tool execution must create/link durable run evidence.
 
-Implemented first code slice:
+## Implemented Delivery
+
+The private workspace now includes:
 
 - durable teammate instances seeded from built-in templates,
 - private teammate thread and message persistence,
-- private chat page with no-tools streamed AI replies,
+- private chat discussion plus standard supervised tool execution,
 - private attachments and avatar upload,
 - soft disable plus hard delete with minimal tombstone audit,
 - single-agent settings sections for skills, channels, memory, MCP, model, profile, and danger backed by real data or metadata,
-- docs updates and focused unit/daemon coverage.
+- effective teammate provider, runner, tool, skill, MCP, workspace, permission, and
+  approval resolution,
+- linked private runs projected through shared WorkCell and participant-free
+  TerminalReport components,
+- cancellation, approval resume, attachment materialization, edit/rerun, and real Web E2E
+  coverage.
 
 Calendar, custom skill-pack import, optional vector retrieval provider installation, and
-multi-party direct messages remain deferred. The next skill-focused slice is specified in
+multi-party direct messages remain deferred. The skill-focused slice is specified in
 [Ling Skill Import v1](ling-skill-import-v1.md).

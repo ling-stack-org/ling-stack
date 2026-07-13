@@ -9,6 +9,7 @@ import {
   History,
   Image as ImageIcon,
   Loader2,
+  Pencil,
   Play,
   Plus,
   RefreshCw,
@@ -37,8 +38,10 @@ import {
 import {
   ConversationArtifactStripPanel,
   ConversationAttachmentStrip,
+  ConversationReferenceStrip,
+  ConversationReplacementRetry,
   ConversationWorkCell,
-  FileRefChip,
+  InlineMessageEditor,
   MessageActionBar,
   MessageBodyRenderer,
   MessageBubble,
@@ -59,6 +62,7 @@ import type {
   ChannelExecutionProposal,
   ChannelHandoff,
   ChannelHandoffStatus,
+  ChannelLinkPreview,
   ChannelMention,
   ChannelMessage,
   ChannelMessageFileRef,
@@ -100,6 +104,7 @@ export interface ChannelMessageRenderersInput {
   readonly auditActivityVisible: boolean;
   readonly channelArtifactsByRun: Readonly<Record<string, readonly RunArtifact[]>>;
   readonly channelAttachmentById: ReadonlyMap<string, ChannelAttachment>;
+  readonly channelLinkPreviewById: ReadonlyMap<string, ChannelLinkPreview>;
   readonly channelMessageFeedbackById: Readonly<Record<string, FeedbackValue>>;
   readonly channelMessagesLoadingOlder: boolean;
   readonly channelWorkflowSteps: readonly ChannelWorkflowStep[];
@@ -111,6 +116,12 @@ export interface ChannelMessageRenderersInput {
   readonly executionProposalsByMessageId: ReadonlyMap<string, readonly ChannelExecutionProposal[]>;
   readonly formatBytes: (value: number) => string;
   readonly latestStatus: string;
+  readonly latestEditableMessageId?: string;
+  readonly editingMessageId?: string;
+  readonly editSaving?: boolean;
+  readonly editError?: string;
+  readonly replacementRetryingMessageId?: string;
+  readonly replacementRetryError?: string;
   readonly localUserDisplayName: string;
   readonly loadPreview: (request: PreviewRequest) => Promise<PreviewContentResponse>;
   readonly memoryById: ReadonlyMap<string, MemoryObject>;
@@ -137,6 +148,7 @@ export interface ChannelMessageRenderersInput {
   readonly onOpenApprovalDetail: (approval: ApprovalRequest | undefined) => void;
   readonly onOpenContextSummaryInConversationDetail: (summary: ChannelContextSummary) => void;
   readonly onOpenRun: (runId: string) => void;
+  readonly onOpenFileReference: () => void;
   readonly onOpenThreadForMessage: (message: ChannelMessage) => void;
   readonly onOrchestrateWorkflow: (workflow: ChannelWorkflow) => void;
   readonly onRejectDecision: (decision: ChannelDecision) => void;
@@ -149,6 +161,10 @@ export interface ChannelMessageRenderersInput {
   readonly onStartWorkflowFromHandoff: (handoff: ChannelHandoff) => void;
   readonly onSupersedeDecision: (decision: ChannelDecision) => void;
   readonly onToggleChannelMessageFeedback: (messageId: string, feedback: FeedbackValue) => void;
+  readonly onBeginMessageEdit: (messageId: string) => void;
+  readonly onCancelMessageEdit: () => void;
+  readonly onSaveMessageEdit: (message: ChannelMessage, body: string) => void | Promise<void>;
+  readonly onRetryMessageReplacement: (message: ChannelMessage) => void | Promise<void>;
   readonly onUpdateExecutionProposal: (
     proposal: ChannelExecutionProposal,
     input: UpdateChannelExecutionProposalRequest,
@@ -165,6 +181,7 @@ export interface ChannelMessageRenderers {
 }
 
 export function createChannelMessageRenderers(input: ChannelMessageRenderersInput): ChannelMessageRenderers {
+  const channelSurface = input.selectedChannelBranchRootThreadId ? "channel_branch" : "channel_root";
   function renderLingAgentAvatar(): ReactNode {
     const teammate = input.allLocalTeammateById.get(LING_AGENT_AUTHOR_ID);
     return (
@@ -306,11 +323,10 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
 
   function renderChannelAiMessageActions(message: ChannelMessage, copyText: string): ReactNode {
     const feedback = input.channelMessageFeedbackById[message.id];
-    const surface = input.selectedChannelBranchRootThreadId ? "channel_branch" : "channel_root";
     return (
       <div className="channel-message-row-footer-stack">
         <MessageActionBar
-          surface={surface}
+          surface={channelSurface}
           className="channel-message-ai-actions"
           copiedLabel={input.t("Copied")}
           actions={[
@@ -385,7 +401,7 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
         key={block.id}
       >
         {pendingCoordinatorMessage ? <Loader2 className="message-pending-spinner spin" size={13} /> : null}
-        <MessageBodyRenderer text={body} cwd={input.cwd} compact streaming={pendingCoordinatorMessage} />
+        <MessageBodyRenderer text={body} cwd={input.cwd} compact streaming={pendingCoordinatorMessage} onOpenLocalFile={input.onOpenFileReference} />
         {evidenceNode}
       </div>
     );
@@ -404,6 +420,7 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
       <div className="conversation-turn-operation" key={block.id}>
         <ConversationWorkCell
           model={block.operationCell}
+          surface={channelSurface}
           cwd={input.cwd}
           detailsState={context.detailsState}
           onOpenRun={block.operationCell.anchorRunId.startsWith("workflow:") ? undefined : input.onOpenRun}
@@ -432,6 +449,7 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
         revisionKey={block.terminalReportRevisionKey}
         rows={block.rows}
         renderParticipantAvatar={renderConversationParticipantAvatar}
+        surface={channelSurface}
       />
     );
   }
@@ -631,6 +649,7 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
       ? input.proposedPlanArtifactsById.get(proposedPlanBlock.plan.id) ?? proposedPlanBlock.plan
       : undefined;
     const visibleMessageBody = proposedPlanBlock?.displayBody ?? pendingAiReplyBody;
+    const editing = input.editingMessageId === message.id;
     if (plainChatMessage) {
       return (
         <div className="message-group">
@@ -640,10 +659,25 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
             avatar={renderChannelMessageAvatar(message)}
             authorName={messageAuthorLabel(message, input.teammateOptions, input.t("Deleted teammate"), input.localUserDisplayName, input.allLocalTeammateById)}
             createdAtLabel={formatDateTime(message.createdAt)}
-            bodyNode={(
+            statusNode={message.editedAt ? <span className="conversation-message-edited-label">{input.t("Edited")}</span> : undefined}
+            bodyNode={editing ? (
+              <div className="conversation-inline-message-editor-stack">
+                <InlineMessageEditor
+                  initialValue={message.body}
+                  cwd={input.cwd}
+                  ariaLabel={input.t("Edit message")}
+                  saveLabel={input.t("Save and resend")}
+                  cancelLabel={input.t("Cancel")}
+                  saving={input.editSaving}
+                  onCancel={input.onCancelMessageEdit}
+                  onSave={(value) => input.onSaveMessageEdit(message, value)}
+                />
+                {input.editError ? <div className="inline-error compact-inline-error" role="alert">{input.editError}</div> : null}
+              </div>
+            ) : (
               <div className={pendingAiReply ? "message-body-shell message-body-with-spinner" : "message-body-shell"}>
                 {pendingAiReply ? <Loader2 className="message-pending-spinner spin" size={13} /> : null}
-                {visibleMessageBody.trim() ? <MessageBodyRenderer text={visibleMessageBody} cwd={input.cwd} compact streaming={pendingAiReply} /> : null}
+                {visibleMessageBody.trim() ? <MessageBodyRenderer text={visibleMessageBody} cwd={input.cwd} compact streaming={pendingAiReply} onOpenLocalFile={input.onOpenFileReference} /> : null}
                 {proposedPlanBlock ? (
                   <ProposedPlanBlock
                     plan={proposedPlan ?? proposedPlanBlock.plan}
@@ -658,7 +692,7 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
                 ) : null}
               </div>
             )}
-            attachmentsNode={renderChannelMessageAssets(message.attachmentIds, messageFileRefs, message.channelId)}
+            attachmentsNode={renderChannelMessageAssets(message.attachmentIds, messageFileRefs, message.linkPreviewIds, message.channelId)}
             evidenceNode={(messageUsedMemoryEvents.length > 0 || message.webEvidence) ? (
               <MessageEvidencePanel
                 memoryContent={usedMemorySummary}
@@ -666,7 +700,40 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
                 webEvidence={message.webEvidence}
               />
             ) : null}
-            actionsNode={message.authorType === "ai-teammate" ? renderChannelAiMessageActions(message, message.body) : null}
+            errorNode={message.pendingReplacement ? (
+              <ConversationReplacementRetry
+                failureReason={input.replacementRetryError || message.pendingReplacement.failureReason}
+                retryLabel={input.t("Retry response")}
+                retrying={input.replacementRetryingMessageId === message.id}
+                onRetry={() => void input.onRetryMessageReplacement(message)}
+              />
+            ) : null}
+            actionsNode={!editing && message.authorType === "ai-teammate"
+              ? renderChannelAiMessageActions(message, message.body)
+              : !editing && message.authorType === "local-user"
+                ? (
+                    <MessageActionBar
+                      surface={channelSurface}
+                      className="channel-message-user-actions"
+                      actions={[
+                        {
+                          id: "copy",
+                          kind: "copy",
+                          label: input.t("Copy message"),
+                          icon: <Copy size={14} />,
+                          copyText: message.body,
+                        },
+                        ...(input.latestEditableMessageId === message.id ? [{
+                          id: "edit",
+                          kind: "edit_latest" as const,
+                          label: input.t("Edit message"),
+                          icon: <Pencil size={14} />,
+                          onClick: () => input.onBeginMessageEdit(message.id),
+                        }] : []),
+                      ]}
+                    />
+                  )
+                : null}
           />
           {executionProposals.map((proposal) => renderExecutionProposalCard(proposal))}
         </div>
@@ -727,6 +794,7 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
       return (
         <ConversationWorkCell
           model={workCell}
+          surface={channelSurface}
           cwd={input.cwd}
           detailsState={input.conversationWorkCellDetailsByKey[detailsKey] ?? { status: "not_loaded" }}
           onOpenRun={workCell.anchorRunId.startsWith("workflow:") ? undefined : input.onOpenRun}
@@ -840,6 +908,7 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
       return (
         <ConversationWorkCell
           model={workCell}
+          surface={channelSurface}
           cwd={input.cwd}
           detailsState={input.conversationWorkCellDetailsByKey[input.conversationWorkCellDetailsCacheKey(workCell.threadId)] ?? { status: "not_loaded" }}
           onOpenRun={input.onOpenRun}
@@ -946,10 +1015,10 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
             createdAtLabel={formatDateTime(preview.createdAt)}
             bodyNode={(
               <div className="message-body-shell">
-                <MessageBodyRenderer text={preview.body} cwd={input.cwd} compact />
+                <MessageBodyRenderer text={preview.body} cwd={input.cwd} compact onOpenLocalFile={input.onOpenFileReference} />
               </div>
             )}
-            attachmentsNode={renderChannelMessageAssets(preview.attachmentIds, preview.fileRefs, preview.channelId)}
+            attachmentsNode={renderChannelMessageAssets(preview.attachmentIds, preview.fileRefs, preview.linkPreviewIds, preview.channelId)}
           />
         ) : null}
         <div className="channel-send-thinking-row" role="status" aria-live="polite">
@@ -963,12 +1032,16 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
   function renderChannelMessageAssets(
     attachmentIds: readonly string[],
     fileRefs: readonly ChannelMessageFileRef[] = [],
+    linkPreviewIds: readonly string[] = [],
     channelId: string = input.selectedChannelId,
   ): ReactNode {
     const attachments = attachmentIds
       .map((id) => input.channelAttachmentById.get(id))
       .filter((attachment): attachment is ChannelAttachment => Boolean(attachment));
-    if (attachments.length === 0 && fileRefs.length === 0) {
+    const linkPreviews = linkPreviewIds
+      .map((id) => input.channelLinkPreviewById.get(id))
+      .filter((preview): preview is ChannelLinkPreview => preview?.status === "ready");
+    if (attachments.length === 0 && fileRefs.length === 0 && linkPreviews.length === 0) {
       return null;
     }
     return (
@@ -992,23 +1065,46 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
             } : undefined,
           }))}
         />
-        {fileRefs.length > 0 ? (
-          <div className="conversation-attachment-strip channel-file-ref-strip" aria-label={input.t("Workspace file references")}>
-            {fileRefs.map((fileRef, index) => (
-              <FileRefChip
-                key={`${fileRef.path}:${fileRef.line ?? ""}:${index}`}
-                icon={<FileText size={13} />}
-                label={fileRef.label ?? fileRef.path}
-                meta={fileRef.line !== undefined ? `:${fileRef.line}` : undefined}
-              />
-            ))}
-          </div>
-        ) : null}
+        <ConversationReferenceStrip
+          ariaLabel={input.t("References")}
+          references={[
+            ...fileRefs.map((fileRef, index) => ({
+              id: `file:${fileRef.path}:${fileRef.line ?? ""}:${index}`,
+              kind: "workspace_file" as const,
+              label: fileRef.label ?? fileNameFromReferencePath(fileRef.path),
+              meta: fileRef.line !== undefined ? `${fileRef.path}:${fileRef.line}` : fileRef.path,
+              previewTitle: fileRef.label ?? fileNameFromReferencePath(fileRef.path),
+              previewText: fileRef.path,
+              onOpen: input.onOpenFileReference,
+            })),
+            ...linkPreviews.map((preview) => ({
+              id: `web:${preview.id}`,
+              kind: "web" as const,
+              label: preview.title ?? preview.siteName ?? webReferenceHost(preview.normalizedUrl || preview.url),
+              meta: preview.siteName ?? webReferenceHost(preview.normalizedUrl || preview.url),
+              href: preview.normalizedUrl || preview.url,
+              previewTitle: preview.title,
+              previewText: preview.description,
+            })),
+          ]}
+        />
       </>
     );
   }
 
   return { renderMessageFeedItem };
+}
+
+function fileNameFromReferencePath(path: string): string {
+  return path.split("/").filter(Boolean).at(-1) ?? path;
+}
+
+function webReferenceHost(value: string): string {
+  try {
+    return new URL(value).hostname.replace(/^www\./iu, "");
+  } catch {
+    return value;
+  }
 }
 
 export const LING_AGENT_AUTHOR_ID = "ling_agent";

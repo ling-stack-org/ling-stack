@@ -19,6 +19,10 @@ import {
   openTaskFromAttentionQueue,
   readScrollState,
 } from "./support/test-helpers";
+import {
+  expectSharedConversationRichBody,
+  sharedConversationRichBody,
+} from "./support/rich-content";
 
 async function expectComposerValue(composer: Locator, value: string): Promise<void> {
   if (value.length === 0) {
@@ -2956,6 +2960,13 @@ test("channel activity supports mentions, messages, files, links, and topic repl
   await expect(sentMessage.getByRole("link", { name: /brief\.txt/ })).toBeVisible();
   await expect(sentMessage.getByRole("link", { name: /shot\.png/ })).toBeVisible();
   expect(state.channelLinkPreviews.some((preview) => isRecord(preview) && preview.title === "Example Domain")).toBe(true);
+  const sentReferences = sentMessage.getByLabel("References");
+  const webReference = sentReferences.getByRole("link", { name: /Example Domain/ });
+  await expect(webReference).toBeVisible();
+  await webReference.hover();
+  await expect(sentReferences.getByRole("tooltip")).toContainText("Example Domain");
+  await page.mouse.move(4, 4);
+  await expect(sentReferences.getByRole("tooltip")).toHaveCount(0);
   await page.getByRole("button", { name: "More channel views" }).click();
   const viewMenu = page.getByRole("menu", { name: "More channel views" });
   await expect(viewMenu.getByRole("menuitem", { name: "Settings" })).toBeVisible();
@@ -3077,7 +3088,7 @@ test("channel composer snapshots restore draft assets and topic replies across c
       intent: "discuss",
       authorType: "ai-teammate",
       authorId: "ling_agent",
-      body: "Snapshot reply ready.",
+      body: `Snapshot reply ready.\n\n${sharedConversationRichBody}`,
       mentions: [],
       attachmentIds: [],
       linkPreviewIds: [],
@@ -3109,6 +3120,7 @@ test("channel composer snapshots restore draft assets and topic replies across c
   await teammateReply.getByRole("button", { name: "Reply in topic" }).click();
   const topicPanel = page.getByLabel("Topic replies");
   await expect(topicPanel).toBeVisible();
+  await expectSharedConversationRichBody(topicPanel);
   await topicPanel.getByLabel("Topic reply input").fill("Engineering topic reply draft");
 
   await navigation.getByRole("button", { name: "Design" }).click();
@@ -3129,6 +3141,259 @@ test("channel composer snapshots restore draft assets and topic replies across c
   await navigation.getByRole("button", { name: "Design" }).click();
   await expect(page.getByRole("heading", { name: "Design", level: 1 })).toBeVisible();
   await expectComposerValue(composerInput, "Design snapshot draft");
+});
+
+test("latest channel prompt edits in place and hides its superseded reply", async ({ page }) => {
+  await useEnglishLocale(page);
+  const state = createBaseState({ approvalStatus: "expired" });
+  state.channelMessages = [{
+    id: "msg_channel_edit_source",
+    workspaceId: "workspace_default",
+    channelId: "channel_engineering",
+    kind: "message",
+    intent: "discuss",
+    authorType: "local-user",
+    authorId: "local-user",
+    body: "Original channel prompt",
+    mentions: [],
+    attachmentIds: [],
+    linkPreviewIds: [],
+    fileRefs: [],
+    status: "ready",
+    createdAt: "2026-07-12T03:20:00.000Z",
+    updatedAt: "2026-07-12T03:20:00.000Z",
+  }, {
+    id: "msg_channel_edit_old_reply",
+    workspaceId: "workspace_default",
+    channelId: "channel_engineering",
+    threadId: "msg_channel_edit_source",
+    kind: "ai_reply",
+    intent: "discuss",
+    authorType: "ai-teammate",
+    authorId: "engineer",
+    body: "Old channel response should disappear.",
+    mentions: [],
+    attachmentIds: [],
+    linkPreviewIds: [],
+    fileRefs: [],
+    status: "ready",
+    createdAt: "2026-07-12T03:20:01.000Z",
+    updatedAt: "2026-07-12T03:20:01.000Z",
+  }];
+
+  await mockDaemon(page, state);
+  await page.goto("/");
+  await openEngineeringChannel(page);
+
+  const feed = page.getByLabel("Channel message feed");
+  const userRow = feed.locator(".channel-message-row.local-user");
+  await userRow.hover();
+  await userRow.getByRole("button", { name: "Edit message" }).click();
+  await feed.getByLabel("Edit message").fill("Revised channel prompt");
+  await feed.getByRole("button", { name: "Save and resend" }).click();
+
+  await expect(feed).toContainText("Revised channel prompt");
+  await expect(feed).toContainText("Edited reply: Revised channel prompt");
+  await expect(feed).not.toContainText("Original channel prompt");
+  await expect(feed).not.toContainText("Old channel response should disappear.");
+  await expect.poll(() => state.lastConversationMessageEditRequest?.surface).toBe("channel_root");
+  await expect.poll(() => state.lastConversationMessageEditRequest?.messageId).toBe("msg_channel_edit_source");
+});
+
+test("pending channel replacement survives refresh and retries with the original idempotency key", async ({ page }) => {
+  await useEnglishLocale(page);
+  const state = createBaseState({ approvalStatus: "expired" });
+  state.channelMessages = [{
+    id: "msg_channel_edit_pending",
+    workspaceId: "workspace_default",
+    channelId: "channel_engineering",
+    kind: "message",
+    intent: "discuss",
+    authorType: "local-user",
+    authorId: "local-user",
+    body: "Revised prompt waiting for a response",
+    mentions: [],
+    attachmentIds: [],
+    linkPreviewIds: [],
+    fileRefs: [],
+    status: "ready",
+    revision: 2,
+    editedAt: "2026-07-12T03:22:00.000Z",
+    pendingReplacement: {
+      supersessionId: "supersession_channel_pending",
+      idempotencyKey: "channel-edit-pending-key",
+      failureReason: "Provider temporarily unavailable",
+    },
+    createdAt: "2026-07-12T03:20:00.000Z",
+    updatedAt: "2026-07-12T03:22:00.000Z",
+  }];
+
+  await mockDaemon(page, state);
+  await page.goto("/");
+  await openEngineeringChannel(page);
+
+  const feed = page.getByLabel("Channel message feed");
+  const userRow = feed.locator(".channel-message-row.local-user");
+  await expect(userRow).toContainText("Edited");
+  await expect(userRow).toContainText("Provider temporarily unavailable");
+  await userRow.hover();
+  await expect(userRow.getByRole("button", { name: "Edit message" })).toHaveCount(0);
+  await userRow.getByRole("button", { name: "Retry response" }).click();
+
+  await expect(feed).toContainText("Edited reply: Revised prompt waiting for a response");
+  await expect(userRow.getByRole("button", { name: "Retry response" })).toHaveCount(0);
+  await expect.poll(() => state.lastConversationMessageEditRequest?.idempotencyKey).toBe("channel-edit-pending-key");
+  await expect.poll(() => state.lastConversationMessageEditRequest?.expectedRevision).toBe(2);
+});
+
+test("latest topic reply edits in place without creating a second topic", async ({ page }) => {
+  await useEnglishLocale(page);
+  const state = createBaseState({ approvalStatus: "expired" });
+  state.channelMessages = [{
+    id: "msg_topic_edit_root",
+    workspaceId: "workspace_default",
+    channelId: "channel_engineering",
+    kind: "ai_reply",
+    intent: "discuss",
+    authorType: "ai-teammate",
+    authorId: "engineer",
+    body: "Topic root response",
+    mentions: [],
+    attachmentIds: [],
+    linkPreviewIds: [],
+    fileRefs: [],
+    status: "ready",
+    createdAt: "2026-07-12T03:25:00.000Z",
+    updatedAt: "2026-07-12T03:25:00.000Z",
+  }, {
+    id: "msg_topic_edit_user",
+    workspaceId: "workspace_default",
+    channelId: "channel_engineering",
+    threadId: "msg_topic_edit_root",
+    kind: "message",
+    intent: "discuss",
+    authorType: "local-user",
+    authorId: "local-user",
+    body: "Original topic follow-up",
+    mentions: [],
+    attachmentIds: [],
+    linkPreviewIds: [],
+    fileRefs: [],
+    status: "ready",
+    createdAt: "2026-07-12T03:25:01.000Z",
+    updatedAt: "2026-07-12T03:25:01.000Z",
+  }, {
+    id: "msg_topic_edit_old_reply",
+    workspaceId: "workspace_default",
+    channelId: "channel_engineering",
+    threadId: "msg_topic_edit_root",
+    kind: "ai_reply",
+    intent: "discuss",
+    authorType: "ai-teammate",
+    authorId: "engineer",
+    body: "Old topic response should disappear.",
+    mentions: [],
+    attachmentIds: [],
+    linkPreviewIds: [],
+    fileRefs: [],
+    status: "ready",
+    createdAt: "2026-07-12T03:25:02.000Z",
+    updatedAt: "2026-07-12T03:25:02.000Z",
+  }];
+
+  await mockDaemon(page, state);
+  await page.goto("/");
+  await openEngineeringChannel(page);
+
+  const rootMessage = page.getByLabel("Channel message feed").locator(".channel-message-row.ai-teammate").filter({ hasText: "Topic root response" });
+  await rootMessage.hover();
+  await rootMessage.getByRole("button", { name: "Reply in topic" }).click();
+  const topicPanel = page.getByLabel("Topic replies");
+  const userReply = topicPanel.locator(".thread-reply-item.thread-reply-own");
+  await userReply.hover();
+  await userReply.getByRole("button", { name: "Edit message" }).click();
+  await topicPanel.getByLabel("Edit message").fill("Revised topic follow-up");
+  await topicPanel.getByRole("button", { name: "Save and resend" }).click();
+
+  await expect(topicPanel).toContainText("Revised topic follow-up");
+  await expect(topicPanel).toContainText("Edited reply: Revised topic follow-up");
+  await expect(topicPanel).not.toContainText("Original topic follow-up");
+  await expect(topicPanel).not.toContainText("Old topic response should disappear.");
+  await expect(page.getByLabel("Topic replies")).toHaveCount(1);
+  await expect.poll(() => state.lastConversationMessageEditRequest?.surface).toBe("topic_reply");
+  await expect.poll(() => state.lastConversationMessageEditRequest?.messageId).toBe("msg_topic_edit_user");
+});
+
+test("latest channel branch prompt reruns inside the same branch lane", async ({ page }) => {
+  await useEnglishLocale(page);
+  const state = createBaseState({ approvalStatus: "expired" });
+  const branchId = "channel_branch_edit";
+  const rootThreadId = "thread_channel_branch_edit";
+  state.channelBranches = [{
+    id: branchId,
+    workspaceId: "workspace_default",
+    channelId: "channel_engineering",
+    name: "Implementation branch",
+    status: "active",
+    rootThreadId,
+    createdAt: "2026-07-12T03:27:00.000Z",
+    updatedAt: "2026-07-12T03:27:00.000Z",
+  }];
+  state.channelMessages = [{
+    id: "msg_branch_edit_source",
+    workspaceId: "workspace_default",
+    channelId: "channel_engineering",
+    threadId: rootThreadId,
+    kind: "message",
+    intent: "discuss",
+    authorType: "local-user",
+    authorId: "local-user",
+    body: "Original branch prompt",
+    mentions: [],
+    attachmentIds: [],
+    linkPreviewIds: [],
+    fileRefs: [],
+    status: "ready",
+    createdAt: "2026-07-12T03:27:01.000Z",
+    updatedAt: "2026-07-12T03:27:01.000Z",
+  }, {
+    id: "msg_branch_edit_old_reply",
+    workspaceId: "workspace_default",
+    channelId: "channel_engineering",
+    threadId: rootThreadId,
+    kind: "ai_reply",
+    intent: "discuss",
+    authorType: "ai-teammate",
+    authorId: "engineer",
+    body: "Old branch response should disappear.",
+    mentions: [],
+    attachmentIds: [],
+    linkPreviewIds: [],
+    fileRefs: [],
+    status: "ready",
+    createdAt: "2026-07-12T03:27:02.000Z",
+    updatedAt: "2026-07-12T03:27:02.000Z",
+  }];
+
+  await mockDaemon(page, state);
+  await page.goto("/");
+  const navigation = page.getByLabel("Ling Stack navigation");
+  await navigation.getByRole("button", { name: "Implementation branch" }).click();
+
+  const feed = page.getByLabel("Channel message feed");
+  const userRow = feed.locator(".channel-message-row.local-user");
+  await userRow.hover();
+  await userRow.getByRole("button", { name: "Edit message" }).click();
+  await feed.getByLabel("Edit message").fill("Revised branch prompt");
+  await feed.getByRole("button", { name: "Save and resend" }).click();
+
+  await expect(feed).toContainText("Revised branch prompt");
+  await expect(feed).toContainText("Edited reply: Revised branch prompt");
+  await expect(feed).not.toContainText("Original branch prompt");
+  await expect(feed).not.toContainText("Old branch response should disappear.");
+  await expect(navigation.locator(".sidebar-branch-row-shell.selected")).toContainText("Implementation branch");
+  await expect.poll(() => state.lastConversationMessageEditRequest?.surface).toBe("channel_branch");
+  await expect.poll(() => state.lastConversationMessageEditRequest?.messageId).toBe("msg_branch_edit_source");
 });
 
 test("channel message body renders safe markdown, highlighted code, folded logs, and structured diffs", async ({ page }) => {
@@ -3173,6 +3438,34 @@ test("channel message body renders safe markdown, highlighted code, folded logs,
       "Rich rendering probe <script>window.__ling_p5_xss = true</script>",
       "",
       `Long label probe: ${longMixedLabel}`,
+      "",
+      "## Shared rich blocks",
+      "",
+      "> Keep the conversation surface compact while preserving structured content.",
+      "",
+      "| Capability | State |",
+      "| :--- | ---: |",
+      "| Mermaid | Ready |",
+      "| Math | Ready |",
+      "",
+      "- [x] Parse GFM",
+      "- [ ] Finish reference previews",
+      "",
+      "Inline math: $E = mc^2$.",
+      "",
+      "$$",
+      "\\sum_{i=1}^{n} i = \\frac{n(n+1)}{2}",
+      "$$",
+      "",
+      "```mermaid",
+      "flowchart LR",
+      "  A[Plan] --> B[Implement]",
+      "  B --> C[Verify]",
+      "```",
+      "",
+      "```mermaid",
+      "this is not valid mermaid syntax ???",
+      "```",
       "",
       "```ts",
       "const answer = 42;",
@@ -3265,6 +3558,34 @@ test("channel message body renders safe markdown, highlighted code, folded logs,
   await expect(message).toContainText("<script>window.__ling_p5_xss = true</script>");
   await expect(message.locator("script")).toHaveCount(0);
   await expect.poll(() => page.evaluate(() => (window as unknown as { __ling_p5_xss?: boolean }).__ling_p5_xss === true)).toBe(false);
+  await expect(message.getByRole("heading", { name: "Shared rich blocks", level: 2 })).toBeVisible();
+  await expect(message.locator(".message-body-quote")).toContainText("preserving structured content");
+  const richTable = message.locator(".message-body-table");
+  await expect(richTable).toContainText("Capability");
+  await expect(richTable).toContainText("Mermaid");
+  await expect(message.locator(".message-body-task-item input[type=checkbox]")).toHaveCount(2);
+  await expect(message.locator(".message-inline-math .katex")).toBeVisible();
+  await expect(message.locator(".message-math-block .katex-display")).toBeVisible();
+  const deferredMermaidBlock = message.locator('.message-mermaid-block[data-render-status="deferred"]').filter({ hasText: "flowchart LR" });
+  await deferredMermaidBlock.scrollIntoViewIfNeeded();
+  const mermaidBlock = message.locator('.message-mermaid-block[data-render-status="rendered"]');
+  const mermaidSvg = mermaidBlock.locator(".message-mermaid-canvas svg");
+  await expect(mermaidSvg).toBeVisible();
+  await expect(mermaidSvg).toContainText("Plan");
+  const lightMermaidId = await mermaidSvg.getAttribute("id");
+  await page.emulateMedia({ colorScheme: "dark" });
+  await expect.poll(() => mermaidSvg.getAttribute("id")).not.toBe(lightMermaidId);
+  await expect(mermaidSvg).toContainText("Verify");
+  await page.emulateMedia({ colorScheme: "light" });
+  await mermaidBlock.hover();
+  await mermaidBlock.getByRole("button", { name: "Expand diagram" }).click();
+  const diagramDialog = page.getByRole("dialog", { name: "Diagram" });
+  await expect(diagramDialog.locator(".message-mermaid-expanded > svg")).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(diagramDialog).toHaveCount(0);
+  const invalidMermaidBlock = message.locator(".message-mermaid-block").filter({ hasText: "this is not valid mermaid syntax" });
+  await invalidMermaidBlock.scrollIntoViewIfNeeded();
+  await expect(invalidMermaidBlock.getByText("Diagram preview unavailable")).toBeVisible();
   const copyMessageButton = message.getByRole("button", { name: "Copy message" });
   await copyMessageButton.focus();
   await page.keyboard.press("Enter");
@@ -3378,11 +3699,21 @@ test("channel message body renders safe markdown, highlighted code, folded logs,
   const richLayout = await message.evaluate((element) => {
     const bounds = element.getBoundingClientRect();
     const overflowing = Array.from(element.querySelectorAll<HTMLElement>(".message-code-block, .message-diff-block, .message-body-renderer"))
-      .some((node) => node.scrollWidth > Math.ceil(node.clientWidth) + 1);
+      .filter((node) => node.scrollWidth > Math.ceil(node.clientWidth) + 1)
+      .map((node) => ({ className: node.className, clientWidth: node.clientWidth, scrollWidth: node.scrollWidth }));
     return { width: Math.round(bounds.width), overflowing };
   });
   expect(richLayout.width).toBeGreaterThan(300);
-  expect(richLayout.overflowing).toBe(false);
+  expect(richLayout.overflowing).toEqual([]);
+  for (const viewport of [{ width: 820, height: 900 }, { width: 390, height: 844 }]) {
+    await page.setViewportSize(viewport);
+    await mermaidBlock.scrollIntoViewIfNeeded();
+    const responsiveOverflow = await message.locator(".message-body-renderer").evaluate((element) => ({
+      clientWidth: element.clientWidth,
+      scrollWidth: element.scrollWidth,
+    }));
+    expect(responsiveOverflow.scrollWidth).toBeLessThanOrEqual(responsiveOverflow.clientWidth + 1);
+  }
   await maybeCaptureConversationScreenshots(page, "p9-long-labels", [
     { suffix: "narrow", width: 820, height: 900 },
     { suffix: "mobile", width: 390, height: 844 },
@@ -3418,7 +3749,15 @@ test("channel composer sends workspace file refs as native message payload", asy
       source: "composer",
     },
   ]);
-  await expect(page.getByLabel("Workspace file references").getByText("apps/web/src/features/workspace/WorkspaceClientView.tsx")).toBeVisible();
+  const references = page.getByLabel("References");
+  const fileReference = references.getByRole("button", { name: /WorkspaceClientView\.tsx/ });
+  await expect(fileReference).toBeVisible();
+  await fileReference.hover();
+  await expect(references.getByRole("tooltip")).toContainText("apps/web/src/features/workspace/WorkspaceClientView.tsx");
+  await fileReference.click();
+  const filesDock = page.locator(".channel-side-panel.right-dock");
+  await expect(filesDock).toHaveAttribute("aria-label", "Channel workspace dock");
+  await expect(filesDock).toContainText("WorkspaceClientView.tsx");
   await expect(page.locator(".channel-composer .composer-inline-token.file-reference")).toHaveCount(0);
 });
 
@@ -4352,6 +4691,14 @@ test("channel materialized PDF and DOCX inputs show simple chips and a natural L
   await expect(channelFeed.getByText("Summarize these attachments?")).toBeVisible();
   await expect(channelFeed.getByRole("link", { name: "risk-brief.pdf" })).toBeVisible();
   await expect(channelFeed.getByRole("link", { name: "acceptance.docx" })).toBeVisible();
+  await channelFeed.getByRole("button", { name: "Preview: risk-brief.pdf" }).click();
+  const pdfPreview = page.getByLabel("File preview");
+  await expect(pdfPreview).toContainText("mock preview for risk-brief.pdf");
+  await pdfPreview.getByRole("button", { name: "Close preview" }).click();
+  await channelFeed.getByRole("button", { name: "Preview: acceptance.docx" }).click();
+  const documentPreview = page.getByLabel("File preview");
+  await expect(documentPreview).toContainText("mock preview for acceptance.docx");
+  await documentPreview.getByRole("button", { name: "Close preview" }).click();
   await expect(channelFeed.getByText("我读到了 PDF 的 Q2 风险和 DOCX 的验收项")).toBeVisible();
   await expect(page.getByLabel("Pending message assets")).toHaveCount(0);
   await expect(channelFeed.getByText("metadata_only")).toHaveCount(0);
@@ -7105,6 +7452,7 @@ test("channel activity keeps the composer visible while the message feed scrolls
   await expect(page.getByLabel("Channel composer")).toBeVisible();
   await expect(page.locator("article.task-detail")).toHaveCount(0);
   await expect(page.locator('[aria-label="Channel activity"] > .panel-title')).toHaveCount(0);
+  const messageFeed = page.locator(".activity-shell .message-feed");
   const scrollState = await readScrollState(page, ".activity-shell .message-feed");
   expect(scrollState.max).toBeGreaterThan(0);
   await expect.poll(() => readScrollState(page, ".activity-shell .message-feed")).toMatchObject({ atBottom: true });
@@ -7131,11 +7479,13 @@ test("channel activity keeps the composer visible while the message feed scrolls
   const composerBox = await page.getByLabel("Channel composer").boundingBox();
   expect(feedBox?.height ?? 0).toBeGreaterThan(180);
   expect((composerBox?.y ?? 0) + (composerBox?.height ?? 0)).toBeGreaterThan((panelBox?.y ?? 0) + (panelBox?.height ?? 0) - 36);
-  await page.locator(".activity-shell .message-feed").evaluate((element) => {
-    element.dispatchEvent(new WheelEvent("wheel", { bubbles: true, deltaY: -120 }));
+  await messageFeed.hover();
+  await page.mouse.wheel(0, -1_200);
+  await messageFeed.evaluate((element) => {
     element.scrollTop = 0;
     element.dispatchEvent(new Event("scroll"));
   });
+  await expect.poll(() => readScrollState(page, ".activity-shell .message-feed")).toMatchObject({ atBottom: false });
   await expect(latestButton).toBeVisible();
   await expect.poll(async () => {
     const latestButtonBox = await latestButton.boundingBox();
@@ -7149,11 +7499,13 @@ test("channel activity keeps the composer visible while the message feed scrolls
   await expect.poll(() => readScrollState(page, ".activity-shell .message-feed")).toMatchObject({ atBottom: true });
   await expect(latestButton).toHaveCount(0);
   await page.waitForTimeout(1_100);
-  await page.locator(".activity-shell .message-feed").evaluate((element) => {
-    element.dispatchEvent(new WheelEvent("wheel", { bubbles: true, deltaY: -120 }));
+  await messageFeed.hover();
+  await page.mouse.wheel(0, -1_200);
+  await messageFeed.evaluate((element) => {
     element.scrollTop = 0;
     element.dispatchEvent(new Event("scroll"));
   });
+  await expect.poll(() => readScrollState(page, ".activity-shell .message-feed")).toMatchObject({ atBottom: false });
   await expect(latestButton).toBeVisible();
   state.channelMessages.push({
     id: "msg_scroll_background_failed",

@@ -15,5 +15,11 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "echo \"lint not configured yet\"",
     "test": "tsc -p tsconfig.json && node --test test/*.test.mjs"
+  },
+  "dependencies": {
+    "remark-gfm": "^4.0.1",
+    "remark-math": "^6.0.0",
+    "remark-parse": "^11.0.0",
+    "unified": "^11.0.5"
   }
 }

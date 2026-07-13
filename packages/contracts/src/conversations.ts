@@ -1,5 +1,5 @@
-import type { ChannelAttachmentKind } from "./channels.js";
-import type { PermissionPreset, RunThinkingLevel, RunTool, SessionPermissionMode } from "./shared.js";
+import type { ChannelAttachmentKind, ChannelMention, ChannelMessageFileRef } from "./channels.js";
+import type { ConversationPendingReplacement, PermissionConfirmation, PermissionPreset, RunThinkingLevel, RunTool, SessionPermissionMode } from "./shared.js";
 import type { ResponseLanguagePreference } from "./settings.js";
 import type { RunEventEnvelope, RunSession } from "./runtime.js";
 import type { LingThread } from "./threads.js";
@@ -20,6 +20,9 @@ export interface ConversationTranscriptMessage {
   readonly threadId: string;
   readonly turnId?: string;
   readonly runId?: string;
+  readonly revision?: number;
+  readonly editedAt?: string;
+  readonly pendingReplacement?: ConversationPendingReplacement;
   readonly createdAt: string;
   readonly updatedAt: string;
 }
@@ -113,4 +116,56 @@ export interface ConversationAttachmentListResponse {
 
 export interface ConversationAttachmentMutationResponse {
   readonly attachment: ConversationAttachment;
+}
+
+export type ConversationMessageEditSurface =
+  | "normal_conversation"
+  | "channel_root"
+  | "channel_branch"
+  | "topic_reply"
+  | "teammate_direct";
+
+export interface EditConversationMessageRequest {
+  readonly surface: ConversationMessageEditSurface;
+  readonly ownerId: string;
+  readonly messageId: string;
+  readonly expectedRevision: number;
+  readonly body: string;
+  readonly mentions?: readonly ChannelMention[];
+  readonly attachmentIds?: readonly string[];
+  readonly linkPreviewIds?: readonly string[];
+  readonly fileRefs?: readonly ChannelMessageFileRef[];
+  readonly providerPresetId?: string;
+  readonly permissionPreset?: PermissionPreset;
+  readonly permissionConfirmation?: PermissionConfirmation;
+  readonly requestedSkillId?: string;
+  readonly idempotencyKey: string;
+}
+
+export interface ConversationMessageRevisionView {
+  readonly id: string;
+  readonly surface: ConversationMessageEditSurface;
+  readonly ownerId: string;
+  readonly laneId: string;
+  readonly messageId: string;
+  readonly revision: number;
+  readonly body: string;
+  readonly mentions: readonly ChannelMention[];
+  readonly attachmentIds: readonly string[];
+  readonly linkPreviewIds: readonly string[];
+  readonly fileRefs: readonly ChannelMessageFileRef[];
+  readonly createdAt: string;
+}
+
+export interface EditConversationMessageResponse {
+  readonly message: ConversationMessageRevisionView;
+  readonly supersessionId: string;
+  readonly supersededTurnId?: string;
+  readonly replacementTurnId?: string;
+  readonly interruptedRunIds: readonly string[];
+  readonly supersededResponseMessageIds: readonly string[];
+  readonly preservedWorkspaceChanges: true;
+  readonly status: "replacement_started" | "replacement_pending";
+  readonly failureReason?: string;
+  readonly idempotentReplay: boolean;
 }
