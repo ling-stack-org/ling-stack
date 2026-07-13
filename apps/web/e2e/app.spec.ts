@@ -9,6 +9,10 @@ import {
 import {
   readSidebarSelection,
 } from "./support/test-helpers";
+import {
+  expectSharedConversationRichBody,
+  sharedConversationRichBody,
+} from "./support/rich-content";
 
 async function useEnglishLocale(page: Page): Promise<void> {
   await page.addInitScript(() => {
@@ -429,6 +433,176 @@ test("normal conversation composer sends and replays uploaded attachments", asyn
   await conversationDock.getByRole("button", { name: "Files" }).click();
   await expect(conversationDock.locator(".right-dock-head-page")).toContainText("Files");
   await expect(conversationDock).toContainText("brief.txt");
+});
+
+test("normal conversation renders the shared GFM, Mermaid, and math pipeline", async ({ page }) => {
+  await useEnglishLocale(page);
+  const state = createBaseState({ approvalStatus: "expired" });
+  const threadId = "thread_normal_rich_content";
+  const turnId = "turn_normal_rich_content";
+  const runId = "run_normal_rich_content";
+  const createdAt = "2026-07-12T03:00:00.000Z";
+  const completedAt = "2026-07-12T03:01:00.000Z";
+  state.threads = [{
+    id: threadId,
+    workspaceId: "workspace_default",
+    kind: "conversation",
+    title: "Shared rich content",
+    objective: "Verify shared rich content",
+    status: "succeeded",
+    lastRunId: runId,
+    createdAt,
+    updatedAt: completedAt,
+  }];
+  state.turns = [{
+    id: turnId,
+    workspaceId: "workspace_default",
+    threadId,
+    kind: "initial_request",
+    status: "succeeded",
+    title: "Shared rich content",
+    userInstruction: "Show the shared rich content fixture.",
+    activeRunId: runId,
+    lastRunId: runId,
+    createdByActor: "local-user",
+    createdAt,
+    updatedAt: completedAt,
+    completedAt,
+  }];
+  state.turnRunLinks = [{ turnId, runId, attemptNumber: 1, role: "primary", createdAt }];
+  state.runs = [{
+    id: runId,
+    status: "succeeded",
+    cwd,
+    taskId: "task_normal_rich_content",
+    providerPresetId: "provider_local",
+    providerName: "local-relay",
+    providerModel: "gpt-5.5",
+    taskSnapshot: { id: "task_normal_rich_content", title: "Shared rich content" },
+    providerSnapshot: {},
+    requestSnapshot: {},
+    eventLogPath: `.ling-stack/sessions/${runId}.jsonl`,
+    threadId,
+    turnId,
+    createdAt,
+    startedAt: createdAt,
+    updatedAt: completedAt,
+    endedAt: completedAt,
+  }, ...state.runs];
+  state.eventsByRun[runId] = [{
+    id: "event_normal_rich_content",
+    runId,
+    seq: 1,
+    ts: completedAt,
+    type: "assistant_text_delta",
+    data: { text: `${sharedConversationRichBody}\n\nReference: apps/web/src/features/workspace/ConversationHome.tsx#L260` },
+  }];
+
+  await mockDaemon(page, state);
+  await page.goto("/");
+  await page.getByLabel("Ling Stack navigation").locator(".sidebar-recent-row").filter({ hasText: "Shared rich content" }).click();
+
+  const pageSurface = page.getByLabel("Conversation page");
+  const assistantRow = pageSurface.locator(".normal-conversation-message-row.ai-teammate");
+  await expect(assistantRow).toHaveCount(1);
+  await expect(assistantRow.locator(".teammate-avatar-image, .teammate-avatar-stack")).toHaveCount(0);
+  await expectSharedConversationRichBody(assistantRow);
+  await assistantRow.getByRole("button", { name: /ConversationHome\.tsx/ }).click();
+  const filesDock = page.getByLabel("Conversation workspace dock");
+  await expect(filesDock).toBeVisible();
+  await expect(filesDock).toContainText("ConversationHome.tsx");
+});
+
+test("latest normal conversation prompt edits in place and hides the superseded response", async ({ page }) => {
+  await useEnglishLocale(page);
+  const state = createBaseState({ approvalStatus: "expired" });
+  const threadId = "thread_normal_edit";
+  const turnId = "turn_normal_edit";
+  const runId = "run_normal_edit";
+  const createdAt = "2026-07-12T03:10:00.000Z";
+  state.threads = [{
+    id: threadId,
+    workspaceId: "workspace_default",
+    kind: "conversation",
+    title: "Editable normal prompt",
+    objective: "Original normal prompt",
+    status: "succeeded",
+    lastRunId: runId,
+    createdAt,
+    updatedAt: createdAt,
+  }];
+  state.turns = [{
+    id: turnId,
+    workspaceId: "workspace_default",
+    threadId,
+    kind: "initial_request",
+    status: "succeeded",
+    title: "Original normal prompt",
+    userInstruction: "Original normal prompt",
+    activeRunId: runId,
+    lastRunId: runId,
+    createdByActor: "local-user",
+    createdAt,
+    updatedAt: createdAt,
+    completedAt: createdAt,
+  }];
+  state.turnRunLinks = [{ turnId, runId, attemptNumber: 1, role: "primary", createdAt }];
+  state.runs = [{
+    id: runId,
+    status: "succeeded",
+    cwd,
+    taskId: "task_normal_edit",
+    providerPresetId: "provider_local",
+    providerName: "local-relay",
+    providerModel: "gpt-5.5",
+    taskSnapshot: { id: "task_normal_edit", title: "Original normal prompt" },
+    providerSnapshot: {},
+    requestSnapshot: {},
+    eventLogPath: `.ling-stack/sessions/${runId}.jsonl`,
+    threadId,
+    turnId,
+    createdAt,
+    startedAt: createdAt,
+    updatedAt: createdAt,
+    endedAt: createdAt,
+  }, ...state.runs];
+  state.eventsByRun[runId] = [{
+    id: "event_normal_edit_old",
+    runId,
+    seq: 1,
+    ts: createdAt,
+    type: "assistant_text_delta",
+    data: { text: "Old normal response should disappear." },
+  }];
+
+  await mockDaemon(page, state);
+  await page.goto("/");
+  await page.getByLabel("Ling Stack navigation").locator(".sidebar-recent-row").filter({ hasText: "Editable normal prompt" }).click();
+
+  const conversationPage = page.getByLabel("Conversation page");
+  const userRow = conversationPage.locator(".normal-conversation-message-row.local-user");
+  await userRow.hover();
+  await userRow.getByRole("button", { name: "Edit message" }).click();
+  const editor = conversationPage.getByLabel("Edit message");
+  await editor.fill("Revised normal prompt");
+  await conversationPage.getByRole("button", { name: "Save and resend" }).click();
+
+  await expect(conversationPage).toContainText("Revised normal prompt");
+  await expect(conversationPage).toContainText("Ling Agent response: Revised normal prompt");
+  await expect(conversationPage).not.toContainText("Original normal prompt");
+  await expect(conversationPage).not.toContainText("Old normal response should disappear.");
+  await expect.poll(() => state.lastConversationMessageEditRequest?.surface).toBe("normal_conversation");
+  await expect.poll(() => state.lastConversationMessageEditRequest?.messageId).toBe(`conversation-user:${turnId}`);
+  const revisedUserRow = conversationPage.locator(".normal-conversation-message-row.local-user");
+  await expect(revisedUserRow).toContainText("Edited");
+  await revisedUserRow.hover();
+  await expect(revisedUserRow.getByRole("button", { name: "Edit message" })).toBeVisible();
+  await revisedUserRow.getByRole("button", { name: "Edit message" }).click();
+  await conversationPage.getByLabel("Edit message").fill("Revised normal prompt again");
+  await conversationPage.getByRole("button", { name: "Save and resend" }).click();
+
+  await expect(conversationPage).toContainText("Revised normal prompt again");
+  await expect.poll(() => state.lastConversationMessageEditRequest?.expectedRevision).toBe(2);
 });
 
 test("executed normal conversation renders one structured terminal report", async ({ page }) => {

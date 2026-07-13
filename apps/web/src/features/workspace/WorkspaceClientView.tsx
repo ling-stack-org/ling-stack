@@ -40,6 +40,7 @@ import {
   completeLingThreadGoal,
   convertProposedPlanToWorkflow,
   deleteLingThreadGoal,
+  editConversationMessage,
   getChannelWorkflowEvidence,
   getLingThreadEvidence,
   getLingThreadGoal,
@@ -885,6 +886,11 @@ export function WorkspaceClientView({
   const [channelTeamMetricsError, setChannelTeamMetricsError] = useState("");
   const [channelTeamMetricsRefreshKey, setChannelTeamMetricsRefreshKey] = useState(0);
   const [channelMessageFeedbackById, setChannelMessageFeedbackById] = useState<Record<string, "up" | "down">>({});
+  const [editingChannelMessageId, setEditingChannelMessageId] = useState<string | undefined>();
+  const [channelMessageEditSaving, setChannelMessageEditSaving] = useState(false);
+  const [channelMessageEditError, setChannelMessageEditError] = useState("");
+  const [channelReplacementRetryingMessageId, setChannelReplacementRetryingMessageId] = useState<string>();
+  const [channelReplacementRetryError, setChannelReplacementRetryError] = useState("");
   const channelMoreRef = useRef<HTMLDivElement | null>(null);
   const governanceNotificationsRef = useRef<HTMLDivElement | null>(null);
   const teammateManagerButtonRef = useRef<HTMLButtonElement | null>(null);
@@ -932,6 +938,12 @@ export function WorkspaceClientView({
     () => channelWorkCellDemoFixture ? [...channelMessages, ...channelWorkCellDemoFixture.channelMessages] : channelMessages,
     [channelMessages, channelWorkCellDemoFixture],
   );
+  const latestEditableChannelMessageId = useMemo(() => [...channelMessagesForDisplay]
+    .filter((message) => message.authorType === "local-user" && !message.pendingReplacement)
+    .filter((message) => selectedChannelBranchRootThreadId
+      ? message.threadId === selectedChannelBranchRootThreadId
+      : !message.threadId)
+    .at(-1)?.id, [channelMessagesForDisplay, selectedChannelBranchRootThreadId]);
   const memoryByIdForDisplay = useMemo(() => {
     if (!channelWorkCellDemoFixture) {
       return memoryById;
@@ -3229,6 +3241,78 @@ export function WorkspaceClientView({
     "--composer-input-min-height": `${composerInputMinHeight}px`,
   } as CSSProperties;
   const localUserDisplayName = userProfile?.displayName.trim() || t("You");
+  const channelComposerPermissionPreset = permissionPreset ?? inferPermissionPreset(permissionMode);
+
+  function channelMessageEditSurface(message: ChannelMessage): "channel_root" | "channel_branch" | "topic_reply" {
+    if (selectedChannelBranchRootThreadId && message.threadId === selectedChannelBranchRootThreadId) {
+      return "channel_branch";
+    }
+    return message.threadId ? "topic_reply" : "channel_root";
+  }
+
+  async function saveChannelMessageEdit(message: ChannelMessage, body: string): Promise<void> {
+    if (!selectedChannelId || channelMessageEditSaving) {
+      return;
+    }
+    setChannelMessageEditSaving(true);
+    setChannelMessageEditError("");
+    setChannelReplacementRetryError("");
+    try {
+      await editConversationMessage(cwd, {
+        surface: channelMessageEditSurface(message),
+        ownerId: selectedChannelId,
+        messageId: message.id,
+        expectedRevision: message.revision ?? 1,
+        body,
+        mentions: message.mentions,
+        attachmentIds: message.attachmentIds,
+        linkPreviewIds: message.linkPreviewIds,
+        fileRefs: message.fileRefs,
+        providerPresetId: taskRunProviderId || fallbackProviderId || undefined,
+        permissionPreset: channelComposerPermissionPreset,
+        idempotencyKey: `channel-message-edit:${message.id}:${crypto.randomUUID()}`,
+      });
+      setEditingChannelMessageId(undefined);
+      await Promise.all([onRefreshChannelMessages(), onRefreshChannelActivity()]);
+    } catch (error) {
+      setChannelMessageEditError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setChannelMessageEditSaving(false);
+    }
+  }
+
+  async function retryChannelMessageReplacement(message: ChannelMessage): Promise<void> {
+    const pending = message.pendingReplacement;
+    if (!pending || !selectedChannelId || channelReplacementRetryingMessageId) {
+      return;
+    }
+    setChannelReplacementRetryingMessageId(message.id);
+    setChannelReplacementRetryError("");
+    try {
+      const result = await editConversationMessage(cwd, {
+        surface: channelMessageEditSurface(message),
+        ownerId: selectedChannelId,
+        messageId: message.id,
+        expectedRevision: message.revision ?? 1,
+        body: message.body,
+        mentions: message.mentions,
+        attachmentIds: message.attachmentIds,
+        linkPreviewIds: message.linkPreviewIds,
+        fileRefs: message.fileRefs,
+        providerPresetId: taskRunProviderId || fallbackProviderId || undefined,
+        permissionPreset: channelComposerPermissionPreset,
+        idempotencyKey: pending.idempotencyKey,
+      });
+      if (result.status === "replacement_pending") {
+        setChannelReplacementRetryError(result.failureReason ?? pending.failureReason ?? "");
+      }
+      await Promise.all([onRefreshChannelMessages(), onRefreshChannelActivity()]);
+    } catch (error) {
+      setChannelReplacementRetryError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setChannelReplacementRetryingMessageId(undefined);
+    }
+  }
   const messageRenderers = createChannelMessageRenderers({
     activeRunId,
     allLocalTeammateById,
@@ -3238,6 +3322,7 @@ export function WorkspaceClientView({
     auditActivityVisible,
     channelArtifactsByRun: channelArtifactsByRunForDisplay,
     channelAttachmentById,
+    channelLinkPreviewById,
     channelMessageFeedbackById,
     channelMessagesLoadingOlder,
     channelWorkflowSteps: channelWorkflowStepsForDisplay,
@@ -3249,6 +3334,12 @@ export function WorkspaceClientView({
     executionProposalsByMessageId,
     formatBytes,
     latestStatus,
+    latestEditableMessageId: latestEditableChannelMessageId,
+    editingMessageId: editingChannelMessageId,
+    editSaving: channelMessageEditSaving,
+    editError: channelMessageEditError,
+    replacementRetryingMessageId: channelReplacementRetryingMessageId,
+    replacementRetryError: channelReplacementRetryError,
     loadPreview: channelWorkCellPreviewLoader,
     localUserDisplayName,
     memoryById: memoryByIdForDisplay,
@@ -3276,6 +3367,7 @@ export function WorkspaceClientView({
     onOpenApprovalDetail: openApprovalDetail,
     onOpenContextSummaryInConversationDetail: openContextSummaryInConversationDetail,
     onOpenRun: openRunInPanel,
+    onOpenFileReference: () => openRightDockPage("files"),
     onOpenThreadForMessage: threadReplyController.openThreadForMessage,
     onOrchestrateWorkflow,
     onRejectDecision,
@@ -3288,6 +3380,16 @@ export function WorkspaceClientView({
     onStartWorkflowFromHandoff,
     onSupersedeDecision,
     onToggleChannelMessageFeedback: toggleChannelMessageFeedback,
+    onBeginMessageEdit: (messageId) => {
+      setChannelMessageEditError("");
+      setEditingChannelMessageId(messageId);
+    },
+    onCancelMessageEdit: () => {
+      setChannelMessageEditError("");
+      setEditingChannelMessageId(undefined);
+    },
+    onSaveMessageEdit: saveChannelMessageEdit,
+    onRetryMessageReplacement: retryChannelMessageReplacement,
     onUpdateExecutionProposal,
     onUpdateHandoffStatus,
     readRunTitle,
@@ -3306,7 +3408,6 @@ export function WorkspaceClientView({
     });
   }
 
-  const channelComposerPermissionPreset = permissionPreset ?? inferPermissionPreset(permissionMode);
   const channelComposerPermissionLocked = Boolean(activeConversationRun) || sendState === "sending" || composerBusy || Boolean(runGuidanceSubmitting) || isCancellingRun;
   const channelComposer = (
     <ChannelComposer
@@ -4417,6 +4518,22 @@ export function WorkspaceClientView({
             onDraftChange: threadReplyController.changeDraft,
             onSend: () => void threadReplyController.sendReply(),
             onClose: threadReplyController.closeThread,
+            editingMessageId: editingChannelMessageId,
+            editSaving: channelMessageEditSaving,
+            editError: channelMessageEditError,
+            replacementRetryingMessageId: channelReplacementRetryingMessageId,
+            replacementRetryError: channelReplacementRetryError,
+            onBeginMessageEdit: (messageId) => {
+              setChannelMessageEditError("");
+              setEditingChannelMessageId(messageId);
+            },
+            onCancelMessageEdit: () => {
+              setChannelMessageEditError("");
+              setEditingChannelMessageId(undefined);
+            },
+            onSaveMessageEdit: saveChannelMessageEdit,
+            onRetryMessageReplacement: retryChannelMessageReplacement,
+            onOpenFileReference: () => openRightDockPage("files"),
             messageAuthorLabel: (message, threadTeammates) =>
               messageAuthorLabel(message, threadTeammates, t("Deleted teammate"), t("You"), allLocalTeammateById),
           } : undefined}

@@ -52,6 +52,21 @@ export {
   mergeConversationSurfacePolicy,
 } from "./surface-policy.js";
 export {
+  findLatestEditableConversationMessage,
+} from "./message-edit-policy.js";
+export type {
+  ConversationMessageEditAuthor,
+  ConversationMessageEditCandidate,
+  ConversationMessageEditScope,
+} from "./message-edit-policy.js";
+export {
+  getTerminalReportProjectionPolicy,
+} from "./terminal-report-projection-policy.js";
+export type {
+  TerminalReportArtifactMode,
+  TerminalReportProjectionPolicy,
+} from "./terminal-report-projection-policy.js";
+export {
   composerSlashCommandParts,
   composerUrlReferenceParts,
   composerWorkspaceFileParts,
@@ -75,6 +90,7 @@ export {
 } from "./slash-command-picker.js";
 export type { ActiveSlashCommandPicker } from "./slash-command-picker.js";
 export {
+  collectLocalFileReferences,
   parseLocalFileReference,
   parseMessageBody,
   splitInlineTokens,
@@ -84,6 +100,7 @@ export type {
   MessageBodyBlock,
   MessageBodyParseOptions,
   MessageInlineToken,
+  MessageListItem,
 } from "./message-body.js";
 export {
   conversationPermissionPresetRequiresConfirmation,

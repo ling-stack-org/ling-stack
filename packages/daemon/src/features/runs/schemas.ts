@@ -7,6 +7,9 @@ import {
   runContinuationReasons,
   sessionPermissionModes,
   type PermissionConfirmation,
+  type DirectWorkspaceBinding,
+  type DirectWorkspaceSnapshot,
+  type LingTurnCreatedByActor,
   type LingConversationTone,
   type PermissionPreset,
   type RunContinuationReason,
@@ -51,6 +54,12 @@ export interface RunRequest extends Omit<PiRunnerRunOptions, "onApprovalRequired
   readonly parentRunId?: string;
   readonly interventionId?: string;
   readonly continuationReason?: RunContinuationReason;
+  readonly sourceMessageId?: string;
+  readonly linkedMessageId?: string;
+  readonly createdByActor?: LingTurnCreatedByActor;
+  readonly directWorkspaceBinding?: DirectWorkspaceBinding;
+  readonly directWorkspaceSnapshot?: DirectWorkspaceSnapshot;
+  readonly skipMemoryRecall?: boolean;
 }
 
 export function parseRunRequest(value: unknown): RunRequest {

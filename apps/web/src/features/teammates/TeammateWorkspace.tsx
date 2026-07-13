@@ -79,6 +79,7 @@ import type {
   McpTool,
   ProviderPreset,
   PermissionPreset,
+  PermissionConfirmation,
   RunSession,
   SessionPermissionMode,
   SkillImportDraft,
@@ -98,6 +99,7 @@ import type {
   TeammatePrivateAttachment,
   TeammateDirectMessageStreamBlockedEvent,
   TeammateDirectMessageStreamDeltaEvent,
+  TeammateDirectMessageStreamRunLinkedEvent,
   TeammateDirectMessageStreamDoneEvent,
   TeammateDirectMessageStreamErrorEvent,
   TeammateDirectMessageStreamReadyEvent,
@@ -931,7 +933,10 @@ export function TeammateWorkspace({
     return uniqueDirectLinkPreviews([...existing, ...created]);
   }
 
-  async function sendPrivateMessage(): Promise<void> {
+  async function sendPrivateMessage(authorization: {
+    readonly permissionPreset: PermissionPreset;
+    readonly permissionConfirmation?: PermissionConfirmation;
+  }): Promise<void> {
     const serializedInput = serializeComposerInputParts(composerInputParts);
     const body = serializedInput.body.trim();
     const attachmentIds = [...serializedInput.attachmentIds];
@@ -959,6 +964,8 @@ export function TeammateWorkspace({
         linkPreviewIds: linkPreviews.map((preview) => preview.id),
         fileRefs,
         providerPresetId: teammate.providerPresetId,
+        permissionPreset: authorization.permissionPreset,
+        permissionConfirmation: authorization.permissionConfirmation,
       });
       await readSseResponse(response, (event) => {
         if (event.event === "ready") {
@@ -971,7 +978,19 @@ export function TeammateWorkspace({
         }
         if (event.event === "delta") {
           const data = JSON.parse(event.data) as TeammateDirectMessageStreamDeltaEvent;
-          setMessages((current) => current.map((message) => message.id === data.messageId ? { ...message, body: data.body, status: "pending" } : message));
+          setMessages((current) => current.map((message) => message.id === data.messageId ? {
+            ...message,
+            body: data.body,
+            status: "pending",
+          } : message));
+          return;
+        }
+        if (event.event === "run_linked") {
+          const data = JSON.parse(event.data) as TeammateDirectMessageStreamRunLinkedEvent;
+          setMessages((current) => current.map((message) => message.id === data.messageId ? {
+            ...message,
+            linkedRunId: data.linkedRunId ?? message.linkedRunId,
+          } : message));
           return;
         }
         if (event.event === "done") {
@@ -1150,7 +1169,10 @@ export function TeammateWorkspace({
     }
   }
 
-  function handlePrivateComposerSubmit(): void {
+  function handlePrivateComposerSubmit(authorization: {
+    readonly permissionPreset: PermissionPreset;
+    readonly permissionConfirmation?: PermissionConfirmation;
+  }): void {
     if (directReplyActive) {
       if (privateComposerHasGuidancePayload) {
         void submitDirectGuidance("queue_followup");
@@ -1159,10 +1181,16 @@ export function TeammateWorkspace({
       void stopDirectReply();
       return;
     }
-    void sendPrivateMessage();
+    void sendPrivateMessage(authorization);
   }
 
-  function handlePrivateComposerKeyDown(event: KeyboardEvent<HTMLDivElement>): void {
+  function handlePrivateComposerKeyDown(
+    event: KeyboardEvent<HTMLDivElement>,
+    authorization: {
+      readonly permissionPreset: PermissionPreset;
+      readonly permissionConfirmation?: PermissionConfirmation;
+    },
+  ): void {
     if (event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing) {
       return;
     }
@@ -1177,7 +1205,7 @@ export function TeammateWorkspace({
       setWorkspaceError(t("Guidance is already queued. Run or delete the queued message first."));
       return;
     }
-    void sendPrivateMessage();
+    void sendPrivateMessage(authorization);
   }
 
   function handlePrivateComposerPaste(event: ClipboardEvent<HTMLDivElement>): void {
@@ -2124,10 +2152,12 @@ export function TeammateWorkspace({
           onScrollToLatest={scrollPrivateFeedToLatest}
           onCopyMessageText={copyMessageText}
           onOpenRun={onOpenRun}
+          onOpenFiles={() => openChatDockPage("files")}
           onCreateTaskFromMessage={createTaskFromMessage}
           onPromoteDirectGuidance={promoteDirectGuidance}
           onCancelDirectGuidance={cancelDirectGuidance}
           onEditDirectGuidance={editDirectGuidance}
+          onRefreshMessages={refreshTeammateWorkspace}
           onMessageDraftChange={setMessageDraft}
           onComposerSubmit={handlePrivateComposerSubmit}
           onComposerKeyDown={handlePrivateComposerKeyDown}

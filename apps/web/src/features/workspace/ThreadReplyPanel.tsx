@@ -1,7 +1,7 @@
-import { CircleAlert, Loader2, Reply, Send, X } from "lucide-react";
+import { CircleAlert, Copy, Loader2, Pencil, Reply, Send, X } from "lucide-react";
 import { useI18n } from "../../i18n.js";
 import { filterUsedMemoryEventsByResponse, UsedMemorySummary } from "../../shared/components/index.js";
-import { MessageBodyRenderer } from "../../shared/conversation/index.js";
+import { ConversationReplacementRetry, InlineMessageEditor, MessageActionBar, MessageBodyRenderer, MessageRow } from "../../shared/conversation/index.js";
 import type { ChannelMention, ChannelMessage, MemoryObject, UsedMemoryEvent } from "../../types.js";
 
 export function ThreadReplyPanel({
@@ -17,6 +17,16 @@ export function ThreadReplyPanel({
   onDraftChange,
   onSend,
   onClose,
+  editingMessageId,
+  editSaving,
+  editError,
+  replacementRetryingMessageId,
+  replacementRetryError,
+  onBeginMessageEdit,
+  onCancelMessageEdit,
+  onSaveMessageEdit,
+  onRetryMessageReplacement,
+  onOpenFileReference,
   messageAuthorLabel,
 }: {
   readonly cwd: string;
@@ -31,11 +41,22 @@ export function ThreadReplyPanel({
   readonly onDraftChange: (value: string) => void;
   readonly onSend: () => void;
   readonly onClose: () => void;
+  readonly editingMessageId?: string;
+  readonly editSaving?: boolean;
+  readonly editError?: string;
+  readonly replacementRetryingMessageId?: string;
+  readonly replacementRetryError?: string;
+  readonly onBeginMessageEdit: (messageId: string) => void;
+  readonly onCancelMessageEdit: () => void;
+  readonly onSaveMessageEdit: (message: ChannelMessage, body: string) => void | Promise<void>;
+  readonly onRetryMessageReplacement: (message: ChannelMessage) => void | Promise<void>;
+  readonly onOpenFileReference: () => void;
   readonly messageAuthorLabel: (message: ChannelMessage, teammates: readonly ChannelMention[]) => string;
 }): JSX.Element {
   const { t } = useI18n();
   const canSend = draft.trim().length > 0 && !pending;
   const rootMessageIsOwn = rootMessage.authorType === "local-user";
+  const latestOwnReplyId = [...replies].reverse().find((reply) => reply.authorType === "local-user" && !reply.pendingReplacement)?.id;
   return (
     <aside className="thread-reply-panel" aria-label={t("Topic replies")}>
       <div className="thread-reply-head">
@@ -51,7 +72,7 @@ export function ThreadReplyPanel({
         {rootMessageIsOwn ? null : (
           <small>{t("Topic started by {author}", { author: messageAuthorLabel(rootMessage, teammates) })}</small>
         )}
-        <MessageBodyRenderer text={rootMessage.body} cwd={cwd} compact />
+        <MessageBodyRenderer text={rootMessage.body} cwd={cwd} compact onOpenLocalFile={onOpenFileReference} />
         <UsedMemorySummary
           compact
           events={filterUsedMemoryEventsByResponse(usedMemoryEvents, rootMessage.id)}
@@ -63,21 +84,60 @@ export function ThreadReplyPanel({
           <div className="thread-empty-state">{t("No replies yet")}</div>
         ) : replies.map((reply) => {
           const replyIsOwn = reply.authorType === "local-user";
+          const editing = editingMessageId === reply.id;
           return (
-            <article key={reply.id} className={replyIsOwn ? "thread-reply-item thread-reply-own" : "thread-reply-item"}>
-              {replyIsOwn ? null : (
-                <div className="thread-reply-meta">
-                  <strong>{messageAuthorLabel(reply, teammates)}</strong>
-                  {reply.kind === "ai_reply" ? <small>AI</small> : null}
+            <MessageRow
+              key={reply.id}
+              className={replyIsOwn ? "thread-reply-item thread-reply-own" : "thread-reply-item"}
+              authorType={reply.authorType}
+              authorName={messageAuthorLabel(reply, teammates)}
+              statusNode={reply.editedAt ? <span className="conversation-message-edited-label">{t("Edited")}</span> : undefined}
+              bodyNode={editing ? (
+                <div className="conversation-inline-message-editor-stack">
+                  <InlineMessageEditor
+                    initialValue={reply.body}
+                    cwd={cwd}
+                    ariaLabel={t("Edit message")}
+                    saveLabel={t("Save and resend")}
+                    cancelLabel={t("Cancel")}
+                    saving={editSaving}
+                    onCancel={onCancelMessageEdit}
+                    onSave={(value) => onSaveMessageEdit(reply, value)}
+                  />
+                  {editError ? <div className="inline-error compact-inline-error" role="alert">{editError}</div> : null}
                 </div>
-              )}
-              <MessageBodyRenderer text={reply.body} cwd={cwd} compact />
-              <UsedMemorySummary
-                compact
-                events={filterUsedMemoryEventsByResponse(usedMemoryEvents, reply.id)}
-                memoryById={memoryById}
-              />
-            </article>
+              ) : <MessageBodyRenderer text={reply.body} cwd={cwd} compact onOpenLocalFile={onOpenFileReference} />}
+              evidenceNode={!editing ? (
+                <UsedMemorySummary
+                  compact
+                  events={filterUsedMemoryEventsByResponse(usedMemoryEvents, reply.id)}
+                  memoryById={memoryById}
+                />
+              ) : null}
+              errorNode={reply.pendingReplacement ? (
+                <ConversationReplacementRetry
+                  failureReason={replacementRetryError || reply.pendingReplacement.failureReason}
+                  retryLabel={t("Retry response")}
+                  retrying={replacementRetryingMessageId === reply.id}
+                  onRetry={() => void onRetryMessageReplacement(reply)}
+                />
+              ) : null}
+              actionsNode={!editing ? (
+                <MessageActionBar
+                  surface="topic_reply"
+                  actions={[
+                    { id: "copy", kind: "copy", label: t("Copy message"), icon: <Copy size={13} />, copyText: reply.body },
+                    ...(reply.id === latestOwnReplyId ? [{
+                      id: "edit",
+                      kind: "edit_latest" as const,
+                      label: t("Edit message"),
+                      icon: <Pencil size={13} />,
+                      onClick: () => onBeginMessageEdit(reply.id),
+                    }] : []),
+                  ]}
+                />
+              ) : null}
+            />
           );
         })}
       </div>

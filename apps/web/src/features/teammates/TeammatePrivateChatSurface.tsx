@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent, type ReactNode, type RefCallback, type RefObject, type UIEvent } from "react";
 import type { ReactVirtualizer, VirtualItem } from "@tanstack/react-virtual";
-import { ArrowDown, Copy, FileText, Image, Link2, Loader2, MessageSquare, Plus, Send, Square, ThumbsDown, ThumbsUp, X } from "lucide-react";
-import { artifactContentUrl, attachmentContentUrl } from "../../api.js";
+import { ArrowDown, Copy, FileText, Image, Link2, Loader2, MessageSquare, Pencil, Plus, Send, Square, ThumbsDown, ThumbsUp, X } from "lucide-react";
+import { artifactContentUrl, attachmentContentUrl, editConversationMessage } from "../../api.js";
 import { useI18n, type Translate } from "../../i18n.js";
 import { formatDateTime } from "../../lib/formatting.js";
 import { buildConversationWorkCellViewModel, type ConversationWorkCellViewModel } from "../../lib/conversation-work-cell.js";
@@ -20,8 +20,11 @@ import {
 import {
   ComposerPermissionMenu,
   ConversationAttachmentStrip,
+  ConversationReferenceStrip,
+  ConversationReplacementRetry,
   ConversationComposerShell,
   ConversationGuidanceStrip,
+  InlineMessageEditor,
   ConversationShell,
   ConversationWorkCell,
   ConversationVirtualFeed,
@@ -48,6 +51,7 @@ import type {
   UsedMemoryEvent,
   UserProfile,
   PermissionPreset,
+  PermissionConfirmation,
   SessionPermissionMode,
   TerminalReportDto,
 } from "../../types.js";
@@ -119,10 +123,12 @@ export function TeammatePrivateChatSurface({
   onScrollToLatest,
   onCopyMessageText,
   onOpenRun,
+  onOpenFiles,
   onCreateTaskFromMessage,
   onPromoteDirectGuidance,
   onCancelDirectGuidance,
   onEditDirectGuidance,
+  onRefreshMessages,
   onMessageDraftChange,
   onComposerSubmit,
   onComposerKeyDown,
@@ -200,13 +206,24 @@ export function TeammatePrivateChatSurface({
   readonly onScrollToLatest: () => void;
   readonly onCopyMessageText: (text: string) => void;
   readonly onOpenRun?: (runId: string) => void;
+  readonly onOpenFiles: () => void;
   readonly onCreateTaskFromMessage: (message: TeammateDirectMessage) => void | Promise<void>;
   readonly onPromoteDirectGuidance: (interventionId: string) => void | Promise<void>;
   readonly onCancelDirectGuidance: (interventionId: string) => void | Promise<void>;
   readonly onEditDirectGuidance: (intervention: TeammateDirectReplyIntervention) => void | Promise<void>;
+  readonly onRefreshMessages: () => void | Promise<void>;
   readonly onMessageDraftChange: (value: string) => void;
-  readonly onComposerSubmit: () => void;
-  readonly onComposerKeyDown: (event: KeyboardEvent<HTMLDivElement>) => void;
+  readonly onComposerSubmit: (authorization: {
+    readonly permissionPreset: PermissionPreset;
+    readonly permissionConfirmation?: PermissionConfirmation;
+  }) => void;
+  readonly onComposerKeyDown: (
+    event: KeyboardEvent<HTMLDivElement>,
+    authorization: {
+      readonly permissionPreset: PermissionPreset;
+      readonly permissionConfirmation?: PermissionConfirmation;
+    },
+  ) => void;
   readonly onComposerPaste: (event: ClipboardEvent<HTMLDivElement>) => void;
   readonly onComposerDragOver: (event: DragEvent<HTMLDivElement>) => void;
   readonly onComposerDragLeave: (event: DragEvent<HTMLDivElement>) => void;
@@ -236,8 +253,14 @@ export function TeammatePrivateChatSurface({
   const { t } = useI18n();
   const [messageFeedbackById, setMessageFeedbackById] = useState<Record<string, "up" | "down">>({});
   const [selectedPermissionPreset, setSelectedPermissionPreset] = useState<PermissionPreset>(() => defaultPermissionPreset ?? inferPermissionPreset(defaultPermissionMode));
+  const [permissionConfirmation, setPermissionConfirmation] = useState<PermissionConfirmation | undefined>();
   const [slashPicker, setSlashPicker] = useState<ActiveSlashCommandPicker | undefined>();
   const [slashActiveIndex, setSlashActiveIndex] = useState(0);
+  const [editingMessageId, setEditingMessageId] = useState<string | undefined>();
+  const [editSaving, setEditSaving] = useState(false);
+  const [editError, setEditError] = useState("");
+  const [replacementRetryingMessageId, setReplacementRetryingMessageId] = useState<string>();
+  const [replacementRetryError, setReplacementRetryError] = useState("");
   const composerInputRef = useRef<TokenizedComposerInputHandle | null>(null);
   const privateDockController = useWorkspaceRightDockController({
     initialOpen: false,
@@ -250,6 +273,7 @@ export function TeammatePrivateChatSurface({
   });
   const workspaceTerminalSession = useWorkspaceTerminalSession(cwd.trim());
   const localUserDisplayName = userProfile?.displayName.trim() || t("You");
+  const latestEditableMessageId = [...visibleMessages].reverse().find((message) => message.authorType === "local-user" && !message.pendingReplacement)?.id;
   const privateWorkCellByMessageId = buildPrivateWorkCellMap({
     messages: visibleMessages,
     teammateId: teammate.id,
@@ -286,7 +310,110 @@ export function TeammatePrivateChatSurface({
 
   useEffect(() => {
     setSelectedPermissionPreset(defaultPermissionPreset ?? inferPermissionPreset(defaultPermissionMode));
+    setPermissionConfirmation(undefined);
   }, [defaultPermissionMode, defaultPermissionPreset]);
+
+  function confirmPermissionChange(preset: PermissionPreset): boolean {
+    if (preset !== "full_access") {
+      return true;
+    }
+    const confirmed = typeof globalThis.confirm === "function"
+      ? globalThis.confirm(t("Full access can allow broad local file, network, and tool access for the next run. Continue?"))
+      : false;
+    if (confirmed) {
+      setPermissionConfirmation({
+        mode: "full_access",
+        confirmed: true,
+        confirmedAt: new Date().toISOString(),
+        reason: "Confirmed from teammate private composer",
+      });
+    }
+    return confirmed;
+  }
+
+  function submitComposer(): void {
+    let confirmation = permissionConfirmation;
+    if (selectedPermissionPreset === "full_access" && !confirmation) {
+      if (!confirmPermissionChange("full_access")) {
+        return;
+      }
+      confirmation = {
+        mode: "full_access",
+        confirmed: true,
+        confirmedAt: new Date().toISOString(),
+        reason: "Confirmed from teammate private composer",
+      };
+      setPermissionConfirmation(confirmation);
+    }
+    onComposerSubmit({
+      permissionPreset: selectedPermissionPreset,
+      permissionConfirmation: confirmation,
+    });
+  }
+
+  async function saveMessageEdit(message: TeammateDirectMessage, body: string): Promise<void> {
+    if (editSaving) {
+      return;
+    }
+    setEditSaving(true);
+    setEditError("");
+    setReplacementRetryError("");
+    try {
+      await editConversationMessage(cwd.trim(), {
+        surface: "teammate_direct",
+        ownerId: teammate.id,
+        messageId: message.id,
+        expectedRevision: message.revision ?? 1,
+        body,
+        attachmentIds: message.attachmentIds,
+        linkPreviewIds: message.linkPreviewIds,
+        fileRefs: message.fileRefs,
+        providerPresetId: teammate.providerPresetId,
+        permissionPreset: selectedPermissionPreset,
+        permissionConfirmation,
+        idempotencyKey: `teammate-message-edit:${message.id}:${crypto.randomUUID()}`,
+      });
+      setEditingMessageId(undefined);
+      await onRefreshMessages();
+    } catch (error) {
+      setEditError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setEditSaving(false);
+    }
+  }
+
+  async function retryMessageReplacement(message: TeammateDirectMessage): Promise<void> {
+    const pending = message.pendingReplacement;
+    if (!pending || replacementRetryingMessageId) {
+      return;
+    }
+    setReplacementRetryingMessageId(message.id);
+    setReplacementRetryError("");
+    try {
+      const result = await editConversationMessage(cwd.trim(), {
+        surface: "teammate_direct",
+        ownerId: teammate.id,
+        messageId: message.id,
+        expectedRevision: message.revision ?? 1,
+        body: message.body,
+        attachmentIds: message.attachmentIds,
+        linkPreviewIds: message.linkPreviewIds,
+        fileRefs: message.fileRefs,
+        providerPresetId: teammate.providerPresetId,
+        permissionPreset: selectedPermissionPreset,
+        permissionConfirmation,
+        idempotencyKey: pending.idempotencyKey,
+      });
+      if (result.status === "replacement_pending") {
+        setReplacementRetryError(result.failureReason ?? pending.failureReason ?? "");
+      }
+      await onRefreshMessages();
+    } catch (error) {
+      setReplacementRetryError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setReplacementRetryingMessageId(undefined);
+    }
+  }
 
   useEffect(() => {
     if (!privateComposerSending) {
@@ -349,7 +476,24 @@ export function TeammatePrivateChatSurface({
         return;
       }
     }
-    onComposerKeyDown(event);
+    let confirmation = permissionConfirmation;
+    if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing && selectedPermissionPreset === "full_access" && !confirmation) {
+      if (!confirmPermissionChange("full_access")) {
+        event.preventDefault();
+        return;
+      }
+      confirmation = {
+        mode: "full_access",
+        confirmed: true,
+        confirmedAt: new Date().toISOString(),
+        reason: "Confirmed from teammate private composer",
+      };
+      setPermissionConfirmation(confirmation);
+    }
+    onComposerKeyDown(event, {
+      permissionPreset: selectedPermissionPreset,
+      permissionConfirmation: confirmation,
+    });
   }
 
   function toggleMessageFeedback(messageId: string, feedback: "up" | "down"): void {
@@ -420,6 +564,11 @@ export function TeammatePrivateChatSurface({
                     : message.body;
               const workCellRun = workCell ? runs.find((run) => run.id === workCell.model.anchorRunId) : undefined;
               const messageFeedback = messageFeedbackById[message.id];
+              const editing = editingMessageId === message.id;
+              const messageFileRefs = message.fileRefs ?? [];
+              const messageLinkPreviews = (message.linkPreviewIds ?? [])
+                .map((id) => directLinkPreviewById.get(id))
+                .filter((preview): preview is TeammateDirectLinkPreview => preview?.status === "ready");
               const feedbackActions = message.authorType === "ai-teammate" ? [
                 {
                   id: "like",
@@ -452,39 +601,85 @@ export function TeammatePrivateChatSurface({
                   }
                   authorName={authorName}
                   createdAtLabel={formatDateTime(message.createdAt)}
+                  statusNode={message.editedAt ? <span className="conversation-message-edited-label">{t("Edited")}</span> : undefined}
                   body={messageBody}
+                  bodyNode={editing ? (
+                    <div className="conversation-inline-message-editor-stack">
+                      <InlineMessageEditor
+                        initialValue={message.body}
+                        cwd={cwd}
+                        ariaLabel={t("Edit message")}
+                        saveLabel={t("Save and resend")}
+                        cancelLabel={t("Cancel")}
+                        saving={editSaving}
+                        onCancel={() => {
+                          setEditError("");
+                          setEditingMessageId(undefined);
+                        }}
+                        onSave={(value) => saveMessageEdit(message, value)}
+                      />
+                      {editError ? <div className="inline-error compact-inline-error" role="alert">{editError}</div> : null}
+                    </div>
+                  ) : undefined}
                   bodyCwd={cwd}
                   bodyCompact
                   bodyStreaming={pendingAiReply}
-                  attachmentsNode={(message.attachmentIds ?? []).length > 0 ? (
-                    <ConversationAttachmentStrip
-                      className="teammate-message-attachments"
-                      chipClassName="teammate-attachment-chip"
-                      loadPreview={loadPreviewContent}
-                      attachments={(message.attachmentIds ?? [])
-                        .map((id) => privateAttachmentById.get(id))
-                        .filter((attachment): attachment is TeammatePrivateAttachment => Boolean(attachment))
-                        .map((attachment) => ({
-                          id: attachment.id,
-                          label: attachment.fileName,
-                          meta: formatBytes(attachment.sizeBytes),
-                          href: attachmentContentUrl(attachment, cwd.trim()),
-                          target: "_blank",
-                          rel: "noreferrer",
-                          icon: attachment.kind === "image" ? <Image size={13} /> : <FileText size={13} />,
-                          previewRequest: attachmentCanPreview(attachment) ? {
-                            source: "attachment",
-                            cwd: cwd.trim(),
-                            attachmentId: attachment.id,
-                            scope: "teammate_private",
-                            teammateId: teammate.id,
-                          } : undefined,
-                        }))}
-                    />
+                  bodyOnOpenLocalFile={onOpenFiles}
+                  attachmentsNode={(message.attachmentIds ?? []).length > 0 || messageFileRefs.length > 0 || messageLinkPreviews.length > 0 ? (
+                    <>
+                      <ConversationAttachmentStrip
+                        className="teammate-message-attachments"
+                        chipClassName="teammate-attachment-chip"
+                        loadPreview={loadPreviewContent}
+                        attachments={(message.attachmentIds ?? [])
+                          .map((id) => privateAttachmentById.get(id))
+                          .filter((attachment): attachment is TeammatePrivateAttachment => Boolean(attachment))
+                          .map((attachment) => ({
+                            id: attachment.id,
+                            label: attachment.fileName,
+                            meta: formatBytes(attachment.sizeBytes),
+                            href: attachmentContentUrl(attachment, cwd.trim()),
+                            target: "_blank",
+                            rel: "noreferrer",
+                            icon: attachment.kind === "image" ? <Image size={13} /> : <FileText size={13} />,
+                            previewRequest: attachmentCanPreview(attachment) ? {
+                              source: "attachment",
+                              cwd: cwd.trim(),
+                              attachmentId: attachment.id,
+                              scope: "teammate_private",
+                              teammateId: teammate.id,
+                            } : undefined,
+                          }))}
+                      />
+                      <ConversationReferenceStrip
+                        ariaLabel={t("References")}
+                        references={[
+                          ...messageFileRefs.map((fileRef, index) => ({
+                            id: `file:${fileRef.path}:${fileRef.line ?? ""}:${index}`,
+                            kind: "workspace_file" as const,
+                            label: fileRef.label ?? fileNameFromReferencePath(fileRef.path),
+                            meta: fileRef.line !== undefined ? `${fileRef.path}:${fileRef.line}` : fileRef.path,
+                            previewTitle: fileRef.label ?? fileNameFromReferencePath(fileRef.path),
+                            previewText: fileRef.path,
+                            onOpen: onOpenFiles,
+                          })),
+                          ...messageLinkPreviews.map((preview) => ({
+                            id: `web:${preview.id}`,
+                            kind: "web" as const,
+                            label: preview.title ?? preview.siteName ?? webReferenceHost(preview.normalizedUrl || preview.url),
+                            meta: preview.siteName ?? webReferenceHost(preview.normalizedUrl || preview.url),
+                            href: preview.normalizedUrl || preview.url,
+                            previewTitle: preview.title,
+                            previewText: preview.description,
+                          })),
+                        ]}
+                      />
+                    </>
                   ) : null}
                   workCellNode={workCell ? (
                     <ConversationWorkCell
                       model={workCell.model}
+                      surface="teammate_direct"
                       cwd={workCellRun?.cwd ?? cwd.trim()}
                       detailsState={{ status: "loaded", groups: workCell.model.groups, evidenceLinks: workCell.model.evidenceLinks }}
                       onOpenRun={onOpenRun}
@@ -500,8 +695,20 @@ export function TeammatePrivateChatSurface({
                       webEvidence={message.webEvidence}
                     />
                   ) : null}
-                  errorNode={message.errorMessage && message.status !== "cancelled" && !recoveredHistoricalProviderFailure ? <small className="teammate-message-error">{message.errorMessage}</small> : null}
-                  actionsNode={(
+                  errorNode={(
+                    <>
+                      {message.errorMessage && message.status !== "cancelled" && !recoveredHistoricalProviderFailure ? <small className="teammate-message-error">{message.errorMessage}</small> : null}
+                      {message.pendingReplacement ? (
+                        <ConversationReplacementRetry
+                          failureReason={replacementRetryError || message.pendingReplacement.failureReason}
+                          retryLabel={t("Retry response")}
+                          retrying={replacementRetryingMessageId === message.id}
+                          onRetry={() => void retryMessageReplacement(message)}
+                        />
+                      ) : null}
+                    </>
+                  )}
+                  actionsNode={!editing ? (
                     <MessageActionBar
                       surface="teammate_direct"
                       className="teammate-message-actions"
@@ -514,10 +721,20 @@ export function TeammatePrivateChatSurface({
                           icon: <Copy size={14} />,
                           onClick: () => onCopyMessageText(message.body),
                         },
+                        ...(message.authorType === "local-user" && message.id === latestEditableMessageId ? [{
+                          id: "edit",
+                          kind: "edit_latest" as const,
+                          label: t("Edit message"),
+                          icon: <Pencil size={14} />,
+                          onClick: () => {
+                            setEditError("");
+                            setEditingMessageId(message.id);
+                          },
+                        }] : []),
                         ...feedbackActions,
                         {
                           id: "create-task",
-                          kind: "create_task",
+                          kind: "create_task" as const,
                           label: t("Create task"),
                           icon: creatingTask ? <Loader2 className="spin" size={14} /> : <Plus size={14} />,
                           disabled: creatingTask || taskChannelOptions.length === 0,
@@ -525,7 +742,7 @@ export function TeammatePrivateChatSurface({
                         },
                       ]}
                     />
-                  )}
+                  ) : null}
                 />
               );
             }}
@@ -709,7 +926,13 @@ export function TeammatePrivateChatSurface({
                   disabled={permissionLocked}
                   disabledReason={t("Permission is locked while the private reply is running.")}
                   fullAccessConfirmationMessage={t("Full access can allow broad local file, network, and tool access for the next run. Continue?")}
-                  onPresetChange={setSelectedPermissionPreset}
+                  confirmChange={confirmPermissionChange}
+                  onPresetChange={(preset) => {
+                    setSelectedPermissionPreset(preset);
+                    if (preset !== "full_access") {
+                      setPermissionConfirmation(undefined);
+                    }
+                  }}
                 />
               </>
             )}
@@ -717,7 +940,7 @@ export function TeammatePrivateChatSurface({
               <button
                 className="primary-button composer-send-button"
                 type="button"
-                onClick={onComposerSubmit}
+                onClick={submitComposer}
                 disabled={privateComposerSendDisabled || privateComposerSending}
                 aria-label={privateComposerSending ? privateComposerSendingLabel : privateComposerSendLabel}
                 title={privateComposerSending ? privateComposerSendingLabel : privateComposerSendLabel}
@@ -846,4 +1069,16 @@ function buildPrivateWorkCellMap(input: {
     }
   }
   return cells;
+}
+
+function fileNameFromReferencePath(path: string): string {
+  return path.split("/").filter(Boolean).at(-1) ?? path;
+}
+
+function webReferenceHost(value: string): string {
+  try {
+    return new URL(value).hostname.replace(/^www\./iu, "");
+  } catch {
+    return value;
+  }
 }

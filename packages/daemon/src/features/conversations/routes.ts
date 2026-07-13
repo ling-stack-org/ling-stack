@@ -40,8 +40,86 @@ import type { RunRequest } from "../runs/schemas.js";
 import { materializeInlineConversationAttachments, type ConversationAttachmentMaterialization } from "./materialization.js";
 import { lingConversationToneInstruction } from "./conversation-tone.js";
 import { projectTerminalReportDto } from "../channels/terminal-report-routes.js";
+import {
+  buildConversationSupersessionProjection,
+  filterSupersededLingTurns,
+  filterSupersededTerminalReports,
+  projectPendingConversationReplacement,
+} from "./supersession-projection.js";
 
 type StartConversationRun = (runRequest: RunRequest, sink: RunExecutionSink) => Promise<string | undefined>;
+
+export async function startConversationReplacementRun(input: {
+  readonly store: RunStore;
+  readonly workspaceCwd: string;
+  readonly thread: LingThread;
+  readonly message: string;
+  readonly messageId: string;
+  readonly attachmentIds: readonly string[];
+  readonly providerPresetId?: string;
+  readonly permissionPreset?: PermissionPreset;
+  readonly permissionConfirmation?: import("@ling-stack/core").PermissionConfirmation;
+  readonly previousRun?: RunSession;
+  readonly runnerRegistry: RunnerRegistry;
+  readonly startRun: StartConversationRun;
+  readonly imageVisionSummarizer?: LingImageVisionSummarizer;
+}): Promise<{ readonly turn: LingTurn; readonly runId?: string }> {
+  const now = new Date().toISOString();
+  const attachments = input.attachmentIds
+    .map((attachmentId) => input.store.getConversationAttachment(attachmentId))
+    .filter((attachment): attachment is ConversationAttachment => Boolean(attachment));
+  const attachmentMaterializations = await materializeInlineConversationAttachments({
+    store: input.store,
+    attachments,
+    now,
+    imageVisionSummarizer: input.imageVisionSummarizer,
+  });
+  const previousSnapshot = readRecord(input.previousRun?.requestSnapshot);
+  const providerPresetId = input.providerPresetId
+    ?? input.previousRun?.providerPresetId
+    ?? readOptionalRecordString(previousSnapshot, "providerPresetId");
+  if (!providerPresetId) {
+    throw new HttpError(409, "edit_replacement_start_failed", "No provider preset is available for the replacement conversation run.");
+  }
+  const effectiveConfig = await buildEffectiveConfigResponse({ cwd: input.workspaceCwd, store: input.store, runnerRegistry: input.runnerRegistry });
+  const turn = input.store.createLingTurn({
+    threadId: input.thread.id,
+    kind: "manual_followup",
+    title: conversationTitle(input.message),
+    userInstruction: input.message,
+    teammateId: LING_AGENT_ID,
+    sourceMessageId: input.messageId,
+    createdByActor: "local-user",
+  }, now);
+  const streamInput: ConversationStreamRequest = {
+    threadId: input.thread.id,
+    message: input.message,
+    attachmentIds: [...input.attachmentIds],
+    projectPath: readOptionalRecordString(previousSnapshot, "projectPath")
+      ?? (input.previousRun?.cwd && input.previousRun.cwd !== input.workspaceCwd ? input.previousRun.cwd : undefined),
+    providerPresetId,
+    thinkingLevel: readThinkingLevel(readOptionalRecordString(previousSnapshot, "thinkingLevel")),
+    permissionPreset: input.permissionPreset ?? readPermissionPreset(readOptionalRecordString(previousSnapshot, "permissionPreset")),
+    permissionMode: readPermissionMode(readOptionalRecordString(previousSnapshot, "permissionMode")),
+    responseLanguage: readResponseLanguagePreference(readOptionalRecordString(previousSnapshot, "responseLanguage")),
+    tools: readOptionalStringArray(previousSnapshot, "tools", runTools),
+    idempotencyKey: `conversation-replacement:${turn.id}`,
+  };
+  const runRequest = {
+    ...buildConversationRunRequest({
+      workspaceCwd: input.workspaceCwd,
+      thread: input.thread,
+      turn,
+      input: streamInput,
+      lingConversationTone: effectiveConfig.values.lingConversationTone.value,
+      attachments,
+      attachmentMaterializations,
+    }),
+    permissionConfirmation: input.permissionConfirmation,
+  };
+  const runId = await startRunAndWaitUntilReady(runRequest, input.startRun);
+  return { turn, runId };
+}
 
 const defaultConversationTools: readonly RunTool[] = ["read", "grep", "find", "ls", "bash", "edit", "write"];
 const thinkingLevels: readonly RunThinkingLevel[] = ["off", "minimal", "low", "medium", "high", "xhigh"];
@@ -275,7 +353,9 @@ export function handleConversationDetail(
       writeJson(response, 404, { error: "conversation_not_found", message: `Conversation not found: ${threadId}` });
       return;
     }
-    writeJson(response, 200, buildConversationDetail(store, cwd, thread));
+    writeJson(response, 200, buildConversationDetail(store, cwd, thread, {
+      includeSuperseded: url.searchParams.get("includeSuperseded") === "true",
+    }));
   } catch (error) {
     writeJson(response, 400, {
       error: "bad_request",
@@ -284,8 +364,19 @@ export function handleConversationDetail(
   }
 }
 
-export function buildConversationDetail(store: RunStore, cwd: string, thread: LingThread): ConversationDetailResponse {
-  const turns = [...store.listLingTurns({ threadId: thread.id, limit: 200 })].reverse();
+export function buildConversationDetail(
+  store: RunStore,
+  cwd: string,
+  thread: LingThread,
+  options: { readonly includeSuperseded?: boolean } = {},
+): ConversationDetailResponse {
+  const projection = buildConversationSupersessionProjection(store, {
+    surfaces: ["normal_conversation"],
+    ownerId: thread.id,
+  });
+  const storedTurns = store.listLingTurns({ threadId: thread.id, limit: 200 });
+  const turns = [...(options.includeSuperseded ? storedTurns : filterSupersededLingTurns(storedTurns, projection))]
+    .sort((left, right) => left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id));
   const runLinks = turns.flatMap((turn) => store.listLingTurnRuns(turn.id));
   const runs = runLinks
     .map((link) => store.getRun(link.runId))
@@ -294,9 +385,58 @@ export function buildConversationDetail(store: RunStore, cwd: string, thread: Li
   const runByTurnId = new Map(runLinks.map((link) => [link.turnId, store.getRun(link.runId)]));
   const messages = turns.flatMap((turn) => {
     const run = runByTurnId.get(turn.id);
-    const user = createUserTranscriptMessage(thread, turn, conversationAttachmentsFromRunSnapshot(store, run));
+    const rawUser = createUserTranscriptMessage(thread, turn, conversationAttachmentsFromRunSnapshot(store, run));
+    const latestRevision = store.listConversationMessageRevisions({
+      surface: "normal_conversation",
+      messageId: rawUser.id,
+    }).at(-1);
+    const user = latestRevision ? {
+      ...rawUser,
+      content: latestRevision.body,
+      revision: latestRevision.revision,
+      editedAt: latestRevision.revision > 1 ? latestRevision.createdAt : undefined,
+      pendingReplacement: projectPendingConversationReplacement(store, "normal_conversation", rawUser.id),
+    } : { ...rawUser, revision: 1 };
     return run ? [user, assistantMessageFromRun(store, thread, turn, run)] : [user];
   });
+  const messageById = new Map(messages.map((message) => [message.id, message]));
+  const pendingSupersessionByMessage = new Map<string, ReturnType<RunStore["listConversationTurnSupersessions"]>[number]>();
+  for (const supersession of store.listConversationTurnSupersessions({
+    surface: "normal_conversation",
+    ownerId: thread.id,
+    replacementStatus: "pending",
+    limit: 200,
+  })) {
+    if (!pendingSupersessionByMessage.has(supersession.messageId)) {
+      pendingSupersessionByMessage.set(supersession.messageId, supersession);
+    }
+  }
+  for (const supersession of pendingSupersessionByMessage.values()) {
+    const sourceTurn = supersession.supersededTurnId
+      ? storedTurns.find((turn) => turn.id === supersession.supersededTurnId)
+      : undefined;
+    const revision = store.listConversationMessageRevisions({
+      surface: "normal_conversation",
+      messageId: supersession.messageId,
+    }).find((candidate) => candidate.id === supersession.replacementRevisionId);
+    if (!sourceTurn || !revision) {
+      continue;
+    }
+    const sourceRun = store.listLingTurnRuns(sourceTurn.id)
+      .map((link) => store.getRun(link.runId))
+      .filter((run): run is RunSession => Boolean(run))
+      .at(-1);
+    const rawUser = createUserTranscriptMessage(thread, sourceTurn, conversationAttachmentsFromRunSnapshot(store, sourceRun));
+    messageById.set(rawUser.id, {
+      ...rawUser,
+      content: revision.body,
+      status: "succeeded",
+      revision: revision.revision,
+      editedAt: revision.createdAt,
+      pendingReplacement: projectPendingConversationReplacement(store, "normal_conversation", rawUser.id),
+      updatedAt: revision.createdAt,
+    });
+  }
   const latestRun = runs[runs.length - 1];
   const latestSnapshot = readRecord(latestRun?.requestSnapshot);
   const latestProjectPath = latestRun?.cwd && latestRun.cwd !== cwd ? latestRun.cwd : undefined;
@@ -305,10 +445,12 @@ export function buildConversationDetail(store: RunStore, cwd: string, thread: Li
     thread,
     turns,
     runs,
-    terminalReports: store.listTerminalReports({ threadId: thread.id, limit: 200 })
+    terminalReports: (options.includeSuperseded
+      ? store.listTerminalReports({ threadId: thread.id, limit: 200 })
+      : filterSupersededTerminalReports(store.listTerminalReports({ threadId: thread.id, limit: 200 }), projection))
       .filter((record) => Boolean(record.report) && (record.status === "committed" || record.status === "fallback"))
       .map((record) => projectTerminalReportDto(record.report!)),
-    messages,
+    messages: [...messageById.values()].sort((left, right) => left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id)),
     defaults: {
       projectPath: readOptionalRecordString(latestSnapshot, "projectPath") || latestProjectPath,
       providerPresetId: latestRun?.providerPresetId ?? readOptionalRecordString(latestSnapshot, "providerPresetId"),
@@ -414,13 +556,14 @@ function createUserTranscriptMessage(
   attachments: readonly ConversationAttachment[] = [],
 ): ConversationTranscriptMessage {
   return {
-    id: `conversation-user:${turn.id}`,
+    id: turn.sourceMessageId?.startsWith("conversation-user:") ? turn.sourceMessageId : `conversation-user:${turn.id}`,
     role: "user",
     content: turn.userInstruction,
     ...(attachments.length > 0 ? { attachments } : {}),
     status: statusFromTurn(turn),
     threadId: thread.id,
     turnId: turn.id,
+    revision: 1,
     createdAt: turn.createdAt,
     updatedAt: turn.updatedAt,
   };
@@ -664,4 +807,45 @@ function assertConversationThread(store: RunStore, threadId: string): void {
 
 function normalizeStringList(values: readonly string[]): string[] {
   return [...new Set(values.map((value) => value.trim()).filter(Boolean))];
+}
+
+async function startRunAndWaitUntilReady(runRequest: RunRequest, startRun: StartConversationRun): Promise<string | undefined> {
+  let settled = false;
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  const ready = new Promise<string | undefined>((resolve, reject) => {
+    const finish = (callback: () => void): void => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      if (timeout) {
+        clearTimeout(timeout);
+      }
+      callback();
+    };
+    const sink: RunExecutionSink = {
+      kind: "detached",
+      onClose() {},
+      isClosed() {
+        return false;
+      },
+      writeReady(data) {
+        const runId = isRecord(data) && typeof data.runId === "string" ? data.runId : undefined;
+        finish(() => resolve(runId));
+      },
+      writeEvent() {},
+      writeError(_statusCode, body) {
+        const message = readOptionalRecordString(readRecord(body), "message") ?? "Replacement run failed before start.";
+        finish(() => reject(new Error(message)));
+      },
+      end() {
+        finish(() => reject(new Error("Replacement run ended before it became ready.")));
+      },
+    };
+    timeout = setTimeout(() => finish(() => reject(new Error("Timed out waiting for replacement run readiness."))), 15_000);
+    void startRun(runRequest, sink).catch((error) => {
+      finish(() => reject(error));
+    });
+  });
+  return await ready;
 }

@@ -14,9 +14,13 @@ export type MessageActionKind =
   | "copy"
   | "like"
   | "dislike"
+  | "edit_latest"
   | "reply_topic"
+  | "fork"
   | "create_task"
   | "retry"
+  | "open_reference"
+  | "open_artifact"
   | "open"
   | "download"
   | "custom";
@@ -36,11 +40,17 @@ export interface ConversationSurfacePolicy {
   readonly allowCopy: boolean;
   readonly allowFeedback: boolean;
   readonly allowTopicReply: boolean;
+  readonly allowThreadFork: boolean;
+  readonly allowLatestUserMessageEdit: boolean;
   readonly allowCreateTask: boolean;
   readonly allowRetry: boolean;
+  readonly allowToolExecution: boolean;
   readonly allowTeammateMentions: boolean;
   readonly allowMultiTeammateActivity: boolean;
+  readonly showUserAvatar: boolean;
+  readonly showAgentAvatar: boolean;
   readonly showChannelRoster: boolean;
+  readonly showTerminalReportParticipants: boolean;
   readonly evidenceMode: ConversationEvidenceMode;
   readonly workCellMode: ConversationWorkCellMode;
   readonly rawDetailMode: ConversationRawDetailMode;
@@ -52,11 +62,17 @@ const conversationSurfacePolicies: Record<ConversationSurfaceKind, ConversationS
     allowCopy: true,
     allowFeedback: true,
     allowTopicReply: false,
+    allowThreadFork: true,
+    allowLatestUserMessageEdit: true,
     allowCreateTask: false,
     allowRetry: false,
+    allowToolExecution: true,
     allowTeammateMentions: false,
     allowMultiTeammateActivity: false,
+    showUserAvatar: false,
+    showAgentAvatar: false,
     showChannelRoster: false,
+    showTerminalReportParticipants: false,
     evidenceMode: "compact",
     workCellMode: "compact",
     rawDetailMode: "developer",
@@ -66,11 +82,17 @@ const conversationSurfacePolicies: Record<ConversationSurfaceKind, ConversationS
     allowCopy: true,
     allowFeedback: true,
     allowTopicReply: true,
+    allowThreadFork: true,
+    allowLatestUserMessageEdit: true,
     allowCreateTask: true,
     allowRetry: false,
+    allowToolExecution: true,
     allowTeammateMentions: true,
     allowMultiTeammateActivity: true,
+    showUserAvatar: true,
+    showAgentAvatar: true,
     showChannelRoster: true,
+    showTerminalReportParticipants: true,
     evidenceMode: "compact",
     workCellMode: "compact",
     rawDetailMode: "developer",
@@ -80,11 +102,17 @@ const conversationSurfacePolicies: Record<ConversationSurfaceKind, ConversationS
     allowCopy: true,
     allowFeedback: true,
     allowTopicReply: true,
+    allowThreadFork: true,
+    allowLatestUserMessageEdit: true,
     allowCreateTask: true,
     allowRetry: false,
+    allowToolExecution: true,
     allowTeammateMentions: true,
     allowMultiTeammateActivity: true,
+    showUserAvatar: true,
+    showAgentAvatar: true,
     showChannelRoster: true,
+    showTerminalReportParticipants: true,
     evidenceMode: "compact",
     workCellMode: "compact",
     rawDetailMode: "developer",
@@ -94,11 +122,17 @@ const conversationSurfacePolicies: Record<ConversationSurfaceKind, ConversationS
     allowCopy: true,
     allowFeedback: false,
     allowTopicReply: false,
+    allowThreadFork: false,
+    allowLatestUserMessageEdit: true,
     allowCreateTask: false,
     allowRetry: false,
+    allowToolExecution: false,
     allowTeammateMentions: false,
     allowMultiTeammateActivity: false,
+    showUserAvatar: true,
+    showAgentAvatar: true,
     showChannelRoster: false,
+    showTerminalReportParticipants: false,
     evidenceMode: "compact",
     workCellMode: "none",
     rawDetailMode: "hidden",
@@ -108,11 +142,17 @@ const conversationSurfacePolicies: Record<ConversationSurfaceKind, ConversationS
     allowCopy: true,
     allowFeedback: true,
     allowTopicReply: false,
+    allowThreadFork: false,
+    allowLatestUserMessageEdit: true,
     allowCreateTask: true,
     allowRetry: false,
+    allowToolExecution: true,
     allowTeammateMentions: false,
     allowMultiTeammateActivity: false,
+    showUserAvatar: true,
+    showAgentAvatar: true,
     showChannelRoster: false,
+    showTerminalReportParticipants: false,
     evidenceMode: "compact",
     workCellMode: "compact",
     rawDetailMode: "developer",
@@ -122,11 +162,17 @@ const conversationSurfacePolicies: Record<ConversationSurfaceKind, ConversationS
     allowCopy: true,
     allowFeedback: false,
     allowTopicReply: false,
+    allowThreadFork: false,
+    allowLatestUserMessageEdit: false,
     allowCreateTask: false,
     allowRetry: true,
+    allowToolExecution: true,
     allowTeammateMentions: false,
     allowMultiTeammateActivity: false,
+    showUserAvatar: false,
+    showAgentAvatar: true,
     showChannelRoster: false,
+    showTerminalReportParticipants: false,
     evidenceMode: "rich",
     workCellMode: "rich",
     rawDetailMode: "rich",
@@ -158,12 +204,18 @@ export function conversationActionAllowedByPolicy(
     case "like":
     case "dislike":
       return policy.allowFeedback;
+    case "edit_latest":
+      return policy.allowLatestUserMessageEdit;
     case "reply_topic":
       return policy.allowTopicReply;
+    case "fork":
+      return policy.allowThreadFork;
     case "create_task":
       return policy.allowCreateTask;
     case "retry":
       return policy.allowRetry;
+    case "open_reference":
+    case "open_artifact":
     case "open":
     case "download":
     case "custom":

@@ -34,7 +34,7 @@ import { createAiChannelReply } from "../features/channels/ai-replies.js";
 import { handleChannelCollaborationProtocol } from "../features/channels/collaboration-protocol.js";
 import { handleChannelPlaybookCandidates } from "../features/channels/playbooks.js";
 import { handleChannelLinkPreviewItem, handleChannelLinkPreviewsCollection } from "../features/channels/link-previews.js";
-import { handleChannelMessagesCollection, handleChannelMessageStream } from "../features/channels/messages.js";
+import { handleChannelMessagesCollection, handleChannelMessageStream, handleLingAgentChannelMessage } from "../features/channels/messages.js";
 import { confirmChannelExecutionProposalWorkflow } from "../features/channels/proposal-workflows.js";
 import { handleChannelTeamExpertsProjection } from "../features/channels/team-experts.js";
 import { handleChannelTeamMetricsProjection } from "../features/channels/team-metrics.js";
@@ -141,7 +141,8 @@ import {
   handleGovernanceNotificationRoute,
   parseGovernanceNotificationRoute,
 } from "../features/governance-notifications/routes.js";
-import { handleConversationAttachmentsCollection, handleConversationDetail, handleConversationStream } from "../features/conversations/routes.js";
+import { handleConversationAttachmentsCollection, handleConversationDetail, handleConversationStream, startConversationReplacementRun } from "../features/conversations/routes.js";
+import { handleConversationMessageEdit } from "../features/conversations/message-edits.js";
 import { handleRunMediaJob, syncMediaJobForApprovalDecision } from "../features/media/executor.js";
 import { handleMediaJobRoute, handleMediaJobsCollection } from "../features/media/routes.js";
 import { handleMcpServerItem, handleMcpServersCollection, handleMcpToolsCollection } from "../features/mcp/routes.js";
@@ -164,7 +165,13 @@ import {
 import { handleUserProfile } from "../features/profile/routes.js";
 import { ensureRunCancelled } from "../features/runs/cancellation.js";
 import { handleExecutionActionsCollection } from "../features/runs/execution-actions.js";
-import { createDetachedRunExecutionSink, createSseRunExecutionSink, executeRunRequest } from "../features/runs/orchestrator.js";
+import {
+  createDetachedRunExecutionSink,
+  createSseRunExecutionSink,
+  executeRunRequest,
+  type RunExecutionSink,
+} from "../features/runs/orchestrator.js";
+import type { RunRequest } from "../features/runs/schemas.js";
 import {
   handleRunInterventionItem,
   handleRunInterventionPromote,
@@ -309,15 +316,6 @@ export async function routeRequest(
     providerStartupRefresh,
     startupState,
   } = context;
-  const directReplyControl = new DirectReplyControlService({
-    runnerRegistry,
-    runtimeSupervisor,
-    secretResolver,
-    activeDirectReplies,
-    runControl: new RunControlService(),
-    providerStartupRefresh,
-    imageVisionSummarizer,
-  });
   setCorsHeaders(response);
 
   if (request.method === "OPTIONS") {
@@ -353,6 +351,31 @@ export async function routeRequest(
       startupState,
     });
   };
+  const startTeammateDirectRun = async (runRequest: RunRequest, sink: RunExecutionSink): Promise<string | undefined> =>
+    executeRunRequest(
+      runRequest,
+      sink,
+      runnerRegistry,
+      storeRegistry,
+      activeRuns,
+      runtimeSupervisor,
+      secretResolver,
+      mcpBroker,
+      {
+        afterRunTerminal: maybeContinueRunInterventions,
+        controlPlaneEvents,
+        startupState,
+      },
+    );
+  const directReplyControl = new DirectReplyControlService({
+    startRun: startTeammateDirectRun,
+    activeRuns,
+    secretResolver,
+    activeDirectReplies,
+    runControl: new RunControlService(),
+    providerStartupRefresh,
+    imageVisionSummarizer,
+  });
 
   if (request.method === "GET" && url.pathname === "/health") {
     writeJson(response, 200, {
@@ -1354,6 +1377,116 @@ export async function routeRequest(
     };
   };
 
+  if (url.pathname === "/conversation-message-edits") {
+    await handleConversationMessageEdit(request, response, config, storeRegistry, {
+      activeRuns,
+      startReplacement: async ({ store, editable, request: editRequest, revision }) => {
+        if (editable.surface === "normal_conversation") {
+          const previousRun = editable.supersededRunIds
+            .map((runId) => store.getRun(runId))
+            .filter((run): run is RunSession => Boolean(run))
+            .at(-1);
+          const started = await startConversationReplacementRun({
+            store,
+            workspaceCwd: store.paths.cwd,
+            thread: editable.thread,
+            message: revision.body,
+            messageId: revision.messageId,
+            attachmentIds: revision.attachmentIds,
+            providerPresetId: editRequest.providerPresetId,
+            permissionPreset: editRequest.permissionPreset,
+            permissionConfirmation: editRequest.permissionConfirmation,
+            previousRun,
+            runnerRegistry,
+            startRun: startTeammateDirectRun,
+            imageVisionSummarizer,
+          });
+          return { replacementTurnId: started.turn.id };
+        }
+
+        if (editable.surface === "teammate_direct") {
+          const teammate = store.getAiTeammate(editable.ownerId);
+          const sourceMessage = store.getTeammateDirectMessage(editable.messageId);
+          if (!teammate || !sourceMessage) {
+            throw new HttpError(404, "message_not_found", "The edited private message is no longer available.");
+          }
+          const workspace = await ensureDirectWorkspaceReady({ store, thread: editable.thread, workspaceCwd: store.paths.cwd });
+          if (!workspace.ok) {
+            throw new HttpError(409, "edit_replacement_start_failed", workspace.message);
+          }
+          await providerStartupRefresh.refreshBeforeRun({
+            cwd: store.paths.cwd,
+            store,
+            providerPresetId: editRequest.providerPresetId ?? teammate.providerPresetId,
+          });
+          return await new Promise<{ readonly replacementTurnId?: string }>((resolve, reject) => {
+            let started = false;
+            void createAiTeammateDirectReply({
+              startRun: startTeammateDirectRun,
+              store,
+              teammate,
+              thread: editable.thread,
+              sourceMessage,
+              providerPresetId: editRequest.providerPresetId,
+              permissionPreset: editRequest.permissionPreset,
+              permissionConfirmation: editRequest.permissionConfirmation,
+              requestedSkillId: editRequest.requestedSkillId,
+              workspace: workspace.workspace,
+              secretResolver,
+              imageVisionSummarizer,
+              webFetch: context.webFetch,
+              webResolveHostAddresses: context.webResolveHostAddresses,
+              onWorkUnitStarted: ({ workUnitId }) => {
+                if (started) {
+                  return;
+                }
+                started = true;
+                const runId = store.getWorkUnit(workUnitId)?.linkedRunId;
+                resolve({ replacementTurnId: runId ? store.getLingTurnForRun(runId)?.id : undefined });
+              },
+            }).then((reply) => {
+              if (!started) {
+                reject(new Error(reply.errorMessage || "Private replacement did not start a run."));
+              }
+            }, reject);
+          });
+        }
+
+        const sourceMessage = store.getChannelMessage(editable.messageId);
+        if (!sourceMessage) {
+          throw new HttpError(404, "message_not_found", "The edited channel message is no longer available.");
+        }
+        await handleLingAgentChannelMessage({
+          store,
+          channel: editable.channel,
+          sourceMessage,
+          requestedProviderPresetId: editRequest.providerPresetId,
+          requestAiReply: true,
+          createAiReply: (input) => createAiChannelReply({
+            runnerRegistry,
+            runtimeSupervisor,
+            secretResolver,
+            webFetch: context.webFetch,
+            webResolveHostAddresses: context.webResolveHostAddresses,
+            ...input,
+            completionMode: "background",
+            teamObserverBusEnabled: config.channels.teamObserverBus === true,
+          }),
+          startExecutionProposalWorkflow: (input) => confirmAndOrchestrateChannelProposal({
+            store: input.store,
+            cwd: store.paths.cwd,
+            proposalId: input.proposalId,
+          }),
+          config,
+          routeDependencies: { runnerRegistry, secretResolver, config },
+          imageVisionSummarizer,
+        });
+        return {};
+      },
+    });
+    return;
+  }
+
   const workflowHandoffIntentRoute = parseWorkflowHandoffIntentRoute(url.pathname);
   if (workflowHandoffIntentRoute) {
     if (workflowHandoffIntentRoute.kind === "collection") {
@@ -1832,7 +1965,18 @@ export async function routeRequest(
         config,
         storeRegistry,
         teammateRoute.teammateId,
-        async ({ store, teammate, thread, sourceMessage, providerPresetId, onWorkUnitStarted }) => {
+        async ({
+          store,
+          teammate,
+          thread,
+          sourceMessage,
+          providerPresetId,
+          permissionPreset,
+          permissionConfirmation,
+          requestedSkillId,
+          skillOptimizationMode,
+          onWorkUnitStarted,
+        }) => {
           let sourceWorkUnitId: string | undefined;
           const workspace = await ensureDirectWorkspaceReady({ store, thread, workspaceCwd: store.paths.cwd });
           if (!workspace.ok) {
@@ -1844,14 +1988,17 @@ export async function routeRequest(
             providerPresetId: providerPresetId ?? teammate.providerPresetId,
           });
           const reply = await createAiTeammateDirectReply({
-            runnerRegistry,
+            startRun: startTeammateDirectRun,
             store,
             teammate,
             thread,
             sourceMessage,
             providerPresetId,
+            permissionPreset,
+            permissionConfirmation,
+            requestedSkillId,
+            skillOptimizationMode,
             workspace: workspace.workspace,
-            runtimeSupervisor,
             secretResolver,
             imageVisionSummarizer,
             webFetch: context.webFetch,
@@ -1886,7 +2033,20 @@ export async function routeRequest(
         config,
         storeRegistry,
         teammateRoute.teammateId,
-        async ({ store, teammate, thread, sourceMessage, providerPresetId, signal, onWorkUnitStarted, stream }) => {
+        async ({
+          store,
+          teammate,
+          thread,
+          sourceMessage,
+          providerPresetId,
+          permissionPreset,
+          permissionConfirmation,
+          requestedSkillId,
+          skillOptimizationMode,
+          signal,
+          onWorkUnitStarted,
+          stream,
+        }) => {
           let sourceWorkUnitId: string | undefined;
           const workspace = await ensureDirectWorkspaceReady({ store, thread, workspaceCwd: store.paths.cwd });
           if (!workspace.ok) {
@@ -1900,14 +2060,17 @@ export async function routeRequest(
             providerPresetId: providerPresetId ?? teammate.providerPresetId,
           });
           const reply = await createAiTeammateDirectReply({
-            runnerRegistry,
+            startRun: startTeammateDirectRun,
             store,
             teammate,
             thread,
             sourceMessage,
             providerPresetId,
+            permissionPreset,
+            permissionConfirmation,
+            requestedSkillId,
+            skillOptimizationMode,
             workspace: workspace.workspace,
-            runtimeSupervisor,
             secretResolver,
             imageVisionSummarizer,
             webFetch: context.webFetch,

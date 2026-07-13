@@ -52,6 +52,7 @@ export function useConversationDomain(input: {
   };
   readonly actions: {
     readonly refreshConversationThreads: (cwd?: string) => Promise<void>;
+    readonly refreshSelectedConversation: (cwd?: string) => Promise<void>;
     readonly openNewConversation: () => void;
     readonly selectConversationThread: (threadId: string, cwd?: string) => Promise<void>;
     readonly archiveConversationThread: (threadId: string, cwd?: string) => Promise<void>;
@@ -107,6 +108,23 @@ export function useConversationDomain(input: {
       setConversationsLoading(false);
     }
   }, [input, openNewConversation]);
+
+  const refreshSelectedConversation = useCallback(async (cwd = input.cwd): Promise<void> => {
+    const workspaceCwd = cwd.trim();
+    if (!workspaceCwd || !selectedConversationThreadId) {
+      return;
+    }
+    setConversationsLoading(true);
+    try {
+      const detail = await getConversation(workspaceCwd, selectedConversationThreadId);
+      setSelectedConversationDetail(detail);
+      input.setErrorMessage("");
+    } catch (error) {
+      input.setErrorMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setConversationsLoading(false);
+    }
+  }, [input, selectedConversationThreadId]);
 
   const archiveConversationThread = useCallback(async (threadId: string, cwd = input.cwd): Promise<void> => {
     const workspaceCwd = cwd.trim();
@@ -299,6 +317,7 @@ export function useConversationDomain(input: {
     },
     actions: {
       refreshConversationThreads,
+      refreshSelectedConversation,
       openNewConversation,
       selectConversationThread,
       archiveConversationThread,

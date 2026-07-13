@@ -5,6 +5,7 @@ import { parseUnifiedDiff, summarizeFileChanges, type ConversationFileChange } f
 import type { ConversationAgentActivitySpan, ConversationArtifactStripItem, ConversationOperationCellViewModel, ConversationWorkCellEvidenceLink, ConversationWorkCellGroup, ConversationWorkCellRow } from "../../../lib/conversation-work-cell.js";
 import type { PreviewContentResponse } from "../../../types.js";
 import type { ArtifactPreviewLoader } from "../preview/ArtifactPreviewDrawer.js";
+import type { ConversationSurfaceKind, TerminalReportProjectionPolicy } from "../tokens/conversation-surface-policy.js";
 import { ConversationArtifactStrip } from "./ConversationArtifactStrip.js";
 import { DiffViewer } from "./DiffViewer.js";
 import { TerminalReportBlock } from "./TerminalReportBlock.js";
@@ -21,6 +22,7 @@ export interface ConversationWorkCellDetailsState {
 
 export interface ConversationWorkCellProps {
   readonly model: ConversationOperationCellViewModel;
+  readonly surface: ConversationSurfaceKind;
   readonly cwd?: string;
   readonly detailsState?: ConversationWorkCellDetailsState;
   readonly onOpenRun?: (runId: string) => void;
@@ -30,10 +32,12 @@ export interface ConversationWorkCellProps {
   readonly renderParticipantAvatar?: (participantId: string | undefined, label: string) => ReactNode;
   readonly showArtifactStrip?: boolean;
   readonly showTerminalReport?: boolean;
+  readonly terminalReportProjectionPolicy?: Partial<TerminalReportProjectionPolicy>;
 }
 
 export function ConversationWorkCell({
   model,
+  surface,
   cwd,
   detailsState,
   onOpenRun,
@@ -43,6 +47,7 @@ export function ConversationWorkCell({
   renderParticipantAvatar,
   showArtifactStrip = true,
   showTerminalReport = true,
+  terminalReportProjectionPolicy,
 }: ConversationWorkCellProps): JSX.Element {
   const { t } = useI18n();
   const active = model.mode === "active";
@@ -210,6 +215,8 @@ export function ConversationWorkCell({
           revisionKey={terminalReportRevisionKey(model)}
           rows={model.terminalReportRows}
           renderParticipantAvatar={renderParticipantAvatar}
+          surface={surface}
+          projectionPolicy={terminalReportProjectionPolicy}
         />
       ) : null}
       {visibleArtifactItems.length > 0 ? (

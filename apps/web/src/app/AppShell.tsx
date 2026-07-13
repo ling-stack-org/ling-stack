@@ -394,6 +394,7 @@ export function AppShell(): JSX.Element {
   } = conversationDomain.state;
   const {
     refreshConversationThreads,
+    refreshSelectedConversation,
     openNewConversation,
     selectConversationThread,
     archiveConversationThread,
@@ -985,6 +986,9 @@ export function AppShell(): JSX.Element {
       content: message.content,
       attachments: message.attachments,
       status: message.status,
+      revision: message.revision,
+      editedAt: message.editedAt,
+      pendingReplacement: message.pendingReplacement,
       createdAt: message.createdAt,
       updatedAt: message.updatedAt,
     })),
@@ -2320,7 +2324,10 @@ export function AppShell(): JSX.Element {
                   workspaceCwd={form.cwd}
                   sending={conversationStreamBusy}
                   onOpenRun={(runId) => void openRunFromWorkspace(runId)}
-                  onRefreshConversation={() => refreshConversationThreads(form.cwd.trim())}
+                  onRefreshConversation={() => Promise.all([
+                    refreshConversationThreads(form.cwd.trim()),
+                    refreshSelectedConversation(form.cwd.trim()),
+                  ]).then(() => undefined)}
                   onSendConversation={async (input) => {
                     await sendConversationMessage({
                       message: input.message,
@@ -2927,6 +2934,9 @@ function homeMessageFromTranscript(message: ConversationTranscriptMessage): Conv
     content: message.content,
     attachments: message.attachments,
     status: message.status,
+    revision: message.revision,
+    editedAt: message.editedAt,
+    pendingReplacement: message.pendingReplacement,
     createdAt: message.createdAt,
     updatedAt: message.updatedAt,
   };

@@ -47,6 +47,15 @@ import type {
   UpdateLingTerminalReportDraftInput,
 } from "./terminal-report-types.js";
 import type {
+  CommitConversationMessageEditInput,
+  CommitConversationMessageEditResult,
+  ConversationMessageRevision,
+  ConversationReplacementStatus,
+  ConversationTurnSupersession,
+  ListConversationMessageRevisionsOptions,
+  ListConversationTurnSupersessionsOptions,
+} from "./conversation-revision-types.js";
+import type {
   AvailabilityIncident,
   ChannelTeamEvidenceItem,
   ChannelTeamPattern,
@@ -1205,6 +1214,16 @@ export interface ListControlPlaneEventsOptions {
 
 export interface RunStore {
   readonly paths: LingStackRuntimePaths;
+  commitConversationMessageEdit(input: CommitConversationMessageEditInput, now: string): CommitConversationMessageEditResult;
+  listConversationMessageRevisions(options: ListConversationMessageRevisionsOptions): ConversationMessageRevision[];
+  getConversationTurnSupersession(id: string): ConversationTurnSupersession | undefined;
+  getConversationTurnSupersessionByIdempotency(idempotencyKey: string): ConversationTurnSupersession | undefined;
+  listConversationTurnSupersessions(options?: ListConversationTurnSupersessionsOptions): ConversationTurnSupersession[];
+  updateConversationTurnSupersession(
+    id: string,
+    input: { readonly replacementTurnId?: string | null; readonly replacementStatus?: ConversationReplacementStatus; readonly failureReason?: string | null },
+    now: string,
+  ): ConversationTurnSupersession | undefined;
   createLingThread(input: CreateLingThreadInput, now: string): LingThread;
   getLingThread(threadId: string): LingThread | undefined;
   findLingThreadByOwner(input: {

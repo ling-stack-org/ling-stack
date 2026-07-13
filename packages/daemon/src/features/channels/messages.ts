@@ -25,6 +25,11 @@ import {
   enrichChannelMessageWithWebEvidence,
   enrichChannelMessagesWithWebEvidence,
 } from "../web/message-web-evidence.js";
+import {
+  buildConversationSupersessionProjection,
+  filterSupersededChannelMessages,
+  projectChannelMessageRevisionMetadata,
+} from "../conversations/supersession-projection.js";
 
 export type CreateChannelAiReply = (input: {
   readonly store: RunStore;
@@ -294,7 +299,13 @@ export async function handleChannelMessagesCollection(
         beforeMessageId: url.searchParams.get("beforeMessageId") ?? undefined,
         limit: readOptionalIntegerQuery(url, "limit", 1),
       });
-      const messages = enrichChannelMessagesWithWebEvidence(store, page.messages);
+      const visibleMessages = url.searchParams.get("includeSuperseded") === "true"
+        ? page.messages
+        : filterSupersededChannelMessages(page.messages, buildConversationSupersessionProjection(store, {
+            surfaces: ["channel_root", "channel_branch", "topic_reply"],
+            ownerId: channelId,
+          }));
+      const messages = enrichChannelMessagesWithWebEvidence(store, visibleMessages.map((message) => projectChannelMessageRevisionMetadata(store, message)));
       writeJson(response, 200, {
         cwd,
         channelId,

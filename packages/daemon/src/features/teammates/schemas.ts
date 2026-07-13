@@ -1,6 +1,7 @@
 import { basename } from "node:path";
 import {
   readOnlyRunTools,
+  permissionPresets,
   type AiTeammate,
   type AiTeammateUpdateInput,
   type ChannelMessageFileRef,
@@ -11,6 +12,9 @@ import {
   type ReplaceTeammateMemoryScopeInput,
   type ReplaceTeammateSkillBindingInput,
   type RunTool,
+  type PermissionConfirmation,
+  type PermissionPreset,
+  type SkillOptimizationMode,
   type SkillApprovalProfile,
 } from "@ling-stack/core";
 import { parseApprovalProfileObject } from "../../shared/approval-profile.js";
@@ -37,11 +41,23 @@ export interface TeammateDirectMessageRequest {
   readonly fileRefs: readonly ChannelMessageFileRef[];
   readonly requestAiReply: boolean;
   readonly providerPresetId?: string;
+  readonly permissionPreset?: PermissionPreset;
+  readonly permissionConfirmation?: PermissionConfirmation;
+  readonly requestedSkillId?: string;
+  readonly skillOptimizationMode?: SkillOptimizationMode;
 }
 
 export interface TeammatePrivateAttachmentRequest extends ChannelAttachmentRequest {
   readonly scope?: "teammate_direct_thread" | "teammate_profile_avatar";
 }
+
+const teammateDirectSkillOptimizationModes: readonly SkillOptimizationMode[] = [
+  "no_operation",
+  "report_only",
+  "preview_on_demand",
+  "auto_safe",
+  "auto_runtime_experimental",
+];
 
 export function parseCreateAiTeammateInput(value: unknown): CreateAiTeammateInput {
   if (!isRecord(value)) {
@@ -220,6 +236,10 @@ export function parseTeammateDirectMessageRequest(value: unknown): TeammateDirec
     fileRefs: readOptionalChannelMessageFileRefs(value, "fileRefs") ?? [],
     requestAiReply: readOptionalBoolean(value, "requestAiReply") ?? false,
     providerPresetId: readOptionalString(value, "providerPresetId"),
+    permissionPreset: readOptionalPermissionPreset(value, "permissionPreset"),
+    permissionConfirmation: readOptionalPermissionConfirmation(value, "permissionConfirmation"),
+    requestedSkillId: readOptionalString(value, "requestedSkillId"),
+    skillOptimizationMode: readOptionalSkillOptimizationMode(value, "skillOptimizationMode"),
   };
   if (!input.body.trim() && input.attachmentIds.length === 0 && input.linkPreviewIds.length === 0 && input.fileRefs.length === 0) {
     throw new Error("body, attachmentIds, linkPreviewIds, or fileRefs is required");
@@ -234,6 +254,46 @@ export function parseTeammateDirectMessageRequest(value: unknown): TeammateDirec
     throw new Error("A teammate direct message can reference at most 12 workspace files");
   }
   return input;
+}
+
+function readOptionalPermissionPreset(record: Record<string, unknown>, key: string): PermissionPreset | undefined {
+  const value = readOptionalString(record, key);
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!permissionPresets.includes(value as PermissionPreset)) {
+    throw new Error(`${key} must be one of: ${permissionPresets.join(", ")}`);
+  }
+  return value as PermissionPreset;
+}
+
+function readOptionalPermissionConfirmation(record: Record<string, unknown>, key: string): PermissionConfirmation | undefined {
+  const value = record[key];
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!isRecord(value)) {
+    throw new Error(`${key} must be an object`);
+  }
+  const mode = readString(value, "mode");
+  const confirmed = value.confirmed;
+  const confirmedAt = readString(value, "confirmedAt");
+  const reason = readString(value, "reason");
+  if (mode !== "full_access" || confirmed !== true || !reason.trim() || Number.isNaN(Date.parse(confirmedAt))) {
+    throw new Error(`${key} must contain a valid full_access confirmation`);
+  }
+  return { mode: "full_access", confirmed: true, confirmedAt, reason };
+}
+
+function readOptionalSkillOptimizationMode(record: Record<string, unknown>, key: string): SkillOptimizationMode | undefined {
+  const value = readOptionalString(record, key);
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!teammateDirectSkillOptimizationModes.includes(value as SkillOptimizationMode)) {
+    throw new Error(`${key} must be one of: ${teammateDirectSkillOptimizationModes.join(", ")}`);
+  }
+  return value as SkillOptimizationMode;
 }
 
 export function parseTeammatePrivateAttachmentRequest(value: unknown): TeammatePrivateAttachmentRequest {

@@ -198,6 +198,8 @@ const SKILL_REGRESSION_RUNS_MIGRATION_VERSION = 93;
 const SKILL_REGRESSION_RUNS_MIGRATION_NAME = "create_skill_regression_runs";
 const LING_TERMINAL_REPORTS_MIGRATION_VERSION = 94;
 const LING_TERMINAL_REPORTS_MIGRATION_NAME = "create_ling_terminal_reports";
+const CONVERSATION_REVISIONS_MIGRATION_VERSION = 95;
+const CONVERSATION_REVISIONS_MIGRATION_NAME = "create_conversation_revisions";
 
 export function configureSqliteRunStoreDatabase(database: DatabaseSync): void {
   database.exec(`
@@ -4513,6 +4515,72 @@ export function applySqliteRunStoreMigrations(context: SqliteRunStoreMigrationCo
       }
     }
     const hasTaskAttachmentIdsMigration = context.hasMigration(TASK_ATTACHMENT_IDS_MIGRATION_VERSION);
+    const hasConversationRevisionsMigration = context.hasMigration(CONVERSATION_REVISIONS_MIGRATION_VERSION);
+    if (
+      !hasConversationRevisionsMigration ||
+      !context.hasTable("conversation_message_revisions") ||
+      !context.hasTable("conversation_turn_supersessions")
+    ) {
+      database.exec(`
+        CREATE TABLE IF NOT EXISTS conversation_message_revisions (
+          id TEXT PRIMARY KEY,
+          workspace_id TEXT NOT NULL,
+          surface_kind TEXT NOT NULL,
+          owner_id TEXT NOT NULL,
+          lane_id TEXT NOT NULL,
+          message_id TEXT NOT NULL,
+          revision INTEGER NOT NULL,
+          body TEXT NOT NULL,
+          mentions_json TEXT NOT NULL,
+          attachment_ids_json TEXT NOT NULL,
+          link_preview_ids_json TEXT NOT NULL,
+          file_refs_json TEXT NOT NULL,
+          supersedes_revision_id TEXT,
+          source_turn_id TEXT,
+          source_run_id TEXT,
+          created_by TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          UNIQUE(workspace_id, surface_kind, message_id, revision),
+          FOREIGN KEY(workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE,
+          FOREIGN KEY(supersedes_revision_id) REFERENCES conversation_message_revisions(id) ON DELETE SET NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_conversation_message_revisions_owner
+        ON conversation_message_revisions(workspace_id, surface_kind, owner_id, lane_id, created_at);
+
+        CREATE TABLE IF NOT EXISTS conversation_turn_supersessions (
+          id TEXT PRIMARY KEY,
+          workspace_id TEXT NOT NULL,
+          surface_kind TEXT NOT NULL,
+          owner_id TEXT NOT NULL,
+          lane_id TEXT NOT NULL,
+          message_id TEXT NOT NULL,
+          superseded_turn_id TEXT,
+          superseded_run_ids_json TEXT NOT NULL,
+          superseded_response_message_ids_json TEXT NOT NULL,
+          replacement_revision_id TEXT NOT NULL,
+          replacement_turn_id TEXT,
+          reason TEXT NOT NULL,
+          replacement_status TEXT NOT NULL,
+          failure_reason TEXT,
+          idempotency_key TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          UNIQUE(workspace_id, idempotency_key),
+          FOREIGN KEY(workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE,
+          FOREIGN KEY(replacement_revision_id) REFERENCES conversation_message_revisions(id) ON DELETE RESTRICT
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_conversation_turn_supersessions_owner
+        ON conversation_turn_supersessions(workspace_id, surface_kind, owner_id, lane_id, created_at);
+
+        CREATE INDEX IF NOT EXISTS idx_conversation_turn_supersessions_pending
+        ON conversation_turn_supersessions(workspace_id, replacement_status, updated_at);
+      `);
+      if (!hasConversationRevisionsMigration) {
+        context.recordMigration(CONVERSATION_REVISIONS_MIGRATION_VERSION, CONVERSATION_REVISIONS_MIGRATION_NAME);
+      }
+    }
     if (!hasTaskAttachmentIdsMigration || !context.hasColumn("tasks", "attachment_ids_json")) {
       if (!context.hasColumn("tasks", "attachment_ids_json")) {
         database.exec("ALTER TABLE tasks ADD COLUMN attachment_ids_json TEXT NOT NULL DEFAULT '[]';");

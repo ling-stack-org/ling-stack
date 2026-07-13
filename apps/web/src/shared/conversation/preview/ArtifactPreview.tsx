@@ -17,14 +17,18 @@ export function ArtifactPreview({ preview }: ArtifactPreviewProps): JSX.Element 
   }
 
   if (preview.text !== undefined) {
-    if (preview.kind === "markdown_text" || preview.kind === "plain_text") {
+    if (preview.kind === "markdown_text" || preview.kind === "plain_text" || preview.kind === "pdf" || preview.kind === "office") {
       return (
         <div className="artifact-preview-text-panel">
           <div className="artifact-preview-text-actions">
             <span>{previewKindLabel(preview.kind)}</span>
             <CopyActionButton text={preview.text} label={t("Copy preview")} className="message-code-copy" />
           </div>
-          <MessageBodyRenderer text={preview.text} compact={false} />
+          {preview.kind === "markdown_text" || preview.kind === "plain_text" ? (
+            <MessageBodyRenderer text={preview.text} compact={false} />
+          ) : (
+            <pre className="artifact-preview-document-text">{preview.text}</pre>
+          )}
         </div>
       );
     }

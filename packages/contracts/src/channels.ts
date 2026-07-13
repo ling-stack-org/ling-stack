@@ -1,4 +1,4 @@
-import type { RunTool, ToolName } from "./shared.js";
+import type { ConversationPendingReplacement, RunTool, ToolName } from "./shared.js";
 import type { ResponseLanguage, ResponseLanguagePreference } from "./settings.js";
 import type {
   ProcedureObservationCluster,
@@ -507,6 +507,9 @@ export interface ChannelMessage {
   readonly linkedRunId?: string;
   readonly status: "pending" | "ready" | "blocked" | "failed";
   readonly errorMessage?: string;
+  readonly revision?: number;
+  readonly editedAt?: string;
+  readonly pendingReplacement?: ConversationPendingReplacement;
   readonly webEvidence?: MessageWebEvidence;
   readonly createdAt: string;
   readonly updatedAt: string;
