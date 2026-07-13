@@ -28,6 +28,7 @@ export function useControlPlaneInvalidation(input: {
   readonly refreshAiTeammates: (cwd?: string) => Promise<void>;
   readonly refreshUsedMemoryAudit: (cwd?: string) => Promise<void>;
   readonly refreshChannelRunArtifacts: (cwd?: string, channelId?: string, channelRuns?: readonly RunSession[]) => Promise<void>;
+  readonly refreshChannelExecutionActions: (cwd?: string, channelId?: string, channelRuns?: readonly RunSession[]) => Promise<void>;
   readonly refreshChannelActivity: () => Promise<void>;
 }): void {
   const invalidationRef = useRef<(domains: readonly ControlPlaneDomain[]) => void>(() => undefined);
@@ -43,6 +44,7 @@ export function useControlPlaneInvalidation(input: {
       if (input.selectedChannelId) {
         refreshes.push(input.refreshChannelActivity());
         refreshes.push(input.refreshRuntimeState(workspaceCwd));
+        refreshes.push(input.refreshChannelExecutionActions(workspaceCwd, input.selectedChannelId, input.channelRunsForArtifacts));
       }
     }
     if (changed.has("work_units")) {

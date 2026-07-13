@@ -31,6 +31,7 @@ import {
   listUsedMemoryEvents,
   listMcpServers,
   listMcpTools,
+  listExecutionActions,
   listTeammateMcpBindings,
   listTeammateMemoryScopes,
   listTeammateSkills,
@@ -68,6 +69,7 @@ import type {
   AiTeammate,
   Channel,
   EffectiveTeammateSkill,
+  ExecutionAction,
   MemoryHealthReport,
   MemoryMarkdownImportPlan,
   MemoryObject,
@@ -217,6 +219,7 @@ export function TeammateWorkspace({
   const [nextDirectBeforeMessageId, setNextDirectBeforeMessageId] = useState<string | undefined>();
   const [loadingOlderDirectMessages, setLoadingOlderDirectMessages] = useState(false);
   const [terminalReports, setTerminalReports] = useState<readonly TerminalReportDto[]>([]);
+  const [directExecutionActions, setDirectExecutionActions] = useState<readonly ExecutionAction[]>([]);
   const [directRuntime, setDirectRuntime] = useState<TeammateDirectRuntimeResponse | undefined>();
   const [directWorkspace, setDirectWorkspace] = useState<DirectWorkspaceResponse | undefined>();
   const [directReplyOptimisticActive, setDirectReplyOptimisticActive] = useState(false);
@@ -422,6 +425,8 @@ export function TeammateWorkspace({
       return `${message.body} ${attachmentText}`.toLowerCase().includes(normalizedMessageSearchQuery);
     });
   }, [messages, normalizedMessageSearchQuery, privateAttachmentById]);
+  const directReplyActive = Boolean(directRuntime?.activeReply || directReplyOptimisticActive);
+  const hasDirectRuntimeActivity = Boolean(directRuntime?.activeReply || directReplyOptimisticActive || (directRuntime?.interventions.length ?? 0) > 0);
 
   useEffect(() => {
     const workspaceCwd = cwd.trim();
@@ -450,6 +455,63 @@ export function TeammateWorkspace({
       cancelled = true;
     };
   }, [cwd, runs, visibleMessages]);
+
+  const visibleDirectRunIds = useMemo(() => {
+    const teammateRunIds = new Set(runs.filter((run) => !run.teammateId || run.teammateId === teammate.id).map((run) => run.id));
+    return [...new Set(visibleMessages
+      .map((message) => message.linkedRunId)
+      .filter((runId): runId is string => Boolean(runId && teammateRunIds.has(runId))))];
+  }, [runs, teammate.id, visibleMessages]);
+  const visibleDirectRunKey = visibleDirectRunIds.join("|");
+  const hasActiveVisibleDirectRun = useMemo(() => {
+    const visibleRunIds = new Set(visibleDirectRunIds);
+    return runs.some((run) => visibleRunIds.has(run.id) && (
+      run.status === "queued" || run.status === "running" || run.status === "waiting_for_approval"
+    ));
+  }, [runs, visibleDirectRunKey]);
+
+  useEffect(() => {
+    const workspaceCwd = cwd.trim();
+    if (!workspaceCwd || visibleDirectRunIds.length === 0) {
+      setDirectExecutionActions([]);
+      return undefined;
+    }
+    let cancelled = false;
+    let loading = false;
+    const refresh = async (): Promise<void> => {
+      if (loading) {
+        return;
+      }
+      loading = true;
+      try {
+        const responses = await Promise.all(visibleDirectRunIds.map((runId) =>
+          listExecutionActions(workspaceCwd, { runId, limit: 100 }),
+        ));
+        if (!cancelled) {
+          const byId = new Map(responses.flatMap((response) => response.actions).map((action) => [action.id, action]));
+          setDirectExecutionActions([...byId.values()]);
+        }
+      } catch {
+        // Preserve the last persisted snapshot across transient polling failures.
+      } finally {
+        loading = false;
+      }
+    };
+    void refresh();
+    const interval = directReplyActive || hasDirectRuntimeActivity || hasActiveVisibleDirectRun
+      ? window.setInterval(() => {
+          if (document.visibilityState === "visible") {
+            void refresh();
+          }
+        }, 750)
+      : undefined;
+    return () => {
+      cancelled = true;
+      if (interval !== undefined) {
+        window.clearInterval(interval);
+      }
+    };
+  }, [cwd, directReplyActive, hasActiveVisibleDirectRun, hasDirectRuntimeActivity, visibleDirectRunKey]);
 
   useEffect(() => {
     if (isProtectedSystemTeammate && (activeTab === "skills" || activeTab === "mcp" || activeTab === "danger")) {
@@ -585,8 +647,6 @@ export function TeammateWorkspace({
   const settingsProviderReady = Boolean(settingsProvider && providerPreflightReady(settingsProvider));
   const openDirectInterventions = directRuntime?.interventions ?? [];
   const hasQueuedDirectGuidance = openDirectInterventions.some((intervention) => intervention.status === "queued");
-  const directReplyActive = Boolean(directRuntime?.activeReply || directReplyOptimisticActive);
-  const hasDirectRuntimeActivity = Boolean(directRuntime?.activeReply || directReplyOptimisticActive || openDirectInterventions.length > 0);
   const privateComposerPayload = useMemo(() => {
     const serializedInput = serializeComposerInputParts(composerInputParts);
     const fileRefs = directComposerFileRefs(composerFileReferenceParts);
@@ -2119,6 +2179,7 @@ export function TeammateWorkspace({
           usedMemoryEvents={usedMemoryEvents}
           memoryById={memoryById}
           runs={runs}
+          executionActions={directExecutionActions}
           terminalReports={terminalReports}
           providerRecovered={providerRecovered}
           privateAttachmentById={privateAttachmentById}

@@ -279,6 +279,31 @@ export interface MockExecutionAction {
   previewArtifactIds: string[];
   resultArtifactIds: string[];
   policySnapshot?: unknown;
+  commandEvidence?: {
+    command: string;
+    cwd?: string;
+    startedAt?: string;
+    completedAt?: string;
+    durationMs?: number;
+    exitCode?: number;
+    timedOut?: boolean;
+    cancelled?: boolean;
+    latestEventSeq: number;
+    outputTail: Array<{
+      eventSeq: number;
+      stream: "stdout" | "stderr";
+      text: string;
+      byteCount: number;
+      redacted: boolean;
+      ts: string;
+    }>;
+    outputByteCount: number;
+    outputLineCount?: number;
+    outputTruncated: boolean;
+    stdoutArtifactId?: string;
+    stderrArtifactId?: string;
+    resultArtifactId?: string;
+  };
   createdAt: string;
   updatedAt: string;
   approvedAt?: string;
@@ -6128,6 +6153,7 @@ function buildMockConversationDetail(state: MockState, cwd: string, thread: Mock
     thread,
     turns,
     runs,
+    executionActions: state.executionActions.filter((action) => action.threadId === thread.id || runs.some((run) => run.id === action.runId)),
     terminalReports: state.terminalReports.filter((report) => isRecord(report) && report.threadId === thread.id),
     messages,
     defaults: {
@@ -11593,7 +11619,7 @@ export async function handleDaemonRoute(
         right.id.localeCompare(left.id)
       )
       .slice(0, limit);
-    await route.fulfill({ json: { cwd, actions } });
+    await route.fulfill({ json: { cwd, actions, revision: actions.map((action) => `${action.id}:${action.updatedAt}`).join("|") } });
     return;
   }
   if (request.method() === "GET" && path === "/work-items") {

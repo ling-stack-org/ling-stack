@@ -14,6 +14,26 @@ export type ConversationOperationKind =
 export type ConversationWorkCellGroupKind = "changed" | "checked" | "context" | "evidence" | "attention";
 export type ConversationWorkCellRowTone = "neutral" | "running" | "waiting" | "success" | "failed";
 
+export interface ConversationCommandExecutionView {
+  readonly actionId: string;
+  readonly toolCallId?: string;
+  readonly runId?: string;
+  readonly workUnitId?: string;
+  readonly workflowStepId?: string;
+  readonly actionType: string;
+  readonly risk: "low" | "medium" | "high" | "critical";
+  readonly status: string;
+  readonly commandText: string;
+  readonly startedAt?: string;
+  readonly completedAt?: string;
+  readonly durationMs?: number;
+  readonly exitCode?: number;
+  readonly latestEventSeq: number;
+  readonly outputTruncated: boolean;
+  readonly stdoutArtifactId?: string;
+  readonly stderrArtifactId?: string;
+}
+
 export interface ConversationWorkCellStat {
   readonly id: string;
   readonly label: string;
@@ -30,6 +50,7 @@ export interface ConversationWorkCellRow {
   readonly description?: string;
   readonly meta?: string;
   readonly commandText?: string;
+  readonly commandExecution?: ConversationCommandExecutionView;
   readonly changePreview?: ConversationWorkCellChangePreview;
   readonly detailLines?: readonly ConversationWorkCellRowDetailLine[];
   readonly tone?: ConversationWorkCellRowTone;
@@ -71,6 +92,7 @@ export interface ConversationAgentActivitySpan {
   readonly stateLabel?: string;
   readonly latestRow?: ConversationWorkCellRow;
   readonly rows: readonly ConversationWorkCellRow[];
+  readonly items?: readonly ConversationWorkCellItem[];
 }
 
 /** @deprecated Use ConversationAgentActivitySpan. */
@@ -126,6 +148,38 @@ export interface ConversationWorkCellGroup {
   readonly rows: readonly ConversationWorkCellRow[];
 }
 
+export interface ConversationCommandBatchItem {
+  readonly id: string;
+  readonly actionId: string;
+  readonly row: ConversationWorkCellRow;
+  readonly commandText: string;
+  readonly status: string;
+  readonly exitCode?: number;
+  readonly durationMs?: number;
+  readonly outputTruncated: boolean;
+  readonly stdoutArtifactId?: string;
+  readonly stderrArtifactId?: string;
+}
+
+export interface ConversationCommandBatch {
+  readonly id: string;
+  readonly revisionKey: string;
+  readonly commandCount: number;
+  readonly durationMs?: number;
+  readonly defaultExpanded: boolean;
+  readonly commands: readonly ConversationCommandBatchItem[];
+}
+
+export type ConversationWorkCellItem =
+  | {
+      readonly kind: "operation";
+      readonly row: ConversationWorkCellRow;
+    }
+  | {
+      readonly kind: "command_batch";
+      readonly batch: ConversationCommandBatch;
+    };
+
 export interface ConversationOperationCellViewModel {
   readonly id: string;
   readonly sourceKind: ConversationOperationCellSourceKind;
@@ -143,6 +197,7 @@ export interface ConversationOperationCellViewModel {
   readonly stats: readonly ConversationWorkCellStat[];
   readonly elapsedMs?: number;
   readonly operationRows: readonly ConversationWorkCellRow[];
+  readonly operationItems?: readonly ConversationWorkCellItem[];
   readonly agentSpans: readonly ConversationAgentActivitySpan[];
   /** @deprecated Use agentSpans. Kept while call sites migrate. */
   readonly agentBranches: readonly ConversationWorkCellBranch[];

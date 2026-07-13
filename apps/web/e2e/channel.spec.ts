@@ -8637,6 +8637,22 @@ test("local channel work-cell demo fixture renders a realistic multi-agent opera
   await expect(commandRow.locator(".conversation-work-cell-row-detail")).not.toContainText("运行 Web typecheck");
   await expect(commandRow.locator(".conversation-work-cell-row-detail")).toContainText("$ corepack pnpm --filter @ling-stack/web typecheck");
 
+  const commandBatch = engineerDetail.locator(".conversation-command-batch");
+  await expect(commandBatch).toHaveCount(1);
+  await expect(commandBatch.locator(".conversation-command-batch-header")).toContainText("已运行 3 个命令");
+  await expect(commandBatch).toHaveClass(/collapsed/u);
+  await expect(commandBatch.locator(".conversation-command-batch-list")).toHaveCount(0);
+  await commandBatch.locator(".conversation-command-batch-header").click();
+  await expect(commandBatch).toHaveClass(/expanded/u);
+  await expect(commandBatch.locator(".conversation-command-batch-list .conversation-work-cell-row")).toHaveCount(3);
+  await expect(commandBatch).toContainText("corepack pnpm --filter @ling-stack/web typecheck");
+  await expect(commandBatch).toContainText("corepack pnpm --filter @ling-stack/web check:i18n");
+  await expect(commandBatch).toContainText("git diff --check");
+  const firstBatchedCommand = commandBatch.locator(".conversation-work-cell-row").first();
+  await expect(firstBatchedCommand).toContainText("exit 0");
+  await firstBatchedCommand.locator(".conversation-work-cell-row-main").click();
+  await expect(firstBatchedCommand.locator(".conversation-work-cell-row-detail")).toContainText("Completed successfully.");
+
   const docEditActionRow = engineerDetail.locator(".conversation-work-cell-row").filter({ hasText: "已编辑 conversation-work-cell-operation-records.md" });
   await expect(docEditActionRow.locator(".conversation-work-cell-change-stat .add")).toHaveText("+3");
   await expect(docEditActionRow.locator(".conversation-work-cell-change-stat .delete")).toHaveText("-2");
@@ -9298,6 +9314,91 @@ test("active conversation work cell renders sparse rows while runtime approvals 
   expect(state.approvals.find((approval) => isRecord(approval) && approval.id === "approval_1")?.status).toBe("approved");
   expect(state.approvalPolicy.toolDecisions.bash).toBe("ask");
   expect(state.approvalPolicy.toolDecisions.write).toBe("ask");
+});
+
+test("active command remains standalone and streams its bounded output expanded", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.locale", "en-US");
+  });
+  const state = createBaseState({ approvalStatus: "expired" });
+  const run = state.runs[0];
+  run.threadId = "thread_active_command";
+  run.status = "running";
+  run.errorMessage = undefined;
+  run.startedAt = "2026-05-22T00:00:30.000Z";
+  run.updatedAt = "2026-05-22T00:01:00.000Z";
+  state.tasks = state.tasks.map((task) => isRecord(task) && task.id === "task_inspect"
+    ? { ...task, status: "running", currentRunId: run.id, updatedAt: run.updatedAt }
+    : task);
+  state.turns = [{
+    id: "turn_active_command",
+    workspaceId: "workspace_default",
+    threadId: run.threadId,
+    kind: "initial_request",
+    status: "running",
+    title: "Run focused checks",
+    userInstruction: "Run the focused checks.",
+    channelId: "channel_engineering",
+    taskId: "task_inspect",
+    activeRunId: run.id,
+    createdByActor: "local-user",
+    createdAt: run.startedAt,
+    updatedAt: run.updatedAt,
+  }];
+  state.turnRunLinks = [{
+    turnId: "turn_active_command",
+    runId: run.id,
+    attemptNumber: 1,
+    role: "primary",
+    createdAt: run.startedAt,
+  }];
+  state.executionActions = [{
+    id: "active_command_action",
+    workspaceId: "workspace_default",
+    threadId: run.threadId,
+    runId: run.id,
+    toolCallId: "tool_active_command",
+    actionType: "bash",
+    risk: "low",
+    status: "executing",
+    title: "Run focused checks",
+    summary: "pnpm test",
+    targetRefs: [{ type: "command", label: "pnpm test" }],
+    previewArtifactIds: [],
+    resultArtifactIds: [],
+    commandEvidence: {
+      command: "pnpm test",
+      cwd,
+      startedAt: run.startedAt,
+      latestEventSeq: 5,
+      outputTail: [{
+        eventSeq: 5,
+        stream: "stdout",
+        text: "Running focused conversation tests...\n",
+        byteCount: 38,
+        redacted: false,
+        ts: run.updatedAt,
+      }],
+      outputByteCount: 38,
+      outputLineCount: 1,
+      outputTruncated: false,
+    },
+    createdAt: run.startedAt,
+    updatedAt: run.updatedAt,
+    executedAt: run.startedAt,
+  }];
+  await mockDaemon(page, state);
+  await page.goto("/");
+  await openEngineeringChannel(page);
+
+  const workCell = page.getByLabel("Channel message feed").locator(".conversation-work-cell");
+  const activeStream = workCell.getByLabel("Active work stream");
+  await expect(activeStream.locator(".conversation-command-batch")).toHaveCount(0);
+  const commandRow = activeStream.locator(".conversation-work-cell-row.command-execution");
+  await expect(commandRow).toHaveClass(/expanded/u);
+  await expect(commandRow).toContainText("Running command");
+  await expect(commandRow.locator(".conversation-work-cell-shell-command")).toContainText("pnpm test");
+  await expect(commandRow.locator(".conversation-work-cell-row-detail")).toContainText("Running focused conversation tests...");
 });
 
 test("Ling Agent session active run guidance queues follow-up from composer and stops the run", async ({ page }) => {

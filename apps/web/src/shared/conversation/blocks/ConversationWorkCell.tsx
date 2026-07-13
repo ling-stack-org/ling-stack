@@ -1,12 +1,13 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { BookOpen, CheckCircle2, ChevronDown, CircleAlert, Clock3, FilePenLine, FileText, GitBranch, History, ListChecks, Loader2, RefreshCw, Search, ShieldCheck, SquareTerminal } from "lucide-react";
 import { useI18n, type Translate } from "../../../i18n.js";
 import { parseUnifiedDiff, summarizeFileChanges, type ConversationFileChange } from "../../../lib/diff-summary.js";
-import type { ConversationAgentActivitySpan, ConversationArtifactStripItem, ConversationOperationCellViewModel, ConversationWorkCellEvidenceLink, ConversationWorkCellGroup, ConversationWorkCellRow, ConversationWorkCellRowDetailLine } from "../../../lib/conversation-work-cell.js";
+import { projectConversationCommandBatches, type ConversationAgentActivitySpan, type ConversationArtifactStripItem, type ConversationCommandBatchItem, type ConversationOperationCellViewModel, type ConversationWorkCellEvidenceLink, type ConversationWorkCellGroup, type ConversationWorkCellItem, type ConversationWorkCellRow, type ConversationWorkCellRowDetailLine } from "../../../lib/conversation-work-cell.js";
 import type { PreviewContentResponse } from "../../../types.js";
 import type { ArtifactPreviewLoader } from "../preview/ArtifactPreviewDrawer.js";
 import type { ConversationSurfaceKind, TerminalReportProjectionPolicy } from "../tokens/conversation-surface-policy.js";
 import { ConversationArtifactStrip, type ConversationWorkspaceReviewTarget } from "./ConversationArtifactStrip.js";
+import { ConversationCommandBatch } from "./ConversationCommandBatch.js";
 import { DiffViewer } from "./DiffViewer.js";
 import { TerminalReportBlock, type TerminalReportFileTarget } from "./TerminalReportBlock.js";
 import { useConversationBlockView } from "../view-store/use-conversation-block-view.js";
@@ -72,7 +73,8 @@ export function ConversationWorkCell({
     : singleAgentRows.length > 0
       ? singleAgentRows
       : fallbackRows;
-  const showOperationRows = operationRows.length > 0;
+  const operationItems = model.operationItems ?? projectConversationCommandBatches(operationRows);
+  const showOperationRows = operationItems.length > 0;
   const terminalReportRendered = showTerminalReport && model.terminalReportRows.length > 0;
   const statusLabel = model.kicker ?? workCellStatusLabel(model.status, active, t);
   const artifactStripSummary = showArtifactStrip ? buildArtifactStripSummary(model.artifactStripItems, t) : undefined;
@@ -213,7 +215,7 @@ export function ConversationWorkCell({
             ) : null}
 
             {showOperationRows ? (
-              <ActiveTurnItemStream rows={operationRows} cwd={cwd} loadPreview={loadPreview} />
+              <ActiveTurnItemStream items={operationItems} cwd={cwd} loadPreview={loadPreview} />
             ) : null}
             {!terminalReportRendered ? evidenceDisclosure : null}
           </div>
@@ -478,7 +480,8 @@ function AgentActivitySpanItem({
   readonly renderAgentAvatar?: (span: ConversationAgentActivitySpan) => ReactNode;
 }): JSX.Element {
   const { t } = useI18n();
-  const hasDetail = span.rows.length > 0;
+  const items = span.items ?? projectConversationCommandBatches(span.rows, { participantScope: span.participantId ?? span.id });
+  const hasDetail = items.length > 0;
   const avatar = renderAgentAvatar?.(span);
   const headContent = (
     <>
@@ -502,11 +505,7 @@ function AgentActivitySpanItem({
       </div>
       {hasDetail ? (
         <div className="conversation-work-cell-agent-span-detail" aria-label={t("Agent activity detail")}>
-          <div className="conversation-work-cell-row-list">
-            {span.rows.map((row) => (
-              <WorkCellRow key={row.id} row={row} compact cwd={cwd} loadPreview={loadPreview} />
-            ))}
-          </div>
+          <ActiveTurnItemStream items={items} cwd={cwd} loadPreview={loadPreview} />
         </div>
       ) : null}
     </div>
@@ -634,16 +633,16 @@ function WorkCellDetails({
 }
 
 function ActiveTurnItemStream({
-  rows,
+  items,
   cwd,
   loadPreview,
 }: {
-  readonly rows: readonly ConversationWorkCellRow[];
+  readonly items: readonly ConversationWorkCellItem[];
   readonly cwd?: string;
   readonly loadPreview: ArtifactPreviewLoader;
 }): JSX.Element {
   const { t } = useI18n();
-  if (rows.length === 0) {
+  if (items.length === 0) {
     return (
       <div className="conversation-work-cell-active-stream empty">
         <Clock3 size={13} />
@@ -653,7 +652,23 @@ function ActiveTurnItemStream({
   }
   return (
     <div className="conversation-work-cell-active-stream" aria-label={t("Active work stream")}>
-      {rows.map((row) => <WorkCellRow key={row.id} row={row} compact cwd={cwd} loadPreview={loadPreview} />)}
+      {items.map((item) => item.kind === "command_batch" ? (
+        <ConversationCommandBatch
+          key={item.batch.id}
+          batch={item.batch}
+          renderCommand={(command) => (
+            <WorkCellRow
+              key={command.id}
+              row={commandBatchRow(command)}
+              compact
+              cwd={cwd}
+              loadPreview={loadPreview}
+            />
+          )}
+        />
+      ) : (
+        <WorkCellRow key={item.row.id} row={item.row} compact cwd={cwd} loadPreview={loadPreview} />
+      ))}
     </div>
   );
 }
@@ -671,7 +686,8 @@ function WorkCellRow({
   readonly cwd?: string;
   readonly loadPreview?: ArtifactPreviewLoader;
 }): JSX.Element {
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useState(row.commandExecution?.status === "executing");
+  const previousCommandStatusRef = useRef(row.commandExecution?.status);
   const [changePreview, setChangePreview] = useState<InlineChangePreviewState>({ status: "idle", changes: [] });
   const displayDescription = displayableRowDescription(row.title, row.description);
   const displayMeta = displayableRowMeta(row.meta);
@@ -688,12 +704,24 @@ function WorkCellRow({
   const rowClassName = [
     "conversation-work-cell-row",
     row.presentation === "shell" ? "shell" : "",
+    row.commandExecution ? "command-execution" : "",
     row.presentation === "note" ? "note" : "",
     row.tone ?? "neutral",
     compact ? "compact" : "",
     showRowIcon ? "" : "iconless",
     expanded ? "expanded" : "",
   ].filter(Boolean).join(" ");
+
+  useEffect(() => {
+    const currentStatus = row.commandExecution?.status;
+    const previousStatus = previousCommandStatusRef.current;
+    if (currentStatus === "executing" && previousStatus !== "executing") {
+      setExpanded(true);
+    } else if (previousStatus === "executing" && currentStatus !== "executing") {
+      setExpanded(false);
+    }
+    previousCommandStatusRef.current = currentStatus;
+  }, [row.commandExecution?.actionId, row.commandExecution?.status]);
 
   useEffect(() => {
     const preview = row.changePreview;
@@ -779,6 +807,36 @@ function WorkCellRow({
       ) : null}
     </div>
   );
+}
+
+function commandBatchRow(command: ConversationCommandBatchItem): ConversationWorkCellRow {
+  const commandText = stripShellPrompt(command.commandText) ?? command.commandText;
+  const detailLines = (command.row.detailLines ?? []).filter((line) => stripShellPrompt(line.text) !== commandText);
+  const meta = [
+    command.exitCode !== undefined ? `exit ${command.exitCode}` : undefined,
+    formatCompactCommandDuration(command.durationMs),
+  ].filter((value): value is string => Boolean(value)).join(" · ");
+  return {
+    ...command.row,
+    id: command.id,
+    title: commandText,
+    description: undefined,
+    commandText: undefined,
+    commandExecution: undefined,
+    detailLines,
+    meta: meta || undefined,
+  };
+}
+
+function formatCompactCommandDuration(durationMs: number | undefined): string | undefined {
+  if (durationMs === undefined || durationMs < 0) {
+    return undefined;
+  }
+  if (durationMs < 1000) {
+    return `${Math.max(1, Math.round(durationMs))}ms`;
+  }
+  const seconds = durationMs / 1000;
+  return seconds < 10 ? `${seconds.toFixed(1)}s` : `${Math.round(seconds)}s`;
 }
 
 interface InlineChangePreviewState {

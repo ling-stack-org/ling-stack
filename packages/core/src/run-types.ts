@@ -936,6 +936,35 @@ export interface ExecutionActionTargetRef {
   readonly path?: string;
 }
 
+export interface ExecutionActionCommandOutputChunk {
+  readonly eventSeq: number;
+  readonly stream: "stdout" | "stderr";
+  readonly text: string;
+  readonly byteCount: number;
+  readonly redacted: boolean;
+  readonly ts: string;
+}
+
+export interface ExecutionActionCommandEvidence {
+  readonly command: string;
+  readonly cwd?: string;
+  readonly startedAt?: string;
+  readonly completedAt?: string;
+  readonly durationMs?: number;
+  readonly exitCode?: number;
+  readonly signal?: string;
+  readonly timedOut?: boolean;
+  readonly cancelled?: boolean;
+  readonly latestEventSeq: number;
+  readonly outputTail: readonly ExecutionActionCommandOutputChunk[];
+  readonly outputByteCount: number;
+  readonly outputLineCount?: number;
+  readonly outputTruncated: boolean;
+  readonly stdoutArtifactId?: string;
+  readonly stderrArtifactId?: string;
+  readonly resultArtifactId?: string;
+}
+
 export interface ExecutionAction {
   readonly id: string;
   readonly workspaceId: string;
@@ -955,7 +984,9 @@ export interface ExecutionAction {
   readonly scopes?: readonly ExecutionScope[];
   readonly scopeSummary?: string;
   readonly policySnapshot?: unknown;
+  readonly commandEvidence?: ExecutionActionCommandEvidence;
   readonly createdAt: string;
+  readonly updatedAt?: string;
   readonly resolvedAt?: string;
   readonly executedAt?: string;
   readonly completedAt?: string;

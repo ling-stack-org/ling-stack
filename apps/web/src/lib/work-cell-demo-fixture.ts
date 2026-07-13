@@ -541,6 +541,39 @@ export function createChannelWorkCellDemoFixture(input: {
         createdAt: "2026-07-10T09:14:06.000Z",
         completedAt: "2026-07-10T09:14:14.000Z",
       }),
+      demoAction({
+        id: `${idPrefix}_action_engineer_followup_typecheck`,
+        runId: runEngineerFollowupId,
+        workspaceId,
+        actionType: "bash",
+        title: "复查会话类型",
+        summary: "Engineer 复查统一会话投影类型。",
+        targetRefs: [{ type: "command", label: "corepack pnpm --filter @ling-stack/web typecheck" }],
+        createdAt: "2026-07-10T09:14:14.100Z",
+        completedAt: "2026-07-10T09:14:15.000Z",
+      }),
+      demoAction({
+        id: `${idPrefix}_action_engineer_followup_i18n`,
+        runId: runEngineerFollowupId,
+        workspaceId,
+        actionType: "bash",
+        title: "检查会话文案",
+        summary: "Engineer 检查命令批次文案。",
+        targetRefs: [{ type: "command", label: "corepack pnpm --filter @ling-stack/web check:i18n" }],
+        createdAt: "2026-07-10T09:14:15.100Z",
+        completedAt: "2026-07-10T09:14:16.000Z",
+      }),
+      demoAction({
+        id: `${idPrefix}_action_engineer_followup_diff_check`,
+        runId: runEngineerFollowupId,
+        workspaceId,
+        actionType: "bash",
+        title: "检查补丁格式",
+        summary: "Engineer 检查最终补丁格式。",
+        targetRefs: [{ type: "command", label: "git diff --check" }],
+        createdAt: "2026-07-10T09:14:16.100Z",
+        completedAt: "2026-07-10T09:14:17.000Z",
+      }),
     ],
     artifactsByRun: {
       [runEngineerId]: [artifactEngineerDiff, artifactEngineerCss],
@@ -775,6 +808,10 @@ function demoAction(input: {
   readonly risk?: ExecutionAction["risk"];
   readonly resultArtifactIds?: readonly string[];
 }): ExecutionAction {
+  const commandText = input.actionType === "bash"
+    ? input.targetRefs.find((ref) => ref.type === "command")?.label
+    : undefined;
+  const durationMs = Math.max(0, Date.parse(input.completedAt) - Date.parse(input.createdAt));
   return {
     id: input.id,
     workspaceId: input.workspaceId,
@@ -788,7 +825,33 @@ function demoAction(input: {
     targetRefs: input.targetRefs,
     previewArtifactIds: [],
     resultArtifactIds: input.resultArtifactIds ?? [],
+    ...(commandText ? {
+      toolCallId: `tool_${input.id}`,
+      commandEvidence: {
+        command: commandText,
+        cwd: "/repo",
+        startedAt: input.createdAt,
+        completedAt: input.completedAt,
+        durationMs,
+        exitCode: 0,
+        timedOut: false,
+        cancelled: false,
+        latestEventSeq: 3,
+        outputTail: [{
+          eventSeq: 2,
+          stream: "stdout",
+          text: "Completed successfully.\n",
+          byteCount: 24,
+          redacted: false,
+          ts: input.completedAt,
+        }],
+        outputByteCount: 24,
+        outputLineCount: 1,
+        outputTruncated: false,
+      },
+    } : {}),
     createdAt: input.createdAt,
+    updatedAt: input.completedAt,
     resolvedAt: input.createdAt,
     executedAt: input.createdAt,
     completedAt: input.completedAt,

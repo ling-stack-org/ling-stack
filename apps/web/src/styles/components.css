@@ -5115,6 +5115,110 @@ button.message-local-file-link {
   white-space: nowrap;
 }
 
+.conversation-work-cell-row.command-execution .conversation-work-cell-row-detail code:not(.conversation-work-cell-shell-command),
+.conversation-command-batch-list .conversation-work-cell-row-detail code:not(.conversation-work-cell-shell-command) {
+  display: block;
+  width: 100%;
+  max-width: min(640px, 100%);
+  overflow: visible;
+  color: var(--conversation-code-muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+  text-overflow: clip;
+  white-space: pre-wrap;
+}
+
+.conversation-command-batch {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  animation: conversation-settle-in 150ms ease-out both;
+}
+
+.conversation-command-batch-header {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) auto 16px;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  min-width: 0;
+  min-height: 20px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--conversation-text-muted);
+  font-size: 12px;
+  line-height: 18px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.conversation-command-batch-header > svg {
+  width: 13px;
+  height: 13px;
+}
+
+.conversation-command-batch-header > span:not(.conversation-command-batch-toggle) {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.conversation-command-batch-header small {
+  color: inherit;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.conversation-command-batch-header:hover,
+.conversation-command-batch-header:focus-visible {
+  color: var(--conversation-text-strong);
+}
+
+.conversation-command-batch-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 120ms ease, visibility 120ms ease;
+}
+
+.conversation-command-batch-toggle svg {
+  transition: transform 140ms ease;
+}
+
+.conversation-command-batch-header:hover .conversation-command-batch-toggle,
+.conversation-command-batch-header:focus-visible .conversation-command-batch-toggle,
+.conversation-command-batch.expanded .conversation-command-batch-toggle {
+  opacity: 1;
+  visibility: visible;
+}
+
+.conversation-command-batch.expanded .conversation-command-batch-toggle svg {
+  transform: rotate(180deg);
+}
+
+.conversation-command-batch-list {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.conversation-command-batch-list .conversation-work-cell-row-copy strong {
+  overflow: visible;
+  text-overflow: clip;
+  white-space: normal;
+}
+
+@media (hover: none) {
+  .conversation-command-batch-toggle {
+    opacity: 1;
+    visibility: visible;
+  }
+}
+
 .conversation-work-cell-group {
   display: grid;
   gap: 4px;
@@ -5216,6 +5320,7 @@ button.message-local-file-link {
 @media (prefers-reduced-motion: reduce) {
   .conversation-work-cell,
   .conversation-work-cell-row,
+  .conversation-command-batch,
   .conversation-work-cell-agent-span,
   .conversation-work-cell-artifact-row,
   .transcript-block-view,

@@ -12,6 +12,7 @@ Related docs:
 - [Conversation UI Design Conformance Recovery Plan](conversation-ui-design-conformance-recovery-plan.md)
 - [Codex-Inspired Conversation Components v1](codex-inspired-conversation-components-v1.md)
 - [Conversation Operation Bubble And Performance Store](conversation-operation-bubble-and-performance-store.md)
+- [Conversation Command Execution Batching Detailed Design](conversation-command-execution-batching-detailed-design.md)
 
 ## Purpose
 
@@ -179,6 +180,59 @@ The shared view model exposes these operation kinds:
 
 Failed rows use `CircleAlert` regardless of kind. Waiting rows and approval rows use
 `ShieldCheck`.
+
+## Codex-Inspired Command Execution Batches
+
+Long runs of successful shell commands should not dominate the conversation after their
+meaningful work is complete. Ling may project adjacent low-risk command actions into one
+compact command batch while preserving every underlying `ExecutionAction` and run event.
+
+The product contract is:
+
+- command batching is a UI projection only; it never rewrites, deletes, or coalesces
+  persisted events;
+- the latest executing command remains a standalone row, stays expanded, and shows a
+  bounded live output tail;
+- a completed batch renders as `Ran N commands` with an optional elapsed-time suffix;
+- a batch is created only when at least three eligible completed commands are adjacent;
+- expanding the batch reveals every command as a separate row in execution order;
+- the batch disclosure controls only the child command list;
+- each child command controls only its own output detail;
+- completed batches default to collapsed, including when the containing completed work
+  cell is expanded later;
+- failed, cancelled, approval-gated, or safety-sensitive commands always stay visible as
+  standalone rows;
+- Git commit, Git push, deployment, credential, provider, external-send, and other
+  consequential actions are never hidden inside a generic command count;
+- command batches never cross agent, run, retry, handoff, narrative-note, edit, approval,
+  failure, or workflow-step boundaries;
+- ordinary conversation, teammate private chat, and channel work cells use the same
+  batch component and rules; multi-agent channels additionally scope batches to one
+  participating agent span.
+
+Example while work is active:
+
+```text
+Ran 3 commands
+Running pnpm test
+  latest bounded output...
+```
+
+Example after expanding a completed batch:
+
+```text
+Ran 4 commands
+  pnpm install                 0 · 8.2s
+  pnpm typecheck               0 · 4.1s
+  pnpm lint                    0 · 2.7s
+  pnpm test                    0 · 12.6s
+```
+
+The compact batch header does not replace the final Ling summary, artifact strip, or
+verification section. It only reduces repetitive process chrome in the operation stream.
+The detailed runtime contract, deterministic grouping algorithm, live refresh path, and
+implementation slices are defined in
+[Conversation Command Execution Batching Detailed Design](conversation-command-execution-batching-detailed-design.md).
 
 ## Runtime And View Model
 

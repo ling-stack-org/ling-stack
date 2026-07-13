@@ -27,6 +27,10 @@ import {
   classifyToolAction,
 } from "./action-classifier.js";
 import { expireStalePendingApprovals } from "./approvals.js";
+import {
+  deriveExecutionActionCommandEvidence,
+  executionActionStatusFromCommandEvidence,
+} from "./execution-action-command-evidence.js";
 
 export interface ListExecutionActionsOptions {
   readonly runId?: string;
@@ -60,15 +64,17 @@ export function handleExecutionActionsCollection(
     expireStalePendingApprovals(store, {
       runId: url.searchParams.get("runId") ?? undefined,
     });
+    const actions = listExecutionActions(store, {
+      runId: url.searchParams.get("runId") ?? undefined,
+      threadId: url.searchParams.get("threadId") ?? undefined,
+      status: readOptionalExecutionActionStatusQuery(url),
+      actionType: readOptionalExecutionActionTypeQuery(url),
+      limit: readOptionalIntegerQuery(url, "limit", 1),
+    });
     writeJson(response, 200, {
       cwd,
-      actions: listExecutionActions(store, {
-        runId: url.searchParams.get("runId") ?? undefined,
-        threadId: url.searchParams.get("threadId") ?? undefined,
-        status: readOptionalExecutionActionStatusQuery(url),
-        actionType: readOptionalExecutionActionTypeQuery(url),
-        limit: readOptionalIntegerQuery(url, "limit", 1),
-      }),
+      actions,
+      revision: executionActionsRevision(actions),
     });
   } catch (error) {
     writeJson(response, 400, {
@@ -157,7 +163,7 @@ function deriveToolActionsForRun(
   run: RunSession,
   approvalToolCallIds: ReadonlySet<string>,
 ): ExecutionAction[] {
-  const events = store.listEvents(run.id, { limit: 1000 });
+  const events = listAllRunEvents(store, run.id);
   const starts = new Map<string, RunEventEnvelope>();
   const ends = new Map<string, RunEventEnvelope>();
   for (const event of events) {
@@ -195,6 +201,11 @@ function deriveToolActionsForRun(
       args: readToolArgs(start),
       isError: readToolEndIsError(end),
     });
+    const commandEvidence = toolName === "bash"
+      ? deriveExecutionActionCommandEvidence({ events, toolCallId, start, end })
+      : undefined;
+    const commandStatus = executionActionStatusFromCommandEvidence(commandEvidence);
+    const latestToolEvent = findLatestToolEvent(events, toolCallId);
     actions.push({
       id: `tool:${run.id}:${toolCallId}`,
       workspaceId: DEFAULT_WORKSPACE_ID,
@@ -204,7 +215,7 @@ function deriveToolActionsForRun(
       toolCallId,
       actionType: classified.actionType,
       risk: classified.risk,
-      status: end ? readToolEndIsError(end) ? "failed" : "succeeded" : "executing",
+      status: commandStatus ?? fallbackToolActionStatus(run, end),
       title: classified.title,
       summary: classified.summary,
       targetRefs: classified.targetRefs,
@@ -213,12 +224,64 @@ function deriveToolActionsForRun(
       scopes: classified.scopes,
       scopeSummary: classified.scopeSummary,
       policySnapshot: readRunPolicySnapshot(run),
+      commandEvidence,
       createdAt: start?.ts ?? end?.ts ?? run.createdAt,
+      updatedAt: latestToolEvent?.ts ?? start?.ts ?? end?.ts ?? run.updatedAt,
       executedAt: start?.ts,
       completedAt: end?.ts,
     });
   }
   return actions;
+}
+
+function listAllRunEvents(store: ExecutionActionStore, runId: string): RunEventEnvelope[] {
+  const events: RunEventEnvelope[] = [];
+  let afterSeq = 0;
+  while (true) {
+    const page = store.listEvents(runId, { afterSeq, limit: 1000 });
+    events.push(...page);
+    const latestSeq = page.at(-1)?.seq;
+    if (page.length < 1000 || latestSeq === undefined || latestSeq <= afterSeq) {
+      return events;
+    }
+    afterSeq = latestSeq;
+  }
+}
+
+function fallbackToolActionStatus(
+  run: RunSession,
+  end: RunEventEnvelope | undefined,
+): ExecutionAction["status"] {
+  if (end) {
+    return readToolEndIsError(end) ? "failed" : "succeeded";
+  }
+  if (run.status === "cancelled") {
+    return "cancelled";
+  }
+  if (run.status === "failed") {
+    return "failed";
+  }
+  return "executing";
+}
+
+function executionActionsRevision(actions: readonly ExecutionAction[]): string {
+  return actions
+    .map((action) => `${action.id}:${action.commandEvidence?.latestEventSeq ?? 0}:${action.updatedAt ?? action.completedAt ?? action.createdAt}`)
+    .sort()
+    .join("|");
+}
+
+function findLatestToolEvent(
+  events: readonly RunEventEnvelope[],
+  toolCallId: string,
+): RunEventEnvelope | undefined {
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    const event = events[index];
+    if (event && readToolCallId(event) === toolCallId) {
+      return event;
+    }
+  }
+  return undefined;
 }
 
 function buildApprovalTargetRefs(approval: ApprovalRequest, run: RunSession | undefined): ExecutionActionTargetRef[] {

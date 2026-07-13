@@ -62,15 +62,17 @@ export function classifyToolAction(input: {
 }): ClassifiedAction {
   if (input.toolName === "bash") {
     const command = readInputString(input.args, "command", "");
+    const riskFlags = classifyBashRiskFlags(command);
     const payload: ApprovalPayload = {
       type: "bash",
       cwd: input.run.cwd,
       command,
-      riskFlags: classifyBashRiskFlags(command),
+      riskFlags,
     };
     const classified = classifyPayloadAction(payload, input.run.cwd);
     return {
       ...classified,
+      risk: classified.actionType === "bash" && riskFlags.length === 0 ? "low" : classified.risk,
       targetRefs: mergeTargetRefs(classified.targetRefs, buildCommonRefs(input.run, input.toolCallId)),
     };
   }

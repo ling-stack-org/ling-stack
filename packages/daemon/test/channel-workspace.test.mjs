@@ -2784,6 +2784,7 @@ test("conversation stream materializes uploaded attachments into the run prompt"
     const detail = await getJson(`${daemon.url}/conversations/${encodeURIComponent(initialReady.data.thread.id)}?cwd=${encodeURIComponent(cwd)}`);
     const userMessage = detail.messages.find((message) => message.id === initialReady.data.userMessage.id);
     assert.equal(userMessage.attachments[0].id, attachment.id);
+    assert.deepEqual(detail.executionActions, []);
 
     const preview = await getJson(`${daemon.url}/attachments/${encodeURIComponent(attachment.id)}/preview?cwd=${encodeURIComponent(cwd)}&scope=conversation&threadId=${encodeURIComponent(initialReady.data.thread.id)}`);
     assert.equal(preview.kind, "plain_text");
