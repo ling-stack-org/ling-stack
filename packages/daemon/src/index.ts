@@ -97,6 +97,7 @@ export function createDaemonServer(
   let automationSchedulers: AutomationSchedulerRegistry;
   let startupOptionalWarmups: StartupOptionalWarmupCoordinator;
   const storeRegistry = new RunStoreRegistry(dependencies.storeFactory ?? createDefaultRunStore, {
+    trustedWorkspaceRoots: [resolvedConfig.defaultWorkspaceCwd],
     onStoreInitialized: (cwd, store) => {
       configureTerminalReportStore(store, {
         enabled: resolvedConfig.channels.terminalReports === true,

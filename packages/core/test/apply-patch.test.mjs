@@ -3,6 +3,7 @@ import { test } from "node:test";
 import {
   ApplyPatchError,
   applyPatchPlan,
+  invertPatchPlan,
   parseApplyPatch,
   planApplyPatch,
   renderPatchPreview,
@@ -57,6 +58,107 @@ test("apply-patch plans and applies add update and delete operations", async () 
   assert.equal(files.get("notes/new.md"), "hello\nworld\n");
   assert.equal(files.get("src/example.txt"), "alpha\nbravo\nomega\n");
   assert.equal(files.has("old.txt"), false);
+
+  await applyPatchPlan({
+    plan: invertPatchPlan(plan),
+    readFile: (path) => files.get(path),
+    writeFile: (path, content) => {
+      files.set(path, content);
+    },
+    deleteFile: (path) => {
+      files.delete(path);
+    },
+  });
+
+  assert.equal(files.has("notes/new.md"), false);
+  assert.equal(files.get("src/example.txt"), "alpha\nbeta\nomega\n");
+  assert.equal(files.get("old.txt"), "remove me\n");
+});
+
+test("inverse patch preserves hash guards", async () => {
+  const files = new Map([["src/example.txt", "old\n"]]);
+  const plan = planApplyPatch({
+    patchText: `*** Begin Patch
+*** Update File: src/example.txt
+@@
+-old
++new
+*** End Patch`,
+    readFile: (path) => files.get(path),
+  });
+  await applyPatchPlan({
+    plan,
+    readFile: (path) => files.get(path),
+    writeFile: (path, content) => files.set(path, content),
+    deleteFile: (path) => files.delete(path),
+  });
+  files.set("src/example.txt", "user edit\n");
+
+  await assert.rejects(
+    () => applyPatchPlan({
+      plan: invertPatchPlan(plan),
+      readFile: (path) => files.get(path),
+      writeFile: (path, content) => files.set(path, content),
+      deleteFile: (path) => files.delete(path),
+    }),
+    /changed after preview/,
+  );
+  assert.equal(files.get("src/example.txt"), "user edit\n");
+});
+
+test("inverse patch restores deleted files without adding a trailing newline", async () => {
+  const files = new Map([["notes.txt", "exact bytes"]]);
+  const plan = planApplyPatch({
+    patchText: `*** Begin Patch
+*** Delete File: notes.txt
+*** End Patch`,
+    readFile: (path) => files.get(path),
+  });
+
+  await applyPatchPlan({
+    plan,
+    readFile: (path) => files.get(path),
+    writeFile: (path, content) => files.set(path, content),
+    deleteFile: (path) => files.delete(path),
+  });
+  await applyPatchPlan({
+    plan: invertPatchPlan(plan),
+    readFile: (path) => files.get(path),
+    writeFile: (path, content) => files.set(path, content),
+    deleteFile: (path) => files.delete(path),
+  });
+
+  assert.equal(files.get("notes.txt"), "exact bytes");
+});
+
+test("apply and inverse patch preserve CRLF line endings", async () => {
+  const original = "alpha\r\nbeta\r\ngamma\r\n";
+  const files = new Map([["windows.txt", original]]);
+  const plan = planApplyPatch({
+    patchText: `*** Begin Patch
+*** Update File: windows.txt
+@@
+-beta
++bravo
+*** End Patch`,
+    readFile: (path) => files.get(path),
+  });
+
+  await applyPatchPlan({
+    plan,
+    readFile: (path) => files.get(path),
+    writeFile: (path, content) => files.set(path, content),
+    deleteFile: (path) => files.delete(path),
+  });
+  assert.equal(files.get("windows.txt"), "alpha\r\nbravo\r\ngamma\r\n");
+
+  await applyPatchPlan({
+    plan: invertPatchPlan(plan),
+    readFile: (path) => files.get(path),
+    writeFile: (path, content) => files.set(path, content),
+    deleteFile: (path) => files.delete(path),
+  });
+  assert.equal(files.get("windows.txt"), original);
 });
 
 test("apply-patch rejects traversal paths and unknown directives", () => {

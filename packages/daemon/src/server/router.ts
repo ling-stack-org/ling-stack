@@ -201,6 +201,17 @@ import { handleLingThreadItem, handleLingThreadsCollection } from "../features/r
 import { handleToolLoadRequestsCollection, handleToolSurfacesCollection } from "../features/runs/tool-surfaces.js";
 import { handleTraceItem, handleTracesCollection } from "../features/runs/traces-routes.js";
 import { resolveProviderForRun } from "../features/runs/providers.js";
+import { handleGetWorkspaceChanges } from "../features/previews/workspace-changes.js";
+import {
+  handleGetWorkspaceFileContent,
+  handleGetWorkspaceFileOpenOptions,
+  handlePostWorkspaceFileOpen,
+} from "../features/previews/workspace-file-actions.js";
+import { handleGetWorkspaceFilePreview } from "../features/previews/workspace-file-preview.js";
+import {
+  handleGetRunWorkspaceChanges,
+  handleMutateRunWorkspaceChanges,
+} from "../features/runs/workspace-change-recovery.js";
 import { handleEffectiveConfig, handleWorkspaceSettings } from "../features/settings/routes.js";
 import { handleSkillRoute } from "../features/skills/routes.js";
 import { handleTaskItem, handleTaskRun, handleTasksCollection } from "../features/tasks/routes.js";
@@ -289,6 +300,7 @@ import {
   parseWorkUnitRoute,
 } from "./routes.js";
 import { RunControlService } from "../run-control.js";
+import { allowLocalWorkspaceRequest } from "../shared/local-workspace-access.js";
 import { setCorsHeaders, writeJson } from "../shared/response.js";
 import { handleStartupStatus } from "../startup/routes.js";
 
@@ -445,7 +457,7 @@ export async function routeRequest(
   }
 
   if (url.pathname === "/workspace-directory/select") {
-    await handleWorkspaceDirectorySelect(request, response, config);
+    await handleWorkspaceDirectorySelect(request, response, config, storeRegistry);
     return;
   }
 
@@ -1187,6 +1199,27 @@ export async function routeRequest(
     handleGetShellSnapshot(response, url, storeRegistry, runRoute.runId, runRoute.snapshotId);
     return;
   }
+  if (request.method === "GET" && runRoute?.kind === "workspace-changes") {
+    if (!allowLocalWorkspaceRequest({ request, response, storeRegistry, cwd: url.searchParams.get("cwd") ?? undefined })) {
+      return;
+    }
+    await handleGetRunWorkspaceChanges(response, url, storeRegistry, runRoute.runId);
+    return;
+  }
+  if (request.method === "POST" && runRoute?.kind === "workspace-changes-undo") {
+    if (!allowLocalWorkspaceRequest({ request, response, storeRegistry, cwd: url.searchParams.get("cwd") ?? undefined })) {
+      return;
+    }
+    await handleMutateRunWorkspaceChanges(response, url, storeRegistry, runRoute.runId, "undo");
+    return;
+  }
+  if (request.method === "POST" && runRoute?.kind === "workspace-changes-reapply") {
+    if (!allowLocalWorkspaceRequest({ request, response, storeRegistry, cwd: url.searchParams.get("cwd") ?? undefined })) {
+      return;
+    }
+    await handleMutateRunWorkspaceChanges(response, url, storeRegistry, runRoute.runId, "reapply");
+    return;
+  }
 
   const runInterventionRoute = parseRunInterventionRoute(url.pathname);
   if (runInterventionRoute) {
@@ -1230,6 +1263,42 @@ export async function routeRequest(
   const workUnitRoute = parseWorkUnitRoute(url.pathname);
   if (workUnitRoute) {
     handleWorkUnitRoute(request, response, url, storeRegistry, activeRuns, runtimeSupervisor, workUnitRoute, ensureRunCancelled, controlPlaneEvents);
+    return;
+  }
+
+  if (request.method === "GET" && url.pathname === "/workspace-files/preview") {
+    if (!allowLocalWorkspaceRequest({ request, response, storeRegistry, cwd: url.searchParams.get("cwd") ?? undefined })) {
+      return;
+    }
+    await handleGetWorkspaceFilePreview(response, url);
+    return;
+  }
+  if (request.method === "GET" && url.pathname === "/workspace/changes") {
+    if (!allowLocalWorkspaceRequest({ request, response, storeRegistry, cwd: url.searchParams.get("cwd") ?? undefined })) {
+      return;
+    }
+    await handleGetWorkspaceChanges(response, url);
+    return;
+  }
+  if (request.method === "GET" && url.pathname === "/workspace-files/open-options") {
+    if (!allowLocalWorkspaceRequest({ request, response, storeRegistry, cwd: url.searchParams.get("cwd") ?? undefined })) {
+      return;
+    }
+    handleGetWorkspaceFileOpenOptions(response, url);
+    return;
+  }
+  if (request.method === "POST" && url.pathname === "/workspace-files/open") {
+    if (!allowLocalWorkspaceRequest({ request, response, storeRegistry, cwd: url.searchParams.get("cwd") ?? undefined })) {
+      return;
+    }
+    await handlePostWorkspaceFileOpen(request, response, url, config.maxBodyBytes);
+    return;
+  }
+  if (request.method === "GET" && url.pathname === "/workspace-files/content") {
+    if (!allowLocalWorkspaceRequest({ request, response, storeRegistry, cwd: url.searchParams.get("cwd") ?? undefined })) {
+      return;
+    }
+    await handleGetWorkspaceFileContent(response, url);
     return;
   }
 

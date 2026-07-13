@@ -129,6 +129,8 @@ import {
 import {
   WorkspaceRightDock,
   WorkspaceToolbarIconButton,
+  type WorkspaceRightDockFileTarget,
+  type WorkspaceRightDockReviewTarget,
 } from "./right-dock/index.js";
 import { channelRightDockTransitionMs } from "./layout/channel-workspace-layout.js";
 import {
@@ -3368,6 +3370,11 @@ export function WorkspaceClientView({
     onOpenContextSummaryInConversationDetail: openContextSummaryInConversationDetail,
     onOpenRun: openRunInPanel,
     onOpenFileReference: () => openRightDockPage("files"),
+    onOpenTerminalReportFile: (target) => openRightDockPage("files", target),
+    onOpenWorkspaceReview: (target) => openRightDockPage("review", undefined, {
+      ...target,
+      cwd: target.runId ? runById.get(target.runId)?.cwd ?? target.cwd : target.cwd,
+    }),
     onOpenThreadForMessage: threadReplyController.openThreadForMessage,
     onOrchestrateWorkflow,
     onRejectDecision,
@@ -3665,7 +3672,7 @@ export function WorkspaceClientView({
     }
   }
 
-  function openRightDockPage(page: DockPageKind): void {
+  function openRightDockPage(page: DockPageKind, workspaceFile?: WorkspaceRightDockFileTarget, workspaceReview?: WorkspaceRightDockReviewTarget): void {
     setSidePanelView("context");
     setSidePanelOpen(true);
     setCreateTaskOpen(false);
@@ -3680,7 +3687,7 @@ export function WorkspaceClientView({
     }
     setWorkspaceSettingsOpen(false);
     setTeammateManagerOpen(false);
-    channelRightDock.requestPage(page);
+    channelRightDock.requestPage(page, workspaceFile, workspaceReview);
   }
 
   function openSidePanelView(view: ChannelSidePanelView): void {

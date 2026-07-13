@@ -109,9 +109,9 @@ export function parseUnifiedDiff(
       current.path = normalizeDiffPath(current.newPath !== "/dev/null" ? current.newPath : current.oldPath) || input.fallbackPath;
     }
 
-    if (line.startsWith("+") && !line.startsWith("+++")) {
+    if (line.startsWith("+") && !/^\+\+\+\s/u.test(line)) {
       current.additions += 1;
-    } else if (line.startsWith("-") && !line.startsWith("---")) {
+    } else if (line.startsWith("-") && !/^---\s/u.test(line)) {
       current.deletions += 1;
     }
     current.diffLines.push(line);
@@ -309,10 +309,10 @@ function hiddenUnmodifiedLineCount(
 }
 
 function diffLineKind(line: string): ConversationDiffLineKind {
-  if (line.startsWith("+") && !line.startsWith("+++")) {
+  if (line.startsWith("+") && !/^\+\+\+\s/u.test(line)) {
     return "add";
   }
-  if (line.startsWith("-") && !line.startsWith("---")) {
+  if (line.startsWith("-") && !/^---\s/u.test(line)) {
     return "delete";
   }
   if (line.startsWith("@@")) {
@@ -357,7 +357,8 @@ function diffDisplayLine(
 }
 
 function countLines(diff: string, prefix: "+" | "-"): number {
-  return diff.split("\n").filter((line) => line.startsWith(prefix) && !line.startsWith(`${prefix}${prefix}${prefix}`)).length;
+  const header = prefix === "+" ? /^\+\+\+\s/u : /^---\s/u;
+  return diff.split("\n").filter((line) => line.startsWith(prefix) && !header.test(line)).length;
 }
 
 function splitDiffLines(diff: string): readonly string[] {

@@ -167,10 +167,10 @@ function createPatchApprovalPayload(input: {
   const shared = {
     path,
     patchFormat: APPLY_PATCH_FORMAT,
-    touchedPaths: input.touchedPaths,
-    summary: input.summary,
+    touchedPaths: [...input.touchedPaths],
+    summary: { ...input.summary },
     rawPatchSha256: input.rawPatchSha256,
-    patchPlan: input.patchPlan,
+    patchPlan: input.patchPlan ? clonePatchPlan(input.patchPlan) : undefined,
   };
   if (input.request.toolName === "write") {
     return {
@@ -184,6 +184,22 @@ function createPatchApprovalPayload(input: {
     type: "file_edit",
     ...shared,
     diffPreview: input.diffPreview,
+  };
+}
+
+function clonePatchPlan(plan: PatchPlan): PatchPlan {
+  return {
+    format: plan.format,
+    operations: plan.operations.map((operation) => ({
+      ...operation,
+      hunks: operation.hunks.map((hunk) => ({
+        ...hunk,
+        lines: hunk.lines.map((line) => ({ ...line })),
+      })),
+    })),
+    touchedPaths: [...plan.touchedPaths],
+    summary: { ...plan.summary },
+    rawPatchSha256: plan.rawPatchSha256,
   };
 }
 
@@ -229,7 +245,7 @@ function summarizeParsedOperations(operations: readonly PatchOperation[]): Patch
   };
 }
 
-function assertNoInternalPatchPaths(paths: readonly string[]): void {
+export function assertNoInternalPatchPaths(paths: readonly string[]): void {
   for (const path of paths) {
     if (path === ".ling-stack" || path.startsWith(".ling-stack/")) {
       throw new ApplyPatchError("Patches may not modify .ling-stack internal state.", { path });
@@ -237,7 +253,7 @@ function assertNoInternalPatchPaths(paths: readonly string[]): void {
   }
 }
 
-function assertPatchPathsWithinAllowedWritePaths(paths: readonly string[], cwd: string, allowedWritePaths: readonly string[]): void {
+export function assertPatchPathsWithinAllowedWritePaths(paths: readonly string[], cwd: string, allowedWritePaths: readonly string[]): void {
   for (const path of paths) {
     if (!isPathWithinAllowedWritePaths(path, cwd, allowedWritePaths)) {
       throw new ApplyPatchError(`Patch path is outside allowed write paths: ${path}`, { path });
@@ -245,7 +261,7 @@ function assertPatchPathsWithinAllowedWritePaths(paths: readonly string[], cwd: 
   }
 }
 
-function assertNoSymlinkEscapes(paths: readonly string[], cwd: string, allowedWritePaths: readonly string[]): void {
+export function assertNoSymlinkEscapes(paths: readonly string[], cwd: string, allowedWritePaths: readonly string[]): void {
   for (const path of paths) {
     const absolutePath = resolvePath(cwd, path);
     const realAncestor = realpathSync(nearestExistingAncestor(absolutePath));
@@ -276,7 +292,7 @@ function nearestExistingAncestor(absolutePath: string): string {
   }
 }
 
-function readWorkspaceTextFile(cwd: string, path: string): string | undefined {
+export function readWorkspaceTextFile(cwd: string, path: string): string | undefined {
   const absolutePath = resolvePath(cwd, path);
   if (!existsSync(absolutePath)) {
     return undefined;
@@ -292,7 +308,7 @@ function readWorkspaceTextFile(cwd: string, path: string): string | undefined {
   return content.toString("utf8");
 }
 
-function atomicWriteWorkspaceTextFile(cwd: string, path: string, content: string): void {
+export function atomicWriteWorkspaceTextFile(cwd: string, path: string, content: string): void {
   const absolutePath = resolvePath(cwd, path);
   const dir = dirname(absolutePath);
   mkdirSync(dir, { recursive: true });
@@ -301,7 +317,7 @@ function atomicWriteWorkspaceTextFile(cwd: string, path: string, content: string
   renameSync(tempPath, absolutePath);
 }
 
-function deleteWorkspaceFile(cwd: string, path: string): void {
+export function deleteWorkspaceFile(cwd: string, path: string): void {
   const absolutePath = resolvePath(cwd, path);
   rmSync(absolutePath, { force: false });
 }

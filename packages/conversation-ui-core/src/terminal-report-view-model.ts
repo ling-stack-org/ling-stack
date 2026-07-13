@@ -98,6 +98,7 @@ export function terminalReportToViewModel(report: TerminalReportViewInput): Term
     ...report.references,
     ...sections.flatMap((section) => section.sourceRefs),
   ]);
+  const changedPaths = [...new Set(report.changes.flatMap((change) => change.paths).filter(Boolean))];
   return {
     reportId: report.id,
     revisionKey: `${report.id}:${report.evidenceFingerprint}`,
@@ -128,7 +129,7 @@ export function terminalReportToViewModel(report: TerminalReportViewInput): Term
         title: change.title,
         description: change.summary,
         meta: changeMeta(change, report.language),
-        detailLines: change.paths.map((path) => ({ kind: "code" as const, text: path })),
+        detailLines: change.paths.map((path) => ({ kind: "file_ref" as const, text: path, path })),
         tone: "success" as const,
       })),
       ...report.verification.map((verification) => ({
@@ -170,22 +171,81 @@ export function terminalReportToViewModel(report: TerminalReportViewInput): Term
       previewable: ref.kind === "artifact" || ref.kind === "file",
       previewKind: ref.kind === "file" ? "file" : undefined,
     })),
-    artifactStripItems: report.artifacts.map((artifact) => ({
-      id: `${report.id}:artifact:${artifact.id}`,
-      kind: "artifact" as const,
-      label: artifact.title || artifact.path || artifact.id,
-      href: artifact.href,
-      artifactId: artifact.id,
-      previewable: Boolean(artifact.path || artifact.href),
-      previewKind: "file" as const,
-    })),
+    artifactStripItems: [
+      ...(changedPaths.length > 0 ? [{
+        id: `${report.id}:changed`,
+        kind: "changed" as const,
+        label: localizedChangedFilesLabel(report.language, changedPaths.length),
+        changeArtifacts: changedPaths.map((path) => ({
+          id: `${report.id}:changed:${path}`,
+          label: path,
+          path,
+          previewable: false,
+        })),
+        tone: "neutral" as const,
+      }] : []),
+      ...report.artifacts.filter(isUserVisibleTerminalReportArtifact).map((artifact) => ({
+        id: `${report.id}:artifact:${artifact.id}`,
+        kind: "artifact" as const,
+        label: artifact.title || artifact.path || artifact.id,
+        path: artifact.path,
+        href: artifact.href,
+        artifactId: artifact.id,
+        previewable: Boolean(artifact.path || artifact.href),
+        previewKind: "file" as const,
+      })),
+    ],
     updatedAt: report.committedAt,
   };
 }
 
+function localizedChangedFilesLabel(language: TerminalReportViewInput["language"], count: number): string {
+  if (language === "zh-CN") {
+    return count === 1 ? "已编辑 1 个文件" : `已编辑 ${count} 个文件`;
+  }
+  return count === 1 ? "Edited 1 file" : `Edited ${count} files`;
+}
+
 function uniqueSourceRefs(refs: readonly TerminalReportSourceRefInput[]): TerminalReportSourceRefInput[] {
-  const visible = refs.filter((ref) => ref.visibility !== "developer_only" && ref.sensitivity !== "secret_adjacent");
+  const visible = refs.filter(isUserVisibleTerminalReportSourceRef);
   return [...new Map(visible.map((ref) => [`${ref.kind}:${ref.id}`, ref])).values()];
+}
+
+const INTERNAL_TERMINAL_REPORT_REFERENCE_KINDS = new Set([
+  "approval",
+  "check",
+  "message",
+  "operation",
+  "run",
+  "task",
+  "turn",
+  "workflow",
+  "workflow_step",
+]);
+
+function isUserVisibleTerminalReportSourceRef(ref: TerminalReportSourceRefInput): boolean {
+  if (ref.visibility === "developer_only" || ref.sensitivity === "secret_adjacent") {
+    return false;
+  }
+  if (INTERNAL_TERMINAL_REPORT_REFERENCE_KINDS.has(ref.kind)) {
+    return false;
+  }
+  if (isInternalTerminalReportArtifactText(ref.label ?? "")) {
+    return false;
+  }
+  if (ref.kind === "external") {
+    return Boolean(ref.href);
+  }
+  return ref.kind === "artifact" || ref.kind === "file" || ref.kind === "memory" || Boolean(ref.href);
+}
+
+function isUserVisibleTerminalReportArtifact(artifact: TerminalReportViewInput["artifacts"][number]): boolean {
+  return !isInternalTerminalReportArtifactText([artifact.title, artifact.path].filter(Boolean).join(" "));
+}
+
+function isInternalTerminalReportArtifactText(value: string): boolean {
+  return /^(Generated file metadata|Workflow step context|Workflow step output|Action preview):/iu.test(value.trim()) ||
+    /\bcontent log\b/iu.test(value);
 }
 
 function outcomeTone(status: TerminalReportViewInput["outcome"]["status"]): ConversationWorkCellRowTone {

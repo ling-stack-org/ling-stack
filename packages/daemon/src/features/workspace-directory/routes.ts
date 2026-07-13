@@ -1,5 +1,7 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { ResolvedDaemonConfig } from "../../config.js";
+import type { RunStoreRegistry } from "../../runtime/store-registry.js";
+import { isAllowedLocalOrigin } from "../../shared/local-workspace-access.js";
 import { writeJson } from "../../shared/response.js";
 import {
   selectWorkspaceDirectory,
@@ -17,6 +19,7 @@ export async function handleWorkspaceDirectorySelect(
   request: IncomingMessage,
   response: ServerResponse,
   config: ResolvedDaemonConfig,
+  storeRegistry: RunStoreRegistry,
 ): Promise<void> {
   const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
   if (request.method !== "POST") {
@@ -32,9 +35,20 @@ export async function handleWorkspaceDirectorySelect(
     writeJson(response, 400, { error: "bad_request", message: "cwd query parameter is required" });
     return;
   }
+  if (!isAllowedLocalOrigin(request.headers.origin)) {
+    writeJson(response, 403, {
+      error: "forbidden_origin",
+      message: "Workspace directory selection is only available from local Ling Stack pages.",
+    });
+    return;
+  }
 
   try {
-    writeJson(response, 200, await selectWorkspaceDirectory({ defaultPath: cwd }));
+    const selected = await selectWorkspaceDirectory({ defaultPath: cwd });
+    if (!selected.cancelled && selected.path) {
+      storeRegistry.trustWorkspaceRoot(selected.path);
+    }
+    writeJson(response, 200, selected);
   } catch (error) {
     if (error instanceof WorkspaceDirectoryPickerError) {
       writeJson(response, error.statusCode, { error: error.code, message: error.message });
@@ -44,19 +58,6 @@ export async function handleWorkspaceDirectorySelect(
       error: "directory_picker_failed",
       message: error instanceof Error ? error.message : String(error),
     });
-  }
-}
-
-function isAllowedLocalOrigin(originHeader: string | undefined): boolean {
-  if (!originHeader) {
-    return true;
-  }
-  try {
-    const origin = new URL(originHeader);
-    return (origin.protocol === "http:" || origin.protocol === "https:")
-      && (origin.hostname === "localhost" || origin.hostname === "127.0.0.1" || origin.hostname === "[::1]");
-  } catch {
-    return false;
   }
 }
 

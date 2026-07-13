@@ -52,6 +52,8 @@ import {
   createTranscriptBlockRendererRegistry,
   renderTranscriptBlockFromRegistry,
   type ConversationWorkCellDetailsState,
+  type ConversationWorkspaceReviewTarget,
+  type TerminalReportFileTarget,
 } from "../../shared/conversation/index.js";
 import type {
   ApprovalRequest,
@@ -149,6 +151,8 @@ export interface ChannelMessageRenderersInput {
   readonly onOpenContextSummaryInConversationDetail: (summary: ChannelContextSummary) => void;
   readonly onOpenRun: (runId: string) => void;
   readonly onOpenFileReference: () => void;
+  readonly onOpenTerminalReportFile: (target: TerminalReportFileTarget) => void;
+  readonly onOpenWorkspaceReview: (target: ConversationWorkspaceReviewTarget) => void;
   readonly onOpenThreadForMessage: (message: ChannelMessage) => void;
   readonly onOrchestrateWorkflow: (workflow: ChannelWorkflow) => void;
   readonly onRejectDecision: (decision: ChannelDecision) => void;
@@ -290,6 +294,9 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
     const externalArtifactItems = terminalSummaryRendered
       ? turn.operationCell?.artifactStripItems ?? []
       : [];
+    const externalArtifactCwd = turn.operationCell
+      ? input.runById.get(turn.operationCell.anchorRunId)?.cwd ?? input.cwd
+      : input.cwd;
 
     return (
       <MessageRow
@@ -309,8 +316,10 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
               <div className="conversation-turn-artifacts">
                 <ConversationArtifactStripPanel
                   items={externalArtifactItems}
-                  cwd={input.cwd}
+                  cwd={externalArtifactCwd}
+                  runId={externalArtifactItems.find((item) => item.kind === "changed")?.recoveryRunId}
                   loadPreview={input.loadPreview}
+                  onOpenWorkspaceReview={input.onOpenWorkspaceReview}
                 />
               </div>
             ) : null}
@@ -416,12 +425,13 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
     readonly block: Extract<ConversationTranscriptBlock, { readonly kind: "operation" }>;
     readonly context: WorkspaceTranscriptRenderContext;
   }): ReactNode {
+    const operationCwd = input.runById.get(block.operationCell.anchorRunId)?.cwd ?? input.cwd;
     return (
       <div className="conversation-turn-operation" key={block.id}>
         <ConversationWorkCell
           model={block.operationCell}
           surface={channelSurface}
-          cwd={input.cwd}
+          cwd={operationCwd}
           detailsState={context.detailsState}
           onOpenRun={block.operationCell.anchorRunId.startsWith("workflow:") ? undefined : input.onOpenRun}
           onLoadDetails={context.onLoadDetails}
@@ -430,6 +440,8 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
           renderParticipantAvatar={renderConversationParticipantAvatar}
           showArtifactStrip={!conversationTurnHasTerminalSummary(turn)}
           showTerminalReport={!turn.blocks.some((item) => item.kind === "final_result")}
+          onOpenWorkspaceFile={input.onOpenTerminalReportFile}
+          onOpenWorkspaceReview={input.onOpenWorkspaceReview}
         />
       </div>
     );
@@ -446,10 +458,10 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
       <TerminalReportBlock
         key={block.id}
         blockId={block.terminalReportId}
-        revisionKey={block.terminalReportRevisionKey}
         rows={block.rows}
         renderParticipantAvatar={renderConversationParticipantAvatar}
         surface={channelSurface}
+        onOpenWorkspaceFile={input.onOpenTerminalReportFile}
       />
     );
   }
@@ -795,13 +807,15 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
         <ConversationWorkCell
           model={workCell}
           surface={channelSurface}
-          cwd={input.cwd}
+          cwd={input.runById.get(workCell.anchorRunId)?.cwd ?? input.cwd}
           detailsState={input.conversationWorkCellDetailsByKey[detailsKey] ?? { status: "not_loaded" }}
           onOpenRun={workCell.anchorRunId.startsWith("workflow:") ? undefined : input.onOpenRun}
           onLoadDetails={input.onLoadWorkflowWorkCellDetails}
           loadPreview={input.loadPreview}
           renderAgentAvatar={renderConversationAgentAvatar}
           renderParticipantAvatar={renderConversationParticipantAvatar}
+          onOpenWorkspaceFile={input.onOpenTerminalReportFile}
+          onOpenWorkspaceReview={input.onOpenWorkspaceReview}
         />
       );
     }
@@ -909,13 +923,15 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
         <ConversationWorkCell
           model={workCell}
           surface={channelSurface}
-          cwd={input.cwd}
+          cwd={run.cwd}
           detailsState={input.conversationWorkCellDetailsByKey[input.conversationWorkCellDetailsCacheKey(workCell.threadId)] ?? { status: "not_loaded" }}
           onOpenRun={input.onOpenRun}
           onLoadDetails={input.onLoadConversationWorkCellDetails}
           loadPreview={input.loadPreview}
           renderAgentAvatar={renderConversationAgentAvatar}
           renderParticipantAvatar={renderConversationParticipantAvatar}
+          onOpenWorkspaceFile={input.onOpenTerminalReportFile}
+          onOpenWorkspaceReview={input.onOpenWorkspaceReview}
         />
       );
     }

@@ -114,7 +114,8 @@ export { ConversationSummaryRow, type ConversationSummaryMetaItem, type Conversa
 export { ConversationReplacementRetry } from "./feedback/ConversationReplacementRetry.js";
 export { ConversationVirtualFeed, type ConversationVirtualFeedProps } from "./blocks/ConversationVirtualFeed.js";
 export { ConversationArtifactStripPanel, ConversationWorkCell, type ConversationWorkCellDetailsState, type ConversationWorkCellProps } from "./blocks/ConversationWorkCell.js";
-export { TerminalReportBlock } from "./blocks/TerminalReportBlock.js";
+export type { ConversationWorkspaceReviewTarget } from "./blocks/ConversationArtifactStrip.js";
+export { TerminalReportBlock, type TerminalReportFileTarget } from "./blocks/TerminalReportBlock.js";
 export { ConversationViewProvider, useOptionalConversationViewStore, type ConversationViewProviderProps } from "./view-store/conversation-view-provider.js";
 export { TranscriptBlockView, transcriptBlockViewKey, type TranscriptBlockViewProps } from "./blocks/TranscriptBlockView.js";
 export { EvidenceDisclosure, type EvidenceDisclosureProps } from "./blocks/EvidenceDisclosure.js";

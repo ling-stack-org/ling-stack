@@ -46,8 +46,8 @@ export async function inspectWorkspaceGitStatus(cwd: string, checkedAt: string):
   }
 
   try {
-    const statusOutput = (await git(cwd, ["status", "--porcelain=v1", "-b", "--untracked-files=all"])).stdout;
-    const parsedStatus = parseGitStatusPorcelain(statusOutput);
+    const statusOutput = (await git(cwd, ["status", "--porcelain=v1", "-z", "-b", "--untracked-files=all"])).stdout;
+    const parsedStatus = parseGitStatusPorcelainV1Z(statusOutput);
     const unstagedStats = await git(cwd, ["diff", "--numstat"]).then((result) => parseGitNumstat(result.stdout)).catch(() => ({ additions: 0, deletions: 0, hasStats: false }));
     const stagedStats = await git(cwd, ["diff", "--cached", "--numstat"]).then((result) => parseGitNumstat(result.stdout)).catch(() => ({ additions: 0, deletions: 0, hasStats: false }));
     const headSha = await git(cwd, ["rev-parse", "--short", "HEAD"]).then((result) => result.stdout.trim() || undefined).catch(() => undefined);
@@ -103,6 +103,42 @@ export function parseGitStatusPorcelain(stdout: string): {
   return { branchName, upstream, files };
 }
 
+export function parseGitStatusPorcelainV1Z(stdout: string): {
+  readonly branchName?: string;
+  readonly upstream?: string;
+  readonly files: readonly WorkspaceGitStatusFile[];
+} {
+  let branchName: string | undefined;
+  let upstream: string | undefined;
+  const files: WorkspaceGitStatusFile[] = [];
+  const records = stdout.split("\0");
+
+  for (let index = 0; index < records.length; index += 1) {
+    const record = records[index];
+    if (!record) {
+      continue;
+    }
+    if (record.startsWith("## ")) {
+      const parsedHeader = parseGitBranchHeader(record.slice(3));
+      branchName = parsedHeader.branchName;
+      upstream = parsedHeader.upstream;
+      continue;
+    }
+    const statusPair = record.slice(0, 2);
+    const hasOriginalPath = statusPair.includes("R") || statusPair.includes("C");
+    const originalPath = hasOriginalPath ? records[index + 1] || undefined : undefined;
+    const parsedFile = parseGitStatusFile(record, originalPath);
+    if (parsedFile) {
+      files.push(parsedFile);
+    }
+    if (hasOriginalPath) {
+      index += 1;
+    }
+  }
+
+  return { branchName, upstream, files };
+}
+
 export function parseGitNumstat(stdout: string): { readonly additions: number; readonly deletions: number; readonly hasStats: boolean } {
   let additions = 0;
   let deletions = 0;
@@ -144,7 +180,7 @@ function parseGitBranchHeader(header: string): { readonly branchName?: string; r
   return { branchName: withoutStatus || undefined };
 }
 
-function parseGitStatusFile(line: string): WorkspaceGitStatusFile | undefined {
+function parseGitStatusFile(line: string, nulOriginalPath?: string): WorkspaceGitStatusFile | undefined {
   if (line.length < 3) {
     return undefined;
   }
@@ -154,7 +190,9 @@ function parseGitStatusFile(line: string): WorkspaceGitStatusFile | undefined {
   const untracked = statusPair === "??";
   const conflicted = conflictStatuses.has(statusPair);
   const rawPath = line.slice(3);
-  const { path, originalPath } = parseStatusPath(rawPath, indexStatus);
+  const { path, originalPath } = nulOriginalPath
+    ? { path: rawPath, originalPath: nulOriginalPath }
+    : parseStatusPath(rawPath, indexStatus);
   const staged = conflicted || (!untracked && indexStatus !== " " && indexStatus !== "?");
   const unstaged = conflicted || (!untracked && worktreeStatus !== " " && worktreeStatus !== "?");
 

@@ -9,6 +9,7 @@ import {
   type PatchOperation,
   type PatchPlan,
   type PatchSummary,
+  type PatchTextFormat,
   type PlanApplyPatchInput,
 } from "./apply-patch-types.js";
 import { sha256Text } from "./hash.js";
@@ -69,6 +70,44 @@ export async function applyPatchPlan(input: ApplyPatchPlanInput): Promise<ApplyP
   };
 }
 
+export function invertPatchPlan(plan: PatchPlan): PatchPlan {
+  const operations = [...plan.operations].reverse().map((operation): PatchOperation => ({
+    ...operation,
+    kind: operation.kind === "add" ? "delete" : operation.kind === "delete" ? "add" : "update",
+    oldSha256: operation.newSha256,
+    newSha256: operation.oldSha256,
+    oldTextFormat: operation.newTextFormat,
+    newTextFormat: operation.oldTextFormat,
+    hunks: operation.hunks.map((hunk) => ({
+      ...hunk,
+      oldStart: hunk.newStart,
+      oldLines: hunk.newLines,
+      newStart: hunk.oldStart,
+      newLines: hunk.oldLines,
+      lines: hunk.lines.map((line): PatchLine => ({
+        kind: line.kind === "add" ? "remove" : line.kind === "remove" ? "add" : "context",
+        text: line.text,
+      })),
+    })),
+  }));
+  const summary: PatchSummary = {
+    fileCount: plan.summary.fileCount,
+    addCount: plan.summary.deleteCount,
+    updateCount: plan.summary.updateCount,
+    deleteCount: plan.summary.addCount,
+    moveCount: plan.summary.moveCount,
+    addedLines: plan.summary.removedLines,
+    removedLines: plan.summary.addedLines,
+  };
+  return {
+    format: APPLY_PATCH_FORMAT,
+    operations,
+    touchedPaths: [...plan.touchedPaths],
+    summary,
+    rawPatchSha256: sha256Text(JSON.stringify({ inverseOf: plan.rawPatchSha256, operations })),
+  };
+}
+
 function planOperation(operation: PatchOperation, readFile: PlanApplyPatchInput["readFile"]): PatchOperation {
   const current = readFile(operation.path);
   if (operation.kind === "add" && current !== undefined) {
@@ -91,6 +130,8 @@ function planOperation(operation: PatchOperation, readFile: PlanApplyPatchInput[
       : plannedUpdate?.hunks ?? operation.hunks,
     oldSha256: current === undefined ? undefined : sha256Text(current),
     newSha256: next === undefined ? undefined : sha256Text(next),
+    oldTextFormat: current === undefined ? undefined : textFormat(current),
+    newTextFormat: next === undefined ? undefined : textFormat(next),
   };
 }
 
@@ -99,7 +140,7 @@ function planUpdateHunks(
   current: string,
   hunks: readonly PatchHunk[],
 ): { readonly content: string; readonly hunks: readonly PatchHunk[] } {
-  const { lines: originalLines, trailingNewline } = splitContentLines(current);
+  const { lines: originalLines, format } = splitContentLines(current);
   let cursor = 0;
   let nextLines = [...originalLines];
   const plannedHunks: PatchHunk[] = [];
@@ -132,14 +173,17 @@ function planUpdateHunks(
   }
 
   return {
-    content: stringifyLines(nextLines, trailingNewline),
+    content: stringifyLines(nextLines, format),
     hunks: plannedHunks,
   };
 }
 
 function applyOperationToCurrentContent(operation: PatchOperation, current: string | undefined): string | undefined {
   if (operation.kind === "add") {
-    return stringifyLines(operation.hunks.flatMap((hunk) => hunk.lines.filter((line) => line.kind === "add").map((line) => line.text)), true);
+    return stringifyLines(
+      operation.hunks.flatMap((hunk) => hunk.lines.filter((line) => line.kind === "add").map((line) => line.text)),
+      operation.newTextFormat ?? { lineEnding: "\n", trailingNewline: true },
+    );
   }
   if (operation.kind === "delete") {
     return undefined;
@@ -147,11 +191,16 @@ function applyOperationToCurrentContent(operation: PatchOperation, current: stri
   if (current === undefined) {
     throw new ApplyPatchError(`Update File target does not exist: ${operation.path}`, { path: operation.path });
   }
-  return applyUpdateHunks(operation.path, current, operation.hunks);
+  return applyUpdateHunks(operation.path, current, operation.hunks, operation.newTextFormat);
 }
 
-function applyUpdateHunks(path: string, current: string, hunks: readonly PatchHunk[]): string {
-  const { lines, trailingNewline } = splitContentLines(current);
+function applyUpdateHunks(
+  path: string,
+  current: string,
+  hunks: readonly PatchHunk[],
+  outputFormat?: PatchTextFormat,
+): string {
+  const { lines, format } = splitContentLines(current);
   let cursor = 0;
   let nextLines = [...lines];
 
@@ -172,7 +221,7 @@ function applyUpdateHunks(path: string, current: string, hunks: readonly PatchHu
     cursor = matchIndex + newLines.length;
   }
 
-  return stringifyLines(nextLines, trailingNewline);
+  return stringifyLines(nextLines, outputFormat ?? format);
 }
 
 function findHunkIndex(lines: readonly string[], expected: readonly string[], preferredIndex: number | undefined, cursor: number): number {
@@ -199,21 +248,29 @@ function matchesAt(lines: readonly string[], expected: readonly string[], index:
   return expected.every((line, offset) => lines[index + offset] === line);
 }
 
-function splitContentLines(content: string): { readonly lines: string[]; readonly trailingNewline: boolean } {
+function splitContentLines(content: string): { readonly lines: string[]; readonly format: PatchTextFormat } {
+  const format = textFormat(content);
   const normalized = content.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
-  const trailingNewline = normalized.endsWith("\n");
   const lines = normalized.split("\n");
-  if (trailingNewline) {
+  if (format.trailingNewline) {
     lines.pop();
   }
-  return { lines, trailingNewline };
+  return { lines, format };
 }
 
-function stringifyLines(lines: readonly string[], trailingNewline: boolean): string {
+function stringifyLines(lines: readonly string[], format: PatchTextFormat): string {
   if (lines.length === 0) {
-    return trailingNewline ? "\n" : "";
+    return format.trailingNewline ? format.lineEnding : "";
   }
-  return `${lines.join("\n")}${trailingNewline ? "\n" : ""}`;
+  return `${lines.join(format.lineEnding)}${format.trailingNewline ? format.lineEnding : ""}`;
+}
+
+function textFormat(content: string): PatchTextFormat {
+  const firstLineEnding = /\r\n|\n|\r/u.exec(content)?.[0];
+  return {
+    lineEnding: firstLineEnding === "\r\n" || firstLineEnding === "\r" ? firstLineEnding : "\n",
+    trailingNewline: /(?:\r\n|\n|\r)$/u.test(content),
+  };
 }
 
 function createDeleteHunks(content: string): readonly PatchHunk[] {

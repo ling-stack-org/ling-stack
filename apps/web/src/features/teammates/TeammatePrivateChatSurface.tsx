@@ -37,6 +37,7 @@ import {
   findActiveSlashCommand,
   insertSlashCommandToken,
   type ActiveSlashCommandPicker,
+  type LocalFileReference,
   type TokenizedComposerInputHandle,
 } from "../../shared/conversation/index.js";
 import type {
@@ -68,7 +69,9 @@ import {
   ConversationSummaryPopover,
   WorkspaceRightDock,
   type ConversationSummaryRow,
+  type WorkspaceRightDockFileTarget,
   type WorkspaceRightDockPageRequest,
+  type WorkspaceRightDockReviewTarget,
 } from "../workspace/right-dock/index.js";
 import { useWorkspaceBottomPanelResizeController } from "../workspace/useWorkspaceBottomPanelResizeController.js";
 import { useWorkspaceRightDockController } from "../workspace/useWorkspaceRightDockController.js";
@@ -124,6 +127,7 @@ export function TeammatePrivateChatSurface({
   onCopyMessageText,
   onOpenRun,
   onOpenFiles,
+  onOpenReview,
   onCreateTaskFromMessage,
   onPromoteDirectGuidance,
   onCancelDirectGuidance,
@@ -206,7 +210,8 @@ export function TeammatePrivateChatSurface({
   readonly onScrollToLatest: () => void;
   readonly onCopyMessageText: (text: string) => void;
   readonly onOpenRun?: (runId: string) => void;
-  readonly onOpenFiles: () => void;
+  readonly onOpenFiles: (target?: WorkspaceRightDockFileTarget) => void;
+  readonly onOpenReview: (target: WorkspaceRightDockReviewTarget) => void;
   readonly onCreateTaskFromMessage: (message: TeammateDirectMessage) => void | Promise<void>;
   readonly onPromoteDirectGuidance: (interventionId: string) => void | Promise<void>;
   readonly onCancelDirectGuidance: (interventionId: string) => void | Promise<void>;
@@ -624,7 +629,7 @@ export function TeammatePrivateChatSurface({
                   bodyCwd={cwd}
                   bodyCompact
                   bodyStreaming={pendingAiReply}
-                  bodyOnOpenLocalFile={onOpenFiles}
+                  bodyOnOpenLocalFile={(reference) => onOpenFiles(workspaceFileTargetFromLocalReference(reference))}
                   attachmentsNode={(message.attachmentIds ?? []).length > 0 || messageFileRefs.length > 0 || messageLinkPreviews.length > 0 ? (
                     <>
                       <ConversationAttachmentStrip
@@ -661,7 +666,11 @@ export function TeammatePrivateChatSurface({
                             meta: fileRef.line !== undefined ? `${fileRef.path}:${fileRef.line}` : fileRef.path,
                             previewTitle: fileRef.label ?? fileNameFromReferencePath(fileRef.path),
                             previewText: fileRef.path,
-                            onOpen: onOpenFiles,
+                            onOpen: () => onOpenFiles({
+                              path: fileRef.path,
+                              line: fileRef.line,
+                              label: fileRef.label ?? fileNameFromReferencePath(fileRef.path),
+                            }),
                           })),
                           ...messageLinkPreviews.map((preview) => ({
                             id: `web:${preview.id}`,
@@ -683,6 +692,8 @@ export function TeammatePrivateChatSurface({
                       cwd={workCellRun?.cwd ?? cwd.trim()}
                       detailsState={{ status: "loaded", groups: workCell.model.groups, evidenceLinks: workCell.model.evidenceLinks }}
                       onOpenRun={onOpenRun}
+                      onOpenWorkspaceFile={onOpenFiles}
+                      onOpenWorkspaceReview={onOpenReview}
                       loadPreview={loadPreviewContent}
                     />
                   ) : null}
@@ -1029,6 +1040,19 @@ export function TeammatePrivateChatSurface({
       )}
     />
   );
+}
+
+function workspaceFileTargetFromLocalReference(reference: LocalFileReference): WorkspaceRightDockFileTarget {
+  const location = reference.location ?? "";
+  const path = location && reference.displayPath.endsWith(location)
+    ? reference.displayPath.slice(0, -location.length)
+    : reference.displayPath;
+  const lineMatch = /^(?::|#L)(\d+)/u.exec(location);
+  return {
+    path,
+    line: lineMatch ? Number(lineMatch[1]) : undefined,
+    label: fileNameFromReferencePath(path),
+  };
 }
 
 function buildPrivateWorkCellMap(input: {

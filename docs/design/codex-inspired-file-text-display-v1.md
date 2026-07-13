@@ -491,6 +491,44 @@ Right drawer owns full previews:
 The drawer should preserve back navigation so opening a file preview from a run summary
 does not navigate away from the conversation.
 
+### TerminalReport And Private-Chat File References
+
+TerminalReport `changes[].paths` and teammate private-chat workspace-file references are
+explicit file drill-down entry points. They share the same safe workspace-file preview
+contract, but they do not change the presentation or behavior of other conversation
+references.
+
+TerminalReport rules:
+
+- project `changes[].paths` as structured `file_ref` detail lines instead of generic code,
+- render only the basename in a summary-only blue file link,
+- derive the leading icon from the file extension using the open-source React Icons
+  collection, while keeping the icon color inherited from the link,
+- use the normal conversation link color at rest and the stronger link color plus an
+  underline on hover or keyboard focus,
+- show the full path only after one second of continuous hover or focus,
+- clicking opens the right dock directly on that workspace file and optional line,
+- do not apply this link style to artifact cards, changed-file lists, agent operation
+  records, attachments, or generic `ConversationReferenceStrip` items.
+
+Private-chat rules:
+
+- keep the existing message-body file chip and structured-reference chip styling,
+- clicking either chip must preserve the exact workspace path and optional line,
+- open the right dock directly on the file content rather than only navigating to the
+  Files index,
+- normal-conversation and channel message-body references keep their current navigation
+  behavior in this slice.
+
+Workspace-file preview rules:
+
+- accept only files whose resolved real path remains inside the resolved workspace root,
+- reject missing files, directories, path traversal, and symlink escapes,
+- cap reads at 64 KiB and mark truncated responses,
+- return unsupported metadata for non-UTF-8 or unsupported binary content,
+- remain read-only and never add previewed content to model context,
+- preserve the requested line so the dock can focus the corresponding content.
+
 ## Rollout Plan
 
 ### P0: Safe Message Text Rendering

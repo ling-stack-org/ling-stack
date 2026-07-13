@@ -92,7 +92,7 @@ function conversationAgentSummaryDetailLines(
       continue;
     }
     seen.add(text);
-    result.push({ kind: line.kind, text });
+    result.push(line.kind === "file_ref" ? { ...line, text } : { kind: line.kind, text });
     if (result.length >= 5) {
       break;
     }
@@ -169,6 +169,7 @@ export function buildConversationArtifactStripItems(input: {
         id: `artifact:${artifact.id}`,
         kind: "artifact",
         label: mainFeedArtifactLabel(artifact),
+        path: artifact.path,
         href: evidenceLink?.href,
         artifactId: artifact.id,
         artifactType: artifact.type,
@@ -234,11 +235,15 @@ export function buildConversationArtifactStripItems(input: {
       path: row.description,
       previewable: false,
     }));
+  const recoveryRunId = changeArtifacts.length > 0 && changeArtifacts.every((artifact) => artifact.runId && artifact.runId === changeArtifacts[0]?.runId)
+    ? changeArtifacts[0]?.runId
+    : undefined;
   if (changeEntries.length > 0) {
     items.push({
       id: "changed",
       kind: "changed",
       label: changeEntries.length === 1 ? input.t("Edited 1 file") : input.t("Edited {count} files", { count: changeEntries.length }),
+      recoveryRunId,
       changeArtifacts: changeEntries,
       tone: "neutral",
     });
@@ -463,9 +468,11 @@ export function buildConversationWorkCellViewModel(input: BuildConversationWorkC
     ...evidenceLinks,
     ...(terminalReport?.evidenceLinks ?? []),
   ], (item) => item.id);
+  const baseArtifactStripItems = buildConversationArtifactStripItems({ groups, evidenceLinks, artifacts, t: input.t });
+  const hasBaseChangedItem = baseArtifactStripItems.some((item) => item.kind === "changed");
   const artifactStripItems = uniqueBy([
-    ...buildConversationArtifactStripItems({ groups, evidenceLinks, artifacts, t: input.t }),
-    ...(terminalReport?.artifactStripItems ?? []),
+    ...baseArtifactStripItems,
+    ...(terminalReport?.artifactStripItems ?? []).filter((item) => item.kind !== "changed" || !hasBaseChangedItem),
   ], (item) => item.artifactId ?? item.id);
 
   return normalizeConversationOperationCell({

@@ -69,6 +69,8 @@ import {
   projectRunsToEvidenceGroup,
   projectRunsToReviewItems,
   type RightDockMessageProjectionInput,
+  type WorkspaceRightDockFileTarget,
+  type WorkspaceRightDockReviewTarget,
 } from "./right-dock/index.js";
 import { useWorkspaceBottomPanelResizeController } from "./useWorkspaceBottomPanelResizeController.js";
 import { useConversationSummaryPanelController, useConversationSummaryPlacementMotion } from "./useConversationSummaryPanelController.js";
@@ -355,6 +357,19 @@ export function ConversationHome({
     setConversationSummaryOpen(false);
     setConversationDockOpen(true);
     conversationDockController.requestPage("files");
+  }
+
+  function openConversationReportFile(target: WorkspaceRightDockFileTarget): void {
+    setConversationSummaryOpen(false);
+    setConversationDockOpen(true);
+    conversationDockController.requestPage("files", target);
+  }
+
+  function openConversationReview(target: WorkspaceRightDockReviewTarget): void {
+    const executionCwd = detailContext?.runs.find((run) => run.id === target.runId)?.cwd ?? target.cwd;
+    setConversationSummaryOpen(false);
+    setConversationDockOpen(true);
+    conversationDockController.requestPage("review", undefined, { ...target, cwd: executionCwd });
   }
   const conversationSummaryNode = (
     <ConversationSummaryPopover
@@ -1161,8 +1176,10 @@ export function ConversationHome({
                     <ConversationWorkCell
                       model={workCell}
                       surface="normal_conversation"
-                      cwd={workspaceCwd.trim()}
+                      cwd={detailContext?.runs.find((run) => run.id === workCell.anchorRunId)?.cwd ?? workspaceCwd.trim()}
                       onOpenRun={onOpenRun}
+                      onOpenWorkspaceFile={openConversationReportFile}
+                      onOpenWorkspaceReview={openConversationReview}
                       loadPreview={loadPreviewContent}
                     />
                   ) : null}

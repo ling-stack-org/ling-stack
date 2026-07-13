@@ -34,6 +34,9 @@ export function parseRunRoute(
   | { kind: "artifacts"; runId: string }
   | { kind: "shell-snapshots"; runId: string }
   | { kind: "shell-snapshot"; runId: string; snapshotId: string }
+  | { kind: "workspace-changes"; runId: string }
+  | { kind: "workspace-changes-undo"; runId: string }
+  | { kind: "workspace-changes-reapply"; runId: string }
   | { kind: "cancel"; runId: string }
   | { kind: "interventions"; runId: string }
   | { kind: "tool-load-requests"; runId: string }
@@ -53,6 +56,15 @@ export function parseRunRoute(
   }
   if (segments.length === 4 && segments[0] === "runs" && segments[2] === "shell-snapshots") {
     return { kind: "shell-snapshot", runId: segments[1], snapshotId: segments[3] };
+  }
+  if (segments.length === 3 && segments[0] === "runs" && segments[2] === "workspace-changes") {
+    return { kind: "workspace-changes", runId: segments[1] };
+  }
+  if (segments.length === 4 && segments[0] === "runs" && segments[2] === "workspace-changes" && segments[3] === "undo") {
+    return { kind: "workspace-changes-undo", runId: segments[1] };
+  }
+  if (segments.length === 4 && segments[0] === "runs" && segments[2] === "workspace-changes" && segments[3] === "reapply") {
+    return { kind: "workspace-changes-reapply", runId: segments[1] };
   }
   if (segments.length === 3 && segments[0] === "runs" && segments[2] === "cancel") {
     return { kind: "cancel", runId: segments[1] };

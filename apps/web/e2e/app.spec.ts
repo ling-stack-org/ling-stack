@@ -606,6 +606,7 @@ test("latest normal conversation prompt edits in place and hides the superseded 
 });
 
 test("executed normal conversation renders one structured terminal report", async ({ page }) => {
+  await page.setViewportSize({ width: 1000, height: 620 });
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "zh-CN");
   });
@@ -685,16 +686,16 @@ test("executed normal conversation renders one structured terminal report", asyn
       corrections: [],
       sourceRefs: [{ kind: "turn", id: turnId, visibility: "conversation" }],
     },
-    changes: [{
-      id: "change_terminal_report_conversation",
-      kind: "code",
-      title: "接入普通会话投影",
-      summary: "普通会话读取执行轮关联的结构化报告。",
-      paths: ["apps/web/src/features/workspace/ConversationHome.tsx"],
-      addedLines: 18,
+    changes: Array.from({ length: 12 }, (_, index) => ({
+      id: `change_terminal_report_conversation_${index}`,
+      kind: "code" as const,
+      title: index === 0 ? "接入普通会话投影" : `普通会话滚动回归项 ${index + 1}`,
+      summary: "普通会话读取执行轮关联的结构化报告，并在展开后保持完整滚动能力。",
+      paths: [`apps/web/src/features/workspace/ConversationHome-${index + 1}.tsx`],
+      addedLines: 18 + index,
       deletedLines: 2,
       sourceRefs: [],
-    }],
+    })),
     verification: [{
       id: "check_terminal_report_conversation",
       title: "Web typecheck",
@@ -703,9 +704,36 @@ test("executed normal conversation renders one structured terminal report", asyn
       sourceRefs: [],
     }],
     participants: [],
-    artifacts: [],
+    artifacts: [
+      {
+        id: "artifact_terminal_report_conversation",
+        kind: "file",
+        title: "ConversationHome.tsx",
+        path: "apps/web/src/features/workspace/ConversationHome.tsx",
+        sourceRefs: [],
+      },
+      {
+        id: "artifact_terminal_report_metadata",
+        kind: "other",
+        title: "Generated file metadata: ConversationHome.tsx",
+        path: `${runId}/generated-file-metadata.txt`,
+        sourceRefs: [],
+      },
+      {
+        id: "artifact_terminal_report_action_preview",
+        kind: "other",
+        title: "Action preview: bash",
+        path: `${runId}/actions/approval_1/preview.json`,
+        sourceRefs: [],
+      },
+    ],
     risks: [],
-    references: [],
+    references: [
+      { kind: "turn", id: turnId, label: "User task", visibility: "conversation" },
+      { kind: "run", id: runId, label: "Ling Agent run", visibility: "conversation" },
+      { kind: "artifact", id: "artifact_terminal_report_metadata", label: "Generated file metadata: ConversationHome.tsx", visibility: "conversation" },
+      { kind: "file", id: "apps/web/src/features/workspace/ConversationHome.tsx", label: "ConversationHome.tsx", visibility: "conversation" },
+    ],
     evidenceSnapshotId: "snapshot_terminal_report_conversation",
     evidenceFingerprint: "fingerprint_terminal_report_conversation",
     synthesis: { mode: "deterministic_fallback", promptVersion: "terminal-report-v1", attemptCount: 0, validationCodes: [] },
@@ -714,6 +742,28 @@ test("executed normal conversation renders one structured terminal report", asyn
   }];
 
   await mockDaemon(page, state);
+  await page.route(/\/workspace-files\/preview(?:\?.*)?$/, async (route) => {
+    const url = new URL(route.request().url());
+    const path = url.searchParams.get("path") ?? "";
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        ref: {
+          id: `workspace:${path}`,
+          source: "workspace_file",
+          scope: "workspace",
+          label: path.split("/").at(-1) ?? path,
+          displayPath: path,
+          previewable: true,
+        },
+        kind: "code",
+        text: "export const terminalReportWorkspacePreview = true;\n",
+        truncated: false,
+        redactionNotes: [],
+      }),
+    });
+  });
   await page.goto("/");
   const navigation = page.getByLabel("Ling Stack navigation");
   await navigation.locator(".sidebar-recent-row").filter({ hasText: "实现结构化终局报告" }).click();
@@ -724,10 +774,62 @@ test("executed normal conversation renders one structured terminal report", asyn
   const report = assistantRow.locator(".terminal-report-block");
   await expect(report).toContainText("结构化终局报告已接入普通会话");
   await expect(report.locator(".terminal-report-participants")).toHaveCount(0);
-  await report.locator(".terminal-report-summary").click();
+  await expect(report.locator(".terminal-report-summary")).not.toHaveAttribute("aria-expanded");
+  await expect(report.locator(".terminal-report-toggle")).toHaveCount(0);
   await expect(report).toContainText("接入普通会话投影");
-  await expect(report).toContainText("1 个文件");
-  await expect(report).toContainText("已通过");
+  await expect(report.locator(".terminal-report-section.kind-change .terminal-report-row-title small")).toHaveCount(0);
+  await expect(report.locator(".terminal-report-section.kind-verification .terminal-report-row-title small")).toHaveCount(0);
+  const reportFileLink = report.locator(".terminal-report-file-reference").first();
+  await expect(reportFileLink).toBeVisible();
+  await expect(reportFileLink).toHaveText("ConversationHome-1.tsx");
+  await expect(reportFileLink.locator('.terminal-report-file-type-icon[data-file-kind="react"]')).toBeVisible();
+  const reportFileColor = await reportFileLink.evaluate((element) => getComputedStyle(element).color);
+  await reportFileLink.hover();
+  await page.waitForTimeout(700);
+  await expect(reportFileLink.getByRole("tooltip")).toHaveCount(0);
+  await page.waitForTimeout(400);
+  await expect(reportFileLink.getByRole("tooltip")).toContainText("apps/web/src/features/workspace/ConversationHome-1.tsx");
+  const reportFileHoverColor = await reportFileLink.evaluate((element) => getComputedStyle(element).color);
+  expect(reportFileHoverColor).not.toBe(reportFileColor);
+  await expect(reportFileLink).toHaveCSS("text-decoration-line", "underline");
+  const reportFileIconColor = await reportFileLink.locator("svg").evaluate((element) => getComputedStyle(element).color);
+  expect(reportFileIconColor).toBe(reportFileHoverColor);
+  const workCell = assistantRow.locator(".conversation-work-cell");
+  await expect(workCell.locator(".conversation-work-cell-artifact-row")).toHaveCount(1);
+  await expect(workCell).toContainText("ConversationHome.tsx");
+  await expect(workCell).not.toContainText("Generated file metadata");
+  await expect(workCell).not.toContainText("Action preview");
+  const references = workCell.locator(".conversation-work-cell-evidence-summary");
+  await expect(references).toContainText("1 个引用");
+  await expect(references).toHaveAttribute("aria-expanded", "false");
+  await expect.poll(() => workCell.evaluate((element) => {
+    const childClasses = Array.from(element.children).map((child) => child.className.toString());
+    const operationIndex = childClasses.findIndex((className) => className.includes("conversation-operation-shell"));
+    const reportIndex = childClasses.findIndex((className) => className.includes("terminal-report-block"));
+    const artifactsIndex = childClasses.findIndex((className) => className.includes("conversation-work-cell-artifacts"));
+    const referencesIndex = childClasses.findIndex((className) => className.includes("conversation-work-cell-post-report-evidence"));
+    return operationIndex < reportIndex && reportIndex < artifactsIndex && artifactsIndex < referencesIndex;
+  })).toBe(true);
+  const feed = page.locator(".normal-conversation-feed");
+  const expandedMetrics = await feed.evaluate((element) => ({
+    clientHeight: element.clientHeight,
+    scrollHeight: element.scrollHeight,
+    scrollTop: element.scrollTop,
+  }));
+  expect(expandedMetrics.scrollHeight).toBeGreaterThan(expandedMetrics.clientHeight);
+  await feed.evaluate((element) => {
+    element.scrollTop = 0;
+  });
+  await expect.poll(() => feed.evaluate((element) => element.scrollTop)).toBe(0);
+  await feed.evaluate((element) => {
+    element.scrollTop = 120;
+  });
+  await expect.poll(() => feed.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
+  await reportFileLink.click();
+  const conversationDock = page.locator(".normal-conversation-right-dock");
+  await expect(conversationDock).toContainText("apps/web/src/features/workspace/ConversationHome-1.tsx");
+  await expect(conversationDock).toContainText("terminalReportWorkspacePreview");
+  await expect(conversationDock.getByRole("button", { name: "打开方式" })).toBeVisible();
 });
 
 test("persisted normal conversation without work evidence renders only the assistant reply", async ({ page }) => {

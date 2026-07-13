@@ -2,13 +2,13 @@ import { useEffect, useState, type ReactNode } from "react";
 import { BookOpen, CheckCircle2, ChevronDown, CircleAlert, Clock3, FilePenLine, FileText, GitBranch, History, ListChecks, Loader2, RefreshCw, Search, ShieldCheck, SquareTerminal } from "lucide-react";
 import { useI18n, type Translate } from "../../../i18n.js";
 import { parseUnifiedDiff, summarizeFileChanges, type ConversationFileChange } from "../../../lib/diff-summary.js";
-import type { ConversationAgentActivitySpan, ConversationArtifactStripItem, ConversationOperationCellViewModel, ConversationWorkCellEvidenceLink, ConversationWorkCellGroup, ConversationWorkCellRow } from "../../../lib/conversation-work-cell.js";
+import type { ConversationAgentActivitySpan, ConversationArtifactStripItem, ConversationOperationCellViewModel, ConversationWorkCellEvidenceLink, ConversationWorkCellGroup, ConversationWorkCellRow, ConversationWorkCellRowDetailLine } from "../../../lib/conversation-work-cell.js";
 import type { PreviewContentResponse } from "../../../types.js";
 import type { ArtifactPreviewLoader } from "../preview/ArtifactPreviewDrawer.js";
 import type { ConversationSurfaceKind, TerminalReportProjectionPolicy } from "../tokens/conversation-surface-policy.js";
-import { ConversationArtifactStrip } from "./ConversationArtifactStrip.js";
+import { ConversationArtifactStrip, type ConversationWorkspaceReviewTarget } from "./ConversationArtifactStrip.js";
 import { DiffViewer } from "./DiffViewer.js";
-import { TerminalReportBlock } from "./TerminalReportBlock.js";
+import { TerminalReportBlock, type TerminalReportFileTarget } from "./TerminalReportBlock.js";
 import { useConversationBlockView } from "../view-store/use-conversation-block-view.js";
 
 export type ConversationWorkCellDetailsStatus = "not_loaded" | "loading" | "loaded" | "empty" | "error";
@@ -33,6 +33,8 @@ export interface ConversationWorkCellProps {
   readonly showArtifactStrip?: boolean;
   readonly showTerminalReport?: boolean;
   readonly terminalReportProjectionPolicy?: Partial<TerminalReportProjectionPolicy>;
+  readonly onOpenWorkspaceFile?: (target: TerminalReportFileTarget) => void;
+  readonly onOpenWorkspaceReview?: (target: ConversationWorkspaceReviewTarget) => void;
 }
 
 export function ConversationWorkCell({
@@ -48,6 +50,8 @@ export function ConversationWorkCell({
   showArtifactStrip = true,
   showTerminalReport = true,
   terminalReportProjectionPolicy,
+  onOpenWorkspaceFile,
+  onOpenWorkspaceReview,
 }: ConversationWorkCellProps): JSX.Element {
   const { t } = useI18n();
   const active = model.mode === "active";
@@ -69,11 +73,13 @@ export function ConversationWorkCell({
       ? singleAgentRows
       : fallbackRows;
   const showOperationRows = operationRows.length > 0;
+  const terminalReportRendered = showTerminalReport && model.terminalReportRows.length > 0;
   const statusLabel = model.kicker ?? workCellStatusLabel(model.status, active, t);
   const artifactStripSummary = showArtifactStrip ? buildArtifactStripSummary(model.artifactStripItems, t) : undefined;
   const visibleArtifactItems = showArtifactStrip
     ? model.artifactStripItems.filter((item) => item.kind === "artifact" || item.kind === "changed")
     : [];
+  const recoveryRunId = visibleArtifactItems.find((item) => item.kind === "changed")?.recoveryRunId;
   const referencesOnly = !showArtifactStrip;
   const evidenceSummary = model.terminalReportRows.length > 0
     ? buildReferenceSummary(model.evidenceLinks.length, t)
@@ -137,6 +143,45 @@ export function ConversationWorkCell({
     }
   }
 
+  const evidenceDisclosure = (
+    <>
+      {evidenceSummary ? (
+        <button
+          className={artifactStripSummary ? "conversation-work-cell-evidence-summary conversation-work-cell-artifact-strip" : "conversation-work-cell-evidence-summary"}
+          type="button"
+          onClick={toggleDetails}
+          aria-expanded={detailsExpanded}
+        >
+          <ChevronDown size={14} aria-hidden="true" />
+          <span>{evidenceSummary}</span>
+        </button>
+      ) : null}
+
+      {diagnosticsHandler ? (
+        <div className="conversation-work-cell-actions">
+          <button
+            className="secondary-button compact-button"
+            type="button"
+            onClick={() => diagnosticsHandler(model.anchorRunId)}
+          >
+            <History size={13} />
+            {t("Diagnostics")}
+          </button>
+        </div>
+      ) : null}
+
+      {detailsExpanded ? (
+        <WorkCellDetails
+          state={currentDetailsState}
+          cwd={cwd}
+          loadPreview={loadPreview}
+          showGroups={!referencesOnly}
+          onRetry={() => onLoadDetails?.(model.threadId)}
+        />
+      ) : null}
+    </>
+  );
+
   return (
     <article className={rootClassName} data-thread-id={model.threadId} data-operation-source={model.sourceKind} aria-label={statusLabel}>
       <span className="visually-hidden" role="status" aria-live="polite" aria-label={statusLabel} />
@@ -170,61 +215,34 @@ export function ConversationWorkCell({
             {showOperationRows ? (
               <ActiveTurnItemStream rows={operationRows} cwd={cwd} loadPreview={loadPreview} />
             ) : null}
-
-            {evidenceSummary ? (
-              <button
-                className={artifactStripSummary ? "conversation-work-cell-evidence-summary conversation-work-cell-artifact-strip" : "conversation-work-cell-evidence-summary"}
-                type="button"
-                onClick={toggleDetails}
-                aria-expanded={detailsExpanded}
-              >
-                <ChevronDown size={14} aria-hidden="true" />
-                <span>{evidenceSummary}</span>
-              </button>
-            ) : null}
-
-            {diagnosticsHandler ? (
-              <div className="conversation-work-cell-actions">
-                <button
-                  className="secondary-button compact-button"
-                  type="button"
-                  onClick={() => diagnosticsHandler(model.anchorRunId)}
-                >
-                  <History size={13} />
-                  {t("Diagnostics")}
-                </button>
-              </div>
-            ) : null}
-
-            {detailsExpanded ? (
-              <WorkCellDetails
-                state={currentDetailsState}
-                cwd={cwd}
-                loadPreview={loadPreview}
-                showGroups={!referencesOnly}
-                onRetry={() => onLoadDetails?.(model.threadId)}
-              />
-            ) : null}
+            {!terminalReportRendered ? evidenceDisclosure : null}
           </div>
           </div>
         ) : null}
       </div>
-      {showTerminalReport && model.terminalReportRows.length > 0 ? (
+      {terminalReportRendered ? (
         <TerminalReportBlock
           blockId={model.id}
-          revisionKey={terminalReportRevisionKey(model)}
           rows={model.terminalReportRows}
           renderParticipantAvatar={renderParticipantAvatar}
           surface={surface}
           projectionPolicy={terminalReportProjectionPolicy}
+          onOpenWorkspaceFile={onOpenWorkspaceFile ? (target) => onOpenWorkspaceFile({ ...target, cwd }) : undefined}
         />
       ) : null}
       {visibleArtifactItems.length > 0 ? (
         <ConversationArtifactStrip
           items={visibleArtifactItems}
           cwd={cwd}
+          runId={recoveryRunId}
           loadPreview={loadPreview}
+          onOpenWorkspaceReview={onOpenWorkspaceReview}
         />
+      ) : null}
+      {terminalReportRendered && (evidenceSummary || diagnosticsHandler || detailsExpanded) ? (
+        <div className="conversation-work-cell-body conversation-work-cell-post-report-evidence">
+          {evidenceDisclosure}
+        </div>
       ) : null}
     </article>
   );
@@ -233,11 +251,15 @@ export function ConversationWorkCell({
 export function ConversationArtifactStripPanel({
   items,
   cwd,
+  runId,
   loadPreview,
+  onOpenWorkspaceReview,
 }: {
   readonly items: readonly ConversationArtifactStripItem[];
   readonly cwd?: string;
+  readonly runId?: string;
   readonly loadPreview: ArtifactPreviewLoader;
+  readonly onOpenWorkspaceReview?: (target: ConversationWorkspaceReviewTarget) => void;
 }): JSX.Element | null {
   const visibleItems = items.filter((item) => item.kind === "artifact" || item.kind === "changed");
   if (visibleItems.length === 0) {
@@ -247,7 +269,9 @@ export function ConversationArtifactStripPanel({
     <ConversationArtifactStrip
       items={visibleItems}
       cwd={cwd}
+      runId={runId}
       loadPreview={loadPreview}
+      onOpenWorkspaceReview={onOpenWorkspaceReview}
     />
   );
 }
@@ -378,13 +402,6 @@ function operationBubbleRevisionKey(
     model.agentSpans.length,
     model.artifactStripItems.length,
     evidenceSummary ?? "",
-  ].join("|");
-}
-
-function terminalReportRevisionKey(model: ConversationOperationCellViewModel): string {
-  return [
-    model.updatedAt,
-    ...model.terminalReportRows.map((row) => `${row.id}:${row.title}:${row.meta ?? ""}`),
   ].join("|");
 }
 
@@ -811,7 +828,7 @@ function InlineChangePreview({ changes }: { readonly changes: readonly Conversat
 
 function shellCommandText(
   row: ConversationWorkCellRow,
-  detailLines: readonly { readonly kind?: "text" | "code"; readonly text: string }[],
+  detailLines: readonly ConversationWorkCellRowDetailLine[],
 ): string | undefined {
   const command = stripShellPrompt(row.commandText);
   if (command) {
@@ -829,11 +846,11 @@ function stripShellPrompt(value?: string): string | undefined {
   return trimmed.replace(/^\$\s*/u, "").trim() || undefined;
 }
 
-function displayableRowDetailLines(lines?: readonly { readonly kind?: "text" | "code"; readonly text: string }[]): readonly { readonly kind?: "text" | "code"; readonly text: string }[] {
+function displayableRowDetailLines(lines?: readonly ConversationWorkCellRowDetailLine[]): readonly ConversationWorkCellRowDetailLine[] {
   if (!lines || lines.length === 0) {
     return [];
   }
-  const result: Array<{ readonly kind?: "text" | "code"; readonly text: string }> = [];
+  const result: ConversationWorkCellRowDetailLine[] = [];
   const seen = new Set<string>();
   for (const line of lines) {
     const text = line.text.trim();
@@ -841,7 +858,7 @@ function displayableRowDetailLines(lines?: readonly { readonly kind?: "text" | "
       continue;
     }
     seen.add(text);
-    result.push({ kind: line.kind, text });
+    result.push(line.kind === "file_ref" ? { ...line, text } : { kind: line.kind, text });
     if (result.length >= 5) {
       break;
     }

@@ -1,5 +1,7 @@
-import { closeSync, openSync, readSync, statSync } from "node:fs";
+import { closeSync, createReadStream, openSync, readSync, statSync } from "node:fs";
 import { basename, extname } from "node:path";
+import { createInterface } from "node:readline";
+import { Readable } from "node:stream";
 import { TextDecoder } from "node:util";
 import type {
   ChannelAttachment,
@@ -30,6 +32,13 @@ export interface BuildAttachmentPreviewInput {
   readonly attachmentsDir: string;
   readonly maxBytes?: number;
   readonly imageUrl?: string;
+}
+
+export interface BuildWorkspaceFilePreviewInput {
+  readonly contentPath: string;
+  readonly displayPath: string;
+  readonly maxBytes?: number;
+  readonly focusLine?: number;
 }
 
 export function normalizePreviewMaxBytes(value: number | undefined): number {
@@ -92,6 +101,119 @@ export async function buildAttachmentPreview(input: BuildAttachmentPreviewInput)
     extractedText: extractedDocument?.text,
     extractedTextTruncated: extractedDocument?.truncated,
   });
+}
+
+export async function buildWorkspaceFilePreview(input: BuildWorkspaceFilePreviewInput): Promise<PreviewContentResponse> {
+  const maxBytes = normalizePreviewMaxBytes(input.maxBytes);
+  const inferredKind = inferTextualPreviewKind(input.displayPath);
+  const kind = inferredKind === "unsupported" ? "plain_text" : inferredKind;
+  const stats = statSync(input.contentPath);
+  const ref: PreviewFileRef = {
+    id: `workspace:${input.displayPath}`,
+    source: "workspace_file",
+    scope: "workspace",
+    label: basename(input.displayPath) || input.displayPath,
+    displayPath: input.displayPath,
+    sizeBytes: stats.size,
+    previewable: true,
+  };
+
+  if (input.focusLine !== undefined && kind !== "image" && kind !== "pdf" && kind !== "office") {
+    const window = await readWorkspaceTextLineWindow(input.contentPath, input.focusLine, maxBytes);
+    if (!window.ok) {
+      return {
+        ref: { ...ref, previewable: false },
+        kind: "unsupported",
+        truncated: window.truncated,
+        sizeBytes: stats.size,
+        redactionNotes: ["Preview unavailable because the content is not valid UTF-8."],
+      };
+    }
+    return {
+      ref,
+      kind,
+      text: kind === "json" && window.startLine === 1 && !window.truncated ? formatJsonPreview(window.text) : window.text,
+      textStartLine: window.startLine,
+      truncated: window.truncated,
+      sizeBytes: stats.size,
+      redactionNotes: [
+        "Preview is read-only and not included in AI context.",
+        ...(window.truncated ? ["Preview truncated"] : []),
+      ],
+    };
+  }
+
+  return buildPreviewResponse({
+    ref,
+    kind,
+    contentPath: input.contentPath,
+    maxBytes,
+    fileName: input.displayPath,
+  });
+}
+
+async function readWorkspaceTextLineWindow(
+  path: string,
+  focusLine: number,
+  maxBytes: number,
+): Promise<
+  | { readonly ok: true; readonly text: string; readonly startLine: number; readonly truncated: boolean }
+  | { readonly ok: false; readonly truncated: boolean }
+> {
+  const startLine = Math.max(1, Math.floor(focusLine) - 90);
+  const endLine = Math.max(startLine, Math.floor(focusLine) + 89);
+  const selected: string[] = [];
+  let selectedBytes = 0;
+  let lineNumber = 0;
+  let truncatedAfter = false;
+  const fileStream = createReadStream(path);
+  const decodedStream = Readable.from(decodeUtf8Chunks(fileStream));
+  const lines = createInterface({ input: decodedStream, crlfDelay: Infinity });
+  try {
+    for await (const line of lines) {
+      lineNumber += 1;
+      if (lineNumber < startLine) {
+        continue;
+      }
+      if (lineNumber > endLine) {
+        truncatedAfter = true;
+        break;
+      }
+      const nextBytes = Buffer.byteLength(line, "utf8") + (selected.length > 0 ? 1 : 0);
+      if (selectedBytes + nextBytes > maxBytes) {
+        truncatedAfter = true;
+        break;
+      }
+      selected.push(line);
+      selectedBytes += nextBytes;
+    }
+  } catch {
+    return { ok: false, truncated: startLine > 1 || truncatedAfter };
+  } finally {
+    lines.close();
+    decodedStream.destroy();
+    fileStream.destroy();
+  }
+  return {
+    ok: true,
+    text: selected.join("\n"),
+    startLine,
+    truncated: startLine > 1 || truncatedAfter,
+  };
+}
+
+async function* decodeUtf8Chunks(stream: Readable): AsyncGenerator<string> {
+  const decoder = new TextDecoder("utf-8", { fatal: true });
+  for await (const chunk of stream) {
+    const decoded = decoder.decode(chunk as Buffer, { stream: true });
+    if (decoded) {
+      yield decoded;
+    }
+  }
+  const tail = decoder.decode();
+  if (tail) {
+    yield tail;
+  }
 }
 
 function buildPreviewResponse(input: {
