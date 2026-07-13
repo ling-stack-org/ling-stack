@@ -703,8 +703,8 @@
 }
 
 .normal-conversation-feed {
-  display: grid;
-  align-content: end;
+  display: flex;
+  flex-direction: column;
   gap: 18px;
   width: min(var(--channel-conversation-width, 800px), calc(100% - 48px));
   min-height: 0;
@@ -713,6 +713,10 @@
   overflow-y: auto;
   overscroll-behavior: contain;
   scrollbar-width: none;
+}
+
+.normal-conversation-feed > :first-child {
+  margin-top: auto;
 }
 
 @media (max-width: 900px) {

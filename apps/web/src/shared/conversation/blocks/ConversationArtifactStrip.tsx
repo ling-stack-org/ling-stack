@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode, type RefObject } from "react";
 import { createPortal } from "react-dom";
-import { ChevronDown, FilePenLine, FileText, Image as ImageIcon } from "lucide-react";
+import { ChevronDown, Code2, FilePenLine, FileText, Image as ImageIcon, Loader2, Redo2, Undo2 } from "lucide-react";
+import { getRunWorkspaceChanges, reapplyRunWorkspaceChanges, undoRunWorkspaceChanges } from "../../../api.js";
 import { useI18n, type Translate } from "../../../i18n.js";
 import { parseUnifiedDiff, summarizeFileChanges, type ConversationFileChange } from "../../../lib/diff-summary.js";
 import type { ConversationArtifactStripChangeArtifact, ConversationArtifactStripItem } from "../../../lib/conversation-work-cell.js";
-import type { PreviewContentResponse } from "../../../types.js";
+import type { PreviewContentResponse, RunWorkspaceChangesResponse } from "../../../types.js";
 import type { ArtifactPreviewLoader } from "../preview/ArtifactPreviewDrawer.js";
 import { DiffViewer } from "./DiffViewer.js";
 
@@ -12,14 +13,24 @@ const artifactHoverDelayMs = 2_000;
 const artifactHoverHideDelayMs = 140;
 const collapsedChangeFileCount = 3;
 
+export interface ConversationWorkspaceReviewTarget {
+  readonly cwd: string;
+  readonly runId?: string;
+  readonly path?: string;
+}
+
 export function ConversationArtifactStrip({
   items,
   cwd,
+  runId,
   loadPreview,
+  onOpenWorkspaceReview,
 }: {
   readonly items: readonly ConversationArtifactStripItem[];
   readonly cwd?: string;
+  readonly runId?: string;
   readonly loadPreview: ArtifactPreviewLoader;
+  readonly onOpenWorkspaceReview?: (target: ConversationWorkspaceReviewTarget) => void;
 }): JSX.Element | null {
   const { t } = useI18n();
   const artifactItems = items.filter((item) => item.kind === "artifact");
@@ -46,8 +57,10 @@ export function ConversationArtifactStrip({
         <ChangedFilesGroup
           item={item}
           cwd={cwd}
+          runId={runId}
           key={item.id}
           loadPreview={loadPreview}
+          onOpenWorkspaceReview={onOpenWorkspaceReview}
           onPreviewEnter={hoverPreview.scheduleChange}
           onPreviewLeave={hoverPreview.leaveSource}
           onPreviewNow={hoverPreview.showChangeNow}
@@ -87,8 +100,7 @@ function ArtifactOutputRow({
     </>
   );
 
-  if (previewable) {
-    return (
+  const row = previewable ? (
       <button
         className="conversation-work-cell-artifact-row"
         type="button"
@@ -101,29 +113,32 @@ function ArtifactOutputRow({
       >
         {content}
       </button>
-    );
-  }
-  if (item.href) {
-    return (
+    ) : item.href ? (
       <a className="conversation-work-cell-artifact-row" href={item.href} target="_blank" rel="noreferrer" title={item.label}>
         {content}
       </a>
+    ) : (
+      <span className="conversation-work-cell-artifact-row">{content}</span>
     );
-  }
-  return <span className="conversation-work-cell-artifact-row">{content}</span>;
+
+  return row;
 }
 
 function ChangedFilesGroup({
   item,
   cwd,
+  runId,
   loadPreview,
+  onOpenWorkspaceReview,
   onPreviewEnter,
   onPreviewLeave,
   onPreviewNow,
 }: {
   readonly item: ConversationArtifactStripItem;
   readonly cwd?: string;
+  readonly runId?: string;
   readonly loadPreview: ArtifactPreviewLoader;
+  readonly onOpenWorkspaceReview?: (target: ConversationWorkspaceReviewTarget) => void;
   readonly onPreviewEnter: (change: LoadedChangeFile, element: HTMLElement) => void;
   readonly onPreviewLeave: () => void;
   readonly onPreviewNow: (change: LoadedChangeFile, element: HTMLElement) => void;
@@ -131,6 +146,10 @@ function ChangedFilesGroup({
   const { t } = useI18n();
   const [showAll, setShowAll] = useState(false);
   const [loadedChanges, setLoadedChanges] = useState<readonly LoadedChangeFile[]>(() => fallbackChangeFiles(item.changeArtifacts ?? []));
+  const [recovery, setRecovery] = useState<RunWorkspaceChangesResponse>();
+  const [recoveryStatus, setRecoveryStatus] = useState<"idle" | "loading" | "loaded" | "unavailable">("idle");
+  const [recoveryBusy, setRecoveryBusy] = useState<"undo" | "reapply" | "">("");
+  const [recoveryError, setRecoveryError] = useState("");
 
   useEffect(() => {
     const artifacts = item.changeArtifacts ?? [];
@@ -150,6 +169,31 @@ function ChangedFilesGroup({
     };
   }, [cwd, item.changeArtifacts, loadPreview]);
 
+  useEffect(() => {
+    if (!cwd || !runId) {
+      setRecovery(undefined);
+      setRecoveryStatus("idle");
+      return;
+    }
+    let cancelled = false;
+    setRecovery(undefined);
+    setRecoveryStatus("loading");
+    void getRunWorkspaceChanges(cwd, runId).then((response) => {
+      if (!cancelled) {
+        setRecovery(response);
+        setRecoveryStatus("loaded");
+      }
+    }, () => {
+      if (!cancelled) {
+        setRecovery(undefined);
+        setRecoveryStatus("unavailable");
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [cwd, runId]);
+
   const fileCount = loadedChanges.length || item.changeArtifacts?.length || 0;
   const exactChanges = loadedChanges.filter((entry) => entry.change && entry.exact);
   const summary = exactChanges.length === loadedChanges.length && loadedChanges.length > 0
@@ -158,6 +202,38 @@ function ChangedFilesGroup({
   const title = fileCount === 1 ? t("Edited 1 file") : t("Edited {count} files", { count: fileCount });
   const visibleChanges = showAll ? loadedChanges : loadedChanges.slice(0, collapsedChangeFileCount);
   const hiddenCount = Math.max(0, loadedChanges.length - visibleChanges.length);
+  const undoUnavailableReason = recovery?.unavailableReason ?? t("Undo is unavailable for this run");
+
+  async function mutateRecovery(action: "undo" | "reapply"): Promise<void> {
+    if (!cwd || !runId || recoveryBusy) {
+      return;
+    }
+    const fileCount = recovery?.summary.fileCount ?? fileCountFromChanges(loadedChanges);
+    const confirmed = globalThis.confirm(action === "undo"
+      ? t("Undo changes to {count} files?", { count: fileCount })
+      : t("Reapply changes to {count} files?", { count: fileCount }));
+    if (!confirmed) {
+      return;
+    }
+    setRecoveryBusy(action);
+    setRecoveryError("");
+    try {
+      setRecovery(action === "undo"
+        ? await undoRunWorkspaceChanges(cwd, runId)
+        : await reapplyRunWorkspaceChanges(cwd, runId));
+      setRecoveryStatus("loaded");
+    } catch (error) {
+      setRecoveryError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setRecoveryBusy("");
+    }
+  }
+
+  function openReview(path?: string): void {
+    if (cwd) {
+      onOpenWorkspaceReview?.({ cwd, runId, path });
+    }
+  }
 
   return (
     <section className="conversation-work-cell-change-group">
@@ -169,7 +245,32 @@ function ChangedFilesGroup({
           <strong>{title}</strong>
           {summary ? <ChangeStat additions={summary.additions} deletions={summary.deletions} /> : null}
         </span>
+        <span className="conversation-work-cell-change-actions">
+          {recovery?.canReapply ? (
+            <button type="button" onClick={() => void mutateRecovery("reapply")} disabled={Boolean(recoveryBusy)}>
+              {recoveryBusy === "reapply" ? <Loader2 className="spin" size={13} /> : <Redo2 size={13} />}
+              {t("Reapply")}
+            </button>
+          ) : runId ? (
+            <button
+              type="button"
+              onClick={() => void mutateRecovery("undo")}
+              disabled={Boolean(recoveryBusy) || recoveryStatus !== "loaded" || !recovery?.canUndo}
+              title={recovery?.canUndo ? undefined : undoUnavailableReason}
+            >
+              {recoveryBusy === "undo" || recoveryStatus === "loading" ? <Loader2 className="spin" size={13} /> : <Undo2 size={13} />}
+              {t("Undo")}
+            </button>
+          ) : null}
+          {cwd && onOpenWorkspaceReview ? (
+            <button type="button" onClick={() => openReview()}>
+              <Code2 size={13} />
+              {t("Review changes")}
+            </button>
+          ) : null}
+        </span>
       </div>
+      {recoveryError ? <small className="conversation-work-cell-change-error" title={recoveryError}>{recoveryError}</small> : null}
       <div className="conversation-work-cell-change-files">
         {visibleChanges.map((entry) => {
           const previewable = Boolean(entry.change);
@@ -181,7 +282,7 @@ function ChangedFilesGroup({
               ) : null}
             </>
           );
-          return previewable ? (
+          return previewable || (cwd && onOpenWorkspaceReview) ? (
             <button
               className="conversation-work-cell-change-file"
               type="button"
@@ -190,7 +291,14 @@ function ChangedFilesGroup({
               onPointerLeave={onPreviewLeave}
               onFocus={(event) => onPreviewNow(entry, event.currentTarget)}
               onBlur={onPreviewLeave}
-              onClick={(event) => onPreviewNow(entry, event.currentTarget)}
+              onClick={(event) => {
+                if (cwd && onOpenWorkspaceReview) {
+                  onPreviewLeave();
+                  openReview(entry.path);
+                } else {
+                  onPreviewNow(entry, event.currentTarget);
+                }
+              }}
             >
               {content}
             </button>
@@ -212,6 +320,10 @@ function ChangedFilesGroup({
       </div>
     </section>
   );
+}
+
+function fileCountFromChanges(changes: readonly LoadedChangeFile[]): number {
+  return new Set(changes.map((change) => change.path)).size;
 }
 
 function ChangeStat({ additions, deletions }: { readonly additions: number; readonly deletions: number }): JSX.Element {

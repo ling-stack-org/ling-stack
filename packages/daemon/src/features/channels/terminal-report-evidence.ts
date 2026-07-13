@@ -25,6 +25,7 @@ import {
 } from "@ling-stack/core";
 import { listExecutionActions } from "../runs/execution-actions.js";
 import { redactEvidenceText } from "./context-processing/evidence.js";
+import { inferUserLanguage } from "./response-language.js";
 import { buildWorkflowEvidence } from "./workflow-evidence.js";
 
 export interface TerminalReportEvidenceBudgets {
@@ -139,7 +140,7 @@ export function collectRunTerminalReportEvidence(
     sourceMessageId: turn?.sourceMessageId,
     source: { kind: "run", id: run.id },
     objective: boundedText(task?.prompt || task?.title || turn?.userInstruction || turn?.title || "Complete the run.", budgets.summaryCharacters),
-    language: options.language ?? languageForRun(run) ?? "en-US",
+    language: options.language ?? languageForRun(run, turn?.userInstruction ?? task?.prompt ?? task?.title) ?? "en-US",
     terminalState,
     terminalAt: run.endedAt ?? run.updatedAt,
     steps: [{
@@ -209,7 +210,7 @@ export function collectTurnTerminalReportEvidence(
     sourceMessageId: turn.sourceMessageId,
     source: { kind: "turn", id: turn.id },
     objective: boundedText(turn.userInstruction || turn.title, budgets.summaryCharacters),
-    language: options.language ?? runs.map(languageForRun).find(Boolean) ?? "en-US",
+    language: options.language ?? runs.map((run) => languageForRun(run, turn.userInstruction)).find(Boolean) ?? inferUserLanguage(turn.userInstruction),
     terminalState,
     terminalAt: turn.completedAt ?? turn.updatedAt,
     steps: runs.map((run, index) => mapTurnRunStep(store, turn, run, index, budgets.summaryCharacters)),
@@ -805,12 +806,14 @@ function surfaceForThread(kind: string | undefined, channelId: string | undefine
   return kind === "teammate_direct" ? "teammate_private_chat" : "normal_conversation";
 }
 
-function languageForRun(run: RunSession): TerminalReportLanguage | undefined {
-  if (!isRecord(run.requestSnapshot)) {
-    return undefined;
+function languageForRun(run: RunSession, fallbackText?: string): TerminalReportLanguage | undefined {
+  if (isRecord(run.requestSnapshot)) {
+    const value = run.requestSnapshot.responseLanguage;
+    if (value === "zh-CN" || value === "en-US") {
+      return value;
+    }
   }
-  const value = run.requestSnapshot.responseLanguage;
-  return value === "zh-CN" || value === "en-US" ? value : undefined;
+  return fallbackText?.trim() ? inferUserLanguage(fallbackText) : undefined;
 }
 
 function readRunAssistantSummary(store: RunStore, runId: string, maxCharacters: number): string | undefined {

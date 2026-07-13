@@ -112,7 +112,7 @@ import type {
 import { TeammateActivityTab } from "./TeammateActivityTab.js";
 import { TeammateChatContextPanel } from "./TeammateChatContextPanel.js";
 import { TeammateChatHeader } from "./TeammateChatHeader.js";
-import { type ConversationSummaryRow, type WorkspaceRightDockPageRequest } from "../workspace/right-dock/index.js";
+import { type ConversationSummaryRow, type WorkspaceRightDockFileTarget, type WorkspaceRightDockPageRequest, type WorkspaceRightDockReviewTarget } from "../workspace/right-dock/index.js";
 import { buildTeammatePrivateDockContent } from "./teammate-private-dock.js";
 import { TeammateChannelsTab } from "./TeammateChannelsTab.js";
 import { TeammateDangerTab } from "./TeammateDangerTab.js";
@@ -570,10 +570,10 @@ export function TeammateWorkspace({
     chatSummaryInMainLayout ? "main" : "header",
   );
 
-  function openChatDockPage(page: WorkspaceRightDockPageRequest["page"]): void {
+  function openChatDockPage(page: WorkspaceRightDockPageRequest["page"], workspaceFile?: WorkspaceRightDockFileTarget, workspaceReview?: WorkspaceRightDockReviewTarget): void {
     setChatSummaryOpen(false);
     setChatDockOpen(true);
-    setChatDockPageRequest({ page, nonce: Date.now() });
+    setChatDockPageRequest({ page, nonce: Date.now(), workspaceFile, workspaceReview });
   }
   const directLinkPreviewById = useMemo(() => new Map(directLinkPreviews.map((preview) => [preview.id, preview])), [directLinkPreviews]);
   const pendingDirectLinkPreviews = useMemo(
@@ -2152,7 +2152,8 @@ export function TeammateWorkspace({
           onScrollToLatest={scrollPrivateFeedToLatest}
           onCopyMessageText={copyMessageText}
           onOpenRun={onOpenRun}
-          onOpenFiles={() => openChatDockPage("files")}
+          onOpenFiles={(target) => openChatDockPage("files", target)}
+          onOpenReview={(target) => openChatDockPage("review", undefined, target)}
           onCreateTaskFromMessage={createTaskFromMessage}
           onPromoteDirectGuidance={promoteDirectGuidance}
           onCancelDirectGuidance={cancelDirectGuidance}

@@ -190,9 +190,10 @@ export function workflowProgressToConversationWorkCell(model: WorkflowProgressMo
     ...model.evidenceLinks,
     ...(terminalReport?.evidenceLinks ?? []),
   ], (item) => item.id);
+  const hasBaseChangedItem = model.artifactStripItems.some((item) => item.kind === "changed");
   const artifactStripItems = uniqueBy([
     ...model.artifactStripItems,
-    ...(terminalReport?.artifactStripItems ?? []),
+    ...(terminalReport?.artifactStripItems ?? []).filter((item) => item.kind !== "changed" || !hasBaseChangedItem),
   ], (item) => item.artifactId ?? item.id);
   return normalizeConversationOperationCell({
     id: model.id,

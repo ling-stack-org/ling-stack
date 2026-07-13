@@ -42,10 +42,21 @@ export interface ConversationWorkCellChangePreview {
   readonly sizeBytes?: number;
 }
 
-export interface ConversationWorkCellRowDetailLine {
-  readonly kind?: "text" | "code";
-  readonly text: string;
-}
+export type ConversationWorkCellRowDetailLine =
+  | {
+      readonly kind?: "text";
+      readonly text: string;
+    }
+  | {
+      readonly kind: "code";
+      readonly text: string;
+    }
+  | {
+      readonly kind: "file_ref";
+      readonly text: string;
+      readonly path: string;
+      readonly line?: number;
+    };
 
 export type ConversationAgentActivitySpanKind = "agent" | "overflow";
 
@@ -95,6 +106,7 @@ export interface ConversationArtifactStripItem {
   readonly id: string;
   readonly kind: ConversationArtifactStripItemKind;
   readonly label: string;
+  readonly path?: string;
   readonly tone?: ConversationWorkCellRowTone;
   readonly href?: string;
   readonly artifactId?: string;
@@ -103,6 +115,7 @@ export interface ConversationArtifactStripItem {
   readonly sizeBytes?: number;
   readonly previewKind?: "file" | "image";
   readonly previewable?: boolean;
+  readonly recoveryRunId?: string;
   readonly changeArtifacts?: readonly ConversationArtifactStripChangeArtifact[];
 }
 

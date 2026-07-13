@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import {
   Activity,
   Code2,
@@ -9,10 +9,10 @@ import {
   ShieldCheck,
   SquareTerminal,
 } from "lucide-react";
-import { previewArtifactContent } from "../../../api.js";
+import { getWorkspaceChanges, previewArtifactContent, previewWorkspaceFile } from "../../../api.js";
 import { useI18n } from "../../../i18n.js";
 import { useTheme } from "../../../theme.js";
-import type { ProposedPlanArtifact } from "../../../types.js";
+import type { ProposedPlanArtifact, WorkspaceChangesResponse } from "../../../types.js";
 import {
   normalizeShikiLanguage,
   renderShikiCodeTokens,
@@ -27,7 +27,6 @@ import {
   popDockPage,
   pushDockPage,
   resetDockStack,
-  ReviewQueuePage,
   RightDockShell,
   ToolPlaceholderPage,
   type DockEvidenceGroupView,
@@ -49,6 +48,8 @@ import {
 } from "./PlanHistoryPage.js";
 import { reviewNeedsAction } from "./projections.js";
 import { WorkspaceTerminalPanel, type WorkspaceTerminalSession } from "../WorkspaceTerminalPanel.js";
+import { WorkspaceChangeReviewPage } from "./WorkspaceChangeReviewPage.js";
+import { WorkspaceFileOpenMenu } from "../../../shared/conversation/blocks/WorkspaceFileOpenMenu.js";
 
 export interface WorkspaceRightDockForcedDetail {
   readonly id: string;
@@ -60,6 +61,21 @@ export interface WorkspaceRightDockForcedDetail {
 export interface WorkspaceRightDockPageRequest {
   readonly page: DockPageKind;
   readonly nonce: number;
+  readonly workspaceFile?: WorkspaceRightDockFileTarget;
+  readonly workspaceReview?: WorkspaceRightDockReviewTarget;
+}
+
+export interface WorkspaceRightDockFileTarget {
+  readonly cwd?: string;
+  readonly path: string;
+  readonly line?: number;
+  readonly label?: string;
+}
+
+export interface WorkspaceRightDockReviewTarget {
+  readonly cwd: string;
+  readonly runId?: string;
+  readonly path?: string;
 }
 
 export interface WorkspaceRightDockProps {
@@ -144,6 +160,15 @@ export function WorkspaceRightDock({
   const [planScope, setPlanScope] = useState<"thread" | "channel">("thread");
   const [planStatusFilter, setPlanStatusFilter] = useState<PlanStatusFilter>("current");
   const [artifactPreviewByReviewId, setArtifactPreviewByReviewId] = useState<Readonly<Record<string, DockReviewItem["codePreview"]>>>({});
+  const [requestedWorkspaceFile, setRequestedWorkspaceFile] = useState<{
+    readonly nonce: number;
+    readonly target: WorkspaceRightDockFileTarget;
+  }>();
+  const [requestedWorkspaceReview, setRequestedWorkspaceReview] = useState<WorkspaceRightDockReviewTarget>();
+  const [workspaceChanges, setWorkspaceChanges] = useState<WorkspaceChangesResponse>();
+  const [workspaceChangesLoading, setWorkspaceChangesLoading] = useState(false);
+  const [workspaceChangesError, setWorkspaceChangesError] = useState("");
+  const [workspaceChangesRefreshKey, setWorkspaceChangesRefreshKey] = useState(0);
   const browserGroups = useMemo(
     () => evidenceGroups.filter((group) => group.id === "browser"),
     [evidenceGroups],
@@ -174,6 +199,8 @@ export function WorkspaceRightDock({
     [enrichedReviewItems],
   );
   const codeChangeActionCount = codeChangeReviewItems.filter(reviewNeedsAction).length;
+  const effectiveReviewCwd = requestedWorkspaceReview?.cwd ?? cwd;
+  const reviewFileCount = workspaceChanges?.files.length ?? codeChangeReviewItems.length;
   const detailNodeById = useMemo(() => {
     const map = new Map<string, ReactNode>();
     for (const item of enrichedReviewItems) {
@@ -214,6 +241,11 @@ export function WorkspaceRightDock({
         />
       ));
     }
+    if (requestedWorkspaceFile && (requestedWorkspaceFile.target.cwd || cwd)) {
+      map.set(workspaceFileDetailSourceId(requestedWorkspaceFile.nonce), (
+        <DockWorkspaceFilePreview cwd={requestedWorkspaceFile.target.cwd ?? cwd ?? ""} target={requestedWorkspaceFile.target} />
+      ));
+    }
     for (const plan of proposedPlans) {
       map.set(`plan:${plan.id}`, (
         <PlanDetailPanel
@@ -247,6 +279,7 @@ export function WorkspaceRightDock({
     onSavePlan,
     planActionBusyId,
     proposedPlans,
+    requestedWorkspaceFile,
     t,
   ]);
   const effectiveStack = forcedDetail
@@ -257,6 +290,7 @@ export function WorkspaceRightDock({
       sourceId: forcedDetail.id,
     })]
     : stack;
+  const reviewPageActive = open && effectiveStack.at(-1)?.page === "review";
 
   useEffect(() => {
     setStack(resetDockStack());
@@ -265,12 +299,46 @@ export function WorkspaceRightDock({
   useEffect(() => {
     if (!open) {
       setStack(resetDockStack());
+      setRequestedWorkspaceReview(undefined);
     }
   }, [open]);
 
   useEffect(() => {
     setArtifactPreviewByReviewId({});
+    setRequestedWorkspaceFile(undefined);
   }, [cwd]);
+
+  useEffect(() => {
+    if (!reviewPageActive || !effectiveReviewCwd) {
+      setWorkspaceChangesLoading(false);
+      if (!effectiveReviewCwd) {
+        setWorkspaceChanges(undefined);
+        setWorkspaceChangesError("");
+      }
+      return;
+    }
+    let cancelled = false;
+    setWorkspaceChanges((current) => current?.cwd === effectiveReviewCwd ? current : undefined);
+    setWorkspaceChangesLoading(true);
+    setWorkspaceChangesError("");
+    void getWorkspaceChanges(effectiveReviewCwd).then((response) => {
+      if (!cancelled) {
+        setWorkspaceChanges(response);
+      }
+    }, (error) => {
+      if (!cancelled) {
+        setWorkspaceChanges(undefined);
+        setWorkspaceChangesError(error instanceof Error ? error.message : String(error));
+      }
+    }).finally(() => {
+      if (!cancelled) {
+        setWorkspaceChangesLoading(false);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [effectiveReviewCwd, reviewPageActive, workspaceChangesRefreshKey]);
 
   useEffect(() => {
     if (!cwd) {
@@ -350,28 +418,20 @@ export function WorkspaceRightDock({
         icon: <Code2 size={16} />,
         launcherItem: {
           description: t("Changed files and diff previews"),
-          count: codeChangeReviewItems.length,
-          statusLabel: codeChangeReviewItems.length > 0 ? t("{count} code changes", { count: codeChangeReviewItems.length }) : t("No code changes"),
-          severity: codeChangeActionCount > 0 ? "warning" : codeChangeReviewItems.length > 0 ? "info" : "neutral",
+          count: reviewFileCount,
+          statusLabel: workspaceChangesLoading && !workspaceChanges
+            ? t("Loading")
+            : reviewFileCount > 0 ? t("{count} code changes", { count: reviewFileCount }) : t("No code changes"),
+          severity: codeChangeActionCount > 0 ? "warning" : reviewFileCount > 0 ? "info" : "neutral",
         },
         render: () => (
-          <ReviewQueuePage
-            items={codeChangeReviewItems}
-            activeFilter="files"
-            filters={[{ id: "files", label: t("Code changes") }]}
-            emptyTitle={t("No code changes")}
-            emptyDescription={t("Changed files and diff previews will appear here.")}
-            needsActionLabel={t("Pending")}
-            trackedLabel={t("Tracked")}
-            blockerLabel={t("Blocker")}
-            sendReviewLabel={t("Send review")}
-            clearReviewLabel={t("Clear")}
-            detailEmptyTitle={t("Select a code change")}
-            detailEmptyDescription={t("Choose a changed file to inspect its diff.")}
-            detailPresentation="accordion"
-            showStatusSummary={false}
-            renderItemDetail={(item) => <DockReviewItemDetail item={item} cwd={cwd} compact />}
-            onFilterChange={() => undefined}
+          <WorkspaceChangeReviewPage
+            cwd={effectiveReviewCwd}
+            changes={workspaceChanges}
+            loading={workspaceChangesLoading}
+            error={workspaceChangesError}
+            requestedPath={requestedWorkspaceReview?.path}
+            onRefresh={() => setWorkspaceChangesRefreshKey((current) => current + 1)}
           />
         ),
       },
@@ -557,6 +617,7 @@ export function WorkspaceRightDock({
     includeActivity,
     codeChangeActionCount,
     codeChangeReviewItems,
+    effectiveReviewCwd,
     currentPlanThreadId,
     onOpenPlanSource,
     planActionBusyId,
@@ -571,10 +632,41 @@ export function WorkspaceRightDock({
     terminalSession,
     cwd,
     visiblePlanCount,
+    requestedWorkspaceReview?.path,
+    reviewFileCount,
+    workspaceChanges,
+    workspaceChangesError,
+    workspaceChangesLoading,
   ]);
 
   useEffect(() => {
     if (!open || forcedDetail || !pageRequest) {
+      return;
+    }
+    if (pageRequest.workspaceFile) {
+      const sourceId = workspaceFileDetailSourceId(pageRequest.nonce);
+      setRequestedWorkspaceFile({ nonce: pageRequest.nonce, target: pageRequest.workspaceFile });
+      setStack([
+        createDockPageEntry({
+          page: "detail",
+          title: pageRequest.workspaceFile.label || fileNameFromPath(pageRequest.workspaceFile.path) || pageRequest.workspaceFile.path,
+          subtitle: workspaceFileTargetSubtitle(pageRequest.workspaceFile),
+          sourceId,
+        }),
+      ]);
+      onPageRequestConsumed?.(pageRequest.nonce);
+      return;
+    }
+    if (pageRequest.page === "review" && pageRequest.workspaceReview) {
+      setRequestedWorkspaceReview(pageRequest.workspaceReview);
+      setStack([
+        createDockPageEntry({
+          page: "review",
+          title: t("Review workbench"),
+          subtitle: pageRequest.workspaceReview.path || t("Workspace changes"),
+        }),
+      ]);
+      onPageRequestConsumed?.(pageRequest.nonce);
       return;
     }
     const manifest = pages.find((candidate) => candidate.id === pageRequest.page);
@@ -588,6 +680,9 @@ export function WorkspaceRightDock({
         subtitle: manifest.launcherItem.statusLabel,
       }),
     ]);
+    if (pageRequest.page === "review") {
+      setRequestedWorkspaceReview(undefined);
+    }
     onPageRequestConsumed?.(pageRequest.nonce);
   }, [forcedDetail, onPageRequestConsumed, open, pageRequest, pages]);
 
@@ -609,7 +704,12 @@ export function WorkspaceRightDock({
       className={className}
       onClose={onClose}
       onCollapsedChange={onCollapsedChange}
-      onNavigate={pushPage}
+      onNavigate={(entry) => {
+        if (entry.page === "review") {
+          setRequestedWorkspaceReview(undefined);
+        }
+        pushPage(entry);
+      }}
       onBack={() => {
         if (forcedDetail) {
           onClose?.();
@@ -845,12 +945,15 @@ type DockReviewCodeRenderRow =
 function DockReviewCodePreview({
   item,
   preview,
+  focusLine,
 }: {
   readonly item: DockReviewItem;
   readonly preview: NonNullable<DockReviewItem["codePreview"]>;
+  readonly focusLine?: number;
 }): JSX.Element {
   const { t } = useI18n();
   const [collapsed, setCollapsed] = useState(false);
+  const focusedLineRef = useRef<HTMLSpanElement | null>(null);
   const primaryLabel = preview.title;
   const secondaryLabel = preview.pathLabel ?? preview.language;
   const stats = preview.stats ?? codePreviewStats(preview.lines);
@@ -861,6 +964,16 @@ function DockReviewCodePreview({
   useEffect(() => {
     setCollapsed(false);
   }, [item.id, preview.title]);
+
+  useEffect(() => {
+    if (collapsed || focusLine === undefined) {
+      return;
+    }
+    const frameId = globalThis.requestAnimationFrame(() => {
+      focusedLineRef.current?.scrollIntoView({ block: "center" });
+    });
+    return () => globalThis.cancelAnimationFrame(frameId);
+  }, [collapsed, focusLine, item.id, preview.title]);
 
   return (
     <figure className={collapsed ? "right-dock-code-preview collapsed" : "right-dock-code-preview"} data-language={preview.language ?? "text"}>
@@ -891,11 +1004,14 @@ function DockReviewCodePreview({
                 );
               }
               const note = row.note;
+              const lineNumber = row.line.newLineNumber ?? row.line.lineNumber ?? row.line.oldLineNumber;
+              const focused = focusLine !== undefined && lineNumber === focusLine;
               return (
                 <span key={row.id} className="right-dock-code-row-group">
-                  <span className={[
+                  <span ref={focused ? focusedLineRef : undefined} className={[
                     "right-dock-code-line",
                     row.line.kind,
+                    focused ? "focused" : "",
                     note ? "has-note" : "",
                     note?.severity === "blocker" ? "block-note" : "",
                   ].filter(Boolean).join(" ")}>
@@ -1192,14 +1308,43 @@ function codePreviewFromArtifact(
   };
 }
 
-function textToCodeLines(text: string, language: string): readonly DockReviewCodeLine[] {
+function workspaceFileCodePreview(
+  target: WorkspaceRightDockFileTarget,
+  response: Awaited<ReturnType<typeof previewWorkspaceFile>>,
+): NonNullable<DockReviewItem["codePreview"]> | undefined {
+  if (response.text === undefined) {
+    return undefined;
+  }
+  const language = response.kind === "json"
+    ? "json"
+    : response.kind === "diff"
+      ? "diff"
+      : response.kind === "log"
+        ? "log"
+        : "text";
+  const textStartLine = response.textStartLine ?? 1;
+  const allLines = textToCodeLines(response.text, language, textStartLine);
+  const focusIndex = target.line === undefined ? -1 : Math.max(0, target.line - textStartLine);
+  const startIndex = focusIndex >= 0 ? Math.max(0, focusIndex - 90) : 0;
+  const endIndex = Math.min(allLines.length, startIndex + 180);
+  const visibleLines = allLines.slice(startIndex, endIndex);
+  return {
+    title: target.label || fileNameFromPath(target.path) || response.ref.label,
+    language,
+    pathLabel: response.ref.displayPath || target.path,
+    lines: visibleLines,
+    truncated: response.truncated || startIndex > 0 || endIndex < allLines.length,
+  };
+}
+
+function textToCodeLines(text: string, language: string, startLine = 1): readonly DockReviewCodeLine[] {
   if (language !== "diff") {
     return text.split(/\r?\n/u).map((line, index) => ({
       kind: "context",
       text: line || " ",
-      lineNumber: index + 1,
-      oldLineNumber: index + 1,
-      newLineNumber: index + 1,
+      lineNumber: startLine + index,
+      oldLineNumber: startLine + index,
+      newLineNumber: startLine + index,
     }));
   }
   const lines: DockReviewCodeLine[] = [];
@@ -1507,4 +1652,84 @@ function DockFileItemDetail({
       ) : null}
     </dl>
   );
+}
+
+function DockWorkspaceFilePreview({
+  cwd,
+  target,
+}: {
+  readonly cwd: string;
+  readonly target: WorkspaceRightDockFileTarget;
+}): JSX.Element {
+  const { t } = useI18n();
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [preview, setPreview] = useState<Awaited<ReturnType<typeof previewWorkspaceFile>>>();
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setError("");
+    setPreview(undefined);
+    void previewWorkspaceFile(cwd, target.path, 64 * 1024, target.line).then((response) => {
+      if (!cancelled) {
+        setPreview(response);
+      }
+    }, (reason) => {
+      if (!cancelled) {
+        setError(reason instanceof Error ? reason.message : String(reason));
+      }
+    }).finally(() => {
+      if (!cancelled) {
+        setLoading(false);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [cwd, target.line, target.path]);
+
+  if (loading) {
+    return <div className="artifact-preview-loading">{t("Loading preview...")}</div>;
+  }
+  if (error) {
+    return <div className="artifact-preview-error" role="alert">{error}</div>;
+  }
+  if (!preview) {
+    return <div className="artifact-preview-empty">{t("Preview unavailable")}</div>;
+  }
+  const codePreview = workspaceFileCodePreview(target, preview);
+  if (!codePreview) {
+    return (
+      <div className="artifact-preview-empty">
+        <strong>{target.label || fileNameFromPath(target.path) || target.path}</strong>
+        <span>{t("Preview unavailable")}</span>
+      </div>
+    );
+  }
+  const item: DockReviewItem = {
+    id: `workspace-file:${target.path}:${target.line ?? ""}`,
+    group: "files",
+    severity: "info",
+    status: "passed",
+    title: codePreview.title,
+    reason: t("Read-only workspace file preview"),
+    pathLabel: codePreview.pathLabel,
+  };
+  return (
+    <article className="right-dock-workspace-file-preview" data-workspace-file-path={target.path}>
+      <div className="right-dock-workspace-file-preview-actions">
+        <WorkspaceFileOpenMenu cwd={cwd} path={target.path} line={target.line} compact />
+      </div>
+      <DockReviewCodePreview item={item} preview={codePreview} focusLine={target.line} />
+    </article>
+  );
+}
+
+function workspaceFileDetailSourceId(nonce: number): string {
+  return `workspace-file-request:${nonce}`;
+}
+
+function workspaceFileTargetSubtitle(target: WorkspaceRightDockFileTarget): string {
+  return target.line === undefined ? target.path : `${target.path}:${target.line}`;
 }

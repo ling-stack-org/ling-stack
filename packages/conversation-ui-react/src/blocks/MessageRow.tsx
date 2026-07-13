@@ -96,9 +96,10 @@ export function MessageRow({
         {workCellNode}
         {evidenceNode}
         {errorNode}
-        {actionsNode}
+        {ownMessage ? null : actionsNode}
       </div>
       {ownMessage && !showOwnAuthor ? avatar : null}
+      {ownMessage && actionsNode ? <div className="message-row-own-actions">{actionsNode}</div> : null}
     </article>
   );
 }

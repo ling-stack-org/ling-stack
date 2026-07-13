@@ -2778,6 +2778,7 @@ test("conversation stream materializes uploaded attachments into the run prompt"
     const done = events.find((event) => event.event === "done");
     assert.ok(done);
     assert.equal(done.data.run.requestSnapshot.lingConversationTone, "friendly");
+    assert.equal(done.data.run.requestSnapshot.responseLanguage, "en-US");
     assert.ok(done.data.run.requestSnapshot.appendSystemPrompt.some((instruction) => /Default conversation tone: friendly\./.test(instruction)));
 
     const detail = await getJson(`${daemon.url}/conversations/${encodeURIComponent(initialReady.data.thread.id)}?cwd=${encodeURIComponent(cwd)}`);

@@ -1,4 +1,4 @@
-export { WorkspaceRightDock, type WorkspaceRightDockForcedDetail, type WorkspaceRightDockPageRequest, type WorkspaceRightDockProps } from "./WorkspaceRightDock.js";
+export { WorkspaceRightDock, type WorkspaceRightDockFileTarget, type WorkspaceRightDockForcedDetail, type WorkspaceRightDockPageRequest, type WorkspaceRightDockProps, type WorkspaceRightDockReviewTarget } from "./WorkspaceRightDock.js";
 export { WorkspaceDockToolbar, WorkspaceDockToolbarButtons, type WorkspaceDockToolbarMode, type WorkspaceDockToolbarProps } from "./WorkspaceDockToolbar.js";
 export { ConversationSummaryPopover, type ConversationSummaryPopoverProps, type ConversationSummaryRow, type ConversationSummaryTone } from "./ConversationSummaryPopover.js";
 export { ConversationTopToolbar, type ConversationTopToolbarProps } from "./ConversationTopToolbar.js";

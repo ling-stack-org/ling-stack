@@ -835,6 +835,149 @@ test("progress popover shows active context source groups and opens source detai
   await expect(page.locator(".channel-side-panel")).toHaveCount(0);
 });
 
+test("channel AI replies use the standard full conversation width", async ({ page }) => {
+  await useEnglishLocale(page);
+  await page.setViewportSize({ width: 1600, height: 900 });
+  const state = createBaseState({ approvalStatus: "expired" });
+  state.channelMessages = [
+    {
+      id: "msg_wide_table_source",
+      workspaceId: "workspace_default",
+      channelId: "channel_engineering",
+      kind: "message",
+      intent: "discuss",
+      authorType: "local-user",
+      authorId: "tian",
+      body: "Summarize the available AI news sources.",
+      mentions: [],
+      attachmentIds: [],
+      linkPreviewIds: [],
+      fileRefs: [],
+      status: "ready",
+      createdAt: "2026-07-13T00:00:00.000Z",
+      updatedAt: "2026-07-13T00:00:00.000Z",
+    },
+    {
+      id: "msg_wide_table_reply",
+      workspaceId: "workspace_default",
+      channelId: "channel_engineering",
+      threadId: "msg_wide_table_source",
+      kind: "ai_reply",
+      intent: "discuss",
+      authorType: "ai-teammate",
+      authorId: "ling_agent",
+      body: "| Source | Coverage | URL |\n|---|---|---|\n| AI Daily | Product and research news | https://example.com/daily |",
+      mentions: [],
+      attachmentIds: [],
+      linkPreviewIds: [],
+      fileRefs: [],
+      status: "ready",
+      createdAt: "2026-07-13T00:00:01.000Z",
+      updatedAt: "2026-07-13T00:00:01.000Z",
+    },
+    {
+      id: "msg_regular_source",
+      workspaceId: "workspace_default",
+      channelId: "channel_engineering",
+      kind: "message",
+      intent: "discuss",
+      authorType: "local-user",
+      authorId: "tian",
+      body: "Give me a one-sentence status.",
+      mentions: [],
+      attachmentIds: [],
+      linkPreviewIds: [],
+      fileRefs: [],
+      status: "ready",
+      createdAt: "2026-07-13T00:00:02.000Z",
+      updatedAt: "2026-07-13T00:00:02.000Z",
+    },
+    {
+      id: "msg_regular_reply",
+      workspaceId: "workspace_default",
+      channelId: "channel_engineering",
+      threadId: "msg_regular_source",
+      kind: "ai_reply",
+      intent: "discuss",
+      authorType: "ai-teammate",
+      authorId: "ling_agent",
+      body: "The system is healthy.",
+      mentions: [],
+      attachmentIds: [],
+      linkPreviewIds: [],
+      fileRefs: [],
+      status: "ready",
+      createdAt: "2026-07-13T00:00:03.000Z",
+      updatedAt: "2026-07-13T00:00:03.000Z",
+    },
+    {
+      id: "msg_standalone_ai_reply",
+      workspaceId: "workspace_default",
+      channelId: "channel_engineering",
+      kind: "ai_reply",
+      intent: "discuss",
+      authorType: "ai-teammate",
+      authorId: "ling_agent",
+      body: "This standalone AI reply must use the full channel conversation width instead of wrapping at the legacy 680 pixel limit.",
+      mentions: [],
+      attachmentIds: [],
+      linkPreviewIds: [],
+      fileRefs: [],
+      status: "ready",
+      createdAt: "2026-07-13T00:00:04.000Z",
+      updatedAt: "2026-07-13T00:00:04.000Z",
+    },
+  ];
+  await mockDaemon(page, state);
+  await page.goto("/");
+  await openEngineeringChannel(page);
+
+  const chatLayout = page.locator(".activity-chat-layout");
+  const composer = page.locator(".activity-shell .channel-composer");
+  const wideTurn = page.locator(".conversation-turn").filter({ has: page.locator(".message-body-table-scroll") });
+  const sourceMessage = wideTurn.locator(".channel-message-row.local-user");
+  const sourceMessageContent = sourceMessage.locator(":scope > .message-content");
+  const sourceMessageActions = sourceMessage.locator(":scope > .message-row-own-actions");
+  const sourceMessageActionBar = sourceMessageActions.locator(".channel-message-user-actions");
+  const assistantReply = wideTurn.locator(".conversation-turn-assistant-row");
+  const assistantContent = assistantReply.locator(":scope > .message-content");
+  const regularTurn = page.locator(".conversation-turn").filter({ hasText: "The system is healthy." });
+  const regularAssistantReply = regularTurn.locator(".conversation-turn-assistant-row");
+  const standaloneAssistantReply = page.locator(".channel-message-row.ai-teammate:not(.conversation-turn-assistant-row)");
+  const standaloneAssistantContent = standaloneAssistantReply.locator(":scope > .message-content");
+  await expect.poll(async () => Math.round((await chatLayout.boundingBox())?.width ?? 0)).toBeGreaterThanOrEqual(780);
+  await expect.poll(async () => Math.round((await chatLayout.boundingBox())?.width ?? 0)).toBeLessThanOrEqual(820);
+  await expect.poll(async () => Math.round((await composer.boundingBox())?.width ?? 0)).toBeGreaterThanOrEqual(780);
+  await expect.poll(async () => Math.round((await composer.boundingBox())?.width ?? 0)).toBeLessThanOrEqual(820);
+  await expect(wideTurn).toHaveCount(1);
+  await expect.poll(async () => Math.round((await sourceMessage.boundingBox())?.width ?? 0)).toBeGreaterThanOrEqual(780);
+  await expect.poll(async () => Math.round((await sourceMessage.boundingBox())?.width ?? 0)).toBeLessThanOrEqual(820);
+  await expect(sourceMessageContent.locator(".channel-message-user-actions")).toHaveCount(0);
+  await expect(sourceMessageActionBar).toHaveCount(1);
+  await expect(sourceMessageActionBar).toHaveCSS("opacity", "0");
+  await sourceMessage.hover();
+  await expect(sourceMessageActionBar).toHaveCSS("opacity", "1");
+  await expect.poll(async () => {
+    const contentBox = await sourceMessageContent.boundingBox();
+    const actionsBox = await sourceMessageActions.boundingBox();
+    return contentBox && actionsBox ? Math.round(actionsBox.y - (contentBox.y + contentBox.height)) : -1;
+  }).toBeGreaterThanOrEqual(0);
+  await expect.poll(async () => Math.round((await assistantReply.boundingBox())?.width ?? 0)).toBeGreaterThanOrEqual(780);
+  await expect.poll(async () => Math.round((await assistantReply.boundingBox())?.width ?? 0)).toBeLessThanOrEqual(820);
+  await expect.poll(async () => Math.round((await assistantContent.boundingBox())?.width ?? 0)).toBeGreaterThanOrEqual(740);
+  await expect.poll(async () => Math.round((await assistantContent.boundingBox())?.width ?? 0)).toBeLessThanOrEqual(780);
+  await expect(regularTurn).toHaveCount(1);
+  await expect.poll(async () => Math.round((await regularTurn.boundingBox())?.width ?? 0)).toBeGreaterThanOrEqual(780);
+  await expect.poll(async () => Math.round((await regularTurn.boundingBox())?.width ?? 0)).toBeLessThanOrEqual(820);
+  await expect.poll(async () => Math.round((await regularAssistantReply.boundingBox())?.width ?? 0)).toBeGreaterThanOrEqual(780);
+  await expect.poll(async () => Math.round((await regularAssistantReply.boundingBox())?.width ?? 0)).toBeLessThanOrEqual(820);
+  await expect(standaloneAssistantReply).toHaveCount(1);
+  await expect.poll(async () => Math.round((await standaloneAssistantReply.boundingBox())?.width ?? 0)).toBeGreaterThanOrEqual(780);
+  await expect.poll(async () => Math.round((await standaloneAssistantReply.boundingBox())?.width ?? 0)).toBeLessThanOrEqual(820);
+  await expect.poll(async () => Math.round((await standaloneAssistantContent.boundingBox())?.width ?? 0)).toBeGreaterThanOrEqual(740);
+  await expect.poll(async () => Math.round((await standaloneAssistantContent.boundingBox())?.width ?? 0)).toBeLessThanOrEqual(780);
+});
+
 test("channel environment surface shows read-only context and opens review", async ({ page }) => {
   await useEnglishLocale(page);
   await page.setViewportSize({ width: 2160, height: 1200 });
@@ -934,6 +1077,37 @@ test("channel environment surface shows read-only context and opens review", asy
   };
 
   await mockDaemon(page, state);
+  await page.route(/\/workspace\/changes(?:\?.*)?$/, async (route) => {
+    const worktreeCwd = `${cwd}/.ling-stack/worktrees/channels/channel_engineering`;
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        cwd: worktreeCwd,
+        state: "dirty",
+        repoRoot: worktreeCwd,
+        branchName: "ling/channel-environment",
+        upstream: "main",
+        headSha: "abc1234",
+        additions: 12,
+        deletions: 3,
+        files: [{
+          path: "apps/web/src/features/workspace/WorkspaceClientView.tsx",
+          kind: "modified",
+          staged: false,
+          unstaged: true,
+          untracked: false,
+          additions: 12,
+          deletions: 3,
+          diff: state.artifactsByRun.run_environment?.[0]?.contentText,
+          truncated: false,
+        }],
+        totalFileCount: 1,
+        truncated: false,
+        checkedAt: "2026-06-29T00:01:00.000Z",
+      }),
+    });
+  });
   await page.goto("/");
   await openEngineeringChannel(page);
   await page.getByRole("button", { name: "Hide navigation" }).click();
@@ -1126,57 +1300,15 @@ test("channel environment surface shows read-only context and opens review", asy
   await page.mouse.move(resizeHandleBox!.x - 130, resizeHandleBox!.y + 40, { steps: 6 });
   await page.mouse.up();
   await expect.poll(async () => (await dock.boundingBox())?.width ?? 0).toBeGreaterThan((initialDockBox?.width ?? 0) + 80);
-  await expect(dock).toContainText("Workspace environment diff");
-  const reviewSummaryRow = dock.locator(".right-dock-review-row", { hasText: "Workspace environment diff" });
-  const codePreview = dock.locator(".right-dock-code-preview");
-  await expect(codePreview).toBeVisible();
-  const reviewPageBody = dock.locator(".right-dock-page-body");
-  const fullBleedBoxes = await Promise.all([
-    reviewPageBody.boundingBox(),
-    codePreview.boundingBox(),
-  ]);
-  const [reviewPageBodyBox, codePreviewBox] = fullBleedBoxes;
-  expect(reviewPageBodyBox).not.toBeNull();
-  expect(codePreviewBox).not.toBeNull();
-  expect(Math.abs((codePreviewBox?.x ?? 0) - (reviewPageBodyBox?.x ?? 0))).toBeLessThanOrEqual(1);
-  expect(Math.abs(((codePreviewBox?.x ?? 0) + (codePreviewBox?.width ?? 0)) - ((reviewPageBodyBox?.x ?? 0) + (reviewPageBodyBox?.width ?? 0)))).toBeLessThanOrEqual(1);
-  const codePreviewTheme = await page.evaluate(() => {
-    const preview = document.querySelector<HTMLElement>(".right-dock-code-preview");
-    const caption = document.querySelector<HTMLElement>(".right-dock-code-preview figcaption");
-    const pre = document.querySelector<HTMLElement>(".right-dock-code-preview pre");
-    if (!preview || !caption || !pre) {
-      return undefined;
-    }
-    const resolveColor = (value: string): string => {
-      const probe = document.createElement("span");
-      probe.style.color = value;
-      document.body.append(probe);
-      const resolved = getComputedStyle(probe).color;
-      probe.remove();
-      return resolved;
-    };
-    return {
-      theme: document.documentElement.dataset.theme,
-      previewBg: getComputedStyle(preview).backgroundColor,
-      preBg: getComputedStyle(pre).backgroundColor,
-      expectedCodeBg: resolveColor("var(--conversation-code-bg)"),
-      captionBg: getComputedStyle(caption).backgroundColor,
-      expectedCaptionBg: resolveColor("var(--conversation-code-bg-hover)"),
-    };
-  });
-  expect(codePreviewTheme).toBeDefined();
-  expect(codePreviewTheme?.theme).toBe("light");
-  expect(codePreviewTheme?.previewBg).toBe(codePreviewTheme?.expectedCodeBg);
-  expect(codePreviewTheme?.preBg).toBe(codePreviewTheme?.expectedCodeBg);
-  expect(codePreviewTheme?.captionBg).toBe(codePreviewTheme?.expectedCaptionBg);
-  await expect(reviewSummaryRow).toHaveCount(0);
-  await expect(dock.locator(".right-dock-review-row")).toHaveCount(0);
-  await expect(codePreview.locator("pre")).toContainText("reviewPreview");
-  await expect(codePreview.locator(".right-dock-code-fold")).toContainText("9 unmodified lines");
-  await codePreview.getByRole("button", { name: "Collapse code preview" }).click();
-  await expect(codePreview).toHaveClass(/collapsed/u);
-  await expect(codePreview.locator("pre")).toHaveCount(0);
-  await expect(codePreview).toContainText("Workspace environment diff");
+  await expect(dock).toContainText("ling/channel-environment");
+  const changedFileSection = dock.locator('.workspace-change-file-section[data-workspace-change-path="apps/web/src/features/workspace/WorkspaceClientView.tsx"]');
+  await expect(changedFileSection).toBeVisible();
+  await expect(changedFileSection).toContainText("WorkspaceClientView.tsx");
+  await expect(changedFileSection.locator(".diff-viewer")).toContainText("reviewPreview");
+  await expect(changedFileSection.getByRole("button", { name: "Open with" })).toBeVisible();
+  await changedFileSection.getByRole("button", { name: "Collapse code preview: WorkspaceClientView.tsx" }).click();
+  await expect(changedFileSection).toHaveClass(/collapsed/u);
+  await expect(changedFileSection.locator(".diff-viewer")).toHaveCount(0);
   const expandedResizeHandleBox = await resizeHandle.boundingBox();
   expect(expandedResizeHandleBox).not.toBeNull();
   await page.mouse.move(expandedResizeHandleBox!.x + expandedResizeHandleBox!.width / 2, expandedResizeHandleBox!.y + 40);
@@ -1244,8 +1376,9 @@ test("channel environment surface shows read-only context and opens review", asy
   await expect(rightDock.locator(".right-dock-head-page")).toContainText("Review");
   await expect(rightDock.locator(".right-dock-filter-row")).toHaveCount(0);
   await expect(rightDock.locator(".right-dock-review-status-card")).toHaveCount(0);
-  await expect(rightDock.locator(".right-dock-review-page")).not.toContainText("Risk");
-  await expect(rightDock.locator(".right-dock-review-page")).not.toContainText("Runtime");
+  await expect(rightDock.locator(".workspace-change-review-page")).toBeVisible();
+  await expect(rightDock.locator(".workspace-change-review-page")).not.toContainText("Risk");
+  await expect(rightDock.locator(".workspace-change-review-page")).not.toContainText("Runtime");
 });
 
 test("channel environment labels review-only items as review instead of changes", async ({ page }) => {
@@ -2981,31 +3114,25 @@ test("channel activity supports mentions, messages, files, links, and topic repl
   await expect(teammateReply).toBeVisible();
   await expect(sentMessage).toHaveClass(/message-bubble-own/);
   await expect(teammateReply).toHaveClass(/message-bubble-peer/);
-  const messageLayout = await page.locator(".message-feed").evaluate((feed) => {
-    const own = feed.querySelector(".message-bubble-own .message-content");
-    const peer = feed.querySelector(".message-bubble-peer .message-content");
-    if (!own || !peer) {
-      return null;
-    }
-    const feedRect = feed.getBoundingClientRect();
-    const ownRect = own.getBoundingClientRect();
-    const peerRect = peer.getBoundingClientRect();
-    return {
-      feedLeft: feedRect.left,
-      feedRight: feedRect.right,
-      ownLeft: ownRect.left,
-      ownRight: ownRect.right,
-      peerLeft: peerRect.left,
-      peerRight: peerRect.right,
-    };
-  });
-  if (!messageLayout) {
+  const [feedRect, ownRect, peerRect] = await Promise.all([
+    page.locator(".message-feed").boundingBox(),
+    sentMessageContent.boundingBox(),
+    teammateReplyContent.boundingBox(),
+  ]);
+  if (!feedRect || !ownRect || !peerRect) {
     throw new Error("Expected own and peer chat bubbles to render in the message feed.");
   }
+  const messageLayout = {
+    feedLeft: feedRect.x,
+    feedRight: feedRect.x + feedRect.width,
+    ownLeft: ownRect.x,
+    ownRight: ownRect.x + ownRect.width,
+    peerLeft: peerRect.x,
+    peerRight: peerRect.x + peerRect.width,
+  };
   expect(messageLayout.ownRight).toBeGreaterThan(messageLayout.feedRight - 64);
   expect(messageLayout.peerLeft).toBeLessThan(messageLayout.feedLeft + 48);
   expect(messageLayout.ownLeft).toBeGreaterThan(messageLayout.peerLeft);
-  expect(messageLayout.ownRight).toBeGreaterThan(messageLayout.peerRight);
   await expect(sentMessage.getByRole("button", { name: /Create task|Record decision|Create handoff|Create task with context|Details/ })).toHaveCount(0);
   await expect(sentMessage.locator(".message-meta")).toHaveCount(0);
   await expect(teammateReply.locator(".message-meta time")).toHaveCount(0);
@@ -8273,6 +8400,39 @@ test("local channel work-cell demo fixture renders a realistic multi-agent opera
   ];
 
   await mockDaemon(page, state);
+  let demoRecoveryState: "applied" | "undone" = "applied";
+  await page.route(/\/runs\/demo_work_cell_[^/]+\/workspace-changes(?:\/(?:undo|reapply))?(?:\?.*)?$/, async (route) => {
+    const url = new URL(route.request().url());
+    if (url.pathname.endsWith("/undo")) {
+      demoRecoveryState = "undone";
+    } else if (url.pathname.endsWith("/reapply")) {
+      demoRecoveryState = "applied";
+    }
+    const runId = url.pathname.split("/")[2] ?? "demo_work_cell_run";
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        cwd: url.searchParams.get("cwd") ?? "/repo",
+        runId,
+        state: demoRecoveryState,
+        canUndo: demoRecoveryState === "applied",
+        canReapply: demoRecoveryState === "undone",
+        files: [],
+        summary: {
+          fileCount: 5,
+          addCount: 0,
+          updateCount: 5,
+          deleteCount: 0,
+          moveCount: 0,
+          addedLines: 15,
+          removedLines: 4,
+        },
+        updatedAt: "2026-07-13T00:00:00.000Z",
+      }),
+    });
+  });
+  page.on("dialog", (dialog) => void dialog.accept());
   await page.route(/\/channels\/channel_engineering\/protocol(?:\?.*)?$/, async (route) => {
     await new Promise((resolve) => setTimeout(resolve, 350));
     await route.fallback();
@@ -8334,19 +8494,24 @@ test("local channel work-cell demo fixture renders a realistic multi-agent opera
   await expect(terminalReport).toContainText("Designer");
   await expect(terminalReport).toContainText("Engineer");
   await expect(terminalReport).toContainText("QA");
-  await expect(terminalReport.locator(".terminal-report-participants.compact .terminal-report-participant-avatar .teammate-avatar-image-default")).toHaveCount(4);
+  await expect(terminalReport.locator(".terminal-report-participants .terminal-report-participant-avatar .teammate-avatar-image-default")).toHaveCount(4);
   await expect(workCell).not.toContainText("正在思考");
   await expect(workCell).not.toContainText("Ling runtime");
   const terminalSummary = assistantTranscript.locator(".conversation-turn-assistant-copy.terminal");
   await expect(terminalSummary).toHaveCount(0);
   await expect(assistantTranscript).not.toContainText("完成：「频道 work-cell 操作记录样例」");
   const terminalReportSummary = terminalReport.locator(".terminal-report-summary");
-  await expect(terminalReportSummary).toHaveAttribute("aria-expanded", "false");
-  await terminalReportSummary.click();
-  await expect(terminalReportSummary).toHaveAttribute("aria-expanded", "true");
+  await expect(terminalReportSummary).not.toHaveAttribute("aria-expanded");
+  await expect(terminalReport.locator(".terminal-report-toggle")).toHaveCount(0);
   await expect(terminalReport).toContainText("重构操作记录展示");
   await expect(terminalReport).toContainText("Web typecheck");
   await expect(terminalReport).toContainText("确认 workflow、run、action 和 artifact 的会话投影边界");
+  await expect(terminalReport.getByRole("button", { name: "ConversationWorkCell.tsx", exact: true })).toBeVisible();
+  await expect(terminalReport.getByRole("button", { name: "components.css", exact: true })).toBeVisible();
+  await expect(terminalReport.getByRole("button", { name: "conversation-work-cell-operation-records.md", exact: true })).toBeVisible();
+  await expect(terminalReport.locator('.terminal-report-file-type-icon[data-file-kind="react"]')).toBeVisible();
+  await expect(terminalReport.locator('.terminal-report-file-type-icon[data-file-kind="css"]')).toBeVisible();
+  await expect(terminalReport.locator('.terminal-report-file-type-icon[data-file-kind="markdown"]')).toBeVisible();
   await expect(terminalReport.locator(".terminal-report-participant-copy > strong").first()).toHaveCSS("color", "rgb(37, 99, 235)");
   const teamSummary = assistantTranscript.locator(".channel-team-experts-summary");
   await expect(teamSummary).toHaveCount(0);
@@ -8358,6 +8523,7 @@ test("local channel work-cell demo fixture renders a realistic multi-agent opera
   await expect.poll(async () => Math.round((await artifactRows.first().boundingBox())?.width ?? 0)).toBe(artifactSurfaceWidth);
   await expect(artifactRows.filter({ hasText: "conversation-work-cell-operation-records.md" })).toHaveCount(1);
   await expect(artifactRows.filter({ hasText: "ConversationWorkCell.tsx" })).toHaveCount(1);
+  await expect(transcriptArtifacts.getByRole("button", { name: "打开方式" })).toHaveCount(0);
   await expect(transcriptArtifacts).not.toContainText("channel-work-cell-e2e.log");
   const changedGroup = transcriptArtifacts.locator(".conversation-work-cell-change-group");
   await expect.poll(async () => Math.round((await changedGroup.boundingBox())?.width ?? 0)).toBe(artifactSurfaceWidth);
@@ -8367,6 +8533,9 @@ test("local channel work-cell demo fixture renders a realistic multi-agent opera
   await expect(changedSummary.locator(".conversation-work-cell-change-stat .delete")).toHaveText("-4");
   await expect(changedSummary.locator(":scope > svg")).toHaveCount(0);
   await expect(changedSummary).not.toHaveAttribute("aria-expanded");
+  await expect(changedSummary.getByRole("button", { name: "撤销", exact: true })).toHaveCount(0);
+  await expect(changedSummary.getByRole("button", { name: "重新应用", exact: true })).toHaveCount(0);
+  await expect(changedSummary.getByRole("button", { name: "审核", exact: true })).toBeVisible();
   await expect(transcriptArtifacts.locator(".conversation-work-cell-artifacts").locator(":scope > *").last()).toHaveClass(/conversation-work-cell-change-group/);
   await expect.poll(() =>
     assistantTranscript.locator(".conversation-turn-assistant-transcript").evaluate((element) => {
@@ -8501,7 +8670,7 @@ test("local channel work-cell demo fixture renders a realistic multi-agent opera
   const demoPreviewRequests: string[] = [];
   page.on("request", (request) => {
     const url = request.url();
-    if (url.includes("demo_work_cell") && url.includes("/preview")) {
+    if (url.includes("demo_work_cell") && url.includes("/preview") && new URL(url).searchParams.get("maxBytes") === "65536") {
       demoPreviewRequests.push(url);
     }
   });
@@ -8563,7 +8732,12 @@ test("local channel work-cell demo fixture renders a realistic multi-agent opera
   await page.mouse.move(0, 0);
   await expect(hoverPreview).toHaveCount(0);
 
-  await artifactRows.filter({ hasText: "conversation-work-cell-operation-records.md" }).click();
+  const docArtifactPreview = transcriptArtifacts.getByRole("button", {
+    name: "预览: conversation-work-cell-operation-records.md",
+    exact: true,
+  });
+  await docArtifactPreview.scrollIntoViewIfNeeded();
+  await docArtifactPreview.click();
   await expect(hoverPreview).toBeVisible();
   await expect(hoverPreview).toContainText("# Conversation Work Cell Operation Records");
   await expect(page.locator(".artifact-preview-drawer")).toHaveCount(0);

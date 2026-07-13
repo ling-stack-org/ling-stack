@@ -674,7 +674,7 @@ test("private structured references preview safely and open the private Files do
     teammateId,
     authorType: "local-user",
     authorId: "local-user",
-    body: "Review the attached structured references.",
+    body: "Review [the inline target](apps/web/src/features/teammates/TeammatePrivateChatSurface.tsx:540) and the attached structured references.",
     attachmentIds: [],
     linkPreviewIds: [linkPreviewId],
     fileRefs: [{ path: "apps/web/src/features/teammates/TeammatePrivateChatSurface.tsx", label: "TeammatePrivateChatSurface.tsx", line: 540 }],
@@ -684,6 +684,31 @@ test("private structured references preview safely and open the private Files do
   }];
 
   await mockDaemon(page, state);
+  await page.route(/\/workspace-files\/preview(?:\?.*)?$/, async (route) => {
+    const url = new URL(route.request().url());
+    const path = url.searchParams.get("path") ?? "";
+    const lines = Array.from({ length: 620 }, (_, index) => index === 539
+      ? "export const privateTargetLine = true;"
+      : `// private preview line ${index + 1}`);
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        ref: {
+          id: `workspace:${path}`,
+          source: "workspace_file",
+          scope: "workspace",
+          label: "TeammatePrivateChatSurface.tsx",
+          displayPath: path,
+          previewable: true,
+        },
+        kind: "code",
+        text: lines.join("\n"),
+        truncated: false,
+        redactionNotes: [],
+      }),
+    });
+  });
   await page.goto("/");
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Reference Engineer" }).click();
 
@@ -695,11 +720,16 @@ test("private structured references preview safely and open the private Files do
   await page.mouse.move(4, 4);
   await expect(references.getByRole("tooltip")).toHaveCount(0);
 
+  const inlineFileReference = privateFeed.locator(".message-local-file-link").filter({ hasText: "TeammatePrivateChatSurface.tsx" });
+  await inlineFileReference.click();
+  const dock = page.getByLabel("Private chat workspace dock");
+  await expect(dock).toContainText("apps/web/src/features/teammates/TeammatePrivateChatSurface.tsx");
+  await expect(dock.locator(".right-dock-code-line.focused")).toContainText("privateTargetLine");
+
   const fileReference = references.getByRole("button", { name: /TeammatePrivateChatSurface\.tsx/ });
   await fileReference.click();
-  const dock = page.getByLabel("Private chat workspace dock");
   await expect(dock).toBeVisible();
-  await expect(dock).toContainText("TeammatePrivateChatSurface.tsx");
+  await expect(dock.locator(".right-dock-code-line.focused")).toContainText("privateTargetLine");
 });
 
 test("AI teammates page links council management to Council Workspace", async ({ page }) => {
@@ -1092,10 +1122,11 @@ test("AI teammate private workspace sends blocked chat replies and persists sett
   await expect(linkedRunPrivateRow.getByText("Private acceptance criteria summary.")).toHaveCount(0);
   const privateTerminalReport = linkedRunPrivateRow.locator(".terminal-report-block");
   await expect(privateTerminalReport).toBeVisible();
-  await privateTerminalReport.locator(".terminal-report-summary").click();
+  await expect(privateTerminalReport.locator(".terminal-report-summary")).not.toHaveAttribute("aria-expanded");
+  await expect(privateTerminalReport.locator(".terminal-report-toggle")).toHaveCount(0);
   await expect(privateTerminalReport).toContainText("Refined private acceptance criteria");
-  await expect(privateTerminalReport).toContainText("1 file");
-  await expect(privateTerminalReport).toContainText("passed");
+  await expect(privateTerminalReport.getByRole("button", { name: "private-acceptance.md", exact: true })).toBeVisible();
+  await expect(privateTerminalReport).toContainText("Acceptance review");
   await expect(privateTerminalReport.locator(".terminal-report-participants")).toHaveCount(0);
   await expect(linkedRunPrivateRow.locator(".message-reply-button")).toHaveCount(0);
   const privateToolbar = page.getByLabel("Private chat actions");

@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type MutableRefObject, type PointerEvent as ReactPointerEvent } from "react";
 import type { DockPageKind } from "../../shared/conversation/index.js";
-import type { WorkspaceRightDockPageRequest } from "./right-dock/index.js";
+import type { WorkspaceRightDockFileTarget, WorkspaceRightDockPageRequest, WorkspaceRightDockReviewTarget } from "./right-dock/index.js";
 import {
   channelRightDockMinWidth,
   channelRightDockMinChatWidth,
@@ -28,7 +28,7 @@ export interface WorkspaceRightDockController {
   readonly resizing: boolean;
   readonly width: number;
   readonly containerStyle: CSSProperties;
-  readonly requestPage: (page: DockPageKind) => void;
+  readonly requestPage: (page: DockPageKind, workspaceFile?: WorkspaceRightDockFileTarget, workspaceReview?: WorkspaceRightDockReviewTarget) => void;
   readonly consumePageRequest: (nonce: number) => void;
   readonly close: () => void;
   readonly handleResizePointerDown: (event: ReactPointerEvent<HTMLButtonElement>) => void;
@@ -250,10 +250,12 @@ export function useWorkspaceRightDockController({
     };
   }, []);
 
-  function requestPage(page: DockPageKind): void {
+  function requestPage(page: DockPageKind, workspaceFile?: WorkspaceRightDockFileTarget, workspaceReview?: WorkspaceRightDockReviewTarget): void {
     setPageRequest((current) => ({
       page,
       nonce: (current?.nonce ?? 0) + 1,
+      workspaceFile,
+      workspaceReview,
     }));
   }
 

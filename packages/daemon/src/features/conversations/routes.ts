@@ -544,6 +544,7 @@ function buildConversationRunRequest(input: {
     permissionMode: input.input.permissionMode,
     thinkingLevel: input.input.thinkingLevel,
     lingConversationTone: input.lingConversationTone,
+    responseLanguage,
     appendSystemPrompt,
     conversationAttachmentIds: input.attachments.map((attachment) => attachment.id),
     idempotencyKey: input.input.idempotencyKey ?? `conversation:${input.turn.id}`,

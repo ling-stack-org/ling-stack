@@ -204,10 +204,10 @@ test("run and turn terminal evidence preserve retry history while latest partici
     store.markRunSucceeded(repairRun.id, "2026-07-11T03:04:00.000Z");
 
     const runSnapshot = collectRunTerminalReportEvidence(store, repairRun.id, {
-      language: "zh-CN",
       generatedAt: "2026-07-11T03:05:00.000Z",
     });
     assert.equal(runSnapshot.source.kind, "run");
+    assert.equal(runSnapshot.language, "zh-CN");
     assert.equal(runSnapshot.participants[0]?.status, "completed");
     assert.equal(runSnapshot.checks[0]?.status, "passed");
 
@@ -218,15 +218,60 @@ test("run and turn terminal evidence preserve retry history while latest partici
     assert.equal(cancelledRunSnapshot.participants.length, 0);
 
     const turnSnapshot = collectTurnTerminalReportEvidence(store, turn.id, {
-      language: "zh-CN",
       generatedAt: "2026-07-11T03:05:00.000Z",
     });
     assert.equal(turnSnapshot.source.kind, "turn");
+    assert.equal(turnSnapshot.language, "zh-CN");
     assert.equal(turnSnapshot.steps.length, 3);
     assert.deepEqual(turnSnapshot.steps.map((step) => step.status), ["failed", "cancelled", "succeeded"]);
     assert.equal(turnSnapshot.participants.length, 1);
     assert.equal(turnSnapshot.participants[0]?.status, "completed");
     assert.equal(turnSnapshot.participants[0]?.runIds.length, 2);
+  } finally {
+    store.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("terminal evidence infers legacy conversation language when the run snapshot has no language", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-terminal-report-language-fallback-"));
+  const store = createSqliteRunStore(cwd);
+  try {
+    const now = "2026-07-11T04:00:00.000Z";
+    const thread = store.createLingThread({
+      kind: "conversation",
+      title: "修复会话总结",
+      objective: "修复中文会话的总结语言",
+    }, now);
+    const turn = store.createLingTurn({
+      threadId: thread.id,
+      kind: "initial_request",
+      title: "修复会话总结",
+      userInstruction: "修复中文会话的总结语言",
+    }, now);
+    const channel = store.createChannel({ name: "Conversation backing channel", boundPath: cwd }, now);
+    const task = store.createTask({
+      channelId: channel.id,
+      title: "修复会话总结",
+      prompt: "修复中文会话的总结语言",
+      assigneeTeammateId: "ling_agent",
+    }, now);
+    const run = store.createRun(runInput({
+      id: "run_terminal_language_fallback",
+      cwd,
+      taskId: task.id,
+      teammateId: "ling_agent",
+      threadId: thread.id,
+      turnId: turn.id,
+      responseLanguage: null,
+      createdAt: now,
+    }));
+    store.appendEvent(run.id, "assistant_text_delta", { text: "已完成中文会话总结修复。" });
+    appendToolAction(store, run.id, "language_typecheck", "bash", { command: "pnpm typecheck" }, false, now);
+    store.markRunSucceeded(run.id, now);
+
+    assert.equal(collectRunTerminalReportEvidence(store, run.id).language, "zh-CN");
+    assert.equal(collectTurnTerminalReportEvidence(store, turn.id).language, "zh-CN");
   } finally {
     store.close();
     await rm(cwd, { recursive: true, force: true });
@@ -289,7 +334,10 @@ function runInput(overrides) {
     providerModel: "test-model",
     taskSnapshot: { id: overrides.taskId, title: "Terminal report" },
     providerSnapshot: { provider: "test-provider", model: "test-model" },
-    requestSnapshot: { cwd: overrides.cwd, responseLanguage: "zh-CN" },
+    requestSnapshot: {
+      cwd: overrides.cwd,
+      ...(overrides.responseLanguage === null ? {} : { responseLanguage: overrides.responseLanguage ?? "zh-CN" }),
+    },
     threadId: overrides.threadId,
     turnId: overrides.turnId,
     turnRunRole: overrides.turnRunRole,

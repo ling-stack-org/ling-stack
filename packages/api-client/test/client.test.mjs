@@ -30,6 +30,39 @@ test("daemonBaseUrlFromEnv trims configured URL and falls back to local daemon",
   assert.equal(daemonBaseUrlFromEnv({}), "http://127.0.0.1:17891");
 });
 
+test("builds workspace review recovery and open-action requests", async () => {
+  const mock = createFetchMock([
+    { cwd: "/repo", state: "clean", additions: 0, deletions: 0, files: [], checkedAt: "now" },
+    { cwd: "/repo", runId: "run 1", state: "applied", canUndo: true, canReapply: false, files: [], summary: {}, updatedAt: "now" },
+    { cwd: "/repo", runId: "run 1", state: "undone", canUndo: false, canReapply: true, files: [], summary: {}, updatedAt: "now" },
+    { cwd: "/repo", runId: "run 1", state: "applied", canUndo: true, canReapply: false, files: [], summary: {}, updatedAt: "now" },
+    { cwd: "/repo", path: "src/a.ts", options: [] },
+    { cwd: "/repo", path: "src/a.ts", target: "vscode", opened: true },
+  ]);
+  const client = new LingDaemonClient({ baseUrl: "http://daemon.test", fetch: mock.fetch });
+
+  await client.getWorkspaceChanges("/repo");
+  await client.getRunWorkspaceChanges("run 1", "/repo");
+  await client.undoRunWorkspaceChanges("run 1", "/repo");
+  await client.reapplyRunWorkspaceChanges("run 1", "/repo");
+  await client.getWorkspaceFileOpenOptions("/repo", "src/a.ts");
+  await client.openWorkspaceFile("/repo", "src/a.ts", { target: "vscode", line: 12 });
+
+  assert.deepEqual(mock.calls.map((call) => [call.method, call.url]), [
+    ["GET", "http://daemon.test/workspace/changes?cwd=%2Frepo"],
+    ["GET", "http://daemon.test/runs/run%201/workspace-changes?cwd=%2Frepo"],
+    ["POST", "http://daemon.test/runs/run%201/workspace-changes/undo?cwd=%2Frepo"],
+    ["POST", "http://daemon.test/runs/run%201/workspace-changes/reapply?cwd=%2Frepo"],
+    ["GET", "http://daemon.test/workspace-files/open-options?cwd=%2Frepo&path=src%2Fa.ts"],
+    ["POST", "http://daemon.test/workspace-files/open?cwd=%2Frepo&path=src%2Fa.ts"],
+  ]);
+  assert.equal(mock.calls[5].body, JSON.stringify({ target: "vscode", line: 12 }));
+  assert.equal(
+    client.workspaceFileContentUrl("/repo", "src/a.ts", true),
+    "http://daemon.test/workspace-files/content?cwd=%2Frepo&path=src%2Fa.ts&download=1",
+  );
+});
+
 test("binds global fetch to globalThis when no custom fetch is provided", async () => {
   const originalFetch = globalThis.fetch;
   try {
@@ -1046,6 +1079,7 @@ test("uses expected routes for delete, cancel, check, and artifact URLs", async 
   await client.cancelRun("/repo", "run 1");
   await client.checkProvider("/repo", "provider 1");
   await client.refreshChannelLinkPreview("/repo", "link 1");
+  await client.previewWorkspaceFile("/repo path", "apps/web/src/view.tsx", 4096, 42);
 
   assert.equal(mock.calls[0].method, "DELETE");
   assert.equal(mock.calls[0].url, "http://daemon.test/channels/channel%201?cwd=%2Frepo");
@@ -1057,6 +1091,8 @@ test("uses expected routes for delete, cancel, check, and artifact URLs", async 
   assert.equal(mock.calls[3].url, "http://daemon.test/providers/provider%201/check?cwd=%2Frepo");
   assert.equal(mock.calls[4].method, "POST");
   assert.equal(mock.calls[4].url, "http://daemon.test/link-previews/link%201/refresh?cwd=%2Frepo");
+  assert.equal(mock.calls[5].method, "GET");
+  assert.equal(mock.calls[5].url, "http://daemon.test/workspace-files/preview?cwd=%2Frepo+path&path=apps%2Fweb%2Fsrc%2Fview.tsx&maxBytes=4096&line=42");
   assert.equal(client.artifactContentUrl("artifact 1", "/repo"), "http://daemon.test/artifacts/artifact%201/content?cwd=%2Frepo");
   assert.equal(client.attachmentContentUrl("attachment 1", "/repo"), "http://daemon.test/attachments/attachment%201/content?cwd=%2Frepo");
 });
