@@ -9318,6 +9318,11 @@ export async function handleDaemonRoute(
       await route.fulfill({ json: buildMockChannelWorkspaceResponse(channelId, updated, binding) });
       return;
     }
+    if (request.method() === "POST" && action === "open") {
+      const binding = readMockChannelWorkspaceBinding(channel);
+      await route.fulfill({ json: buildMockChannelWorkspaceResponse(channelId, channel, binding) });
+      return;
+    }
     if (request.method() === "POST" && action === "create-worktree") {
       const binding = buildMockManagedChannelWorktreeBinding(channelId, "2026-05-25T00:18:00.000Z");
       const updated = { ...channel, workspaceBinding: binding, updatedAt: "2026-05-25T00:18:00.000Z" };

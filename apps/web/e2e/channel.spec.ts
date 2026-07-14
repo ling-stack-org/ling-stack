@@ -2930,6 +2930,14 @@ test("channel settings manage workspace binding", async ({ page }) => {
   const details = page.getByLabel("Channel management");
   const workspaceControl = details.getByLabel("Channel workspace");
   await expect(workspaceControl).toContainText("Local");
+  const openWorkspaceRequest = page.waitForRequest((request) =>
+    request.method() === "POST" && new URL(request.url()).pathname === "/channels/channel_engineering/workspace/open"
+  );
+  await workspaceControl.getByRole("button", { name: "Open path" }).click();
+  await openWorkspaceRequest;
+  await expect(workspaceControl).not.toContainText("Opening workspace path.");
+  await expect(workspaceControl.locator(".inline-success")).toHaveCount(0);
+  await expect(workspaceControl.getByRole("button", { name: "Open path" })).toBeEnabled();
   await workspaceControl.getByRole("button", { name: "Create worktree" }).click();
   await expect.poll(() => {
     const channel = state.channels.find((item) => isRecord(item) && item.id === "channel_engineering");

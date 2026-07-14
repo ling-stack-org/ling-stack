@@ -41,6 +41,7 @@ test("builds workspace review recovery and open-action requests", async () => {
     { cwd: "/repo", workflowId: "workflow 1", runIds: ["run 1", "run 2"], state: "applied", canUndo: true, canReapply: false, files: [], summary: {}, updatedAt: "now" },
     { cwd: "/repo", path: "src/a.ts", options: [] },
     { cwd: "/repo", path: "src/a.ts", target: "vscode", opened: true },
+    { cwd: "/repo", channelId: "channel 1", binding: {}, snapshot: {} },
   ]);
   const client = new LingDaemonClient({ baseUrl: "http://daemon.test", fetch: mock.fetch });
 
@@ -53,6 +54,7 @@ test("builds workspace review recovery and open-action requests", async () => {
   await client.reapplyWorkflowWorkspaceChanges("/repo", "workflow 1");
   await client.getWorkspaceFileOpenOptions("/repo", "src/a.ts");
   await client.openWorkspaceFile("/repo", "src/a.ts", { target: "vscode", line: 12 });
+  await client.openChannelWorkspace("/repo", "channel 1");
 
   assert.deepEqual(mock.calls.map((call) => [call.method, call.url]), [
     ["GET", "http://daemon.test/workspace/changes?cwd=%2Frepo"],
@@ -64,6 +66,7 @@ test("builds workspace review recovery and open-action requests", async () => {
     ["POST", "http://daemon.test/workflows/workflow%201/workspace-changes/reapply?cwd=%2Frepo"],
     ["GET", "http://daemon.test/workspace-files/open-options?cwd=%2Frepo&path=src%2Fa.ts"],
     ["POST", "http://daemon.test/workspace-files/open?cwd=%2Frepo&path=src%2Fa.ts"],
+    ["POST", "http://daemon.test/channels/channel%201/workspace/open?cwd=%2Frepo"],
   ]);
   assert.equal(mock.calls[8].body, JSON.stringify({ target: "vscode", line: 12 }));
   assert.equal(

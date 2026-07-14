@@ -4270,8 +4270,6 @@ export const zhCN = {
   "Channel handed off to Local.": "频道已移交到本地。",
   "Channel handed off to Worktree.": "频道已移交到工作树。",
   "Channel handed off to External path.": "频道已移交到外部路径。",
-  "Opening workspace path.": "正在打开工作区路径。",
-  "Workspace path copied.": "工作区路径已复制。",
   "Workspace cwd is required.": "需要工作区 cwd。",
   "Goal completed": "目标已完成",
   "Plan saved": "计划已保存",

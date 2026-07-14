@@ -8268,6 +8268,14 @@ test("channel workspace API supports local and external path handoff", async () 
     const refreshed = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/workspace/refresh?cwd=${encodeURIComponent(cwd)}`, {});
     assert.equal(refreshed.binding.status, "missing");
 
+    const unavailableOpen = await fetch(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/workspace/open?cwd=${encodeURIComponent(cwd)}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    assert.equal(unavailableOpen.status, 409);
+    assert.equal((await unavailableOpen.json()).error, "channel_workspace_unavailable");
+
     const local = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/workspace/handoff?cwd=${encodeURIComponent(cwd)}`, {
       mode: "local",
     });

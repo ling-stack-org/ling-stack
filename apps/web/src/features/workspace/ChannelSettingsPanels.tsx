@@ -328,8 +328,8 @@ export function ChannelSettingsPanels({
                   {channelWorkspaceBusyAction === "refresh" ? <Loader2 className="spin" size={14} /> : <RefreshCw size={14} />}
                   {t("Refresh status")}
                 </button>
-                <button className="secondary-button compact-button" type="button" onClick={onOpenChannelWorkspacePath} disabled={!selectedChannelExecutionPath}>
-                  <FolderOpen size={14} />
+                <button className="secondary-button compact-button" type="button" onClick={onOpenChannelWorkspacePath} disabled={!selectedChannelExecutionPath || Boolean(channelWorkspaceBusyAction)}>
+                  {channelWorkspaceBusyAction === "open" ? <Loader2 className="spin" size={14} /> : <FolderOpen size={14} />}
                   {t("Open path")}
                 </button>
               </div>

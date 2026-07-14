@@ -346,7 +346,7 @@ export function parseChannelRoute(
   readonly playbookAction?: "candidates" | "candidate-from-cluster" | "review-candidate";
   readonly playbookCandidateId?: string;
   readonly playbookClusterId?: string;
-  readonly workspaceAction?: "create-worktree" | "handoff" | "refresh" | "cleanup" | "git-status";
+  readonly workspaceAction?: "create-worktree" | "handoff" | "refresh" | "cleanup" | "git-status" | "open";
 } | undefined {
   const segments = pathname.split("/").filter(Boolean).map(decodeURIComponent);
   if (segments.length === 2 && segments[0] === "channels") {
@@ -407,7 +407,7 @@ export function parseChannelRoute(
     segments.length === 4 &&
     segments[0] === "channels" &&
     segments[2] === "workspace" &&
-    (segments[3] === "create-worktree" || segments[3] === "handoff" || segments[3] === "refresh" || segments[3] === "cleanup" || segments[3] === "git-status")
+    (segments[3] === "create-worktree" || segments[3] === "handoff" || segments[3] === "refresh" || segments[3] === "cleanup" || segments[3] === "git-status" || segments[3] === "open")
   ) {
     return { channelId: segments[1], action: "workspace", workspaceAction: segments[3] };
   }

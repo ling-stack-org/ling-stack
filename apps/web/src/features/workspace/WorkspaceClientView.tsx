@@ -59,6 +59,7 @@ import {
   handoffChannelWorkspace,
   listChannelCollaborationCards,
   listChannelTerminalReports,
+  openChannelWorkspace,
   refreshChannelWorkspace,
 } from "../../api/channels.js";
 import { useI18n, type Translate } from "../../i18n.js";
@@ -2356,16 +2357,20 @@ export function WorkspaceClientView({
   }
 
   function onOpenChannelWorkspacePath(): void {
-    if (!selectedChannelExecutionPath) {
+    const workspaceCwd = cwd.trim();
+    if (!workspaceCwd || !selectedChannelId || !selectedChannelExecutionPath || channelWorkspaceBusyAction) {
       return;
     }
-    try {
-      globalThis.open?.(`file://${selectedChannelExecutionPath}`, "_blank", "noopener");
-      setChannelWorkspaceNotice(t("Opening workspace path."));
-    } catch {
-      void globalThis.navigator?.clipboard?.writeText(selectedChannelExecutionPath);
-      setChannelWorkspaceNotice(t("Workspace path copied."));
-    }
+    setChannelWorkspaceBusyAction("open");
+    setChannelWorkspaceNotice("");
+    setChannelWorkspaceError("");
+    void openChannelWorkspace(workspaceCwd, selectedChannelId)
+      .catch((caught: unknown) => {
+        setChannelWorkspaceError(caught instanceof Error ? caught.message : String(caught));
+      })
+      .finally(() => {
+        setChannelWorkspaceBusyAction("");
+      });
   }
 
   function addSelectedChannelTeammate(): void {

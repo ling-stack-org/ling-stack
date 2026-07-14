@@ -276,6 +276,10 @@ export async function refreshChannelWorkspace(cwd: string, channelId: string): P
   return daemonClient.refreshChannelWorkspace(cwd, channelId);
 }
 
+export async function openChannelWorkspace(cwd: string, channelId: string): Promise<ChannelWorkspaceResponse> {
+  return daemonClient.openChannelWorkspace(cwd, channelId);
+}
+
 export async function listChannelMessages(
   cwd: string,
   channelId: string,
