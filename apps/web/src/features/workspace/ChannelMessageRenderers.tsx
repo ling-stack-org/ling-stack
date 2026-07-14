@@ -317,7 +317,7 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
                 <ConversationArtifactStripPanel
                   items={externalArtifactItems}
                   cwd={externalArtifactCwd}
-                  runId={externalArtifactItems.find((item) => item.kind === "changed")?.recoveryRunId}
+                  recoveryTarget={externalArtifactItems.find((item) => item.kind === "changed")?.recoveryTarget}
                   loadPreview={input.loadPreview}
                   onOpenWorkspaceReview={input.onOpenWorkspaceReview}
                 />

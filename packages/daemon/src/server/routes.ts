@@ -636,7 +636,7 @@ export function parseChannelHandoffRoute(pathname: string): { readonly handoffId
 export function parseChannelWorkflowRoute(
   pathname: string,
 ):
-  | { readonly kind: "workflow"; readonly workflowId: string; readonly action?: "orchestrate" | "cancel" | "evidence" | "collaboration-card" }
+  | { readonly kind: "workflow"; readonly workflowId: string; readonly action?: "orchestrate" | "cancel" | "evidence" | "collaboration-card" | "workspace-changes" | "workspace-changes-undo" | "workspace-changes-reapply" }
   | { readonly kind: "steps"; readonly workflowId: string }
   | { readonly kind: "workflow-step"; readonly workflowStepId: string; readonly action?: "start" | "retry" | "evidence" }
   | undefined {
@@ -655,6 +655,15 @@ export function parseChannelWorkflowRoute(
   }
   if (segments.length === 3 && segments[0] === "workflows" && segments[2] === "collaboration-card") {
     return { kind: "workflow", workflowId: segments[1], action: "collaboration-card" };
+  }
+  if (segments.length === 3 && segments[0] === "workflows" && segments[2] === "workspace-changes") {
+    return { kind: "workflow", workflowId: segments[1], action: "workspace-changes" };
+  }
+  if (segments.length === 4 && segments[0] === "workflows" && segments[2] === "workspace-changes" && segments[3] === "undo") {
+    return { kind: "workflow", workflowId: segments[1], action: "workspace-changes-undo" };
+  }
+  if (segments.length === 4 && segments[0] === "workflows" && segments[2] === "workspace-changes" && segments[3] === "reapply") {
+    return { kind: "workflow", workflowId: segments[1], action: "workspace-changes-reapply" };
   }
   if (segments.length === 3 && segments[0] === "workflows" && segments[2] === "steps") {
     return { kind: "steps", workflowId: segments[1] };

@@ -124,6 +124,10 @@ export interface ConversationArtifactStripChangeArtifact {
   readonly previewable?: boolean;
 }
 
+export type ConversationWorkspaceRecoveryTarget =
+  | { readonly kind: "run"; readonly id: string }
+  | { readonly kind: "workflow"; readonly id: string };
+
 export interface ConversationArtifactStripItem {
   readonly id: string;
   readonly kind: ConversationArtifactStripItemKind;
@@ -138,7 +142,7 @@ export interface ConversationArtifactStripItem {
   readonly sizeBytes?: number;
   readonly previewKind?: "file" | "image";
   readonly previewable?: boolean;
-  readonly recoveryRunId?: string;
+  readonly recoveryTarget?: ConversationWorkspaceRecoveryTarget;
   readonly changeArtifacts?: readonly ConversationArtifactStripChangeArtifact[];
 }
 

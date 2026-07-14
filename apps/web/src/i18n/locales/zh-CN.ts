@@ -3,6 +3,7 @@ export const zhCN = {
     "Reapply": "重新应用",
     "Review changes": "审核",
     "Undo is unavailable for this run": "当前运行没有可恢复的变更记录",
+    "Undo is unavailable for this work": "当前工作没有可恢复的变更记录",
     "Undo changes to {count} files?": "撤销对 {count} 个文件的更改？",
     "Reapply changes to {count} files?": "重新应用对 {count} 个文件的更改？",
     "Workspace changes": "工作区变更",

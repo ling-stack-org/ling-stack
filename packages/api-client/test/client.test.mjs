@@ -36,6 +36,9 @@ test("builds workspace review recovery and open-action requests", async () => {
     { cwd: "/repo", runId: "run 1", state: "applied", canUndo: true, canReapply: false, files: [], summary: {}, updatedAt: "now" },
     { cwd: "/repo", runId: "run 1", state: "undone", canUndo: false, canReapply: true, files: [], summary: {}, updatedAt: "now" },
     { cwd: "/repo", runId: "run 1", state: "applied", canUndo: true, canReapply: false, files: [], summary: {}, updatedAt: "now" },
+    { cwd: "/repo", workflowId: "workflow 1", runIds: ["run 1", "run 2"], state: "applied", canUndo: true, canReapply: false, files: [], summary: {}, updatedAt: "now" },
+    { cwd: "/repo", workflowId: "workflow 1", runIds: ["run 1", "run 2"], state: "undone", canUndo: false, canReapply: true, files: [], summary: {}, updatedAt: "now" },
+    { cwd: "/repo", workflowId: "workflow 1", runIds: ["run 1", "run 2"], state: "applied", canUndo: true, canReapply: false, files: [], summary: {}, updatedAt: "now" },
     { cwd: "/repo", path: "src/a.ts", options: [] },
     { cwd: "/repo", path: "src/a.ts", target: "vscode", opened: true },
   ]);
@@ -45,6 +48,9 @@ test("builds workspace review recovery and open-action requests", async () => {
   await client.getRunWorkspaceChanges("run 1", "/repo");
   await client.undoRunWorkspaceChanges("run 1", "/repo");
   await client.reapplyRunWorkspaceChanges("run 1", "/repo");
+  await client.getWorkflowWorkspaceChanges("/repo", "workflow 1");
+  await client.undoWorkflowWorkspaceChanges("/repo", "workflow 1");
+  await client.reapplyWorkflowWorkspaceChanges("/repo", "workflow 1");
   await client.getWorkspaceFileOpenOptions("/repo", "src/a.ts");
   await client.openWorkspaceFile("/repo", "src/a.ts", { target: "vscode", line: 12 });
 
@@ -53,10 +59,13 @@ test("builds workspace review recovery and open-action requests", async () => {
     ["GET", "http://daemon.test/runs/run%201/workspace-changes?cwd=%2Frepo"],
     ["POST", "http://daemon.test/runs/run%201/workspace-changes/undo?cwd=%2Frepo"],
     ["POST", "http://daemon.test/runs/run%201/workspace-changes/reapply?cwd=%2Frepo"],
+    ["GET", "http://daemon.test/workflows/workflow%201/workspace-changes?cwd=%2Frepo"],
+    ["POST", "http://daemon.test/workflows/workflow%201/workspace-changes/undo?cwd=%2Frepo"],
+    ["POST", "http://daemon.test/workflows/workflow%201/workspace-changes/reapply?cwd=%2Frepo"],
     ["GET", "http://daemon.test/workspace-files/open-options?cwd=%2Frepo&path=src%2Fa.ts"],
     ["POST", "http://daemon.test/workspace-files/open?cwd=%2Frepo&path=src%2Fa.ts"],
   ]);
-  assert.equal(mock.calls[5].body, JSON.stringify({ target: "vscode", line: 12 }));
+  assert.equal(mock.calls[8].body, JSON.stringify({ target: "vscode", line: 12 }));
   assert.equal(
     client.workspaceFileContentUrl("/repo", "src/a.ts", true),
     "http://daemon.test/workspace-files/content?cwd=%2Frepo&path=src%2Fa.ts&download=1",

@@ -15,6 +15,7 @@ export const enUS = {
     "Reapply": "Reapply",
     "Review changes": "Review",
     "Undo is unavailable for this run": "Undo is unavailable for this run",
+    "Undo is unavailable for this work": "Undo is unavailable for this work",
     "Undo changes to {count} files?": "Undo changes to {count} files?",
     "Reapply changes to {count} files?": "Reapply changes to {count} files?",
     "Workspace changes": "Workspace changes",

@@ -194,7 +194,9 @@ export function workflowProgressToConversationWorkCell(model: WorkflowProgressMo
   const artifactStripItems = mergeConversationArtifactStripItems(
     model.artifactStripItems,
     (terminalReport?.artifactStripItems ?? []).filter((item) => item.kind !== "changed" || !hasBaseChangedItem),
-  );
+  ).map((item) => item.kind === "changed"
+    ? { ...item, recoveryTarget: { kind: "workflow" as const, id: model.workflowId } }
+    : item);
   return normalizeConversationOperationCell({
     id: model.id,
     sourceKind: "workflow",

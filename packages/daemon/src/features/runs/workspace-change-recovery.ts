@@ -31,20 +31,20 @@ import {
 
 export type RecoveryAction = "undo" | "reapply";
 
-interface RunPatchSet {
+export interface RunPatchSet {
   readonly approvals: readonly ApprovalRequest[];
   readonly plans: readonly PatchPlan[];
   readonly files: readonly RunWorkspaceChangeFile[];
   readonly summary: PatchSummary;
 }
 
-interface RecoveryPreflight {
+export interface RecoveryPreflight {
   readonly paths: readonly string[];
   readonly before: ReadonlyMap<string, string | undefined>;
   readonly after: ReadonlyMap<string, string | undefined>;
 }
 
-interface RecoveryIntentFile {
+export interface RecoveryIntentFile {
   readonly path: string;
   readonly beforeSha256: string;
   readonly afterSha256: string;
@@ -60,6 +60,11 @@ interface RecoveryObservation {
   readonly state: "applied" | "undone";
   readonly updatedAt?: string;
   readonly conflict?: string;
+}
+
+export interface RecoveryPlanStep {
+  readonly plan: PatchPlan;
+  readonly allowedWritePathSets: readonly (readonly string[])[];
 }
 
 export async function handleGetRunWorkspaceChanges(
@@ -115,7 +120,7 @@ export async function recoverRunWorkspaceChanges(
   if (patchSet.plans.length === 0) {
     throw new RunWorkspaceRecoveryError(409, "workspace_changes_unavailable", "This run has no successfully applied reversible patch records.");
   }
-  const events = listAllRunEvents(store, run.id);
+  const events = runScopedRecoveryEvents(listAllRunEvents(store, run.id));
   const observation = observeRecoveryState(run.cwd, patchSet, events);
   if (observation.conflict) {
     throw new RunWorkspaceRecoveryError(409, "workspace_change_conflict", observation.conflict);
@@ -151,7 +156,7 @@ export async function recoverRunWorkspaceChanges(
   return buildRunWorkspaceChangesResponse(store, run);
 }
 
-class RunWorkspaceRecoveryError extends Error {
+export class RunWorkspaceRecoveryError extends Error {
   constructor(
     readonly statusCode: number,
     readonly code: string,
@@ -167,7 +172,7 @@ export async function buildRunWorkspaceChangesResponse(
   run: RunSession,
 ): Promise<RunWorkspaceChangesResponse> {
   const patchSet = collectRunPatchSet(store, run.id);
-  const events = listAllRunEvents(store, run.id);
+  const events = runScopedRecoveryEvents(listAllRunEvents(store, run.id));
   const observation = observeRecoveryState(run.cwd, patchSet, events);
   const recoveryState = observation.state;
   const updatedAt = observation.updatedAt ?? run.updatedAt;
@@ -220,7 +225,7 @@ function resolveRunStore(
   return store && run ? { store, run } : undefined;
 }
 
-function collectRunPatchSet(store: RunStore, runId: string): RunPatchSet {
+export function collectRunPatchSet(store: RunStore, runId: string): RunPatchSet {
   const events = listAllRunEvents(store, runId);
   const successfulToolEnds = new Map<string, number>();
   for (const event of events) {
@@ -258,7 +263,7 @@ function isPatchPlan(value: unknown): value is PatchPlan {
   return isRecord(value) && value.format === APPLY_PATCH_FORMAT && Array.isArray(value.operations) && Array.isArray(value.touchedPaths) && isRecord(value.summary) && typeof value.rawPatchSha256 === "string";
 }
 
-function recoveryPlans(plans: readonly PatchPlan[], action: RecoveryAction): readonly PatchPlan[] {
+export function recoveryPlans(plans: readonly PatchPlan[], action: RecoveryAction): readonly PatchPlan[] {
   return action === "undo" ? [...plans].reverse().map(invertPatchPlan) : plans;
 }
 
@@ -267,16 +272,25 @@ async function preflightPatchSequence(
   allowedWritePathSets: readonly (readonly string[])[],
   plans: readonly PatchPlan[],
 ): Promise<RecoveryPreflight> {
-  const paths = uniquePaths(plans.flatMap((plan) => plan.touchedPaths));
+  return preflightRecoveryPlanSequence(cwd, plans.map((plan) => ({ plan, allowedWritePathSets })));
+}
+
+export async function preflightRecoveryPlanSequence(
+  cwd: string,
+  steps: readonly RecoveryPlanStep[],
+): Promise<RecoveryPreflight> {
+  const paths = uniquePaths(steps.flatMap((step) => step.plan.touchedPaths));
   assertNoInternalPatchPaths(paths);
-  for (const allowedWritePaths of allowedWritePathSets) {
-    assertPatchPathsWithinAllowedWritePaths(paths, cwd, allowedWritePaths);
-    assertNoSymlinkEscapes(paths, cwd, allowedWritePaths);
+  for (const step of steps) {
+    for (const allowedWritePaths of step.allowedWritePathSets) {
+      assertPatchPathsWithinAllowedWritePaths(step.plan.touchedPaths, cwd, allowedWritePaths);
+      assertNoSymlinkEscapes(step.plan.touchedPaths, cwd, allowedWritePaths);
+    }
   }
 
   const before = new Map(paths.map((path) => [path, readWorkspaceTextFile(cwd, path)] as const));
   const after = new Map(before);
-  for (const plan of plans) {
+  for (const { plan } of steps) {
     await applyPatchPlan({
       plan,
       readFile: (path) => after.get(path),
@@ -291,7 +305,7 @@ async function preflightPatchSequence(
   return { paths, before, after };
 }
 
-function commitRecovery(cwd: string, preflight: RecoveryPreflight): void {
+export function commitRecovery(cwd: string, preflight: RecoveryPreflight): void {
   const committed: string[] = [];
   try {
     for (const path of preflight.paths) {
@@ -328,7 +342,7 @@ function writeWorkspaceState(cwd: string, path: string, content: string | undefi
   }
 }
 
-function readAllowedWritePathSets(store: RunStore, run: RunSession): readonly (readonly string[])[] {
+export function readAllowedWritePathSets(store: RunStore, run: RunSession): readonly (readonly string[])[] {
   if (!isRecord(run.requestSnapshot) || !isRecord(run.requestSnapshot.effectivePolicySnapshot)) {
     throw new ApplyPatchError("The run does not contain a recoverable write-scope snapshot.");
   }
@@ -395,7 +409,7 @@ function observeRecoveryState(
   }
 }
 
-function recoveryIntentFiles(preflight: RecoveryPreflight): readonly RecoveryIntentFile[] {
+export function recoveryIntentFiles(preflight: RecoveryPreflight): readonly RecoveryIntentFile[] {
   return preflight.paths.map((path) => ({
     path,
     beforeSha256: hashRecoveryContent(preflight.before.get(path)),
@@ -426,7 +440,7 @@ function readRecoveryIntent(data: unknown, patchSet: RunPatchSet): RecoveryInten
   return { action: data.action, recoveryId: data.recoveryId, files };
 }
 
-function hashRecoveryContent(content: string | undefined): string {
+export function hashRecoveryContent(content: string | undefined): string {
   const hash = createHash("sha256");
   if (content === undefined) {
     hash.update("missing\0", "utf8");
@@ -437,7 +451,7 @@ function hashRecoveryContent(content: string | undefined): string {
   return hash.digest("hex");
 }
 
-function summarizePatchFiles(plans: readonly PatchPlan[]): readonly RunWorkspaceChangeFile[] {
+export function summarizePatchFiles(plans: readonly PatchPlan[]): readonly RunWorkspaceChangeFile[] {
   const files = new Map<string, { operationCount: number; additions: number; deletions: number }>();
   for (const operation of plans.flatMap((plan) => plan.operations)) {
     const current = files.get(operation.path) ?? { operationCount: 0, additions: 0, deletions: 0 };
@@ -451,7 +465,7 @@ function summarizePatchFiles(plans: readonly PatchPlan[]): readonly RunWorkspace
   return [...files.entries()].map(([path, stats]) => ({ path, ...stats }));
 }
 
-function summarizePatchPlans(plans: readonly PatchPlan[]): PatchSummary {
+export function summarizePatchPlans(plans: readonly PatchPlan[]): PatchSummary {
   const files = summarizePatchFiles(plans);
   return {
     fileCount: files.length,
@@ -477,11 +491,11 @@ function operationLineStats(operation: PatchOperation): { readonly additions: nu
   return { additions, deletions };
 }
 
-function uniquePaths(paths: readonly string[]): readonly string[] {
+export function uniquePaths(paths: readonly string[]): readonly string[] {
   return [...new Set(paths)];
 }
 
-function listAllRunEvents(store: RunStore, runId: string): readonly RunEventEnvelope[] {
+export function listAllRunEvents(store: RunStore, runId: string): readonly RunEventEnvelope[] {
   const events: RunEventEnvelope[] = [];
   let afterSeq = 0;
   while (true) {
@@ -494,13 +508,22 @@ function listAllRunEvents(store: RunStore, runId: string): readonly RunEventEnve
   }
 }
 
-function isTerminalRun(run: RunSession): boolean {
+export function isTerminalRun(run: RunSession): boolean {
   return run.status === "succeeded" || run.status === "failed" || run.status === "cancelled";
 }
 
-function recoveryErrorStatus(error: unknown): number {
+export function recoveryErrorStatus(error: unknown): number {
   if (!(error instanceof ApplyPatchError)) {
     return 500;
   }
   return /outside allowed write paths|resolves outside|symlink resolves outside/iu.test(error.message) ? 403 : 409;
+}
+
+function runScopedRecoveryEvents(events: readonly RunEventEnvelope[]): readonly RunEventEnvelope[] {
+  return events.filter((event) => {
+    if (event.type !== "workspace_change_recovery_started" && event.type !== "workspace_changes_undone" && event.type !== "workspace_changes_reapplied") {
+      return true;
+    }
+    return !isRecord(event.data) || event.data.scope !== "workflow";
+  });
 }

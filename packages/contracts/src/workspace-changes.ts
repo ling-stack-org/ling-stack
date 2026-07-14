@@ -61,6 +61,19 @@ export interface RunWorkspaceChangesResponse {
   readonly updatedAt: string;
 }
 
+export interface WorkflowWorkspaceChangesResponse {
+  readonly cwd: string;
+  readonly workflowId: string;
+  readonly runIds: readonly string[];
+  readonly state: RunWorkspaceChangeState;
+  readonly canUndo: boolean;
+  readonly canReapply: boolean;
+  readonly files: readonly RunWorkspaceChangeFile[];
+  readonly summary: RunWorkspaceChangeSummary;
+  readonly unavailableReason?: string;
+  readonly updatedAt: string;
+}
+
 export type WorkspaceFileOpenTarget =
   | "vscode"
   | "cursor"

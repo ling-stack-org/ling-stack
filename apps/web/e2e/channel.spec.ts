@@ -8425,20 +8425,21 @@ test("local channel work-cell demo fixture renders a realistic multi-agent opera
 
   await mockDaemon(page, state);
   let demoRecoveryState: "applied" | "undone" = "applied";
-  await page.route(/\/runs\/demo_work_cell_[^/]+\/workspace-changes(?:\/(?:undo|reapply))?(?:\?.*)?$/, async (route) => {
+  await page.route(/\/(?:runs|workflows)\/demo_work_cell_[^/]+\/workspace-changes(?:\/(?:undo|reapply))?(?:\?.*)?$/, async (route) => {
     const url = new URL(route.request().url());
     if (url.pathname.endsWith("/undo")) {
       demoRecoveryState = "undone";
     } else if (url.pathname.endsWith("/reapply")) {
       demoRecoveryState = "applied";
     }
-    const runId = url.pathname.split("/")[2] ?? "demo_work_cell_run";
+    const recoveryId = url.pathname.split("/")[2] ?? "demo_work_cell_recovery";
+    const workflowRecovery = url.pathname.startsWith("/workflows/");
     await route.fulfill({
       status: 200,
       contentType: "application/json",
       body: JSON.stringify({
         cwd: url.searchParams.get("cwd") ?? "/repo",
-        runId,
+        ...(workflowRecovery ? { workflowId: recoveryId, runIds: ["demo_work_cell_run_engineer", "demo_work_cell_run_qa"] } : { runId: recoveryId }),
         state: demoRecoveryState,
         canUndo: demoRecoveryState === "applied",
         canReapply: demoRecoveryState === "undone",
@@ -8606,8 +8607,23 @@ test("local channel work-cell demo fixture renders a realistic multi-agent opera
   await expect(changedSummary.locator(".conversation-work-cell-change-stat .delete")).toHaveText("-4");
   await expect(changedSummary.locator(":scope > svg")).toHaveCount(0);
   await expect(changedSummary).not.toHaveAttribute("aria-expanded");
-  await expect(changedSummary.getByRole("button", { name: "撤销", exact: true })).toHaveCount(0);
-  await expect(changedSummary.getByRole("button", { name: "重新应用", exact: true })).toHaveCount(0);
+  const undoButton = changedSummary.getByRole("button", { name: "撤销", exact: true });
+  await expect(undoButton).toBeEnabled();
+  const undoRequest = page.waitForRequest((request) =>
+    request.method() === "POST" && new URL(request.url()).pathname.startsWith("/workflows/") &&
+      new URL(request.url()).pathname.endsWith("/workspace-changes/undo")
+  );
+  await undoButton.click();
+  await undoRequest;
+  const reapplyButton = changedSummary.getByRole("button", { name: "重新应用", exact: true });
+  await expect(reapplyButton).toBeEnabled();
+  const reapplyRequest = page.waitForRequest((request) =>
+    request.method() === "POST" && new URL(request.url()).pathname.startsWith("/workflows/") &&
+      new URL(request.url()).pathname.endsWith("/workspace-changes/reapply")
+  );
+  await reapplyButton.click();
+  await reapplyRequest;
+  await expect(undoButton).toBeEnabled();
   await expect(changedSummary.getByRole("button", { name: "审核", exact: true })).toBeVisible();
   await expect(transcriptArtifacts.locator(".conversation-work-cell-artifacts").locator(":scope > *").last()).toHaveClass(/conversation-work-cell-change-group/);
   await expect.poll(() =>

@@ -65,6 +65,7 @@ import type {
   ChannelTeamSnapshotResponse,
   ChannelTeamSnapshotsResponse,
   WorkflowEvidenceResponse,
+  WorkflowWorkspaceChangesResponse,
   WorkflowCollaborationCardResponse,
   CreateChannelAttachmentRequest,
   CreateChannelBranchRequest,
@@ -566,6 +567,18 @@ export const channelEndpoints = {
 
   async getChannelWorkflow(this: LingDaemonEndpointContext, cwd: string, workflowId: string): Promise<ChannelWorkflowMutationResponse> {
       return this._get(`/workflows/${encodeURIComponent(workflowId)}`, { cwd });
+    },
+
+  async getWorkflowWorkspaceChanges(this: LingDaemonEndpointContext, cwd: string, workflowId: string): Promise<WorkflowWorkspaceChangesResponse> {
+      return this._get(`/workflows/${encodeURIComponent(workflowId)}/workspace-changes`, { cwd });
+    },
+
+  async undoWorkflowWorkspaceChanges(this: LingDaemonEndpointContext, cwd: string, workflowId: string): Promise<WorkflowWorkspaceChangesResponse> {
+      return this._post(`/workflows/${encodeURIComponent(workflowId)}/workspace-changes/undo`, { cwd }, {});
+    },
+
+  async reapplyWorkflowWorkspaceChanges(this: LingDaemonEndpointContext, cwd: string, workflowId: string): Promise<WorkflowWorkspaceChangesResponse> {
+      return this._post(`/workflows/${encodeURIComponent(workflowId)}/workspace-changes/reapply`, { cwd }, {});
     },
 
   async getChannelWorkflowEvidence(this: LingDaemonEndpointContext, cwd: string, workflowId: string): Promise<WorkflowEvidenceResponse> {

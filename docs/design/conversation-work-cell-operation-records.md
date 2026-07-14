@@ -153,6 +153,18 @@ edge of the row:
 - failed or stale targets remain non-mutating and report the daemon error inside the
   menu rather than falling back to an unrestricted local file URL.
 
+The changed-files row carries a structured recovery target rather than an optional bare
+run id:
+
+- a normal conversation, teammate-private run, or single-run work cell uses
+  `{ kind: "run", id: runId }`;
+- a channel multi-agent workflow uses `{ kind: "workflow", id: workflowId }` even when
+  its visible artifacts came from several Agent runs;
+- the shared artifact-strip component selects the matching status, undo, and reapply API
+  from that target and keeps the same button placement on every conversation surface;
+- a workflow target is never downgraded to its latest run because that would expose a
+  partial undo under an aggregate changed-files count.
+
 Once the final summary and artifact strip are present, the completed work cell's compact
 evidence disclosure shows references only. Changed-item and check counts are omitted
 because the operation stream and final changed-files group already own those facts.

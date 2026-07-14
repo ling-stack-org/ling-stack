@@ -1,5 +1,6 @@
 import type {
   RunWorkspaceChangesResponse,
+  WorkflowWorkspaceChangesResponse,
   WorkspaceChangesResponse,
   WorkspaceFileOpenOptionsResponse,
   WorkspaceFileOpenRequest,
@@ -21,6 +22,18 @@ export function undoRunWorkspaceChanges(cwd: string, runId: string): Promise<Run
 
 export function reapplyRunWorkspaceChanges(cwd: string, runId: string): Promise<RunWorkspaceChangesResponse> {
   return daemonClient.reapplyRunWorkspaceChanges(runId, cwd);
+}
+
+export function getWorkflowWorkspaceChanges(cwd: string, workflowId: string): Promise<WorkflowWorkspaceChangesResponse> {
+  return daemonClient.getWorkflowWorkspaceChanges(cwd, workflowId);
+}
+
+export function undoWorkflowWorkspaceChanges(cwd: string, workflowId: string): Promise<WorkflowWorkspaceChangesResponse> {
+  return daemonClient.undoWorkflowWorkspaceChanges(cwd, workflowId);
+}
+
+export function reapplyWorkflowWorkspaceChanges(cwd: string, workflowId: string): Promise<WorkflowWorkspaceChangesResponse> {
+  return daemonClient.reapplyWorkflowWorkspaceChanges(cwd, workflowId);
 }
 
 export function getWorkspaceFileOpenOptions(cwd: string, path: string): Promise<WorkspaceFileOpenOptionsResponse> {

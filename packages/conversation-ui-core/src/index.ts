@@ -34,6 +34,7 @@ export type {
   ConversationWorkCellRowTone,
   ConversationWorkCellStat,
   ConversationWorkCellViewModel,
+  ConversationWorkspaceRecoveryTarget,
 } from "./work-cell-view-model.js";
 export { normalizeConversationOperationCell } from "./work-cell-view-model.js";
 export {

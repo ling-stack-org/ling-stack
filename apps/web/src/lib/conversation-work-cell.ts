@@ -22,6 +22,7 @@ import {
   type ConversationWorkCellRowDetailLine,
   type ConversationWorkCellRowTone,
   type ConversationWorkCellViewModel,
+  type ConversationWorkspaceRecoveryTarget,
 } from "@ling-stack/conversation-ui-core";
 import type { ApprovalRequest, ExecutionAction, LingApprovalCheckpoint, LingThreadEvidenceResponse, LingTraceDetailResponse, LingTraceSpan, LingTurn, LingTurnRun, RunArtifact, RunSession, TerminalReportDto } from "../types.js";
 import type { Translate } from "../i18n.js";
@@ -58,6 +59,7 @@ export type {
   ConversationWorkCellRowTone,
   ConversationWorkCellStat,
   ConversationWorkCellViewModel,
+  ConversationWorkspaceRecoveryTarget,
 } from "@ling-stack/conversation-ui-core";
 
 /** @deprecated Use ConversationOperationCellMode from @ling-stack/conversation-ui-core. */
@@ -251,7 +253,7 @@ export function buildConversationArtifactStripItems(input: {
       id: "changed",
       kind: "changed",
       label: changeEntries.length === 1 ? input.t("Edited 1 file") : input.t("Edited {count} files", { count: changeEntries.length }),
-      recoveryRunId,
+      recoveryTarget: recoveryRunId ? { kind: "run", id: recoveryRunId } : undefined,
       changeArtifacts: changeEntries,
       tone: "neutral",
     });

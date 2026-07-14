@@ -79,6 +79,36 @@ Undo is available only when all of these conditions hold:
 Undo applies the inverse patch plans in reverse order. It never executes
 `git checkout`, `git reset`, or a repository-wide restore.
 
+### Multi-Agent Undo Means Workflow-Owned Atomic Recovery
+
+A completed multi-agent work cell can aggregate reversible patches from several runs.
+Binding its `Undo` action to the latest run would be incorrect because the visible changed-
+files summary can contain earlier Engineer, QA, or follow-up edits. Ling therefore uses a
+workflow recovery target for channel workflow work cells.
+
+Workflow recovery:
+
+- collects every terminal run attached to the workflow's steps, including retry runs whose
+  `workflowStepId` still points at the workflow;
+- ignores read-only runs with no successfully applied reversible PatchPlan;
+- requires every recoverable run to use the same execution directory;
+- validates each PatchPlan against the write-scope snapshot of the run that created it and
+  against the current workspace policy;
+- orders plans by successful tool completion time, with workflow step position, run creation
+  time, and in-run plan order as deterministic tie-breakers;
+- preflights the complete cross-run patch sequence in memory before the first filesystem
+  mutation;
+- undoes the combined sequence in reverse order and reapplies it in forward order;
+- commits all resulting file states with the same compare-before-write and best-effort
+  rollback guarantees as run recovery;
+- records one workflow-scoped recovery intent on a deterministic workflow run so daemon
+  restart reconciliation can distinguish fully applied, fully reverted, and interrupted
+  recovery states.
+
+The workflow action is available only when at least one reversible PatchPlan exists. It
+does not claim ownership of shell, external-editor, binary, or otherwise unrecorded
+changes; those changes remain visible in Review but outside automatic recovery.
+
 ### Reapply Means Exact Patch Replay
 
 After undo, Ling records a run event marking the patch set as undone. Reapply is enabled
@@ -255,6 +285,23 @@ interface RunWorkspaceChangesResponse {
   readonly summary: PatchSummary;
   readonly unavailableReason?: string;
 }
+
+interface WorkflowWorkspaceChangesResponse {
+  readonly cwd: string;
+  readonly workflowId: string;
+  readonly runIds: readonly string[];
+  readonly state: RunWorkspaceChangeState;
+  readonly canUndo: boolean;
+  readonly canReapply: boolean;
+  readonly files: readonly RunWorkspaceChangeFile[];
+  readonly summary: RunWorkspaceChangeSummary;
+  readonly unavailableReason?: string;
+  readonly updatedAt: string;
+}
+
+type ConversationWorkspaceRecoveryTarget =
+  | { readonly kind: "run"; readonly id: string }
+  | { readonly kind: "workflow"; readonly id: string };
 ```
 
 ## API Surface
@@ -268,6 +315,10 @@ GET  /workspace-files/content?cwd=...&path=...&download=1
 GET  /runs/:runId/workspace-changes?cwd=...
 POST /runs/:runId/workspace-changes/undo?cwd=...
 POST /runs/:runId/workspace-changes/reapply?cwd=...
+
+GET  /workflows/:workflowId/workspace-changes?cwd=...
+POST /workflows/:workflowId/workspace-changes/undo?cwd=...
+POST /workflows/:workflowId/workspace-changes/reapply?cwd=...
 ```
 
 ## Failure Handling
@@ -278,6 +329,10 @@ POST /runs/:runId/workspace-changes/reapply?cwd=...
 - An active run returns `409 run_not_terminal`.
 - A run without reversible patch plans returns `200` with `state: unavailable` for GET
   and `409` for mutations.
+- A workflow whose recoverable runs use different execution directories returns
+  `state: unavailable`; Ling never spans one recovery across multiple worktrees.
+- A workflow recovery conflict returns before the first file write. A write-time race
+  triggers the same bounded rollback used by run recovery.
 - Multi-plan recovery performs a complete in-memory preflight before the first disk write.
 
 ## Verification
@@ -286,6 +341,11 @@ Required coverage:
 
 - inverse patch generation for add, update, and delete,
 - multi-action undo in reverse order and reapply in forward order,
+- multi-run workflow undo in reverse workflow order and reapply in forward workflow order,
+- overlapping edits to the same file across two workflow runs,
+- workflow recovery rejection for active runs, mixed execution directories, revoked write
+  scope, and intervening file edits,
+- interrupted workflow recovery intent reconciliation after the filesystem commit,
 - conflict detection after an intervening edit,
 - workspace diff for staged, unstaged, and untracked files,
 - staged and unstaged changes that cancel in the worktree but remain pending in the index,
@@ -298,6 +358,7 @@ Required coverage:
 - local-Origin and daemon-known workspace enforcement,
 - path escape rejection for preview, open, and download,
 - work-cell action-state rendering,
+- shared work-cell routing for run and workflow recovery targets,
 - Review navigator open, filter, file click, and diff scroll,
 - Open-with option menu and request payload,
 - inline Open-with rendering for TerminalReport artifacts with one trusted changed-file

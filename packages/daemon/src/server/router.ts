@@ -92,6 +92,10 @@ import {
   handleChannelWorkflowStepsCollection,
   handleChannelWorkflowsCollection,
 } from "../features/channels/workflows.js";
+import {
+  handleGetWorkflowWorkspaceChanges,
+  handleMutateWorkflowWorkspaceChanges,
+} from "../features/channels/workflow-workspace-change-recovery.js";
 import { createWorkflowStepContextArtifact } from "../features/channels/workflow-step-packets.js";
 import {
   handleExternalWorkActionCancel,
@@ -1583,6 +1587,28 @@ export async function routeRequest(
   const workflowRoute = parseChannelWorkflowRoute(url.pathname);
   if (workflowRoute) {
     if (workflowRoute.kind === "workflow") {
+      if (workflowRoute.action === "workspace-changes" || workflowRoute.action === "workspace-changes-undo" || workflowRoute.action === "workspace-changes-reapply") {
+        const expectedMethod = workflowRoute.action === "workspace-changes" ? "GET" : "POST";
+        if (request.method !== expectedMethod) {
+          writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for workflow workspace recovery` });
+          return;
+        }
+        if (!allowLocalWorkspaceRequest({ request, response, storeRegistry, cwd: url.searchParams.get("cwd") ?? undefined })) {
+          return;
+        }
+        if (workflowRoute.action === "workspace-changes") {
+          await handleGetWorkflowWorkspaceChanges(response, url, storeRegistry, workflowRoute.workflowId);
+        } else {
+          await handleMutateWorkflowWorkspaceChanges(
+            response,
+            url,
+            storeRegistry,
+            workflowRoute.workflowId,
+            workflowRoute.action === "workspace-changes-undo" ? "undo" : "reapply",
+          );
+        }
+        return;
+      }
       if (workflowRoute.action === "orchestrate") {
         if (request.method !== "POST") {
           writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for workflow orchestration` });
