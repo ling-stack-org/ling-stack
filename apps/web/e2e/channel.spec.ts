@@ -2930,6 +2930,29 @@ test("channel settings manage workspace binding", async ({ page }) => {
   const details = page.getByLabel("Channel management");
   const workspaceControl = details.getByLabel("Channel workspace");
   await expect(workspaceControl).toContainText("Local");
+  const executionPathInput = details.getByLabel("Execution path");
+  const manualExecutionPath = "/tmp/manual-channel-path";
+  await executionPathInput.fill(manualExecutionPath);
+  await expect(details.getByRole("button", { name: "Save" })).toBeEnabled();
+  await details.getByRole("button", { name: "Save" }).click();
+  await expect.poll(() => {
+    const channel = state.channels.find((item) => isRecord(item) && item.id === "channel_engineering");
+    if (!isRecord(channel) || !isRecord(channel.workspaceBinding)) {
+      return undefined;
+    }
+    return [channel.boundPath, channel.workspaceBinding.mode, channel.workspaceBinding.executionPath];
+  }).toEqual([manualExecutionPath, "local", manualExecutionPath]);
+
+  const selectedExecutionPath = "/Users/gsx/minimax-agent-cn/projects";
+  await details.getByRole("button", { name: "Change directory" }).click();
+  await expect.poll(() => {
+    const channel = state.channels.find((item) => isRecord(item) && item.id === "channel_engineering");
+    if (!isRecord(channel) || !isRecord(channel.workspaceBinding)) {
+      return undefined;
+    }
+    return [channel.boundPath, channel.workspaceBinding.mode, channel.workspaceBinding.executionPath];
+  }).toEqual([selectedExecutionPath, "local", selectedExecutionPath]);
+  await expect(executionPathInput).toHaveValue(selectedExecutionPath);
   const openWorkspaceRequest = page.waitForRequest((request) =>
     request.method() === "POST" && new URL(request.url()).pathname === "/channels/channel_engineering/workspace/open"
   );

@@ -7690,6 +7690,30 @@ code,
   grid-column: 1 / -1;
 }
 
+.channel-execution-path-control {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 34px 34px;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.channel-execution-path-control > input {
+  min-width: 0;
+}
+
+.channel-execution-path-action {
+  width: 34px;
+  min-width: 34px;
+  height: 34px;
+  min-height: 34px;
+  padding: 0;
+}
+
+.channel-execution-path-error {
+  overflow-wrap: anywhere;
+}
+
 .channel-autosave-status {
   display: inline-flex;
   align-items: center;

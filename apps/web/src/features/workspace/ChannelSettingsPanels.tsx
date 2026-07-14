@@ -37,6 +37,7 @@ import type {
 } from "../../types.js";
 import { TeammateAvatarView } from "../teammates/TeammateAvatarView.js";
 import type { LocalTeammateDraft } from "../teammates/index.js";
+import { ChannelExecutionPathField } from "./ChannelExecutionPathField.js";
 import { ChannelRuntimePolicyFields, ProviderPresetOptions } from "./WorkspaceControls.js";
 
 export type ChannelNotificationLevel = "all" | "mentions" | "muted";
@@ -174,6 +175,7 @@ export function ChannelSettingsPanels({
   channelEditForm,
   channelSettingsAutosaveState,
   onChannelEditFormChange,
+  onChangeChannelWorkspacePath,
   providersLoading,
   providers,
   taskReadyProviders,
@@ -227,6 +229,7 @@ export function ChannelSettingsPanels({
   readonly channelEditForm: ChannelFormState;
   readonly channelSettingsAutosaveState: ChannelSettingsAutosaveState;
   readonly onChannelEditFormChange: (form: ChannelFormState) => void;
+  readonly onChangeChannelWorkspacePath: (path: string) => Promise<void>;
   readonly providersLoading: boolean;
   readonly providers: readonly ProviderPreset[];
   readonly taskReadyProviders: readonly ProviderPreset[];
@@ -300,10 +303,13 @@ export function ChannelSettingsPanels({
               <ProviderPresetOptions runnableProviders={taskReadyProviders} blockedProviders={setupChatProviders} />
             </select>
           </label>
-          <label className="field channel-path-field">
-            <span>{t("Execution path")}</span>
-            <input value={channelEditForm.boundPath} onChange={(event) => onChannelEditFormChange({ ...channelEditForm, boundPath: event.target.value })} disabled={!selectedChannelId} />
-          </label>
+          <ChannelExecutionPathField
+            value={channelEditForm.boundPath}
+            pickerCwd={cwd}
+            disabled={!selectedChannelId || Boolean(channelWorkspaceBusyAction)}
+            forceApply={Boolean(selectedChannelWorkspace && selectedChannelWorkspace.mode !== "local")}
+            onApply={onChangeChannelWorkspacePath}
+          />
 
           {selectedChannelWorkspace ? (
             <section className="channel-workspace-control" aria-label={t("Channel workspace")}>

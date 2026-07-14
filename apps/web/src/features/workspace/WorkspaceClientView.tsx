@@ -3832,6 +3832,7 @@ export function WorkspaceClientView({
       channelEditForm={channelEditForm}
       channelSettingsAutosaveState={channelSettingsAutosaveState}
       onChannelEditFormChange={updateChannelSettingsEditForm}
+      onChangeChannelWorkspacePath={changeChannelEnvironmentWorkspacePath}
       providersLoading={providersLoading}
       providers={providers}
       taskReadyProviders={taskReadyProviders}
