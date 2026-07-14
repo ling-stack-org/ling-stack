@@ -8811,6 +8811,7 @@ code,
 
 .conversation-work-cell-change-files {
   display: grid;
+  width: 100%;
   min-width: 0;
 }
 
@@ -8823,7 +8824,7 @@ code,
   width: 100%;
   min-width: 0;
   min-height: 30px;
-  padding: 5px 8px 5px 51px;
+  padding: 5px 8px 5px 12px;
   border: 0;
   border-radius: 5px;
   background: transparent;

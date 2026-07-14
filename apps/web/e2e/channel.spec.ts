@@ -8625,6 +8625,18 @@ test("local channel work-cell demo fixture renders a realistic multi-agent opera
   await reapplyRequest;
   await expect(undoButton).toBeEnabled();
   await expect(changedSummary.getByRole("button", { name: "审核", exact: true })).toBeVisible();
+  const changedFilesList = changedGroup.locator(".conversation-work-cell-change-files");
+  const firstChangedFile = changedFilesList.locator(".conversation-work-cell-change-file").first();
+  const [changedFilesListBox, firstChangedFileBox, firstChangedPathBox] = await Promise.all([
+    changedFilesList.boundingBox(),
+    firstChangedFile.boundingBox(),
+    firstChangedFile.locator("code").boundingBox(),
+  ]);
+  expect(changedFilesListBox).not.toBeNull();
+  expect(firstChangedFileBox).not.toBeNull();
+  expect(firstChangedPathBox).not.toBeNull();
+  expect(Math.round(firstChangedFileBox!.width)).toBe(Math.round(changedFilesListBox!.width));
+  expect(Math.round(firstChangedPathBox!.x - firstChangedFileBox!.x)).toBeLessThanOrEqual(16);
   await expect(transcriptArtifacts.locator(".conversation-work-cell-artifacts").locator(":scope > *").last()).toHaveClass(/conversation-work-cell-change-group/);
   await expect.poll(() =>
     assistantTranscript.locator(".conversation-turn-assistant-transcript").evaluate((element) => {
