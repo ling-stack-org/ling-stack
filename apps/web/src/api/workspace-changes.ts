@@ -7,6 +7,7 @@ import type {
   WorkspaceFileOpenResponse,
 } from "../types.js";
 import { daemonClient } from "./client.js";
+import { channelWorkCellDemoWorkflowRecovery } from "../lib/work-cell-demo-fixture.js";
 
 export function getWorkspaceChanges(cwd: string): Promise<WorkspaceChangesResponse> {
   return daemonClient.getWorkspaceChanges(cwd);
@@ -25,14 +26,26 @@ export function reapplyRunWorkspaceChanges(cwd: string, runId: string): Promise<
 }
 
 export function getWorkflowWorkspaceChanges(cwd: string, workflowId: string): Promise<WorkflowWorkspaceChangesResponse> {
+  const demo = channelWorkCellDemoWorkflowRecovery({ cwd, workflowId });
+  if (demo) {
+    return Promise.resolve(demo);
+  }
   return daemonClient.getWorkflowWorkspaceChanges(cwd, workflowId);
 }
 
 export function undoWorkflowWorkspaceChanges(cwd: string, workflowId: string): Promise<WorkflowWorkspaceChangesResponse> {
+  const demo = channelWorkCellDemoWorkflowRecovery({ cwd, workflowId, action: "undo" });
+  if (demo) {
+    return Promise.resolve(demo);
+  }
   return daemonClient.undoWorkflowWorkspaceChanges(cwd, workflowId);
 }
 
 export function reapplyWorkflowWorkspaceChanges(cwd: string, workflowId: string): Promise<WorkflowWorkspaceChangesResponse> {
+  const demo = channelWorkCellDemoWorkflowRecovery({ cwd, workflowId, action: "reapply" });
+  if (demo) {
+    return Promise.resolve(demo);
+  }
   return daemonClient.reapplyWorkflowWorkspaceChanges(cwd, workflowId);
 }
 

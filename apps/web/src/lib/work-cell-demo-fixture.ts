@@ -1,4 +1,4 @@
-import type { ChannelMessage, ChannelWorkflow, ChannelWorkflowStep, ExecutionAction, MemoryObject, PreviewContentKind, PreviewContentResponse, RunArtifact, RunSession, TerminalReportDto, UsedMemoryEvent } from "../types.js";
+import type { ChannelMessage, ChannelWorkflow, ChannelWorkflowStep, ExecutionAction, MemoryObject, PreviewContentKind, PreviewContentResponse, RunArtifact, RunSession, TerminalReportDto, UsedMemoryEvent, WorkflowWorkspaceChangesResponse } from "../types.js";
 import type { PreviewRequest } from "./previews.js";
 
 export const channelWorkCellDemoStorageKey = "ling-stack.workCellDemo";
@@ -16,6 +16,7 @@ export interface ChannelWorkCellDemoFixture {
 }
 
 const channelWorkCellDemoArtifactPrefix = "demo_work_cell_";
+const channelWorkCellDemoRecoveryStateByWorkflowId = new Map<string, "applied" | "undone">();
 
 export function channelWorkCellDemoFixtureEnabled(): boolean {
   if (!import.meta.env.DEV || typeof window === "undefined") {
@@ -26,6 +27,58 @@ export function channelWorkCellDemoFixtureEnabled(): boolean {
     return window.localStorage.getItem(channelWorkCellDemoStorageKey) === "true" ||
       params.get("workCellDemo") === "1" ||
       params.get("lingWorkCellDemo") === "true";
+  } catch {
+    return false;
+  }
+}
+
+export function channelWorkCellDemoWorkflowRecovery(input: {
+  readonly cwd: string;
+  readonly workflowId: string;
+  readonly action?: "undo" | "reapply";
+}): WorkflowWorkspaceChangesResponse | undefined {
+  if (!channelWorkCellInteractiveDemoEnabled() || !input.workflowId.startsWith(channelWorkCellDemoArtifactPrefix)) {
+    return undefined;
+  }
+  if (input.action) {
+    channelWorkCellDemoRecoveryStateByWorkflowId.set(input.workflowId, input.action === "undo" ? "undone" : "applied");
+  }
+  const state = channelWorkCellDemoRecoveryStateByWorkflowId.get(input.workflowId) ?? "applied";
+  const idPrefix = input.workflowId.endsWith("_workflow")
+    ? input.workflowId.slice(0, -"_workflow".length)
+    : input.workflowId;
+  return {
+    cwd: input.cwd,
+    workflowId: input.workflowId,
+    runIds: [
+      `${idPrefix}_run_engineer`,
+      `${idPrefix}_run_qa`,
+      `${idPrefix}_run_engineer_followup`,
+    ],
+    state,
+    canUndo: state === "applied",
+    canReapply: state === "undone",
+    files: [],
+    summary: {
+      fileCount: 5,
+      addCount: 0,
+      updateCount: 5,
+      deleteCount: 0,
+      moveCount: 0,
+      addedLines: 15,
+      removedLines: 4,
+    },
+    updatedAt: new Date().toISOString(),
+  };
+}
+
+function channelWorkCellInteractiveDemoEnabled(): boolean {
+  if (!import.meta.env.DEV || typeof window === "undefined") {
+    return false;
+  }
+  try {
+    const params = new URLSearchParams(window.location.search);
+    return params.get("workCellDemo") === "1" || params.get("lingWorkCellDemo") === "true";
   } catch {
     return false;
   }
