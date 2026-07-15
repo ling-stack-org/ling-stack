@@ -9282,6 +9282,25 @@ code,
   background: var(--surface-selected);
 }
 
+.workspace-file-open-target-icon {
+  display: grid;
+  width: 16px;
+  height: 16px;
+  place-items: center;
+}
+
+.workspace-file-open-target-icon > img {
+  display: block;
+  width: 16px;
+  height: 16px;
+  object-fit: contain;
+}
+
+.workspace-file-open-target-icon > svg {
+  width: 13px;
+  height: 13px;
+}
+
 .workspace-file-open-popover > small {
   padding: 4px 6px;
   overflow: hidden;

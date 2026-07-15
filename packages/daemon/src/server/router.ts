@@ -208,6 +208,7 @@ import { resolveProviderForRun } from "../features/runs/providers.js";
 import { handleGetWorkspaceChanges } from "../features/previews/workspace-changes.js";
 import {
   handleGetWorkspaceFileContent,
+  handleGetWorkspaceFileOpenIcon,
   handleGetWorkspaceFileOpenOptions,
   handlePostWorkspaceFileOpen,
 } from "../features/previews/workspace-file-actions.js";
@@ -1284,6 +1285,19 @@ export async function routeRequest(
     await handleGetWorkspaceChanges(response, url);
     return;
   }
+  const workspaceFileOpenIconTarget = parseWorkspaceFileOpenIconTarget(url.pathname);
+  if (request.method === "GET" && workspaceFileOpenIconTarget) {
+    const cwd = url.searchParams.get("cwd")?.trim();
+    if (!cwd) {
+      writeJson(response, 400, { error: "bad_request", message: "cwd query parameter is required" });
+      return;
+    }
+    if (!allowLocalWorkspaceRequest({ request, response, storeRegistry, cwd })) {
+      return;
+    }
+    await handleGetWorkspaceFileOpenIcon(request, response, workspaceFileOpenIconTarget);
+    return;
+  }
   if (request.method === "GET" && url.pathname === "/workspace-files/open-options") {
     if (!allowLocalWorkspaceRequest({ request, response, storeRegistry, cwd: url.searchParams.get("cwd") ?? undefined })) {
       return;
@@ -2350,6 +2364,14 @@ function parseConversationRoute(pathname: string): { readonly threadId: string }
   const segments = pathname.split("/").filter(Boolean).map(decodeURIComponent);
   if (segments.length === 2 && segments[0] === "conversations" && segments[1]) {
     return { threadId: segments[1] };
+  }
+  return undefined;
+}
+
+function parseWorkspaceFileOpenIconTarget(pathname: string): string | undefined {
+  const segments = pathname.split("/").filter(Boolean).map(decodeURIComponent);
+  if (segments.length === 3 && segments[0] === "workspace-files" && segments[1] === "open-icons" && segments[2]) {
+    return segments[2];
   }
   return undefined;
 }

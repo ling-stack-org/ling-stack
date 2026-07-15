@@ -21,6 +21,7 @@ import type {
   WorkspaceFileOpenOptionsResponse,
   WorkspaceFileOpenRequest,
   WorkspaceFileOpenResponse,
+  WorkspaceFileOpenTarget,
 } from "@ling-stack/contracts";
 import type { LingDaemonEndpointContext, PublicEndpointGroup } from "../transport.js";
 
@@ -113,6 +114,10 @@ export const operationEndpoints = {
 
   async openWorkspaceFile(this: LingDaemonEndpointContext, cwd: string, path: string, input: WorkspaceFileOpenRequest): Promise<WorkspaceFileOpenResponse> {
       return this._post("/workspace-files/open", { cwd, path }, input);
+    },
+
+  workspaceFileOpenIconUrl(this: LingDaemonEndpointContext, cwd: string, target: WorkspaceFileOpenTarget): string {
+      return this._url(`/workspace-files/open-icons/${encodeURIComponent(target)}`, { cwd });
     },
 
   workspaceFileContentUrl(this: LingDaemonEndpointContext, cwd: string, path: string, download = false): string {

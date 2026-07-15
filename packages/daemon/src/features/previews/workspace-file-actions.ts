@@ -14,6 +14,13 @@ import {
   resolveWorkspaceFileTarget,
   WorkspaceFileTargetError,
 } from "./workspace-file-preview.js";
+import {
+  isWorkspaceFileOpenTarget,
+  workspaceFileOpenTargetDefinition,
+  workspaceFileOpenTargetDefinitions,
+  type WorkspaceFileOpenTargetDefinition,
+} from "./workspace-file-open-targets.js";
+import { loadWorkspaceFileOpenIcon } from "./workspace-file-open-icons.js";
 
 export function handleGetWorkspaceFileOpenOptions(response: ServerResponse, url: URL): void {
   const request = workspaceFileQuery(url);
@@ -30,6 +37,42 @@ export function handleGetWorkspaceFileOpenOptions(response: ServerResponse, url:
     });
   } catch (error) {
     writeWorkspaceFileError(response, error, "workspace_file_open_options_failed");
+  }
+}
+
+export async function handleGetWorkspaceFileOpenIcon(
+  request: IncomingMessage,
+  response: ServerResponse,
+  target: string,
+): Promise<void> {
+  if (!isWorkspaceFileOpenTarget(target)) {
+    writeJson(response, 404, { error: "workspace_file_open_icon_not_found", message: "Application icon is not available." });
+    return;
+  }
+  try {
+    const icon = await loadWorkspaceFileOpenIcon(target);
+    if (!icon) {
+      writeJson(response, 404, { error: "workspace_file_open_icon_not_found", message: "Application icon is not available." });
+      return;
+    }
+    if (request.headers["if-none-match"] === icon.etag) {
+      setCorsHeaders(response);
+      response.writeHead(304, { "Cache-Control": "private, no-cache", ETag: icon.etag });
+      response.end();
+      return;
+    }
+    setCorsHeaders(response);
+    response.writeHead(200, {
+      "Content-Type": "image/png",
+      "Content-Length": String(icon.bytes.length),
+      "Cache-Control": "private, no-cache",
+      "Cross-Origin-Resource-Policy": "cross-origin",
+      "ETag": icon.etag,
+      "X-Content-Type-Options": "nosniff",
+    });
+    response.end(icon.bytes);
+  } catch {
+    writeJson(response, 404, { error: "workspace_file_open_icon_not_found", message: "Application icon is not available." });
   }
 }
 
@@ -102,20 +145,26 @@ function workspaceFileQuery(url: URL): { readonly cwd: string; readonly path: st
 }
 
 function workspaceFileOpenOptions(): readonly WorkspaceFileOpenOption[] {
-  const mac = process.platform === "darwin";
-  return ([
-    { id: "vscode", label: "Visual Studio Code", available: editorAvailable("code", "Visual Studio Code") },
-    { id: "cursor", label: "Cursor", available: editorAvailable("cursor", "Cursor") },
-    { id: "zed", label: "Zed", available: editorAvailable("zed", "Zed") },
-    { id: "sublime_text", label: "Sublime Text", available: editorAvailable("subl", "Sublime Text") },
-    { id: "textedit", label: "TextEdit", available: macApplicationAvailable("TextEdit") },
-    { id: "xcode", label: "Xcode", available: editorAvailable("xed", "Xcode") },
-    { id: "pycharm", label: "PyCharm", available: editorAvailable("charm", "PyCharm") },
-    { id: "webstorm", label: "WebStorm", available: editorAvailable("webstorm", "WebStorm") },
-    { id: "intellij", label: "IntelliJ IDEA", available: editorAvailable("idea", "IntelliJ IDEA") },
-    { id: "finder", label: "Show in Finder", available: mac },
-    { id: "terminal", label: "Terminal", available: mac || commandAvailable("x-terminal-emulator") },
-  ] satisfies readonly WorkspaceFileOpenOption[]).filter((option) => option.available);
+  return workspaceFileOpenTargetDefinitions()
+    .map((definition) => ({
+      id: definition.id,
+      label: definition.label,
+      available: workspaceFileOpenTargetAvailable(definition),
+    } satisfies WorkspaceFileOpenOption))
+    .filter((option) => option.available);
+}
+
+function workspaceFileOpenTargetAvailable(definition: WorkspaceFileOpenTargetDefinition): boolean {
+  if (definition.kind === "finder") {
+    return process.platform === "darwin";
+  }
+  if (definition.kind === "terminal") {
+    return process.platform === "darwin" || commandAvailable("x-terminal-emulator");
+  }
+  if (process.platform === "darwin" && definition.macApplication) {
+    return macApplicationAvailable(definition.macApplication);
+  }
+  return definition.command ? commandAvailable(definition.command) : false;
 }
 
 function commandAvailable(command: string): boolean {
@@ -124,10 +173,6 @@ function commandAvailable(command: string): boolean {
 
 function macApplicationAvailable(application: string): boolean {
   return process.platform === "darwin" && spawnSync("/usr/bin/open", ["-Ra", application], { stdio: "ignore" }).status === 0;
-}
-
-function editorAvailable(command: string, macApplication: string): boolean {
-  return process.platform === "darwin" ? macApplicationAvailable(macApplication) : commandAvailable(command);
 }
 
 async function launchWorkspaceFile(target: WorkspaceFileOpenTarget, path: string, line: number | undefined): Promise<void> {
@@ -143,8 +188,8 @@ async function launchWorkspaceFile(target: WorkspaceFileOpenTarget, path: string
     await spawnDetached("x-terminal-emulator", ["--working-directory", dirname(path)]);
     return;
   }
-  const editor = workspaceEditorDefinition(target);
-  if (!editor) {
+  const editor = workspaceFileOpenTargetDefinition(target);
+  if (editor.kind !== "editor" || !editor.macApplication) {
     throw new Error(`Unsupported workspace file open target: ${target}`);
   }
   const commandPath = editor.command ? resolveCommandPath(editor.command) : undefined;
@@ -153,22 +198,6 @@ async function launchWorkspaceFile(target: WorkspaceFileOpenTarget, path: string
     return;
   }
   await spawnDetached("/usr/bin/open", ["-a", editor.macApplication, path]);
-}
-
-function workspaceEditorDefinition(target: WorkspaceFileOpenTarget): {
-  readonly command?: string;
-  readonly macApplication: string;
-} | undefined {
-  if (target === "vscode") return { command: "code", macApplication: "Visual Studio Code" };
-  if (target === "cursor") return { command: "cursor", macApplication: "Cursor" };
-  if (target === "zed") return { command: "zed", macApplication: "Zed" };
-  if (target === "sublime_text") return { command: "subl", macApplication: "Sublime Text" };
-  if (target === "textedit") return { macApplication: "TextEdit" };
-  if (target === "xcode") return { command: "xed", macApplication: "Xcode" };
-  if (target === "pycharm") return { command: "charm", macApplication: "PyCharm" };
-  if (target === "webstorm") return { command: "webstorm", macApplication: "WebStorm" };
-  if (target === "intellij") return { command: "idea", macApplication: "IntelliJ IDEA" };
-  return undefined;
 }
 
 function editorArgs(target: WorkspaceFileOpenTarget, path: string, line: number | undefined): readonly string[] {
@@ -220,12 +249,6 @@ function spawnDetachedProcess(command: string, args: readonly string[], env = pr
       resolve();
     });
   });
-}
-
-function isWorkspaceFileOpenTarget(value: unknown): value is WorkspaceFileOpenTarget {
-  return value === "vscode" || value === "cursor" || value === "zed" || value === "sublime_text" ||
-    value === "textedit" || value === "xcode" || value === "pycharm" || value === "webstorm" ||
-    value === "intellij" || value === "finder" || value === "terminal";
 }
 
 function writeWorkspaceFileError(response: ServerResponse, error: unknown, fallbackCode: string): void {

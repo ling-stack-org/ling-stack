@@ -150,6 +150,10 @@ edge of the row:
   locations never gain workspace-open authority through string guessing;
 - the daemon remains authoritative for current file existence, workspace containment,
   regular-file validation, and installed-application discovery;
+- installed application entries prefer a daemon-served local PNG icon while Finder,
+  Terminal, download, and failed icon loads retain their compact semantic fallback icon;
+- application icons occupy a stable 16px visual slot and must not resize menu rows while
+  loading or after fallback;
 - failed or stale targets remain non-mutating and report the daemon error inside the
   menu rather than falling back to an unrestricted local file URL.
 

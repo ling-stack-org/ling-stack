@@ -6375,6 +6375,14 @@ export async function handleDaemonRoute(
     await route.fulfill({ json: { cwd, settings: state.workspaceSettings } });
     return;
   }
+  if (request.method() === "GET" && /^\/workspace-files\/open-icons\/[^/]+$/u.test(path)) {
+    await route.fulfill({
+      status: 200,
+      contentType: "image/png",
+      body: Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9ZJk8AAAAASUVORK5CYII=", "base64"),
+    });
+    return;
+  }
   if (request.method() === "GET" && path === "/workspace-files/open-options") {
     const requestedCwd = url.searchParams.get("cwd");
     const requestedPath = url.searchParams.get("path");

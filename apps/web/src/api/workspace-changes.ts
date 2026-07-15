@@ -5,6 +5,7 @@ import type {
   WorkspaceFileOpenOptionsResponse,
   WorkspaceFileOpenRequest,
   WorkspaceFileOpenResponse,
+  WorkspaceFileOpenTarget,
 } from "../types.js";
 import { daemonClient } from "./client.js";
 import { channelWorkCellDemoWorkflowRecovery } from "../lib/work-cell-demo-fixture.js";
@@ -55,6 +56,10 @@ export function getWorkspaceFileOpenOptions(cwd: string, path: string): Promise<
 
 export function openWorkspaceFile(cwd: string, path: string, input: WorkspaceFileOpenRequest): Promise<WorkspaceFileOpenResponse> {
   return daemonClient.openWorkspaceFile(cwd, path, input);
+}
+
+export function workspaceFileOpenIconUrl(cwd: string, target: WorkspaceFileOpenTarget): string {
+  return daemonClient.workspaceFileOpenIconUrl(cwd, target);
 }
 
 export function workspaceFileContentUrl(cwd: string, path: string, download = false): string {

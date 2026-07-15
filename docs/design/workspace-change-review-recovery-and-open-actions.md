@@ -236,6 +236,50 @@ a generic `Default app` entry. The supported discovery set starts with:
 - Terminal at the containing directory,
 - download copy through a workspace-scoped content endpoint.
 
+### Local Application Icons
+
+Installed application rows use the real local application icon when the daemon can
+resolve one. This is a local capability, not a browser filesystem capability:
+
+```text
+WorkspaceFileOpenMenu
+  -> GET /workspace-files/open-icons/:target?cwd=/trusted/workspace
+  -> daemon validates local Origin + trusted cwd + allowlisted target
+  -> platform application discovery
+  -> bounded PNG conversion and in-memory cache
+  -> Web renders the PNG or falls back to the semantic Lucide icon
+```
+
+The icon route accepts only a `WorkspaceFileOpenTarget` already present in the launch
+adapter registry. It never accepts an application path, executable path, bundle path,
+icon filename, or arbitrary bundle identifier from the browser. A successful response is
+`image/png`; unavailable, stale, or unsupported icons return a normal non-success status
+and leave the existing fallback icon visible.
+
+macOS implementation rules:
+
+- resolve the installed `.app` bundle from the known application name and bundle metadata;
+- prefer direct `/Applications` and user `Applications` candidates, then use Spotlight
+  metadata as a discovery fallback;
+- read `Contents/Info.plist` to locate `CFBundleIconFile` or a bounded `.icns` fallback
+  inside `Contents/Resources`;
+- convert the source icon to a 64 by 64 PNG with the system `sips` utility;
+- cache by target, resolved application path, source icon mtime, and requested size so
+  repeated menu opens need only a source mtime check and do not repeat metadata or
+  conversion process execution;
+- return an ETag and require browser revalidation so application upgrades can refresh the
+  icon without transferring unchanged PNG bytes;
+- keep cache data in daemon memory or an OS temporary location, never in the workspace.
+
+The first implementation targets macOS because the current launcher already uses
+LaunchServices through `/usr/bin/open`. The endpoint shape remains platform-neutral:
+Windows can later use shell executable icon extraction, and Linux can resolve the
+`Icon` field from an installed `.desktop` entry and the active icon theme.
+
+Static brand icons are fallback presentation only. They do not prove that an application
+is installed and do not replace the launcher adapter because line-addressed launch
+arguments still differ across VS Code, Xcode, JetBrains IDEs, Zed, and Sublime Text.
+
 Security rules:
 
 - browser requests must come from a local HTTP(S) Origin; requests without Origin remain
@@ -250,6 +294,8 @@ Security rules:
   workspace file paths,
 - downloads stream file bytes instead of buffering the complete file in daemon memory,
 - unavailable applications are omitted or disabled,
+- application icon requests are restricted to known open targets and never expose local
+  application or icon paths in public response bodies,
 - the Web client never receives an unrestricted local-file URL.
 
 Line-addressed file references request a bounded text window around the target line. The

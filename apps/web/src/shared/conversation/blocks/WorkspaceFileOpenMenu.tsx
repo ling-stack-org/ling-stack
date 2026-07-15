@@ -12,6 +12,7 @@ import {
   getWorkspaceFileOpenOptions,
   openWorkspaceFile,
   workspaceFileContentUrl,
+  workspaceFileOpenIconUrl,
 } from "../../../api.js";
 import { useI18n } from "../../../i18n.js";
 import type {
@@ -140,7 +141,7 @@ export function WorkspaceFileOpenMenu({
           {loading ? <span className="workspace-file-open-loading"><Loader2 className="spin" size={13} />{t("Loading")}</span> : null}
           {options.map((option) => (
             <button type="button" key={option.id} onClick={() => void launch(option.id)}>
-              {openTargetIcon(option.id)}
+              <OpenTargetIcon cwd={cwd} target={option.id} />
               <span>{openTargetLabel(option, t)}</span>
             </button>
           ))}
@@ -195,9 +196,32 @@ function openTargetLabel(option: WorkspaceFileOpenOption, t: (key: string) => st
   return option.label;
 }
 
-function openTargetIcon(target: WorkspaceFileOpenTarget): JSX.Element {
-  if (target === "finder") return <FolderOpen size={13} />;
-  if (target === "terminal") return <SquareTerminal size={13} />;
-  if (target === "textedit") return <FileText size={13} />;
-  return <Code2 size={13} />;
+function OpenTargetIcon({
+  cwd,
+  target,
+}: {
+  readonly cwd: string;
+  readonly target: WorkspaceFileOpenTarget;
+}): JSX.Element {
+  const [failed, setFailed] = useState(false);
+  const fallback = openTargetFallbackIcon(target);
+  if (target === "finder" || target === "terminal" || failed) {
+    return <span className="workspace-file-open-target-icon" aria-hidden="true">{fallback}</span>;
+  }
+  return (
+    <span className="workspace-file-open-target-icon" aria-hidden="true">
+      <img
+        alt=""
+        src={workspaceFileOpenIconUrl(cwd, target)}
+        onError={() => setFailed(true)}
+      />
+    </span>
+  );
+}
+
+function openTargetFallbackIcon(target: WorkspaceFileOpenTarget): JSX.Element {
+  if (target === "finder") return <FolderOpen />;
+  if (target === "terminal") return <SquareTerminal />;
+  if (target === "textedit") return <FileText />;
+  return <Code2 />;
 }

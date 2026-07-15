@@ -8626,6 +8626,14 @@ test("local channel work-cell demo fixture renders a realistic multi-agent opera
   await expect(openMenu).toContainText("Visual Studio Code");
   await expect(openMenu).toContainText("TextEdit");
   await expect(openMenu).not.toContainText("Default app");
+  const vscodeOpenIcon = openMenu.getByRole("button", { name: "Visual Studio Code", exact: true }).locator(".workspace-file-open-target-icon > img");
+  const textEditOpenIcon = openMenu.getByRole("button", { name: "TextEdit", exact: true }).locator(".workspace-file-open-target-icon > img");
+  await expect(vscodeOpenIcon).toHaveAttribute("src", /\/workspace-files\/open-icons\/vscode\?/u);
+  await expect(textEditOpenIcon).toHaveAttribute("src", /\/workspace-files\/open-icons\/textedit\?/u);
+  await expect.poll(() => vscodeOpenIcon.evaluate((image) => image instanceof HTMLImageElement ? image.naturalWidth : 0)).toBeGreaterThan(0);
+  await expect.poll(() => textEditOpenIcon.evaluate((image) => image instanceof HTMLImageElement ? image.naturalWidth : 0)).toBeGreaterThan(0);
+  await expect(openMenu.locator(".workspace-file-open-target-icon > svg")).toHaveCount(2);
+  await expect(openMenu.locator(".workspace-file-open-target-icon > svg").first()).toBeVisible();
   const [openWithTriggerBox, openMenuBox] = await Promise.all([
     openWithTrigger.boundingBox(),
     openMenu.boundingBox(),
