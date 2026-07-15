@@ -2414,6 +2414,12 @@ test("channel settings can add and remove teammates without preferred specialist
     return isRecord(channelNotifications) ? channelNotifications.channel_engineering : undefined;
   }).toBe("muted");
   await expect.poll(() => page.evaluate(() => localStorage.getItem("ling-stack.channelNotifications.%2Ftmp%2Fling-stack-workspace.channel_engineering"))).toBeNull();
+
+  await page.reload();
+  await openEngineeringChannel(page);
+  await page.getByRole("button", { name: "More channel views" }).click();
+  await page.getByRole("menuitem", { name: "Settings" }).click();
+  await expect(page.getByLabel("Channel notifications").getByRole("radio", { name: "Muted" })).toHaveAttribute("aria-checked", "true");
 });
 
 test("channel settings attaches an AI council by reference", async ({ page }) => {
