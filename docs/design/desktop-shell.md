@@ -1,5 +1,11 @@
 # Desktop Shell
 
+## Status
+
+Approved architecture direction. Packaging has not started. The minimal Electron shell
+required by Computer Use picture-in-picture is the first concrete implementation target;
+tray, updater, and full keychain UX remain later shell slices.
+
 ## Purpose
 
 This document records the future desktop shell design.
@@ -18,6 +24,8 @@ contracts, and approval boundaries.
 - Start, stop, and monitor the local daemon.
 - Reuse the same Web UI and daemon API.
 - Add OS keychain, tray/menu bar, notifications, file picker, and update UX.
+- Add cross-platform floating Computer Use preview windows without owning Computer Use
+  runtime state or approval policy.
 - Keep Desktop downstream of daemon state machines, approvals, leases, and audit logs.
 - Render the shared `ConversationTranscript` contract from the daemon instead of copying
   Web-only conversation grouping logic.
@@ -37,6 +45,41 @@ Reasoning:
 - Tauri remains a later evaluation when package size and native boundaries matter more
   than speed of iteration.
 
+## Shared Main UI Synchronization Contract
+
+Desktop must load the same built Web application as the browser surface. It must not keep
+a copied Desktop page tree that needs manual synchronization after every Web UI change.
+
+```text
+apps/web shared build
+  -> browser
+  -> Desktop main BrowserWindow
+
+apps/desktop Desktop-only renderers
+  -> Computer Use PiP
+  -> future OS-owned utility windows
+```
+
+Desktop differences enter through a narrow capability provider exposed by preload. A
+shared component may show an OS-specific action only when that capability exists, but
+the underlying conversation, dock, task, settings, and transcript models remain shared.
+
+Rules:
+
+- Build the Web UI and Desktop shell from the same repository revision.
+- Do not copy `WorkspaceClientView`, conversation routes, dock pages, or provider/settings
+  pages into `apps/desktop`.
+- Do not expose generic IPC to make shared components Desktop-aware.
+- Keep Desktop-specific commands behind typed capability groups.
+- Keep shared semantic tokens and browser-safe renderer primitives in shared packages.
+- Keep separate Desktop windows small and purpose-specific; they consume shared
+  contracts but do not become a second application model.
+- A main UI restyle or navigation change should normally require zero Desktop-main
+  changes and at most a small capability-slot or geometry-marker update.
+
+This allows Desktop shell and Computer Use infrastructure to start before final main UI
+placement is approved.
+
 ## Target Structure
 
 ```text
@@ -51,7 +94,10 @@ apps/desktop/
   preload/
     index.ts
   renderer/
-    # loads the built Web UI
+    main-window/
+      # loads the built Web UI
+    computer-use-preview/
+      # dedicated Desktop-only PiP renderer
   resources/
     icons/
   tests/
@@ -70,6 +116,8 @@ Desktop owns:
 - OS keychain access,
 - update UX,
 - crash/restart affordances.
+- Computer Use picture-in-picture BrowserWindow lifecycle, screen placement, local
+  visibility preferences, capture-adapter lifecycle, and media cleanup.
 
 Desktop does not own:
 
@@ -84,6 +132,33 @@ Desktop does not own:
 - provider adapters,
 - GitHub automation logic,
 - workspace persistence schema.
+- Computer Use session legality, stop authorization, approval state, durable audit state,
+  or terminal status.
+
+## Computer Use Picture-in-Picture Boundary
+
+Desktop presents active Computer Use state but does not reconstruct or own it.
+
+```text
+Computer Use runtime/plugin
+  -> daemon projection and control-plane event
+  -> Desktop preview coordinator
+  -> macOS/Windows capture adapter
+  -> picture-in-picture BrowserWindow
+```
+
+The shared visual and behavior layer is cross-platform. macOS and Windows differ only in
+capture, permission, source focus, and optional native rendering optimization.
+
+Hide and Close affect the preview only. `Stop Computer Use` is a separate audited runtime
+command. The first version must not use private `CAContext`/`CALayerHost`, private
+CoreGraphics virtual-display APIs, or undocumented Windows composition APIs.
+
+Detailed contracts and sequencing:
+
+- [Desktop Computer Use Picture-in-Picture](desktop-computer-use-picture-in-picture.md)
+- [Desktop Computer Use Picture-in-Picture Detailed Design](desktop-computer-use-picture-in-picture-detailed-design.md)
+- [Desktop Computer Use Picture-in-Picture Implementation Plan](desktop-computer-use-picture-in-picture-implementation-plan.md)
 
 ## Conversation Transcript Boundary
 
