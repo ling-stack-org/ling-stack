@@ -5380,7 +5380,16 @@ test("explicit mentions still reply and keep proposal extraction enabled", async
 
 test("auto_route is rejected by channel create and update while the feature flag is disabled", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-auto-route-disabled-"));
-  const daemon = await startDaemonForTest(undefined, {}, { channels: { autoRoute: false, intentSelector: false } });
+  let channelStore;
+  const daemon = await startDaemonForTest(undefined, {
+    storeFactory: (storeCwd) => {
+      const store = createSqliteRunStore(storeCwd);
+      if (storeCwd === cwd) {
+        channelStore = store;
+      }
+      return store;
+    },
+  }, { channels: { autoRoute: false, intentSelector: false } });
   try {
     const createUrl = `${daemon.url}/channels?cwd=${encodeURIComponent(cwd)}`;
     const createBody = {
@@ -5405,6 +5414,18 @@ test("auto_route is rejected by channel create and update while the feature flag
     });
     assert.equal(updateResponse.status, 400);
     assert.equal((await updateResponse.json()).error, "auto_route_disabled");
+
+    assert.ok(channelStore);
+    channelStore.updateChannel(channel.id, { autoReplyMode: "auto_route" }, new Date().toISOString());
+    const renameResponse = await fetch(`${daemon.url}/channels/${encodeURIComponent(channel.id)}?cwd=${encodeURIComponent(cwd)}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "Renamed", autoReplyMode: "auto_route" }),
+    });
+    assert.equal(renameResponse.status, 200);
+    const renamed = (await renameResponse.json()).channel;
+    assert.equal(renamed.name, "Renamed");
+    assert.equal(renamed.autoReplyMode, "auto_route");
   } finally {
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });

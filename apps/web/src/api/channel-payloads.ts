@@ -28,8 +28,6 @@ export function channelFormToUpdatePayload(form: ChannelFormState): UpdateChanne
     boundPath: form.boundPath.trim() || null,
     workspaceBinding: form.workspaceBinding ?? null,
     defaultProviderPresetId: form.defaultProviderPresetId || null,
-    defaultTeammateId: null,
-    autoReplyMode: form.autoReplyMode,
     responseLanguage: form.responseLanguage,
     allowedTools: form.allowedTools.filter(isRunnerTool),
     runtimePolicy: form.runtimePolicy,

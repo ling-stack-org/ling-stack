@@ -91,7 +91,7 @@ export function ChannelExecutionPathField({
           disabled={disabled || Boolean(busyAction)}
         />
         <button
-          className="icon-button channel-execution-path-action"
+          className="icon-button channel-settings-field-action"
           type="button"
           aria-label={t("Change directory")}
           title={t("Change directory")}
@@ -101,7 +101,7 @@ export function ChannelExecutionPathField({
           {busyAction === "select" ? <Loader2 className="spin" size={15} /> : <FolderOpen size={15} />}
         </button>
         <button
-          className="icon-button channel-execution-path-action"
+          className="icon-button channel-settings-field-action"
           type="button"
           aria-label={t("Save")}
           title={t("Save")}

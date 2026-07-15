@@ -7698,11 +7698,23 @@ code,
   min-width: 0;
 }
 
+.channel-name-control {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 34px;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.channel-name-control > input {
+  min-width: 0;
+}
+
 .channel-execution-path-control > input {
   min-width: 0;
 }
 
-.channel-execution-path-action {
+.channel-settings-field-action {
   width: 34px;
   min-width: 34px;
   height: 34px;
@@ -7710,7 +7722,8 @@ code,
   padding: 0;
 }
 
-.channel-execution-path-error {
+.channel-execution-path-error,
+.channel-name-error {
   overflow-wrap: anywhere;
 }
 

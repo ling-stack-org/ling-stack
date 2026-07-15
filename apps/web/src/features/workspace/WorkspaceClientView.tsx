@@ -2283,6 +2283,21 @@ export function WorkspaceClientView({
     setChannelSettingsAutosaveRevision((current) => current + 1);
   }
 
+  async function saveChannelName(name: string): Promise<void> {
+    if (!selectedChannelId) {
+      return;
+    }
+    const previousForm = channelEditForm;
+    const nextForm = { ...channelEditForm, name: name.trim() };
+    onChannelEditFormChange(nextForm);
+    try {
+      await onSaveChannel(nextForm);
+    } catch (error) {
+      onChannelEditFormChange(previousForm);
+      throw error;
+    }
+  }
+
   async function runChannelWorkspaceAction(
     action: string,
     operation: () => Promise<{ readonly binding: ChannelWorkspaceBinding }>,
@@ -3822,6 +3837,7 @@ export function WorkspaceClientView({
       channelTeamMetricsPanel={channelTeamMetricsPanel}
       channelEditForm={channelEditForm}
       onChannelEditFormChange={updateChannelSettingsEditForm}
+      onSaveChannelName={saveChannelName}
       onChangeChannelWorkspacePath={changeChannelEnvironmentWorkspacePath}
       providersLoading={providersLoading}
       providers={providers}

@@ -37,6 +37,7 @@ import type {
 import { TeammateAvatarView } from "../teammates/TeammateAvatarView.js";
 import type { LocalTeammateDraft } from "../teammates/index.js";
 import { ChannelExecutionPathField } from "./ChannelExecutionPathField.js";
+import { ChannelNameField } from "./ChannelNameField.js";
 import { ChannelRuntimePolicyFields, ProviderPresetOptions } from "./WorkspaceControls.js";
 
 export type ChannelNotificationLevel = "all" | "mentions" | "muted";
@@ -172,6 +173,7 @@ export function ChannelSettingsPanels({
   channelTeamMetricsPanel,
   channelEditForm,
   onChannelEditFormChange,
+  onSaveChannelName,
   onChangeChannelWorkspacePath,
   providersLoading,
   providers,
@@ -225,6 +227,7 @@ export function ChannelSettingsPanels({
   readonly channelTeamMetricsPanel: ReactNode;
   readonly channelEditForm: ChannelFormState;
   readonly onChannelEditFormChange: (form: ChannelFormState) => void;
+  readonly onSaveChannelName: (name: string) => Promise<void>;
   readonly onChangeChannelWorkspacePath: (path: string) => Promise<void>;
   readonly providersLoading: boolean;
   readonly providers: readonly ProviderPreset[];
@@ -283,10 +286,11 @@ export function ChannelSettingsPanels({
         </div>
 
         <div className="channel-options-grid channel-options-grid-primary">
-          <label className="field channel-name-field">
-            <span>{t("Name")}</span>
-            <input value={channelEditForm.name} onChange={(event) => onChannelEditFormChange({ ...channelEditForm, name: event.target.value })} disabled={!selectedChannelId} />
-          </label>
+          <ChannelNameField
+            value={channelEditForm.name}
+            disabled={!selectedChannelId}
+            onSave={onSaveChannelName}
+          />
           <label className="field">
             <span>{t("Run provider")}</span>
             <select value={channelEditForm.defaultProviderPresetId} onChange={(event) => onChannelEditFormChange({ ...channelEditForm, defaultProviderPresetId: event.target.value })} disabled={providersLoading || providers.length === 0 || !selectedChannelId}>

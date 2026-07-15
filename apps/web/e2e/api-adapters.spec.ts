@@ -244,9 +244,9 @@ test("form payload adapters preserve daemon request boundary semantics", () => {
     name: "General",
     boundPath: null,
     defaultProviderPresetId: null,
-    defaultTeammateId: null,
-    autoReplyMode: "mentions_only",
   });
+  expect(channelFormToUpdatePayload(channelForm)).not.toHaveProperty("defaultTeammateId");
+  expect(channelFormToUpdatePayload(channelForm)).not.toHaveProperty("autoReplyMode");
 
   expect(taskEditFormToPayload({ title: "T", prompt: "P", status: "review" })).toEqual({
     title: "T",

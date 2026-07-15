@@ -1833,6 +1833,11 @@ test("channel runtime policy is visible while preferred specialist controls stay
     createMockTeammate({ id: "engineer", displayName: "Ling Engineer" }),
     createMockTeammate({ id: "designer", roleKey: "designer", displayName: "Ling Designer" }),
   ];
+  state.channels = state.channels.map((channel) =>
+    isRecord(channel) && channel.id === "channel_engineering"
+      ? { ...channel, autoReplyMode: "auto_route" }
+      : channel
+  );
   const openAiTemplate = {
     templateId: "openai-gpt",
     description: "Official OpenAI endpoint.",
@@ -1860,9 +1865,23 @@ test("channel runtime policy is visible while preferred specialist controls stay
   await expect(currentManagement.getByLabel("Preferred specialist")).toHaveCount(0);
   await expect(currentManagement).not.toContainText("Preferred specialist");
   await expect(currentManagement.getByLabel("Ling reply")).toHaveCount(0);
-  await expect(currentManagement.getByRole("button", { name: "Save channel" })).toHaveCount(0);
+  const currentNameSave = currentManagement.getByRole("button", { name: "Save channel" });
+  await expect(currentNameSave).toBeVisible();
+  await expect(currentNameSave).toBeDisabled();
   await expect(currentManagement.locator(".channel-autosave-status")).toHaveCount(0);
   await expect(page.locator(".channel-notification-panel > .channel-settings-section-head > small")).toHaveCount(0);
+  await currentManagement.getByLabel("Name").fill("Engineering QA");
+  const legacyRenameRequest = page.waitForRequest((request) =>
+    request.method() === "PATCH" && new URL(request.url()).pathname === "/channels/channel_engineering"
+  );
+  await currentNameSave.click();
+  const legacyRenameBody = await (await legacyRenameRequest).postDataJSON();
+  expect(legacyRenameBody).not.toHaveProperty("autoReplyMode");
+  expect(legacyRenameBody).not.toHaveProperty("defaultTeammateId");
+  await expect.poll(() => {
+    const updated = state.channels.find((channel) => isRecord(channel) && channel.id === "channel_engineering");
+    return isRecord(updated) ? [updated.name, updated.autoReplyMode] : [];
+  }).toEqual(["Engineering QA", "auto_route"]);
 
   const navigation = page.getByLabel("Ling Stack navigation");
   await navigation.getByRole("button", { name: "Channel actions" }).click();
@@ -1908,8 +1927,12 @@ test("channel runtime policy is visible while preferred specialist controls stay
   await expect(details.getByLabel("Ling reply")).toHaveCount(0);
   await expect(details.getByRole("button", { name: "Create channel" })).toHaveCount(0);
   await expect(details.getByRole("button", { name: "Create default" })).toHaveCount(0);
-  await expect(details.getByRole("button", { name: "Save channel" })).toHaveCount(0);
+  const releaseNameSave = details.getByRole("button", { name: "Save channel" });
+  await expect(releaseNameSave).toBeVisible();
+  await expect(releaseNameSave).toBeDisabled();
   await details.getByLabel("Name").fill("Release QA");
+  await expect(releaseNameSave).toBeEnabled();
+  await releaseNameSave.click();
   await expect.poll(() => {
     const updated = state.channels.find((channel) => isRecord(channel) && channel.id === (isRecord(created) ? created.id : ""));
     return isRecord(updated) ? updated.name : "";
