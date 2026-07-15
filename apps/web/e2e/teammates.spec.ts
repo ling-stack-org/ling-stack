@@ -1058,7 +1058,13 @@ test("AI teammate private workspace sends blocked chat replies and persists sett
       sourceRefs: [],
     }],
     participants: [],
-    artifacts: [],
+    artifacts: [{
+      id: "artifact_private_acceptance",
+      kind: "document",
+      title: "private-acceptance.md",
+      path: "docs/private-acceptance.md",
+      sourceRefs: [{ kind: "file", id: "docs/private-acceptance.md", visibility: "conversation" }],
+    }],
     risks: [],
     references: [],
     evidenceSnapshotId: "snapshot_private_acceptance",
@@ -1140,6 +1146,10 @@ test("AI teammate private workspace sends blocked chat replies and persists sett
   await expect(page.locator(".brand-mark")).toHaveCount(0);
   await expect.poll(() => readSidebarSelection(page)).toEqual({ activeNav: [], selectedRows: ["Ling Engineer"] });
   await expect(page.getByText(/Model ready|Model needs setup/)).toBeVisible();
+  const privateChatStatus = page.locator(".teammate-chat-status-row");
+  await expect(privateChatStatus).toContainText("Memory on");
+  await expect(privateChatStatus).toContainText(/\d+ attachments/u);
+  await expect(privateChatStatus.locator(".conversation-status-meta small")).toHaveCount(0);
   const privateChatDarkSurfaces = await page.evaluate(() => {
     const selectors = [
       ".workspace-teammate-private-surface",
@@ -1186,6 +1196,7 @@ test("AI teammate private workspace sends blocked chat replies and persists sett
   await expect(privateTerminalReport.getByRole("button", { name: "private-acceptance.md", exact: true })).toBeVisible();
   await expect(privateTerminalReport).toContainText("Acceptance review");
   await expect(privateTerminalReport.locator(".terminal-report-participants")).toHaveCount(0);
+  await expect(linkedRunPrivateRow.locator(".conversation-work-cell-artifact-row").getByRole("button", { name: "Open with" })).toBeVisible();
   await expect(linkedRunPrivateRow.locator(".message-reply-button")).toHaveCount(0);
   const privateToolbar = page.getByLabel("Private chat actions");
   await expect(privateToolbar).toHaveClass(/workspace-top-right-toolbar/);

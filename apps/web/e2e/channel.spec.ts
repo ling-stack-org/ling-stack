@@ -1833,6 +1833,11 @@ test("channel runtime policy is visible while preferred specialist controls stay
     createMockTeammate({ id: "engineer", displayName: "Ling Engineer" }),
     createMockTeammate({ id: "designer", roleKey: "designer", displayName: "Ling Designer" }),
   ];
+  state.channels = state.channels.map((channel) =>
+    isRecord(channel) && channel.id === "channel_engineering"
+      ? { ...channel, autoReplyMode: "auto_route" }
+      : channel
+  );
   const openAiTemplate = {
     templateId: "openai-gpt",
     description: "Official OpenAI endpoint.",
@@ -1856,12 +1861,33 @@ test("channel runtime policy is visible while preferred specialist controls stay
   await expect(page.getByText("active channel")).toHaveCount(0);
   await page.getByRole("button", { name: "More channel views" }).click();
   await page.getByRole("menuitem", { name: "Settings" }).click();
+  const settingsTabs = page.getByRole("tablist", { name: "Channel settings navigation" });
+  await expect(settingsTabs.getByRole("tab", { name: "General" })).toHaveAttribute("aria-selected", "true");
+  await expect(settingsTabs.getByRole("tab", { name: "Workspace" })).toHaveAttribute("aria-selected", "false");
+  await expect(page.getByLabel("Channel workspace settings")).toHaveCount(0);
+  await expect(page.getByLabel("Channel teammates")).toHaveCount(0);
+  await expect(page.getByLabel("Channel AI councils")).toHaveCount(0);
   const currentManagement = page.getByLabel("Channel management");
   await expect(currentManagement.getByLabel("Preferred specialist")).toHaveCount(0);
   await expect(currentManagement).not.toContainText("Preferred specialist");
   await expect(currentManagement.getByLabel("Ling reply")).toHaveCount(0);
-  await expect(currentManagement.getByRole("button", { name: "Save channel" })).toHaveCount(0);
-  await expect(currentManagement.getByText("Changes save automatically")).toBeVisible();
+  const currentNameSave = currentManagement.getByRole("button", { name: "Save channel" });
+  await expect(currentNameSave).toBeVisible();
+  await expect(currentNameSave).toBeDisabled();
+  await expect(currentManagement.locator(".channel-autosave-status")).toHaveCount(0);
+  await expect(page.locator(".channel-notification-panel > .channel-settings-section-head > small")).toHaveCount(0);
+  await currentManagement.getByLabel("Name").fill("Engineering QA");
+  const legacyRenameRequest = page.waitForRequest((request) =>
+    request.method() === "PATCH" && new URL(request.url()).pathname === "/channels/channel_engineering"
+  );
+  await currentNameSave.click();
+  const legacyRenameBody = await (await legacyRenameRequest).postDataJSON();
+  expect(legacyRenameBody).not.toHaveProperty("autoReplyMode");
+  expect(legacyRenameBody).not.toHaveProperty("defaultTeammateId");
+  await expect.poll(() => {
+    const updated = state.channels.find((channel) => isRecord(channel) && channel.id === "channel_engineering");
+    return isRecord(updated) ? [updated.name, updated.autoReplyMode] : [];
+  }).toEqual(["Engineering QA", "auto_route"]);
 
   const navigation = page.getByLabel("Ling Stack navigation");
   await navigation.getByRole("button", { name: "Channel actions" }).click();
@@ -1907,13 +1933,17 @@ test("channel runtime policy is visible while preferred specialist controls stay
   await expect(details.getByLabel("Ling reply")).toHaveCount(0);
   await expect(details.getByRole("button", { name: "Create channel" })).toHaveCount(0);
   await expect(details.getByRole("button", { name: "Create default" })).toHaveCount(0);
-  await expect(details.getByRole("button", { name: "Save channel" })).toHaveCount(0);
+  const releaseNameSave = details.getByRole("button", { name: "Save channel" });
+  await expect(releaseNameSave).toBeVisible();
+  await expect(releaseNameSave).toBeDisabled();
   await details.getByLabel("Name").fill("Release QA");
+  await expect(releaseNameSave).toBeEnabled();
+  await releaseNameSave.click();
   await expect.poll(() => {
     const updated = state.channels.find((channel) => isRecord(channel) && channel.id === (isRecord(created) ? created.id : ""));
     return isRecord(updated) ? updated.name : "";
   }).toBe("Release QA");
-  await expect(details.getByText("Saved")).toBeVisible();
+  await expect(details.locator(".channel-autosave-status")).toHaveCount(0);
 });
 
 test("channel reply routing mode is not exposed in ordinary settings", async ({ page }) => {
@@ -2390,6 +2420,12 @@ test("channel settings can add and remove teammates without preferred specialist
     return isRecord(channelNotifications) ? channelNotifications.channel_engineering : undefined;
   }).toBe("muted");
   await expect.poll(() => page.evaluate(() => localStorage.getItem("ling-stack.channelNotifications.%2Ftmp%2Fling-stack-workspace.channel_engineering"))).toBeNull();
+
+  await page.reload();
+  await openEngineeringChannel(page);
+  await page.getByRole("button", { name: "More channel views" }).click();
+  await page.getByRole("menuitem", { name: "Settings" }).click();
+  await expect(page.getByLabel("Channel notifications").getByRole("radio", { name: "Muted" })).toHaveAttribute("aria-checked", "true");
 });
 
 test("channel settings attaches an AI council by reference", async ({ page }) => {
@@ -2464,6 +2500,8 @@ test("channel settings attaches an AI council by reference", async ({ page }) =>
 
   await page.getByRole("button", { name: "More channel views" }).click();
   await page.getByRole("menuitem", { name: "Settings" }).click();
+  const settingsTabs = page.getByRole("tablist", { name: "Channel settings navigation" });
+  await settingsTabs.getByRole("tab", { name: "Councils" }).click();
   const councils = page.getByLabel("Channel AI councils");
   await expect(councils).toContainText("No AI councils attached");
   await councils.getByLabel("Attach AI council").selectOption("council_builtin_development");
@@ -2488,12 +2526,14 @@ test("channel settings attaches an AI council by reference", async ({ page }) =>
   await expect(councils.getByLabel("Projected council specialists")).toContainText("Development Council · Verification");
   await expect(councils.getByLabel("Projected council specialists")).not.toContainText("Ling Agent");
 
+  await settingsTabs.getByRole("tab", { name: "Members" }).click();
   const directTeammates = page.getByLabel("Channel teammates");
   await expect(directTeammates.locator(".channel-teammate-chip")).toHaveCount(1);
   await expect(directTeammates).toContainText("Ling Engineer");
   await expect(directTeammates.locator(".channel-teammate-chip").filter({ hasText: "Ling Designer" })).toHaveCount(0);
   expect(state.teammateChannelMemberships.filter((item) => isRecord(item) && item.channelId === "channel_engineering")).toHaveLength(1);
 
+  await settingsTabs.getByRole("tab", { name: "Councils" }).click();
   await councils.getByRole("button", { name: "Detach council" }).click();
   await expect.poll(() => {
     const policy = state.channelCouncilPolicies.find((item) => isRecord(item) && item.channelId === "channel_engineering");
@@ -2927,9 +2967,43 @@ test("channel settings manage workspace binding", async ({ page }) => {
 
   await page.getByRole("button", { name: "More channel views" }).click();
   await page.getByRole("menuitem", { name: "Settings" }).click();
-  const details = page.getByLabel("Channel management");
-  const workspaceControl = details.getByLabel("Channel workspace");
+  const settingsTabs = page.getByRole("tablist", { name: "Channel settings navigation" });
+  await settingsTabs.getByRole("tab", { name: "Workspace" }).click();
+  const workspaceSettings = page.getByLabel("Channel workspace settings");
+  const workspaceControl = workspaceSettings.getByLabel("Channel workspace");
   await expect(workspaceControl).toContainText("Local");
+  await expect(workspaceControl.locator(".channel-workspace-control-head .status-badge")).toHaveCount(0);
+  const executionPathInput = workspaceSettings.getByLabel("Execution path");
+  const manualExecutionPath = "/tmp/manual-channel-path";
+  await executionPathInput.fill(manualExecutionPath);
+  await expect(workspaceSettings.getByRole("button", { name: "Save" })).toBeEnabled();
+  await workspaceSettings.getByRole("button", { name: "Save" }).click();
+  await expect.poll(() => {
+    const channel = state.channels.find((item) => isRecord(item) && item.id === "channel_engineering");
+    if (!isRecord(channel) || !isRecord(channel.workspaceBinding)) {
+      return undefined;
+    }
+    return [channel.boundPath, channel.workspaceBinding.mode, channel.workspaceBinding.executionPath];
+  }).toEqual([manualExecutionPath, "local", manualExecutionPath]);
+
+  const selectedExecutionPath = "/Users/gsx/minimax-agent-cn/projects";
+  await workspaceSettings.getByRole("button", { name: "Change directory" }).click();
+  await expect.poll(() => {
+    const channel = state.channels.find((item) => isRecord(item) && item.id === "channel_engineering");
+    if (!isRecord(channel) || !isRecord(channel.workspaceBinding)) {
+      return undefined;
+    }
+    return [channel.boundPath, channel.workspaceBinding.mode, channel.workspaceBinding.executionPath];
+  }).toEqual([selectedExecutionPath, "local", selectedExecutionPath]);
+  await expect(executionPathInput).toHaveValue(selectedExecutionPath);
+  const openWorkspaceRequest = page.waitForRequest((request) =>
+    request.method() === "POST" && new URL(request.url()).pathname === "/channels/channel_engineering/workspace/open"
+  );
+  await workspaceControl.getByRole("button", { name: "Open path" }).click();
+  await openWorkspaceRequest;
+  await expect(workspaceControl).not.toContainText("Opening workspace path.");
+  await expect(workspaceControl.locator(".inline-success")).toHaveCount(0);
+  await expect(workspaceControl.getByRole("button", { name: "Open path" })).toBeEnabled();
   await workspaceControl.getByRole("button", { name: "Create worktree" }).click();
   await expect.poll(() => {
     const channel = state.channels.find((item) => isRecord(item) && item.id === "channel_engineering");
@@ -8382,7 +8456,31 @@ test("local channel work-cell demo fixture renders a realistic multi-agent opera
     localStorage.setItem("ling-stack.workCellDemo", "true");
   });
   const state = createBaseState({ approvalStatus: "expired" });
-  state.channelMessages = [];
+  state.channelMessages = [{
+    id: "message_after_work_cell_demo",
+    workspaceId: "workspace_default",
+    channelId: "channel_engineering",
+    kind: "message",
+    intent: "discuss",
+    authorType: "local-user",
+    authorId: "local-user",
+    body: [
+      "继续检查历史会话里的文件操作。",
+      "这一条测试消息让上面的产物记录成为历史内容。",
+      "菜单向下展开时仍然必须覆盖后续会话行。",
+      "Visual Studio Code、TextEdit 和下载入口都应该可以点击。",
+      "虚拟列表不能拦截弹层的指针事件。",
+      "滚动后菜单也不能改变消息流高度。",
+      "完成验证后继续保留简约的会话布局。",
+    ].join("\n"),
+    mentions: [],
+    attachmentIds: [],
+    linkPreviewIds: [],
+    fileRefs: [],
+    status: "ready",
+    createdAt: "2026-07-10T09:15:00.000Z",
+    updatedAt: "2026-07-10T09:15:00.000Z",
+  }];
   state.tasks = [];
   state.runs = [];
   state.approvals = [];
@@ -8401,20 +8499,21 @@ test("local channel work-cell demo fixture renders a realistic multi-agent opera
 
   await mockDaemon(page, state);
   let demoRecoveryState: "applied" | "undone" = "applied";
-  await page.route(/\/runs\/demo_work_cell_[^/]+\/workspace-changes(?:\/(?:undo|reapply))?(?:\?.*)?$/, async (route) => {
+  await page.route(/\/(?:runs|workflows)\/demo_work_cell_[^/]+\/workspace-changes(?:\/(?:undo|reapply))?(?:\?.*)?$/, async (route) => {
     const url = new URL(route.request().url());
     if (url.pathname.endsWith("/undo")) {
       demoRecoveryState = "undone";
     } else if (url.pathname.endsWith("/reapply")) {
       demoRecoveryState = "applied";
     }
-    const runId = url.pathname.split("/")[2] ?? "demo_work_cell_run";
+    const recoveryId = url.pathname.split("/")[2] ?? "demo_work_cell_recovery";
+    const workflowRecovery = url.pathname.startsWith("/workflows/");
     await route.fulfill({
       status: 200,
       contentType: "application/json",
       body: JSON.stringify({
         cwd: url.searchParams.get("cwd") ?? "/repo",
-        runId,
+        ...(workflowRecovery ? { workflowId: recoveryId, runIds: ["demo_work_cell_run_engineer", "demo_work_cell_run_qa"] } : { runId: recoveryId }),
         state: demoRecoveryState,
         canUndo: demoRecoveryState === "applied",
         canReapply: demoRecoveryState === "undone",
@@ -8521,9 +8620,66 @@ test("local channel work-cell demo fixture renders a realistic multi-agent opera
   const artifactSurfaceWidth = await transcriptArtifacts.evaluate((element) => Math.round(element.getBoundingClientRect().width));
   expect(artifactSurfaceWidth).toBeGreaterThan(680);
   await expect.poll(async () => Math.round((await artifactRows.first().boundingBox())?.width ?? 0)).toBe(artifactSurfaceWidth);
-  await expect(artifactRows.filter({ hasText: "conversation-work-cell-operation-records.md" })).toHaveCount(1);
+  const docArtifactRow = artifactRows.filter({ hasText: "conversation-work-cell-operation-records.md" });
+  await expect(docArtifactRow).toHaveCount(1);
   await expect(artifactRows.filter({ hasText: "ConversationWorkCell.tsx" })).toHaveCount(1);
-  await expect(transcriptArtifacts.getByRole("button", { name: "打开方式" })).toHaveCount(0);
+  await expect(transcriptArtifacts.getByRole("button", { name: "打开方式" })).toHaveCount(2);
+  await docArtifactRow.evaluate((element) => element.scrollIntoView({ block: "end" }));
+  const openOptionsRequest = page.waitForRequest((request) => {
+    const url = new URL(request.url());
+    return url.pathname === "/workspace-files/open-options" &&
+      url.searchParams.get("path") === "docs/design/conversation-work-cell-operation-records.md";
+  });
+  const openWithTrigger = docArtifactRow.getByRole("button", { name: "打开方式" });
+  const feedScrollHeightBeforeOpen = await feed.evaluate((element) => element.scrollHeight);
+  await openWithTrigger.click();
+  await openOptionsRequest;
+  const openMenu = docArtifactRow.locator(".workspace-file-open-popover");
+  await expect(openMenu).toContainText("Visual Studio Code");
+  await expect(openMenu).toContainText("TextEdit");
+  await expect(openMenu).not.toContainText("Default app");
+  const vscodeOpenIcon = openMenu.getByRole("button", { name: "Visual Studio Code", exact: true }).locator(".workspace-file-open-target-icon > img");
+  const textEditOpenIcon = openMenu.getByRole("button", { name: "TextEdit", exact: true }).locator(".workspace-file-open-target-icon > img");
+  await expect(vscodeOpenIcon).toHaveAttribute("src", /\/workspace-files\/open-icons\/vscode\?/u);
+  await expect(textEditOpenIcon).toHaveAttribute("src", /\/workspace-files\/open-icons\/textedit\?/u);
+  await expect.poll(() => vscodeOpenIcon.evaluate((image) => image instanceof HTMLImageElement ? image.naturalWidth : 0)).toBeGreaterThan(0);
+  await expect.poll(() => textEditOpenIcon.evaluate((image) => image instanceof HTMLImageElement ? image.naturalWidth : 0)).toBeGreaterThan(0);
+  await expect(openMenu.locator(".workspace-file-open-target-icon > svg")).toHaveCount(2);
+  await expect(openMenu.locator(".workspace-file-open-target-icon > svg").first()).toBeVisible();
+  const [openWithTriggerBox, openMenuBox] = await Promise.all([
+    openWithTrigger.boundingBox(),
+    openMenu.boundingBox(),
+  ]);
+  expect(openWithTriggerBox).not.toBeNull();
+  expect(openMenuBox).not.toBeNull();
+  expect(openMenuBox!.y + openMenuBox!.height).toBeLessThanOrEqual(openWithTriggerBox!.y - 4);
+  expect(await feed.evaluate((element) => element.scrollHeight)).toBe(feedScrollHeightBeforeOpen);
+  await openWithTrigger.click();
+  await docArtifactRow.evaluate((element) => {
+    const scrollOwner = element.closest<HTMLElement>(".message-feed");
+    if (!scrollOwner) {
+      throw new Error("Message feed scroll owner is missing.");
+    }
+    scrollOwner.scrollTop += element.getBoundingClientRect().top - scrollOwner.getBoundingClientRect().top - 48;
+  });
+  await expect.poll(async () => {
+    const [feedBox, triggerBox] = await Promise.all([feed.boundingBox(), openWithTrigger.boundingBox()]);
+    return feedBox && triggerBox ? Math.round(triggerBox.y - feedBox.y) : -1;
+  }).toBeLessThan(180);
+  await openWithTrigger.click();
+  const [downwardTriggerBox, downwardMenuBox] = await Promise.all([
+    openWithTrigger.boundingBox(),
+    openMenu.boundingBox(),
+  ]);
+  expect(downwardTriggerBox).not.toBeNull();
+  expect(downwardMenuBox).not.toBeNull();
+  expect(downwardMenuBox!.y).toBeGreaterThanOrEqual(downwardTriggerBox!.y + downwardTriggerBox!.height + 4);
+  const openWorkspaceRequest = page.waitForRequest((request) =>
+    request.method() === "POST" && new URL(request.url()).pathname === "/workspace-files/open"
+  );
+  await openMenu.getByRole("button", { name: "TextEdit", exact: true }).click();
+  await openWorkspaceRequest;
+  await expect(openMenu).toHaveCount(0);
   await expect(transcriptArtifacts).not.toContainText("channel-work-cell-e2e.log");
   const changedGroup = transcriptArtifacts.locator(".conversation-work-cell-change-group");
   await expect.poll(async () => Math.round((await changedGroup.boundingBox())?.width ?? 0)).toBe(artifactSurfaceWidth);
@@ -8533,9 +8689,36 @@ test("local channel work-cell demo fixture renders a realistic multi-agent opera
   await expect(changedSummary.locator(".conversation-work-cell-change-stat .delete")).toHaveText("-4");
   await expect(changedSummary.locator(":scope > svg")).toHaveCount(0);
   await expect(changedSummary).not.toHaveAttribute("aria-expanded");
-  await expect(changedSummary.getByRole("button", { name: "撤销", exact: true })).toHaveCount(0);
-  await expect(changedSummary.getByRole("button", { name: "重新应用", exact: true })).toHaveCount(0);
+  const undoButton = changedSummary.getByRole("button", { name: "撤销", exact: true });
+  await expect(undoButton).toBeEnabled();
+  const undoRequest = page.waitForRequest((request) =>
+    request.method() === "POST" && new URL(request.url()).pathname.startsWith("/workflows/") &&
+      new URL(request.url()).pathname.endsWith("/workspace-changes/undo")
+  );
+  await undoButton.click();
+  await undoRequest;
+  const reapplyButton = changedSummary.getByRole("button", { name: "重新应用", exact: true });
+  await expect(reapplyButton).toBeEnabled();
+  const reapplyRequest = page.waitForRequest((request) =>
+    request.method() === "POST" && new URL(request.url()).pathname.startsWith("/workflows/") &&
+      new URL(request.url()).pathname.endsWith("/workspace-changes/reapply")
+  );
+  await reapplyButton.click();
+  await reapplyRequest;
+  await expect(undoButton).toBeEnabled();
   await expect(changedSummary.getByRole("button", { name: "审核", exact: true })).toBeVisible();
+  const changedFilesList = changedGroup.locator(".conversation-work-cell-change-files");
+  const firstChangedFile = changedFilesList.locator(".conversation-work-cell-change-file").first();
+  const [changedFilesListBox, firstChangedFileBox, firstChangedPathBox] = await Promise.all([
+    changedFilesList.boundingBox(),
+    firstChangedFile.boundingBox(),
+    firstChangedFile.locator("code").boundingBox(),
+  ]);
+  expect(changedFilesListBox).not.toBeNull();
+  expect(firstChangedFileBox).not.toBeNull();
+  expect(firstChangedPathBox).not.toBeNull();
+  expect(Math.round(firstChangedFileBox!.width)).toBe(Math.round(changedFilesListBox!.width));
+  expect(Math.round(firstChangedPathBox!.x - firstChangedFileBox!.x)).toBeLessThanOrEqual(16);
   await expect(transcriptArtifacts.locator(".conversation-work-cell-artifacts").locator(":scope > *").last()).toHaveClass(/conversation-work-cell-change-group/);
   await expect.poll(() =>
     assistantTranscript.locator(".conversation-turn-assistant-transcript").evaluate((element) => {

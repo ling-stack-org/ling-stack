@@ -88,6 +88,30 @@ export class RunStoreRegistry {
     return undefined;
   }
 
+  findStoreForWorkflow(workflowId: string, cwd?: string): RunStore | undefined {
+    for (const store of this.storesByCwd.values()) {
+      if (store.getChannelWorkflow(workflowId)) {
+        return store;
+      }
+    }
+
+    for (const root of this.trustedWorkspaceRoots) {
+      const store = this.getStore(root);
+      if (store.getChannelWorkflow(workflowId)) {
+        return store;
+      }
+    }
+
+    if (cwd) {
+      const store = this.getStore(cwd);
+      if (store.getChannelWorkflow(workflowId)) {
+        return store;
+      }
+    }
+
+    return undefined;
+  }
+
   findStoreForArtifact(artifactId: string, cwd?: string): { readonly store: RunStore; readonly artifact: RunArtifact } | undefined {
     for (const store of this.storesByCwd.values()) {
       const artifact = store.getArtifact(artifactId);

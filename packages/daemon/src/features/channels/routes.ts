@@ -144,7 +144,7 @@ export async function handleChannelItem(
     if (request.method === "PATCH") {
       const body = await readJsonBody(request, config.maxBodyBytes);
       const input = parseChannelUpdateInput(body);
-      if (input.autoReplyMode === "auto_route" && !config.channels.autoRoute) {
+      if (input.autoReplyMode === "auto_route" && channel.autoReplyMode !== "auto_route" && !config.channels.autoRoute) {
         writeJson(response, 400, { error: "auto_route_disabled", message: "Channel auto_route is disabled." });
         return;
       }

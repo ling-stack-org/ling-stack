@@ -6375,6 +6375,53 @@ export async function handleDaemonRoute(
     await route.fulfill({ json: { cwd, settings: state.workspaceSettings } });
     return;
   }
+  if (request.method() === "GET" && /^\/workspace-files\/open-icons\/[^/]+$/u.test(path)) {
+    await route.fulfill({
+      status: 200,
+      contentType: "image/png",
+      body: Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9ZJk8AAAAASUVORK5CYII=", "base64"),
+    });
+    return;
+  }
+  if (request.method() === "GET" && path === "/workspace-files/open-options") {
+    const requestedCwd = url.searchParams.get("cwd");
+    const requestedPath = url.searchParams.get("path");
+    if (!requestedCwd || !requestedPath) {
+      await route.fulfill({ status: 400, json: { error: "bad_request", message: "cwd and path are required" } });
+      return;
+    }
+    await route.fulfill({
+      json: {
+        cwd: requestedCwd,
+        path: requestedPath,
+        options: [
+          { id: "vscode", label: "Visual Studio Code", available: true },
+          { id: "textedit", label: "TextEdit", available: true },
+          { id: "finder", label: "Show in Finder", available: true },
+          { id: "terminal", label: "Terminal", available: true },
+        ],
+      },
+    });
+    return;
+  }
+  if (request.method() === "POST" && path === "/workspace-files/open") {
+    const requestedCwd = url.searchParams.get("cwd");
+    const requestedPath = url.searchParams.get("path");
+    const body = await request.postDataJSON() as { target?: unknown };
+    if (!requestedCwd || !requestedPath || typeof body.target !== "string") {
+      await route.fulfill({ status: 400, json: { error: "bad_request", message: "cwd, path, and target are required" } });
+      return;
+    }
+    await route.fulfill({
+      json: {
+        cwd: requestedCwd,
+        path: requestedPath,
+        target: body.target,
+        opened: true,
+      },
+    });
+    return;
+  }
   if (request.method() === "GET" && path === "/startup/status") {
     const requestedCwd = url.searchParams.get("cwd") ?? cwd;
     await route.fulfill({ json: { ...state.startupStatus, cwd: requestedCwd } });
@@ -9277,6 +9324,11 @@ export async function handleDaemonRoute(
       const updated = { ...channel, workspaceBinding: binding, updatedAt: "2026-05-25T00:18:00.000Z" };
       state.channels[channelIndex] = updated;
       await route.fulfill({ json: buildMockChannelWorkspaceResponse(channelId, updated, binding) });
+      return;
+    }
+    if (request.method() === "POST" && action === "open") {
+      const binding = readMockChannelWorkspaceBinding(channel);
+      await route.fulfill({ json: buildMockChannelWorkspaceResponse(channelId, channel, binding) });
       return;
     }
     if (request.method() === "POST" && action === "create-worktree") {

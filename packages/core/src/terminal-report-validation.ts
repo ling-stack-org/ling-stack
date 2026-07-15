@@ -127,8 +127,20 @@ export function validateTerminalReportContent(
 
   const artifactsById = new Map(snapshot.artifacts.map((artifact) => [artifact.id, artifact]));
   for (const [index, artifact] of content.artifacts.entries()) {
-    if (!artifactsById.has(artifact.id)) {
+    const evidenceArtifact = artifactsById.get(artifact.id);
+    if (!evidenceArtifact) {
       issues.push(issue("terminal_report_external_ref_unverified", `artifacts.${index}`, `Artifact is not present in evidence: ${artifact.id}`));
+    } else {
+      const artifactRefs = new Set(evidenceArtifact.sourceRefs.map(terminalReportSourceRefKey));
+      for (const ref of artifact.sourceRefs) {
+        if (!artifactRefs.has(terminalReportSourceRefKey(ref))) {
+          issues.push(issue(
+            "terminal_report_source_ref_missing",
+            `artifacts.${index}.sourceRefs`,
+            `Source ref is not bound to artifact evidence: ${terminalReportSourceRefKey(ref)}`,
+          ));
+        }
+      }
     }
     if ((artifact.kind === "commit" || artifact.kind === "pull_request" || artifact.kind === "deployment") && !artifact.href) {
       issues.push(issue("terminal_report_external_ref_unverified", `artifacts.${index}.href`, `${artifact.kind} artifacts require a validated href.`));

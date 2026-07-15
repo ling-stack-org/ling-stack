@@ -106,8 +106,8 @@ export function TeammateChatHeader({
         title={providerReady ? t("Model ready") : t("Model needs setup")}
         statusNode={teammate.status === "active" ? null : <StatusBadge status={teammate.status} />}
         metaItems={[
-          { id: "recall", label: t("Memory"), value: memoryScopeCount > 0 ? t("Memory on") : t("Memory preparing") },
-          { id: "attachments", label: t("Files"), value: t("{count} attachments", { count: attachmentCount }) },
+          { id: "recall", value: memoryScopeCount > 0 ? t("Memory on") : t("Memory preparing") },
+          { id: "attachments", value: t("{count} attachments", { count: attachmentCount }) },
         ]}
       />
       {searchOpen ? (

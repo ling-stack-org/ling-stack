@@ -18,6 +18,18 @@ interface TerminalReportSectionInput {
   readonly sourceRefs: readonly TerminalReportSourceRefInput[];
 }
 
+type TerminalReportArtifactKindInput =
+  | "file"
+  | "diff"
+  | "document"
+  | "image"
+  | "test_result"
+  | "commit"
+  | "pull_request"
+  | "deployment"
+  | "external"
+  | "other";
+
 export interface TerminalReportViewInput {
   readonly id: string;
   readonly status: "committed" | "fallback";
@@ -57,6 +69,7 @@ export interface TerminalReportViewInput {
   })[];
   readonly artifacts: readonly (TerminalReportSectionInput & {
     readonly id: string;
+    readonly kind: TerminalReportArtifactKindInput;
     readonly title: string;
     readonly path?: string;
     readonly href?: string;
@@ -184,19 +197,58 @@ export function terminalReportToViewModel(report: TerminalReportViewInput): Term
         })),
         tone: "neutral" as const,
       }] : []),
-      ...report.artifacts.filter(isUserVisibleTerminalReportArtifact).map((artifact) => ({
-        id: `${report.id}:artifact:${artifact.id}`,
-        kind: "artifact" as const,
-        label: artifact.title || artifact.path || artifact.id,
-        path: artifact.path,
-        href: artifact.href,
-        artifactId: artifact.id,
-        previewable: Boolean(artifact.path || artifact.href),
-        previewKind: "file" as const,
-      })),
+      ...report.artifacts.filter(isUserVisibleTerminalReportArtifact).map((artifact) => {
+        const workspaceFilePath = terminalReportArtifactWorkspacePath(artifact, changedPaths);
+        return {
+          id: `${report.id}:artifact:${artifact.id}`,
+          kind: "artifact" as const,
+          label: artifact.title || artifact.path || artifact.id,
+          path: artifact.path,
+          ...(workspaceFilePath ? { workspaceFilePath } : {}),
+          href: artifact.href,
+          artifactId: artifact.id,
+          previewable: Boolean(artifact.path || artifact.href),
+          previewKind: "file" as const,
+        };
+      }),
     ],
     updatedAt: report.committedAt,
   };
+}
+
+const WORKSPACE_FILE_ARTIFACT_KINDS = new Set<TerminalReportArtifactKindInput>([
+  "file",
+  "diff",
+  "document",
+  "image",
+  "test_result",
+]);
+
+function terminalReportArtifactWorkspacePath(
+  artifact: TerminalReportViewInput["artifacts"][number],
+  changedPaths: readonly string[],
+): string | undefined {
+  if (!WORKSPACE_FILE_ARTIFACT_KINDS.has(artifact.kind) || changedPaths.length === 0) {
+    return undefined;
+  }
+  const changedPathByNormalizedPath = new Map(
+    changedPaths.map((path) => [normalizedConversationFilePath(path), path] as const),
+  );
+  const trustedWorkspacePaths = [...new Map(
+    artifact.sourceRefs
+      .filter((ref) => ref.kind === "file" && isUserVisibleTerminalReportSourceRef(ref))
+      .map((ref) => {
+        const normalizedPath = normalizedConversationFilePath(ref.id);
+        const changedPath = changedPathByNormalizedPath.get(normalizedPath);
+        return changedPath ? [normalizedPath, changedPath] as const : undefined;
+      })
+      .filter((entry): entry is readonly [string, string] => Boolean(entry)),
+  ).values()];
+  return trustedWorkspacePaths.length === 1 ? trustedWorkspacePaths[0] : undefined;
+}
+
+function normalizedConversationFilePath(value?: string): string {
+  return value?.trim().replace(/\\/gu, "/").replace(/^\.\//u, "") ?? "";
 }
 
 function localizedChangedFilesLabel(language: TerminalReportViewInput["language"], count: number): string {

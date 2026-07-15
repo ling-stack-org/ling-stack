@@ -22,6 +22,7 @@ import {
   type ConversationWorkCellRowDetailLine,
   type ConversationWorkCellRowTone,
   type ConversationWorkCellViewModel,
+  type ConversationWorkspaceRecoveryTarget,
 } from "@ling-stack/conversation-ui-core";
 import type { ApprovalRequest, ExecutionAction, LingApprovalCheckpoint, LingThreadEvidenceResponse, LingTraceDetailResponse, LingTraceSpan, LingTurn, LingTurnRun, RunArtifact, RunSession, TerminalReportDto } from "../types.js";
 import type { Translate } from "../i18n.js";
@@ -58,6 +59,7 @@ export type {
   ConversationWorkCellRowTone,
   ConversationWorkCellStat,
   ConversationWorkCellViewModel,
+  ConversationWorkspaceRecoveryTarget,
 } from "@ling-stack/conversation-ui-core";
 
 /** @deprecated Use ConversationOperationCellMode from @ling-stack/conversation-ui-core. */
@@ -251,7 +253,7 @@ export function buildConversationArtifactStripItems(input: {
       id: "changed",
       kind: "changed",
       label: changeEntries.length === 1 ? input.t("Edited 1 file") : input.t("Edited {count} files", { count: changeEntries.length }),
-      recoveryRunId,
+      recoveryTarget: recoveryRunId ? { kind: "run", id: recoveryRunId } : undefined,
       changeArtifacts: changeEntries,
       tone: "neutral",
     });
@@ -478,10 +480,10 @@ export function buildConversationWorkCellViewModel(input: BuildConversationWorkC
   ], (item) => item.id);
   const baseArtifactStripItems = buildConversationArtifactStripItems({ groups, evidenceLinks, artifacts, t: input.t });
   const hasBaseChangedItem = baseArtifactStripItems.some((item) => item.kind === "changed");
-  const artifactStripItems = uniqueBy([
-    ...baseArtifactStripItems,
-    ...(terminalReport?.artifactStripItems ?? []).filter((item) => item.kind !== "changed" || !hasBaseChangedItem),
-  ], (item) => item.artifactId ?? item.id);
+  const artifactStripItems = mergeConversationArtifactStripItems(
+    baseArtifactStripItems,
+    (terminalReport?.artifactStripItems ?? []).filter((item) => item.kind !== "changed" || !hasBaseChangedItem),
+  );
 
   return normalizeConversationOperationCell({
     id: turnContext ? `work-cell:turn:${turnContext.turn.id}` : `work-cell:${input.threadId}`,
@@ -1672,4 +1674,22 @@ function uniqueBy<T>(items: readonly T[], keyOf: (item: T) => string): readonly 
     result.push(item);
   }
   return result;
+}
+
+export function mergeConversationArtifactStripItems(
+  primary: readonly ConversationArtifactStripItem[],
+  enrichments: readonly ConversationArtifactStripItem[],
+): readonly ConversationArtifactStripItem[] {
+  const keyOf = (item: ConversationArtifactStripItem): string => item.artifactId ?? item.id;
+  const enrichmentByKey = new Map(enrichments.map((item) => [keyOf(item), item]));
+  const primaryKeys = new Set(primary.map(keyOf));
+  return [
+    ...primary.map((item) => {
+      const enrichment = enrichmentByKey.get(keyOf(item));
+      return !item.workspaceFilePath && enrichment?.workspaceFilePath
+        ? { ...item, workspaceFilePath: enrichment.workspaceFilePath }
+        : item;
+    }),
+    ...enrichments.filter((item) => !primaryKeys.has(keyOf(item))),
+  ];
 }

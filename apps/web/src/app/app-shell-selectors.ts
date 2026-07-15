@@ -74,7 +74,8 @@ export function buildSidebarChannelNotifications(
   runs: readonly RunSession[],
   tasks: readonly Task[],
   selectedChannelId: string,
-  channelUnreadById: Readonly<Record<string, boolean>>,
+  channelUnreadById: Readonly<Record<string, ChannelUnreadState>>,
+  notificationLevels: Readonly<Record<string, string>>,
 ): Readonly<Record<string, SidebarNotification>> {
   const runById = new Map(runs.map((item) => [item.id, item]));
   const taskById = new Map(tasks.map((item) => [item.id, item]));
@@ -92,13 +93,45 @@ export function buildSidebarChannelNotifications(
     }
   }
 
-  for (const [channelId, hasUnread] of Object.entries(channelUnreadById)) {
-    if (hasUnread && channelId !== selectedChannelId) {
+  for (const [channelId, state] of Object.entries(channelUnreadById)) {
+    const notificationLevel = readChannelNotificationLevel(notificationLevels[channelId]);
+    const shouldNotify = state.unread && (
+      notificationLevel === "all" ||
+      (notificationLevel === "mentions" && state.mentioned)
+    );
+    if (shouldNotify && channelId !== selectedChannelId) {
       unread.add(channelId);
     }
   }
 
   return Object.fromEntries([...unread].map((channelId) => [channelId, { unread: true }]));
+}
+
+export interface ChannelUnreadState {
+  readonly unread: boolean;
+  readonly mentioned: boolean;
+}
+
+export function buildChannelUnreadState(
+  messages: readonly ChannelMessage[],
+  seenAt: string | undefined,
+): ChannelUnreadState | undefined {
+  const unreadMessages = seenAt
+    ? messages.filter((message) => message.updatedAt > seenAt)
+    : messages;
+  if (unreadMessages.length === 0) {
+    return undefined;
+  }
+  return {
+    unread: true,
+    mentioned: unreadMessages.some((message) =>
+      message.mentions.some((mention) => mention.kind === "local-user")
+    ),
+  };
+}
+
+function readChannelNotificationLevel(value: string | undefined): "all" | "mentions" | "muted" {
+  return value === "all" || value === "muted" ? value : "mentions";
 }
 
 export function latestChannelMessageTimestamp(messages: readonly ChannelMessage[]): string {

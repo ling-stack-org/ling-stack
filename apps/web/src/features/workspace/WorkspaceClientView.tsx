@@ -59,6 +59,7 @@ import {
   handoffChannelWorkspace,
   listChannelCollaborationCards,
   listChannelTerminalReports,
+  openChannelWorkspace,
   refreshChannelWorkspace,
 } from "../../api/channels.js";
 import { useI18n, type Translate } from "../../i18n.js";
@@ -239,7 +240,6 @@ import {
   ChannelSettingsPanels,
   channelWorkspaceModeIcon,
   isLingAgentTeammate,
-  type ChannelSettingsAutosaveState,
   type ChannelNotificationLevel,
 } from "./ChannelSettingsPanels.js";
 import { ChannelComposer } from "./ChannelComposer.js";
@@ -871,7 +871,6 @@ export function WorkspaceClientView({
   const [pendingChannelTeammateId, setPendingChannelTeammateId] = useState("");
   const [pendingChannelCouncilId, setPendingChannelCouncilId] = useState("");
   const [channelNotificationLevel, setChannelNotificationLevel] = useState<ChannelNotificationLevel>("mentions");
-  const [channelSettingsAutosaveState, setChannelSettingsAutosaveState] = useState<ChannelSettingsAutosaveState>("idle");
   const [channelSettingsAutosaveRevision, setChannelSettingsAutosaveRevision] = useState(0);
   const [channelWorkspaceBusyAction, setChannelWorkspaceBusyAction] = useState("");
   const [channelWorkspaceExternalPath, setChannelWorkspaceExternalPath] = useState("");
@@ -1846,7 +1845,6 @@ export function WorkspaceClientView({
   useEffect(() => {
     if (channelSettingsAutosaveRevision === 0) {
       channelSettingsAutosaveLastSavedKeyRef.current = selectedChannelFormKey;
-      setChannelSettingsAutosaveState("idle");
     }
   }, [channelSettingsAutosaveRevision, selectedChannelFormKey]);
 
@@ -1855,7 +1853,6 @@ export function WorkspaceClientView({
     channelSettingsAutosaveLastSavedKeyRef.current = selectedChannelFormKey;
     channelSettingsAutosaveQueuedRef.current = false;
     setChannelSettingsAutosaveRevision(0);
-    setChannelSettingsAutosaveState("idle");
     if (channelSettingsAutosaveTimerRef.current !== undefined) {
       globalThis.clearTimeout(channelSettingsAutosaveTimerRef.current);
       channelSettingsAutosaveTimerRef.current = undefined;
@@ -1867,11 +1864,9 @@ export function WorkspaceClientView({
       return undefined;
     }
     if (channelEditFormKey === selectedChannelFormKey || channelEditFormKey === channelSettingsAutosaveLastSavedKeyRef.current) {
-      setChannelSettingsAutosaveState("saved");
       return undefined;
     }
 
-    setChannelSettingsAutosaveState("saving");
     if (channelSettingsAutosaveTimerRef.current !== undefined) {
       globalThis.clearTimeout(channelSettingsAutosaveTimerRef.current);
     }
@@ -1891,12 +1886,9 @@ export function WorkspaceClientView({
           await onSaveChannelRef.current(snapshotForm);
           if (requestId === channelSettingsAutosaveRequestRef.current) {
             channelSettingsAutosaveLastSavedKeyRef.current = snapshotKey;
-            setChannelSettingsAutosaveState(channelSettingsAutosaveLatestKeyRef.current === snapshotKey ? "saved" : "saving");
           }
         } catch {
-          if (requestId === channelSettingsAutosaveRequestRef.current) {
-            setChannelSettingsAutosaveState("error");
-          }
+          // The next edit schedules another save attempt.
         } finally {
           channelSettingsAutosaveInFlightRef.current = false;
           if (requestId === channelSettingsAutosaveRequestRef.current) {
@@ -2291,6 +2283,21 @@ export function WorkspaceClientView({
     setChannelSettingsAutosaveRevision((current) => current + 1);
   }
 
+  async function saveChannelName(name: string): Promise<void> {
+    if (!selectedChannelId) {
+      return;
+    }
+    const previousForm = channelEditForm;
+    const nextForm = { ...channelEditForm, name: name.trim() };
+    onChannelEditFormChange(nextForm);
+    try {
+      await onSaveChannel(nextForm);
+    } catch (error) {
+      onChannelEditFormChange(previousForm);
+      throw error;
+    }
+  }
+
   async function runChannelWorkspaceAction(
     action: string,
     operation: () => Promise<{ readonly binding: ChannelWorkspaceBinding }>,
@@ -2356,16 +2363,20 @@ export function WorkspaceClientView({
   }
 
   function onOpenChannelWorkspacePath(): void {
-    if (!selectedChannelExecutionPath) {
+    const workspaceCwd = cwd.trim();
+    if (!workspaceCwd || !selectedChannelId || !selectedChannelExecutionPath || channelWorkspaceBusyAction) {
       return;
     }
-    try {
-      globalThis.open?.(`file://${selectedChannelExecutionPath}`, "_blank", "noopener");
-      setChannelWorkspaceNotice(t("Opening workspace path."));
-    } catch {
-      void globalThis.navigator?.clipboard?.writeText(selectedChannelExecutionPath);
-      setChannelWorkspaceNotice(t("Workspace path copied."));
-    }
+    setChannelWorkspaceBusyAction("open");
+    setChannelWorkspaceNotice("");
+    setChannelWorkspaceError("");
+    void openChannelWorkspace(workspaceCwd, selectedChannelId)
+      .catch((caught: unknown) => {
+        setChannelWorkspaceError(caught instanceof Error ? caught.message : String(caught));
+      })
+      .finally(() => {
+        setChannelWorkspaceBusyAction("");
+      });
   }
 
   function addSelectedChannelTeammate(): void {
@@ -3825,8 +3836,9 @@ export function WorkspaceClientView({
       onRefreshChannelCouncil={onRefreshChannelCouncil}
       channelTeamMetricsPanel={channelTeamMetricsPanel}
       channelEditForm={channelEditForm}
-      channelSettingsAutosaveState={channelSettingsAutosaveState}
       onChannelEditFormChange={updateChannelSettingsEditForm}
+      onSaveChannelName={saveChannelName}
+      onChangeChannelWorkspacePath={changeChannelEnvironmentWorkspacePath}
       providersLoading={providersLoading}
       providers={providers}
       taskReadyProviders={taskReadyProviders}
@@ -3842,8 +3854,6 @@ export function WorkspaceClientView({
       onRefreshChannelWorkspace={onRefreshChannelWorkspace}
       onOpenChannelWorkspacePath={onOpenChannelWorkspacePath}
       onHandoffChannelWorkspace={onHandoffChannelWorkspace}
-      channelsLoading={channelsLoading}
-      onRefreshChannels={onRefreshChannels}
     />
   );
   const channelContextDockContent = (

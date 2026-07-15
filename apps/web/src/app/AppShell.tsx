@@ -119,10 +119,12 @@ import { inferPermissionPreset } from "../lib/session-permissions.js";
 import { StatusBadge } from "../shared/components/index.js";
 import {
   aiTeammateToLocalDraft,
+  buildChannelUnreadState,
   buildChannelTransitionEntities,
   buildSidebarChannelNotifications,
   buildSidebarTeammateNotifications,
   latestChannelMessageTimestamp,
+  type ChannelUnreadState,
 } from "./app-shell-selectors.js";
 import { useAppNavigationController } from "./use-app-navigation-controller.js";
 import { useChannelActionsController } from "./use-channel-actions-controller.js";
@@ -199,7 +201,7 @@ export function AppShell(): JSX.Element {
     channels: { autoRoute: false },
     transports: { providerWebSocketFallback: false, localWebSocketRpc: false },
   });
-  const [channelUnreadById, setChannelUnreadById] = useState<Readonly<Record<string, boolean>>>({});
+  const [channelUnreadById, setChannelUnreadById] = useState<Readonly<Record<string, ChannelUnreadState>>>({});
   const channelSeenMessageAtRef = useRef<Record<string, string>>({});
   const [runningWorkflowStepId, setRunningWorkflowStepId] = useState("");
   const [orchestratingWorkflowId, setOrchestratingWorkflowId] = useState("");
@@ -880,8 +882,18 @@ export function AppShell(): JSX.Element {
     }
 
     const seenAt = channelSeenMessageAtRef.current[channelId];
-    if (!seenAt || latestMessageAt > seenAt) {
-      setChannelUnreadById((current) => current[channelId] ? current : { ...current, [channelId]: true });
+    const nextUnread = buildChannelUnreadState(messages, seenAt);
+    if (nextUnread) {
+      setChannelUnreadById((current) => {
+        const previous = current[channelId];
+        const next = {
+          unread: previous?.unread === true || nextUnread.unread,
+          mentioned: previous?.mentioned === true || nextUnread.mentioned,
+        };
+        return previous?.unread === next.unread && previous.mentioned === next.mentioned
+          ? current
+          : { ...current, [channelId]: next };
+      });
     }
   }
 
@@ -929,8 +941,9 @@ export function AppShell(): JSX.Element {
       tasks,
       selectedChannelId,
       channelUnreadById,
+      workspaceSettings?.channelNotifications ?? {},
     ),
-    [approvals, channelUnreadById, run, runs, selectedChannelId, tasks],
+    [approvals, channelUnreadById, run, runs, selectedChannelId, tasks, workspaceSettings?.channelNotifications],
   );
   const sidebarTeammateNotifications = useMemo(
     () => buildSidebarTeammateNotifications(approvals, tasks),

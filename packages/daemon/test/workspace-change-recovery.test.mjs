@@ -13,6 +13,10 @@ import {
   buildRunWorkspaceChangesResponse,
   recoverRunWorkspaceChanges,
 } from "../dist/features/runs/workspace-change-recovery.js";
+import {
+  buildWorkflowWorkspaceChangesResponse,
+  recoverWorkflowWorkspaceChanges,
+} from "../dist/features/channels/workflow-workspace-change-recovery.js";
 import { RunStoreRegistry } from "../dist/runtime/store-registry.js";
 import { isAllowedLocalOrigin } from "../dist/shared/local-workspace-access.js";
 
@@ -136,6 +140,118 @@ test("run patch changes can be undone and reapplied without overwriting later ed
     );
     assert.equal(await readFile(filePath, "utf8"), "user edit\n");
     const conflicted = await buildRunWorkspaceChangesResponse(store, store.getRun(run.id));
+    assert.equal(conflicted.state, "conflicted");
+    assert.equal(conflicted.canUndo, false);
+  } finally {
+    store.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("multi-agent workflow patches are undone atomically in reverse order and reapplied forward", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-workflow-patch-recovery-"));
+  const store = createSqliteRunStore(cwd);
+  const filePath = resolve(cwd, "shared.txt");
+  try {
+    await writeFile(filePath, "base\n", "utf8");
+    const channel = store.createChannel({ name: "Workflow recovery", boundPath: cwd }, "2026-07-13T00:00:00.000Z");
+    const workflow = store.createChannelWorkflow({
+      channelId: channel.id,
+      title: "Multi-agent recovery",
+      objective: "Apply two dependent edits.",
+      status: "succeeded",
+      createdBy: "ling_agent",
+    }, "2026-07-13T00:00:00.000Z");
+    const engineerStep = store.createChannelWorkflowStep({
+      workflowId: workflow.id,
+      position: 1,
+      title: "Engineer edit",
+      prompt: "Create the first version.",
+      toParticipantId: "engineer",
+      toParticipantLabel: "Engineer",
+      status: "succeeded",
+    }, "2026-07-13T00:00:01.000Z");
+    const qaStep = store.createChannelWorkflowStep({
+      workflowId: workflow.id,
+      position: 2,
+      title: "QA correction",
+      prompt: "Adjust the first version.",
+      toParticipantId: "qa",
+      toParticipantLabel: "QA",
+      status: "succeeded",
+    }, "2026-07-13T00:00:02.000Z");
+
+    const engineerRun = await createReversiblePatchRun({
+      store,
+      cwd,
+      runId: "run_workflow_engineer",
+      taskId: "task_workflow_engineer",
+      channelId: channel.id,
+      workflowStepId: engineerStep.id,
+      toolCallId: "tool_workflow_engineer",
+      path: "shared.txt",
+      before: "base",
+      after: "engineer",
+      createdAt: "2026-07-13T00:00:03.000Z",
+    });
+    store.updateChannelWorkflowStep(engineerStep.id, { runId: engineerRun.id }, "2026-07-13T00:00:04.000Z");
+    const qaRun = await createReversiblePatchRun({
+      store,
+      cwd,
+      runId: "run_workflow_qa",
+      taskId: "task_workflow_qa",
+      channelId: channel.id,
+      workflowStepId: qaStep.id,
+      toolCallId: "tool_workflow_qa",
+      path: "shared.txt",
+      before: "engineer",
+      after: "qa",
+      createdAt: "2026-07-13T00:00:05.000Z",
+    });
+    store.updateChannelWorkflowStep(qaStep.id, { runId: qaRun.id }, "2026-07-13T00:00:06.000Z");
+    assert.equal(await readFile(filePath, "utf8"), "qa\n");
+
+    const applied = await buildWorkflowWorkspaceChangesResponse(store, store.getChannelWorkflow(workflow.id));
+    assert.equal(applied.state, "applied");
+    assert.equal(applied.canUndo, true);
+    assert.deepEqual(applied.runIds, [engineerRun.id, qaRun.id]);
+    assert.equal(applied.summary.updateCount, 2);
+
+    const interruptedStore = new Proxy(store, {
+      get(target, property) {
+        if (property === "appendEvent") {
+          return (runId, type, data) => {
+            if (type === "workspace_changes_undone" && data?.scope === "workflow") {
+              throw new Error("simulated workflow event persistence failure");
+            }
+            return target.appendEvent(runId, type, data);
+          };
+        }
+        const value = Reflect.get(target, property, target);
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    });
+    await assert.rejects(
+      () => recoverWorkflowWorkspaceChanges(interruptedStore, store.getChannelWorkflow(workflow.id), "undo"),
+      /simulated workflow event persistence failure/,
+    );
+    assert.equal(await readFile(filePath, "utf8"), "base\n");
+    const reconciled = await buildWorkflowWorkspaceChangesResponse(store, store.getChannelWorkflow(workflow.id));
+    assert.equal(reconciled.state, "undone");
+    assert.equal(reconciled.canReapply, true);
+
+    const reapplied = await recoverWorkflowWorkspaceChanges(store, store.getChannelWorkflow(workflow.id), "reapply");
+    assert.equal(reapplied.state, "applied");
+    assert.equal(reapplied.canUndo, true);
+    assert.equal(await readFile(filePath, "utf8"), "qa\n");
+
+    await writeFile(filePath, "user edit\n", "utf8");
+    await assert.rejects(
+      () => recoverWorkflowWorkspaceChanges(store, store.getChannelWorkflow(workflow.id), "undo"),
+      /changed after preview/,
+    );
+    assert.equal(await readFile(filePath, "utf8"), "user edit\n");
+    const conflicted = await buildWorkflowWorkspaceChangesResponse(store, store.getChannelWorkflow(workflow.id));
     assert.equal(conflicted.state, "conflicted");
     assert.equal(conflicted.canUndo, false);
   } finally {
@@ -369,4 +485,70 @@ test("run and artifact lookup use the persistent workspace store for execution c
 
 async function git(cwd, ...args) {
   await execFileAsync("git", args, { cwd });
+}
+
+async function createReversiblePatchRun(input) {
+  const plan = planApplyPatch({
+    patchText: `*** Begin Patch
+*** Update File: ${input.path}
+@@
+-${input.before}
++${input.after}
+*** End Patch`,
+    readFile: (path) => readFileSync(resolve(input.cwd, path), "utf8"),
+  });
+  await writeFile(resolve(input.cwd, input.path), `${input.after}\n`, "utf8");
+  const run = input.store.createRun({
+    id: input.runId,
+    cwd: input.cwd,
+    taskId: input.taskId,
+    channelId: input.channelId,
+    workflowStepId: input.workflowStepId,
+    providerName: "test-provider",
+    providerModel: "test-model",
+    taskSnapshot: { id: input.taskId, title: input.taskId },
+    providerSnapshot: { provider: "test-provider", model: "test-model" },
+    requestSnapshot: {
+      cwd: input.cwd,
+      effectivePolicySnapshot: {
+        mode: "workspace_write",
+        toolDecisions: {},
+        allowedWritePaths: [input.cwd],
+        workspacePolicyUpdatedAt: input.createdAt,
+        riskNotes: [],
+      },
+    },
+    createdAt: input.createdAt,
+  });
+  const approval = input.store.createApprovalRequest({
+    runId: run.id,
+    taskId: input.taskId,
+    toolCallId: input.toolCallId,
+    actionType: "edit",
+    risk: "medium",
+    title: `Edit ${input.path}`,
+    description: "Apply a reversible workflow patch.",
+    payload: {
+      type: "file_edit",
+      path: input.path,
+      diffPreview: `-${input.before}\n+${input.after}`,
+      patchFormat: plan.format,
+      touchedPaths: [...plan.touchedPaths],
+      summary: { ...plan.summary },
+      rawPatchSha256: plan.rawPatchSha256,
+      patchPlan: {
+        ...plan,
+        touchedPaths: [...plan.touchedPaths],
+        summary: { ...plan.summary },
+        operations: plan.operations.map((operation) => ({
+          ...operation,
+          hunks: operation.hunks.map((hunk) => ({ ...hunk, lines: hunk.lines.map((line) => ({ ...line })) })),
+        })),
+      },
+    },
+  }, input.createdAt);
+  input.store.approveApprovalRequest(approval.id, { reason: "test", resolvedBy: "local-user" }, input.createdAt);
+  input.store.appendEvent(run.id, "tool_end", { toolCallId: input.toolCallId, toolName: "edit", isError: false });
+  input.store.markRunSucceeded(run.id, input.createdAt);
+  return input.store.getRun(run.id);
 }

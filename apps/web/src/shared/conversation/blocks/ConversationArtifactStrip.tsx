@@ -1,17 +1,26 @@
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode, type RefObject } from "react";
 import { createPortal } from "react-dom";
 import { ChevronDown, Code2, FilePenLine, FileText, Image as ImageIcon, Loader2, Redo2, Undo2 } from "lucide-react";
-import { getRunWorkspaceChanges, reapplyRunWorkspaceChanges, undoRunWorkspaceChanges } from "../../../api.js";
+import {
+  getRunWorkspaceChanges,
+  getWorkflowWorkspaceChanges,
+  reapplyRunWorkspaceChanges,
+  reapplyWorkflowWorkspaceChanges,
+  undoRunWorkspaceChanges,
+  undoWorkflowWorkspaceChanges,
+} from "../../../api.js";
 import { useI18n, type Translate } from "../../../i18n.js";
 import { parseUnifiedDiff, summarizeFileChanges, type ConversationFileChange } from "../../../lib/diff-summary.js";
-import type { ConversationArtifactStripChangeArtifact, ConversationArtifactStripItem } from "../../../lib/conversation-work-cell.js";
-import type { PreviewContentResponse, RunWorkspaceChangesResponse } from "../../../types.js";
+import type { ConversationArtifactStripChangeArtifact, ConversationArtifactStripItem, ConversationWorkspaceRecoveryTarget } from "../../../lib/conversation-work-cell.js";
+import type { PreviewContentResponse, RunWorkspaceChangesResponse, WorkflowWorkspaceChangesResponse } from "../../../types.js";
 import type { ArtifactPreviewLoader } from "../preview/ArtifactPreviewDrawer.js";
 import { DiffViewer } from "./DiffViewer.js";
+import { WorkspaceFileOpenMenu } from "./WorkspaceFileOpenMenu.js";
 
 const artifactHoverDelayMs = 2_000;
 const artifactHoverHideDelayMs = 140;
 const collapsedChangeFileCount = 3;
+type WorkspaceRecoveryResponse = RunWorkspaceChangesResponse | WorkflowWorkspaceChangesResponse;
 
 export interface ConversationWorkspaceReviewTarget {
   readonly cwd: string;
@@ -22,13 +31,13 @@ export interface ConversationWorkspaceReviewTarget {
 export function ConversationArtifactStrip({
   items,
   cwd,
-  runId,
+  recoveryTarget,
   loadPreview,
   onOpenWorkspaceReview,
 }: {
   readonly items: readonly ConversationArtifactStripItem[];
   readonly cwd?: string;
-  readonly runId?: string;
+  readonly recoveryTarget?: ConversationWorkspaceRecoveryTarget;
   readonly loadPreview: ArtifactPreviewLoader;
   readonly onOpenWorkspaceReview?: (target: ConversationWorkspaceReviewTarget) => void;
 }): JSX.Element | null {
@@ -57,7 +66,7 @@ export function ConversationArtifactStrip({
         <ChangedFilesGroup
           item={item}
           cwd={cwd}
-          runId={runId}
+          recoveryTarget={item.recoveryTarget ?? recoveryTarget}
           key={item.id}
           loadPreview={loadPreview}
           onOpenWorkspaceReview={onOpenWorkspaceReview}
@@ -86,6 +95,7 @@ function ArtifactOutputRow({
 }): JSX.Element {
   const { t } = useI18n();
   const previewable = Boolean(item.previewable && item.artifactId && cwd);
+  const workspaceFilePath = item.workspaceFilePath?.trim();
   const meta = artifactItemMeta(item, t);
   const icon = item.previewKind === "image" ? <ImageIcon size={13} aria-hidden="true" /> : <FileText size={13} aria-hidden="true" />;
   const content = (
@@ -100,34 +110,41 @@ function ArtifactOutputRow({
     </>
   );
 
-  const row = previewable ? (
-      <button
-        className="conversation-work-cell-artifact-row"
-        type="button"
-        aria-label={`${t("Preview")}: ${item.label}`}
-        onPointerEnter={(event) => onPreviewEnter(item, event.currentTarget)}
-        onPointerLeave={onPreviewLeave}
-        onFocus={(event) => onPreviewNow(item, event.currentTarget)}
-        onBlur={onPreviewLeave}
-        onClick={(event) => onPreviewNow(item, event.currentTarget)}
-      >
-        {content}
-      </button>
-    ) : item.href ? (
-      <a className="conversation-work-cell-artifact-row" href={item.href} target="_blank" rel="noreferrer" title={item.label}>
-        {content}
-      </a>
-    ) : (
-      <span className="conversation-work-cell-artifact-row">{content}</span>
-    );
+  const main = previewable ? (
+    <button
+      className="conversation-work-cell-artifact-main"
+      type="button"
+      aria-label={`${t("Preview")}: ${item.label}`}
+      onPointerEnter={(event) => onPreviewEnter(item, event.currentTarget)}
+      onPointerLeave={onPreviewLeave}
+      onFocus={(event) => onPreviewNow(item, event.currentTarget)}
+      onBlur={onPreviewLeave}
+      onClick={(event) => onPreviewNow(item, event.currentTarget)}
+    >
+      {content}
+    </button>
+  ) : item.href ? (
+    <a className="conversation-work-cell-artifact-main" href={item.href} target="_blank" rel="noreferrer" title={item.label}>
+      {content}
+    </a>
+  ) : (
+    <span className="conversation-work-cell-artifact-main">{content}</span>
+  );
 
-  return row;
+  return (
+    <div className="conversation-work-cell-artifact-row">
+      {main}
+      {cwd && workspaceFilePath ? (
+        <WorkspaceFileOpenMenu cwd={cwd} path={workspaceFilePath} placement="auto" />
+      ) : null}
+    </div>
+  );
 }
 
 function ChangedFilesGroup({
   item,
   cwd,
-  runId,
+  recoveryTarget,
   loadPreview,
   onOpenWorkspaceReview,
   onPreviewEnter,
@@ -136,7 +153,7 @@ function ChangedFilesGroup({
 }: {
   readonly item: ConversationArtifactStripItem;
   readonly cwd?: string;
-  readonly runId?: string;
+  readonly recoveryTarget?: ConversationWorkspaceRecoveryTarget;
   readonly loadPreview: ArtifactPreviewLoader;
   readonly onOpenWorkspaceReview?: (target: ConversationWorkspaceReviewTarget) => void;
   readonly onPreviewEnter: (change: LoadedChangeFile, element: HTMLElement) => void;
@@ -146,7 +163,7 @@ function ChangedFilesGroup({
   const { t } = useI18n();
   const [showAll, setShowAll] = useState(false);
   const [loadedChanges, setLoadedChanges] = useState<readonly LoadedChangeFile[]>(() => fallbackChangeFiles(item.changeArtifacts ?? []));
-  const [recovery, setRecovery] = useState<RunWorkspaceChangesResponse>();
+  const [recovery, setRecovery] = useState<WorkspaceRecoveryResponse>();
   const [recoveryStatus, setRecoveryStatus] = useState<"idle" | "loading" | "loaded" | "unavailable">("idle");
   const [recoveryBusy, setRecoveryBusy] = useState<"undo" | "reapply" | "">("");
   const [recoveryError, setRecoveryError] = useState("");
@@ -170,7 +187,7 @@ function ChangedFilesGroup({
   }, [cwd, item.changeArtifacts, loadPreview]);
 
   useEffect(() => {
-    if (!cwd || !runId) {
+    if (!cwd || !recoveryTarget) {
       setRecovery(undefined);
       setRecoveryStatus("idle");
       return;
@@ -178,7 +195,7 @@ function ChangedFilesGroup({
     let cancelled = false;
     setRecovery(undefined);
     setRecoveryStatus("loading");
-    void getRunWorkspaceChanges(cwd, runId).then((response) => {
+    void getWorkspaceRecovery(cwd, recoveryTarget).then((response) => {
       if (!cancelled) {
         setRecovery(response);
         setRecoveryStatus("loaded");
@@ -192,7 +209,7 @@ function ChangedFilesGroup({
     return () => {
       cancelled = true;
     };
-  }, [cwd, runId]);
+  }, [cwd, recoveryTarget?.id, recoveryTarget?.kind]);
 
   const fileCount = loadedChanges.length || item.changeArtifacts?.length || 0;
   const exactChanges = loadedChanges.filter((entry) => entry.change && entry.exact);
@@ -202,10 +219,10 @@ function ChangedFilesGroup({
   const title = fileCount === 1 ? t("Edited 1 file") : t("Edited {count} files", { count: fileCount });
   const visibleChanges = showAll ? loadedChanges : loadedChanges.slice(0, collapsedChangeFileCount);
   const hiddenCount = Math.max(0, loadedChanges.length - visibleChanges.length);
-  const undoUnavailableReason = recovery?.unavailableReason ?? t("Undo is unavailable for this run");
+  const undoUnavailableReason = recovery?.unavailableReason ?? t("Undo is unavailable for this work");
 
   async function mutateRecovery(action: "undo" | "reapply"): Promise<void> {
-    if (!cwd || !runId || recoveryBusy) {
+    if (!cwd || !recoveryTarget || recoveryBusy) {
       return;
     }
     const fileCount = recovery?.summary.fileCount ?? fileCountFromChanges(loadedChanges);
@@ -218,9 +235,7 @@ function ChangedFilesGroup({
     setRecoveryBusy(action);
     setRecoveryError("");
     try {
-      setRecovery(action === "undo"
-        ? await undoRunWorkspaceChanges(cwd, runId)
-        : await reapplyRunWorkspaceChanges(cwd, runId));
+      setRecovery(await mutateWorkspaceRecovery(cwd, recoveryTarget, action));
       setRecoveryStatus("loaded");
     } catch (error) {
       setRecoveryError(error instanceof Error ? error.message : String(error));
@@ -231,7 +246,11 @@ function ChangedFilesGroup({
 
   function openReview(path?: string): void {
     if (cwd) {
-      onOpenWorkspaceReview?.({ cwd, runId, path });
+      onOpenWorkspaceReview?.({
+        cwd,
+        runId: recoveryTarget?.kind === "run" ? recoveryTarget.id : undefined,
+        path,
+      });
     }
   }
 
@@ -251,7 +270,7 @@ function ChangedFilesGroup({
               {recoveryBusy === "reapply" ? <Loader2 className="spin" size={13} /> : <Redo2 size={13} />}
               {t("Reapply")}
             </button>
-          ) : runId ? (
+          ) : recoveryTarget ? (
             <button
               type="button"
               onClick={() => void mutateRecovery("undo")}
@@ -320,6 +339,30 @@ function ChangedFilesGroup({
       </div>
     </section>
   );
+}
+
+function getWorkspaceRecovery(
+  cwd: string,
+  target: ConversationWorkspaceRecoveryTarget,
+): Promise<WorkspaceRecoveryResponse> {
+  return target.kind === "workflow"
+    ? getWorkflowWorkspaceChanges(cwd, target.id)
+    : getRunWorkspaceChanges(cwd, target.id);
+}
+
+function mutateWorkspaceRecovery(
+  cwd: string,
+  target: ConversationWorkspaceRecoveryTarget,
+  action: "undo" | "reapply",
+): Promise<WorkspaceRecoveryResponse> {
+  if (target.kind === "workflow") {
+    return action === "undo"
+      ? undoWorkflowWorkspaceChanges(cwd, target.id)
+      : reapplyWorkflowWorkspaceChanges(cwd, target.id);
+  }
+  return action === "undo"
+    ? undoRunWorkspaceChanges(cwd, target.id)
+    : reapplyRunWorkspaceChanges(cwd, target.id);
 }
 
 function fileCountFromChanges(changes: readonly LoadedChangeFile[]): number {

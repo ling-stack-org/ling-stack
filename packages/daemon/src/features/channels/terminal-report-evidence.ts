@@ -69,7 +69,12 @@ export function collectWorkflowTerminalReportEvidence(
   const budgets = resolveBudgets(options.budgets);
   const sourceRef = sourceRefFor("workflow", evidence.workflow.id, evidence.workflow.title);
   const packetArtifactIds = new Set(evidence.steps.flatMap((item) => item.packetArtifacts.map((artifact) => artifact.id)));
-  const artifacts = evidence.artifacts.map((artifact) => mapArtifact(artifact, packetArtifactIds.has(artifact.id)));
+  const workspaceFileRefsByArtifactId = collectWorkspaceFileRefsByArtifactId(evidence.actions);
+  const artifacts = evidence.artifacts.map((artifact) => mapArtifact(
+    artifact,
+    packetArtifactIds.has(artifact.id),
+    workspaceFileRefsByArtifactId.get(artifact.id) ?? [],
+  ));
   const artifactsById = new Map(evidence.artifacts.map((artifact) => [artifact.id, artifact]));
   const steps = evidence.steps
     .filter((item) => workflowStepHasActivity(item))
@@ -127,6 +132,7 @@ export function collectRunTerminalReportEvidence(
   const actions = listExecutionActions(store, { runId: run.id, limit: 500 });
   const approvalsRaw = store.listApprovalRequests({ runId: run.id, limit: 500 });
   const artifactsById = new Map(artifactsRaw.map((artifact) => [artifact.id, artifact]));
+  const workspaceFileRefsByArtifactId = collectWorkspaceFileRefsByArtifactId(actions);
   const changedPaths = changedPathsFromArtifacts(artifactsRaw);
   const teammate = run.teammateId ? store.getAiTeammate(run.teammateId) : undefined;
   const resultSummary = readRunAssistantSummary(store, run.id, budgets.summaryCharacters) ?? run.errorMessage;
@@ -167,7 +173,11 @@ export function collectRunTerminalReportEvidence(
       contributionSummaries: resultSummary ? [boundedText(resultSummary, budgets.summaryCharacters)] : [],
       sourceRefs: [sourceRef],
     }] : [],
-    artifacts: artifactsRaw.map((artifact) => mapArtifact(artifact, false)),
+    artifacts: artifactsRaw.map((artifact) => mapArtifact(
+      artifact,
+      false,
+      workspaceFileRefsByArtifactId.get(artifact.id) ?? [],
+    )),
     approvals: approvalsRaw.map(mapApproval),
     risks: collectRunRisks(run, actions, approvalsRaw, sourceRef, budgets.summaryCharacters),
     references: [
@@ -198,6 +208,7 @@ export function collectTurnTerminalReportEvidence(
   const actions = uniqueById(runs.flatMap((run) => listExecutionActions(store, { runId: run.id, limit: 500 })));
   const approvalsRaw = uniqueById(runs.flatMap((run) => store.listApprovalRequests({ runId: run.id, limit: 500 })));
   const artifactsById = new Map(artifactsRaw.map((artifact) => [artifact.id, artifact]));
+  const workspaceFileRefsByArtifactId = collectWorkspaceFileRefsByArtifactId(actions);
   const sourceRef = sourceRefFor("turn", turn.id, turn.title);
   const participants = aggregateRunParticipants(store, runs, budgets.summaryCharacters);
 
@@ -217,7 +228,11 @@ export function collectTurnTerminalReportEvidence(
     operations: actions.map((action) => mapOperation(action, artifactsById, budgets.summaryCharacters)),
     checks: actions.filter(isCheckAction).map((action) => mapCheck(action, budgets.summaryCharacters)),
     participants,
-    artifacts: artifactsRaw.map((artifact) => mapArtifact(artifact, false)),
+    artifacts: artifactsRaw.map((artifact) => mapArtifact(
+      artifact,
+      false,
+      workspaceFileRefsByArtifactId.get(artifact.id) ?? [],
+    )),
     approvals: approvalsRaw.map(mapApproval),
     risks: collectTurnRisks(turn, runs, actions, approvalsRaw, sourceRef, budgets.summaryCharacters),
     references: [
@@ -402,7 +417,11 @@ function mapCheck(action: ExecutionAction, maxCharacters: number): TerminalRepor
   };
 }
 
-function mapArtifact(artifact: RunArtifact, folded: boolean): TerminalReportEvidenceArtifact {
+function mapArtifact(
+  artifact: RunArtifact,
+  folded: boolean,
+  workspaceFileRefs: readonly TerminalReportSourceRef[],
+): TerminalReportEvidenceArtifact {
   const ref = artifactRef(artifact, folded || artifact.type === "log");
   return {
     id: artifact.id,
@@ -414,8 +433,33 @@ function mapArtifact(artifact: RunArtifact, folded: boolean): TerminalReportEvid
     sourceRefs: uniqueRefs([
       ref,
       ...(artifact.runId ? [sourceRefFor("run", artifact.runId, "Artifact run")] : []),
+      ...workspaceFileRefs,
     ]),
   };
+}
+
+function collectWorkspaceFileRefsByArtifactId(
+  actions: readonly ExecutionAction[],
+): ReadonlyMap<string, readonly TerminalReportSourceRef[]> {
+  const refsByArtifactId = new Map<string, TerminalReportSourceRef[]>();
+  for (const action of actions) {
+    if (operationKind(action) !== "edit") {
+      continue;
+    }
+    const fileRefs = action.targetRefs
+      .map(targetRefToSourceRef)
+      .filter((ref): ref is TerminalReportSourceRef => ref?.kind === "file");
+    if (fileRefs.length === 0) {
+      continue;
+    }
+    for (const artifactId of action.resultArtifactIds) {
+      refsByArtifactId.set(artifactId, uniqueRefs([
+        ...(refsByArtifactId.get(artifactId) ?? []),
+        ...fileRefs,
+      ]));
+    }
+  }
+  return refsByArtifactId;
 }
 
 function mapApproval(approval: ApprovalRequest): TerminalReportEvidenceApproval {

@@ -47,6 +47,25 @@ test("terminal report validation rejects unsupported verification and participan
   assert.ok(result.issues.some((item) => item.code === "terminal_report_participant_without_activity"));
 });
 
+test("terminal report validation rejects file refs borrowed from another artifact", () => {
+  const snapshot = buildSnapshot();
+  const content = buildDeterministicTerminalReportContent(snapshot);
+  const docsFileRef = snapshot.artifacts.find((artifact) => artifact.id === "artifact_docs")?.sourceRefs.find((ref) => ref.kind === "file");
+  assert.ok(docsFileRef);
+  const invalid = {
+    ...content,
+    artifacts: content.artifacts.map((artifact) => artifact.id === "artifact_code"
+      ? { ...artifact, sourceRefs: [...artifact.sourceRefs, docsFileRef] }
+      : artifact),
+  };
+
+  const result = validateTerminalReportContent(invalid, snapshot);
+  assert.equal(result.ok, false);
+  assert.ok(result.issues.some((item) =>
+    item.code === "terminal_report_source_ref_missing" && item.path === "artifacts.0.sourceRefs"
+  ));
+});
+
 test("terminal report evidence fingerprint detects snapshot mutation", () => {
   const snapshot = buildSnapshot();
   assert.equal(validateTerminalReportEvidenceSnapshot(snapshot).ok, true);
@@ -78,6 +97,8 @@ function buildSnapshot() {
   const check = ref("check", "check_typecheck", "Typecheck");
   const artifactCode = ref("artifact", "artifact_code", "src/index.ts");
   const artifactDocs = ref("artifact", "artifact_docs", "docs/result.md");
+  const fileCode = ref("file", "src/index.ts", "src/index.ts");
+  const fileDocs = ref("file", "docs/result.md", "docs/result.md");
   const base = {
     schemaVersion: 1,
     id: "snapshot_demo",
@@ -122,7 +143,7 @@ function buildSnapshot() {
       runId: "run_engineer",
       teammateId: "engineer",
       changedPaths: ["src/index.ts", "docs/result.md"],
-      sourceRefs: [runEngineer, artifactCode, artifactDocs],
+      sourceRefs: [runEngineer, artifactCode, artifactDocs, fileCode, fileDocs],
     }],
     checks: [{
       id: "check_typecheck",
@@ -159,7 +180,7 @@ function buildSnapshot() {
         title: "src/index.ts",
         path: "src/index.ts",
         changedPaths: ["src/index.ts"],
-        sourceRefs: [runEngineer, artifactCode],
+        sourceRefs: [runEngineer, artifactCode, fileCode],
       },
       {
         id: "artifact_docs",
@@ -167,12 +188,12 @@ function buildSnapshot() {
         title: "docs/result.md",
         path: "docs/result.md",
         changedPaths: ["docs/result.md"],
-        sourceRefs: [runEngineer, artifactDocs],
+        sourceRefs: [runEngineer, artifactDocs, fileDocs],
       },
     ],
     approvals: [],
     risks: [],
-    references: [workflow, runEngineer, runQa, check, artifactCode, artifactDocs],
+    references: [workflow, runEngineer, runQa, check, artifactCode, artifactDocs, fileCode, fileDocs],
     generatedAt: "2026-07-11T00:10:01.000Z",
   };
   return {

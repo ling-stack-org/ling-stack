@@ -11,7 +11,7 @@ import type {
   ConversationWorkCellRowTone,
   ConversationWorkCellViewModel,
 } from "./conversation-work-cell.js";
-import { buildConversationApprovalCheckpointRows, buildConversationArtifactStripItems, buildConversationExecutionActionEvidenceRows, mainFeedArtifactEvidenceLinks, mainFeedEvidenceGroups, normalizeConversationOperationCell } from "./conversation-work-cell.js";
+import { buildConversationApprovalCheckpointRows, buildConversationArtifactStripItems, buildConversationExecutionActionEvidenceRows, mainFeedArtifactEvidenceLinks, mainFeedEvidenceGroups, mergeConversationArtifactStripItems, normalizeConversationOperationCell } from "./conversation-work-cell.js";
 import { truncatePreview } from "./data.js";
 
 export type WorkflowProgressMode = "active" | "completed";
@@ -191,10 +191,12 @@ export function workflowProgressToConversationWorkCell(model: WorkflowProgressMo
     ...(terminalReport?.evidenceLinks ?? []),
   ], (item) => item.id);
   const hasBaseChangedItem = model.artifactStripItems.some((item) => item.kind === "changed");
-  const artifactStripItems = uniqueBy([
-    ...model.artifactStripItems,
-    ...(terminalReport?.artifactStripItems ?? []).filter((item) => item.kind !== "changed" || !hasBaseChangedItem),
-  ], (item) => item.artifactId ?? item.id);
+  const artifactStripItems = mergeConversationArtifactStripItems(
+    model.artifactStripItems,
+    (terminalReport?.artifactStripItems ?? []).filter((item) => item.kind !== "changed" || !hasBaseChangedItem),
+  ).map((item) => item.kind === "changed"
+    ? { ...item, recoveryTarget: { kind: "workflow" as const, id: model.workflowId } }
+    : item);
   return normalizeConversationOperationCell({
     id: model.id,
     sourceKind: "workflow",

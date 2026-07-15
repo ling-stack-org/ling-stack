@@ -79,6 +79,36 @@ Undo is available only when all of these conditions hold:
 Undo applies the inverse patch plans in reverse order. It never executes
 `git checkout`, `git reset`, or a repository-wide restore.
 
+### Multi-Agent Undo Means Workflow-Owned Atomic Recovery
+
+A completed multi-agent work cell can aggregate reversible patches from several runs.
+Binding its `Undo` action to the latest run would be incorrect because the visible changed-
+files summary can contain earlier Engineer, QA, or follow-up edits. Ling therefore uses a
+workflow recovery target for channel workflow work cells.
+
+Workflow recovery:
+
+- collects every terminal run attached to the workflow's steps, including retry runs whose
+  `workflowStepId` still points at the workflow;
+- ignores read-only runs with no successfully applied reversible PatchPlan;
+- requires every recoverable run to use the same execution directory;
+- validates each PatchPlan against the write-scope snapshot of the run that created it and
+  against the current workspace policy;
+- orders plans by successful tool completion time, with workflow step position, run creation
+  time, and in-run plan order as deterministic tie-breakers;
+- preflights the complete cross-run patch sequence in memory before the first filesystem
+  mutation;
+- undoes the combined sequence in reverse order and reapplies it in forward order;
+- commits all resulting file states with the same compare-before-write and best-effort
+  rollback guarantees as run recovery;
+- records one workflow-scoped recovery intent on a deterministic workflow run so daemon
+  restart reconciliation can distinguish fully applied, fully reverted, and interrupted
+  recovery states.
+
+The workflow action is available only when at least one reversible PatchPlan exists. It
+does not claim ownership of shell, external-editor, binary, or otherwise unrecorded
+changes; those changes remain visible in Review but outside automatic recovery.
+
 ### Reapply Means Exact Patch Replay
 
 After undo, Ling records a run event marking the patch set as undone. Reapply is enabled
@@ -151,6 +181,52 @@ the patch contains deletes.
 Workspace file detail provides an `Open with` menu. The daemon resolves and validates the
 file before launching anything.
 
+The same menu is available inline on workspace-backed output rows in the final
+conversation artifact strip. This is not a generic Artifact action. The shared
+conversation view model carries an optional `workspaceFilePath`, and the Web renderer
+shows the menu only when that field is present.
+
+Projection rules:
+
+1. Collect the structured changed paths from `TerminalReport.changes[].paths`.
+2. For each conversation-visible TerminalReport artifact, collect its user-visible
+   `sourceRefs` whose kind is `file`.
+3. Keep only file references whose normalized id exactly matches a structured changed path.
+4. Populate `ConversationArtifactStripItem.workspaceFilePath` only when exactly one trusted
+   changed path remains.
+5. Do not infer workspace authority from the Artifact path, title, basename, href, or raw
+   Run Artifact storage location. Missing or ambiguous file references leave the action
+   unavailable.
+
+The mapping is deliberately performed in `conversation-ui-core`, not in JSX. Channel,
+normal-conversation, and teammate-private projections therefore receive the same semantic
+item and cannot drift into separate UI rules.
+
+The evidence collector establishes the trusted binding before synthesis. For `edit` and
+`write` execution actions, each result Artifact inherits the action's structured file
+target references. Deterministic fallback therefore retains the same binding without
+trusting an Artifact storage path. Model synthesis may reuse only source references bound
+to that same evidence Artifact; borrowing a file reference from another operation or
+Artifact fails TerminalReport validation.
+
+The row composition is:
+
+```text
+artifact row container
+  preview button or link
+  Open with menu
+```
+
+The menu must not be nested inside the preview button. Pointer and keyboard interaction on
+the preview surface retains the existing two-second hover preview and immediate focus/click
+preview. Pointer and keyboard interaction on `Open with` owns only its menu.
+
+The wide conversation surface uses `Open with`; the right-dock file detail uses compact
+`Open`. Both reuse `WorkspaceFileOpenMenu` and the same daemon endpoints. Conversation
+rows choose above or below from the nearest clipping scroll container's available space;
+the selected side's available height also bounds the scrollable popover. Opening the menu
+must not increase feed scroll height or place menu actions outside that visible boundary.
+
 Options are derived from applications the daemon can actually launch. Ling does not show
 a generic `Default app` entry. The supported discovery set starts with:
 
@@ -159,6 +235,50 @@ a generic `Default app` entry. The supported discovery set starts with:
 - Finder reveal on macOS,
 - Terminal at the containing directory,
 - download copy through a workspace-scoped content endpoint.
+
+### Local Application Icons
+
+Installed application rows use the real local application icon when the daemon can
+resolve one. This is a local capability, not a browser filesystem capability:
+
+```text
+WorkspaceFileOpenMenu
+  -> GET /workspace-files/open-icons/:target?cwd=/trusted/workspace
+  -> daemon validates local Origin + trusted cwd + allowlisted target
+  -> platform application discovery
+  -> bounded PNG conversion and in-memory cache
+  -> Web renders the PNG or falls back to the semantic Lucide icon
+```
+
+The icon route accepts only a `WorkspaceFileOpenTarget` already present in the launch
+adapter registry. It never accepts an application path, executable path, bundle path,
+icon filename, or arbitrary bundle identifier from the browser. A successful response is
+`image/png`; unavailable, stale, or unsupported icons return a normal non-success status
+and leave the existing fallback icon visible.
+
+macOS implementation rules:
+
+- resolve the installed `.app` bundle from the known application name and bundle metadata;
+- prefer direct `/Applications` and user `Applications` candidates, then use Spotlight
+  metadata as a discovery fallback;
+- read `Contents/Info.plist` to locate `CFBundleIconFile` or a bounded `.icns` fallback
+  inside `Contents/Resources`;
+- convert the source icon to a 64 by 64 PNG with the system `sips` utility;
+- cache by target, resolved application path, source icon mtime, and requested size so
+  repeated menu opens need only a source mtime check and do not repeat metadata or
+  conversion process execution;
+- return an ETag and require browser revalidation so application upgrades can refresh the
+  icon without transferring unchanged PNG bytes;
+- keep cache data in daemon memory or an OS temporary location, never in the workspace.
+
+The first implementation targets macOS because the current launcher already uses
+LaunchServices through `/usr/bin/open`. The endpoint shape remains platform-neutral:
+Windows can later use shell executable icon extraction, and Linux can resolve the
+`Icon` field from an installed `.desktop` entry and the active icon theme.
+
+Static brand icons are fallback presentation only. They do not prove that an application
+is installed and do not replace the launcher adapter because line-addressed launch
+arguments still differ across VS Code, Xcode, JetBrains IDEs, Zed, and Sublime Text.
 
 Security rules:
 
@@ -174,6 +294,8 @@ Security rules:
   workspace file paths,
 - downloads stream file bytes instead of buffering the complete file in daemon memory,
 - unavailable applications are omitted or disabled,
+- application icon requests are restricted to known open targets and never expose local
+  application or icon paths in public response bodies,
 - the Web client never receives an unrestricted local-file URL.
 
 Line-addressed file references request a bounded text window around the target line. The
@@ -209,6 +331,23 @@ interface RunWorkspaceChangesResponse {
   readonly summary: PatchSummary;
   readonly unavailableReason?: string;
 }
+
+interface WorkflowWorkspaceChangesResponse {
+  readonly cwd: string;
+  readonly workflowId: string;
+  readonly runIds: readonly string[];
+  readonly state: RunWorkspaceChangeState;
+  readonly canUndo: boolean;
+  readonly canReapply: boolean;
+  readonly files: readonly RunWorkspaceChangeFile[];
+  readonly summary: RunWorkspaceChangeSummary;
+  readonly unavailableReason?: string;
+  readonly updatedAt: string;
+}
+
+type ConversationWorkspaceRecoveryTarget =
+  | { readonly kind: "run"; readonly id: string }
+  | { readonly kind: "workflow"; readonly id: string };
 ```
 
 ## API Surface
@@ -222,6 +361,10 @@ GET  /workspace-files/content?cwd=...&path=...&download=1
 GET  /runs/:runId/workspace-changes?cwd=...
 POST /runs/:runId/workspace-changes/undo?cwd=...
 POST /runs/:runId/workspace-changes/reapply?cwd=...
+
+GET  /workflows/:workflowId/workspace-changes?cwd=...
+POST /workflows/:workflowId/workspace-changes/undo?cwd=...
+POST /workflows/:workflowId/workspace-changes/reapply?cwd=...
 ```
 
 ## Failure Handling
@@ -232,6 +375,10 @@ POST /runs/:runId/workspace-changes/reapply?cwd=...
 - An active run returns `409 run_not_terminal`.
 - A run without reversible patch plans returns `200` with `state: unavailable` for GET
   and `409` for mutations.
+- A workflow whose recoverable runs use different execution directories returns
+  `state: unavailable`; Ling never spans one recovery across multiple worktrees.
+- A workflow recovery conflict returns before the first file write. A write-time race
+  triggers the same bounded rollback used by run recovery.
 - Multi-plan recovery performs a complete in-memory preflight before the first disk write.
 
 ## Verification
@@ -240,6 +387,11 @@ Required coverage:
 
 - inverse patch generation for add, update, and delete,
 - multi-action undo in reverse order and reapply in forward order,
+- multi-run workflow undo in reverse workflow order and reapply in forward workflow order,
+- overlapping edits to the same file across two workflow runs,
+- workflow recovery rejection for active runs, mixed execution directories, revoked write
+  scope, and intervening file edits,
+- interrupted workflow recovery intent reconciliation after the filesystem commit,
 - conflict detection after an intervening edit,
 - workspace diff for staged, unstaged, and untracked files,
 - staged and unstaged changes that cancel in the worktree but remain pending in the index,
@@ -252,6 +404,12 @@ Required coverage:
 - local-Origin and daemon-known workspace enforcement,
 - path escape rejection for preview, open, and download,
 - work-cell action-state rendering,
+- shared work-cell routing for run and workflow recovery targets,
 - Review navigator open, filter, file click, and diff scroll,
 - Open-with option menu and request payload,
+- inline Open-with rendering for TerminalReport artifacts with one trusted changed-file
+  source reference,
+- no inline Open-with action for raw Artifact storage paths, exact paths without a trusted
+  file reference, or ambiguous file references,
+- menu interaction does not trigger the artifact preview,
 - channel, normal conversation, and teammate-private shared rendering.

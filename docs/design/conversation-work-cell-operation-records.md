@@ -134,6 +134,41 @@ summary. It separates produced files from source changes:
 - the default preview does not open the full-page artifact lightbox or duplicate its
   open, download, copy, and close chrome.
 
+Workspace-backed output rows also expose a persistent `Open with` action at the right
+edge of the row:
+
+- the main row remains the preview target while `Open with` is a separate sibling
+  control, so opening the application menu never triggers the hover preview;
+- the conversation surface uses the complete `Open with` label; the narrower right dock
+  keeps the compact `Open` label;
+- the action is shared by channel, normal-conversation, and teammate-private surfaces;
+- only rows carrying a structured `workspaceFilePath` render the action;
+- `workspaceFilePath` is projected from a TerminalReport artifact only when exactly one
+  user-visible `file` source reference resolves to one of that report's structured
+  changed paths;
+- arbitrary Run Artifact storage paths, labels, hrefs, and `.ling-stack/artifacts`
+  locations never gain workspace-open authority through string guessing;
+- the daemon remains authoritative for current file existence, workspace containment,
+  regular-file validation, and installed-application discovery;
+- installed application entries prefer a daemon-served local PNG icon while Finder,
+  Terminal, download, and failed icon loads retain their compact semantic fallback icon;
+- application icons occupy a stable 16px visual slot and must not resize menu rows while
+  loading or after fallback;
+- failed or stale targets remain non-mutating and report the daemon error inside the
+  menu rather than falling back to an unrestricted local file URL.
+
+The changed-files row carries a structured recovery target rather than an optional bare
+run id:
+
+- a normal conversation, teammate-private run, or single-run work cell uses
+  `{ kind: "run", id: runId }`;
+- a channel multi-agent workflow uses `{ kind: "workflow", id: workflowId }` even when
+  its visible artifacts came from several Agent runs;
+- the shared artifact-strip component selects the matching status, undo, and reapply API
+  from that target and keeps the same button placement on every conversation surface;
+- a workflow target is never downgraded to its latest run because that would expose a
+  partial undo under an aggregate changed-files count.
+
 Once the final summary and artifact strip are present, the completed work cell's compact
 evidence disclosure shows references only. Changed-item and check counts are omitted
 because the operation stream and final changed-files group already own those facts.

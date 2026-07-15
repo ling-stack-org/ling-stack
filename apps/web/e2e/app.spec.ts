@@ -784,8 +784,12 @@ test("executed normal conversation renders one structured terminal report", asyn
         id: "artifact_terminal_report_conversation",
         kind: "file",
         title: "ConversationHome.tsx",
-        path: "apps/web/src/features/workspace/ConversationHome.tsx",
-        sourceRefs: [],
+        path: "apps/web/src/features/workspace/ConversationHome-1.tsx",
+        sourceRefs: [{
+          kind: "file",
+          id: "apps/web/src/features/workspace/ConversationHome-1.tsx",
+          visibility: "conversation",
+        }],
       },
       {
         id: "artifact_terminal_report_metadata",
@@ -807,7 +811,7 @@ test("executed normal conversation renders one structured terminal report", asyn
       { kind: "turn", id: turnId, label: "User task", visibility: "conversation" },
       { kind: "run", id: runId, label: "Ling Agent run", visibility: "conversation" },
       { kind: "artifact", id: "artifact_terminal_report_metadata", label: "Generated file metadata: ConversationHome.tsx", visibility: "conversation" },
-      { kind: "file", id: "apps/web/src/features/workspace/ConversationHome.tsx", label: "ConversationHome.tsx", visibility: "conversation" },
+      { kind: "file", id: "apps/web/src/features/workspace/ConversationHome-1.tsx", label: "ConversationHome.tsx", visibility: "conversation" },
     ],
     evidenceSnapshotId: "snapshot_terminal_report_conversation",
     evidenceFingerprint: "fingerprint_terminal_report_conversation",
@@ -879,6 +883,7 @@ test("executed normal conversation renders one structured terminal report", asyn
   await expect(workCell).not.toContainText("echo prior attempt");
   await expect(workCell.locator(".conversation-work-cell-artifact-row")).toHaveCount(1);
   await expect(workCell).toContainText("ConversationHome.tsx");
+  await expect(workCell.locator(".conversation-work-cell-artifact-row").getByRole("button", { name: "打开方式" })).toBeVisible();
   await expect(workCell).not.toContainText("Generated file metadata");
   await expect(workCell).not.toContainText("Action preview");
   const references = workCell.locator(".conversation-work-cell-evidence-summary");

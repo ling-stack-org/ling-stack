@@ -5,6 +5,7 @@ import { resolve } from "node:path";
 import test from "node:test";
 import {
   buildDeterministicTerminalReportContent,
+  computeTerminalReportEvidenceFingerprint,
   createSqliteRunStore,
 } from "../../core/dist/index.js";
 import { createRunnerRegistry } from "../dist/index.js";
@@ -58,6 +59,58 @@ test("terminal report synthesis repairs unsupported claims and rejects hallucina
     assert.equal(fallback.mode, "deterministic_fallback");
     assert.equal(fallback.attemptCount, 2);
     assert.equal(fallback.fallbackReason, "terminal_report_synthesis_invalid_after_repair");
+  });
+});
+
+test("terminal report synthesis restores evidence-bound file refs omitted by the model", async () => {
+  await withSynthesisFixture([], async ({ store, snapshot, runnerRegistry, runner, secretResolver }) => {
+    const artifactRef = terminalReportRef("artifact", "artifact_workspace_file", "workspace output");
+    const fileRef = terminalReportRef("file", "src/workspace.ts", "src/workspace.ts");
+    const snapshotBody = {
+      ...snapshot,
+      operations: [...snapshot.operations, {
+        id: "operation_workspace_file",
+        kind: "edit",
+        title: "Edit workspace file",
+        status: "succeeded",
+        changedPaths: ["src/workspace.ts"],
+        sourceRefs: [artifactRef, fileRef],
+      }],
+      artifacts: [...snapshot.artifacts, {
+        id: "artifact_workspace_file",
+        kind: "file",
+        title: "workspace output",
+        path: "run_1/workspace-output.txt",
+        changedPaths: ["src/workspace.ts"],
+        status: "created",
+        sourceRefs: [artifactRef, fileRef],
+      }],
+      evidenceFingerprint: undefined,
+    };
+    const boundSnapshot = {
+      ...snapshotBody,
+      evidenceFingerprint: computeTerminalReportEvidenceFingerprint(snapshotBody),
+    };
+    const valid = buildDeterministicTerminalReportContent(boundSnapshot);
+    runner.responses = [JSON.stringify({
+      ...valid,
+      artifacts: valid.artifacts.map((artifact) => ({
+        ...artifact,
+        sourceRefs: artifact.sourceRefs.filter((ref) => ref.kind !== "file"),
+      })),
+    })];
+
+    const result = await synthesizeTerminalReportContent({
+      store,
+      snapshot: boundSnapshot,
+      runnerRegistry,
+      secretResolver,
+      timeoutMs: 100,
+    });
+    assert.equal(result.mode, "model");
+    assert.ok(result.content?.artifacts.find((artifact) => artifact.id === "artifact_workspace_file")?.sourceRefs.some((ref) =>
+      ref.kind === "file" && ref.id === "src/workspace.ts"
+    ));
   });
 });
 
@@ -166,3 +219,7 @@ const dummySecretResolver = {
     return { ref, configured: false };
   },
 };
+
+function terminalReportRef(kind, id, label) {
+  return { kind, id, label, visibility: "conversation", sensitivity: "normal" };
+}

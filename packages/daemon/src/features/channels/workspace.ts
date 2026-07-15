@@ -10,6 +10,8 @@ import {
 } from "@ling-stack/core";
 import type { ResolvedDaemonConfig } from "../../config.js";
 import type { RunStoreRegistry } from "../../runtime/store-registry.js";
+import { isAllowedLocalOrigin } from "../../shared/local-workspace-access.js";
+import { openLocalDirectory } from "../../shared/local-path-open.js";
 import { readJsonBody } from "../../shared/request.js";
 import { writeJson } from "../../shared/response.js";
 import { buildUnavailableWorkspaceGitStatus, inspectWorkspaceGitStatus } from "./git-status.js";
@@ -52,7 +54,7 @@ export async function handleChannelWorkspace(
   config: ResolvedDaemonConfig,
   storeRegistry: RunStoreRegistry,
   channelId: string,
-  action?: "create-worktree" | "handoff" | "refresh" | "cleanup" | "git-status",
+  action?: "create-worktree" | "handoff" | "refresh" | "cleanup" | "git-status" | "open",
 ): Promise<void> {
   const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
   const cwd = url.searchParams.get("cwd");
@@ -90,6 +92,26 @@ export async function handleChannelWorkspace(
         snapshot,
         gitStatus,
       });
+      return;
+    }
+
+    if (action === "open" && request.method === "POST") {
+      if (!isAllowedLocalOrigin(request.headers.origin)) {
+        writeJson(response, 403, {
+          error: "forbidden_origin",
+          message: "Channel workspace actions are only available from local Ling Stack pages.",
+        });
+        return;
+      }
+      const binding = channel.workspaceBinding ?? defaultChannelWorkspaceBinding(channel, cwd);
+      const channelWithBinding = { ...channel, workspaceBinding: binding };
+      const ready = assertChannelWorkspaceReady(channelWithBinding, cwd);
+      if (!ready.ok) {
+        writeJson(response, 409, { error: "channel_workspace_unavailable", message: ready.message });
+        return;
+      }
+      await openLocalDirectory(ready.executionCwd);
+      writeJson(response, 200, buildChannelWorkspaceResponse(cwd, channelWithBinding));
       return;
     }
 

@@ -81,7 +81,7 @@ export function ConversationWorkCell({
   const visibleArtifactItems = showArtifactStrip
     ? model.artifactStripItems.filter((item) => item.kind === "artifact" || item.kind === "changed")
     : [];
-  const recoveryRunId = visibleArtifactItems.find((item) => item.kind === "changed")?.recoveryRunId;
+  const recoveryTarget = visibleArtifactItems.find((item) => item.kind === "changed")?.recoveryTarget;
   const referencesOnly = !showArtifactStrip;
   const evidenceSummary = model.terminalReportRows.length > 0
     ? buildReferenceSummary(model.evidenceLinks.length, t)
@@ -236,7 +236,7 @@ export function ConversationWorkCell({
         <ConversationArtifactStrip
           items={visibleArtifactItems}
           cwd={cwd}
-          runId={recoveryRunId}
+          recoveryTarget={recoveryTarget}
           loadPreview={loadPreview}
           onOpenWorkspaceReview={onOpenWorkspaceReview}
         />
@@ -253,13 +253,13 @@ export function ConversationWorkCell({
 export function ConversationArtifactStripPanel({
   items,
   cwd,
-  runId,
+  recoveryTarget,
   loadPreview,
   onOpenWorkspaceReview,
 }: {
   readonly items: readonly ConversationArtifactStripItem[];
   readonly cwd?: string;
-  readonly runId?: string;
+  readonly recoveryTarget?: ConversationArtifactStripItem["recoveryTarget"];
   readonly loadPreview: ArtifactPreviewLoader;
   readonly onOpenWorkspaceReview?: (target: ConversationWorkspaceReviewTarget) => void;
 }): JSX.Element | null {
@@ -271,7 +271,7 @@ export function ConversationArtifactStripPanel({
     <ConversationArtifactStrip
       items={visibleItems}
       cwd={cwd}
-      runId={runId}
+      recoveryTarget={recoveryTarget}
       loadPreview={loadPreview}
       onOpenWorkspaceReview={onOpenWorkspaceReview}
     />

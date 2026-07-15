@@ -92,6 +92,10 @@ import {
   handleChannelWorkflowStepsCollection,
   handleChannelWorkflowsCollection,
 } from "../features/channels/workflows.js";
+import {
+  handleGetWorkflowWorkspaceChanges,
+  handleMutateWorkflowWorkspaceChanges,
+} from "../features/channels/workflow-workspace-change-recovery.js";
 import { createWorkflowStepContextArtifact } from "../features/channels/workflow-step-packets.js";
 import {
   handleExternalWorkActionCancel,
@@ -204,6 +208,7 @@ import { resolveProviderForRun } from "../features/runs/providers.js";
 import { handleGetWorkspaceChanges } from "../features/previews/workspace-changes.js";
 import {
   handleGetWorkspaceFileContent,
+  handleGetWorkspaceFileOpenIcon,
   handleGetWorkspaceFileOpenOptions,
   handlePostWorkspaceFileOpen,
 } from "../features/previews/workspace-file-actions.js";
@@ -1280,6 +1285,19 @@ export async function routeRequest(
     await handleGetWorkspaceChanges(response, url);
     return;
   }
+  const workspaceFileOpenIconTarget = parseWorkspaceFileOpenIconTarget(url.pathname);
+  if (request.method === "GET" && workspaceFileOpenIconTarget) {
+    const cwd = url.searchParams.get("cwd")?.trim();
+    if (!cwd) {
+      writeJson(response, 400, { error: "bad_request", message: "cwd query parameter is required" });
+      return;
+    }
+    if (!allowLocalWorkspaceRequest({ request, response, storeRegistry, cwd })) {
+      return;
+    }
+    await handleGetWorkspaceFileOpenIcon(request, response, workspaceFileOpenIconTarget);
+    return;
+  }
   if (request.method === "GET" && url.pathname === "/workspace-files/open-options") {
     if (!allowLocalWorkspaceRequest({ request, response, storeRegistry, cwd: url.searchParams.get("cwd") ?? undefined })) {
       return;
@@ -1583,6 +1601,28 @@ export async function routeRequest(
   const workflowRoute = parseChannelWorkflowRoute(url.pathname);
   if (workflowRoute) {
     if (workflowRoute.kind === "workflow") {
+      if (workflowRoute.action === "workspace-changes" || workflowRoute.action === "workspace-changes-undo" || workflowRoute.action === "workspace-changes-reapply") {
+        const expectedMethod = workflowRoute.action === "workspace-changes" ? "GET" : "POST";
+        if (request.method !== expectedMethod) {
+          writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for workflow workspace recovery` });
+          return;
+        }
+        if (!allowLocalWorkspaceRequest({ request, response, storeRegistry, cwd: url.searchParams.get("cwd") ?? undefined })) {
+          return;
+        }
+        if (workflowRoute.action === "workspace-changes") {
+          await handleGetWorkflowWorkspaceChanges(response, url, storeRegistry, workflowRoute.workflowId);
+        } else {
+          await handleMutateWorkflowWorkspaceChanges(
+            response,
+            url,
+            storeRegistry,
+            workflowRoute.workflowId,
+            workflowRoute.action === "workspace-changes-undo" ? "undo" : "reapply",
+          );
+        }
+        return;
+      }
       if (workflowRoute.action === "orchestrate") {
         if (request.method !== "POST") {
           writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for workflow orchestration` });
@@ -2324,6 +2364,14 @@ function parseConversationRoute(pathname: string): { readonly threadId: string }
   const segments = pathname.split("/").filter(Boolean).map(decodeURIComponent);
   if (segments.length === 2 && segments[0] === "conversations" && segments[1]) {
     return { threadId: segments[1] };
+  }
+  return undefined;
+}
+
+function parseWorkspaceFileOpenIconTarget(pathname: string): string | undefined {
+  const segments = pathname.split("/").filter(Boolean).map(decodeURIComponent);
+  if (segments.length === 3 && segments[0] === "workspace-files" && segments[1] === "open-icons" && segments[2]) {
+    return segments[2];
   }
   return undefined;
 }
