@@ -1861,7 +1861,8 @@ test("channel runtime policy is visible while preferred specialist controls stay
   await expect(currentManagement).not.toContainText("Preferred specialist");
   await expect(currentManagement.getByLabel("Ling reply")).toHaveCount(0);
   await expect(currentManagement.getByRole("button", { name: "Save channel" })).toHaveCount(0);
-  await expect(currentManagement.getByText("Changes save automatically")).toBeVisible();
+  await expect(currentManagement.locator(".channel-autosave-status")).toHaveCount(0);
+  await expect(page.locator(".channel-notification-panel > .channel-settings-section-head > small")).toHaveCount(0);
 
   const navigation = page.getByLabel("Ling Stack navigation");
   await navigation.getByRole("button", { name: "Channel actions" }).click();
@@ -1913,7 +1914,7 @@ test("channel runtime policy is visible while preferred specialist controls stay
     const updated = state.channels.find((channel) => isRecord(channel) && channel.id === (isRecord(created) ? created.id : ""));
     return isRecord(updated) ? updated.name : "";
   }).toBe("Release QA");
-  await expect(details.getByText("Saved")).toBeVisible();
+  await expect(details.locator(".channel-autosave-status")).toHaveCount(0);
 });
 
 test("channel reply routing mode is not exposed in ordinary settings", async ({ page }) => {
@@ -2930,6 +2931,7 @@ test("channel settings manage workspace binding", async ({ page }) => {
   const details = page.getByLabel("Channel management");
   const workspaceControl = details.getByLabel("Channel workspace");
   await expect(workspaceControl).toContainText("Local");
+  await expect(workspaceControl.locator(".channel-workspace-control-head .status-badge")).toHaveCount(0);
   const executionPathInput = details.getByLabel("Execution path");
   const manualExecutionPath = "/tmp/manual-channel-path";
   await executionPathInput.fill(manualExecutionPath);

@@ -24,7 +24,6 @@ import {
   aiCouncilHealthLabels,
   aiCouncilRoutingModeLabel,
 } from "../../lib/ai-councils.js";
-import { StatusBadge } from "../../shared/components/index.js";
 import type {
   AiCouncil,
   AiCouncilHealthReport,
@@ -41,7 +40,6 @@ import { ChannelExecutionPathField } from "./ChannelExecutionPathField.js";
 import { ChannelRuntimePolicyFields, ProviderPresetOptions } from "./WorkspaceControls.js";
 
 export type ChannelNotificationLevel = "all" | "mentions" | "muted";
-export type ChannelSettingsAutosaveState = "idle" | "saving" | "saved" | "error";
 
 const channelNotificationLevels: readonly ChannelNotificationLevel[] = ["all", "mentions", "muted"];
 
@@ -173,7 +171,6 @@ export function ChannelSettingsPanels({
   onRefreshChannelCouncil,
   channelTeamMetricsPanel,
   channelEditForm,
-  channelSettingsAutosaveState,
   onChannelEditFormChange,
   onChangeChannelWorkspacePath,
   providersLoading,
@@ -227,7 +224,6 @@ export function ChannelSettingsPanels({
   readonly onRefreshChannelCouncil: () => void;
   readonly channelTeamMetricsPanel: ReactNode;
   readonly channelEditForm: ChannelFormState;
-  readonly channelSettingsAutosaveState: ChannelSettingsAutosaveState;
   readonly onChannelEditFormChange: (form: ChannelFormState) => void;
   readonly onChangeChannelWorkspacePath: (path: string) => Promise<void>;
   readonly providersLoading: boolean;
@@ -257,7 +253,6 @@ export function ChannelSettingsPanels({
             {channelNotificationLevel === "muted" ? <BellOff size={15} /> : <Bell size={15} />}
             <strong>{t("Notifications")}</strong>
           </span>
-          <small>{t(channelNotificationLevelLabel(channelNotificationLevel))}</small>
         </div>
         <div className="channel-notification-options" role="radiogroup" aria-label={t("Channel notifications")}>
           {channelNotificationLevels.map((level) => (
@@ -284,10 +279,6 @@ export function ChannelSettingsPanels({
           <span>
             <SlidersHorizontal size={15} />
             <strong>{t("Current channel")}</strong>
-          </span>
-          <span className={`channel-autosave-status ${channelSettingsAutosaveState}`} role="status">
-            {channelAutosaveStatusIcon(channelSettingsAutosaveState)}
-            <small>{t(channelAutosaveStatusLabel(channelSettingsAutosaveState))}</small>
           </span>
         </div>
 
@@ -318,7 +309,6 @@ export function ChannelSettingsPanels({
                   {channelWorkspaceModeIcon(selectedChannelWorkspace.mode, 15)}
                   <strong>{t("Workspace")}</strong>
                 </span>
-                <StatusBadge status={selectedChannelWorkspace.status === "ready" ? "done" : selectedChannelWorkspace.status === "missing" ? "blocked" : "todo"} />
               </div>
               <div className="channel-workspace-summary">
                 <strong>{t(channelWorkspaceModeLabel(selectedChannelWorkspace.mode))}</strong>
@@ -532,29 +522,6 @@ export function ChannelSettingsPanels({
       </div>
     </div>
   );
-}
-
-function channelAutosaveStatusIcon(state: ChannelSettingsAutosaveState): JSX.Element {
-  if (state === "saving") {
-    return <Loader2 className="spin" size={13} />;
-  }
-  if (state === "error") {
-    return <CircleAlert size={13} />;
-  }
-  return <Check size={13} />;
-}
-
-function channelAutosaveStatusLabel(state: ChannelSettingsAutosaveState): string {
-  if (state === "saving") {
-    return "Saving...";
-  }
-  if (state === "saved") {
-    return "Saved";
-  }
-  if (state === "error") {
-    return "Save failed.";
-  }
-  return "Changes save automatically";
 }
 
 function channelNotificationLevelLabel(level: ChannelNotificationLevel): string {

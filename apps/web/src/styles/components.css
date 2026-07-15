@@ -7714,38 +7714,6 @@ code,
   overflow-wrap: anywhere;
 }
 
-.channel-autosave-status {
-  display: inline-flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 6px;
-  min-width: 0;
-  height: 28px;
-  padding: 0 9px;
-  border: 1px solid var(--border-subtle);
-  border-radius: 999px;
-  background: var(--surface-panel-strong);
-  color: var(--text-muted);
-  white-space: nowrap;
-}
-
-.channel-autosave-status.saved {
-  color: var(--success);
-}
-
-.channel-autosave-status.error {
-  border-color: var(--danger-border);
-  background: var(--danger-soft);
-  color: var(--danger);
-}
-
-.channel-autosave-status small {
-  color: inherit;
-  font-size: 11px;
-  font-weight: 720;
-  line-height: 1;
-}
-
 .channel-runtime-card {
   display: grid;
   grid-template-columns: minmax(180px, 0.42fr) minmax(0, 1fr);
