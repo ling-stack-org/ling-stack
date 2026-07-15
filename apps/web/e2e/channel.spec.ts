@@ -1861,6 +1861,12 @@ test("channel runtime policy is visible while preferred specialist controls stay
   await expect(page.getByText("active channel")).toHaveCount(0);
   await page.getByRole("button", { name: "More channel views" }).click();
   await page.getByRole("menuitem", { name: "Settings" }).click();
+  const settingsTabs = page.getByRole("tablist", { name: "Channel settings navigation" });
+  await expect(settingsTabs.getByRole("tab", { name: "General" })).toHaveAttribute("aria-selected", "true");
+  await expect(settingsTabs.getByRole("tab", { name: "Workspace" })).toHaveAttribute("aria-selected", "false");
+  await expect(page.getByLabel("Channel workspace settings")).toHaveCount(0);
+  await expect(page.getByLabel("Channel teammates")).toHaveCount(0);
+  await expect(page.getByLabel("Channel AI councils")).toHaveCount(0);
   const currentManagement = page.getByLabel("Channel management");
   await expect(currentManagement.getByLabel("Preferred specialist")).toHaveCount(0);
   await expect(currentManagement).not.toContainText("Preferred specialist");
@@ -2494,6 +2500,8 @@ test("channel settings attaches an AI council by reference", async ({ page }) =>
 
   await page.getByRole("button", { name: "More channel views" }).click();
   await page.getByRole("menuitem", { name: "Settings" }).click();
+  const settingsTabs = page.getByRole("tablist", { name: "Channel settings navigation" });
+  await settingsTabs.getByRole("tab", { name: "Councils" }).click();
   const councils = page.getByLabel("Channel AI councils");
   await expect(councils).toContainText("No AI councils attached");
   await councils.getByLabel("Attach AI council").selectOption("council_builtin_development");
@@ -2518,12 +2526,14 @@ test("channel settings attaches an AI council by reference", async ({ page }) =>
   await expect(councils.getByLabel("Projected council specialists")).toContainText("Development Council · Verification");
   await expect(councils.getByLabel("Projected council specialists")).not.toContainText("Ling Agent");
 
+  await settingsTabs.getByRole("tab", { name: "Members" }).click();
   const directTeammates = page.getByLabel("Channel teammates");
   await expect(directTeammates.locator(".channel-teammate-chip")).toHaveCount(1);
   await expect(directTeammates).toContainText("Ling Engineer");
   await expect(directTeammates.locator(".channel-teammate-chip").filter({ hasText: "Ling Designer" })).toHaveCount(0);
   expect(state.teammateChannelMemberships.filter((item) => isRecord(item) && item.channelId === "channel_engineering")).toHaveLength(1);
 
+  await settingsTabs.getByRole("tab", { name: "Councils" }).click();
   await councils.getByRole("button", { name: "Detach council" }).click();
   await expect.poll(() => {
     const policy = state.channelCouncilPolicies.find((item) => isRecord(item) && item.channelId === "channel_engineering");
@@ -2957,15 +2967,17 @@ test("channel settings manage workspace binding", async ({ page }) => {
 
   await page.getByRole("button", { name: "More channel views" }).click();
   await page.getByRole("menuitem", { name: "Settings" }).click();
-  const details = page.getByLabel("Channel management");
-  const workspaceControl = details.getByLabel("Channel workspace");
+  const settingsTabs = page.getByRole("tablist", { name: "Channel settings navigation" });
+  await settingsTabs.getByRole("tab", { name: "Workspace" }).click();
+  const workspaceSettings = page.getByLabel("Channel workspace settings");
+  const workspaceControl = workspaceSettings.getByLabel("Channel workspace");
   await expect(workspaceControl).toContainText("Local");
   await expect(workspaceControl.locator(".channel-workspace-control-head .status-badge")).toHaveCount(0);
-  const executionPathInput = details.getByLabel("Execution path");
+  const executionPathInput = workspaceSettings.getByLabel("Execution path");
   const manualExecutionPath = "/tmp/manual-channel-path";
   await executionPathInput.fill(manualExecutionPath);
-  await expect(details.getByRole("button", { name: "Save" })).toBeEnabled();
-  await details.getByRole("button", { name: "Save" }).click();
+  await expect(workspaceSettings.getByRole("button", { name: "Save" })).toBeEnabled();
+  await workspaceSettings.getByRole("button", { name: "Save" }).click();
   await expect.poll(() => {
     const channel = state.channels.find((item) => isRecord(item) && item.id === "channel_engineering");
     if (!isRecord(channel) || !isRecord(channel.workspaceBinding)) {
@@ -2975,7 +2987,7 @@ test("channel settings manage workspace binding", async ({ page }) => {
   }).toEqual([manualExecutionPath, "local", manualExecutionPath]);
 
   const selectedExecutionPath = "/Users/gsx/minimax-agent-cn/projects";
-  await details.getByRole("button", { name: "Change directory" }).click();
+  await workspaceSettings.getByRole("button", { name: "Change directory" }).click();
   await expect.poll(() => {
     const channel = state.channels.find((item) => isRecord(item) && item.id === "channel_engineering");
     if (!isRecord(channel) || !isRecord(channel.workspaceBinding)) {

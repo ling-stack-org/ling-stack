@@ -3854,8 +3854,6 @@ export function WorkspaceClientView({
       onRefreshChannelWorkspace={onRefreshChannelWorkspace}
       onOpenChannelWorkspacePath={onOpenChannelWorkspacePath}
       onHandoffChannelWorkspace={onHandoffChannelWorkspace}
-      channelsLoading={channelsLoading}
-      onRefreshChannels={onRefreshChannels}
     />
   );
   const channelContextDockContent = (
