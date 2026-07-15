@@ -2,7 +2,7 @@ import type { ReactNode } from "react";
 
 export interface ConversationStatusMetaItem {
   readonly id: string;
-  readonly label: string;
+  readonly label?: string;
   readonly value: ReactNode;
 }
 
@@ -49,7 +49,7 @@ export function ConversationStatusStrip({
           <div className="conversation-status-meta">
             {metaItems.map((item) => (
               <span key={item.id}>
-                <small>{item.label}</small>
+                {item.label ? <small>{item.label}</small> : null}
                 <strong>{item.value}</strong>
               </span>
             ))}
