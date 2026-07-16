@@ -38,6 +38,18 @@ const defaultSkillSourceUpgradePolicy = {
   updatedAt: "2026-06-22T00:00:00.000Z",
 };
 
+const defaultOfficialSkillSourceStatus = {
+  status: "synced",
+  source: {
+    sourceId: "official-gstack",
+    originUrl: "https://github.com/garrytan/gstack.git",
+    ref: "main",
+    revision: "11de390b",
+    version: "1.58.5.0",
+    lastSyncedAt: "2026-06-22T00:00:00.000Z",
+  },
+};
+
 const mockCreateAiCouncilRequestKeys = new Set(["displayName", "description", "routingPolicy", "members", "pinned"]);
 const mockCreateAiCouncilRoutingPolicyKeys = new Set(["defaultMode", "maxActiveMembers", "notes"]);
 const mockCloneAiCouncilRequestKeys = new Set(["displayName", "description", "pinned"]);
@@ -80,6 +92,7 @@ export interface MockState {
   skillRegistryEntries: unknown[];
   skillSourceSnapshots: unknown[];
   skillSourceUpgradePolicy: Record<string, unknown>;
+  officialSkillSourceStatus: Record<string, unknown>;
   skillImportDrafts: unknown[];
   skillCandidates: unknown[];
   skillCandidateReviewRecords: unknown[];
@@ -1079,6 +1092,7 @@ export function createBaseState(options: { approvalStatus: "pending" | "expired"
     skillRegistryEntries: buildMockSkillRegistryEntries(),
     skillSourceSnapshots: createMockSkillSourceSnapshots(),
     skillSourceUpgradePolicy: { ...defaultSkillSourceUpgradePolicy },
+    officialSkillSourceStatus: { ...defaultOfficialSkillSourceStatus },
     skillImportDrafts: [],
     skillCandidates: createMockSkillCandidates(),
     skillCandidateReviewRecords: [],
@@ -2472,6 +2486,41 @@ function publishMockSkillSourceSync(state: MockState, input: Record<string, unkn
   return { preview, skills: publishedSkills, snapshots: publishedSnapshots };
 }
 
+function applyMockSkillSourceSync(state: MockState, input: Record<string, unknown> = {}): Record<string, unknown> {
+  const completedAt = "2026-06-22T00:06:00.000Z";
+  const preview = createMockSkillSourceSyncPreview(state, input);
+  const records = Array.isArray(preview.records) ? preview.records.filter(isRecord) : [];
+  const changed = records.filter((record) => record.state !== "unchanged" && record.state !== "missing" && record.state !== "orphaned");
+  const unchanged = records.filter((record) => record.state === "unchanged");
+  state.skillSourceUpgradePolicy = {
+    ...state.skillSourceUpgradePolicy,
+    lastCheckedAt: completedAt,
+    updatedAt: completedAt,
+  };
+  const source = isRecord(state.officialSkillSourceStatus.source) ? state.officialSkillSourceStatus.source : {};
+  state.officialSkillSourceStatus = {
+    status: "synced",
+    source: {
+      ...source,
+      sourceId: "official-gstack",
+      originUrl: "https://github.com/garrytan/gstack.git",
+      ref: "main",
+      lastSyncedAt: completedAt,
+    },
+  };
+  return {
+    completedAt,
+    policy: state.skillSourceUpgradePolicy,
+    source: state.officialSkillSourceStatus.source,
+    summary: {
+      synced: changed.length,
+      unchanged: unchanged.length,
+    },
+    skills: [],
+    snapshots: [],
+  };
+}
+
 function isMockPublishableSyncRecord(record: Record<string, unknown>, allowNewSkills: boolean): boolean {
   const warnings = Array.isArray(record.warnings) ? record.warnings.filter(isRecord) : [];
   if (warnings.some((warning) => warning.severity === "error")) {
@@ -2939,9 +2988,78 @@ export function buildMockEffectiveSkills(state: MockState, teammateId: string): 
 
 export function createMockSkillImportDraft(state: MockState, body: Record<string, unknown>): Record<string, unknown> {
   const content = typeof body.content === "string" ? body.content : "";
+  const sourcePath = typeof body.sourcePath === "string" ? body.sourcePath : undefined;
+  const sourceFileName = sourcePath?.replaceAll("\\", "/").split("/").at(-1)?.toLowerCase();
+  const inferredSource = sourceFileName === "agents.md" || sourceFileName === "agent.md"
+    ? "agents-md"
+    : sourceFileName === "skill.md" || content.includes("---\nname:")
+      ? "skill-directory"
+      : "custom";
+  const structured = parseMockStructuredSkillImport(content);
+  if (structured) {
+    const definitions = structured.skills.map((skill, index) => {
+      const skillId = readMockString(skill.id) ?? `custom-skill-${state.skillImportDrafts.length + index + 1}`;
+      const name = readMockString(skill.name) ?? skillId;
+      const summary = readMockString(skill.summary) ?? "Imported workspace skill.";
+      const promptFragments = readMockStringArray(skill.promptFragments);
+      const duplicateSkill = state.skillRegistryEntries.some((entry) => isRecord(entry) && entry.id === skillId);
+      const permissionWarnings = /approval|secret|external/i.test(promptFragments.join("\n"))
+        ? [{
+            code: "permission_like_instruction",
+            severity: "warning",
+            message: "Permission-like instructions were kept as prompt text only.",
+          }]
+        : [];
+      return {
+        definition: {
+          id: skillId,
+          name,
+          summary,
+          roleAffinity: readMockStringArray(skill.roleAffinity, ["custom"]),
+          promptFragments,
+          requiredTools: readMockStringArray(skill.requiredTools),
+          requiredProviderCapabilities: readMockStringArray(skill.requiredProviderCapabilities),
+          approvalProfile: isRecord(skill.approvalProfile) ? skill.approvalProfile : { mode: "none" },
+          stateEffects: readMockStringArray(skill.stateEffects),
+        },
+        visibility: {
+          workspaceVisible: true,
+          promotableToWorkspace: true,
+        },
+        warnings: [
+          ...permissionWarnings,
+          ...(duplicateSkill ? [{
+            code: "duplicate_skill_id",
+            severity: "error",
+            message: `Skill id already exists: ${skillId}`,
+          }] : []),
+        ],
+      };
+    });
+    const firstDefinition = definitions[0]?.definition;
+    const name = typeof body.name === "string" && body.name.trim()
+      ? body.name.trim()
+      : structured.name ?? firstDefinition?.name ?? "Imported skill pack";
+    const description = structured.description ?? firstDefinition?.summary ?? "Imported workspace skill.";
+    return {
+      id: `skill_draft_${state.skillImportDrafts.length + 1}`,
+      workspaceId: "workspace_default",
+      source: typeof body.source === "string" ? body.source : inferredSource,
+      sourcePath,
+      packId: typeof body.packId === "string" ? body.packId : `skill_pack_${state.skillImportDrafts.length + 1}`,
+      name,
+      version: "0.1.0",
+      description,
+      definitions,
+      warnings: [],
+      createdAt: "2026-06-04T00:20:00.000Z",
+      updatedAt: "2026-06-04T00:20:00.000Z",
+    };
+  }
   const skillId = content.match(/^id:\s*([a-z0-9-]+)/im)?.[1] ?? `custom-skill-${state.skillImportDrafts.length + 1}`;
   const heading = content.match(/^#\s+(.+)$/m)?.[1]?.trim();
   const summary = content.match(/^summary:\s*(.+)$/im)?.[1]?.trim() ?? "Imported workspace skill.";
+  const duplicateSkill = state.skillRegistryEntries.some((entry) => isRecord(entry) && entry.id === skillId);
   const warnings = /approval|secret|external/i.test(content)
     ? [
       {
@@ -2951,11 +3069,19 @@ export function createMockSkillImportDraft(state: MockState, body: Record<string
       },
     ]
     : [];
+  const definitionWarnings = [
+    ...warnings,
+    ...(duplicateSkill ? [{
+      code: "duplicate_skill_id",
+      severity: "error",
+      message: `Skill id already exists: ${skillId}`,
+    }] : []),
+  ];
   return {
     id: `skill_draft_${state.skillImportDrafts.length + 1}`,
     workspaceId: "workspace_default",
-    source: typeof body.source === "string" ? body.source : "custom",
-    sourcePath: typeof body.sourcePath === "string" ? body.sourcePath : undefined,
+    source: typeof body.source === "string" ? body.source : inferredSource,
+    sourcePath,
     packId: `skill_pack_${state.skillImportDrafts.length + 1}`,
     name: typeof body.name === "string" && body.name.trim() ? body.name.trim() : heading ?? "Imported skill pack",
     version: "0.1.0",
@@ -2967,7 +3093,6 @@ export function createMockSkillImportDraft(state: MockState, body: Record<string
           name: heading ?? skillId,
           summary,
           roleAffinity: ["qa"],
-          workflowPhase: "test",
           promptFragments: [content],
           requiredTools: ["read", "grep"],
           requiredProviderCapabilities: ["chat"],
@@ -2978,7 +3103,7 @@ export function createMockSkillImportDraft(state: MockState, body: Record<string
           workspaceVisible: true,
           promotableToWorkspace: true,
         },
-        warnings,
+        warnings: definitionWarnings,
       },
     ],
     warnings: [],
@@ -2987,28 +3112,75 @@ export function createMockSkillImportDraft(state: MockState, body: Record<string
   };
 }
 
-export function createMockSkillCandidateDraft(state: MockState, candidate: Record<string, unknown>): Record<string, unknown> {
+function parseMockStructuredSkillImport(content: string): {
+  readonly name?: string;
+  readonly description?: string;
+  readonly skills: readonly Record<string, unknown>[];
+} | undefined {
+  try {
+    const parsed = JSON.parse(content) as unknown;
+    if (!isRecord(parsed) || !Array.isArray(parsed.skills)) return undefined;
+    const skills = parsed.skills.filter(isRecord);
+    if (skills.length === 0) return undefined;
+    return {
+      ...(readMockString(parsed.name) ? { name: readMockString(parsed.name) } : {}),
+      ...(readMockString(parsed.description) ? { description: readMockString(parsed.description) } : {}),
+      skills,
+    };
+  } catch {
+    return undefined;
+  }
+}
+
+function readMockString(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function readMockStringArray(value: unknown, fallback: readonly string[] = []): string[] {
+  if (!Array.isArray(value)) return [...fallback];
+  return value.map(String).map((item) => item.trim()).filter(Boolean);
+}
+
+export function createMockSkillCandidateDraft(
+  state: MockState,
+  candidate: Record<string, unknown>,
+  editedContent?: string,
+): Record<string, unknown> {
+  const sourcePath = `skill-candidates/${String(candidate.id)}`;
+  if (editedContent?.trim()) {
+    return {
+      ...createMockSkillImportDraft(state, {
+        content: editedContent,
+        source: "custom",
+        sourcePath,
+        name: typeof candidate.title === "string" ? candidate.title : "Skill candidate draft",
+      }),
+      source: "custom",
+      sourcePath,
+      packId: "ling-generated",
+    };
+  }
   const definition = isRecord(candidate.definition) ? candidate.definition : {};
-  const skillDefinition = isRecord(definition.skillDefinition)
+  const skillDefinitionWithLegacyMetadata = isRecord(definition.skillDefinition)
     ? definition.skillDefinition
     : {
         id: uniqueMockSkillId(state, slugMockSkillId(typeof candidate.title === "string" ? candidate.title : "skill candidate")),
         name: typeof candidate.title === "string" ? candidate.title : "Skill candidate",
         summary: typeof candidate.summary === "string" ? candidate.summary : "Generated from a skill candidate.",
         roleAffinity: ["qa"],
-        workflowPhase: typeof definition.workflowPhase === "string" ? definition.workflowPhase : "operate",
         promptFragments: [mockSkillCandidatePrompt(candidate)],
         requiredTools: Array.isArray(definition.requiredTools) ? definition.requiredTools.map(String) : [],
         requiredProviderCapabilities: Array.isArray(definition.requiredProviderCapabilities) ? definition.requiredProviderCapabilities.map(String) : ["chat"],
         approvalProfile: { mode: "none" },
         stateEffects: [],
       };
+  const { workflowPhase: _legacyWorkflowPhase, ...skillDefinition } = skillDefinitionWithLegacyMetadata;
   return {
     id: `skill_draft_${state.skillImportDrafts.length + 1}`,
     workspaceId: "workspace_default",
     source: "custom",
-    sourcePath: `skill-candidates/${String(candidate.id)}`,
-    packId: `skill_pack_candidate_${state.skillImportDrafts.length + 1}`,
+    sourcePath,
+    packId: "ling-generated",
     name: typeof candidate.title === "string" ? candidate.title : "Skill candidate draft",
     version: "0.1.0",
     description: typeof candidate.summary === "string" ? candidate.summary : "Generated from a skill candidate.",
@@ -6447,6 +6619,10 @@ export async function handleDaemonRoute(
     });
     return;
   }
+  if (request.method() === "GET" && path === "/skills/sync/gstack/status") {
+    await route.fulfill({ json: { cwd, ...state.officialSkillSourceStatus } });
+    return;
+  }
   if (request.method() === "GET" && path === "/workspace-terminal/profile") {
     const requestedCwd = url.searchParams.get("cwd") ?? cwd;
     const workspaceLabel = requestedCwd.split("/").filter(Boolean).at(-1) ?? requestedCwd;
@@ -6991,6 +7167,12 @@ export async function handleDaemonRoute(
     });
     return;
   }
+  if (request.method() === "POST" && path === "/skills/sync/gstack/apply") {
+    const body = await request.postDataJSON() as Record<string, unknown>;
+    const result = applyMockSkillSourceSync(state, body);
+    await route.fulfill({ json: { cwd, ...result } });
+    return;
+  }
   if (request.method() === "POST" && path === "/skills/sync/gstack/refresh") {
     const body = await request.postDataJSON() as Record<string, unknown>;
     await route.fulfill({
@@ -7203,7 +7385,8 @@ export async function handleDaemonRoute(
         await route.fulfill({ status: 400, json: { error: "skill_candidate_duplicate_review_required" } });
         return;
       }
-      const draft = createMockSkillCandidateDraft(state, candidate);
+      const body = safePostDataJson(request);
+      const draft = createMockSkillCandidateDraft(state, candidate, typeof body.content === "string" ? body.content : undefined);
       state.skillImportDrafts.unshift(draft);
       await route.fulfill({ status: 201, json: { cwd, candidate, draft, contextFindings: createMockSkillImportDraftContextFindings(draft) } });
       return;
@@ -7464,6 +7647,13 @@ export async function handleDaemonRoute(
       return;
     }
   }
+  if (request.method() === "POST" && path === "/skills/import-preview") {
+    const body = await request.postDataJSON() as Record<string, unknown>;
+    const draft = createMockSkillImportDraft(state, body);
+    const { id: _id, workspaceId: _workspaceId, createdAt: _createdAt, updatedAt: _updatedAt, ...preview } = draft;
+    await route.fulfill({ json: { cwd, preview, contextFindings: createMockSkillImportDraftContextFindings(draft) } });
+    return;
+  }
   if (request.method() === "POST" && path === "/skills/import-draft") {
     const body = await request.postDataJSON() as Record<string, unknown>;
     const draft = createMockSkillImportDraft(state, body);
@@ -7511,9 +7701,120 @@ export async function handleDaemonRoute(
           !isRecord(entry) || !published.some((skill) => skill.id === entry.id)
         ),
       ];
+      const sourcePath = typeof draft.sourcePath === "string" ? draft.sourcePath : "";
+      const candidateId = sourcePath.startsWith("skill-candidates/") ? sourcePath.slice("skill-candidates/".length) : "";
+      if (candidateId) {
+        state.skillCandidates = state.skillCandidates.map((candidate) => isRecord(candidate) && candidate.id === candidateId
+          ? { ...candidate, status: "published", updatedAt: "2026-06-04T00:21:00.000Z" }
+          : candidate);
+      }
       await route.fulfill({ json: { cwd, draftId, skills: published } });
       return;
     }
+  }
+  const skillRevisionMatch = /^\/skills\/([^/]+)\/(revision-preview|revisions)$/.exec(path);
+  if (skillRevisionMatch && request.method() === "POST") {
+    const skillId = decodeURIComponent(skillRevisionMatch[1]);
+    const action = skillRevisionMatch[2];
+    const skill = state.skillRegistryEntries.find((entry) => isRecord(entry) && entry.id === skillId);
+    if (!isRecord(skill) || !isRecord(skill.definition)) {
+      await route.fulfill({ status: 404, json: { error: "skill_not_found", message: `Skill not found: ${skillId}` } });
+      return;
+    }
+    if (["builtin", "gstack", "workspace"].includes(String(skill.source)) || skill.reviewStatus === "archived") {
+      await route.fulfill({ status: 409, json: { error: "skill_not_editable", message: "This skill is managed by a read-only source." } });
+      return;
+    }
+    const body = safePostDataJson(request);
+    if (body.expectedUpdatedAt !== skill.updatedAt || !isRecord(body.definition)) {
+      await route.fulfill({ status: 409, json: { error: "skill_revision_conflict", message: "Skill changed after the editor was opened." } });
+      return;
+    }
+    const nextDefinition = {
+      ...skill.definition,
+      name: typeof body.definition.name === "string" ? body.definition.name : skill.definition.name,
+      summary: typeof body.definition.summary === "string" ? body.definition.summary : skill.definition.summary,
+      promptFragments: Array.isArray(body.definition.promptFragments) ? body.definition.promptFragments : skill.definition.promptFragments,
+      requiredTools: Array.isArray(body.definition.requiredTools) ? body.definition.requiredTools : skill.definition.requiredTools,
+      requiredProviderCapabilities: Array.isArray(body.definition.requiredProviderCapabilities)
+        ? body.definition.requiredProviderCapabilities
+        : skill.definition.requiredProviderCapabilities,
+      approvalProfile: isRecord(body.definition.approvalProfile) ? body.definition.approvalProfile : skill.definition.approvalProfile,
+    };
+    const requiredToolsChanged = JSON.stringify(nextDefinition.requiredTools) !== JSON.stringify(skill.definition.requiredTools);
+    const requiredProviderCapabilitiesChanged = JSON.stringify(nextDefinition.requiredProviderCapabilities) !== JSON.stringify(skill.definition.requiredProviderCapabilities);
+    const approvalProfileChanged = JSON.stringify(nextDefinition.approvalProfile) !== JSON.stringify(skill.definition.approvalProfile);
+    const authorityDiff = {
+      changed: requiredToolsChanged || requiredProviderCapabilitiesChanged || approvalProfileChanged,
+      requiredToolsChanged,
+      requiredProviderCapabilitiesChanged,
+      approvalProfileChanged,
+      before: {
+        requiredTools: skill.definition.requiredTools,
+        requiredProviderCapabilities: skill.definition.requiredProviderCapabilities,
+        approvalProfile: skill.definition.approvalProfile,
+      },
+      after: {
+        requiredTools: nextDefinition.requiredTools,
+        requiredProviderCapabilities: nextDefinition.requiredProviderCapabilities,
+        approvalProfile: nextDefinition.approvalProfile,
+      },
+    };
+    const preview = {
+      definition: nextDefinition,
+      warnings: [],
+      authorityDiff,
+      requiresConfirmation: authorityDiff.changed,
+      canPublish: Boolean(String(nextDefinition.name).trim() && String(nextDefinition.summary).trim() && Array.isArray(nextDefinition.promptFragments) && nextDefinition.promptFragments.length > 0),
+    };
+    if (action === "revision-preview") {
+      await route.fulfill({ json: { cwd, skillId, preview } });
+      return;
+    }
+    if (preview.requiresConfirmation && body.confirmAuthorityChanges !== true) {
+      await route.fulfill({ status: 409, json: { error: "skill_revision_confirmation_required", message: "Skill authority changes require explicit confirmation.", preview } });
+      return;
+    }
+    const updated = { ...skill, definition: nextDefinition, updatedAt: "2026-07-16T02:00:00.000Z" };
+    state.skillRegistryEntries = state.skillRegistryEntries.map((entry) => isRecord(entry) && entry.id === skillId ? updated : entry);
+    const draftId = `skill_revision_draft_${state.skillImportDrafts.length + 1}`;
+    state.skillImportDrafts.unshift({
+      id: draftId,
+      workspaceId: "workspace_default",
+      source: skill.source,
+      sourcePath: skill.sourcePath,
+      packId: skill.packId,
+      name: nextDefinition.name,
+      description: nextDefinition.summary,
+      definitions: [{ definition: nextDefinition, visibility: skill.visibility }],
+      warnings: [],
+      createdAt: updated.updatedAt,
+      updatedAt: updated.updatedAt,
+    });
+    await route.fulfill({ json: { cwd, draftId, skill: updated } });
+    return;
+  }
+  const skillHardDeleteMatch = /^\/skills\/([^/]+)\/hard-delete$/.exec(path);
+  if (skillHardDeleteMatch && request.method() === "POST") {
+    const skillId = decodeURIComponent(skillHardDeleteMatch[1]);
+    const skill = state.skillRegistryEntries.find((entry) => isRecord(entry) && entry.id === skillId);
+    if (!isRecord(skill)) {
+      await route.fulfill({ status: 404, json: { error: "skill_not_found" } });
+      return;
+    }
+    if (!["custom", "skill-directory", "agents-md"].includes(String(skill.source))) {
+      await route.fulfill({ status: 409, json: { error: "skill_delete_not_imported", message: "skill_delete_not_imported" } });
+      return;
+    }
+    const hasBinding = state.teammateSkillBindings.some((binding) => isRecord(binding) && binding.skillId === skillId);
+    if (hasBinding) {
+      await route.fulfill({ status: 409, json: { error: "skill_delete_blocked", message: "skill_delete_blocked:teammate_binding" } });
+      return;
+    }
+    state.skillRegistryEntries = state.skillRegistryEntries.filter((entry) => !isRecord(entry) || entry.id !== skillId);
+    state.skillSourceSnapshots = state.skillSourceSnapshots.filter((snapshot) => !isRecord(snapshot) || snapshot.skillId !== skillId);
+    await route.fulfill({ json: { cwd, deletedSkillId: skillId, deletedAt: "2026-07-12T00:00:00.000Z" } });
+    return;
   }
   const skillMatch = /^\/skills\/([^/]+)$/.exec(path);
   if (skillMatch && request.method() === "DELETE") {

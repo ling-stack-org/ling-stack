@@ -1,5 +1,7 @@
 # GStack Skill Source Sync
 
+> Model update: [Skill Capability Model And Library Simplification](skill-capability-model-and-library-simplification.md) supersedes source-sync phase inference. Source sync now produces stage-free skills and infers role affinity directly from capability text.
+
 Status: Implementation-ready design
 Date: 2026-06-22
 Scope: Codex-style skill source snapshots, gstack skill sync, lazy skill loading,

@@ -11,12 +11,14 @@ import type {
   SkillSourceSnapshot,
   TeammateSkillBinding,
 } from "../../types.js";
-import { approvalProfileText, workflowPhaseLabel } from "./helpers.js";
+import { approvalProfileText } from "./helpers.js";
 import {
   skillExecutionState,
   teammateSkillFilterLabel,
   type SkillBindingFilter,
 } from "./teammate-workspace-utils.js";
+
+import { SelectControl } from "../../shared/components/SelectControl.js";
 
 export interface SkillImportForm {
   readonly name: string;
@@ -178,12 +180,12 @@ export function TeammateSkillsTab({
           <div className="teammate-task-create-grid">
             <label className="field">
               <span>{t("Source")}</span>
-              <select value={skillImportForm.source} onChange={(event) => onSkillImportFormChange({ ...skillImportForm, source: event.target.value as SkillPackSource })}>
+              <SelectControl value={skillImportForm.source} onChange={(event) => onSkillImportFormChange({ ...skillImportForm, source: event.target.value as SkillPackSource })}>
                 <option value="custom">{t("custom")}</option>
                 <option value="skill-directory">{t("skill-directory")}</option>
                 <option value="agents-md">{t("agents-md")}</option>
                 <option value="workspace">{t("workspace")}</option>
-              </select>
+              </SelectControl>
             </label>
             <label className="field">
               <span>{t("Draft name")}</span>
@@ -255,7 +257,6 @@ export function TeammateSkillsTab({
                   <th>{t("Status")}</th>
                   <th>{t("Skill")}</th>
                   <th>{t("Source")}</th>
-                  <th>{t("Stage")}</th>
                   <th>{t("Required tools")}</th>
                   <th>{t("Approval")}</th>
                   <th>{t("Blocked reasons")}</th>
@@ -265,7 +266,7 @@ export function TeammateSkillsTab({
               <tbody>
                 {skillTableRows.length === 0 ? (
                   <tr>
-                    <td colSpan={8}>
+                    <td colSpan={7}>
                       <div className="client-empty-state teammate-empty compact">
                         <span>{t("No skills match filters")}</span>
                       </div>
@@ -298,9 +299,6 @@ export function TeammateSkillsTab({
                         </td>
                         <td>
                           <TeammateSkillSourceStatus label={sourceLabel} snapshot={sourceSnapshot} />
-                        </td>
-                        <td>
-                          <span className={`phase-token ${skill?.workflowPhase ?? "operate"}`}>{skill ? workflowPhaseLabel(skill.workflowPhase, t) : t("Custom")}</span>
                         </td>
                         <td>
                           <TeammateSkillTokenList values={skill?.requiredTools ?? []} emptyLabel={t("No tools")} />

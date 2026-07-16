@@ -224,7 +224,7 @@ export function parseLingThreadRoute(
 
 export type SkillRoute =
   | { readonly kind: "draft"; readonly draftId: string; readonly action?: "publish" }
-  | { readonly kind: "skill"; readonly skillId: string; readonly action?: "corrections" | "source" | "source-archive" | "source-rollback" | "source-artifacts" | "optimization-preview" | "compiled-views" | "compiled-view-archive"; readonly viewId?: string }
+  | { readonly kind: "skill"; readonly skillId: string; readonly action?: "corrections" | "hard-delete" | "source" | "source-archive" | "source-rollback" | "source-artifacts" | "optimization-preview" | "compiled-views" | "compiled-view-archive" | "revision-preview" | "revisions"; readonly viewId?: string }
   | { readonly kind: "candidate"; readonly candidateId: string; readonly action?: "review" | "draft" };
 
 export function parseSkillRoute(pathname: string): SkillRoute | undefined {
@@ -247,6 +247,9 @@ export function parseSkillRoute(pathname: string): SkillRoute | undefined {
   if (segments.length === 3 && segments[0] === "skills" && segments[2] === "corrections") {
     return { kind: "skill", skillId: segments[1], action: "corrections" };
   }
+  if (segments.length === 3 && segments[0] === "skills" && segments[2] === "hard-delete") {
+    return { kind: "skill", skillId: segments[1], action: "hard-delete" };
+  }
   if (segments.length === 3 && segments[0] === "skills" && segments[2] === "source") {
     return { kind: "skill", skillId: segments[1], action: "source" };
   }
@@ -261,6 +264,12 @@ export function parseSkillRoute(pathname: string): SkillRoute | undefined {
   }
   if (segments.length === 3 && segments[0] === "skills" && segments[2] === "optimization-preview") {
     return { kind: "skill", skillId: segments[1], action: "optimization-preview" };
+  }
+  if (segments.length === 3 && segments[0] === "skills" && segments[2] === "revision-preview") {
+    return { kind: "skill", skillId: segments[1], action: "revision-preview" };
+  }
+  if (segments.length === 3 && segments[0] === "skills" && segments[2] === "revisions") {
+    return { kind: "skill", skillId: segments[1], action: "revisions" };
   }
   if (segments.length === 3 && segments[0] === "skills" && segments[2] === "compiled-views") {
     return { kind: "skill", skillId: segments[1], action: "compiled-views" };

@@ -9496,7 +9496,7 @@ test("skill candidate API persists manual candidates and gates review approval",
     assert.match(await blocked.text(), /negative triggers/);
 
     const health = await getJson(`${daemon.url}/skills/health?cwd=${encodeURIComponent(cwd)}&limit=20`);
-    assert.equal(health.report.summary.pendingCandidates, 2);
+    assert.equal(health.report.summary.pendingCandidates, 1);
     assert.ok(health.report.findings.some((finding) =>
       finding.kind === "missing_negative_triggers" &&
       finding.candidateIds.includes(missingGate.candidate.id)

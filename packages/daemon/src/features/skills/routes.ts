@@ -50,7 +50,6 @@ import {
   type SkillSourceSyncPreviewReport,
   type SkillSourceSnapshot,
   type SkillSourceWarning,
-  type SkillWorkflowPhase,
 } from "@ling-stack/core";
 import type {
   SkillRecordingEligibilityActionHint,
@@ -68,11 +67,13 @@ import { writeJson } from "../../shared/response.js";
 import { listEffectiveSkillRegistryEntries, listExecutableSkillDefinitions, refreshEffectiveSkillRegistryEntries } from "./registry.js";
 import {
   parseCreateSkillCandidateRequest,
+  buildSkillImportPreview,
   parseSkillInvocationSuggestionRequest,
   parseProcedureObservationJobRequest,
   parseProcedureObservationRequest,
   parseSkillRecordingObservationRequest,
   parseSkillCorrectionRequest,
+  parseSkillCandidateDraftRequest,
   parseSkillCandidateReviewRequest,
   parseSkillImportDraftOptimizationPreviewRequest,
   parseSkillImportDraftRequest,
@@ -90,6 +91,9 @@ import {
   type ParsedCreateSkillCandidateRequest,
 } from "./schemas.js";
 import { resolveAiTeammateReference } from "../teammates/identity.js";
+import { handleSkillHardDelete } from "./hard-delete-route.js";
+import { handleManagedOfficialSkillSourceRoute, publicSourceState, refreshManagedOfficialGstackSkillSource, saveManagedOfficialGstackSubscription } from "./managed-official-skill-source-route.js";
+import { handleSkillRevisionRoute } from "./revision-routes.js";
 
 export async function handleSkillRoute(
   request: IncomingMessage,
@@ -108,6 +112,9 @@ export async function handleSkillRoute(
 
   try {
     const store = storeRegistry.getStore(cwd);
+    if (await handleManagedOfficialSkillSourceRoute({ request, response, url, cwd, store })) {
+      return;
+    }
     if (url.pathname === "/skills/source-upgrade-policy") {
       if (request.method === "GET") {
         writeJson(response, 200, { cwd, policy: store.getSkillSourceUpgradePolicy(new Date().toISOString()) });
@@ -201,6 +208,50 @@ export async function handleSkillRoute(
       const input = parseSkillSourceSyncRequest(body);
       const preview = await buildGstackSkillSourceSyncPreview(cwd, store, input);
       writeJson(response, 200, { cwd, preview });
+      return;
+    }
+
+    if (url.pathname === "/skills/sync/gstack/apply") {
+      if (request.method !== "POST") {
+        writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for /skills/sync/gstack/apply` });
+        return;
+      }
+      const body = await readOptionalJsonBody(request, config.maxBodyBytes);
+      parseSkillSourceSyncRequest(body);
+      if (hasManagedOfficialSourceSyncInput(body)) {
+        throw new HttpError(400, "official_skill_source_input_not_supported", "Official skill sync does not accept source configuration.");
+      }
+      const completedAt = new Date().toISOString();
+      const managedSource = await refreshManagedOfficialGstackSkillSource(cwd);
+      const preview = await buildManagedOfficialGstackSkillSourceSyncPreview(store, managedSource.scanRoot, completedAt);
+      const classified = classifyTrustedGstackSkillSourceSyncApply(preview.records);
+      const result = classified.skillIds.length > 0
+        ? await publishGstackSkillSourceSync({
+            store,
+            controlPlaneEvents,
+            cwd,
+            preview,
+            selectedSkillIds: classified.skillIds,
+            allowNewSkills: true,
+            publishArtifacts: true,
+            trusted: true,
+            now: completedAt,
+          })
+        : { skills: [], snapshots: [], artifacts: [] };
+      const policy = store.updateSkillSourceUpgradePolicy({ lastCheckedAt: completedAt }, completedAt);
+      const subscription = saveManagedOfficialGstackSubscription(store, managedSource.source, completedAt);
+      writeJson(response, 200, {
+        cwd,
+        completedAt,
+        policy,
+        source: publicSourceState(subscription),
+        summary: {
+          synced: classified.skillIds.length,
+          unchanged: classified.unchanged,
+        },
+        skills: result.skills,
+        snapshots: result.snapshots,
+      });
       return;
     }
 
@@ -588,6 +639,19 @@ export async function handleSkillRoute(
       return;
     }
 
+    if (url.pathname === "/skills/import-preview") {
+      if (request.method !== "POST") {
+        writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for /skills/import-preview` });
+        return;
+      }
+      const body = await readJsonBody(request, config.maxBodyBytes);
+      const draftInput = parseSkillImportDraftRequest(body, listEffectiveSkillRegistryEntries(store));
+      const preview = buildSkillImportPreview(draftInput);
+      const contextFindings = buildImportDraftContextFindings(draftInput, readImportDraftContent(body));
+      writeJson(response, 200, { cwd, preview, contextFindings });
+      return;
+    }
+
     if (url.pathname === "/skills/import-draft/optimization-preview") {
       if (request.method !== "POST") {
         writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for /skills/import-draft/optimization-preview` });
@@ -623,6 +687,25 @@ export async function handleSkillRoute(
       return;
     }
 
+    if (route.kind === "skill" && route.action === "hard-delete") {
+      await handleSkillHardDelete({ request, response, store, controlPlaneEvents, cwd, skillId: route.skillId });
+      return;
+    }
+
+    if (route.kind === "skill" && (route.action === "revision-preview" || route.action === "revisions")) {
+      await handleSkillRevisionRoute({
+        request,
+        response,
+        config,
+        store,
+        controlPlaneEvents,
+        cwd,
+        skillId: route.skillId,
+        action: route.action,
+      });
+      return;
+    }
+
     if (route.kind === "draft") {
       if (request.method === "GET") {
         const draft = store.getSkillImportDraft(route.draftId);
@@ -636,16 +719,32 @@ export async function handleSkillRoute(
       if (request.method === "POST" && route.action === "publish") {
         const now = new Date().toISOString();
         const draft = store.getSkillImportDraft(route.draftId);
-        const skills = store.publishSkillImportDraft(route.draftId, now);
         const candidateId = candidateIdFromSkillSourcePath(draft?.sourcePath);
+        const candidateBeforePublish = candidateId ? store.getSkillCandidate(candidateId) : undefined;
+        if (candidateId && !candidateBeforePublish) {
+          writeJson(response, 409, { error: "skill_candidate_not_found", message: `Skill candidate not found for draft: ${candidateId}` });
+          return;
+        }
+        if (candidateBeforePublish && candidateBeforePublish.status !== "approved_for_draft" && candidateBeforePublish.status !== "published") {
+          writeJson(response, 409, { error: "skill_candidate_not_publishable", message: `Skill candidate is not ready to publish: ${candidateBeforePublish.status}` });
+          return;
+        }
+        const skills = store.publishSkillImportDraft(route.draftId, now);
         if (candidateId) {
+          const publishedEvents = store.listSkillUsageEvents({ candidateId, kind: "published", limit: 500 });
           for (const skill of skills) {
-            store.appendSkillUsageEvent({
-              candidateId,
-              skillId: skill.id,
-              kind: "published",
-              reason: `Published import draft ${route.draftId}.`,
-            }, now);
+            if (!publishedEvents.some((event) => event.skillId === skill.id)) {
+              store.appendSkillUsageEvent({
+                candidateId,
+                skillId: skill.id,
+                kind: "published",
+                reason: `Published import draft ${route.draftId}.`,
+              }, now);
+            }
+          }
+          const publishedCandidate = store.markSkillCandidatePublished(candidateId, now);
+          if (candidateBeforePublish?.status !== publishedCandidate.status) {
+            appendSkillCandidateChangedEvent(store, controlPlaneEvents, cwd, "publish", publishedCandidate.id, publishedCandidate.status);
           }
         }
         appendSkillRegistryChangedEvent(store, controlPlaneEvents, cwd, "publish", skills[0]?.id ?? route.draftId);
@@ -882,8 +981,13 @@ export async function handleSkillRoute(
           writeJson(response, 404, { error: "skill_candidate_not_found", message: `Skill candidate not found: ${route.candidateId}` });
           return;
         }
+        const body = await readOptionalJsonBody(request, config.maxBodyBytes);
+        const draftRequest = parseSkillCandidateDraftRequest(body);
         const now = new Date().toISOString();
-        const draftInput = createImportDraftInputFromCandidate(candidate, listEffectiveSkillRegistryEntries(store));
+        const existingSkills = listEffectiveSkillRegistryEntries(store);
+        const draftInput = draftRequest.content?.trim()
+          ? createEditedImportDraftInputFromCandidate(candidate, draftRequest.content, existingSkills)
+          : createImportDraftInputFromCandidate(candidate, existingSkills);
         const draft = store.createSkillImportDraft(draftInput, now);
         store.appendSkillUsageEvent({
           candidateId: candidate.id,
@@ -1281,6 +1385,24 @@ async function buildGstackSkillSourceSyncPreview(
   });
 }
 
+async function buildManagedOfficialGstackSkillSourceSyncPreview(
+  store: SkillRouteStore,
+  root: SkillSourceScanRoot,
+  generatedAt: string,
+): Promise<SkillSourceSyncPreviewReport> {
+  const preview = await previewGstackSkillSourceSync({
+    roots: [root],
+    registrySkills: listEffectiveSkillRegistryEntries(store),
+    snapshots: store.listSkillSourceSnapshots({ includeArchived: true }),
+    generatedAt,
+  });
+  const unavailable = preview.records.filter((record) => record.state === "missing" || record.state === "orphaned");
+  if (unavailable.length > 0) {
+    throw new HttpError(409, "gstack_source_sync_unavailable", `Local gstack sources are unavailable: ${unavailable.map((record) => record.skillId).join(", ")}`);
+  }
+  return preview;
+}
+
 async function publishGstackSkillSourceSync(input: {
   readonly store: SkillRouteStore;
   readonly controlPlaneEvents: ControlPlaneEventHub;
@@ -1289,6 +1411,7 @@ async function publishGstackSkillSourceSync(input: {
   readonly selectedSkillIds: readonly string[];
   readonly allowNewSkills: boolean;
   readonly publishArtifacts: boolean;
+  readonly trusted?: boolean;
   readonly now: string;
 }): Promise<{ readonly skills: readonly SkillRegistryEntry[]; readonly snapshots: readonly SkillSourceSnapshot[]; readonly artifacts: readonly SkillSourceArtifact[] }> {
   const selectedSkillIds = uniqueStrings(input.selectedSkillIds);
@@ -1298,20 +1421,20 @@ async function publishGstackSkillSourceSync(input: {
     throw new HttpError(400, "skill_source_sync_selection_not_found", `Selected skill source records were not found: ${missingSelections.join(", ")}`);
   }
   const selectedRecords = selectedSkillIds.map((skillId) => recordsBySkillId.get(skillId)).filter((record): record is SkillSourceSyncPreviewRecord => Boolean(record));
-  const nonPublishable = selectedRecords.filter((record) => record.state === "blocked" || record.state === "missing" || record.state === "orphaned");
+  const nonPublishable = selectedRecords.filter((record) => record.state === "missing" || record.state === "orphaned" || (!input.trusted && record.state === "blocked"));
   if (nonPublishable.length > 0) {
     throw new HttpError(409, "skill_source_sync_not_publishable", `Selected records are not publishable: ${nonPublishable.map((record) => `${record.skillId}:${record.state}`).join(", ")}`);
   }
-  const semanticErrors = selectedRecords.filter((record) => record.semanticDiff.some((item) => item.severity === "error"));
+  const semanticErrors = input.trusted ? [] : selectedRecords.filter((record) => record.semanticDiff.some((item) => item.severity === "error"));
   if (semanticErrors.length > 0) {
     throw new HttpError(409, "skill_source_sync_semantic_error", `Selected records have semantic error drift: ${semanticErrors.map((record) => record.skillId).join(", ")}`);
   }
   const newRecords = selectedRecords.filter((record) => record.state === "new");
-  if (newRecords.length > 0 && !input.allowNewSkills) {
+  if (newRecords.length > 0 && !input.trusted && !input.allowNewSkills) {
     throw new HttpError(409, "skill_source_sync_new_skills_require_confirmation", `New skills require allowNewSkills=true: ${newRecords.map((record) => record.skillId).join(", ")}`);
   }
   const policy = input.store.getSkillSourceUpgradePolicy(input.now);
-  if (policy.mode === "auto-safe") {
+  if (!input.trusted && policy.mode === "auto-safe") {
     const unsafe = selectedRecords.filter((record) => !isAutoSafeSkillSourceRecord(record, policy.allowNewSkills, policy.approvedRootIds));
     if (unsafe.length > 0) {
       throw new HttpError(409, "skill_source_sync_auto_safe_rejected", `auto-safe rejected records with unapproved roots, warnings, semantic risk, new skills, or artifact review requirements: ${unsafe.map((record) => record.skillId).join(", ")}`);
@@ -1566,10 +1689,24 @@ function isAutoSafeSkillSourceRecord(record: SkillSourceSyncPreviewRecord, allow
   if (!["attachable", "drifted", "unchanged"].includes(record.state)) {
     return false;
   }
-  if (record.warnings.length > 0 || record.semanticDiff.length > 0) {
+  if (record.warnings.length > 0 || record.semanticDiff.some((item) => item.severity === "error")) {
     return false;
   }
   return record.referencedFiles.every((file) => file.kind === "reference" || file.kind === "agent-metadata");
+}
+
+function classifyTrustedGstackSkillSourceSyncApply(records: readonly SkillSourceSyncPreviewRecord[]): {
+  readonly skillIds: readonly string[];
+  readonly unchanged: number;
+} {
+  return {
+    skillIds: uniqueStrings(records.filter((record) => record.state !== "unchanged").map((record) => record.skillId)),
+    unchanged: records.filter((record) => record.state === "unchanged").length,
+  };
+}
+
+function hasManagedOfficialSourceSyncInput(value: unknown): boolean {
+  return typeof value === "object" && value !== null && !Array.isArray(value) && Object.keys(value).length > 0;
 }
 
 function isPathInside(root: string, candidate: string): boolean {
@@ -2064,7 +2201,6 @@ function skillCandidateInputFromObservation(observation: ProcedureObservation): 
     title: observation.title,
     summary: observation.summary,
     definition: {
-      workflowPhase: "operate",
       positiveTriggers: observation.positiveTriggers.length > 0 ? observation.positiveTriggers : [observation.normalizedGoal],
       negativeTriggers: observation.negativeTriggers,
       procedureSteps: observation.procedureSteps.map((step) => ({
@@ -2109,7 +2245,6 @@ function skillCandidateHealthInputFromCreateRequest(input: ParsedCreateSkillCand
     targetSkillId: input.targetSkillId,
     title: input.title,
     summary: input.summary,
-    workflowPhase: input.definition.workflowPhase,
     positiveTriggers: input.definition.positiveTriggers,
     negativeTriggers: input.definition.negativeTriggers,
     procedureSteps: input.definition.procedureSteps,
@@ -2131,7 +2266,6 @@ function skillCandidateHealthInputFromCandidate(candidate: SkillCandidate): Skil
     targetSkillId: candidate.targetSkillId,
     title: candidate.title,
     summary: candidate.summary,
-    workflowPhase: candidate.definition.workflowPhase,
     positiveTriggers: candidate.definition.positiveTriggers,
     negativeTriggers: candidate.definition.negativeTriggers,
     procedureSteps: candidate.definition.procedureSteps,
@@ -2323,7 +2457,7 @@ function createImportDraftInputFromCandidate(
   }
   const warnings: SkillImportWarning[] = [];
   const definition = candidate.definition.skillDefinition && isCompleteSkillDefinition(candidate.definition.skillDefinition)
-    ? candidate.definition.skillDefinition
+    ? withoutLegacySkillWorkflowPhase(candidate.definition.skillDefinition)
     : synthesizeSkillDefinitionFromCandidate(candidate, existingSkills, warnings);
   const definitionWarnings = skillDefinitionWarnings(definition, existingSkills);
   return {
@@ -2344,6 +2478,31 @@ function createImportDraftInputFromCandidate(
   };
 }
 
+function createEditedImportDraftInputFromCandidate(
+  candidate: SkillCandidate,
+  content: string,
+  existingSkills: readonly SkillRegistryEntry[],
+): CreateSkillImportDraftInput {
+  if (candidate.status !== "approved_for_draft") {
+    throw new Error("Skill candidate must be approved_for_draft before creating a registry draft");
+  }
+  const sourcePath = `skill-candidates/${candidate.id}`;
+  const parsed = parseSkillImportDraftRequest({
+    content,
+    source: "custom",
+    sourcePath,
+    name: candidate.title,
+  }, existingSkills);
+  return {
+    ...parsed,
+    source: "custom",
+    sourcePath,
+    packId: "ling-generated",
+    name: parsed.name || candidate.title,
+    description: parsed.description || candidate.summary,
+  };
+}
+
 function synthesizeSkillDefinitionFromCandidate(
   candidate: SkillCandidate,
   existingSkills: readonly SkillRegistryEntry[],
@@ -2351,7 +2510,6 @@ function synthesizeSkillDefinitionFromCandidate(
 ): SkillDefinition {
   const requestedId = slugSkillId(candidate.title);
   const id = uniqueSkillId(requestedId, candidate.id, existingSkills);
-  const workflowPhase = normalizeWorkflowPhase(candidate.definition.workflowPhase, warnings);
   const requiredTools = normalizeRunTools(candidate.definition.requiredTools, warnings);
   const requiredProviderCapabilities = normalizeProviderCapabilities(candidate.definition.requiredProviderCapabilities, warnings);
   return {
@@ -2359,7 +2517,6 @@ function synthesizeSkillDefinitionFromCandidate(
     name: candidate.title,
     summary: candidate.summary,
     roleAffinity: ["custom"],
-    workflowPhase,
     promptFragments: [candidatePromptFragment(candidate)],
     requiredTools,
     requiredProviderCapabilities,
@@ -2436,19 +2593,6 @@ function candidatePromptFragment(candidate: SkillCandidate): string {
   return lines.join("\n").slice(0, 12_000);
 }
 
-function normalizeWorkflowPhase(value: string, warnings: SkillImportWarning[]): SkillWorkflowPhase {
-  const phases = ["discover", "plan", "design", "implement", "review", "test", "secure", "ship", "document", "operate"] as const;
-  if ((phases as readonly string[]).includes(value)) {
-    return value as SkillWorkflowPhase;
-  }
-  warnings.push({
-    code: "unsupported_section",
-    severity: "warning",
-    message: `Unsupported workflow phase "${value}" was normalized to operate.`,
-  });
-  return "operate";
-}
-
 function normalizeRunTools(values: readonly (RunTool | string)[], warnings: SkillImportWarning[]): RunTool[] {
   const supported = supportedRunTools();
   const accepted: RunTool[] = [];
@@ -2483,6 +2627,11 @@ function normalizeProviderCapabilities(
     }
   }
   return accepted.length > 0 ? [...new Set(accepted)] : ["chat", "reasoning"];
+}
+
+function withoutLegacySkillWorkflowPhase(value: SkillDefinition): SkillDefinition {
+  const { workflowPhase: _legacyWorkflowPhase, ...definition } = value as SkillDefinition & { readonly workflowPhase?: unknown };
+  return definition;
 }
 
 function supportedRunTools(): readonly RunTool[] {

@@ -89,7 +89,8 @@ export class LingDaemonTransport implements LingDaemonEndpointContext {
     }
     const response = await this.fetchImpl(this._url(path, query), init);
     if (!response.ok) {
-      throw new LingDaemonError(await readErrorMessage(response), response.status, response.statusText);
+      const error = await readErrorDetails(response);
+      throw new LingDaemonError(error.message, response.status, response.statusText, error.code);
     }
     return (await response.json()) as T;
   }
@@ -103,7 +104,8 @@ export class LingDaemonTransport implements LingDaemonEndpointContext {
     }
     const response = await this.fetchImpl(this._url(path, query), init);
     if (!response.ok) {
-      throw new LingDaemonError(await readErrorMessage(response), response.status, response.statusText);
+      const error = await readErrorDetails(response);
+      throw new LingDaemonError(error.message, response.status, response.statusText, error.code);
     }
     if (method === "DELETE") {
       return undefined as T;
@@ -124,6 +126,10 @@ export class LingDaemonTransport implements LingDaemonEndpointContext {
 }
 
 export async function readErrorMessage(response: Response): Promise<string> {
+  return (await readErrorDetails(response)).message;
+}
+
+async function readErrorDetails(response: Response): Promise<{ readonly message: string; readonly code?: string }> {
   let message = `${response.status} ${response.statusText}`;
   try {
     const body = (await response.json()) as { message?: unknown; error?: unknown };
@@ -132,10 +138,13 @@ export async function readErrorMessage(response: Response): Promise<string> {
     } else if (typeof body.error === "string") {
       message = body.error;
     }
+    return {
+      message: friendlyErrorMessage(message),
+      ...(typeof body.error === "string" ? { code: body.error } : {}),
+    };
   } catch {
-    return friendlyErrorMessage(message);
+    return { message: friendlyErrorMessage(message) };
   }
-  return friendlyErrorMessage(message);
 }
 
 function friendlyErrorMessage(message: string): string {

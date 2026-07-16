@@ -15,6 +15,7 @@
 @import "./styles/settings.css";
 @import "./styles/settings-diagnostics.css";
 @import "./styles/settings-interactions.css";
+@import "./styles/settings-skill-editor.css";
 @import "./styles/approvals.css";
 @import "./styles/work-board.css";
 @import "./styles/layout.css";
@@ -28,3 +29,4 @@
 @import "./styles/sidebar.css";
 @import "./styles/action-menus.css";
 @import "./styles/model-workbench.css";
+@import "./styles/select-controls.css";

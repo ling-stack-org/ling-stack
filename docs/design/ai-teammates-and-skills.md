@@ -1,5 +1,7 @@
 # AI Teammates and Skills
 
+> Model update: [Skill Capability Model And Library Simplification](skill-capability-model-and-library-simplification.md) supersedes skill-stage fields and stage UI. Workflow steps still retain phases; teammate-bound skills do not.
+
 Ling Stack needs a skills layer before it can safely support multi-agent work.
 
 Tools are atomic capabilities such as `read`, `grep`, `bash`, `edit`, and `write`. Skills are task workflow templates such as planning, review, QA, security review, and release. AI teammates bind roles to skills, tools, provider capabilities, approval policy, and workflow state.

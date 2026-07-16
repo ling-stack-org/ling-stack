@@ -40,6 +40,8 @@ export * from "./sandbox-types.js";
 export * from "./skill-types.js";
 export * from "./skill-health.js";
 export * from "./skill-source-health.js";
+export * from "./managed-official-skill-source-types.js";
+export * from "./managed-official-skill-source.js";
 export * from "./skill-source-sync.js";
 export * from "./skill-optimization-preview.js";
 export * from "./skill-source-runtime.js";

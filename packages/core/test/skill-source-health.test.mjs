@@ -23,7 +23,6 @@ function registrySkill(overrides = {}) {
       name: overrides.name ?? "Skill Source Fixture",
       summary: overrides.summary ?? "Use this workflow to validate source-backed skill health.",
       roleAffinity: overrides.roleAffinity ?? ["engineer"],
-      workflowPhase: overrides.workflowPhase ?? "review",
       promptFragments: overrides.promptFragments ?? ["Review the skill source and report context risks."],
       requiredTools: overrides.requiredTools ?? ["read"],
       requiredProviderCapabilities: overrides.requiredProviderCapabilities ?? ["chat"],

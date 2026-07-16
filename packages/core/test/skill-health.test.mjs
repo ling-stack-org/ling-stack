@@ -22,7 +22,6 @@ function skill(overrides = {}) {
       name: overrides.name ?? "Skill Alpha",
       summary: overrides.summary ?? "Use this workflow to review repeated skill generation candidates.",
       roleAffinity: overrides.roleAffinity ?? ["engineer"],
-      workflowPhase: overrides.workflowPhase ?? "review",
       promptFragments: overrides.promptFragments ?? ["Review the candidate and summarize the duplicate risk."],
       requiredTools: overrides.requiredTools ?? ["read"],
       requiredProviderCapabilities: overrides.requiredProviderCapabilities ?? ["chat"],
@@ -48,7 +47,6 @@ function candidate(overrides = {}) {
     targetSkillId: overrides.targetSkillId,
     title: overrides.title ?? "Skill Alpha",
     summary: overrides.summary ?? "Review repeated skill generation candidates and merge the duplicate evidence.",
-    workflowPhase: overrides.workflowPhase ?? "review",
     positiveTriggers: overrides.positiveTriggers ?? ["skill duplicate", "generated skill candidate"],
     negativeTriggers: overrides.negativeTriggers ?? ["fresh workflow with no overlap"],
     procedureSteps: overrides.procedureSteps,
@@ -144,7 +142,6 @@ test("duplicate analysis separates exact overlap from unrelated candidates", () 
       title: "Release canary monitor",
       summary: "Watch live deployment metrics after a release.",
       positiveTriggers: ["post deploy canary"],
-      workflowPhase: "operate",
     }),
     activeSkills: [skill({ id: "skill-alpha", name: "Skill Alpha" })],
   });

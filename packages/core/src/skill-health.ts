@@ -1,6 +1,6 @@
 import type { RunTool } from "./approval-policy.js";
 import type { ProviderCapability } from "./provider-types.js";
-import type { SkillDefinition, SkillRegistryEntry, SkillWorkflowPhase } from "./skill-types.js";
+import type { SkillDefinition, SkillRegistryEntry } from "./skill-types.js";
 import type { SkillUsageStats } from "./skill-usage-types.js";
 
 export type SkillHealthSeverity = "info" | "warning" | "critical";
@@ -59,7 +59,6 @@ export interface SkillCandidateHealthInput {
   readonly targetSkillId?: string;
   readonly title: string;
   readonly summary: string;
-  readonly workflowPhase: SkillWorkflowPhase | string;
   readonly positiveTriggers: readonly string[];
   readonly negativeTriggers: readonly string[];
   readonly procedureSteps?: readonly {
@@ -446,7 +445,6 @@ function usageHealthFindings(
 interface SkillFingerprint {
   readonly id: string;
   readonly title: string;
-  readonly workflowPhase: string;
   readonly triggerTokens: readonly string[];
   readonly procedureTokens: readonly string[];
   readonly requiredTools: readonly string[];
@@ -459,10 +457,8 @@ function fingerprintSkill(skill: SkillRegistryEntry): SkillFingerprint {
   return {
     id: skill.id,
     title: normalizeText(definition.name),
-    workflowPhase: definition.workflowPhase,
     triggerTokens: tokens([definition.id, definition.name, definition.summary].join(" ")),
     procedureTokens: tokens([
-      definition.workflowPhase,
       definition.summary,
       definition.requiredTools.join(" "),
       definition.requiredProviderCapabilities.join(" "),
@@ -477,10 +473,8 @@ function fingerprintCandidate(candidate: SkillCandidateHealthInput): SkillFinger
   return {
     id: candidate.id,
     title: normalizeText(candidate.title),
-    workflowPhase: String(candidate.workflowPhase),
     triggerTokens: tokens([candidate.id, candidate.title, candidate.summary, ...candidate.positiveTriggers].join(" ")),
     procedureTokens: tokens([
-      candidate.workflowPhase,
       candidate.summary,
       ...(candidate.procedureSteps ?? []).flatMap((step) => [step.title, step.instruction ?? "", ...(step.requiredTools ?? [])]),
       ...(candidate.requiredTools ?? []),
@@ -497,15 +491,11 @@ function similarity(left: SkillFingerprint, right: SkillFingerprint): number {
   }
   const triggerScore = jaccard(left.triggerTokens, right.triggerTokens);
   const procedureScore = jaccard(left.procedureTokens, right.procedureTokens);
-  const phaseScore = left.workflowPhase === right.workflowPhase ? 0.15 : 0;
-  return Math.min(1, triggerScore * 0.45 + procedureScore * 0.4 + phaseScore);
+  return Math.min(1, triggerScore * 0.55 + procedureScore * 0.45);
 }
 
 function conflictingSkillFields(candidate: SkillCandidateHealthInput, skill: SkillDefinition): readonly string[] {
   const fields: string[] = [];
-  if (candidate.workflowPhase !== skill.workflowPhase) {
-    fields.push("workflowPhase");
-  }
   if (!sameStringSet(candidate.requiredTools ?? [], skill.requiredTools)) {
     fields.push("requiredTools");
   }
@@ -517,9 +507,6 @@ function conflictingSkillFields(candidate: SkillCandidateHealthInput, skill: Ski
 
 function conflictingCandidateFields(left: SkillCandidateHealthInput, right: SkillCandidateHealthInput): readonly string[] {
   const fields: string[] = [];
-  if (left.workflowPhase !== right.workflowPhase) {
-    fields.push("workflowPhase");
-  }
   if (!sameStringSet(left.requiredTools ?? [], right.requiredTools ?? [])) {
     fields.push("requiredTools");
   }
@@ -531,9 +518,6 @@ function conflictingCandidateFields(left: SkillCandidateHealthInput, right: Skil
 
 function conflictingSkillFieldsFromDefinitions(left: SkillDefinition, right: SkillDefinition): readonly string[] {
   const fields: string[] = [];
-  if (left.workflowPhase !== right.workflowPhase) {
-    fields.push("workflowPhase");
-  }
   if (!sameStringSet(left.requiredTools, right.requiredTools)) {
     fields.push("requiredTools");
   }

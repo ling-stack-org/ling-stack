@@ -1,5 +1,6 @@
 import { type ReactNode } from "react";
-import { AlertTriangle, Archive, BookOpen, CheckCircle2, Gauge, RefreshCw, Search } from "lucide-react";
+import { AlertTriangle, Archive, BookOpen, Gauge, RefreshCw, Search } from "lucide-react";
+import type { OfficialSkillSourceState } from "@ling-stack/contracts";
 import { skillSourceArtifactContentUrl } from "../../api.js";
 import { formatDateTime } from "../../lib/formatting.js";
 import type {
@@ -12,19 +13,12 @@ import type {
   SkillRegistryEntry,
   SkillSourceArtifact,
   SkillSourceHealthReport,
-  SkillSourceSemanticDiffItem,
   SkillSourceSnapshot,
-  SkillSourceSyncDiffItem,
-  SkillSourceSyncPreviewRecord,
-  SkillSourceSyncPreviewReport,
-  SkillSourceSyncRecordState,
-  SkillSourceUpgradePolicy,
   TeammateSkillBinding,
 } from "../../types.js";
 
 import {
   SettingsTranslator,
-  isSelectableSyncRecord,
   playbookCandidateReviewMessage,
   playbookCandidateReviewReason,
   skillCandidateReviewMessage,
@@ -35,20 +29,16 @@ import {
   skillLibraryFilterLabel,
   skillRegistryState,
   skillSourceLabel,
-  skillSourceSemanticDiffLabel,
   skillSourceSnapshotState,
-  skillSourceSyncDiffLabel,
-  skillSourceSyncStateLabel,
   sourceHealthKindLabel,
   sourceHealthMessage,
   sourceHealthTitle,
-  syncRecordTitle,
 } from "./skill-library-utils.js";
+import type { SkillSourceSyncResultView } from "./skill-source-sync-result-cache.js";
+
 export {
   boundTeammateNames,
-  defaultSelectedSyncSkillIds,
   isOpenSkillCandidateStatus,
-  isSelectableSyncRecord,
   playbookCandidateReviewMessage,
   playbookCandidateReviewReason,
   skillCandidateReviewMessage,
@@ -61,240 +51,50 @@ export {
 } from "./skill-library-utils.js";
 
 export function SkillSourceSyncPanel({
-  preview,
-  policy,
-  rootPath,
-  includeDetectedRoots,
-  allowNewSkills,
-  selectedSkillIds,
+  source,
+  result,
   loading,
   syncing,
-  onRootPathChange,
-  onIncludeDetectedRootsChange,
-  onAllowNewSkillsChange,
-  onPreview,
-  onRefresh,
-  onCheckUpdates,
-  onPolicyModeChange,
-  onPublish,
-  onToggleRecord,
+  onSync,
   t,
 }: {
-  readonly preview: SkillSourceSyncPreviewReport | undefined;
-  readonly policy: SkillSourceUpgradePolicy | undefined;
-  readonly rootPath: string;
-  readonly includeDetectedRoots: boolean;
-  readonly allowNewSkills: boolean;
-  readonly selectedSkillIds: readonly string[];
+  readonly source: OfficialSkillSourceState | undefined;
+  readonly result: SkillSourceSyncResultView | undefined;
   readonly loading: boolean;
   readonly syncing: boolean;
-  readonly onRootPathChange: (value: string) => void;
-  readonly onIncludeDetectedRootsChange: (value: boolean) => void;
-  readonly onAllowNewSkillsChange: (value: boolean) => void;
-  readonly onPreview: () => void;
-  readonly onRefresh: () => void;
-  readonly onCheckUpdates: () => void;
-  readonly onPolicyModeChange: (mode: SkillSourceUpgradePolicy["mode"]) => void;
-  readonly onPublish: () => void;
-  readonly onToggleRecord: (record: SkillSourceSyncPreviewRecord) => void;
+  readonly onSync: () => void;
   readonly t: SettingsTranslator;
 }): JSX.Element {
-  const records = preview?.records ?? [];
-  const selectedSet = new Set(selectedSkillIds);
   const disabled = loading || syncing;
   return (
-    <section className="settings-skill-source-sync" aria-label={t("gstack source sync")}>
+    <section className="settings-skill-source-sync" aria-label={t("Official skill updates")}>
       <header className="settings-skill-source-sync-head">
         <span>
           <RefreshCw size={15} className={syncing ? "spin" : undefined} />
-          <strong>{t("gstack source sync")}</strong>
+          <strong>{t("Official skill updates")}</strong>
+          <small>
+            {source?.lastSyncedAt
+              ? t("Last sync {time}", { time: formatDateTime(source.lastSyncedAt) })
+              : t("Ready to check official skills")}
+          </small>
         </span>
-        <small>
-          {policy?.lastCheckedAt ? t("Checked {time}", { time: formatDateTime(policy.lastCheckedAt) }) : preview ? t("{count} records", { count: preview.summary.totalRecords }) : t("Preview before publishing")}
-        </small>
+        <button className="primary-button compact-button" type="button" onClick={onSync} disabled={disabled}>
+          <RefreshCw size={14} className={syncing ? "spin" : undefined} />
+          {t("Sync updates")}
+        </button>
       </header>
-      <div className="settings-skill-source-sync-controls">
-        <label className="field">
-          <span>{t("Upgrade policy")}</span>
-          <select
-            value={policy?.mode ?? "prompt"}
-            onChange={(event) => onPolicyModeChange(event.target.value as SkillSourceUpgradePolicy["mode"])}
-            disabled={disabled || !policy}
-          >
-            <option value="manual">{t("Manual")}</option>
-            <option value="prompt">{t("Prompt before publish")}</option>
-            <option value="auto-safe">{t("Auto-safe")}</option>
-          </select>
-        </label>
-        <div className="settings-skill-source-sync-actions">
-          <button className="secondary-button compact-button" type="button" onClick={onPreview} disabled={disabled || (!includeDetectedRoots && !rootPath.trim())}>
-            <Search size={14} />
-            {t("Preview")}
-          </button>
-          <button className="secondary-button compact-button" type="button" onClick={onRefresh} disabled={disabled || (!includeDetectedRoots && !rootPath.trim())}>
-            <RefreshCw size={14} />
-            {t("Refresh")}
-          </button>
-          <button className="secondary-button compact-button" type="button" onClick={onCheckUpdates} disabled={disabled || (!includeDetectedRoots && !rootPath.trim())}>
-            <Gauge size={14} />
-            {t("Check updates")}
-          </button>
-          <button className="primary-button compact-button" type="button" onClick={onPublish} disabled={disabled || selectedSkillIds.length === 0}>
-            <CheckCircle2 size={14} />
-            {t("Publish selected")}
-          </button>
+      {source?.version ? (
+        <div className="settings-skill-source-connection" role="status">
+          <span>{t("Official version")}</span>
+          <span>{source.version}</span>
         </div>
-      </div>
-      <div className="settings-skill-source-sync-switches settings-skill-source-sync-options" aria-label={t("Sync settings")}>
-        <label className="settings-toggle">
-          <input type="checkbox" checked={includeDetectedRoots} disabled={disabled} onChange={(event) => onIncludeDetectedRootsChange(event.target.checked)} />
-          {t("Include detected roots")}
-        </label>
-        <label className="settings-toggle">
-          <input type="checkbox" checked={allowNewSkills} disabled={disabled} onChange={(event) => onAllowNewSkillsChange(event.target.checked)} />
-          {t("Allow new skills")}
-        </label>
-      </div>
-      <details className="settings-compact-details settings-interaction-details settings-skill-source-config">
-        <summary>{t("Advanced source roots")}</summary>
-        <label className="field">
-          <span>{t("Skill root paths")}</span>
-          <textarea
-            rows={2}
-            value={rootPath}
-            onChange={(event) => onRootPathChange(event.target.value)}
-            placeholder="~/.gstack/repos/gstack/.agents/skills"
-          />
-        </label>
-      </details>
-      {preview ? (
-        <>
-          {!allowNewSkills && preview.summary.new > 0 ? (
-            <p className="settings-skill-source-sync-hint">{t("Enable Allow new skills to select new source records.")}</p>
-          ) : null}
-          <div className="settings-skill-source-sync-summary" aria-label={t("gstack source sync summary")}>
-            <span><small>{t("Attachable")}</small><strong>{preview.summary.attachable}</strong></span>
-            <span><small>{t("Drifted")}</small><strong>{preview.summary.drifted}</strong></span>
-            <span><small>{t("New skills")}</small><strong>{preview.summary.new}</strong></span>
-            <span><small>{t("Blocked")}</small><strong>{preview.summary.blocked}</strong></span>
-            <span><small>{t("Selected")}</small><strong>{selectedSkillIds.length}</strong></span>
-          </div>
-        </>
       ) : null}
-      {records.length === 0 ? (
-        <div className="compact-empty">{syncing ? t("Scanning source roots...") : t("No source preview loaded")}</div>
-      ) : (
-        <div className="settings-skill-source-sync-records">
-          {records.map((record) => {
-            const selectable = isSelectableSyncRecord(record, allowNewSkills);
-            const selected = selectedSet.has(record.skillId);
-            const title = syncRecordTitle(record);
-            const path = record.upstreamSkillPath ?? record.sourcePath ?? "-";
-            const diff = record.diff ?? [];
-            const semanticDiff = record.semanticDiff ?? [];
-            const contextFindings = record.contextFindings ?? [];
-            const artifactReviewCount = record.referencedFiles.filter((file) => file.kind === "script" || file.kind === "asset").length;
-            return (
-              <article key={`${record.skillId}:${record.sourcePath ?? record.upstreamSkillPath ?? record.state}`} className={`settings-skill-source-sync-record ${record.state}`}>
-                <label className="settings-skill-source-sync-select">
-                  <input
-                    type="checkbox"
-                    checked={selected}
-                    disabled={!selectable || disabled}
-                    onChange={() => onToggleRecord(record)}
-                    aria-label={t("Select {skill}", { skill: record.skillId })}
-                  />
-                </label>
-                <div className="settings-skill-source-sync-main">
-                  <div className="settings-skill-source-sync-title">
-                    <span>
-                      <strong>{title}</strong>
-                      <small>{t("{files} files · {warnings} warnings", { files: record.referencedFiles.length, warnings: record.warnings.length })}</small>
-                    </span>
-                    <span className={`settings-skill-sync-state ${record.state}`}>{skillSourceSyncStateLabel(record.state, t)}</span>
-                  </div>
-                  <div className="settings-skill-source-sync-meta">
-                    <span>{record.sourceKind ?? "-"}</span>
-                    {record.sourceRootId ? <span>{t("Root")}: {record.sourceRootId}</span> : null}
-                    <span>{t("Files")}: {record.referencedFiles.length}</span>
-                    <span>{t("Warnings")}: {record.warnings.length}</span>
-                    <span>{t("Context")}: {contextFindings.length}</span>
-                    <span>{t("Semantic")}: {semanticDiff.length}</span>
-                    {artifactReviewCount > 0 ? <span>{t("Artifact review")}: {artifactReviewCount}</span> : null}
-                  </div>
-                  {record.sourceChecksum || record.warnings.length > 0 || contextFindings.length > 0 || diff.length > 0 || semanticDiff.length > 0 ? (
-                    <details className="settings-compact-details settings-skill-source-sync-details">
-                      <summary>{t("Source evidence")}</summary>
-                      <div className="settings-skill-source-sync-evidence-line">
-                        <small>{t("Skill ID")}</small>
-                        <code>{record.skillId}</code>
-                      </div>
-                      <div className="settings-skill-source-sync-evidence-line">
-                        <small>{t("Source path")}</small>
-                        <code>{path}</code>
-                      </div>
-                      {record.sourceChecksum ? (
-                        <div className="settings-skill-source-sync-evidence-line">
-                          <small>{t("Raw source checksum")}</small>
-                          <code>{record.sourceChecksum}</code>
-                        </div>
-                      ) : null}
-                      {record.warnings.length > 0 ? (
-                        <div className="settings-skill-source-sync-warnings">
-                          {record.warnings.slice(0, 2).map((warning, index) => (
-                            <small key={`${warning.code}:${warning.location ?? index}`} className={warning.severity}>
-                              {warning.severity}: {warning.code}
-                            </small>
-                          ))}
-                        </div>
-                      ) : null}
-                      {contextFindings.length > 0 ? (
-                        <div className="settings-skill-source-sync-context" aria-label={t("Context health for {skill}", { skill: record.skillId })}>
-                          {contextFindings.slice(0, 3).map((finding, index) => (
-                            <small key={`${finding.kind}:${index}`} className={finding.severity}>
-                              {sourceHealthKindLabel(finding.kind, t)}: {sourceHealthTitle(finding, t)}
-                            </small>
-                          ))}
-                        </div>
-                      ) : null}
-                      {diff.length > 0 ? (
-                        <div className="settings-skill-source-sync-diff" aria-label={t("Drift diff for {skill}", { skill: record.skillId })}>
-                          <span className="settings-skill-source-sync-diff-title">{t("Drift diff")} · {diff.length}</span>
-                          <div className="settings-skill-source-sync-diff-items">
-                            {diff.slice(0, 5).map((item) => (
-                              <div key={item.field} className={`settings-skill-source-sync-diff-item ${item.severity}`}>
-                                <small>{skillSourceSyncDiffLabel(item, t)}</small>
-                                <code>{item.before ?? "-"}</code>
-                                <span>→</span>
-                                <code>{item.after ?? "-"}</code>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      ) : null}
-                      {semanticDiff.length > 0 ? (
-                        <div className="settings-skill-source-sync-diff" aria-label={t("Semantic diff for {skill}", { skill: record.skillId })}>
-                          <span className="settings-skill-source-sync-diff-title">{t("Semantic diff")} · {semanticDiff.length}</span>
-                          <div className="settings-skill-source-sync-diff-items">
-                            {semanticDiff.slice(0, 5).map((item, index) => (
-                              <div key={`${item.kind}:${index}`} className={`settings-skill-source-sync-diff-item ${item.severity}`}>
-                                <small>{skillSourceSemanticDiffLabel(item, t)}</small>
-                                <code>{item.before ?? "-"}</code>
-                                <span>→</span>
-                                <code>{item.after ?? "-"}</code>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      ) : null}
-                    </details>
-                  ) : null}
-                </div>
-              </article>
-            );
-          })}
+      {result ? (
+        <div className="settings-skill-source-sync-summary" aria-label={t("Skill sync summary")}>
+          <span>{t("Synced")}: <strong>{result.summary.synced}</strong></span>
+          <span>{t("Unchanged")}: <strong>{result.summary.unchanged}</strong></span>
         </div>
-      )}
+      ) : null}
     </section>
   );
 }
@@ -440,18 +240,20 @@ export function SkillSourceHealthPanel({
 export function SkillSourceStatus({
   source,
   snapshot,
+  showSource = true,
   showState = true,
   t,
 }: {
   readonly source: SkillPackSource;
   readonly snapshot: SkillSourceSnapshot | undefined;
+  readonly showSource?: boolean;
   readonly showState?: boolean;
   readonly t: SettingsTranslator;
 }): JSX.Element {
   const sourceState = skillSourceSnapshotState(snapshot, t);
   return (
     <span className="settings-skill-source-status">
-      <span>{skillSourceLabel(source, t)}</span>
+      {showSource ? <span>{skillSourceLabel(source, t)}</span> : null}
       {showState ? <small className={sourceState.tone}>{sourceState.label}</small> : null}
     </span>
   );
@@ -464,6 +266,7 @@ export function SkillSourceInspector({
   optimizationPreview,
   optimizationPreviewLoading,
   showPreviewAction = true,
+  allowSourceMutations = true,
   cwd,
   saving,
   onPreviewOptimization,
@@ -477,6 +280,7 @@ export function SkillSourceInspector({
   readonly optimizationPreview?: SkillOptimizationPreview;
   readonly optimizationPreviewLoading: boolean;
   readonly showPreviewAction?: boolean;
+  readonly allowSourceMutations?: boolean;
   readonly cwd: string;
   readonly saving: boolean;
   readonly onPreviewOptimization: () => void;
@@ -513,10 +317,12 @@ export function SkillSourceInspector({
             {optimizationPreviewLoading ? t("Previewing...") : t("Preview optimization")}
           </button>
         ) : null}
-        <button className="secondary-button danger compact-button" type="button" onClick={onArchive} disabled={saving}>
-          <Archive size={14} />
-          {t("Archive source snapshot")}
-        </button>
+        {allowSourceMutations ? (
+          <button className="secondary-button danger compact-button" type="button" onClick={onArchive} disabled={saving}>
+            <Archive size={14} />
+            {t("Archive source snapshot")}
+          </button>
+        ) : null}
       </div>
       {optimizationPreview ? (
         <div className="settings-skill-optimization-preview" aria-label={t("Skill optimization preview")}>
@@ -570,7 +376,7 @@ export function SkillSourceInspector({
           </a>
         </p>
       ) : null}
-      {history.length > 0 ? (
+      {allowSourceMutations && history.length > 0 ? (
         <div className="settings-skill-source-warning-list">
           {history.slice(0, 4).map((archived) => (
             <small key={archived.id} className="info">

@@ -12,6 +12,7 @@ export interface LingStackUserConfigPaths {
   readonly providerProfilesPath: string;
   readonly pluginsDir: string;
   readonly pluginCacheDir: string;
+  readonly sourcesDir: string;
   readonly stateDir: string;
   readonly recentWorkspacesPath: string;
   readonly daemonStatePath: string;
@@ -78,6 +79,7 @@ export function resolveUserConfigPaths(options: ResolveUserConfigPathsOptions = 
     providerProfilesPath: join(rootDir, "providers", "profiles.json"),
     pluginsDir: join(rootDir, "plugins"),
     pluginCacheDir: join(rootDir, "plugins", "cache"),
+    sourcesDir: join(rootDir, "sources"),
     stateDir: join(rootDir, "state"),
     recentWorkspacesPath: join(rootDir, "state", "recent-workspaces.json"),
     daemonStatePath: join(rootDir, "state", "daemon.json"),

@@ -19,7 +19,6 @@ function candidateInput(overrides = {}) {
     title: overrides.title ?? "Review reusable deploy handoff",
     summary: overrides.summary ?? "Capture the deploy handoff as a reviewed candidate skill.",
     definition: {
-      workflowPhase: overrides.workflowPhase ?? "operate",
       positiveTriggers: overrides.positiveTriggers ?? ["repeated deploy handoff"],
       negativeTriggers: overrides.negativeTriggers ?? ["one-off deploy note"],
       procedureSteps: overrides.procedureSteps ?? [{ title: "Collect deploy evidence", instruction: "Read the run summary and linked approval." }],
@@ -64,6 +63,7 @@ test("sqlite skill candidates create, list, get, and survive migration idempoten
     const candidate = store.createSkillCandidate(candidateInput({ id: "skill_candidate_one" }), now);
 
     assert.equal(candidate.status, "pending");
+    assert.equal("workflowPhase" in candidate.definition, false);
     assert.equal(candidate.workspaceId, "workspace_default");
     assert.equal(store.getSkillCandidate(candidate.id)?.title, "Review reusable deploy handoff");
     assert.deepEqual(store.listSkillCandidates({ status: "pending" }).map((item) => item.id), [candidate.id]);
@@ -97,6 +97,26 @@ test("sqlite skill candidate review approves eligible candidates and records aud
     const records = store.listSkillCandidateReviewRecords(candidate.id);
     assert.equal(records.length, 1);
     assert.equal(records[0].action, "approve_for_draft");
+  });
+});
+
+test("sqlite skill candidate publish completion is idempotent and only follows draft approval", async () => {
+  await withStore("ling-stack-skill-candidate-publish-", async (store) => {
+    const candidate = store.createSkillCandidate(candidateInput({ id: "skill_candidate_publish" }), now);
+    assert.throws(
+      () => store.markSkillCandidatePublished(candidate.id, "2026-06-20T00:00:30.000Z"),
+      /approved_for_draft/,
+    );
+
+    store.applySkillCandidateReviewAction({
+      candidateId: candidate.id,
+      action: "approve_for_draft",
+      actor: "user",
+    }, "2026-06-20T00:01:00.000Z");
+    const published = store.markSkillCandidatePublished(candidate.id, "2026-06-20T00:02:00.000Z");
+    assert.equal(published.status, "published");
+    assert.equal(published.updatedAt, "2026-06-20T00:02:00.000Z");
+    assert.deepEqual(store.markSkillCandidatePublished(candidate.id, "2026-06-20T00:03:00.000Z"), published);
   });
 });
 

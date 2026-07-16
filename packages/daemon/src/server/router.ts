@@ -970,6 +970,8 @@ export async function routeRequest(
     url.pathname === "/skills/import-draft" ||
     url.pathname === "/skills/import-draft/optimization-preview" ||
     url.pathname === "/skills/sync/gstack/preview" ||
+    url.pathname === "/skills/sync/gstack/apply" ||
+    url.pathname === "/skills/sync/gstack/status" ||
     url.pathname === "/skills/sync/gstack/publish" ||
     url.pathname === "/skills/sync/gstack/refresh" ||
     url.pathname === "/skills/sync/gstack/check-updates" ||

@@ -1,12 +1,12 @@
-import { BookOpen, Search } from "lucide-react";
 import { formatDateTime } from "../../lib/formatting.js";
+import { Pencil } from "lucide-react";
 import type {
   SkillOptimizationPreview,
   SkillRegistryEntry,
   SkillSourceArtifact,
   SkillSourceSnapshot,
 } from "../../types.js";
-import { approvalProfileText, workflowPhaseLabel } from "../teammates/helpers.js";
+import { approvalProfileText } from "../teammates/helpers.js";
 import {
   SkillInspectorSection,
   SkillSourceInspector,
@@ -19,6 +19,7 @@ import { skillRegistryState } from "./skill-library-utils.js";
 
 export function SkillCompactInspector({
   skill,
+  readOnly = false,
   sourceSnapshot,
   sourceHistory,
   artifacts,
@@ -27,12 +28,15 @@ export function SkillCompactInspector({
   cwd,
   saving,
   boundTeammates,
+  editable = false,
+  onEdit,
   onPreviewOptimization,
   onArchiveSource,
   onRollbackSource,
   t,
 }: {
   readonly skill: SkillRegistryEntry;
+  readonly readOnly?: boolean;
   readonly sourceSnapshot: SkillSourceSnapshot | undefined;
   readonly sourceHistory: readonly SkillSourceSnapshot[];
   readonly artifacts: readonly SkillSourceArtifact[];
@@ -41,6 +45,8 @@ export function SkillCompactInspector({
   readonly cwd: string;
   readonly saving: boolean;
   readonly boundTeammates: readonly string[];
+  readonly editable?: boolean;
+  readonly onEdit?: () => void;
   readonly onPreviewOptimization: () => void;
   readonly onArchiveSource: () => void;
   readonly onRollbackSource: (snapshotId: string) => void;
@@ -50,27 +56,17 @@ export function SkillCompactInspector({
   const requiredToolCount = skill.definition.requiredTools.length;
   const providerCapabilityCount = skill.definition.requiredProviderCapabilities.length;
   const promptFragmentCount = skill.definition.promptFragments.length;
+  const showState = skill.reviewStatus === "draft" || skill.reviewStatus === "disabled";
 
   return (
     <div className="settings-skill-compact-inspector">
-      <div className="settings-skill-inspector-head">
-        <span>
-          <BookOpen size={15} />
-          <strong>{skill.definition.name}</strong>
-        </span>
-        <SkillStatePill label={state.label} tone={state.tone} />
-      </div>
-
       <div className="settings-skill-summary-card">
+        {showState ? <div className="settings-skill-detail-state"><SkillStatePill label={state.label} tone={state.tone} /></div> : null}
         <p>{skill.definition.summary}</p>
         <div className="settings-skill-summary-strip" aria-label={t("Skill capability summary")}>
           <span>
             <small>{t("Source")}</small>
             <SkillSourceStatus source={skill.source} snapshot={sourceSnapshot} t={t} />
-          </span>
-          <span>
-            <small>{t("Stage")}</small>
-            <strong>{workflowPhaseLabel(skill.definition.workflowPhase, t)}</strong>
           </span>
           <span>
             <small>{t("Required tools")}</small>
@@ -84,17 +80,17 @@ export function SkillCompactInspector({
         <div className="settings-skill-next-action">
           <span>
             <strong>{sourceSnapshot ? t("Source-backed") : t("Metadata only")}</strong>
-            <small>
-              {sourceSnapshot
-                ? t("Source details are available below when you need them.")
-                : t("No published SKILL.md snapshot is attached yet.")}
-            </small>
+            {!sourceSnapshot ? <small>{t("No published SKILL.md snapshot is attached yet.")}</small> : null}
           </span>
-          <button className="secondary-button compact-button" type="button" onClick={onPreviewOptimization} disabled={saving || optimizationPreviewLoading}>
-            <Search size={14} />
-            {optimizationPreviewLoading ? t("Previewing...") : t("Preview optimization")}
-          </button>
         </div>
+        {editable && onEdit ? (
+          <div className="settings-skill-summary-edit-action">
+            <button className="secondary-button compact-button" type="button" onClick={onEdit} disabled={saving}>
+              <Pencil size={14} />
+              {t("Edit skill")}
+            </button>
+          </div>
+        ) : null}
       </div>
 
       <details className="settings-compact-details settings-skill-inspector-details">
@@ -133,12 +129,13 @@ export function SkillCompactInspector({
           artifacts={artifacts}
           optimizationPreview={optimizationPreview}
           optimizationPreviewLoading={optimizationPreviewLoading}
-          showPreviewAction={false}
+          showPreviewAction={Boolean(sourceSnapshot)}
           cwd={cwd}
           saving={saving}
           onPreviewOptimization={onPreviewOptimization}
           onArchive={onArchiveSource}
           onRollback={onRollbackSource}
+          allowSourceMutations={!readOnly}
           t={t}
         />
       </details>

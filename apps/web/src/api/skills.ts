@@ -1,5 +1,6 @@
 import type {
   CandidateGenerationDecisionAction,
+  OfficialSkillSourceStatusResponse,
   CandidateGenerationDecisionListResponse,
   CandidateRouteKind,
   ProcedureObservationClusterListResponse,
@@ -10,6 +11,7 @@ import type {
   ProcedureObservationJobResponse,
   ProcedureObservationRequest,
   ProcedureObservationResponse,
+  SkillCandidateDraftRequest,
   SkillCandidateDraftResponse,
   SkillCandidateListResponse,
   SkillCandidateObserveResponse,
@@ -25,8 +27,10 @@ import type {
   SkillImportDraftOptimizationPreviewRequest,
   SkillImportDraftRequest,
   SkillImportDraftResponse,
+  SkillImportPreviewResponse,
   SkillImportPublishResponse,
   SkillHealthResponse,
+  SkillHardDeleteResponse,
   SkillOptimizationPreviewRequest,
   SkillOptimizationPreviewResponse,
   SkillRecordingEligibilityResponse,
@@ -34,12 +38,17 @@ import type {
   SkillRecordingObservationResponse,
   SkillRegistryListResponse,
   SkillRegistryMutationResponse,
+  SkillRevisionPreviewRequest,
+  SkillRevisionPreviewResponse,
+  SkillRevisionPublishRequest,
+  SkillRevisionPublishResponse,
   SkillSourceHealthResponse,
   SkillSourceArtifactListResponse,
   SkillSourceSnapshotArchiveResponse,
   SkillSourceSnapshotRollbackRequest,
   SkillSourceSnapshotRollbackResponse,
   SkillSourceSnapshotResponse,
+  SkillSourceSyncApplyResponse,
   SkillSourceSyncCheckUpdatesResponse,
   SkillSourceSyncPreviewResponse,
   SkillSourceSyncPublishRequest,
@@ -56,6 +65,10 @@ import { daemonClient } from "./client.js";
 
 export async function listSkills(cwd: string): Promise<SkillRegistryListResponse> {
   return daemonClient.listSkills(cwd);
+}
+
+export async function getOfficialSkillSourceStatus(cwd: string): Promise<OfficialSkillSourceStatusResponse> {
+  return daemonClient.getOfficialSkillSourceStatus(cwd);
 }
 
 export async function getSkillHealth(cwd: string, options: { readonly limit?: number } = {}): Promise<SkillHealthResponse> {
@@ -100,6 +113,10 @@ export async function updateSkillSourceUpgradePolicy(cwd: string, input: SkillSo
 
 export async function previewGstackSkillSourceSync(cwd: string, input: SkillSourceSyncRequest = {}): Promise<SkillSourceSyncPreviewResponse> {
   return daemonClient.previewGstackSkillSourceSync(cwd, input);
+}
+
+export async function applyGstackSkillSourceSync(cwd: string): Promise<SkillSourceSyncApplyResponse> {
+  return daemonClient.applyGstackSkillSourceSync(cwd);
 }
 
 export async function checkGstackSkillSourceUpdates(cwd: string, input: SkillSourceSyncRequest = {}): Promise<SkillSourceSyncCheckUpdatesResponse> {
@@ -225,12 +242,24 @@ export async function observeSkillCandidate(cwd: string, input: ProcedureObserva
   return daemonClient.observeSkillCandidate(cwd, input);
 }
 
-export async function createSkillCandidateDraft(cwd: string, candidateId: string): Promise<SkillCandidateDraftResponse> {
-  return daemonClient.createSkillCandidateDraft(cwd, candidateId);
+export async function createSkillCandidateDraft(cwd: string, candidateId: string, input: SkillCandidateDraftRequest = {}): Promise<SkillCandidateDraftResponse> {
+  return daemonClient.createSkillCandidateDraft(cwd, candidateId, input);
 }
 
 export async function createSkillImportDraft(cwd: string, input: SkillImportDraftRequest): Promise<SkillImportDraftResponse> {
   return daemonClient.createSkillImportDraft(cwd, input);
+}
+
+export async function previewSkillImport(cwd: string, input: SkillImportDraftRequest): Promise<SkillImportPreviewResponse> {
+  return daemonClient.previewSkillImport(cwd, input);
+}
+
+export async function previewSkillRevision(cwd: string, skillId: string, input: SkillRevisionPreviewRequest): Promise<SkillRevisionPreviewResponse> {
+  return daemonClient.previewSkillRevision(cwd, skillId, input);
+}
+
+export async function publishSkillRevision(cwd: string, skillId: string, input: SkillRevisionPublishRequest): Promise<SkillRevisionPublishResponse> {
+  return daemonClient.publishSkillRevision(cwd, skillId, input);
 }
 
 export async function previewSkillImportDraftOptimization(
@@ -246,4 +275,8 @@ export async function publishSkillImportDraft(cwd: string, draftId: string): Pro
 
 export async function archiveSkill(cwd: string, skillId: string): Promise<SkillRegistryMutationResponse> {
   return daemonClient.archiveSkill(cwd, skillId);
+}
+
+export async function hardDeleteSkill(cwd: string, skillId: string): Promise<SkillHardDeleteResponse> {
+  return daemonClient.hardDeleteSkill(cwd, skillId);
 }

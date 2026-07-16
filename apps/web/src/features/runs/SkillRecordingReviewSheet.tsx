@@ -7,6 +7,8 @@ import {
 } from "../../lib/skill-recording.js";
 import type { SkillRecordingObservationResponse } from "../../types.js";
 
+import { SelectControl } from "../../shared/components/SelectControl.js";
+
 export function SkillRecordingReviewSheet({
   draft,
   submitting,
@@ -49,7 +51,7 @@ export function SkillRecordingReviewSheet({
       <div className="run-recording-grid">
         <label className="field">
           <span>{t("Destination")}</span>
-          <select
+          <SelectControl
             value={draft.destinationHint}
             onChange={(event) => onChange({ destinationHint: event.target.value as SkillRecordingDestinationHint })}
           >
@@ -58,7 +60,7 @@ export function SkillRecordingReviewSheet({
             <option value="playbook">{t("Playbook")}</option>
             <option value="automation">{t("Automation")}</option>
             <option value="memory">{t("Memory")}</option>
-          </select>
+          </SelectControl>
         </label>
         <label className="field">
           <span>{t("Title")}</span>
