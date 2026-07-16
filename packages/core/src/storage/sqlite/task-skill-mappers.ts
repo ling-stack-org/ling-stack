@@ -16,6 +16,7 @@ import {
   type SkillSourceUpgradePolicy,
   type SkillVisibility,
 } from "../../skill-types.js";
+import type { OfficialSkillSourceSubscription } from "../../managed-official-skill-source-types.js";
 import { type Task, type TaskStatus } from "../../workspace-types.js";
 import {
   omitUndefined,
@@ -115,6 +116,20 @@ export function mapSkillSourceSnapshot(row: Record<string, SQLOutputValue>): Ski
     referencedFiles: parseJson(readString(row, "referenced_files_json")) as SkillSourceSnapshot["referencedFiles"],
     warnings: parseJson(readString(row, "warnings_json")) as SkillSourceSnapshot["warnings"],
     reviewStatus: readString(row, "review_status") as SkillSourceSnapshotReviewStatus,
+    createdAt: readString(row, "created_at"),
+    updatedAt: readString(row, "updated_at"),
+  });
+}
+
+export function mapOfficialSkillSourceSubscription(row: Record<string, SQLOutputValue>): OfficialSkillSourceSubscription {
+  return omitUndefined({
+    workspaceId: readString(row, "workspace_id"),
+    sourceId: readString(row, "source_id") as OfficialSkillSourceSubscription["sourceId"],
+    originUrl: readString(row, "origin_url"),
+    ref: readString(row, "ref"),
+    revision: readNullableString(row, "revision"),
+    version: readNullableString(row, "version"),
+    lastSyncedAt: readNullableString(row, "last_synced_at"),
     createdAt: readString(row, "created_at"),
     updatedAt: readString(row, "updated_at"),
   });

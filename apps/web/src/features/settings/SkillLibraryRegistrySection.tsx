@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { BookOpen, Plus, Search, Upload, X } from "lucide-react";
 import { RightDrawer } from "../../shared/conversation/index.js";
 import type {
@@ -15,11 +15,15 @@ import type {
 } from "./skill-library-utils.js";
 import {
   filterBuiltinSkillEntries,
+  filterEvolvedSkillEntries,
   filterUserSkillEntries,
   partitionSkillRegistry,
   type BuiltinSkillBindingFilter,
   type UserSkillSortMode,
 } from "./skill-library-view-models.js";
+
+import { SelectControl } from "../../shared/components/SelectControl.js";
+import { isEditableSkillEntry } from "./skill-editor-utils.js";
 
 export function SkillLibraryRegistrySection({
   mode,
@@ -42,9 +46,11 @@ export function SkillLibraryRegistrySection({
   onRollbackSource,
   onImport,
   onNewDraft,
+  onEditSkill,
+  toolbarAfterSearch,
   t,
 }: {
-  readonly mode: "user" | "builtin";
+  readonly mode: "user" | "evolved" | "builtin";
   readonly skills: readonly SkillRegistryEntry[];
   readonly loading: boolean;
   readonly saving: boolean;
@@ -64,36 +70,41 @@ export function SkillLibraryRegistrySection({
   readonly onRollbackSource: (snapshotId: string) => void;
   readonly onImport: () => void;
   readonly onNewDraft: () => void;
+  readonly onEditSkill: (skill: SkillRegistryEntry) => void;
+  readonly toolbarAfterSearch?: ReactNode;
   readonly t: SettingsTranslator;
 }): JSX.Element {
   const [userSearchQuery, setUserSearchQuery] = useState("");
+  const [evolvedSearchQuery, setEvolvedSearchQuery] = useState("");
   const [builtinSearchQuery, setBuiltinSearchQuery] = useState("");
   const [builtinFilter, setBuiltinFilter] = useState<BuiltinSkillBindingFilter>("all");
   const [userSortMode, setUserSortMode] = useState<UserSkillSortMode>("updated");
+  const [evolvedSortMode, setEvolvedSortMode] = useState<UserSkillSortMode>("updated");
 
   const partition = useMemo(() => partitionSkillRegistry(skills), [skills]);
   const boundSkillIds = useMemo(() => new Set(bindingSummaries.flatMap((summary) =>
     summary.bindings.filter((binding) => binding.enabled).map((binding) => binding.skillId)
   )), [bindingSummaries]);
-
-  const entries = useMemo(() => mode === "user"
-    ? filterUserSkillEntries(skills, {
-      query: userSearchQuery,
-      sortMode: userSortMode,
-      sourceSnapshotBySkillId,
-    })
-    : filterBuiltinSkillEntries(skills, {
+  const entries = useMemo(() => {
+    if (mode === "user") {
+      return filterUserSkillEntries(skills, { query: userSearchQuery, sortMode: userSortMode });
+    }
+    if (mode === "evolved") {
+      return filterEvolvedSkillEntries(skills, { query: evolvedSearchQuery, sortMode: evolvedSortMode });
+    }
+    return filterBuiltinSkillEntries(skills, {
       query: builtinSearchQuery,
       binding: builtinFilter,
       boundSkillIds,
-      sourceSnapshotBySkillId,
-    }), [
+    });
+  }, [
     boundSkillIds,
     builtinFilter,
     builtinSearchQuery,
+    evolvedSearchQuery,
+    evolvedSortMode,
     mode,
     skills,
-    sourceSnapshotBySkillId,
     userSearchQuery,
     userSortMode,
   ]);
@@ -121,83 +132,111 @@ export function SkillLibraryRegistrySection({
     return () => window.removeEventListener("keydown", closeOnEscape);
   }, [onSelectSkill, visibleSelectedSkill]);
 
-  const baseEntries = mode === "user" ? partition.user : partition.builtin;
-  if (baseEntries.length === 0) {
-    return (
-      <div className="settings-skill-ownership-empty">
-        <Search size={18} />
-        <strong>{t(mode === "user" ? "No user skills yet" : "No built-in skills available")}</strong>
-        <small>{t(mode === "user"
-          ? "Import a skill or create a draft to start building your workspace library."
-          : "Built-in skills are loaded with the workspace library.")}</small>
-        <span>
+  const boundBuiltinCount = partition.builtin.filter((entry) => boundSkillIds.has(entry.id)).length;
+  const activeSearchQuery = mode === "user" ? userSearchQuery : mode === "evolved" ? evolvedSearchQuery : builtinSearchQuery;
+  const toolbar = (
+    <div className={`settings-skill-library-toolbar settings-skill-library-toolbar--${mode}${toolbarAfterSearch ? " has-view-select" : ""}`}>
+      <label className="settings-skill-search">
+        <Search size={15} />
+        <input
+          value={activeSearchQuery}
+          onChange={(event) => {
+            if (mode === "user") setUserSearchQuery(event.target.value);
+            else if (mode === "evolved") setEvolvedSearchQuery(event.target.value);
+            else setBuiltinSearchQuery(event.target.value);
+          }}
+          placeholder={t("Search skills or tools")}
+        />
+      </label>
+      {toolbarAfterSearch}
+      {mode === "builtin" ? (
+        <SelectControl
+          variant="compact"
+          value={builtinFilter}
+          onChange={(event) => {
+            const value = event.target.value;
+            setBuiltinFilter(value === "bound" || value === "unbound" ? value : "all");
+          }}
+          aria-label={t("Built-in skill filters")}
+        >
+          <option value="all">{t(builtinFilterLabel("all"))}</option>
+          <option value="bound">{t(builtinFilterLabel("bound"))}</option>
+          <option value="unbound">{t(builtinFilterLabel("unbound"))}</option>
+        </SelectControl>
+      ) : null}
+      {mode === "user" || mode === "evolved" ? (
+        <div className="settings-skill-library-toolbar-actions">
+          <SelectControl
+            variant="compact"
+            value={mode === "user" ? userSortMode : evolvedSortMode}
+            onChange={(event) => {
+              const value = event.target.value === "name" ? "name" : "updated";
+              if (mode === "user") setUserSortMode(value);
+              else setEvolvedSortMode(value);
+            }}
+            aria-label={t("Sort skills")}>
+            <option value="updated">{t("Sort by updated")}</option>
+            <option value="name">{t("Sort by name")}</option>
+          </SelectControl>
           {mode === "user" ? (
             <>
-              <button className="primary-button compact-button" type="button" onClick={onImport}>
+              <button className="secondary-button compact-button" type="button" onClick={onImport}>
                 <Upload size={14} />
                 {t("Import skill")}
               </button>
               <button className="secondary-button compact-button" type="button" onClick={onNewDraft}>
                 <Plus size={14} />
-                {t("New draft")}
+                {t("Create skill")}
               </button>
             </>
           ) : null}
-        </span>
-      </div>
+        </div>
+      ) : null}
+    </div>
+  );
+  const baseEntries = mode === "user" ? partition.user : mode === "evolved" ? partition.evolved : partition.builtin;
+  if (baseEntries.length === 0) {
+    return (
+      <>
+        {mode === "evolved" ? toolbar : null}
+        <div className="settings-skill-ownership-empty">
+          <Search size={18} />
+          <strong>{t(mode === "user" ? "No user skills yet" : mode === "evolved" ? "No AI-created skills yet" : "No built-in skills available")}</strong>
+          <small>{t(mode === "user"
+            ? "Import a skill or create a draft to start building your workspace library."
+            : mode === "evolved"
+              ? "Adopt and publish a pending skill to manage it here."
+              : "Built-in skills are loaded with the workspace library.")}</small>
+          <span>
+            {mode === "user" ? (
+              <>
+                <button className="secondary-button compact-button" type="button" onClick={onImport}>
+                  <Upload size={14} />
+                  {t("Import skill")}
+                </button>
+                <button className="secondary-button compact-button" type="button" onClick={onNewDraft}>
+                  <Plus size={14} />
+                  {t("Create skill")}
+                </button>
+              </>
+            ) : null}
+          </span>
+        </div>
+      </>
     );
   }
-
-  const boundBuiltinCount = partition.builtin.filter((entry) => boundSkillIds.has(entry.id)).length;
-  const activeSearchQuery = mode === "user" ? userSearchQuery : builtinSearchQuery;
 
   return (
     <>
       {mode === "builtin" ? (
         <div className="settings-skill-ownership-meta" aria-label={t("Built-in skills summary")}>
-          <>
-            <span><small>{t("Built-in skills")}</small><strong>{partition.builtin.length}</strong></span>
-            <span><small>{t("Bound")}</small><strong>{boundBuiltinCount}</strong></span>
-            <span><small>{t("Unbound")}</small><strong>{partition.builtin.length - boundBuiltinCount}</strong></span>
-          </>
+          <span><small>{t("Built-in skills")}</small><strong>{partition.builtin.length}</strong></span>
+          <span><small>{t("Bound")}</small><strong>{boundBuiltinCount}</strong></span>
+          <span><small>{t("Unbound")}</small><strong>{partition.builtin.length - boundBuiltinCount}</strong></span>
         </div>
       ) : null}
 
-      <div className={`settings-skill-library-toolbar settings-skill-library-toolbar--${mode}`}>
-        <label className="settings-skill-search">
-          <Search size={15} />
-          <input
-            value={activeSearchQuery}
-            onChange={(event) => mode === "user" ? setUserSearchQuery(event.target.value) : setBuiltinSearchQuery(event.target.value)}
-            placeholder={t("Search skills or tools")}
-          />
-        </label>
-        {mode === "builtin" ? (
-          <div className="settings-skill-filters" role="tablist" aria-label={t("Built-in skill filters")}>
-            {(["all", "bound", "unbound"] as const).map((item) => (
-            <button key={item} type="button" className={builtinFilter === item ? "active" : ""} onClick={() => setBuiltinFilter(item)}>
-              {t(builtinFilterLabel(item))}
-            </button>
-            ))}
-          </div>
-        ) : null}
-        {mode === "user" ? (
-          <div className="settings-skill-library-toolbar-actions">
-            <select value={userSortMode} onChange={(event) => setUserSortMode(event.target.value === "name" ? "name" : "updated")} aria-label={t("Sort skills")}>
-              <option value="updated">{t("Sort by updated")}</option>
-              <option value="name">{t("Sort by name")}</option>
-            </select>
-            <button className="primary-button compact-button" type="button" onClick={onImport}>
-              <Upload size={14} />
-              {t("Import skill")}
-            </button>
-            <button className="secondary-button compact-button" type="button" onClick={onNewDraft}>
-              <Plus size={14} />
-              {t("New draft")}
-            </button>
-          </div>
-        ) : null}
-      </div>
+      {toolbar}
 
       <div className={visibleSelectedSkill ? "settings-skill-library-body has-drawer" : "settings-skill-library-body"}>
         <SkillLibraryTable
@@ -236,6 +275,8 @@ export function SkillLibraryRegistrySection({
               cwd={cwd}
               saving={saving}
               boundTeammates={boundSkillNames(visibleSelectedSkill.id, bindingSummaries)}
+              editable={isEditableSkillEntry(visibleSelectedSkill)}
+              onEdit={() => onEditSkill(visibleSelectedSkill)}
               onPreviewOptimization={onPreviewOptimization}
               onArchiveSource={() => onArchiveSource(visibleSelectedSkill.id)}
               onRollbackSource={onRollbackSource}

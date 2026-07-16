@@ -136,9 +136,6 @@ function transcriptBlockLabel(kind: TranscriptBlockBase["kind"], t: Translate): 
   if (kind === "source_summary") {
     return t("Source summary");
   }
-  if (kind === "workflow_packet_summary") {
-    return t("Workflow packet summary");
-  }
   if (kind === "approval") {
     return t("Approval");
   }

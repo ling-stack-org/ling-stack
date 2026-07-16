@@ -31,3 +31,7 @@ export function artifactContentUrl(artifactId: string, cwd?: string): string {
 export async function previewArtifactContent(cwd: string, artifactId: string, maxBytes?: number): Promise<PreviewContentResponse> {
   return daemonClient.previewArtifactContent(cwd, artifactId, maxBytes);
 }
+
+export async function previewWorkspaceFile(cwd: string, path: string, maxBytes?: number, line?: number): Promise<PreviewContentResponse> {
+  return daemonClient.previewWorkspaceFile(cwd, path, maxBytes, line);
+}

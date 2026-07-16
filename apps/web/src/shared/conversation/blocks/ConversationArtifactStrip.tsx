@@ -1,25 +1,45 @@
-import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { useEffect, useRef, useState, type CSSProperties, type ReactNode, type RefObject } from "react";
 import { createPortal } from "react-dom";
-import { ChevronDown, FilePenLine, FileText, Image as ImageIcon } from "lucide-react";
+import { ChevronDown, Code2, FilePenLine, FileText, Image as ImageIcon, Loader2, Redo2, Undo2 } from "lucide-react";
+import {
+  getRunWorkspaceChanges,
+  getWorkflowWorkspaceChanges,
+  reapplyRunWorkspaceChanges,
+  reapplyWorkflowWorkspaceChanges,
+  undoRunWorkspaceChanges,
+  undoWorkflowWorkspaceChanges,
+} from "../../../api.js";
 import { useI18n, type Translate } from "../../../i18n.js";
 import { parseUnifiedDiff, summarizeFileChanges, type ConversationFileChange } from "../../../lib/diff-summary.js";
-import type { ConversationArtifactStripChangeArtifact, ConversationArtifactStripItem } from "../../../lib/conversation-work-cell.js";
-import type { PreviewContentResponse } from "../../../types.js";
+import type { ConversationArtifactStripChangeArtifact, ConversationArtifactStripItem, ConversationWorkspaceRecoveryTarget } from "../../../lib/conversation-work-cell.js";
+import type { PreviewContentResponse, RunWorkspaceChangesResponse, WorkflowWorkspaceChangesResponse } from "../../../types.js";
 import type { ArtifactPreviewLoader } from "../preview/ArtifactPreviewDrawer.js";
 import { DiffViewer } from "./DiffViewer.js";
+import { WorkspaceFileOpenMenu } from "./WorkspaceFileOpenMenu.js";
 
 const artifactHoverDelayMs = 2_000;
 const artifactHoverHideDelayMs = 140;
 const collapsedChangeFileCount = 3;
+type WorkspaceRecoveryResponse = RunWorkspaceChangesResponse | WorkflowWorkspaceChangesResponse;
+
+export interface ConversationWorkspaceReviewTarget {
+  readonly cwd: string;
+  readonly runId?: string;
+  readonly path?: string;
+}
 
 export function ConversationArtifactStrip({
   items,
   cwd,
+  recoveryTarget,
   loadPreview,
+  onOpenWorkspaceReview,
 }: {
   readonly items: readonly ConversationArtifactStripItem[];
   readonly cwd?: string;
+  readonly recoveryTarget?: ConversationWorkspaceRecoveryTarget;
   readonly loadPreview: ArtifactPreviewLoader;
+  readonly onOpenWorkspaceReview?: (target: ConversationWorkspaceReviewTarget) => void;
 }): JSX.Element | null {
   const { t } = useI18n();
   const artifactItems = items.filter((item) => item.kind === "artifact");
@@ -46,8 +66,10 @@ export function ConversationArtifactStrip({
         <ChangedFilesGroup
           item={item}
           cwd={cwd}
+          recoveryTarget={item.recoveryTarget ?? recoveryTarget}
           key={item.id}
           loadPreview={loadPreview}
+          onOpenWorkspaceReview={onOpenWorkspaceReview}
           onPreviewEnter={hoverPreview.scheduleChange}
           onPreviewLeave={hoverPreview.leaveSource}
           onPreviewNow={hoverPreview.showChangeNow}
@@ -73,6 +95,7 @@ function ArtifactOutputRow({
 }): JSX.Element {
   const { t } = useI18n();
   const previewable = Boolean(item.previewable && item.artifactId && cwd);
+  const workspaceFilePath = item.workspaceFilePath?.trim();
   const meta = artifactItemMeta(item, t);
   const icon = item.previewKind === "image" ? <ImageIcon size={13} aria-hidden="true" /> : <FileText size={13} aria-hidden="true" />;
   const content = (
@@ -87,43 +110,52 @@ function ArtifactOutputRow({
     </>
   );
 
-  if (previewable) {
-    return (
-      <button
-        className="conversation-work-cell-artifact-row"
-        type="button"
-        aria-label={`${t("Preview")}: ${item.label}`}
-        onPointerEnter={(event) => onPreviewEnter(item, event.currentTarget)}
-        onPointerLeave={onPreviewLeave}
-        onFocus={(event) => onPreviewNow(item, event.currentTarget)}
-        onBlur={onPreviewLeave}
-        onClick={(event) => onPreviewNow(item, event.currentTarget)}
-      >
-        {content}
-      </button>
-    );
-  }
-  if (item.href) {
-    return (
-      <a className="conversation-work-cell-artifact-row" href={item.href} target="_blank" rel="noreferrer" title={item.label}>
-        {content}
-      </a>
-    );
-  }
-  return <span className="conversation-work-cell-artifact-row">{content}</span>;
+  const main = previewable ? (
+    <button
+      className="conversation-work-cell-artifact-main"
+      type="button"
+      aria-label={`${t("Preview")}: ${item.label}`}
+      onPointerEnter={(event) => onPreviewEnter(item, event.currentTarget)}
+      onPointerLeave={onPreviewLeave}
+      onFocus={(event) => onPreviewNow(item, event.currentTarget)}
+      onBlur={onPreviewLeave}
+      onClick={(event) => onPreviewNow(item, event.currentTarget)}
+    >
+      {content}
+    </button>
+  ) : item.href ? (
+    <a className="conversation-work-cell-artifact-main" href={item.href} target="_blank" rel="noreferrer" title={item.label}>
+      {content}
+    </a>
+  ) : (
+    <span className="conversation-work-cell-artifact-main">{content}</span>
+  );
+
+  return (
+    <div className="conversation-work-cell-artifact-row">
+      {main}
+      {cwd && workspaceFilePath ? (
+        <WorkspaceFileOpenMenu cwd={cwd} path={workspaceFilePath} placement="auto" />
+      ) : null}
+    </div>
+  );
 }
 
 function ChangedFilesGroup({
   item,
   cwd,
+  recoveryTarget,
   loadPreview,
+  onOpenWorkspaceReview,
   onPreviewEnter,
   onPreviewLeave,
   onPreviewNow,
 }: {
   readonly item: ConversationArtifactStripItem;
   readonly cwd?: string;
+  readonly recoveryTarget?: ConversationWorkspaceRecoveryTarget;
   readonly loadPreview: ArtifactPreviewLoader;
+  readonly onOpenWorkspaceReview?: (target: ConversationWorkspaceReviewTarget) => void;
   readonly onPreviewEnter: (change: LoadedChangeFile, element: HTMLElement) => void;
   readonly onPreviewLeave: () => void;
   readonly onPreviewNow: (change: LoadedChangeFile, element: HTMLElement) => void;
@@ -131,6 +163,10 @@ function ChangedFilesGroup({
   const { t } = useI18n();
   const [showAll, setShowAll] = useState(false);
   const [loadedChanges, setLoadedChanges] = useState<readonly LoadedChangeFile[]>(() => fallbackChangeFiles(item.changeArtifacts ?? []));
+  const [recovery, setRecovery] = useState<WorkspaceRecoveryResponse>();
+  const [recoveryStatus, setRecoveryStatus] = useState<"idle" | "loading" | "loaded" | "unavailable">("idle");
+  const [recoveryBusy, setRecoveryBusy] = useState<"undo" | "reapply" | "">("");
+  const [recoveryError, setRecoveryError] = useState("");
 
   useEffect(() => {
     const artifacts = item.changeArtifacts ?? [];
@@ -150,6 +186,31 @@ function ChangedFilesGroup({
     };
   }, [cwd, item.changeArtifacts, loadPreview]);
 
+  useEffect(() => {
+    if (!cwd || !recoveryTarget) {
+      setRecovery(undefined);
+      setRecoveryStatus("idle");
+      return;
+    }
+    let cancelled = false;
+    setRecovery(undefined);
+    setRecoveryStatus("loading");
+    void getWorkspaceRecovery(cwd, recoveryTarget).then((response) => {
+      if (!cancelled) {
+        setRecovery(response);
+        setRecoveryStatus("loaded");
+      }
+    }, () => {
+      if (!cancelled) {
+        setRecovery(undefined);
+        setRecoveryStatus("unavailable");
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [cwd, recoveryTarget?.id, recoveryTarget?.kind]);
+
   const fileCount = loadedChanges.length || item.changeArtifacts?.length || 0;
   const exactChanges = loadedChanges.filter((entry) => entry.change && entry.exact);
   const summary = exactChanges.length === loadedChanges.length && loadedChanges.length > 0
@@ -158,6 +219,40 @@ function ChangedFilesGroup({
   const title = fileCount === 1 ? t("Edited 1 file") : t("Edited {count} files", { count: fileCount });
   const visibleChanges = showAll ? loadedChanges : loadedChanges.slice(0, collapsedChangeFileCount);
   const hiddenCount = Math.max(0, loadedChanges.length - visibleChanges.length);
+  const undoUnavailableReason = recovery?.unavailableReason ?? t("Undo is unavailable for this work");
+
+  async function mutateRecovery(action: "undo" | "reapply"): Promise<void> {
+    if (!cwd || !recoveryTarget || recoveryBusy) {
+      return;
+    }
+    const fileCount = recovery?.summary.fileCount ?? fileCountFromChanges(loadedChanges);
+    const confirmed = globalThis.confirm(action === "undo"
+      ? t("Undo changes to {count} files?", { count: fileCount })
+      : t("Reapply changes to {count} files?", { count: fileCount }));
+    if (!confirmed) {
+      return;
+    }
+    setRecoveryBusy(action);
+    setRecoveryError("");
+    try {
+      setRecovery(await mutateWorkspaceRecovery(cwd, recoveryTarget, action));
+      setRecoveryStatus("loaded");
+    } catch (error) {
+      setRecoveryError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setRecoveryBusy("");
+    }
+  }
+
+  function openReview(path?: string): void {
+    if (cwd) {
+      onOpenWorkspaceReview?.({
+        cwd,
+        runId: recoveryTarget?.kind === "run" ? recoveryTarget.id : undefined,
+        path,
+      });
+    }
+  }
 
   return (
     <section className="conversation-work-cell-change-group">
@@ -169,7 +264,32 @@ function ChangedFilesGroup({
           <strong>{title}</strong>
           {summary ? <ChangeStat additions={summary.additions} deletions={summary.deletions} /> : null}
         </span>
+        <span className="conversation-work-cell-change-actions">
+          {recovery?.canReapply ? (
+            <button type="button" onClick={() => void mutateRecovery("reapply")} disabled={Boolean(recoveryBusy)}>
+              {recoveryBusy === "reapply" ? <Loader2 className="spin" size={13} /> : <Redo2 size={13} />}
+              {t("Reapply")}
+            </button>
+          ) : recoveryTarget ? (
+            <button
+              type="button"
+              onClick={() => void mutateRecovery("undo")}
+              disabled={Boolean(recoveryBusy) || recoveryStatus !== "loaded" || !recovery?.canUndo}
+              title={recovery?.canUndo ? undefined : undoUnavailableReason}
+            >
+              {recoveryBusy === "undo" || recoveryStatus === "loading" ? <Loader2 className="spin" size={13} /> : <Undo2 size={13} />}
+              {t("Undo")}
+            </button>
+          ) : null}
+          {cwd && onOpenWorkspaceReview ? (
+            <button type="button" onClick={() => openReview()}>
+              <Code2 size={13} />
+              {t("Review changes")}
+            </button>
+          ) : null}
+        </span>
       </div>
+      {recoveryError ? <small className="conversation-work-cell-change-error" title={recoveryError}>{recoveryError}</small> : null}
       <div className="conversation-work-cell-change-files">
         {visibleChanges.map((entry) => {
           const previewable = Boolean(entry.change);
@@ -181,7 +301,7 @@ function ChangedFilesGroup({
               ) : null}
             </>
           );
-          return previewable ? (
+          return previewable || (cwd && onOpenWorkspaceReview) ? (
             <button
               className="conversation-work-cell-change-file"
               type="button"
@@ -190,7 +310,14 @@ function ChangedFilesGroup({
               onPointerLeave={onPreviewLeave}
               onFocus={(event) => onPreviewNow(entry, event.currentTarget)}
               onBlur={onPreviewLeave}
-              onClick={(event) => onPreviewNow(entry, event.currentTarget)}
+              onClick={(event) => {
+                if (cwd && onOpenWorkspaceReview) {
+                  onPreviewLeave();
+                  openReview(entry.path);
+                } else {
+                  onPreviewNow(entry, event.currentTarget);
+                }
+              }}
             >
               {content}
             </button>
@@ -212,6 +339,34 @@ function ChangedFilesGroup({
       </div>
     </section>
   );
+}
+
+function getWorkspaceRecovery(
+  cwd: string,
+  target: ConversationWorkspaceRecoveryTarget,
+): Promise<WorkspaceRecoveryResponse> {
+  return target.kind === "workflow"
+    ? getWorkflowWorkspaceChanges(cwd, target.id)
+    : getRunWorkspaceChanges(cwd, target.id);
+}
+
+function mutateWorkspaceRecovery(
+  cwd: string,
+  target: ConversationWorkspaceRecoveryTarget,
+  action: "undo" | "reapply",
+): Promise<WorkspaceRecoveryResponse> {
+  if (target.kind === "workflow") {
+    return action === "undo"
+      ? undoWorkflowWorkspaceChanges(cwd, target.id)
+      : reapplyWorkflowWorkspaceChanges(cwd, target.id);
+  }
+  return action === "undo"
+    ? undoRunWorkspaceChanges(cwd, target.id)
+    : reapplyRunWorkspaceChanges(cwd, target.id);
+}
+
+function fileCountFromChanges(changes: readonly LoadedChangeFile[]): number {
+  return new Set(changes.map((change) => change.path)).size;
 }
 
 function ChangeStat({ additions, deletions }: { readonly additions: number; readonly deletions: number }): JSX.Element {
@@ -319,6 +474,7 @@ function useArtifactHoverPreview(input: {
   const showTimerRef = useRef<number | undefined>();
   const hideTimerRef = useRef<number | undefined>();
   const requestIdRef = useRef(0);
+  const previewRef = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
     if (!preview) {
@@ -326,11 +482,18 @@ function useArtifactHoverPreview(input: {
     }
     const scrollOptions = { capture: true, passive: true } as const;
     const hide = (): void => setPreview(undefined);
-    globalThis.addEventListener("scroll", hide, scrollOptions);
+    const handleScroll = (event: Event): void => {
+      const target = event.target;
+      if (target instanceof Node && previewRef.current?.contains(target)) {
+        return;
+      }
+      hide();
+    };
+    globalThis.addEventListener("scroll", handleScroll, scrollOptions);
     globalThis.addEventListener("resize", hide);
     globalThis.addEventListener("keydown", handleEscape);
     return () => {
-      globalThis.removeEventListener("scroll", hide, scrollOptions);
+      globalThis.removeEventListener("scroll", handleScroll, scrollOptions);
       globalThis.removeEventListener("resize", hide);
       globalThis.removeEventListener("keydown", handleEscape);
     };
@@ -439,6 +602,7 @@ function useArtifactHoverPreview(input: {
   const node = preview && typeof document !== "undefined"
     ? createPortal(
       <ArtifactHoverPreview
+        previewRef={previewRef}
         state={preview}
         onPointerEnter={cancelHide}
         onPointerLeave={leaveSource}
@@ -458,10 +622,12 @@ function useArtifactHoverPreview(input: {
 }
 
 function ArtifactHoverPreview({
+  previewRef,
   state,
   onPointerEnter,
   onPointerLeave,
 }: {
+  readonly previewRef: RefObject<HTMLElement>;
   readonly state: HoverPreviewState;
   readonly onPointerEnter: () => void;
   readonly onPointerLeave: () => void;
@@ -471,6 +637,7 @@ function ArtifactHoverPreview({
   const change = target.kind === "change" ? target.entry.change : previewDiffChange(target.preview, label);
   return (
     <aside
+      ref={previewRef}
       className="conversation-artifact-hover-preview"
       style={state.position}
       onPointerEnter={onPointerEnter}
@@ -482,7 +649,7 @@ function ArtifactHoverPreview({
       </header>
       <div className="conversation-artifact-hover-preview-body">
         {change ? (
-          <DiffViewer change={change} maxCollapsedLines={10} />
+          <DiffViewer change={change} maxCollapsedLines={18} showFoldMarkers={false} />
         ) : target.kind === "artifact" ? (
           <CompactArtifactPreview preview={target.preview} />
         ) : null}

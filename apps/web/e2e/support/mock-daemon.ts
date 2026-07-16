@@ -38,6 +38,18 @@ const defaultSkillSourceUpgradePolicy = {
   updatedAt: "2026-06-22T00:00:00.000Z",
 };
 
+const defaultOfficialSkillSourceStatus = {
+  status: "synced",
+  source: {
+    sourceId: "official-gstack",
+    originUrl: "https://github.com/garrytan/gstack.git",
+    ref: "main",
+    revision: "11de390b",
+    version: "1.58.5.0",
+    lastSyncedAt: "2026-06-22T00:00:00.000Z",
+  },
+};
+
 const mockCreateAiCouncilRequestKeys = new Set(["displayName", "description", "routingPolicy", "members", "pinned"]);
 const mockCreateAiCouncilRoutingPolicyKeys = new Set(["defaultMode", "maxActiveMembers", "notes"]);
 const mockCloneAiCouncilRequestKeys = new Set(["displayName", "description", "pinned"]);
@@ -80,6 +92,7 @@ export interface MockState {
   skillRegistryEntries: unknown[];
   skillSourceSnapshots: unknown[];
   skillSourceUpgradePolicy: Record<string, unknown>;
+  officialSkillSourceStatus: Record<string, unknown>;
   skillImportDrafts: unknown[];
   skillCandidates: unknown[];
   skillCandidateReviewRecords: unknown[];
@@ -98,6 +111,7 @@ export interface MockState {
   teammateDirectLinkPreviews: unknown[];
   teammatePrivateAttachments: unknown[];
   conversationAttachments: unknown[];
+  terminalReports: unknown[];
   retentionTombstones: unknown[];
   automationDefinitions: unknown[];
   failThreadHardDeleteForThreadIds?: string[];
@@ -116,6 +130,8 @@ export interface MockState {
   keepChannelAiReplyPending?: boolean;
   failNextChannelMessage?: boolean;
   lastChannelMessageRequest?: Record<string, unknown>;
+  lastTeammateDirectMessageRequest?: Record<string, unknown>;
+  lastConversationMessageEditRequest?: Record<string, unknown>;
   channelMessageQueries?: Record<string, unknown>[];
   pendingChannelAiReplies?: Record<string, string>;
   failNextTaskCreate?: boolean;
@@ -217,6 +233,8 @@ export interface MockLingTurn {
   automationId?: string;
   sourceMessageId?: string;
   sourceTurnId?: string;
+  revision?: number;
+  editedAt?: string;
   interventionId?: string;
   activeRunId?: string;
   lastRunId?: string;
@@ -278,6 +296,31 @@ export interface MockExecutionAction {
   previewArtifactIds: string[];
   resultArtifactIds: string[];
   policySnapshot?: unknown;
+  commandEvidence?: {
+    command: string;
+    cwd?: string;
+    startedAt?: string;
+    completedAt?: string;
+    durationMs?: number;
+    exitCode?: number;
+    timedOut?: boolean;
+    cancelled?: boolean;
+    latestEventSeq: number;
+    outputTail: Array<{
+      eventSeq: number;
+      stream: "stdout" | "stderr";
+      text: string;
+      byteCount: number;
+      redacted: boolean;
+      ts: string;
+    }>;
+    outputByteCount: number;
+    outputLineCount?: number;
+    outputTruncated: boolean;
+    stdoutArtifactId?: string;
+    stderrArtifactId?: string;
+    resultArtifactId?: string;
+  };
   createdAt: string;
   updatedAt: string;
   approvedAt?: string;
@@ -1053,6 +1096,7 @@ export function createBaseState(options: { approvalStatus: "pending" | "expired"
     skillRegistryEntries: buildMockSkillRegistryEntries(),
     skillSourceSnapshots: createMockSkillSourceSnapshots(),
     skillSourceUpgradePolicy: { ...defaultSkillSourceUpgradePolicy },
+    officialSkillSourceStatus: { ...defaultOfficialSkillSourceStatus },
     skillImportDrafts: [],
     skillCandidates: createMockSkillCandidates(),
     skillCandidateReviewRecords: [],
@@ -1070,6 +1114,7 @@ export function createBaseState(options: { approvalStatus: "pending" | "expired"
     teammateDirectLinkPreviews: [],
     teammatePrivateAttachments: [],
     conversationAttachments: [],
+    terminalReports: [],
     retentionTombstones: [],
     automationDefinitions: [],
     tasks: [
@@ -2495,6 +2540,41 @@ function publishMockSkillSourceSync(state: MockState, input: Record<string, unkn
   return { preview, skills: publishedSkills, snapshots: publishedSnapshots };
 }
 
+function applyMockSkillSourceSync(state: MockState, input: Record<string, unknown> = {}): Record<string, unknown> {
+  const completedAt = "2026-06-22T00:06:00.000Z";
+  const preview = createMockSkillSourceSyncPreview(state, input);
+  const records = Array.isArray(preview.records) ? preview.records.filter(isRecord) : [];
+  const changed = records.filter((record) => record.state !== "unchanged" && record.state !== "missing" && record.state !== "orphaned");
+  const unchanged = records.filter((record) => record.state === "unchanged");
+  state.skillSourceUpgradePolicy = {
+    ...state.skillSourceUpgradePolicy,
+    lastCheckedAt: completedAt,
+    updatedAt: completedAt,
+  };
+  const source = isRecord(state.officialSkillSourceStatus.source) ? state.officialSkillSourceStatus.source : {};
+  state.officialSkillSourceStatus = {
+    status: "synced",
+    source: {
+      ...source,
+      sourceId: "official-gstack",
+      originUrl: "https://github.com/garrytan/gstack.git",
+      ref: "main",
+      lastSyncedAt: completedAt,
+    },
+  };
+  return {
+    completedAt,
+    policy: state.skillSourceUpgradePolicy,
+    source: state.officialSkillSourceStatus.source,
+    summary: {
+      synced: changed.length,
+      unchanged: unchanged.length,
+    },
+    skills: [],
+    snapshots: [],
+  };
+}
+
 function isMockPublishableSyncRecord(record: Record<string, unknown>, allowNewSkills: boolean): boolean {
   const warnings = Array.isArray(record.warnings) ? record.warnings.filter(isRecord) : [];
   if (warnings.some((warning) => warning.severity === "error")) {
@@ -2968,6 +3048,67 @@ export function createMockSkillImportDraft(state: MockState, body: Record<string
     : sourceFileName === "skill.md" || content.includes("---\nname:")
       ? "skill-directory"
       : "custom";
+  const structured = parseMockStructuredSkillImport(content);
+  if (structured) {
+    const definitions = structured.skills.map((skill, index) => {
+      const skillId = readMockString(skill.id) ?? `custom-skill-${state.skillImportDrafts.length + index + 1}`;
+      const name = readMockString(skill.name) ?? skillId;
+      const summary = readMockString(skill.summary) ?? "Imported workspace skill.";
+      const promptFragments = readMockStringArray(skill.promptFragments);
+      const duplicateSkill = state.skillRegistryEntries.some((entry) => isRecord(entry) && entry.id === skillId);
+      const permissionWarnings = /approval|secret|external/i.test(promptFragments.join("\n"))
+        ? [{
+            code: "permission_like_instruction",
+            severity: "warning",
+            message: "Permission-like instructions were kept as prompt text only.",
+          }]
+        : [];
+      return {
+        definition: {
+          id: skillId,
+          name,
+          summary,
+          roleAffinity: readMockStringArray(skill.roleAffinity, ["custom"]),
+          promptFragments,
+          requiredTools: readMockStringArray(skill.requiredTools),
+          requiredProviderCapabilities: readMockStringArray(skill.requiredProviderCapabilities),
+          approvalProfile: isRecord(skill.approvalProfile) ? skill.approvalProfile : { mode: "none" },
+          stateEffects: readMockStringArray(skill.stateEffects),
+        },
+        visibility: {
+          workspaceVisible: true,
+          promotableToWorkspace: true,
+        },
+        warnings: [
+          ...permissionWarnings,
+          ...(duplicateSkill ? [{
+            code: "duplicate_skill_id",
+            severity: "error",
+            message: `Skill id already exists: ${skillId}`,
+          }] : []),
+        ],
+      };
+    });
+    const firstDefinition = definitions[0]?.definition;
+    const name = typeof body.name === "string" && body.name.trim()
+      ? body.name.trim()
+      : structured.name ?? firstDefinition?.name ?? "Imported skill pack";
+    const description = structured.description ?? firstDefinition?.summary ?? "Imported workspace skill.";
+    return {
+      id: `skill_draft_${state.skillImportDrafts.length + 1}`,
+      workspaceId: "workspace_default",
+      source: typeof body.source === "string" ? body.source : inferredSource,
+      sourcePath,
+      packId: typeof body.packId === "string" ? body.packId : `skill_pack_${state.skillImportDrafts.length + 1}`,
+      name,
+      version: "0.1.0",
+      description,
+      definitions,
+      warnings: [],
+      createdAt: "2026-06-04T00:20:00.000Z",
+      updatedAt: "2026-06-04T00:20:00.000Z",
+    };
+  }
   const skillId = content.match(/^id:\s*([a-z0-9-]+)/im)?.[1] ?? `custom-skill-${state.skillImportDrafts.length + 1}`;
   const heading = content.match(/^#\s+(.+)$/m)?.[1]?.trim();
   const summary = content.match(/^summary:\s*(.+)$/im)?.[1]?.trim() ?? "Imported workspace skill.";
@@ -3024,7 +3165,54 @@ export function createMockSkillImportDraft(state: MockState, body: Record<string
   };
 }
 
-export function createMockSkillCandidateDraft(state: MockState, candidate: Record<string, unknown>): Record<string, unknown> {
+function parseMockStructuredSkillImport(content: string): {
+  readonly name?: string;
+  readonly description?: string;
+  readonly skills: readonly Record<string, unknown>[];
+} | undefined {
+  try {
+    const parsed = JSON.parse(content) as unknown;
+    if (!isRecord(parsed) || !Array.isArray(parsed.skills)) return undefined;
+    const skills = parsed.skills.filter(isRecord);
+    if (skills.length === 0) return undefined;
+    return {
+      ...(readMockString(parsed.name) ? { name: readMockString(parsed.name) } : {}),
+      ...(readMockString(parsed.description) ? { description: readMockString(parsed.description) } : {}),
+      skills,
+    };
+  } catch {
+    return undefined;
+  }
+}
+
+function readMockString(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function readMockStringArray(value: unknown, fallback: readonly string[] = []): string[] {
+  if (!Array.isArray(value)) return [...fallback];
+  return value.map(String).map((item) => item.trim()).filter(Boolean);
+}
+
+export function createMockSkillCandidateDraft(
+  state: MockState,
+  candidate: Record<string, unknown>,
+  editedContent?: string,
+): Record<string, unknown> {
+  const sourcePath = `skill-candidates/${String(candidate.id)}`;
+  if (editedContent?.trim()) {
+    return {
+      ...createMockSkillImportDraft(state, {
+        content: editedContent,
+        source: "custom",
+        sourcePath,
+        name: typeof candidate.title === "string" ? candidate.title : "Skill candidate draft",
+      }),
+      source: "custom",
+      sourcePath,
+      packId: "ling-generated",
+    };
+  }
   const definition = isRecord(candidate.definition) ? candidate.definition : {};
   const skillDefinitionWithLegacyMetadata = isRecord(definition.skillDefinition)
     ? definition.skillDefinition
@@ -3044,8 +3232,8 @@ export function createMockSkillCandidateDraft(state: MockState, candidate: Recor
     id: `skill_draft_${state.skillImportDrafts.length + 1}`,
     workspaceId: "workspace_default",
     source: "custom",
-    sourcePath: `skill-candidates/${String(candidate.id)}`,
-    packId: `skill_pack_candidate_${state.skillImportDrafts.length + 1}`,
+    sourcePath,
+    packId: "ling-generated",
     name: typeof candidate.title === "string" ? candidate.title : "Skill candidate draft",
     version: "0.1.0",
     description: typeof candidate.summary === "string" ? candidate.summary : "Generated from a skill candidate.",
@@ -5921,9 +6109,255 @@ export function buildMockExternalActionView(state: MockState, action: MockExtern
   };
 }
 
+async function handleMockConversationMessageEdit(
+  route: Route,
+  state: MockState,
+  body: Record<string, unknown>,
+): Promise<void> {
+  const surface = typeof body.surface === "string" ? body.surface : "";
+  const ownerId = typeof body.ownerId === "string" ? body.ownerId : "";
+  const messageId = typeof body.messageId === "string" ? body.messageId : "";
+  const replacementBody = typeof body.body === "string" ? body.body : "";
+  const expectedRevision = typeof body.expectedRevision === "number" ? body.expectedRevision : 1;
+  const idempotencyKey = typeof body.idempotencyKey === "string" ? body.idempotencyKey : "";
+  const now = "2026-07-12T04:00:00.000Z";
+  const mentions = Array.isArray(body.mentions) ? body.mentions : [];
+  const attachmentIds = Array.isArray(body.attachmentIds) ? body.attachmentIds.filter((item): item is string => typeof item === "string") : [];
+  const linkPreviewIds = Array.isArray(body.linkPreviewIds) ? body.linkPreviewIds.filter((item): item is string => typeof item === "string") : [];
+  const fileRefs = Array.isArray(body.fileRefs) ? body.fileRefs.filter(isRecord).map(normalizeMockFileRef) : [];
+  const revision = {
+    id: `revision_${messageId}_${expectedRevision + 1}`,
+    surface,
+    ownerId,
+    laneId: ownerId,
+    messageId,
+    revision: expectedRevision + 1,
+    body: replacementBody,
+    mentions,
+    attachmentIds,
+    linkPreviewIds,
+    fileRefs,
+    createdAt: now,
+  };
+  const supersededResponseMessageIds: string[] = [];
+  const interruptedRunIds: string[] = [];
+  let supersededTurnId: string | undefined;
+  let replacementTurnId: string | undefined;
+  let replayedSupersessionId: string | undefined;
+  let idempotentReplay = false;
+
+  if (surface === "normal_conversation") {
+    const originalTurn = state.turns.find((turn) =>
+      turn.threadId === ownerId &&
+      (turn.sourceMessageId === messageId || `conversation-user:${turn.id}` === messageId) &&
+      turn.status !== "superseded"
+    );
+    const thread = state.threads.find((candidate) => candidate.id === ownerId && candidate.kind === "conversation");
+    if (!originalTurn || !thread) {
+      await route.fulfill({ status: 404, json: { error: "message_not_found", message: "Conversation message not found." } });
+      return;
+    }
+    supersededTurnId = originalTurn.id;
+    originalTurn.status = "superseded";
+    originalTurn.updatedAt = now;
+    supersededResponseMessageIds.push(`conversation-assistant:${originalTurn.id}`);
+    interruptedRunIds.push(...state.turnRunLinks.filter((link) => link.turnId === originalTurn.id).map((link) => link.runId));
+
+    replacementTurnId = `turn_conversation_edit_${state.turns.length + 1}`;
+    const replacementRunId = `run_conversation_edit_${state.runs.length + 1}`;
+    const originalRun = interruptedRunIds
+      .map((runId) => state.runs.find((run) => run.id === runId))
+      .find((run): run is MockRun => Boolean(run));
+    const replacementTurn: MockLingTurn = {
+      id: replacementTurnId,
+      workspaceId: "workspace_default",
+      threadId: ownerId,
+      kind: originalTurn.kind,
+      status: "succeeded",
+      title: summarizeMockConversationTitle(replacementBody),
+      userInstruction: replacementBody,
+      teammateId: originalTurn.teammateId ?? "ling_agent",
+      sourceMessageId: messageId,
+      sourceTurnId: originalTurn.id,
+      revision: expectedRevision + 1,
+      editedAt: now,
+      lastRunId: replacementRunId,
+      createdByActor: "local-user",
+      createdAt: now,
+      updatedAt: now,
+      completedAt: now,
+    };
+    const replacementRun: MockRun = {
+      id: replacementRunId,
+      status: "succeeded",
+      cwd: originalRun?.cwd ?? cwd,
+      taskId: `conversation:${replacementTurnId}`,
+      providerPresetId: typeof body.providerPresetId === "string" ? body.providerPresetId : originalRun?.providerPresetId,
+      providerName: originalRun?.providerName ?? "mock-provider",
+      providerModel: originalRun?.providerModel ?? "mock-model",
+      taskSnapshot: { id: `conversation:${replacementTurnId}`, title: replacementTurn.title, prompt: replacementBody },
+      providerSnapshot: originalRun?.providerSnapshot ?? {},
+      requestSnapshot: { ...(isRecord(originalRun?.requestSnapshot) ? originalRun.requestSnapshot : {}), ...body },
+      eventLogPath: `.ling-stack/sessions/${replacementRunId}.jsonl`,
+      threadId: ownerId,
+      turnId: replacementTurnId,
+      createdAt: now,
+      startedAt: now,
+      updatedAt: now,
+      endedAt: now,
+    };
+    state.turns.push(replacementTurn);
+    state.runs.unshift(replacementRun);
+    state.turnRunLinks.push({ turnId: replacementTurnId, runId: replacementRunId, attemptNumber: 1, role: "primary", createdAt: now });
+    state.eventsByRun[replacementRunId] = [{
+      id: `evt_${replacementRunId}_assistant`,
+      runId: replacementRunId,
+      seq: 0,
+      ts: now,
+      type: "assistant_text_delta",
+      data: { text: `Ling Agent response: ${replacementBody}` },
+    }, {
+      id: `evt_${replacementRunId}_end`,
+      runId: replacementRunId,
+      seq: 1,
+      ts: now,
+      type: "run_end",
+      data: { status: "succeeded" },
+    }];
+    thread.lastRunId = replacementRunId;
+    thread.updatedAt = now;
+  } else if (surface === "channel_root" || surface === "channel_branch" || surface === "topic_reply") {
+    const messageIndex = state.channelMessages.findIndex((candidate) => isRecord(candidate) && candidate.id === messageId && candidate.channelId === ownerId);
+    const current = messageIndex >= 0 && isRecord(state.channelMessages[messageIndex]) ? state.channelMessages[messageIndex] : undefined;
+    if (!current) {
+      await route.fulfill({ status: 404, json: { error: "message_not_found", message: "Channel message not found." } });
+      return;
+    }
+    const pendingReplacement = isRecord(current.pendingReplacement) && current.pendingReplacement.idempotencyKey === idempotencyKey
+      ? current.pendingReplacement
+      : undefined;
+    if (pendingReplacement) {
+      revision.revision = expectedRevision;
+      revision.id = `revision_${messageId}_${expectedRevision}`;
+      replayedSupersessionId = typeof pendingReplacement.supersessionId === "string" ? pendingReplacement.supersessionId : undefined;
+      idempotentReplay = true;
+    }
+    state.channelMessages[messageIndex] = {
+      ...current,
+      body: replacementBody,
+      revision: pendingReplacement ? expectedRevision : expectedRevision + 1,
+      editedAt: now,
+      pendingReplacement: undefined,
+      updatedAt: now,
+    };
+    for (let index = 0; index < state.channelMessages.length; index += 1) {
+      const candidate = state.channelMessages[index];
+      const matchesSupersededReply = isRecord(candidate) && candidate.authorType === "ai-teammate" && candidate.status !== "superseded" && (
+        surface === "topic_reply" || surface === "channel_branch"
+          ? candidate.threadId === current.threadId && String(candidate.createdAt ?? "") >= String(current.createdAt ?? "")
+          : candidate.threadId === messageId
+      );
+      if (matchesSupersededReply && isRecord(candidate)) {
+        supersededResponseMessageIds.push(String(candidate.id));
+        state.channelMessages[index] = { ...candidate, status: "superseded", updatedAt: now };
+      }
+    }
+    state.channelMessages.push({
+      id: `msg_edit_reply_${state.channelMessages.length + 1}`,
+      workspaceId: "workspace_default",
+      channelId: ownerId,
+      threadId: typeof current.threadId === "string" && (surface === "topic_reply" || surface === "channel_branch") ? current.threadId : messageId,
+      kind: "ai_reply",
+      intent: "discuss",
+      authorType: "ai-teammate",
+      authorId: "ling_agent",
+      body: `Edited reply: ${replacementBody}`,
+      mentions: [],
+      attachmentIds: [],
+      linkPreviewIds: [],
+      fileRefs: [],
+      status: "ready",
+      createdAt: now,
+      updatedAt: now,
+    });
+    replacementTurnId = `turn_channel_edit_${state.turns.length + 1}`;
+  } else if (surface === "teammate_direct") {
+    const messageIndex = state.teammateDirectMessages.findIndex((candidate) => isRecord(candidate) && candidate.id === messageId && candidate.teammateId === ownerId);
+    const current = messageIndex >= 0 && isRecord(state.teammateDirectMessages[messageIndex]) ? state.teammateDirectMessages[messageIndex] : undefined;
+    if (!current) {
+      await route.fulfill({ status: 404, json: { error: "message_not_found", message: "Private message not found." } });
+      return;
+    }
+    const pendingReplacement = isRecord(current.pendingReplacement) && current.pendingReplacement.idempotencyKey === idempotencyKey
+      ? current.pendingReplacement
+      : undefined;
+    if (pendingReplacement) {
+      revision.revision = expectedRevision;
+      revision.id = `revision_${messageId}_${expectedRevision}`;
+      replayedSupersessionId = typeof pendingReplacement.supersessionId === "string" ? pendingReplacement.supersessionId : undefined;
+      idempotentReplay = true;
+    }
+    state.teammateDirectMessages[messageIndex] = {
+      ...current,
+      body: replacementBody,
+      revision: pendingReplacement ? expectedRevision : expectedRevision + 1,
+      editedAt: now,
+      pendingReplacement: undefined,
+      updatedAt: now,
+    };
+    for (let index = 0; index < state.teammateDirectMessages.length; index += 1) {
+      const candidate = state.teammateDirectMessages[index];
+      if (
+        isRecord(candidate) &&
+        candidate.teammateId === ownerId &&
+        candidate.threadId === current.threadId &&
+        candidate.authorType === "ai-teammate" &&
+        String(candidate.createdAt ?? "") >= String(current.createdAt ?? "") &&
+        candidate.status !== "superseded"
+      ) {
+        supersededResponseMessageIds.push(String(candidate.id));
+        state.teammateDirectMessages[index] = { ...candidate, status: "superseded", updatedAt: now };
+      }
+    }
+    state.teammateDirectMessages.push({
+      id: `tdmsg_edit_reply_${state.teammateDirectMessages.length + 1}`,
+      workspaceId: "workspace_default",
+      threadId: current.threadId,
+      teammateId: ownerId,
+      authorType: "ai-teammate",
+      authorId: ownerId,
+      body: `Edited private reply: ${replacementBody}`,
+      attachmentIds: [],
+      linkPreviewIds: [],
+      fileRefs: [],
+      status: "ready",
+      createdAt: now,
+      updatedAt: now,
+    });
+    replacementTurnId = `turn_direct_edit_${state.turns.length + 1}`;
+  } else {
+    await route.fulfill({ status: 400, json: { error: "invalid_surface", message: "Unsupported conversation surface." } });
+    return;
+  }
+
+  await route.fulfill({
+    json: {
+      message: revision,
+      supersessionId: replayedSupersessionId ?? `supersession_${messageId}_${expectedRevision + 1}`,
+      supersededTurnId,
+      replacementTurnId,
+      interruptedRunIds,
+      supersededResponseMessageIds,
+      preservedWorkspaceChanges: true,
+      status: "replacement_started",
+      idempotentReplay,
+    },
+  });
+}
+
 function buildMockConversationDetail(state: MockState, cwd: string, thread: MockLingThread): Record<string, unknown> {
   const turns = state.turns
-    .filter((turn) => turn.threadId === thread.id)
+    .filter((turn) => turn.threadId === thread.id && turn.status !== "superseded")
     .sort((left, right) => left.createdAt.localeCompare(right.createdAt));
   const runLinks = turns.flatMap((turn) => state.turnRunLinks.filter((link) => link.turnId === turn.id));
   const runs = runLinks
@@ -5944,6 +6378,8 @@ function buildMockConversationDetail(state: MockState, cwd: string, thread: Mock
     thread,
     turns,
     runs,
+    executionActions: state.executionActions.filter((action) => action.threadId === thread.id || runs.some((run) => run.id === action.runId)),
+    terminalReports: state.terminalReports.filter((report) => isRecord(report) && report.threadId === thread.id),
     messages,
     defaults: {
       projectPath: typeof requestSnapshot.projectPath === "string" ? requestSnapshot.projectPath : latestProjectPath,
@@ -5964,13 +6400,15 @@ function createMockConversationUserMessage(
 ): Record<string, unknown> {
   const resolvedAttachments = attachments ?? findMockConversationAttachmentsForTurn(state, thread.id, turn.id, run);
   return {
-    id: `conversation-user:${turn.id}`,
+    id: turn.sourceMessageId?.startsWith("conversation-user:") ? turn.sourceMessageId : `conversation-user:${turn.id}`,
     role: "user",
     content: turn.userInstruction,
     status: turn.status === "failed" ? "failed" : "succeeded",
     threadId: thread.id,
     turnId: turn.id,
     attachments: resolvedAttachments,
+    revision: turn.revision,
+    editedAt: turn.editedAt,
     createdAt: turn.createdAt,
     updatedAt: turn.updatedAt,
   };
@@ -6162,6 +6600,53 @@ export async function handleDaemonRoute(
     await route.fulfill({ json: { cwd, settings: state.workspaceSettings } });
     return;
   }
+  if (request.method() === "GET" && /^\/workspace-files\/open-icons\/[^/]+$/u.test(path)) {
+    await route.fulfill({
+      status: 200,
+      contentType: "image/png",
+      body: Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9ZJk8AAAAASUVORK5CYII=", "base64"),
+    });
+    return;
+  }
+  if (request.method() === "GET" && path === "/workspace-files/open-options") {
+    const requestedCwd = url.searchParams.get("cwd");
+    const requestedPath = url.searchParams.get("path");
+    if (!requestedCwd || !requestedPath) {
+      await route.fulfill({ status: 400, json: { error: "bad_request", message: "cwd and path are required" } });
+      return;
+    }
+    await route.fulfill({
+      json: {
+        cwd: requestedCwd,
+        path: requestedPath,
+        options: [
+          { id: "vscode", label: "Visual Studio Code", available: true },
+          { id: "textedit", label: "TextEdit", available: true },
+          { id: "finder", label: "Show in Finder", available: true },
+          { id: "terminal", label: "Terminal", available: true },
+        ],
+      },
+    });
+    return;
+  }
+  if (request.method() === "POST" && path === "/workspace-files/open") {
+    const requestedCwd = url.searchParams.get("cwd");
+    const requestedPath = url.searchParams.get("path");
+    const body = await request.postDataJSON() as { target?: unknown };
+    if (!requestedCwd || !requestedPath || typeof body.target !== "string") {
+      await route.fulfill({ status: 400, json: { error: "bad_request", message: "cwd, path, and target are required" } });
+      return;
+    }
+    await route.fulfill({
+      json: {
+        cwd: requestedCwd,
+        path: requestedPath,
+        target: body.target,
+        opened: true,
+      },
+    });
+    return;
+  }
   if (request.method() === "GET" && path === "/startup/status") {
     const requestedCwd = url.searchParams.get("cwd") ?? cwd;
     await route.fulfill({ json: { ...state.startupStatus, cwd: requestedCwd } });
@@ -6185,6 +6670,10 @@ export async function handleDaemonRoute(
         label: "projects",
       },
     });
+    return;
+  }
+  if (request.method() === "GET" && path === "/skills/sync/gstack/status") {
+    await route.fulfill({ json: { cwd, ...state.officialSkillSourceStatus } });
     return;
   }
   if (request.method() === "GET" && path === "/workspace-terminal/profile") {
@@ -6754,6 +7243,12 @@ export async function handleDaemonRoute(
     });
     return;
   }
+  if (request.method() === "POST" && path === "/skills/sync/gstack/apply") {
+    const body = await request.postDataJSON() as Record<string, unknown>;
+    const result = applyMockSkillSourceSync(state, body);
+    await route.fulfill({ json: { cwd, ...result } });
+    return;
+  }
   if (request.method() === "POST" && path === "/skills/sync/gstack/refresh") {
     const body = await request.postDataJSON() as Record<string, unknown>;
     await route.fulfill({
@@ -6966,7 +7461,8 @@ export async function handleDaemonRoute(
         await route.fulfill({ status: 400, json: { error: "skill_candidate_duplicate_review_required" } });
         return;
       }
-      const draft = createMockSkillCandidateDraft(state, candidate);
+      const body = safePostDataJson(request);
+      const draft = createMockSkillCandidateDraft(state, candidate, typeof body.content === "string" ? body.content : undefined);
       state.skillImportDrafts.unshift(draft);
       await route.fulfill({ status: 201, json: { cwd, candidate, draft, contextFindings: createMockSkillImportDraftContextFindings(draft) } });
       return;
@@ -7281,9 +7777,98 @@ export async function handleDaemonRoute(
           !isRecord(entry) || !published.some((skill) => skill.id === entry.id)
         ),
       ];
+      const sourcePath = typeof draft.sourcePath === "string" ? draft.sourcePath : "";
+      const candidateId = sourcePath.startsWith("skill-candidates/") ? sourcePath.slice("skill-candidates/".length) : "";
+      if (candidateId) {
+        state.skillCandidates = state.skillCandidates.map((candidate) => isRecord(candidate) && candidate.id === candidateId
+          ? { ...candidate, status: "published", updatedAt: "2026-06-04T00:21:00.000Z" }
+          : candidate);
+      }
       await route.fulfill({ json: { cwd, draftId, skills: published } });
       return;
     }
+  }
+  const skillRevisionMatch = /^\/skills\/([^/]+)\/(revision-preview|revisions)$/.exec(path);
+  if (skillRevisionMatch && request.method() === "POST") {
+    const skillId = decodeURIComponent(skillRevisionMatch[1]);
+    const action = skillRevisionMatch[2];
+    const skill = state.skillRegistryEntries.find((entry) => isRecord(entry) && entry.id === skillId);
+    if (!isRecord(skill) || !isRecord(skill.definition)) {
+      await route.fulfill({ status: 404, json: { error: "skill_not_found", message: `Skill not found: ${skillId}` } });
+      return;
+    }
+    if (["builtin", "gstack", "workspace"].includes(String(skill.source)) || skill.reviewStatus === "archived") {
+      await route.fulfill({ status: 409, json: { error: "skill_not_editable", message: "This skill is managed by a read-only source." } });
+      return;
+    }
+    const body = safePostDataJson(request);
+    if (body.expectedUpdatedAt !== skill.updatedAt || !isRecord(body.definition)) {
+      await route.fulfill({ status: 409, json: { error: "skill_revision_conflict", message: "Skill changed after the editor was opened." } });
+      return;
+    }
+    const nextDefinition = {
+      ...skill.definition,
+      name: typeof body.definition.name === "string" ? body.definition.name : skill.definition.name,
+      summary: typeof body.definition.summary === "string" ? body.definition.summary : skill.definition.summary,
+      promptFragments: Array.isArray(body.definition.promptFragments) ? body.definition.promptFragments : skill.definition.promptFragments,
+      requiredTools: Array.isArray(body.definition.requiredTools) ? body.definition.requiredTools : skill.definition.requiredTools,
+      requiredProviderCapabilities: Array.isArray(body.definition.requiredProviderCapabilities)
+        ? body.definition.requiredProviderCapabilities
+        : skill.definition.requiredProviderCapabilities,
+      approvalProfile: isRecord(body.definition.approvalProfile) ? body.definition.approvalProfile : skill.definition.approvalProfile,
+    };
+    const requiredToolsChanged = JSON.stringify(nextDefinition.requiredTools) !== JSON.stringify(skill.definition.requiredTools);
+    const requiredProviderCapabilitiesChanged = JSON.stringify(nextDefinition.requiredProviderCapabilities) !== JSON.stringify(skill.definition.requiredProviderCapabilities);
+    const approvalProfileChanged = JSON.stringify(nextDefinition.approvalProfile) !== JSON.stringify(skill.definition.approvalProfile);
+    const authorityDiff = {
+      changed: requiredToolsChanged || requiredProviderCapabilitiesChanged || approvalProfileChanged,
+      requiredToolsChanged,
+      requiredProviderCapabilitiesChanged,
+      approvalProfileChanged,
+      before: {
+        requiredTools: skill.definition.requiredTools,
+        requiredProviderCapabilities: skill.definition.requiredProviderCapabilities,
+        approvalProfile: skill.definition.approvalProfile,
+      },
+      after: {
+        requiredTools: nextDefinition.requiredTools,
+        requiredProviderCapabilities: nextDefinition.requiredProviderCapabilities,
+        approvalProfile: nextDefinition.approvalProfile,
+      },
+    };
+    const preview = {
+      definition: nextDefinition,
+      warnings: [],
+      authorityDiff,
+      requiresConfirmation: authorityDiff.changed,
+      canPublish: Boolean(String(nextDefinition.name).trim() && String(nextDefinition.summary).trim() && Array.isArray(nextDefinition.promptFragments) && nextDefinition.promptFragments.length > 0),
+    };
+    if (action === "revision-preview") {
+      await route.fulfill({ json: { cwd, skillId, preview } });
+      return;
+    }
+    if (preview.requiresConfirmation && body.confirmAuthorityChanges !== true) {
+      await route.fulfill({ status: 409, json: { error: "skill_revision_confirmation_required", message: "Skill authority changes require explicit confirmation.", preview } });
+      return;
+    }
+    const updated = { ...skill, definition: nextDefinition, updatedAt: "2026-07-16T02:00:00.000Z" };
+    state.skillRegistryEntries = state.skillRegistryEntries.map((entry) => isRecord(entry) && entry.id === skillId ? updated : entry);
+    const draftId = `skill_revision_draft_${state.skillImportDrafts.length + 1}`;
+    state.skillImportDrafts.unshift({
+      id: draftId,
+      workspaceId: "workspace_default",
+      source: skill.source,
+      sourcePath: skill.sourcePath,
+      packId: skill.packId,
+      name: nextDefinition.name,
+      description: nextDefinition.summary,
+      definitions: [{ definition: nextDefinition, visibility: skill.visibility }],
+      warnings: [],
+      createdAt: updated.updatedAt,
+      updatedAt: updated.updatedAt,
+    });
+    await route.fulfill({ json: { cwd, draftId, skill: updated } });
+    return;
   }
   const skillHardDeleteMatch = /^\/skills\/([^/]+)\/hard-delete$/.exec(path);
   if (skillHardDeleteMatch && request.method() === "POST") {
@@ -8032,7 +8617,9 @@ export async function handleDaemonRoute(
     }
     if ((action === "direct-thread" || action === "direct-messages") && request.method() === "GET") {
       const thread = getOrCreateMockTeammateThread(state, teammateId, teammate);
-      const messages = state.teammateDirectMessages.filter((item) => isRecord(item) && item.teammateId === teammateId && item.threadId === thread.id);
+      const messages = state.teammateDirectMessages.filter((item) =>
+        isRecord(item) && item.teammateId === teammateId && item.threadId === thread.id && item.status !== "superseded"
+      );
       const url = new URL(request.url());
       const limit = Math.min(Math.max(Number.parseInt(url.searchParams.get("limit") ?? "100", 10) || 100, 1), 500);
       const beforeMessageId = url.searchParams.get("beforeMessageId") ?? undefined;
@@ -8162,6 +8749,7 @@ export async function handleDaemonRoute(
             ? "Provider preflight is not ready."
             : "";
       const directReplyBody = buildMockDirectReplyBody(state, message.attachmentIds);
+      const linkedRunId = `run_direct_${state.teammateDirectMessages.length + 1}`;
       const aiReply = {
         id: `tdmsg_${state.teammateDirectMessages.length + 1}`,
         workspaceId: "workspace_default",
@@ -8175,6 +8763,7 @@ export async function handleDaemonRoute(
         fileRefs: [],
         status: blockedReason ? "blocked" : "ready",
         errorMessage: blockedReason || undefined,
+        linkedRunId: blockedReason ? undefined : linkedRunId,
         createdAt: "2026-06-04T00:20:01.000Z",
         updatedAt: "2026-06-04T00:20:01.000Z",
       };
@@ -8187,6 +8776,7 @@ export async function handleDaemonRoute(
         ]
         : [
           { event: "ready", data: { message, aiReply: pendingReply } },
+          { event: "run_linked", data: { messageId: aiReply.id, linkedRunId } },
           { event: "delta", data: { messageId: aiReply.id, delta: aiReply.body, body: aiReply.body } },
           { event: "done", data: { message, aiReply } },
         ];
@@ -9114,6 +9704,11 @@ export async function handleDaemonRoute(
       await route.fulfill({ json: buildMockChannelWorkspaceResponse(channelId, updated, binding) });
       return;
     }
+    if (request.method() === "POST" && action === "open") {
+      const binding = readMockChannelWorkspaceBinding(channel);
+      await route.fulfill({ json: buildMockChannelWorkspaceResponse(channelId, channel, binding) });
+      return;
+    }
     if (request.method() === "POST" && action === "create-worktree") {
       const binding = buildMockManagedChannelWorktreeBinding(channelId, "2026-05-25T00:18:00.000Z");
       const updated = { ...channel, workspaceBinding: binding, updatedAt: "2026-05-25T00:18:00.000Z" };
@@ -9317,6 +9912,7 @@ export async function handleDaemonRoute(
       .filter((message) =>
         isRecord(message) &&
         message.channelId === channelId &&
+        message.status !== "superseded" &&
         (!threadId || message.threadId === threadId)
       )
       .sort((left, right) => {
@@ -10425,6 +11021,12 @@ export async function handleDaemonRoute(
     await route.fulfill({ json: { cwd, tasks } });
     return;
   }
+  if (request.method() === "POST" && path === "/conversation-message-edits") {
+    const body = await request.postDataJSON() as Record<string, unknown>;
+    state.lastConversationMessageEditRequest = body;
+    await handleMockConversationMessageEdit(route, state, body);
+    return;
+  }
   if (request.method() === "GET" && path === "/conversations/attachments") {
     const threadId = url.searchParams.get("threadId") ?? undefined;
     const limit = Number(url.searchParams.get("limit") ?? 100);
@@ -10601,6 +11203,21 @@ export async function handleDaemonRoute(
         "",
       ].join("\n\n"),
     });
+    return;
+  }
+  if (request.method() === "GET" && path === "/terminal-reports") {
+    const threadId = url.searchParams.get("threadId");
+    const sourceKind = url.searchParams.get("sourceKind");
+    const sourceId = url.searchParams.get("sourceId");
+    const reports = state.terminalReports.filter((report) => {
+      if (!isRecord(report)) return false;
+      if (threadId && report.threadId !== threadId) return false;
+      const source = isRecord(report.source) ? report.source : {};
+      if (sourceKind && source.kind !== sourceKind) return false;
+      if (sourceId && source.id !== sourceId) return false;
+      return true;
+    });
+    await route.fulfill({ json: { reports } });
     return;
   }
   const conversationRouteMatch = /^\/conversations\/([^/]+)$/.exec(path);
@@ -11504,7 +12121,7 @@ export async function handleDaemonRoute(
         right.id.localeCompare(left.id)
       )
       .slice(0, limit);
-    await route.fulfill({ json: { cwd, actions } });
+    await route.fulfill({ json: { cwd, actions, revision: actions.map((action) => `${action.id}:${action.updatedAt}`).join("|") } });
     return;
   }
   if (request.method() === "GET" && path === "/work-items") {

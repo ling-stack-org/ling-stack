@@ -7,6 +7,7 @@ import type {
   ChannelWorkflowStep,
   RunArtifact,
   RunExecutionStoreFacet,
+  RunStore,
 } from "@ling-stack/core";
 import type { LingAgentTurnEnvelope, LingTurnMaterializationStatus } from "../ling-agent-turn-envelope.js";
 import {
@@ -17,8 +18,12 @@ import {
 } from "./evidence.js";
 import { listChannelBranchRootThreadIds, resolveChannelConversationSurface } from "../conversation-surface.js";
 import type { ChannelContextSource, ChannelContextSourceRef } from "./types.js";
+import {
+  buildConversationSupersessionProjection,
+  filterSupersededChannelMessages,
+} from "../../conversations/supersession-projection.js";
 
-type ChannelContextConversationStore = ChannelStoreFacet & RunExecutionStoreFacet;
+type ChannelContextConversationStore = ChannelStoreFacet & RunExecutionStoreFacet & Partial<Pick<RunStore, "listConversationTurnSupersessions">>;
 type ChannelContextActiveWorkStore = ChannelStoreFacet & RunExecutionStoreFacet & ApprovalStoreFacet;
 type WorkflowEvidenceStore = RunExecutionStoreFacet;
 
@@ -231,9 +236,9 @@ export function listChannelContextMessages(input: {
   const limit = input.limit ?? 8;
   const surface = resolveChannelConversationSurface(input.store, input.channelId, input.sourceMessage);
   if (surface.kind === "branch") {
-    return input.store
+    return filterChannelContextSupersessions(input.store, input.channelId, input.store
       .listChannelMessages({ channelId: input.channelId, threadId: surface.rootThreadId, limit })
-      .filter((message) => message.id === input.sourceMessage.id || !historicalGuidanceMessageIds.has(message.id));
+      .filter((message) => message.id === input.sourceMessage.id || !historicalGuidanceMessageIds.has(message.id)));
   }
   if (surface.kind === "topic") {
     const parentMessage = input.store.getChannelMessage(surface.sourceMessageId);
@@ -241,15 +246,30 @@ export function listChannelContextMessages(input: {
     const messages = parentMessage?.channelId === input.channelId
       ? [parentMessage, ...topicMessages.filter((message) => message.id !== parentMessage.id)]
       : topicMessages;
-    return messages.filter((message) => message.id === input.sourceMessage.id || !historicalGuidanceMessageIds.has(message.id));
+    return filterChannelContextSupersessions(
+      input.store,
+      input.channelId,
+      messages.filter((message) => message.id === input.sourceMessage.id || !historicalGuidanceMessageIds.has(message.id)),
+    );
   }
-  return input.store
+  return filterChannelContextSupersessions(input.store, input.channelId, input.store
     .listChannelMessages({
       channelId: input.channelId,
       limit,
       excludeThreadIds: listChannelBranchRootThreadIds(input.store, input.channelId),
     })
-    .filter((message) => message.id === input.sourceMessage.id || !historicalGuidanceMessageIds.has(message.id));
+    .filter((message) => message.id === input.sourceMessage.id || !historicalGuidanceMessageIds.has(message.id)));
+}
+
+function filterChannelContextSupersessions(
+  store: ChannelContextConversationStore,
+  channelId: string,
+  messages: readonly ChannelMessage[],
+): ChannelMessage[] {
+  return filterSupersededChannelMessages(messages, buildConversationSupersessionProjection(store, {
+    surfaces: ["channel_root", "channel_branch", "topic_reply"],
+    ownerId: channelId,
+  }));
 }
 
 export function listPriorChannelContextMessages(input: {

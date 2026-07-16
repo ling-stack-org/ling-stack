@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { homedir } from "node:os";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
-import { readdir, readFile, stat } from "node:fs/promises";
+import { readdir, readFile, realpath, stat } from "node:fs/promises";
 import { parseDocument } from "yaml";
 import { readOnlyRunTools, type RunTool } from "./approval-policy.js";
 import type { ProviderCapability } from "./provider-types.js";
@@ -37,6 +37,12 @@ export interface ResolveSkillSourceRootsInput {
   readonly gstackRepoRoots?: readonly string[];
   readonly codexSkillRoots?: readonly string[];
   readonly includeDetectedRoots?: boolean;
+}
+
+export interface ResolveLocalGstackSkillSourceRootsInput {
+  readonly homeDir?: string;
+  readonly gstackRepoRoots?: readonly string[];
+  readonly volumeRoot?: string;
 }
 
 export interface PreviewGstackSkillSourceSyncInput {
@@ -134,6 +140,48 @@ export async function resolveSkillSourceRoots(input: ResolveSkillSourceRootsInpu
     }
   }
   return [...unique.values()];
+}
+
+export async function resolveLocalGstackSkillSourceRoots(input: ResolveLocalGstackSkillSourceRootsInput = {}): Promise<SkillSourceScanRoot[]> {
+  const home = input.homeDir ?? homedir();
+  const repoRoots = input.gstackRepoRoots?.length
+    ? input.gstackRepoRoots
+    : await discoverLocalGstackRepoRoots(home, input.volumeRoot);
+  const candidates = await Promise.all(repoRoots.map((repoRoot, index) => gstackRootFromRepoPath(
+    repoRoot,
+    index === 0 && !input.gstackRepoRoots?.length ? "local-gstack" : hashedSkillSourceRootId("configured-gstack-root", repoRoot),
+  )));
+  const unique = new Map<string, SkillSourceScanRoot>();
+  for (const candidate of candidates) {
+    const rootPath = resolve(candidate.rootPath);
+    if (!unique.has(rootPath) && await isDirectory(rootPath)) {
+      unique.set(rootPath, { ...candidate, rootPath });
+    }
+  }
+  return [...unique.values()];
+}
+
+async function discoverLocalGstackRepoRoots(homeDir: string, volumeRoot = "/Volumes"): Promise<readonly string[]> {
+  const candidates = [
+    join(homeDir, ".gstack", "repos", "gstack"),
+    join(homeDir, "workspace", "gstack"),
+    ...(await discoverMountedWorkspaceGstackRoots(volumeRoot)),
+  ];
+  const unique = new Set<string>();
+  for (const candidate of candidates) {
+    const resolved = await realpath(candidate).catch(() => resolve(candidate));
+    if (await isDirectory(join(resolved, ".agents", "skills"))) {
+      unique.add(resolved);
+    }
+  }
+  return [...unique];
+}
+
+async function discoverMountedWorkspaceGstackRoots(volumeRoot: string): Promise<readonly string[]> {
+  const entries = await readdir(volumeRoot, { withFileTypes: true }).catch(() => []);
+  return entries
+    .filter((entry) => entry.isDirectory() && !entry.name.startsWith("."))
+    .map((entry) => join(volumeRoot, entry.name, "workspace", "gstack"));
 }
 
 export async function previewGstackSkillSourceSync(input: PreviewGstackSkillSourceSyncInput): Promise<SkillSourceSyncPreviewReport> {

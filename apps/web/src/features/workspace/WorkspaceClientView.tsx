@@ -40,6 +40,7 @@ import {
   completeLingThreadGoal,
   convertProposedPlanToWorkflow,
   deleteLingThreadGoal,
+  editConversationMessage,
   getChannelWorkflowEvidence,
   getLingThreadEvidence,
   getLingThreadGoal,
@@ -54,10 +55,11 @@ import {
 import {
   createChannelWorktree,
   getChannelWorkspaceGitStatus,
-  getChannelTeamExpertsProjection,
   getChannelTeamMetricsProjection,
   handoffChannelWorkspace,
   listChannelCollaborationCards,
+  listChannelTerminalReports,
+  openChannelWorkspace,
   refreshChannelWorkspace,
 } from "../../api/channels.js";
 import { useI18n, type Translate } from "../../i18n.js";
@@ -128,6 +130,8 @@ import {
 import {
   WorkspaceRightDock,
   WorkspaceToolbarIconButton,
+  type WorkspaceRightDockFileTarget,
+  type WorkspaceRightDockReviewTarget,
 } from "./right-dock/index.js";
 import { channelRightDockTransitionMs } from "./layout/channel-workspace-layout.js";
 import {
@@ -196,7 +200,6 @@ import type {
   GovernanceNotification,
   ExternalWorkActionView,
   ExternalWorkCiTriageView,
-  FoldedExpertsReadModel,
   MemoryObject,
   ProviderPreset,
   ProposedPlanArtifact,
@@ -214,6 +217,7 @@ import type {
   Task,
   TaskFormState,
   TaskRunActionState,
+  TerminalReportDto,
   TeammateChannelMembership,
   EffectiveChannelCouncilProjection,
   UpdateChannelCollaborationProtocolRequest,
@@ -236,17 +240,13 @@ import {
   ChannelSettingsPanels,
   channelWorkspaceModeIcon,
   isLingAgentTeammate,
-  type ChannelSettingsAutosaveState,
   type ChannelNotificationLevel,
 } from "./ChannelSettingsPanels.js";
-import { ChannelComposer, type ChannelComposerInlineFeedback } from "./ChannelComposer.js";
+import { ChannelComposer } from "./ChannelComposer.js";
 import { ChannelActivityWorkspace } from "./ChannelActivityWorkspace.js";
 import { useChannelRightDockController } from "./useChannelRightDockController.js";
 import { useChannelBottomPanelResizeController } from "./useChannelBottomPanelResizeController.js";
-import {
-  conversationTurnRenderSignature,
-  useChannelMessageFeed,
-} from "./ChannelMessageFeed.js";
+import { useChannelMessageFeed } from "./ChannelMessageFeed.js";
 import {
   LING_AGENT_AUTHOR_ID,
   createChannelMessageRenderers,
@@ -297,17 +297,6 @@ function channelActivityVisibleInDefaultChat(item: ChannelActivityItem): boolean
   return item.kind === "message" || item.kind === "summary";
 }
 
-interface ChannelTeamExpertsState {
-  readonly channelId: string;
-  readonly turnId: string;
-  readonly experts: FoldedExpertsReadModel;
-}
-
-interface ChannelTeamExpertsTurnTarget {
-  readonly turnId: string;
-  readonly signature: string;
-}
-
 interface ChannelTeamMetricsState {
   readonly channelId: string;
   readonly metrics: ChannelTeamMetricsProjection;
@@ -325,6 +314,20 @@ interface BranchConversationActivityScope {
   readonly taskIds: ReadonlySet<string>;
   readonly workflowIds: ReadonlySet<string>;
   readonly workflowStepIds: ReadonlySet<string>;
+}
+
+function latestTerminalReportMap(
+  reports: readonly TerminalReportDto[],
+  keyOf: (report: TerminalReportDto) => string,
+): ReadonlyMap<string, TerminalReportDto> {
+  const result = new Map<string, TerminalReportDto>();
+  for (const report of [...reports].sort((left, right) => left.committedAt.localeCompare(right.committedAt))) {
+    const key = keyOf(report);
+    if (key) {
+      result.set(key, report);
+    }
+  }
+  return result;
 }
 
 function channelActivityItemBelongsToBranchConversation(
@@ -727,6 +730,7 @@ export function WorkspaceClientView({
   const [channelGitStatusState, setChannelGitStatusState] = useState<ChannelGitStatusLoadState>({ status: "idle" });
   const [selectedApprovalId, setSelectedApprovalId] = useState("");
   const [conversationWorkCellDetailsByKey, setConversationWorkCellDetailsByKey] = useState<Readonly<Record<string, ConversationWorkCellDetailsState>>>({});
+  const [channelTerminalReports, setChannelTerminalReports] = useState<readonly TerminalReportDto[]>([]);
   const [conversationThreadTurnsByKey, setConversationThreadTurnsByKey] = useState<Readonly<Record<string, ThreadTurnsLoadState>>>({});
   const [channelMoreOpen, setChannelMoreOpen] = useState(false);
   const [channelRenameOpen, setChannelRenameOpen] = useState(false);
@@ -855,7 +859,6 @@ export function WorkspaceClientView({
     handleComposerResizePointerEnd,
     showComposerFeedback,
   } = useChannelComposerDraftController();
-  const [conversationBackgroundToast, setConversationBackgroundToast] = useState<ChannelComposerInlineFeedback | undefined>();
   const [activeChannelGoal, setActiveChannelGoal] = useState<LingThreadGoal | undefined>();
   const [channelGoalLoadingThreadId, setChannelGoalLoadingThreadId] = useState("");
   const [channelGoalBusy, setChannelGoalBusy] = useState(false);
@@ -868,7 +871,6 @@ export function WorkspaceClientView({
   const [pendingChannelTeammateId, setPendingChannelTeammateId] = useState("");
   const [pendingChannelCouncilId, setPendingChannelCouncilId] = useState("");
   const [channelNotificationLevel, setChannelNotificationLevel] = useState<ChannelNotificationLevel>("mentions");
-  const [channelSettingsAutosaveState, setChannelSettingsAutosaveState] = useState<ChannelSettingsAutosaveState>("idle");
   const [channelSettingsAutosaveRevision, setChannelSettingsAutosaveRevision] = useState(0);
   const [channelWorkspaceBusyAction, setChannelWorkspaceBusyAction] = useState("");
   const [channelWorkspaceExternalPath, setChannelWorkspaceExternalPath] = useState("");
@@ -880,14 +882,16 @@ export function WorkspaceClientView({
     readonly status: "idle" | "loaded" | "error";
     readonly cards: readonly CollaborationTaskCardModel[];
   }>({ channelId: "", signature: "", status: "idle", cards: [] });
-  const [channelTeamExpertsByTurn, setChannelTeamExpertsByTurn] = useState<Readonly<Record<string, ChannelTeamExpertsState>>>({});
-  const [channelTeamExpertsExpandedByTurn, setChannelTeamExpertsExpandedByTurn] = useState<Readonly<Record<string, boolean>>>({});
   const [channelTeamMetricsState, setChannelTeamMetricsState] = useState<ChannelTeamMetricsState | undefined>();
   const [channelTeamMetricsLoading, setChannelTeamMetricsLoading] = useState(false);
   const [channelTeamMetricsError, setChannelTeamMetricsError] = useState("");
   const [channelTeamMetricsRefreshKey, setChannelTeamMetricsRefreshKey] = useState(0);
   const [channelMessageFeedbackById, setChannelMessageFeedbackById] = useState<Record<string, "up" | "down">>({});
-  const conversationBackgroundToastTimeoutRef = useRef<number | undefined>();
+  const [editingChannelMessageId, setEditingChannelMessageId] = useState<string | undefined>();
+  const [channelMessageEditSaving, setChannelMessageEditSaving] = useState(false);
+  const [channelMessageEditError, setChannelMessageEditError] = useState("");
+  const [channelReplacementRetryingMessageId, setChannelReplacementRetryingMessageId] = useState<string>();
+  const [channelReplacementRetryError, setChannelReplacementRetryError] = useState("");
   const channelMoreRef = useRef<HTMLDivElement | null>(null);
   const governanceNotificationsRef = useRef<HTMLDivElement | null>(null);
   const teammateManagerButtonRef = useRef<HTMLButtonElement | null>(null);
@@ -895,6 +899,7 @@ export function WorkspaceClientView({
   const conversationWorkCellEvidenceLoadsRef = useRef(new Set<string>());
   const conversationThreadTurnLoadsRef = useRef(new Set<string>());
   const conversationThreadTurnRunSignaturesRef = useRef(new Map<string, string>());
+  const messageFeedChannelIdRef = useRef(selectedChannelId);
   const channelWorkspaceExternalPathChannelIdRef = useRef(selectedChannelId);
   const channelSettingsAutosaveTimerRef = useRef<number | undefined>();
   const channelSettingsAutosaveInFlightRef = useRef(false);
@@ -934,6 +939,12 @@ export function WorkspaceClientView({
     () => channelWorkCellDemoFixture ? [...channelMessages, ...channelWorkCellDemoFixture.channelMessages] : channelMessages,
     [channelMessages, channelWorkCellDemoFixture],
   );
+  const latestEditableChannelMessageId = useMemo(() => [...channelMessagesForDisplay]
+    .filter((message) => message.authorType === "local-user" && !message.pendingReplacement)
+    .filter((message) => selectedChannelBranchRootThreadId
+      ? message.threadId === selectedChannelBranchRootThreadId
+      : !message.threadId)
+    .at(-1)?.id, [channelMessagesForDisplay, selectedChannelBranchRootThreadId]);
   const memoryByIdForDisplay = useMemo(() => {
     if (!channelWorkCellDemoFixture) {
       return memoryById;
@@ -969,6 +980,12 @@ export function WorkspaceClientView({
   const channelExecutionActionsForDisplay = useMemo(
     () => channelWorkCellDemoFixture ? [...channelExecutionActions, ...channelWorkCellDemoFixture.executionActions] : channelExecutionActions,
     [channelExecutionActions, channelWorkCellDemoFixture],
+  );
+  const terminalReportsForDisplay = useMemo(
+    () => channelWorkCellDemoFixture
+      ? [...channelTerminalReports, ...channelWorkCellDemoFixture.terminalReports]
+      : channelTerminalReports,
+    [channelTerminalReports, channelWorkCellDemoFixture],
   );
   const channelWorkCellPreviewLoader = useMemo(
     () => async (request: PreviewRequest) => {
@@ -1025,6 +1042,28 @@ export function WorkspaceClientView({
       .join("|");
     return [workflowsSignature, stepsSignature, runsSignature, approvalsSignature].join("\n");
   }, [approvals, channelRuns, channelWorkflowSteps, channelWorkflows, selectedChannelId]);
+  useEffect(() => {
+    const workspaceCwd = cwd.trim();
+    if (!workspaceCwd || !selectedChannelId) {
+      setChannelTerminalReports([]);
+      return;
+    }
+    let cancelled = false;
+    void listChannelTerminalReports(workspaceCwd, selectedChannelId, { limit: 200 })
+      .then((response) => {
+        if (!cancelled) {
+          setChannelTerminalReports(response.reports);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setChannelTerminalReports([]);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [channelCollaborationCardRefreshSignature, cwd, selectedChannelId]);
   useEffect(() => {
     const workspaceCwd = cwd.trim();
     if (!workspaceCwd || !selectedChannelId) {
@@ -1087,6 +1126,18 @@ export function WorkspaceClientView({
   });
   const channelWorkThreadTreeVisible = false;
   const channelRunsByThreadId = useMemo(() => groupRunsByThreadId(channelRuns), [channelRuns]);
+  const terminalReportByWorkflowId = useMemo(
+    () => latestTerminalReportMap(terminalReportsForDisplay.filter((report) => report.source.kind === "workflow"), (report) => report.source.id),
+    [terminalReportsForDisplay],
+  );
+  const terminalReportByThreadId = useMemo(
+    () => latestTerminalReportMap(terminalReportsForDisplay.filter((report) => Boolean(report.threadId)), (report) => report.threadId ?? ""),
+    [terminalReportsForDisplay],
+  );
+  const terminalReportMessageIds = useMemo(
+    () => new Set(terminalReportsForDisplay.map((report) => `message_${report.id}`)),
+    [terminalReportsForDisplay],
+  );
   const visibleConversationThreadIds = useMemo(() => [...channelRunsByThreadId.keys()], [channelRunsByThreadId]);
   const visibleConversationThreadRunSignatures = useMemo(() => {
     const signatures = new Map<string, string>();
@@ -1114,13 +1165,14 @@ export function WorkspaceClientView({
         executionActions: channelExecutionActionsForDisplay,
         t,
         artifactHref: (artifact) => artifactContentUrl(artifact.id, cwd),
+        terminalReport: terminalReportByThreadId.get(threadId),
       });
       if (cell) {
         cells.set(threadId, cell);
       }
     }
     return cells;
-  }, [approvals, channelArtifactsByRunForDisplay, channelExecutionActionsForDisplay, channelRuns, channelRunsByThreadId, conversationThreadTurnsByKey, cwd, t]);
+  }, [approvals, channelArtifactsByRunForDisplay, channelExecutionActionsForDisplay, channelRuns, channelRunsByThreadId, conversationThreadTurnsByKey, cwd, t, terminalReportByThreadId]);
   const workflowProgressByWorkflowId = useMemo(() => {
     const cells = new Map<string, WorkflowProgressModel>();
     for (const workflow of channelWorkflowsForDisplay.filter((item) => item.channelId === selectedChannelId)) {
@@ -1137,10 +1189,11 @@ export function WorkspaceClientView({
         executionActions: channelExecutionActionsForDisplay,
         t,
         artifactHref: (artifact) => artifactContentUrl(artifact.id, cwd),
+        terminalReport: terminalReportByWorkflowId.get(workflow.id),
       }));
     }
     return cells;
-  }, [approvals, channelArtifactsByRunForDisplay, channelExecutionActionsForDisplay, channelRuns, channelWorkflowStepsForDisplay, channelWorkflowsForDisplay, cwd, selectedChannelId, t]);
+  }, [approvals, channelArtifactsByRunForDisplay, channelExecutionActionsForDisplay, channelRuns, channelWorkflowStepsForDisplay, channelWorkflowsForDisplay, cwd, selectedChannelId, t, terminalReportByWorkflowId]);
   const localCollaborationTaskCardByWorkflowId = useMemo(() => {
     const cards = new Map<string, CollaborationTaskCardModel>();
     for (const workflow of channelWorkflowsForDisplay.filter((item) => item.channelId === selectedChannelId)) {
@@ -1173,6 +1226,9 @@ export function WorkspaceClientView({
   const conversationWorkCellByWorkflowId = useMemo(() => {
     const cells = new Map<string, ConversationWorkCellViewModel>();
     for (const [workflowId, progressModel] of workflowProgressByWorkflowId) {
+      if (progressModel.conversationVisibility === "audit_only") {
+        continue;
+      }
       cells.set(workflowId, workflowProgressToConversationWorkCell(progressModel));
     }
     return cells;
@@ -1515,6 +1571,7 @@ export function WorkspaceClientView({
       operationCellByWorkflowId: conversationWorkCellByWorkflowId,
       operationCellByThreadId: conversationWorkCellByThreadId,
       lingAgentAuthorId: LING_AGENT_AUTHOR_ID,
+      terminalReportMessageIds,
     }),
     [
       channelExecutionProposals,
@@ -1526,78 +1583,10 @@ export function WorkspaceClientView({
       conversationWorkCellByThreadId,
       conversationWorkCellByWorkflowId,
       selectedChannelId,
+      terminalReportMessageIds,
       usedMemoryEventsForDisplay,
     ],
   );
-  const channelTeamExpertsTurnTargets = useMemo<readonly ChannelTeamExpertsTurnTarget[]>(
-    () => conversationTurnProjection.turns
-      .filter((turn) => turn.blocks.length > 0)
-      .map((turn) => ({
-        turnId: turn.sourceMessage.id,
-        signature: conversationTurnRenderSignature(turn),
-      })),
-    [conversationTurnProjection.turns],
-  );
-  const channelTeamExpertsRequestSignature = useMemo(
-    () => channelTeamExpertsTurnTargets.map((turn) => `${turn.turnId}:${turn.signature}`).join("\n"),
-    [channelTeamExpertsTurnTargets],
-  );
-  useEffect(() => {
-    setChannelTeamExpertsExpandedByTurn({});
-  }, [selectedChannelId]);
-  useEffect(() => {
-    const activeTurnIds = new Set(channelTeamExpertsTurnTargets.map((turn) => turn.turnId));
-    setChannelTeamExpertsExpandedByTurn((current) => {
-      let changed = false;
-      const next: Record<string, boolean> = {};
-      for (const [turnId, expanded] of Object.entries(current)) {
-        if (activeTurnIds.has(turnId)) {
-          next[turnId] = expanded;
-        } else {
-          changed = true;
-        }
-      }
-      return changed ? next : current;
-    });
-  }, [channelTeamExpertsRequestSignature, channelTeamExpertsTurnTargets]);
-  useEffect(() => {
-    const workspaceCwd = cwd.trim();
-    if (!workspaceCwd || !selectedChannelId || channelTeamExpertsTurnTargets.length === 0) {
-      setChannelTeamExpertsByTurn({});
-      return;
-    }
-    let cancelled = false;
-    void Promise.all(channelTeamExpertsTurnTargets.map(async ({ turnId }) => {
-      try {
-        const response = await getChannelTeamExpertsProjection(workspaceCwd, selectedChannelId, turnId, { includeExpired: true, limit: 8 });
-        return {
-          turnId,
-          state: {
-            channelId: response.channelId,
-            turnId: response.turnId,
-            experts: response.experts,
-          },
-        };
-      } catch {
-        return { turnId, state: undefined };
-      }
-    }))
-      .then((results) => {
-        if (cancelled) {
-          return;
-        }
-        const next: Record<string, ChannelTeamExpertsState> = {};
-        for (const result of results) {
-          if (result.state) {
-            next[result.turnId] = result.state;
-          }
-        }
-        setChannelTeamExpertsByTurn(next);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [channelTeamExpertsRequestSignature, channelTeamExpertsTurnTargets, cwd, selectedChannelId]);
   useEffect(() => {
     const workspaceCwd = cwd.trim();
     if (!workspaceCwd || !selectedChannelId || !channelSettingsPageOpen) {
@@ -1751,8 +1740,6 @@ export function WorkspaceClientView({
     latestVisibleItemId: latestVisibleActivityItemId,
     renderableItemCount: renderableActivityItems.length,
     restoreBlockedUntilRef: channelRightDockMotionUntilRef,
-    t,
-    onBackgroundToast: showConversationBackgroundToast,
     onLoadOlder: onLoadOlderChannelMessages,
   });
   const {
@@ -1858,7 +1845,6 @@ export function WorkspaceClientView({
   useEffect(() => {
     if (channelSettingsAutosaveRevision === 0) {
       channelSettingsAutosaveLastSavedKeyRef.current = selectedChannelFormKey;
-      setChannelSettingsAutosaveState("idle");
     }
   }, [channelSettingsAutosaveRevision, selectedChannelFormKey]);
 
@@ -1867,7 +1853,6 @@ export function WorkspaceClientView({
     channelSettingsAutosaveLastSavedKeyRef.current = selectedChannelFormKey;
     channelSettingsAutosaveQueuedRef.current = false;
     setChannelSettingsAutosaveRevision(0);
-    setChannelSettingsAutosaveState("idle");
     if (channelSettingsAutosaveTimerRef.current !== undefined) {
       globalThis.clearTimeout(channelSettingsAutosaveTimerRef.current);
       channelSettingsAutosaveTimerRef.current = undefined;
@@ -1879,11 +1864,9 @@ export function WorkspaceClientView({
       return undefined;
     }
     if (channelEditFormKey === selectedChannelFormKey || channelEditFormKey === channelSettingsAutosaveLastSavedKeyRef.current) {
-      setChannelSettingsAutosaveState("saved");
       return undefined;
     }
 
-    setChannelSettingsAutosaveState("saving");
     if (channelSettingsAutosaveTimerRef.current !== undefined) {
       globalThis.clearTimeout(channelSettingsAutosaveTimerRef.current);
     }
@@ -1903,12 +1886,9 @@ export function WorkspaceClientView({
           await onSaveChannelRef.current(snapshotForm);
           if (requestId === channelSettingsAutosaveRequestRef.current) {
             channelSettingsAutosaveLastSavedKeyRef.current = snapshotKey;
-            setChannelSettingsAutosaveState(channelSettingsAutosaveLatestKeyRef.current === snapshotKey ? "saved" : "saving");
           }
         } catch {
-          if (requestId === channelSettingsAutosaveRequestRef.current) {
-            setChannelSettingsAutosaveState("error");
-          }
+          // The next edit schedules another save attempt.
         } finally {
           channelSettingsAutosaveInFlightRef.current = false;
           if (requestId === channelSettingsAutosaveRequestRef.current) {
@@ -1963,8 +1943,10 @@ export function WorkspaceClientView({
         clearSavedChannelNotificationLevel(cwd, selectedChannelId);
       }
     }
-    messageFeedState.reset();
-    setConversationBackgroundToast(undefined);
+    if (messageFeedChannelIdRef.current !== selectedChannelId) {
+      messageFeedChannelIdRef.current = selectedChannelId;
+      messageFeedState.reset();
+    }
     closeConversationBlockActionMenu();
   }, [closeConversationBlockActionMenu, cwd, messageFeedState.reset, selectedChannelId, selectedChannelNotificationLevel, workspaceSettingsLoaded]);
 
@@ -2301,6 +2283,21 @@ export function WorkspaceClientView({
     setChannelSettingsAutosaveRevision((current) => current + 1);
   }
 
+  async function saveChannelName(name: string): Promise<void> {
+    if (!selectedChannelId) {
+      return;
+    }
+    const previousForm = channelEditForm;
+    const nextForm = { ...channelEditForm, name: name.trim() };
+    onChannelEditFormChange(nextForm);
+    try {
+      await onSaveChannel(nextForm);
+    } catch (error) {
+      onChannelEditFormChange(previousForm);
+      throw error;
+    }
+  }
+
   async function runChannelWorkspaceAction(
     action: string,
     operation: () => Promise<{ readonly binding: ChannelWorkspaceBinding }>,
@@ -2366,16 +2363,20 @@ export function WorkspaceClientView({
   }
 
   function onOpenChannelWorkspacePath(): void {
-    if (!selectedChannelExecutionPath) {
+    const workspaceCwd = cwd.trim();
+    if (!workspaceCwd || !selectedChannelId || !selectedChannelExecutionPath || channelWorkspaceBusyAction) {
       return;
     }
-    try {
-      globalThis.open?.(`file://${selectedChannelExecutionPath}`, "_blank", "noopener");
-      setChannelWorkspaceNotice(t("Opening workspace path."));
-    } catch {
-      void globalThis.navigator?.clipboard?.writeText(selectedChannelExecutionPath);
-      setChannelWorkspaceNotice(t("Workspace path copied."));
-    }
+    setChannelWorkspaceBusyAction("open");
+    setChannelWorkspaceNotice("");
+    setChannelWorkspaceError("");
+    void openChannelWorkspace(workspaceCwd, selectedChannelId)
+      .catch((caught: unknown) => {
+        setChannelWorkspaceError(caught instanceof Error ? caught.message : String(caught));
+      })
+      .finally(() => {
+        setChannelWorkspaceBusyAction("");
+      });
   }
 
   function addSelectedChannelTeammate(): void {
@@ -2683,19 +2684,6 @@ export function WorkspaceClientView({
     () => channelTeammates.filter(({ teammate }) => !teammate.hidden),
     [channelTeammates],
   );
-  const channelExpertTeammateByKey = useMemo(
-    () => {
-      const map = new Map<string, LocalTeammateDraft>();
-      for (const { teammate } of channelTeammates) {
-        indexChannelExpertTeammate(map, teammate);
-      }
-      for (const teammate of localTeammates) {
-        indexChannelExpertTeammate(map, teammate);
-      }
-      return map;
-    },
-    [channelTeammates, localTeammates],
-  );
   const channelHeaderTeammates = useMemo(
     () => visibleChannelHeaderTeammates.slice(0, 4),
     [visibleChannelHeaderTeammates],
@@ -2735,23 +2723,6 @@ export function WorkspaceClientView({
     ),
     [channelEffectiveCouncil],
   );
-
-  function showConversationBackgroundToast(feedback: ChannelComposerInlineFeedback): void {
-    if (conversationBackgroundToastTimeoutRef.current !== undefined) {
-      globalThis.clearTimeout(conversationBackgroundToastTimeoutRef.current);
-    }
-    setConversationBackgroundToast(feedback);
-    conversationBackgroundToastTimeoutRef.current = globalThis.setTimeout(() => {
-      setConversationBackgroundToast(undefined);
-      conversationBackgroundToastTimeoutRef.current = undefined;
-    }, 4_200);
-  }
-
-  useEffect(() => () => {
-    if (conversationBackgroundToastTimeoutRef.current !== undefined) {
-      globalThis.clearTimeout(conversationBackgroundToastTimeoutRef.current);
-    }
-  }, []);
 
   const activeChannelConversationThread = useMemo(
     () => selectedChannelBranchRootThreadId
@@ -3283,6 +3254,78 @@ export function WorkspaceClientView({
     "--composer-input-min-height": `${composerInputMinHeight}px`,
   } as CSSProperties;
   const localUserDisplayName = userProfile?.displayName.trim() || t("You");
+  const channelComposerPermissionPreset = permissionPreset ?? inferPermissionPreset(permissionMode);
+
+  function channelMessageEditSurface(message: ChannelMessage): "channel_root" | "channel_branch" | "topic_reply" {
+    if (selectedChannelBranchRootThreadId && message.threadId === selectedChannelBranchRootThreadId) {
+      return "channel_branch";
+    }
+    return message.threadId ? "topic_reply" : "channel_root";
+  }
+
+  async function saveChannelMessageEdit(message: ChannelMessage, body: string): Promise<void> {
+    if (!selectedChannelId || channelMessageEditSaving) {
+      return;
+    }
+    setChannelMessageEditSaving(true);
+    setChannelMessageEditError("");
+    setChannelReplacementRetryError("");
+    try {
+      await editConversationMessage(cwd, {
+        surface: channelMessageEditSurface(message),
+        ownerId: selectedChannelId,
+        messageId: message.id,
+        expectedRevision: message.revision ?? 1,
+        body,
+        mentions: message.mentions,
+        attachmentIds: message.attachmentIds,
+        linkPreviewIds: message.linkPreviewIds,
+        fileRefs: message.fileRefs,
+        providerPresetId: taskRunProviderId || fallbackProviderId || undefined,
+        permissionPreset: channelComposerPermissionPreset,
+        idempotencyKey: `channel-message-edit:${message.id}:${crypto.randomUUID()}`,
+      });
+      setEditingChannelMessageId(undefined);
+      await Promise.all([onRefreshChannelMessages(), onRefreshChannelActivity()]);
+    } catch (error) {
+      setChannelMessageEditError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setChannelMessageEditSaving(false);
+    }
+  }
+
+  async function retryChannelMessageReplacement(message: ChannelMessage): Promise<void> {
+    const pending = message.pendingReplacement;
+    if (!pending || !selectedChannelId || channelReplacementRetryingMessageId) {
+      return;
+    }
+    setChannelReplacementRetryingMessageId(message.id);
+    setChannelReplacementRetryError("");
+    try {
+      const result = await editConversationMessage(cwd, {
+        surface: channelMessageEditSurface(message),
+        ownerId: selectedChannelId,
+        messageId: message.id,
+        expectedRevision: message.revision ?? 1,
+        body: message.body,
+        mentions: message.mentions,
+        attachmentIds: message.attachmentIds,
+        linkPreviewIds: message.linkPreviewIds,
+        fileRefs: message.fileRefs,
+        providerPresetId: taskRunProviderId || fallbackProviderId || undefined,
+        permissionPreset: channelComposerPermissionPreset,
+        idempotencyKey: pending.idempotencyKey,
+      });
+      if (result.status === "replacement_pending") {
+        setChannelReplacementRetryError(result.failureReason ?? pending.failureReason ?? "");
+      }
+      await Promise.all([onRefreshChannelMessages(), onRefreshChannelActivity()]);
+    } catch (error) {
+      setChannelReplacementRetryError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setChannelReplacementRetryingMessageId(undefined);
+    }
+  }
   const messageRenderers = createChannelMessageRenderers({
     activeRunId,
     allLocalTeammateById,
@@ -3292,10 +3335,9 @@ export function WorkspaceClientView({
     auditActivityVisible,
     channelArtifactsByRun: channelArtifactsByRunForDisplay,
     channelAttachmentById,
+    channelLinkPreviewById,
     channelMessageFeedbackById,
     channelMessagesLoadingOlder,
-    channelTeamExpertsByTurn,
-    channelTeamExpertsExpandedByTurn,
     channelWorkflowSteps: channelWorkflowStepsForDisplay,
     channelWorkflows: channelWorkflowsForDisplay,
     conversationWorkCellByThreadId,
@@ -3305,6 +3347,12 @@ export function WorkspaceClientView({
     executionProposalsByMessageId,
     formatBytes,
     latestStatus,
+    latestEditableMessageId: latestEditableChannelMessageId,
+    editingMessageId: editingChannelMessageId,
+    editSaving: channelMessageEditSaving,
+    editError: channelMessageEditError,
+    replacementRetryingMessageId: channelReplacementRetryingMessageId,
+    replacementRetryError: channelReplacementRetryError,
     loadPreview: channelWorkCellPreviewLoader,
     localUserDisplayName,
     memoryById: memoryByIdForDisplay,
@@ -3332,6 +3380,12 @@ export function WorkspaceClientView({
     onOpenApprovalDetail: openApprovalDetail,
     onOpenContextSummaryInConversationDetail: openContextSummaryInConversationDetail,
     onOpenRun: openRunInPanel,
+    onOpenFileReference: () => openRightDockPage("files"),
+    onOpenTerminalReportFile: (target) => openRightDockPage("files", target),
+    onOpenWorkspaceReview: (target) => openRightDockPage("review", undefined, {
+      ...target,
+      cwd: target.runId ? runById.get(target.runId)?.cwd ?? target.cwd : target.cwd,
+    }),
     onOpenThreadForMessage: threadReplyController.openThreadForMessage,
     onOrchestrateWorkflow,
     onRejectDecision,
@@ -3344,11 +3398,19 @@ export function WorkspaceClientView({
     onStartWorkflowFromHandoff,
     onSupersedeDecision,
     onToggleChannelMessageFeedback: toggleChannelMessageFeedback,
-    onToggleChannelTeamExpertsExpanded: toggleChannelTeamExpertsExpanded,
+    onBeginMessageEdit: (messageId) => {
+      setChannelMessageEditError("");
+      setEditingChannelMessageId(messageId);
+    },
+    onCancelMessageEdit: () => {
+      setChannelMessageEditError("");
+      setEditingChannelMessageId(undefined);
+    },
+    onSaveMessageEdit: saveChannelMessageEdit,
+    onRetryMessageReplacement: retryChannelMessageReplacement,
     onUpdateExecutionProposal,
     onUpdateHandoffStatus,
     readRunTitle,
-    resolveExpertTeammate: (agentId) => channelExpertTeammateByKey.get(normalizeChannelExpertTeammateKey(agentId)),
     planActionBusyId: proposedPlanActionBusyId,
     workflowWorkCellDetailsCacheKey,
   });
@@ -3364,14 +3426,6 @@ export function WorkspaceClientView({
     });
   }
 
-  function toggleChannelTeamExpertsExpanded(turnId: string): void {
-    setChannelTeamExpertsExpandedByTurn((current) => ({
-      ...current,
-      [turnId]: !(current[turnId] ?? false),
-    }));
-  }
-
-  const channelComposerPermissionPreset = permissionPreset ?? inferPermissionPreset(permissionMode);
   const channelComposerPermissionLocked = Boolean(activeConversationRun) || sendState === "sending" || composerBusy || Boolean(runGuidanceSubmitting) || isCancellingRun;
   const channelComposer = (
     <ChannelComposer
@@ -3545,6 +3599,34 @@ export function WorkspaceClientView({
     setChannelEnvironmentPageOpen(false);
   }
 
+  async function changeChannelEnvironmentWorkspacePath(path: string): Promise<void> {
+    const nextPath = path.trim();
+    if (!selectedChannelId || !nextPath) {
+      return;
+    }
+    const previousForm = channelEditForm;
+    const now = new Date().toISOString();
+    const nextForm: ChannelFormState = {
+      ...channelEditForm,
+      boundPath: nextPath,
+      workspaceBinding: {
+        mode: "local",
+        status: "ready",
+        executionPath: nextPath,
+        createdAt: channelEditForm.workspaceBinding?.createdAt ?? now,
+        checkedAt: now,
+        updatedAt: now,
+      },
+    };
+    onChannelEditFormChange(nextForm);
+    try {
+      await onSaveChannel(nextForm);
+    } catch (error) {
+      onChannelEditFormChange(previousForm);
+      throw error;
+    }
+  }
+
   function openEnvironmentCommitDialog(): void {
     setEnvironmentCommitDialogOpen(true);
     setProgressPopoverOpen(false);
@@ -3601,7 +3683,7 @@ export function WorkspaceClientView({
     }
   }
 
-  function openRightDockPage(page: DockPageKind): void {
+  function openRightDockPage(page: DockPageKind, workspaceFile?: WorkspaceRightDockFileTarget, workspaceReview?: WorkspaceRightDockReviewTarget): void {
     setSidePanelView("context");
     setSidePanelOpen(true);
     setCreateTaskOpen(false);
@@ -3616,7 +3698,7 @@ export function WorkspaceClientView({
     }
     setWorkspaceSettingsOpen(false);
     setTeammateManagerOpen(false);
-    channelRightDock.requestPage(page);
+    channelRightDock.requestPage(page, workspaceFile, workspaceReview);
   }
 
   function openSidePanelView(view: ChannelSidePanelView): void {
@@ -3754,8 +3836,9 @@ export function WorkspaceClientView({
       onRefreshChannelCouncil={onRefreshChannelCouncil}
       channelTeamMetricsPanel={channelTeamMetricsPanel}
       channelEditForm={channelEditForm}
-      channelSettingsAutosaveState={channelSettingsAutosaveState}
       onChannelEditFormChange={updateChannelSettingsEditForm}
+      onSaveChannelName={saveChannelName}
+      onChangeChannelWorkspacePath={changeChannelEnvironmentWorkspacePath}
       providersLoading={providersLoading}
       providers={providers}
       taskReadyProviders={taskReadyProviders}
@@ -3771,8 +3854,6 @@ export function WorkspaceClientView({
       onRefreshChannelWorkspace={onRefreshChannelWorkspace}
       onOpenChannelWorkspacePath={onOpenChannelWorkspacePath}
       onHandoffChannelWorkspace={onHandoffChannelWorkspace}
-      channelsLoading={channelsLoading}
-      onRefreshChannels={onRefreshChannels}
     />
   );
   const channelContextDockContent = (
@@ -4310,6 +4391,8 @@ export function WorkspaceClientView({
           <ChannelEnvironmentPage
             summary={channelEnvironmentSummary}
             channelName={selectedChannel?.name}
+            workspacePickerCwd={cwd}
+            onChangeWorkspacePath={changeChannelEnvironmentWorkspacePath}
             onOpenReview={() => openRightDockPage("review")}
             onOpenCommit={openEnvironmentCommitDialog}
           />
@@ -4422,18 +4505,6 @@ export function WorkspaceClientView({
             ),
             latestButtonNode: (
               <>
-                {conversationBackgroundToast ? (
-                  <button
-                    key={conversationBackgroundToast.id}
-                    className={`conversation-background-toast ${conversationBackgroundToast.tone}`}
-                    type="button"
-                    onClick={messageFeedState.scrollToLatest}
-                    aria-label={`${conversationBackgroundToast.message}. ${t("Jump to latest")}`}
-                  >
-                    <span role="status" aria-live="polite">{conversationBackgroundToast.message}</span>
-                    <small>{t("Jump to latest")}</small>
-                  </button>
-                ) : null}
                 {conversationBlockFeedbackNode}
                 {messageFeedState.latestButtonVisible ? (
                   <button
@@ -4464,6 +4535,22 @@ export function WorkspaceClientView({
             onDraftChange: threadReplyController.changeDraft,
             onSend: () => void threadReplyController.sendReply(),
             onClose: threadReplyController.closeThread,
+            editingMessageId: editingChannelMessageId,
+            editSaving: channelMessageEditSaving,
+            editError: channelMessageEditError,
+            replacementRetryingMessageId: channelReplacementRetryingMessageId,
+            replacementRetryError: channelReplacementRetryError,
+            onBeginMessageEdit: (messageId) => {
+              setChannelMessageEditError("");
+              setEditingChannelMessageId(messageId);
+            },
+            onCancelMessageEdit: () => {
+              setChannelMessageEditError("");
+              setEditingChannelMessageId(undefined);
+            },
+            onSaveMessageEdit: saveChannelMessageEdit,
+            onRetryMessageReplacement: retryChannelMessageReplacement,
+            onOpenFileReference: () => openRightDockPage("files"),
             messageAuthorLabel: (message, threadTeammates) =>
               messageAuthorLabel(message, threadTeammates, t("Deleted teammate"), t("You"), allLocalTeammateById),
           } : undefined}
@@ -4632,25 +4719,6 @@ function runCanBeStoppedInComposer(
 
 function workflowStepIsTerminal(step: ChannelWorkflowStep): boolean {
   return step.status === "succeeded" || step.status === "failed" || step.status === "skipped" || step.status === "cancelled";
-}
-
-function indexChannelExpertTeammate(map: Map<string, LocalTeammateDraft>, teammate: LocalTeammateDraft): void {
-  const aliases = [
-    teammate.id,
-    teammate.displayName,
-    teammate.roleKey,
-    teammate.systemRole,
-  ];
-  for (const alias of aliases) {
-    const key = normalizeChannelExpertTeammateKey(alias);
-    if (key && !map.has(key)) {
-      map.set(key, teammate);
-    }
-  }
-}
-
-function normalizeChannelExpertTeammateKey(value: string | undefined): string {
-  return value?.trim().replace(/^@+/, "").toLowerCase() ?? "";
 }
 
 function teammateLabel(

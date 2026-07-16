@@ -517,6 +517,23 @@ test("unified exec bounds long output chunks and stream previews", async () => {
       assert.equal(Buffer.byteLength(chunk.text, "utf8") <= 4 * 1024, true);
     }
 
+    const actions = await getJson(`${daemon.url}/execution-actions?cwd=${encodeURIComponent(cwd)}&runId=${encodeURIComponent(runId)}`);
+    assert.equal(typeof actions.revision, "string");
+    assert.equal(actions.actions.length, 1);
+    const action = actions.actions[0];
+    assert.equal(action.status, "succeeded");
+    assert.equal(action.risk, "low");
+    assert.equal(action.commandEvidence.command, runner.request.input.command);
+    assert.equal(action.commandEvidence.exitCode, 0);
+    assert.equal(action.commandEvidence.durationMs >= 0, true);
+    assert.equal(action.commandEvidence.outputByteCount, 14_000);
+    assert.equal(action.commandEvidence.outputTail.length <= 64, true);
+    assert.equal(Buffer.byteLength(action.commandEvidence.outputTail.map((chunk) => chunk.text).join(""), "utf8") <= 8 * 1024, true);
+    assert.equal(action.commandEvidence.outputTruncated, true);
+    assert.ok(action.commandEvidence.stdoutArtifactId);
+    assert.ok(action.commandEvidence.stderrArtifactId);
+    assert.ok(action.commandEvidence.resultArtifactId);
+
     const artifacts = await getJson(`${daemon.url}/runs/${encodeURIComponent(runId)}/artifacts?cwd=${encodeURIComponent(cwd)}`);
     const execArtifacts = artifacts.artifacts.filter((artifact) => artifact.path.includes(`/unified-exec/${runner.request.toolCallId}/`));
     assert.deepEqual(execArtifacts.map((artifact) => artifact.path.split("/").at(-1)).sort(), ["result.json", "stderr.txt", "stdout.txt"]);
@@ -555,6 +572,10 @@ test("unified exec run cancellation kills command and leaves the run cancelled",
 
     const finalRun = await getJson(`${daemon.url}/runs/${encodeURIComponent(runId)}?cwd=${encodeURIComponent(cwd)}`);
     assert.equal(finalRun.status, "cancelled");
+    const actions = await getJson(`${daemon.url}/execution-actions?cwd=${encodeURIComponent(cwd)}&runId=${encodeURIComponent(runId)}`);
+    assert.equal(actions.actions.length, 1);
+    assert.equal(actions.actions[0].status, "cancelled");
+    assert.equal(actions.actions[0].commandEvidence.command, runner.request.input.command);
     await assert.rejects(() => readFile(markerPath, "utf8"), /ENOENT/);
     const artifacts = await getJson(`${daemon.url}/runs/${encodeURIComponent(runId)}/artifacts?cwd=${encodeURIComponent(cwd)}`);
     assert.equal(artifacts.artifacts.some((artifact) => artifact.path.endsWith("/unified-exec/tool_unified_exec_cancel/result.json")), true);

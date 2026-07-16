@@ -19,6 +19,10 @@ import {
   openTaskFromAttentionQueue,
   readScrollState,
 } from "./support/test-helpers";
+import {
+  expectSharedConversationRichBody,
+  sharedConversationRichBody,
+} from "./support/rich-content";
 
 async function expectComposerValue(composer: Locator, value: string): Promise<void> {
   if (value.length === 0) {
@@ -230,7 +234,7 @@ test("terminal bottom panel runs commands in the channel workspace", async ({ pa
   await expect(sideTerminal.locator(".workspace-terminal-output")).toContainText(cwd);
 });
 
-test("channel team experts fold into latest turn and metrics stay in settings", async ({ page }) => {
+test("channel team metrics stay in settings without a conversation expert summary", async ({ page }) => {
   await useEnglishLocale(page);
   const state = createBaseState({ approvalStatus: "pending" });
   state.channelMessages = [
@@ -260,7 +264,7 @@ test("channel team experts fold into latest turn and metrics stay in settings", 
       intent: "discuss",
       authorType: "ai-teammate",
       authorId: "ling_agent",
-      body: "主回复保持干净，团队证据折叠展示。",
+      body: "主回复保持干净，团队证据不重复展示。",
       mentions: [],
       attachmentIds: [],
       linkPreviewIds: [],
@@ -391,33 +395,18 @@ test("channel team experts fold into latest turn and metrics stay in settings", 
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Engineering" }).click();
 
   const feed = page.getByLabel("Channel message feed");
-  await expect(feed.getByText("主回复保持干净，团队证据折叠展示。")).toBeVisible();
+  await expect(feed.getByText("主回复保持干净，团队证据不重复展示。")).toBeVisible();
   await expect(feed.getByText("后续回复没有团队证据。")).toBeVisible();
-  const experts = feed.locator(".channel-team-experts-summary");
-  await expect(experts).toHaveCount(1);
-  await expect(experts).toContainText("1 active");
-  await expect(experts).toContainText("2 done");
-  await expect.poll(() => state.channelTeamExpertsRequests.some((request) =>
-    request.channelId === "channel_engineering" &&
-    request.turnId === "msg_team_source" &&
-    request.includeExpired === true
-  )).toBe(true);
-  await expect.poll(() => state.channelTeamExpertsRequests.some((request) =>
-    request.channelId === "channel_engineering" &&
-    request.turnId === "msg_team_followup" &&
-    request.includeExpired === true
-  )).toBe(true);
+  await expect(feed.locator(".channel-team-experts-summary")).toHaveCount(0);
+  await expect.poll(() => state.channelTeamExpertsRequests.length).toBe(0);
   await expect(feed.getByText("Architect checked boundaries.")).toHaveCount(0);
-  const assistantTranscript = feed.locator(".conversation-turn-assistant-transcript").filter({ hasText: "主回复保持干净，团队证据折叠展示。" });
+  const assistantTranscript = feed.locator(".conversation-turn-assistant-transcript").filter({ hasText: "主回复保持干净，团队证据不重复展示。" });
   await expect(assistantTranscript.locator(".message-action-bar.channel-message-ai-actions")).toHaveCount(1);
   const assistantTurnOrder = await assistantTranscript.evaluate((element) =>
     Array.from(element.children).map((child) => (child as HTMLElement).className)
   );
-  expect(assistantTurnOrder.some((className) => className.includes("channel-team-experts-summary"))).toBe(true);
+  expect(assistantTurnOrder.some((className) => className.includes("channel-team-experts-summary"))).toBe(false);
   expect(assistantTurnOrder.at(-1)).toContain("channel-message-row-footer-stack");
-
-  await experts.getByRole("button", { name: /Teammates/ }).click();
-  await expect(feed.getByText("Architect checked boundaries.")).toBeVisible();
 
   await page.getByRole("button", { name: "More channel views" }).click();
   await page.getByRole("menuitem", { name: "Settings" }).click();
@@ -846,6 +835,149 @@ test("progress popover shows active context source groups and opens source detai
   await expect(page.locator(".channel-side-panel")).toHaveCount(0);
 });
 
+test("channel AI replies use the standard full conversation width", async ({ page }) => {
+  await useEnglishLocale(page);
+  await page.setViewportSize({ width: 1600, height: 900 });
+  const state = createBaseState({ approvalStatus: "expired" });
+  state.channelMessages = [
+    {
+      id: "msg_wide_table_source",
+      workspaceId: "workspace_default",
+      channelId: "channel_engineering",
+      kind: "message",
+      intent: "discuss",
+      authorType: "local-user",
+      authorId: "tian",
+      body: "Summarize the available AI news sources.",
+      mentions: [],
+      attachmentIds: [],
+      linkPreviewIds: [],
+      fileRefs: [],
+      status: "ready",
+      createdAt: "2026-07-13T00:00:00.000Z",
+      updatedAt: "2026-07-13T00:00:00.000Z",
+    },
+    {
+      id: "msg_wide_table_reply",
+      workspaceId: "workspace_default",
+      channelId: "channel_engineering",
+      threadId: "msg_wide_table_source",
+      kind: "ai_reply",
+      intent: "discuss",
+      authorType: "ai-teammate",
+      authorId: "ling_agent",
+      body: "| Source | Coverage | URL |\n|---|---|---|\n| AI Daily | Product and research news | https://example.com/daily |",
+      mentions: [],
+      attachmentIds: [],
+      linkPreviewIds: [],
+      fileRefs: [],
+      status: "ready",
+      createdAt: "2026-07-13T00:00:01.000Z",
+      updatedAt: "2026-07-13T00:00:01.000Z",
+    },
+    {
+      id: "msg_regular_source",
+      workspaceId: "workspace_default",
+      channelId: "channel_engineering",
+      kind: "message",
+      intent: "discuss",
+      authorType: "local-user",
+      authorId: "tian",
+      body: "Give me a one-sentence status.",
+      mentions: [],
+      attachmentIds: [],
+      linkPreviewIds: [],
+      fileRefs: [],
+      status: "ready",
+      createdAt: "2026-07-13T00:00:02.000Z",
+      updatedAt: "2026-07-13T00:00:02.000Z",
+    },
+    {
+      id: "msg_regular_reply",
+      workspaceId: "workspace_default",
+      channelId: "channel_engineering",
+      threadId: "msg_regular_source",
+      kind: "ai_reply",
+      intent: "discuss",
+      authorType: "ai-teammate",
+      authorId: "ling_agent",
+      body: "The system is healthy.",
+      mentions: [],
+      attachmentIds: [],
+      linkPreviewIds: [],
+      fileRefs: [],
+      status: "ready",
+      createdAt: "2026-07-13T00:00:03.000Z",
+      updatedAt: "2026-07-13T00:00:03.000Z",
+    },
+    {
+      id: "msg_standalone_ai_reply",
+      workspaceId: "workspace_default",
+      channelId: "channel_engineering",
+      kind: "ai_reply",
+      intent: "discuss",
+      authorType: "ai-teammate",
+      authorId: "ling_agent",
+      body: "This standalone AI reply must use the full channel conversation width instead of wrapping at the legacy 680 pixel limit.",
+      mentions: [],
+      attachmentIds: [],
+      linkPreviewIds: [],
+      fileRefs: [],
+      status: "ready",
+      createdAt: "2026-07-13T00:00:04.000Z",
+      updatedAt: "2026-07-13T00:00:04.000Z",
+    },
+  ];
+  await mockDaemon(page, state);
+  await page.goto("/");
+  await openEngineeringChannel(page);
+
+  const chatLayout = page.locator(".activity-chat-layout");
+  const composer = page.locator(".activity-shell .channel-composer");
+  const wideTurn = page.locator(".conversation-turn").filter({ has: page.locator(".message-body-table-scroll") });
+  const sourceMessage = wideTurn.locator(".channel-message-row.local-user");
+  const sourceMessageContent = sourceMessage.locator(":scope > .message-content");
+  const sourceMessageActions = sourceMessage.locator(":scope > .message-row-own-actions");
+  const sourceMessageActionBar = sourceMessageActions.locator(".channel-message-user-actions");
+  const assistantReply = wideTurn.locator(".conversation-turn-assistant-row");
+  const assistantContent = assistantReply.locator(":scope > .message-content");
+  const regularTurn = page.locator(".conversation-turn").filter({ hasText: "The system is healthy." });
+  const regularAssistantReply = regularTurn.locator(".conversation-turn-assistant-row");
+  const standaloneAssistantReply = page.locator(".channel-message-row.ai-teammate:not(.conversation-turn-assistant-row)");
+  const standaloneAssistantContent = standaloneAssistantReply.locator(":scope > .message-content");
+  await expect.poll(async () => Math.round((await chatLayout.boundingBox())?.width ?? 0)).toBeGreaterThanOrEqual(780);
+  await expect.poll(async () => Math.round((await chatLayout.boundingBox())?.width ?? 0)).toBeLessThanOrEqual(820);
+  await expect.poll(async () => Math.round((await composer.boundingBox())?.width ?? 0)).toBeGreaterThanOrEqual(780);
+  await expect.poll(async () => Math.round((await composer.boundingBox())?.width ?? 0)).toBeLessThanOrEqual(820);
+  await expect(wideTurn).toHaveCount(1);
+  await expect.poll(async () => Math.round((await sourceMessage.boundingBox())?.width ?? 0)).toBeGreaterThanOrEqual(780);
+  await expect.poll(async () => Math.round((await sourceMessage.boundingBox())?.width ?? 0)).toBeLessThanOrEqual(820);
+  await expect(sourceMessageContent.locator(".channel-message-user-actions")).toHaveCount(0);
+  await expect(sourceMessageActionBar).toHaveCount(1);
+  await expect(sourceMessageActionBar).toHaveCSS("opacity", "0");
+  await sourceMessage.hover();
+  await expect(sourceMessageActionBar).toHaveCSS("opacity", "1");
+  await expect.poll(async () => {
+    const contentBox = await sourceMessageContent.boundingBox();
+    const actionsBox = await sourceMessageActions.boundingBox();
+    return contentBox && actionsBox ? Math.round(actionsBox.y - (contentBox.y + contentBox.height)) : -1;
+  }).toBeGreaterThanOrEqual(0);
+  await expect.poll(async () => Math.round((await assistantReply.boundingBox())?.width ?? 0)).toBeGreaterThanOrEqual(780);
+  await expect.poll(async () => Math.round((await assistantReply.boundingBox())?.width ?? 0)).toBeLessThanOrEqual(820);
+  await expect.poll(async () => Math.round((await assistantContent.boundingBox())?.width ?? 0)).toBeGreaterThanOrEqual(740);
+  await expect.poll(async () => Math.round((await assistantContent.boundingBox())?.width ?? 0)).toBeLessThanOrEqual(780);
+  await expect(regularTurn).toHaveCount(1);
+  await expect.poll(async () => Math.round((await regularTurn.boundingBox())?.width ?? 0)).toBeGreaterThanOrEqual(780);
+  await expect.poll(async () => Math.round((await regularTurn.boundingBox())?.width ?? 0)).toBeLessThanOrEqual(820);
+  await expect.poll(async () => Math.round((await regularAssistantReply.boundingBox())?.width ?? 0)).toBeGreaterThanOrEqual(780);
+  await expect.poll(async () => Math.round((await regularAssistantReply.boundingBox())?.width ?? 0)).toBeLessThanOrEqual(820);
+  await expect(standaloneAssistantReply).toHaveCount(1);
+  await expect.poll(async () => Math.round((await standaloneAssistantReply.boundingBox())?.width ?? 0)).toBeGreaterThanOrEqual(780);
+  await expect.poll(async () => Math.round((await standaloneAssistantReply.boundingBox())?.width ?? 0)).toBeLessThanOrEqual(820);
+  await expect.poll(async () => Math.round((await standaloneAssistantContent.boundingBox())?.width ?? 0)).toBeGreaterThanOrEqual(740);
+  await expect.poll(async () => Math.round((await standaloneAssistantContent.boundingBox())?.width ?? 0)).toBeLessThanOrEqual(780);
+});
+
 test("channel environment surface shows read-only context and opens review", async ({ page }) => {
   await useEnglishLocale(page);
   await page.setViewportSize({ width: 2160, height: 1200 });
@@ -945,6 +1077,37 @@ test("channel environment surface shows read-only context and opens review", asy
   };
 
   await mockDaemon(page, state);
+  await page.route(/\/workspace\/changes(?:\?.*)?$/, async (route) => {
+    const worktreeCwd = `${cwd}/.ling-stack/worktrees/channels/channel_engineering`;
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        cwd: worktreeCwd,
+        state: "dirty",
+        repoRoot: worktreeCwd,
+        branchName: "ling/channel-environment",
+        upstream: "main",
+        headSha: "abc1234",
+        additions: 12,
+        deletions: 3,
+        files: [{
+          path: "apps/web/src/features/workspace/WorkspaceClientView.tsx",
+          kind: "modified",
+          staged: false,
+          unstaged: true,
+          untracked: false,
+          additions: 12,
+          deletions: 3,
+          diff: state.artifactsByRun.run_environment?.[0]?.contentText,
+          truncated: false,
+        }],
+        totalFileCount: 1,
+        truncated: false,
+        checkedAt: "2026-06-29T00:01:00.000Z",
+      }),
+    });
+  });
   await page.goto("/");
   await openEngineeringChannel(page);
   await page.getByRole("button", { name: "Hide navigation" }).click();
@@ -1137,57 +1300,15 @@ test("channel environment surface shows read-only context and opens review", asy
   await page.mouse.move(resizeHandleBox!.x - 130, resizeHandleBox!.y + 40, { steps: 6 });
   await page.mouse.up();
   await expect.poll(async () => (await dock.boundingBox())?.width ?? 0).toBeGreaterThan((initialDockBox?.width ?? 0) + 80);
-  await expect(dock).toContainText("Workspace environment diff");
-  const reviewSummaryRow = dock.locator(".right-dock-review-row", { hasText: "Workspace environment diff" });
-  const codePreview = dock.locator(".right-dock-code-preview");
-  await expect(codePreview).toBeVisible();
-  const reviewPageBody = dock.locator(".right-dock-page-body");
-  const fullBleedBoxes = await Promise.all([
-    reviewPageBody.boundingBox(),
-    codePreview.boundingBox(),
-  ]);
-  const [reviewPageBodyBox, codePreviewBox] = fullBleedBoxes;
-  expect(reviewPageBodyBox).not.toBeNull();
-  expect(codePreviewBox).not.toBeNull();
-  expect(Math.abs((codePreviewBox?.x ?? 0) - (reviewPageBodyBox?.x ?? 0))).toBeLessThanOrEqual(1);
-  expect(Math.abs(((codePreviewBox?.x ?? 0) + (codePreviewBox?.width ?? 0)) - ((reviewPageBodyBox?.x ?? 0) + (reviewPageBodyBox?.width ?? 0)))).toBeLessThanOrEqual(1);
-  const codePreviewTheme = await page.evaluate(() => {
-    const preview = document.querySelector<HTMLElement>(".right-dock-code-preview");
-    const caption = document.querySelector<HTMLElement>(".right-dock-code-preview figcaption");
-    const pre = document.querySelector<HTMLElement>(".right-dock-code-preview pre");
-    if (!preview || !caption || !pre) {
-      return undefined;
-    }
-    const resolveColor = (value: string): string => {
-      const probe = document.createElement("span");
-      probe.style.color = value;
-      document.body.append(probe);
-      const resolved = getComputedStyle(probe).color;
-      probe.remove();
-      return resolved;
-    };
-    return {
-      theme: document.documentElement.dataset.theme,
-      previewBg: getComputedStyle(preview).backgroundColor,
-      preBg: getComputedStyle(pre).backgroundColor,
-      expectedCodeBg: resolveColor("var(--conversation-code-bg)"),
-      captionBg: getComputedStyle(caption).backgroundColor,
-      expectedCaptionBg: resolveColor("var(--conversation-code-bg-hover)"),
-    };
-  });
-  expect(codePreviewTheme).toBeDefined();
-  expect(codePreviewTheme?.theme).toBe("light");
-  expect(codePreviewTheme?.previewBg).toBe(codePreviewTheme?.expectedCodeBg);
-  expect(codePreviewTheme?.preBg).toBe(codePreviewTheme?.expectedCodeBg);
-  expect(codePreviewTheme?.captionBg).toBe(codePreviewTheme?.expectedCaptionBg);
-  await expect(reviewSummaryRow).toHaveCount(0);
-  await expect(dock.locator(".right-dock-review-row")).toHaveCount(0);
-  await expect(codePreview.locator("pre")).toContainText("reviewPreview");
-  await expect(codePreview.locator(".right-dock-code-fold")).toContainText("9 unmodified lines");
-  await codePreview.getByRole("button", { name: "Collapse code preview" }).click();
-  await expect(codePreview).toHaveClass(/collapsed/u);
-  await expect(codePreview.locator("pre")).toHaveCount(0);
-  await expect(codePreview).toContainText("Workspace environment diff");
+  await expect(dock).toContainText("ling/channel-environment");
+  const changedFileSection = dock.locator('.workspace-change-file-section[data-workspace-change-path="apps/web/src/features/workspace/WorkspaceClientView.tsx"]');
+  await expect(changedFileSection).toBeVisible();
+  await expect(changedFileSection).toContainText("WorkspaceClientView.tsx");
+  await expect(changedFileSection.locator(".diff-viewer")).toContainText("reviewPreview");
+  await expect(changedFileSection.getByRole("button", { name: "Open with" })).toBeVisible();
+  await changedFileSection.getByRole("button", { name: "Collapse code preview: WorkspaceClientView.tsx" }).click();
+  await expect(changedFileSection).toHaveClass(/collapsed/u);
+  await expect(changedFileSection.locator(".diff-viewer")).toHaveCount(0);
   const expandedResizeHandleBox = await resizeHandle.boundingBox();
   expect(expandedResizeHandleBox).not.toBeNull();
   await page.mouse.move(expandedResizeHandleBox!.x + expandedResizeHandleBox!.width / 2, expandedResizeHandleBox!.y + 40);
@@ -1215,6 +1336,27 @@ test("channel environment surface shows read-only context and opens review", asy
   await expect(environmentPage).toContainText("No browser evidence");
   await expect(environmentPage).toContainText("No sources");
 
+  const selectedEnvironmentPath = "/Users/gsx/minimax-agent-cn/projects";
+  await environmentPage.getByRole("button", { name: "Change directory" }).click();
+  await expect.poll(() => {
+    const channel = state.channels.find((item) => isRecord(item) && item.id === "channel_engineering");
+    if (!isRecord(channel) || !isRecord(channel.workspaceBinding)) {
+      return undefined;
+    }
+    return {
+      boundPath: channel.boundPath,
+      mode: channel.workspaceBinding.mode,
+      executionPath: channel.workspaceBinding.executionPath,
+    };
+  }).toEqual({
+    boundPath: selectedEnvironmentPath,
+    mode: "local",
+    executionPath: selectedEnvironmentPath,
+  });
+  const localEnvironment = environmentPage.getByLabel("Local environment");
+  await expect(localEnvironment).toContainText("Local");
+  await expect(localEnvironment).toContainText(selectedEnvironmentPath);
+
   await environmentPage.locator(".channel-environment-section.commit").getByRole("button", { name: "Open" }).click();
   const dialog = page.getByRole("dialog", { name: "Commit or push" });
   await expect(dialog).toBeVisible();
@@ -1234,8 +1376,9 @@ test("channel environment surface shows read-only context and opens review", asy
   await expect(rightDock.locator(".right-dock-head-page")).toContainText("Review");
   await expect(rightDock.locator(".right-dock-filter-row")).toHaveCount(0);
   await expect(rightDock.locator(".right-dock-review-status-card")).toHaveCount(0);
-  await expect(rightDock.locator(".right-dock-review-page")).not.toContainText("Risk");
-  await expect(rightDock.locator(".right-dock-review-page")).not.toContainText("Runtime");
+  await expect(rightDock.locator(".workspace-change-review-page")).toBeVisible();
+  await expect(rightDock.locator(".workspace-change-review-page")).not.toContainText("Risk");
+  await expect(rightDock.locator(".workspace-change-review-page")).not.toContainText("Runtime");
 });
 
 test("channel environment labels review-only items as review instead of changes", async ({ page }) => {
@@ -1690,6 +1833,11 @@ test("channel runtime policy is visible while preferred specialist controls stay
     createMockTeammate({ id: "engineer", displayName: "Ling Engineer" }),
     createMockTeammate({ id: "designer", roleKey: "designer", displayName: "Ling Designer" }),
   ];
+  state.channels = state.channels.map((channel) =>
+    isRecord(channel) && channel.id === "channel_engineering"
+      ? { ...channel, autoReplyMode: "auto_route" }
+      : channel
+  );
   const openAiTemplate = {
     templateId: "openai-gpt",
     description: "Official OpenAI endpoint.",
@@ -1713,12 +1861,33 @@ test("channel runtime policy is visible while preferred specialist controls stay
   await expect(page.getByText("active channel")).toHaveCount(0);
   await page.getByRole("button", { name: "More channel views" }).click();
   await page.getByRole("menuitem", { name: "Settings" }).click();
+  const settingsTabs = page.getByRole("tablist", { name: "Channel settings navigation" });
+  await expect(settingsTabs.getByRole("tab", { name: "General" })).toHaveAttribute("aria-selected", "true");
+  await expect(settingsTabs.getByRole("tab", { name: "Workspace" })).toHaveAttribute("aria-selected", "false");
+  await expect(page.getByLabel("Channel workspace settings")).toHaveCount(0);
+  await expect(page.getByLabel("Channel teammates")).toHaveCount(0);
+  await expect(page.getByLabel("Channel AI councils")).toHaveCount(0);
   const currentManagement = page.getByLabel("Channel management");
   await expect(currentManagement.getByLabel("Preferred specialist")).toHaveCount(0);
   await expect(currentManagement).not.toContainText("Preferred specialist");
   await expect(currentManagement.getByLabel("Ling reply")).toHaveCount(0);
-  await expect(currentManagement.getByRole("button", { name: "Save channel" })).toHaveCount(0);
-  await expect(currentManagement.getByText("Changes save automatically")).toBeVisible();
+  const currentNameSave = currentManagement.getByRole("button", { name: "Save channel" });
+  await expect(currentNameSave).toBeVisible();
+  await expect(currentNameSave).toBeDisabled();
+  await expect(currentManagement.locator(".channel-autosave-status")).toHaveCount(0);
+  await expect(page.locator(".channel-notification-panel > .channel-settings-section-head > small")).toHaveCount(0);
+  await currentManagement.getByLabel("Name").fill("Engineering QA");
+  const legacyRenameRequest = page.waitForRequest((request) =>
+    request.method() === "PATCH" && new URL(request.url()).pathname === "/channels/channel_engineering"
+  );
+  await currentNameSave.click();
+  const legacyRenameBody = await (await legacyRenameRequest).postDataJSON();
+  expect(legacyRenameBody).not.toHaveProperty("autoReplyMode");
+  expect(legacyRenameBody).not.toHaveProperty("defaultTeammateId");
+  await expect.poll(() => {
+    const updated = state.channels.find((channel) => isRecord(channel) && channel.id === "channel_engineering");
+    return isRecord(updated) ? [updated.name, updated.autoReplyMode] : [];
+  }).toEqual(["Engineering QA", "auto_route"]);
 
   const navigation = page.getByLabel("Ling Stack navigation");
   await navigation.getByRole("button", { name: "Channel actions" }).click();
@@ -1764,13 +1933,17 @@ test("channel runtime policy is visible while preferred specialist controls stay
   await expect(details.getByLabel("Ling reply")).toHaveCount(0);
   await expect(details.getByRole("button", { name: "Create channel" })).toHaveCount(0);
   await expect(details.getByRole("button", { name: "Create default" })).toHaveCount(0);
-  await expect(details.getByRole("button", { name: "Save channel" })).toHaveCount(0);
+  const releaseNameSave = details.getByRole("button", { name: "Save channel" });
+  await expect(releaseNameSave).toBeVisible();
+  await expect(releaseNameSave).toBeDisabled();
   await details.getByLabel("Name").fill("Release QA");
+  await expect(releaseNameSave).toBeEnabled();
+  await releaseNameSave.click();
   await expect.poll(() => {
     const updated = state.channels.find((channel) => isRecord(channel) && channel.id === (isRecord(created) ? created.id : ""));
     return isRecord(updated) ? updated.name : "";
   }).toBe("Release QA");
-  await expect(details.getByText("Saved")).toBeVisible();
+  await expect(details.locator(".channel-autosave-status")).toHaveCount(0);
 });
 
 test("channel reply routing mode is not exposed in ordinary settings", async ({ page }) => {
@@ -2186,6 +2359,10 @@ test("channel settings can add and remove teammates without preferred specialist
   await page.getByRole("button", { name: "AI teammate management" }).click();
   let manager = page.getByLabel("Channel teammates");
   await expect(manager).toContainText("No teammates in this channel");
+  const teammateDock = page.locator(".channel-teammate-dock");
+  await expect.poll(async () => Math.round((await teammateDock.boundingBox())?.width ?? 0)).toBeGreaterThanOrEqual(760);
+  await expect(manager).toHaveCSS("padding-left", "18px");
+  await expect(manager).toHaveCSS("padding-right", "18px");
   await page.getByRole("button", { name: "AI teammate management" }).click();
   await expect(manager).toHaveCount(0);
   await page.getByRole("button", { name: "AI teammate management" }).click();
@@ -2243,6 +2420,12 @@ test("channel settings can add and remove teammates without preferred specialist
     return isRecord(channelNotifications) ? channelNotifications.channel_engineering : undefined;
   }).toBe("muted");
   await expect.poll(() => page.evaluate(() => localStorage.getItem("ling-stack.channelNotifications.%2Ftmp%2Fling-stack-workspace.channel_engineering"))).toBeNull();
+
+  await page.reload();
+  await openEngineeringChannel(page);
+  await page.getByRole("button", { name: "More channel views" }).click();
+  await page.getByRole("menuitem", { name: "Settings" }).click();
+  await expect(page.getByLabel("Channel notifications").getByRole("radio", { name: "Muted" })).toHaveAttribute("aria-checked", "true");
 });
 
 test("channel settings attaches an AI council by reference", async ({ page }) => {
@@ -2317,6 +2500,8 @@ test("channel settings attaches an AI council by reference", async ({ page }) =>
 
   await page.getByRole("button", { name: "More channel views" }).click();
   await page.getByRole("menuitem", { name: "Settings" }).click();
+  const settingsTabs = page.getByRole("tablist", { name: "Channel settings navigation" });
+  await settingsTabs.getByRole("tab", { name: "Councils" }).click();
   const councils = page.getByLabel("Channel AI councils");
   await expect(councils).toContainText("No AI councils attached");
   await councils.getByLabel("Attach AI council").selectOption("council_builtin_development");
@@ -2341,12 +2526,14 @@ test("channel settings attaches an AI council by reference", async ({ page }) =>
   await expect(councils.getByLabel("Projected council specialists")).toContainText("Development Council · Verification");
   await expect(councils.getByLabel("Projected council specialists")).not.toContainText("Ling Agent");
 
+  await settingsTabs.getByRole("tab", { name: "Members" }).click();
   const directTeammates = page.getByLabel("Channel teammates");
   await expect(directTeammates.locator(".channel-teammate-chip")).toHaveCount(1);
   await expect(directTeammates).toContainText("Ling Engineer");
   await expect(directTeammates.locator(".channel-teammate-chip").filter({ hasText: "Ling Designer" })).toHaveCount(0);
   expect(state.teammateChannelMemberships.filter((item) => isRecord(item) && item.channelId === "channel_engineering")).toHaveLength(1);
 
+  await settingsTabs.getByRole("tab", { name: "Councils" }).click();
   await councils.getByRole("button", { name: "Detach council" }).click();
   await expect.poll(() => {
     const policy = state.channelCouncilPolicies.find((item) => isRecord(item) && item.channelId === "channel_engineering");
@@ -2450,7 +2637,7 @@ test("channel message feed renders AI teammate avatar images", async ({ page }) 
   await expect(engineerReply.locator(".avatar-initial")).toHaveCount(0);
 });
 
-test("channel message feed renders web evidence inline with sources and blocked reasons", async ({ page }) => {
+test("channel message feed shows usable web sources and keeps diagnostics in the right dock", async ({ page }) => {
   await useEnglishLocale(page);
   const state = createBaseState({ approvalStatus: "pending" });
   state.aiTeammates = [createMockTeammate({ id: "engineer", displayName: "Ling Engineer" })];
@@ -2606,25 +2793,12 @@ test("channel message feed renders web evidence inline with sources and blocked 
   await expect(sourcedEvidence).not.toContainText("OpenAI Responses + Web Search");
 
   const degradedReply = feed.locator(".channel-message-row").filter({ hasText: "Degraded web reply." });
-  const degradedEvidence = degradedReply.getByLabel("Message evidence");
-  const degradedToggle = degradedEvidence.getByRole("button");
-  await expect(degradedToggle).toBeVisible();
-  await expect(degradedToggle).toHaveAttribute("aria-expanded", "true");
-  await expect(degradedEvidence).toContainText("Degraded reason");
-  await expect(degradedEvidence).toContainText("web_search backend returned a summary but no source URLs.");
-  await expect(degradedEvidence).not.toContainText("Search queries");
-  await expect(degradedEvidence).not.toContainText("AI news today");
-  await expect(degradedEvidence).not.toContainText("Provider");
-  await expect(degradedEvidence).not.toContainText("Chat Completions Search Relay");
+  await expect(degradedReply.getByLabel("Message evidence")).toHaveCount(0);
+  await expect(degradedReply).not.toContainText("web_search backend returned a summary but no source URLs.");
 
   const blockedReply = feed.locator(".channel-message-row").filter({ hasText: "Blocked web reply." });
-  const blockedEvidence = blockedReply.getByLabel("Message evidence");
-  const blockedToggle = blockedEvidence.getByRole("button");
-  await expect(blockedToggle).toBeVisible();
-  await expect(blockedToggle).toHaveAttribute("aria-expanded", "true");
-  await expect(blockedEvidence).toContainText("Blocked reason");
-  await expect(blockedEvidence).toContainText("Current selected Ling provider does not support realtime web search.");
-  await expect(blockedEvidence).not.toContainText("latest Ling Stack release");
+  await expect(blockedReply.getByLabel("Message evidence")).toHaveCount(0);
+  await expect(blockedReply).not.toContainText("Current selected Ling provider does not support realtime web search.");
 
   const configuredOnlyReply = feed.locator(".channel-message-row").filter({ hasText: "Configured web search but no actual evidence." });
   await expect(configuredOnlyReply).toBeVisible();
@@ -2633,6 +2807,19 @@ test("channel message feed renders web evidence inline with sources and blocked 
   await expect(configuredOnlyReply).not.toContainText("OpenAI news today");
   await expect(configuredOnlyReply).not.toContainText("Custom OpenAI-compatible");
   await expect(configuredOnlyReply).not.toContainText("openai-chat-completions-web-search");
+
+  await page.getByRole("button", { name: "Show details" }).click();
+  const dock = page.locator(".channel-side-panel.right-dock");
+  await expect(dock).toBeVisible();
+  await dock.getByRole("button", { name: "Browser" }).click();
+  const degradedDiagnostic = dock.locator(".right-dock-evidence-row").filter({ hasText: "web_search backend returned a summary but no source URLs." });
+  await expect(degradedDiagnostic).toBeVisible();
+  await expect(degradedDiagnostic).toContainText("Degraded");
+  await degradedDiagnostic.click();
+  const degradedDetail = dock.locator(".right-dock-detail-list");
+  await expect(degradedDetail).toContainText("Failure reason");
+  await expect(degradedDetail).toContainText("web_search backend returned a summary but no source URLs.");
+  await expect(degradedDetail).toContainText("web_search");
 });
 
 test("right dock browser evidence exposes failed read URL detail", async ({ page }) => {
@@ -2702,7 +2889,7 @@ test("right dock browser evidence exposes failed read URL detail", async ({ page
   await expect(detail.locator("a.right-dock-evidence-link")).toHaveAttribute("href", "https://example.com/private-report");
 });
 
-test("conversation turn transcript renders coordinator web evidence in the main chat", async ({ page }) => {
+test("conversation turn transcript omits web diagnostics without usable sources", async ({ page }) => {
   await useEnglishLocale(page);
   const state = createBaseState({ approvalStatus: "pending" });
   state.channelMessages = [
@@ -2763,16 +2950,8 @@ test("conversation turn transcript renders coordinator web evidence in the main 
   const turn = page.locator('[data-conversation-turn-id="conversation-turn:msg_web_turn_user"]');
   await expect(turn).toBeVisible();
   await expect(turn).toContainText("Here is the AI news summary.");
-  const evidence = turn.getByLabel("Message evidence");
-  const toggle = evidence.getByRole("button");
-  await expect(toggle).toHaveAttribute("aria-expanded", "true");
-  await expect(evidence).toContainText("Degraded reason");
-  await expect(evidence).toContainText("web_search backend returned text but no citation/source metadata.");
-  await expect(evidence).not.toContainText("Search queries");
-  await expect(evidence).not.toContainText("AI latest news");
-  await expect(evidence).not.toContainText("Provider");
-  await expect(evidence).not.toContainText("Chat Completions Search Relay");
-  await expect(evidence).not.toContainText("0 sources");
+  await expect(turn.getByLabel("Message evidence")).toHaveCount(0);
+  await expect(turn).not.toContainText("web_search backend returned text but no citation/source metadata.");
 });
 
 test("channel settings manage workspace binding", async ({ page }) => {
@@ -2788,9 +2967,43 @@ test("channel settings manage workspace binding", async ({ page }) => {
 
   await page.getByRole("button", { name: "More channel views" }).click();
   await page.getByRole("menuitem", { name: "Settings" }).click();
-  const details = page.getByLabel("Channel management");
-  const workspaceControl = details.getByLabel("Channel workspace");
+  const settingsTabs = page.getByRole("tablist", { name: "Channel settings navigation" });
+  await settingsTabs.getByRole("tab", { name: "Workspace" }).click();
+  const workspaceSettings = page.getByLabel("Channel workspace settings");
+  const workspaceControl = workspaceSettings.getByLabel("Channel workspace");
   await expect(workspaceControl).toContainText("Local");
+  await expect(workspaceControl.locator(".channel-workspace-control-head .status-badge")).toHaveCount(0);
+  const executionPathInput = workspaceSettings.getByLabel("Execution path");
+  const manualExecutionPath = "/tmp/manual-channel-path";
+  await executionPathInput.fill(manualExecutionPath);
+  await expect(workspaceSettings.getByRole("button", { name: "Save" })).toBeEnabled();
+  await workspaceSettings.getByRole("button", { name: "Save" }).click();
+  await expect.poll(() => {
+    const channel = state.channels.find((item) => isRecord(item) && item.id === "channel_engineering");
+    if (!isRecord(channel) || !isRecord(channel.workspaceBinding)) {
+      return undefined;
+    }
+    return [channel.boundPath, channel.workspaceBinding.mode, channel.workspaceBinding.executionPath];
+  }).toEqual([manualExecutionPath, "local", manualExecutionPath]);
+
+  const selectedExecutionPath = "/Users/gsx/minimax-agent-cn/projects";
+  await workspaceSettings.getByRole("button", { name: "Change directory" }).click();
+  await expect.poll(() => {
+    const channel = state.channels.find((item) => isRecord(item) && item.id === "channel_engineering");
+    if (!isRecord(channel) || !isRecord(channel.workspaceBinding)) {
+      return undefined;
+    }
+    return [channel.boundPath, channel.workspaceBinding.mode, channel.workspaceBinding.executionPath];
+  }).toEqual([selectedExecutionPath, "local", selectedExecutionPath]);
+  await expect(executionPathInput).toHaveValue(selectedExecutionPath);
+  const openWorkspaceRequest = page.waitForRequest((request) =>
+    request.method() === "POST" && new URL(request.url()).pathname === "/channels/channel_engineering/workspace/open"
+  );
+  await workspaceControl.getByRole("button", { name: "Open path" }).click();
+  await openWorkspaceRequest;
+  await expect(workspaceControl).not.toContainText("Opening workspace path.");
+  await expect(workspaceControl.locator(".inline-success")).toHaveCount(0);
+  await expect(workspaceControl.getByRole("button", { name: "Open path" })).toBeEnabled();
   await workspaceControl.getByRole("button", { name: "Create worktree" }).click();
   await expect.poll(() => {
     const channel = state.channels.find((item) => isRecord(item) && item.id === "channel_engineering");
@@ -2954,6 +3167,13 @@ test("channel activity supports mentions, messages, files, links, and topic repl
   await expect(sentMessage.getByRole("link", { name: /brief\.txt/ })).toBeVisible();
   await expect(sentMessage.getByRole("link", { name: /shot\.png/ })).toBeVisible();
   expect(state.channelLinkPreviews.some((preview) => isRecord(preview) && preview.title === "Example Domain")).toBe(true);
+  const sentReferences = sentMessage.getByLabel("References");
+  const webReference = sentReferences.getByRole("link", { name: /Example Domain/ });
+  await expect(webReference).toBeVisible();
+  await webReference.hover();
+  await expect(sentReferences.getByRole("tooltip")).toContainText("Example Domain");
+  await page.mouse.move(4, 4);
+  await expect(sentReferences.getByRole("tooltip")).toHaveCount(0);
   await page.getByRole("button", { name: "More channel views" }).click();
   const viewMenu = page.getByRole("menu", { name: "More channel views" });
   await expect(viewMenu.getByRole("menuitem", { name: "Settings" })).toBeVisible();
@@ -2968,31 +3188,25 @@ test("channel activity supports mentions, messages, files, links, and topic repl
   await expect(teammateReply).toBeVisible();
   await expect(sentMessage).toHaveClass(/message-bubble-own/);
   await expect(teammateReply).toHaveClass(/message-bubble-peer/);
-  const messageLayout = await page.locator(".message-feed").evaluate((feed) => {
-    const own = feed.querySelector(".message-bubble-own .message-content");
-    const peer = feed.querySelector(".message-bubble-peer .message-content");
-    if (!own || !peer) {
-      return null;
-    }
-    const feedRect = feed.getBoundingClientRect();
-    const ownRect = own.getBoundingClientRect();
-    const peerRect = peer.getBoundingClientRect();
-    return {
-      feedLeft: feedRect.left,
-      feedRight: feedRect.right,
-      ownLeft: ownRect.left,
-      ownRight: ownRect.right,
-      peerLeft: peerRect.left,
-      peerRight: peerRect.right,
-    };
-  });
-  if (!messageLayout) {
+  const [feedRect, ownRect, peerRect] = await Promise.all([
+    page.locator(".message-feed").boundingBox(),
+    sentMessageContent.boundingBox(),
+    teammateReplyContent.boundingBox(),
+  ]);
+  if (!feedRect || !ownRect || !peerRect) {
     throw new Error("Expected own and peer chat bubbles to render in the message feed.");
   }
+  const messageLayout = {
+    feedLeft: feedRect.x,
+    feedRight: feedRect.x + feedRect.width,
+    ownLeft: ownRect.x,
+    ownRight: ownRect.x + ownRect.width,
+    peerLeft: peerRect.x,
+    peerRight: peerRect.x + peerRect.width,
+  };
   expect(messageLayout.ownRight).toBeGreaterThan(messageLayout.feedRight - 64);
   expect(messageLayout.peerLeft).toBeLessThan(messageLayout.feedLeft + 48);
   expect(messageLayout.ownLeft).toBeGreaterThan(messageLayout.peerLeft);
-  expect(messageLayout.ownRight).toBeGreaterThan(messageLayout.peerRight);
   await expect(sentMessage.getByRole("button", { name: /Create task|Record decision|Create handoff|Create task with context|Details/ })).toHaveCount(0);
   await expect(sentMessage.locator(".message-meta")).toHaveCount(0);
   await expect(teammateReply.locator(".message-meta time")).toHaveCount(0);
@@ -3005,9 +3219,10 @@ test("channel activity supports mentions, messages, files, links, and topic repl
   });
   expect(sentMessageTypography.bodyColor).not.toBe("");
   expect(sentMessageTypography.bodyFontWeight).toBeGreaterThanOrEqual(550);
-  await expect(sentMessageContent).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+  await expect(sentMessageContent).not.toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
   await expect(sentMessageContent).toHaveCSS("border-top-color", "rgba(0, 0, 0, 0)");
-  await expect(sentMessageContent).toHaveCSS("padding-top", "0px");
+  await expect(sentMessageContent).toHaveCSS("padding-top", "8px");
+  await expect(sentMessageContent).toHaveCSS("border-radius", "8px");
   await teammateReply.hover();
   await expect(teammateReplyContent).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
   await expect(teammateReplyContent).toHaveCSS("border-top-color", "rgba(0, 0, 0, 0)");
@@ -3074,7 +3289,7 @@ test("channel composer snapshots restore draft assets and topic replies across c
       intent: "discuss",
       authorType: "ai-teammate",
       authorId: "ling_agent",
-      body: "Snapshot reply ready.",
+      body: `Snapshot reply ready.\n\n${sharedConversationRichBody}`,
       mentions: [],
       attachmentIds: [],
       linkPreviewIds: [],
@@ -3106,6 +3321,7 @@ test("channel composer snapshots restore draft assets and topic replies across c
   await teammateReply.getByRole("button", { name: "Reply in topic" }).click();
   const topicPanel = page.getByLabel("Topic replies");
   await expect(topicPanel).toBeVisible();
+  await expectSharedConversationRichBody(topicPanel);
   await topicPanel.getByLabel("Topic reply input").fill("Engineering topic reply draft");
 
   await navigation.getByRole("button", { name: "Design" }).click();
@@ -3126,6 +3342,259 @@ test("channel composer snapshots restore draft assets and topic replies across c
   await navigation.getByRole("button", { name: "Design" }).click();
   await expect(page.getByRole("heading", { name: "Design", level: 1 })).toBeVisible();
   await expectComposerValue(composerInput, "Design snapshot draft");
+});
+
+test("latest channel prompt edits in place and hides its superseded reply", async ({ page }) => {
+  await useEnglishLocale(page);
+  const state = createBaseState({ approvalStatus: "expired" });
+  state.channelMessages = [{
+    id: "msg_channel_edit_source",
+    workspaceId: "workspace_default",
+    channelId: "channel_engineering",
+    kind: "message",
+    intent: "discuss",
+    authorType: "local-user",
+    authorId: "local-user",
+    body: "Original channel prompt",
+    mentions: [],
+    attachmentIds: [],
+    linkPreviewIds: [],
+    fileRefs: [],
+    status: "ready",
+    createdAt: "2026-07-12T03:20:00.000Z",
+    updatedAt: "2026-07-12T03:20:00.000Z",
+  }, {
+    id: "msg_channel_edit_old_reply",
+    workspaceId: "workspace_default",
+    channelId: "channel_engineering",
+    threadId: "msg_channel_edit_source",
+    kind: "ai_reply",
+    intent: "discuss",
+    authorType: "ai-teammate",
+    authorId: "engineer",
+    body: "Old channel response should disappear.",
+    mentions: [],
+    attachmentIds: [],
+    linkPreviewIds: [],
+    fileRefs: [],
+    status: "ready",
+    createdAt: "2026-07-12T03:20:01.000Z",
+    updatedAt: "2026-07-12T03:20:01.000Z",
+  }];
+
+  await mockDaemon(page, state);
+  await page.goto("/");
+  await openEngineeringChannel(page);
+
+  const feed = page.getByLabel("Channel message feed");
+  const userRow = feed.locator(".channel-message-row.local-user");
+  await userRow.hover();
+  await userRow.getByRole("button", { name: "Edit message" }).click();
+  await feed.getByLabel("Edit message").fill("Revised channel prompt");
+  await feed.getByRole("button", { name: "Save and resend" }).click();
+
+  await expect(feed).toContainText("Revised channel prompt");
+  await expect(feed).toContainText("Edited reply: Revised channel prompt");
+  await expect(feed).not.toContainText("Original channel prompt");
+  await expect(feed).not.toContainText("Old channel response should disappear.");
+  await expect.poll(() => state.lastConversationMessageEditRequest?.surface).toBe("channel_root");
+  await expect.poll(() => state.lastConversationMessageEditRequest?.messageId).toBe("msg_channel_edit_source");
+});
+
+test("pending channel replacement survives refresh and retries with the original idempotency key", async ({ page }) => {
+  await useEnglishLocale(page);
+  const state = createBaseState({ approvalStatus: "expired" });
+  state.channelMessages = [{
+    id: "msg_channel_edit_pending",
+    workspaceId: "workspace_default",
+    channelId: "channel_engineering",
+    kind: "message",
+    intent: "discuss",
+    authorType: "local-user",
+    authorId: "local-user",
+    body: "Revised prompt waiting for a response",
+    mentions: [],
+    attachmentIds: [],
+    linkPreviewIds: [],
+    fileRefs: [],
+    status: "ready",
+    revision: 2,
+    editedAt: "2026-07-12T03:22:00.000Z",
+    pendingReplacement: {
+      supersessionId: "supersession_channel_pending",
+      idempotencyKey: "channel-edit-pending-key",
+      failureReason: "Provider temporarily unavailable",
+    },
+    createdAt: "2026-07-12T03:20:00.000Z",
+    updatedAt: "2026-07-12T03:22:00.000Z",
+  }];
+
+  await mockDaemon(page, state);
+  await page.goto("/");
+  await openEngineeringChannel(page);
+
+  const feed = page.getByLabel("Channel message feed");
+  const userRow = feed.locator(".channel-message-row.local-user");
+  await expect(userRow).toContainText("Edited");
+  await expect(userRow).toContainText("Provider temporarily unavailable");
+  await userRow.hover();
+  await expect(userRow.getByRole("button", { name: "Edit message" })).toHaveCount(0);
+  await userRow.getByRole("button", { name: "Retry response" }).click();
+
+  await expect(feed).toContainText("Edited reply: Revised prompt waiting for a response");
+  await expect(userRow.getByRole("button", { name: "Retry response" })).toHaveCount(0);
+  await expect.poll(() => state.lastConversationMessageEditRequest?.idempotencyKey).toBe("channel-edit-pending-key");
+  await expect.poll(() => state.lastConversationMessageEditRequest?.expectedRevision).toBe(2);
+});
+
+test("latest topic reply edits in place without creating a second topic", async ({ page }) => {
+  await useEnglishLocale(page);
+  const state = createBaseState({ approvalStatus: "expired" });
+  state.channelMessages = [{
+    id: "msg_topic_edit_root",
+    workspaceId: "workspace_default",
+    channelId: "channel_engineering",
+    kind: "ai_reply",
+    intent: "discuss",
+    authorType: "ai-teammate",
+    authorId: "engineer",
+    body: "Topic root response",
+    mentions: [],
+    attachmentIds: [],
+    linkPreviewIds: [],
+    fileRefs: [],
+    status: "ready",
+    createdAt: "2026-07-12T03:25:00.000Z",
+    updatedAt: "2026-07-12T03:25:00.000Z",
+  }, {
+    id: "msg_topic_edit_user",
+    workspaceId: "workspace_default",
+    channelId: "channel_engineering",
+    threadId: "msg_topic_edit_root",
+    kind: "message",
+    intent: "discuss",
+    authorType: "local-user",
+    authorId: "local-user",
+    body: "Original topic follow-up",
+    mentions: [],
+    attachmentIds: [],
+    linkPreviewIds: [],
+    fileRefs: [],
+    status: "ready",
+    createdAt: "2026-07-12T03:25:01.000Z",
+    updatedAt: "2026-07-12T03:25:01.000Z",
+  }, {
+    id: "msg_topic_edit_old_reply",
+    workspaceId: "workspace_default",
+    channelId: "channel_engineering",
+    threadId: "msg_topic_edit_root",
+    kind: "ai_reply",
+    intent: "discuss",
+    authorType: "ai-teammate",
+    authorId: "engineer",
+    body: "Old topic response should disappear.",
+    mentions: [],
+    attachmentIds: [],
+    linkPreviewIds: [],
+    fileRefs: [],
+    status: "ready",
+    createdAt: "2026-07-12T03:25:02.000Z",
+    updatedAt: "2026-07-12T03:25:02.000Z",
+  }];
+
+  await mockDaemon(page, state);
+  await page.goto("/");
+  await openEngineeringChannel(page);
+
+  const rootMessage = page.getByLabel("Channel message feed").locator(".channel-message-row.ai-teammate").filter({ hasText: "Topic root response" });
+  await rootMessage.hover();
+  await rootMessage.getByRole("button", { name: "Reply in topic" }).click();
+  const topicPanel = page.getByLabel("Topic replies");
+  const userReply = topicPanel.locator(".thread-reply-item.thread-reply-own");
+  await userReply.hover();
+  await userReply.getByRole("button", { name: "Edit message" }).click();
+  await topicPanel.getByLabel("Edit message").fill("Revised topic follow-up");
+  await topicPanel.getByRole("button", { name: "Save and resend" }).click();
+
+  await expect(topicPanel).toContainText("Revised topic follow-up");
+  await expect(topicPanel).toContainText("Edited reply: Revised topic follow-up");
+  await expect(topicPanel).not.toContainText("Original topic follow-up");
+  await expect(topicPanel).not.toContainText("Old topic response should disappear.");
+  await expect(page.getByLabel("Topic replies")).toHaveCount(1);
+  await expect.poll(() => state.lastConversationMessageEditRequest?.surface).toBe("topic_reply");
+  await expect.poll(() => state.lastConversationMessageEditRequest?.messageId).toBe("msg_topic_edit_user");
+});
+
+test("latest channel branch prompt reruns inside the same branch lane", async ({ page }) => {
+  await useEnglishLocale(page);
+  const state = createBaseState({ approvalStatus: "expired" });
+  const branchId = "channel_branch_edit";
+  const rootThreadId = "thread_channel_branch_edit";
+  state.channelBranches = [{
+    id: branchId,
+    workspaceId: "workspace_default",
+    channelId: "channel_engineering",
+    name: "Implementation branch",
+    status: "active",
+    rootThreadId,
+    createdAt: "2026-07-12T03:27:00.000Z",
+    updatedAt: "2026-07-12T03:27:00.000Z",
+  }];
+  state.channelMessages = [{
+    id: "msg_branch_edit_source",
+    workspaceId: "workspace_default",
+    channelId: "channel_engineering",
+    threadId: rootThreadId,
+    kind: "message",
+    intent: "discuss",
+    authorType: "local-user",
+    authorId: "local-user",
+    body: "Original branch prompt",
+    mentions: [],
+    attachmentIds: [],
+    linkPreviewIds: [],
+    fileRefs: [],
+    status: "ready",
+    createdAt: "2026-07-12T03:27:01.000Z",
+    updatedAt: "2026-07-12T03:27:01.000Z",
+  }, {
+    id: "msg_branch_edit_old_reply",
+    workspaceId: "workspace_default",
+    channelId: "channel_engineering",
+    threadId: rootThreadId,
+    kind: "ai_reply",
+    intent: "discuss",
+    authorType: "ai-teammate",
+    authorId: "engineer",
+    body: "Old branch response should disappear.",
+    mentions: [],
+    attachmentIds: [],
+    linkPreviewIds: [],
+    fileRefs: [],
+    status: "ready",
+    createdAt: "2026-07-12T03:27:02.000Z",
+    updatedAt: "2026-07-12T03:27:02.000Z",
+  }];
+
+  await mockDaemon(page, state);
+  await page.goto("/");
+  const navigation = page.getByLabel("Ling Stack navigation");
+  await navigation.getByRole("button", { name: "Implementation branch" }).click();
+
+  const feed = page.getByLabel("Channel message feed");
+  const userRow = feed.locator(".channel-message-row.local-user");
+  await userRow.hover();
+  await userRow.getByRole("button", { name: "Edit message" }).click();
+  await feed.getByLabel("Edit message").fill("Revised branch prompt");
+  await feed.getByRole("button", { name: "Save and resend" }).click();
+
+  await expect(feed).toContainText("Revised branch prompt");
+  await expect(feed).toContainText("Edited reply: Revised branch prompt");
+  await expect(feed).not.toContainText("Original branch prompt");
+  await expect(feed).not.toContainText("Old branch response should disappear.");
+  await expect(navigation.locator(".sidebar-branch-row-shell.selected")).toContainText("Implementation branch");
+  await expect.poll(() => state.lastConversationMessageEditRequest?.surface).toBe("channel_branch");
+  await expect.poll(() => state.lastConversationMessageEditRequest?.messageId).toBe("msg_branch_edit_source");
 });
 
 test("channel message body renders safe markdown, highlighted code, folded logs, and structured diffs", async ({ page }) => {
@@ -3170,6 +3639,34 @@ test("channel message body renders safe markdown, highlighted code, folded logs,
       "Rich rendering probe <script>window.__ling_p5_xss = true</script>",
       "",
       `Long label probe: ${longMixedLabel}`,
+      "",
+      "## Shared rich blocks",
+      "",
+      "> Keep the conversation surface compact while preserving structured content.",
+      "",
+      "| Capability | State |",
+      "| :--- | ---: |",
+      "| Mermaid | Ready |",
+      "| Math | Ready |",
+      "",
+      "- [x] Parse GFM",
+      "- [ ] Finish reference previews",
+      "",
+      "Inline math: $E = mc^2$.",
+      "",
+      "$$",
+      "\\sum_{i=1}^{n} i = \\frac{n(n+1)}{2}",
+      "$$",
+      "",
+      "```mermaid",
+      "flowchart LR",
+      "  A[Plan] --> B[Implement]",
+      "  B --> C[Verify]",
+      "```",
+      "",
+      "```mermaid",
+      "this is not valid mermaid syntax ???",
+      "```",
       "",
       "```ts",
       "const answer = 42;",
@@ -3262,6 +3759,34 @@ test("channel message body renders safe markdown, highlighted code, folded logs,
   await expect(message).toContainText("<script>window.__ling_p5_xss = true</script>");
   await expect(message.locator("script")).toHaveCount(0);
   await expect.poll(() => page.evaluate(() => (window as unknown as { __ling_p5_xss?: boolean }).__ling_p5_xss === true)).toBe(false);
+  await expect(message.getByRole("heading", { name: "Shared rich blocks", level: 2 })).toBeVisible();
+  await expect(message.locator(".message-body-quote")).toContainText("preserving structured content");
+  const richTable = message.locator(".message-body-table");
+  await expect(richTable).toContainText("Capability");
+  await expect(richTable).toContainText("Mermaid");
+  await expect(message.locator(".message-body-task-item input[type=checkbox]")).toHaveCount(2);
+  await expect(message.locator(".message-inline-math .katex")).toBeVisible();
+  await expect(message.locator(".message-math-block .katex-display")).toBeVisible();
+  const deferredMermaidBlock = message.locator('.message-mermaid-block[data-render-status="deferred"]').filter({ hasText: "flowchart LR" });
+  await deferredMermaidBlock.scrollIntoViewIfNeeded();
+  const mermaidBlock = message.locator('.message-mermaid-block[data-render-status="rendered"]');
+  const mermaidSvg = mermaidBlock.locator(".message-mermaid-canvas svg");
+  await expect(mermaidSvg).toBeVisible();
+  await expect(mermaidSvg).toContainText("Plan");
+  const lightMermaidId = await mermaidSvg.getAttribute("id");
+  await page.emulateMedia({ colorScheme: "dark" });
+  await expect.poll(() => mermaidSvg.getAttribute("id")).not.toBe(lightMermaidId);
+  await expect(mermaidSvg).toContainText("Verify");
+  await page.emulateMedia({ colorScheme: "light" });
+  await mermaidBlock.hover();
+  await mermaidBlock.getByRole("button", { name: "Expand diagram" }).click();
+  const diagramDialog = page.getByRole("dialog", { name: "Diagram" });
+  await expect(diagramDialog.locator(".message-mermaid-expanded > svg")).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(diagramDialog).toHaveCount(0);
+  const invalidMermaidBlock = message.locator(".message-mermaid-block").filter({ hasText: "this is not valid mermaid syntax" });
+  await invalidMermaidBlock.scrollIntoViewIfNeeded();
+  await expect(invalidMermaidBlock.getByText("Diagram preview unavailable")).toBeVisible();
   const copyMessageButton = message.getByRole("button", { name: "Copy message" });
   await copyMessageButton.focus();
   await page.keyboard.press("Enter");
@@ -3375,11 +3900,21 @@ test("channel message body renders safe markdown, highlighted code, folded logs,
   const richLayout = await message.evaluate((element) => {
     const bounds = element.getBoundingClientRect();
     const overflowing = Array.from(element.querySelectorAll<HTMLElement>(".message-code-block, .message-diff-block, .message-body-renderer"))
-      .some((node) => node.scrollWidth > Math.ceil(node.clientWidth) + 1);
+      .filter((node) => node.scrollWidth > Math.ceil(node.clientWidth) + 1)
+      .map((node) => ({ className: node.className, clientWidth: node.clientWidth, scrollWidth: node.scrollWidth }));
     return { width: Math.round(bounds.width), overflowing };
   });
   expect(richLayout.width).toBeGreaterThan(300);
-  expect(richLayout.overflowing).toBe(false);
+  expect(richLayout.overflowing).toEqual([]);
+  for (const viewport of [{ width: 820, height: 900 }, { width: 390, height: 844 }]) {
+    await page.setViewportSize(viewport);
+    await mermaidBlock.scrollIntoViewIfNeeded();
+    const responsiveOverflow = await message.locator(".message-body-renderer").evaluate((element) => ({
+      clientWidth: element.clientWidth,
+      scrollWidth: element.scrollWidth,
+    }));
+    expect(responsiveOverflow.scrollWidth).toBeLessThanOrEqual(responsiveOverflow.clientWidth + 1);
+  }
   await maybeCaptureConversationScreenshots(page, "p9-long-labels", [
     { suffix: "narrow", width: 820, height: 900 },
     { suffix: "mobile", width: 390, height: 844 },
@@ -3415,7 +3950,15 @@ test("channel composer sends workspace file refs as native message payload", asy
       source: "composer",
     },
   ]);
-  await expect(page.getByLabel("Workspace file references").getByText("apps/web/src/features/workspace/WorkspaceClientView.tsx")).toBeVisible();
+  const references = page.getByLabel("References");
+  const fileReference = references.getByRole("button", { name: /WorkspaceClientView\.tsx/ });
+  await expect(fileReference).toBeVisible();
+  await fileReference.hover();
+  await expect(references.getByRole("tooltip")).toContainText("apps/web/src/features/workspace/WorkspaceClientView.tsx");
+  await fileReference.click();
+  const filesDock = page.locator(".channel-side-panel.right-dock");
+  await expect(filesDock).toHaveAttribute("aria-label", "Channel workspace dock");
+  await expect(filesDock).toContainText("WorkspaceClientView.tsx");
   await expect(page.locator(".channel-composer .composer-inline-token.file-reference")).toHaveCount(0);
 });
 
@@ -4349,6 +4892,14 @@ test("channel materialized PDF and DOCX inputs show simple chips and a natural L
   await expect(channelFeed.getByText("Summarize these attachments?")).toBeVisible();
   await expect(channelFeed.getByRole("link", { name: "risk-brief.pdf" })).toBeVisible();
   await expect(channelFeed.getByRole("link", { name: "acceptance.docx" })).toBeVisible();
+  await channelFeed.getByRole("button", { name: "Preview: risk-brief.pdf" }).click();
+  const pdfPreview = page.getByLabel("File preview");
+  await expect(pdfPreview).toContainText("mock preview for risk-brief.pdf");
+  await pdfPreview.getByRole("button", { name: "Close preview" }).click();
+  await channelFeed.getByRole("button", { name: "Preview: acceptance.docx" }).click();
+  const documentPreview = page.getByLabel("File preview");
+  await expect(documentPreview).toContainText("mock preview for acceptance.docx");
+  await documentPreview.getByRole("button", { name: "Close preview" }).click();
   await expect(channelFeed.getByText("我读到了 PDF 的 Q2 风险和 DOCX 的验收项")).toBeVisible();
   await expect(page.getByLabel("Pending message assets")).toHaveCount(0);
   await expect(channelFeed.getByText("metadata_only")).toHaveCount(0);
@@ -5756,17 +6307,12 @@ test("workflow context inspect details stay out of main feed expansion", async (
   const operationBubble = workCell.locator(".conversation-operation-bubble");
   await expect(operationBubble).toBeVisible();
   await expect(operationBubble.locator(".conversation-operation-shell-status")).toContainText("Processed");
+  await expect(operationBubble.locator(".conversation-operation-shell-summary")).toHaveCount(0);
   await expect(operationBubble.getByRole("button", { name: "Copy summary" })).toHaveCount(0);
   await expect(operationBubble).toHaveClass(/collapsed/);
   await expect(operationBubble.getByRole("button", { name: "Expand operation" })).toHaveCount(1);
   const packetSummary = feed.locator(".transcript-block-view.kind-workflow_packet_summary");
-  await expect(packetSummary).toBeVisible();
-  await expect(packetSummary).toContainText("Workflow packet summary");
-  await expect(packetSummary).toContainText("1 context · 2 output · 1 summary");
-  await packetSummary.locator(".transcript-block-view-head").click();
-  await expect(packetSummary).toContainText("Context packet");
-  await expect(packetSummary).toContainText("Output packet");
-  await expect(packetSummary).toContainText("Fan-in summary");
+  await expect(packetSummary).toHaveCount(0);
   await expect(workCell).not.toContainText("Context inspect workflow");
   await expect(workCell).not.toContainText("workflow_runtime_boundary");
   await expect(workCell).not.toContainText("old_verbose_log_tail");
@@ -5784,9 +6330,9 @@ test("workflow context inspect details stay out of main feed expansion", async (
   const engineerShellRow = activeStream.locator(".conversation-work-cell-row.shell").filter({ hasText: "Ran command" });
   await expect(engineerShellRow.locator(".conversation-work-cell-shell-card")).toHaveCount(0);
   await engineerShellRow.locator(".conversation-work-cell-row-main").click();
-  await expect(engineerShellRow.locator(".conversation-work-cell-row-detail")).toContainText("Run focused workflow UI test");
+  await expect(engineerShellRow.locator(".conversation-work-cell-row-detail")).not.toContainText("Run focused workflow UI test");
   await expect(engineerShellRow.locator(".conversation-work-cell-row-detail")).toContainText("$ pnpm --filter @ling-stack/web exec playwright test e2e/channel.spec.ts -g workflow");
-  await expect(engineerShellRow.locator(".conversation-work-cell-row-detail")).toContainText("Validate workflow detail rows.");
+  await expect(engineerShellRow.locator(".conversation-work-cell-row-detail")).not.toContainText("Validate workflow detail rows.");
 
   await workCell.locator(".conversation-work-cell-evidence-summary").click();
   await expect(workCell.getByLabel("Checks")).toContainText("Engineer: Implement inspect summary");
@@ -5811,14 +6357,15 @@ test("workflow context inspect details stay out of main feed expansion", async (
   await expect(evidenceRegion).toContainText("Edited workflow-progress.ts");
   await expect(evidenceRegion).toContainText("Ran command");
   await expect(evidenceRegion).toContainText("Handoff: Engineer -> Reviewer");
-  await expect(evidenceRegion).toContainText("Approval checkpoint: Resume workflow execution");
+  await expect(evidenceRegion).not.toContainText("Approval checkpoint: Resume workflow execution");
+  await expect(evidenceRegion).not.toContainText("Resume workflow execution");
   await expect(evidenceRegion).not.toContainText("execution_action_workflow_edit");
   await expect(evidenceRegion).not.toContainText("handoff_intent_context");
   await expect(evidenceRegion).not.toContainText("checkpoint_context_resume");
   await expect(evidenceRegion).not.toContainText("approval_context_checkpoint");
   const editActionRow = evidenceRegion.locator(".conversation-work-cell-row").filter({ hasText: "Edited workflow-progress.ts" });
   await editActionRow.locator(".conversation-work-cell-row-main").click();
-  await expect(editActionRow.locator(".conversation-work-cell-row-detail")).toContainText("Update workflow evidence projection");
+  await expect(editActionRow.locator(".conversation-work-cell-row-detail")).not.toContainText("Update workflow evidence projection");
   await expect(editActionRow.locator(".conversation-work-cell-row-detail")).toContainText("apps/web/src/lib/workflow-progress.ts");
   await expect(editActionRow.locator(".conversation-work-cell-row-detail")).toContainText("1 output recorded");
   await expect(editActionRow.locator(".conversation-work-cell-row-detail")).not.toContainText("artifact_context_inspect_file");
@@ -5827,16 +6374,10 @@ test("workflow context inspect details stay out of main feed expansion", async (
   await expect(handoffRow.locator(".conversation-work-cell-row-detail")).toContainText("Required input: Inspect the workflow evidence rows");
   await expect(handoffRow.locator(".conversation-work-cell-row-detail")).toContainText("Expected output: A reviewer verdict");
   await expect(handoffRow.locator(".conversation-work-cell-row-detail")).toContainText("Risk: Requires reviewer confirmation before shipping.");
-  const checkpointRow = evidenceRegion.locator(".conversation-work-cell-row").filter({ hasText: "Approval checkpoint: Resume workflow execution" });
-  await checkpointRow.locator(".conversation-work-cell-row-main").click();
-  await expect(checkpointRow.locator(".conversation-work-cell-row-detail")).toContainText("Action: bash");
-  await expect(checkpointRow.locator(".conversation-work-cell-row-detail")).toContainText("Resume handle: verified");
-  await expect(checkpointRow.locator(".conversation-work-cell-row-detail")).not.toContainText("runner_handle_context_secret");
-  await expect(checkpointRow.locator(".conversation-work-cell-row-detail")).not.toContainText("raw_resume_payload");
   const commandActionRow = evidenceRegion.locator(".conversation-work-cell-row.shell").filter({ hasText: "Ran command" });
   await expect(commandActionRow.locator(".conversation-work-cell-shell-card")).toHaveCount(0);
   await commandActionRow.locator(".conversation-work-cell-row-main").click();
-  await expect(commandActionRow.locator(".conversation-work-cell-row-detail")).toContainText("Run focused workflow UI test");
+  await expect(commandActionRow.locator(".conversation-work-cell-row-detail")).not.toContainText("Run focused workflow UI test");
   await expect(commandActionRow.locator(".conversation-work-cell-row-detail")).toContainText("$ pnpm --filter @ling-stack/web exec playwright test e2e/channel.spec.ts -g workflow");
   await maybeCaptureR32Screenshot(page, "workflow-action-details-expanded");
   expect(workflowEvidenceRequests).toHaveLength(1);
@@ -5940,6 +6481,106 @@ test("blocked workflow hides accepted proposal and leaves blocker report in defa
 
   await openChannelChatTools(page);
   await expect(feed.getByLabel("Task confirmation")).toContainText("Create README.md");
+});
+
+test("resolved approval-only workflow stays out of the conversation", async ({ page }) => {
+  await useEnglishLocale(page);
+  const state = createBaseState({ approvalStatus: "expired" });
+  state.channelMessages = [
+    {
+      id: "msg_approval_only_recovery",
+      workspaceId: "workspace_default",
+      channelId: "channel_engineering",
+      kind: "message",
+      intent: "discuss",
+      authorType: "local-user",
+      authorId: "tian",
+      body: "Review the high-risk shell command.",
+      mentions: [],
+      attachmentIds: [],
+      linkPreviewIds: [],
+      status: "ready",
+      createdAt: "2026-06-29T07:55:00.000Z",
+      updatedAt: "2026-06-29T07:55:00.000Z",
+    },
+  ];
+  state.channelExecutionProposals = [
+    {
+      id: "proposal_approval_only_recovery",
+      workspaceId: "workspace_default",
+      channelId: "channel_engineering",
+      sourceMessageId: "msg_approval_only_recovery",
+      proposedByTeammateId: "ling_agent",
+      title: "Review shell command",
+      prompt: "Review the high-risk shell command.",
+      assigneeTeammateId: "ling_agent",
+      acceptanceCriteria: ["The approval decision is recorded."],
+      collaborationSteps: [{ teammateId: "ling_agent", action: "coordinated", summary: "Request approval." }],
+      requiredTools: ["bash"],
+      status: "accepted",
+      linkedWorkflowId: "workflow_approval_only_recovery",
+      createdAt: "2026-06-29T07:55:01.000Z",
+      updatedAt: "2026-06-29T07:55:02.000Z",
+    },
+  ];
+  state.runs = [];
+  state.tasks = [];
+  state.channelWorkflows = [
+    {
+      id: "workflow_approval_only_recovery",
+      workspaceId: "workspace_default",
+      channelId: "channel_engineering",
+      title: "Review shell command",
+      objective: "Review the high-risk shell command.",
+      status: "succeeded",
+      createdBy: "local-user",
+      createdAt: "2026-06-29T07:55:02.527Z",
+      updatedAt: "2026-07-11T05:29:19.652Z",
+    },
+  ];
+  state.channelWorkflowSteps = [
+    {
+      id: "workflow_step_approval_only_recovery",
+      workspaceId: "workspace_default",
+      channelId: "channel_engineering",
+      workflowId: "workflow_approval_only_recovery",
+      position: 1,
+      title: "Review high-risk shell command",
+      prompt: "Review the high-risk shell command.",
+      toParticipantId: "ling_agent",
+      toParticipantLabel: "Ling Agent",
+      status: "succeeded",
+      resultSummary: "Recovered completed approval-only workflow step.",
+      createdAt: "2026-06-29T07:55:02.620Z",
+      updatedAt: "2026-07-11T05:29:19.652Z",
+    },
+  ];
+  state.approvals = [
+    {
+      id: "approval_approval_only_recovery",
+      workflowStepId: "workflow_step_approval_only_recovery",
+      channelId: "channel_engineering",
+      actionType: "workflow_step",
+      risk: "high",
+      title: "Review high-risk shell command",
+      description: "Review the high-risk shell command.",
+      payload: { type: "workflow_step" },
+      status: "approved",
+      createdAt: "2026-06-29T07:55:02.000Z",
+      resolvedAt: "2026-06-29T08:32:58.247Z",
+      resolvedBy: "local-user",
+    },
+  ];
+
+  await mockDaemon(page, state);
+  await page.goto("/");
+  await openEngineeringChannel(page);
+
+  const feed = page.getByLabel("Channel message feed");
+  await expect(feed.getByText("Review the high-risk shell command.", { exact: true })).toBeVisible();
+  await expect(feed.locator(".conversation-work-cell")).toHaveCount(0);
+  await expect(feed).not.toContainText("285h 34m");
+  await expect(feed).not.toContainText("Recovered completed approval-only workflow step.");
 });
 
 test("progress popover owns workflow status while the right drawer avoids duplicate progress cards", async ({ page }) => {
@@ -6166,7 +6807,7 @@ test("progress popover owns workflow status while the right drawer avoids duplic
   await expect(panel).toHaveAttribute("aria-label", "Channel workspace dock");
   await expect(panel).toContainText("Workspace tools");
   await expect(panel).toContainText("Review");
-  await expect(panel).toContainText("Evidence");
+  await expect(panel.getByRole("button", { name: "Evidence", exact: true })).toHaveCount(0);
   await expect(panel).toContainText("Files");
   await expect(panel).not.toContainText("Settings");
   await expect(panel.locator(".collaboration-task-card")).toHaveCount(0);
@@ -6420,28 +7061,24 @@ test("completed multi-agent transcript reveals all agent process rows from the p
   await expect(assistantTranscript).toHaveCount(1);
   await expect(assistantTranscript).toContainText("分析登录页 smoke 的目标范围，仅输出结论");
   await expect(assistantTranscript).toContainText("协作队友：产品策略、QA");
-  const expertSummary = assistantTranscript.locator(".channel-team-experts-summary");
-  await expect(expertSummary).toContainText("2 已完成");
+  await expect(assistantTranscript.locator(".channel-team-experts-summary")).toHaveCount(0);
   const transcriptArtifacts = assistantTranscript.locator(".conversation-turn-artifacts");
   await expect(transcriptArtifacts).toContainText("login-smoke-scope.md");
   await expect.poll(() =>
     assistantTranscript.locator(".conversation-turn-assistant-transcript").evaluate((element) => {
       const childClasses = Array.from(element.children).map((child) => child.className.toString());
       const terminalIndex = childClasses.findIndex((className) => className.includes("conversation-turn-assistant-copy terminal"));
-      const expertIndex = childClasses.findIndex((className) => className.includes("channel-team-experts-summary"));
       const artifactsIndex = childClasses.findIndex((className) => className.includes("conversation-turn-artifacts"));
       const actionsIndex = childClasses.findIndex((className) => className.includes("channel-message-row-footer-stack"));
       return {
         actionsIsLast: actionsIndex === childClasses.length - 1,
-        terminalBeforeExpert: terminalIndex >= 0 && expertIndex > terminalIndex,
-        expertBeforeArtifacts: artifactsIndex > expertIndex,
+        terminalBeforeArtifacts: terminalIndex >= 0 && artifactsIndex > terminalIndex,
         artifactsBeforeActions: actionsIndex > artifactsIndex,
       };
     }),
   ).toEqual({
     actionsIsLast: true,
-    terminalBeforeExpert: true,
-    expertBeforeArtifacts: true,
+    terminalBeforeArtifacts: true,
     artifactsBeforeActions: true,
   });
   await expect(feed).not.toContainText("确认需求：");
@@ -6471,7 +7108,7 @@ test("completed multi-agent transcript reveals all agent process rows from the p
   await expect(productSpan.locator(".conversation-work-cell-agent-span-detail")).toContainText("已读取 login-smoke-scope.md");
   const productActionRow = productSpan.locator(".conversation-work-cell-row").filter({ hasText: "已读取 login-smoke-scope.md" });
   await productActionRow.locator(".conversation-work-cell-row-main").click();
-  await expect(productActionRow.locator(".conversation-work-cell-row-detail")).toContainText("读取 smoke 范围笔记");
+  await expect(productActionRow.locator(".conversation-work-cell-row-detail")).not.toContainText("读取 smoke 范围笔记");
   await expect(productActionRow.locator(".conversation-work-cell-row-detail")).toContainText("docs/login-smoke-scope.md");
 
   const qaSpan = workCell.locator(".conversation-work-cell-agent-span").filter({ hasText: "QA" });
@@ -6481,7 +7118,7 @@ test("completed multi-agent transcript reveals all agent process rows from the p
   await expect(qaSpan.locator(".conversation-work-cell-agent-span-detail")).toContainText("已运行命令");
   const qaActionRow = qaSpan.locator(".conversation-work-cell-row").filter({ hasText: "已运行命令" });
   await qaActionRow.locator(".conversation-work-cell-row-main").click();
-  await expect(qaActionRow.locator(".conversation-work-cell-row-detail")).toContainText("运行 smoke 验收检查");
+  await expect(qaActionRow.locator(".conversation-work-cell-row-detail")).not.toContainText("运行 smoke 验收检查");
   await expect(qaActionRow.locator(".conversation-work-cell-row-detail")).toContainText("$ pnpm --filter @ling-stack/web test:e2e -- login-smoke");
   await maybeCaptureR32Screenshot(page, "serial-multi-agent-expanded");
 });
@@ -6996,6 +7633,19 @@ test("channel activity keeps the composer visible while the message feed scrolls
     createdAt: "2026-05-25T00:40:00.000Z",
     updatedAt: "2026-05-25T00:40:00.000Z",
   });
+  state.channels.push({
+    id: "channel_general",
+    workspaceId: "workspace_default",
+    name: "General",
+    status: "active",
+    boundPath: cwd,
+    defaultTeammateId: "engineer",
+    autoReplyMode: "mentions_only",
+    allowedTools: ["read", "grep", "find", "ls"],
+    runtimePolicy: defaultRuntimePolicy,
+    createdAt: "2026-05-25T00:41:00.000Z",
+    updatedAt: "2026-05-25T00:41:00.000Z",
+  });
   await mockDaemon(page, state);
   await page.goto("/");
   await openEngineeringChannel(page);
@@ -7003,11 +7653,9 @@ test("channel activity keeps the composer visible while the message feed scrolls
   await expect(page.getByLabel("Channel composer")).toBeVisible();
   await expect(page.locator("article.task-detail")).toHaveCount(0);
   await expect(page.locator('[aria-label="Channel activity"] > .panel-title')).toHaveCount(0);
+  const messageFeed = page.locator(".activity-shell .message-feed");
   const scrollState = await readScrollState(page, ".activity-shell .message-feed");
   expect(scrollState.max).toBeGreaterThan(0);
-  await page.locator(".activity-shell .message-feed").evaluate((element) => {
-    element.scrollTop = element.scrollHeight;
-  });
   await expect.poll(() => readScrollState(page, ".activity-shell .message-feed")).toMatchObject({ atBottom: true });
   const latestButton = page.getByRole("button", { name: "Jump to latest message" });
   await expect(latestButton).toHaveCount(0);
@@ -7032,11 +7680,13 @@ test("channel activity keeps the composer visible while the message feed scrolls
   const composerBox = await page.getByLabel("Channel composer").boundingBox();
   expect(feedBox?.height ?? 0).toBeGreaterThan(180);
   expect((composerBox?.y ?? 0) + (composerBox?.height ?? 0)).toBeGreaterThan((panelBox?.y ?? 0) + (panelBox?.height ?? 0) - 36);
-  await page.locator(".activity-shell .message-feed").evaluate((element) => {
-    element.dispatchEvent(new WheelEvent("wheel", { bubbles: true, deltaY: -120 }));
+  await messageFeed.hover();
+  await page.mouse.wheel(0, -1_200);
+  await messageFeed.evaluate((element) => {
     element.scrollTop = 0;
     element.dispatchEvent(new Event("scroll"));
   });
+  await expect.poll(() => readScrollState(page, ".activity-shell .message-feed")).toMatchObject({ atBottom: false });
   await expect(latestButton).toBeVisible();
   await expect.poll(async () => {
     const latestButtonBox = await latestButton.boundingBox();
@@ -7045,6 +7695,19 @@ test("channel activity keeps the composer visible while the message feed scrolls
       height: Math.round(latestButtonBox?.height ?? 0),
     };
   }).toMatchObject({ width: 42, height: 42 });
+  await page.getByRole("button", { name: "General", exact: true }).click();
+  await page.getByRole("button", { name: "Engineering", exact: true }).click();
+  await expect.poll(() => readScrollState(page, ".activity-shell .message-feed")).toMatchObject({ atBottom: true });
+  await expect(latestButton).toHaveCount(0);
+  await page.waitForTimeout(1_100);
+  await messageFeed.hover();
+  await page.mouse.wheel(0, -1_200);
+  await messageFeed.evaluate((element) => {
+    element.scrollTop = 0;
+    element.dispatchEvent(new Event("scroll"));
+  });
+  await expect.poll(() => readScrollState(page, ".activity-shell .message-feed")).toMatchObject({ atBottom: false });
+  await expect(latestButton).toBeVisible();
   state.channelMessages.push({
     id: "msg_scroll_background_failed",
     workspaceId: "workspace_default",
@@ -7061,10 +7724,9 @@ test("channel activity keeps the composer visible while the message feed scrolls
     createdAt: "2026-05-25T01:00:00.000Z",
     updatedAt: "2026-05-25T01:00:00.000Z",
   });
-  const backgroundToast = page.getByRole("button", { name: /Background work needs attention/ });
-  await expect(backgroundToast).toBeVisible();
-  await expect(backgroundToast).toContainText("Jump to latest");
-  await backgroundToast.click();
+  await expect(page.getByRole("button", { name: /Background work needs attention/ })).toHaveCount(0);
+  await expect(latestButton).toBeVisible();
+  await latestButton.click();
   await expect.poll(() => readScrollState(page, ".activity-shell .message-feed")).toMatchObject({ atBottom: true });
   await expect(latestButton).toHaveCount(0);
   await expect(page.getByLabel("Channel composer")).toBeVisible();
@@ -7794,7 +8456,31 @@ test("local channel work-cell demo fixture renders a realistic multi-agent opera
     localStorage.setItem("ling-stack.workCellDemo", "true");
   });
   const state = createBaseState({ approvalStatus: "expired" });
-  state.channelMessages = [];
+  state.channelMessages = [{
+    id: "message_after_work_cell_demo",
+    workspaceId: "workspace_default",
+    channelId: "channel_engineering",
+    kind: "message",
+    intent: "discuss",
+    authorType: "local-user",
+    authorId: "local-user",
+    body: [
+      "继续检查历史会话里的文件操作。",
+      "这一条测试消息让上面的产物记录成为历史内容。",
+      "菜单向下展开时仍然必须覆盖后续会话行。",
+      "Visual Studio Code、TextEdit 和下载入口都应该可以点击。",
+      "虚拟列表不能拦截弹层的指针事件。",
+      "滚动后菜单也不能改变消息流高度。",
+      "完成验证后继续保留简约的会话布局。",
+    ].join("\n"),
+    mentions: [],
+    attachmentIds: [],
+    linkPreviewIds: [],
+    fileRefs: [],
+    status: "ready",
+    createdAt: "2026-07-10T09:15:00.000Z",
+    updatedAt: "2026-07-10T09:15:00.000Z",
+  }];
   state.tasks = [];
   state.runs = [];
   state.approvals = [];
@@ -7803,77 +8489,253 @@ test("local channel work-cell demo fixture renders a realistic multi-agent opera
   state.channelWorkflowSteps = [];
   state.executionActions = [];
   state.artifactsByRun = {};
+  state.aiTeammates = [
+    createMockTeammate({ id: "ling_agent", templateId: "ling_agent", kind: "system_teammate", systemRole: "ling_agent", roleKey: "custom", displayName: "Ling Agent", avatarTone: "violet" }),
+    createMockTeammate({ id: "teammate_builtin_architect", templateId: "architect", roleKey: "architect", displayName: "Ling Architect" }),
+    createMockTeammate({ id: "teammate_builtin_designer", templateId: "designer", roleKey: "designer", displayName: "Ling Designer" }),
+    createMockTeammate({ id: "teammate_builtin_engineer", templateId: "engineer", roleKey: "engineer", displayName: "Ling Engineer" }),
+    createMockTeammate({ id: "teammate_builtin_qa", templateId: "qa", roleKey: "qa", displayName: "Ling QA" }),
+  ];
 
   await mockDaemon(page, state);
+  let demoRecoveryState: "applied" | "undone" = "applied";
+  await page.route(/\/(?:runs|workflows)\/demo_work_cell_[^/]+\/workspace-changes(?:\/(?:undo|reapply))?(?:\?.*)?$/, async (route) => {
+    const url = new URL(route.request().url());
+    if (url.pathname.endsWith("/undo")) {
+      demoRecoveryState = "undone";
+    } else if (url.pathname.endsWith("/reapply")) {
+      demoRecoveryState = "applied";
+    }
+    const recoveryId = url.pathname.split("/")[2] ?? "demo_work_cell_recovery";
+    const workflowRecovery = url.pathname.startsWith("/workflows/");
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        cwd: url.searchParams.get("cwd") ?? "/repo",
+        ...(workflowRecovery ? { workflowId: recoveryId, runIds: ["demo_work_cell_run_engineer", "demo_work_cell_run_qa"] } : { runId: recoveryId }),
+        state: demoRecoveryState,
+        canUndo: demoRecoveryState === "applied",
+        canReapply: demoRecoveryState === "undone",
+        files: [],
+        summary: {
+          fileCount: 5,
+          addCount: 0,
+          updateCount: 5,
+          deleteCount: 0,
+          moveCount: 0,
+          addedLines: 15,
+          removedLines: 4,
+        },
+        updatedAt: "2026-07-13T00:00:00.000Z",
+      }),
+    });
+  });
+  page.on("dialog", (dialog) => void dialog.accept());
+  await page.route(/\/channels\/channel_engineering\/protocol(?:\?.*)?$/, async (route) => {
+    await new Promise((resolve) => setTimeout(resolve, 350));
+    await route.fallback();
+  });
   await page.goto("/");
   await openEngineeringChannel(page);
 
+  await expect.poll(() => readScrollState(page, ".activity-shell .message-feed")).toMatchObject({ atBottom: true });
+  await expect(page.getByRole("button", { name: "Jump to latest message" })).toHaveCount(0);
+
   const feed = page.locator(".message-feed");
+  await expect(feed).toContainText("讨论一下：多 Agent 讨论问题时");
+  const discussionReplies = feed.locator(".channel-message-row.ai-teammate").filter({ hasText: /讨论阶段应该保留|普通会话行最清晰|不创建 workflow|限制可见参与人数/u });
+  await expect(discussionReplies).toHaveCount(4);
+  for (const name of ["Ling Architect", "Ling Designer", "Ling Engineer", "Ling QA"]) {
+    const reply = discussionReplies.filter({ has: page.locator("strong", { hasText: name }) });
+    await expect(reply).toHaveCount(1);
+    await expect(reply.locator(".teammate-avatar-image.compact")).toHaveCount(1);
+    await expect(reply).not.toContainText("已处理");
+  }
+  await expect(discussionReplies.locator(".conversation-work-cell")).toHaveCount(0);
+  await expect(discussionReplies.locator(".terminal-report-block")).toHaveCount(0);
   const demoTurn = feed.locator(".conversation-turn").filter({ hasText: "把频道里的多 agent 操作记录按我们讨论的最终效果接进去" });
   await expect(demoTurn).toHaveCount(1);
+  const sourceMessage = demoTurn.locator(".channel-message-row.local-user");
+  await expect(sourceMessage).toHaveCount(1);
+  const sourceMessageSpacing = await sourceMessage.evaluate((element) => {
+    const paragraph = element.querySelector<HTMLElement>(".message-body-paragraph");
+    const avatar = element.querySelector<HTMLElement>(":scope > .user-profile-avatar, :scope > .avatar-initial");
+    const shell = element.querySelector<HTMLElement>(".message-body-shell");
+    if (!paragraph || !avatar || !shell) {
+      return null;
+    }
+    return {
+      textToAvatar: Math.round(avatar.getBoundingClientRect().left - paragraph.getBoundingClientRect().right),
+      paragraphPaddingRight: getComputedStyle(paragraph).paddingRight,
+      shellPaddingRight: getComputedStyle(shell).paddingRight,
+    };
+  });
+  expect(sourceMessageSpacing).not.toBeNull();
+  expect(sourceMessageSpacing?.textToAvatar).toBeLessThanOrEqual(24);
+  expect(sourceMessageSpacing?.paragraphPaddingRight).toBe("0px");
+  expect(sourceMessageSpacing?.shellPaddingRight).toBe("0px");
   const assistantTranscript = demoTurn.locator(".conversation-turn-assistant-row");
+  await expect(assistantTranscript.locator(":scope > .teammate-avatar-image-default")).toHaveAttribute("src", "/avatars/teammates/ling-agent.png");
+  await expect(assistantTranscript.locator(":scope > .avatar-initial")).toHaveCount(0);
   const workCell = assistantTranscript.locator(".conversation-work-cell").first();
   await expect(workCell).toBeVisible();
+  const operationWidth = await assistantTranscript.locator(".conversation-turn-operation").evaluate((element) => Math.round(element.getBoundingClientRect().width));
+  expect(operationWidth).toBeGreaterThan(680);
+  await expect.poll(async () => Math.round((await workCell.boundingBox())?.width ?? 0)).toBe(operationWidth);
   await expect(workCell).toHaveAttribute("data-operation-source", "workflow");
   await expect(workCell.locator(".conversation-operation-shell-head")).toHaveAttribute("aria-expanded", "false");
-  await expect(workCell).toContainText("主要任务已完成");
+  await expect(workCell.locator(".terminal-report-block")).toHaveCount(0);
+  const terminalReport = assistantTranscript.locator(".terminal-report-block");
+  await expect(terminalReport).toBeVisible();
+  await expect(terminalReport).toContainText("多 Agent 操作记录已接入频道会话");
+  await expect(terminalReport).toContainText("Architect");
+  await expect(terminalReport).toContainText("Designer");
+  await expect(terminalReport).toContainText("Engineer");
+  await expect(terminalReport).toContainText("QA");
+  await expect(terminalReport.locator(".terminal-report-participants .terminal-report-participant-avatar .teammate-avatar-image-default")).toHaveCount(4);
   await expect(workCell).not.toContainText("正在思考");
   await expect(workCell).not.toContainText("Ling runtime");
   const terminalSummary = assistantTranscript.locator(".conversation-turn-assistant-copy.terminal");
-  await expect(terminalSummary).toContainText("主要任务已完成");
-  await expect(terminalSummary).not.toContainText("结果：");
-  await expect(terminalSummary).not.toContainText("频道 work-cell 操作记录样例」。");
-  const messageEvidence = assistantTranscript.getByRole("region", { name: "消息证据" });
-  const memoryDisclosure = messageEvidence.locator(".conversation-evidence-toggle");
-  await expect(memoryDisclosure).toContainText("已使用 1 条记忆");
-  await expect(memoryDisclosure).toContainText("07/10");
-  await memoryDisclosure.click();
-  const memoryCitation = messageEvidence.locator(".used-memory-summary.inline");
-  await expect(memoryCitation).toContainText("完成态引用展示规则");
-  await expect(memoryCitation).not.toContainText("已使用 1 条记忆");
-  await expect(messageEvidence.getByText("记忆", { exact: true })).toHaveCount(0);
-  await expect(messageEvidence.getByText("已使用 1 条记忆", { exact: true })).toHaveCount(1);
-  await expect(messageEvidence.locator(".conversation-evidence-section-flat")).toHaveCSS("border-top-width", "0px");
+  await expect(terminalSummary).toHaveCount(0);
+  await expect(assistantTranscript).not.toContainText("完成：「频道 work-cell 操作记录样例」");
+  const terminalReportSummary = terminalReport.locator(".terminal-report-summary");
+  await expect(terminalReportSummary).not.toHaveAttribute("aria-expanded");
+  await expect(terminalReport.locator(".terminal-report-toggle")).toHaveCount(0);
+  await expect(terminalReport).toContainText("重构操作记录展示");
+  await expect(terminalReport).toContainText("Web typecheck");
+  await expect(terminalReport).toContainText("确认 workflow、run、action 和 artifact 的会话投影边界");
+  await expect(terminalReport.getByRole("button", { name: "ConversationWorkCell.tsx", exact: true })).toBeVisible();
+  await expect(terminalReport.getByRole("button", { name: "components.css", exact: true })).toBeVisible();
+  await expect(terminalReport.getByRole("button", { name: "conversation-work-cell-operation-records.md", exact: true })).toBeVisible();
+  await expect(terminalReport.locator('.terminal-report-file-type-icon[data-file-kind="react"]')).toBeVisible();
+  await expect(terminalReport.locator('.terminal-report-file-type-icon[data-file-kind="css"]')).toBeVisible();
+  await expect(terminalReport.locator('.terminal-report-file-type-icon[data-file-kind="markdown"]')).toBeVisible();
+  await expect(terminalReport.locator(".terminal-report-participant-copy > strong").first()).toHaveCSS("color", "rgb(37, 99, 235)");
   const teamSummary = assistantTranscript.locator(".channel-team-experts-summary");
-  await expect(teamSummary).toContainText("4 已完成");
-  await teamSummary.locator(".channel-team-experts-summary-toggle").click();
-  const qaParticipationSummary = teamSummary.locator(".channel-team-experts-summary-entry").filter({ hasText: "QA" });
-  await expect(qaParticipationSummary.locator(".channel-team-experts-summary-entry-summary")).toContainText(
-    '已运行命令: $ corepack pnpm --filter @ling-stack/web exec playwright test apps/web/e2e/channel.spec.ts -g "work cell"',
-  );
+  await expect(teamSummary).toHaveCount(0);
   const transcriptArtifacts = assistantTranscript.locator(".conversation-turn-artifacts");
   const artifactRows = transcriptArtifacts.locator(".conversation-work-cell-artifact-row");
-  await expect(artifactRows).toHaveCount(1);
-  await expect(artifactRows).toContainText("conversation-work-cell-operation-records.md");
-  await expect(artifactRows).not.toContainText("channel-work-cell-e2e.log");
-  await expect(artifactRows).not.toContainText(["ConversationWorkCell.tsx", "components.css"]);
+  await expect(artifactRows).toHaveCount(2);
+  const artifactSurfaceWidth = await transcriptArtifacts.evaluate((element) => Math.round(element.getBoundingClientRect().width));
+  expect(artifactSurfaceWidth).toBeGreaterThan(680);
+  await expect.poll(async () => Math.round((await artifactRows.first().boundingBox())?.width ?? 0)).toBe(artifactSurfaceWidth);
+  const docArtifactRow = artifactRows.filter({ hasText: "conversation-work-cell-operation-records.md" });
+  await expect(docArtifactRow).toHaveCount(1);
+  await expect(artifactRows.filter({ hasText: "ConversationWorkCell.tsx" })).toHaveCount(1);
+  await expect(transcriptArtifacts.getByRole("button", { name: "打开方式" })).toHaveCount(2);
+  await docArtifactRow.evaluate((element) => element.scrollIntoView({ block: "end" }));
+  const openOptionsRequest = page.waitForRequest((request) => {
+    const url = new URL(request.url());
+    return url.pathname === "/workspace-files/open-options" &&
+      url.searchParams.get("path") === "docs/design/conversation-work-cell-operation-records.md";
+  });
+  const openWithTrigger = docArtifactRow.getByRole("button", { name: "打开方式" });
+  const feedScrollHeightBeforeOpen = await feed.evaluate((element) => element.scrollHeight);
+  await openWithTrigger.click();
+  await openOptionsRequest;
+  const openMenu = docArtifactRow.locator(".workspace-file-open-popover");
+  await expect(openMenu).toContainText("Visual Studio Code");
+  await expect(openMenu).toContainText("TextEdit");
+  await expect(openMenu).not.toContainText("Default app");
+  const vscodeOpenIcon = openMenu.getByRole("button", { name: "Visual Studio Code", exact: true }).locator(".workspace-file-open-target-icon > img");
+  const textEditOpenIcon = openMenu.getByRole("button", { name: "TextEdit", exact: true }).locator(".workspace-file-open-target-icon > img");
+  await expect(vscodeOpenIcon).toHaveAttribute("src", /\/workspace-files\/open-icons\/vscode\?/u);
+  await expect(textEditOpenIcon).toHaveAttribute("src", /\/workspace-files\/open-icons\/textedit\?/u);
+  await expect.poll(() => vscodeOpenIcon.evaluate((image) => image instanceof HTMLImageElement ? image.naturalWidth : 0)).toBeGreaterThan(0);
+  await expect.poll(() => textEditOpenIcon.evaluate((image) => image instanceof HTMLImageElement ? image.naturalWidth : 0)).toBeGreaterThan(0);
+  await expect(openMenu.locator(".workspace-file-open-target-icon > svg")).toHaveCount(2);
+  await expect(openMenu.locator(".workspace-file-open-target-icon > svg").first()).toBeVisible();
+  const [openWithTriggerBox, openMenuBox] = await Promise.all([
+    openWithTrigger.boundingBox(),
+    openMenu.boundingBox(),
+  ]);
+  expect(openWithTriggerBox).not.toBeNull();
+  expect(openMenuBox).not.toBeNull();
+  expect(openMenuBox!.y + openMenuBox!.height).toBeLessThanOrEqual(openWithTriggerBox!.y - 4);
+  expect(await feed.evaluate((element) => element.scrollHeight)).toBe(feedScrollHeightBeforeOpen);
+  await openWithTrigger.click();
+  await docArtifactRow.evaluate((element) => {
+    const scrollOwner = element.closest<HTMLElement>(".message-feed");
+    if (!scrollOwner) {
+      throw new Error("Message feed scroll owner is missing.");
+    }
+    scrollOwner.scrollTop += element.getBoundingClientRect().top - scrollOwner.getBoundingClientRect().top - 48;
+  });
+  await expect.poll(async () => {
+    const [feedBox, triggerBox] = await Promise.all([feed.boundingBox(), openWithTrigger.boundingBox()]);
+    return feedBox && triggerBox ? Math.round(triggerBox.y - feedBox.y) : -1;
+  }).toBeLessThan(180);
+  await openWithTrigger.click();
+  const [downwardTriggerBox, downwardMenuBox] = await Promise.all([
+    openWithTrigger.boundingBox(),
+    openMenu.boundingBox(),
+  ]);
+  expect(downwardTriggerBox).not.toBeNull();
+  expect(downwardMenuBox).not.toBeNull();
+  expect(downwardMenuBox!.y).toBeGreaterThanOrEqual(downwardTriggerBox!.y + downwardTriggerBox!.height + 4);
+  const openWorkspaceRequest = page.waitForRequest((request) =>
+    request.method() === "POST" && new URL(request.url()).pathname === "/workspace-files/open"
+  );
+  await openMenu.getByRole("button", { name: "TextEdit", exact: true }).click();
+  await openWorkspaceRequest;
+  await expect(openMenu).toHaveCount(0);
+  await expect(transcriptArtifacts).not.toContainText("channel-work-cell-e2e.log");
   const changedGroup = transcriptArtifacts.locator(".conversation-work-cell-change-group");
+  await expect.poll(async () => Math.round((await changedGroup.boundingBox())?.width ?? 0)).toBe(artifactSurfaceWidth);
   const changedSummary = changedGroup.locator(".conversation-work-cell-change-summary");
   await expect(changedSummary).toContainText("已编辑 5 个文件");
-  await expect(changedSummary.locator(".conversation-work-cell-change-stat .add")).toHaveText("+16");
+  await expect(changedSummary.locator(".conversation-work-cell-change-stat .add")).toHaveText("+15");
   await expect(changedSummary.locator(".conversation-work-cell-change-stat .delete")).toHaveText("-4");
   await expect(changedSummary.locator(":scope > svg")).toHaveCount(0);
   await expect(changedSummary).not.toHaveAttribute("aria-expanded");
+  const undoButton = changedSummary.getByRole("button", { name: "撤销", exact: true });
+  await expect(undoButton).toBeEnabled();
+  const undoRequest = page.waitForRequest((request) =>
+    request.method() === "POST" && new URL(request.url()).pathname.startsWith("/workflows/") &&
+      new URL(request.url()).pathname.endsWith("/workspace-changes/undo")
+  );
+  await undoButton.click();
+  await undoRequest;
+  const reapplyButton = changedSummary.getByRole("button", { name: "重新应用", exact: true });
+  await expect(reapplyButton).toBeEnabled();
+  const reapplyRequest = page.waitForRequest((request) =>
+    request.method() === "POST" && new URL(request.url()).pathname.startsWith("/workflows/") &&
+      new URL(request.url()).pathname.endsWith("/workspace-changes/reapply")
+  );
+  await reapplyButton.click();
+  await reapplyRequest;
+  await expect(undoButton).toBeEnabled();
+  await expect(changedSummary.getByRole("button", { name: "审核", exact: true })).toBeVisible();
+  const changedFilesList = changedGroup.locator(".conversation-work-cell-change-files");
+  const firstChangedFile = changedFilesList.locator(".conversation-work-cell-change-file").first();
+  const [changedFilesListBox, firstChangedFileBox, firstChangedPathBox] = await Promise.all([
+    changedFilesList.boundingBox(),
+    firstChangedFile.boundingBox(),
+    firstChangedFile.locator("code").boundingBox(),
+  ]);
+  expect(changedFilesListBox).not.toBeNull();
+  expect(firstChangedFileBox).not.toBeNull();
+  expect(firstChangedPathBox).not.toBeNull();
+  expect(Math.round(firstChangedFileBox!.width)).toBe(Math.round(changedFilesListBox!.width));
+  expect(Math.round(firstChangedPathBox!.x - firstChangedFileBox!.x)).toBeLessThanOrEqual(16);
   await expect(transcriptArtifacts.locator(".conversation-work-cell-artifacts").locator(":scope > *").last()).toHaveClass(/conversation-work-cell-change-group/);
   await expect.poll(() =>
     assistantTranscript.locator(".conversation-turn-assistant-transcript").evaluate((element) => {
       const childClasses = Array.from(element.children).map((child) => child.className.toString());
       const operationIndex = childClasses.findIndex((className) => className.includes("conversation-turn-operation"));
-      const terminalIndex = childClasses.findIndex((className) => className.includes("conversation-turn-assistant-copy terminal"));
-      const teamIndex = childClasses.findIndex((className) => className.includes("channel-team-experts-summary"));
+      const reportIndex = childClasses.findIndex((className) => className.includes("terminal-report-block"));
       const artifactsIndex = childClasses.findIndex((className) => className.includes("conversation-turn-artifacts"));
       const actionsIndex = childClasses.findIndex((className) => className.includes("channel-message-row-footer-stack"));
       return {
-        operationBeforeTerminal: operationIndex >= 0 && terminalIndex > operationIndex,
-        terminalBeforeTeam: teamIndex > terminalIndex,
-        teamBeforeArtifacts: artifactsIndex > teamIndex,
+        operationBeforeReport: operationIndex >= 0 && reportIndex > operationIndex,
+        reportBeforeArtifacts: artifactsIndex > reportIndex,
         artifactsBeforeActions: actionsIndex > artifactsIndex,
       };
     }),
   ).toEqual({
-    operationBeforeTerminal: true,
-    terminalBeforeTeam: true,
-    teamBeforeArtifacts: true,
+    operationBeforeReport: true,
+    reportBeforeArtifacts: true,
     artifactsBeforeActions: true,
   });
 
@@ -7881,12 +8743,12 @@ test("local channel work-cell demo fixture renders a realistic multi-agent opera
   await expect(workCell.locator(".conversation-work-cell-agent-span")).toHaveCount(4);
   await expect(workCell.locator(".conversation-work-cell-artifact-row")).toHaveCount(0);
   const workCellReferences = workCell.locator(".conversation-work-cell-evidence-summary");
-  await expect(workCellReferences).toHaveText("3 个引用");
+  await expect(workCellReferences).toContainText("引用");
   await expect(workCellReferences).not.toContainText("变更");
   await expect(workCellReferences).not.toContainText("检查");
   await workCellReferences.click();
   await expect(workCell.locator(".conversation-work-cell-group")).toHaveCount(0);
-  await expect(workCell.locator(".conversation-work-cell-evidence-links > *")).toHaveCount(3);
+  await expect(workCell.locator(".conversation-work-cell-evidence-links > *")).not.toHaveCount(0);
   await workCellReferences.click();
   await expect(workCell).toContainText("Architect");
   await expect(workCell).toContainText("Designer");
@@ -7899,6 +8761,7 @@ test("local channel work-cell demo fixture renders a realistic multi-agent opera
   await expect(engineerSpan.locator(".conversation-work-cell-agent-span-toggle")).toHaveCount(0);
   await expect(engineerSpan.locator("button.conversation-work-cell-agent-span-head")).toHaveCount(0);
   const engineerDetail = engineerSpan.locator(".conversation-work-cell-agent-span-detail");
+  await expect(engineerDetail).toHaveCSS("padding-left", "0px");
   await expect(engineerDetail).toContainText("完成频道 work-cell 操作记录投影");
   await expect(engineerDetail).toContainText("主要任务已完成");
   await expect(engineerDetail).toContainText("先把 agent 内部工作流拆成可扫描的步骤");
@@ -7917,19 +8780,33 @@ test("local channel work-cell demo fixture renders a realistic multi-agent opera
   await expect(engineerNoteRow.locator(".conversation-work-cell-row-toggle")).toHaveCount(0);
   await expect(engineerNoteRow.locator(".conversation-work-cell-row-main")).toHaveCSS("padding-left", "0px");
   const thoughtColor = await engineerNoteRow.locator(".conversation-work-cell-row-copy strong").evaluate((element) => getComputedStyle(element).color);
-  const conversationColor = await terminalSummary.locator(".message-body-paragraph").evaluate((element) => getComputedStyle(element).color);
+  const conversationColor = await terminalReport.locator(".terminal-report-outcome-copy > span").evaluate((element) => getComputedStyle(element).color);
   expect(thoughtColor).toBe(conversationColor);
   await expect(engineerNoteRow.locator(".conversation-work-cell-row-copy strong")).toHaveCSS("font-size", "13px");
   await expect(engineerNoteRow.locator(".conversation-work-cell-row-copy strong")).toHaveCSS("font-weight", "550");
   const editActionRow = engineerDetail.locator(".conversation-work-cell-row").filter({ hasText: "已编辑 ConversationWorkCell.tsx" });
   await expect(editActionRow.locator(".conversation-work-cell-row-copy strong")).toHaveCSS("font-size", "12px");
   await expect(editActionRow.locator(".conversation-work-cell-row-copy strong")).toHaveCSS("font-weight", "400");
-  await expect(editActionRow.locator(".conversation-work-cell-change-stat .add")).toHaveText("+5");
+  await expect(editActionRow.locator(".conversation-work-cell-change-stat .add")).toHaveText("+4");
   await expect(editActionRow.locator(".conversation-work-cell-change-stat .delete")).toHaveText("-1");
+  const editIconColor = await editActionRow.locator(".conversation-work-cell-row-icon").evaluate((element) => getComputedStyle(element).color);
+  const editTitleColor = await editActionRow.locator(".conversation-work-cell-row-copy strong").evaluate((element) => getComputedStyle(element).color);
+  expect(editIconColor).toBe(editTitleColor);
+  await editActionRow.locator(".conversation-work-cell-row-main").hover();
+  const editHoverIconColor = await editActionRow.locator(".conversation-work-cell-row-icon").evaluate((element) => getComputedStyle(element).color);
+  const editHoverTitleColor = await editActionRow.locator(".conversation-work-cell-row-copy strong").evaluate((element) => getComputedStyle(element).color);
+  expect(editHoverIconColor).toBe(editHoverTitleColor);
+  expect(editHoverIconColor).not.toBe(editIconColor);
   await editActionRow.locator(".conversation-work-cell-row-main").click();
+  await expect(editActionRow.locator(".conversation-work-cell-row-detail")).toHaveCSS("padding-left", "0px");
+  await expect(editActionRow.locator(".conversation-work-cell-row-detail")).not.toContainText("Engineer 修改 work-cell 行展示");
+  await expect(editActionRow.locator(".conversation-work-cell-row-detail")).not.toContainText("接入 agent 操作记录行");
   await expect(editActionRow.locator(".conversation-work-cell-change-preview")).toBeVisible();
-  await expect(editActionRow.locator(".conversation-work-cell-change-preview .diff-line.add")).toHaveCount(5);
+  await expect(editActionRow.locator(".conversation-work-cell-change-preview .diff-line.add")).toHaveCount(4);
   await expect(editActionRow.locator(".conversation-work-cell-change-preview .diff-line.delete")).toHaveCount(1);
+  await expect(editActionRow.locator(".conversation-work-cell-change-preview .diff-line.context")).toHaveCount(6);
+  await expect(editActionRow.locator(".conversation-work-cell-change-preview .diff-fold")).toHaveCount(0);
+  await expect(editActionRow.locator(".conversation-work-cell-change-preview")).toContainText("const operationRows = visibleOperationRows(model);");
 
   const commandRow = engineerDetail.locator(".conversation-work-cell-row.shell").filter({ hasText: "已运行命令" }).first();
   const commandRowMain = commandRow.locator(".conversation-work-cell-row-main");
@@ -7940,8 +8817,24 @@ test("local channel work-cell demo fixture renders a realistic multi-agent opera
   await expect(commandRowToggle).toHaveCSS("opacity", "1");
   await commandRowMain.click();
   await expect(commandRowToggle).toHaveCSS("opacity", "1");
-  await expect(commandRow.locator(".conversation-work-cell-row-detail")).toContainText("运行 Web typecheck");
+  await expect(commandRow.locator(".conversation-work-cell-row-detail")).not.toContainText("运行 Web typecheck");
   await expect(commandRow.locator(".conversation-work-cell-row-detail")).toContainText("$ corepack pnpm --filter @ling-stack/web typecheck");
+
+  const commandBatch = engineerDetail.locator(".conversation-command-batch");
+  await expect(commandBatch).toHaveCount(1);
+  await expect(commandBatch.locator(".conversation-command-batch-header")).toContainText("已运行 3 个命令");
+  await expect(commandBatch).toHaveClass(/collapsed/u);
+  await expect(commandBatch.locator(".conversation-command-batch-list")).toHaveCount(0);
+  await commandBatch.locator(".conversation-command-batch-header").click();
+  await expect(commandBatch).toHaveClass(/expanded/u);
+  await expect(commandBatch.locator(".conversation-command-batch-list .conversation-work-cell-row")).toHaveCount(3);
+  await expect(commandBatch).toContainText("corepack pnpm --filter @ling-stack/web typecheck");
+  await expect(commandBatch).toContainText("corepack pnpm --filter @ling-stack/web check:i18n");
+  await expect(commandBatch).toContainText("git diff --check");
+  const firstBatchedCommand = commandBatch.locator(".conversation-work-cell-row").first();
+  await expect(firstBatchedCommand).toContainText("exit 0");
+  await firstBatchedCommand.locator(".conversation-work-cell-row-main").click();
+  await expect(firstBatchedCommand.locator(".conversation-work-cell-row-detail")).toContainText("Completed successfully.");
 
   const docEditActionRow = engineerDetail.locator(".conversation-work-cell-row").filter({ hasText: "已编辑 conversation-work-cell-operation-records.md" });
   await expect(docEditActionRow.locator(".conversation-work-cell-change-stat .add")).toHaveText("+3");
@@ -7957,19 +8850,33 @@ test("local channel work-cell demo fixture renders a realistic multi-agent opera
   await expect(qaDetail).toContainText("通过频道工作记录样例回归");
   const qaCommandRow = qaDetail.locator(".conversation-work-cell-row.shell").filter({ hasText: "已运行命令" });
   await qaCommandRow.locator(".conversation-work-cell-row-main").click();
-  await expect(qaCommandRow.locator(".conversation-work-cell-row-detail")).toContainText("运行频道 work-cell 回归");
+  await expect(qaCommandRow.locator(".conversation-work-cell-row-detail")).not.toContainText("运行频道 work-cell 回归");
+  const qaCommand = qaCommandRow.locator(".conversation-work-cell-shell-command");
+  await expect(qaCommand).toHaveText('$ corepack pnpm --filter @ling-stack/web exec playwright test apps/web/e2e/channel.spec.ts -g "work cell"');
+  await expect(qaCommand).toHaveCSS("text-overflow", "clip");
+  await expect(qaCommand).toHaveCSS("white-space", "pre-wrap");
+  const qaCommandLayout = await qaCommand.evaluate((element) => {
+    const style = getComputedStyle(element);
+    return {
+      contentHeight: element.clientHeight - Number.parseFloat(style.paddingTop) - Number.parseFloat(style.paddingBottom),
+      lineHeight: Number.parseFloat(style.lineHeight),
+      overflowsHorizontally: element.scrollWidth > element.clientWidth,
+    };
+  });
+  expect(qaCommandLayout.overflowsHorizontally).toBe(false);
+  expect(qaCommandLayout.contentHeight).toBeGreaterThan(qaCommandLayout.lineHeight * 1.5);
 
   const demoPreviewRequests: string[] = [];
   page.on("request", (request) => {
     const url = request.url();
-    if (url.includes("demo_work_cell") && url.includes("/preview")) {
+    if (url.includes("demo_work_cell") && url.includes("/preview") && new URL(url).searchParams.get("maxBytes") === "65536") {
       demoPreviewRequests.push(url);
     }
   });
   const changedFiles = changedGroup.locator(".conversation-work-cell-change-file");
   await expect(changedFiles).toHaveCount(3);
   await expect(changedFiles.nth(0)).toContainText("ConversationWorkCell.tsx");
-  await expect(changedFiles.nth(0).locator(".conversation-work-cell-change-stat .add")).toHaveText("+5");
+  await expect(changedFiles.nth(0).locator(".conversation-work-cell-change-stat .add")).toHaveText("+4");
   await expect(changedFiles.nth(0).locator(".conversation-work-cell-change-stat .delete")).toHaveText("-1");
   await expect(changedFiles.nth(1)).toContainText("components.css");
   await expect(changedFiles.nth(2)).toContainText("channel.spec.ts");
@@ -7991,9 +8898,30 @@ test("local channel work-cell demo fixture renders a realistic multi-agent opera
   await page.waitForTimeout(250);
   await expect(hoverPreview).toBeVisible();
   await expect(hoverPreview).toContainText("ConversationWorkCell.tsx");
-  await expect(hoverPreview.locator(".diff-line.add")).toHaveCount(5);
+  await expect(hoverPreview.locator(".diff-line.add")).toHaveCount(4);
   await expect(hoverPreview.locator(".diff-line.delete")).toHaveCount(1);
-  const sourceRowBox = await changedFiles.nth(0).boundingBox();
+  await expect(hoverPreview.locator(".diff-line.context")).toHaveCount(6);
+  await expect(hoverPreview.locator(".diff-fold")).toHaveCount(0);
+  await expect(hoverPreview).toContainText("const operationRows = visibleOperationRows(model);");
+  await expect(hoverPreview).toContainText("{operationBody}");
+  const hoverPreviewBody = hoverPreview.locator(".conversation-artifact-hover-preview-body");
+  const hoverDiffViewer = hoverPreview.locator(".diff-viewer");
+  await expect(hoverPreviewBody).toHaveCSS("overflow-y", "auto");
+  await expect(hoverDiffViewer).toHaveCSS("overflow-y", "visible");
+  const hoverScrollRange = await hoverPreviewBody.evaluate((element) => element.scrollHeight - element.clientHeight);
+  expect(hoverScrollRange).toBeGreaterThan(0);
+  await hoverPreviewBody.hover();
+  await page.mouse.wheel(0, 120);
+  await expect.poll(() => hoverPreviewBody.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
+  await expect(hoverPreview).toBeVisible();
+  await changedFiles.nth(1).click();
+  await expect(hoverPreview).toContainText("components.css");
+  await expect(hoverPreview.locator(".diff-line.add")).toHaveCount(4);
+  await expect(hoverPreview.locator(".diff-line.delete")).toHaveCount(0);
+  await expect(hoverPreview.locator(".diff-line.context")).toHaveCount(6);
+  await expect(hoverPreview).toContainText("transition: color 120ms ease;");
+  await expect(hoverPreview).toContainText("min-width: 0;");
+  const sourceRowBox = await changedFiles.nth(1).boundingBox();
   const hoverPreviewBox = await hoverPreview.boundingBox();
   expect(sourceRowBox).not.toBeNull();
   expect(hoverPreviewBox).not.toBeNull();
@@ -8003,7 +8931,12 @@ test("local channel work-cell demo fixture renders a realistic multi-agent opera
   await page.mouse.move(0, 0);
   await expect(hoverPreview).toHaveCount(0);
 
-  await artifactRows.filter({ hasText: "conversation-work-cell-operation-records.md" }).click();
+  const docArtifactPreview = transcriptArtifacts.getByRole("button", {
+    name: "预览: conversation-work-cell-operation-records.md",
+    exact: true,
+  });
+  await docArtifactPreview.scrollIntoViewIfNeeded();
+  await docArtifactPreview.click();
   await expect(hoverPreview).toBeVisible();
   await expect(hoverPreview).toContainText("# Conversation Work Cell Operation Records");
   await expect(page.locator(".artifact-preview-drawer")).toHaveCount(0);
@@ -8234,9 +9167,9 @@ test("durable Ling thread runs render as collapsed conversation work cells", asy
   const defaultCommandActionRow = defaultOperationStream.locator(".conversation-work-cell-row.shell").filter({ hasText: "Ran command" });
   await expect(defaultCommandActionRow.locator(".conversation-work-cell-shell-card")).toHaveCount(0);
   await defaultCommandActionRow.locator(".conversation-work-cell-row-main").click();
-  await expect(defaultCommandActionRow.locator(".conversation-work-cell-row-detail")).toContainText("Run typecheck");
+  await expect(defaultCommandActionRow.locator(".conversation-work-cell-row-detail")).not.toContainText("Run typecheck");
   await expect(defaultCommandActionRow.locator(".conversation-work-cell-row-detail")).toContainText("$ pnpm typecheck");
-  await expect(defaultCommandActionRow.locator(".conversation-work-cell-row-detail")).toContainText("Validate the workspace client rendering.");
+  await expect(defaultCommandActionRow.locator(".conversation-work-cell-row-detail")).not.toContainText("Validate the workspace client rendering.");
   await expect(workCell.locator(".conversation-work-cell-group")).toHaveCount(0);
   await expect(workCell).not.toContainText(".ling-stack/sessions/run_failed.jsonl");
   await expect(workCell).not.toContainText("Context Pack");
@@ -8260,7 +9193,8 @@ test("durable Ling thread runs render as collapsed conversation work cells", asy
   await expect(evidenceRegion).toContainText("Ran command");
   await expect(evidenceRegion).toContainText("Trace: Agent run");
   await expect(evidenceRegion).toContainText("Trace: Tool call");
-  await expect(evidenceRegion).toContainText("Approval checkpoint: Approve typecheck");
+  await expect(evidenceRegion).not.toContainText("Approval checkpoint: Approve typecheck");
+  await expect(evidenceRegion).not.toContainText("Approve typecheck");
   await expect(evidenceRegion).not.toContainText("artifact_thread_diff");
   await expect(evidenceRegion).not.toContainText("trace_thread_thread_inspect");
   await expect(evidenceRegion).not.toContainText("span_trace_thread_thread_inspect");
@@ -8269,22 +9203,15 @@ test("durable Ling thread runs render as collapsed conversation work cells", asy
   await expect(evidenceRegion).not.toContainText("run_failed");
   const editActionRow = evidenceRegion.locator(".conversation-work-cell-row").filter({ hasText: "Edited WorkspaceClientView.tsx" });
   await editActionRow.locator(".conversation-work-cell-row-main").click();
-  await expect(editActionRow.locator(".conversation-work-cell-row-detail")).toContainText("Render conversation work cell");
+  await expect(editActionRow.locator(".conversation-work-cell-row-detail")).not.toContainText("Render conversation work cell");
   await expect(editActionRow.locator(".conversation-work-cell-row-detail")).toContainText("apps/web/src/features/workspace/WorkspaceClientView.tsx");
   await expect(editActionRow.locator(".conversation-work-cell-row-detail")).toContainText("1 output recorded");
   await expect(editActionRow.locator(".conversation-work-cell-row-detail")).not.toContainText("artifact_thread_diff");
   const commandActionRow = evidenceRegion.locator(".conversation-work-cell-row.shell").filter({ hasText: "Ran command" });
   await expect(commandActionRow.locator(".conversation-work-cell-shell-card")).toHaveCount(0);
   await commandActionRow.locator(".conversation-work-cell-row-main").click();
-  await expect(commandActionRow.locator(".conversation-work-cell-row-detail")).toContainText("Run typecheck");
+  await expect(commandActionRow.locator(".conversation-work-cell-row-detail")).not.toContainText("Run typecheck");
   await expect(commandActionRow.locator(".conversation-work-cell-row-detail")).toContainText("$ pnpm typecheck");
-  const checkpointRow = evidenceRegion.locator(".conversation-work-cell-row").filter({ hasText: "Approval checkpoint: Approve typecheck" });
-  await checkpointRow.locator(".conversation-work-cell-row-main").click();
-  await expect(checkpointRow.locator(".conversation-work-cell-row-detail")).toContainText("Action: bash");
-  await expect(checkpointRow.locator(".conversation-work-cell-row-detail")).toContainText("Status: Resumed");
-  await expect(checkpointRow.locator(".conversation-work-cell-row-detail")).toContainText("Resume handle: verified");
-  await expect(checkpointRow.locator(".conversation-work-cell-row-detail")).not.toContainText("runner_handle_thread_secret");
-  await expect(checkpointRow.locator(".conversation-work-cell-row-detail")).not.toContainText("raw_thread_resume_payload");
   const traceToolRow = evidenceRegion.locator(".conversation-work-cell-row").filter({ hasText: "Trace: Tool call" }).first();
   await traceToolRow.locator(".conversation-work-cell-row-main").click();
   await expect(traceToolRow.locator(".conversation-work-cell-row-detail")).toContainText("Tool namespace: core");
@@ -8307,7 +9234,7 @@ test("durable Ling thread runs render as collapsed conversation work cells", asy
   await expect(page.locator(".artifact-preview-lightbox")).toHaveCount(0);
   await page.mouse.move(0, 0);
   await expect(compactPreview).toHaveCount(0);
-  await expect(workCell).toContainText("Run typecheck");
+  await expect(workCell).not.toContainText("Run typecheck");
   expect(threadEvidenceRequests).toHaveLength(1);
   expect(traceListRequests).toHaveLength(1);
   expect(traceDetailRequests).toHaveLength(1);
@@ -8570,6 +9497,91 @@ test("active conversation work cell renders sparse rows while runtime approvals 
   expect(state.approvals.find((approval) => isRecord(approval) && approval.id === "approval_1")?.status).toBe("approved");
   expect(state.approvalPolicy.toolDecisions.bash).toBe("ask");
   expect(state.approvalPolicy.toolDecisions.write).toBe("ask");
+});
+
+test("active command remains standalone and streams its bounded output expanded", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.locale", "en-US");
+  });
+  const state = createBaseState({ approvalStatus: "expired" });
+  const run = state.runs[0];
+  run.threadId = "thread_active_command";
+  run.status = "running";
+  run.errorMessage = undefined;
+  run.startedAt = "2026-05-22T00:00:30.000Z";
+  run.updatedAt = "2026-05-22T00:01:00.000Z";
+  state.tasks = state.tasks.map((task) => isRecord(task) && task.id === "task_inspect"
+    ? { ...task, status: "running", currentRunId: run.id, updatedAt: run.updatedAt }
+    : task);
+  state.turns = [{
+    id: "turn_active_command",
+    workspaceId: "workspace_default",
+    threadId: run.threadId,
+    kind: "initial_request",
+    status: "running",
+    title: "Run focused checks",
+    userInstruction: "Run the focused checks.",
+    channelId: "channel_engineering",
+    taskId: "task_inspect",
+    activeRunId: run.id,
+    createdByActor: "local-user",
+    createdAt: run.startedAt,
+    updatedAt: run.updatedAt,
+  }];
+  state.turnRunLinks = [{
+    turnId: "turn_active_command",
+    runId: run.id,
+    attemptNumber: 1,
+    role: "primary",
+    createdAt: run.startedAt,
+  }];
+  state.executionActions = [{
+    id: "active_command_action",
+    workspaceId: "workspace_default",
+    threadId: run.threadId,
+    runId: run.id,
+    toolCallId: "tool_active_command",
+    actionType: "bash",
+    risk: "low",
+    status: "executing",
+    title: "Run focused checks",
+    summary: "pnpm test",
+    targetRefs: [{ type: "command", label: "pnpm test" }],
+    previewArtifactIds: [],
+    resultArtifactIds: [],
+    commandEvidence: {
+      command: "pnpm test",
+      cwd,
+      startedAt: run.startedAt,
+      latestEventSeq: 5,
+      outputTail: [{
+        eventSeq: 5,
+        stream: "stdout",
+        text: "Running focused conversation tests...\n",
+        byteCount: 38,
+        redacted: false,
+        ts: run.updatedAt,
+      }],
+      outputByteCount: 38,
+      outputLineCount: 1,
+      outputTruncated: false,
+    },
+    createdAt: run.startedAt,
+    updatedAt: run.updatedAt,
+    executedAt: run.startedAt,
+  }];
+  await mockDaemon(page, state);
+  await page.goto("/");
+  await openEngineeringChannel(page);
+
+  const workCell = page.getByLabel("Channel message feed").locator(".conversation-work-cell");
+  const activeStream = workCell.getByLabel("Active work stream");
+  await expect(activeStream.locator(".conversation-command-batch")).toHaveCount(0);
+  const commandRow = activeStream.locator(".conversation-work-cell-row.command-execution");
+  await expect(commandRow).toHaveClass(/expanded/u);
+  await expect(commandRow).toContainText("Running command");
+  await expect(commandRow.locator(".conversation-work-cell-shell-command")).toContainText("pnpm test");
+  await expect(commandRow.locator(".conversation-work-cell-row-detail")).toContainText("Running focused conversation tests...");
 });
 
 test("Ling Agent session active run guidance queues follow-up from composer and stops the run", async ({ page }) => {

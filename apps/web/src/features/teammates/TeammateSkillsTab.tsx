@@ -18,6 +18,8 @@ import {
   type SkillBindingFilter,
 } from "./teammate-workspace-utils.js";
 
+import { SelectControl } from "../../shared/components/SelectControl.js";
+
 export interface SkillImportForm {
   readonly name: string;
   readonly sourcePath: string;
@@ -178,12 +180,12 @@ export function TeammateSkillsTab({
           <div className="teammate-task-create-grid">
             <label className="field">
               <span>{t("Source")}</span>
-              <select value={skillImportForm.source} onChange={(event) => onSkillImportFormChange({ ...skillImportForm, source: event.target.value as SkillPackSource })}>
+              <SelectControl value={skillImportForm.source} onChange={(event) => onSkillImportFormChange({ ...skillImportForm, source: event.target.value as SkillPackSource })}>
                 <option value="custom">{t("custom")}</option>
                 <option value="skill-directory">{t("skill-directory")}</option>
                 <option value="agents-md">{t("agents-md")}</option>
                 <option value="workspace">{t("workspace")}</option>
-              </select>
+              </SelectControl>
             </label>
             <label className="field">
               <span>{t("Draft name")}</span>

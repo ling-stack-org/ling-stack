@@ -82,6 +82,8 @@ export interface DaemonFeatureFlags {
   readonly channels: {
     readonly autoRoute: boolean;
     readonly intentSelector?: boolean;
+    readonly teamObserverBus?: boolean;
+    readonly terminalReports?: boolean;
   };
   readonly transports?: {
     readonly providerWebSocketFallback: boolean;
@@ -107,6 +109,7 @@ export type WorkUnitKind =
   | "task_run"
   | "conversation_run"
   | "channel_ai_reply"
+  | "channel_terminal_report"
   | "teammate_direct_reply"
   | "external_work_step"
   | "external_work_action"
@@ -413,6 +416,9 @@ export type RunEventType =
   | "approval_expired"
   | "approval_cancelled"
   | "artifact_created"
+  | "workspace_change_recovery_started"
+  | "workspace_changes_undone"
+  | "workspace_changes_reapplied"
   | "run_intervention_created"
   | "run_followup_queued"
   | "run_interrupt_requested"

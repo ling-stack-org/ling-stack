@@ -1,0 +1,129 @@
+import assert from "node:assert/strict";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { resolve } from "node:path";
+import test from "node:test";
+import { createSqliteRunStore } from "../../core/dist/index.js";
+import {
+  configureTerminalReportStore,
+  processRunTerminalReport,
+  processTurnTerminalReport,
+  processWorkflowTerminalReport,
+} from "../dist/features/channels/terminal-report-coordinator.js";
+import { maybeCreateWorkflowTerminalCoordinatorReply } from "../dist/features/channels/workflows.js";
+import { buildLingAgentSessionViewForChannel } from "../dist/features/channels/ling-agent-session-view.js";
+import { createTerminalWorkflowFixture } from "./terminal-report-coordinator-fixture.mjs";
+
+test("terminal report flag off preserves the legacy workflow terminal message", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-terminal-report-flag-off-"));
+  const store = createSqliteRunStore(cwd);
+  try {
+    const fixture = createTerminalWorkflowFixture(store, cwd, "flag-off");
+    configureTerminalReportStore(store, { enabled: false });
+    const message = maybeCreateWorkflowTerminalCoordinatorReply(store, fixture.workflow.id, {
+      now: "2026-07-11T05:04:00.000Z",
+    });
+    assert.ok(message);
+    assert.match(message.body, /^完成：「实现 TerminalReport」/u);
+    assert.equal(store.listTerminalReports({ sourceKind: "workflow", sourceId: fixture.workflow.id }).length, 0);
+  } finally {
+    store.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("terminal report coordinator stores executed conversation turns and skips plain replies", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-terminal-report-turn-coordinator-"));
+  const store = createSqliteRunStore(cwd);
+  try {
+    configureTerminalReportStore(store, { enabled: true });
+    const now = "2026-07-11T06:00:00.000Z";
+    const channel = store.createChannel({ name: "Conversation backing", boundPath: cwd }, now);
+    const task = store.createTask({ channelId: channel.id, title: "Edit report UI", prompt: "Edit report UI" }, now);
+    const thread = store.createLingThread({ kind: "conversation", title: "Edit report UI", objective: "Edit and verify report UI" }, now);
+    const turn = store.createLingTurn({
+      threadId: thread.id,
+      kind: "initial_request",
+      title: "Edit report UI",
+      userInstruction: "Edit and verify report UI",
+    }, now);
+    const run = store.createRun({
+      id: "run_terminal_turn_executed",
+      cwd,
+      taskId: task.id,
+      providerName: "test-provider",
+      providerModel: "test-model",
+      taskSnapshot: { id: task.id, title: task.title },
+      providerSnapshot: { provider: "test-provider", model: "test-model" },
+      requestSnapshot: { cwd, responseLanguage: "zh-CN" },
+      threadId: thread.id,
+      turnId: turn.id,
+      createdAt: "2026-07-11T06:01:00.000Z",
+    });
+    store.appendEvent(run.id, "tool_start", { toolCallId: "edit_ui", toolName: "edit", args: { path: "apps/web/src/view.tsx" } });
+    store.appendEvent(run.id, "tool_end", { toolCallId: "edit_ui", toolName: "edit", isError: false });
+    store.createArtifact({ runId: run.id, type: "file", path: "apps/web/src/view.tsx", title: "view.tsx", createdAt: "2026-07-11T06:01:30.000Z" });
+    store.markRunSucceeded(run.id, "2026-07-11T06:02:00.000Z");
+
+    const result = await processTurnTerminalReport(store, turn.id, { now: "2026-07-11T06:03:00.000Z" });
+    assert.ok(result);
+    assert.equal(result.record.report?.source.kind, "turn");
+    assert.equal(result.record.report?.threadId, thread.id);
+    assert.equal(result.message, undefined);
+    assert.equal(store.getWorkUnit(result.workUnit?.id ?? "")?.ownerType, "turn");
+
+    const plainTask = store.createTask({ channelId: channel.id, title: "Answer question", prompt: "Answer question" }, now);
+    const plainRun = store.createRun({
+      id: "run_terminal_plain_reply",
+      cwd,
+      taskId: plainTask.id,
+      providerName: "test-provider",
+      providerModel: "test-model",
+      taskSnapshot: { id: plainTask.id, title: plainTask.title },
+      providerSnapshot: { provider: "test-provider", model: "test-model" },
+      requestSnapshot: { cwd, responseLanguage: "zh-CN" },
+      createdAt: "2026-07-11T06:04:00.000Z",
+    });
+    store.appendEvent(plainRun.id, "assistant_text_delta", { text: "这是一个普通回答。" });
+    store.markRunSucceeded(plainRun.id, "2026-07-11T06:05:00.000Z");
+    assert.equal(await processRunTerminalReport(store, plainRun.id, { now: "2026-07-11T06:06:00.000Z" }), undefined);
+    assert.equal(store.listTerminalReports({ sourceKind: "run", sourceId: plainRun.id }).length, 0);
+  } finally {
+    store.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("terminal report coordinator commits fallback, publishes once, and closes its work unit", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-terminal-report-coordinator-"));
+  const store = createSqliteRunStore(cwd);
+  try {
+    const fixture = createTerminalWorkflowFixture(store, cwd, "enabled");
+    configureTerminalReportStore(store, { enabled: true, barrierDeadlineMs: 50, barrierPollIntervalMs: 5 });
+    const result = await processWorkflowTerminalReport(store, fixture.workflow.id, {
+      now: "2026-07-11T05:04:00.000Z",
+    });
+    assert.equal(result.record.status, "fallback");
+    assert.ok(result.record.publishedMessageId);
+    assert.equal(result.message?.id, result.record.publishedMessageId);
+    assert.match(result.message?.body ?? "", /参与 Agent/u);
+    assert.match(result.message?.body ?? "", /Engineer/u);
+    assert.match(result.message?.body ?? "", /QA/u);
+    assert.equal(store.getWorkUnit(result.workUnit?.id ?? "")?.status, "succeeded");
+    const sessionView = buildLingAgentSessionViewForChannel({ store, channelId: fixture.channel.id });
+    assert.equal(sessionView.status, "succeeded");
+    assert.equal(sessionView.finalResult?.summary, result.record.report?.outcome.summary);
+    assert.deepEqual(sessionView.finalResult?.artifactIds, result.record.report?.artifacts.map((artifact) => artifact.id));
+
+    const repeated = await processWorkflowTerminalReport(store, fixture.workflow.id, {
+      now: "2026-07-11T05:05:00.000Z",
+    });
+    assert.equal(repeated.record.id, result.record.id);
+    assert.equal(repeated.message?.id, result.message?.id);
+    assert.equal(store.listChannelMessages({ channelId: fixture.channel.id, limit: 100 }).filter((message) => message.id === result.message?.id).length, 1);
+    assert.equal(store.listTerminalReports({ sourceKind: "workflow", sourceId: fixture.workflow.id }).length, 1);
+  } finally {
+    store.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});

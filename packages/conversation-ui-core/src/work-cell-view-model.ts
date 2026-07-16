@@ -14,6 +14,26 @@ export type ConversationOperationKind =
 export type ConversationWorkCellGroupKind = "changed" | "checked" | "context" | "evidence" | "attention";
 export type ConversationWorkCellRowTone = "neutral" | "running" | "waiting" | "success" | "failed";
 
+export interface ConversationCommandExecutionView {
+  readonly actionId: string;
+  readonly toolCallId?: string;
+  readonly runId?: string;
+  readonly workUnitId?: string;
+  readonly workflowStepId?: string;
+  readonly actionType: string;
+  readonly risk: "low" | "medium" | "high" | "critical";
+  readonly status: string;
+  readonly commandText: string;
+  readonly startedAt?: string;
+  readonly completedAt?: string;
+  readonly durationMs?: number;
+  readonly exitCode?: number;
+  readonly latestEventSeq: number;
+  readonly outputTruncated: boolean;
+  readonly stdoutArtifactId?: string;
+  readonly stderrArtifactId?: string;
+}
+
 export interface ConversationWorkCellStat {
   readonly id: string;
   readonly label: string;
@@ -24,10 +44,13 @@ export interface ConversationWorkCellRow {
   readonly id: string;
   readonly kind?: ConversationOperationKind;
   readonly presentation?: "default" | "shell" | "note";
+  readonly reportSection?: "outcome" | "correction" | "change" | "verification" | "participant" | "risk";
+  readonly participantId?: string;
   readonly title: string;
   readonly description?: string;
   readonly meta?: string;
   readonly commandText?: string;
+  readonly commandExecution?: ConversationCommandExecutionView;
   readonly changePreview?: ConversationWorkCellChangePreview;
   readonly detailLines?: readonly ConversationWorkCellRowDetailLine[];
   readonly tone?: ConversationWorkCellRowTone;
@@ -40,10 +63,21 @@ export interface ConversationWorkCellChangePreview {
   readonly sizeBytes?: number;
 }
 
-export interface ConversationWorkCellRowDetailLine {
-  readonly kind?: "text" | "code";
-  readonly text: string;
-}
+export type ConversationWorkCellRowDetailLine =
+  | {
+      readonly kind?: "text";
+      readonly text: string;
+    }
+  | {
+      readonly kind: "code";
+      readonly text: string;
+    }
+  | {
+      readonly kind: "file_ref";
+      readonly text: string;
+      readonly path: string;
+      readonly line?: number;
+    };
 
 export type ConversationAgentActivitySpanKind = "agent" | "overflow";
 
@@ -58,6 +92,7 @@ export interface ConversationAgentActivitySpan {
   readonly stateLabel?: string;
   readonly latestRow?: ConversationWorkCellRow;
   readonly rows: readonly ConversationWorkCellRow[];
+  readonly items?: readonly ConversationWorkCellItem[];
 }
 
 /** @deprecated Use ConversationAgentActivitySpan. */
@@ -89,10 +124,16 @@ export interface ConversationArtifactStripChangeArtifact {
   readonly previewable?: boolean;
 }
 
+export type ConversationWorkspaceRecoveryTarget =
+  | { readonly kind: "run"; readonly id: string }
+  | { readonly kind: "workflow"; readonly id: string };
+
 export interface ConversationArtifactStripItem {
   readonly id: string;
   readonly kind: ConversationArtifactStripItemKind;
   readonly label: string;
+  readonly path?: string;
+  readonly workspaceFilePath?: string;
   readonly tone?: ConversationWorkCellRowTone;
   readonly href?: string;
   readonly artifactId?: string;
@@ -101,6 +142,7 @@ export interface ConversationArtifactStripItem {
   readonly sizeBytes?: number;
   readonly previewKind?: "file" | "image";
   readonly previewable?: boolean;
+  readonly recoveryTarget?: ConversationWorkspaceRecoveryTarget;
   readonly changeArtifacts?: readonly ConversationArtifactStripChangeArtifact[];
 }
 
@@ -110,6 +152,38 @@ export interface ConversationWorkCellGroup {
   readonly summary: string;
   readonly rows: readonly ConversationWorkCellRow[];
 }
+
+export interface ConversationCommandBatchItem {
+  readonly id: string;
+  readonly actionId: string;
+  readonly row: ConversationWorkCellRow;
+  readonly commandText: string;
+  readonly status: string;
+  readonly exitCode?: number;
+  readonly durationMs?: number;
+  readonly outputTruncated: boolean;
+  readonly stdoutArtifactId?: string;
+  readonly stderrArtifactId?: string;
+}
+
+export interface ConversationCommandBatch {
+  readonly id: string;
+  readonly revisionKey: string;
+  readonly commandCount: number;
+  readonly durationMs?: number;
+  readonly defaultExpanded: boolean;
+  readonly commands: readonly ConversationCommandBatchItem[];
+}
+
+export type ConversationWorkCellItem =
+  | {
+      readonly kind: "operation";
+      readonly row: ConversationWorkCellRow;
+    }
+  | {
+      readonly kind: "command_batch";
+      readonly batch: ConversationCommandBatch;
+    };
 
 export interface ConversationOperationCellViewModel {
   readonly id: string;
@@ -128,9 +202,12 @@ export interface ConversationOperationCellViewModel {
   readonly stats: readonly ConversationWorkCellStat[];
   readonly elapsedMs?: number;
   readonly operationRows: readonly ConversationWorkCellRow[];
+  readonly operationItems?: readonly ConversationWorkCellItem[];
   readonly agentSpans: readonly ConversationAgentActivitySpan[];
   /** @deprecated Use agentSpans. Kept while call sites migrate. */
   readonly agentBranches: readonly ConversationWorkCellBranch[];
+  readonly terminalReportId?: string;
+  readonly terminalReportRevisionKey?: string;
   readonly terminalReportRows: readonly ConversationWorkCellRow[];
   /** @deprecated Use operationRows. Kept while call sites migrate. */
   readonly activeRows: readonly ConversationWorkCellRow[];

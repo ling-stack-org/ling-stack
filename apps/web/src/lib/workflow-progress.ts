@@ -1,4 +1,5 @@
-import type { ApprovalRequest, ChannelWorkflow, ChannelWorkflowStep, ExecutionAction, RunArtifact, RunSession, WorkflowEvidenceResponse, WorkflowHandoffIntent } from "../types.js";
+import type { ApprovalRequest, ChannelWorkflow, ChannelWorkflowStep, ExecutionAction, RunArtifact, RunSession, TerminalReportDto, WorkflowEvidenceResponse, WorkflowHandoffIntent } from "../types.js";
+import { terminalReportToViewModel } from "@ling-stack/conversation-ui-core";
 import type { Translate } from "../i18n.js";
 import type {
   ConversationAgentActivitySpan,
@@ -10,7 +11,7 @@ import type {
   ConversationWorkCellRowTone,
   ConversationWorkCellViewModel,
 } from "./conversation-work-cell.js";
-import { buildConversationApprovalCheckpointRows, buildConversationArtifactStripItems, buildConversationExecutionActionEvidenceRows, mainFeedArtifactEvidenceLinks, mainFeedEvidenceGroups, normalizeConversationOperationCell } from "./conversation-work-cell.js";
+import { buildConversationApprovalCheckpointRows, buildConversationArtifactStripItems, buildConversationExecutionActionEvidenceRows, mainFeedArtifactEvidenceLinks, mainFeedEvidenceGroups, mergeConversationArtifactStripItems, normalizeConversationOperationCell } from "./conversation-work-cell.js";
 import { truncatePreview } from "./data.js";
 
 export type WorkflowProgressMode = "active" | "completed";
@@ -41,6 +42,8 @@ export interface WorkflowProgressModel {
   readonly artifactStripItems: readonly ConversationArtifactStripItem[];
   readonly attention: WorkflowProgressAttention;
   readonly updatedAt: string;
+  readonly terminalReport?: TerminalReportDto;
+  readonly conversationVisibility: "default" | "audit_only";
 }
 
 export interface BuildWorkflowProgressInput {
@@ -52,6 +55,7 @@ export interface BuildWorkflowProgressInput {
   readonly executionActions?: readonly ExecutionAction[];
   readonly t: Translate;
   readonly artifactHref?: (artifact: RunArtifact) => string;
+  readonly terminalReport?: TerminalReportDto;
 }
 
 export function buildWorkflowProgressModel(input: BuildWorkflowProgressInput): WorkflowProgressModel {
@@ -80,9 +84,10 @@ export function buildWorkflowProgressModel(input: BuildWorkflowProgressInput): W
   const queuedStep = orderedSteps.find((step) => step.status === "queued");
   const failedStep = orderedSteps.find((step) => step.status === "failed");
   const currentStep = blockedStep ?? waitingStep ?? runningStep ?? queuedStep ?? failedStep ?? orderedSteps[completedSteps] ?? orderedSteps.at(-1);
-  const finalResultSummary =
-    readWorkflowFinalResultSummary(orderedSteps, input.workflow.status) ??
-    readWorkflowApprovalFinalResultSummary(workflowApprovals, input.workflow.status);
+  const finalResultSummary = input.terminalReport
+    ? undefined
+    : readWorkflowFinalResultSummary(orderedSteps, input.workflow.status) ??
+      readWorkflowApprovalFinalResultSummary(workflowApprovals, input.workflow.status);
   const attention: WorkflowProgressAttention = blockedStep
     ? "blocked"
     : failedStep || input.workflow.status === "failed"
@@ -141,11 +146,57 @@ export function buildWorkflowProgressModel(input: BuildWorkflowProgressInput): W
     evidenceLinks,
     artifactStripItems: buildConversationArtifactStripItems({ groups, evidenceLinks, artifacts, t: input.t }),
     attention,
-    updatedAt: input.workflow.updatedAt,
+    updatedAt: input.terminalReport?.committedAt && input.terminalReport.committedAt > input.workflow.updatedAt
+      ? input.terminalReport.committedAt
+      : input.workflow.updatedAt,
+    terminalReport: input.terminalReport,
+    conversationVisibility: isResolvedApprovalOnlyWorkflow(input.workflow, orderedSteps, workflowRuns, workflowApprovals, input.terminalReport)
+      ? "audit_only"
+      : "default",
   };
 }
 
+function isResolvedApprovalOnlyWorkflow(
+  workflow: ChannelWorkflow,
+  steps: readonly ChannelWorkflowStep[],
+  runs: readonly RunSession[],
+  approvals: readonly ApprovalRequest[],
+  terminalReport: TerminalReportDto | undefined,
+): boolean {
+  if (terminalReport || !isTerminalWorkflowStatus(workflow.status) || steps.length === 0 || runs.length > 0) {
+    return false;
+  }
+  const approvalStepIds = new Set(
+    approvals
+      .filter((approval) => approval.status !== "pending" && approval.workflowStepId)
+      .map((approval) => approval.workflowStepId as string),
+  );
+  return approvals.length > 0 &&
+    approvals.every((approval) => approval.status !== "pending") &&
+    steps.every((step) => !step.runId && isTerminalWorkflowStepStatus(step.status) && approvalStepIds.has(step.id));
+}
+
+function isTerminalWorkflowStatus(status: ChannelWorkflow["status"]): boolean {
+  return status === "succeeded" || status === "failed" || status === "cancelled";
+}
+
+function isTerminalWorkflowStepStatus(status: ChannelWorkflowStep["status"]): boolean {
+  return status === "succeeded" || status === "failed" || status === "skipped" || status === "cancelled";
+}
+
 export function workflowProgressToConversationWorkCell(model: WorkflowProgressModel): ConversationWorkCellViewModel {
+  const terminalReport = model.terminalReport ? terminalReportToViewModel(model.terminalReport) : undefined;
+  const evidenceLinks = uniqueBy([
+    ...model.evidenceLinks,
+    ...(terminalReport?.evidenceLinks ?? []),
+  ], (item) => item.id);
+  const hasBaseChangedItem = model.artifactStripItems.some((item) => item.kind === "changed");
+  const artifactStripItems = mergeConversationArtifactStripItems(
+    model.artifactStripItems,
+    (terminalReport?.artifactStripItems ?? []).filter((item) => item.kind !== "changed" || !hasBaseChangedItem),
+  ).map((item) => item.kind === "changed"
+    ? { ...item, recoveryTarget: { kind: "workflow" as const, id: model.workflowId } }
+    : item);
   return normalizeConversationOperationCell({
     id: model.id,
     sourceKind: "workflow",
@@ -161,10 +212,12 @@ export function workflowProgressToConversationWorkCell(model: WorkflowProgressMo
     operationRows: model.agentSpans.length > 0 ? [] : model.currentRows,
     agentSpans: model.agentSpans,
     agentBranches: model.agentSpans,
-    terminalReportRows: [],
+    terminalReportId: terminalReport?.reportId,
+    terminalReportRevisionKey: terminalReport?.revisionKey,
+    terminalReportRows: terminalReport?.rows ?? [],
     groups: model.groups,
-    evidenceLinks: model.evidenceLinks,
-    artifactStripItems: model.artifactStripItems,
+    evidenceLinks,
+    artifactStripItems,
     updatedAt: model.updatedAt,
   });
 }

@@ -111,7 +111,7 @@ export async function handleChannelAttachmentItem(
         writeJson(response, 404, { error: "attachment_not_found", message: "Attachment preview was not found for this scope." });
         return;
       }
-      handleGetAttachmentPreview(response, url, store, resolvedAttachment);
+      await handleGetAttachmentPreview(response, url, store, resolvedAttachment);
       return;
     }
 
@@ -399,7 +399,7 @@ function handleGetAttachmentContent(response: ServerResponse, store: RunStore, a
   }
 }
 
-function handleGetAttachmentPreview(response: ServerResponse, url: URL, store: RunStore, attachment: ChannelAttachment | TeammatePrivateAttachment | ConversationAttachment): void {
+async function handleGetAttachmentPreview(response: ServerResponse, url: URL, store: RunStore, attachment: ChannelAttachment | TeammatePrivateAttachment | ConversationAttachment): Promise<void> {
   let contentPath: string;
   try {
     contentPath = resolveAttachmentContentPath(store, attachment);
@@ -413,9 +413,10 @@ function handleGetAttachmentPreview(response: ServerResponse, url: URL, store: R
 
   try {
     const maxBytes = readOptionalIntegerQuery(url, "maxBytes", 1);
-    writeJson(response, 200, buildAttachmentPreview({
+    writeJson(response, 200, await buildAttachmentPreview({
       attachment,
       contentPath,
+      attachmentsDir: store.paths.attachmentsDir,
       maxBytes,
       imageUrl: attachment.kind === "image" ? attachmentContentUrl(url, attachment.id) : undefined,
     }));

@@ -17,6 +17,11 @@ import type {
   WorkItemMutationResponse,
   WorkItemReleaseRequest,
   WorkItemRouteRequest,
+  WorkspaceChangesResponse,
+  WorkspaceFileOpenOptionsResponse,
+  WorkspaceFileOpenRequest,
+  WorkspaceFileOpenResponse,
+  WorkspaceFileOpenTarget,
 } from "@ling-stack/contracts";
 import type { LingDaemonEndpointContext, PublicEndpointGroup } from "../transport.js";
 
@@ -93,6 +98,30 @@ export const operationEndpoints = {
 
   async previewArtifactContent(this: LingDaemonEndpointContext, cwd: string, artifactId: string, maxBytes?: number): Promise<PreviewContentResponse> {
       return this._get(`/artifacts/${encodeURIComponent(artifactId)}/preview`, { cwd, maxBytes });
+    },
+
+  async previewWorkspaceFile(this: LingDaemonEndpointContext, cwd: string, path: string, maxBytes?: number, line?: number): Promise<PreviewContentResponse> {
+      return this._get("/workspace-files/preview", { cwd, path, maxBytes, line });
+    },
+
+  async getWorkspaceChanges(this: LingDaemonEndpointContext, cwd: string): Promise<WorkspaceChangesResponse> {
+      return this._get("/workspace/changes", { cwd });
+    },
+
+  async getWorkspaceFileOpenOptions(this: LingDaemonEndpointContext, cwd: string, path: string): Promise<WorkspaceFileOpenOptionsResponse> {
+      return this._get("/workspace-files/open-options", { cwd, path });
+    },
+
+  async openWorkspaceFile(this: LingDaemonEndpointContext, cwd: string, path: string, input: WorkspaceFileOpenRequest): Promise<WorkspaceFileOpenResponse> {
+      return this._post("/workspace-files/open", { cwd, path }, input);
+    },
+
+  workspaceFileOpenIconUrl(this: LingDaemonEndpointContext, cwd: string, target: WorkspaceFileOpenTarget): string {
+      return this._url(`/workspace-files/open-icons/${encodeURIComponent(target)}`, { cwd });
+    },
+
+  workspaceFileContentUrl(this: LingDaemonEndpointContext, cwd: string, path: string, download = false): string {
+      return this._url("/workspace-files/content", { cwd, path, download: download ? 1 : undefined });
     },
 };
 

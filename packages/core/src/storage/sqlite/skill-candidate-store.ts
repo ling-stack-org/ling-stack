@@ -228,6 +228,31 @@ export class SqliteSkillCandidateStore {
     }
     return { candidate: updated, action };
   }
+
+  markSkillCandidatePublished(candidateId: string, now: string): SkillCandidate {
+    const existing = this.getSkillCandidate(candidateId);
+    if (!existing) {
+      throw new Error(`Skill candidate not found: ${candidateId}`);
+    }
+    if (existing.status === "published") {
+      return existing;
+    }
+    if (existing.status !== "approved_for_draft") {
+      throw new Error(`Skill candidate must be approved_for_draft before publish: ${existing.status}`);
+    }
+    this.context.database
+      .prepare(`
+        UPDATE skill_candidates
+        SET status = 'published', updated_at = ?
+        WHERE workspace_id = ? AND id = ?
+      `)
+      .run(now, existing.workspaceId, existing.id);
+    const updated = this.getSkillCandidate(existing.id);
+    if (!updated) {
+      throw new Error(`Skill candidate disappeared after publish: ${existing.id}`);
+    }
+    return updated;
+  }
 }
 
 function mapSkillCandidate(row: Record<string, SQLOutputValue>): SkillCandidate {

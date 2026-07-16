@@ -1,5 +1,7 @@
-import { closeSync, openSync, readSync, statSync } from "node:fs";
+import { closeSync, createReadStream, openSync, readSync, statSync } from "node:fs";
 import { basename, extname } from "node:path";
+import { createInterface } from "node:readline";
+import { Readable } from "node:stream";
 import { TextDecoder } from "node:util";
 import type {
   ChannelAttachment,
@@ -10,6 +12,9 @@ import type {
   RunArtifact,
   TeammatePrivateAttachment,
 } from "@ling-stack/core";
+import { defaultLingMaterializationBudgets } from "../channels/materialization/budgets.js";
+import { officeExtractorV1 } from "../channels/materialization/extractors/office.js";
+import { pdfExtractorV1 } from "../channels/materialization/extractors/pdf.js";
 
 const DEFAULT_PREVIEW_BYTES = 64 * 1024;
 const MAX_PREVIEW_BYTES = 64 * 1024;
@@ -24,8 +29,16 @@ export interface BuildArtifactPreviewInput {
 export interface BuildAttachmentPreviewInput {
   readonly attachment: ChannelAttachment | ConversationAttachment | TeammatePrivateAttachment;
   readonly contentPath: string;
+  readonly attachmentsDir: string;
   readonly maxBytes?: number;
   readonly imageUrl?: string;
+}
+
+export interface BuildWorkspaceFilePreviewInput {
+  readonly contentPath: string;
+  readonly displayPath: string;
+  readonly maxBytes?: number;
+  readonly focusLine?: number;
 }
 
 export function normalizePreviewMaxBytes(value: number | undefined): number {
@@ -60,9 +73,10 @@ export function buildArtifactPreview(input: BuildArtifactPreviewInput): PreviewC
   });
 }
 
-export function buildAttachmentPreview(input: BuildAttachmentPreviewInput): PreviewContentResponse {
+export async function buildAttachmentPreview(input: BuildAttachmentPreviewInput): Promise<PreviewContentResponse> {
   const maxBytes = normalizePreviewMaxBytes(input.maxBytes);
   const kind = inferAttachmentPreviewKind(input.attachment);
+  const extractedDocument = await extractAttachmentDocumentPreview(input, maxBytes);
   const ref: PreviewFileRef = {
     id: input.attachment.id,
     source: "attachment",
@@ -84,7 +98,122 @@ export function buildAttachmentPreview(input: BuildAttachmentPreviewInput): Prev
     imageUrl: input.imageUrl,
     fileName: input.attachment.fileName,
     contentType: input.attachment.contentType,
+    extractedText: extractedDocument?.text,
+    extractedTextTruncated: extractedDocument?.truncated,
   });
+}
+
+export async function buildWorkspaceFilePreview(input: BuildWorkspaceFilePreviewInput): Promise<PreviewContentResponse> {
+  const maxBytes = normalizePreviewMaxBytes(input.maxBytes);
+  const inferredKind = inferTextualPreviewKind(input.displayPath);
+  const kind = inferredKind === "unsupported" ? "plain_text" : inferredKind;
+  const stats = statSync(input.contentPath);
+  const ref: PreviewFileRef = {
+    id: `workspace:${input.displayPath}`,
+    source: "workspace_file",
+    scope: "workspace",
+    label: basename(input.displayPath) || input.displayPath,
+    displayPath: input.displayPath,
+    sizeBytes: stats.size,
+    previewable: true,
+  };
+
+  if (input.focusLine !== undefined && kind !== "image" && kind !== "pdf" && kind !== "office") {
+    const window = await readWorkspaceTextLineWindow(input.contentPath, input.focusLine, maxBytes);
+    if (!window.ok) {
+      return {
+        ref: { ...ref, previewable: false },
+        kind: "unsupported",
+        truncated: window.truncated,
+        sizeBytes: stats.size,
+        redactionNotes: ["Preview unavailable because the content is not valid UTF-8."],
+      };
+    }
+    return {
+      ref,
+      kind,
+      text: kind === "json" && window.startLine === 1 && !window.truncated ? formatJsonPreview(window.text) : window.text,
+      textStartLine: window.startLine,
+      truncated: window.truncated,
+      sizeBytes: stats.size,
+      redactionNotes: [
+        "Preview is read-only and not included in AI context.",
+        ...(window.truncated ? ["Preview truncated"] : []),
+      ],
+    };
+  }
+
+  return buildPreviewResponse({
+    ref,
+    kind,
+    contentPath: input.contentPath,
+    maxBytes,
+    fileName: input.displayPath,
+  });
+}
+
+async function readWorkspaceTextLineWindow(
+  path: string,
+  focusLine: number,
+  maxBytes: number,
+): Promise<
+  | { readonly ok: true; readonly text: string; readonly startLine: number; readonly truncated: boolean }
+  | { readonly ok: false; readonly truncated: boolean }
+> {
+  const startLine = Math.max(1, Math.floor(focusLine) - 90);
+  const endLine = Math.max(startLine, Math.floor(focusLine) + 89);
+  const selected: string[] = [];
+  let selectedBytes = 0;
+  let lineNumber = 0;
+  let truncatedAfter = false;
+  const fileStream = createReadStream(path);
+  const decodedStream = Readable.from(decodeUtf8Chunks(fileStream));
+  const lines = createInterface({ input: decodedStream, crlfDelay: Infinity });
+  try {
+    for await (const line of lines) {
+      lineNumber += 1;
+      if (lineNumber < startLine) {
+        continue;
+      }
+      if (lineNumber > endLine) {
+        truncatedAfter = true;
+        break;
+      }
+      const nextBytes = Buffer.byteLength(line, "utf8") + (selected.length > 0 ? 1 : 0);
+      if (selectedBytes + nextBytes > maxBytes) {
+        truncatedAfter = true;
+        break;
+      }
+      selected.push(line);
+      selectedBytes += nextBytes;
+    }
+  } catch {
+    return { ok: false, truncated: startLine > 1 || truncatedAfter };
+  } finally {
+    lines.close();
+    decodedStream.destroy();
+    fileStream.destroy();
+  }
+  return {
+    ok: true,
+    text: selected.join("\n"),
+    startLine,
+    truncated: startLine > 1 || truncatedAfter,
+  };
+}
+
+async function* decodeUtf8Chunks(stream: Readable): AsyncGenerator<string> {
+  const decoder = new TextDecoder("utf-8", { fatal: true });
+  for await (const chunk of stream) {
+    const decoded = decoder.decode(chunk as Buffer, { stream: true });
+    if (decoded) {
+      yield decoded;
+    }
+  }
+  const tail = decoder.decode();
+  if (tail) {
+    yield tail;
+  }
 }
 
 function buildPreviewResponse(input: {
@@ -95,6 +224,8 @@ function buildPreviewResponse(input: {
   readonly imageUrl?: string;
   readonly fileName: string;
   readonly contentType?: string;
+  readonly extractedText?: string;
+  readonly extractedTextTruncated?: boolean;
 }): PreviewContentResponse {
   const stats = statSync(input.contentPath);
   const sizeBytes = stats.size;
@@ -117,6 +248,20 @@ function buildPreviewResponse(input: {
       truncated: false,
       sizeBytes,
       redactionNotes: ["Preview is read-only and not included in AI context."],
+    };
+  }
+
+  if ((input.kind === "pdf" || input.kind === "office") && input.extractedText?.trim()) {
+    return {
+      ref: input.ref,
+      kind: input.kind,
+      text: input.extractedText,
+      truncated: input.extractedTextTruncated ?? false,
+      sizeBytes,
+      redactionNotes: [
+        "Preview contains extracted document text and is not included in AI context.",
+        ...(input.extractedTextTruncated ? ["Preview truncated"] : []),
+      ],
     };
   }
 
@@ -153,6 +298,68 @@ function buildPreviewResponse(input: {
       "Preview is read-only and not included in AI context.",
       ...(truncated ? ["Preview truncated"] : []),
     ],
+  };
+}
+
+async function extractAttachmentDocumentPreview(
+  input: BuildAttachmentPreviewInput,
+  maxChars: number,
+): Promise<{ readonly text: string; readonly truncated: boolean } | undefined> {
+  const extractor = input.attachment.kind === "pdf"
+    ? pdfExtractorV1
+    : input.attachment.kind === "office" && extname(input.attachment.fileName).toLowerCase() === ".docx"
+      ? officeExtractorV1
+      : undefined;
+  if (!extractor) {
+    return undefined;
+  }
+  const attachment = toPreviewChannelAttachment(input.attachment);
+  const rawByteLimit = input.attachment.kind === "pdf"
+    ? defaultLingMaterializationBudgets.pdfReadBytes
+    : defaultLingMaterializationBudgets.officeReadBytes;
+  const result = await extractor.materialize({
+    workspaceId: attachment.workspaceId,
+    channelId: attachment.channelId,
+    sourceKind: "attachment",
+    sourceId: attachment.id,
+    sourceFingerprint: `preview:${attachment.id}:${attachment.sizeBytes}`,
+    requestedBy: "turn_envelope",
+    maxBytes: rawByteLimit,
+    maxChars,
+    now: new Date().toISOString(),
+    attachment,
+    attachmentsDir: input.attachmentsDir,
+  });
+  if (result.status !== "available" || !result.contentText?.trim()) {
+    return undefined;
+  }
+  return {
+    text: result.contentText,
+    truncated: result.truncated === true,
+  };
+}
+
+function toPreviewChannelAttachment(
+  attachment: ChannelAttachment | ConversationAttachment | TeammatePrivateAttachment,
+): ChannelAttachment {
+  if ("channelId" in attachment) {
+    return attachment;
+  }
+  const channelId = "teammateId" in attachment
+    ? `teammate_direct:${attachment.teammateId}:${attachment.threadId ?? "thread"}`
+    : `conversation:${attachment.threadId ?? "pending"}`;
+  const messageId = "teammateId" in attachment ? attachment.messageId : attachment.turnId;
+  return {
+    id: attachment.id,
+    workspaceId: attachment.workspaceId,
+    channelId,
+    messageId,
+    kind: attachment.kind,
+    fileName: attachment.fileName,
+    contentType: attachment.contentType,
+    sizeBytes: attachment.sizeBytes,
+    path: attachment.path,
+    createdAt: attachment.createdAt,
   };
 }
 

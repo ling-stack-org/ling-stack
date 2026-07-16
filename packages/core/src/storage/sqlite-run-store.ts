@@ -30,6 +30,16 @@ import {
   type ListChannelInputMaterializationsOptions,
 } from "../input-materialization-types.js";
 import type {
+  CommitLingTerminalReportInput,
+  CreateLingTerminalReportInput,
+  FailLingTerminalReportInput,
+  LingTerminalReportRecord,
+  ListLingTerminalReportsOptions,
+  MarkLingTerminalReportPublishedInput,
+  TerminalReportSourceKind,
+  UpdateLingTerminalReportDraftInput,
+} from "../terminal-report-types.js";
+import type {
   AvailabilityIncident,
   ChannelTeamEvidenceItem,
   ChannelTeamEvaluationRun,
@@ -202,6 +212,7 @@ import {
   type ListSkillSourceArtifactOptions,
   type ListSkillRegistryOptions,
   type ListSkillSourceSnapshotOptions,
+  type PublishSkillRevisionDraftInput,
   type SkillCompiledRuntimeViewRecord,
   type SkillHardDeleteResult,
   type SkillImportDraft,
@@ -219,6 +230,10 @@ import {
   type SkillCandidate,
   type SkillCandidateReviewRecord,
 } from "../skill-candidate-types.js";
+import type {
+  OfficialSkillSourceSubscription,
+  UpsertOfficialSkillSourceSubscriptionInput,
+} from "../managed-official-skill-source-types.js";
 import type {
   CandidateGenerationDecision,
   CreateCandidateGenerationDecisionInput,
@@ -461,6 +476,7 @@ import { SqliteLingThreadSearchStore } from "./sqlite/ling-thread-search-store.j
 import { SqliteLingThreadStore } from "./sqlite/ling-thread-store.js";
 import { SqliteLingThreadCleanupStore } from "./sqlite/ling-thread-cleanup-store.js";
 import { SqliteLingTurnStore } from "./sqlite/ling-turn-store.js";
+import { SqliteTerminalReportStore } from "./sqlite/terminal-report-store.js";
 import { SqliteStateTransitionStore } from "./sqlite/state-transition-store.js";
 import { SqliteResourceLeaseStore } from "./sqlite/resource-lease-store.js";
 import { SqliteRuntimeSemaphoreStore } from "./sqlite/runtime-semaphore-store.js";
@@ -492,6 +508,7 @@ import { SqliteChannelIntentDecisionStore } from "./sqlite/channel-intent-decisi
 import { SqliteChannelProposalStore } from "./sqlite/channel-proposal-store.js";
 import { SqliteChannelAssetStore } from "./sqlite/channel-asset-store.js";
 import { SqliteConversationAssetStore } from "./sqlite/conversation-asset-store.js";
+import { SqliteConversationRevisionStore } from "./sqlite/conversation-revision-store.js";
 import { SqliteChannelCollaborationStore } from "./sqlite/channel-collaboration-store.js";
 import { SqliteChannelProtocolStore } from "./sqlite/channel-protocol-store.js";
 import { SqliteChannelPlaybookStore } from "./sqlite/channel-playbook-store.js";
@@ -534,6 +551,8 @@ export class SqliteRunStore implements RunStore {
   private readonly lingThreads: SqliteLingThreadStore;
   private readonly lingThreadCleanup: SqliteLingThreadCleanupStore;
   private readonly lingTurns: SqliteLingTurnStore;
+  private readonly terminalReports: SqliteTerminalReportStore;
+  private readonly conversationRevisions: SqliteConversationRevisionStore;
   private readonly stateTransitions: SqliteStateTransitionStore;
   private readonly resourceLeases: SqliteResourceLeaseStore;
   private readonly runtimeSemaphores: SqliteRuntimeSemaphoreStore;
@@ -654,6 +673,8 @@ export class SqliteRunStore implements RunStore {
         rebuildLingThreadMetadataForTurn: (turnId, now) => this.tryRebuildLingThreadMetadataForTurn(turnId, now),
       },
     );
+    this.terminalReports = new SqliteTerminalReportStore({ database: this.database });
+    this.conversationRevisions = new SqliteConversationRevisionStore({ database: this.database });
     this.lingThreadMetadata = new SqliteLingThreadMetadataCoordinator(
       { database: this.database },
       {
@@ -713,6 +734,7 @@ export class SqliteRunStore implements RunStore {
       listRecoverableChannelWorkflows: () => this.channelWorkflows.listRecoverableChannelWorkflows(),
       listChannelWorkflowSteps: (options) => this.listChannelWorkflowSteps(options),
       getApprovalRequest: (id) => this.getApprovalRequest(id),
+      listApprovalRequests: (options) => this.listApprovalRequests(options),
       transitionChannelWorkflowStepStatus: (input) => this.transitionChannelWorkflowStepStatus(input),
       getChannelWorkflow: (workflowId) => this.getChannelWorkflow(workflowId),
       transitionChannelWorkflowStatus: (input) => this.transitionChannelWorkflowStatus(input),
@@ -964,6 +986,49 @@ export class SqliteRunStore implements RunStore {
     return this.lingThreads.createLingThread(input, now);
   }
 
+  commitConversationMessageEdit(
+    input: import("../conversation-revision-types.js").CommitConversationMessageEditInput,
+    now: string,
+  ): import("../conversation-revision-types.js").CommitConversationMessageEditResult {
+    return this.conversationRevisions.commitConversationMessageEdit(input, now);
+  }
+
+  listConversationMessageRevisions(
+    options: import("../conversation-revision-types.js").ListConversationMessageRevisionsOptions,
+  ): import("../conversation-revision-types.js").ConversationMessageRevision[] {
+    return this.conversationRevisions.listConversationMessageRevisions(options);
+  }
+
+  getConversationTurnSupersession(
+    id: string,
+  ): import("../conversation-revision-types.js").ConversationTurnSupersession | undefined {
+    return this.conversationRevisions.getConversationTurnSupersession(id);
+  }
+
+  getConversationTurnSupersessionByIdempotency(
+    idempotencyKey: string,
+  ): import("../conversation-revision-types.js").ConversationTurnSupersession | undefined {
+    return this.conversationRevisions.getConversationTurnSupersessionByIdempotency(idempotencyKey);
+  }
+
+  listConversationTurnSupersessions(
+    options?: import("../conversation-revision-types.js").ListConversationTurnSupersessionsOptions,
+  ): import("../conversation-revision-types.js").ConversationTurnSupersession[] {
+    return this.conversationRevisions.listConversationTurnSupersessions(options);
+  }
+
+  updateConversationTurnSupersession(
+    id: string,
+    input: {
+      readonly replacementTurnId?: string | null;
+      readonly replacementStatus?: import("../conversation-revision-types.js").ConversationReplacementStatus;
+      readonly failureReason?: string | null;
+    },
+    now: string,
+  ): import("../conversation-revision-types.js").ConversationTurnSupersession | undefined {
+    return this.conversationRevisions.updateConversationTurnSupersession(id, input, now);
+  }
+
   getLingThread(threadId: string): LingThread | undefined {
     return this.lingThreads.getLingThread(threadId);
   }
@@ -1081,6 +1146,43 @@ export class SqliteRunStore implements RunStore {
 
   reconcileLingTurnStatus(turnId: string, now: string): LingTurn | undefined {
     return this.lingTurns.reconcileLingTurnStatus(turnId, now);
+  }
+
+  createTerminalReportDraft(input: CreateLingTerminalReportInput, now: string): LingTerminalReportRecord {
+    return this.terminalReports.createTerminalReportDraft(input, now);
+  }
+
+  getTerminalReport(id: string): LingTerminalReportRecord | undefined {
+    return this.terminalReports.getTerminalReport(id);
+  }
+
+  getTerminalReportForSource(
+    sourceKind: TerminalReportSourceKind,
+    sourceId: string,
+    generation = 1,
+    workspaceId?: string,
+  ): LingTerminalReportRecord | undefined {
+    return this.terminalReports.getTerminalReportForSource(sourceKind, sourceId, generation, workspaceId);
+  }
+
+  listTerminalReports(options: ListLingTerminalReportsOptions = {}): LingTerminalReportRecord[] {
+    return this.terminalReports.listTerminalReports(options);
+  }
+
+  updateTerminalReportDraft(input: UpdateLingTerminalReportDraftInput): LingTerminalReportRecord {
+    return this.terminalReports.updateTerminalReportDraft(input);
+  }
+
+  commitTerminalReport(input: CommitLingTerminalReportInput): LingTerminalReportRecord {
+    return this.terminalReports.commitTerminalReport(input);
+  }
+
+  markTerminalReportPublished(input: MarkLingTerminalReportPublishedInput): LingTerminalReportRecord {
+    return this.terminalReports.markTerminalReportPublished(input);
+  }
+
+  failTerminalReport(input: FailLingTerminalReportInput): LingTerminalReportRecord {
+    return this.terminalReports.failTerminalReport(input);
   }
 
   createRun(input: CreateRunInput): RunSession {
@@ -1726,6 +1828,14 @@ export class SqliteRunStore implements RunStore {
     return this.skillRegistry.rollbackSkillSourceSnapshot(snapshotId, now);
   }
 
+  getOfficialSkillSourceSubscription(): OfficialSkillSourceSubscription | undefined {
+    return this.skillRegistry.getOfficialSkillSourceSubscription();
+  }
+
+  upsertOfficialSkillSourceSubscription(input: UpsertOfficialSkillSourceSubscriptionInput, now: string): OfficialSkillSourceSubscription {
+    return this.skillRegistry.upsertOfficialSkillSourceSubscription(input, now);
+  }
+
   getSkillSourceUpgradePolicy(now?: string): SkillSourceUpgradePolicy {
     return this.skillRegistry.getSkillSourceUpgradePolicy(now);
   }
@@ -1786,6 +1896,10 @@ export class SqliteRunStore implements RunStore {
     return this.skillRegistry.publishSkillImportDraft(id, now);
   }
 
+  publishSkillRevisionDraft(input: PublishSkillRevisionDraftInput, now: string): SkillRegistryEntry {
+    return this.skillRegistry.publishSkillRevisionDraft(input, now);
+  }
+
   archiveSkillRegistryEntry(id: string, now: string): SkillRegistryEntry | undefined {
     return this.skillRegistry.archiveSkillRegistryEntry(id, now);
   }
@@ -1815,6 +1929,10 @@ export class SqliteRunStore implements RunStore {
     now: string,
   ): { readonly candidate: SkillCandidate; readonly action: SkillCandidateReviewRecord } {
     return this.skillCandidates.applySkillCandidateReviewAction(input, now);
+  }
+
+  markSkillCandidatePublished(candidateId: string, now: string): SkillCandidate {
+    return this.skillCandidates.markSkillCandidatePublished(candidateId, now);
   }
 
   createProcedureObservation(input: CreateProcedureObservationInput, now: string): ProcedureObservation {

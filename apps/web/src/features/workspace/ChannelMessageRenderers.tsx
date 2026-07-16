@@ -9,6 +9,7 @@ import {
   History,
   Image as ImageIcon,
   Loader2,
+  Pencil,
   Play,
   Plus,
   RefreshCw,
@@ -22,7 +23,7 @@ import {
 } from "lucide-react";
 import { effectiveApprovalStatus } from "../../lib/approvals.js";
 import type { ChannelActivityItem } from "../../lib/channel-activity.js";
-import { conversationAgentActivitySummary, type ConversationAgentActivitySpan, type ConversationWorkCellViewModel } from "../../lib/conversation-work-cell.js";
+import type { ConversationAgentActivitySpan, ConversationWorkCellViewModel } from "../../lib/conversation-work-cell.js";
 import type { ConversationTranscriptBlock, ConversationTurnViewModel } from "../../lib/conversation-turn-projector.js";
 import { truncatePreview } from "../../lib/data.js";
 import { formatDateTime } from "../../lib/formatting.js";
@@ -37,17 +38,22 @@ import {
 import {
   ConversationArtifactStripPanel,
   ConversationAttachmentStrip,
+  ConversationReferenceStrip,
+  ConversationReplacementRetry,
   ConversationWorkCell,
-  FileRefChip,
+  InlineMessageEditor,
   MessageActionBar,
   MessageBodyRenderer,
   MessageBubble,
   MessageEvidencePanel,
   MessageRow,
+  TerminalReportBlock,
   TranscriptBlockView,
   createTranscriptBlockRendererRegistry,
   renderTranscriptBlockFromRegistry,
   type ConversationWorkCellDetailsState,
+  type ConversationWorkspaceReviewTarget,
+  type TerminalReportFileTarget,
 } from "../../shared/conversation/index.js";
 import type {
   ApprovalRequest,
@@ -58,13 +64,12 @@ import type {
   ChannelExecutionProposal,
   ChannelHandoff,
   ChannelHandoffStatus,
+  ChannelLinkPreview,
   ChannelMention,
   ChannelMessage,
-  ChannelTeamEvidenceStatus,
   ChannelMessageFileRef,
   ChannelWorkflow,
   ChannelWorkflowStep,
-  FoldedExpertsReadModel,
   MemoryObject,
   RunArtifact,
   RunSession,
@@ -77,7 +82,6 @@ import type {
 } from "../../types.js";
 import type { LocalTeammateDraft } from "../teammates/index.js";
 import { TeammateAvatarView } from "../teammates/TeammateAvatarView.js";
-import { ChannelTeamExpertsSummary } from "./ChannelTeamExpertsSummary.js";
 import {
   ChannelExecutionProposalCard,
   WorkflowFinalSummary,
@@ -102,10 +106,9 @@ export interface ChannelMessageRenderersInput {
   readonly auditActivityVisible: boolean;
   readonly channelArtifactsByRun: Readonly<Record<string, readonly RunArtifact[]>>;
   readonly channelAttachmentById: ReadonlyMap<string, ChannelAttachment>;
+  readonly channelLinkPreviewById: ReadonlyMap<string, ChannelLinkPreview>;
   readonly channelMessageFeedbackById: Readonly<Record<string, FeedbackValue>>;
   readonly channelMessagesLoadingOlder: boolean;
-  readonly channelTeamExpertsByTurn: Readonly<Record<string, ChannelTeamExpertsState>>;
-  readonly channelTeamExpertsExpandedByTurn: Readonly<Record<string, boolean>>;
   readonly channelWorkflowSteps: readonly ChannelWorkflowStep[];
   readonly channelWorkflows: readonly ChannelWorkflow[];
   readonly conversationWorkCellByThreadId: ReadonlyMap<string, ConversationWorkCellViewModel>;
@@ -115,6 +118,12 @@ export interface ChannelMessageRenderersInput {
   readonly executionProposalsByMessageId: ReadonlyMap<string, readonly ChannelExecutionProposal[]>;
   readonly formatBytes: (value: number) => string;
   readonly latestStatus: string;
+  readonly latestEditableMessageId?: string;
+  readonly editingMessageId?: string;
+  readonly editSaving?: boolean;
+  readonly editError?: string;
+  readonly replacementRetryingMessageId?: string;
+  readonly replacementRetryError?: string;
   readonly localUserDisplayName: string;
   readonly loadPreview: (request: PreviewRequest) => Promise<PreviewContentResponse>;
   readonly memoryById: ReadonlyMap<string, MemoryObject>;
@@ -141,6 +150,9 @@ export interface ChannelMessageRenderersInput {
   readonly onOpenApprovalDetail: (approval: ApprovalRequest | undefined) => void;
   readonly onOpenContextSummaryInConversationDetail: (summary: ChannelContextSummary) => void;
   readonly onOpenRun: (runId: string) => void;
+  readonly onOpenFileReference: () => void;
+  readonly onOpenTerminalReportFile: (target: TerminalReportFileTarget) => void;
+  readonly onOpenWorkspaceReview: (target: ConversationWorkspaceReviewTarget) => void;
   readonly onOpenThreadForMessage: (message: ChannelMessage) => void;
   readonly onOrchestrateWorkflow: (workflow: ChannelWorkflow) => void;
   readonly onRejectDecision: (decision: ChannelDecision) => void;
@@ -153,23 +165,19 @@ export interface ChannelMessageRenderersInput {
   readonly onStartWorkflowFromHandoff: (handoff: ChannelHandoff) => void;
   readonly onSupersedeDecision: (decision: ChannelDecision) => void;
   readonly onToggleChannelMessageFeedback: (messageId: string, feedback: FeedbackValue) => void;
-  readonly onToggleChannelTeamExpertsExpanded: (turnId: string) => void;
+  readonly onBeginMessageEdit: (messageId: string) => void;
+  readonly onCancelMessageEdit: () => void;
+  readonly onSaveMessageEdit: (message: ChannelMessage, body: string) => void | Promise<void>;
+  readonly onRetryMessageReplacement: (message: ChannelMessage) => void | Promise<void>;
   readonly onUpdateExecutionProposal: (
     proposal: ChannelExecutionProposal,
     input: UpdateChannelExecutionProposalRequest,
   ) => Promise<ChannelExecutionProposal | undefined>;
   readonly onUpdateHandoffStatus: (handoff: ChannelHandoff, status: ChannelHandoffStatus) => void;
   readonly readRunTitle: (run: RunSession) => string;
-  readonly resolveExpertTeammate: (agentId: string | undefined) => LocalTeammateDraft | undefined;
   readonly planActionBusyId: string;
   readonly proposedPlanArtifactsById: ReadonlyMap<string, ProposedPlanArtifact>;
   readonly workflowWorkCellDetailsCacheKey: (workflowId: string) => string;
-}
-
-interface ChannelTeamExpertsState {
-  readonly channelId: string;
-  readonly turnId: string;
-  readonly experts: FoldedExpertsReadModel;
 }
 
 export interface ChannelMessageRenderers {
@@ -177,13 +185,32 @@ export interface ChannelMessageRenderers {
 }
 
 export function createChannelMessageRenderers(input: ChannelMessageRenderersInput): ChannelMessageRenderers {
+  const channelSurface = input.selectedChannelBranchRootThreadId ? "channel_branch" : "channel_root";
+  function renderLingAgentAvatar(): ReactNode {
+    const teammate = input.allLocalTeammateById.get(LING_AGENT_AUTHOR_ID);
+    return (
+      <TeammateAvatarView
+        teammate={teammate ?? {
+          displayName: LING_AGENT_AUTHOR_LABEL,
+          templateId: LING_AGENT_AUTHOR_ID,
+          kind: "system_teammate",
+          systemRole: "ling_agent",
+          roleKey: "custom",
+          avatarTone: "violet",
+        }}
+        cwd={input.cwd}
+        compact
+      />
+    );
+  }
+
   function renderChannelMessageAvatar(message: ChannelMessage): ReactNode {
     if (message.authorType === "ai-teammate") {
       const teammate = input.allLocalTeammateById.get(message.authorId ?? "");
       return teammate
         ? <TeammateAvatarView teammate={teammate} cwd={input.cwd} compact />
         : message.authorId === LING_AGENT_AUTHOR_ID
-          ? <AvatarInitial label="L" tone="violet" />
+          ? renderLingAgentAvatar()
           : <AvatarInitial label="A" tone="teal" />;
     }
     if (message.authorType === "system") {
@@ -192,89 +219,21 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
     return <UserProfileAvatar profile={input.userProfile} fallbackLabel={input.localUserDisplayName} />;
   }
 
-  function renderConversationAgentAvatar(span: ConversationAgentActivitySpan): ReactNode {
-    const participantId = span.participantId?.trim();
-    const teammate = (participantId ? input.allLocalTeammateById.get(participantId) : undefined) ??
-      input.allLocalTeammateByName.get(span.label.trim().toLowerCase());
+  function renderConversationParticipantAvatar(participantId: string | undefined, label: string): ReactNode {
+    const normalizedParticipantId = participantId?.trim();
+    const normalizedLabel = normalizeAgentLabel(label);
+    const teammate = (normalizedParticipantId ? input.allLocalTeammateById.get(normalizedParticipantId) : undefined) ??
+      input.allLocalTeammateByName.get(label.trim().toLowerCase()) ??
+      [...input.allLocalTeammateById.values()].find((candidate) =>
+        candidate.templateId === normalizedParticipantId ||
+        candidate.roleKey === normalizedParticipantId ||
+        normalizeAgentLabel(candidate.displayName) === normalizedLabel,
+      );
     return teammate ? <TeammateAvatarView teammate={teammate} cwd={input.cwd} compact /> : undefined;
   }
 
-  function renderConversationTurnAgentParticipationSummary(
-    spans: readonly ConversationAgentActivitySpan[],
-    operationStatus: string | undefined,
-    expanded: boolean,
-    onToggleExpanded: () => void,
-  ): ReactNode {
-    const entries = spans.map((span, index) => ({
-      span,
-      index,
-      status: conversationAgentParticipationStatus(span, operationStatus),
-      summary: conversationAgentActivitySummary(span),
-    }));
-    const activeCount = entries.filter((entry) => entry.status === "pending").length;
-    const completedCount = entries.filter((entry) => entry.status === "completed" || entry.status === "adopted").length;
-    const delayedCount = entries.filter((entry) => entry.status === "timeout" || entry.status === "expired").length;
-    const unavailableCount = entries.filter((entry) => entry.status === "unavailable" || entry.status === "rejected").length;
-    const summaryItems = [
-      activeCount > 0 ? { label: `${activeCount} ${input.t("active")}`, tone: "active" as const } : undefined,
-      completedCount > 0 ? { label: `${completedCount} ${input.t("done")}`, tone: "done" as const } : undefined,
-      delayedCount > 0 ? { label: `${delayedCount} ${input.t("delayed")}`, tone: "delayed" as const } : undefined,
-      unavailableCount > 0 ? { label: `${unavailableCount} ${input.t("unavailable")}`, tone: "unavailable" as const } : undefined,
-    ].filter((item): item is { readonly label: string; readonly tone: "active" | "done" | "delayed" | "unavailable" } => Boolean(item));
-    const ariaLabel = `${input.t("Teammates")}: ${summaryItems.map((item) => item.label).join(", ") || `${entries.length} ${input.t("done")}`}`;
-
-    return (
-      <section className="channel-team-experts-summary" aria-label={input.t("Teammates")}>
-        <button
-          type="button"
-          className="channel-team-experts-summary-toggle"
-          aria-expanded={expanded}
-          aria-label={ariaLabel}
-          onClick={onToggleExpanded}
-        >
-          <span className="channel-team-experts-summary-chips" aria-hidden="true">
-            {entries.slice(0, 4).map((entry) => {
-              const avatar = renderConversationAgentAvatar(entry.span);
-              const title = entry.summary ? `${entry.span.label}: ${entry.summary}` : entry.span.label;
-              return avatar ? (
-                <span className={`channel-team-experts-chip status-${entry.status} has-avatar`} title={title} key={entry.span.id}>
-                  {avatar}
-                </span>
-              ) : (
-                <span className={`channel-team-experts-chip status-${entry.status} tone-${entry.index % 6}`} title={title} key={entry.span.id}>
-                  {conversationAgentInitials(entry.span.label)}
-                </span>
-              );
-            })}
-            {entries.length > 4 ? (
-              <span className="channel-team-experts-chip more">+{entries.length - 4}</span>
-            ) : null}
-          </span>
-          <span className="channel-team-experts-summary-meta">
-            {summaryItems.map((item, index) => (
-              <span className={`channel-team-experts-summary-meta-item tone-${item.tone}`} key={item.tone}>
-                {item.label}
-                {index < summaryItems.length - 1 ? <span className="channel-team-experts-summary-meta-separator">,</span> : null}
-              </span>
-            ))}
-          </span>
-        </button>
-        {expanded ? (
-          <div className="channel-team-experts-summary-panel">
-            {entries.map((entry) => (
-              <article className={`channel-team-experts-summary-entry status-${entry.status}`} aria-label={`${entry.span.label}: ${entry.summary}`} key={entry.span.id}>
-                <span className="channel-team-experts-summary-entry-dot" aria-hidden="true" />
-                <span className="channel-team-experts-summary-entry-avatar" aria-hidden="true">
-                  {renderConversationAgentAvatar(entry.span) ?? conversationAgentInitials(entry.span.label)}
-                </span>
-                <strong className="channel-team-experts-summary-entry-agent">{entry.span.label}</strong>
-                <p className="channel-team-experts-summary-entry-summary">{entry.summary}</p>
-              </article>
-            ))}
-          </div>
-        ) : null}
-      </section>
-    );
+  function renderConversationAgentAvatar(span: ConversationAgentActivitySpan): ReactNode {
+    return renderConversationParticipantAvatar(span.participantId, span.label);
   }
 
   const conversationTranscriptBlockRenderers = createTranscriptBlockRendererRegistry<
@@ -288,10 +247,9 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
     approval: renderGenericTranscriptBlock,
     artifact_strip: renderGenericTranscriptBlock,
     source_summary: renderGenericTranscriptBlock,
-    workflow_packet_summary: renderGenericTranscriptBlock,
     requirement_shaping: renderGenericTranscriptBlock,
     decision_needed: renderGenericTranscriptBlock,
-    final_result: renderGenericTranscriptBlock,
+    final_result: renderFinalResultTranscriptBlock,
     raw_debug_ref: renderGenericTranscriptBlock,
   });
 
@@ -332,28 +290,19 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
     const createdAt = anchorMessage?.createdAt ?? turn.createdAt;
     const copyText = conversationTurnAssistantCopyText(turn, input.t);
     const transcriptContext: WorkspaceTranscriptRenderContext = { detailsState, onLoadDetails };
-    const teamExpertsState = input.channelTeamExpertsByTurn[turn.sourceMessage.id];
-    const teamExperts = teamExpertsState?.channelId === input.selectedChannelId && teamExpertsState.turnId === turn.sourceMessage.id
-      ? teamExpertsState.experts
-      : undefined;
     const terminalSummaryRendered = conversationTurnHasTerminalSummary(turn);
-    const hasTeamExpertsSummary = Boolean(teamExperts && teamExperts.totalCount > 1);
-    const fallbackParticipationSpans = terminalSummaryRendered && !hasTeamExpertsSummary
-      ? uniqueAgentParticipationSpans(turn.operationCell?.agentSpans ?? [])
-      : [];
-    const teamExpertsExpanded = input.channelTeamExpertsExpandedByTurn[turn.sourceMessage.id] ?? false;
     const externalArtifactItems = terminalSummaryRendered
       ? turn.operationCell?.artifactStripItems ?? []
       : [];
+    const externalArtifactCwd = turn.operationCell
+      ? input.runById.get(turn.operationCell.anchorRunId)?.cwd ?? input.cwd
+      : input.cwd;
 
     return (
       <MessageRow
-        className={[
-          "channel-message-row conversation-turn-assistant-row",
-          hasTeamExpertsSummary || fallbackParticipationSpans.length > 1 ? "has-team-experts" : "",
-        ].filter(Boolean).join(" ")}
+        className="channel-message-row conversation-turn-assistant-row"
         authorType="ai-teammate"
-        avatar={anchorMessage ? renderChannelMessageAvatar(anchorMessage) : <AvatarInitial label="L" tone="violet" />}
+        avatar={anchorMessage ? renderChannelMessageAvatar(anchorMessage) : renderLingAgentAvatar()}
         authorName={authorName}
         createdAtLabel={formatDateTime(createdAt)}
         bodyNode={(
@@ -363,35 +312,14 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
               block,
               context: transcriptContext,
             }))}
-            {teamExperts && hasTeamExpertsSummary ? (
-              <ChannelTeamExpertsSummary
-                experts={teamExperts}
-                expanded={teamExpertsExpanded}
-                onToggleExpanded={() => input.onToggleChannelTeamExpertsExpanded(turn.sourceMessage.id)}
-                cwd={input.cwd}
-                resolveExpertTeammate={input.resolveExpertTeammate}
-                labels={{
-                  experts: input.t("Teammates"),
-                  active: input.t("active"),
-                  done: input.t("done"),
-                  delayed: input.t("delayed"),
-                  unavailable: input.t("unavailable"),
-                }}
-              />
-            ) : fallbackParticipationSpans.length > 1 ? (
-              renderConversationTurnAgentParticipationSummary(
-                fallbackParticipationSpans,
-                turn.operationCell?.status,
-                teamExpertsExpanded,
-                () => input.onToggleChannelTeamExpertsExpanded(turn.sourceMessage.id),
-              )
-            ) : null}
             {externalArtifactItems.length > 0 ? (
               <div className="conversation-turn-artifacts">
                 <ConversationArtifactStripPanel
                   items={externalArtifactItems}
-                  cwd={input.cwd}
+                  cwd={externalArtifactCwd}
+                  recoveryTarget={externalArtifactItems.find((item) => item.kind === "changed")?.recoveryTarget}
                   loadPreview={input.loadPreview}
+                  onOpenWorkspaceReview={input.onOpenWorkspaceReview}
                 />
               </div>
             ) : null}
@@ -404,11 +332,10 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
 
   function renderChannelAiMessageActions(message: ChannelMessage, copyText: string): ReactNode {
     const feedback = input.channelMessageFeedbackById[message.id];
-    const surface = input.selectedChannelBranchRootThreadId ? "channel_branch" : "channel_root";
     return (
       <div className="channel-message-row-footer-stack">
         <MessageActionBar
-          surface={surface}
+          surface={channelSurface}
           className="channel-message-ai-actions"
           copiedLabel={input.t("Copied")}
           actions={[
@@ -483,7 +410,7 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
         key={block.id}
       >
         {pendingCoordinatorMessage ? <Loader2 className="message-pending-spinner spin" size={13} /> : null}
-        <MessageBodyRenderer text={body} cwd={input.cwd} compact streaming={pendingCoordinatorMessage} />
+        <MessageBodyRenderer text={body} cwd={input.cwd} compact streaming={pendingCoordinatorMessage} onOpenLocalFile={input.onOpenFileReference} />
         {evidenceNode}
       </div>
     );
@@ -498,19 +425,44 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
     readonly block: Extract<ConversationTranscriptBlock, { readonly kind: "operation" }>;
     readonly context: WorkspaceTranscriptRenderContext;
   }): ReactNode {
+    const operationCwd = input.runById.get(block.operationCell.anchorRunId)?.cwd ?? input.cwd;
     return (
       <div className="conversation-turn-operation" key={block.id}>
         <ConversationWorkCell
           model={block.operationCell}
-          cwd={input.cwd}
+          surface={channelSurface}
+          cwd={operationCwd}
           detailsState={context.detailsState}
           onOpenRun={block.operationCell.anchorRunId.startsWith("workflow:") ? undefined : input.onOpenRun}
           onLoadDetails={context.onLoadDetails}
           loadPreview={input.loadPreview}
           renderAgentAvatar={renderConversationAgentAvatar}
+          renderParticipantAvatar={renderConversationParticipantAvatar}
           showArtifactStrip={!conversationTurnHasTerminalSummary(turn)}
+          showTerminalReport={!turn.blocks.some((item) => item.kind === "final_result")}
+          onOpenWorkspaceFile={input.onOpenTerminalReportFile}
+          onOpenWorkspaceReview={input.onOpenWorkspaceReview}
         />
       </div>
+    );
+  }
+
+  function renderFinalResultTranscriptBlock({
+    block,
+  }: {
+    readonly turn: ConversationTurnViewModel;
+    readonly block: Extract<ConversationTranscriptBlock, { readonly kind: "final_result" }>;
+    readonly context: WorkspaceTranscriptRenderContext;
+  }): ReactNode {
+    return (
+      <TerminalReportBlock
+        key={block.id}
+        blockId={block.terminalReportId}
+        rows={block.rows}
+        renderParticipantAvatar={renderConversationParticipantAvatar}
+        surface={channelSurface}
+        onOpenWorkspaceFile={input.onOpenTerminalReportFile}
+      />
     );
   }
 
@@ -709,6 +661,7 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
       ? input.proposedPlanArtifactsById.get(proposedPlanBlock.plan.id) ?? proposedPlanBlock.plan
       : undefined;
     const visibleMessageBody = proposedPlanBlock?.displayBody ?? pendingAiReplyBody;
+    const editing = input.editingMessageId === message.id;
     if (plainChatMessage) {
       return (
         <div className="message-group">
@@ -718,10 +671,25 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
             avatar={renderChannelMessageAvatar(message)}
             authorName={messageAuthorLabel(message, input.teammateOptions, input.t("Deleted teammate"), input.localUserDisplayName, input.allLocalTeammateById)}
             createdAtLabel={formatDateTime(message.createdAt)}
-            bodyNode={(
+            statusNode={message.editedAt ? <span className="conversation-message-edited-label">{input.t("Edited")}</span> : undefined}
+            bodyNode={editing ? (
+              <div className="conversation-inline-message-editor-stack">
+                <InlineMessageEditor
+                  initialValue={message.body}
+                  cwd={input.cwd}
+                  ariaLabel={input.t("Edit message")}
+                  saveLabel={input.t("Save and resend")}
+                  cancelLabel={input.t("Cancel")}
+                  saving={input.editSaving}
+                  onCancel={input.onCancelMessageEdit}
+                  onSave={(value) => input.onSaveMessageEdit(message, value)}
+                />
+                {input.editError ? <div className="inline-error compact-inline-error" role="alert">{input.editError}</div> : null}
+              </div>
+            ) : (
               <div className={pendingAiReply ? "message-body-shell message-body-with-spinner" : "message-body-shell"}>
                 {pendingAiReply ? <Loader2 className="message-pending-spinner spin" size={13} /> : null}
-                {visibleMessageBody.trim() ? <MessageBodyRenderer text={visibleMessageBody} cwd={input.cwd} compact streaming={pendingAiReply} /> : null}
+                {visibleMessageBody.trim() ? <MessageBodyRenderer text={visibleMessageBody} cwd={input.cwd} compact streaming={pendingAiReply} onOpenLocalFile={input.onOpenFileReference} /> : null}
                 {proposedPlanBlock ? (
                   <ProposedPlanBlock
                     plan={proposedPlan ?? proposedPlanBlock.plan}
@@ -736,7 +704,7 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
                 ) : null}
               </div>
             )}
-            attachmentsNode={renderChannelMessageAssets(message.attachmentIds, messageFileRefs, message.channelId)}
+            attachmentsNode={renderChannelMessageAssets(message.attachmentIds, messageFileRefs, message.linkPreviewIds, message.channelId)}
             evidenceNode={(messageUsedMemoryEvents.length > 0 || message.webEvidence) ? (
               <MessageEvidencePanel
                 memoryContent={usedMemorySummary}
@@ -744,7 +712,40 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
                 webEvidence={message.webEvidence}
               />
             ) : null}
-            actionsNode={message.authorType === "ai-teammate" ? renderChannelAiMessageActions(message, message.body) : null}
+            errorNode={message.pendingReplacement ? (
+              <ConversationReplacementRetry
+                failureReason={input.replacementRetryError || message.pendingReplacement.failureReason}
+                retryLabel={input.t("Retry response")}
+                retrying={input.replacementRetryingMessageId === message.id}
+                onRetry={() => void input.onRetryMessageReplacement(message)}
+              />
+            ) : null}
+            actionsNode={!editing && message.authorType === "ai-teammate"
+              ? renderChannelAiMessageActions(message, message.body)
+              : !editing && message.authorType === "local-user"
+                ? (
+                    <MessageActionBar
+                      surface={channelSurface}
+                      className="channel-message-user-actions"
+                      actions={[
+                        {
+                          id: "copy",
+                          kind: "copy",
+                          label: input.t("Copy message"),
+                          icon: <Copy size={14} />,
+                          copyText: message.body,
+                        },
+                        ...(input.latestEditableMessageId === message.id ? [{
+                          id: "edit",
+                          kind: "edit_latest" as const,
+                          label: input.t("Edit message"),
+                          icon: <Pencil size={14} />,
+                          onClick: () => input.onBeginMessageEdit(message.id),
+                        }] : []),
+                      ]}
+                    />
+                  )
+                : null}
           />
           {executionProposals.map((proposal) => renderExecutionProposalCard(proposal))}
         </div>
@@ -805,12 +806,16 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
       return (
         <ConversationWorkCell
           model={workCell}
-          cwd={input.cwd}
+          surface={channelSurface}
+          cwd={input.runById.get(workCell.anchorRunId)?.cwd ?? input.cwd}
           detailsState={input.conversationWorkCellDetailsByKey[detailsKey] ?? { status: "not_loaded" }}
           onOpenRun={workCell.anchorRunId.startsWith("workflow:") ? undefined : input.onOpenRun}
           onLoadDetails={input.onLoadWorkflowWorkCellDetails}
           loadPreview={input.loadPreview}
           renderAgentAvatar={renderConversationAgentAvatar}
+          renderParticipantAvatar={renderConversationParticipantAvatar}
+          onOpenWorkspaceFile={input.onOpenTerminalReportFile}
+          onOpenWorkspaceReview={input.onOpenWorkspaceReview}
         />
       );
     }
@@ -917,12 +922,16 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
       return (
         <ConversationWorkCell
           model={workCell}
-          cwd={input.cwd}
+          surface={channelSurface}
+          cwd={run.cwd}
           detailsState={input.conversationWorkCellDetailsByKey[input.conversationWorkCellDetailsCacheKey(workCell.threadId)] ?? { status: "not_loaded" }}
           onOpenRun={input.onOpenRun}
           onLoadDetails={input.onLoadConversationWorkCellDetails}
           loadPreview={input.loadPreview}
           renderAgentAvatar={renderConversationAgentAvatar}
+          renderParticipantAvatar={renderConversationParticipantAvatar}
+          onOpenWorkspaceFile={input.onOpenTerminalReportFile}
+          onOpenWorkspaceReview={input.onOpenWorkspaceReview}
         />
       );
     }
@@ -1022,10 +1031,10 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
             createdAtLabel={formatDateTime(preview.createdAt)}
             bodyNode={(
               <div className="message-body-shell">
-                <MessageBodyRenderer text={preview.body} cwd={input.cwd} compact />
+                <MessageBodyRenderer text={preview.body} cwd={input.cwd} compact onOpenLocalFile={input.onOpenFileReference} />
               </div>
             )}
-            attachmentsNode={renderChannelMessageAssets(preview.attachmentIds, preview.fileRefs, preview.channelId)}
+            attachmentsNode={renderChannelMessageAssets(preview.attachmentIds, preview.fileRefs, preview.linkPreviewIds, preview.channelId)}
           />
         ) : null}
         <div className="channel-send-thinking-row" role="status" aria-live="polite">
@@ -1039,12 +1048,16 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
   function renderChannelMessageAssets(
     attachmentIds: readonly string[],
     fileRefs: readonly ChannelMessageFileRef[] = [],
+    linkPreviewIds: readonly string[] = [],
     channelId: string = input.selectedChannelId,
   ): ReactNode {
     const attachments = attachmentIds
       .map((id) => input.channelAttachmentById.get(id))
       .filter((attachment): attachment is ChannelAttachment => Boolean(attachment));
-    if (attachments.length === 0 && fileRefs.length === 0) {
+    const linkPreviews = linkPreviewIds
+      .map((id) => input.channelLinkPreviewById.get(id))
+      .filter((preview): preview is ChannelLinkPreview => preview?.status === "ready");
+    if (attachments.length === 0 && fileRefs.length === 0 && linkPreviews.length === 0) {
       return null;
     }
     return (
@@ -1068,18 +1081,29 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
             } : undefined,
           }))}
         />
-        {fileRefs.length > 0 ? (
-          <div className="conversation-attachment-strip channel-file-ref-strip" aria-label={input.t("Workspace file references")}>
-            {fileRefs.map((fileRef, index) => (
-              <FileRefChip
-                key={`${fileRef.path}:${fileRef.line ?? ""}:${index}`}
-                icon={<FileText size={13} />}
-                label={fileRef.label ?? fileRef.path}
-                meta={fileRef.line !== undefined ? `:${fileRef.line}` : undefined}
-              />
-            ))}
-          </div>
-        ) : null}
+        <ConversationReferenceStrip
+          ariaLabel={input.t("References")}
+          references={[
+            ...fileRefs.map((fileRef, index) => ({
+              id: `file:${fileRef.path}:${fileRef.line ?? ""}:${index}`,
+              kind: "workspace_file" as const,
+              label: fileRef.label ?? fileNameFromReferencePath(fileRef.path),
+              meta: fileRef.line !== undefined ? `${fileRef.path}:${fileRef.line}` : fileRef.path,
+              previewTitle: fileRef.label ?? fileNameFromReferencePath(fileRef.path),
+              previewText: fileRef.path,
+              onOpen: input.onOpenFileReference,
+            })),
+            ...linkPreviews.map((preview) => ({
+              id: `web:${preview.id}`,
+              kind: "web" as const,
+              label: preview.title ?? preview.siteName ?? webReferenceHost(preview.normalizedUrl || preview.url),
+              meta: preview.siteName ?? webReferenceHost(preview.normalizedUrl || preview.url),
+              href: preview.normalizedUrl || preview.url,
+              previewTitle: preview.title,
+              previewText: preview.description,
+            })),
+          ]}
+        />
       </>
     );
   }
@@ -1087,8 +1111,24 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
   return { renderMessageFeedItem };
 }
 
+function fileNameFromReferencePath(path: string): string {
+  return path.split("/").filter(Boolean).at(-1) ?? path;
+}
+
+function webReferenceHost(value: string): string {
+  try {
+    return new URL(value).hostname.replace(/^www\./iu, "");
+  } catch {
+    return value;
+  }
+}
+
 export const LING_AGENT_AUTHOR_ID = "ling_agent";
 const LING_AGENT_AUTHOR_LABEL = "Ling Agent";
+
+function normalizeAgentLabel(value: string): string {
+  return value.trim().toLowerCase().replace(/^ling\s+/u, "");
+}
 
 export function messageAuthorLabel(
   message: ChannelMessage,
@@ -1291,74 +1331,8 @@ function isGeneratedWorkflowCoordinatorBody(body: string): boolean {
 }
 
 function conversationTurnHasTerminalSummary(turn: ConversationTurnViewModel): boolean {
-  return turn.blocks.some((block) => block.kind === "coordinator_message" && block.phase === "terminal");
-}
-
-function uniqueAgentParticipationSpans(spans: readonly ConversationAgentActivitySpan[]): readonly ConversationAgentActivitySpan[] {
-  const byKey = new Map<string, ConversationAgentActivitySpan>();
-  for (const span of spans) {
-    if (span.kind === "overflow") {
-      continue;
-    }
-    const key = (span.participantId?.trim() || span.label.trim()).toLowerCase();
-    if (!key) {
-      continue;
-    }
-    const existing = byKey.get(key);
-    if (!existing) {
-      byKey.set(key, span);
-      continue;
-    }
-    byKey.set(key, {
-      ...existing,
-      summary: span.summary ?? existing.summary,
-      meta: span.meta ?? existing.meta,
-      tone: span.tone ?? existing.tone,
-      stateLabel: span.stateLabel ?? existing.stateLabel,
-      latestRow: span.latestRow ?? existing.latestRow,
-      rows: [...existing.rows, ...span.rows],
-    });
-  }
-  return [...byKey.values()];
-}
-
-function conversationAgentParticipationStatus(
-  span: ConversationAgentActivitySpan,
-  operationStatus: string | undefined,
-): ChannelTeamEvidenceStatus {
-  const tone = span.tone ?? span.latestRow?.tone;
-  if (tone === "running") {
-    return "pending";
-  }
-  if (tone === "waiting") {
-    return "timeout";
-  }
-  if (tone === "failed") {
-    return "unavailable";
-  }
-  if (tone === "success") {
-    return "completed";
-  }
-  if (operationStatus === "active" || operationStatus === "running" || operationStatus === "waiting_for_approval") {
-    return "pending";
-  }
-  if (operationStatus === "blocked" || operationStatus === "cancelled" || operationStatus === "superseded") {
-    return "timeout";
-  }
-  if (operationStatus === "failed") {
-    return "unavailable";
-  }
-  return "completed";
-}
-
-function conversationAgentInitials(value: string): string {
-  const normalized = value.trim();
-  return normalized
-    .split(/[\s_-]+/u)
-    .filter(Boolean)
-    .slice(-2)
-    .map((part) => part.slice(0, 1).toUpperCase())
-    .join("") || normalized.slice(0, 2).toUpperCase();
+  return Boolean(turn.operationCell?.terminalReportRows.length) ||
+    turn.blocks.some((block) => block.kind === "coordinator_message" && block.phase === "terminal");
 }
 
 function conversationCoordinatorStartFallback(

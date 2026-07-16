@@ -1,4 +1,5 @@
-import type { AuthorizationMode, ToolName, WorkspaceAccessMode } from "./shared.js";
+import type { AuthorizationMode, ConversationPendingReplacement, PermissionConfirmation, PermissionPreset, ToolName, WorkspaceAccessMode } from "./shared.js";
+import type { SkillOptimizationMode } from "./skills.js";
 import type { SkillApprovalProfile } from "./approvals.js";
 import type {
   ChannelAttachmentKind,
@@ -266,6 +267,9 @@ export interface TeammateDirectMessage {
   readonly errorMessage?: string;
   readonly linkedTaskId?: string;
   readonly linkedRunId?: string;
+  readonly revision?: number;
+  readonly editedAt?: string;
+  readonly pendingReplacement?: ConversationPendingReplacement;
   readonly createdAt: string;
   readonly updatedAt: string;
   readonly webEvidence?: MessageWebEvidence;
@@ -280,6 +284,10 @@ export interface CreateTeammateDirectMessageRequest {
   readonly providerPresetId?: string;
   readonly authorizationMode?: AuthorizationMode;
   readonly workspaceAccessMode?: WorkspaceAccessMode;
+  readonly permissionPreset?: PermissionPreset;
+  readonly permissionConfirmation?: PermissionConfirmation;
+  readonly requestedSkillId?: string;
+  readonly skillOptimizationMode?: SkillOptimizationMode;
 }
 
 export interface TeammateDirectLinkPreview {
@@ -458,6 +466,11 @@ export interface TeammateDirectMessageStreamDeltaEvent {
   readonly messageId: string;
   readonly delta: string;
   readonly body: string;
+}
+
+export interface TeammateDirectMessageStreamRunLinkedEvent {
+  readonly messageId: string;
+  readonly linkedRunId?: string;
 }
 
 export interface TeammateDirectMessageStreamDoneEvent {

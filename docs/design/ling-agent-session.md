@@ -22,6 +22,7 @@ Related docs:
 - [Channel Team Operating System Task Plan - 2026-06-26](channel-team-operating-system-task-plan-2026-06-26.md)
 - [Web E2E Acceptance Matrix](web-e2e-acceptance-matrix.md)
 - [Conversation Plan And Goal Modes](conversation-plan-and-goal-modes.md)
+- [Ling Agent TerminalReport Protocol](ling-agent-terminal-report-protocol.md)
 
 ## Summary
 
@@ -41,6 +42,10 @@ The team observation and folded expert-evidence direction is defined in
 [Channel Team Operating System](channel-team-operating-system.md). That design keeps Ling
 Agent as the single narrator and coordinator while allowing custom teammates to observe,
 produce structured notes, provide dissent, and participate after explicit selection.
+
+The canonical final result contract, evidence boundary, synthesis lifecycle, and
+deterministic fallback are defined in
+[Ling Agent TerminalReport Protocol](ling-agent-terminal-report-protocol.md).
 
 Target user experience:
 
@@ -1265,8 +1270,10 @@ Implementation decisions to settle per slice:
 
 - whether `LingAgentSessionView` can remain a derived read model or needs first-class
   `ling_agent_sessions` storage;
-- where final report generation lives: daemon projection, runner terminal summary, or Web
-  presentation layer backed by evidence;
+- where final report generation lives is resolved by
+  [Ling Agent TerminalReport Protocol](ling-agent-terminal-report-protocol.md): daemon/core
+  owns evidence, validation, persistence, and publication; Ling Agent owns synthesis; Web
+  only renders the committed report;
 - whether Ling Agent system teammate profile is stored as a durable row, a virtual row, or
   a migrated built-in row;
 - where user-added `LING_AGENT.user.md` instructions are stored and versioned;

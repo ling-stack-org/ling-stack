@@ -1,8 +1,12 @@
 import {
   normalizeConversationOperationCell,
+  projectConversationCommandBatches,
+  terminalReportToViewModel,
   type ConversationAgentActivitySpan,
   type ConversationArtifactStripChangeArtifact,
   type ConversationArtifactStripItem,
+  type ConversationCommandBatch,
+  type ConversationCommandBatchItem,
   type ConversationOperationCellMode,
   type ConversationOperationCellSourceKind,
   type ConversationOperationCellStatus,
@@ -13,12 +17,14 @@ import {
   type ConversationWorkCellEvidenceLink,
   type ConversationWorkCellGroup,
   type ConversationWorkCellGroupKind,
+  type ConversationWorkCellItem,
   type ConversationWorkCellRow,
   type ConversationWorkCellRowDetailLine,
   type ConversationWorkCellRowTone,
   type ConversationWorkCellViewModel,
+  type ConversationWorkspaceRecoveryTarget,
 } from "@ling-stack/conversation-ui-core";
-import type { ApprovalRequest, ExecutionAction, LingApprovalCheckpoint, LingThreadEvidenceResponse, LingTraceDetailResponse, LingTraceSpan, LingTurn, LingTurnRun, RunArtifact, RunSession } from "../types.js";
+import type { ApprovalRequest, ExecutionAction, LingApprovalCheckpoint, LingThreadEvidenceResponse, LingTraceDetailResponse, LingTraceSpan, LingTurn, LingTurnRun, RunArtifact, RunSession, TerminalReportDto } from "../types.js";
 import type { Translate } from "../i18n.js";
 import { effectiveApprovalStatus } from "./approvals.js";
 import { truncatePreview } from "./data.js";
@@ -26,6 +32,7 @@ import { artifactLooksLikeDiff } from "./diff-summary.js";
 
 export {
   normalizeConversationOperationCell,
+  projectConversationCommandBatches,
 };
 export type {
   ConversationAgentActivitySpan,
@@ -33,6 +40,8 @@ export type {
   ConversationArtifactStripChangeArtifact,
   ConversationArtifactStripItem,
   ConversationArtifactStripItemKind,
+  ConversationCommandBatch,
+  ConversationCommandBatchItem,
   ConversationOperationCellMode,
   ConversationOperationCellSourceKind,
   ConversationOperationCellStatus,
@@ -44,11 +53,13 @@ export type {
   ConversationWorkCellEvidenceLink,
   ConversationWorkCellGroup,
   ConversationWorkCellGroupKind,
+  ConversationWorkCellItem,
   ConversationWorkCellRow,
   ConversationWorkCellRowDetailLine,
   ConversationWorkCellRowTone,
   ConversationWorkCellStat,
   ConversationWorkCellViewModel,
+  ConversationWorkspaceRecoveryTarget,
 } from "@ling-stack/conversation-ui-core";
 
 /** @deprecated Use ConversationOperationCellMode from @ling-stack/conversation-ui-core. */
@@ -91,7 +102,7 @@ function conversationAgentSummaryDetailLines(
       continue;
     }
     seen.add(text);
-    result.push({ kind: line.kind, text });
+    result.push(line.kind === "file_ref" ? { ...line, text } : { kind: line.kind, text });
     if (result.length >= 5) {
       break;
     }
@@ -168,6 +179,7 @@ export function buildConversationArtifactStripItems(input: {
         id: `artifact:${artifact.id}`,
         kind: "artifact",
         label: mainFeedArtifactLabel(artifact),
+        path: artifact.path,
         href: evidenceLink?.href,
         artifactId: artifact.id,
         artifactType: artifact.type,
@@ -233,11 +245,15 @@ export function buildConversationArtifactStripItems(input: {
       path: row.description,
       previewable: false,
     }));
+  const recoveryRunId = changeArtifacts.length > 0 && changeArtifacts.every((artifact) => artifact.runId && artifact.runId === changeArtifacts[0]?.runId)
+    ? changeArtifacts[0]?.runId
+    : undefined;
   if (changeEntries.length > 0) {
     items.push({
       id: "changed",
       kind: "changed",
       label: changeEntries.length === 1 ? input.t("Edited 1 file") : input.t("Edited {count} files", { count: changeEntries.length }),
+      recoveryTarget: recoveryRunId ? { kind: "run", id: recoveryRunId } : undefined,
       changeArtifacts: changeEntries,
       tone: "neutral",
     });
@@ -418,6 +434,7 @@ export interface BuildConversationWorkCellInput {
   readonly executionActions?: readonly ExecutionAction[];
   readonly t: Translate;
   readonly artifactHref?: (artifact: RunArtifact) => string;
+  readonly terminalReport?: TerminalReportDto;
 }
 
 export function buildConversationWorkCellViewModel(input: BuildConversationWorkCellInput): ConversationWorkCellViewModel | undefined {
@@ -440,20 +457,32 @@ export function buildConversationWorkCellViewModel(input: BuildConversationWorkC
   const approvals = input.approvals
     .filter((approval) => approval.runId ? runIdSet.has(approval.runId) : false)
     .sort((left, right) => (right.resolvedAt ?? right.createdAt).localeCompare(left.resolvedAt ?? left.createdAt));
+  const visibleApprovals = approvals.filter((approval) => effectiveApprovalStatus(approval) !== "approved");
   const artifacts = runIds.flatMap((runId) => input.artifactsByRun[runId] ?? []);
   const artifactsById = artifactsByIdMap(artifacts);
   const actions = (input.executionActions ?? [])
     .filter((action) => action.threadId === input.threadId || (action.runId ? runIdSet.has(action.runId) : false))
     .sort((left, right) => (right.completedAt ?? right.executedAt ?? right.resolvedAt ?? right.createdAt).localeCompare(left.completedAt ?? left.executedAt ?? left.resolvedAt ?? left.createdAt));
-  const pendingApprovals = approvals.filter((approval) => effectiveApprovalStatus(approval) === "pending");
+  const pendingApprovals = visibleApprovals.filter((approval) => effectiveApprovalStatus(approval) === "pending");
   const failedRuns = runs.filter((run) => run.status === "failed");
   const failedActions = actions.filter((action) => action.status === "failed" || action.status === "denied" || action.status === "expired");
   const mode: ConversationWorkCellMode = isWorkCellStatusActive(status) ? "active" : "completed";
   const title = turnContext?.turn.title || readRunTitle(latestRun);
   const evidenceLinks = mainFeedArtifactEvidenceLinks(artifacts, input.artifactHref);
   const groups = mainFeedEvidenceGroups(
-    buildWorkCellGroups({ t: input.t, runs, approvals, artifacts, artifactsById, actions, failedRuns, failedActions, pendingApprovals }),
+    buildWorkCellGroups({ t: input.t, runs, approvals: visibleApprovals, artifacts, artifactsById, actions, failedRuns, failedActions, pendingApprovals }),
     input.t,
+  );
+  const terminalReport = input.terminalReport ? terminalReportToViewModel(input.terminalReport) : undefined;
+  const mergedEvidenceLinks = uniqueBy([
+    ...evidenceLinks,
+    ...(terminalReport?.evidenceLinks ?? []),
+  ], (item) => item.id);
+  const baseArtifactStripItems = buildConversationArtifactStripItems({ groups, evidenceLinks, artifacts, t: input.t });
+  const hasBaseChangedItem = baseArtifactStripItems.some((item) => item.kind === "changed");
+  const artifactStripItems = mergeConversationArtifactStripItems(
+    baseArtifactStripItems,
+    (terminalReport?.artifactStripItems ?? []).filter((item) => item.kind !== "changed" || !hasBaseChangedItem),
   );
 
   return normalizeConversationOperationCell({
@@ -476,16 +505,18 @@ export function buildConversationWorkCellViewModel(input: BuildConversationWorkC
     stats: [
       { id: "tries", label: input.t("Tries"), value: String(runs.length) },
       { id: "artifacts", label: input.t("Artifacts"), value: String(artifacts.length) },
-      { id: "approvals", label: input.t("Approvals"), value: String(approvals.length) },
+      { id: "approvals", label: input.t("Approvals"), value: String(visibleApprovals.length) },
     ],
     elapsedMs: workCellElapsedMs(runs),
     operationRows: buildActiveRows({ t: input.t, latestRun, runs, pendingApprovals, artifacts, actions }),
     agentBranches: [],
-    terminalReportRows: [],
+    terminalReportId: terminalReport?.reportId,
+    terminalReportRevisionKey: terminalReport?.revisionKey,
+    terminalReportRows: terminalReport?.rows ?? [],
     groups,
-    evidenceLinks,
-    artifactStripItems: buildConversationArtifactStripItems({ groups, evidenceLinks, artifacts, t: input.t }),
-    updatedAt: turnContext?.turn.updatedAt ?? latestRun.endedAt ?? latestRun.startedAt ?? latestRun.updatedAt,
+    evidenceLinks: mergedEvidenceLinks,
+    artifactStripItems,
+    updatedAt: terminalReport?.updatedAt ?? turnContext?.turn.updatedAt ?? latestRun.endedAt ?? latestRun.startedAt ?? latestRun.updatedAt,
   });
 }
 
@@ -557,7 +588,8 @@ export function buildConversationApprovalCheckpointRows(input: {
 }): { readonly evidenceRows: readonly ConversationWorkCellRow[]; readonly attentionRows: readonly ConversationWorkCellRow[] } {
   const evidenceRows: ConversationWorkCellRow[] = [];
   const attentionRows: ConversationWorkCellRow[] = [];
-  for (const checkpoint of input.checkpoints.slice(0, 12)) {
+  const visibleCheckpoints = input.checkpoints.filter((checkpoint) => checkpoint.status !== "approved" && checkpoint.status !== "resumed");
+  for (const checkpoint of visibleCheckpoints.slice(0, 12)) {
     const row = approvalCheckpointRow(checkpoint, input.t);
     if (isApprovalCheckpointAttentionStatus(checkpoint.status)) {
       attentionRows.push(row);
@@ -1187,13 +1219,28 @@ function executionActionEvidenceRow(
     kind: operationKindForExecutionAction(action),
     presentation: commandText ? "shell" : undefined,
     title: executionActionDisplayTitle(action, artifactsById, t),
-    description: action.summary,
     commandText,
+    commandExecution: commandText && action.commandEvidence ? {
+      actionId: action.id,
+      toolCallId: action.toolCallId,
+      runId: action.runId,
+      workUnitId: action.workUnitId,
+      workflowStepId: action.targetRefs.find((ref) => ref.type === "workflow_step")?.id,
+      actionType: action.actionType,
+      risk: action.risk,
+      status: action.status,
+      commandText,
+      startedAt: action.commandEvidence.startedAt,
+      completedAt: action.commandEvidence.completedAt,
+      durationMs: action.commandEvidence.durationMs,
+      exitCode: action.commandEvidence.exitCode,
+      latestEventSeq: action.commandEvidence.latestEventSeq,
+      outputTruncated: action.commandEvidence.outputTruncated,
+      stdoutArtifactId: action.commandEvidence.stdoutArtifactId,
+      stderrArtifactId: action.commandEvidence.stderrArtifactId,
+    } : undefined,
     changePreview: executionActionChangePreview(action, artifactsById),
-    detailLines: [
-      ...(action.title.trim() && action.title.trim() !== action.summary.trim() ? [{ text: action.title.trim() }] : []),
-      ...detailLines,
-    ],
+    detailLines,
     meta: operationStatusMeta(action.status, t),
     tone: executionActionTone(action),
   };
@@ -1359,16 +1406,17 @@ function executionActionDetailLines(
     }
   }
 
+  const outputTail = executionActionOutputTail(action);
+  if (outputTail) {
+    push({ kind: "code", text: outputTail });
+  }
+
   const outputArtifacts = action.resultArtifactIds
     .map((artifactId) => artifactsById.get(artifactId))
     .filter((artifact): artifact is RunArtifact => Boolean(artifact))
     .filter((artifact) => isMainFeedSafeText([mainFeedArtifactLabel(artifact), artifact.path].join(" ")));
   if (outputArtifacts.length > 0) {
     push({ text: outputArtifacts.length === 1 ? t("1 output recorded") : t("{count} outputs recorded", { count: outputArtifacts.length }) });
-  }
-
-  if (lines.length === 0 && action.scopeSummary?.trim()) {
-    push({ text: action.scopeSummary });
   }
 
   return lines.slice(0, 5);
@@ -1384,6 +1432,10 @@ function executionActionCommandText(action: ExecutionAction): string | undefined
   if (action.actionType !== "bash" && !action.targetRefs.some((ref) => ref.type === "command")) {
     return undefined;
   }
+  const evidenceCommand = action.commandEvidence?.command.trim();
+  if (evidenceCommand) {
+    return truncatePreview(evidenceCommand, 220);
+  }
   for (const ref of action.targetRefs) {
     if (ref.type !== "command") {
       continue;
@@ -1394,6 +1446,18 @@ function executionActionCommandText(action: ExecutionAction): string | undefined
     }
   }
   return undefined;
+}
+
+function executionActionOutputTail(action: ExecutionAction): string | undefined {
+  const chunks = action.commandEvidence?.outputTail ?? [];
+  if (chunks.length === 0) {
+    return undefined;
+  }
+  const text = chunks.map((chunk) => chunk.text).join("");
+  if (!text.trim()) {
+    return undefined;
+  }
+  return text.split(/\r?\n/u).slice(-12).join("\n").trimEnd();
 }
 
 function userFacingTargetRefText(ref: ExecutionAction["targetRefs"][number]): string | undefined {
@@ -1610,4 +1674,22 @@ function uniqueBy<T>(items: readonly T[], keyOf: (item: T) => string): readonly 
     result.push(item);
   }
   return result;
+}
+
+export function mergeConversationArtifactStripItems(
+  primary: readonly ConversationArtifactStripItem[],
+  enrichments: readonly ConversationArtifactStripItem[],
+): readonly ConversationArtifactStripItem[] {
+  const keyOf = (item: ConversationArtifactStripItem): string => item.artifactId ?? item.id;
+  const enrichmentByKey = new Map(enrichments.map((item) => [keyOf(item), item]));
+  const primaryKeys = new Set(primary.map(keyOf));
+  return [
+    ...primary.map((item) => {
+      const enrichment = enrichmentByKey.get(keyOf(item));
+      return !item.workspaceFilePath && enrichment?.workspaceFilePath
+        ? { ...item, workspaceFilePath: enrichment.workspaceFilePath }
+        : item;
+    }),
+    ...enrichments.filter((item) => !primaryKeys.has(keyOf(item))),
+  ];
 }

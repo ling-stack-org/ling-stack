@@ -1,5 +1,5 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
-import { mockDaemon } from "./support/mock-daemon";
+import { mockDaemon, type MockExecutionAction } from "./support/mock-daemon";
 import {
   createBaseState,
   createChatProvider,
@@ -11,10 +11,59 @@ import {
 import {
   readSidebarSelection,
 } from "./support/test-helpers";
+import {
+  expectSharedConversationRichBody,
+  sharedConversationRichBody,
+} from "./support/rich-content";
 
 async function openAiTeammatesFromSettings(page: Page): Promise<void> {
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
   await page.getByLabel("Settings sections").getByRole("button", { name: "Teammate Management" }).click();
+}
+
+function mockPrivateCommandAction(
+  id: string,
+  threadId: string,
+  runId: string,
+  command: string,
+  startedAt: string,
+  durationMs: number,
+): MockExecutionAction {
+  const completedAt = new Date(Date.parse(startedAt) + durationMs).toISOString();
+  return {
+    id,
+    workspaceId: "workspace_default",
+    threadId,
+    runId,
+    toolCallId: `tool_${id}`,
+    actionType: "bash",
+    risk: "low",
+    status: "succeeded",
+    title: "Run command",
+    summary: command,
+    targetRefs: [{ type: "command", label: command }],
+    previewArtifactIds: [],
+    resultArtifactIds: [],
+    commandEvidence: {
+      command,
+      cwd,
+      startedAt,
+      completedAt,
+      durationMs,
+      exitCode: 0,
+      timedOut: false,
+      cancelled: false,
+      latestEventSeq: 3,
+      outputTail: [{ eventSeq: 2, stream: "stdout", text: "ok\n", byteCount: 3, redacted: false, ts: completedAt }],
+      outputByteCount: 3,
+      outputLineCount: 1,
+      outputTruncated: false,
+    },
+    createdAt: startedAt,
+    updatedAt: completedAt,
+    executedAt: startedAt,
+    completedAt,
+  };
 }
 
 async function openChannelTeammateManager(page: Page): Promise<void> {
@@ -485,6 +534,249 @@ test("Ling Agent private chat renders workspace governance digest without source
   await expect(digestRow).not.toContainText("Workspace governance body must not be copied");
 });
 
+test("AI teammate private chat renders the shared GFM, Mermaid, and math pipeline", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.locale", "en-US");
+  });
+  const state = createBaseState({ approvalStatus: "expired" });
+  const teammateId = "teammate_private_rich_content";
+  state.aiTeammates = [createMockTeammate({
+    id: teammateId,
+    templateId: "engineer",
+    roleKey: "engineer",
+    displayName: "Rich Content Engineer",
+  })];
+  state.teammateDirectMessages = [{
+    id: "tdmsg_private_rich_content",
+    workspaceId: "workspace_default",
+    threadId: `tdthread_${teammateId}`,
+    teammateId,
+    authorType: "ai-teammate",
+    authorId: teammateId,
+    body: sharedConversationRichBody,
+    attachmentIds: [],
+    linkPreviewIds: [],
+    fileRefs: [],
+    status: "ready",
+    createdAt: "2026-07-12T03:00:00.000Z",
+    updatedAt: "2026-07-12T03:00:00.000Z",
+  }];
+
+  await mockDaemon(page, state);
+  await page.goto("/");
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Rich Content Engineer" }).click();
+
+  const privateFeed = page.getByLabel("Private message feed", { exact: true });
+  const teammateRow = privateFeed.locator(".teammate-message-row.ai-teammate");
+  await expect(teammateRow).toHaveCount(1);
+  await expect(teammateRow.locator(".teammate-avatar-image.compact")).toHaveCount(1);
+  await expectSharedConversationRichBody(teammateRow);
+  await expect(teammateRow.locator(".terminal-report-participants")).toHaveCount(0);
+});
+
+test("latest private prompt edits in place and hides its superseded reply", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.locale", "en-US");
+  });
+  const state = createBaseState({ approvalStatus: "expired" });
+  const teammateId = "teammate_private_edit";
+  state.aiTeammates = [createMockTeammate({
+    id: teammateId,
+    templateId: "engineer",
+    roleKey: "engineer",
+    displayName: "Editable Engineer",
+  })];
+  state.teammateDirectMessages = [{
+    id: "tdmsg_private_edit_source",
+    workspaceId: "workspace_default",
+    threadId: `tdthread_${teammateId}`,
+    teammateId,
+    authorType: "local-user",
+    authorId: "local-user",
+    body: "Original private prompt",
+    attachmentIds: [],
+    linkPreviewIds: [],
+    fileRefs: [],
+    status: "ready",
+    createdAt: "2026-07-12T03:30:00.000Z",
+    updatedAt: "2026-07-12T03:30:00.000Z",
+  }, {
+    id: "tdmsg_private_edit_old_reply",
+    workspaceId: "workspace_default",
+    threadId: `tdthread_${teammateId}`,
+    teammateId,
+    authorType: "ai-teammate",
+    authorId: teammateId,
+    body: "Old private response should disappear.",
+    attachmentIds: [],
+    linkPreviewIds: [],
+    fileRefs: [],
+    status: "ready",
+    createdAt: "2026-07-12T03:30:01.000Z",
+    updatedAt: "2026-07-12T03:30:01.000Z",
+  }];
+
+  await mockDaemon(page, state);
+  await page.goto("/");
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Editable Engineer" }).click();
+
+  const privateFeed = page.getByLabel("Private message feed", { exact: true });
+  const userRow = privateFeed.locator(".teammate-message-row.local-user");
+  await userRow.hover();
+  await userRow.getByRole("button", { name: "Edit message" }).click();
+  await privateFeed.getByLabel("Edit message").fill("Revised private prompt");
+  await privateFeed.getByRole("button", { name: "Save and resend" }).click();
+
+  await expect(privateFeed).toContainText("Revised private prompt");
+  await expect(privateFeed).toContainText("Edited private reply: Revised private prompt");
+  await expect(privateFeed).not.toContainText("Original private prompt");
+  await expect(privateFeed).not.toContainText("Old private response should disappear.");
+  await expect.poll(() => state.lastConversationMessageEditRequest?.surface).toBe("teammate_direct");
+  await expect.poll(() => state.lastConversationMessageEditRequest?.messageId).toBe("tdmsg_private_edit_source");
+});
+
+test("pending private replacement retries without exposing Participants", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.locale", "en-US");
+  });
+  const state = createBaseState({ approvalStatus: "expired" });
+  const teammateId = "teammate_private_pending_edit";
+  state.aiTeammates = [createMockTeammate({
+    id: teammateId,
+    templateId: "engineer",
+    roleKey: "engineer",
+    displayName: "Pending Edit Engineer",
+  })];
+  state.teammateDirectMessages = [{
+    id: "tdmsg_private_pending_edit",
+    workspaceId: "workspace_default",
+    threadId: `tdthread_${teammateId}`,
+    teammateId,
+    authorType: "local-user",
+    authorId: "local-user",
+    body: "Revised private prompt waiting for a response",
+    attachmentIds: [],
+    linkPreviewIds: [],
+    fileRefs: [],
+    status: "ready",
+    revision: 2,
+    editedAt: "2026-07-12T03:35:00.000Z",
+    pendingReplacement: {
+      supersessionId: "supersession_private_pending",
+      idempotencyKey: "private-edit-pending-key",
+      failureReason: "Provider temporarily unavailable",
+    },
+    createdAt: "2026-07-12T03:30:00.000Z",
+    updatedAt: "2026-07-12T03:35:00.000Z",
+  }];
+
+  await mockDaemon(page, state);
+  await page.goto("/");
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Pending Edit Engineer" }).click();
+
+  const privateFeed = page.getByLabel("Private message feed", { exact: true });
+  const userRow = privateFeed.locator(".teammate-message-row.local-user");
+  await expect(userRow).toContainText("Edited");
+  await userRow.getByRole("button", { name: "Retry response" }).click();
+
+  await expect(privateFeed).toContainText("Edited private reply: Revised private prompt waiting for a response");
+  await expect(privateFeed.locator(".terminal-report-participants")).toHaveCount(0);
+  await expect.poll(() => state.lastConversationMessageEditRequest?.idempotencyKey).toBe("private-edit-pending-key");
+});
+
+test("private structured references preview safely and open the private Files dock", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.locale", "en-US");
+  });
+  const state = createBaseState({ approvalStatus: "expired" });
+  const teammateId = "teammate_private_references";
+  const linkPreviewId = "tdlink_private_reference";
+  state.aiTeammates = [createMockTeammate({
+    id: teammateId,
+    templateId: "engineer",
+    roleKey: "engineer",
+    displayName: "Reference Engineer",
+  })];
+  state.teammateDirectLinkPreviews = [{
+    id: linkPreviewId,
+    workspaceId: "workspace_default",
+    teammateId,
+    threadId: `tdthread_${teammateId}`,
+    messageId: "tdmsg_private_references",
+    url: "https://example.com/reference",
+    normalizedUrl: "https://example.com/reference",
+    title: "Reference guide",
+    description: "A structured private-chat link preview.",
+    siteName: "Example Docs",
+    status: "ready",
+    createdAt: "2026-07-12T03:40:00.000Z",
+    updatedAt: "2026-07-12T03:40:00.000Z",
+  }];
+  state.teammateDirectMessages = [{
+    id: "tdmsg_private_references",
+    workspaceId: "workspace_default",
+    threadId: `tdthread_${teammateId}`,
+    teammateId,
+    authorType: "local-user",
+    authorId: "local-user",
+    body: "Review [the inline target](apps/web/src/features/teammates/TeammatePrivateChatSurface.tsx:540) and the attached structured references.",
+    attachmentIds: [],
+    linkPreviewIds: [linkPreviewId],
+    fileRefs: [{ path: "apps/web/src/features/teammates/TeammatePrivateChatSurface.tsx", label: "TeammatePrivateChatSurface.tsx", line: 540 }],
+    status: "ready",
+    createdAt: "2026-07-12T03:40:00.000Z",
+    updatedAt: "2026-07-12T03:40:00.000Z",
+  }];
+
+  await mockDaemon(page, state);
+  await page.route(/\/workspace-files\/preview(?:\?.*)?$/, async (route) => {
+    const url = new URL(route.request().url());
+    const path = url.searchParams.get("path") ?? "";
+    const lines = Array.from({ length: 620 }, (_, index) => index === 539
+      ? "export const privateTargetLine = true;"
+      : `// private preview line ${index + 1}`);
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        ref: {
+          id: `workspace:${path}`,
+          source: "workspace_file",
+          scope: "workspace",
+          label: "TeammatePrivateChatSurface.tsx",
+          displayPath: path,
+          previewable: true,
+        },
+        kind: "code",
+        text: lines.join("\n"),
+        truncated: false,
+        redactionNotes: [],
+      }),
+    });
+  });
+  await page.goto("/");
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Reference Engineer" }).click();
+
+  const privateFeed = page.getByLabel("Private message feed", { exact: true });
+  const references = privateFeed.getByLabel("References");
+  const webReference = references.getByRole("link", { name: /Reference guide/ });
+  await webReference.hover();
+  await expect(references.getByRole("tooltip")).toContainText("A structured private-chat link preview.");
+  await page.mouse.move(4, 4);
+  await expect(references.getByRole("tooltip")).toHaveCount(0);
+
+  const inlineFileReference = privateFeed.locator(".message-local-file-link").filter({ hasText: "TeammatePrivateChatSurface.tsx" });
+  await inlineFileReference.click();
+  const dock = page.getByLabel("Private chat workspace dock");
+  await expect(dock).toContainText("apps/web/src/features/teammates/TeammatePrivateChatSurface.tsx");
+  await expect(dock.locator(".right-dock-code-line.focused")).toContainText("privateTargetLine");
+
+  const fileReference = references.getByRole("button", { name: /TeammatePrivateChatSurface\.tsx/ });
+  await fileReference.click();
+  await expect(dock).toBeVisible();
+  await expect(dock.locator(".right-dock-code-line.focused")).toContainText("privateTargetLine");
+});
+
 test("AI teammates page links council management to Council Workspace", async ({ page }) => {
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");
@@ -728,6 +1020,59 @@ test("AI teammate private workspace sends blocked chat replies and persists sett
     },
     ...state.runs,
   ];
+  state.executionActions = [
+    mockPrivateCommandAction("private_typecheck", "thread_private_acceptance", "run_private_acceptance", "pnpm typecheck", "2026-05-29T00:09:10.000Z", 900),
+    mockPrivateCommandAction("private_lint", "thread_private_acceptance", "run_private_acceptance", "pnpm lint", "2026-05-29T00:09:12.000Z", 600),
+    mockPrivateCommandAction("private_test", "thread_private_acceptance", "run_private_acceptance", "pnpm test", "2026-05-29T00:09:14.000Z", 1500),
+    ...state.executionActions,
+  ];
+  state.terminalReports = [{
+    schemaVersion: 1,
+    id: "terminal_report_private_acceptance",
+    workspaceId: "workspace_default",
+    threadId: "thread_private_acceptance",
+    source: { kind: "run", id: "run_private_acceptance" },
+    status: "committed",
+    language: "en-US",
+    outcome: {
+      status: "succeeded",
+      title: "Private acceptance criteria verified",
+      summary: "The run completed with a structured result and retained its operation history.",
+      corrections: [],
+      sourceRefs: [{ kind: "run", id: "run_private_acceptance", visibility: "conversation" }],
+    },
+    changes: [{
+      id: "change_private_acceptance",
+      kind: "documentation",
+      title: "Refined private acceptance criteria",
+      summary: "Updated the private workspace acceptance notes.",
+      paths: ["docs/private-acceptance.md"],
+      addedLines: 8,
+      deletedLines: 1,
+      sourceRefs: [],
+    }],
+    verification: [{
+      id: "check_private_acceptance",
+      title: "Acceptance review",
+      status: "passed",
+      sourceRefs: [],
+    }],
+    participants: [],
+    artifacts: [{
+      id: "artifact_private_acceptance",
+      kind: "document",
+      title: "private-acceptance.md",
+      path: "docs/private-acceptance.md",
+      sourceRefs: [{ kind: "file", id: "docs/private-acceptance.md", visibility: "conversation" }],
+    }],
+    risks: [],
+    references: [],
+    evidenceSnapshotId: "snapshot_private_acceptance",
+    evidenceFingerprint: "fingerprint_private_acceptance",
+    synthesis: { mode: "deterministic_fallback", promptVersion: "terminal-report-v1", attemptCount: 0, validationCodes: [] },
+    createdAt: "2026-05-29T00:09:30.000Z",
+    committedAt: "2026-05-29T00:09:30.000Z",
+  }];
   state.teammateDirectMessages = [
     {
       id: "tdmsg_2",
@@ -801,6 +1146,10 @@ test("AI teammate private workspace sends blocked chat replies and persists sett
   await expect(page.locator(".brand-mark")).toHaveCount(0);
   await expect.poll(() => readSidebarSelection(page)).toEqual({ activeNav: [], selectedRows: ["Ling Engineer"] });
   await expect(page.getByText(/Model ready|Model needs setup/)).toBeVisible();
+  const privateChatStatus = page.locator(".teammate-chat-status-row");
+  await expect(privateChatStatus).toContainText("Memory on");
+  await expect(privateChatStatus).toContainText(/\d+ attachments/u);
+  await expect(privateChatStatus.locator(".conversation-status-meta small")).toHaveCount(0);
   const privateChatDarkSurfaces = await page.evaluate(() => {
     const selectors = [
       ".workspace-teammate-private-surface",
@@ -829,8 +1178,25 @@ test("AI teammate private workspace sends blocked chat replies and persists sett
   const privateFeed = page.getByLabel("Private message feed", { exact: true });
   await expect(privateFeed).toBeVisible();
   await expect(privateFeed.locator(".message-feed-virtualizer")).toBeVisible();
-  const linkedRunPrivateRow = page.locator(".teammate-message-row.ai-teammate").filter({ hasText: "Private acceptance criteria summary." });
+  const linkedRunPrivateRow = page.locator(".teammate-message-row.ai-teammate").filter({ hasText: "Private acceptance criteria verified" });
   await expect(linkedRunPrivateRow.locator(".conversation-work-cell")).toHaveCount(1);
+  const privateWorkCell = linkedRunPrivateRow.locator(".conversation-work-cell");
+  await privateWorkCell.locator(".conversation-operation-shell-head").click();
+  const privateCommandBatch = privateWorkCell.locator(".conversation-command-batch");
+  await expect(privateCommandBatch.locator(".conversation-command-batch-header")).toContainText("Ran 3 commands");
+  await privateCommandBatch.locator(".conversation-command-batch-header").click();
+  await expect(privateCommandBatch.locator(".conversation-command-batch-list .conversation-work-cell-row")).toHaveCount(3);
+  await expect(privateCommandBatch).toContainText("pnpm test");
+  await expect(linkedRunPrivateRow.getByText("Private acceptance criteria summary.")).toHaveCount(0);
+  const privateTerminalReport = linkedRunPrivateRow.locator(".terminal-report-block");
+  await expect(privateTerminalReport).toBeVisible();
+  await expect(privateTerminalReport.locator(".terminal-report-summary")).not.toHaveAttribute("aria-expanded");
+  await expect(privateTerminalReport.locator(".terminal-report-toggle")).toHaveCount(0);
+  await expect(privateTerminalReport).toContainText("Refined private acceptance criteria");
+  await expect(privateTerminalReport.getByRole("button", { name: "private-acceptance.md", exact: true })).toBeVisible();
+  await expect(privateTerminalReport).toContainText("Acceptance review");
+  await expect(privateTerminalReport.locator(".terminal-report-participants")).toHaveCount(0);
+  await expect(linkedRunPrivateRow.locator(".conversation-work-cell-artifact-row").getByRole("button", { name: "Open with" })).toBeVisible();
   await expect(linkedRunPrivateRow.locator(".message-reply-button")).toHaveCount(0);
   const privateToolbar = page.getByLabel("Private chat actions");
   await expect(privateToolbar).toHaveClass(/workspace-top-right-toolbar/);
@@ -854,7 +1220,9 @@ test("AI teammate private workspace sends blocked chat replies and persists sett
   await expect(privateSummaryPanel).toBeVisible();
   await expect(privateSummaryPanel).toHaveAttribute("data-summary-placement-motion", "header->main");
   await expect(privateDock).toContainText("Workspace tools");
+  await expect(privateDock.getByRole("button", { name: "Evidence", exact: true })).toHaveCount(0);
   await expect(privateSummaryPanel).toContainText("Environment");
+  await expect(privateSummaryPanel.getByText("Evidence", { exact: true })).toHaveCount(0);
   await expect(privateChatSurface).toHaveClass(/summary-panel-expanded/);
   await expect(privateSummaryPanel).toHaveClass(/is-popover-expanded/);
   await expect.poll(async () => {
@@ -1106,9 +1474,13 @@ test("AI teammate private workspace sends blocked chat replies and persists sett
 
   await page.getByRole("button", { name: "Back to private chat" }).click();
   await expect(page.getByRole("heading", { name: "Renamed Engineer", level: 1 })).toBeVisible();
+  const privateComposer = page.locator(".teammate-direct-composer");
+  await privateComposer.getByRole("button", { name: /Selected permission preset/ }).click();
+  await privateComposer.getByRole("menuitemradio", { name: /Read-only/ }).click();
   await page.getByPlaceholder("Message this AI teammate privately").fill("Use the newly saved model.");
   await page.getByPlaceholder("Message this AI teammate privately").press("Enter");
   await expect(page.getByLabel("Private chat", { exact: true }).getByText("Private reply: I will refine this into a scoped task.")).toBeVisible();
+  await expect.poll(() => state.lastTeammateDirectMessageRequest?.permissionPreset).toBe("read_only");
 
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Design" }).click();
   await openChannelTeammateManager(page);

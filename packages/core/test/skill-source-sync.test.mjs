@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import test from "node:test";
@@ -9,7 +9,12 @@ import {
   buildSkillSourceSemanticProfile,
   diffSkillSourceSemanticProfiles,
   getBuiltinSkillPack,
+  ManagedOfficialSkillSourceError,
+  normalizeOfficialGstackOrigin,
+  officialGstackSourceScanRoot,
   previewGstackSkillSourceSync,
+  refreshManagedOfficialGstackSource,
+  resolveLocalGstackSkillSourceRoots,
   resolveSkillSourceRoots,
 } from "../dist/index.js";
 
@@ -254,6 +259,89 @@ test("configured gstack repositories resolve to local skill roots with upstream 
     assert.equal(roots[0].rootPath, resolve(repoRoot, ".agents", "skills"));
     assert.equal(roots[0].sourceKind, "gstack-skill-directory");
     assert.equal(roots[0].upstreamVersion, "9.8.7");
+  });
+});
+
+test("local gstack resolver excludes Codex, Agents, and workspace skill roots", async () => {
+  await withTempDir("ling-stack-local-gstack-roots-", async (homeDir) => {
+    const repoRoot = resolve(homeDir, ".gstack", "repos", "gstack");
+    await mkdir(resolve(repoRoot, ".agents", "skills"), { recursive: true });
+    await mkdir(resolve(homeDir, ".codex", "skills"), { recursive: true });
+    await mkdir(resolve(homeDir, ".agents", "skills"), { recursive: true });
+    await writeFile(resolve(repoRoot, "package.json"), JSON.stringify({ name: "gstack", version: "9.8.7" }));
+
+    const roots = await resolveLocalGstackSkillSourceRoots({ homeDir, volumeRoot: resolve(homeDir, "missing-volumes") });
+
+    assert.equal(roots.length, 1);
+    assert.equal(roots[0].id, "local-gstack");
+    assert.equal(roots[0].rootPath.endsWith("/.gstack/repos/gstack/.agents/skills"), true);
+    assert.equal(roots[0].sourceKind, "gstack-skill-directory");
+  });
+});
+
+test("managed official source refreshes a Ling-owned cache without inspecting local skill roots", async () => {
+  await withTempDir("ling-stack-managed-source-", async (root) => {
+    const sourcesDir = resolve(root, "ling-user-data", "sources");
+    const cacheRoot = resolve(sourcesDir, "official-gstack");
+    const calls = [];
+    const git = {
+      async run(args, options) {
+        calls.push({ args: [...args], cwd: options.cwd });
+        if (args[0] === "clone") {
+          await mkdir(resolve(cacheRoot, ".agents", "skills"), { recursive: true });
+          await writeFile(resolve(cacheRoot, "package.json"), JSON.stringify({ name: "gstack", version: "9.8.7" }));
+          return "";
+        }
+        if (args[0] === "rev-parse" && args[1] === "--show-toplevel") {
+          return cacheRoot;
+        }
+        if (args[0] === "config") {
+          return "https://github.com/garrytan/gstack.git";
+        }
+        if (args[0] === "rev-parse" && args[1] === "HEAD") {
+          return "0123456789abcdef";
+        }
+        return "";
+      },
+    };
+
+    const source = await refreshManagedOfficialGstackSource({ sourcesDir, git });
+
+    const canonicalCacheRoot = await realpath(cacheRoot);
+    assert.equal(source.repoRoot, canonicalCacheRoot);
+    assert.equal(source.skillsRoot, resolve(canonicalCacheRoot, ".agents", "skills"));
+    assert.equal(source.revision, "0123456789abcdef");
+    assert.equal(source.version, "9.8.7");
+    assert.equal(calls.some((call) => call.args[0] === "clone"), true);
+    assert.equal(calls.some((call) => call.args[0] === "fetch"), true);
+    assert.equal(calls.some((call) => call.args[0] === "checkout"), true);
+    assert.equal(officialGstackSourceScanRoot(source).rootPath, source.skillsRoot);
+    assert.equal(normalizeOfficialGstackOrigin("git@github.com:garrytan/gstack.git"), "github.com/garrytan/gstack");
+    assert.equal(normalizeOfficialGstackOrigin("https://github.com/example/gstack.git"), "github.com/example/gstack");
+  });
+});
+
+test("managed official source rejects a cache whose origin is not the official repository", async () => {
+  await withTempDir("ling-stack-managed-source-invalid-", async (root) => {
+    const sourcesDir = resolve(root, "ling-user-data", "sources");
+    const cacheRoot = resolve(sourcesDir, "official-gstack");
+    await mkdir(resolve(cacheRoot, ".agents", "skills"), { recursive: true });
+    const git = {
+      async run(args) {
+        if (args[0] === "rev-parse") {
+          return cacheRoot;
+        }
+        if (args[0] === "config") {
+          return "https://github.com/example/gstack.git";
+        }
+        return "";
+      },
+    };
+
+    await assert.rejects(
+      refreshManagedOfficialGstackSource({ sourcesDir, git }),
+      (error) => error instanceof ManagedOfficialSkillSourceError && error.code === "invalid_repository",
+    );
   });
 });
 

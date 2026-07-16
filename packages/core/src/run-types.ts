@@ -26,6 +26,10 @@ import type {
 } from "./provider-types.js";
 import type { LingStackRuntimePaths } from "./runtime-paths.js";
 import type {
+  OfficialSkillSourceSubscription,
+  UpsertOfficialSkillSourceSubscriptionInput,
+} from "./managed-official-skill-source-types.js";
+import type {
   CreateMediaJobInput,
   ListMediaJobsOptions,
   MediaJob,
@@ -36,6 +40,25 @@ import type {
   CreateChannelInputMaterializationInput,
   ListChannelInputMaterializationsOptions,
 } from "./input-materialization-types.js";
+import type {
+  CommitLingTerminalReportInput,
+  CreateLingTerminalReportInput,
+  FailLingTerminalReportInput,
+  LingTerminalReportRecord,
+  ListLingTerminalReportsOptions,
+  MarkLingTerminalReportPublishedInput,
+  TerminalReportSourceKind,
+  UpdateLingTerminalReportDraftInput,
+} from "./terminal-report-types.js";
+import type {
+  CommitConversationMessageEditInput,
+  CommitConversationMessageEditResult,
+  ConversationMessageRevision,
+  ConversationReplacementStatus,
+  ConversationTurnSupersession,
+  ListConversationMessageRevisionsOptions,
+  ListConversationTurnSupersessionsOptions,
+} from "./conversation-revision-types.js";
 import type {
   AvailabilityIncident,
   ChannelTeamEvidenceItem,
@@ -264,6 +287,7 @@ import type {
   ListSkillSourceArtifactOptions,
   ListSkillRegistryOptions,
   ListSkillSourceSnapshotOptions,
+  PublishSkillRevisionDraftInput,
   SkillCompiledRuntimeViewRecord,
   SkillHardDeleteResult,
   SkillImportDraft,
@@ -509,6 +533,9 @@ export type RunEventType =
   | "approval_expired"
   | "approval_cancelled"
   | "artifact_created"
+  | "workspace_change_recovery_started"
+  | "workspace_changes_undone"
+  | "workspace_changes_reapplied"
   | "run_intervention_created"
   | "run_followup_queued"
   | "run_interrupt_requested"
@@ -917,6 +944,35 @@ export interface ExecutionActionTargetRef {
   readonly path?: string;
 }
 
+export interface ExecutionActionCommandOutputChunk {
+  readonly eventSeq: number;
+  readonly stream: "stdout" | "stderr";
+  readonly text: string;
+  readonly byteCount: number;
+  readonly redacted: boolean;
+  readonly ts: string;
+}
+
+export interface ExecutionActionCommandEvidence {
+  readonly command: string;
+  readonly cwd?: string;
+  readonly startedAt?: string;
+  readonly completedAt?: string;
+  readonly durationMs?: number;
+  readonly exitCode?: number;
+  readonly signal?: string;
+  readonly timedOut?: boolean;
+  readonly cancelled?: boolean;
+  readonly latestEventSeq: number;
+  readonly outputTail: readonly ExecutionActionCommandOutputChunk[];
+  readonly outputByteCount: number;
+  readonly outputLineCount?: number;
+  readonly outputTruncated: boolean;
+  readonly stdoutArtifactId?: string;
+  readonly stderrArtifactId?: string;
+  readonly resultArtifactId?: string;
+}
+
 export interface ExecutionAction {
   readonly id: string;
   readonly workspaceId: string;
@@ -936,7 +992,9 @@ export interface ExecutionAction {
   readonly scopes?: readonly ExecutionScope[];
   readonly scopeSummary?: string;
   readonly policySnapshot?: unknown;
+  readonly commandEvidence?: ExecutionActionCommandEvidence;
   readonly createdAt: string;
+  readonly updatedAt?: string;
   readonly resolvedAt?: string;
   readonly executedAt?: string;
   readonly completedAt?: string;
@@ -1198,6 +1256,16 @@ export interface ListControlPlaneEventsOptions {
 
 export interface RunStore {
   readonly paths: LingStackRuntimePaths;
+  commitConversationMessageEdit(input: CommitConversationMessageEditInput, now: string): CommitConversationMessageEditResult;
+  listConversationMessageRevisions(options: ListConversationMessageRevisionsOptions): ConversationMessageRevision[];
+  getConversationTurnSupersession(id: string): ConversationTurnSupersession | undefined;
+  getConversationTurnSupersessionByIdempotency(idempotencyKey: string): ConversationTurnSupersession | undefined;
+  listConversationTurnSupersessions(options?: ListConversationTurnSupersessionsOptions): ConversationTurnSupersession[];
+  updateConversationTurnSupersession(
+    id: string,
+    input: { readonly replacementTurnId?: string | null; readonly replacementStatus?: ConversationReplacementStatus; readonly failureReason?: string | null },
+    now: string,
+  ): ConversationTurnSupersession | undefined;
   createLingThread(input: CreateLingThreadInput, now: string): LingThread;
   getLingThread(threadId: string): LingThread | undefined;
   hardDeleteLingThread(threadId: string, input: HardDeleteLingThreadInput, now: string): HardDeleteLingThreadResult | undefined;
@@ -1232,6 +1300,19 @@ export interface RunStore {
   getLingTurnForRun(runId: string): LingTurn | undefined;
   listLingTurnRuns(turnId: string): LingTurnRun[];
   reconcileLingTurnStatus(turnId: string, now: string): LingTurn | undefined;
+  createTerminalReportDraft(input: CreateLingTerminalReportInput, now: string): LingTerminalReportRecord;
+  getTerminalReport(id: string): LingTerminalReportRecord | undefined;
+  getTerminalReportForSource(
+    sourceKind: TerminalReportSourceKind,
+    sourceId: string,
+    generation?: number,
+    workspaceId?: string,
+  ): LingTerminalReportRecord | undefined;
+  listTerminalReports(options?: ListLingTerminalReportsOptions): LingTerminalReportRecord[];
+  updateTerminalReportDraft(input: UpdateLingTerminalReportDraftInput): LingTerminalReportRecord;
+  commitTerminalReport(input: CommitLingTerminalReportInput): LingTerminalReportRecord;
+  markTerminalReportPublished(input: MarkLingTerminalReportPublishedInput): LingTerminalReportRecord;
+  failTerminalReport(input: FailLingTerminalReportInput): LingTerminalReportRecord;
   createRun(input: CreateRunInput): RunSession;
   markRunStarted(runId: string, startedAt: string): void;
   markRunWaitingForApproval(runId: string, updatedAt: string): void;
@@ -1749,6 +1830,8 @@ export interface RunStore {
   upsertSkillSourceSnapshot(input: CreateSkillSourceSnapshotInput, now: string): SkillSourceSnapshot;
   archiveSkillSourceSnapshot(skillId: string, now: string): SkillSourceSnapshot | undefined;
   rollbackSkillSourceSnapshot(snapshotId: string, now: string): SkillSourceSnapshot | undefined;
+  getOfficialSkillSourceSubscription(): OfficialSkillSourceSubscription | undefined;
+  upsertOfficialSkillSourceSubscription(input: UpsertOfficialSkillSourceSubscriptionInput, now: string): OfficialSkillSourceSubscription;
   getSkillSourceUpgradePolicy(now?: string): SkillSourceUpgradePolicy;
   updateSkillSourceUpgradePolicy(input: UpdateSkillSourceUpgradePolicyInput, now: string): SkillSourceUpgradePolicy;
   upsertSkillSourceArtifact(input: CreateSkillSourceArtifactInput, now: string): SkillSourceArtifact;
@@ -1764,6 +1847,7 @@ export interface RunStore {
   createSkillImportDraft(input: CreateSkillImportDraftInput, now: string): SkillImportDraft;
   getSkillImportDraft(id: string): SkillImportDraft | undefined;
   publishSkillImportDraft(id: string, now: string): SkillRegistryEntry[];
+  publishSkillRevisionDraft(input: PublishSkillRevisionDraftInput, now: string): SkillRegistryEntry;
   archiveSkillRegistryEntry(id: string, now: string): SkillRegistryEntry | undefined;
   hardDeleteSkillRegistryEntry(id: string): SkillHardDeleteResult;
   createSkillCandidate(input: CreateSkillCandidateInput, now: string): SkillCandidate;
@@ -1774,6 +1858,7 @@ export interface RunStore {
     input: ApplySkillCandidateReviewActionInput,
     now: string,
   ): { readonly candidate: SkillCandidate; readonly action: SkillCandidateReviewRecord };
+  markSkillCandidatePublished(candidateId: string, now: string): SkillCandidate;
   createProcedureObservation(input: CreateProcedureObservationInput, now: string): ProcedureObservation;
   listProcedureObservations(options?: ListProcedureObservationsOptions): ProcedureObservation[];
   listProcedureObservationClusters(options?: ListProcedureObservationClustersOptions): ProcedureObservationCluster[];
@@ -1806,6 +1891,17 @@ export type LingThreadStoreFacet = RunStoreFacet<
   | "getLingTurnForRun"
   | "listLingTurnRuns"
   | "reconcileLingTurnStatus"
+>;
+
+export type TerminalReportStoreFacet = RunStoreFacet<
+  | "createTerminalReportDraft"
+  | "getTerminalReport"
+  | "getTerminalReportForSource"
+  | "listTerminalReports"
+  | "updateTerminalReportDraft"
+  | "commitTerminalReport"
+  | "markTerminalReportPublished"
+  | "failTerminalReport"
 >;
 
 export type RunExecutionStoreFacet = RunStoreFacet<
@@ -2174,6 +2270,8 @@ export type SkillRegistryStoreFacet = RunStoreFacet<
   | "upsertSkillSourceSnapshot"
   | "archiveSkillSourceSnapshot"
   | "rollbackSkillSourceSnapshot"
+  | "getOfficialSkillSourceSubscription"
+  | "upsertOfficialSkillSourceSubscription"
   | "getSkillSourceUpgradePolicy"
   | "updateSkillSourceUpgradePolicy"
   | "upsertSkillSourceArtifact"
@@ -2189,6 +2287,7 @@ export type SkillRegistryStoreFacet = RunStoreFacet<
   | "createSkillImportDraft"
   | "getSkillImportDraft"
   | "publishSkillImportDraft"
+  | "publishSkillRevisionDraft"
   | "archiveSkillRegistryEntry"
   | "hardDeleteSkillRegistryEntry"
 >;
@@ -2199,6 +2298,7 @@ export type SkillCandidateStoreFacet = RunStoreFacet<
   | "listSkillCandidates"
   | "listSkillCandidateReviewRecords"
   | "applySkillCandidateReviewAction"
+  | "markSkillCandidatePublished"
 >;
 
 export type ProcedureObservationStoreFacet = RunStoreFacet<

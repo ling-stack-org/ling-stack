@@ -226,6 +226,38 @@ export function lingTurnSelectSql(whereClause: string): string {
   `;
 }
 
+export function terminalReportSelectSql(whereClause: string): string {
+  return `
+    SELECT
+      id,
+      workspace_id,
+      channel_id,
+      thread_id,
+      turn_id,
+      source_message_id,
+      source_kind,
+      source_id,
+      generation,
+      status,
+      outcome_status,
+      language,
+      evidence_snapshot_json,
+      evidence_fingerprint,
+      report_json,
+      synthesis_mode,
+      prompt_version,
+      attempt_count,
+      validation_codes_json,
+      published_message_id,
+      error_code,
+      created_at,
+      updated_at,
+      committed_at
+    FROM ling_terminal_reports
+    ${whereClause}
+  `;
+}
+
 export function automationDefinitionSelectSql(whereClause: string): string {
   return `
     SELECT
@@ -691,6 +723,23 @@ export function skillSourceSnapshotSelectSql(whereClause: string): string {
       created_at,
       updated_at
     FROM skill_source_snapshots
+    ${whereClause}
+  `;
+}
+
+export function officialSkillSourceSubscriptionSelectSql(whereClause: string): string {
+  return `
+    SELECT
+      workspace_id,
+      source_id,
+      origin_url,
+      ref,
+      revision,
+      version,
+      last_synced_at,
+      created_at,
+      updated_at
+    FROM official_skill_source_subscriptions
     ${whereClause}
   `;
 }

@@ -9,6 +9,9 @@ Date: 2026-07-11
 - [Skill Import Productization](skill-import-productization.md)
 - [AI Teammates And Skills](ai-teammates-and-skills.md)
 - [GStack Skill Source Sync](gstack-skill-source-sync.md)
+- [Skill Source Sync Simplification P15](skill-source-sync-simplification-p15.md)
+- [Managed Official Skill Source P16](managed-official-skill-source-p16.md)
+- [Skill Editing And Revision](skill-editing-and-revision.md)
 
 ## Summary
 
@@ -125,6 +128,9 @@ the conservative empty value.
 - Source, requirements, approval policy, prompt fragments, bindings, optimization preview,
   and technical details remain available in the drawer.
 - The drawer does not reintroduce a Stage field.
+- Editable imported and AI-evolved skills expose one visible Edit action in the detail
+  summary. Editing uses the shared structured skill editor and never changes skill id,
+  ownership, bindings, or source provenance.
 
 ## Storage And Security Boundary
 

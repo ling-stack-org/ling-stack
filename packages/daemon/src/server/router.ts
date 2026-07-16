@@ -34,10 +34,12 @@ import { createAiChannelReply } from "../features/channels/ai-replies.js";
 import { handleChannelCollaborationProtocol } from "../features/channels/collaboration-protocol.js";
 import { handleChannelPlaybookCandidates } from "../features/channels/playbooks.js";
 import { handleChannelLinkPreviewItem, handleChannelLinkPreviewsCollection } from "../features/channels/link-previews.js";
-import { handleChannelMessagesCollection, handleChannelMessageStream } from "../features/channels/messages.js";
+import { handleChannelMessagesCollection, handleChannelMessageStream, handleLingAgentChannelMessage } from "../features/channels/messages.js";
 import { confirmChannelExecutionProposalWorkflow } from "../features/channels/proposal-workflows.js";
 import { handleChannelTeamExpertsProjection } from "../features/channels/team-experts.js";
 import { handleChannelTeamMetricsProjection } from "../features/channels/team-metrics.js";
+import { handleChannelTerminalReports, handleTerminalReportItem, handleTerminalReportsCollection } from "../features/channels/terminal-report-routes.js";
+import { maybeScheduleRunTerminalReport } from "../features/channels/terminal-report-coordinator.js";
 import { handleChannelTeamAuthorityLedger } from "../features/channels/team-authority-ledger.js";
 import { handleChannelTeamPatterns } from "../features/channels/team-patterns.js";
 import {
@@ -90,6 +92,10 @@ import {
   handleChannelWorkflowStepsCollection,
   handleChannelWorkflowsCollection,
 } from "../features/channels/workflows.js";
+import {
+  handleGetWorkflowWorkspaceChanges,
+  handleMutateWorkflowWorkspaceChanges,
+} from "../features/channels/workflow-workspace-change-recovery.js";
 import { createWorkflowStepContextArtifact } from "../features/channels/workflow-step-packets.js";
 import {
   handleExternalWorkActionCancel,
@@ -139,7 +145,8 @@ import {
   handleGovernanceNotificationRoute,
   parseGovernanceNotificationRoute,
 } from "../features/governance-notifications/routes.js";
-import { handleConversationAttachmentsCollection, handleConversationDetail, handleConversationStream } from "../features/conversations/routes.js";
+import { handleConversationAttachmentsCollection, handleConversationDetail, handleConversationStream, startConversationReplacementRun } from "../features/conversations/routes.js";
+import { handleConversationMessageEdit } from "../features/conversations/message-edits.js";
 import { handleRunMediaJob, syncMediaJobForApprovalDecision } from "../features/media/executor.js";
 import { handleMediaJobRoute, handleMediaJobsCollection } from "../features/media/routes.js";
 import { handleMcpServerItem, handleMcpServersCollection, handleMcpToolsCollection } from "../features/mcp/routes.js";
@@ -162,7 +169,13 @@ import {
 import { handleUserProfile } from "../features/profile/routes.js";
 import { ensureRunCancelled } from "../features/runs/cancellation.js";
 import { handleExecutionActionsCollection } from "../features/runs/execution-actions.js";
-import { createDetachedRunExecutionSink, createSseRunExecutionSink, executeRunRequest } from "../features/runs/orchestrator.js";
+import {
+  createDetachedRunExecutionSink,
+  createSseRunExecutionSink,
+  executeRunRequest,
+  type RunExecutionSink,
+} from "../features/runs/orchestrator.js";
+import type { RunRequest } from "../features/runs/schemas.js";
 import {
   handleRunInterventionItem,
   handleRunInterventionPromote,
@@ -192,6 +205,18 @@ import { handleLingThreadItem, handleLingThreadsCollection } from "../features/r
 import { handleToolLoadRequestsCollection, handleToolSurfacesCollection } from "../features/runs/tool-surfaces.js";
 import { handleTraceItem, handleTracesCollection } from "../features/runs/traces-routes.js";
 import { resolveProviderForRun } from "../features/runs/providers.js";
+import { handleGetWorkspaceChanges } from "../features/previews/workspace-changes.js";
+import {
+  handleGetWorkspaceFileContent,
+  handleGetWorkspaceFileOpenIcon,
+  handleGetWorkspaceFileOpenOptions,
+  handlePostWorkspaceFileOpen,
+} from "../features/previews/workspace-file-actions.js";
+import { handleGetWorkspaceFilePreview } from "../features/previews/workspace-file-preview.js";
+import {
+  handleGetRunWorkspaceChanges,
+  handleMutateRunWorkspaceChanges,
+} from "../features/runs/workspace-change-recovery.js";
 import { handleEffectiveConfig, handleWorkspaceSettings } from "../features/settings/routes.js";
 import { handleSkillRoute } from "../features/skills/routes.js";
 import { handleTaskItem, handleTaskRun, handleTasksCollection } from "../features/tasks/routes.js";
@@ -274,11 +299,13 @@ import {
   parseTeammateDirectInterventionRoute,
   parseTeammateDirectReplyRoute,
   parseTeammateRoute,
+  parseTerminalReportRoute,
   parseTraceRoute,
   parseWorkItemRoute,
   parseWorkUnitRoute,
 } from "./routes.js";
 import { RunControlService } from "../run-control.js";
+import { allowLocalWorkspaceRequest } from "../shared/local-workspace-access.js";
 import { setCorsHeaders, writeJson } from "../shared/response.js";
 import { handleStartupStatus } from "../startup/routes.js";
 
@@ -306,15 +333,6 @@ export async function routeRequest(
     providerStartupRefresh,
     startupState,
   } = context;
-  const directReplyControl = new DirectReplyControlService({
-    runnerRegistry,
-    runtimeSupervisor,
-    secretResolver,
-    activeDirectReplies,
-    runControl: new RunControlService(),
-    providerStartupRefresh,
-    imageVisionSummarizer,
-  });
   setCorsHeaders(response);
 
   if (request.method === "OPTIONS") {
@@ -331,6 +349,7 @@ export async function routeRequest(
     if (!store) {
       return;
     }
+    maybeScheduleRunTerminalReport(store, terminalRun.id, { linkedRunId: terminalRun.id });
     const goalContinuation = maybeQueueGoalContinuation({
       terminalRun,
       store,
@@ -349,6 +368,31 @@ export async function routeRequest(
       startupState,
     });
   };
+  const startTeammateDirectRun = async (runRequest: RunRequest, sink: RunExecutionSink): Promise<string | undefined> =>
+    executeRunRequest(
+      runRequest,
+      sink,
+      runnerRegistry,
+      storeRegistry,
+      activeRuns,
+      runtimeSupervisor,
+      secretResolver,
+      mcpBroker,
+      {
+        afterRunTerminal: maybeContinueRunInterventions,
+        controlPlaneEvents,
+        startupState,
+      },
+    );
+  const directReplyControl = new DirectReplyControlService({
+    startRun: startTeammateDirectRun,
+    activeRuns,
+    secretResolver,
+    activeDirectReplies,
+    runControl: new RunControlService(),
+    providerStartupRefresh,
+    imageVisionSummarizer,
+  });
 
   if (request.method === "GET" && url.pathname === "/health") {
     writeJson(response, 200, {
@@ -361,6 +405,7 @@ export async function routeRequest(
           autoRoute: config.channels.autoRoute === true,
           intentSelector: config.channels.intentSelector === true,
           teamObserverBus: config.channels.teamObserverBus === true,
+          terminalReports: config.channels.terminalReports === true,
         },
         transports: {
           providerWebSocketFallback: config.transports.providerWebSocketFallback === true,
@@ -390,6 +435,17 @@ export async function routeRequest(
     return;
   }
 
+  if (url.pathname === "/terminal-reports") {
+    await handleTerminalReportsCollection(request, response, config, storeRegistry);
+    return;
+  }
+
+  const terminalReportRoute = parseTerminalReportRoute(url.pathname);
+  if (terminalReportRoute) {
+    await handleTerminalReportItem(request, response, config, storeRegistry, terminalReportRoute.reportId);
+    return;
+  }
+
   if (url.pathname === "/ai-councils") {
     await handleAiCouncilsCollection(request, response, config, storeRegistry);
     return;
@@ -406,7 +462,7 @@ export async function routeRequest(
   }
 
   if (url.pathname === "/workspace-directory/select") {
-    await handleWorkspaceDirectorySelect(request, response, config);
+    await handleWorkspaceDirectorySelect(request, response, config, storeRegistry);
     return;
   }
 
@@ -914,6 +970,8 @@ export async function routeRequest(
     url.pathname === "/skills/import-draft" ||
     url.pathname === "/skills/import-draft/optimization-preview" ||
     url.pathname === "/skills/sync/gstack/preview" ||
+    url.pathname === "/skills/sync/gstack/apply" ||
+    url.pathname === "/skills/sync/gstack/status" ||
     url.pathname === "/skills/sync/gstack/publish" ||
     url.pathname === "/skills/sync/gstack/refresh" ||
     url.pathname === "/skills/sync/gstack/check-updates" ||
@@ -1148,6 +1206,27 @@ export async function routeRequest(
     handleGetShellSnapshot(response, url, storeRegistry, runRoute.runId, runRoute.snapshotId);
     return;
   }
+  if (request.method === "GET" && runRoute?.kind === "workspace-changes") {
+    if (!allowLocalWorkspaceRequest({ request, response, storeRegistry, cwd: url.searchParams.get("cwd") ?? undefined })) {
+      return;
+    }
+    await handleGetRunWorkspaceChanges(response, url, storeRegistry, runRoute.runId);
+    return;
+  }
+  if (request.method === "POST" && runRoute?.kind === "workspace-changes-undo") {
+    if (!allowLocalWorkspaceRequest({ request, response, storeRegistry, cwd: url.searchParams.get("cwd") ?? undefined })) {
+      return;
+    }
+    await handleMutateRunWorkspaceChanges(response, url, storeRegistry, runRoute.runId, "undo");
+    return;
+  }
+  if (request.method === "POST" && runRoute?.kind === "workspace-changes-reapply") {
+    if (!allowLocalWorkspaceRequest({ request, response, storeRegistry, cwd: url.searchParams.get("cwd") ?? undefined })) {
+      return;
+    }
+    await handleMutateRunWorkspaceChanges(response, url, storeRegistry, runRoute.runId, "reapply");
+    return;
+  }
 
   const runInterventionRoute = parseRunInterventionRoute(url.pathname);
   if (runInterventionRoute) {
@@ -1191,6 +1270,55 @@ export async function routeRequest(
   const workUnitRoute = parseWorkUnitRoute(url.pathname);
   if (workUnitRoute) {
     handleWorkUnitRoute(request, response, url, storeRegistry, activeRuns, runtimeSupervisor, workUnitRoute, ensureRunCancelled, controlPlaneEvents);
+    return;
+  }
+
+  if (request.method === "GET" && url.pathname === "/workspace-files/preview") {
+    if (!allowLocalWorkspaceRequest({ request, response, storeRegistry, cwd: url.searchParams.get("cwd") ?? undefined })) {
+      return;
+    }
+    await handleGetWorkspaceFilePreview(response, url);
+    return;
+  }
+  if (request.method === "GET" && url.pathname === "/workspace/changes") {
+    if (!allowLocalWorkspaceRequest({ request, response, storeRegistry, cwd: url.searchParams.get("cwd") ?? undefined })) {
+      return;
+    }
+    await handleGetWorkspaceChanges(response, url);
+    return;
+  }
+  const workspaceFileOpenIconTarget = parseWorkspaceFileOpenIconTarget(url.pathname);
+  if (request.method === "GET" && workspaceFileOpenIconTarget) {
+    const cwd = url.searchParams.get("cwd")?.trim();
+    if (!cwd) {
+      writeJson(response, 400, { error: "bad_request", message: "cwd query parameter is required" });
+      return;
+    }
+    if (!allowLocalWorkspaceRequest({ request, response, storeRegistry, cwd })) {
+      return;
+    }
+    await handleGetWorkspaceFileOpenIcon(request, response, workspaceFileOpenIconTarget);
+    return;
+  }
+  if (request.method === "GET" && url.pathname === "/workspace-files/open-options") {
+    if (!allowLocalWorkspaceRequest({ request, response, storeRegistry, cwd: url.searchParams.get("cwd") ?? undefined })) {
+      return;
+    }
+    handleGetWorkspaceFileOpenOptions(response, url);
+    return;
+  }
+  if (request.method === "POST" && url.pathname === "/workspace-files/open") {
+    if (!allowLocalWorkspaceRequest({ request, response, storeRegistry, cwd: url.searchParams.get("cwd") ?? undefined })) {
+      return;
+    }
+    await handlePostWorkspaceFileOpen(request, response, url, config.maxBodyBytes);
+    return;
+  }
+  if (request.method === "GET" && url.pathname === "/workspace-files/content") {
+    if (!allowLocalWorkspaceRequest({ request, response, storeRegistry, cwd: url.searchParams.get("cwd") ?? undefined })) {
+      return;
+    }
+    await handleGetWorkspaceFileContent(response, url);
     return;
   }
 
@@ -1338,6 +1466,116 @@ export async function routeRequest(
     };
   };
 
+  if (url.pathname === "/conversation-message-edits") {
+    await handleConversationMessageEdit(request, response, config, storeRegistry, {
+      activeRuns,
+      startReplacement: async ({ store, editable, request: editRequest, revision }) => {
+        if (editable.surface === "normal_conversation") {
+          const previousRun = editable.supersededRunIds
+            .map((runId) => store.getRun(runId))
+            .filter((run): run is RunSession => Boolean(run))
+            .at(-1);
+          const started = await startConversationReplacementRun({
+            store,
+            workspaceCwd: store.paths.cwd,
+            thread: editable.thread,
+            message: revision.body,
+            messageId: revision.messageId,
+            attachmentIds: revision.attachmentIds,
+            providerPresetId: editRequest.providerPresetId,
+            permissionPreset: editRequest.permissionPreset,
+            permissionConfirmation: editRequest.permissionConfirmation,
+            previousRun,
+            runnerRegistry,
+            startRun: startTeammateDirectRun,
+            imageVisionSummarizer,
+          });
+          return { replacementTurnId: started.turn.id };
+        }
+
+        if (editable.surface === "teammate_direct") {
+          const teammate = store.getAiTeammate(editable.ownerId);
+          const sourceMessage = store.getTeammateDirectMessage(editable.messageId);
+          if (!teammate || !sourceMessage) {
+            throw new HttpError(404, "message_not_found", "The edited private message is no longer available.");
+          }
+          const workspace = await ensureDirectWorkspaceReady({ store, thread: editable.thread, workspaceCwd: store.paths.cwd });
+          if (!workspace.ok) {
+            throw new HttpError(409, "edit_replacement_start_failed", workspace.message);
+          }
+          await providerStartupRefresh.refreshBeforeRun({
+            cwd: store.paths.cwd,
+            store,
+            providerPresetId: editRequest.providerPresetId ?? teammate.providerPresetId,
+          });
+          return await new Promise<{ readonly replacementTurnId?: string }>((resolve, reject) => {
+            let started = false;
+            void createAiTeammateDirectReply({
+              startRun: startTeammateDirectRun,
+              store,
+              teammate,
+              thread: editable.thread,
+              sourceMessage,
+              providerPresetId: editRequest.providerPresetId,
+              permissionPreset: editRequest.permissionPreset,
+              permissionConfirmation: editRequest.permissionConfirmation,
+              requestedSkillId: editRequest.requestedSkillId,
+              workspace: workspace.workspace,
+              secretResolver,
+              imageVisionSummarizer,
+              webFetch: context.webFetch,
+              webResolveHostAddresses: context.webResolveHostAddresses,
+              onWorkUnitStarted: ({ workUnitId }) => {
+                if (started) {
+                  return;
+                }
+                started = true;
+                const runId = store.getWorkUnit(workUnitId)?.linkedRunId;
+                resolve({ replacementTurnId: runId ? store.getLingTurnForRun(runId)?.id : undefined });
+              },
+            }).then((reply) => {
+              if (!started) {
+                reject(new Error(reply.errorMessage || "Private replacement did not start a run."));
+              }
+            }, reject);
+          });
+        }
+
+        const sourceMessage = store.getChannelMessage(editable.messageId);
+        if (!sourceMessage) {
+          throw new HttpError(404, "message_not_found", "The edited channel message is no longer available.");
+        }
+        await handleLingAgentChannelMessage({
+          store,
+          channel: editable.channel,
+          sourceMessage,
+          requestedProviderPresetId: editRequest.providerPresetId,
+          requestAiReply: true,
+          createAiReply: (input) => createAiChannelReply({
+            runnerRegistry,
+            runtimeSupervisor,
+            secretResolver,
+            webFetch: context.webFetch,
+            webResolveHostAddresses: context.webResolveHostAddresses,
+            ...input,
+            completionMode: "background",
+            teamObserverBusEnabled: config.channels.teamObserverBus === true,
+          }),
+          startExecutionProposalWorkflow: (input) => confirmAndOrchestrateChannelProposal({
+            store: input.store,
+            cwd: store.paths.cwd,
+            proposalId: input.proposalId,
+          }),
+          config,
+          routeDependencies: { runnerRegistry, secretResolver, config },
+          imageVisionSummarizer,
+        });
+        return {};
+      },
+    });
+    return;
+  }
+
   const workflowHandoffIntentRoute = parseWorkflowHandoffIntentRoute(url.pathname);
   if (workflowHandoffIntentRoute) {
     if (workflowHandoffIntentRoute.kind === "collection") {
@@ -1365,6 +1603,28 @@ export async function routeRequest(
   const workflowRoute = parseChannelWorkflowRoute(url.pathname);
   if (workflowRoute) {
     if (workflowRoute.kind === "workflow") {
+      if (workflowRoute.action === "workspace-changes" || workflowRoute.action === "workspace-changes-undo" || workflowRoute.action === "workspace-changes-reapply") {
+        const expectedMethod = workflowRoute.action === "workspace-changes" ? "GET" : "POST";
+        if (request.method !== expectedMethod) {
+          writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for workflow workspace recovery` });
+          return;
+        }
+        if (!allowLocalWorkspaceRequest({ request, response, storeRegistry, cwd: url.searchParams.get("cwd") ?? undefined })) {
+          return;
+        }
+        if (workflowRoute.action === "workspace-changes") {
+          await handleGetWorkflowWorkspaceChanges(response, url, storeRegistry, workflowRoute.workflowId);
+        } else {
+          await handleMutateWorkflowWorkspaceChanges(
+            response,
+            url,
+            storeRegistry,
+            workflowRoute.workflowId,
+            workflowRoute.action === "workspace-changes-undo" ? "undo" : "reapply",
+          );
+        }
+        return;
+      }
       if (workflowRoute.action === "orchestrate") {
         if (request.method !== "POST") {
           writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for workflow orchestration` });
@@ -1664,6 +1924,10 @@ export async function routeRequest(
       await handleChannelCollaborationCardsCollection(request, response, config, storeRegistry, channelRoute.channelId);
       return;
     }
+    if (channelRoute.action === "terminal-reports") {
+      await handleChannelTerminalReports(request, response, config, storeRegistry, channelRoute.channelId);
+      return;
+    }
     if (channelRoute.action === "team-experts") {
       await handleChannelTeamExpertsProjection(request, response, config, storeRegistry, channelRoute.channelId);
       return;
@@ -1812,7 +2076,18 @@ export async function routeRequest(
         config,
         storeRegistry,
         teammateRoute.teammateId,
-        async ({ store, teammate, thread, sourceMessage, providerPresetId, onWorkUnitStarted }) => {
+        async ({
+          store,
+          teammate,
+          thread,
+          sourceMessage,
+          providerPresetId,
+          permissionPreset,
+          permissionConfirmation,
+          requestedSkillId,
+          skillOptimizationMode,
+          onWorkUnitStarted,
+        }) => {
           let sourceWorkUnitId: string | undefined;
           const workspace = await ensureDirectWorkspaceReady({ store, thread, workspaceCwd: store.paths.cwd });
           if (!workspace.ok) {
@@ -1824,14 +2099,17 @@ export async function routeRequest(
             providerPresetId: providerPresetId ?? teammate.providerPresetId,
           });
           const reply = await createAiTeammateDirectReply({
-            runnerRegistry,
+            startRun: startTeammateDirectRun,
             store,
             teammate,
             thread,
             sourceMessage,
             providerPresetId,
+            permissionPreset,
+            permissionConfirmation,
+            requestedSkillId,
+            skillOptimizationMode,
             workspace: workspace.workspace,
-            runtimeSupervisor,
             secretResolver,
             imageVisionSummarizer,
             webFetch: context.webFetch,
@@ -1866,7 +2144,20 @@ export async function routeRequest(
         config,
         storeRegistry,
         teammateRoute.teammateId,
-        async ({ store, teammate, thread, sourceMessage, providerPresetId, signal, onWorkUnitStarted, stream }) => {
+        async ({
+          store,
+          teammate,
+          thread,
+          sourceMessage,
+          providerPresetId,
+          permissionPreset,
+          permissionConfirmation,
+          requestedSkillId,
+          skillOptimizationMode,
+          signal,
+          onWorkUnitStarted,
+          stream,
+        }) => {
           let sourceWorkUnitId: string | undefined;
           const workspace = await ensureDirectWorkspaceReady({ store, thread, workspaceCwd: store.paths.cwd });
           if (!workspace.ok) {
@@ -1880,14 +2171,17 @@ export async function routeRequest(
             providerPresetId: providerPresetId ?? teammate.providerPresetId,
           });
           const reply = await createAiTeammateDirectReply({
-            runnerRegistry,
+            startRun: startTeammateDirectRun,
             store,
             teammate,
             thread,
             sourceMessage,
             providerPresetId,
+            permissionPreset,
+            permissionConfirmation,
+            requestedSkillId,
+            skillOptimizationMode,
             workspace: workspace.workspace,
-            runtimeSupervisor,
             secretResolver,
             imageVisionSummarizer,
             webFetch: context.webFetch,
@@ -2074,6 +2368,14 @@ function parseConversationRoute(pathname: string): { readonly threadId: string }
   const segments = pathname.split("/").filter(Boolean).map(decodeURIComponent);
   if (segments.length === 2 && segments[0] === "conversations" && segments[1]) {
     return { threadId: segments[1] };
+  }
+  return undefined;
+}
+
+function parseWorkspaceFileOpenIconTarget(pathname: string): string | undefined {
+  const segments = pathname.split("/").filter(Boolean).map(decodeURIComponent);
+  if (segments.length === 3 && segments[0] === "workspace-files" && segments[1] === "open-icons" && segments[2]) {
+    return segments[2];
   }
   return undefined;
 }

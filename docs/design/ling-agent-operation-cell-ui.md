@@ -18,6 +18,7 @@ Related docs:
 - [Conversation Work Cell Operation Records](conversation-work-cell-operation-records.md)
 - [Conversation Operation Bubble And Performance Store](conversation-operation-bubble-and-performance-store.md)
 - [Conversation Performance Deferral And Virtualization](conversation-performance-deferral-and-virtualization.md)
+- [Ling Agent TerminalReport Protocol](ling-agent-terminal-report-protocol.md)
 
 ## Summary
 
@@ -41,6 +42,10 @@ Ling Agent transcript
     OperationCell / AgentActivitySpan / ArtifactStrip as needed
     terminal result text, when there is a result to summarize
 ```
+
+Terminal result content must consume the structured `TerminalReport` contract. The UI
+must not reconstruct outcome, changes, verification, participants, artifacts, or risks
+from final prose or from the last workflow-step summary.
 
 It should not read like this:
 
@@ -1131,7 +1136,18 @@ Default conversation feed rules:
 - Command output may use one compact code block because it is evidence output.
 - Active cells update in place; they do not append a new card or toast for every event.
 - Agent spans use small labels, avatars, and faint lane lines, not cards.
+- Reasoning, intent, and action narration render as separate outer note rows. Operation titles stay compact, while expanded operation detail is reserved for paths, commands, output counts, and local diffs; it must not repeat action `title`, `summary`, or scope narration.
 - Artifact strips may have a very light product affordance; operation logs may not.
+- Workflow packet metadata is audit evidence, not conversation content. Context packets,
+  output packets, fan-in summaries, packet counts, and packet ids stay out of the default
+  transcript and remain available only through explicit workflow evidence or developer
+  diagnostics. Real user-facing files still render in the artifact strip below the final
+  report.
+- A resolved approval-only workflow is also audit evidence when every step is terminal,
+  every step is backed only by a resolved workflow-step approval, no run was created, and
+  no TerminalReport exists. The conversation must not render a Work Cell, elapsed time,
+  recovery summary, checks, or attention rows for that workflow. Pending approvals remain
+  visible and actionable until the user resolves them.
 - Conversation-owned result review, file/diff/artifact preview, source metadata, checks,
   approvals, attachments, and links stay in the main conversation through inline
   expansion or in-turn previews. A right-side workspace utility, if present, is not a
@@ -1206,6 +1222,10 @@ Rules:
   cards.
 - Changed-file rows can show path, action, and concise diff stats.
 - Check rows can show status and command/check name.
+- Diff artifacts are generated with at most three unchanged lines before and after each
+  changed range. Ranges separated by six or fewer unchanged lines merge; wider gaps stay
+  separate and show the number of omitted unmodified lines. Context lines remain neutral
+  and do not affect `+additions -deletions` counts.
 - Full file preview, diff review, generated artifact preview, and audit/review detail
   open from the owning conversation row as inline expanded detail, an in-turn preview, or
   a lightbox. They must not move the user into a right drawer to understand the result.

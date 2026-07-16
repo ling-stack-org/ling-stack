@@ -317,11 +317,88 @@ export function syncWorkflowApprovalDecision(
       ...(result ? { result } : {}),
     };
   }
+  const result = reconcileLegacyWorkflowApprovalDecision(store, workflow, step, approval, now);
   return {
     status: "synced",
-    workflow,
-    workflowStep: step,
+    workflow: store.getChannelWorkflow(workflow.id) ?? workflow,
+    workflowStep: store.getChannelWorkflowStep(step.id) ?? step,
+    ...(result ? { result } : {}),
   };
+}
+
+function reconcileLegacyWorkflowApprovalDecision(
+  store: RunStore,
+  workflow: ChannelWorkflow,
+  step: ChannelWorkflowStep,
+  approval: ApprovalRequest,
+  now: string,
+): Extract<WorkflowOrchestrationResult, { status: "waiting_for_approval" | "blocked" | "failed" }> | undefined {
+  if (approval.status === "pending") {
+    return { status: "waiting_for_approval", workflow, workflowStep: step, approval };
+  }
+  if (approval.status === "approved") {
+    const workflowApproval = workflow.status === "waiting_for_approval"
+      ? store.transitionChannelWorkflowStatus({
+          workflowId: workflow.id,
+          expectedStatus: "waiting_for_approval",
+          event: "approval_approved",
+          actor: "local-user",
+          reason: `approval:${approval.id}`,
+          now,
+        })
+      : { ok: true as const, from: workflow.status, to: workflow.status };
+    if (!workflowApproval.ok) {
+      throw new HttpError(409, workflowApproval.code, `Workflow approval transition failed: ${workflowApproval.code}`);
+    }
+    const stepApproval = step.status === "waiting_for_approval"
+      ? store.transitionChannelWorkflowStepStatus({
+          workflowStepId: step.id,
+          expectedStatus: "waiting_for_approval",
+          event: "approval_approved",
+          actor: "local-user",
+          reason: `approval:${approval.id}`,
+          now,
+          blocker: null,
+        })
+      : { ok: true as const, from: step.status, to: step.status };
+    if (!stepApproval.ok) {
+      throw new HttpError(409, stepApproval.code, `Workflow step approval transition failed: ${stepApproval.code}`);
+    }
+    const runningStep = store.getChannelWorkflowStep(step.id) ?? step;
+    if (runningStep.status === "running" && !runningStep.taskId && !runningStep.runId) {
+      const succeeded = store.transitionChannelWorkflowStepStatus({
+        workflowStepId: runningStep.id,
+        expectedStatus: "running",
+        event: "succeed",
+        actor: "local-user",
+        reason: `approval:${approval.id}`,
+        now,
+        blocker: null,
+        resultSummary: "Approval was granted.",
+      });
+      if (!succeeded.ok) {
+        throw new HttpError(409, succeeded.code, `Workflow approval-only step close failed: ${succeeded.code}`);
+      }
+      completeWorkflowIfStepsFinished(store, workflow.id, now);
+    }
+    return undefined;
+  }
+  const reason = approval.decisionReason ?? `Workflow step approval ${approval.status}.`;
+  applyWorkflowStepFailurePolicy({
+    store,
+    workflow,
+    step,
+    policy: resolveWorkflowStepPolicy(step).onApprovalDenied,
+    actor: approval.status === "expired" ? "system" : "local-user",
+    reason,
+    now,
+    blocker: reason,
+  });
+  const latestWorkflow = store.getChannelWorkflow(workflow.id) ?? workflow;
+  const latestStep = store.getChannelWorkflowStep(step.id) ?? step;
+  return latestWorkflow.status === "failed"
+    ? { status: "failed", workflow: latestWorkflow, workflowStep: latestStep, blocker: reason }
+    : { status: "blocked", workflow: latestWorkflow, workflowStep: latestStep, blocker: latestStep.blocker ?? reason };
 }
 
 export function cancelChannelWorkflow(input: CancelWorkflowInput): CancelWorkflowResult {

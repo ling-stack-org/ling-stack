@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ClipboardEvent, type KeyboardEvent } from "react";
 import type { ComposerSlashCommandOption } from "@ling-stack/core/composer-slash-intents";
+import { collectLocalFileReferences, parseMessageBody } from "@ling-stack/conversation-ui-core";
 import {
   ArrowUp,
   Brain,
@@ -12,6 +13,7 @@ import {
   Loader2,
   MessageSquare,
   PackagePlus,
+  Pencil,
   Plus,
   Presentation,
   Search,
@@ -21,9 +23,9 @@ import {
   ThumbsUp,
   X,
 } from "lucide-react";
-import { attachmentContentUrl, deleteAttachment, uploadConversationAttachment } from "../../api.js";
+import { attachmentContentUrl, deleteAttachment, editConversationMessage, uploadConversationAttachment } from "../../api.js";
 import { useI18n } from "../../i18n.js";
-import type { AuthorizationMode, ConversationAttachment, ConversationTranscriptStatus, LingTurn, PermissionConfirmation, PermissionPreset, ProviderThinkingMode, RunSession, SessionPermissionMode, WorkspaceAccessMode } from "../../types.js";
+import type { AuthorizationMode, ConversationAttachment, ConversationPendingReplacement, ConversationTranscriptStatus, ExecutionAction, LingTurn, PermissionConfirmation, PermissionPreset, ProviderThinkingMode, RunSession, SessionPermissionMode, TerminalReportDto, WorkspaceAccessMode } from "../../types.js";
 import {
   createAttachmentPreviewUrl,
   createLocalComposerAssetId,
@@ -44,6 +46,8 @@ import {
   ComposerPermissionMenu,
   ConversationComposerShell,
   ConversationFeed,
+  ConversationReplacementRetry,
+  InlineMessageEditor,
   ConversationShell,
   MessageActionBar,
   MessageRow,
@@ -66,6 +70,8 @@ import {
   projectRunsToEvidenceGroup,
   projectRunsToReviewItems,
   type RightDockMessageProjectionInput,
+  type WorkspaceRightDockFileTarget,
+  type WorkspaceRightDockReviewTarget,
 } from "./right-dock/index.js";
 import { useWorkspaceBottomPanelResizeController } from "./useWorkspaceBottomPanelResizeController.js";
 import { useConversationSummaryPanelController, useConversationSummaryPlacementMotion } from "./useConversationSummaryPanelController.js";
@@ -102,6 +108,9 @@ export interface ConversationHomeMessage {
   readonly content: string;
   readonly attachments?: readonly ConversationAttachment[];
   readonly status?: ConversationTranscriptStatus;
+  readonly revision?: number;
+  readonly editedAt?: string;
+  readonly pendingReplacement?: ConversationPendingReplacement;
   readonly createdAt: string;
   readonly updatedAt?: string;
 }
@@ -110,6 +119,8 @@ export interface ConversationHomeDetailContext {
   readonly threadId?: string;
   readonly turns: readonly LingTurn[];
   readonly runs: readonly RunSession[];
+  readonly executionActions: readonly ExecutionAction[];
+  readonly terminalReports: readonly TerminalReportDto[];
 }
 
 export interface ConversationHomeSendInput {
@@ -199,6 +210,10 @@ export function ConversationHome({
   const [conversationSummaryOpen, setConversationSummaryOpen] = useState(false);
   const [conversationTerminalOpen, setConversationTerminalOpen] = useState(false);
   const [conversationRefreshing, setConversationRefreshing] = useState(false);
+  const [editingMessageId, setEditingMessageId] = useState<string | undefined>();
+  const [editSaving, setEditSaving] = useState(false);
+  const [replacementRetryingMessageId, setReplacementRetryingMessageId] = useState<string>();
+  const [replacementRetryError, setReplacementRetryError] = useState("");
   const [project, setProject] = useState<ConversationHomeProjectSelection>(() => ({
     projectPath: initialProjectPath.trim() || undefined,
     projectLabel: initialProjectLabel.trim() || undefined,
@@ -243,6 +258,10 @@ export function ConversationHome({
     () => new Map((detailContext?.runs ?? []).map((run) => [run.id, run])),
     [detailContext?.runs],
   );
+  const latestEditableUserMessageId = useMemo(
+    () => [...messages].reverse().find((message) => message.role === "user" && !message.pendingReplacement)?.id,
+    [messages],
+  );
   const normalizedMessageSearchQuery = messageSearchQuery.trim().toLowerCase();
   const visibleMessages = useMemo(() => {
     if (!normalizedMessageSearchQuery) {
@@ -278,8 +297,23 @@ export function ConversationHome({
   const conversationDockFileItems = useMemo(
     () => mergeDockFileItems(
       projectAttachmentsToFileItems(visibleMessages.flatMap((message) => message.attachments ?? []), t),
+      visibleMessages.flatMap((message) => collectLocalFileReferences(
+        parseMessageBody(message.content, project.projectPath?.trim() || workspaceCwd.trim()),
+      ).map((reference, index) => ({
+        id: `inline-ref:${message.id}:${reference.raw}:${index}`,
+        name: fileNameFromReferencePath(reference.displayPath),
+        pathLabel: reference.displayPath,
+        kind: "reference" as const,
+        status: "available" as const,
+        ownerScope: {
+          kind: "message" as const,
+          id: message.id,
+          label: message.role === "assistant" ? t("Assistant message files") : t("User message files"),
+          detail: formatConversationTimeLabel(message.updatedAt ?? message.createdAt),
+        },
+      }))),
     ),
-    [t, visibleMessages],
+    [project.projectPath, t, visibleMessages, workspaceCwd],
   );
   const conversationDockEvidenceGroups = useMemo(
     () => mergeEvidenceGroups(
@@ -296,7 +330,6 @@ export function ConversationHome({
     ],
     [conversationDockFileItems, conversationDockMessages, detailContext?.runs, t],
   );
-  const conversationDockEvidenceCount = conversationDockEvidenceGroups.reduce((count, group) => count + group.items.length, 0);
   const latestRun = useMemo(() => {
     const runs = detailContext?.runs ?? [];
     return [...runs].sort((left, right) => (right.updatedAt ?? right.createdAt).localeCompare(left.updatedAt ?? left.createdAt))[0];
@@ -327,19 +360,32 @@ export function ConversationHome({
       primary: t("Files"),
       secondary: t("{count} files", { count: conversationDockFileItems.length }),
     },
-    {
-      id: "evidence",
-      icon: <Search size={18} />,
-      primary: t("Evidence"),
-      secondary: conversationDockEvidenceCount === 1 ? t("1 item") : t("{count} items", { count: conversationDockEvidenceCount }),
-    },
-  ], [conversationDockEvidenceCount, conversationDockFileItems.length, latestRun, t, visibleMessages.length, workspaceCwd]);
+  ], [conversationDockFileItems.length, latestRun, t, visibleMessages.length, workspaceCwd]);
   const conversationSummaryShouldRender = conversationSummaryPanel.rendered;
   const conversationSummaryInMainLayout = conversationSummaryShouldRender && conversationDockOpen;
   const conversationSummaryPlacementRef = useConversationSummaryPlacementMotion(
     conversationSummaryOpen && conversationSummaryShouldRender,
     conversationSummaryInMainLayout ? "main" : "header",
   );
+
+  function openConversationFiles(): void {
+    setConversationSummaryOpen(false);
+    setConversationDockOpen(true);
+    conversationDockController.requestPage("files");
+  }
+
+  function openConversationReportFile(target: WorkspaceRightDockFileTarget): void {
+    setConversationSummaryOpen(false);
+    setConversationDockOpen(true);
+    conversationDockController.requestPage("files", target);
+  }
+
+  function openConversationReview(target: WorkspaceRightDockReviewTarget): void {
+    const executionCwd = detailContext?.runs.find((run) => run.id === target.runId)?.cwd ?? target.cwd;
+    setConversationSummaryOpen(false);
+    setConversationDockOpen(true);
+    conversationDockController.requestPage("review", undefined, { ...target, cwd: executionCwd });
+  }
   const conversationSummaryNode = (
     <ConversationSummaryPopover
       title={t("Environment")}
@@ -358,6 +404,79 @@ export function ConversationHome({
       await onRefreshConversation();
     } finally {
       setConversationRefreshing(false);
+    }
+  }
+
+  async function saveEditedMessage(message: ConversationHomeMessage, body: string): Promise<void> {
+    const threadId = message.threadId ?? detailContext?.threadId;
+    if (!threadId || editSaving) {
+      return;
+    }
+    setEditSaving(true);
+    setNotice("");
+    setReplacementRetryError("");
+    const idempotencyKey = `conversation-edit:${message.id}:${crypto.randomUUID()}`;
+    try {
+      const result = await editConversationMessage(workspaceCwd.trim(), {
+        surface: "normal_conversation",
+        ownerId: threadId,
+        messageId: message.id,
+        expectedRevision: message.revision ?? 1,
+        body,
+        attachmentIds: (message.attachments ?? []).map((attachment) => attachment.id),
+        providerPresetId: activeProviderPresetId,
+        permissionPreset: selectedPermissionPreset,
+        idempotencyKey,
+      });
+      setMessages((current) => current.map((item) => item.id === message.id ? {
+        ...item,
+        content: result.message.body,
+        revision: result.message.revision,
+        editedAt: result.message.createdAt,
+        updatedAt: result.message.createdAt,
+        pendingReplacement: result.status === "replacement_pending" ? {
+          supersessionId: result.supersessionId,
+          idempotencyKey,
+          ...(result.failureReason ? { failureReason: result.failureReason } : {}),
+        } : undefined,
+      } : item));
+      setEditingMessageId(undefined);
+      await refreshConversation();
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : String(error));
+    } finally {
+      setEditSaving(false);
+    }
+  }
+
+  async function retryEditedMessageReplacement(message: ConversationHomeMessage): Promise<void> {
+    const pending = message.pendingReplacement;
+    const threadId = message.threadId ?? detailContext?.threadId;
+    if (!pending || !threadId || replacementRetryingMessageId) {
+      return;
+    }
+    setReplacementRetryingMessageId(message.id);
+    setReplacementRetryError("");
+    try {
+      const result = await editConversationMessage(workspaceCwd.trim(), {
+        surface: "normal_conversation",
+        ownerId: threadId,
+        messageId: message.id,
+        expectedRevision: message.revision ?? 1,
+        body: message.content,
+        attachmentIds: (message.attachments ?? []).map((attachment) => attachment.id),
+        providerPresetId: activeProviderPresetId,
+        permissionPreset: selectedPermissionPreset,
+        idempotencyKey: pending.idempotencyKey,
+      });
+      if (result.status === "replacement_pending") {
+        setReplacementRetryError(result.failureReason ?? pending.failureReason ?? "");
+      }
+      await refreshConversation();
+    } catch (error) {
+      setReplacementRetryError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setReplacementRetryingMessageId(undefined);
     }
   }
   const thinkingButtonLabel = thinkingOff
@@ -1028,25 +1147,59 @@ export function ConversationHome({
             renderItem={(message) => {
               const messageFeedback = messageFeedbackById[message.id];
               const linkedRun = message.runId ? runById.get(message.runId) : undefined;
+              const relatedRun = linkedRun ?? (message.turnId
+                ? runById.get(messages.find((candidate) => candidate.role === "assistant" && candidate.turnId === message.turnId)?.runId ?? "")
+                : undefined);
+              const terminalReport = detailContext?.terminalReports.find((report) =>
+                (message.turnId && report.source.kind === "turn" && report.source.id === message.turnId) ||
+                (message.runId && report.source.kind === "run" && report.source.id === message.runId)
+              );
               const errorText = normalConversationMessageErrorText(message, linkedRun?.status);
-              const workCell = message.role === "assistant" && message.threadId && linkedRun ? buildConversationWorkCellViewModel({
+              const messageExecutionActions = linkedRun
+                ? detailContext?.executionActions.filter((action) => action.runId === linkedRun.id) ?? []
+                : [];
+              const workCell = message.role === "assistant" && message.threadId && linkedRun && (
+                normalConversationTerminalReportHasWorkEvidence(terminalReport) ||
+                messageExecutionActions.length > 0 ||
+                linkedRun.status === "queued" ||
+                linkedRun.status === "running" ||
+                linkedRun.status === "waiting_for_approval"
+              ) ? buildConversationWorkCellViewModel({
                 threadId: message.threadId,
-                runs: detailContext?.runs ?? [linkedRun],
-                turns: detailContext?.turns,
+                runs: [linkedRun],
                 allowRunThreadFallback: true,
                 approvals: [],
                 artifactsByRun: {},
+                executionActions: messageExecutionActions,
                 t,
+                terminalReport,
               }) : undefined;
+              const hasStructuredTerminalReport = Boolean(workCell?.terminalReportRows.length);
               return (
                 <MessageRow
                   className={normalConversationMessageClassName(message)}
                   authorType={conversationMessageAuthorType(message)}
                   authorName={conversationMessageAuthorName(message, t)}
                   createdAtLabel={formatConversationTimeLabel(message.createdAt)}
-                  body={errorText ? "" : message.content || (message.status === "running" ? t("Ling Agent is thinking...") : "")}
+                  statusNode={message.editedAt ? <span className="conversation-message-edited-label">{t("Edited")}</span> : undefined}
+                  body={errorText || hasStructuredTerminalReport ? "" : message.content || (message.status === "running" ? t("Ling Agent is thinking...") : "")}
+                  bodyCwd={project.projectPath?.trim() || workspaceCwd.trim()}
+                  bodyNode={editingMessageId === message.id ? (
+                    <InlineMessageEditor
+                      initialValue={message.content}
+                      cwd={project.projectPath?.trim() || workspaceCwd.trim()}
+                      ariaLabel={t("Edit message")}
+                      saveLabel={t("Save and resend")}
+                      cancelLabel={t("Cancel")}
+                      saving={editSaving}
+                      warning={runMayHaveWorkspaceChanges(relatedRun) ? t("This turn changed the workspace. The edited prompt will continue from the current state.") : undefined}
+                      onCancel={() => setEditingMessageId(undefined)}
+                      onSave={(value) => saveEditedMessage(message, value)}
+                    />
+                  ) : undefined}
                   bodyCompact
                   bodyStreaming={message.status === "running" || message.status === "pending"}
+                  bodyOnOpenLocalFile={openConversationFiles}
                   attachmentsNode={message.attachments && message.attachments.length > 0 ? (
                     <ConversationAttachmentStrip
                       attachments={message.attachments.map((attachment) => ({
@@ -1072,18 +1225,47 @@ export function ConversationHome({
                   workCellNode={workCell ? (
                     <ConversationWorkCell
                       model={workCell}
-                      cwd={workspaceCwd.trim()}
+                      surface="normal_conversation"
+                      cwd={detailContext?.runs.find((run) => run.id === workCell.anchorRunId)?.cwd ?? workspaceCwd.trim()}
                       onOpenRun={onOpenRun}
+                      onOpenWorkspaceFile={openConversationReportFile}
+                      onOpenWorkspaceReview={openConversationReview}
                       loadPreview={loadPreviewContent}
                     />
                   ) : null}
-                  errorNode={errorText ? <div className="inline-error compact-inline-error normal-conversation-message-error" role="alert">{errorText}</div> : null}
-                  actionsNode={message.role === "assistant" && message.content ? (
+                  errorNode={(
+                    <>
+                      {errorText ? <div className="inline-error compact-inline-error normal-conversation-message-error" role="alert">{errorText}</div> : null}
+                      {message.pendingReplacement ? (
+                        <ConversationReplacementRetry
+                          failureReason={replacementRetryError || message.pendingReplacement.failureReason}
+                          retryLabel={t("Retry response")}
+                          retrying={replacementRetryingMessageId === message.id}
+                          onRetry={() => void retryEditedMessageReplacement(message)}
+                        />
+                      ) : null}
+                    </>
+                  )}
+                  actionsNode={message.content && editingMessageId !== message.id ? (
                     <MessageActionBar
                       surface="normal_conversation"
                       className="normal-conversation-message-actions"
-                      copiedLabel={t("Copied")}
-                      actions={[
+                      actions={message.role === "user" ? [
+                        {
+                          id: "copy",
+                          kind: "copy",
+                          label: t("Copy message"),
+                          icon: <Copy size={14} />,
+                          copyText: message.content,
+                        },
+                        ...(message.id === latestEditableUserMessageId ? [{
+                          id: "edit",
+                          kind: "edit_latest" as const,
+                          label: t("Edit message"),
+                          icon: <Pencil size={14} />,
+                          onClick: () => setEditingMessageId(message.id),
+                        }] : []),
+                      ] : [
                         {
                           id: "copy",
                           kind: "copy",
@@ -1356,6 +1538,36 @@ function runTaskSnapshotTitle(run: RunSession): string | undefined {
   return typeof title === "string" && title.trim() ? title : undefined;
 }
 
+function runMayHaveWorkspaceChanges(run: RunSession | undefined): boolean {
+  if (!run?.requestSnapshot || typeof run.requestSnapshot !== "object") {
+    return false;
+  }
+  const tools = "tools" in run.requestSnapshot ? run.requestSnapshot.tools : undefined;
+  return Array.isArray(tools) && tools.some((tool) => tool === "edit" || tool === "write" || tool === "bash");
+}
+
+function normalConversationTerminalReportHasWorkEvidence(report: TerminalReportDto | undefined): boolean {
+  if (!report) {
+    return false;
+  }
+  if (
+    report.outcome.corrections.length > 0 ||
+    report.changes.length > 0 ||
+    report.artifacts.length > 0 ||
+    report.risks.length > 0
+  ) {
+    return true;
+  }
+  const hasExecutionReference = (refs: TerminalReportDto["references"]): boolean => refs.some((ref) =>
+    ref.visibility !== "developer_only" &&
+    ref.sensitivity !== "secret_adjacent" &&
+    ["approval", "artifact", "check", "file", "operation"].includes(ref.kind),
+  );
+  return report.verification.some((verification) =>
+    Boolean(verification.command?.trim() || verification.summary?.trim()) || hasExecutionReference(verification.sourceRefs),
+  ) || hasExecutionReference(report.references) || hasExecutionReference(report.outcome.sourceRefs);
+}
+
 function normalConversationMessageErrorText(message: ConversationHomeMessage, runStatus?: RunSession["status"]): string {
   if (message.role === "user") {
     return "";
@@ -1380,6 +1592,11 @@ function formatConversationTimeLabel(value: string): string {
     return "";
   }
   return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+
+function fileNameFromReferencePath(path: string): string {
+  const withoutLocation = path.replace(/#L\d+(?:-L?\d+)?$/u, "").replace(/:\d+(?::\d+)?$/u, "");
+  return withoutLocation.split("/").filter(Boolean).at(-1) ?? withoutLocation;
 }
 
 function formatBytes(value: number): string {

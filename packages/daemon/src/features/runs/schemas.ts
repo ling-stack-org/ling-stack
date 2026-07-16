@@ -5,13 +5,18 @@ import {
   permissionModeForPreset,
   permissionPresets,
   providerTransports,
+  responseLanguages,
   runContinuationReasons,
   sessionPermissionModes,
   workspaceAccessModes,
   type AuthorizationMode,
   type PermissionConfirmation,
+  type DirectWorkspaceBinding,
+  type DirectWorkspaceSnapshot,
+  type LingTurnCreatedByActor,
   type LingConversationTone,
   type PermissionPreset,
+  type ResponseLanguage,
   type RunContinuationReason,
   type RunTool,
   type SessionPermissionMode,
@@ -53,10 +58,17 @@ export interface RunRequest extends Omit<PiRunnerRunOptions, "onApprovalRequired
   readonly skipProviderPreflight?: boolean;
   readonly idempotencyKey?: string;
   readonly lingConversationTone?: LingConversationTone;
+  readonly responseLanguage?: ResponseLanguage;
   readonly conversationAttachmentIds?: readonly string[];
   readonly parentRunId?: string;
   readonly interventionId?: string;
   readonly continuationReason?: RunContinuationReason;
+  readonly sourceMessageId?: string;
+  readonly linkedMessageId?: string;
+  readonly createdByActor?: LingTurnCreatedByActor;
+  readonly directWorkspaceBinding?: DirectWorkspaceBinding;
+  readonly directWorkspaceSnapshot?: DirectWorkspaceSnapshot;
+  readonly skipMemoryRecall?: boolean;
 }
 
 export function parseRunRequest(value: unknown): RunRequest {
@@ -132,6 +144,7 @@ export function parseRunRequest(value: unknown): RunRequest {
     agentDir: readOptionalString(value, "agentDir"),
     runtimeToolFeatures: readOptionalRuntimeToolFeatures(value, "runtimeToolFeatures"),
     lingConversationTone: readOptionalLingConversationTone(value, "lingConversationTone"),
+    responseLanguage: readOptionalResponseLanguage(value, "responseLanguage"),
     parentRunId: readOptionalString(value, "parentRunId"),
     interventionId: readOptionalString(value, "interventionId"),
     continuationReason: readOptionalRunContinuationReason(value, "continuationReason"),
@@ -149,6 +162,17 @@ function readOptionalLingConversationTone(record: Record<string, unknown>, key: 
     throw new Error(`${key} must be one of: ${lingConversationTones.join(", ")}`);
   }
   return value as LingConversationTone;
+}
+
+function readOptionalResponseLanguage(record: Record<string, unknown>, key: string): ResponseLanguage | undefined {
+  const value = readOptionalString(record, key);
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!responseLanguages.includes(value as ResponseLanguage)) {
+    throw new Error(`${key} must be one of: ${responseLanguages.join(", ")}`);
+  }
+  return value as ResponseLanguage;
 }
 
 function readOptionalRuntimeToolFeatures(record: Record<string, unknown>, key: string): RunRequest["runtimeToolFeatures"] {

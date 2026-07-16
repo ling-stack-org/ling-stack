@@ -5,7 +5,6 @@ export type TranscriptBlockKind =
   | "approval"
   | "artifact_strip"
   | "source_summary"
-  | "workflow_packet_summary"
   | "requirement_shaping"
   | "decision_needed"
   | "final_result"

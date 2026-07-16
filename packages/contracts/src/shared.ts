@@ -15,6 +15,12 @@ export type AuthorizationMode = "ask" | "smart" | "always";
 
 export type WorkspaceAccessMode = "read_only" | "workspace_write" | "full_access";
 
+export interface ConversationPendingReplacement {
+  readonly supersessionId: string;
+  readonly idempotencyKey: string;
+  readonly failureReason?: string;
+}
+
 export type WorkMode = "coding" | "daily";
 
 export interface PermissionPresetDefinition {

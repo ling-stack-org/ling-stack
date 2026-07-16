@@ -553,6 +553,59 @@ test("local WebSocket RPC gates initialize and validates methods", async () => {
   }
 });
 
+test("local WebSocket RPC schedules one terminal report after executed work", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-rpc-terminal-report-"));
+  const stores = new Map();
+  const daemon = await startDaemonForTest({ stores, runner: new RpcTerminalReportRunner() });
+  const provider = (await postJson(`${daemon.url}/providers?cwd=${encodeURIComponent(cwd)}`, {
+    kind: "openai-compatible",
+    displayName: "Terminal report test provider",
+    providerId: "terminal-report-test-provider",
+    model: "test-model",
+    api: "openai-completions",
+    baseUrl: "http://127.0.0.1:8317/v1",
+    authHeader: false,
+    capabilities: ["chat", "tool_call"],
+    input: ["text"],
+    enabled: true,
+  })).provider;
+  const store = stores.get(cwd);
+  assert.ok(store);
+  const channel = store.createChannel({ name: "RPC terminal report", boundPath: cwd }, "2026-07-11T12:00:00.000Z");
+  const task = store.createTask({
+    channelId: channel.id,
+    title: "Inspect package",
+    prompt: "Read package.json without modifying files.",
+  }, "2026-07-11T12:00:00.000Z");
+  const rpc = await openRpcClient(daemon.url, cwd);
+  try {
+    rpc.send(1, "initialize", {});
+    await rpc.next((message) => message.id === 1);
+    rpc.send(2, "runs.start", {
+      cwd,
+      providerPresetId: provider.id,
+      skipProviderPreflight: true,
+      task: { id: task.id, title: task.title, prompt: task.prompt, channelId: channel.id },
+      tools: ["read"],
+    });
+    const accepted = await rpc.next((message) => message.id === 2);
+    assert.equal(accepted.result.accepted, true);
+    await rpc.next((message) => message.method === "$/run_event" && message.params?.kind === "end");
+
+    const run = store.listRuns({ limit: 100 }).find((item) => item.taskId === task.id);
+    assert.ok(run);
+    const report = await waitForTerminalReport(store, "run", run.id);
+    assert.ok(report);
+    assert.equal(report.sourceKind, "run");
+    assert.equal(report.sourceId, run.id);
+    assert.equal(store.listTerminalReports({ sourceKind: "run", sourceId: run.id, limit: 100 }).length, 1);
+  } finally {
+    await rpc.close();
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("local WebSocket RPC returns control-plane data and subscriptions", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-rpc-control-plane-"));
   const stores = new Map();
@@ -962,6 +1015,17 @@ function createStoreForCwd(stores, cwd) {
   return store;
 }
 
+async function waitForTerminalReport(store, sourceKind, sourceId) {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    const report = store.listTerminalReports({ sourceKind, sourceId, limit: 100 })[0];
+    if (report?.status === "committed" || report?.status === "fallback") {
+      return report;
+    }
+    await new Promise((resolveWait) => setTimeout(resolveWait, 20));
+  }
+  return undefined;
+}
+
 class FakeMcpBroker {
   async checkServer(server) {
     return {
@@ -1027,6 +1091,30 @@ class ControlPlaneRunRunner {
       taskId: options.task.id,
       events: [],
       messages: [{ role: "assistant", content: "done" }],
+    };
+  }
+}
+
+class RpcTerminalReportRunner {
+  async runTask(options) {
+    options.onEvent?.({
+      type: "tool_start",
+      toolCallId: "rpc_terminal_report_read",
+      toolName: "read",
+      args: { path: "package.json" },
+    });
+    options.onEvent?.({
+      type: "tool_end",
+      toolCallId: "rpc_terminal_report_read",
+      toolName: "read",
+      result: { content: [{ type: "text", text: "{\"name\":\"ling-stack\"}" }] },
+      isError: false,
+    });
+    options.onEvent?.({ type: "assistant_text_delta", text: "Read package.json successfully." });
+    return {
+      taskId: options.task.id,
+      events: [],
+      messages: [{ role: "assistant", content: "Read package.json successfully." }],
     };
   }
 }

@@ -219,16 +219,15 @@ The pending AI message also shows the live web state in the conversation feed:
 - `open_url_started`: show the public URL being read and attempt count.
 - `open_url_completed`: show available/blocked status, final URL host, and blocked reason when present.
 
-The conversation page renders that field under the AI message in the existing message evidence disclosure:
+The conversation page projects only usable evidence under the AI message. Provider and relay diagnostics remain attached to the message and runtime events, but they are not rendered as persistent conversation cards:
 
-- `web_search` shows call status, query, provider adapter, and blocked reason when present.
+- `web_search` shows compact source references only when usable citation URLs exist.
 - `ling-public-web-search` means Ling host-side fallback found source URLs even though the selected model provider did not produce citations.
-- `degraded` and `blocked` web evidence opens by default because those states are user-actionable and otherwise look like the search never ran.
-- `degraded` reason names the backend/provider contract failure, such as a relay returning text without citation/source metadata.
+- `degraded` and `blocked` reasons are omitted from completed conversation history. The assistant reply owns the user-facing limitation, while raw provider/relay reasons remain available in Browser inspection and runtime records.
 - `Sources` shows bounded citation URLs and snippets returned by the provider adapter.
-- `open_url` shows public URL read attempts, final URL, status, and blocked reason.
+- `open_url` shows successful public URL reads. Failed or blocked reads remain available in Browser inspection instead of occupying the conversation.
 
-The right drawer can still provide deeper run/work-unit inspection, but it is not the primary place for web-search evidence. Runtime/work-unit timelines keep both the live `work_unit_progress` web events and the final `web_evidence_recorded` event so reviewers can correlate the visible reply evidence with the underlying work-unit audit trail.
+The right drawer is the primary diagnostic surface for failed, blocked, or degraded web evidence. Runtime/work-unit timelines keep both the live `work_unit_progress` web events and the final `web_evidence_recorded` event so reviewers can correlate compact visible citations with the underlying work-unit audit trail without exposing provider protocol text in normal reading flow.
 
 ## Prompt Boundary
 
@@ -238,6 +237,7 @@ The channel and private reply system prompts remain side-effect free:
 - web context is explicitly labeled as evidence;
 - replies may use only included web-search/open-url results;
 - replies must keep source URLs visible when using web evidence;
+- replies must briefly explain blocked, degraded, or source-less web context in user-facing language without repeating provider, relay, or protocol diagnostics verbatim;
 - replies must not claim page/body access beyond the included context.
 
 ## Provider And Key Boundary
@@ -266,7 +266,7 @@ The slice intentionally reuses the existing provider secret system:
 | Backend provider declares `web_search` but no Ling adapter supports its protocol in a private teammate direct reply | Block `web_search` without fetching; do not silently send the private query to public fallback. |
 | Backend provider key is missing | Try `ling-public-web-search`; if it returns no URLs, report the configured backend key problem. |
 | OpenAI request fails | Inject sanitized HTTP/network error; continue ordinary reply. |
-| Backend returns text without citation/source metadata | Try `ling-public-web-search`; if it returns URLs, mark evidence `available` with public sources; otherwise include summary, mark the event `degraded`, show provider/reason inline, and do not treat it as current evidence. |
+| Backend returns text without citation/source metadata | Try `ling-public-web-search`; if it returns URLs, mark evidence `available` with public sources; otherwise include summary in model context, mark the event `degraded`, keep provider/reason in inspection records, and do not treat it as current evidence. |
 | Public fallback is blocked/rate-limited or returns no URLs | Mark the event `degraded`; do not claim realtime search success. |
 | URL points to private/local network | Block before fetch or after DNS/redirect check. |
 | URL body too large | Truncate to prompt budget. |

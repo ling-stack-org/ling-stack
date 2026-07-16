@@ -12,6 +12,7 @@ Related docs:
 - [Conversation UI Design Conformance Recovery Plan](conversation-ui-design-conformance-recovery-plan.md)
 - [Codex-Inspired Conversation Components v1](codex-inspired-conversation-components-v1.md)
 - [Conversation Operation Bubble And Performance Store](conversation-operation-bubble-and-performance-store.md)
+- [Conversation Command Execution Batching Detailed Design](conversation-command-execution-batching-detailed-design.md)
 
 ## Purpose
 
@@ -97,6 +98,11 @@ Edit rows use their linked diff artifact as the authority:
   diff preview is available;
 - clicking the edit row reveals a bounded inline diff excerpt with line numbers and
   add/delete highlighting;
+- each changed hunk includes at most three unchanged source lines before and after the
+  actual edit so the user can understand the surrounding code without opening the file;
+- hunks separated by no more than six unchanged lines merge into one preview range;
+  wider gaps remain separate and render an explicit `N unmodified lines` fold marker;
+- context lines use neutral styling and never contribute to the addition/deletion totals;
 - large or truncated previews remain partial and must not claim an exact change count;
 - edit actions without a diff artifact keep the normal row treatment and do not invent
   counts from filenames or prose.
@@ -119,12 +125,49 @@ summary. It separates produced files from source changes:
 - only the bounded `Show N more files` row may expand or collapse additional files;
 - hovering a previewable output or changed-file row for two seconds opens a bounded
   floating preview;
+- the floating diff preview uses the same three-line hunk context contract as inline
+  edit-row detail and keeps a bounded internal line limit;
 - the floating preview prefers the space immediately above its source row and only falls
   back below when the viewport does not have enough room above;
 - keyboard focus or clicking the row opens the same compact preview immediately;
 - moving the pointer outside both the source row and floating preview hides it;
 - the default preview does not open the full-page artifact lightbox or duplicate its
   open, download, copy, and close chrome.
+
+Workspace-backed output rows also expose a persistent `Open with` action at the right
+edge of the row:
+
+- the main row remains the preview target while `Open with` is a separate sibling
+  control, so opening the application menu never triggers the hover preview;
+- the conversation surface uses the complete `Open with` label; the narrower right dock
+  keeps the compact `Open` label;
+- the action is shared by channel, normal-conversation, and teammate-private surfaces;
+- only rows carrying a structured `workspaceFilePath` render the action;
+- `workspaceFilePath` is projected from a TerminalReport artifact only when exactly one
+  user-visible `file` source reference resolves to one of that report's structured
+  changed paths;
+- arbitrary Run Artifact storage paths, labels, hrefs, and `.ling-stack/artifacts`
+  locations never gain workspace-open authority through string guessing;
+- the daemon remains authoritative for current file existence, workspace containment,
+  regular-file validation, and installed-application discovery;
+- installed application entries prefer a daemon-served local PNG icon while Finder,
+  Terminal, download, and failed icon loads retain their compact semantic fallback icon;
+- application icons occupy a stable 16px visual slot and must not resize menu rows while
+  loading or after fallback;
+- failed or stale targets remain non-mutating and report the daemon error inside the
+  menu rather than falling back to an unrestricted local file URL.
+
+The changed-files row carries a structured recovery target rather than an optional bare
+run id:
+
+- a normal conversation, teammate-private run, or single-run work cell uses
+  `{ kind: "run", id: runId }`;
+- a channel multi-agent workflow uses `{ kind: "workflow", id: workflowId }` even when
+  its visible artifacts came from several Agent runs;
+- the shared artifact-strip component selects the matching status, undo, and reapply API
+  from that target and keeps the same button placement on every conversation surface;
+- a workflow target is never downgraded to its latest run because that would expose a
+  partial undo under an aggregate changed-files count.
 
 Once the final summary and artifact strip are present, the completed work cell's compact
 evidence disclosure shows references only. Changed-item and check counts are omitted
@@ -172,6 +215,59 @@ The shared view model exposes these operation kinds:
 
 Failed rows use `CircleAlert` regardless of kind. Waiting rows and approval rows use
 `ShieldCheck`.
+
+## Codex-Inspired Command Execution Batches
+
+Long runs of successful shell commands should not dominate the conversation after their
+meaningful work is complete. Ling may project adjacent low-risk command actions into one
+compact command batch while preserving every underlying `ExecutionAction` and run event.
+
+The product contract is:
+
+- command batching is a UI projection only; it never rewrites, deletes, or coalesces
+  persisted events;
+- the latest executing command remains a standalone row, stays expanded, and shows a
+  bounded live output tail;
+- a completed batch renders as `Ran N commands` with an optional elapsed-time suffix;
+- a batch is created only when at least three eligible completed commands are adjacent;
+- expanding the batch reveals every command as a separate row in execution order;
+- the batch disclosure controls only the child command list;
+- each child command controls only its own output detail;
+- completed batches default to collapsed, including when the containing completed work
+  cell is expanded later;
+- failed, cancelled, approval-gated, or safety-sensitive commands always stay visible as
+  standalone rows;
+- Git commit, Git push, deployment, credential, provider, external-send, and other
+  consequential actions are never hidden inside a generic command count;
+- command batches never cross agent, run, retry, handoff, narrative-note, edit, approval,
+  failure, or workflow-step boundaries;
+- ordinary conversation, teammate private chat, and channel work cells use the same
+  batch component and rules; multi-agent channels additionally scope batches to one
+  participating agent span.
+
+Example while work is active:
+
+```text
+Ran 3 commands
+Running pnpm test
+  latest bounded output...
+```
+
+Example after expanding a completed batch:
+
+```text
+Ran 4 commands
+  pnpm install                 0 · 8.2s
+  pnpm typecheck               0 · 4.1s
+  pnpm lint                    0 · 2.7s
+  pnpm test                    0 · 12.6s
+```
+
+The compact batch header does not replace the final Ling summary, artifact strip, or
+verification section. It only reduces repetitive process chrome in the operation stream.
+The detailed runtime contract, deterministic grouping algorithm, live refresh path, and
+implementation slices are defined in
+[Conversation Command Execution Batching Detailed Design](conversation-command-execution-batching-detailed-design.md).
 
 ## Runtime And View Model
 

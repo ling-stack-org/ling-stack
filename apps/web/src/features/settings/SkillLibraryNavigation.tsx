@@ -4,16 +4,14 @@ import { SettingsSubnav } from "./SettingsSubnav.js";
 export function SkillLibraryNavigation({
   activeSection,
   currentUserCount,
+  evolutionCount,
   builtinCount,
-  reviewCount,
-  sourceAttentionCount,
   onSectionChange,
 }: {
   readonly activeSection: SkillLibrarySectionId;
   readonly currentUserCount: number;
+  readonly evolutionCount: number;
   readonly builtinCount: number;
-  readonly reviewCount: number;
-  readonly sourceAttentionCount: number;
   readonly onSectionChange: (section: SkillLibrarySectionId) => void;
 }): JSX.Element {
   return (
@@ -29,22 +27,16 @@ export function SkillLibraryNavigation({
           badge: `${currentUserCount}`,
         },
         {
+          id: "evolution",
+          label: "AI evolution",
+          description: "Review reusable skills and patterns discovered by Ling.",
+          badge: `${evolutionCount}`,
+        },
+        {
           id: "builtin",
           label: "Built-in skills",
           description: "Inspect Ling built-in skills and their current teammate bindings.",
           badge: `${builtinCount}`,
-        },
-        {
-          id: "review",
-          label: "Review queue",
-          description: "Resolve health findings, skill candidates, candidate clusters, and playbook proposals.",
-          badge: `${reviewCount}`,
-        },
-        {
-          id: "source",
-          label: "Source sync",
-          description: "Check source snapshots, preview gstack updates, and publish selected source records.",
-          badge: `${sourceAttentionCount}`,
         },
       ]}
     />

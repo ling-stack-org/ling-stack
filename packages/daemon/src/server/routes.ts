@@ -34,6 +34,9 @@ export function parseRunRoute(
   | { kind: "artifacts"; runId: string }
   | { kind: "shell-snapshots"; runId: string }
   | { kind: "shell-snapshot"; runId: string; snapshotId: string }
+  | { kind: "workspace-changes"; runId: string }
+  | { kind: "workspace-changes-undo"; runId: string }
+  | { kind: "workspace-changes-reapply"; runId: string }
   | { kind: "cancel"; runId: string }
   | { kind: "interventions"; runId: string }
   | { kind: "tool-load-requests"; runId: string }
@@ -53,6 +56,15 @@ export function parseRunRoute(
   }
   if (segments.length === 4 && segments[0] === "runs" && segments[2] === "shell-snapshots") {
     return { kind: "shell-snapshot", runId: segments[1], snapshotId: segments[3] };
+  }
+  if (segments.length === 3 && segments[0] === "runs" && segments[2] === "workspace-changes") {
+    return { kind: "workspace-changes", runId: segments[1] };
+  }
+  if (segments.length === 4 && segments[0] === "runs" && segments[2] === "workspace-changes" && segments[3] === "undo") {
+    return { kind: "workspace-changes-undo", runId: segments[1] };
+  }
+  if (segments.length === 4 && segments[0] === "runs" && segments[2] === "workspace-changes" && segments[3] === "reapply") {
+    return { kind: "workspace-changes-reapply", runId: segments[1] };
   }
   if (segments.length === 3 && segments[0] === "runs" && segments[2] === "cancel") {
     return { kind: "cancel", runId: segments[1] };
@@ -216,7 +228,7 @@ export function parseLingThreadRoute(
 
 export type SkillRoute =
   | { readonly kind: "draft"; readonly draftId: string; readonly action?: "publish" }
-  | { readonly kind: "skill"; readonly skillId: string; readonly action?: "corrections" | "hard-delete" | "source" | "source-archive" | "source-rollback" | "source-artifacts" | "optimization-preview" | "compiled-views" | "compiled-view-archive"; readonly viewId?: string }
+  | { readonly kind: "skill"; readonly skillId: string; readonly action?: "corrections" | "hard-delete" | "source" | "source-archive" | "source-rollback" | "source-artifacts" | "optimization-preview" | "compiled-views" | "compiled-view-archive" | "revision-preview" | "revisions"; readonly viewId?: string }
   | { readonly kind: "candidate"; readonly candidateId: string; readonly action?: "review" | "draft" };
 
 export function parseSkillRoute(pathname: string): SkillRoute | undefined {
@@ -256,6 +268,12 @@ export function parseSkillRoute(pathname: string): SkillRoute | undefined {
   }
   if (segments.length === 3 && segments[0] === "skills" && segments[2] === "optimization-preview") {
     return { kind: "skill", skillId: segments[1], action: "optimization-preview" };
+  }
+  if (segments.length === 3 && segments[0] === "skills" && segments[2] === "revision-preview") {
+    return { kind: "skill", skillId: segments[1], action: "revision-preview" };
+  }
+  if (segments.length === 3 && segments[0] === "skills" && segments[2] === "revisions") {
+    return { kind: "skill", skillId: segments[1], action: "revisions" };
   }
   if (segments.length === 3 && segments[0] === "skills" && segments[2] === "compiled-views") {
     return { kind: "skill", skillId: segments[1], action: "compiled-views" };
@@ -333,7 +351,7 @@ export function parseChannelRoute(
   pathname: string,
 ): {
   readonly channelId: string;
-  readonly action?: "brief" | "messages" | "messages-stream" | "message-route-decisions" | "intent-decisions" | "proposals" | "attachments" | "link-previews" | "decisions" | "handoffs" | "context-summaries" | "workflows" | "collaboration-cards" | "team-experts" | "team-metrics" | "team-authority-ledger" | "team-patterns" | "team-snapshots" | "team-evaluations" | "workspace" | "protocol" | "playbooks" | "branches" | "council-policy" | "effective-council" | "proposed-plans";
+  readonly action?: "brief" | "messages" | "messages-stream" | "message-route-decisions" | "intent-decisions" | "proposals" | "attachments" | "link-previews" | "decisions" | "handoffs" | "context-summaries" | "workflows" | "collaboration-cards" | "terminal-reports" | "team-experts" | "team-metrics" | "team-authority-ledger" | "team-patterns" | "team-snapshots" | "team-evaluations" | "workspace" | "protocol" | "playbooks" | "branches" | "council-policy" | "effective-council" | "proposed-plans";
   readonly branchId?: string;
   readonly protocolAction?: "revert" | "drafts" | "apply-draft" | "candidates" | "review-candidate" | "candidate-from-cluster" | "canvas";
   readonly protocolDraftId?: string;
@@ -341,7 +359,7 @@ export function parseChannelRoute(
   readonly playbookAction?: "candidates" | "candidate-from-cluster" | "review-candidate";
   readonly playbookCandidateId?: string;
   readonly playbookClusterId?: string;
-  readonly workspaceAction?: "create-worktree" | "handoff" | "refresh" | "cleanup" | "git-status";
+  readonly workspaceAction?: "create-worktree" | "handoff" | "refresh" | "cleanup" | "git-status" | "open";
 } | undefined {
   const segments = pathname.split("/").filter(Boolean).map(decodeURIComponent);
   if (segments.length === 2 && segments[0] === "channels") {
@@ -358,6 +376,9 @@ export function parseChannelRoute(
   }
   if (segments.length === 3 && segments[0] === "channels" && segments[2] === "proposed-plans") {
     return { channelId: segments[1], action: "proposed-plans" };
+  }
+  if (segments.length === 3 && segments[0] === "channels" && segments[2] === "terminal-reports") {
+    return { channelId: segments[1], action: "terminal-reports" };
   }
   if (segments.length === 4 && segments[0] === "channels" && segments[2] === "messages" && segments[3] === "stream") {
     return { channelId: segments[1], action: "messages-stream" };
@@ -399,7 +420,7 @@ export function parseChannelRoute(
     segments.length === 4 &&
     segments[0] === "channels" &&
     segments[2] === "workspace" &&
-    (segments[3] === "create-worktree" || segments[3] === "handoff" || segments[3] === "refresh" || segments[3] === "cleanup" || segments[3] === "git-status")
+    (segments[3] === "create-worktree" || segments[3] === "handoff" || segments[3] === "refresh" || segments[3] === "cleanup" || segments[3] === "git-status" || segments[3] === "open")
   ) {
     return { channelId: segments[1], action: "workspace", workspaceAction: segments[3] };
   }
@@ -606,6 +627,14 @@ export function parseChannelDecisionRoute(pathname: string): { readonly decision
   return undefined;
 }
 
+export function parseTerminalReportRoute(pathname: string): { readonly reportId: string } | undefined {
+  const segments = pathname.split("/").filter(Boolean).map(decodeURIComponent);
+  if (segments.length === 2 && segments[0] === "terminal-reports") {
+    return { reportId: segments[1] };
+  }
+  return undefined;
+}
+
 export function parseChannelHandoffRoute(pathname: string): { readonly handoffId: string; readonly action?: "workflow" } | undefined {
   const segments = pathname.split("/").filter(Boolean).map(decodeURIComponent);
   if (segments.length === 2 && segments[0] === "handoffs") {
@@ -620,7 +649,7 @@ export function parseChannelHandoffRoute(pathname: string): { readonly handoffId
 export function parseChannelWorkflowRoute(
   pathname: string,
 ):
-  | { readonly kind: "workflow"; readonly workflowId: string; readonly action?: "orchestrate" | "cancel" | "evidence" | "collaboration-card" }
+  | { readonly kind: "workflow"; readonly workflowId: string; readonly action?: "orchestrate" | "cancel" | "evidence" | "collaboration-card" | "workspace-changes" | "workspace-changes-undo" | "workspace-changes-reapply" }
   | { readonly kind: "steps"; readonly workflowId: string }
   | { readonly kind: "workflow-step"; readonly workflowStepId: string; readonly action?: "start" | "retry" | "evidence" }
   | undefined {
@@ -639,6 +668,15 @@ export function parseChannelWorkflowRoute(
   }
   if (segments.length === 3 && segments[0] === "workflows" && segments[2] === "collaboration-card") {
     return { kind: "workflow", workflowId: segments[1], action: "collaboration-card" };
+  }
+  if (segments.length === 3 && segments[0] === "workflows" && segments[2] === "workspace-changes") {
+    return { kind: "workflow", workflowId: segments[1], action: "workspace-changes" };
+  }
+  if (segments.length === 4 && segments[0] === "workflows" && segments[2] === "workspace-changes" && segments[3] === "undo") {
+    return { kind: "workflow", workflowId: segments[1], action: "workspace-changes-undo" };
+  }
+  if (segments.length === 4 && segments[0] === "workflows" && segments[2] === "workspace-changes" && segments[3] === "reapply") {
+    return { kind: "workflow", workflowId: segments[1], action: "workspace-changes-reapply" };
   }
   if (segments.length === 3 && segments[0] === "workflows" && segments[2] === "steps") {
     return { kind: "steps", workflowId: segments[1] };

@@ -1,3 +1,8 @@
+import { unified } from "unified";
+import remarkParse from "remark-parse";
+import remarkGfm from "remark-gfm";
+import remarkMath from "remark-math";
+
 export interface LocalFileReference {
   readonly raw: string;
   readonly displayPath: string;
@@ -9,17 +14,48 @@ export type MessageInlineToken =
   | { readonly kind: "text"; readonly text: string }
   | { readonly kind: "mention"; readonly text: string }
   | { readonly kind: "strong"; readonly children: readonly MessageInlineToken[] }
+  | { readonly kind: "emphasis"; readonly children: readonly MessageInlineToken[] }
+  | { readonly kind: "delete"; readonly children: readonly MessageInlineToken[] }
   | { readonly kind: "inline_code"; readonly code: string }
+  | { readonly kind: "inline_math"; readonly source: string }
+  | { readonly kind: "line_break" }
   | { readonly kind: "web_link"; readonly href: string; readonly label: string }
   | { readonly kind: "local_file"; readonly reference: LocalFileReference };
 
+export interface MessageListItem {
+  readonly blocks: readonly MessageBodyBlock[];
+  readonly checked?: boolean;
+}
+
 export type MessageBodyBlock =
   | { readonly kind: "paragraph"; readonly inlines: readonly MessageInlineToken[] }
-  | { readonly kind: "list"; readonly ordered: boolean; readonly items: readonly (readonly MessageInlineToken[])[] }
-  | { readonly kind: "code"; readonly code: string; readonly language?: string };
+  | { readonly kind: "heading"; readonly depth: 1 | 2 | 3 | 4 | 5 | 6; readonly inlines: readonly MessageInlineToken[] }
+  | { readonly kind: "quote"; readonly blocks: readonly MessageBodyBlock[] }
+  | { readonly kind: "list"; readonly ordered: boolean; readonly start?: number; readonly items: readonly MessageListItem[] }
+  | { readonly kind: "table"; readonly align: readonly ("left" | "center" | "right" | null)[]; readonly rows: readonly (readonly (readonly MessageInlineToken[])[])[] }
+  | { readonly kind: "thematic_break" }
+  | { readonly kind: "code"; readonly code: string; readonly language?: string; readonly complete: boolean }
+  | { readonly kind: "mermaid"; readonly source: string; readonly complete: boolean }
+  | { readonly kind: "math"; readonly source: string; readonly display: true; readonly complete: boolean };
 
 export interface MessageBodyParseOptions {
   readonly allowMarkdown?: boolean;
+  readonly streaming?: boolean;
+}
+
+interface MarkdownNode {
+  readonly type: string;
+  readonly value?: string;
+  readonly lang?: string | null;
+  readonly url?: string;
+  readonly alt?: string | null;
+  readonly depth?: number;
+  readonly ordered?: boolean;
+  readonly start?: number | null;
+  readonly checked?: boolean | null;
+  readonly align?: readonly ("left" | "center" | "right" | null)[];
+  readonly children?: readonly MarkdownNode[];
+  readonly position?: { readonly end?: { readonly offset?: number } };
 }
 
 interface LocalPathMatch {
@@ -27,92 +63,32 @@ interface LocalPathMatch {
   readonly reference: LocalFileReference;
 }
 
+const markdownParser = unified().use(remarkParse).use(remarkGfm).use(remarkMath);
 const mentionPattern = /^@[A-Za-z0-9][A-Za-z0-9_.-]*/;
 const webUrlPattern = /^https?:\/\/[^\s<>"']+/i;
 const markdownLinkPattern = /^\[([^\]\n]+)\]\(([^)\s]+)\)/;
-const fencePattern = /^\s*```([A-Za-z0-9_+.#-]*)\s*$/;
-const fenceClosePattern = /^\s*```\s*$/;
-const unorderedListItemPattern = /^\s*[-*+]\s+(.+)$/;
-const orderedListItemPattern = /^\s*\d+[.)]\s+(.+)$/;
 
 export function parseMessageBody(
   text: string,
   cwd?: string,
   options: MessageBodyParseOptions = {},
 ): readonly MessageBodyBlock[] {
-  const allowMarkdown = options.allowMarkdown !== false;
   const normalized = text.replace(/\r\n?/g, "\n");
-  if (normalized.trim().length === 0) {
+  if (!normalized.trim()) {
     return [];
   }
-
-  const lines = normalized.split("\n");
-  const blocks: MessageBodyBlock[] = [];
-  let paragraphLines: string[] = [];
-
-  function flushParagraph(): void {
-    if (paragraphLines.length === 0) {
-      return;
-    }
-    blocks.push({
-      kind: "paragraph",
-      inlines: splitInlineTokens(paragraphLines.join("\n"), cwd, options),
-    });
-    paragraphLines = [];
+  if (options.allowMarkdown === false) {
+    return [{ kind: "paragraph", inlines: splitInlineTokens(normalized, cwd, { allowMarkdown: false }) }];
   }
-
-  for (let index = 0; index < lines.length; index += 1) {
-    const line = lines[index] ?? "";
-
-    if (allowMarkdown) {
-      const fenceMatch = fencePattern.exec(line);
-      if (fenceMatch) {
-        flushParagraph();
-        const codeLines: string[] = [];
-        index += 1;
-        for (; index < lines.length; index += 1) {
-          const codeLine = lines[index] ?? "";
-          if (fenceClosePattern.test(codeLine)) {
-            break;
-          }
-          codeLines.push(codeLine);
-        }
-        blocks.push({
-          kind: "code",
-          code: codeLines.join("\n"),
-          language: fenceMatch[1] ? fenceMatch[1] : undefined,
-        });
-        continue;
-      }
-
-      const listMatch = readListItem(line);
-      if (listMatch) {
-        flushParagraph();
-        const ordered = listMatch.ordered;
-        const items: (readonly MessageInlineToken[])[] = [];
-        for (; index < lines.length; index += 1) {
-          const current = readListItem(lines[index] ?? "");
-          if (!current || current.ordered !== ordered) {
-            index -= 1;
-            break;
-          }
-          items.push(splitInlineTokens(current.text, cwd, options));
-        }
-        blocks.push({ kind: "list", ordered, items });
-        continue;
-      }
-    }
-
-    if (line.trim().length === 0) {
-      flushParagraph();
-      continue;
-    }
-
-    paragraphLines.push(line);
-  }
-
-  flushParagraph();
-  return blocks;
+  const root = markdownParser.parse(normalized) as unknown as MarkdownNode;
+  const incompleteFence = options.streaming === true && hasUnclosedFence(normalized);
+  const incompleteMath = options.streaming === true && hasUnclosedDisplayMath(normalized);
+  return convertBlockNodes(root.children ?? [], {
+    cwd,
+    sourceLength: normalized.length,
+    incompleteFence,
+    incompleteMath,
+  });
 }
 
 export function splitInlineTokens(
@@ -125,20 +101,19 @@ export function splitInlineTokens(
   let index = 0;
 
   function appendText(value: string): void {
-    if (value.length === 0) {
+    if (!value) {
       return;
     }
     const previous = tokens[tokens.length - 1];
     if (previous?.kind === "text") {
       tokens[tokens.length - 1] = { kind: "text", text: previous.text + value };
-      return;
+    } else {
+      tokens.push({ kind: "text", text: value });
     }
-    tokens.push({ kind: "text", text: value });
   }
 
   while (index < text.length) {
     const remaining = text.slice(index);
-
     if (allowMarkdown) {
       const inlineCode = readInlineCode(remaining);
       if (inlineCode) {
@@ -146,14 +121,12 @@ export function splitInlineTokens(
         index += inlineCode.length;
         continue;
       }
-
       const strong = readStrong(remaining, cwd, options);
       if (strong) {
         tokens.push({ kind: "strong", children: strong.children });
         index += strong.length;
         continue;
       }
-
       const markdownLink = readMarkdownLink(remaining, cwd);
       if (markdownLink) {
         tokens.push(markdownLink.token);
@@ -161,21 +134,18 @@ export function splitInlineTokens(
         continue;
       }
     }
-
     const webLink = readWebLink(remaining);
     if (webLink) {
       tokens.push({ kind: "web_link", href: webLink.href, label: webLink.href });
       index += webLink.href.length;
       continue;
     }
-
     const mention = mentionPattern.exec(remaining);
     if (mention) {
       tokens.push({ kind: "mention", text: mention[0] });
       index += mention[0].length;
       continue;
     }
-
     if (isLocalPathStartBoundary(text[index - 1]) && !isHtmlClosingTagPathStart(text, index)) {
       const localPath = readLocalPath(remaining, cwd);
       if (localPath) {
@@ -184,12 +154,212 @@ export function splitInlineTokens(
         continue;
       }
     }
-
     appendText(text[index] ?? "");
     index += 1;
   }
-
   return tokens;
+}
+
+export function collectLocalFileReferences(blocks: readonly MessageBodyBlock[]): readonly LocalFileReference[] {
+  const references: LocalFileReference[] = [];
+  const seen = new Set<string>();
+  const visitInlines = (tokens: readonly MessageInlineToken[]): void => {
+    for (const token of tokens) {
+      if (token.kind === "local_file") {
+        const key = `${token.reference.raw}:${token.reference.location ?? ""}`;
+        if (!seen.has(key)) {
+          seen.add(key);
+          references.push(token.reference);
+        }
+      } else if (token.kind === "strong" || token.kind === "emphasis" || token.kind === "delete") {
+        visitInlines(token.children);
+      }
+    }
+  };
+  const visitBlocks = (items: readonly MessageBodyBlock[]): void => {
+    for (const block of items) {
+      if (block.kind === "paragraph" || block.kind === "heading") {
+        visitInlines(block.inlines);
+      } else if (block.kind === "quote") {
+        visitBlocks(block.blocks);
+      } else if (block.kind === "list") {
+        for (const item of block.items) {
+          visitBlocks(item.blocks);
+        }
+      } else if (block.kind === "table") {
+        for (const row of block.rows) {
+          for (const cell of row) {
+            visitInlines(cell);
+          }
+        }
+      }
+    }
+  };
+  visitBlocks(blocks);
+  return references;
+}
+
+function convertBlockNodes(
+  nodes: readonly MarkdownNode[],
+  context: {
+    readonly cwd?: string;
+    readonly sourceLength: number;
+    readonly incompleteFence: boolean;
+    readonly incompleteMath: boolean;
+  },
+): MessageBodyBlock[] {
+  const blocks: MessageBodyBlock[] = [];
+  for (const node of nodes) {
+    switch (node.type) {
+      case "paragraph":
+        blocks.push({ kind: "paragraph", inlines: convertInlineNodes(node.children ?? [], context.cwd) });
+        break;
+      case "heading":
+        blocks.push({
+          kind: "heading",
+          depth: clampHeadingDepth(node.depth),
+          inlines: convertInlineNodes(node.children ?? [], context.cwd),
+        });
+        break;
+      case "blockquote":
+        blocks.push({ kind: "quote", blocks: convertBlockNodes(node.children ?? [], context) });
+        break;
+      case "list":
+        blocks.push({
+          kind: "list",
+          ordered: node.ordered === true,
+          start: node.ordered && typeof node.start === "number" ? node.start : undefined,
+          items: (node.children ?? []).map((item) => ({
+            blocks: convertBlockNodes(item.children ?? [], context),
+            checked: typeof item.checked === "boolean" ? item.checked : undefined,
+          })),
+        });
+        break;
+      case "table":
+        blocks.push({
+          kind: "table",
+          align: node.align ?? [],
+          rows: (node.children ?? []).map((row) => (row.children ?? []).map((cell) => convertInlineNodes(cell.children ?? [], context.cwd))),
+        });
+        break;
+      case "thematicBreak":
+        blocks.push({ kind: "thematic_break" });
+        break;
+      case "code": {
+        const language = node.lang?.trim() || undefined;
+        const complete = !(context.incompleteFence && node.position?.end?.offset === context.sourceLength);
+        if (language?.toLowerCase() === "mermaid") {
+          blocks.push({ kind: "mermaid", source: node.value ?? "", complete });
+        } else {
+          blocks.push({ kind: "code", code: node.value ?? "", language, complete });
+        }
+        break;
+      }
+      case "math":
+        blocks.push({
+          kind: "math",
+          source: node.value ?? "",
+          display: true,
+          complete: !(context.incompleteMath && node.position?.end?.offset === context.sourceLength),
+        });
+        break;
+      case "html":
+        blocks.push({ kind: "paragraph", inlines: [{ kind: "text", text: node.value ?? "" }] });
+        break;
+      default:
+        if (node.children?.length) {
+          blocks.push(...convertBlockNodes(node.children, context));
+        } else if (node.value) {
+          blocks.push({ kind: "paragraph", inlines: splitInlineTokens(node.value, context.cwd, { allowMarkdown: false }) });
+        }
+    }
+  }
+  return blocks;
+}
+
+function convertInlineNodes(nodes: readonly MarkdownNode[], cwd?: string): MessageInlineToken[] {
+  const tokens: MessageInlineToken[] = [];
+  for (const node of nodes) {
+    switch (node.type) {
+      case "text":
+        tokens.push(...splitInlineTokens(node.value ?? "", cwd, { allowMarkdown: false }));
+        break;
+      case "strong":
+        tokens.push({ kind: "strong", children: convertInlineNodes(node.children ?? [], cwd) });
+        break;
+      case "emphasis":
+        tokens.push({ kind: "emphasis", children: convertInlineNodes(node.children ?? [], cwd) });
+        break;
+      case "delete":
+        tokens.push({ kind: "delete", children: convertInlineNodes(node.children ?? [], cwd) });
+        break;
+      case "inlineCode":
+        tokens.push({ kind: "inline_code", code: node.value ?? "" });
+        break;
+      case "inlineMath":
+        tokens.push({ kind: "inline_math", source: node.value ?? "" });
+        break;
+      case "break":
+        tokens.push({ kind: "line_break" });
+        break;
+      case "link": {
+        const label = inlineTextContent(node.children ?? []) || node.url || "";
+        const destination = node.url ?? "";
+        const webLink = readWebLink(destination);
+        if (webLink?.href === destination) {
+          tokens.push({ kind: "web_link", href: destination, label });
+        } else if (isLikelyLocalPath(destination)) {
+          tokens.push({ kind: "local_file", reference: parseLocalFileReference(destination, cwd) });
+        } else {
+          tokens.push({ kind: "text", text: label });
+        }
+        break;
+      }
+      case "image":
+        tokens.push({ kind: "text", text: node.alt ? `[${node.alt}]` : "" });
+        break;
+      case "html":
+        tokens.push({ kind: "text", text: node.value ?? "" });
+        break;
+      default:
+        if (node.children?.length) {
+          tokens.push(...convertInlineNodes(node.children, cwd));
+        } else if (node.value) {
+          tokens.push({ kind: "text", text: node.value });
+        }
+    }
+  }
+  return tokens;
+}
+
+function inlineTextContent(nodes: readonly MarkdownNode[]): string {
+  return nodes.map((node) => node.value ?? inlineTextContent(node.children ?? [])).join("");
+}
+
+function clampHeadingDepth(value: number | undefined): 1 | 2 | 3 | 4 | 5 | 6 {
+  return Math.min(6, Math.max(1, value ?? 1)) as 1 | 2 | 3 | 4 | 5 | 6;
+}
+
+function hasUnclosedFence(text: string): boolean {
+  let marker: string | undefined;
+  for (const line of text.split("\n")) {
+    const match = /^\s*(`{3,}|~{3,})/.exec(line);
+    if (!match) {
+      continue;
+    }
+    const next = match[1] ?? "";
+    if (!marker) {
+      marker = next;
+    } else if (next[0] === marker[0] && next.length >= marker.length) {
+      marker = undefined;
+    }
+  }
+  return Boolean(marker);
+}
+
+function hasUnclosedDisplayMath(text: string): boolean {
+  const matches = text.match(/(^|[^\\])\$\$/g);
+  return Boolean((matches?.length ?? 0) % 2);
 }
 
 export function parseLocalFileReference(raw: string, cwd?: string): LocalFileReference {
@@ -199,11 +369,9 @@ export function parseLocalFileReference(raw: string, cwd?: string): LocalFileRef
   const location = locationParts.location;
   const normalizedCwd = cwd ? normalizePath(cwd) : "";
   const normalizedPath = pathOnly.startsWith("/") ? normalizePath(pathOnly) : pathOnly;
-
   let displayPath = pathOnly;
   let insideWorkspace = false;
-
-  if (normalizedCwd.length > 0) {
+  if (normalizedCwd) {
     if (pathOnly.startsWith("/")) {
       if (normalizedPath === normalizedCwd) {
         insideWorkspace = true;
@@ -219,25 +387,7 @@ export function parseLocalFileReference(raw: string, cwd?: string): LocalFileRef
       displayPath = pathOnly.replace(/^\.\//, "");
     }
   }
-
-  return {
-    raw,
-    displayPath: `${displayPath}${location ?? ""}`,
-    location,
-    insideWorkspace,
-  };
-}
-
-function readListItem(line: string): { readonly ordered: boolean; readonly text: string } | undefined {
-  const ordered = orderedListItemPattern.exec(line);
-  if (ordered) {
-    return { ordered: true, text: ordered[1] ?? "" };
-  }
-  const unordered = unorderedListItemPattern.exec(line);
-  if (unordered) {
-    return { ordered: false, text: unordered[1] ?? "" };
-  }
-  return undefined;
+  return { raw, displayPath: `${displayPath}${location ?? ""}`, location, insideWorkspace };
 }
 
 function readInlineCode(text: string): { readonly value: string; readonly length: number } | undefined {
@@ -245,13 +395,7 @@ function readInlineCode(text: string): { readonly value: string; readonly length
     return undefined;
   }
   const closingIndex = text.indexOf("`", 1);
-  if (closingIndex <= 1) {
-    return undefined;
-  }
-  return {
-    value: text.slice(1, closingIndex),
-    length: closingIndex + 1,
-  };
+  return closingIndex > 1 ? { value: text.slice(1, closingIndex), length: closingIndex + 1 } : undefined;
 }
 
 function readStrong(
@@ -264,46 +408,27 @@ function readStrong(
     return undefined;
   }
   const closingIndex = text.indexOf(marker, marker.length);
-  if (closingIndex <= marker.length) {
-    return undefined;
-  }
-  const innerText = text.slice(marker.length, closingIndex);
-  return {
-    children: splitInlineTokens(innerText, cwd, options),
+  return closingIndex > marker.length ? {
+    children: splitInlineTokens(text.slice(marker.length, closingIndex), cwd, options),
     length: closingIndex + marker.length,
-  };
+  } : undefined;
 }
 
-function readMarkdownLink(
-  text: string,
-  cwd?: string,
-): { readonly token: MessageInlineToken; readonly length: number } | undefined {
+function readMarkdownLink(text: string, cwd?: string): { readonly token: MessageInlineToken; readonly length: number } | undefined {
   const match = markdownLinkPattern.exec(text);
   if (!match) {
     return undefined;
   }
-
   const label = match[1] ?? "";
   const destination = stripWrappingQuotes(match[2] ?? "");
-  const safeWebUrl = readWebLink(destination);
-  if (safeWebUrl && safeWebUrl.href === destination) {
-    return {
-      token: { kind: "web_link", href: safeWebUrl.href, label },
-      length: match[0].length,
-    };
+  const webLink = readWebLink(destination);
+  if (webLink?.href === destination) {
+    return { token: { kind: "web_link", href: destination, label }, length: match[0].length };
   }
-
   if (isLikelyLocalPath(destination)) {
-    return {
-      token: { kind: "local_file", reference: parseLocalFileReference(destination, cwd) },
-      length: match[0].length,
-    };
+    return { token: { kind: "local_file", reference: parseLocalFileReference(destination, cwd) }, length: match[0].length };
   }
-
-  return {
-    token: { kind: "text", text: label },
-    length: match[0].length,
-  };
+  return { token: { kind: "text", text: label }, length: match[0].length };
 }
 
 function readWebLink(text: string): { readonly href: string } | undefined {
@@ -312,37 +437,21 @@ function readWebLink(text: string): { readonly href: string } | undefined {
     return undefined;
   }
   const href = trimTrailingUrlPunctuation(match[0]);
-  if (href.length === 0) {
-    return undefined;
-  }
   try {
     const url = new URL(href);
-    if (url.protocol !== "http:" && url.protocol !== "https:") {
-      return undefined;
-    }
+    return url.protocol === "http:" || url.protocol === "https:" ? { href } : undefined;
   } catch {
     return undefined;
   }
-  return { href };
 }
 
 function readLocalPath(text: string, cwd?: string): LocalPathMatch | undefined {
-  const startsLikePath = /^(?:~\/|\.{1,2}\/|\/[A-Za-z0-9._~@%+-]|(?:[A-Za-z0-9_.-]+\/))/.test(text);
-  if (!startsLikePath) {
-    return undefined;
-  }
   const match = /^(?:(?:~\/|\.{1,2}\/)[A-Za-z0-9._~@%+/#:-]+|\/[A-Za-z0-9._~@%+-][A-Za-z0-9._~@%+/#:-]*|(?:[A-Za-z0-9_.-]+\/)+[A-Za-z0-9_.@+-][A-Za-z0-9._~@%+/#:-]*)/.exec(text);
   if (!match) {
     return undefined;
   }
   const raw = trimTrailingPathPunctuation(match[0]);
-  if (!isLikelyLocalPath(raw)) {
-    return undefined;
-  }
-  return {
-    raw,
-    reference: parseLocalFileReference(raw, cwd),
-  };
+  return isLikelyLocalPath(raw) ? { raw, reference: parseLocalFileReference(raw, cwd) } : undefined;
 }
 
 function isLocalPathStartBoundary(previous: string | undefined): boolean {
@@ -371,10 +480,7 @@ function splitLocationSuffix(value: string): { readonly path: string; readonly l
     return { path: hashMatch[1] ?? "", location: hashMatch[2] };
   }
   const colonMatch = /^(.*?)(:\d+(?::\d+)?)$/.exec(value);
-  if (colonMatch) {
-    return { path: colonMatch[1] ?? "", location: colonMatch[2] };
-  }
-  return { path: value };
+  return colonMatch ? { path: colonMatch[1] ?? "", location: colonMatch[2] } : { path: value };
 }
 
 function stripFileScheme(value: string): string {
@@ -389,10 +495,7 @@ function stripFileScheme(value: string): string {
 }
 
 function stripWrappingQuotes(value: string): string {
-  if ((value.startsWith("\"") && value.endsWith("\"")) || (value.startsWith("'") && value.endsWith("'"))) {
-    return value.slice(1, -1);
-  }
-  return value;
+  return ((value.startsWith("\"") && value.endsWith("\"")) || (value.startsWith("'") && value.endsWith("'"))) ? value.slice(1, -1) : value;
 }
 
 function trimTrailingUrlPunctuation(value: string): string {
@@ -416,10 +519,9 @@ function normalizePath(value: string): string {
       } else if (!absolute) {
         parts.push(rawPart);
       }
-      continue;
+    } else {
+      parts.push(rawPart);
     }
-    parts.push(rawPart);
   }
-  const normalized = `${absolute ? "/" : ""}${parts.join("/")}`;
-  return normalized || (absolute ? "/" : ".");
+  return `${absolute ? "/" : ""}${parts.join("/")}` || (absolute ? "/" : ".");
 }

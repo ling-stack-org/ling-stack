@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent, type UIEvent } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { ArrowLeft, Brain, FileText, Folder, Loader2, MessageSquare, Save, Search, Settings } from "lucide-react";
+import { ArrowLeft, Brain, FileText, Folder, Loader2, MessageSquare, Save, Settings } from "lucide-react";
 import type { SkillPack } from "@ling-stack/core/skill-types";
 import {
   archiveSkill,
@@ -31,10 +31,12 @@ import {
   listUsedMemoryEvents,
   listMcpServers,
   listMcpTools,
+  listExecutionActions,
   listTeammateMcpBindings,
   listTeammateMemoryScopes,
   listTeammateSkills,
   listTeammateTasks,
+  listTerminalReports,
   promoteTeammateDirectIntervention,
   publishSkillImportDraft,
   replaceTeammateChannels,
@@ -68,6 +70,7 @@ import type {
   AiTeammate,
   Channel,
   EffectiveTeammateSkill,
+  ExecutionAction,
   MemoryHealthReport,
   MemoryMarkdownImportPlan,
   MemoryObject,
@@ -79,6 +82,7 @@ import type {
   McpTool,
   ProviderPreset,
   PermissionPreset,
+  PermissionConfirmation,
   RunSession,
   SessionPermissionMode,
   SkillImportDraft,
@@ -98,6 +102,7 @@ import type {
   TeammatePrivateAttachment,
   TeammateDirectMessageStreamBlockedEvent,
   TeammateDirectMessageStreamDeltaEvent,
+  TeammateDirectMessageStreamRunLinkedEvent,
   TeammateDirectMessageStreamDoneEvent,
   TeammateDirectMessageStreamErrorEvent,
   TeammateDirectMessageStreamReadyEvent,
@@ -106,12 +111,13 @@ import type {
   UsedMemoryEvent,
   UserProfile,
   WorkspaceAccessMode,
+  TerminalReportDto,
 } from "../../types.js";
 import { resolveAuthorizationMode, resolveWorkspaceAccessMode } from "../../lib/conversation-authorization.js";
 import { TeammateActivityTab } from "./TeammateActivityTab.js";
 import { TeammateChatContextPanel } from "./TeammateChatContextPanel.js";
 import { TeammateChatHeader } from "./TeammateChatHeader.js";
-import { type ConversationSummaryRow, type WorkspaceRightDockPageRequest } from "../workspace/right-dock/index.js";
+import { type ConversationSummaryRow, type WorkspaceRightDockFileTarget, type WorkspaceRightDockPageRequest, type WorkspaceRightDockReviewTarget } from "../workspace/right-dock/index.js";
 import { buildTeammatePrivateDockContent } from "./teammate-private-dock.js";
 import { TeammateChannelsTab } from "./TeammateChannelsTab.js";
 import { TeammateDangerTab } from "./TeammateDangerTab.js";
@@ -224,6 +230,8 @@ export function TeammateWorkspace({
   const [hasMoreDirectMessages, setHasMoreDirectMessages] = useState(false);
   const [nextDirectBeforeMessageId, setNextDirectBeforeMessageId] = useState<string | undefined>();
   const [loadingOlderDirectMessages, setLoadingOlderDirectMessages] = useState(false);
+  const [terminalReports, setTerminalReports] = useState<readonly TerminalReportDto[]>([]);
+  const [directExecutionActions, setDirectExecutionActions] = useState<readonly ExecutionAction[]>([]);
   const [directRuntime, setDirectRuntime] = useState<TeammateDirectRuntimeResponse | undefined>();
   const [directWorkspace, setDirectWorkspace] = useState<DirectWorkspaceResponse | undefined>();
   const [directReplyOptimisticActive, setDirectReplyOptimisticActive] = useState(false);
@@ -429,6 +437,93 @@ export function TeammateWorkspace({
       return `${message.body} ${attachmentText}`.toLowerCase().includes(normalizedMessageSearchQuery);
     });
   }, [messages, normalizedMessageSearchQuery, privateAttachmentById]);
+  const directReplyActive = Boolean(directRuntime?.activeReply || directReplyOptimisticActive);
+  const hasDirectRuntimeActivity = Boolean(directRuntime?.activeReply || directReplyOptimisticActive || (directRuntime?.interventions.length ?? 0) > 0);
+
+  useEffect(() => {
+    const workspaceCwd = cwd.trim();
+    const runThreadIdById = new Map(runs.map((run) => [run.id, run.threadId]));
+    const threadIds = [...new Set(visibleMessages.flatMap((message) => [
+      message.threadId,
+      message.linkedRunId ? runThreadIdById.get(message.linkedRunId) : undefined,
+    ]).filter((threadId): threadId is string => Boolean(threadId)))];
+    if (!workspaceCwd || threadIds.length === 0) {
+      setTerminalReports([]);
+      return;
+    }
+    let cancelled = false;
+    void Promise.all(threadIds.map((threadId) => listTerminalReports(workspaceCwd, { threadId, limit: 100 })))
+      .then((responses) => {
+        if (!cancelled) {
+          setTerminalReports(responses.flatMap((response) => response.reports));
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setTerminalReports([]);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [cwd, runs, visibleMessages]);
+
+  const visibleDirectRunIds = useMemo(() => {
+    const teammateRunIds = new Set(runs.filter((run) => !run.teammateId || run.teammateId === teammate.id).map((run) => run.id));
+    return [...new Set(visibleMessages
+      .map((message) => message.linkedRunId)
+      .filter((runId): runId is string => Boolean(runId && teammateRunIds.has(runId))))];
+  }, [runs, teammate.id, visibleMessages]);
+  const visibleDirectRunKey = visibleDirectRunIds.join("|");
+  const hasActiveVisibleDirectRun = useMemo(() => {
+    const visibleRunIds = new Set(visibleDirectRunIds);
+    return runs.some((run) => visibleRunIds.has(run.id) && (
+      run.status === "queued" || run.status === "running" || run.status === "waiting_for_approval"
+    ));
+  }, [runs, visibleDirectRunKey]);
+
+  useEffect(() => {
+    const workspaceCwd = cwd.trim();
+    if (!workspaceCwd || visibleDirectRunIds.length === 0) {
+      setDirectExecutionActions([]);
+      return undefined;
+    }
+    let cancelled = false;
+    let loading = false;
+    const refresh = async (): Promise<void> => {
+      if (loading) {
+        return;
+      }
+      loading = true;
+      try {
+        const responses = await Promise.all(visibleDirectRunIds.map((runId) =>
+          listExecutionActions(workspaceCwd, { runId, limit: 100 }),
+        ));
+        if (!cancelled) {
+          const byId = new Map(responses.flatMap((response) => response.actions).map((action) => [action.id, action]));
+          setDirectExecutionActions([...byId.values()]);
+        }
+      } catch {
+        // Preserve the last persisted snapshot across transient polling failures.
+      } finally {
+        loading = false;
+      }
+    };
+    void refresh();
+    const interval = directReplyActive || hasDirectRuntimeActivity || hasActiveVisibleDirectRun
+      ? window.setInterval(() => {
+          if (document.visibilityState === "visible") {
+            void refresh();
+          }
+        }, 750)
+      : undefined;
+    return () => {
+      cancelled = true;
+      if (interval !== undefined) {
+        window.clearInterval(interval);
+      }
+    };
+  }, [cwd, directReplyActive, hasActiveVisibleDirectRun, hasDirectRuntimeActivity, visibleDirectRunKey]);
 
   useEffect(() => {
     if (isProtectedSystemTeammate && (activeTab === "skills" || activeTab === "mcp" || activeTab === "danger")) {
@@ -533,17 +628,9 @@ export function TeammateWorkspace({
       secondary: recentUsedMemoryEvents.length === 1 ? t("1 item") : t("{count} items", { count: recentUsedMemoryEvents.length }),
       onOpen: () => openChatDockPage("context"),
     },
-    {
-      id: "evidence",
-      icon: <Search size={18} />,
-      primary: t("Evidence"),
-      secondary: privateDockContent.evidenceCount === 1 ? t("1 item") : t("{count} items", { count: privateDockContent.evidenceCount }),
-      onOpen: () => openChatDockPage("evidence"),
-    },
   ], [
     directWorkspace,
     lastAiMessage,
-    privateDockContent.evidenceCount,
     privateDockContent.fileItems.length,
     recentUsedMemoryEvents.length,
     t,
@@ -557,10 +644,10 @@ export function TeammateWorkspace({
     chatSummaryInMainLayout ? "main" : "header",
   );
 
-  function openChatDockPage(page: WorkspaceRightDockPageRequest["page"]): void {
+  function openChatDockPage(page: WorkspaceRightDockPageRequest["page"], workspaceFile?: WorkspaceRightDockFileTarget, workspaceReview?: WorkspaceRightDockReviewTarget): void {
     setChatSummaryOpen(false);
     setChatDockOpen(true);
-    setChatDockPageRequest({ page, nonce: Date.now() });
+    setChatDockPageRequest({ page, nonce: Date.now(), workspaceFile, workspaceReview });
   }
   const directLinkPreviewById = useMemo(() => new Map(directLinkPreviews.map((preview) => [preview.id, preview])), [directLinkPreviews]);
   const pendingDirectLinkPreviews = useMemo(
@@ -572,8 +659,6 @@ export function TeammateWorkspace({
   const settingsProviderReady = Boolean(settingsProvider && providerPreflightReady(settingsProvider));
   const openDirectInterventions = directRuntime?.interventions ?? [];
   const hasQueuedDirectGuidance = openDirectInterventions.some((intervention) => intervention.status === "queued");
-  const directReplyActive = Boolean(directRuntime?.activeReply || directReplyOptimisticActive);
-  const hasDirectRuntimeActivity = Boolean(directRuntime?.activeReply || directReplyOptimisticActive || openDirectInterventions.length > 0);
   const privateComposerPayload = useMemo(() => {
     const serializedInput = serializeComposerInputParts(composerInputParts);
     const fileRefs = directComposerFileRefs(composerFileReferenceParts);
@@ -933,7 +1018,10 @@ export function TeammateWorkspace({
     return uniqueDirectLinkPreviews([...existing, ...created]);
   }
 
-  async function sendPrivateMessage(): Promise<void> {
+  async function sendPrivateMessage(authorization: {
+    readonly permissionPreset: PermissionPreset;
+    readonly permissionConfirmation?: PermissionConfirmation;
+  }): Promise<void> {
     const serializedInput = serializeComposerInputParts(composerInputParts);
     const body = serializedInput.body.trim();
     const attachmentIds = [...serializedInput.attachmentIds];
@@ -963,6 +1051,8 @@ export function TeammateWorkspace({
         providerPresetId: teammate.providerPresetId,
         authorizationMode: directAuthorizationMode,
         workspaceAccessMode: selectedWorkspaceAccessMode,
+        permissionPreset: authorization.permissionPreset,
+        permissionConfirmation: authorization.permissionConfirmation,
       });
       await readSseResponse(response, (event) => {
         if (event.event === "ready") {
@@ -975,7 +1065,19 @@ export function TeammateWorkspace({
         }
         if (event.event === "delta") {
           const data = JSON.parse(event.data) as TeammateDirectMessageStreamDeltaEvent;
-          setMessages((current) => current.map((message) => message.id === data.messageId ? { ...message, body: data.body, status: "pending" } : message));
+          setMessages((current) => current.map((message) => message.id === data.messageId ? {
+            ...message,
+            body: data.body,
+            status: "pending",
+          } : message));
+          return;
+        }
+        if (event.event === "run_linked") {
+          const data = JSON.parse(event.data) as TeammateDirectMessageStreamRunLinkedEvent;
+          setMessages((current) => current.map((message) => message.id === data.messageId ? {
+            ...message,
+            linkedRunId: data.linkedRunId ?? message.linkedRunId,
+          } : message));
           return;
         }
         if (event.event === "done") {
@@ -1154,7 +1256,10 @@ export function TeammateWorkspace({
     }
   }
 
-  function handlePrivateComposerSubmit(): void {
+  function handlePrivateComposerSubmit(authorization: {
+    readonly permissionPreset: PermissionPreset;
+    readonly permissionConfirmation?: PermissionConfirmation;
+  }): void {
     if (directReplyActive) {
       if (privateComposerHasGuidancePayload) {
         void submitDirectGuidance("queue_followup");
@@ -1163,10 +1268,16 @@ export function TeammateWorkspace({
       void stopDirectReply();
       return;
     }
-    void sendPrivateMessage();
+    void sendPrivateMessage(authorization);
   }
 
-  function handlePrivateComposerKeyDown(event: KeyboardEvent<HTMLDivElement>): void {
+  function handlePrivateComposerKeyDown(
+    event: KeyboardEvent<HTMLDivElement>,
+    authorization: {
+      readonly permissionPreset: PermissionPreset;
+      readonly permissionConfirmation?: PermissionConfirmation;
+    },
+  ): void {
     if (event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing) {
       return;
     }
@@ -1181,7 +1292,7 @@ export function TeammateWorkspace({
       setWorkspaceError(t("Guidance is already queued. Run or delete the queued message first."));
       return;
     }
-    void sendPrivateMessage();
+    void sendPrivateMessage(authorization);
   }
 
   function handlePrivateComposerPaste(event: ClipboardEvent<HTMLDivElement>): void {
@@ -2095,6 +2206,8 @@ export function TeammateWorkspace({
           usedMemoryEvents={usedMemoryEvents}
           memoryById={memoryById}
           runs={runs}
+          executionActions={directExecutionActions}
+          terminalReports={terminalReports}
           providerRecovered={providerRecovered}
           privateAttachmentById={privateAttachmentById}
           creatingTask={creatingTask}
@@ -2127,10 +2240,13 @@ export function TeammateWorkspace({
           onScrollToLatest={scrollPrivateFeedToLatest}
           onCopyMessageText={copyMessageText}
           onOpenRun={onOpenRun}
+          onOpenFiles={(target) => openChatDockPage("files", target)}
+          onOpenReview={(target) => openChatDockPage("review", undefined, target)}
           onCreateTaskFromMessage={createTaskFromMessage}
           onPromoteDirectGuidance={promoteDirectGuidance}
           onCancelDirectGuidance={cancelDirectGuidance}
           onEditDirectGuidance={editDirectGuidance}
+          onRefreshMessages={refreshTeammateWorkspace}
           onMessageDraftChange={setMessageDraft}
           onComposerSubmit={handlePrivateComposerSubmit}
           onComposerKeyDown={handlePrivateComposerKeyDown}

@@ -529,6 +529,59 @@ test("channel team metrics exposes visible evidence total separately from team e
   }
 });
 
+test("approval-only workflow owner closes immediately after approval", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-workflow-approval-owner-"));
+  const store = createSqliteRunStore(cwd);
+  let workflow;
+  let step;
+  let approval;
+  try {
+    const channel = store.createChannel({ name: "Approval owner", boundPath: cwd }, "2026-06-11T00:00:00.000Z");
+    workflow = store.createChannelWorkflow({
+      channelId: channel.id,
+      title: "Review risky command",
+      objective: "Close the approval-only workflow owner.",
+      status: "waiting_for_approval",
+      createdBy: "system",
+    }, "2026-06-11T00:01:00.000Z");
+    step = store.createChannelWorkflowStep({
+      workflowId: workflow.id,
+      title: "Review risky shell command",
+      prompt: "Review the proposed command.",
+      toParticipantId: "ling_agent",
+      toParticipantLabel: "Ling Agent",
+      status: "waiting_for_approval",
+    }, "2026-06-11T00:01:10.000Z");
+    approval = store.createApprovalRequest({
+      workflowStepId: step.id,
+      channelId: channel.id,
+      actionType: "bash",
+      risk: "high",
+      title: "Review risky shell command",
+      description: "Approval-only legacy workflow step.",
+      payload: { type: "bash", cwd, command: "git status --short", riskFlags: ["requires_user_review"] },
+    }, "2026-06-11T00:01:20.000Z");
+    store.close();
+
+    const daemon = await startDaemonForTest();
+    try {
+      const resolved = await postJson(`${daemon.url}/approvals/${encodeURIComponent(approval.id)}/approve?cwd=${encodeURIComponent(cwd)}`, {
+        reason: "Reviewed.",
+      });
+      assert.equal(resolved.approval.status, "approved");
+
+      const workflowResponse = await getJson(`${daemon.url}/workflows/${encodeURIComponent(workflow.id)}?cwd=${encodeURIComponent(cwd)}`);
+      assert.equal(workflowResponse.workflow.status, "succeeded");
+      const stepsResponse = await getJson(`${daemon.url}/workflows/${encodeURIComponent(workflow.id)}/steps?cwd=${encodeURIComponent(cwd)}`);
+      assert.equal(stepsResponse.workflowSteps.find((candidate) => candidate.id === step.id)?.status, "succeeded");
+    } finally {
+      await daemon.close();
+    }
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("ling agent session view projects active workflow approval wait", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-ling-agent-session-approval-"));
   const store = createSqliteRunStore(cwd);
@@ -1826,6 +1879,12 @@ test("materialized pdf and docx attachments let Ling answer without materializat
     assert.equal(runner.runs.length, 1);
     assert.match(runner.runs[0].task.prompt, /Turk J Med Sci/);
     assert.match(runner.runs[0].task.prompt, /Walking on imported air/);
+    const pdfPreview = await getJson(`${daemon.url}/attachments/${encodeURIComponent(pdfAttachment.id)}/preview?cwd=${encodeURIComponent(cwd)}&scope=channel&channelId=${encodeURIComponent(channel.id)}`);
+    assert.equal(pdfPreview.kind, "pdf");
+    assert.match(pdfPreview.text, /Turk J Med Sci/);
+    const docxPreview = await getJson(`${daemon.url}/attachments/${encodeURIComponent(docxAttachment.id)}/preview?cwd=${encodeURIComponent(cwd)}&scope=channel&channelId=${encodeURIComponent(channel.id)}`);
+    assert.equal(docxPreview.kind, "office");
+    assert.match(docxPreview.text, /Walking on imported air/);
     const intentDecisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
     assert.deepEqual(intentDecisions.decisions, []);
   } finally {
@@ -2591,6 +2650,8 @@ test("channel discussion injects web search context before runner reply", async 
     assert.match(runner.runs[0].task.prompt, /Ling web context:/);
     assert.match(runner.runs[0].task.prompt, /Fresh web evidence summary/);
     assert.match(runner.runs[0].task.prompt, /https:\/\/example\.com\/fresh/);
+    assert.match(runner.runs[0].systemPrompt, /explain the limitation briefly in user-facing language/);
+    assert.match(runner.runs[0].systemPrompt, /do not repeat provider, relay, or protocol diagnostics verbatim/);
     assert.doesNotMatch(runner.runs[0].task.prompt, /sk-test-secret-value/);
   } finally {
     await daemon.close();
@@ -2721,6 +2782,7 @@ test("conversation stream materializes uploaded attachments into the run prompt"
     assert.equal(done.data.run.requestSnapshot.lingConversationTone, "friendly");
     assert.equal(done.data.run.requestSnapshot.authorizationMode, "smart");
     assert.equal(done.data.run.requestSnapshot.workspaceAccessMode, "workspace_write");
+    assert.equal(done.data.run.requestSnapshot.responseLanguage, "en-US");
     assert.ok(done.data.run.requestSnapshot.appendSystemPrompt.some((instruction) => /Default conversation tone: friendly\./.test(instruction)));
 
     const detail = await getJson(`${daemon.url}/conversations/${encodeURIComponent(initialReady.data.thread.id)}?cwd=${encodeURIComponent(cwd)}`);
@@ -2728,6 +2790,7 @@ test("conversation stream materializes uploaded attachments into the run prompt"
     assert.equal(detail.defaults.workspaceAccessMode, "workspace_write");
     const userMessage = detail.messages.find((message) => message.id === initialReady.data.userMessage.id);
     assert.equal(userMessage.attachments[0].id, attachment.id);
+    assert.deepEqual(detail.executionActions, []);
 
     const preview = await getJson(`${daemon.url}/attachments/${encodeURIComponent(attachment.id)}/preview?cwd=${encodeURIComponent(cwd)}&scope=conversation&threadId=${encodeURIComponent(initialReady.data.thread.id)}`);
     assert.equal(preview.kind, "plain_text");
@@ -5323,7 +5386,16 @@ test("explicit mentions still reply and keep proposal extraction enabled", async
 
 test("auto_route is rejected by channel create and update while the feature flag is disabled", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-auto-route-disabled-"));
-  const daemon = await startDaemonForTest(undefined, {}, { channels: { autoRoute: false, intentSelector: false } });
+  let channelStore;
+  const daemon = await startDaemonForTest(undefined, {
+    storeFactory: (storeCwd) => {
+      const store = createSqliteRunStore(storeCwd);
+      if (storeCwd === cwd) {
+        channelStore = store;
+      }
+      return store;
+    },
+  }, { channels: { autoRoute: false, intentSelector: false } });
   try {
     const createUrl = `${daemon.url}/channels?cwd=${encodeURIComponent(cwd)}`;
     const createBody = {
@@ -5348,6 +5420,18 @@ test("auto_route is rejected by channel create and update while the feature flag
     });
     assert.equal(updateResponse.status, 400);
     assert.equal((await updateResponse.json()).error, "auto_route_disabled");
+
+    assert.ok(channelStore);
+    channelStore.updateChannel(channel.id, { autoReplyMode: "auto_route" }, new Date().toISOString());
+    const renameResponse = await fetch(`${daemon.url}/channels/${encodeURIComponent(channel.id)}?cwd=${encodeURIComponent(cwd)}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "Renamed", autoReplyMode: "auto_route" }),
+    });
+    assert.equal(renameResponse.status, 200);
+    const renamed = (await renameResponse.json()).channel;
+    assert.equal(renamed.name, "Renamed");
+    assert.equal(renamed.autoReplyMode, "auto_route");
   } finally {
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });
@@ -8236,6 +8320,14 @@ test("channel workspace API supports local and external path handoff", async () 
     const refreshed = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/workspace/refresh?cwd=${encodeURIComponent(cwd)}`, {});
     assert.equal(refreshed.binding.status, "missing");
 
+    const unavailableOpen = await fetch(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/workspace/open?cwd=${encodeURIComponent(cwd)}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    assert.equal(unavailableOpen.status, 409);
+    assert.equal((await unavailableOpen.json()).error, "channel_workspace_unavailable");
+
     const local = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/workspace/handoff?cwd=${encodeURIComponent(cwd)}`, {
       mode: "local",
     });
@@ -9436,7 +9528,7 @@ test("skill candidate API persists manual candidates and gates review approval",
     assert.match(await blocked.text(), /negative triggers/);
 
     const health = await getJson(`${daemon.url}/skills/health?cwd=${encodeURIComponent(cwd)}&limit=20`);
-    assert.equal(health.report.summary.pendingCandidates, 2);
+    assert.equal(health.report.summary.pendingCandidates, 1);
     assert.ok(health.report.findings.some((finding) =>
       finding.kind === "missing_negative_triggers" &&
       finding.candidateIds.includes(missingGate.candidate.id)
@@ -10061,15 +10153,191 @@ test("teammate direct message stream emits ready delta and done events", async (
     const response = await fetch(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}/direct-messages/stream?cwd=${encodeURIComponent(cwd)}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ body: "Stream a private reply.", providerPresetId: provider.id }),
+      body: JSON.stringify({
+        body: "Stream a private reply.",
+        providerPresetId: provider.id,
+        permissionPreset: "read_only",
+      }),
     });
     assert.equal(response.status, 200);
     const events = parseSseEvents(await response.text());
-    assert.deepEqual(events.map((event) => event.event), ["ready", "delta", "done"]);
-    assert.equal(events[1].data.delta, "Designer reply");
-    assert.equal(events[2].data.aiReply.body, "Designer reply");
+    assert.deepEqual(events.map((event) => event.event), ["ready", "run_linked", "delta", "done"]);
+    assert.ok(events[1].data.linkedRunId);
+    assert.equal(events[2].data.delta, "Designer reply");
+    assert.equal(events[3].data.aiReply.body, "Designer reply");
+    assert.equal(events[3].data.aiReply.linkedRunId, events[1].data.linkedRunId);
+    const run = await getJson(`${daemon.url}/runs/${encodeURIComponent(events[1].data.linkedRunId)}?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(run.teammateId, teammateId);
+    assert.ok(run.threadId);
+    assert.ok(run.requestSnapshot.turnId);
+    assert.equal(run.requestSnapshot.effectivePolicySnapshot.mode, "ask_everything");
+    assert.equal(run.requestSnapshot.directWorkspaceBinding.mode, "managed_worktree");
+    assert.ok(runner.runs[0].tools.includes("read"));
     const listed = await getJson(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}/direct-messages?cwd=${encodeURIComponent(cwd)}`);
     assert.equal(listed.messages.at(-1).body, "Designer reply");
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("teammate direct execution creates a supervised run and projects tool events", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-private-supervised-run-"));
+  await ensureGitRepo(cwd);
+  const runner = new DirectToolRunner();
+  const stores = new Map();
+  const daemon = await startDaemonForTest(runner, {
+    storeFactory: (storeCwd) => {
+      const store = createSqliteRunStore(storeCwd);
+      stores.set(storeCwd, store);
+      return store;
+    },
+  });
+  try {
+    const provider = (await createStaticChatProvider(daemon.url, cwd)).provider;
+    await postJson(`${daemon.url}/providers/${encodeURIComponent(provider.id)}/check?cwd=${encodeURIComponent(cwd)}`);
+    const teammateId = "teammate_builtin_engineer";
+    await patchJson(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}?cwd=${encodeURIComponent(cwd)}`, {
+      providerPresetId: provider.id,
+      allowedTools: ["read", "grep", "find", "ls", "bash", "edit", "write"],
+    });
+
+    const response = await fetch(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}/direct-messages/stream?cwd=${encodeURIComponent(cwd)}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        body: "Read package.json and report the result.",
+        providerPresetId: provider.id,
+        permissionPreset: "workspace_collaboration",
+      }),
+    });
+    assert.equal(response.status, 200);
+    const events = parseSseEvents(await response.text());
+    const linked = events.find((event) => event.event === "run_linked");
+    const done = events.find((event) => event.event === "done");
+    assert.ok(linked?.data.linkedRunId);
+    assert.equal(done?.data.aiReply.linkedRunId, linked.data.linkedRunId);
+
+    const store = stores.get(cwd);
+    assert.ok(store);
+    const run = store.getRun(linked.data.linkedRunId);
+    assert.ok(run);
+    assert.equal(run.status, "succeeded");
+    assert.equal(run.teammateId, teammateId);
+    assert.equal(run.requestSnapshot.effectivePolicySnapshot.mode, "workspace_write");
+    const thread = store.getLingThread(run.threadId);
+    const turn = store.getLingTurnForRun(run.id);
+    assert.equal(thread?.kind, "teammate_direct");
+    assert.equal(turn?.sourceMessageId, run.taskId);
+    const workUnit = store.getWorkUnit(run.workUnitId);
+    assert.equal(workUnit?.kind, "teammate_direct_reply");
+    assert.equal(workUnit?.linkedRunId, run.id);
+    assert.equal(workUnit?.linkedMessageId, done.data.aiReply.id);
+    assert.equal(workUnit?.teammateId, teammateId);
+    assert.ok(runner.runs[0].tools.includes("read"));
+    assert.ok(runner.runs[0].tools.includes("edit"));
+    const runEvents = store.listEvents(run.id, { limit: 100 });
+    assert.ok(runEvents.some((event) => event.type === "tool_start"));
+    assert.ok(runEvents.some((event) => event.type === "tool_end"));
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("teammate direct execution waits for approval and resumes the same supervised run", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-private-supervised-approval-"));
+  await ensureGitRepo(cwd);
+  const runner = new DirectApprovalRunner();
+  const stores = new Map();
+  const daemon = await startDaemonForTest(runner, {
+    storeFactory: (storeCwd) => {
+      const store = createSqliteRunStore(storeCwd);
+      stores.set(storeCwd, store);
+      return store;
+    },
+  });
+  try {
+    const provider = (await createStaticChatProvider(daemon.url, cwd)).provider;
+    await postJson(`${daemon.url}/providers/${encodeURIComponent(provider.id)}/check?cwd=${encodeURIComponent(cwd)}`);
+    const teammateId = "teammate_builtin_engineer";
+    await patchJson(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}?cwd=${encodeURIComponent(cwd)}`, {
+      providerPresetId: provider.id,
+      allowedTools: ["read", "bash"],
+    });
+
+    const response = await fetch(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}/direct-messages/stream?cwd=${encodeURIComponent(cwd)}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        body: "Run a private shell check after approval.",
+        providerPresetId: provider.id,
+        permissionPreset: "read_only",
+      }),
+    });
+    assert.equal(response.status, 200);
+
+    await waitForCondition(async () => {
+      const pending = await getJson(`${daemon.url}/approvals?cwd=${encodeURIComponent(cwd)}&status=pending`);
+      return pending.approvals.length === 1;
+    }, "private direct approval request");
+    const pending = await getJson(`${daemon.url}/approvals?cwd=${encodeURIComponent(cwd)}&status=pending`);
+    const approval = pending.approvals[0];
+    assert.ok(approval?.runId);
+
+    const store = stores.get(cwd);
+    assert.ok(store);
+    const waitingRun = store.getRun(approval.runId);
+    assert.equal(waitingRun?.status, "waiting_for_approval");
+    assert.equal(store.getWorkUnit(waitingRun.workUnitId)?.status, "waiting_for_approval");
+
+    await postJson(`${daemon.url}/approvals/${encodeURIComponent(approval.id)}/approve?cwd=${encodeURIComponent(cwd)}`, {
+      reason: "Approve private shell check",
+    });
+    const events = parseSseEvents(await response.text());
+    const done = events.find((event) => event.event === "done");
+    assert.ok(done?.data.aiReply.linkedRunId);
+    assert.equal(done.data.aiReply.linkedRunId, approval.runId);
+    assert.equal(store.getRun(approval.runId)?.status, "succeeded");
+    assert.equal(store.getWorkUnit(waitingRun.workUnitId)?.status, "succeeded");
+    assert.deepEqual(runner.decisions.map((decision) => decision.approved), [true]);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("teammate direct execution does not expose tools outside teammate policy", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-private-tool-boundary-"));
+  await ensureGitRepo(cwd);
+  const runner = new RecordingRunner();
+  const daemon = await startDaemonForTest(runner);
+  try {
+    const provider = (await createStaticChatProvider(daemon.url, cwd)).provider;
+    await postJson(`${daemon.url}/providers/${encodeURIComponent(provider.id)}/check?cwd=${encodeURIComponent(cwd)}`);
+    const teammateId = "teammate_builtin_engineer";
+    await patchJson(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}?cwd=${encodeURIComponent(cwd)}`, {
+      providerPresetId: provider.id,
+      allowedTools: ["read"],
+    });
+
+    const response = await fetch(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}/direct-messages/stream?cwd=${encodeURIComponent(cwd)}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        body: "Read the workspace without mutating it.",
+        providerPresetId: provider.id,
+        permissionPreset: "workspace_collaboration",
+      }),
+    });
+    assert.equal(response.status, 200);
+    parseSseEvents(await response.text());
+
+    assert.equal(runner.runs.length, 1);
+    assert.ok(runner.runs[0].tools.includes("read"));
+    assert.equal(runner.runs[0].tools.includes("bash"), false);
+    assert.equal(runner.runs[0].tools.includes("edit"), false);
+    assert.equal(runner.runs[0].tools.includes("write"), false);
   } finally {
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });
@@ -10173,6 +10441,8 @@ test("teammate direct reply injects web search context before runner reply", asy
     assert.match(runner.runs[0].task.prompt, /Private fresh web evidence summary/);
     assert.match(runner.runs[0].task.prompt, /https:\/\/example\.com\/private-fresh/);
     assert.match(runner.runs[0].systemPrompt, /If Ling web context is included/);
+    assert.match(runner.runs[0].systemPrompt, /explain the limitation briefly in user-facing language/);
+    assert.match(runner.runs[0].systemPrompt, /do not repeat provider, relay, or protocol diagnostics verbatim/);
     assert.doesNotMatch(runner.runs[0].task.prompt, /sk-test-secret-value/);
   } finally {
     await daemon.close();
@@ -10287,7 +10557,7 @@ test("teammate direct reply materializes current text and docx attachments", asy
     });
     assert.equal(response.status, 200);
     const events = parseSseEvents(await response.text());
-    assert.deepEqual(events.map((event) => event.event), ["ready", "delta", "done"]);
+    assert.deepEqual(events.map((event) => event.event), ["ready", "run_linked", "delta", "done"]);
 
     const prompt = runner.runs[0].task.prompt;
     assert.match(prompt, /Attachment content:/);
@@ -10411,7 +10681,7 @@ test("teammate direct prompt anchors latest attachment message instead of old gu
     });
     assert.equal(response.status, 200);
     const events = parseSseEvents(await response.text());
-    assert.deepEqual(events.map((event) => event.event), ["ready", "delta", "done"]);
+    assert.deepEqual(events.map((event) => event.event), ["ready", "run_linked", "delta", "done"]);
 
     const prompt = runner.runs.at(-1).task.prompt;
     const oldGuidanceIndex = prompt.indexOf("要继续补「排队引导」相关内容。");
@@ -10766,6 +11036,79 @@ class RecordingRunner {
   }
 }
 
+class DirectToolRunner {
+  constructor() {
+    this.runs = [];
+  }
+
+  async runTask(options) {
+    this.runs.push(options);
+    options.onEvent?.({
+      type: "tool_start",
+      toolCallId: "direct_read_package",
+      toolName: "read",
+      args: { path: "package.json" },
+    });
+    options.onEvent?.({
+      type: "tool_end",
+      toolCallId: "direct_read_package",
+      toolName: "read",
+      result: { path: "package.json", content: [{ type: "text", text: "{\"name\":\"ling-stack\"}" }] },
+      isError: false,
+    });
+    options.onEvent?.({ type: "assistant_text_delta", text: "Read package.json successfully." });
+    return {
+      taskId: options.task.id,
+      messages: [{ role: "assistant", content: "Read package.json successfully." }],
+      events: [],
+    };
+  }
+}
+
+class DirectApprovalRunner {
+  constructor() {
+    this.runs = [];
+    this.decisions = [];
+  }
+
+  async runTask(options) {
+    this.runs.push(options);
+    options.onEvent?.({
+      type: "tool_start",
+      toolCallId: "direct_private_bash",
+      toolName: "bash",
+      args: { command: "printf private-approved" },
+    });
+    const decision = await options.onApprovalRequired?.({
+      toolCallId: "direct_private_bash",
+      toolName: "bash",
+      input: { command: "printf private-approved" },
+      task: options.task,
+      cwd: options.cwd,
+      defaultApproval: "ask",
+    });
+    assert.ok(decision);
+    this.decisions.push(decision);
+    options.onEvent?.({
+      type: "tool_end",
+      toolCallId: "direct_private_bash",
+      toolName: "bash",
+      result: { approved: decision.approved },
+      isError: !decision.approved,
+    });
+    if (!decision.approved) {
+      throw new Error(decision.reason ?? "Private shell approval denied.");
+    }
+    const text = "Private shell check completed after approval.";
+    options.onEvent?.({ type: "assistant_text_delta", text });
+    return {
+      taskId: options.task.id,
+      messages: [{ role: "assistant", content: text }],
+      events: [],
+    };
+  }
+}
+
 class PromptEchoRunner {
   constructor() {
     this.runs = [];
@@ -10938,7 +11281,7 @@ function testDaemonConfig(cwd) {
     defaultWorkspaceCwd: cwd,
     runners: {},
     runtimeTools: {},
-    channels: { autoRoute: false, intentSelector: false },
+    channels: { autoRoute: false, intentSelector: false, terminalReports: false },
   };
 }
 
@@ -10962,7 +11305,7 @@ async function startDaemonForTest(runner, dependencies = {}, config = {}) {
     host: "127.0.0.1",
     port: 0,
     ...restConfig,
-    channels: { intentSelector: false, ...channels },
+    channels: { intentSelector: false, terminalReports: false, ...channels },
   }, {
     ...dependencies,
     ...(runner ? { runner } : {}),

@@ -1,5 +1,5 @@
-import { Search } from "lucide-react";
 import { formatDateTime } from "../../lib/formatting.js";
+import { Pencil } from "lucide-react";
 import type {
   SkillOptimizationPreview,
   SkillRegistryEntry,
@@ -28,6 +28,8 @@ export function SkillCompactInspector({
   cwd,
   saving,
   boundTeammates,
+  editable = false,
+  onEdit,
   onPreviewOptimization,
   onArchiveSource,
   onRollbackSource,
@@ -43,6 +45,8 @@ export function SkillCompactInspector({
   readonly cwd: string;
   readonly saving: boolean;
   readonly boundTeammates: readonly string[];
+  readonly editable?: boolean;
+  readonly onEdit?: () => void;
   readonly onPreviewOptimization: () => void;
   readonly onArchiveSource: () => void;
   readonly onRollbackSource: (snapshotId: string) => void;
@@ -78,11 +82,15 @@ export function SkillCompactInspector({
             <strong>{sourceSnapshot ? t("Source-backed") : t("Metadata only")}</strong>
             {!sourceSnapshot ? <small>{t("No published SKILL.md snapshot is attached yet.")}</small> : null}
           </span>
-          <button className="secondary-button compact-button" type="button" onClick={onPreviewOptimization} disabled={saving || optimizationPreviewLoading}>
-            <Search size={14} />
-            {optimizationPreviewLoading ? t("Previewing...") : t("Preview optimization")}
-          </button>
         </div>
+        {editable && onEdit ? (
+          <div className="settings-skill-summary-edit-action">
+            <button className="secondary-button compact-button" type="button" onClick={onEdit} disabled={saving}>
+              <Pencil size={14} />
+              {t("Edit skill")}
+            </button>
+          </div>
+        ) : null}
       </div>
 
       <details className="settings-compact-details settings-skill-inspector-details">
@@ -121,7 +129,7 @@ export function SkillCompactInspector({
           artifacts={artifacts}
           optimizationPreview={optimizationPreview}
           optimizationPreviewLoading={optimizationPreviewLoading}
-          showPreviewAction={false}
+          showPreviewAction={Boolean(sourceSnapshot)}
           cwd={cwd}
           saving={saving}
           onPreviewOptimization={onPreviewOptimization}

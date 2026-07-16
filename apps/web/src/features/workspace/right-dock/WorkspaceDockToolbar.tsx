@@ -1,4 +1,4 @@
-import { Code2, FileText, PanelRightClose, PanelRightOpen, Search } from "lucide-react";
+import { Code2, FileText, PanelRightClose, PanelRightOpen } from "lucide-react";
 import type { DockPageKind } from "../../../shared/conversation/index.js";
 import { useI18n } from "../../../i18n.js";
 import {
@@ -12,7 +12,6 @@ export type WorkspaceDockToolbarMode = "icon" | "channel";
 export interface WorkspaceDockToolbarProps {
   readonly open: boolean;
   readonly reviewCount: number;
-  readonly evidenceCount: number;
   readonly fileCount: number;
   readonly ariaLabel?: string;
   readonly mode?: WorkspaceDockToolbarMode;
@@ -25,7 +24,6 @@ type WorkspaceDockToolbarButtonsProps = Omit<WorkspaceDockToolbarProps, "ariaLab
 export function WorkspaceDockToolbarButtons({
   open,
   reviewCount,
-  evidenceCount,
   fileCount,
   mode = "channel",
   onOpenPage,
@@ -38,12 +36,6 @@ export function WorkspaceDockToolbarButtons({
       label: t("Review"),
       count: reviewCount,
       icon: <Code2 size={15} />,
-    },
-    {
-      id: "evidence" as const,
-      label: t("Evidence"),
-      count: evidenceCount,
-      icon: <Search size={15} />,
     },
     {
       id: "files" as const,

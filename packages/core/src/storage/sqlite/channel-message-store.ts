@@ -28,7 +28,7 @@ export class SqliteChannelMessageStore {
       throw new Error(`Channel not found: ${input.channelId}`);
     }
     const message: ChannelMessage = {
-      id: createChannelMessageId(),
+      id: input.id ?? createChannelMessageId(),
       workspaceId: DEFAULT_WORKSPACE_ID,
       channelId: input.channelId,
       threadId: input.threadId,

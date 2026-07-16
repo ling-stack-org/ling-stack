@@ -1,42 +1,57 @@
-import type {
-  SkillRegistryEntry,
-  SkillSourceSnapshot,
-} from "../../types.js";
+import type { SkillRegistryEntry } from "../../types.js";
 
-export type SkillLibrarySectionId = "mine" | "builtin" | "review" | "source";
-export type SkillOwnership = "user" | "builtin";
+export type SkillLibrarySectionId = "mine" | "evolution" | "builtin";
+export type SkillOwnership = "user" | "evolved" | "builtin";
+export type SkillEvolutionViewId = "pending" | "generated" | "ignored";
 export type BuiltinSkillBindingFilter = "all" | "bound" | "unbound";
 export type UserSkillSortMode = "updated" | "name";
 
 export interface SkillOwnershipPartition {
   readonly user: readonly SkillRegistryEntry[];
+  readonly evolved: readonly SkillRegistryEntry[];
   readonly builtin: readonly SkillRegistryEntry[];
 }
 
 interface SkillSearchInput {
   readonly query: string;
-  readonly sourceSnapshotBySkillId: ReadonlyMap<string, SkillSourceSnapshot>;
 }
 
 export function skillOwnership(entry: SkillRegistryEntry): SkillOwnership {
-  return entry.source === "builtin" || entry.reviewStatus === "builtin" ? "builtin" : "user";
+  if (entry.source === "builtin" || entry.source === "gstack" || entry.reviewStatus === "builtin") {
+    return "builtin";
+  }
+  if (entry.packId === "ling-generated" || entry.sourcePath?.startsWith("skill-candidates/")) {
+    return "evolved";
+  }
+  return "user";
+}
+
+export function isSkillLibraryVisibleEntry(entry: SkillRegistryEntry): boolean {
+  return !(entry.id === "gstack" && entry.source === "gstack" && entry.packId === "gstack-source-sync");
 }
 
 export function partitionSkillRegistry(entries: readonly SkillRegistryEntry[]): SkillOwnershipPartition {
   const user: SkillRegistryEntry[] = [];
+  const evolved: SkillRegistryEntry[] = [];
   const builtin: SkillRegistryEntry[] = [];
   for (const entry of entries) {
-    if (skillOwnership(entry) === "builtin") {
+    if (!isSkillLibraryVisibleEntry(entry)) {
+      continue;
+    }
+    const ownership = skillOwnership(entry);
+    if (ownership === "builtin") {
       builtin.push(entry);
+    } else if (ownership === "evolved") {
+      evolved.push(entry);
     } else {
       user.push(entry);
     }
   }
-  return { user, builtin };
+  return { user, evolved, builtin };
 }
 
 export function currentUserSkillCount(entries: readonly SkillRegistryEntry[]): number {
-  return entries.filter((entry) => skillOwnership(entry) === "user" && entry.reviewStatus !== "archived").length;
+  return entries.filter((entry) => isSkillLibraryVisibleEntry(entry) && skillOwnership(entry) === "user" && entry.reviewStatus !== "archived").length;
 }
 
 export function filterUserSkillEntries(
@@ -46,7 +61,7 @@ export function filterUserSkillEntries(
   },
 ): readonly SkillRegistryEntry[] {
   const rows = entries.filter((entry) => {
-    if (skillOwnership(entry) !== "user" || entry.reviewStatus === "archived") {
+    if (!isSkillLibraryVisibleEntry(entry) || skillOwnership(entry) !== "user" || entry.reviewStatus === "archived") {
       return false;
     }
     return matchesSkillSearch(entry, input);
@@ -62,7 +77,7 @@ export function filterBuiltinSkillEntries(
   },
 ): readonly SkillRegistryEntry[] {
   const rows = entries.filter((entry) => {
-    if (skillOwnership(entry) !== "builtin") {
+    if (!isSkillLibraryVisibleEntry(entry) || skillOwnership(entry) !== "builtin") {
       return false;
     }
     const bound = input.boundSkillIds.has(entry.id);
@@ -77,21 +92,29 @@ export function filterBuiltinSkillEntries(
   return [...rows].sort(compareSkillName);
 }
 
+export function filterEvolvedSkillEntries(
+  entries: readonly SkillRegistryEntry[],
+  input: SkillSearchInput & {
+    readonly sortMode: UserSkillSortMode;
+  },
+): readonly SkillRegistryEntry[] {
+  const rows = entries.filter((entry) => {
+    if (!isSkillLibraryVisibleEntry(entry) || skillOwnership(entry) !== "evolved" || entry.reviewStatus === "archived") {
+      return false;
+    }
+    return matchesSkillSearch(entry, input);
+  });
+  return [...rows].sort(input.sortMode === "name" ? compareSkillName : compareSkillUpdated);
+}
+
 function matchesSkillSearch(entry: SkillRegistryEntry, input: SkillSearchInput): boolean {
   const query = input.query.trim().toLowerCase();
   if (!query) {
     return true;
   }
-  const snapshot = input.sourceSnapshotBySkillId.get(entry.id);
   const haystack = [
-    entry.id,
     entry.definition.name,
     entry.definition.summary,
-    entry.source,
-    entry.sourcePath ?? "",
-    snapshot?.sourcePath ?? "",
-    snapshot?.upstreamSkillPath ?? "",
-    snapshot?.sourceChecksum ?? "",
     ...entry.definition.requiredTools,
     ...entry.definition.requiredProviderCapabilities,
   ].join(" ").toLowerCase();

@@ -97,7 +97,7 @@ test("sqlite migration removes legacy skill phases without touching workflow met
         JSON.stringify({ phase: "plan", owner: "workflow" }),
         workflow.id,
       );
-      database.prepare("DELETE FROM schema_migrations WHERE version = 94").run();
+      database.prepare("DELETE FROM schema_migrations WHERE version = 100").run();
     } finally {
       database.close();
     }
@@ -114,7 +114,7 @@ test("sqlite migration removes legacy skill phases without touching workflow met
     try {
       const workflowMetadata = JSON.parse(migratedDatabase.prepare("SELECT metadata_json FROM channel_workflows WHERE id = ?").get(workflow.id).metadata_json);
       assert.equal(workflowMetadata.phase, "plan");
-      assert.ok(migratedDatabase.prepare("SELECT version FROM schema_migrations WHERE version = 94 AND name = 'remove_skill_workflow_phase_metadata'").get());
+      assert.ok(migratedDatabase.prepare("SELECT version FROM schema_migrations WHERE version = 100 AND name = 'remove_skill_workflow_phase_metadata'").get());
       const beforeReopen = migratedDatabase.prepare("SELECT definition_json FROM skill_definitions WHERE id = ?").get("legacy-published-skill").definition_json;
       migratedDatabase.close();
 

@@ -122,10 +122,12 @@ import { authorizationAndAccessToLegacyPermission } from "../lib/conversation-au
 import { StatusBadge } from "../shared/components/index.js";
 import {
   aiTeammateToLocalDraft,
+  buildChannelUnreadState,
   buildChannelTransitionEntities,
   buildSidebarChannelNotifications,
   buildSidebarTeammateNotifications,
   latestChannelMessageTimestamp,
+  type ChannelUnreadState,
 } from "./app-shell-selectors.js";
 import { useAppNavigationController } from "./use-app-navigation-controller.js";
 import { useChannelActionsController } from "./use-channel-actions-controller.js";
@@ -204,7 +206,7 @@ export function AppShell(): JSX.Element {
     channels: { autoRoute: false },
     transports: { providerWebSocketFallback: false, localWebSocketRpc: false },
   });
-  const [channelUnreadById, setChannelUnreadById] = useState<Readonly<Record<string, boolean>>>({});
+  const [channelUnreadById, setChannelUnreadById] = useState<Readonly<Record<string, ChannelUnreadState>>>({});
   const channelSeenMessageAtRef = useRef<Record<string, string>>({});
   const [runningWorkflowStepId, setRunningWorkflowStepId] = useState("");
   const [orchestratingWorkflowId, setOrchestratingWorkflowId] = useState("");
@@ -399,6 +401,7 @@ export function AppShell(): JSX.Element {
   } = conversationDomain.state;
   const {
     refreshConversationThreads,
+    refreshSelectedConversation,
     openNewConversation,
     selectConversationThread,
     archiveConversationThread,
@@ -872,8 +875,18 @@ export function AppShell(): JSX.Element {
     }
 
     const seenAt = channelSeenMessageAtRef.current[channelId];
-    if (!seenAt || latestMessageAt > seenAt) {
-      setChannelUnreadById((current) => current[channelId] ? current : { ...current, [channelId]: true });
+    const nextUnread = buildChannelUnreadState(messages, seenAt);
+    if (nextUnread) {
+      setChannelUnreadById((current) => {
+        const previous = current[channelId];
+        const next = {
+          unread: previous?.unread === true || nextUnread.unread,
+          mentioned: previous?.mentioned === true || nextUnread.mentioned,
+        };
+        return previous?.unread === next.unread && previous.mentioned === next.mentioned
+          ? current
+          : { ...current, [channelId]: next };
+      });
     }
   }
 
@@ -921,8 +934,9 @@ export function AppShell(): JSX.Element {
       tasks,
       selectedChannelId,
       channelUnreadById,
+      workspaceSettings?.channelNotifications ?? {},
     ),
-    [approvals, channelUnreadById, run, runs, selectedChannelId, tasks],
+    [approvals, channelUnreadById, run, runs, selectedChannelId, tasks, workspaceSettings?.channelNotifications],
   );
   const sidebarTeammateNotifications = useMemo(
     () => buildSidebarTeammateNotifications(approvals, tasks),
@@ -978,6 +992,9 @@ export function AppShell(): JSX.Element {
       content: message.content,
       attachments: message.attachments,
       status: message.status,
+      revision: message.revision,
+      editedAt: message.editedAt,
+      pendingReplacement: message.pendingReplacement,
       createdAt: message.createdAt,
       updatedAt: message.updatedAt,
     })),
@@ -1476,6 +1493,7 @@ export function AppShell(): JSX.Element {
     refreshAiTeammates,
     refreshUsedMemoryAudit,
     refreshChannelRunArtifacts,
+    refreshChannelExecutionActions,
     refreshChannelActivity,
   });
 
@@ -1597,6 +1615,22 @@ export function AppShell(): JSX.Element {
       return;
     }
     void refreshChannelExecutionActions(form.cwd.trim(), selectedChannelId, channelRunsForArtifacts);
+  }, [activeView, channelRunArtifactsKey, form.cwd, selectedChannelId]);
+
+  useEffect(() => {
+    const cwd = form.cwd.trim();
+    const hasActiveVisibleRun = channelRunsForArtifacts.some((candidate) =>
+      candidate.status === "queued" || candidate.status === "running" || candidate.status === "waiting_for_approval",
+    );
+    if (activeView !== "workspace" || !cwd || !selectedChannelId || !hasActiveVisibleRun) {
+      return undefined;
+    }
+    const interval = window.setInterval(() => {
+      if (document.visibilityState === "visible") {
+        void refreshChannelExecutionActions(cwd, selectedChannelId, channelRunsForArtifacts);
+      }
+    }, 750);
+    return () => window.clearInterval(interval);
   }, [activeView, channelRunArtifactsKey, form.cwd, selectedChannelId]);
 
   useEffect(() => {
@@ -1767,6 +1801,7 @@ export function AppShell(): JSX.Element {
       refreshChannelExecutionProposals(channelId),
       refreshChannelFiles(channelId),
       refreshChannelRunArtifacts(form.cwd.trim(), channelId, channelRunsForArtifacts),
+      refreshChannelExecutionActions(form.cwd.trim(), channelId, channelRunsForArtifacts),
       refreshChannelProtocol(channelId),
       refreshChannelGovernanceNotifications(channelId),
       refreshSelectedChannelCouncil(channelId),
@@ -2327,6 +2362,8 @@ export function AppShell(): JSX.Element {
                     threadId: selectedConversationDetail.thread.id,
                     turns: selectedConversationDetail.turns,
                     runs: selectedConversationDetail.runs,
+                    executionActions: selectedConversationDetail.executionActions,
+                    terminalReports: selectedConversationDetail.terminalReports,
                   } : undefined}
                   defaultProviderLabel={defaultConversationProviderLabel}
                   defaultProviderPresetId={defaultConversationProviderPresetId}
@@ -2336,7 +2373,10 @@ export function AppShell(): JSX.Element {
                   sending={conversationStreamBusy}
                   onOpenRun={(runId) => void openRunFromWorkspace(runId)}
                   onConfirmFullAccess={requestFullAccessConfirmation}
-                  onRefreshConversation={() => refreshConversationThreads(form.cwd.trim())}
+                  onRefreshConversation={() => Promise.all([
+                    refreshConversationThreads(form.cwd.trim()),
+                    refreshSelectedConversation(form.cwd.trim()),
+                  ]).then(() => undefined)}
                   onSendConversation={async (input) => {
                     await sendConversationMessage({
                       message: input.message,
@@ -2937,6 +2977,9 @@ function homeMessageFromTranscript(message: ConversationTranscriptMessage): Conv
     content: message.content,
     attachments: message.attachments,
     status: message.status,
+    revision: message.revision,
+    editedAt: message.editedAt,
+    pendingReplacement: message.pendingReplacement,
     createdAt: message.createdAt,
     updatedAt: message.updatedAt,
   };

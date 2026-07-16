@@ -91,6 +91,10 @@ export interface ParsedSkillOptimizationPreviewRequest {
   readonly mode?: SkillOptimizationMode;
 }
 
+export interface ParsedSkillCandidateDraftRequest {
+  readonly content?: string;
+}
+
 export function parseCreateSkillCandidateRequest(value: unknown): ParsedCreateSkillCandidateRequest {
   if (!isRecord(value)) {
     throw new Error("Skill candidate request must be a JSON object");
@@ -123,6 +127,16 @@ export function parseSkillCandidateReviewRequest(value: unknown): Omit<ApplySkil
     reason: readOptionalString(value, "reason"),
     supersededBy: readOptionalString(value, "supersededBy"),
   };
+}
+
+export function parseSkillCandidateDraftRequest(value: unknown): ParsedSkillCandidateDraftRequest {
+  if (value === undefined) {
+    return {};
+  }
+  if (!isRecord(value)) {
+    throw new Error("Skill candidate draft request must be a JSON object");
+  }
+  return { content: readOptionalString(value, "content") };
 }
 
 export function parseProcedureObservationRequest(value: unknown): CreateProcedureObservationInput {
@@ -1051,7 +1065,7 @@ function readStringArrayWithWarnings<T extends string>(
   return accepted;
 }
 
-function skillPermissionWarnings(content: string): SkillImportWarning[] {
+export function skillPermissionWarnings(content: string): SkillImportWarning[] {
   const lower = content.toLowerCase();
   const warnings: SkillImportWarning[] = [];
   if (/\b(grant|enable|allow|bypass).*\b(tool|tools|bash|write|edit|approval|permission|permissions)\b/.test(lower)) {

@@ -10,6 +10,9 @@ export type {
 export type {
   ConversationAgentActivitySpan,
   ConversationAgentActivitySpanKind,
+  ConversationCommandBatch,
+  ConversationCommandBatchItem,
+  ConversationCommandExecutionView,
   ConversationArtifactStripChangeArtifact,
   ConversationArtifactStripItem,
   ConversationArtifactStripItemKind,
@@ -25,13 +28,24 @@ export type {
   ConversationWorkCellEvidenceLink,
   ConversationWorkCellGroup,
   ConversationWorkCellGroupKind,
+  ConversationWorkCellItem,
   ConversationWorkCellRow,
   ConversationWorkCellRowDetailLine,
   ConversationWorkCellRowTone,
   ConversationWorkCellStat,
   ConversationWorkCellViewModel,
+  ConversationWorkspaceRecoveryTarget,
 } from "./work-cell-view-model.js";
 export { normalizeConversationOperationCell } from "./work-cell-view-model.js";
+export {
+  isCommandBatchEligible,
+  projectConversationCommandBatches,
+} from "./command-batching.js";
+export type {
+  TerminalReportViewInput,
+  TerminalReportViewModel,
+} from "./terminal-report-view-model.js";
+export { terminalReportToViewModel } from "./terminal-report-view-model.js";
 export type {
   ConversationEvidenceMode,
   ConversationRawDetailMode,
@@ -46,6 +60,21 @@ export {
   getConversationSurfacePolicy,
   mergeConversationSurfacePolicy,
 } from "./surface-policy.js";
+export {
+  findLatestEditableConversationMessage,
+} from "./message-edit-policy.js";
+export type {
+  ConversationMessageEditAuthor,
+  ConversationMessageEditCandidate,
+  ConversationMessageEditScope,
+} from "./message-edit-policy.js";
+export {
+  getTerminalReportProjectionPolicy,
+} from "./terminal-report-projection-policy.js";
+export type {
+  TerminalReportArtifactMode,
+  TerminalReportProjectionPolicy,
+} from "./terminal-report-projection-policy.js";
 export {
   composerSlashCommandParts,
   composerUrlReferenceParts,
@@ -70,6 +99,7 @@ export {
 } from "./slash-command-picker.js";
 export type { ActiveSlashCommandPicker } from "./slash-command-picker.js";
 export {
+  collectLocalFileReferences,
   parseLocalFileReference,
   parseMessageBody,
   splitInlineTokens,
@@ -79,6 +109,7 @@ export type {
   MessageBodyBlock,
   MessageBodyParseOptions,
   MessageInlineToken,
+  MessageListItem,
 } from "./message-body.js";
 export {
   conversationPermissionPresetRequiresConfirmation,

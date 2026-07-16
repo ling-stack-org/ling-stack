@@ -22,7 +22,7 @@ export function SkillLibraryTable({
   onDeleteSkill,
   t,
 }: {
-  readonly variant: "user" | "builtin";
+  readonly variant: "user" | "evolved" | "builtin";
   readonly entries: readonly SkillRegistryEntry[];
   readonly loading: boolean;
   readonly saving: boolean;
@@ -61,13 +61,13 @@ export function SkillLibraryTable({
             <th>{t("Description")}</th>
             <th>{t("Bound teammates")}</th>
             <th>{t("Updated")}</th>
-            {variant === "user" ? <th aria-label={t("Skill actions")}>{t("Skill actions")}</th> : null}
+            {variant !== "builtin" ? <th aria-label={t("Skill actions")}>{t("Skill actions")}</th> : null}
           </tr>
         </thead>
         <tbody>
           {entries.length === 0 ? (
             <tr>
-              <td colSpan={variant === "user" ? 5 : 4}>
+              <td colSpan={variant !== "builtin" ? 5 : 4}>
                 <div className="compact-empty">{loading ? t("Loading skills...") : t("No skills match these filters")}</div>
               </td>
             </tr>
@@ -76,7 +76,7 @@ export function SkillLibraryTable({
             const state = skillRegistryState(entry, t);
             const selected = selectedSkillId === entry.id;
             const showState = entry.reviewStatus === "draft" || entry.reviewStatus === "disabled";
-            const canArchive = variant === "user" && entry.source !== "builtin" && entry.reviewStatus !== "archived";
+            const canArchive = variant !== "builtin" && entry.source !== "builtin" && entry.reviewStatus !== "archived";
             const canDelete = canArchive && isManuallyImportedSkill(entry);
             return (
               <tr
@@ -98,7 +98,7 @@ export function SkillLibraryTable({
                 </td>
                 <td className="settings-skill-bound-cell">{boundTeammates.length > 0 ? boundTeammates.join(", ") : t("Unbound")}</td>
                 <td className="settings-skill-updated-cell">{formatDateTime(entry.updatedAt)}</td>
-                {variant === "user" ? (
+                {variant !== "builtin" ? (
                   <td className="settings-skill-action-cell">
                     {canArchive ? (
                       <span className="settings-skill-row-actions">

@@ -817,6 +817,27 @@ export interface CreateSkillImportDraftInput {
   readonly warnings?: readonly SkillImportWarning[];
 }
 
+export interface PublishSkillRevisionDraftInput {
+  readonly draftId: string;
+  readonly skillId: string;
+  readonly expectedUpdatedAt: string;
+}
+
+export type SkillRevisionStoreErrorCode =
+  | "skill_revision_draft_not_found"
+  | "skill_revision_invalid"
+  | "skill_revision_conflict";
+
+export class SkillRevisionStoreError extends Error {
+  readonly code: SkillRevisionStoreErrorCode;
+
+  constructor(code: SkillRevisionStoreErrorCode, message: string) {
+    super(message);
+    this.name = "SkillRevisionStoreError";
+    this.code = code;
+  }
+}
+
 export interface ListSkillRegistryOptions {
   readonly includeArchived?: boolean;
   readonly includeDisabled?: boolean;

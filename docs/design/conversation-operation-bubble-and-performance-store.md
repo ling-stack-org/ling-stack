@@ -172,6 +172,8 @@ Rules:
 - Completed work may fold only after the terminal state is committed.
 - If a final coordinator answer references the completed work, the completed bubble can
   fold to one line immediately after that answer appears.
+- The folded completed header contains only terminal status and elapsed time. It does not
+  repeat the task title or coordinator summary already rendered below the work cell.
 - Approval, blocked, and failed states do not auto-fold.
 - Expanding a completed bubble restores semantic operation rows, checks, approvals,
   artifacts, and bounded output in the same turn.

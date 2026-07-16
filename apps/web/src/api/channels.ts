@@ -74,6 +74,9 @@ import type {
   TaskEditFormState,
   TaskListResponse,
   TaskMutationResponse,
+  TerminalReportListResponse,
+  TerminalReportResponse,
+  TerminalReportSourceKind,
   UpdateChannelBriefRequest,
   UpdateChannelBranchRequest,
   UpdateChannelCollaborationProtocolRequest,
@@ -271,6 +274,10 @@ export async function handoffChannelWorkspace(
 
 export async function refreshChannelWorkspace(cwd: string, channelId: string): Promise<ChannelWorkspaceMutationResponse> {
   return daemonClient.refreshChannelWorkspace(cwd, channelId);
+}
+
+export async function openChannelWorkspace(cwd: string, channelId: string): Promise<ChannelWorkspaceResponse> {
+  return daemonClient.openChannelWorkspace(cwd, channelId);
 }
 
 export async function listChannelMessages(
@@ -539,6 +546,38 @@ export async function getChannelTeamMetricsProjection(
   options: { readonly limit?: number } = {},
 ): Promise<ChannelTeamMetricsProjectionResponse> {
   return daemonClient.getChannelTeamMetricsProjection(cwd, channelId, options);
+}
+
+export async function getTerminalReport(
+  cwd: string,
+  reportId: string,
+): Promise<TerminalReportResponse> {
+  return daemonClient.getTerminalReport(cwd, reportId);
+}
+
+export async function listTerminalReports(
+  cwd: string,
+  options: {
+    readonly threadId?: string;
+    readonly sourceKind?: TerminalReportSourceKind;
+    readonly sourceId?: string;
+    readonly limit?: number;
+  } = {},
+): Promise<TerminalReportListResponse> {
+  return daemonClient.listTerminalReports(cwd, options);
+}
+
+export async function listChannelTerminalReports(
+  cwd: string,
+  channelId: string,
+  options: {
+    readonly threadId?: string;
+    readonly sourceKind?: TerminalReportSourceKind;
+    readonly sourceId?: string;
+    readonly limit?: number;
+  } = {},
+): Promise<TerminalReportListResponse> {
+  return daemonClient.listChannelTerminalReports(cwd, channelId, options);
 }
 
 export async function listTasks(cwd: string, channelId?: string): Promise<TaskListResponse> {

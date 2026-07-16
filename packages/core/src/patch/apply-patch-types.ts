@@ -3,6 +3,12 @@ export const APPLY_PATCH_FORMAT = "ling-apply-patch-v1" as const;
 export type ApplyPatchFormat = typeof APPLY_PATCH_FORMAT;
 export type PatchOperationKind = "add" | "update" | "delete";
 export type PatchLineKind = "context" | "add" | "remove";
+export type PatchLineEnding = "\n" | "\r\n" | "\r";
+
+export interface PatchTextFormat {
+  readonly lineEnding: PatchLineEnding;
+  readonly trailingNewline: boolean;
+}
 
 export interface PatchLine {
   readonly kind: PatchLineKind;
@@ -23,6 +29,8 @@ export interface PatchOperation {
   readonly hunks: readonly PatchHunk[];
   readonly oldSha256?: string;
   readonly newSha256?: string;
+  readonly oldTextFormat?: PatchTextFormat;
+  readonly newTextFormat?: PatchTextFormat;
 }
 
 export interface PatchSummary {

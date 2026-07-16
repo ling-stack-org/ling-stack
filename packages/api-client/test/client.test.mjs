@@ -30,6 +30,51 @@ test("daemonBaseUrlFromEnv trims configured URL and falls back to local daemon",
   assert.equal(daemonBaseUrlFromEnv({}), "http://127.0.0.1:17891");
 });
 
+test("builds workspace review recovery and open-action requests", async () => {
+  const mock = createFetchMock([
+    { cwd: "/repo", state: "clean", additions: 0, deletions: 0, files: [], checkedAt: "now" },
+    { cwd: "/repo", runId: "run 1", state: "applied", canUndo: true, canReapply: false, files: [], summary: {}, updatedAt: "now" },
+    { cwd: "/repo", runId: "run 1", state: "undone", canUndo: false, canReapply: true, files: [], summary: {}, updatedAt: "now" },
+    { cwd: "/repo", runId: "run 1", state: "applied", canUndo: true, canReapply: false, files: [], summary: {}, updatedAt: "now" },
+    { cwd: "/repo", workflowId: "workflow 1", runIds: ["run 1", "run 2"], state: "applied", canUndo: true, canReapply: false, files: [], summary: {}, updatedAt: "now" },
+    { cwd: "/repo", workflowId: "workflow 1", runIds: ["run 1", "run 2"], state: "undone", canUndo: false, canReapply: true, files: [], summary: {}, updatedAt: "now" },
+    { cwd: "/repo", workflowId: "workflow 1", runIds: ["run 1", "run 2"], state: "applied", canUndo: true, canReapply: false, files: [], summary: {}, updatedAt: "now" },
+    { cwd: "/repo", path: "src/a.ts", options: [] },
+    { cwd: "/repo", path: "src/a.ts", target: "vscode", opened: true },
+    { cwd: "/repo", channelId: "channel 1", binding: {}, snapshot: {} },
+  ]);
+  const client = new LingDaemonClient({ baseUrl: "http://daemon.test", fetch: mock.fetch });
+
+  await client.getWorkspaceChanges("/repo");
+  await client.getRunWorkspaceChanges("run 1", "/repo");
+  await client.undoRunWorkspaceChanges("run 1", "/repo");
+  await client.reapplyRunWorkspaceChanges("run 1", "/repo");
+  await client.getWorkflowWorkspaceChanges("/repo", "workflow 1");
+  await client.undoWorkflowWorkspaceChanges("/repo", "workflow 1");
+  await client.reapplyWorkflowWorkspaceChanges("/repo", "workflow 1");
+  await client.getWorkspaceFileOpenOptions("/repo", "src/a.ts");
+  await client.openWorkspaceFile("/repo", "src/a.ts", { target: "vscode", line: 12 });
+  await client.openChannelWorkspace("/repo", "channel 1");
+
+  assert.deepEqual(mock.calls.map((call) => [call.method, call.url]), [
+    ["GET", "http://daemon.test/workspace/changes?cwd=%2Frepo"],
+    ["GET", "http://daemon.test/runs/run%201/workspace-changes?cwd=%2Frepo"],
+    ["POST", "http://daemon.test/runs/run%201/workspace-changes/undo?cwd=%2Frepo"],
+    ["POST", "http://daemon.test/runs/run%201/workspace-changes/reapply?cwd=%2Frepo"],
+    ["GET", "http://daemon.test/workflows/workflow%201/workspace-changes?cwd=%2Frepo"],
+    ["POST", "http://daemon.test/workflows/workflow%201/workspace-changes/undo?cwd=%2Frepo"],
+    ["POST", "http://daemon.test/workflows/workflow%201/workspace-changes/reapply?cwd=%2Frepo"],
+    ["GET", "http://daemon.test/workspace-files/open-options?cwd=%2Frepo&path=src%2Fa.ts"],
+    ["POST", "http://daemon.test/workspace-files/open?cwd=%2Frepo&path=src%2Fa.ts"],
+    ["POST", "http://daemon.test/channels/channel%201/workspace/open?cwd=%2Frepo"],
+  ]);
+  assert.equal(mock.calls[8].body, JSON.stringify({ target: "vscode", line: 12 }));
+  assert.equal(
+    client.workspaceFileContentUrl("/repo", "src/a.ts", true),
+    "http://daemon.test/workspace-files/content?cwd=%2Frepo&path=src%2Fa.ts&download=1",
+  );
+});
+
 test("binds global fetch to globalThis when no custom fetch is provided", async () => {
   const originalFetch = globalThis.fetch;
   try {
@@ -45,6 +90,42 @@ test("binds global fetch to globalThis when no custom fetch is provided", async 
   } finally {
     globalThis.fetch = originalFetch;
   }
+});
+
+test("builds skill revision preview and publish requests", async () => {
+  const mock = createFetchMock([
+    { cwd: "/repo", skillId: "skill 1", preview: {} },
+    { cwd: "/repo", draftId: "draft 1", skill: {} },
+  ]);
+  const client = new LingDaemonClient({ baseUrl: "http://daemon.test", fetch: mock.fetch });
+  const definition = {
+    name: "Edited skill",
+    summary: "Edited summary",
+    promptFragments: ["Do the edited work."],
+    requiredTools: ["read"],
+    requiredProviderCapabilities: ["chat"],
+    approvalProfile: { mode: "none" },
+  };
+
+  await client.previewSkillRevision("/repo", "skill 1", {
+    expectedUpdatedAt: "2026-07-16T00:00:00.000Z",
+    definition,
+  });
+  await client.publishSkillRevision("/repo", "skill 1", {
+    expectedUpdatedAt: "2026-07-16T00:00:00.000Z",
+    definition,
+    confirmAuthorityChanges: true,
+  });
+
+  assert.equal(mock.calls[0].url, "http://daemon.test/skills/skill%201/revision-preview?cwd=%2Frepo");
+  assert.equal(mock.calls[0].method, "POST");
+  assert.deepEqual(JSON.parse(mock.calls[0].body), {
+    expectedUpdatedAt: "2026-07-16T00:00:00.000Z",
+    definition,
+  });
+  assert.equal(mock.calls[1].url, "http://daemon.test/skills/skill%201/revisions?cwd=%2Frepo");
+  assert.equal(mock.calls[1].method, "POST");
+  assert.equal(JSON.parse(mock.calls[1].body).confirmAuthorityChanges, true);
 });
 
 test("builds URL query parameters for list endpoints", async () => {
@@ -81,7 +162,7 @@ test("builds URL query parameters for list endpoints", async () => {
   await client.getSkillCandidate("/repo path", "candidate 1");
   await client.createSkillCandidate("/repo path", { title: "Candidate", summary: "Candidate summary", definition: {}, sourceRefs: [] });
   await client.reviewSkillCandidate("/repo path", "candidate 1", { action: "reject", reason: "Duplicate." });
-  await client.createSkillCandidateDraft("/repo path", "candidate 1");
+  await client.createSkillCandidateDraft("/repo path", "candidate 1", { content: "# Edited candidate" });
   await client.listChannelProtocolCandidates("/repo path", "channel 1", { status: "draft", limit: 6 });
   await client.createChannelProtocolCandidate("/repo path", "channel 1", {
     proposedPatch: { reviewRules: ["Require QA evidence."] },
@@ -178,6 +259,7 @@ test("builds URL query parameters for list endpoints", async () => {
   assert.equal(mock.calls[29].method, "POST");
   assert.equal(mock.calls[30].url, "http://daemon.test/skill-candidates/candidate%201/draft?cwd=%2Frepo+path");
   assert.equal(mock.calls[30].method, "POST");
+  assert.deepEqual(JSON.parse(mock.calls[30].body), { content: "# Edited candidate" });
   assert.equal(mock.calls[31].url, "http://daemon.test/channels/channel%201/protocol-candidates?cwd=%2Frepo+path&status=draft&limit=6");
   assert.equal(mock.calls[32].url, "http://daemon.test/channels/channel%201/protocol-candidates?cwd=%2Frepo+path");
   assert.equal(mock.calls[32].method, "POST");
@@ -736,6 +818,7 @@ test("previews skill imports without using the durable draft route", async () =>
 test("syncs gstack skill sources through expected routes", async () => {
   const responses = [
     { cwd: "/repo", preview: { records: [] } },
+    { cwd: "/repo", completedAt: "2026-06-22T00:00:30.000Z", summary: { synced: 1, unchanged: 2, attention: 0 }, attention: [], skills: [], snapshots: [] },
     { cwd: "/repo", refreshedAt: "2026-06-22T00:00:00.000Z", preview: { records: [] } },
     { cwd: "/repo", publishedAt: "2026-06-22T00:01:00.000Z", preview: { records: [] }, skills: [], snapshots: [] },
   ];
@@ -748,24 +831,49 @@ test("syncs gstack skill sources through expected routes", async () => {
   };
 
   assert.deepEqual(await client.previewGstackSkillSourceSync("/repo path", syncInput), responses[0]);
-  assert.deepEqual(await client.refreshGstackSkillSourceSync("/repo path", syncInput), responses[1]);
+  assert.deepEqual(await client.applyGstackSkillSourceSync("/repo path"), responses[1]);
+  assert.deepEqual(await client.refreshGstackSkillSourceSync("/repo path", syncInput), responses[2]);
   assert.deepEqual(await client.publishGstackSkillSourceSync("/repo path", {
     ...syncInput,
     selectedSkillIds: ["review"],
-  }), responses[2]);
+  }), responses[3]);
 
   assert.equal(mock.calls[0].method, "POST");
   assert.equal(mock.calls[0].url, "http://daemon.test/skills/sync/gstack/preview?cwd=%2Frepo+path");
   assert.deepEqual(JSON.parse(mock.calls[0].body), syncInput);
   assert.equal(mock.calls[1].method, "POST");
-  assert.equal(mock.calls[1].url, "http://daemon.test/skills/sync/gstack/refresh?cwd=%2Frepo+path");
-  assert.deepEqual(JSON.parse(mock.calls[1].body), syncInput);
+  assert.equal(mock.calls[1].url, "http://daemon.test/skills/sync/gstack/apply?cwd=%2Frepo+path");
+  assert.deepEqual(JSON.parse(mock.calls[1].body), {});
   assert.equal(mock.calls[2].method, "POST");
-  assert.equal(mock.calls[2].url, "http://daemon.test/skills/sync/gstack/publish?cwd=%2Frepo+path");
-  assert.deepEqual(JSON.parse(mock.calls[2].body), {
+  assert.equal(mock.calls[2].url, "http://daemon.test/skills/sync/gstack/refresh?cwd=%2Frepo+path");
+  assert.deepEqual(JSON.parse(mock.calls[2].body), syncInput);
+  assert.equal(mock.calls[3].method, "POST");
+  assert.equal(mock.calls[3].url, "http://daemon.test/skills/sync/gstack/publish?cwd=%2Frepo+path");
+  assert.deepEqual(JSON.parse(mock.calls[3].body), {
     ...syncInput,
     selectedSkillIds: ["review"],
   });
+});
+
+test("reads managed official skill source status without a local connection action", async () => {
+  const responses = [{
+    cwd: "/repo",
+    status: "synced",
+    source: {
+      sourceId: "official-gstack",
+      originUrl: "https://github.com/garrytan/gstack.git",
+      ref: "main",
+      revision: "11de390b",
+      version: "1.58.5.0",
+      lastSyncedAt: "2026-07-13T00:00:00.000Z",
+    },
+  }];
+  const mock = createFetchMock(responses);
+  const client = new LingDaemonClient({ baseUrl: "http://daemon.test", fetch: mock.fetch });
+
+  assert.deepEqual(await client.getOfficialSkillSourceStatus("/repo path"), responses[0]);
+  assert.equal(mock.calls[0].method, "GET");
+  assert.equal(mock.calls[0].url, "http://daemon.test/skills/sync/gstack/status?cwd=%2Frepo+path");
 });
 
 test("gets skill recording eligibility by run id", async () => {
@@ -1090,6 +1198,7 @@ test("uses expected routes for delete, cancel, check, and artifact URLs", async 
   await client.cancelRun("/repo", "run 1");
   await client.checkProvider("/repo", "provider 1");
   await client.refreshChannelLinkPreview("/repo", "link 1");
+  await client.previewWorkspaceFile("/repo path", "apps/web/src/view.tsx", 4096, 42);
 
   assert.equal(mock.calls[0].method, "DELETE");
   assert.equal(mock.calls[0].url, "http://daemon.test/channels/channel%201?cwd=%2Frepo");
@@ -1101,6 +1210,8 @@ test("uses expected routes for delete, cancel, check, and artifact URLs", async 
   assert.equal(mock.calls[3].url, "http://daemon.test/providers/provider%201/check?cwd=%2Frepo");
   assert.equal(mock.calls[4].method, "POST");
   assert.equal(mock.calls[4].url, "http://daemon.test/link-previews/link%201/refresh?cwd=%2Frepo");
+  assert.equal(mock.calls[5].method, "GET");
+  assert.equal(mock.calls[5].url, "http://daemon.test/workspace-files/preview?cwd=%2Frepo+path&path=apps%2Fweb%2Fsrc%2Fview.tsx&maxBytes=4096&line=42");
   assert.equal(client.artifactContentUrl("artifact 1", "/repo"), "http://daemon.test/artifacts/artifact%201/content?cwd=%2Frepo");
   assert.equal(client.attachmentContentUrl("attachment 1", "/repo"), "http://daemon.test/attachments/attachment%201/content?cwd=%2Frepo");
 });
@@ -1661,11 +1772,11 @@ test("manages external work actions without transforming daemon responses", asyn
 });
 
 test("maps daemon error bodies and workspace path errors", async () => {
-  const fetchMessage = async () => jsonResponse({ message: "explicit message" }, { status: 418, statusText: "Teapot" });
+  const fetchMessage = async () => jsonResponse({ error: "explicit_code", message: "explicit message" }, { status: 418, statusText: "Teapot" });
   const messageClient = new LingDaemonClient({ baseUrl: "http://daemon.test", fetch: fetchMessage });
   await assert.rejects(
     () => messageClient.listRuns("/repo"),
-    (error) => error instanceof LingDaemonError && error.message === "explicit message" && error.status === 418,
+    (error) => error instanceof LingDaemonError && error.message === "explicit message" && error.status === 418 && error.code === "explicit_code",
   );
 
   const fetchError = async () => jsonResponse({ error: "raw_error" }, { status: 500, statusText: "Server Error" });

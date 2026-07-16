@@ -17,13 +17,17 @@ The existing `Built-in / Custom` filter exposes implementation provenance, but i
 not answer the user's primary question: which skills are mine to manage, and which are
 provided by Ling?
 
-The product surface is separated into two ownership views:
+The product surface is separated into two ownership views plus one governed evolution
+view:
 
-- **My skills** is the default view and contains every non-built-in registry entry.
+- **My skills** is the default view and contains user-managed registry entries.
+- **AI evolution** contains reusable skills and patterns discovered by Ling that still
+  require explicit user review before they can affect the registry.
 - **Built-in skills** is a separate read-only view for Ling-provided definitions.
 
-Review and source-sync workflows remain independent because they represent lifecycle
-work, not ownership.
+Official source updates and health-diagnostic workflows are not part of the Skill Library
+navigation. AI evolution remains visible because it is the user approval boundary for
+generated skill candidates, observed reusable procedures, and playbook proposals.
 
 ## Ownership Contract
 
@@ -33,7 +37,7 @@ Ownership is derived from the existing registry entry and is not persisted separ
 type SkillOwnership = "user" | "builtin";
 
 function skillOwnership(entry: SkillRegistryEntry): SkillOwnership {
-  return entry.source === "builtin" || entry.reviewStatus === "builtin"
+  return entry.source === "builtin" || entry.source === "gstack" || entry.reviewStatus === "builtin"
     ? "builtin"
     : "user";
 }
@@ -48,18 +52,22 @@ User-owned sources include:
 - `workspace`
 - `skill-directory`
 - `agents-md`
-- `gstack`
 
-Source sync may attach or update source snapshots, but it never changes ownership.
+`gstack` is a Ling-managed built-in source. Source sync may attach or update source
+snapshots, but it never makes a gstack skill user-owned.
+
+Legacy workspaces may contain a published `gstack` registry entry from the old source
+sync prototype (`id=gstack`, `packId=gstack-source-sync`). That entry represented the
+source umbrella, not a distinct end-user skill. It must not appear in either ownership
+list. The actual gstack capabilities remain the individual built-in skills.
 
 ## Information Architecture
 
 The Skill Library sub-navigation is:
 
 1. **My skills**
-2. **Built-in skills**
-3. **Review queue**
-4. **Source sync**
+2. **AI evolution**
+3. **Built-in skills**
 
 Entering or reloading the Skill Library always opens **My skills**. The selected
 subsection is not stored in localStorage.
@@ -88,16 +96,35 @@ Built-in skills is a read-only management surface.
   source snapshots.
 - Table columns: skill, stage, bound teammates, source status, details.
 
-Built-in source mutations remain reachable only through **Source sync**, which preserves
-the existing reviewed publish workflow.
+Built-in source mutations are not exposed from the Skill Library.
+
+The current Ling built-in skills come from `gstack-default`, but the default list does
+not add a separate pack banner above the registry. Pack and source identity remain
+available in skill details for audit. The archived legacy `gstack-source-sync` umbrella
+record is not an end-user skill and stays hidden.
+
+### AI Evolution
+
+AI evolution is a governed review surface, not an automatically active skill list.
+
+- It displays open skill candidates, reusable procedure clusters, and playbook proposals
+  produced by the existing observation pipeline.
+- Creating a draft, approving, rejecting, or routing an item continues to use the existing
+  review APIs and safety gates.
+- An item appears in My skills only after the existing review and publish flow creates a
+  registry entry.
+- Skill health diagnostics and official source-update controls are not rendered in this
+  view.
 
 ## Interaction Rules
 
 - Search is scoped to the active ownership view.
+- Default search covers skill name, description, required tools, and provider
+  capabilities. Hidden provenance such as pack id, source paths, upstream paths, and
+  checksums must not make every skill match a source name such as `gstack`.
 - Switching ownership views clears a selection that is not present in the target view.
 - The inspector must never continue showing a skill from the previous ownership view.
 - Import and new-draft actions appear only in My skills.
-- Refresh remains available in every subsection.
 - Archiving a user skill removes it from the current registry list; archived and disabled
   records are not returned by the existing `/skills` endpoint.
 - Empty My skills offers Import skill and New draft actions.
@@ -123,12 +150,19 @@ approval bypasses, or external-send authority.
 
 - Skill Library opens on My skills.
 - No built-in entry appears in My skills.
-- Every non-built-in source appears in My skills.
+- Every user-managed non-built-in source appears in My skills.
 - Archived and disabled user skills are not presented as dead filters because the current
   registry endpoint does not return them.
 - Built-in skills has no archive, disable, edit, copy, source archive, or rollback action.
-- Review queue and Source sync remain reachable and behaviorally unchanged.
-- Registry list and inspector stay within the existing fixed-height internal scroll area.
+- Skill Library exposes My skills, AI evolution, and Built-in skills.
+- AI evolution restores the governed candidate-review flow without restoring official
+  skill updates or skill health diagnostics.
+- Built-in skills contains the 55 bundled `gstack-default` entries without a redundant
+  pack banner; source identity remains in details.
+- `source=gstack` entries never appear in My skills.
+- The legacy single `gstack` source umbrella does not appear in either list.
+- Registry list and inspector follow the natural-height and viewport maximum defined by
+  `skill-library-height-and-ai-evolution-lifecycle.md`.
 - Desktop layouts at 1440x960 and 1280x800 have no horizontal page overflow.
 
 ## Non-Goals
@@ -136,12 +170,17 @@ approval bypasses, or external-send authority.
 - Per-workspace enable/disable overrides for built-in skills.
 - Cloning built-in skills into user-owned skills.
 - New marketplace, package manager, or remote discovery behavior.
-- API, contract, schema, or runtime changes.
+- Runtime semantics outside the candidate publication lifecycle.
 - Settings navigation changes outside the Skill Library page.
 
 ## Assumptions
 
-- All non-built-in sources are user-owned for product presentation, including gstack
-  source-sync imports.
+- gstack is a Ling-managed built-in source, not a user-owned import source.
 - Built-in management is intentionally read-only.
 - Desktop Web is the acceptance target for this pass.
+
+## Follow-Up Contract
+
+The AI evolution ownership, publication lifecycle, migration, and shared height behavior
+are superseded by `skill-library-height-and-ai-evolution-lifecycle.md`. This document
+continues to own the My skills and Built-in skills separation rules.

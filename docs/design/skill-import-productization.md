@@ -7,6 +7,7 @@
 - [Ling Skill Import V1](ling-skill-import-v1.md)
 - [Skill Library Ownership Separation](skill-library-ownership-separation.md)
 - [Skill Context Optimization](skill-context-optimization.md)
+- [Skill Editing And Revision](skill-editing-and-revision.md)
 
 ## Summary
 
@@ -23,6 +24,10 @@ choose one skill file
   -> Ling checks the file without writing durable data
   -> valid files are saved; blocked files show actionable problems
 ```
+
+Import remains intentionally separate from editing. After publication, eligible skills
+can be changed through the structured skill editor. The editor updates Ling's normalized
+registry copy and does not reopen or overwrite the browser-selected file.
 
 ## Input Contract
 

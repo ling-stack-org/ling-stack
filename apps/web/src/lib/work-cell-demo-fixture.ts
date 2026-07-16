@@ -1,4 +1,4 @@
-import type { ChannelMessage, ChannelWorkflow, ChannelWorkflowStep, ExecutionAction, MemoryObject, PreviewContentKind, PreviewContentResponse, RunArtifact, RunSession, UsedMemoryEvent } from "../types.js";
+import type { ChannelMessage, ChannelWorkflow, ChannelWorkflowStep, ExecutionAction, MemoryObject, PreviewContentKind, PreviewContentResponse, RunArtifact, RunSession, TerminalReportDto, UsedMemoryEvent, WorkflowWorkspaceChangesResponse } from "../types.js";
 import type { PreviewRequest } from "./previews.js";
 
 export const channelWorkCellDemoStorageKey = "ling-stack.workCellDemo";
@@ -12,9 +12,11 @@ export interface ChannelWorkCellDemoFixture {
   readonly artifactsByRun: Readonly<Record<string, readonly RunArtifact[]>>;
   readonly memoryObjects: readonly MemoryObject[];
   readonly usedMemoryEvents: readonly UsedMemoryEvent[];
+  readonly terminalReports: readonly TerminalReportDto[];
 }
 
 const channelWorkCellDemoArtifactPrefix = "demo_work_cell_";
+const channelWorkCellDemoRecoveryStateByWorkflowId = new Map<string, "applied" | "undone">();
 
 export function channelWorkCellDemoFixtureEnabled(): boolean {
   if (!import.meta.env.DEV || typeof window === "undefined") {
@@ -25,6 +27,58 @@ export function channelWorkCellDemoFixtureEnabled(): boolean {
     return window.localStorage.getItem(channelWorkCellDemoStorageKey) === "true" ||
       params.get("workCellDemo") === "1" ||
       params.get("lingWorkCellDemo") === "true";
+  } catch {
+    return false;
+  }
+}
+
+export function channelWorkCellDemoWorkflowRecovery(input: {
+  readonly cwd: string;
+  readonly workflowId: string;
+  readonly action?: "undo" | "reapply";
+}): WorkflowWorkspaceChangesResponse | undefined {
+  if (!channelWorkCellInteractiveDemoEnabled() || !input.workflowId.startsWith(channelWorkCellDemoArtifactPrefix)) {
+    return undefined;
+  }
+  if (input.action) {
+    channelWorkCellDemoRecoveryStateByWorkflowId.set(input.workflowId, input.action === "undo" ? "undone" : "applied");
+  }
+  const state = channelWorkCellDemoRecoveryStateByWorkflowId.get(input.workflowId) ?? "applied";
+  const idPrefix = input.workflowId.endsWith("_workflow")
+    ? input.workflowId.slice(0, -"_workflow".length)
+    : input.workflowId;
+  return {
+    cwd: input.cwd,
+    workflowId: input.workflowId,
+    runIds: [
+      `${idPrefix}_run_engineer`,
+      `${idPrefix}_run_qa`,
+      `${idPrefix}_run_engineer_followup`,
+    ],
+    state,
+    canUndo: state === "applied",
+    canReapply: state === "undone",
+    files: [],
+    summary: {
+      fileCount: 5,
+      addCount: 0,
+      updateCount: 5,
+      deleteCount: 0,
+      moveCount: 0,
+      addedLines: 15,
+      removedLines: 4,
+    },
+    updatedAt: new Date().toISOString(),
+  };
+}
+
+function channelWorkCellInteractiveDemoEnabled(): boolean {
+  if (!import.meta.env.DEV || typeof window === "undefined") {
+    return false;
+  }
+  try {
+    const params = new URLSearchParams(window.location.search);
+    return params.get("workCellDemo") === "1" || params.get("lingWorkCellDemo") === "true";
   } catch {
     return false;
   }
@@ -41,8 +95,10 @@ export function createChannelWorkCellDemoFixture(input: {
 
   const workspaceId = "workspace_default";
   const idPrefix = `${channelWorkCellDemoArtifactPrefix}${safeId(channelId)}`;
+  const discussionMessageId = `${idPrefix}_message_discussion`;
   const sourceMessageId = `${idPrefix}_message_request`;
-  const terminalMessageId = `${idPrefix}_message_done`;
+  const terminalReportId = `${idPrefix}_terminal_report`;
+  const terminalMessageId = `message_${terminalReportId}`;
   const workflowId = `${idPrefix}_workflow`;
   const runArchitectId = `${idPrefix}_run_architect`;
   const runDesignerId = `${idPrefix}_run_designer`;
@@ -71,6 +127,59 @@ export function createChannelWorkCellDemoFixture(input: {
   };
 
   const channelMessages: ChannelMessage[] = [
+    {
+      id: discussionMessageId,
+      workspaceId,
+      channelId,
+      kind: "message",
+      intent: "discuss",
+      authorType: "local-user",
+      authorId: "local-user",
+      body: "讨论一下：多 Agent 讨论问题时，应该保留每位专家的独立观点，还是只显示 Ling Agent 的统一结论？",
+      mentions: [],
+      attachmentIds: [],
+      linkPreviewIds: [],
+      fileRefs: [],
+      status: "ready",
+      createdAt: "2026-07-10T09:10:00.000Z",
+      updatedAt: "2026-07-10T09:10:00.000Z",
+    },
+    demoDiscussionReply({
+      id: `${idPrefix}_message_discussion_architect`,
+      workspaceId,
+      channelId,
+      threadId: discussionMessageId,
+      authorId: "teammate_builtin_architect",
+      body: "从信息结构看，讨论阶段应该保留各自观点。不同专家的判断依据可能冲突，这些差异本身就是讨论价值；只有进入执行决策时，才需要由 Ling Agent 收口。",
+      createdAt: "2026-07-10T09:10:08.000Z",
+    }),
+    demoDiscussionReply({
+      id: `${idPrefix}_message_discussion_designer`,
+      workspaceId,
+      channelId,
+      threadId: discussionMessageId,
+      authorId: "teammate_builtin_designer",
+      body: "界面上直接使用普通会话行最清晰：头像、名字、观点正文依次出现，不增加状态卡片。用户可以快速判断是谁提出了什么意见。",
+      createdAt: "2026-07-10T09:10:16.000Z",
+    }),
+    demoDiscussionReply({
+      id: `${idPrefix}_message_discussion_engineer`,
+      workspaceId,
+      channelId,
+      threadId: discussionMessageId,
+      authorId: "teammate_builtin_engineer",
+      body: "实现上讨论回复和普通频道消息完全一致，不创建 workflow、run 或操作记录。只有用户确认要执行后，才切换到下面这种 work-cell 展示。",
+      createdAt: "2026-07-10T09:10:24.000Z",
+    }),
+    demoDiscussionReply({
+      id: `${idPrefix}_message_discussion_qa`,
+      workspaceId,
+      channelId,
+      threadId: discussionMessageId,
+      authorId: "teammate_builtin_qa",
+      body: "我建议保留独立回复，同时限制可见参与人数。需要验证的重点是：不能把未参与的 Agent 算进去，也不能让讨论状态与执行完成状态混在一起。",
+      createdAt: "2026-07-10T09:10:32.000Z",
+    }),
     {
       id: sourceMessageId,
       workspaceId,
@@ -295,11 +404,101 @@ export function createChannelWorkCellDemoFixture(input: {
     sizeBytes: 386,
     createdAt: "2026-07-10T09:14:16.000Z",
   };
+  const terminalReport: TerminalReportDto = {
+    schemaVersion: 1,
+    id: terminalReportId,
+    workspaceId,
+    channelId,
+    threadId: sourceMessageId,
+    sourceMessageId,
+    source: { kind: "workflow", id: workflowId },
+    status: "committed",
+    language: "zh-CN",
+    outcome: {
+      status: "succeeded",
+      title: "多 Agent 操作记录已接入频道会话",
+      summary: "频道现在会保留 Architect、Designer、Engineer 和 QA 的真实操作过程，并在完成后展示结构化总结。",
+      corrections: [],
+      sourceRefs: [{ kind: "workflow", id: workflowId, label: workflow.title, visibility: "conversation" }],
+    },
+    changes: [
+      {
+        id: `${terminalReportId}_change_ui`,
+        kind: "behavior",
+        title: "重构操作记录展示",
+        summary: "过程记录逐行流式展示，完成总结位于过程 shell 外部，artifact 位于总结下方。",
+        paths: ["apps/web/src/shared/conversation/blocks/ConversationWorkCell.tsx", "apps/web/src/styles/components.css"],
+        addedLines: 142,
+        deletedLines: 18,
+        sourceRefs: [{ kind: "artifact", id: artifactEngineerDiff.id, label: artifactEngineerDiff.title, visibility: "conversation" }],
+      },
+      {
+        id: `${terminalReportId}_change_docs`,
+        kind: "documentation",
+        title: "记录会话组件规则",
+        summary: "补充完成态、引用和第二轮 Agent 操作的展示约束。",
+        paths: ["docs/design/conversation-work-cell-operation-records.md"],
+        addedLines: 36,
+        deletedLines: 0,
+        sourceRefs: [{ kind: "artifact", id: artifactDoc.id, label: artifactDoc.title, visibility: "conversation" }],
+      },
+    ],
+    verification: [
+      {
+        id: `${terminalReportId}_check_typecheck`,
+        title: "Web typecheck",
+        status: "passed",
+        command: "corepack pnpm --filter @ling-stack/web typecheck",
+        summary: "会话投影与组件类型检查通过。",
+        sourceRefs: [],
+      },
+      {
+        id: `${terminalReportId}_check_e2e`,
+        title: "频道 work-cell E2E",
+        status: "passed",
+        command: "playwright test apps/web/e2e/channel.spec.ts -g work-cell",
+        summary: "完成态、逐项展开和 artifact 预览通过。",
+        sourceRefs: [{ kind: "artifact", id: artifactQaLog.id, label: artifactQaLog.title, visibility: "folded_evidence" }],
+      },
+    ],
+    participants: [
+      { agentId: "architect", displayName: "Architect", status: "completed", contribution: "确认 workflow、run、action 和 artifact 的会话投影边界。", sourceRefs: [] },
+      { agentId: "designer", displayName: "Designer", status: "completed", contribution: "收紧无气泡、低噪音和悬停反馈的视觉规则。", sourceRefs: [] },
+      { agentId: "engineer", displayName: "Engineer", status: "completed", contribution: "完成组件、样式和第二轮文档收口。", sourceRefs: [] },
+      { agentId: "qa", displayName: "QA", status: "completed", contribution: "验证频道真实路径、完成态折叠和 artifact 预览。", sourceRefs: [] },
+    ],
+    artifacts: [
+      {
+        id: artifactEngineerDiff.id,
+        kind: "diff",
+        title: artifactEngineerDiff.title ?? "ConversationWorkCell.tsx",
+        path: artifactEngineerDiff.path,
+        addedLines: 142,
+        deletedLines: 18,
+        sourceRefs: [{ kind: "file", id: artifactEngineerDiff.path, label: artifactEngineerDiff.title, visibility: "conversation" }],
+      },
+      {
+        id: artifactDoc.id,
+        kind: "document",
+        title: artifactDoc.title ?? "conversation-work-cell-operation-records.md",
+        path: artifactDoc.path,
+        sourceRefs: [{ kind: "file", id: artifactDoc.path, label: artifactDoc.title, visibility: "conversation" }],
+      },
+    ],
+    risks: [],
+    references: [{ kind: "memory", id: memoryObjects[0].id, label: memoryObjects[0].title, visibility: "conversation" }],
+    evidenceSnapshotId: `${terminalReportId}_snapshot`,
+    evidenceFingerprint: `${terminalReportId}_fingerprint`,
+    synthesis: { mode: "model", promptVersion: "terminal-report-v1", attemptCount: 1, validationCodes: [] },
+    createdAt: completedAt,
+    committedAt: "2026-07-10T09:14:19.000Z",
+  };
 
   return {
     channelMessages,
     memoryObjects,
     usedMemoryEvents,
+    terminalReports: [terminalReport],
     workflows: [workflow],
     workflowSteps,
     runs,
@@ -409,6 +608,39 @@ export function createChannelWorkCellDemoFixture(input: {
         createdAt: "2026-07-10T09:14:06.000Z",
         completedAt: "2026-07-10T09:14:14.000Z",
       }),
+      demoAction({
+        id: `${idPrefix}_action_engineer_followup_typecheck`,
+        runId: runEngineerFollowupId,
+        workspaceId,
+        actionType: "bash",
+        title: "复查会话类型",
+        summary: "Engineer 复查统一会话投影类型。",
+        targetRefs: [{ type: "command", label: "corepack pnpm --filter @ling-stack/web typecheck" }],
+        createdAt: "2026-07-10T09:14:14.100Z",
+        completedAt: "2026-07-10T09:14:15.000Z",
+      }),
+      demoAction({
+        id: `${idPrefix}_action_engineer_followup_i18n`,
+        runId: runEngineerFollowupId,
+        workspaceId,
+        actionType: "bash",
+        title: "检查会话文案",
+        summary: "Engineer 检查命令批次文案。",
+        targetRefs: [{ type: "command", label: "corepack pnpm --filter @ling-stack/web check:i18n" }],
+        createdAt: "2026-07-10T09:14:15.100Z",
+        completedAt: "2026-07-10T09:14:16.000Z",
+      }),
+      demoAction({
+        id: `${idPrefix}_action_engineer_followup_diff_check`,
+        runId: runEngineerFollowupId,
+        workspaceId,
+        actionType: "bash",
+        title: "检查补丁格式",
+        summary: "Engineer 检查最终补丁格式。",
+        targetRefs: [{ type: "command", label: "git diff --check" }],
+        createdAt: "2026-07-10T09:14:16.100Z",
+        completedAt: "2026-07-10T09:14:17.000Z",
+      }),
     ],
     artifactsByRun: {
       [runEngineerId]: [artifactEngineerDiff, artifactEngineerCss],
@@ -517,13 +749,18 @@ function demoArtifactPreviewText(artifact: RunArtifact): string {
       "diff --git a/apps/web/src/shared/conversation/blocks/ConversationWorkCell.tsx b/apps/web/src/shared/conversation/blocks/ConversationWorkCell.tsx",
       "--- a/apps/web/src/shared/conversation/blocks/ConversationWorkCell.tsx",
       "+++ b/apps/web/src/shared/conversation/blocks/ConversationWorkCell.tsx",
-      "@@ -120,1 +120,5 @@",
+      "@@ -117,7 +117,10 @@",
+      " const active = isActiveOperation(model.status);",
+      " const operationRows = visibleOperationRows(model);",
+      " const visibleArtifactItems = terminalSummaryRendered ? [] : model.artifactStripItems;",
       "+ const shellStatusLabel = operationShellStatusLabel(model, active, t);",
-      "+ const shellSummary = operationShellSummary(model, evidenceSummary);",
       "+ <div className=\"conversation-operation-shell completed tone-success collapsed\">",
       "+ <ActiveTurnItemStream rows={operationRows} />",
       "- <OperationBubble status={model.status} active={active}>",
       "+ <ConversationArtifactStrip items={visibleArtifactItems} cwd={cwd} onPreview={setPreviewItem} />",
+      " return (",
+      "   <section className=\"conversation-work-cell\">",
+      "     {operationBody}",
       "",
     ].join("\n");
   }
@@ -532,11 +769,17 @@ function demoArtifactPreviewText(artifact: RunArtifact): string {
       "diff --git a/apps/web/src/styles/components.css b/apps/web/src/styles/components.css",
       "--- a/apps/web/src/styles/components.css",
       "+++ b/apps/web/src/styles/components.css",
-      "@@ -4020,0 +4021,4 @@",
+      "@@ -4018,6 +4018,10 @@",
+      "   transition: color 120ms ease;",
+      " }",
+      " ",
       "+.conversation-work-cell-row { color: var(--text-muted); }",
       "+.conversation-work-cell-row:hover,",
       "+.conversation-work-cell-row:focus-within { color: var(--text-primary); }",
       "+.conversation-work-cell-shell-detail code { white-space: pre-wrap; }",
+      " ",
+      " .conversation-work-cell-row-copy {",
+      "   min-width: 0;",
       "",
     ].join("\n");
   }
@@ -553,10 +796,16 @@ function demoArtifactPreviewText(artifact: RunArtifact): string {
       "diff --git a/apps/web/e2e/channel.spec.ts b/apps/web/e2e/channel.spec.ts",
       "--- a/apps/web/e2e/channel.spec.ts",
       "+++ b/apps/web/e2e/channel.spec.ts",
-      "@@ -7930,2 +7930,3 @@",
+      "@@ -7927,7 +7927,8 @@",
+      "   const changedGroup = transcriptArtifacts.locator(\".conversation-work-cell-change-group\");",
+      "   await expect(changedGroup).toBeVisible();",
+      " ",
       "- await expect(previewDrawer).toBeVisible();",
       "+ await changedSummary.click();",
       "+ await expect(changedFiles).toHaveCount(3);",
+      " ",
+      "   const hoverPreview = page.locator(\".conversation-artifact-hover-preview\");",
+      "   await page.mouse.move(0, 0);",
       "",
     ].join("\n");
   }
@@ -565,12 +814,18 @@ function demoArtifactPreviewText(artifact: RunArtifact): string {
       "diff --git a/docs/design/conversation-work-cell-operation-records.md b/docs/design/conversation-work-cell-operation-records.md",
       "--- a/docs/design/conversation-work-cell-operation-records.md",
       "+++ b/docs/design/conversation-work-cell-operation-records.md",
-      "@@ -48,3 +48,4 @@",
+      "@@ -45,8 +45,9 @@",
+      " Each disclosure controls only itself:",
+      " ",
+      " - the completed shell expands or collapses the work cell body;",
       "-展开后逐行展示 agent 操作记录。",
       "-编辑行只显示文件名。",
       "+展开后逐行展示 agent 操作记录，并保持动作顺序。",
       "+编辑行显示真实的新增/删除数量。",
       "+点击编辑行展示该次修改的局部 diff。",
+      " - clicking an operation row must not collapse sibling rows.",
+      " ",
+      " ## Visual Rules",
       "",
     ].join("\n");
   }
@@ -591,9 +846,15 @@ function demoArtifactPreviewText(artifact: RunArtifact): string {
       "diff --git a/apps/web/src/i18n/locales/zh-CN.ts b/apps/web/src/i18n/locales/zh-CN.ts",
       "--- a/apps/web/src/i18n/locales/zh-CN.ts",
       "+++ b/apps/web/src/i18n/locales/zh-CN.ts",
-      "@@ -1570,0 +1571,2 @@",
+      "@@ -1568,6 +1568,8 @@",
+      "   \"Preview\": \"预览\",",
+      "   \"Preview unavailable\": \"无法预览\",",
+      " ",
       "+ \"Show {count} more files\": \"再显示 {count} 个文件\"",
       "+ \"Show fewer files\": \"收起部分文件\"",
+      " ",
+      "   \"Show details\": \"显示详情\",",
+      "   \"Hide details\": \"隐藏详情\",",
       "",
     ].join("\n");
   }
@@ -614,6 +875,10 @@ function demoAction(input: {
   readonly risk?: ExecutionAction["risk"];
   readonly resultArtifactIds?: readonly string[];
 }): ExecutionAction {
+  const commandText = input.actionType === "bash"
+    ? input.targetRefs.find((ref) => ref.type === "command")?.label
+    : undefined;
+  const durationMs = Math.max(0, Date.parse(input.completedAt) - Date.parse(input.createdAt));
   return {
     id: input.id,
     workspaceId: input.workspaceId,
@@ -627,10 +892,65 @@ function demoAction(input: {
     targetRefs: input.targetRefs,
     previewArtifactIds: [],
     resultArtifactIds: input.resultArtifactIds ?? [],
+    ...(commandText ? {
+      toolCallId: `tool_${input.id}`,
+      commandEvidence: {
+        command: commandText,
+        cwd: "/repo",
+        startedAt: input.createdAt,
+        completedAt: input.completedAt,
+        durationMs,
+        exitCode: 0,
+        timedOut: false,
+        cancelled: false,
+        latestEventSeq: 3,
+        outputTail: [{
+          eventSeq: 2,
+          stream: "stdout",
+          text: "Completed successfully.\n",
+          byteCount: 24,
+          redacted: false,
+          ts: input.completedAt,
+        }],
+        outputByteCount: 24,
+        outputLineCount: 1,
+        outputTruncated: false,
+      },
+    } : {}),
     createdAt: input.createdAt,
+    updatedAt: input.completedAt,
     resolvedAt: input.createdAt,
     executedAt: input.createdAt,
     completedAt: input.completedAt,
+  };
+}
+
+function demoDiscussionReply(input: {
+  readonly id: string;
+  readonly workspaceId: string;
+  readonly channelId: string;
+  readonly threadId: string;
+  readonly authorId: string;
+  readonly body: string;
+  readonly createdAt: string;
+}): ChannelMessage {
+  return {
+    id: input.id,
+    workspaceId: input.workspaceId,
+    channelId: input.channelId,
+    threadId: input.threadId,
+    kind: "ai_reply",
+    intent: "discuss",
+    authorType: "ai-teammate",
+    authorId: input.authorId,
+    body: input.body,
+    mentions: [],
+    attachmentIds: [],
+    linkPreviewIds: [],
+    fileRefs: [],
+    status: "ready",
+    createdAt: input.createdAt,
+    updatedAt: input.createdAt,
   };
 }
 

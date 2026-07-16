@@ -12,12 +12,14 @@ export function useConversationBlockView(input: {
   readonly blockId: string;
   readonly revisionKey: string;
   readonly defaultExpanded: boolean;
+  readonly preserveTouchedStateOnRevision?: boolean;
 }): ConversationBlockViewState {
   const store = useOptionalConversationViewStore();
   const [localState, setLocalState] = useState(() => ({
     blockId: input.blockId,
     revisionKey: input.revisionKey,
     expanded: input.defaultExpanded,
+    touched: false,
   }));
   const subscribe = useCallback((listener: () => void) => store?.subscribe(listener) ?? (() => undefined), [store]);
   const getSnapshot = useCallback(
@@ -25,8 +27,10 @@ export function useConversationBlockView(input: {
       ? selectDisclosureExpanded(store.getSnapshot(), "block", input.blockId, input.defaultExpanded)
       : localState.blockId === input.blockId && localState.revisionKey === input.revisionKey
         ? localState.expanded
+        : input.preserveTouchedStateOnRevision && localState.blockId === input.blockId && localState.touched
+          ? localState.expanded
         : input.defaultExpanded,
-    [input.blockId, input.defaultExpanded, input.revisionKey, localState.blockId, localState.expanded, localState.revisionKey, store],
+    [input.blockId, input.defaultExpanded, input.preserveTouchedStateOnRevision, input.revisionKey, localState.blockId, localState.expanded, localState.revisionKey, localState.touched, store],
   );
   const expanded = useSyncExternalStore(
     subscribe,
@@ -39,7 +43,16 @@ export function useConversationBlockView(input: {
       setLocalState((current) => (
         current.blockId === input.blockId && current.revisionKey === input.revisionKey
           ? current
-          : { blockId: input.blockId, revisionKey: input.revisionKey, expanded: input.defaultExpanded }
+          : {
+              blockId: input.blockId,
+              revisionKey: input.revisionKey,
+              expanded: input.preserveTouchedStateOnRevision && current.blockId === input.blockId && current.touched
+                ? current.expanded
+                : input.defaultExpanded,
+              touched: input.preserveTouchedStateOnRevision && current.blockId === input.blockId
+                ? current.touched
+                : false,
+            }
       ));
       return;
     }
@@ -48,8 +61,9 @@ export function useConversationBlockView(input: {
       kind: "block",
       revisionKey: input.revisionKey,
       defaultExpanded: input.defaultExpanded,
+      preserveTouchedStateOnRevision: input.preserveTouchedStateOnRevision,
     });
-  }, [input.blockId, input.defaultExpanded, input.revisionKey, store]);
+  }, [input.blockId, input.defaultExpanded, input.preserveTouchedStateOnRevision, input.revisionKey, store]);
 
   const setExpanded = useCallback((nextExpanded: boolean) => {
     if (store) {
@@ -60,6 +74,7 @@ export function useConversationBlockView(input: {
       blockId: input.blockId,
       revisionKey: input.revisionKey,
       expanded: nextExpanded,
+      touched: true,
     });
   }, [input.blockId, input.revisionKey, store]);
 
@@ -72,6 +87,7 @@ export function useConversationBlockView(input: {
       blockId: input.blockId,
       revisionKey: input.revisionKey,
       expanded: !current.expanded,
+      touched: true,
     }));
   }, [input.blockId, input.revisionKey, store]);
 

@@ -197,8 +197,18 @@ const SKILL_COMPILED_RUNTIME_VIEWS_MIGRATION_VERSION = 92;
 const SKILL_COMPILED_RUNTIME_VIEWS_MIGRATION_NAME = "create_skill_compiled_runtime_views";
 const SKILL_REGRESSION_RUNS_MIGRATION_VERSION = 93;
 const SKILL_REGRESSION_RUNS_MIGRATION_NAME = "create_skill_regression_runs";
-const REMOVE_SKILL_WORKFLOW_PHASE_MIGRATION_VERSION = 94;
+const LING_TERMINAL_REPORTS_MIGRATION_VERSION = 94;
+const LING_TERMINAL_REPORTS_MIGRATION_NAME = "create_ling_terminal_reports";
+const CONVERSATION_REVISIONS_MIGRATION_VERSION = 95;
+const CONVERSATION_REVISIONS_MIGRATION_NAME = "create_conversation_revisions";
+// Versions 96-99 were used by local feature branches. Keep skill migrations above
+// that range so existing developer workspaces rerun these idempotent repairs.
+const REMOVE_SKILL_WORKFLOW_PHASE_MIGRATION_VERSION = 100;
 const REMOVE_SKILL_WORKFLOW_PHASE_MIGRATION_NAME = "remove_skill_workflow_phase_metadata";
+const MANAGED_OFFICIAL_SKILL_SOURCE_MIGRATION_VERSION = 101;
+const MANAGED_OFFICIAL_SKILL_SOURCE_MIGRATION_NAME = "create_managed_official_skill_source";
+const AI_EVOLUTION_SKILL_LIFECYCLE_MIGRATION_VERSION = 102;
+const AI_EVOLUTION_SKILL_LIFECYCLE_MIGRATION_NAME = "repair_ai_evolution_skill_lifecycle";
 
 export function configureSqliteRunStoreDatabase(database: DatabaseSync): void {
   database.exec(`
@@ -4468,7 +4478,242 @@ export function applySqliteRunStoreMigrations(context: SqliteRunStoreMigrationCo
         context.recordMigration(SKILL_REGRESSION_RUNS_MIGRATION_VERSION, SKILL_REGRESSION_RUNS_MIGRATION_NAME);
       }
     }
+    const hasLingTerminalReportsMigration = context.hasMigration(LING_TERMINAL_REPORTS_MIGRATION_VERSION);
+    if (
+      !hasLingTerminalReportsMigration ||
+      !context.hasTable("ling_terminal_reports")
+    ) {
+      database.exec(`
+        CREATE TABLE IF NOT EXISTS ling_terminal_reports (
+          id TEXT PRIMARY KEY,
+          workspace_id TEXT NOT NULL,
+          channel_id TEXT,
+          thread_id TEXT,
+          turn_id TEXT,
+          source_message_id TEXT,
+          source_kind TEXT NOT NULL,
+          source_id TEXT NOT NULL,
+          generation INTEGER NOT NULL,
+          status TEXT NOT NULL,
+          outcome_status TEXT,
+          language TEXT NOT NULL,
+          evidence_snapshot_json TEXT NOT NULL,
+          evidence_fingerprint TEXT NOT NULL,
+          report_json TEXT,
+          synthesis_mode TEXT,
+          prompt_version TEXT,
+          attempt_count INTEGER NOT NULL DEFAULT 0,
+          validation_codes_json TEXT NOT NULL DEFAULT '[]',
+          published_message_id TEXT,
+          error_code TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          committed_at TEXT,
+          UNIQUE (workspace_id, source_kind, source_id, generation),
+          FOREIGN KEY(workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_ling_terminal_reports_channel_thread
+        ON ling_terminal_reports(workspace_id, channel_id, thread_id, created_at);
+
+        CREATE INDEX IF NOT EXISTS idx_ling_terminal_reports_fingerprint
+        ON ling_terminal_reports(workspace_id, evidence_fingerprint);
+      `);
+      if (!hasLingTerminalReportsMigration) {
+        context.recordMigration(LING_TERMINAL_REPORTS_MIGRATION_VERSION, LING_TERMINAL_REPORTS_MIGRATION_NAME);
+      }
+    }
     const hasTaskAttachmentIdsMigration = context.hasMigration(TASK_ATTACHMENT_IDS_MIGRATION_VERSION);
+    const hasConversationRevisionsMigration = context.hasMigration(CONVERSATION_REVISIONS_MIGRATION_VERSION);
+    if (
+      !hasConversationRevisionsMigration ||
+      !context.hasTable("conversation_message_revisions") ||
+      !context.hasTable("conversation_turn_supersessions")
+    ) {
+      database.exec(`
+        CREATE TABLE IF NOT EXISTS conversation_message_revisions (
+          id TEXT PRIMARY KEY,
+          workspace_id TEXT NOT NULL,
+          surface_kind TEXT NOT NULL,
+          owner_id TEXT NOT NULL,
+          lane_id TEXT NOT NULL,
+          message_id TEXT NOT NULL,
+          revision INTEGER NOT NULL,
+          body TEXT NOT NULL,
+          mentions_json TEXT NOT NULL,
+          attachment_ids_json TEXT NOT NULL,
+          link_preview_ids_json TEXT NOT NULL,
+          file_refs_json TEXT NOT NULL,
+          supersedes_revision_id TEXT,
+          source_turn_id TEXT,
+          source_run_id TEXT,
+          created_by TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          UNIQUE(workspace_id, surface_kind, message_id, revision),
+          FOREIGN KEY(workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE,
+          FOREIGN KEY(supersedes_revision_id) REFERENCES conversation_message_revisions(id) ON DELETE SET NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_conversation_message_revisions_owner
+        ON conversation_message_revisions(workspace_id, surface_kind, owner_id, lane_id, created_at);
+
+        CREATE TABLE IF NOT EXISTS conversation_turn_supersessions (
+          id TEXT PRIMARY KEY,
+          workspace_id TEXT NOT NULL,
+          surface_kind TEXT NOT NULL,
+          owner_id TEXT NOT NULL,
+          lane_id TEXT NOT NULL,
+          message_id TEXT NOT NULL,
+          superseded_turn_id TEXT,
+          superseded_run_ids_json TEXT NOT NULL,
+          superseded_response_message_ids_json TEXT NOT NULL,
+          replacement_revision_id TEXT NOT NULL,
+          replacement_turn_id TEXT,
+          reason TEXT NOT NULL,
+          replacement_status TEXT NOT NULL,
+          failure_reason TEXT,
+          idempotency_key TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          UNIQUE(workspace_id, idempotency_key),
+          FOREIGN KEY(workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE,
+          FOREIGN KEY(replacement_revision_id) REFERENCES conversation_message_revisions(id) ON DELETE RESTRICT
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_conversation_turn_supersessions_owner
+        ON conversation_turn_supersessions(workspace_id, surface_kind, owner_id, lane_id, created_at);
+
+        CREATE INDEX IF NOT EXISTS idx_conversation_turn_supersessions_pending
+        ON conversation_turn_supersessions(workspace_id, replacement_status, updated_at);
+      `);
+      if (!hasConversationRevisionsMigration) {
+        context.recordMigration(CONVERSATION_REVISIONS_MIGRATION_VERSION, CONVERSATION_REVISIONS_MIGRATION_NAME);
+      }
+    }
+    if (!context.hasMigration(REMOVE_SKILL_WORKFLOW_PHASE_MIGRATION_VERSION)) {
+      removeLegacySkillWorkflowPhaseMetadata(context);
+      context.recordMigration(REMOVE_SKILL_WORKFLOW_PHASE_MIGRATION_VERSION, REMOVE_SKILL_WORKFLOW_PHASE_MIGRATION_NAME);
+    }
+
+    const hasManagedOfficialSkillSourceMigration = context.hasMigration(MANAGED_OFFICIAL_SKILL_SOURCE_MIGRATION_VERSION);
+    if (!hasManagedOfficialSkillSourceMigration || !context.hasTable("official_skill_source_subscriptions")) {
+      database.exec(`
+        CREATE TABLE IF NOT EXISTS official_skill_source_subscriptions (
+          workspace_id TEXT NOT NULL,
+          source_id TEXT NOT NULL,
+          origin_url TEXT NOT NULL,
+          ref TEXT NOT NULL,
+          revision TEXT,
+          version TEXT,
+          last_synced_at TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          PRIMARY KEY(workspace_id, source_id),
+          FOREIGN KEY(workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE
+        );
+
+        DROP TABLE IF EXISTS gstack_source_connections;
+      `);
+      if (!hasManagedOfficialSkillSourceMigration) {
+        context.recordMigration(MANAGED_OFFICIAL_SKILL_SOURCE_MIGRATION_VERSION, MANAGED_OFFICIAL_SKILL_SOURCE_MIGRATION_NAME);
+      }
+    }
+
+    if (!context.hasMigration(AI_EVOLUTION_SKILL_LIFECYCLE_MIGRATION_VERSION)) {
+      database.exec(`
+        INSERT OR IGNORE INTO skill_packs (
+          id, workspace_id, source, name, version, description, source_path,
+          checksum, review_status, created_at, updated_at
+        )
+        SELECT
+          'ling-generated', candidate.workspace_id, 'custom', 'AI evolution', NULL,
+          'Skills created through the governed AI evolution review flow.', NULL,
+          NULL, 'published', candidate.created_at, candidate.updated_at
+        FROM skill_candidates candidate
+        WHERE EXISTS (
+          SELECT 1
+          FROM skill_definitions skill
+          WHERE skill.workspace_id = candidate.workspace_id
+            AND (
+              skill.source_path = candidate.id
+              OR skill.source_path = 'skill-candidates/' || candidate.id
+            )
+        )
+        ORDER BY candidate.created_at ASC
+        LIMIT 1;
+
+        UPDATE skill_definitions
+        SET
+          pack_id = 'ling-generated',
+          source = 'custom',
+          source_path = 'skill-candidates/' || (
+            SELECT candidate.id
+            FROM skill_candidates candidate
+            WHERE candidate.workspace_id = skill_definitions.workspace_id
+              AND (
+                skill_definitions.source_path = candidate.id
+                OR skill_definitions.source_path = 'skill-candidates/' || candidate.id
+              )
+            LIMIT 1
+          )
+        WHERE EXISTS (
+          SELECT 1
+          FROM skill_candidates candidate
+          WHERE candidate.workspace_id = skill_definitions.workspace_id
+            AND (
+              skill_definitions.source_path = candidate.id
+              OR skill_definitions.source_path = 'skill-candidates/' || candidate.id
+            )
+        );
+
+        UPDATE skill_candidates
+        SET
+          status = 'published',
+          updated_at = COALESCE((
+            SELECT MAX(skill.updated_at)
+            FROM skill_definitions skill
+            WHERE skill.workspace_id = skill_candidates.workspace_id
+              AND skill.source_path = 'skill-candidates/' || skill_candidates.id
+          ), updated_at)
+        WHERE status = 'approved_for_draft'
+          AND EXISTS (
+            SELECT 1
+            FROM skill_definitions skill
+            WHERE skill.workspace_id = skill_candidates.workspace_id
+              AND skill.source_path = 'skill-candidates/' || skill_candidates.id
+          );
+
+        INSERT INTO skill_usage_events (
+          id, workspace_id, skill_id, candidate_id, run_id, teammate_id,
+          channel_id, kind, reason, created_at
+        )
+        SELECT
+          'skill_usage_' || lower(hex(randomblob(16))),
+          candidate.workspace_id,
+          skill.id,
+          candidate.id,
+          NULL,
+          NULL,
+          NULL,
+          'published',
+          'Reconciled published AI evolution skill during migration.',
+          MAX(candidate.updated_at, skill.updated_at)
+        FROM skill_candidates candidate
+        INNER JOIN skill_definitions skill
+          ON skill.workspace_id = candidate.workspace_id
+          AND skill.source_path = 'skill-candidates/' || candidate.id
+        WHERE candidate.status = 'published'
+          AND NOT EXISTS (
+            SELECT 1
+            FROM skill_usage_events event
+            WHERE event.workspace_id = candidate.workspace_id
+              AND event.candidate_id = candidate.id
+              AND event.skill_id = skill.id
+              AND event.kind = 'published'
+          );
+      `);
+      context.recordMigration(AI_EVOLUTION_SKILL_LIFECYCLE_MIGRATION_VERSION, AI_EVOLUTION_SKILL_LIFECYCLE_MIGRATION_NAME);
+    }
     if (!hasTaskAttachmentIdsMigration || !context.hasColumn("tasks", "attachment_ids_json")) {
       if (!context.hasColumn("tasks", "attachment_ids_json")) {
         database.exec("ALTER TABLE tasks ADD COLUMN attachment_ids_json TEXT NOT NULL DEFAULT '[]';");

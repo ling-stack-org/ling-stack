@@ -19,7 +19,6 @@ export interface TeammatePrivateDockContent {
   readonly reviewItems: WorkspaceRightDockProps["reviewItems"];
   readonly evidenceGroups: WorkspaceRightDockProps["evidenceGroups"];
   readonly fileItems: WorkspaceRightDockProps["fileItems"];
-  readonly evidenceCount: number;
 }
 
 export function buildTeammatePrivateDockContent({
@@ -66,6 +65,5 @@ export function buildTeammatePrivateDockContent({
     reviewItems,
     evidenceGroups,
     fileItems,
-    evidenceCount: evidenceGroups.reduce((count, group) => count + group.items.length, 0),
   };
 }

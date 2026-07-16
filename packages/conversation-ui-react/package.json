@@ -14,17 +14,21 @@
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "echo \"lint not configured yet\"",
-    "test": "tsc -p tsconfig.json --noEmit"
+    "test": "tsc -p tsconfig.json && node --test test/*.test.mjs"
   },
   "dependencies": {
     "@ling-stack/conversation-ui-core": "workspace:*",
-    "lucide-react": "^0.468.0"
+    "katex": "^0.16.22",
+    "lucide-react": "^0.468.0",
+    "mermaid": "^11.12.0",
+    "type-fest": "^4.41.0"
   },
   "peerDependencies": {
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
   },
   "devDependencies": {
+    "@types/katex": "^0.16.7",
     "@types/react": "^18.3.1",
     "@types/react-dom": "^18.3.1"
   }

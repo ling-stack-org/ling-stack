@@ -4,6 +4,8 @@ import type {
   ConversationDetailResponse,
   ConversationStreamRequest,
   CreateConversationAttachmentRequest,
+  EditConversationMessageRequest,
+  EditConversationMessageResponse,
 } from "@ling-stack/contracts";
 import type { LingDaemonEndpointContext, PublicEndpointGroup } from "../transport.js";
 
@@ -26,6 +28,10 @@ export const conversationEndpoints = {
 
   async createConversationAttachment(this: LingDaemonEndpointContext, cwd: string, input: CreateConversationAttachmentRequest): Promise<ConversationAttachmentMutationResponse> {
     return this._post("/conversations/attachments", { cwd }, input);
+  },
+
+  async editConversationMessage(this: LingDaemonEndpointContext, cwd: string, input: EditConversationMessageRequest): Promise<EditConversationMessageResponse> {
+    return this._post("/conversation-message-edits", { cwd }, input);
   },
 };
 

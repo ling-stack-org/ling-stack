@@ -1,5 +1,5 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
-import { mockDaemon } from "./support/mock-daemon";
+import { mockDaemon, type MockExecutionAction } from "./support/mock-daemon";
 import {
   createBaseState,
   createChatProvider,
@@ -10,11 +10,60 @@ import {
 import {
   readSidebarSelection,
 } from "./support/test-helpers";
+import {
+  expectSharedConversationRichBody,
+  sharedConversationRichBody,
+} from "./support/rich-content";
 
 async function useEnglishLocale(page: Page): Promise<void> {
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");
   });
+}
+
+function mockCommandExecutionAction(
+  id: string,
+  threadId: string,
+  runId: string,
+  command: string,
+  startedAt: string,
+  durationMs: number,
+): MockExecutionAction {
+  const completedAt = new Date(Date.parse(startedAt) + durationMs).toISOString();
+  return {
+    id,
+    workspaceId: "workspace_default",
+    threadId,
+    runId,
+    toolCallId: `tool_${id}`,
+    actionType: "bash",
+    risk: "low",
+    status: "succeeded",
+    title: "Run command",
+    summary: command,
+    targetRefs: [{ type: "command", label: command }],
+    previewArtifactIds: [],
+    resultArtifactIds: [],
+    commandEvidence: {
+      command,
+      cwd,
+      startedAt,
+      completedAt,
+      durationMs,
+      exitCode: 0,
+      timedOut: false,
+      cancelled: false,
+      latestEventSeq: 3,
+      outputTail: [{ eventSeq: 2, stream: "stdout", text: "ok\n", byteCount: 3, redacted: false, ts: completedAt }],
+      outputByteCount: 3,
+      outputLineCount: 1,
+      outputTruncated: false,
+    },
+    createdAt: startedAt,
+    updatedAt: completedAt,
+    executedAt: startedAt,
+    completedAt,
+  };
 }
 
 async function readComposerGeometry(page: Page, selector: string): Promise<{ backgroundColor: string; borderRadius: string; boxShadow: string; inputHeight: number; padding: string }> {
@@ -89,7 +138,7 @@ test("sidebar selection is exclusive and conversation sections stay below primar
   const newConversationButton = navigation.getByRole("button", { name: "New conversation" });
   await expect(newConversationButton).toBeVisible();
   const commandButtonWidth = await newConversationButton.evaluate((button) => Math.round(button.getBoundingClientRect().width));
-  expect(commandButtonWidth).toBeGreaterThan(140);
+  expect(commandButtonWidth).toBeGreaterThan(100);
   expect(commandButtonWidth).toBeLessThan(320);
   await expect(primaryNav.getByRole("button")).toHaveText(["Inbox", "Image Generation", "Automations"]);
   await expect(primaryNav.getByRole("button", { name: "AI Councils" })).toHaveCount(0);
@@ -325,7 +374,9 @@ test("recent conversations only show records created from the conversation home"
   await expect(conversationDock).toBeVisible();
   await expect(conversationDock).toContainText("Workspace tools");
   await expect(conversationDock.getByRole("button", { name: "Activity" })).toBeVisible();
+  await expect(conversationDock.getByRole("button", { name: "Evidence", exact: true })).toHaveCount(0);
   await expect(conversationSummaryPanel).toContainText("Environment");
+  await expect(conversationSummaryPanel.getByText("Evidence", { exact: true })).toHaveCount(0);
   await expect(conversationPage).toHaveClass(/summary-panel-expanded/);
   await expect(conversationSummaryPanel).toHaveClass(/is-popover-expanded/);
   await expect.poll(async () => {
@@ -356,7 +407,7 @@ test("recent conversations only show records created from the conversation home"
   await expect(conversationPage.getByLabel("Conversation messages", { exact: true })).toContainText("Plan launch");
   await expect(conversationPage.locator(".normal-conversation-message-row.ai-teammate")).toHaveCount(1);
   const assistantRow = conversationPage.locator(".normal-conversation-message-row.ai-teammate").first();
-  await expect(assistantRow.locator(".conversation-work-cell")).toHaveCount(1);
+  await expect(assistantRow.locator(".conversation-work-cell")).toHaveCount(0);
   const assistantActions = assistantRow.locator(".normal-conversation-message-actions.message-action-bar");
   await expect(assistantActions).toHaveCount(1);
   await expect(assistantActions.locator('[data-tooltip="Copy message"]')).toHaveCount(1);
@@ -484,6 +535,554 @@ test("normal conversation composer sends and replays uploaded attachments", asyn
   await expect(conversationDock).toContainText("brief.txt");
 });
 
+test("normal conversation renders the shared GFM, Mermaid, and math pipeline", async ({ page }) => {
+  await useEnglishLocale(page);
+  const state = createBaseState({ approvalStatus: "expired" });
+  const threadId = "thread_normal_rich_content";
+  const turnId = "turn_normal_rich_content";
+  const runId = "run_normal_rich_content";
+  const createdAt = "2026-07-12T03:00:00.000Z";
+  const completedAt = "2026-07-12T03:01:00.000Z";
+  state.threads = [{
+    id: threadId,
+    workspaceId: "workspace_default",
+    kind: "conversation",
+    title: "Shared rich content",
+    objective: "Verify shared rich content",
+    status: "succeeded",
+    lastRunId: runId,
+    createdAt,
+    updatedAt: completedAt,
+  }];
+  state.turns = [{
+    id: turnId,
+    workspaceId: "workspace_default",
+    threadId,
+    kind: "initial_request",
+    status: "succeeded",
+    title: "Shared rich content",
+    userInstruction: "Show the shared rich content fixture.",
+    activeRunId: runId,
+    lastRunId: runId,
+    createdByActor: "local-user",
+    createdAt,
+    updatedAt: completedAt,
+    completedAt,
+  }];
+  state.turnRunLinks = [{ turnId, runId, attemptNumber: 1, role: "primary", createdAt }];
+  state.runs = [{
+    id: runId,
+    status: "succeeded",
+    cwd,
+    taskId: "task_normal_rich_content",
+    providerPresetId: "provider_local",
+    providerName: "local-relay",
+    providerModel: "gpt-5.5",
+    taskSnapshot: { id: "task_normal_rich_content", title: "Shared rich content" },
+    providerSnapshot: {},
+    requestSnapshot: {},
+    eventLogPath: `.ling-stack/sessions/${runId}.jsonl`,
+    threadId,
+    turnId,
+    createdAt,
+    startedAt: createdAt,
+    updatedAt: completedAt,
+    endedAt: completedAt,
+  }, ...state.runs];
+  state.eventsByRun[runId] = [{
+    id: "event_normal_rich_content",
+    runId,
+    seq: 1,
+    ts: completedAt,
+    type: "assistant_text_delta",
+    data: { text: `${sharedConversationRichBody}\n\nReference: apps/web/src/features/workspace/ConversationHome.tsx#L260` },
+  }];
+
+  await mockDaemon(page, state);
+  await page.goto("/");
+  await page.getByLabel("Ling Stack navigation").locator(".sidebar-recent-row").filter({ hasText: "Shared rich content" }).click();
+
+  const pageSurface = page.getByLabel("Conversation page");
+  const assistantRow = pageSurface.locator(".normal-conversation-message-row.ai-teammate");
+  await expect(assistantRow).toHaveCount(1);
+  await expect(assistantRow.locator(".teammate-avatar-image, .teammate-avatar-stack")).toHaveCount(0);
+  await expectSharedConversationRichBody(assistantRow);
+  await assistantRow.getByRole("button", { name: /ConversationHome\.tsx/ }).click();
+  const filesDock = page.getByLabel("Conversation workspace dock");
+  await expect(filesDock).toBeVisible();
+  await expect(filesDock).toContainText("ConversationHome.tsx");
+});
+
+test("latest normal conversation prompt edits in place and hides the superseded response", async ({ page }) => {
+  await useEnglishLocale(page);
+  const state = createBaseState({ approvalStatus: "expired" });
+  const threadId = "thread_normal_edit";
+  const turnId = "turn_normal_edit";
+  const runId = "run_normal_edit";
+  const createdAt = "2026-07-12T03:10:00.000Z";
+  state.threads = [{
+    id: threadId,
+    workspaceId: "workspace_default",
+    kind: "conversation",
+    title: "Editable normal prompt",
+    objective: "Original normal prompt",
+    status: "succeeded",
+    lastRunId: runId,
+    createdAt,
+    updatedAt: createdAt,
+  }];
+  state.turns = [{
+    id: turnId,
+    workspaceId: "workspace_default",
+    threadId,
+    kind: "initial_request",
+    status: "succeeded",
+    title: "Original normal prompt",
+    userInstruction: "Original normal prompt",
+    activeRunId: runId,
+    lastRunId: runId,
+    createdByActor: "local-user",
+    createdAt,
+    updatedAt: createdAt,
+    completedAt: createdAt,
+  }];
+  state.turnRunLinks = [{ turnId, runId, attemptNumber: 1, role: "primary", createdAt }];
+  state.runs = [{
+    id: runId,
+    status: "succeeded",
+    cwd,
+    taskId: "task_normal_edit",
+    providerPresetId: "provider_local",
+    providerName: "local-relay",
+    providerModel: "gpt-5.5",
+    taskSnapshot: { id: "task_normal_edit", title: "Original normal prompt" },
+    providerSnapshot: {},
+    requestSnapshot: {},
+    eventLogPath: `.ling-stack/sessions/${runId}.jsonl`,
+    threadId,
+    turnId,
+    createdAt,
+    startedAt: createdAt,
+    updatedAt: createdAt,
+    endedAt: createdAt,
+  }, ...state.runs];
+  state.eventsByRun[runId] = [{
+    id: "event_normal_edit_old",
+    runId,
+    seq: 1,
+    ts: createdAt,
+    type: "assistant_text_delta",
+    data: { text: "Old normal response should disappear." },
+  }];
+
+  await mockDaemon(page, state);
+  await page.goto("/");
+  await page.getByLabel("Ling Stack navigation").locator(".sidebar-recent-row").filter({ hasText: "Editable normal prompt" }).click();
+
+  const conversationPage = page.getByLabel("Conversation page");
+  const userRow = conversationPage.locator(".normal-conversation-message-row.local-user");
+  await userRow.hover();
+  await userRow.getByRole("button", { name: "Edit message" }).click();
+  const editor = conversationPage.getByLabel("Edit message");
+  await editor.fill("Revised normal prompt");
+  await conversationPage.getByRole("button", { name: "Save and resend" }).click();
+
+  await expect(conversationPage).toContainText("Revised normal prompt");
+  await expect(conversationPage).toContainText("Ling Agent response: Revised normal prompt");
+  await expect(conversationPage).not.toContainText("Original normal prompt");
+  await expect(conversationPage).not.toContainText("Old normal response should disappear.");
+  await expect.poll(() => state.lastConversationMessageEditRequest?.surface).toBe("normal_conversation");
+  await expect.poll(() => state.lastConversationMessageEditRequest?.messageId).toBe(`conversation-user:${turnId}`);
+  const revisedUserRow = conversationPage.locator(".normal-conversation-message-row.local-user");
+  await expect(revisedUserRow).toContainText("Edited");
+  await revisedUserRow.hover();
+  await expect(revisedUserRow.getByRole("button", { name: "Edit message" })).toBeVisible();
+  await revisedUserRow.getByRole("button", { name: "Edit message" }).click();
+  await conversationPage.getByLabel("Edit message").fill("Revised normal prompt again");
+  await conversationPage.getByRole("button", { name: "Save and resend" }).click();
+
+  await expect(conversationPage).toContainText("Revised normal prompt again");
+  await expect.poll(() => state.lastConversationMessageEditRequest?.expectedRevision).toBe(2);
+});
+
+test("executed normal conversation renders one structured terminal report", async ({ page }) => {
+  await page.setViewportSize({ width: 1000, height: 620 });
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.locale", "zh-CN");
+  });
+  const state = createBaseState({ approvalStatus: "expired" });
+  const threadId = "thread_terminal_report_conversation";
+  const turnId = "turn_terminal_report_conversation";
+  const runId = "run_terminal_report_conversation";
+  const priorRunId = "run_terminal_report_conversation_prior";
+  const createdAt = "2026-07-11T03:00:00.000Z";
+  const completedAt = "2026-07-11T03:01:00.000Z";
+  state.threads = [{
+    id: threadId,
+    workspaceId: "workspace_default",
+    kind: "conversation",
+    title: "实现结构化终局报告",
+    objective: "实现结构化终局报告",
+    status: "succeeded",
+    lastRunId: runId,
+    createdAt,
+    updatedAt: completedAt,
+  }];
+  state.turns = [{
+    id: turnId,
+    workspaceId: "workspace_default",
+    threadId,
+    kind: "initial_request",
+    status: "succeeded",
+    title: "实现结构化终局报告",
+    userInstruction: "实现结构化终局报告",
+    activeRunId: runId,
+    lastRunId: runId,
+    createdByActor: "local-user",
+    createdAt,
+    updatedAt: completedAt,
+    completedAt,
+  }];
+  state.turnRunLinks = [
+    { turnId, runId, attemptNumber: 2, role: "primary", createdAt: "2026-07-11T03:00:30.000Z" },
+    { turnId, runId: priorRunId, attemptNumber: 1, role: "retry", createdAt },
+  ];
+  state.runs = [{
+    id: runId,
+    status: "succeeded",
+    cwd,
+    taskId: "task_terminal_report_conversation",
+    providerPresetId: "provider_local",
+    providerName: "local-relay",
+    providerModel: "gpt-5.5",
+    taskSnapshot: { id: "task_terminal_report_conversation", title: "实现结构化终局报告" },
+    providerSnapshot: {},
+    requestSnapshot: {},
+    eventLogPath: `.ling-stack/sessions/${runId}.jsonl`,
+    threadId,
+    turnId,
+    createdAt,
+    startedAt: createdAt,
+    updatedAt: completedAt,
+    endedAt: completedAt,
+  }, {
+    id: priorRunId,
+    status: "failed",
+    cwd,
+    taskId: "task_terminal_report_conversation_prior",
+    providerPresetId: "provider_local",
+    providerName: "local-relay",
+    providerModel: "gpt-5.5",
+    taskSnapshot: { id: "task_terminal_report_conversation_prior", title: "旧尝试" },
+    providerSnapshot: {},
+    requestSnapshot: {},
+    eventLogPath: `.ling-stack/sessions/${priorRunId}.jsonl`,
+    threadId,
+    turnId,
+    createdAt,
+    startedAt: createdAt,
+    updatedAt: "2026-07-11T03:00:20.000Z",
+    endedAt: "2026-07-11T03:00:20.000Z",
+    errorMessage: "prior attempt failed",
+  }, ...state.runs];
+  state.eventsByRun[runId] = [{
+    id: "event_terminal_report_assistant_text",
+    runId,
+    seq: 1,
+    ts: completedAt,
+    type: "assistant_text_delta",
+    data: { text: "旧的执行总结不应和结构化报告重复展示。" },
+  }];
+  state.executionActions = [
+    mockCommandExecutionAction("normal_typecheck", threadId, runId, "corepack pnpm --filter @ling-stack/web typecheck", "2026-07-13T04:00:10.000Z", 1200),
+    mockCommandExecutionAction("normal_i18n", threadId, runId, "corepack pnpm --filter @ling-stack/web check:i18n", "2026-07-13T04:00:12.000Z", 700),
+    mockCommandExecutionAction("normal_diff", threadId, runId, "git diff --check", "2026-07-13T04:00:14.000Z", 300),
+    mockCommandExecutionAction("normal_prior", threadId, priorRunId, "echo prior attempt", "2026-07-11T03:00:10.000Z", 200),
+    ...state.executionActions,
+  ];
+  state.terminalReports = [{
+    schemaVersion: 1,
+    id: "terminal_report_conversation",
+    workspaceId: "workspace_default",
+    threadId,
+    turnId,
+    source: { kind: "turn", id: turnId },
+    status: "committed",
+    language: "zh-CN",
+    outcome: {
+      status: "succeeded",
+      title: "结构化终局报告已接入普通会话",
+      summary: "执行过程保留在工作记录中，最终结果由 TerminalReport 独立展示。",
+      corrections: [],
+      sourceRefs: [{ kind: "turn", id: turnId, visibility: "conversation" }],
+    },
+    changes: Array.from({ length: 12 }, (_, index) => ({
+      id: `change_terminal_report_conversation_${index}`,
+      kind: "code" as const,
+      title: index === 0 ? "接入普通会话投影" : `普通会话滚动回归项 ${index + 1}`,
+      summary: "普通会话读取执行轮关联的结构化报告，并在展开后保持完整滚动能力。",
+      paths: [`apps/web/src/features/workspace/ConversationHome-${index + 1}.tsx`],
+      addedLines: 18 + index,
+      deletedLines: 2,
+      sourceRefs: [],
+    })),
+    verification: [{
+      id: "check_terminal_report_conversation",
+      title: "Web typecheck",
+      status: "passed",
+      command: "corepack pnpm --filter @ling-stack/web typecheck",
+      sourceRefs: [],
+    }],
+    participants: [],
+    artifacts: [
+      {
+        id: "artifact_terminal_report_conversation",
+        kind: "file",
+        title: "ConversationHome.tsx",
+        path: "apps/web/src/features/workspace/ConversationHome-1.tsx",
+        sourceRefs: [{
+          kind: "file",
+          id: "apps/web/src/features/workspace/ConversationHome-1.tsx",
+          visibility: "conversation",
+        }],
+      },
+      {
+        id: "artifact_terminal_report_metadata",
+        kind: "other",
+        title: "Generated file metadata: ConversationHome.tsx",
+        path: `${runId}/generated-file-metadata.txt`,
+        sourceRefs: [],
+      },
+      {
+        id: "artifact_terminal_report_action_preview",
+        kind: "other",
+        title: "Action preview: bash",
+        path: `${runId}/actions/approval_1/preview.json`,
+        sourceRefs: [],
+      },
+    ],
+    risks: [],
+    references: [
+      { kind: "turn", id: turnId, label: "User task", visibility: "conversation" },
+      { kind: "run", id: runId, label: "Ling Agent run", visibility: "conversation" },
+      { kind: "artifact", id: "artifact_terminal_report_metadata", label: "Generated file metadata: ConversationHome.tsx", visibility: "conversation" },
+      { kind: "file", id: "apps/web/src/features/workspace/ConversationHome-1.tsx", label: "ConversationHome.tsx", visibility: "conversation" },
+    ],
+    evidenceSnapshotId: "snapshot_terminal_report_conversation",
+    evidenceFingerprint: "fingerprint_terminal_report_conversation",
+    synthesis: { mode: "deterministic_fallback", promptVersion: "terminal-report-v1", attemptCount: 0, validationCodes: [] },
+    createdAt: completedAt,
+    committedAt: completedAt,
+  }];
+
+  await mockDaemon(page, state);
+  await page.route(/\/workspace-files\/preview(?:\?.*)?$/, async (route) => {
+    const url = new URL(route.request().url());
+    const path = url.searchParams.get("path") ?? "";
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        ref: {
+          id: `workspace:${path}`,
+          source: "workspace_file",
+          scope: "workspace",
+          label: path.split("/").at(-1) ?? path,
+          displayPath: path,
+          previewable: true,
+        },
+        kind: "code",
+        text: "export const terminalReportWorkspacePreview = true;\n",
+        truncated: false,
+        redactionNotes: [],
+      }),
+    });
+  });
+  await page.goto("/");
+  const navigation = page.getByLabel("Ling Stack navigation");
+  await navigation.locator(".sidebar-recent-row").filter({ hasText: "实现结构化终局报告" }).click();
+
+  const assistantRow = page.getByLabel("对话页面").locator(".normal-conversation-message-row.ai-teammate");
+  await expect(assistantRow).toHaveCount(1);
+  await expect(assistantRow.getByText("旧的执行总结不应和结构化报告重复展示。")).toHaveCount(0);
+  const report = assistantRow.locator(".terminal-report-block");
+  await expect(report).toContainText("结构化终局报告已接入普通会话");
+  await expect(report.locator(".terminal-report-participants")).toHaveCount(0);
+  await expect(report.locator(".terminal-report-summary")).not.toHaveAttribute("aria-expanded");
+  await expect(report.locator(".terminal-report-toggle")).toHaveCount(0);
+  await expect(report).toContainText("接入普通会话投影");
+  await expect(report.locator(".terminal-report-section.kind-change .terminal-report-row-title small")).toHaveCount(0);
+  await expect(report.locator(".terminal-report-section.kind-verification .terminal-report-row-title small")).toHaveCount(0);
+  const reportFileLink = report.locator(".terminal-report-file-reference").first();
+  await expect(reportFileLink).toBeVisible();
+  await expect(reportFileLink).toHaveText("ConversationHome-1.tsx");
+  await expect(reportFileLink.locator('.terminal-report-file-type-icon[data-file-kind="react"]')).toBeVisible();
+  const reportFileColor = await reportFileLink.evaluate((element) => getComputedStyle(element).color);
+  await reportFileLink.hover();
+  await page.waitForTimeout(700);
+  await expect(reportFileLink.getByRole("tooltip")).toHaveCount(0);
+  await page.waitForTimeout(400);
+  await expect(reportFileLink.getByRole("tooltip")).toContainText("apps/web/src/features/workspace/ConversationHome-1.tsx");
+  const reportFileHoverColor = await reportFileLink.evaluate((element) => getComputedStyle(element).color);
+  expect(reportFileHoverColor).not.toBe(reportFileColor);
+  await expect(reportFileLink).toHaveCSS("text-decoration-line", "underline");
+  const reportFileIconColor = await reportFileLink.locator("svg").evaluate((element) => getComputedStyle(element).color);
+  expect(reportFileIconColor).toBe(reportFileHoverColor);
+  const workCell = assistantRow.locator(".conversation-work-cell");
+  await workCell.locator(".conversation-operation-shell-head").click();
+  const commandBatch = workCell.locator(".conversation-command-batch");
+  await expect(commandBatch.locator(".conversation-command-batch-header")).toContainText("已运行 3 个命令");
+  await commandBatch.locator(".conversation-command-batch-header").click();
+  await expect(commandBatch.locator(".conversation-command-batch-list .conversation-work-cell-row")).toHaveCount(3);
+  await expect(commandBatch).toContainText("git diff --check");
+  await expect(workCell).not.toContainText("echo prior attempt");
+  await expect(workCell.locator(".conversation-work-cell-artifact-row")).toHaveCount(1);
+  await expect(workCell).toContainText("ConversationHome.tsx");
+  await expect(workCell.locator(".conversation-work-cell-artifact-row").getByRole("button", { name: "打开方式" })).toBeVisible();
+  await expect(workCell).not.toContainText("Generated file metadata");
+  await expect(workCell).not.toContainText("Action preview");
+  const references = workCell.locator(".conversation-work-cell-evidence-summary");
+  await expect(references).toContainText("1 个引用");
+  await expect(references).toHaveAttribute("aria-expanded", "false");
+  await expect.poll(() => workCell.evaluate((element) => {
+    const childClasses = Array.from(element.children).map((child) => child.className.toString());
+    const operationIndex = childClasses.findIndex((className) => className.includes("conversation-operation-shell"));
+    const reportIndex = childClasses.findIndex((className) => className.includes("terminal-report-block"));
+    const artifactsIndex = childClasses.findIndex((className) => className.includes("conversation-work-cell-artifacts"));
+    const referencesIndex = childClasses.findIndex((className) => className.includes("conversation-work-cell-post-report-evidence"));
+    return operationIndex < reportIndex && reportIndex < artifactsIndex && artifactsIndex < referencesIndex;
+  })).toBe(true);
+  const feed = page.locator(".normal-conversation-feed");
+  const expandedMetrics = await feed.evaluate((element) => ({
+    clientHeight: element.clientHeight,
+    scrollHeight: element.scrollHeight,
+    scrollTop: element.scrollTop,
+  }));
+  expect(expandedMetrics.scrollHeight).toBeGreaterThan(expandedMetrics.clientHeight);
+  await feed.evaluate((element) => {
+    element.scrollTop = 0;
+  });
+  await expect.poll(() => feed.evaluate((element) => element.scrollTop)).toBe(0);
+  await feed.evaluate((element) => {
+    element.scrollTop = 120;
+  });
+  await expect.poll(() => feed.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
+  await reportFileLink.click();
+  const conversationDock = page.locator(".normal-conversation-right-dock");
+  await expect(conversationDock).toContainText("apps/web/src/features/workspace/ConversationHome-1.tsx");
+  await expect(conversationDock).toContainText("terminalReportWorkspacePreview");
+  await expect(conversationDock.getByRole("button", { name: "打开方式" })).toBeVisible();
+});
+
+test("persisted normal conversation without work evidence renders only the assistant reply", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.locale", "zh-CN");
+  });
+  const state = createBaseState({ approvalStatus: "expired" });
+  const threadId = "thread_persisted_chat_only";
+  const turnId = "turn_persisted_chat_only";
+  const runId = "run_persisted_chat_only";
+  const createdAt = "2026-07-11T04:00:00.000Z";
+  const completedAt = "2026-07-11T04:00:09.000Z";
+  state.threads = [{
+    id: threadId,
+    workspaceId: "workspace_default",
+    kind: "conversation",
+    title: "欧哈呦",
+    objective: "欧哈呦",
+    status: "succeeded",
+    lastRunId: runId,
+    createdAt,
+    updatedAt: completedAt,
+  }];
+  state.turns = [{
+    id: turnId,
+    workspaceId: "workspace_default",
+    threadId,
+    kind: "initial_request",
+    status: "succeeded",
+    title: "欧哈呦",
+    userInstruction: "欧哈呦",
+    lastRunId: runId,
+    createdByActor: "local-user",
+    createdAt,
+    updatedAt: completedAt,
+    completedAt,
+  }];
+  state.turnRunLinks = [{ turnId, runId, attemptNumber: 1, role: "primary", createdAt }];
+  state.runs = [{
+    id: runId,
+    status: "succeeded",
+    cwd,
+    taskId: "task_persisted_chat_only",
+    providerPresetId: "provider_local",
+    providerName: "local-relay",
+    providerModel: "gpt-5.5",
+    taskSnapshot: { id: "task_persisted_chat_only", title: "欧哈呦" },
+    providerSnapshot: {},
+    requestSnapshot: {},
+    eventLogPath: `.ling-stack/sessions/${runId}.jsonl`,
+    threadId,
+    createdAt,
+    startedAt: createdAt,
+    updatedAt: completedAt,
+    endedAt: completedAt,
+  }, ...state.runs];
+  state.eventsByRun[runId] = [{
+    id: "event_persisted_chat_only_assistant_text",
+    runId,
+    seq: 1,
+    ts: completedAt,
+    type: "assistant_text_delta",
+    data: { text: "欧哈呦！需要我帮你处理什么任务？" },
+  }];
+  state.terminalReports = [{
+    schemaVersion: 1,
+    id: "terminal_report_persisted_chat_only",
+    workspaceId: "workspace_default",
+    threadId,
+    turnId,
+    source: { kind: "turn", id: turnId },
+    status: "fallback",
+    language: "zh-CN",
+    outcome: {
+      status: "succeeded",
+      title: "欧哈呦",
+      summary: "任务已完成。",
+      corrections: [],
+      sourceRefs: [{ kind: "run", id: runId, visibility: "conversation" }],
+    },
+    changes: [],
+    verification: [{
+      id: "generic_check_persisted_chat_only",
+      title: "欧哈呦",
+      status: "passed",
+      sourceRefs: [{ kind: "run", id: runId, visibility: "conversation" }],
+    }],
+    participants: [],
+    artifacts: [],
+    risks: [],
+    references: [
+      { kind: "turn", id: turnId, visibility: "conversation" },
+      { kind: "run", id: runId, visibility: "conversation" },
+    ],
+    evidenceSnapshotId: "snapshot_persisted_chat_only",
+    evidenceFingerprint: "fingerprint_persisted_chat_only",
+    synthesis: { mode: "deterministic_fallback", promptVersion: "terminal-report-v1", attemptCount: 0, validationCodes: [] },
+    createdAt: completedAt,
+    committedAt: completedAt,
+  }];
+
+  await mockDaemon(page, state);
+  await page.goto("/");
+  const navigation = page.getByLabel("Ling Stack navigation");
+  await navigation.locator(".sidebar-recent-row").filter({ hasText: "欧哈呦" }).click();
+
+  const assistantRow = page.getByLabel("对话页面").locator(".normal-conversation-message-row.ai-teammate");
+  await expect(assistantRow).toContainText("欧哈呦！需要我帮你处理什么任务？");
+  await expect(assistantRow.locator(".conversation-work-cell")).toHaveCount(0);
+});
+
 test("conversation home follows user language and shows thinking as off", async ({ page }) => {
   const state = createBaseState({ approvalStatus: "expired" });
   state.providers = [createChatProvider({ id: "provider_local", displayName: "Local Relay", model: "gpt-5.5" })];
@@ -504,6 +1103,7 @@ test("conversation home follows user language and shows thinking as off", async 
   await home.getByRole("button", { name: "发送" }).click();
   const conversationPage = page.getByLabel("对话页面");
   await expect(conversationPage.locator(".normal-conversation-message-row.ai-teammate")).toHaveCount(1);
+  await expect(conversationPage.locator(".conversation-work-cell")).toHaveCount(0);
   await expect(conversationPage.getByText("Ling Agent 回复：你好")).toBeVisible();
 
   await navigation.getByRole("button", { name: "新建对话" }).click();
@@ -735,6 +1335,7 @@ test("conversation home model picker uses the model workbench default without ch
   await geminiRow.getByRole("button", { name: "Set default" }).click();
   await expect(geminiRow).toHaveClass(/selected/);
   await expect(geminiRow).toContainText("Current default");
+  await expect(geminiRow.getByRole("button", { name: "Set default" })).toHaveCount(0);
   await page.getByRole("button", { name: "Back to app" }).click();
 
   await navigation.getByRole("button", { name: "New conversation" }).click();

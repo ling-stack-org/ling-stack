@@ -58,6 +58,7 @@ export function useConversationDomain(input: {
   };
   readonly actions: {
     readonly refreshConversationThreads: (cwd?: string) => Promise<void>;
+    readonly refreshSelectedConversation: (cwd?: string) => Promise<void>;
     readonly openNewConversation: () => void;
     readonly selectConversationThread: (threadId: string, cwd?: string) => Promise<void>;
     readonly archiveConversationThread: (threadId: string, cwd?: string) => Promise<void>;
@@ -113,6 +114,23 @@ export function useConversationDomain(input: {
       setConversationsLoading(false);
     }
   }, [input, openNewConversation]);
+
+  const refreshSelectedConversation = useCallback(async (cwd = input.cwd): Promise<void> => {
+    const workspaceCwd = cwd.trim();
+    if (!workspaceCwd || !selectedConversationThreadId) {
+      return;
+    }
+    setConversationsLoading(true);
+    try {
+      const detail = await getConversation(workspaceCwd, selectedConversationThreadId);
+      setSelectedConversationDetail(detail);
+      input.setErrorMessage("");
+    } catch (error) {
+      input.setErrorMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setConversationsLoading(false);
+    }
+  }, [input, selectedConversationThreadId]);
 
   const archiveConversationThread = useCallback(async (threadId: string, cwd = input.cwd): Promise<void> => {
     const workspaceCwd = cwd.trim();
@@ -234,6 +252,47 @@ export function useConversationDomain(input: {
         throw new Error(await readResponseError(response));
       }
       let activeThreadId = selectedConversationThreadId;
+      let evidenceRefreshTimer: ReturnType<typeof setTimeout> | undefined;
+      let evidenceRefreshPromise: Promise<void> | undefined;
+      let evidenceRefreshRequested = false;
+      const refreshActiveConversationEvidence = (): Promise<void> => {
+        if (!activeThreadId) {
+          return Promise.resolve();
+        }
+        if (evidenceRefreshPromise) {
+          evidenceRefreshRequested = true;
+          return evidenceRefreshPromise;
+        }
+        const requestedThreadId = activeThreadId;
+        evidenceRefreshPromise = (async () => {
+          try {
+            const detail = await getConversation(workspaceCwd, requestedThreadId);
+            if (requestedThreadId === activeThreadId) {
+              setSelectedConversationDetail((current) => mergeConversationDetailSnapshot(current, detail));
+            }
+          } catch {
+            // The terminal refresh remains authoritative if an incremental refresh races startup.
+          } finally {
+            evidenceRefreshPromise = undefined;
+            if (evidenceRefreshRequested) {
+              evidenceRefreshRequested = false;
+              scheduleEvidenceRefresh();
+            }
+          }
+        })();
+        return evidenceRefreshPromise;
+      };
+      const scheduleEvidenceRefresh = (): void => {
+        evidenceRefreshRequested = true;
+        if (evidenceRefreshTimer !== undefined || evidenceRefreshPromise) {
+          return;
+        }
+        evidenceRefreshTimer = setTimeout(() => {
+          evidenceRefreshTimer = undefined;
+          evidenceRefreshRequested = false;
+          void refreshActiveConversationEvidence();
+        }, 250);
+      };
       await readSseResponse(response, (parsed) => {
         if (parsed.event === "ready") {
           const event = JSON.parse(parsed.data) as ConversationStreamReadyEvent;
@@ -243,6 +302,7 @@ export function useConversationDomain(input: {
             event.userMessage,
             event.assistantMessage,
           ]));
+          scheduleEvidenceRefresh();
           handlers.onReady?.(event);
           return;
         }
@@ -250,6 +310,9 @@ export function useConversationDomain(input: {
           const event = JSON.parse(parsed.data) as ConversationStreamRunEvent;
           if (event.assistantMessage) {
             setSelectedConversationDetail((current) => mergeConversationMessages(current, workspaceCwd, undefined, [event.assistantMessage as ConversationTranscriptMessage]));
+          }
+          if (event.event.type === "tool_start" || event.event.type === "tool_update" || event.event.type === "tool_end") {
+            scheduleEvidenceRefresh();
           }
           handlers.onRunEvent?.(event);
           return;
@@ -283,6 +346,11 @@ export function useConversationDomain(input: {
           handlers.onError?.(messageText, event);
         }
       });
+      if (evidenceRefreshTimer !== undefined) {
+        clearTimeout(evidenceRefreshTimer);
+      }
+      evidenceRefreshRequested = false;
+      await evidenceRefreshPromise;
       await refreshConversationThreads(workspaceCwd);
       if (activeThreadId) {
         const detail = await getConversation(workspaceCwd, activeThreadId);
@@ -308,12 +376,30 @@ export function useConversationDomain(input: {
     },
     actions: {
       refreshConversationThreads,
+      refreshSelectedConversation,
       openNewConversation,
       selectConversationThread,
       archiveConversationThread,
       archiveAllConversationThreads,
       sendConversationMessage,
     },
+  };
+}
+
+function mergeConversationDetailSnapshot(
+  current: ConversationDetailResponse | undefined,
+  snapshot: ConversationDetailResponse,
+): ConversationDetailResponse {
+  if (!current || current.thread.id !== snapshot.thread.id) {
+    return snapshot;
+  }
+  const messages = new Map(snapshot.messages.map((message) => [conversationMessageMergeKey(message), message]));
+  for (const message of current.messages) {
+    messages.set(conversationMessageMergeKey(message), message);
+  }
+  return {
+    ...snapshot,
+    messages: [...messages.values()].sort((left, right) => left.createdAt.localeCompare(right.createdAt)),
   };
 }
 
@@ -349,6 +435,8 @@ function mergeConversationMessages(
     thread: thread ?? current?.thread ?? messagesThreadFallback(messages),
     turns: current?.turns ?? [],
     runs: current?.runs ?? [],
+    executionActions: current?.executionActions ?? [],
+    terminalReports: current?.terminalReports ?? [],
     messages: [...byId.values()].sort((left, right) => left.createdAt.localeCompare(right.createdAt)),
     defaults: current?.defaults ?? {},
   };

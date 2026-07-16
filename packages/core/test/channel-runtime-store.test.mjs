@@ -1547,3 +1547,46 @@ test("recoverStaleChannelWorkflows reconciles running steps from linked terminal
     await rm(cwd, { recursive: true, force: true });
   }
 });
+
+test("recoverStaleChannelWorkflows closes resolved approval-only workflow owners", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-workflow-approval-recovery-"));
+  const now = "2026-06-05T01:00:00.000Z";
+  const resolvedAt = "2026-06-05T01:02:00.000Z";
+  const recoveredAt = "2026-06-05T01:05:00.000Z";
+  const store = createSqliteRunStore(cwd);
+  try {
+    const channel = store.createChannel({ name: "Approval recovery", boundPath: cwd }, now);
+    const workflow = store.createChannelWorkflow({
+      channelId: channel.id,
+      title: "Recover approval owner",
+      objective: "Close a legacy approval-only workflow step.",
+      status: "waiting_for_approval",
+      createdBy: "system",
+    }, now);
+    const step = store.createChannelWorkflowStep({
+      workflowId: workflow.id,
+      title: "Review risky shell command",
+      prompt: "Review the command.",
+      toParticipantId: "ling_agent",
+      toParticipantLabel: "Ling Agent",
+      status: "waiting_for_approval",
+    }, now);
+    const approval = store.createApprovalRequest({
+      workflowStepId: step.id,
+      channelId: channel.id,
+      actionType: "bash",
+      risk: "high",
+      title: "Review risky shell command",
+      description: "Legacy approval-only owner.",
+      payload: { type: "bash", cwd, command: "git status --short", riskFlags: ["requires_user_review"] },
+    }, now);
+    store.approveApprovalRequest(approval.id, { reason: "Reviewed.", resolvedBy: "local-user" }, resolvedAt);
+
+    assert.ok(store.recoverStaleChannelWorkflows(recoveredAt) > 0);
+    assert.equal(store.getChannelWorkflowStep(step.id).status, "succeeded");
+    assert.equal(store.getChannelWorkflow(workflow.id).status, "succeeded");
+  } finally {
+    store.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});

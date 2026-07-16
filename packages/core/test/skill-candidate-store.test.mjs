@@ -100,6 +100,26 @@ test("sqlite skill candidate review approves eligible candidates and records aud
   });
 });
 
+test("sqlite skill candidate publish completion is idempotent and only follows draft approval", async () => {
+  await withStore("ling-stack-skill-candidate-publish-", async (store) => {
+    const candidate = store.createSkillCandidate(candidateInput({ id: "skill_candidate_publish" }), now);
+    assert.throws(
+      () => store.markSkillCandidatePublished(candidate.id, "2026-06-20T00:00:30.000Z"),
+      /approved_for_draft/,
+    );
+
+    store.applySkillCandidateReviewAction({
+      candidateId: candidate.id,
+      action: "approve_for_draft",
+      actor: "user",
+    }, "2026-06-20T00:01:00.000Z");
+    const published = store.markSkillCandidatePublished(candidate.id, "2026-06-20T00:02:00.000Z");
+    assert.equal(published.status, "published");
+    assert.equal(published.updatedAt, "2026-06-20T00:02:00.000Z");
+    assert.deepEqual(store.markSkillCandidatePublished(candidate.id, "2026-06-20T00:03:00.000Z"), published);
+  });
+});
+
 test("sqlite skill candidate review blocks draft approval without governance gates", async () => {
   await withStore("ling-stack-skill-candidate-gates-", async (store) => {
     const missingNegativeTriggers = store.createSkillCandidate(candidateInput({
