@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { CircleAlert, Loader2, PlugZap, Plus, RefreshCw } from "lucide-react";
 import { useI18n } from "../../i18n.js";
+import { resolveMediaProviderRuntimeState } from "@ling-stack/core/provider-media-normalization";
 import {
   canUseGenerationProviderForOperation,
   providerHasGenerationCapability,
@@ -30,6 +31,8 @@ import {
   type MediaJobStatusFilter,
 } from "./media-job-view-models.js";
 
+import { SelectControl } from "../../shared/components/SelectControl.js";
+
 export function MediaJobsPage({
   cwd,
   providers,
@@ -46,6 +49,7 @@ export function MediaJobsPage({
   onSelectJob,
   onRun,
   onOpenProviders,
+  embedded = false,
 }: {
   readonly cwd: string;
   readonly providers: readonly ProviderPreset[];
@@ -62,6 +66,7 @@ export function MediaJobsPage({
   readonly onSelectJob: (jobId: string) => void;
   readonly onRun: (jobId: string) => void | Promise<void>;
   readonly onOpenProviders: () => void;
+  readonly embedded?: boolean;
 }): JSX.Element {
   const { t } = useI18n();
   const [isCreateOpen, setCreateOpen] = useState(false);
@@ -73,6 +78,9 @@ export function MediaJobsPage({
   const selectedProvider = providers.find((provider) => provider.id === form.providerPresetId);
   const providerSupportsOperation = Boolean(selectedProvider?.capabilities.includes(form.operation));
   const selectedProviderCanRun = Boolean(selectedProvider && canUseGenerationProviderForOperation(selectedProvider, form.operation));
+  const selectedVideoGeneration = selectedProvider && form.operation === "video_generate"
+    ? resolveMediaProviderRuntimeState(selectedProvider, "video_generate").videoGeneration
+    : undefined;
   const hasRunnableGenerationModel = runnableProvidersForOperation.length > 0;
   const canCreate = Boolean(selectedProviderCanRun && form.prompt.trim());
   const jobSummary = summarizeMediaJobs({ jobs, artifactsByJob, runningJobId });
@@ -117,40 +125,62 @@ export function MediaJobsPage({
   }
 
   return (
-    <div className="media-jobs-page">
-      <PageActionHeader
-        className="media-jobs-page-header"
-        title={<span id="media-jobs-title">{t("Generation tasks")}</span>}
-        description={(
-          <>
-            {t("{modelCount} available generation models · {taskCount} tasks · {generatingCount} generating · {readyCount} ready · {attentionCount} need attention", {
-              modelCount: runnableProvidersForOperation.length,
+    <div className={`media-jobs-page${embedded ? " embedded" : ""}`}>
+      {embedded ? (
+        <div className="media-jobs-embedded-toolbar">
+          <div>
+            <strong id="media-jobs-title">{t("Generation tasks")}</strong>
+            <span>{t("{taskCount} tasks · {generatingCount} generating · {attentionCount} need attention", {
               taskCount: jobSummary.taskCount,
               generatingCount: jobSummary.generatingCount,
-              readyCount: jobSummary.readyCount,
               attentionCount: jobSummary.attentionCount,
-            })}
-          </>
-        )}
-        secondaryActions={(
-          <button className="secondary-button compact-button media-refresh-button" type="button" onClick={onRefresh} disabled={isLoading} aria-label={t("Refresh")}>
-            {isLoading ? <Loader2 className="spin" size={16} /> : <RefreshCw size={16} />}
-          </button>
-        )}
-        primaryAction={(
-          <button
-            className="primary-button media-create-button"
-            type="button"
-            onClick={openPrimaryAction}
-            title={hasRunnableGenerationModel
-              ? t("Choose a generation model in the task dialog.")
-              : t("Open Model Workbench to configure an image or video generation model.")}
-          >
-            {hasRunnableGenerationModel ? <Plus size={16} /> : <PlugZap size={16} />}
-            {hasRunnableGenerationModel ? t("Create generation task") : t("Configure generation model")}
-          </button>
-        )}
-      />
+            })}</span>
+          </div>
+          <span className="media-jobs-embedded-actions">
+            <button className="secondary-button compact-button media-refresh-button" type="button" onClick={onRefresh} disabled={isLoading} aria-label={t("Refresh")} title={t("Refresh")}>
+              {isLoading ? <Loader2 className="spin" size={16} /> : <RefreshCw size={16} />}
+            </button>
+            <button className="primary-button compact-button" type="button" onClick={openPrimaryAction}>
+              {hasRunnableGenerationModel ? <Plus size={16} /> : <PlugZap size={16} />}
+              {hasRunnableGenerationModel ? t("Create generation task") : t("Configure generation model")}
+            </button>
+          </span>
+        </div>
+      ) : (
+        <PageActionHeader
+          className="media-jobs-page-header"
+          title={<span id="media-jobs-title">{t("Generation tasks")}</span>}
+          description={(
+            <>
+              {t("{modelCount} available generation models · {taskCount} tasks · {generatingCount} generating · {readyCount} ready · {attentionCount} need attention", {
+                modelCount: runnableProvidersForOperation.length,
+                taskCount: jobSummary.taskCount,
+                generatingCount: jobSummary.generatingCount,
+                readyCount: jobSummary.readyCount,
+                attentionCount: jobSummary.attentionCount,
+              })}
+            </>
+          )}
+          secondaryActions={(
+            <button className="secondary-button compact-button media-refresh-button" type="button" onClick={onRefresh} disabled={isLoading} aria-label={t("Refresh")}>
+              {isLoading ? <Loader2 className="spin" size={16} /> : <RefreshCw size={16} />}
+            </button>
+          )}
+          primaryAction={(
+            <button
+              className="primary-button media-create-button"
+              type="button"
+              onClick={openPrimaryAction}
+              title={hasRunnableGenerationModel
+                ? t("Choose a generation model in the task dialog.")
+                : t("Open Model Workbench to configure an image or video generation model.")}
+            >
+              {hasRunnableGenerationModel ? <Plus size={16} /> : <PlugZap size={16} />}
+              {hasRunnableGenerationModel ? t("Create generation task") : t("Configure generation model")}
+            </button>
+          )}
+        />
+      )}
 
       {errorMessage ? (
         <div className="inline-error media-page-error">
@@ -236,7 +266,7 @@ export function MediaJobsPage({
               <div className="media-job-form-toolbar" aria-label={t("Generation task controls")}>
                 <label className="field wide">
                   <span>{t("Generation model")}</span>
-                  <select
+                  <SelectControl
                     value={selectedProvider && providerSupportsOperation ? form.providerPresetId : ""}
                     onChange={(event) => onFormChange({ ...form, providerPresetId: event.target.value })}
                     disabled={generationProvidersForOperation.length === 0}
@@ -247,12 +277,12 @@ export function MediaJobsPage({
                         {providerModelRouteLabel(provider)}
                       </option>
                     ))}
-                  </select>
+                  </SelectControl>
                 </label>
 
                 <label className="field wide">
                   <span>{t("Operation")}</span>
-                  <select
+                  <SelectControl
                     value={form.operation}
                     onChange={(event) => {
                       const operation = event.target.value as MediaOperation;
@@ -264,7 +294,7 @@ export function MediaJobsPage({
                     <option value="image_generate">{t("Image generate")}</option>
                     <option value="image_edit">{t("Image edit")}</option>
                     <option value="video_generate">{t("Video generate")}</option>
-                  </select>
+                  </SelectControl>
                 </label>
               </div>
 
@@ -297,15 +327,26 @@ export function MediaJobsPage({
               </label>
               </DialogSection>
 
-              <DialogSection
-                title={t("Advanced parameters")}
-                description={t(mediaAdvancedSummary(form.operation))}
-                collapsible
-                defaultOpen
-                className="media-create-advanced"
-              >
-                <MediaJobAdvancedFields form={form} onFormChange={onFormChange} />
-              </DialogSection>
+              {form.operation === "video_generate" ? (
+                <>
+                  <DialogSection title={t("Video settings")} description={t("Choose the output frame and duration.")}>
+                    <MediaJobAdvancedFields form={form} onFormChange={onFormChange} videoGeneration={selectedVideoGeneration} videoFields="core" />
+                  </DialogSection>
+                  <DialogSection title={t("More settings")} description={t("Optional model controls")} collapsible className="media-create-advanced">
+                    <MediaJobAdvancedFields form={form} onFormChange={onFormChange} videoFields="watermark" />
+                  </DialogSection>
+                </>
+              ) : (
+                <DialogSection
+                  title={t("Advanced parameters")}
+                  description={t(mediaAdvancedSummary(form.operation))}
+                  collapsible
+                  defaultOpen
+                  className="media-create-advanced"
+                >
+                  <MediaJobAdvancedFields form={form} onFormChange={onFormChange} />
+                </DialogSection>
+              )}
         </CreateDialogShell>
       ) : null}
     </div>

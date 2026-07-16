@@ -351,14 +351,8 @@
   font-size: 12px;
 }
 
-.review-queue-route-control select {
+.review-queue-route-control .select-control {
   min-width: 160px;
-  height: 30px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  background: var(--surface-panel);
-  color: var(--text-strong);
-  font-size: 12px;
 }
 
 .runtime-permission-delta {

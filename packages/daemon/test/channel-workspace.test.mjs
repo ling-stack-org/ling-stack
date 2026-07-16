@@ -2759,6 +2759,8 @@ test("conversation stream materializes uploaded attachments into the run prompt"
         message: "Summarize the attached note.",
         attachmentIds: [attachment.id],
         providerPresetId: provider.id,
+        authorizationMode: "smart",
+        workspaceAccessMode: "workspace_write",
       }),
     });
 
@@ -2778,10 +2780,14 @@ test("conversation stream materializes uploaded attachments into the run prompt"
     const done = events.find((event) => event.event === "done");
     assert.ok(done);
     assert.equal(done.data.run.requestSnapshot.lingConversationTone, "friendly");
+    assert.equal(done.data.run.requestSnapshot.authorizationMode, "smart");
+    assert.equal(done.data.run.requestSnapshot.workspaceAccessMode, "workspace_write");
     assert.equal(done.data.run.requestSnapshot.responseLanguage, "en-US");
     assert.ok(done.data.run.requestSnapshot.appendSystemPrompt.some((instruction) => /Default conversation tone: friendly\./.test(instruction)));
 
     const detail = await getJson(`${daemon.url}/conversations/${encodeURIComponent(initialReady.data.thread.id)}?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(detail.defaults.authorizationMode, "smart");
+    assert.equal(detail.defaults.workspaceAccessMode, "workspace_write");
     const userMessage = detail.messages.find((message) => message.id === initialReady.data.userMessage.id);
     assert.equal(userMessage.attachments[0].id, attachment.id);
     assert.deepEqual(detail.executionActions, []);
@@ -8201,6 +8207,8 @@ test("workspace settings API persists UI preferences in .ling-stack state", asyn
     assert.equal(initial.settings.schemaVersion, 1);
     assert.equal(initial.settings.workspaceCwd, undefined);
     assert.equal(initial.settings.lingConversationTone, undefined);
+    assert.equal(initial.settings.defaultAuthorizationMode, "smart");
+    assert.equal(initial.settings.defaultWorkspaceAccessMode, "workspace_write");
     assert.deepEqual(initial.settings.skillGovernancePolicy, {
       generationMode: "semi_auto",
       recordingMode: "user_initiated",
@@ -8215,6 +8223,7 @@ test("workspace settings API persists UI preferences in .ling-stack state", asyn
       locale: "zh-CN",
       lingConversationTone: "friendly",
       defaultProviderPresetId: "provider_default_chat",
+      defaultAuthorizationMode: "ask",
       channelNotifications: { channel_one: "mentions" },
       channelActivityViews: { channel_one: [{ id: "custom:review", name: "Review" }] },
       skillGovernancePolicy: {
@@ -8230,6 +8239,10 @@ test("workspace settings API persists UI preferences in .ling-stack state", asyn
     assert.equal(patched.settings.locale, "zh-CN");
     assert.equal(patched.settings.lingConversationTone, "friendly");
     assert.equal(patched.settings.defaultProviderPresetId, "provider_default_chat");
+    assert.equal(patched.settings.defaultAuthorizationMode, "ask");
+    assert.equal(patched.settings.defaultWorkspaceAccessMode, "workspace_write");
+    assert.equal(patched.settings.defaultPermissionMode, "custom");
+    assert.equal(patched.settings.defaultPermissionPreset, "custom");
     assert.equal(patched.settings.channelNotifications.channel_one, "mentions");
     assert.equal(patched.settings.skillGovernancePolicy.generationMode, "approval_only");
 
@@ -8237,6 +8250,8 @@ test("workspace settings API persists UI preferences in .ling-stack state", asyn
     assert.equal(reopened.settings.theme, "dark");
     assert.equal(reopened.settings.lingConversationTone, "friendly");
     assert.equal(reopened.settings.defaultProviderPresetId, "provider_default_chat");
+    assert.equal(reopened.settings.defaultAuthorizationMode, "ask");
+    assert.equal(reopened.settings.defaultWorkspaceAccessMode, "workspace_write");
     assert.equal(reopened.settings.channelActivityViews.channel_one[0].id, "custom:review");
     assert.equal(reopened.settings.skillGovernancePolicy.generationMode, "approval_only");
 
@@ -8249,6 +8264,14 @@ test("workspace settings API persists UI preferences in .ling-stack state", asyn
     assert.equal(reset.settings.lingConversationTone, undefined);
     assert.equal(reset.settings.skillGovernancePolicy.generationMode, "semi_auto");
 
+    const accessPatched = await patchJson(`${daemon.url}/workspace-settings?cwd=${encodeURIComponent(cwd)}`, {
+      defaultWorkspaceAccessMode: "read_only",
+    });
+    assert.equal(accessPatched.settings.defaultAuthorizationMode, "ask");
+    assert.equal(accessPatched.settings.defaultWorkspaceAccessMode, "read_only");
+    assert.equal(accessPatched.settings.defaultPermissionMode, "ask_everything");
+    assert.equal(accessPatched.settings.defaultPermissionPreset, "read_only");
+
     const invalid = await fetch(`${daemon.url}/workspace-settings?cwd=${encodeURIComponent(cwd)}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
@@ -8256,6 +8279,14 @@ test("workspace settings API persists UI preferences in .ling-stack state", asyn
     });
     assert.equal(invalid.status, 400);
     assert.match(await invalid.text(), /lingConversationTone must be friendly, pragmatic, none, or null/);
+
+    const invalidSandbox = await fetch(`${daemon.url}/workspace-settings?cwd=${encodeURIComponent(cwd)}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ defaultWorkspaceAccessMode: "trusted_local" }),
+    });
+    assert.equal(invalidSandbox.status, 400);
+    assert.match(await invalidSandbox.text(), /defaultWorkspaceAccessMode must be read_only, workspace_write, full_access, or null/);
   } finally {
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });
@@ -9414,6 +9445,7 @@ test("skill candidate API persists manual candidates and gates review approval",
     assert.equal(created.candidate.proposedAction, "create");
     assert.equal(created.candidate.status, "pending");
     assert.equal(created.candidate.duplicateAnalysis.decision, "no_overlap");
+    assert.equal("workflowPhase" in created.candidate.definition, false);
 
     const listed = await getJson(`${daemon.url}/skill-candidates?cwd=${encodeURIComponent(cwd)}&status=pending&origin=manual-draft&limit=10`);
     assert.deepEqual(listed.candidates.map((candidate) => candidate.id), [payload.id]);
@@ -9436,32 +9468,47 @@ test("skill candidate API persists manual candidates and gates review approval",
     assert.equal(reviewedDetail.reviewRecords.length, 1);
     assert.equal(reviewedDetail.reviewRecords[0].action, "approve_for_draft");
 
-    const draftResponse = await postJson(`${daemon.url}/skill-candidates/${encodeURIComponent(payload.id)}/draft?cwd=${encodeURIComponent(cwd)}`, {});
+    const draftResponse = await postJson(`${daemon.url}/skill-candidates/${encodeURIComponent(payload.id)}/draft?cwd=${encodeURIComponent(cwd)}`, {
+      content: [
+        "---",
+        "name: Edited release checklist",
+        "description: Use the reviewed release checklist with explicit evidence and validation.",
+        "---",
+        "",
+        "Collect release evidence, verify the approval record, and report failures before publishing.",
+      ].join("\n"),
+    });
     assert.equal(draftResponse.candidate.id, payload.id);
     assert.equal(draftResponse.draft.source, "custom");
     assert.equal(draftResponse.draft.sourcePath, `skill-candidates/${payload.id}`);
-    assert.equal(draftResponse.draft.definitions[0].definition.id, "reusable-release-checklist");
-    assert.match(draftResponse.draft.definitions[0].definition.promptFragments[0], /repeated release checklist/);
+    assert.equal(draftResponse.draft.packId, "ling-generated");
+    assert.equal(draftResponse.draft.definitions[0].definition.id, "edited-release-checklist");
+    assert.equal("workflowPhase" in draftResponse.draft.definitions[0].definition, false);
+    assert.match(draftResponse.draft.definitions[0].definition.promptFragments[0], /Collect release evidence/);
 
     const publishedDraft = await postJson(`${daemon.url}/skills/import-drafts/${encodeURIComponent(draftResponse.draft.id)}/publish?cwd=${encodeURIComponent(cwd)}`, {});
-    assert.equal(publishedDraft.skills[0].id, "reusable-release-checklist");
+    assert.equal(publishedDraft.skills[0].id, "edited-release-checklist");
     assert.equal(publishedDraft.skills[0].packId, "ling-generated");
+    assert.equal(publishedDraft.skills[0].sourcePath, `skill-candidates/${payload.id}`);
+    const publishedCandidateDetail = await getJson(`${daemon.url}/skill-candidates/${encodeURIComponent(payload.id)}?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(publishedCandidateDetail.candidate.status, "published");
+    await postJson(`${daemon.url}/skills/import-drafts/${encodeURIComponent(draftResponse.draft.id)}/publish?cwd=${encodeURIComponent(cwd)}`, {});
     const listedSkills = await getJson(`${daemon.url}/skills?cwd=${encodeURIComponent(cwd)}`);
-    assert.ok(listedSkills.skills.some((skill) => skill.id === "reusable-release-checklist" && skill.source === "custom"));
+    assert.ok(listedSkills.skills.some((skill) => skill.id === "edited-release-checklist" && skill.source === "custom"));
     const draftEvents = await getJson(`${daemon.url}/skills/usage-events?cwd=${encodeURIComponent(cwd)}&candidateId=${encodeURIComponent(payload.id)}&limit=10`);
     assert.deepEqual(draftEvents.events.map((event) => event.kind).sort(), ["draft_created", "published"]);
 
-    const correction = await postJson(`${daemon.url}/skills/reusable-release-checklist/corrections?cwd=${encodeURIComponent(cwd)}`, {
+    const correction = await postJson(`${daemon.url}/skills/edited-release-checklist/corrections?cwd=${encodeURIComponent(cwd)}`, {
       reason: "Correction evidence should be collected before release checklist validation.",
       candidateId: payload.id,
     });
     assert.equal(correction.event.kind, "user_corrected");
-    assert.equal(correction.event.skillId, "reusable-release-checklist");
-    await postJson(`${daemon.url}/skills/reusable-release-checklist/corrections?cwd=${encodeURIComponent(cwd)}`, {
+    assert.equal(correction.event.skillId, "edited-release-checklist");
+    await postJson(`${daemon.url}/skills/edited-release-checklist/corrections?cwd=${encodeURIComponent(cwd)}`, {
       reason: "Correction repeated for health finding.",
       candidateId: payload.id,
     });
-    const usageStats = await getJson(`${daemon.url}/skills/usage-stats?cwd=${encodeURIComponent(cwd)}&skillId=reusable-release-checklist`);
+    const usageStats = await getJson(`${daemon.url}/skills/usage-stats?cwd=${encodeURIComponent(cwd)}&skillId=edited-release-checklist`);
     assert.equal(usageStats.stats[0].correctionCount, 2);
 
     const missingGate = await postJson(`${daemon.url}/skill-candidates?cwd=${encodeURIComponent(cwd)}`, {
@@ -9469,7 +9516,6 @@ test("skill candidate API persists manual candidates and gates review approval",
       title: "Weak candidate",
       summary: "Candidate without negative triggers cannot be approved.",
       definition: {
-        workflowPhase: "operate",
         positiveTriggers: ["weak repeated operation"],
         negativeTriggers: [],
         procedureSteps: [{ title: "Read evidence" }],
@@ -9503,11 +9549,11 @@ test("skill candidate API persists manual candidates and gates review approval",
     ));
     assert.ok(health.report.findings.some((finding) =>
       finding.kind === "never_used_skill" &&
-      finding.skillIds.includes("reusable-release-checklist")
+      finding.skillIds.includes("edited-release-checklist")
     ));
     assert.ok(health.report.findings.some((finding) =>
       finding.kind === "high_user_correction_skill" &&
-      finding.skillIds.includes("reusable-release-checklist")
+      finding.skillIds.includes("edited-release-checklist")
     ));
 
     const duplicateConflict = await postJson(`${daemon.url}/skill-candidates?cwd=${encodeURIComponent(cwd)}`, {
@@ -9516,7 +9562,6 @@ test("skill candidate API persists manual candidates and gates review approval",
       summary: "A duplicate candidate that still needs conflict review.",
       status: "approved_for_draft",
       definition: {
-        workflowPhase: "ship",
         positiveTriggers: ["release checklist"],
         negativeTriggers: ["one-off note"],
         procedureSteps: [{ title: "Read release evidence" }],
@@ -9527,7 +9572,7 @@ test("skill candidate API persists manual candidates and gates review approval",
       duplicateAnalysis: {
         decision: "conflict_review",
         similarityScore: 0.8,
-        matchedSkillIds: ["reusable-release-checklist"],
+        matchedSkillIds: ["edited-release-checklist"],
         matchedCandidateIds: [],
         triggerOverlap: ["release checklist"],
         conflictingFields: ["requiredTools"],

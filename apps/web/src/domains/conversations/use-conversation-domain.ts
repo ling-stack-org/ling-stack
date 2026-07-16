@@ -2,6 +2,7 @@ import { useCallback, useState } from "react";
 import { archiveLingThread, getConversation, listLingThreads, streamConversation } from "../../api.js";
 import { readSseResponse } from "../../sse.js";
 import type {
+  AuthorizationMode,
   ConversationDetailResponse,
   ConversationStreamBlockedEvent,
   ConversationStreamDoneEvent,
@@ -9,12 +10,14 @@ import type {
   ConversationStreamRunEvent,
   ConversationTranscriptMessage,
   LingThread,
+  PermissionConfirmation,
   PermissionPreset,
   ProviderThinkingMode,
   ResponseLanguagePreference,
   RunThinkingLevel,
   RunTool,
   SessionPermissionMode,
+  WorkspaceAccessMode,
 } from "../../types.js";
 
 export interface ConversationSendInput {
@@ -23,8 +26,11 @@ export interface ConversationSendInput {
   readonly projectPath?: string;
   readonly providerPresetId: string;
   readonly thinkingLevel?: ProviderThinkingMode;
+  readonly authorizationMode?: AuthorizationMode;
+  readonly workspaceAccessMode?: WorkspaceAccessMode;
   readonly permissionPreset?: PermissionPreset;
   readonly permissionMode?: SessionPermissionMode;
+  readonly permissionConfirmation?: PermissionConfirmation;
   readonly responseLanguage?: ResponseLanguagePreference;
   readonly tools?: readonly RunTool[];
 }
@@ -234,8 +240,11 @@ export function useConversationDomain(input: {
         projectPath: message.projectPath,
         providerPresetId: message.providerPresetId,
         thinkingLevel: normalizeThinkingLevel(message.thinkingLevel),
+        authorizationMode: message.authorizationMode,
+        workspaceAccessMode: message.workspaceAccessMode,
         permissionPreset: message.permissionPreset,
         permissionMode: message.permissionMode,
+        permissionConfirmation: message.permissionConfirmation,
         responseLanguage: message.responseLanguage,
         tools: message.tools,
       });

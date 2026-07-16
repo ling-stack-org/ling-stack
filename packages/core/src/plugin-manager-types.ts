@@ -6,6 +6,21 @@ export type ManagedPluginStatus = "available" | "enabled" | "disabled" | "blocke
 export type ManagedPluginHealthStatus = "unknown" | "ready" | "failed" | "disabled" | "expired";
 export type ManagedPluginPackageStatus = "installed" | "uninstalled";
 export type ManagedPluginRuntimePreviewStatus = "injectable" | "blocked" | "disabled";
+export type ManagedPluginSetupState = "detected" | "missing" | "unsupported" | "connected" | "ready";
+
+export interface ManagedPluginSetupGuide {
+  readonly documentationUrl: string;
+  readonly installCommand: string;
+  readonly supportsCustomCommand: boolean;
+}
+
+export interface ManagedPluginSetupView {
+  readonly kind: "local_binary";
+  readonly state: ManagedPluginSetupState;
+  readonly checkedAt: string;
+  readonly detectedCommand?: string;
+  readonly guide?: ManagedPluginSetupGuide;
+}
 
 export type ManagedPluginContributionKind =
   | "mcp-server"
@@ -101,6 +116,7 @@ export type ManagedPluginEventType =
   | "checked"
   | "contribution_linked"
   | "contribution_disabled"
+  | "connected"
   | "installed"
   | "uninstalled"
   | "package_refreshed"
@@ -267,6 +283,7 @@ export interface ManagedPluginView {
   readonly health?: ManagedPluginHealthSnapshot;
   readonly package?: ManagedPluginPackageView;
   readonly runtimePreview?: ManagedPluginRuntimePreview;
+  readonly setup?: ManagedPluginSetupView;
   readonly linkedResources: readonly ManagedPluginLinkedResource[];
   readonly events?: readonly ManagedPluginEvent[];
   readonly disabledReason?: string;

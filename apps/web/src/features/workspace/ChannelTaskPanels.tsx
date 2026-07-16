@@ -71,6 +71,8 @@ import type {
 } from "../../types.js";
 import { ProviderPresetOptions } from "./WorkspaceControls.js";
 
+import { SelectControl } from "../../shared/components/SelectControl.js";
+
 export function NewTaskPanel({
   taskForm,
   selectedChannel,
@@ -110,10 +112,10 @@ export function NewTaskPanel({
       </div>
       <label className="field wide">
         <span>{t("Run provider")}</span>
-        <select value={effectiveProviderId} onChange={(event) => onProviderSelect(event.target.value)} disabled={providersLoading}>
+        <SelectControl value={effectiveProviderId} onChange={(event) => onProviderSelect(event.target.value)} disabled={providersLoading}>
           <option value="">{t("Select provider preset")}</option>
           <ProviderPresetOptions runnableProviders={taskReadyProviders} blockedProviders={setupChatProviders} />
-        </select>
+        </SelectControl>
       </label>
       <label className="field wide">
         <span>{t("Title")}</span>

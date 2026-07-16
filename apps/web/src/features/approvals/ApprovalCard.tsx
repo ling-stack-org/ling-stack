@@ -9,7 +9,7 @@ import {
   Tags,
 } from "lucide-react";
 import { previewArtifactContent } from "../../api.js";
-import { useI18n } from "../../i18n.js";
+import { useI18n, type Translate } from "../../i18n.js";
 import {
   approvalOwnerLabels,
   approvalTimingLabel,
@@ -449,16 +449,24 @@ function ApprovalPayloadSummary({ approval }: { readonly approval: ApprovalReque
   }
 
   const model = readDataString(approval.payload, "model") || "-";
-  const operation = readDataString(approval.payload, "operation") || "-";
+  const workflowName = readDataString(approval.payload, "workflowName");
+  const operation = mediaOperationLabel(readDataString(approval.payload, "operation"), t);
   const promptPreview = readDataString(approval.payload, "promptPreview");
 
   return (
     <div className="approval-payload-summary" aria-label="Media cost approval summary">
-      <span>{t("model {model}", { model })}</span>
+      <span>{workflowName ? t("workflow {workflow}", { workflow: workflowName }) : t("model {model}", { model })}</span>
       <span>{t("operation {operation}", { operation })}</span>
       {promptPreview ? <p>{promptPreview}</p> : null}
     </div>
   );
+}
+
+function mediaOperationLabel(operation: string, t: Translate): string {
+  if (operation === "image_generate") return t("Image generation");
+  if (operation === "image_edit") return t("Image editing");
+  if (operation === "video_generate") return t("Video generation");
+  return operation || "-";
 }
 
 function runtimePermissionScopeSummary(scope: unknown): string {

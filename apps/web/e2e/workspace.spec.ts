@@ -271,8 +271,17 @@ test("workspace task run sends the selected session permission mode", async ({ p
   await openTaskFromAttentionQueue(page, "Inspect workspace");
   const taskDetail = page.locator("article.task-detail");
   await expect(taskDetail.getByRole("group", { name: "Permission preset" })).toBeVisible();
-  await taskDetail.getByRole("button", { name: "Workspace collaboration" }).click();
+  await taskDetail.getByRole("button", { name: "Workspace write" }).click();
   await taskDetail.getByRole("button", { name: "Run", exact: true }).click();
+
+  await expect.poll(() => {
+    const snapshot = state.runs[0]?.requestSnapshot;
+    return isRecord(snapshot) ? snapshot.authorizationMode : undefined;
+  }).toBe("smart");
+  await expect.poll(() => {
+    const snapshot = state.runs[0]?.requestSnapshot;
+    return isRecord(snapshot) ? snapshot.workspaceAccessMode : undefined;
+  }).toBe("workspace_write");
 
   await expect.poll(() => {
     const snapshot = state.runs[0]?.requestSnapshot;
@@ -328,6 +337,10 @@ test("workspace full access task run requires confirmation and sends confirmatio
     confirmed: true,
     reason: "user_confirmed_full_access",
   });
+  await expect.poll(() => {
+    const snapshot = state.runs[0]?.requestSnapshot;
+    return isRecord(snapshot) ? snapshot.workspaceAccessMode : undefined;
+  }).toBe("full_access");
 });
 
 test("saved workspace path wins over daemon default", async ({ page }) => {

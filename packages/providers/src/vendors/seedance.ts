@@ -3,6 +3,10 @@ import { defaultMediaVendorHttpClient, getMediaVendorResponseHeader, mapMediaVen
 import { redactSecretText, redactSecrets } from "../redaction.js";
 import type {
   LiveMediaVendorTransportOptions,
+  MediaExecutionHandle,
+  MediaExecutionPollResult,
+  MediaExecutionResult,
+  MediaExecutionSubmission,
   MediaExecutionArtifact,
   MediaVendorHttpClient,
   MediaVendorHttpResponse,
@@ -20,6 +24,170 @@ const DEFAULT_SEEDANCE_MAX_POLL_ATTEMPTS = 90;
 type SeedanceFinalVideoSuccess = { readonly status: "succeeded"; readonly videoUrl: string; readonly statusResponse: unknown };
 type SeedanceFinalVideoFailure = { readonly status: "failed"; readonly errorCode: MediaVendorTransportResult["errorCode"]; readonly errorMessage: string };
 type SeedanceFinalVideoResolution = SeedanceFinalVideoSuccess | SeedanceFinalVideoFailure;
+
+export async function submitSeedanceVideoTask(
+  request: MediaVendorTransportRequest,
+  options: LiveMediaVendorTransportOptions,
+): Promise<MediaExecutionSubmission> {
+  const endpoint = `${options.baseUrl?.replace(/\/+$/, "")}/contents/generations/tasks`;
+  const payload = buildSeedanceVideoTaskPayload(request.requestPlan);
+  const httpClient = options.httpClient ?? defaultMediaVendorHttpClient;
+  const abortController = new AbortController();
+  const timeout = setTimeout(() => abortController.abort(), options.timeoutMs ?? DEFAULT_LIVE_MEDIA_VENDOR_TIMEOUT_MS);
+  try {
+    const response = await httpClient(endpoint, {
+      method: "POST",
+      headers: {
+        ...options.headers,
+        authorization: `Bearer ${options.apiKey}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify(payload),
+      signal: abortController.signal,
+    });
+    if (!response.ok) {
+      const failure = await normalizeSeedanceHttpFailure(response, mediaVendorRedactionValues(options));
+      return { status: "failed", errorCode: failure.errorCode, errorMessage: failure.errorMessage ?? "Seedance video task creation failed." };
+    }
+    const createResponse = await response.json();
+    const externalOperationId = extractSeedanceTaskId(createResponse);
+    if (!externalOperationId) {
+      return { status: "failed", errorCode: "invalid_request", errorMessage: "Seedance video task response did not include task id." };
+    }
+    const statusEndpoint = `${options.baseUrl?.replace(/\/+$/, "")}/contents/generations/tasks/${encodeURIComponent(externalOperationId)}`;
+    return {
+      status: "submitted",
+      handle: {
+        adapterKind: "seedance",
+        externalOperationId,
+        recovery: {
+          statusEndpoint,
+          request: payload,
+          createResponse: redactSecrets(createResponse, mediaVendorRedactionValues(options)),
+          ...(extractSeedanceVideoUrl(createResponse) ? { videoUrl: extractSeedanceVideoUrl(createResponse) } : {}),
+        },
+      },
+    };
+  } catch (error) {
+    const isTimeout = error instanceof Error && error.name === "AbortError";
+    return {
+      status: "failed",
+      errorCode: isTimeout ? "timeout" : "network_error",
+      errorMessage: redactSecretText(
+        isTimeout ? "Seedance video task creation timed out." : error instanceof Error ? error.message : String(error),
+        mediaVendorRedactionValues(options),
+      ),
+    };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+export async function pollSeedanceVideoTask(
+  handle: MediaExecutionHandle,
+  options: LiveMediaVendorTransportOptions,
+): Promise<MediaExecutionPollResult> {
+  if (handle.adapterKind !== "seedance") {
+    return { status: "failed", errorCode: "unsupported_capability", errorMessage: "Unsupported media execution handle." };
+  }
+  const statusEndpoint = readRecoveryString(handle.recovery, "statusEndpoint");
+  const existingVideoUrl = readRecoveryString(handle.recovery, "videoUrl");
+  if (existingVideoUrl) {
+    return { status: "succeeded", recovery: handle.recovery };
+  }
+  if (!statusEndpoint) {
+    return { status: "failed", errorCode: "invalid_request", errorMessage: "Seedance execution handle is missing a status endpoint." };
+  }
+  const httpClient = options.httpClient ?? defaultMediaVendorHttpClient;
+  try {
+    const response = await httpClient(statusEndpoint, {
+      method: "GET",
+      headers: { ...options.headers, authorization: `Bearer ${options.apiKey}` },
+    });
+    if (!response.ok) {
+      const failure = await normalizeSeedanceStatusHttpFailure(response, mediaVendorRedactionValues(options));
+      return { status: "failed", errorCode: failure.errorCode, errorMessage: failure.errorMessage };
+    }
+    const statusResponse = await response.json();
+    const videoUrl = extractSeedanceVideoUrl(statusResponse);
+    if (videoUrl) {
+      return {
+        status: "succeeded",
+        recovery: {
+          ...handle.recovery,
+          videoUrl,
+          statusResponse: redactSecrets(statusResponse, mediaVendorRedactionValues(options)),
+        },
+      };
+    }
+    if (readSeedanceTaskStatus(statusResponse) === "pending") {
+      return { status: "pending" };
+    }
+    return {
+      status: "failed",
+      errorCode: "provider_internal_error",
+      errorMessage: `Seedance video task ${handle.externalOperationId} did not return a usable video result.`,
+    };
+  } catch (error) {
+    return {
+      status: "failed",
+      errorCode: "network_error",
+      errorMessage: redactSecretText(error instanceof Error ? error.message : String(error), mediaVendorRedactionValues(options)),
+    };
+  }
+}
+
+export async function collectSeedanceVideoArtifacts(
+  handle: MediaExecutionHandle,
+  options: LiveMediaVendorTransportOptions,
+): Promise<MediaExecutionResult> {
+  const videoUrl = readRecoveryString(handle.recovery, "videoUrl");
+  if (!videoUrl) {
+    return { status: "failed", artifacts: [], errorCode: "invalid_request", errorMessage: "Seedance execution handle has no completed video URL." };
+  }
+  try {
+    const httpClient = options.httpClient ?? defaultMediaVendorHttpClient;
+    const abortController = new AbortController();
+    const timeout = setTimeout(() => abortController.abort(), options.timeoutMs ?? DEFAULT_LIVE_MEDIA_VENDOR_TIMEOUT_MS);
+    try {
+      const videoArtifact = await downloadSeedanceVideoArtifact(videoUrl, httpClient, abortController.signal);
+      return {
+        status: "succeeded",
+        artifacts: [
+          {
+            type: "json",
+            title: "Seedance video_generate response",
+            contentType: "application/json; charset=utf-8",
+            pathHint: "seedance-video-response.json",
+            content: JSON.stringify(redactSecrets({
+              mode: "live_seedance_video_generate_final",
+              taskId: handle.externalOperationId,
+              statusEndpoint: readRecoveryString(handle.recovery, "statusEndpoint"),
+              request: handle.recovery.request,
+              createResponse: handle.recovery.createResponse,
+              statusResponse: handle.recovery.statusResponse,
+            }, mediaVendorRedactionValues(options)), null, 2),
+          },
+          videoArtifact,
+        ],
+      };
+    } finally {
+      clearTimeout(timeout);
+    }
+  } catch (error) {
+    const isTimeout = error instanceof Error && error.name === "AbortError";
+    return {
+      status: "failed",
+      artifacts: [],
+      errorCode: isTimeout ? "timeout" : "network_error",
+      errorMessage: redactSecretText(error instanceof Error ? error.message : String(error), mediaVendorRedactionValues(options)),
+    };
+  }
+}
+
+export async function cancelSeedanceVideoTask(_handle: MediaExecutionHandle): Promise<void> {
+  // Seedance's current public task endpoint has no verified cancel mapping. Keep the daemon cancellation local until one exists.
+}
 
 export async function executeSeedanceVideoTask(
   request: MediaVendorTransportRequest,
@@ -357,6 +525,11 @@ function extractSeedanceTaskId(value: unknown): string | undefined {
     return data.id;
   }
   return undefined;
+}
+
+function readRecoveryString(recovery: Record<string, unknown>, key: string): string | undefined {
+  const value = recovery[key];
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }
 
 function extractSeedanceVideoUrl(value: unknown): string | undefined {

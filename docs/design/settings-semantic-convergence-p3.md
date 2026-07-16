@@ -7,6 +7,7 @@
 - [Settings Semantic Convergence P3 Implementation Plan](settings-semantic-convergence-p3-implementation-plan.md)
 - [Settings Visual Density Follow-up](settings-visual-density-followup.md)
 - [Settings Personalization And Ling Conversation Tone](settings-personalization-and-ling-tone.md)
+- [Primary Navigation Tool Promotion](primary-navigation-tool-promotion.md)
 
 ## Summary
 
@@ -23,6 +24,11 @@ supersedes this document's `Skills -> Skill policy / Skill library` grouping for
 implementation work. The follow-up moves `Skill policy` under `Personalization`, keeps
 `Skill library` as a standalone Settings item, and adds the behavior-bearing
 `Ling conversation tone` setting.
+
+IA supersession: [Primary Navigation Tool Promotion](primary-navigation-tool-promotion.md)
+moves `Work Board` and `Plugin Manager` out of Settings and into the global desktop
+navigation. The historical placement below remains useful as P3 context, but the
+promotion document is the current source of truth for those two surfaces.
 
 The product target is simple:
 
@@ -54,7 +60,8 @@ The product target is simple:
 - No route deletion and no new `ViewId`.
 - No global visual redesign.
 - No mobile acceptance scope.
-- No Work Board primary-nav promotion.
+- Work Board and Plugin Manager promotion is owned by the later primary-navigation
+  decision, not by the original P3 implementation slice.
 - No large refactor of `AppShell.tsx`.
 - No behavior change inside the 1000+ line `SkillLibrarySettingsPanel.tsx`.
 - No source-file rename churn for existing implementation components such as
@@ -86,7 +93,6 @@ Settings
       -> Teammate Management
       -> Council Workspace
     Work controls
-      -> Work Board
       -> Default authorization
 
   Personal
@@ -98,12 +104,9 @@ Settings
   Workspace
     Runtime and permissions
       -> Default authorization
-      -> Tool permission policy
-      -> Execution runners
     Connections
       -> Work intake
       -> Tool servers
-      -> Plugin bundles
     Skills
       -> Skill policy
       -> Skill library
@@ -120,14 +123,11 @@ Settings
 | --- | --- | --- |
 | Configuration overview | Open low-frequency setup and control surfaces | Tool row details |
 | Workspace setup | Prepare the models and AI collaborators Ling uses | Model/provider detail pages |
-| Work controls | Review workspace work and default authorization | Work Board detail pages, policy details |
-| Default authorization | Choose how new conversations get permission | Permission preset explanations |
-| Tool permission policy | Tune exact tool decisions and write boundaries | Advanced policy details |
-| Execution runners | Choose allowed local execution runners | Runner detail rows |
+| Work controls | Manage default authorization for new work | Authorization policy details |
+| Default authorization | Choose when Ling asks and the default workspace access boundary | Authorization and sandbox option explanations |
 | Connections | Connect Ling to outside systems | Detail panel names when useful |
 | Work intake | Connect external work entering a channel | GitHub/Linear setup fields |
 | Tool servers | Manage AI-accessible MCP servers | MCP detail page and server rows |
-| Plugin bundles | Manage trusted capability packages | Plugin detail cards |
 | Skill policy | Control generation, recording, and publication rules | Policy details |
 | Skill library | Inspect reusable skill definitions and source health | Registry/detail rows |
 | Archived data | Restore archived product objects | Archive item rows |
@@ -137,11 +137,17 @@ Settings
 
 - Prefer product labels in Settings navigation and subnavs.
 - Keep acronyms and implementation names only when the user is inspecting that system:
-  MCP in Tool servers, GitHub/Linear in Work intake, plugin package data in Plugin bundles,
+  MCP in Tool servers, GitHub/Linear in Work intake, and plugin package data in the global Plugin Manager,
   startup phases in System health.
 - Use "Default authorization" for the high-level default users choose before a new
   conversation.
-- Use "Tool permission policy" only for exact tool decisions and write path boundaries.
+- Keep the Settings destination named "Default authorization". Inside that page, expose
+  two independent decisions: authorization timing and the default sandbox boundary.
+- Use "Sandbox settings" as the user-facing label for `Read only`, `Workspace write`,
+  and `Full access`. This is a Ling-enforced permission boundary, not a claim that the
+  current in-process Pi runner is wrapped by an OS sandbox.
+- Keep exact tool decisions, custom write paths, and runner selection out of the ordinary
+  Settings UI. They remain internal policy and runtime concerns.
 - Use "System health" for startup readiness and support diagnostics; do not label the
   main navigation as raw diagnostics.
 - Use "Archived data" for restore surfaces; do not imply permanent deletion.
@@ -152,7 +158,10 @@ Settings
   cards, or decorative visual treatment.
 - Configuration overview should use grouped rows. Cards are acceptable only for concrete
   controls such as default authorization, permission presets, or status summaries.
-- Settings subnavs should be a single reusable compact segmented row with stable height,
+- Settings subnavs should be reserved for genuinely mutually exclusive content, such as
+  Connections, Skills, or Data views. Runtime permissions expose one destination with
+  two compact decisions: Default authorization and Sandbox settings.
+- Reusable Settings subnavs should be a single compact segmented row with stable height,
   consistent badge treatment, and no layout shift when badges appear.
 - Long labels and descriptions must truncate or wrap intentionally without pushing action
   buttons off-screen.
@@ -168,11 +177,14 @@ Settings
 - `apps/web/src/features/settings/SettingsPage.tsx`
   owns the section list and panel routing. It should not own nested subnav business logic.
 - `apps/web/src/features/settings/SettingsSubnav.tsx`
-  owns the compact subnav presentation shared by Runtime, Connections, Skills, and Data.
+  owns the compact subnav presentation shared by Settings panels that still have
+  mutually exclusive views.
 - `apps/web/src/features/settings/SettingsWorkspaceToolsPanel.tsx`
   owns Configuration overview grouping and workspace tool rows.
 - `apps/web/src/features/settings/ExecutionPermissionsSettingsPanel.tsx`
-  owns Runtime subnav labels and Runtime sub-surface composition.
+  owns the Default authorization and Sandbox settings decisions. A focused Settings
+  choice-menu component owns popover interaction; policy resolution remains in core.
+  Tool-level policy and runner configuration remain behind internal APIs.
 - `apps/web/src/features/settings/IntegrationsSettingsPanel.tsx`
   owns Connections subnav labels and sub-surface composition.
 - `apps/web/src/features/settings/SkillsSettingsPanel.tsx`
@@ -187,9 +199,12 @@ Settings
 
 ## API / Types
 
-- No public HTTP API change.
-- No contract change.
-- No persistent state change.
+- Add independent `AuthorizationMode` and `WorkspaceAccessMode` contracts.
+- Workspace settings persist `defaultAuthorizationMode` and
+  `defaultWorkspaceAccessMode`; the existing permission mode/preset fields remain as
+  compatibility projections for older clients and stored data.
+- Conversation and run requests may carry the independent values. Legacy requests keep
+  their existing paired permission validation and behavior.
 - Existing Settings section ids remain frontend-only UI state.
 - Subsection ids can stay local component state.
 
@@ -207,6 +222,17 @@ Settings subsection click
   -> focused sub-surface
 ```
 
+Runtime and permissions is intentionally not a subsection tab flow. The page destination
+remains Default authorization and exposes two rows:
+
+```text
+Default authorization -> Ask first / Smart authorization / Always authorize
+Sandbox settings      -> Read only / Workspace write / Full access
+```
+
+Sandbox is the upper bound. Authorization timing applies only to operations allowed by
+that bound. Tool-level policy and Pi runner internals remain hidden.
+
 ```text
 Configuration overview tool click
   -> AppShell existing workspaceToolDetail
@@ -214,12 +240,12 @@ Configuration overview tool click
   -> Settings left navigation stays available
 ```
 
-## Hard Stops
+## Historical P3 Hard Stops
 
 - Do not add Settings business logic to `AppShell.tsx`.
-- Do not add a Work Board primary sidebar entry as part of P3.
-- Do not hide or remove Model Workbench, Teammate Management, Council Workspace, Work
-  Board, Default authorization, MCP tools, plugins, archived data, or system health.
+- Work Board promotion was outside P3; the later primary-navigation decision now owns it.
+- Do not hide or remove Model Workbench, Teammate Management, Council Workspace,
+  Default authorization, MCP tools, archived data, or system health.
 - Do not rename API/storage concepts just to match UI copy.
 - Do not expand `SkillLibrarySettingsPanel.tsx` with new behavior in this pass.
 - Do not add a new visual system or palette.
@@ -232,9 +258,10 @@ Configuration overview tool click
 - `corepack pnpm --filter @ling-stack/web test:e2e -- app.spec.ts dark-mode.spec.ts profile.spec.ts mcp.spec.ts runtime.spec.ts`
 - Optional browser check on the served desktop Web app:
   - Configuration overview has `Workspace setup` and `Work controls`.
-  - Runtime subnav has `Default authorization`, `Tool permission policy`, and
-    `Execution runners`.
-  - Connections subnav has `Work intake`, `Tool servers`, and `Plugin bundles`.
+  - Runtime page shows only `Default authorization` with the three authorization modes.
+  - `Tool permission policy`, `Advanced workspace policy`, and `Execution runners` are
+    absent from the ordinary Settings UI.
+  - Connections keeps `Work intake` and `Tool servers`; Plugin Manager is global navigation.
   - Skills subnav has `Skill policy` and `Skill library`.
   - Data subnav has `Archived data` and `System health`.
   - No Settings page creates horizontal overflow at desktop width.
@@ -242,9 +269,9 @@ Configuration overview tool click
 ## Acceptance Checklist
 
 - [x] Configuration overview shows `Workspace setup` and `Work controls` groups.
-- [x] Runtime subsections read `Default authorization`, `Tool permission policy`, and
-      `Execution runners`.
-- [x] Connections subsections read `Work intake`, `Tool servers`, and `Plugin bundles`.
+- [x] Runtime Settings exposes only `Default authorization`; tool policy and runner
+      controls remain internal.
+- [x] Connections exposes `Work intake` and `Tool servers`; Plugin Manager is promoted by the later IA decision.
 - [x] Skills subsections read `Skill policy` and `Skill library`.
 - [x] Data subsections read `Archived data` and `System health`.
 - [x] Settings nested workspace tools still hide the global sidebar and return to
@@ -256,10 +283,10 @@ Configuration overview tool click
 ## Implementation Evidence
 
 - Audit found the P3 implementation mostly present: `SettingsSubnav`, grouped
-  Configuration overview, Runtime/Connections/Skills/Data subnavs, and related i18n keys
-  already existed.
-- Added focused e2e assertions for P3 subnav aria labels, default selected tabs, and
-  visible product labels in `apps/web/e2e/settings.spec.ts`.
+  Configuration overview, Connections/Skills/Data subnavs, and related i18n keys already
+  existed.
+- Runtime Settings was subsequently reduced to the single Default authorization
+  decision. Focused e2e assertions protect the hidden tool-policy and runner boundaries.
 - `corepack pnpm --filter @ling-stack/web typecheck`
 - `corepack pnpm --filter @ling-stack/web test:e2e -- settings.spec.ts`
 - `corepack pnpm --filter @ling-stack/web test:e2e -- app.spec.ts dark-mode.spec.ts profile.spec.ts mcp.spec.ts runtime.spec.ts`

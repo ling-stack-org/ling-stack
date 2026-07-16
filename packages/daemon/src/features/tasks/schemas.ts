@@ -1,9 +1,12 @@
 import {
+  authorizationModes,
   readOnlyRunTools,
   permissionModeForPreset,
   permissionPresets,
   sessionPermissionModes,
   taskStatuses,
+  workspaceAccessModes,
+  type AuthorizationMode,
   type CreateTaskInput,
   type PermissionConfirmation,
   type PermissionPreset,
@@ -13,6 +16,7 @@ import {
   type SkillOptimizationMode,
   type TaskStatus,
   type TaskUpdateInput,
+  type WorkspaceAccessMode,
 } from "@ling-stack/core";
 import { parseApprovalProfileObject } from "../../shared/approval-profile.js";
 import { isRecord, readNullableString, readOptionalBoolean, readOptionalString, readOptionalStringArray, readString } from "../../shared/validation.js";
@@ -26,6 +30,8 @@ export interface TaskRunRequest {
   readonly idempotencyKey?: string;
   readonly tools?: readonly RunTool[];
   readonly approvalProfile?: SkillApprovalProfile;
+  readonly authorizationMode?: AuthorizationMode;
+  readonly workspaceAccessMode?: WorkspaceAccessMode;
   readonly permissionPreset?: PermissionPreset;
   readonly permissionMode?: SessionPermissionMode;
   readonly permissionConfirmation?: PermissionConfirmation;
@@ -75,10 +81,12 @@ export function parseTaskRunRequest(value: unknown): TaskRunRequest {
     throw new Error("Task run request must be a JSON object");
   }
   const permissionPreset = readOptionalPermissionPreset(value, "permissionPreset");
-  const permissionMode = resolvePermissionMode(
-    permissionPreset,
-    readOptionalSessionPermissionMode(value, "permissionMode"),
-  );
+  const authorizationMode = readOptionalAuthorizationMode(value, "authorizationMode");
+  const workspaceAccessMode = readOptionalWorkspaceAccessMode(value, "workspaceAccessMode");
+  const rawPermissionMode = readOptionalSessionPermissionMode(value, "permissionMode");
+  const permissionMode = authorizationMode !== undefined || workspaceAccessMode !== undefined
+    ? rawPermissionMode
+    : resolvePermissionMode(permissionPreset, rawPermissionMode);
   return {
     providerPresetId: readString(value, "providerPresetId"),
     runnerId: readOptionalString(value, "runnerId"),
@@ -88,6 +96,8 @@ export function parseTaskRunRequest(value: unknown): TaskRunRequest {
     idempotencyKey: readOptionalString(value, "idempotencyKey"),
     tools: readOptionalRunTools(value, "tools"),
     approvalProfile: readOptionalApprovalProfile(value, "approvalProfile"),
+    authorizationMode,
+    workspaceAccessMode,
     permissionPreset,
     permissionMode,
     permissionConfirmation: readOptionalPermissionConfirmation(value, "permissionConfirmation"),
@@ -107,6 +117,28 @@ function readOptionalSessionPermissionMode(record: Record<string, unknown>, key:
     throw new Error(`${key} must be one of: ${sessionPermissionModes.join(", ")}`);
   }
   return value as SessionPermissionMode;
+}
+
+function readOptionalAuthorizationMode(record: Record<string, unknown>, key: string): AuthorizationMode | undefined {
+  const value = readOptionalString(record, key);
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!authorizationModes.includes(value as AuthorizationMode)) {
+    throw new Error(`${key} must be one of: ${authorizationModes.join(", ")}`);
+  }
+  return value as AuthorizationMode;
+}
+
+function readOptionalWorkspaceAccessMode(record: Record<string, unknown>, key: string): WorkspaceAccessMode | undefined {
+  const value = readOptionalString(record, key);
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!workspaceAccessModes.includes(value as WorkspaceAccessMode)) {
+    throw new Error(`${key} must be one of: ${workspaceAccessModes.join(", ")}`);
+  }
+  return value as WorkspaceAccessMode;
 }
 
 function readOptionalSkillOptimizationMode(record: Record<string, unknown>, key: string): SkillOptimizationMode | undefined {

@@ -33,11 +33,13 @@ import { createDefaultMcpBroker } from "./features/mcp/broker.js";
 import { createSystemKeychainSecretStore } from "./features/providers/keychain-secret-store.js";
 import { ProviderStartupRefreshService } from "./features/providers/startup-refresh.js";
 import { ActiveDirectReplyRegistry } from "./features/teammates/direct-reply-active-registry.js";
+import { resumePendingMediaJobExecutions } from "./features/media/executor.js";
 import { ActiveRunRegistry } from "./runtime/active-runs.js";
 import { createRunnerRegistry, DEFAULT_RUNNER_ID, LEGACY_PI_RUNNER_ID, type RunnerRegistry } from "./runtime/runners.js";
 import { listExternalRunnerRegistrations } from "./runtime/external-runners.js";
 import { RunStoreRegistry, type RunStoreFactory } from "./runtime/store-registry.js";
 import { RuntimeSupervisor } from "./runtime/supervisor.js";
+import { startRuntimeWorkUnit, transitionWorkUnitTerminal } from "./runtime/work-units.js";
 import { routeRequest } from "./server/router.js";
 import { attachRpcWebSocketServer } from "./server/rpc.js";
 import { writeJson } from "./shared/response.js";
@@ -204,6 +206,27 @@ export function createDaemonServer(
         secretResolver,
       });
       startupOptionalWarmups.start(resolvedConfig.defaultWorkspaceCwd, storeRegistry.getStore(resolvedConfig.defaultWorkspaceCwd));
+      resumePendingMediaJobExecutions({
+        cwd: resolvedConfig.defaultWorkspaceCwd,
+        storeRegistry,
+        secretResolver,
+        hooks: {
+          startRuntimeWorkUnit: (input) => startRuntimeWorkUnit({ ...input, runtimeSupervisor }),
+          transitionRuntimeWorkUnitTerminal: (input) => {
+            transitionWorkUnitTerminal(input.store, {
+              workUnitId: input.workUnitId,
+              attemptId: input.attemptId,
+              event: input.event,
+              attemptStatus: input.attemptStatus,
+              runtimeEventType: input.runtimeEventType,
+              actor: input.actor,
+              now: input.now,
+              errorCode: input.errorCode,
+              errorMessage: input.errorMessage,
+            });
+          },
+        },
+      });
     },
     stop: async () => {
       await new Promise<void>((resolve, reject) => {

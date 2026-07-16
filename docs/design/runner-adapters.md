@@ -10,11 +10,10 @@ Current boundary:
 - Pi remains the default effective runner.
 - `RunnerRegistry` resolves runner ids, aliases, allowed runners, provider/tool
   conformance, explicit/implicit fallback policy, and audit metadata.
-- Runs, work units, attempts, workflow steps, Settings, and Run History already expose
-  runner audit.
-- `codex-app-server` and `openclaw-acp` are registered as disabled placeholder runners
-  so settings, fallback, and audit can fail closed before real adapters are enabled.
-- No Codex app-server or OpenClaw/ACP backend is enabled today.
+- Runs, work units, attempts, workflow steps, and Run History retain runner audit.
+- `codex-app-server` and `openclaw-acp` remain feature-gated external runners and fail
+  closed until endpoint, readiness, and conformance gates pass.
+- No external runner is enabled by default or shown in ordinary Settings.
 - Model-provider integrations such as OpenAI, Anthropic/Claude, and Google/Gemini are
   not runner adapters by themselves. They remain provider presets unless they expose an
   external agent runtime with its own session, tools, events, artifacts, and approval
@@ -42,29 +41,33 @@ Implemented:
 - runtime settings still seed only enabled Pi as default/allowed runner;
 - `/runners` can expose disabled future adapters for audit and UI display.
 - future adapter registrations now include `featureFlag`, `capabilities`, and
-  `disabledReason` metadata, so Settings can show why `codex-app-server` and
-  `openclaw-acp` are unavailable.
+  `disabledReason` metadata, so internal diagnostics and audit clients can explain why
+  `codex-app-server` and `openclaw-acp` are unavailable.
 - daemon config can express `runners.codexAppServer.enabled` and
-  `runners.openclawAcp.enabled`, but the registrations still fail closed until a real
-  adapter and conformance gate exist.
-- Settings runtime runner UI shows disabled runner feature flags and disabled reasons
-  while preventing disabled runners from being selected.
+  `runners.openclawAcp.enabled`, but registrations fail closed until endpoint,
+  readiness, and conformance gates pass.
+- ordinary Settings uses Pi implicitly and does not expose runner selection, feature
+  flags, readiness blockers, or fallback controls;
 - sandbox profile contracts now define fail-closed backend verification, network policy,
   artifact import, secret-ref, and opaque session-ref gates without enabling a sandbox
   backend.
 
 Still future:
 
-- real Codex app-server health probe, stream adapter, approval bridge, and resume handle;
-- real OpenClaw/ACP capability negotiation, client bridge, violation handling, and
-  workspace-bound session lifecycle;
+- daemon-managed connection setup or service launch instead of manual endpoint wiring;
+- automatic readiness and capability probes that persist verifiable evidence rather
+  than trusting manually entered `readinessPassed` or `conformancePassed` booleans;
+- full tool parity for read, command, edit, write, approval, cancellation, artifact, and
+  workspace-bound execution;
+- safe fallback behavior with clear requested/effective runner audit;
 - OpenAI Agents SDK adapter decision refresh after platform-native sandbox policy and
   runner hydration observability are implemented;
 - wiring sandbox profile readiness into a concrete runner adapter after artifact import,
   network policy, and secret redaction conformance exists;
 - adapter decision records for Hermes, Claude, Gemini, or other future runtimes only when
   they expose an executable agent session rather than only a model API;
-- feature-flag UI that enables a non-Pi runner only after conformance passes.
+- a user-facing runner picker only after at least two runners are healthy, conformant,
+  capability-complete, and suitable for the same product workflows.
 
 ## Principles
 
@@ -222,6 +225,12 @@ These profiles are user-facing policy names, not backend names. A backend may im
 profile only when doctor checks and conformance evidence prove that the claimed file,
 process, network, artifact-import, and secret-redaction behavior is enforceable on the
 host platform.
+
+The Settings label `Sandbox settings` is currently a separate Ling permission-boundary
+control. It may select read-only, workspace-write, or full-access behavior for approvals
+and file tools, but it must not be presented as OS isolation while Pi still runs
+in-process. Commands that cannot be proven to stay inside the workspace remain approval
+gated until the platform-native execution wrapper is real and conformant.
 
 Required blocker codes for any future sandbox-backed runner:
 
@@ -456,7 +465,8 @@ high-level order is:
 8. implement `codex-app-server` as a dedicated adapter, not ACP by default;
 9. refresh the OpenAI Agents SDK adapter decision before adding any SDK runner id;
 10. write a Hermes decision record before adding any Hermes runner id;
-11. expose picker options only for enabled, healthy, conformant runners.
+11. expose a picker only after at least two enabled, healthy, conformant, capability-
+    complete runners are available for the same product workflows.
 
 ## Security Requirements
 
@@ -473,6 +483,7 @@ high-level order is:
 - Unknown/disabled adapter ids fail closed unless fallback policy explicitly allows Pi.
 - Adapter conformance covers stream, tool, approval, cancellation, artifact, error, and
   secret-redaction behavior.
-- Web runner picker only shows healthy enabled adapters.
+- Any future Web runner picker is withheld until at least two healthy, enabled,
+  conformant, capability-complete adapters are available.
 - Runner audit surfaces show requested/effective runner, source, fallback policy, and
   adapter failure reason.

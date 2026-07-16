@@ -357,7 +357,6 @@ h3 {
 }
 
 input,
-select,
 textarea {
   width: 100%;
   border: 1px solid #cfd8d3;
@@ -368,7 +367,7 @@ textarea {
 }
 
 input,
-select {
+input {
   height: 36px;
   padding: 0 10px;
 }
@@ -381,14 +380,12 @@ textarea {
 }
 
 input:focus,
-select:focus,
 textarea:focus {
   border-color: #0e7a63;
   box-shadow: 0 0 0 3px rgba(14, 122, 99, 0.12);
 }
 
 input:disabled,
-select:disabled,
 textarea:disabled {
   cursor: not-allowed;
   background: #eef2ed;

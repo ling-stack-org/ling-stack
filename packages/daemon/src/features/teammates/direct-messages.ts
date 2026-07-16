@@ -2,12 +2,14 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import {
   isLingAgentTeammateId,
   type AiTeammate,
+  type AuthorizationMode,
   type PermissionConfirmation,
   type PermissionPreset,
   type RunStore,
   type SkillOptimizationMode,
   type TeammateDirectMessage,
   type TeammateDirectThread,
+  type WorkspaceAccessMode,
 } from "@ling-stack/core";
 import type { ResolvedDaemonConfig } from "../../config.js";
 import { HttpError } from "../../errors.js";
@@ -37,6 +39,8 @@ export type CreateTeammateDirectAiReply = (input: {
   readonly thread: TeammateDirectThread;
   readonly sourceMessage: TeammateDirectMessage;
   readonly providerPresetId?: string;
+  readonly authorizationMode?: AuthorizationMode;
+  readonly workspaceAccessMode?: WorkspaceAccessMode;
   readonly permissionPreset?: PermissionPreset;
   readonly permissionConfirmation?: PermissionConfirmation;
   readonly requestedSkillId?: string;
@@ -196,6 +200,8 @@ export async function handleTeammateDirectMessagesCollection(
             thread,
             sourceMessage: message,
             providerPresetId: input.providerPresetId,
+            authorizationMode: input.authorizationMode,
+            workspaceAccessMode: input.workspaceAccessMode,
             permissionPreset: input.permissionPreset,
             permissionConfirmation: input.permissionConfirmation,
             requestedSkillId: input.requestedSkillId,
@@ -287,6 +293,8 @@ export async function handleTeammateDirectMessageStream(
         thread,
         sourceMessage: message,
         providerPresetId: messageInput.providerPresetId,
+        authorizationMode: messageInput.authorizationMode,
+        workspaceAccessMode: messageInput.workspaceAccessMode,
         permissionPreset: messageInput.permissionPreset,
         permissionConfirmation: messageInput.permissionConfirmation,
         requestedSkillId: messageInput.requestedSkillId,

@@ -1,7 +1,6 @@
 import { CircleAlert, Copy, ExternalLink, Image as ImageIcon, Loader2, Play, PlugZap } from "lucide-react";
 import { artifactContentUrl } from "../../api.js";
 import { useI18n } from "../../i18n.js";
-import { artifactDownloadName, isImageArtifact } from "../../lib/artifacts.js";
 import { formatDateTime } from "../../lib/formatting.js";
 import { ArtifactRow, StatusActionRow } from "../../shared/components/index.js";
 import type { MediaJob, RunArtifact } from "../../types.js";
@@ -15,8 +14,8 @@ import {
   mediaJobRunDisabledReason,
   mediaJobInputValue,
   mediaOperationLabel,
-  mediaJobStatusBadgeClass,
 } from "./media-job-view-models.js";
+import { MediaArtifactPreview } from "./MediaArtifactPreview.js";
 
 export function MediaJobDetailPanel({
   cwd,
@@ -107,6 +106,20 @@ function MediaJobDetail({
   const size = mediaJobInputValue(job.input, ["size", "resolution", "image_size", "imageSize"]);
   const seed = mediaJobInputValue(job.input, ["seed"]);
   const steps = mediaJobInputValue(job.input, ["steps", "num_steps", "numSteps"]);
+  const ratio = mediaJobInputValue(job.input, ["ratio", "aspect_ratio", "aspectRatio"]);
+  const duration = mediaJobInputValue(job.input, ["duration", "duration_seconds", "durationSeconds"]);
+  const jobParameters = job.operation === "video_generate"
+    ? [
+      [t("Model"), providerName],
+      [t("Aspect ratio"), ratio],
+      [t("Video duration"), duration === "--" ? duration : t("{count} seconds", { count: duration })],
+    ]
+    : [
+      [t("Model"), providerName],
+      [t("Size"), size],
+      [t("Seed"), seed],
+      [t("Steps"), steps],
+    ].filter(([, value]) => value !== "--");
   const runDisabledReason = mediaJobRunDisabledReason({ job, artifacts, isLoading, isRunning, isStarting });
   const runDisabledTitle = runDisabledReason ? t(runDisabledReason) : t("Run generation");
   const actionView = mediaJobPrimaryActionView({ job, artifacts, isLoading, isRunning, isStarting });
@@ -124,26 +137,26 @@ function MediaJobDetail({
         </span>
       </div>
       <h2>{t(mediaOperationLabel(job.operation))}</h2>
-      <p className="media-job-detail-summary">
-        {displayState === "completed"
-          ? t("Successfully generated {count} artifact based on the provided prompt.", { count: artifacts.length })
-          : displayState === "starting"
-            ? t("Generation request is starting. Results will appear here when it finishes.")
-          : displayState === "generating"
-            ? t("Generation is running. Results will appear here when it finishes.")
-          : needsRecovery
-            ? recoveryView?.description
-            : t("This task is ready to start when model settings are satisfied.")}
-      </p>
+      {!needsRecovery ? (
+        <p className="media-job-detail-summary">
+          {displayState === "completed"
+            ? t("Successfully generated {count} artifact based on the provided prompt.", { count: artifacts.length })
+            : displayState === "starting"
+              ? t("Generation request is starting. Results will appear here when it finishes.")
+            : displayState === "generating"
+              ? t("Generation is running. Results will appear here when it finishes.")
+              : t("This task is ready to start when model settings are satisfied.")}
+        </p>
+      ) : null}
 
       {primaryArtifact ? (
         <MediaJobResultHero artifact={primaryArtifact} cwd={cwd} />
-      ) : (
+      ) : !needsRecovery ? (
         <span className={`media-job-detail-preview empty ${job.status} ${displayState}`}>
-          {isRunning || isStarting ? <Loader2 className="spin" size={22} /> : needsRecovery ? <CircleAlert size={22} /> : <ImageIcon size={22} />}
-          <strong>{displayState === "starting" ? t("Starting generation") : displayState === "generating" ? t("Generating") : needsRecovery ? t("Needs attention") : t("No result yet")}</strong>
+          {isRunning || isStarting ? <Loader2 className="spin" size={22} /> : <ImageIcon size={22} />}
+          <strong>{displayState === "starting" ? t("Starting generation") : displayState === "generating" ? t("Generating") : t("No result yet")}</strong>
         </span>
-      )}
+      ) : null}
 
       {displayState === "completed" && primaryArtifact && resultActionView.hasResult ? (
         <MediaJobResultActions
@@ -155,37 +168,24 @@ function MediaJobDetail({
       ) : null}
 
       {needsRecovery && recoveryView ? (
-        <section className="media-job-recovery-card" aria-label={t("Generation recovery")}>
-          <div className="media-job-recovery-copy">
-            <CircleAlert size={17} />
-            <span>
-              <strong>{recoveryView.title}</strong>
-              <small>{recoveryView.description}</small>
-            </span>
-          </div>
-          {recoveryView.actionKind === "open_providers" ? (
-            <button className="secondary-button compact-button" type="button" onClick={onOpenProviders}>
-              <PlugZap size={15} />
-              {recoveryView.actionLabel}
-            </button>
-          ) : (
-            <span className="media-job-recovery-next">{t("Next step")}: {recoveryView.actionLabel}</span>
-          )}
-          <details className="media-job-detail-disclosure media-job-generation-details">
-            <summary>{t("Generation details")}</summary>
-            <p>{recoveryView.rawDetails}</p>
-          </details>
-        </section>
-      ) : null}
-
-      <StatusActionRow
-        className="media-job-detail-control-row"
-        title={t("Generation controls")}
-        description={actionView.visible ? (runDisabledReason ? runDisabledTitle : t("Start or retry this task, or copy its prompt and parameters.")) : t("Generated result is ready.")}
-        status={<span className={`status-badge ${mediaJobStatusBadgeClass(displayState)}`}>{t(mediaJobDisplayStateLabel(displayState))}</span>}
-        actions={(
-          <>
-            {actionView.visible ? (
+        <MediaJobFailureSummary
+          recoveryView={recoveryView}
+          isLoading={isLoading}
+          isRunning={isRunning}
+          isStarting={isStarting}
+          canRun={canRun}
+          runDisabledTitle={runDisabledTitle}
+          onCopy={onCopy}
+          onOpenProviders={onOpenProviders}
+          onRun={onRun}
+        />
+      ) : actionView.visible ? (
+        <StatusActionRow
+          className="media-job-detail-control-row"
+          title={t("Generation controls")}
+          description={runDisabledReason ? runDisabledTitle : t("Start or retry this task, or copy its prompt and parameters.")}
+          actions={(
+            <>
               <button
                 className={actionView.emphasis === "primary" ? "primary-button" : "secondary-button"}
                 type="button"
@@ -197,23 +197,20 @@ function MediaJobDetail({
                 {isRunning || isStarting ? <Loader2 className="spin" size={16} /> : <Play size={16} />}
                 {t(actionView.label)}
               </button>
-            ) : null}
-            <button className="secondary-button" type="button" onClick={onCopy}>
-              <Copy size={16} />
-              {t("Copy details")}
-            </button>
-          </>
-        )}
-      />
+              <button className="secondary-button" type="button" onClick={onCopy}>
+                <Copy size={16} />
+                {t("Copy details")}
+              </button>
+            </>
+          )}
+        />
+      ) : null}
 
-      <div className="media-job-detail-meta stitch-params" aria-label={t("Generation task parameters")}>
-        <span>{t("Model")}<strong>{providerName}</strong></span>
-        <span>{t("Size")}<strong>{size}</strong></span>
-        <span>{t("Seed")}<strong>{seed}</strong></span>
-        <span>{t("Steps")}<strong>{steps}</strong></span>
+      <div className={`media-job-detail-meta stitch-params${jobParameters.length % 2 ? " odd" : ""}`} aria-label={t("Generation task parameters")}>
+        {jobParameters.map(([label, value]) => <span key={label}>{label}<strong>{value}</strong></span>)}
       </div>
 
-      <details className="media-job-detail-disclosure" open>
+      <details className="media-job-detail-disclosure" open={displayState === "ready_to_start"}>
         <summary>{t("View full prompt")}</summary>
         <p>{job.prompt}</p>
       </details>
@@ -243,6 +240,69 @@ function MediaJobDetail({
         </div>
       ) : null}
     </div>
+  );
+}
+
+function MediaJobFailureSummary({
+  recoveryView,
+  isLoading,
+  isRunning,
+  isStarting,
+  canRun,
+  runDisabledTitle,
+  onCopy,
+  onOpenProviders,
+  onRun,
+}: {
+  readonly recoveryView: ReturnType<typeof mediaJobFailureRecoveryView>;
+  readonly isLoading: boolean;
+  readonly isRunning: boolean;
+  readonly isStarting: boolean;
+  readonly canRun: boolean;
+  readonly runDisabledTitle: string;
+  readonly onCopy: () => void;
+  readonly onOpenProviders: () => void;
+  readonly onRun: () => void;
+}): JSX.Element {
+  const { t } = useI18n();
+  const isBusy = isLoading || isRunning || isStarting;
+  return (
+    <section className="media-job-failure-summary" aria-label={t("Generation recovery")}>
+      <div className="media-job-failure-main">
+        <span className="media-job-failure-icon" aria-hidden="true">
+          <CircleAlert size={18} />
+        </span>
+        <span className="media-job-failure-copy">
+          <span className="media-job-failure-state">{t("Needs attention")}</span>
+          <strong>{recoveryView.title}</strong>
+          <small>{recoveryView.description}</small>
+        </span>
+      </div>
+      <div className="media-job-failure-actions">
+        <button
+          className="primary-button"
+          type="button"
+          onClick={recoveryView.actionKind === "open_providers" ? onOpenProviders : onRun}
+          disabled={recoveryView.actionKind === "retry" && (isBusy || !canRun)}
+          title={recoveryView.actionKind === "retry" ? runDisabledTitle : undefined}
+        >
+          {recoveryView.actionKind === "open_providers"
+            ? <PlugZap size={16} />
+            : isBusy
+              ? <Loader2 className="spin" size={16} />
+              : <Play size={16} />}
+          {recoveryView.actionLabel}
+        </button>
+        <button className="secondary-button" type="button" onClick={onCopy}>
+          <Copy size={16} />
+          {t("Copy details")}
+        </button>
+      </div>
+      <details className="media-job-failure-details">
+        <summary>{t("Generation details")}</summary>
+        <p>{recoveryView.rawDetails}</p>
+      </details>
+    </section>
   );
 }
 
@@ -284,19 +344,5 @@ function MediaJobResultHero({
   readonly artifact: RunArtifact;
   readonly cwd: string;
 }): JSX.Element {
-  const { t } = useI18n();
-  const title = artifact.title || artifactDownloadName(artifact);
-  if (isImageArtifact(artifact)) {
-    return (
-      <a className="media-job-detail-preview image" href={artifactContentUrl(artifact.id, cwd)} target="_blank" rel="noreferrer">
-        <img src={artifactContentUrl(artifact.id, cwd)} alt={title} />
-      </a>
-    );
-  }
-  return (
-    <a className="media-job-detail-preview file" href={artifactContentUrl(artifact.id, cwd)} target="_blank" rel="noreferrer">
-      <ImageIcon size={22} />
-      <strong>{t("Open generated result")}</strong>
-    </a>
-  );
+  return <MediaArtifactPreview artifact={artifact} cwd={cwd} variant="hero" className="media-job-detail-preview" />;
 }

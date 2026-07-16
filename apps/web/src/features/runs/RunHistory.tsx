@@ -106,6 +106,8 @@ import type {
   WorkUnitDetailResponse,
 } from "../../types.js";
 
+import { SelectControl } from "../../shared/components/SelectControl.js";
+
 type WorkHistoryTurnLoadState =
   | { readonly status: "loading"; readonly signature: string }
   | {
@@ -1169,7 +1171,7 @@ export function ThreadDetailPanel({
           </div>
           <label className="approval-reason-field thread-resume-composer">
             <span>{t("Resume source turn")}</span>
-            <select
+            <SelectControl
               value={selectedSourceTurn?.id ?? ""}
               onChange={(event) => {
                 setSelectedSourceTurnId(event.target.value);
@@ -1184,11 +1186,11 @@ export function ThreadDetailPanel({
                   {turn.title} · {turn.status} · {turn.id}
                 </option>
               ))}
-            </select>
+            </SelectControl>
           </label>
           <label className="approval-reason-field thread-resume-composer">
             <span>{t("Resume source run")}</span>
-            <select
+            <SelectControl
               value={sourceRunId}
               onChange={(event) => {
                 setSelectedSourceRunId(event.target.value);
@@ -1205,7 +1207,7 @@ export function ThreadDetailPanel({
                   {readTaskTitle(item.run.taskSnapshot) || item.run.taskId} · {item.run.id}
                 </option>
               ))}
-            </select>
+            </SelectControl>
           </label>
           <label className="approval-reason-field thread-resume-composer">
             <span>{t("Resume instruction")}</span>

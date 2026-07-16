@@ -80,11 +80,8 @@
 }
 
 .provider-workbench .provider-search-field,
-.provider-toolbar-controls select,
 .provider-workbench .secondary-button {
   border-color: var(--border);
-  background: var(--surface-panel-strong);
-  color: var(--text);
 }
 
 .provider-workbench .provider-search-field input {
@@ -427,15 +424,13 @@
 }
 
 .provider-sheet input,
-.provider-sheet select,
 .provider-sheet textarea {
   border-color: var(--border);
   background: var(--surface-panel-strong);
   color: var(--text);
 }
 
-.provider-sheet input:disabled,
-.provider-sheet select:disabled {
+.provider-sheet input:disabled {
   background: var(--surface-subtle);
   color: var(--text-muted);
 }

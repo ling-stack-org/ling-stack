@@ -45,15 +45,31 @@ test("main pages and workspace tools follow dark theme tokens", async ({ page })
   const navigation = page.getByLabel("Ling Stack navigation");
   await expect(navigation.getByRole("button", { name: "收件箱" })).toBeVisible();
 
-  await navigation.getByRole("button", { name: "图像生成" }).click();
-  await expect(page.locator(".media-jobs-page")).toBeVisible();
-  await assertDarkPage(page, "generation tasks", [
+  await navigation.getByRole("button", { name: "媒体生产" }).click();
+  await expect(page.locator(".media-production-page")).toBeVisible();
+  await assertDarkPage(page, "media production studio", [
     ".workspace-generation-surface",
-    ".media-jobs-page",
-    ".media-job-list-panel",
-    ".media-job-row",
-    ".media-job-detail-panel",
+    ".media-production-page",
+    ".media-production-canvas-toolbar",
+    ".media-production-studio",
+    ".media-production-empty-state",
   ]);
+
+  await navigation.getByRole("button", { name: "插件管理" }).click();
+  await expect(page.locator(".plugin-manager-page .settings-plugin-manager")).toBeVisible();
+  await assertDarkPage(page, "plugin manager", [
+    ".workspace-plugins-surface",
+    ".plugin-manager-page",
+    ".settings-plugin-manager",
+    ".plugin-table",
+    ".plugin-table-header",
+  ]);
+  await page.locator('.plugin-table-row[data-plugin-id="trusted-local:cua-driver"]').getByRole("button", { name: "安装引导" }).click();
+  await assertDarkPage(page, "Cua Driver installation guide", [
+    ".cua-install-panel",
+    ".cua-install-command",
+  ]);
+  await page.getByRole("dialog", { name: "安装 Cua Driver" }).getByRole("button", { name: "关闭" }).click();
 
   await navigation.getByRole("button", { name: "自动化" }).click();
   await expect(page.locator(".automations-inbox-page")).toBeVisible();
@@ -71,6 +87,18 @@ test("main pages and workspace tools follow dark theme tokens", async ({ page })
     ".settings-layout",
     ".settings-section-nav",
     ".settings-content-stack",
+  ]);
+
+  await page.getByLabel("设置分组").getByRole("button", { name: /默认授权|Default authorization/ }).click();
+  await expect(page.locator(".settings-global-approval-card")).toBeVisible();
+  await expect(page.locator(".runtime-runner-settings-panel")).toHaveCount(0);
+  await page.locator(".rich-choice-select-trigger").first().click();
+  await assertDarkPage(page, "default authorization settings", [
+    ".settings-default-authorization-section",
+    ".settings-global-approval-card",
+    ".settings-decision-row",
+    ".rich-choice-select-trigger",
+    ".rich-choice-select-popover",
   ]);
 
   await page.getByLabel("设置分组").getByRole("button", { name: /智囊团工作区|Council Workspace/ }).click();
@@ -140,15 +168,6 @@ test("main pages and workspace tools follow dark theme tokens", async ({ page })
     ".mcp-empty",
   ]);
 
-  await page.getByLabel("设置分组").getByRole("button", { name: /Plugin Manager|插件管理/ }).click();
-  await expect(page.locator(".settings-plugin-manager")).toBeVisible();
-  await assertDarkPage(page, "plugin settings", [
-    ".settings-layout",
-    ".settings-plugin-manager",
-    ".settings-meta-line",
-    ".settings-plugin-row",
-  ]);
-
   await page.getByLabel("设置分组").getByRole("button", { name: /个性化|Personalization/ }).click();
   await expect(page.locator(".personalization-settings-panel")).toBeVisible();
   await expect(page.locator(".skill-governance-settings-panel")).toBeVisible();
@@ -164,30 +183,28 @@ test("main pages and workspace tools follow dark theme tokens", async ({ page })
   ]);
 
   await page.getByLabel("设置分组").getByRole("button", { name: /技能库|Skill library/ }).click();
+  await page.getByRole("tab", { name: /内置技能|Built-in skills/ }).click();
   await expect(page.locator(".settings-skill-table")).toBeVisible();
+  await page.locator(".settings-skill-table tbody tr").first().click();
+  await expect(page.locator(".settings-skill-compact-inspector")).toBeVisible();
   await assertDarkPage(page, "skill library settings", [
     ".settings-layout",
     ".settings-skill-library",
-    ".settings-skill-library-stats span",
+    ".settings-skill-ownership-meta span",
     ".settings-skill-library-toolbar",
     ".settings-skill-table-wrap",
     ".settings-skill-table",
-    ".settings-skill-inspector",
-    ".settings-skill-search-empty",
+    ".settings-skill-detail-drawer",
+    ".settings-skill-compact-inspector",
+    ".settings-skill-summary-card",
   ]);
 
-  await page.getByRole("tab", { name: /待复核|Review queue/ }).click();
-  await expect(page.locator(".settings-skill-review-stack")).toBeVisible();
-  await assertDarkPage(page, "skill library review settings", [
-    ".settings-layout",
-    ".settings-skill-library",
-    ".settings-skill-review-stack",
-    ".settings-compact-details",
-    ".settings-skill-review-queue",
-    ".settings-skill-review-filters",
-  ]);
+  await expect(page.getByRole("tab", { name: /AI 进化|AI evolution/ })).toBeVisible();
+  await expect(page.getByRole("tab", { name: /待复核|Review queue/ })).toHaveCount(0);
+  await expect(page.getByRole("tab", { name: /官方技能更新|Official skill updates/ })).toHaveCount(0);
 
-  await page.getByLabel("设置分组").getByRole("button", { name: /工作看板|Work Board/ }).click();
+  await page.getByRole("button", { name: /返回应用|Back to app/ }).click();
+  await navigation.getByRole("button", { name: /工作看板|Work Board/ }).click();
   await expect(page.locator(".work-board-page")).toBeVisible();
   await assertDarkPage(page, "work board", [
     ".work-board-page",
@@ -197,6 +214,8 @@ test("main pages and workspace tools follow dark theme tokens", async ({ page })
     ".work-board-detail",
   ]);
 
+  await navigation.getByRole("button", { name: /设置|Settings/ }).click();
+  await page.getByLabel("设置分组").getByRole("button", { name: /启动与诊断|Startup and diagnostics/ }).click();
   await page.getByRole("button", { name: /打开运行诊断|Open run diagnostics/ }).first().click();
   await expect(page.getByLabel("设置分组")).toBeVisible();
   await expect(page.getByLabel("Ling Stack navigation")).toHaveCount(0);
@@ -207,6 +226,21 @@ test("main pages and workspace tools follow dark theme tokens", async ({ page })
     ".settings-run-diagnostics-summary",
     ".settings-run-diagnostics-list",
     ".settings-run-diagnostics-detail",
+  ]);
+
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.getByLabel("设置分组").getByRole("button", { name: /已归档项目|Archived items/ }).click();
+  await expect(page.locator(".archived-items-settings-panel")).toBeVisible();
+  await expect(page.locator(".archived-items-settings-panel").getByRole("tab")).toHaveCount(4);
+  await expect(page.locator(".archived-delete-action")).toHaveCount(1);
+  await assertDarkPage(page, "archived items settings", [
+    ".settings-layout",
+    ".archived-items-settings-panel",
+    ".archived-items-toolbar",
+    ".settings-subnav",
+    ".archived-item-list",
+    ".archived-item-row",
+    ".archived-item-actions",
   ]);
 
 });
@@ -232,7 +266,49 @@ function createDarkThemeState(): MockState {
       displayName: "工程队友",
       providerPresetId: "provider_local",
     }),
+    createMockTeammate({
+      id: "teammate_archived_dark",
+      displayName: "已归档队友",
+      hidden: true,
+      status: "active",
+      updatedAt: "2026-06-24T00:04:00.000Z",
+    }),
   ];
+  state.threads.push({
+    id: "thread_archived_dark",
+    workspaceId: "workspace_default",
+    kind: "conversation",
+    teammateId: "ling_agent",
+    title: "已归档会话",
+    objective: "Dark mode archived conversation",
+    status: "archived",
+    conversationMode: { mode: "default" },
+    createdAt: "2026-06-24T00:04:00.000Z",
+    updatedAt: "2026-06-24T00:04:00.000Z",
+    archivedAt: "2026-06-24T00:04:00.000Z",
+  });
+  state.channels.push({
+    id: "channel_archived_dark",
+    workspaceId: "workspace_default",
+    name: "已归档频道",
+    status: "archived",
+    boundPath: cwd,
+    autoReplyMode: "mentions_only",
+    allowedTools: ["read"],
+    runtimePolicy: {},
+    createdAt: "2026-06-24T00:04:00.000Z",
+    updatedAt: "2026-06-24T00:04:00.000Z",
+  });
+  state.channelBranches.push({
+    id: "branch_archived_dark",
+    workspaceId: "workspace_default",
+    channelId: "channel_archived_dark",
+    name: "已归档分支",
+    status: "archived",
+    createdAt: "2026-06-24T00:04:00.000Z",
+    updatedAt: "2026-06-24T00:04:00.000Z",
+    archivedAt: "2026-06-24T00:04:00.000Z",
+  });
   state.mediaJobs = [
     {
       id: "media_job_dark_succeeded",

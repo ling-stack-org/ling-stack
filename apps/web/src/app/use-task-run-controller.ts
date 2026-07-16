@@ -264,6 +264,8 @@ export function useTaskRunController(input: {
       await input.runWithRequest(input.buildTaskRunRequest(runCwd, task, channel, providerPresetId, {
         tools: options.toolsOverride,
         approvalProfile: options.approvalProfileOverride,
+        authorizationMode: input.form.authorizationMode,
+        workspaceAccessMode: input.form.workspaceAccessMode,
         permissionPreset: input.form.permissionPreset,
         permissionMode: input.form.permissionMode,
       }), runCwd, async (runId) => {

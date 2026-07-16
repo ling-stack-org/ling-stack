@@ -1,4 +1,4 @@
-export type ViewId = "workspace" | "teammates" | "councils" | "runs" | "threads" | "automations" | "providers" | "media" | "approvals" | "work_board" | "profile" | "settings";
+export type ViewId = "workspace" | "teammates" | "councils" | "runs" | "threads" | "automations" | "providers" | "plugins" | "media" | "approvals" | "work_board" | "profile" | "settings";
 export type SidebarViewTarget = ViewId | "tasks";
 export type SidebarConversationKind = "teammate" | "direct";
 export type SidebarTarget = SidebarViewTarget | `channel:${string}` | `${SidebarConversationKind}:${string}`;
@@ -59,8 +59,11 @@ export function viewTitle(view: ViewId): string {
   if (view === "work_board") {
     return "Work Board";
   }
+  if (view === "plugins") {
+    return "Plugin Manager";
+  }
   if (view === "media") {
-    return "Generation tasks";
+    return "媒体生产";
   }
   if (view === "profile") {
     return "Profile";
@@ -96,8 +99,11 @@ export function viewDescription(view: ViewId): string {
   if (view === "work_board") {
     return "全局工作状态台账：按频道、来源、负责人、等待原因和阻塞状态查看所有工作。";
   }
+  if (view === "plugins") {
+    return "管理插件包、运行状态、能力检查和 MCP 工具接入。";
+  }
   if (view === "media") {
-    return "Create and run image and video generation tasks. Configure a generation-capable model in Model Workbench first.";
+    return "用模型工作台中已验证的图片和视频模型创建生成任务与分镜生产项目。";
   }
   if (view === "profile") {
     return "查看个人资料、Token 活动、连续使用天数和技能调用统计。";

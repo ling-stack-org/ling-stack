@@ -36,6 +36,8 @@ test("run request builders preserve provider preset and legacy provider payloads
     apiKey: "",
     api: "openai-responses",
     tools: ["read", "grep", "write"],
+    authorizationMode: "smart",
+    workspaceAccessMode: "workspace_write",
     permissionPreset: "workspace_collaboration",
     permissionMode: "workspace_write",
   } satisfies RunFormState;
@@ -44,6 +46,8 @@ test("run request builders preserve provider preset and legacy provider payloads
   expect(presetRequest).toMatchObject({
     cwd: "/repo",
     providerPresetId: "provider_chat",
+    authorizationMode: "smart",
+    workspaceAccessMode: "workspace_write",
     permissionPreset: "workspace_collaboration",
     permissionMode: "workspace_write",
     thinkingLevel: "medium",
@@ -92,6 +96,8 @@ test("task run requests preserve workspace cwd fallback and approval profile", (
 
   const request = buildTaskRunRequest("/workspace", task, channel, "provider_chat", {
     approvalProfile: { mode: "standard", risk: "medium", requiredForTools: ["bash"] },
+    authorizationMode: "ask",
+    workspaceAccessMode: "read_only",
     permissionPreset: "read_only",
     permissionMode: "ask_everything",
   }) as Record<string, unknown>;
@@ -102,6 +108,8 @@ test("task run requests preserve workspace cwd fallback and approval profile", (
     providerPresetId: "provider_chat",
     tools: ["read", "grep", "find", "ls"],
     approvalProfile: { mode: "standard", risk: "medium", requiredForTools: ["bash"] },
+    authorizationMode: "ask",
+    workspaceAccessMode: "read_only",
     permissionPreset: "read_only",
     permissionMode: "ask_everything",
   });
@@ -127,6 +135,8 @@ test("rerun request reconstructs provider preset payload from run snapshots", ()
       workspaceCwd: "/workspace",
       providerPresetId: "provider_snapshot",
       tools: ["read", "invalid", "bash"],
+      authorizationMode: "always",
+      workspaceAccessMode: "full_access",
       permissionPreset: "custom",
       permissionMode: "balanced",
       lingConversationTone: "friendly",
@@ -148,6 +158,8 @@ test("rerun request reconstructs provider preset payload from run snapshots", ()
     },
     providerPresetId: "provider_snapshot",
     tools: ["read", "bash"],
+    authorizationMode: "always",
+    workspaceAccessMode: "full_access",
     permissionPreset: "custom",
     permissionMode: "balanced",
     thinkingLevel: "medium",

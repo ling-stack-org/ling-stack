@@ -1,0 +1,115 @@
+.media-create-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(17, 17, 17, 0.42);
+}
+
+.media-create-dialog {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  width: min(860px, calc(100vw - 48px));
+  max-height: min(820px, calc(100vh - 48px));
+  overflow: hidden;
+  border: 1px solid #dcdcdc;
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: 0 24px 70px rgba(15, 23, 42, 0.22);
+}
+
+.media-create-header,
+.media-create-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 24px 32px;
+  border-bottom: 1px solid #e5e5e5;
+}
+
+.media-create-header h2 {
+  margin: 0;
+  color: #111111;
+  font-size: 22px;
+  font-weight: 700;
+  line-height: 28px;
+}
+
+.media-create-header p {
+  margin: 6px 0 0;
+  color: #707070;
+  font-size: 14px;
+  line-height: 20px;
+}
+
+.media-create-body {
+  display: grid;
+  align-content: start;
+  gap: 20px;
+  min-height: 0;
+  overflow: auto;
+  padding: 28px 32px;
+}
+
+.media-create-advanced {
+  padding: 0;
+  border: 1px solid #e5e5e5;
+  border-radius: 7px;
+  background: #ffffff;
+}
+
+.media-create-advanced summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  min-height: 50px;
+  padding: 0 16px;
+  color: #171717;
+  font-size: 14px;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.media-create-advanced summary small {
+  color: #707070;
+  font-size: 12px;
+  font-weight: 400;
+}
+
+.media-create-advanced .field {
+  padding: 0 16px 16px;
+}
+
+.media-structured-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px 16px;
+  padding: 0 16px 16px;
+}
+
+.media-structured-fields .field {
+  padding: 0;
+}
+
+.media-structured-fields .field.wide {
+  grid-column: 1 / -1;
+}
+
+.media-create-footer {
+  border-top: 1px solid #e5e5e5;
+  border-bottom: 0;
+}
+
+.media-create-footer > span,
+.media-create-footer-note {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-right: auto;
+  color: #707070;
+  font-size: 14px;
+}

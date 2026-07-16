@@ -8,8 +8,9 @@
     "build": "corepack pnpm --filter @ling-stack/conversation-ui-core build && corepack pnpm --filter @ling-stack/conversation-ui-react build && corepack pnpm --filter @ling-stack/api-client build && corepack pnpm --filter @ling-stack/core build && tsc -p tsconfig.json && vite build",
     "typecheck": "corepack pnpm --filter @ling-stack/conversation-ui-core build && corepack pnpm --filter @ling-stack/conversation-ui-react build && corepack pnpm --filter @ling-stack/api-client build && corepack pnpm --filter @ling-stack/core build && tsc -p tsconfig.json --noEmit",
     "preview": "vite preview --host 127.0.0.1",
-    "lint": "node scripts/check-appshell-imports.mjs",
+    "lint": "node scripts/check-appshell-imports.mjs && node scripts/check-select-controls.mjs",
     "check:i18n": "node scripts/check-i18n.mjs",
+    "check:select-controls": "node scripts/check-select-controls.mjs",
     "test": "echo \"tests not configured yet\"",
     "test:e2e": "corepack pnpm --filter @ling-stack/conversation-ui-core build && corepack pnpm --filter @ling-stack/conversation-ui-react build && corepack pnpm --filter @ling-stack/api-client build && corepack pnpm --filter @ling-stack/core build && playwright test"
   },
@@ -20,6 +21,7 @@
     "@ling-stack/conversation-ui-react": "workspace:*",
     "@ling-stack/core": "workspace:*",
     "@tanstack/react-virtual": "^3.14.2",
+    "@xyflow/react": "^12.9.3",
     "katex": "^0.16.22",
     "lucide-react": "^0.468.0",
     "react": "^18.3.1",

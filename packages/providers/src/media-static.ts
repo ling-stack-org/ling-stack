@@ -126,6 +126,13 @@ function createStaticVendorMediaAdapter(options: StaticMediaAdapterOptions & {
 }): MediaAdapter {
   const capabilities = options.definition.capabilities;
   const transport = options.transport ?? createDisabledMediaVendorTransport();
+  const lifecycleEnabled = options.definition.kind === "seedance";
+  const createTransportRequest = (request: MediaExecutionRequest) => ({
+    vendor: options.definition,
+    requestPlan: createMediaVendorRequestPlan(options.definition, request),
+    jobId: request.jobId,
+    requestedAt: request.requestedAt,
+  });
   return {
     id: options.id ?? `${options.definition.kind}-static`,
     displayName: options.displayName ?? `${options.definition.displayName} Static Adapter`,
@@ -157,13 +164,9 @@ function createStaticVendorMediaAdapter(options: StaticMediaAdapterOptions & {
         throw new MediaAdapterExecutionError(forcedErrorCode, `Static media adapter forced ${forcedErrorCode}.`);
       }
 
-      const requestPlan = createMediaVendorRequestPlan(options.definition, request);
-      const transportResult = await transport.execute({
-        vendor: options.definition,
-        requestPlan,
-        jobId: request.jobId,
-        requestedAt: request.requestedAt,
-      });
+      const transportRequest = createTransportRequest(request);
+      const requestPlan = transportRequest.requestPlan;
+      const transportResult = await transport.execute(transportRequest);
       if (transportResult.status === "failed") {
         return {
           status: "failed",
@@ -187,6 +190,19 @@ function createStaticVendorMediaAdapter(options: StaticMediaAdapterOptions & {
         ],
       };
     },
+
+    ...(lifecycleEnabled && transport.submit ? {
+      submit: async (request: MediaExecutionRequest) => await transport.submit!(createTransportRequest(request)),
+    } : {}),
+    ...(lifecycleEnabled && transport.poll ? {
+      poll: async (handle: import("./types.js").MediaExecutionHandle) => await transport.poll!(handle),
+    } : {}),
+    ...(lifecycleEnabled && transport.collectArtifacts ? {
+      collectArtifacts: async (handle: import("./types.js").MediaExecutionHandle) => await transport.collectArtifacts!(handle),
+    } : {}),
+    ...(lifecycleEnabled && transport.cancel ? {
+      cancel: async (handle: import("./types.js").MediaExecutionHandle) => await transport.cancel!(handle),
+    } : {}),
   };
 }
 

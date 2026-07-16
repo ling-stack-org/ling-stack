@@ -25,7 +25,7 @@ import {
 } from "lucide-react";
 import { attachmentContentUrl, deleteAttachment, editConversationMessage, uploadConversationAttachment } from "../../api.js";
 import { useI18n } from "../../i18n.js";
-import type { ConversationAttachment, ConversationPendingReplacement, ConversationTranscriptStatus, ExecutionAction, LingTurn, PermissionPreset, ProviderThinkingMode, RunSession, SessionPermissionMode, TerminalReportDto } from "../../types.js";
+import type { AuthorizationMode, ConversationAttachment, ConversationPendingReplacement, ConversationTranscriptStatus, ExecutionAction, LingTurn, PermissionConfirmation, PermissionPreset, ProviderThinkingMode, RunSession, SessionPermissionMode, TerminalReportDto, WorkspaceAccessMode } from "../../types.js";
 import {
   createAttachmentPreviewUrl,
   createLocalComposerAssetId,
@@ -53,7 +53,8 @@ import {
   MessageRow,
   type MessageRowAuthorType,
 } from "../../shared/conversation/index.js";
-import { conversationPermissionPresetMenuOptions, inferPermissionPreset, permissionModeForPreset } from "../../lib/session-permissions.js";
+import { conversationPermissionPresetMenuOptions, permissionPresetForWorkspaceAccessMode, workspaceAccessModeForPermissionPreset } from "../../lib/session-permissions.js";
+import { authorizationAndAccessToLegacyPermission, resolveAuthorizationMode, resolveWorkspaceAccessMode } from "../../lib/conversation-authorization.js";
 import { buildConversationWorkCellViewModel } from "../../lib/conversation-work-cell.js";
 import { attachmentCanPreview, loadPreviewContent } from "../../lib/previews.js";
 import {
@@ -128,8 +129,11 @@ export interface ConversationHomeSendInput {
   readonly project: ConversationHomeProjectSelection;
   readonly model: ConversationHomeModelSelection;
   readonly authorization: {
+    readonly authorizationMode: AuthorizationMode;
+    readonly workspaceAccessMode: WorkspaceAccessMode;
     readonly permissionMode: SessionPermissionMode;
     readonly permissionPreset: PermissionPreset;
+    readonly permissionConfirmation?: PermissionConfirmation;
   };
   readonly replaceMessages: (messages: readonly ConversationHomeMessage[]) => void;
   readonly upsertMessage: (message: ConversationHomeMessage) => void;
@@ -143,6 +147,8 @@ export function ConversationHome({
   initialProjectLabel = "",
   initialProviderPresetId = "",
   initialThinkingLevel = "off",
+  initialAuthorizationMode,
+  initialWorkspaceAccessMode,
   initialPermissionMode,
   initialPermissionPreset,
   detailContext,
@@ -153,6 +159,7 @@ export function ConversationHome({
   workspaceCwd,
   sending = false,
   onOpenRun,
+  onConfirmFullAccess,
   onRefreshConversation,
   onSendConversation,
 }: {
@@ -162,6 +169,8 @@ export function ConversationHome({
   readonly initialProjectLabel?: string;
   readonly initialProviderPresetId?: string;
   readonly initialThinkingLevel?: ProviderThinkingMode;
+  readonly initialAuthorizationMode?: AuthorizationMode;
+  readonly initialWorkspaceAccessMode?: WorkspaceAccessMode;
   readonly initialPermissionMode?: SessionPermissionMode;
   readonly initialPermissionPreset?: PermissionPreset;
   readonly detailContext?: ConversationHomeDetailContext;
@@ -172,6 +181,7 @@ export function ConversationHome({
   readonly workspaceCwd: string;
   readonly sending?: boolean;
   readonly onOpenRun?: (runId: string) => void;
+  readonly onConfirmFullAccess?: () => Promise<PermissionConfirmation | undefined>;
   readonly onRefreshConversation?: () => void | Promise<void>;
   readonly onSendConversation: (input: ConversationHomeSendInput) => Promise<void>;
 }): JSX.Element {
@@ -187,7 +197,11 @@ export function ConversationHome({
   const [modelSearch, setModelSearch] = useState("");
   const [selectedProviderPresetId, setSelectedProviderPresetId] = useState(initialProviderPresetId.trim());
   const [selectedThinkingLevel, setSelectedThinkingLevel] = useState<ProviderThinkingMode>(initialThinkingLevel);
-  const [selectedPermissionPreset, setSelectedPermissionPreset] = useState<PermissionPreset>(() => initialPermissionPreset ?? inferPermissionPreset(initialPermissionMode));
+  const [selectedPermissionPreset, setSelectedPermissionPreset] = useState<PermissionPreset>(() => permissionPresetForWorkspaceAccessMode(resolveWorkspaceAccessMode(
+    initialWorkspaceAccessMode,
+    initialPermissionMode,
+    initialPermissionPreset,
+  )));
   const [messageFeedbackById, setMessageFeedbackById] = useState<Record<string, "up" | "down">>({});
   const [pendingAttachments, setPendingAttachments] = useState<readonly PendingAttachmentItem<ConversationAttachment>[]>([]);
   const [messageSearchOpen, setMessageSearchOpen] = useState(false);
@@ -533,8 +547,12 @@ export function ConversationHome({
   }, [initialProviderPresetId, initialThinkingLevel]);
 
   useEffect(() => {
-    setSelectedPermissionPreset(initialPermissionPreset ?? inferPermissionPreset(initialPermissionMode));
-  }, [initialPermissionMode, initialPermissionPreset]);
+    setSelectedPermissionPreset(permissionPresetForWorkspaceAccessMode(resolveWorkspaceAccessMode(
+      initialWorkspaceAccessMode,
+      initialPermissionMode,
+      initialPermissionPreset,
+    )));
+  }, [initialPermissionMode, initialPermissionPreset, initialWorkspaceAccessMode]);
 
   useEffect(() => {
     if (!modelMenuOpen && !thinkingMenuOpen) {
@@ -615,6 +633,25 @@ export function ConversationHome({
       setNotice(t("Please configure a chat model before sending."));
       return;
     }
+    const authorizationMode = resolveAuthorizationMode(initialAuthorizationMode, initialPermissionMode, initialPermissionPreset);
+    const workspaceAccessMode = workspaceAccessModeForPermissionPreset(selectedPermissionPreset);
+    let permissionConfirmation: PermissionConfirmation | undefined;
+    if (workspaceAccessMode === "full_access") {
+      permissionConfirmation = onConfirmFullAccess
+        ? await onConfirmFullAccess()
+        : globalThis.confirm(t("Full access can allow broad local file, network, and tool access for the next run. Continue?"))
+          ? {
+              mode: "full_access",
+              confirmed: true,
+              confirmedAt: new Date().toISOString(),
+              reason: "user_confirmed_full_access",
+            }
+          : undefined;
+      if (!permissionConfirmation) {
+        return;
+      }
+    }
+    const legacyPermission = authorizationAndAccessToLegacyPermission(authorizationMode, workspaceAccessMode);
     const now = new Date().toISOString();
     const pendingUserMessage: ConversationHomeMessage = {
       id: createConversationHomeMessageId(),
@@ -649,8 +686,11 @@ export function ConversationHome({
           ...(thinkingEnabled && selectedThinkingLevel !== "off" ? { thinkingLevel: selectedThinkingLevel } : {}),
         },
         authorization: {
-          permissionMode: permissionModeForPreset(selectedPermissionPreset),
-          permissionPreset: selectedPermissionPreset,
+          authorizationMode,
+          workspaceAccessMode,
+          permissionMode: legacyPermission.permissionMode,
+          permissionPreset: legacyPermission.permissionPreset,
+          permissionConfirmation,
         },
         replaceMessages: (nextMessages) => setMessages(nextMessages),
         upsertMessage: (message) => setMessages((current) => upsertConversationHomeMessage(current, message)),

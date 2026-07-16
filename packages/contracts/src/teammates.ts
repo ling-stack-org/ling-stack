@@ -1,4 +1,4 @@
-import type { ConversationPendingReplacement, PermissionConfirmation, PermissionPreset, ToolName } from "./shared.js";
+import type { AuthorizationMode, ConversationPendingReplacement, PermissionConfirmation, PermissionPreset, ToolName, WorkspaceAccessMode } from "./shared.js";
 import type { SkillOptimizationMode } from "./skills.js";
 import type { SkillApprovalProfile } from "./approvals.js";
 import type {
@@ -12,6 +12,7 @@ import type {
   ChannelWorkspaceStatus,
 } from "./channels.js";
 import type { McpToolDefaultApproval } from "./mcp.js";
+import type { RetentionTombstone } from "./retention.js";
 import type { WorkUnit } from "./runtime.js";
 
 export interface TeammatePersonaDraftRequest {
@@ -126,16 +127,6 @@ export interface AiTeammateListResponse {
 
 export interface AiTeammateMutationResponse {
   readonly teammate: AiTeammate;
-}
-
-export interface RetentionTombstone {
-  readonly id: string;
-  readonly workspaceId: string;
-  readonly entityType: "ai-teammate";
-  readonly entityId: string;
-  readonly reason?: string;
-  readonly deletedCounts: Readonly<Record<string, number>>;
-  readonly createdAt: string;
 }
 
 export interface HardDeleteAiTeammateRequest {
@@ -291,6 +282,8 @@ export interface CreateTeammateDirectMessageRequest {
   readonly fileRefs?: readonly ChannelMessageFileRef[];
   readonly requestAiReply?: boolean;
   readonly providerPresetId?: string;
+  readonly authorizationMode?: AuthorizationMode;
+  readonly workspaceAccessMode?: WorkspaceAccessMode;
   readonly permissionPreset?: PermissionPreset;
   readonly permissionConfirmation?: PermissionConfirmation;
   readonly requestedSkillId?: string;

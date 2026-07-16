@@ -5,9 +5,12 @@
 - [Settings Visual Density Follow-up](settings-visual-density-followup.md)
 - [Settings Diagnostic Density P8](settings-diagnostic-density-p8.md)
 - [Settings Interaction Depth P9](settings-interaction-depth-p9.md)
+- [Advanced Workspace Policy Productization](settings-advanced-workspace-policy-productization.md)
 - [P10 Implementation Plan](settings-full-surface-productization-p10-implementation-plan.md)
 - [Ling Design System](ling-design-system.md)
 - [Ling Design System P11 Implementation Plan](ling-design-system-p11-implementation-plan.md)
+- [Skill Source Sync Simplification P15](skill-source-sync-simplification-p15.md)
+- [Primary Navigation Tool Promotion](primary-navigation-tool-promotion.md)
 
 ## Summary
 
@@ -20,16 +23,20 @@ Settings is a management workspace. It must not silently switch into the main
 application shell unless the user chooses `Back to app` or a button explicitly
 named `Open ... in app`.
 
+Later IA decision: Work Board and Plugin Manager are no longer Settings-owned
+surfaces. They now live in the global desktop navigation under
+[Primary Navigation Tool Promotion](primary-navigation-tool-promotion.md).
+
 ## Screenshot Evidence Matrix
 
 | Evidence | Settings surface | Problem | Target design |
 | --- | --- | --- | --- |
 | Fig. 1 | Council Workspace / Channel access | Empty copy wraps vertically, the blank panel is too large, and channel access looks broken. | Horizontal compact empty state, clear select/attach/open-channel grouping, and no oversized blank diagnostic frame. |
 | Fig. 2 | Council Workspace / Council settings | Large form, low-signal copy, and action stacking make Settings feel like a full standalone workspace. | Summary-first settings tab with name, description, status, save as the primary action, and clone/archive in a low-frequency action row. |
-| Fig. 3 | Work Board | List plus right inspector is dense, and `Open run` risks switching to the main shell. | Row selection stays in Settings; run opens embedded diagnostics; task/channel/approval exits only through explicit `Open ... in app` buttons. |
-| Fig. 4 | Default authorization / Tool permission policy | Preset cards are oversized, advanced policy is exposed, and technical preview copy dominates. | Compact preset chooser, concise effective summary, tool decisions and write paths collapsed by default. |
-| Fig. 5 | Default authorization / Execution runners | Raw runner ids, fallback values, and readiness internals are visible by default; rows are too tall. | Runner rows show enabled state, display name, readiness summary, and a details disclosure for ids/blockers. |
-| Fig. 6 | Skill library / Source sync | Source path, health evidence, and preview space still form a diagnostic wall. | Top layer shows sync status and primary actions; paths, checksums, diffs, and context findings stay in details. |
+| Fig. 3 | Work Board | The Settings-owned surface made a daily work ledger feel like configuration. | Promote Work Board to global navigation and use its normal contextual links. |
+| Fig. 4 | Default authorization / Tool permission policy | Preset cards are oversized, advanced policy is exposed, and technical preview copy dominates. | Keep only the compact Default authorization chooser; remove tool-policy editing and previews from ordinary Settings. |
+| Fig. 5 | Default authorization / Execution runners | Raw runner ids, fallback values, and readiness internals are visible by default; rows are too tall. | Remove runner selection from ordinary Settings and use Pi by default. External runners remain a deferred internal capability. |
+| Fig. 6 | Skill library / Source sync | Source path, health evidence, and preview/publish controls still form a diagnostic wall. | One safe `Sync updates` action shows compact totals; only attention records expose details. |
 | Fig. 7 | Skill library / Review queue | Large empty panels and repeated health/review frames make the empty state heavy. | Compact empty states, one queue summary, and candidate details only when work exists. |
 | Fig. 8 | Archived items | Restore/delete rule text was easy to miss at the bottom, rows could stretch the page, and action icons could drift from labels. | A single muted hint sits under the title, each archived category has an internal scroll boundary, and row actions keep icon/text centered. |
 | Fig. 9 | Startup and diagnostics | The page still has technical diagnostic copy and a weak task hierarchy. | Startup status, blockers, refresh, and run diagnostics entry only; startup phases and diagnostic evidence collapsed. |
@@ -88,72 +95,70 @@ Acceptance:
 - Settings mode does not render the standalone `Council Workspace` H1/description.
 - Clone/archive are not part of the default form scan path.
 
-### Fig. 3 Settings / Work Board
+### Fig. 3 Global Work Board
 
-Default layer:
-- Row click selects detail only.
-- Right detail focuses on status, next action, owner/claim, and related objects.
-
-Details layer:
-- Run evidence opens Settings diagnostics.
-- Task/channel/approval navigation is labeled as leaving Settings.
-
-Buttons:
-- `Open run diagnostics`: stay in Settings.
-- `Open task in app`, `Open channel in app`, `Open approval in app`: leave
-  Settings explicitly.
-
-Acceptance:
-- Clicking a row does not show `Ling Stack navigation`.
-- Clicking a run action shows `.settings-run-diagnostics-panel`.
+This section is superseded by the primary-navigation promotion. Work Board keeps
+the global navigation visible, uses its existing row/detail interaction, and opens
+task, run, approval, and channel objects through their normal app routes. Settings
+does not retain a duplicate Work Board entry or embedded rendering mode.
 
 ### Fig. 4 Default Authorization / Tool Permission Policy
 
 Default layer:
-- Presets are compact choices.
-- Effective permissions summary is the visible preview.
+- The Settings destination remains named `Default authorization`.
+- Default authorization and Sandbox settings are two compact rows with right-aligned
+  dropdowns.
+- Authorization offers Ask first, Smart authorization, and Always authorize.
+- Sandbox offers Read only, Workspace write, and Full access.
+- Tool-policy summaries, previews, custom write paths, and runner controls are not shown
+  to ordinary users.
 
 Details layer:
-- Advanced workspace policy, write paths, raw tool decision lists, and policy
-  preview details are collapsed by default.
+- None in ordinary Settings. Exact tool decisions and write boundaries remain internal
+  policy data.
 
 Buttons:
-- Preset selection and save stay in Settings.
+- Each dropdown saves its own workspace default without changing the other value.
 
 Acceptance:
-- First screen does not show workspace raw ids or full policy internals.
+- The navigation and Configuration overview row still read `Default authorization`.
+- The page shows both dropdowns and no three-button segmented authorization control.
+- Changing authorization does not change sandbox; changing sandbox does not change
+  authorization.
+- `Tool permission policy`, `Advanced workspace policy`, effective permission previews,
+  and runner controls are absent.
 
 ### Fig. 5 Default Authorization / Execution Runners
 
 Default layer:
-- Runner rows show display name, enabled state, readiness summary, and primary
-  action.
+- Ling uses the built-in Pi runner by default.
+- No runner list, status, readiness summary, or fallback configuration is shown in
+  ordinary Settings.
 
 Details layer:
-- Raw runner id, fallback choice, readiness blockers, and runner metadata live
-  under runner details.
+- Runner registry, readiness, and fallback metadata remain available through internal
+  daemon APIs and diagnostics contracts only.
 
 Buttons:
-- Enable/disable/check/save stay in Settings.
+- None until external runner productization meets the documented readiness threshold.
 
 Acceptance:
-- Runner ids and fallback internals are not visible until details expands.
+- No user-facing runner control exists while Pi is the only production-ready runner.
 
 ### Fig. 6 Skill Library / Source Sync
 
 Default layer:
-- Source sync shows sync status, selected count, preview/publish actions, and
-  compact records.
-
-Details layer:
-- Root path, detected roots, checksums, drift diff, context findings, and health
-  diagnostics are folded.
+- Source sync shows current status, last sync time, and one `Sync updates` action.
+- It imports the Ling-managed official skill source. Parseable new and changed skills
+  apply in the daemon without a review queue. The managed-source contract is defined in
+  [Managed Official Skill Source P16](managed-official-skill-source-p16.md).
 
 Buttons:
-- Preview/publish/archive/rollback stay in Settings.
+- Sync updates/archive/rollback stay in Settings.
 
 Acceptance:
-- Source path and checksum do not dominate the first screen.
+- Source path and checksum do not dominate the first screen; a missing or unreadable
+  managed official source fails the operation without partial registry writes.
 
 ### Fig. 7 Skill Library / Review Queue
 
@@ -175,8 +180,9 @@ Acceptance:
 
 Default layer:
 - A single muted hint sits below the page title:
-  `Restored items return to their lists; channel and branch delete is permanent.`
-- Archived rows show object name, type, archived time, and restore action.
+  `Restored items return to their lists; deleting any archived item is permanent.`
+- Archived rows show object name, type, archived time, restore, and an icon-only delete
+  action.
 - Conversations, AI teammates, channels, and branches each own a bounded list
   with internal vertical scrolling.
 
@@ -185,6 +191,9 @@ Details layer:
 
 Buttons:
 - Restore/delete stay in Settings.
+- Conversation and AI teammate permanent delete follow
+  [P14](settings-archived-items-permanent-delete.md); sidebar archive remains
+  non-destructive.
 
 Acceptance:
 - Restore/delete rules do not sit at the page footer or become a separate
@@ -232,7 +241,7 @@ Acceptance:
 - `stay-settings`: refresh, save, check, sync, create, edit, filter, select,
   tab change, details expansion, and local inspector selection.
 - `open-settings-tool`: Model Workbench, Teammate Management, Council Workspace,
-  Work Board, and Default authorization switching.
+  and Default authorization switching.
 - `open-settings-diagnostic`: run diagnostics, run evidence, provider repair
   evidence, startup evidence.
 - `open-in-app-explicit`: channel, task, approval, and teammate chat navigation
@@ -243,11 +252,10 @@ Acceptance:
 - Council Workspace keeps a compact list/detail surface in Settings. Channel
   access empty states must never collapse into vertical text. Channel opening is
   an explicit app-context action.
-- Work Board uses Settings selection and inspector behavior. Run evidence opens
-  embedded diagnostics. Work-object navigation is explicit.
-- Default authorization keeps presets and summaries visible while advanced
-  policies, write paths, runner ids, fallback internals, and blockers are
-  folded.
+- Work Board is a global navigation surface and does not use the Settings shell.
+- Default authorization keeps authorization timing and sandbox boundary visible as two
+  dropdowns. Advanced tool policies, custom write paths, runner ids, fallback internals,
+  and blockers are not ordinary Settings content.
 - Skill library Source sync and Review queue are summary-first. Raw source
   evidence remains reachable but never fills the first screen by default.
 - Archived items removes default policy copy from the first screen.

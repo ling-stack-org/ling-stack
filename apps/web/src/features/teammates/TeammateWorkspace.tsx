@@ -66,6 +66,7 @@ import {
   type PendingAttachmentItem,
 } from "../../shared/components/index.js";
 import type {
+  AuthorizationMode,
   AiTeammate,
   Channel,
   EffectiveTeammateSkill,
@@ -109,8 +110,10 @@ import type {
   UpdateAiTeammateRequest,
   UsedMemoryEvent,
   UserProfile,
+  WorkspaceAccessMode,
   TerminalReportDto,
 } from "../../types.js";
+import { resolveAuthorizationMode, resolveWorkspaceAccessMode } from "../../lib/conversation-authorization.js";
 import { TeammateActivityTab } from "./TeammateActivityTab.js";
 import { TeammateChatContextPanel } from "./TeammateChatContextPanel.js";
 import { TeammateChatHeader } from "./TeammateChatHeader.js";
@@ -189,6 +192,8 @@ export function TeammateWorkspace({
   onRefreshChannels,
   onRefreshTasks,
   onOpenRun,
+  defaultAuthorizationMode,
+  defaultWorkspaceAccessMode,
   defaultPermissionMode,
   defaultPermissionPreset,
 }: {
@@ -208,6 +213,8 @@ export function TeammateWorkspace({
   readonly onRefreshChannels?: () => MaybePromise<void>;
   readonly onRefreshTasks?: (channelId: string) => MaybePromise<void>;
   readonly onOpenRun?: (runId: string) => void;
+  readonly defaultAuthorizationMode?: AuthorizationMode;
+  readonly defaultWorkspaceAccessMode?: WorkspaceAccessMode;
   readonly defaultPermissionMode?: SessionPermissionMode;
   readonly defaultPermissionPreset?: PermissionPreset;
 }): JSX.Element {
@@ -215,6 +222,11 @@ export function TeammateWorkspace({
   const [workspaceView, setWorkspaceView] = useState<TeammateWorkspaceView>("chat");
   const [activeTab, setActiveTab] = useState<TeammateWorkspaceTab>("profile");
   const [messages, setMessages] = useState<readonly TeammateDirectMessage[]>([]);
+  const [selectedWorkspaceAccessMode, setSelectedWorkspaceAccessMode] = useState<WorkspaceAccessMode>(() => resolveWorkspaceAccessMode(
+    defaultWorkspaceAccessMode,
+    defaultPermissionMode,
+    defaultPermissionPreset,
+  ));
   const [hasMoreDirectMessages, setHasMoreDirectMessages] = useState(false);
   const [nextDirectBeforeMessageId, setNextDirectBeforeMessageId] = useState<string | undefined>();
   const [loadingOlderDirectMessages, setLoadingOlderDirectMessages] = useState(false);
@@ -682,6 +694,19 @@ export function TeammateWorkspace({
     : hasQueuedDirectGuidance
       ? t("Guidance is queued. Wait for it to run, or run it now.")
       : t("Message this AI teammate privately");
+  const directAuthorizationMode = resolveAuthorizationMode(
+    defaultAuthorizationMode,
+    defaultPermissionMode,
+    defaultPermissionPreset,
+  );
+
+  useEffect(() => {
+    setSelectedWorkspaceAccessMode(resolveWorkspaceAccessMode(
+      defaultWorkspaceAccessMode,
+      defaultPermissionMode,
+      defaultPermissionPreset,
+    ));
+  }, [defaultPermissionMode, defaultPermissionPreset, defaultWorkspaceAccessMode]);
 
   useEffect(() => {
     setSettingsForm(teammateToSettingsForm(teammate));
@@ -1024,6 +1049,8 @@ export function TeammateWorkspace({
         linkPreviewIds: linkPreviews.map((preview) => preview.id),
         fileRefs,
         providerPresetId: teammate.providerPresetId,
+        authorizationMode: directAuthorizationMode,
+        workspaceAccessMode: selectedWorkspaceAccessMode,
         permissionPreset: authorization.permissionPreset,
         permissionConfirmation: authorization.permissionConfirmation,
       });
@@ -2231,8 +2258,8 @@ export function TeammateWorkspace({
           onRemoveComposerFileReference={removeComposerFileReference}
           onRemovePendingLinkPreview={(previewId) => setPendingDirectLinkPreviewIds((current) => current.filter((id) => id !== previewId))}
           onRemovePendingAttachment={removePendingAttachment}
-          defaultPermissionMode={defaultPermissionMode}
-          defaultPermissionPreset={defaultPermissionPreset}
+          workspaceAccessMode={selectedWorkspaceAccessMode}
+          onWorkspaceAccessModeChange={setSelectedWorkspaceAccessMode}
           dockOpen={chatDockOpen}
           dockPageRequest={chatDockPageRequest}
           dockActions={(

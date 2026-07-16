@@ -1,6 +1,7 @@
 import {
   permissionModeForPreset,
   type AiTeammate,
+  type AuthorizationMode,
   type LingThread,
   type PermissionConfirmation,
   type PermissionPreset,
@@ -8,6 +9,7 @@ import {
   type SkillOptimizationMode,
   type TeammateDirectMessage,
   type TeammateDirectThread,
+  type WorkspaceAccessMode,
 } from "@ling-stack/core";
 import type { RunRequest } from "../runs/schemas.js";
 import type { DirectWorkspaceReady } from "./direct-workspace.js";
@@ -27,6 +29,8 @@ export function resolveTeammateDirectExecutionContext(input: {
   readonly workspace: DirectWorkspaceReady;
   readonly prompt: string;
   readonly systemPrompt: string;
+  readonly authorizationMode?: AuthorizationMode;
+  readonly workspaceAccessMode?: WorkspaceAccessMode;
   readonly permissionPreset?: PermissionPreset;
   readonly permissionConfirmation?: PermissionConfirmation;
   readonly requestedSkillId?: string;
@@ -52,6 +56,8 @@ export function resolveTeammateDirectExecutionContext(input: {
       skillOptimizationMode: input.skillOptimizationMode,
       tools: input.teammate.allowedTools,
       approvalProfile: input.teammate.approvalProfile,
+      authorizationMode: input.authorizationMode,
+      workspaceAccessMode: input.workspaceAccessMode,
       permissionPreset: input.permissionPreset,
       permissionMode,
       permissionConfirmation: input.permissionConfirmation,

@@ -210,7 +210,8 @@
   font-size: 12px;
 }
 
-.work-board-filters select {
+.work-board-filters .select-control {
+  width: 100%;
   min-width: 0;
 }
 
@@ -437,16 +438,10 @@
   gap: 6px;
 }
 
-.work-item-route-control select,
-.work-board-detail-route select {
+.work-item-route-control .select-control,
+.work-board-detail-route .select-control {
   min-width: 138px;
   max-width: 180px;
-  height: 30px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  background: var(--surface-panel);
-  color: var(--text-strong);
-  font-size: 12px;
 }
 
 .work-board-detail {
@@ -682,7 +677,7 @@
   padding-top: 4px;
 }
 
-.work-board-detail-route select {
+.work-board-detail-route .select-control {
   flex: 1;
   max-width: none;
 }

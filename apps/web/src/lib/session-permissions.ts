@@ -1,5 +1,5 @@
 import type { ConversationPermissionPresetOption } from "@ling-stack/conversation-ui-core";
-import type { ApprovalPolicy, ApprovalPolicyFormState, ApprovalToolDecision, EffectiveRunPolicySnapshot, PermissionPreset, SessionPermissionMode, ToolName } from "../types.js";
+import type { ApprovalPolicy, ApprovalPolicyFormState, ApprovalToolDecision, AuthorizationMode, EffectiveRunPolicySnapshot, PermissionPreset, SessionPermissionMode, ToolName, WorkspaceAccessMode } from "../types.js";
 import type { Translate } from "../i18n.js";
 import { allTools, riskyTools } from "./tools.js";
 
@@ -38,10 +38,10 @@ export function sessionPermissionModeLabel(mode: SessionPermissionMode | undefin
 
 export function permissionPresetLabel(preset: PermissionPreset | undefined, t: Translate): string {
   if (preset === "read_only") {
-    return t("Read-only / planning");
+    return t("Read only");
   }
   if (preset === "workspace_collaboration") {
-    return t("Workspace collaboration");
+    return t("Workspace write");
   }
   if (preset === "full_access") {
     return t("Full access");
@@ -92,12 +92,26 @@ export function permissionPresetRequiresConfirmation(preset: PermissionPreset | 
   return preset === "full_access";
 }
 
+export function permissionPresetForWorkspaceAccessMode(mode: WorkspaceAccessMode): PermissionPreset {
+  return mode === "workspace_write" ? "workspace_collaboration" : mode;
+}
+
+export function workspaceAccessModeForPermissionPreset(preset: PermissionPreset | undefined): WorkspaceAccessMode {
+  if (preset === "read_only" || preset === "full_access") {
+    return preset;
+  }
+  return "workspace_write";
+}
+
 export function conversationPermissionPresetMenuOptions(t: Translate): readonly ConversationPermissionPresetOption[] {
-  return permissionPresetOptions.map((preset) => ({
+  return (["read_only", "workspace_collaboration", "full_access"] as const).map((preset) => ({
     preset,
-    label: permissionPresetLabel(preset, t),
-    description: permissionPresetDescription(preset, t),
-    requiresConfirmation: permissionPresetRequiresConfirmation(preset),
+    label: preset === "read_only" ? t("Read only") : preset === "workspace_collaboration" ? t("Workspace write") : t("Full access"),
+    description: preset === "read_only"
+      ? t("Read project files; editing and commands are blocked.")
+      : preset === "workspace_collaboration"
+        ? t("Edit files inside the current workspace; commands still ask for approval.")
+        : t("Access files outside the workspace; each run still requires explicit confirmation."),
   }));
 }
 
@@ -172,6 +186,8 @@ export function readEffectivePolicySnapshot(snapshot: unknown): EffectiveRunPoli
   const record = readRecord(snapshot);
   const policy = readRecord(record?.effectivePolicySnapshot);
   const mode = typeof policy?.mode === "string" && isSessionPermissionMode(policy.mode) ? policy.mode : undefined;
+  const authorizationMode = typeof policy?.authorizationMode === "string" && isAuthorizationMode(policy.authorizationMode) ? policy.authorizationMode : undefined;
+  const workspaceAccessMode = typeof policy?.workspaceAccessMode === "string" && isWorkspaceAccessMode(policy.workspaceAccessMode) ? policy.workspaceAccessMode : undefined;
   const allowedWritePaths = Array.isArray(policy?.allowedWritePaths)
     ? policy.allowedWritePaths.filter((item): item is string => typeof item === "string")
     : [];
@@ -184,6 +200,8 @@ export function readEffectivePolicySnapshot(snapshot: unknown): EffectiveRunPoli
   }
   return {
     mode,
+    authorizationMode,
+    workspaceAccessMode,
     toolDecisions: toolDecisions as EffectiveRunPolicySnapshot["toolDecisions"],
     allowedWritePaths,
     workspacePolicyUpdatedAt: typeof policy?.workspacePolicyUpdatedAt === "string" ? policy.workspacePolicyUpdatedAt : undefined,
@@ -219,6 +237,14 @@ function isSessionPermissionMode(value: string | undefined): value is SessionPer
 
 function isPermissionPreset(value: string | undefined): value is PermissionPreset {
   return value === "read_only" || value === "workspace_collaboration" || value === "full_access" || value === "custom";
+}
+
+function isAuthorizationMode(value: string | undefined): value is AuthorizationMode {
+  return value === "ask" || value === "smart" || value === "always";
+}
+
+function isWorkspaceAccessMode(value: string | undefined): value is WorkspaceAccessMode {
+  return value === "read_only" || value === "workspace_write" || value === "full_access";
 }
 
 function applyPermissionModeToToolDecisions(

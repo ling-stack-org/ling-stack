@@ -54,10 +54,10 @@ import type {
   UserProfile,
   PermissionPreset,
   PermissionConfirmation,
-  SessionPermissionMode,
   TerminalReportDto,
+  WorkspaceAccessMode,
 } from "../../types.js";
-import { conversationPermissionPresetMenuOptions, inferPermissionPreset } from "../../lib/session-permissions.js";
+import { conversationPermissionPresetMenuOptions, permissionPresetForWorkspaceAccessMode, workspaceAccessModeForPermissionPreset } from "../../lib/session-permissions.js";
 import { TeammateAvatarView } from "./TeammateAvatarView.js";
 import {
   directFileRefLabel,
@@ -146,8 +146,8 @@ export function TeammatePrivateChatSurface({
   onRemoveComposerFileReference,
   onRemovePendingLinkPreview,
   onRemovePendingAttachment,
-  defaultPermissionMode,
-  defaultPermissionPreset,
+  workspaceAccessMode,
+  onWorkspaceAccessModeChange,
   dockOpen,
   dockPageRequest,
   dockActions,
@@ -240,8 +240,8 @@ export function TeammatePrivateChatSurface({
   readonly onRemoveComposerFileReference: (raw: string, occurrenceIndex: number) => void;
   readonly onRemovePendingLinkPreview: (previewId: string) => void;
   readonly onRemovePendingAttachment: (localId: string) => void | Promise<void>;
-  readonly defaultPermissionMode?: SessionPermissionMode;
-  readonly defaultPermissionPreset?: PermissionPreset;
+  readonly workspaceAccessMode: WorkspaceAccessMode;
+  readonly onWorkspaceAccessModeChange: (mode: WorkspaceAccessMode) => void;
   readonly dockOpen: boolean;
   readonly dockPageRequest?: WorkspaceRightDockPageRequest;
   readonly dockActions?: ReactNode;
@@ -260,7 +260,7 @@ export function TeammatePrivateChatSurface({
 }): JSX.Element {
   const { t } = useI18n();
   const [messageFeedbackById, setMessageFeedbackById] = useState<Record<string, "up" | "down">>({});
-  const [selectedPermissionPreset, setSelectedPermissionPreset] = useState<PermissionPreset>(() => defaultPermissionPreset ?? inferPermissionPreset(defaultPermissionMode));
+  const [selectedPermissionPreset, setSelectedPermissionPreset] = useState<PermissionPreset>(() => permissionPresetForWorkspaceAccessMode(workspaceAccessMode));
   const [permissionConfirmation, setPermissionConfirmation] = useState<PermissionConfirmation | undefined>();
   const [slashPicker, setSlashPicker] = useState<ActiveSlashCommandPicker | undefined>();
   const [slashActiveIndex, setSlashActiveIndex] = useState(0);
@@ -318,9 +318,9 @@ export function TeammatePrivateChatSurface({
   );
 
   useEffect(() => {
-    setSelectedPermissionPreset(defaultPermissionPreset ?? inferPermissionPreset(defaultPermissionMode));
+    setSelectedPermissionPreset(permissionPresetForWorkspaceAccessMode(workspaceAccessMode));
     setPermissionConfirmation(undefined);
-  }, [defaultPermissionMode, defaultPermissionPreset]);
+  }, [workspaceAccessMode]);
 
   function confirmPermissionChange(preset: PermissionPreset): boolean {
     if (preset !== "full_access") {
@@ -944,6 +944,7 @@ export function TeammatePrivateChatSurface({
                   confirmChange={confirmPermissionChange}
                   onPresetChange={(preset) => {
                     setSelectedPermissionPreset(preset);
+                    onWorkspaceAccessModeChange(workspaceAccessModeForPermissionPreset(preset));
                     if (preset !== "full_access") {
                       setPermissionConfirmation(undefined);
                     }

@@ -93,6 +93,26 @@ export interface RuntimePermissionGrant {
   readonly expiresAt?: string;
 }
 
+export type MediaCostApprovalPayload =
+  | {
+      readonly type: "media_cost";
+      readonly sourceKind: "provider";
+      readonly providerPresetId: string;
+      readonly model: string;
+      readonly operation: "image_generate" | "image_edit" | "video_generate";
+      readonly estimatedCost?: number;
+      readonly promptPreview: string;
+    }
+  | {
+      readonly type: "media_cost";
+      readonly sourceKind: "workflow";
+      readonly workflowDefinitionId: string;
+      readonly workflowName: string;
+      readonly operation: "image_generate" | "image_edit" | "video_generate";
+      readonly estimatedCost?: number;
+      readonly promptPreview: string;
+    };
+
 export type ApprovalPayload =
   | {
       readonly type: "file_write";
@@ -152,14 +172,7 @@ export type ApprovalPayload =
       readonly command?: string;
       readonly environment?: string;
     }
-  | {
-      readonly type: "media_cost";
-      readonly providerPresetId: string;
-      readonly model: string;
-      readonly operation: "image_generate" | "image_edit" | "video_generate";
-      readonly estimatedCost?: number;
-      readonly promptPreview: string;
-    }
+  | MediaCostApprovalPayload
   | {
       readonly type: "provider_change";
       readonly providerPresetId: string;

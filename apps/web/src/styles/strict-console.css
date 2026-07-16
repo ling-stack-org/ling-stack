@@ -94,7 +94,6 @@
 
 .channel-tab,
 .segmented-control button,
-.mention-picker select,
 .link-preview-input input,
 .mention-suggestion {
   background: transparent;
@@ -462,15 +461,13 @@
 }
 
 .workspace-provider-surface .provider-sheet input,
-.workspace-provider-surface .provider-sheet select,
 .workspace-provider-surface .provider-sheet textarea {
   border-color: var(--border);
   background: var(--surface-panel);
   color: var(--text);
 }
 
-.workspace-provider-surface .provider-sheet input:disabled,
-.workspace-provider-surface .provider-sheet select:disabled {
+.workspace-provider-surface .provider-sheet input:disabled {
   background: var(--surface-pressed);
   color: var(--text-muted);
   opacity: 1;
@@ -627,7 +624,6 @@
 .workspace-provider-surface .provider-table th:nth-child(7),
 .workspace-provider-surface .provider-table td:nth-child(7),
 .workspace-provider-surface .provider-search-field,
-.workspace-provider-surface .provider-toolbar-controls select,
 .workspace-provider-surface .provider-avatar,
 .workspace-provider-surface .provider-state,
 .workspace-provider-surface .capability-list span,
@@ -635,7 +631,6 @@
 .workspace-provider-surface .provider-row-menu-trigger,
 .workspace-provider-surface .provider-row-menu-popover,
 .workspace-provider-surface .provider-sheet input,
-.workspace-provider-surface .provider-sheet select,
 .workspace-provider-surface .provider-sheet textarea,
 .workspace-provider-surface .settings-toggle,
 .workspace-provider-surface .provider-check-feedback {
@@ -1019,7 +1014,7 @@
 }
 
 .teammate-create-overlay .teammate-create-dialog .teammate-create-fields input,
-.teammate-create-overlay .teammate-create-dialog .teammate-create-fields select {
+.teammate-create-overlay .teammate-create-dialog .teammate-create-fields input {
   min-height: 40px;
   border-radius: 7px;
 }
@@ -1236,7 +1231,7 @@
   color: var(--text-muted);
 }
 
-:root[data-theme="dark"] .workspace :is(input, select, textarea, [contenteditable="true"]) {
+:root[data-theme="dark"] .workspace :is(input, textarea, [contenteditable="true"]) {
   border-color: var(--border);
   background: var(--surface-panel-strong);
   color: var(--text);
@@ -1247,7 +1242,7 @@
   color: var(--text-soft);
 }
 
-:root[data-theme="dark"] .workspace :is(input, select, textarea):disabled {
+:root[data-theme="dark"] .workspace :is(input, textarea):disabled {
   border-color: var(--border);
   background: var(--surface-pressed);
   color: var(--text-soft);

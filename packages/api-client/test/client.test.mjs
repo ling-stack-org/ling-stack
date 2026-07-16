@@ -718,6 +718,24 @@ test("lists and refreshes skills through expected routes", async () => {
   assert.deepEqual(JSON.parse(mock.calls[1].body), {});
 });
 
+test("archives and permanently deletes skills through distinct routes", async () => {
+  const responses = [
+    { cwd: "/repo", skill: { id: "skill 1", reviewStatus: "archived" } },
+    { cwd: "/repo", deletedSkillId: "skill 1", deletedAt: "2026-07-12T00:00:00.000Z" },
+  ];
+  const mock = createFetchMock(responses);
+  const client = new LingDaemonClient({ baseUrl: "http://daemon.test", fetch: mock.fetch });
+
+  assert.equal(await client.archiveSkill("/repo path", "skill 1"), undefined);
+  assert.deepEqual(await client.hardDeleteSkill("/repo path", "skill 1"), responses[1]);
+
+  assert.equal(mock.calls[0].method, "DELETE");
+  assert.equal(mock.calls[0].url, "http://daemon.test/skills/skill%201?cwd=%2Frepo+path");
+  assert.equal(mock.calls[1].method, "POST");
+  assert.equal(mock.calls[1].url, "http://daemon.test/skills/skill%201/hard-delete?cwd=%2Frepo+path");
+  assert.deepEqual(JSON.parse(mock.calls[1].body), {});
+});
+
 test("reads skill source snapshots and source health through expected routes", async () => {
   const responses = [
     { cwd: "/repo", report: { workspaceId: "workspace_default" }, snapshots: [] },
@@ -769,6 +787,32 @@ test("reads skill source snapshots and source health through expected routes", a
   assert.equal(mock.calls[7].method, "POST");
   assert.equal(mock.calls[7].url, "http://daemon.test/skills/review%20skill/compiled-views/skill_compiled_1/archive?cwd=%2Frepo+path");
   assert.deepEqual(JSON.parse(mock.calls[7].body), {});
+});
+
+test("previews skill imports without using the durable draft route", async () => {
+  const response = {
+    cwd: "/repo",
+    preview: {
+      source: "skill-directory",
+      sourcePath: "SKILL.md",
+      name: "QA review",
+      description: "Review the current change.",
+      definitions: [],
+      warnings: [],
+    },
+    contextFindings: [],
+  };
+  const mock = createFetchMock([response]);
+  const client = new LingDaemonClient({ baseUrl: "http://daemon.test", fetch: mock.fetch });
+  const input = {
+    content: "---\nname: QA review\n---\n\nReview the current change.",
+    sourcePath: "SKILL.md",
+  };
+
+  assert.deepEqual(await client.previewSkillImport("/repo path", input), response);
+  assert.equal(mock.calls[0].method, "POST");
+  assert.equal(mock.calls[0].url, "http://daemon.test/skills/import-preview?cwd=%2Frepo+path");
+  assert.deepEqual(JSON.parse(mock.calls[0].body), input);
 });
 
 test("syncs gstack skill sources through expected routes", async () => {
@@ -1198,6 +1242,7 @@ test("uses expected managed plugin routes", async () => {
 
   await client.listManagedPlugins("/repo path");
   await client.getManagedPlugin("/repo path", "trusted-local:cua-driver");
+  await client.connectManagedPlugin("/repo path", "trusted-local:cua-driver", { command: "/bin/cua-driver" });
   await client.applyManagedPluginPreset("/repo path", "trusted-local:cua-driver", { options: { command: "/bin/cua-driver" } });
   await client.checkManagedPlugin("/repo path", "trusted-local:cua-driver");
   await client.enableManagedPlugin("/repo path", "trusted-local:cua-driver");
@@ -1207,12 +1252,14 @@ test("uses expected managed plugin routes", async () => {
   assert.equal(mock.calls[0].url, "http://daemon.test/plugins?cwd=%2Frepo+path");
   assert.equal(mock.calls[1].url, "http://daemon.test/plugins/trusted-local%3Acua-driver?cwd=%2Frepo+path");
   assert.equal(mock.calls[2].method, "POST");
-  assert.equal(mock.calls[2].url, "http://daemon.test/plugins/trusted-local%3Acua-driver/apply-preset?cwd=%2Frepo+path");
-  assert.deepEqual(JSON.parse(mock.calls[2].body), { options: { command: "/bin/cua-driver" } });
-  assert.equal(mock.calls[3].url, "http://daemon.test/plugins/trusted-local%3Acua-driver/check?cwd=%2Frepo+path");
-  assert.equal(mock.calls[4].url, "http://daemon.test/plugins/trusted-local%3Acua-driver/enable?cwd=%2Frepo+path");
-  assert.equal(mock.calls[5].url, "http://daemon.test/plugins/trusted-local%3Acua-driver/disable?cwd=%2Frepo+path");
-  assert.deepEqual(JSON.parse(mock.calls[5].body), { reason: "pause" });
+  assert.equal(mock.calls[2].url, "http://daemon.test/plugins/trusted-local%3Acua-driver/connect?cwd=%2Frepo+path");
+  assert.deepEqual(JSON.parse(mock.calls[2].body), { command: "/bin/cua-driver" });
+  assert.equal(mock.calls[3].url, "http://daemon.test/plugins/trusted-local%3Acua-driver/apply-preset?cwd=%2Frepo+path");
+  assert.deepEqual(JSON.parse(mock.calls[3].body), { options: { command: "/bin/cua-driver" } });
+  assert.equal(mock.calls[4].url, "http://daemon.test/plugins/trusted-local%3Acua-driver/check?cwd=%2Frepo+path");
+  assert.equal(mock.calls[5].url, "http://daemon.test/plugins/trusted-local%3Acua-driver/enable?cwd=%2Frepo+path");
+  assert.equal(mock.calls[6].url, "http://daemon.test/plugins/trusted-local%3Acua-driver/disable?cwd=%2Frepo+path");
+  assert.deepEqual(JSON.parse(mock.calls[6].body), { reason: "pause" });
 });
 
 test("uses expected teammate private data lifecycle routes", async () => {
@@ -1237,6 +1284,17 @@ test("uses expected teammate private data lifecycle routes", async () => {
   assert.equal(mock.calls[4].url, "http://daemon.test/teammates/teammate%201/avatar?cwd=%2Frepo");
   assert.equal(mock.calls[5].method, "DELETE");
   assert.equal(mock.calls[5].url, "http://daemon.test/teammates/teammate%201/avatar?cwd=%2Frepo");
+});
+
+test("uses expected archived conversation hard delete route", async () => {
+  const mock = createFetchMock({ tombstone: { entityType: "conversation-thread" } });
+  const client = new LingDaemonClient({ baseUrl: "http://daemon.test", fetch: mock.fetch });
+
+  await client.hardDeleteLingThread("/repo path", "thread 1", { reason: "owner request" });
+
+  assert.equal(mock.calls[0].method, "POST");
+  assert.equal(mock.calls[0].url, "http://daemon.test/threads/thread%201/hard-delete?cwd=%2Frepo+path");
+  assert.deepEqual(JSON.parse(mock.calls[0].body), { reason: "owner request" });
 });
 
 test("imports GitHub and Linear external work without transforming daemon responses", async () => {
@@ -1714,6 +1772,41 @@ test("manages external work actions without transforming daemon responses", asyn
   assert.equal(mock.calls[5].method, "POST");
   assert.equal(mock.calls[5].url, "http://daemon.test/external-work/actions/external_work_action_1/execute?cwd=%2Frepo+path");
   assert.deepEqual(JSON.parse(mock.calls[5].body), { workflowPath: "WORKFLOW.md" });
+});
+
+test("builds media workflow connection and lifecycle requests", async () => {
+  const mock = createFetchMock(Array.from({ length: 10 }, () => ({ ok: true })));
+  const client = new LingDaemonClient({ baseUrl: "http://daemon.test", fetch: mock.fetch });
+  const graph = { "1": { class_type: "CLIPTextEncode", inputs: { text: "Prompt" } } };
+  const connection = {
+    name: "Local ComfyUI",
+    baseUrl: "http://127.0.0.1:8188",
+    authMode: "none",
+    networkPolicy: "trusted_private_network",
+  };
+
+  await client.listMediaWorkflowConnections("/repo path");
+  await client.createMediaWorkflowConnection("/repo path", connection);
+  await client.checkMediaWorkflowConnection("/repo path", "connection 1");
+  await client.listMediaWorkflows("/repo path");
+  await client.analyzeMediaWorkflow("/repo path", { connectionId: "connection 1", graph });
+  await client.importMediaWorkflow("/repo path", { connectionId: "connection 1", name: "Storyboard", fileName: "workflow.json", graph });
+  await client.testMediaWorkflow("/repo path", "workflow 1", { versionId: "version 1", inputValues: { "1.text": "Scene" } });
+  await client.activateMediaWorkflow("/repo path", "workflow 1", "version 1");
+  await client.archiveMediaWorkflow("/repo path", "workflow 1");
+  await client.deleteMediaWorkflow("/repo path", "workflow 1");
+
+  assert.equal(mock.calls[0].url, "http://daemon.test/media-workflow-connections?cwd=%2Frepo+path");
+  assert.equal(mock.calls[1].method, "POST");
+  assert.deepEqual(JSON.parse(mock.calls[1].body), connection);
+  assert.equal(mock.calls[2].url, "http://daemon.test/media-workflow-connections/connection%201/check?cwd=%2Frepo+path");
+  assert.equal(mock.calls[4].url, "http://daemon.test/media-workflows/analyze?cwd=%2Frepo+path");
+  assert.deepEqual(JSON.parse(mock.calls[4].body), { connectionId: "connection 1", graph });
+  assert.equal(mock.calls[6].url, "http://daemon.test/media-workflows/workflow%201/test?cwd=%2Frepo+path");
+  assert.deepEqual(JSON.parse(mock.calls[6].body), { versionId: "version 1", inputValues: { "1.text": "Scene" } });
+  assert.deepEqual(JSON.parse(mock.calls[7].body), { versionId: "version 1" });
+  assert.equal(mock.calls[8].url, "http://daemon.test/media-workflows/workflow%201/archive?cwd=%2Frepo+path");
+  assert.equal(mock.calls[9].method, "DELETE");
 });
 
 test("maps daemon error bodies and workspace path errors", async () => {

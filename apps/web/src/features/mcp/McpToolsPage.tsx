@@ -20,6 +20,8 @@ import type {
   McpTool,
 } from "../../types.js";
 
+import { SelectControl } from "../../shared/components/SelectControl.js";
+
 type PublicMcpServer = McpServer & {
   readonly secretConfigured?: Readonly<Record<string, boolean>>;
 };
@@ -357,10 +359,10 @@ export function McpToolsPage({
                   </label>
                   <label className="field">
                     <span>{t("Transport")}</span>
-                    <select value={form.transportType} onChange={(event) => setForm({ ...form, transportType: event.target.value as McpServerFormState["transportType"] })}>
+                    <SelectControl value={form.transportType} onChange={(event) => setForm({ ...form, transportType: event.target.value as McpServerFormState["transportType"] })}>
                       <option value="streamable-http">HTTP</option>
                       <option value="stdio">stdio</option>
-                    </select>
+                    </SelectControl>
                   </label>
                 </div>
               </section>

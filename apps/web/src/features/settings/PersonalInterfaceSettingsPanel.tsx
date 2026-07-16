@@ -4,6 +4,8 @@ import { ThemeSwitcher } from "../../theme.js";
 import type { EffectiveConfigResponse, ResponseLanguagePreference, UserProfile } from "../../types.js";
 import { ProfilePage } from "../profile/ProfilePage.js";
 
+import { SelectControl } from "../../shared/components/SelectControl.js";
+
 export function PersonalSettingsPanel({
   cwd,
   onProfileChange,
@@ -59,7 +61,7 @@ export function InterfacePreferencesSettingsPanel({
               <strong>{t("AI response language")}</strong>
               <small>{configSourceLabel(effectiveConfig?.values.responseLanguage.source, t)}</small>
             </span>
-            <select
+            <SelectControl
               value={workspaceResponseLanguage}
               onChange={(event) => onWorkspaceResponseLanguageChange(event.target.value as ResponseLanguagePreference)}
               aria-label={t("AI response language")}
@@ -67,7 +69,7 @@ export function InterfacePreferencesSettingsPanel({
               <option value="follow_user">{t("Follow user message")}</option>
               <option value="zh-CN">{t("Chinese")}</option>
               <option value="en-US">{t("English")}</option>
-            </select>
+            </SelectControl>
           </div>
         </div>
       </section>

@@ -71,17 +71,6 @@
   align-self: flex-start;
 }
 
-.settings-plugin-apply-result,
-.settings-plugin-runtime-preview {
-  align-items: flex-start;
-}
-
-.settings-plugin-apply-result .settings-interaction-details,
-.settings-plugin-runtime-preview .settings-interaction-details {
-  flex-basis: 100%;
-  margin-left: 24px;
-}
-
 .runtime-runner-row .settings-interaction-details {
   grid-column: 1 / -1;
   margin-left: 28px;
@@ -205,15 +194,6 @@
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
-.permission-preset-card-grid {
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-}
-
-.permission-preset-card {
-  min-height: 52px;
-  padding: 11px 12px;
-}
-
 .settings-skill-source-config {
   margin-top: 8px;
 }
@@ -241,7 +221,4 @@
     grid-template-columns: minmax(0, 1fr);
   }
 
-  .permission-preset-card-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
 }

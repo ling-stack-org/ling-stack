@@ -51,10 +51,17 @@ export function mapApprovalPolicy(row: Record<string, SQLOutputValue>): Approval
 }
 
 export function mapMediaJob(row: Record<string, SQLOutputValue>): MediaJob {
+  const sourceKind = readString(row, "source_kind");
+  const providerPresetId = readNullableString(row, "provider_preset_id");
+  const workflowVersionId = readNullableString(row, "workflow_version_id");
   return omitUndefined({
     id: readString(row, "id"),
     workspaceId: readString(row, "workspace_id"),
-    providerPresetId: readString(row, "provider_preset_id"),
+    providerPresetId,
+    workflowVersionId,
+    executionSource: sourceKind === "workflow" && workflowVersionId
+      ? { kind: "workflow" as const, workflowVersionId }
+      : { kind: "provider" as const, providerPresetId: providerPresetId ?? "" },
     operation: readString(row, "operation") as MediaJob["operation"],
     prompt: readString(row, "prompt"),
     input: parseJsonObject(readString(row, "input_json")),

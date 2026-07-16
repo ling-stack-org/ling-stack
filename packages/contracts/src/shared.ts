@@ -11,6 +11,10 @@ export type SessionPermissionMode = "ask_everything" | "balanced" | "workspace_w
 
 export type PermissionPreset = "read_only" | "workspace_collaboration" | "full_access" | "custom";
 
+export type AuthorizationMode = "ask" | "smart" | "always";
+
+export type WorkspaceAccessMode = "read_only" | "workspace_write" | "full_access";
+
 export interface ConversationPendingReplacement {
   readonly supersessionId: string;
   readonly idempotencyKey: string;
@@ -40,6 +44,8 @@ export interface EffectiveRunPolicyRiskNote {
 
 export interface EffectiveRunPolicySnapshot {
   readonly mode: SessionPermissionMode;
+  readonly authorizationMode?: AuthorizationMode;
+  readonly workspaceAccessMode?: WorkspaceAccessMode;
   readonly conversationMode?: ConversationModeKind;
   readonly planModeMutationPolicy?: "deny_repo_tracked_mutation";
   readonly toolDecisions: Record<RunTool, ApprovalToolDecision>;

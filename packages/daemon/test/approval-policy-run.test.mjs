@@ -2434,6 +2434,278 @@ test("media job API creates, lists, and shows queued jobs without running on cre
   }
 });
 
+test("media production API persists storyboard order independently from canvas placement", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-media-production-"));
+  const daemon = await startDaemonForTest(new ApprovalProbeRunner({
+    toolCallId: "tool_unused_media_production",
+    toolName: "bash",
+  }));
+  try {
+    const createdProject = await postJson(`${daemon.url}/media-projects?cwd=${encodeURIComponent(cwd)}`, {
+      name: "Product launch film",
+      canvasViewport: { x: 12, y: -8, zoom: 1.1 },
+    });
+    assert.equal(createdProject.mediaProject.name, "Product launch film");
+    assert.deepEqual(createdProject.mediaProject.canvasViewport, { x: 12, y: -8, zoom: 1.1 });
+
+    const firstScene = await postJson(`${daemon.url}/media-projects/${encodeURIComponent(createdProject.mediaProject.id)}/scenes?cwd=${encodeURIComponent(cwd)}`, {
+      title: "Opening frame",
+      prompt: "",
+      canvasPosition: { x: 640, y: 240 },
+    });
+    const secondScene = await postJson(`${daemon.url}/media-projects/${encodeURIComponent(createdProject.mediaProject.id)}/scenes?cwd=${encodeURIComponent(cwd)}`, {
+      title: "Detail frame",
+      prompt: "A close up of the product material.",
+      canvasPosition: { x: 80, y: 60 },
+    });
+    assert.equal(firstScene.mediaScene.sortOrder, 0);
+    assert.equal(secondScene.mediaScene.sortOrder, 1);
+
+    const reordered = await postJson(`${daemon.url}/media-projects/${encodeURIComponent(createdProject.mediaProject.id)}/reorder?cwd=${encodeURIComponent(cwd)}`, {
+      sceneIds: [secondScene.mediaScene.id, firstScene.mediaScene.id],
+    });
+    assert.deepEqual(reordered.scenes.map((scene) => scene.id), [secondScene.mediaScene.id, firstScene.mediaScene.id]);
+    assert.deepEqual(reordered.scenes.map((scene) => scene.canvasPosition), [{ x: 80, y: 60 }, { x: 640, y: 240 }]);
+
+    const detail = await getJson(`${daemon.url}/media-projects/${encodeURIComponent(createdProject.mediaProject.id)}?cwd=${encodeURIComponent(cwd)}`);
+    assert.deepEqual(detail.scenes.map((scene) => scene.id), [secondScene.mediaScene.id, firstScene.mediaScene.id]);
+    assert.equal(detail.sceneRuns.length, 0);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("media production project run validates every legacy target before creating any scene run", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-media-project-run-"));
+  const daemon = await startDaemonForTest(new ApprovalProbeRunner({
+    toolCallId: "tool_unused_media_project_run",
+    toolName: "bash",
+  }));
+  const seedream = await startMockSeedreamServer();
+  process.env.LING_STACK_TEST_MEDIA_KEY = "test-media-project-key";
+  try {
+    const provider = await createMediaProvider(daemon.url, cwd, {
+      kind: "seedance",
+      displayName: "Seedance Video",
+      providerId: "seedance",
+      model: "doubao-seedance-1-0-pro-250528",
+      capabilities: ["video_generate"],
+      input: ["text"],
+      baseUrl: seedream.url,
+      apiKeyRef: "env:LING_STACK_TEST_MEDIA_KEY",
+      compat: { mediaVendorTransport: { mode: "live" } },
+    });
+    const project = await postJson(`${daemon.url}/media-projects?cwd=${encodeURIComponent(cwd)}`, {
+      name: "Launch sequence",
+      defaultProviderPresetId: provider.provider.id,
+    });
+    const readyScene = await postJson(`${daemon.url}/media-projects/${encodeURIComponent(project.mediaProject.id)}/scenes?cwd=${encodeURIComponent(cwd)}`, {
+      title: "Opening",
+      prompt: "A slow cinematic product reveal.",
+    });
+    await postJson(`${daemon.url}/media-projects/${encodeURIComponent(project.mediaProject.id)}/scenes?cwd=${encodeURIComponent(cwd)}`, {
+      title: "Missing prompt",
+      prompt: "",
+    });
+
+    const legacyFailure = await postJsonExpectError(`${daemon.url}/media-projects/${encodeURIComponent(project.mediaProject.id)}/run?cwd=${encodeURIComponent(cwd)}`, {});
+    assert.equal(legacyFailure.status, 400);
+    assert.match(legacyFailure.body.message, /填写分镜提示词/);
+    assert.equal(await mediaJobCount(daemon.url, cwd), 0);
+    const noPartialRuns = await getJson(`${daemon.url}/media-projects/${encodeURIComponent(project.mediaProject.id)}?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(noPartialRuns.sceneRuns.length, 0);
+
+    const selectedRun = await postJson(`${daemon.url}/media-projects/${encodeURIComponent(project.mediaProject.id)}/run?cwd=${encodeURIComponent(cwd)}`, {
+      sceneIds: [readyScene.mediaScene.id],
+    });
+    assert.equal(selectedRun.mediaJobs.length, 1);
+    assert.equal(selectedRun.mediaSceneRuns.length, 1);
+    assert.equal(selectedRun.mediaSceneRuns[0].sceneId, readyScene.mediaScene.id);
+    assert.equal(selectedRun.mediaJobs[0].status, "queued");
+    assert.equal(selectedRun.approvals, undefined);
+    assert.equal((await listApprovals(daemon.url, cwd, { mediaJobId: selectedRun.mediaJobs[0].id })).length, 0);
+    const duplicateWhileActive = await postJsonExpectError(`${daemon.url}/media-scenes/${encodeURIComponent(readyScene.mediaScene.id)}/run?cwd=${encodeURIComponent(cwd)}`, {});
+    assert.equal(duplicateWhileActive.status, 409);
+    assert.equal(duplicateWhileActive.body.error, "media_scene_run_active");
+    await waitForMediaJobStatus(daemon.url, cwd, selectedRun.mediaJobs[0].id, "succeeded");
+
+    const firstCompletedDetail = await getJson(`${daemon.url}/media-projects/${encodeURIComponent(project.mediaProject.id)}?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(
+      firstCompletedDetail.scenes.find((scene) => scene.id === readyScene.mediaScene.id)?.selectedMediaSceneRunId,
+      selectedRun.mediaSceneRuns[0].id,
+    );
+
+    const regeneration = await postJson(`${daemon.url}/media-scenes/${encodeURIComponent(readyScene.mediaScene.id)}/run?cwd=${encodeURIComponent(cwd)}`, {});
+    assert.equal(regeneration.approval, undefined);
+    await waitForMediaJobStatus(daemon.url, cwd, regeneration.mediaJob.id, "succeeded");
+    const regeneratedDetail = await getJson(`${daemon.url}/media-projects/${encodeURIComponent(project.mediaProject.id)}?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(
+      regeneratedDetail.scenes.find((scene) => scene.id === readyScene.mediaScene.id)?.selectedMediaSceneRunId,
+      selectedRun.mediaSceneRuns[0].id,
+    );
+
+    const cancellable = await postJson(`${daemon.url}/media-scenes/${encodeURIComponent(readyScene.mediaScene.id)}/run?cwd=${encodeURIComponent(cwd)}`, {});
+    assert.equal(cancellable.mediaJob.status, "queued");
+    const cancelledRun = await postJson(`${daemon.url}/media-scene-runs/${encodeURIComponent(cancellable.mediaSceneRun.id)}/cancel?cwd=${encodeURIComponent(cwd)}`, {});
+    assert.equal(cancelledRun.mediaJob.status, "cancelled");
+    assert.equal((await listApprovals(daemon.url, cwd, { mediaJobId: cancellable.mediaJob.id })).length, 0);
+    const cancelledDetail = await getJson(`${daemon.url}/media-projects/${encodeURIComponent(project.mediaProject.id)}?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(
+      cancelledDetail.scenes.find((scene) => scene.id === readyScene.mediaScene.id)?.selectedMediaSceneRunId,
+      selectedRun.mediaSceneRuns[0].id,
+    );
+  } finally {
+    delete process.env.LING_STACK_TEST_MEDIA_KEY;
+    await seedream.close();
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("media production keeps direct Seedance scenes and ComfyUI workflow scenes in one project", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-media-mixed-sources-"));
+  const daemon = await startDaemonForTest(new ApprovalProbeRunner({
+    toolCallId: "tool_unused_media_mixed_sources",
+    toolName: "bash",
+  }));
+  const seedance = await startMockSeedreamServer();
+  const comfy = await startMockComfyUiServer();
+  process.env.LING_STACK_TEST_MEDIA_KEY = "test-media-mixed-key";
+  try {
+    const provider = await createMediaProvider(daemon.url, cwd, {
+      kind: "seedance",
+      displayName: "Seedance Video",
+      providerId: "seedance",
+      model: "doubao-seedance-1-0-pro-250528",
+      capabilities: ["video_generate"],
+      input: ["text"],
+      baseUrl: seedance.url,
+      apiKeyRef: "env:LING_STACK_TEST_MEDIA_KEY",
+      compat: { mediaVendorTransport: { mode: "live" } },
+    });
+    const connection = await postJson(`${daemon.url}/media-workflow-connections?cwd=${encodeURIComponent(cwd)}`, {
+      name: "Test ComfyUI",
+      baseUrl: comfy.url,
+      authMode: "none",
+      networkPolicy: "trusted_private_network",
+      protocolVariant: "auto",
+    });
+    const checked = await postJson(`${daemon.url}/media-workflow-connections/${encodeURIComponent(connection.connection.id)}/check?cwd=${encodeURIComponent(cwd)}`, {});
+    assert.equal(checked.connection.status, "ready");
+
+    const graph = {
+      "1": { class_type: "CLIPTextEncode", inputs: { text: "Default prompt" } },
+      "9": { class_type: "SaveVideo", inputs: { filename_prefix: "Ling" } },
+    };
+    const imported = await postJson(`${daemon.url}/media-workflows/import?cwd=${encodeURIComponent(cwd)}`, {
+      connectionId: connection.connection.id,
+      name: "Comfy storyboard",
+      fileName: "workflow.json",
+      graph,
+    });
+    assert.equal(imported.analysis.validation.ok, true);
+    const promptField = imported.importedVersion.inputFields.find((field) => field.semantic === "prompt");
+    assert.ok(promptField);
+    const tested = await postJson(`${daemon.url}/media-workflows/${encodeURIComponent(imported.definition.id)}/test?cwd=${encodeURIComponent(cwd)}`, {
+      versionId: imported.importedVersion.id,
+      inputValues: { [promptField.id]: "Workflow smoke" },
+    });
+    assert.equal(tested.mediaJob.status, "queued");
+    assert.equal(tested.approval, undefined);
+    await waitForMediaJobStatus(daemon.url, cwd, tested.mediaJob.id, "succeeded");
+    const activated = await postJson(`${daemon.url}/media-workflows/${encodeURIComponent(imported.definition.id)}/activate?cwd=${encodeURIComponent(cwd)}`, {
+      versionId: imported.importedVersion.id,
+    });
+    assert.equal(activated.definition.status, "ready");
+
+    const project = await postJson(`${daemon.url}/media-projects?cwd=${encodeURIComponent(cwd)}`, {
+      name: "Mixed source storyboard",
+      defaultProviderPresetId: provider.provider.id,
+      defaultExecutionMode: "direct",
+    });
+    const directScene = await postJson(`${daemon.url}/media-projects/${encodeURIComponent(project.mediaProject.id)}/scenes?cwd=${encodeURIComponent(cwd)}`, {
+      title: "Direct scene",
+      prompt: "Seedance direct scene",
+      executionMode: "direct",
+    });
+    const workflowScene = await postJson(`${daemon.url}/media-projects/${encodeURIComponent(project.mediaProject.id)}/scenes?cwd=${encodeURIComponent(cwd)}`, {
+      title: "Workflow scene",
+      prompt: "ComfyUI scene",
+      executionMode: "workflow",
+      workflowDefinitionId: imported.definition.id,
+    });
+    const run = await postJson(`${daemon.url}/media-projects/${encodeURIComponent(project.mediaProject.id)}/run?cwd=${encodeURIComponent(cwd)}`, {
+      sceneIds: [directScene.mediaScene.id, workflowScene.mediaScene.id],
+    });
+    assert.equal(run.mediaJobs.length, 2);
+    assert.equal(run.approvals, undefined);
+    assert.equal(run.mediaJobs.every((job) => job.status === "queued"), true);
+    assert.deepEqual(new Set(run.mediaJobs.map((job) => job.executionSource.kind)), new Set(["provider", "workflow"]));
+    assert.deepEqual(new Set(run.mediaSceneRuns.map((sceneRun) => sceneRun.executionSnapshot.kind)), new Set(["provider", "workflow"]));
+    assert.equal(run.mediaSceneRuns.find((sceneRun) => sceneRun.sceneId === workflowScene.mediaScene.id).executionSnapshot.workflowName, "Comfy storyboard");
+    for (const job of run.mediaJobs) {
+      await waitForMediaJobStatus(daemon.url, cwd, job.id, "succeeded");
+    }
+    const completedProject = await getJson(`${daemon.url}/media-projects/${encodeURIComponent(project.mediaProject.id)}?cwd=${encodeURIComponent(cwd)}`);
+    const selectedRunsByScene = new Map(completedProject.scenes.map((scene) => [scene.id, scene.selectedMediaSceneRunId]));
+    assert.equal(selectedRunsByScene.get(directScene.mediaScene.id), run.mediaSceneRuns.find((sceneRun) => sceneRun.sceneId === directScene.mediaScene.id)?.id);
+    assert.equal(selectedRunsByScene.get(workflowScene.mediaScene.id), run.mediaSceneRuns.find((sceneRun) => sceneRun.sceneId === workflowScene.mediaScene.id)?.id);
+  } finally {
+    delete process.env.LING_STACK_TEST_MEDIA_KEY;
+    await comfy.close();
+    await seedance.close();
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("ComfyUI workflow polling resumes from the persisted execution handle after daemon restart", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-media-workflow-resume-"));
+  const comfy = await startMockComfyUiServer({ completeImmediately: false });
+  const runner = () => new ApprovalProbeRunner({ toolCallId: "tool_unused_media_workflow_resume", toolName: "bash" });
+  let daemon = await startDaemonForTest(runner(), {}, { defaultWorkspaceCwd: cwd });
+  try {
+    const connection = await postJson(`${daemon.url}/media-workflow-connections?cwd=${encodeURIComponent(cwd)}`, {
+      name: "Restart ComfyUI",
+      baseUrl: comfy.url,
+      authMode: "none",
+      networkPolicy: "trusted_private_network",
+      protocolVariant: "prompt_legacy",
+    });
+    await postJson(`${daemon.url}/media-workflow-connections/${encodeURIComponent(connection.connection.id)}/check?cwd=${encodeURIComponent(cwd)}`, {});
+    const imported = await postJson(`${daemon.url}/media-workflows/import?cwd=${encodeURIComponent(cwd)}`, {
+      connectionId: connection.connection.id,
+      name: "Restart workflow",
+      fileName: "workflow.json",
+      graph: {
+        "1": { class_type: "CLIPTextEncode", inputs: { text: "Default prompt" } },
+        "9": { class_type: "SaveVideo", inputs: { filename_prefix: "Ling" } },
+      },
+    });
+    const promptField = imported.importedVersion.inputFields.find((field) => field.semantic === "prompt");
+    assert.ok(promptField);
+    const tested = await postJson(`${daemon.url}/media-workflows/${encodeURIComponent(imported.definition.id)}/test?cwd=${encodeURIComponent(cwd)}`, {
+      versionId: imported.importedVersion.id,
+      inputValues: { [promptField.id]: "Resume after restart" },
+    });
+    assert.equal(tested.approval, undefined);
+    await waitForMediaJobStatus(daemon.url, cwd, tested.mediaJob.id, "running");
+    await daemon.close();
+
+    comfy.complete();
+    daemon = await startDaemonForTest(runner(), {}, { defaultWorkspaceCwd: cwd });
+    const resumed = await waitForMediaJobStatus(daemon.url, cwd, tested.mediaJob.id, "succeeded", 8_000);
+    assert.equal(resumed.mediaJob.executionSource.kind, "workflow");
+    const artifacts = await getJson(`${daemon.url}/media-jobs/${encodeURIComponent(tested.mediaJob.id)}/artifacts?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(artifacts.artifacts.some((artifact) => artifact.type === "video"), true);
+  } finally {
+    await daemon.close().catch(() => undefined);
+    await comfy.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("media job API blocks static media providers from reporting fake success", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-media-run-"));
   const daemon = await startDaemonForTest(new ApprovalProbeRunner({
@@ -4233,6 +4505,17 @@ async function startMockSeedreamServer(options = {}) {
       response.end(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
       return;
     }
+    if (request.method === "GET" && request.url === "/generated/video-1.mp4") {
+      requests.push({
+        method: request.method,
+        path: request.url,
+        authorization: request.headers.authorization,
+        body: {},
+      });
+      response.writeHead(200, { "content-type": "video/mp4" });
+      response.end(Buffer.from("mock-seedance-video"));
+      return;
+    }
     const chunks = [];
     for await (const chunk of request) {
       chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
@@ -4254,6 +4537,15 @@ async function startMockSeedreamServer(options = {}) {
       }));
       return;
     }
+    if (request.method === "GET" && request.url?.endsWith("/contents/generations/tasks/seedance-task-1")) {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({
+        id: "seedance-task-1",
+        status: "succeeded",
+        content: { video_url: `http://${request.headers.host}/generated/video-1.mp4` },
+      }));
+      return;
+    }
     response.writeHead(200, { "content-type": "application/json" });
     const imageUrls = options.imageUrls ?? [`http://${request.headers.host}/generated/image-1.png`];
     response.end(JSON.stringify({
@@ -4268,6 +4560,72 @@ async function startMockSeedreamServer(options = {}) {
   return {
     url: `http://127.0.0.1:${address.port}`,
     requests,
+    close: () => new Promise((resolveClose, rejectClose) => {
+      server.close((error) => error ? rejectClose(error) : resolveClose());
+    }),
+  };
+}
+
+async function startMockComfyUiServer(options = {}) {
+  const requests = [];
+  let completed = options.completeImmediately !== false;
+  const server = createServer(async (request, response) => {
+    const url = new URL(request.url ?? "/", `http://${request.headers.host}`);
+    const chunks = [];
+    for await (const chunk of request) chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+    const bodyText = Buffer.concat(chunks).toString("utf8");
+    const body = bodyText && request.headers["content-type"]?.includes("application/json") ? JSON.parse(bodyText) : {};
+    requests.push({ method: request.method, path: url.pathname, body });
+    if (request.method === "GET" && url.pathname === "/api/object_info") {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({ CLIPTextEncode: {}, SaveVideo: {} }));
+      return;
+    }
+    if (request.method === "GET" && url.pathname === "/api/jobs") {
+      response.writeHead(404, { "content-type": "application/json" });
+      response.end(JSON.stringify({ error: "not_found" }));
+      return;
+    }
+    if (request.method === "POST" && url.pathname === "/api/prompt") {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({ prompt_id: `prompt_${requests.filter((item) => item.path === "/api/prompt").length}` }));
+      return;
+    }
+    if (request.method === "GET" && url.pathname.startsWith("/api/history_v2/")) {
+      response.writeHead(404, { "content-type": "application/json" });
+      response.end(JSON.stringify({ error: "not_found" }));
+      return;
+    }
+    if (request.method === "GET" && url.pathname.startsWith("/api/history/")) {
+      const operationId = decodeURIComponent(url.pathname.slice("/api/history/".length));
+      response.writeHead(200, { "content-type": "application/json" });
+      if (!completed) {
+        response.end(JSON.stringify({}));
+        return;
+      }
+      response.end(JSON.stringify({
+        [operationId]: {
+          status: { status_str: "success" },
+          outputs: { "9": { videos: [{ filename: `${operationId}.mp4`, type: "output" }] } },
+        },
+      }));
+      return;
+    }
+    if (request.method === "GET" && url.pathname === "/api/view") {
+      response.writeHead(200, { "content-type": "video/mp4", "content-length": "12" });
+      response.end(Buffer.from("mock-video-1"));
+      return;
+    }
+    response.writeHead(404, { "content-type": "application/json" });
+    response.end(JSON.stringify({ error: "not_found" }));
+  });
+  await new Promise((resolveListen) => server.listen(0, "127.0.0.1", resolveListen));
+  const address = server.address();
+  assert.ok(address && typeof address === "object");
+  return {
+    url: `http://127.0.0.1:${address.port}`,
+    requests,
+    complete: () => { completed = true; },
     close: () => new Promise((resolveClose, rejectClose) => {
       server.close((error) => error ? rejectClose(error) : resolveClose());
     }),
@@ -4559,7 +4917,7 @@ async function waitForMediaJobStatus(baseUrl, cwd, mediaJobId, expectedStatus, t
       return latest;
     }
     if (Date.now() >= deadline) {
-      throw new Error(`Timed out waiting for media job ${mediaJobId} to become ${expectedStatus}; latest=${latest.mediaJob.status}`);
+      throw new Error(`Timed out waiting for media job ${mediaJobId} to become ${expectedStatus}; latest=${latest.mediaJob.status}; error=${latest.mediaJob.errorMessage ?? "none"}`);
     }
     await new Promise((resolve) => setTimeout(resolve, 25));
   }

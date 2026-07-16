@@ -1464,15 +1464,9 @@
   color: #8a8a8a;
 }
 
-.provider-toolbar-controls select {
+.provider-toolbar-controls .select-control {
+  width: min(164px, 100%);
   min-height: 32px;
-  max-width: 164px;
-  padding: 0 30px 0 10px;
-  border: 1px solid #e5e5e5;
-  border-radius: 6px;
-  background-color: #ffffff;
-  color: #111111;
-  font-size: 13px;
 }
 
 .provider-workbench .inline-error,
@@ -2326,8 +2320,7 @@
   font-weight: 500;
 }
 
-.provider-sheet input,
-.provider-sheet select {
+.provider-sheet input {
   min-height: 36px;
   border-color: #e5e5e5;
   border-radius: 6px;
@@ -2336,8 +2329,7 @@
   font-size: 13px;
 }
 
-.provider-sheet input:disabled,
-.provider-sheet select:disabled {
+.provider-sheet input:disabled {
   background: #f5f5f5;
   color: #6b6b6b;
 }

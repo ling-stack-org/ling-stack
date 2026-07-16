@@ -3,6 +3,8 @@ import { useI18n } from "../../i18n.js";
 import { PageActionHeader } from "../../shared/components/index.js";
 import type { ProviderStatusFilter, ProviderWorkbenchSummary } from "./provider-workbench-view-models.js";
 
+import { SelectControl } from "../../shared/components/SelectControl.js";
+
 export function ProviderWorkbenchHeader({
   summary,
   providerSearch,
@@ -43,7 +45,7 @@ export function ProviderWorkbenchHeader({
     <div className="provider-readiness-summary" aria-label={t("Model readiness summary")}>
       <span>{t("{count} models", { count: summary.totalCount })}</span>
       <span>{t("{count} chat ready", { count: summary.chatReadyCount })}</span>
-      <span>{t("{count} image ready", { count: summary.generationReadyCount })}</span>
+      <span>{t("{count} generation ready", { count: summary.generationReadyCount })}</span>
       {summary.missingSecretCount > 0 ? (
         <span className="attention">{t("{count} need API key", { count: summary.missingSecretCount })}</span>
       ) : null}
@@ -87,7 +89,8 @@ export function ProviderWorkbenchHeader({
           onChange={(event) => onProviderSearchChange(event.target.value)}
         />
       </label>
-      <select
+      <SelectControl
+              variant="compact"
         aria-label={t("Filter model presets")}
         value={providerStatusFilter}
         onChange={(event) => onProviderStatusFilterChange(event.target.value as ProviderStatusFilter)}
@@ -97,7 +100,7 @@ export function ProviderWorkbenchHeader({
         <option value="needsAttention">{t("Needs attention")}</option>
         <option value="missingKey">{t("Missing key")}</option>
         <option value="disabled">{t("Disabled providers")}</option>
-      </select>
+      </SelectControl>
     </div>
   );
 

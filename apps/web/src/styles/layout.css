@@ -36,7 +36,6 @@ body {
 .status-badge,
 .event-count,
 input,
-select,
 textarea {
   border-radius: var(--radius-md);
 }
@@ -549,7 +548,7 @@ textarea {
   background: var(--surface-panel);
 }
 
-.workspace:not(.workspace-client-surface) {
+.workspace:not(.workspace-client-surface):not(.workspace-plugins-surface) {
   padding: 20px;
 }
 
@@ -1627,13 +1626,7 @@ textarea {
   white-space: nowrap;
 }
 
-.run-provider-field select {
-  width: min(330px, 46%);
-  height: 30px;
-  font-size: 12px;
-}
-
-.run-provider-field select {
+.run-provider-field .select-control {
   width: 100%;
 }
 
@@ -1726,18 +1719,6 @@ textarea {
   border: 1px solid rgba(33, 38, 42, 0.1);
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.58);
-  color: #56635f;
-  font-size: 11px;
-  font-weight: 760;
-}
-
-.mention-picker select {
-  width: 100%;
-  min-width: 0;
-  height: 24px;
-  padding: 0 16px 0 0;
-  border: 0;
-  background: transparent;
   color: #56635f;
   font-size: 11px;
   font-weight: 760;

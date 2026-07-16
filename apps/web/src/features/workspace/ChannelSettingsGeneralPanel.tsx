@@ -1,5 +1,6 @@
 import { Bell, BellOff, Box, Globe2, SquareTerminal, UserRound } from "lucide-react";
 import { useI18n } from "../../i18n.js";
+import { SelectControl } from "../../shared/components/SelectControl.js";
 import type { ChannelFormState, ProviderPreset } from "../../types.js";
 import { ChannelNameField } from "./ChannelNameField.js";
 import { ChannelExecutionModeSummary, ProviderPresetOptions } from "./WorkspaceControls.js";
@@ -53,7 +54,7 @@ export function ChannelSettingsGeneralPanel({
           <label className="channel-settings-row channel-settings-select-row">
             <span className="channel-settings-row-icon" aria-hidden="true"><Box size={18} /></span>
             <span className="channel-settings-row-label">{t("Channel run provider")}</span>
-            <select
+            <SelectControl
               aria-label={t("Channel run provider")}
               value={channelEditForm.defaultProviderPresetId}
               onChange={(event) => onChannelEditFormChange({ ...channelEditForm, defaultProviderPresetId: event.target.value })}
@@ -61,13 +62,13 @@ export function ChannelSettingsGeneralPanel({
             >
               <option value="">{t("Select provider preset")}</option>
               <ProviderPresetOptions runnableProviders={taskReadyProviders} blockedProviders={setupChatProviders} />
-            </select>
+            </SelectControl>
           </label>
 
           <label className="channel-settings-row channel-settings-select-row">
             <span className="channel-settings-row-icon" aria-hidden="true"><Globe2 size={18} /></span>
             <span className="channel-settings-row-label">{t("AI response language")}</span>
-            <select
+            <SelectControl
               aria-label={t("AI response language")}
               value={channelEditForm.responseLanguage}
               onChange={(event) => onChannelEditFormChange({ ...channelEditForm, responseLanguage: event.target.value as ChannelFormState["responseLanguage"] })}
@@ -77,7 +78,7 @@ export function ChannelSettingsGeneralPanel({
               <option value="follow_user">{t("Follow user message")}</option>
               <option value="zh-CN">{t("Chinese")}</option>
               <option value="en-US">{t("English")}</option>
-            </select>
+            </SelectControl>
           </label>
 
           <div className="channel-settings-row channel-settings-runtime-row" aria-label={t("Channel runtime policy")}>

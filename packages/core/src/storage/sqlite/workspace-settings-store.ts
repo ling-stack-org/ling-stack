@@ -8,6 +8,18 @@ import {
   type UpdateWorkspaceSettingsInput,
   type WorkspaceSettings,
 } from "../../workspace-types.js";
+import {
+  authorizationAndAccessFromLegacyPermission,
+  authorizationModes,
+  defaultAuthorizationMode,
+  defaultWorkspaceAccessMode,
+  legacyPermissionFromAuthorizationAndAccess,
+  workspaceAccessModes,
+  type AuthorizationMode,
+  type PermissionPreset,
+  type SessionPermissionMode,
+  type WorkspaceAccessMode,
+} from "../../session-permissions.js";
 import { nullableUpdate, omitUndefined, parseJsonObject, readString, stringifyJson } from "./helpers.js";
 import type { SqliteStoreContext } from "./store-context.js";
 
@@ -26,6 +38,7 @@ export class SqliteWorkspaceSettingsStore {
 
   updateWorkspaceSettings(input: UpdateWorkspaceSettingsInput, now: string): WorkspaceSettings {
     const current = this.getWorkspaceSettings();
+    const permissionDefaults = resolvePermissionDefaults(current, input);
     const next: WorkspaceSettings = omitUndefined({
       schemaVersion: 1 as const,
       workspaceCwd: nullableUpdate(input.workspaceCwd, current.workspaceCwd),
@@ -34,8 +47,10 @@ export class SqliteWorkspaceSettingsStore {
       responseLanguage: nullableUpdate(input.responseLanguage, current.responseLanguage),
       lingConversationTone: nullableUpdate(input.lingConversationTone, current.lingConversationTone),
       defaultProviderPresetId: nullableUpdate(input.defaultProviderPresetId, current.defaultProviderPresetId),
-      defaultPermissionMode: nullableUpdate(input.defaultPermissionMode, current.defaultPermissionMode),
-      defaultPermissionPreset: nullableUpdate(input.defaultPermissionPreset, current.defaultPermissionPreset),
+      defaultAuthorizationMode: permissionDefaults.authorizationMode,
+      defaultWorkspaceAccessMode: permissionDefaults.workspaceAccessMode,
+      defaultPermissionMode: permissionDefaults.permissionMode,
+      defaultPermissionPreset: permissionDefaults.permissionPreset,
       channelNotifications: nullableUpdate(input.channelNotifications, current.channelNotifications),
       channelActivityViews: nullableUpdate(input.channelActivityViews, current.channelActivityViews),
       skillGovernancePolicy: input.skillGovernancePolicy === undefined
@@ -59,6 +74,8 @@ export class SqliteWorkspaceSettingsStore {
 function createDefaultWorkspaceSettings(now: string): WorkspaceSettings {
   return {
     schemaVersion: 1,
+    defaultAuthorizationMode,
+    defaultWorkspaceAccessMode,
     defaultPermissionMode: "workspace_write",
     defaultPermissionPreset: "workspace_collaboration",
     skillGovernancePolicy: DEFAULT_SKILL_GOVERNANCE_POLICY,
@@ -76,6 +93,9 @@ function parseOptionalLingConversationTone(value: unknown): LingConversationTone
 
 function parseWorkspaceSettings(value: string, updatedAt: string): WorkspaceSettings {
   const parsed = parseJsonObject(value);
+  const defaultPermissionMode = parseOptionalSessionPermissionMode(parsed.defaultPermissionMode) ?? "workspace_write";
+  const defaultPermissionPreset = parseOptionalPermissionPreset(parsed.defaultPermissionPreset) ?? "workspace_collaboration";
+  const legacySelection = authorizationAndAccessFromLegacyPermission(defaultPermissionMode, defaultPermissionPreset);
   const parsedTheme: WorkspaceSettings["theme"] =
     parsed.theme === "light" || parsed.theme === "dark" || parsed.theme === "system" ? parsed.theme : undefined;
   return omitUndefined({
@@ -86,13 +106,66 @@ function parseWorkspaceSettings(value: string, updatedAt: string): WorkspaceSett
     responseLanguage: parseOptionalResponseLanguagePreference(parsed.responseLanguage),
     lingConversationTone: parseOptionalLingConversationTone(parsed.lingConversationTone),
     defaultProviderPresetId: typeof parsed.defaultProviderPresetId === "string" && parsed.defaultProviderPresetId.trim() ? parsed.defaultProviderPresetId : undefined,
-    defaultPermissionMode: parseOptionalSessionPermissionMode(parsed.defaultPermissionMode) ?? "workspace_write",
-    defaultPermissionPreset: parseOptionalPermissionPreset(parsed.defaultPermissionPreset) ?? "workspace_collaboration",
+    defaultAuthorizationMode: parseOptionalAuthorizationMode(parsed.defaultAuthorizationMode) ?? legacySelection.authorizationMode,
+    defaultWorkspaceAccessMode: parseOptionalWorkspaceAccessMode(parsed.defaultWorkspaceAccessMode) ?? legacySelection.workspaceAccessMode,
+    defaultPermissionMode,
+    defaultPermissionPreset,
     channelNotifications: parseOptionalStringRecord(parsed.channelNotifications),
     channelActivityViews: parseOptionalUnknownRecord(parsed.channelActivityViews),
     skillGovernancePolicy: parseSkillGovernancePolicy(parsed.skillGovernancePolicy) ?? DEFAULT_SKILL_GOVERNANCE_POLICY,
     updatedAt: typeof parsed.updatedAt === "string" && parsed.updatedAt.trim() ? parsed.updatedAt : updatedAt,
   });
+}
+
+function resolvePermissionDefaults(
+  current: WorkspaceSettings,
+  input: UpdateWorkspaceSettingsInput,
+): {
+  readonly authorizationMode: AuthorizationMode;
+  readonly workspaceAccessMode: WorkspaceAccessMode;
+  readonly permissionMode: SessionPermissionMode;
+  readonly permissionPreset: PermissionPreset;
+} {
+  const canonicalChanged = input.defaultAuthorizationMode !== undefined || input.defaultWorkspaceAccessMode !== undefined;
+  if (canonicalChanged) {
+    const authorizationMode = nullableUpdate(input.defaultAuthorizationMode, current.defaultAuthorizationMode) ?? defaultAuthorizationMode;
+    const workspaceAccessMode = nullableUpdate(input.defaultWorkspaceAccessMode, current.defaultWorkspaceAccessMode) ?? defaultWorkspaceAccessMode;
+    return {
+      authorizationMode,
+      workspaceAccessMode,
+      ...legacyPermissionFromAuthorizationAndAccess(authorizationMode, workspaceAccessMode),
+    };
+  }
+
+  const legacyChanged = input.defaultPermissionMode !== undefined || input.defaultPermissionPreset !== undefined;
+  if (legacyChanged) {
+    const permissionMode = nullableUpdate(input.defaultPermissionMode, current.defaultPermissionMode) ?? "workspace_write";
+    const permissionPreset = nullableUpdate(input.defaultPermissionPreset, current.defaultPermissionPreset) ?? "workspace_collaboration";
+    return {
+      ...authorizationAndAccessFromLegacyPermission(permissionMode, permissionPreset),
+      permissionMode,
+      permissionPreset,
+    };
+  }
+
+  return {
+    authorizationMode: current.defaultAuthorizationMode ?? defaultAuthorizationMode,
+    workspaceAccessMode: current.defaultWorkspaceAccessMode ?? defaultWorkspaceAccessMode,
+    permissionMode: current.defaultPermissionMode ?? "workspace_write",
+    permissionPreset: current.defaultPermissionPreset ?? "workspace_collaboration",
+  };
+}
+
+function parseOptionalAuthorizationMode(value: unknown): AuthorizationMode | undefined {
+  return typeof value === "string" && authorizationModes.includes(value as AuthorizationMode)
+    ? value as AuthorizationMode
+    : undefined;
+}
+
+function parseOptionalWorkspaceAccessMode(value: unknown): WorkspaceAccessMode | undefined {
+  return typeof value === "string" && workspaceAccessModes.includes(value as WorkspaceAccessMode)
+    ? value as WorkspaceAccessMode
+    : undefined;
 }
 
 function parseOptionalSessionPermissionMode(value: unknown): WorkspaceSettings["defaultPermissionMode"] | undefined {

@@ -4,6 +4,8 @@ import type {
   CreateToolLoadRequest,
   CreateRunInterventionRequest,
   ExecutionActionListResponse,
+  HardDeleteLingThreadRequest,
+  HardDeleteLingThreadResponse,
   LingThreadArchiveRequest,
   LingThreadDetailResponse,
   LingThreadEvidenceResponse,
@@ -250,6 +252,10 @@ export const runEndpoints = {
 
   async unarchiveLingThread(this: LingDaemonEndpointContext, cwd: string, threadId: string, input: LingThreadArchiveRequest = {}): Promise<LingThreadMutationResponse> {
       return this._post(`/threads/${encodeURIComponent(threadId)}/unarchive`, { cwd }, input);
+    },
+
+  async hardDeleteLingThread(this: LingDaemonEndpointContext, cwd: string, threadId: string, input: HardDeleteLingThreadRequest = {}): Promise<HardDeleteLingThreadResponse> {
+      return this._post(`/threads/${encodeURIComponent(threadId)}/hard-delete`, { cwd }, input);
     },
 
   async pinLingThread(this: LingDaemonEndpointContext, cwd: string, threadId: string, input: LingThreadPinRequest = {}): Promise<LingThreadMutationResponse> {

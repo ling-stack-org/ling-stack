@@ -786,7 +786,10 @@ has negative triggers, validation steps, and no critical safety finding.
 `SkillImportDraft`. It does not publish the draft, bind teammates, or mutate the active
 registry. Duplicate decisions that require merge/update/conflict review
 (`update_existing`, `conflict_review`, `reject_duplicate`) block draft creation until a
-reviewer resolves the overlap.
+reviewer resolves the overlap. The optional body `{ "content": "..." }` reparses the
+user-edited skill content while preserving `packId=ling-generated` and the canonical
+`skill-candidates/:id` source path. Publishing that draft marks the candidate as
+`published` and records the candidate-to-skill publication link.
 
 Draft-from-candidate response:
 
@@ -3289,7 +3292,7 @@ The daemon resolves artifact content relative to `.ling-stack/artifacts` and rej
 
 ## Media Jobs
 
-Media jobs are persisted metadata for media-capable provider presets. The execution interface uses the Generation Runtime Resolver to decide whether a provider can run the requested image or video operation. Live-capable adapters run directly after runtime readiness passes; media generation no longer creates a `media_cost` approval before execution.
+Media jobs are persisted metadata for direct provider or Media Production workflow execution. The Generation Runtime Resolver decides whether a provider can run the requested image or video operation. Standalone jobs run after an explicit run request. Media Production scene runs, ordered project runs, and workflow tests treat the user's generation action as the explicit authorization and dispatch immediately without creating a second `media_cost` approval.
 
 Supported statuses:
 
@@ -3389,7 +3392,7 @@ POST /media-jobs/:id/run?cwd=/path/to/project
 
 The current execution interface uses the media adapter contract, provider-kind registry, and Generation Runtime Resolver. A live-ready provider preset must have a supported operation, `compat.mediaVendorTransport.mode = "live"` after normalization, `baseUrl`, `apiKeyRef`, and a configured secret. Live transport currently supports OpenAI Images `image_generate`, Seedream `image_generate`, Seedream URL-based `image_edit`, and Seedance `video_generate` with final task polling plus video download. Image and video adapters record compact JSON metadata artifacts and download returned HTTP(S) media URLs into local artifacts under `.ling-stack/artifacts` without sending the provider authorization header to those media URLs. Jimeng, billing, local-file image edit materialization, and unsupported media operations remain out of scope.
 
-Live-ready jobs execute directly when `POST /media-jobs/:id/run` is called. The daemon does not create `media_cost` approvals for new media jobs. Legacy jobs or historical approvals that already reference `media_cost` remain readable through the approval APIs, but they are not required for new generation execution.
+Live-ready standalone jobs execute directly when `POST /media-jobs/:id/run` is called. This route does not create a `media_cost` approval. Media Production uses the same durable executor automatically after its scene, project, or workflow-test route creates the job.
 
 Runnable statuses are `queued`, `waiting_for_approval`, `failed`, and `cancelled`. `running` and `succeeded` jobs return `409 media_job_not_runnable`. Tests can force the static failure path with `input.forceFailure: true`.
 
@@ -3415,7 +3418,7 @@ Response:
 }
 ```
 
-Legacy `media_cost` approvals may still appear in old workspaces through the normal approval APIs. New media job runs do not return an `approval` field:
+Standalone media job runs do not return an `approval` field:
 
 ```json
 {
@@ -3427,6 +3430,27 @@ Legacy `media_cost` approvals may still appear in old workspaces through the nor
   "artifacts": [{ "id": "artifact_...", "mediaJobId": "media_job_...", "type": "image" }]
 }
 ```
+
+### Media Production Dispatch
+
+The Media Production entry points create durable jobs and immediately hand them to the daemon dispatcher:
+
+```http
+POST /media-scenes/:id/run?cwd=/path/to/project
+POST /media-projects/:id/run?cwd=/path/to/project
+POST /media-workflows/:id/test?cwd=/path/to/project
+```
+
+A scene or workflow test response contains the queued job. A project run contains one queued job and Scene Run per submitted scene:
+
+```json
+{
+  "mediaJob": { "id": "media_job_...", "status": "queued" },
+  "mediaSceneRun": { "id": "media_scene_run_...", "mediaJobId": "media_job_..." }
+}
+```
+
+The response is written before the background dispatcher advances the job to `running`, so clients should refresh the shared Media Job record. Provider and Workflow jobs keep their distinct execution source and use the same polling, cancellation, artifact, runtime-work-unit, and restart-resume infrastructure. Historical `waiting_for_approval` jobs and approval records remain readable for compatibility, but new Media Production runs do not create them.
 
 ### List Media Job Artifacts
 
@@ -4325,7 +4349,7 @@ Request body is optional:
 ```
 
 Approval decisions append `approval_approved`, `approval_denied`, or `approval_expired` to the linked run event log when the run still exists. Listing or fetching approvals lazily normalizes pending requests whose `expiresAt` is already in the past.
-Legacy media job approvals are owned by `mediaJobId`; they are listed and resolved through the same approval endpoints for historical compatibility, but new media job runs no longer create `media_cost` approval requests.
+Media cost approvals are owned by `mediaJobId`. Approving a Media Production request dispatches its direct-provider or workflow job; denying it fails the waiting job without contacting the external generation service. Historical approvals remain readable through the same endpoints.
 
 ## Current Limits
 

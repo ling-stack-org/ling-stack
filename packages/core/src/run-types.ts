@@ -30,11 +30,32 @@ import type {
   UpsertOfficialSkillSourceSubscriptionInput,
 } from "./managed-official-skill-source-types.js";
 import type {
+  CreateMediaProjectInput,
   CreateMediaJobInput,
+  CreateMediaSceneInput,
+  CreateMediaSceneRunInput,
   ListMediaJobsOptions,
+  MediaJobExecutionHandle,
   MediaJob,
+  MediaProject,
+  MediaScene,
+  MediaSceneRun,
+  UpdateMediaProjectInput,
   UpdateMediaJobStatusInput,
+  UpdateMediaSceneInput,
+  UpsertMediaJobExecutionHandleInput,
 } from "./media-types.js";
+import type {
+  CreateMediaWorkflowConnectionInput,
+  CreateMediaWorkflowDefinitionInput,
+  CreateMediaWorkflowVersionInput,
+  ListMediaWorkflowDefinitionsOptions,
+  MediaWorkflowConnection,
+  MediaWorkflowDefinition,
+  MediaWorkflowVersion,
+  UpdateMediaWorkflowConnectionInput,
+  UpdateMediaWorkflowDefinitionInput,
+} from "./media-workflow-types.js";
 import type {
   ChannelInputMaterialization,
   CreateChannelInputMaterializationInput,
@@ -146,6 +167,8 @@ import type {
   EffectiveChannelCouncilProjection,
   HardDeleteAiTeammateInput,
   HardDeleteAiTeammateResult,
+  HardDeleteLingThreadInput,
+  HardDeleteLingThreadResult,
   ListAiCouncilsOptions,
   ListAiTeammatesOptions,
   ListChannelAttachmentsOptions,
@@ -1266,6 +1289,7 @@ export interface RunStore {
   ): ConversationTurnSupersession | undefined;
   createLingThread(input: CreateLingThreadInput, now: string): LingThread;
   getLingThread(threadId: string): LingThread | undefined;
+  hardDeleteLingThread(threadId: string, input: HardDeleteLingThreadInput, now: string): HardDeleteLingThreadResult | undefined;
   findLingThreadByOwner(input: {
     readonly kind: LingThreadKind;
     readonly taskId?: string;
@@ -1704,6 +1728,39 @@ export interface RunStore {
   getMediaJob(id: string): MediaJob | undefined;
   listMediaJobs(options?: ListMediaJobsOptions): MediaJob[];
   updateMediaJobStatus(id: string, input: UpdateMediaJobStatusInput, now: string): MediaJob | undefined;
+  createMediaProject(input: CreateMediaProjectInput, now: string): MediaProject;
+  getMediaProject(id: string): MediaProject | undefined;
+  listMediaProjects(): MediaProject[];
+  updateMediaProject(id: string, input: UpdateMediaProjectInput, now: string): MediaProject | undefined;
+  deleteMediaProject(id: string): boolean;
+  createMediaScene(input: CreateMediaSceneInput, now: string): MediaScene;
+  getMediaScene(id: string): MediaScene | undefined;
+  listMediaScenes(projectId: string): MediaScene[];
+  updateMediaScene(id: string, input: UpdateMediaSceneInput, now: string): MediaScene | undefined;
+  reorderMediaScenes(projectId: string, sceneIds: readonly string[], now: string): MediaScene[];
+  deleteMediaScene(id: string): boolean;
+  createMediaSceneRun(input: CreateMediaSceneRunInput, now: string): MediaSceneRun;
+  listMediaSceneRuns(options: { readonly projectId?: string; readonly sceneId?: string }): MediaSceneRun[];
+  getMediaSceneRun(id: string): MediaSceneRun | undefined;
+  getMediaSceneRunByMediaJobId(mediaJobId: string): MediaSceneRun | undefined;
+  upsertMediaJobExecutionHandle(input: UpsertMediaJobExecutionHandleInput, now: string): MediaJobExecutionHandle;
+  getMediaJobExecutionHandle(mediaJobId: string): MediaJobExecutionHandle | undefined;
+  listMediaJobExecutionHandles(): MediaJobExecutionHandle[];
+  deleteMediaJobExecutionHandle(mediaJobId: string): boolean;
+  createMediaWorkflowConnection(input: CreateMediaWorkflowConnectionInput, now: string): MediaWorkflowConnection;
+  getMediaWorkflowConnection(id: string): MediaWorkflowConnection | undefined;
+  listMediaWorkflowConnections(): MediaWorkflowConnection[];
+  updateMediaWorkflowConnection(id: string, input: UpdateMediaWorkflowConnectionInput, now: string): MediaWorkflowConnection | undefined;
+  deleteMediaWorkflowConnection(id: string): boolean;
+  createMediaWorkflowDefinition(input: CreateMediaWorkflowDefinitionInput, now: string): MediaWorkflowDefinition;
+  getMediaWorkflowDefinition(id: string): MediaWorkflowDefinition | undefined;
+  listMediaWorkflowDefinitions(options?: ListMediaWorkflowDefinitionsOptions): MediaWorkflowDefinition[];
+  updateMediaWorkflowDefinition(id: string, input: UpdateMediaWorkflowDefinitionInput, now: string): MediaWorkflowDefinition | undefined;
+  deleteMediaWorkflowDefinition(id: string): boolean;
+  createMediaWorkflowVersion(input: CreateMediaWorkflowVersionInput, now: string): MediaWorkflowVersion;
+  getMediaWorkflowVersion(id: string): MediaWorkflowVersion | undefined;
+  listMediaWorkflowVersions(workflowDefinitionId: string): MediaWorkflowVersion[];
+  setMediaWorkflowVersionTestJob(id: string, mediaJobId: string): MediaWorkflowVersion | undefined;
   createApprovalRequest(input: CreateApprovalRequestInput, now: string): ApprovalRequest;
   getApprovalRequest(id: string): ApprovalRequest | undefined;
   listApprovalRequests(options?: ListApprovalRequestsOptions): ApprovalRequest[];
@@ -2144,6 +2201,25 @@ export type MediaStoreFacet = RunStoreFacet<
   | "getMediaJob"
   | "listMediaJobs"
   | "updateMediaJobStatus"
+  | "createMediaProject"
+  | "getMediaProject"
+  | "listMediaProjects"
+  | "updateMediaProject"
+  | "deleteMediaProject"
+  | "createMediaScene"
+  | "getMediaScene"
+  | "listMediaScenes"
+  | "updateMediaScene"
+  | "reorderMediaScenes"
+  | "deleteMediaScene"
+  | "createMediaSceneRun"
+  | "listMediaSceneRuns"
+  | "getMediaSceneRun"
+  | "getMediaSceneRunByMediaJobId"
+  | "upsertMediaJobExecutionHandle"
+  | "getMediaJobExecutionHandle"
+  | "listMediaJobExecutionHandles"
+  | "deleteMediaJobExecutionHandle"
 >;
 
 export type ApprovalStoreFacet = RunStoreFacet<

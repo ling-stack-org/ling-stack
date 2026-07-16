@@ -21,6 +21,7 @@ export * from "./api/plugins.js";
 export * from "./api/approvals.js";
 export * from "./api/external-work.js";
 export * from "./api/media.js";
+export * from "./api/media-production.js";
 export * from "./api/profile.js";
 export * from "./api/workspace-directory.js";
 export * from "./api/workspace-changes.js";

@@ -44,6 +44,8 @@ import type {
 } from "../../types.js";
 import { ChannelRuntimePolicyFields, ProviderPresetOptions } from "./WorkspaceControls.js";
 
+import { SelectControl } from "../../shared/components/SelectControl.js";
+
 export function ChannelTaskWorkspace({
   cwd,
   channels,
@@ -224,13 +226,13 @@ export function ChannelTaskWorkspace({
               <ChannelRuntimePolicyFields form={channelEditForm} onChange={onChannelEditFormChange} />
 	              <label className="field wide">
 	                <span>{t("Default provider")}</span>
-                <select
+                <SelectControl
                   value={channelEditForm.defaultProviderPresetId}
                   onChange={(event) => onChannelEditFormChange({ ...channelEditForm, defaultProviderPresetId: event.target.value })}
                 >
 	                  <option value="">{t("None")}</option>
                   <ProviderPresetOptions runnableProviders={taskReadyProviders} blockedProviders={setupChatProviders} />
-                </select>
+                </SelectControl>
               </label>
               {mediaProviders.length > 0 ? (
                 <div className="provider-run-notice neutral">
@@ -295,10 +297,10 @@ export function ChannelTaskWorkspace({
 
         <label className="field wide">
 	          <span>{t("Run provider")}</span>
-          <select value={effectiveProviderId} onChange={(event) => onProviderSelect(event.target.value)} disabled={providers.length === 0}>
+          <SelectControl value={effectiveProviderId} onChange={(event) => onProviderSelect(event.target.value)} disabled={providers.length === 0}>
 	            <option value="">{t("Select provider preset")}</option>
             <ProviderPresetOptions runnableProviders={taskReadyProviders} blockedProviders={setupChatProviders} />
-          </select>
+          </SelectControl>
         </label>
         {providers.length === 0 || taskReadyProviders.length === 0 || !effectiveProvider || effectiveProviderPreflightBlocker ? (
           <div className={canPreflightRunWithEffectiveProvider ? "provider-run-notice ok" : "provider-run-notice"}>
@@ -397,13 +399,13 @@ export function ChannelTaskWorkspace({
             </label>
             <label className="field wide">
               <span>{t("Status")}</span>
-              <select value={taskEditForm.status} onChange={(event) => onTaskEditFormChange({ ...taskEditForm, status: event.target.value as TaskStatus })}>
+              <SelectControl value={taskEditForm.status} onChange={(event) => onTaskEditFormChange({ ...taskEditForm, status: event.target.value as TaskStatus })}>
                 {taskStatuses.map((status) => (
                   <option key={status} value={status}>
                     {t(status)}
                   </option>
                 ))}
-              </select>
+              </SelectControl>
             </label>
             <label className="field wide">
               <span>{t("Prompt")}</span>

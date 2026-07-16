@@ -4,6 +4,7 @@ export * from "./approval-types.js";
 export * from "./approval-checkpoints.js";
 export * from "./session-permissions.js";
 export * from "./media-types.js";
+export * from "./media-workflow-types.js";
 export * from "./memory-types.js";
 export * from "./memory-health.js";
 export * from "./memory-markdown-export.js";

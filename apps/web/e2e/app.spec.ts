@@ -5,6 +5,7 @@ import {
   createChatProvider,
   createMockTeammate,
   cwd,
+  isRecord,
 } from "./support/mock-state";
 import {
   readSidebarSelection,
@@ -139,7 +140,7 @@ test("sidebar selection is exclusive and conversation sections stay below primar
   const commandButtonWidth = await newConversationButton.evaluate((button) => Math.round(button.getBoundingClientRect().width));
   expect(commandButtonWidth).toBeGreaterThan(100);
   expect(commandButtonWidth).toBeLessThan(320);
-  await expect(primaryNav.getByRole("button")).toHaveText(["Inbox", "Image Generation", "Automations"]);
+  await expect(primaryNav.getByRole("button")).toHaveText(["Inbox", "Media Production", "Work Board", "Plugin Manager", "Automations"]);
   await expect(primaryNav.getByRole("button", { name: "AI Councils" })).toHaveCount(0);
   await expect(navigation.getByRole("button", { name: "Workspace" })).toHaveCount(0);
   await expect(navigation.getByRole("button", { name: "Tasks" })).toHaveCount(0);
@@ -301,17 +302,17 @@ test("sidebar archive hides conversations and teammates without deleting data", 
 
   await navigation.getByRole("button", { name: "Settings" }).click();
   await page.getByLabel("Settings sections").getByRole("button", { name: /Archived items/ }).click();
-  await expect(page.locator(".archived-items-settings-panel").getByRole("heading", { name: "Archived items" })).toBeVisible();
+  await expect(page.locator(".archived-items-settings-panel")).toBeVisible();
 
-  const conversationGroup = page.locator(".archived-item-group").filter({ hasText: "Conversations" });
-  const teammateGroup = page.locator(".archived-item-group").filter({ hasText: "AI Teammates" });
-  await expect(conversationGroup).toContainText("Archive me");
-  await expect(teammateGroup).toContainText("Designer");
+  const archivedList = page.locator(".archived-item-list");
+  await expect(archivedList).toContainText("Archive me");
 
-  await conversationGroup.getByRole("button", { name: "Restore" }).click();
+  await archivedList.getByRole("button", { name: "Restore" }).click();
   await expect.poll(() => state.threads.find((thread) => thread.kind === "conversation" && thread.title === "Archive me")?.archivedAt ?? "").toBe("");
 
-  await teammateGroup.getByRole("button", { name: "Restore" }).click();
+  await page.locator(".archived-items-settings-panel").getByRole("tab", { name: /AI Teammates/ }).click();
+  await expect(archivedList).toContainText("Designer");
+  await archivedList.getByRole("button", { name: "Restore" }).click();
   await expect.poll(() => state.aiTeammates.find((teammate) => teammate.id === "teammate_sidebar_designer")?.hidden).toBe(false);
   await page.getByRole("button", { name: "Back to app" }).click();
   await expect(navigation.locator(".sidebar-recent-row").filter({ hasText: "Archive me" })).toBeVisible();
@@ -339,6 +340,14 @@ test("recent conversations only show records created from the conversation home"
   await expect(homeComposer.getByRole("button", { name: "Mention teammate" })).toHaveCount(0);
   await home.getByRole("textbox", { name: "Conversation message" }).fill("Plan launch");
   await home.getByRole("button", { name: "Send" }).click();
+  await expect.poll(() => {
+    const snapshot = state.runs[0]?.requestSnapshot;
+    return isRecord(snapshot) ? snapshot.authorizationMode : undefined;
+  }).toBe("smart");
+  await expect.poll(() => {
+    const snapshot = state.runs[0]?.requestSnapshot;
+    return isRecord(snapshot) ? snapshot.workspaceAccessMode : undefined;
+  }).toBe("workspace_write");
   const conversationPage = page.getByLabel("Conversation page");
   await expect(conversationPage).toBeVisible();
   const conversationToolbar = conversationPage.getByLabel("Conversation workspace toolbar");
@@ -429,6 +438,52 @@ test("recent conversations only show records created from the conversation home"
   await home.getByRole("button", { name: "Send" }).click();
   await expect(page.getByLabel("Conversation page").locator(".normal-conversation-message-row.ai-teammate")).toHaveCount(1);
   await expect(navigation.locator(".sidebar-recent-row").first()).toContainText("Second local conversation");
+});
+
+test("normal conversation full access confirms before creating the run", async ({ page }) => {
+  await useEnglishLocale(page);
+  const state = createBaseState({ approvalStatus: "expired" });
+  state.providers = [createChatProvider({ id: "provider_local", displayName: "Local Relay", model: "gpt-5.5" })];
+  state.workspaceSettings = {
+    ...state.workspaceSettings,
+    defaultAuthorizationMode: "always",
+    defaultWorkspaceAccessMode: "full_access",
+    defaultPermissionMode: "full_access",
+    defaultPermissionPreset: "full_access",
+  };
+  state.runs = [];
+  await mockDaemon(page, state);
+  await page.goto("/");
+
+  const navigation = page.getByLabel("Ling Stack navigation");
+  await navigation.getByRole("button", { name: "New conversation" }).click();
+  const home = page.getByLabel("Conversation home");
+  await expect(home.getByRole("button", { name: /Selected permission preset Full access/ })).toBeVisible();
+  await home.getByRole("textbox", { name: "Conversation message" }).fill("Inspect trusted files");
+  await home.getByRole("button", { name: "Send" }).click();
+
+  const confirmSheet = page.getByRole("dialog", { name: "Confirm full access" });
+  await expect(confirmSheet).toBeVisible();
+  await confirmSheet.getByRole("button", { name: "Cancel" }).last().click();
+  await expect(confirmSheet).toHaveCount(0);
+  expect(state.runs).toHaveLength(0);
+  await expect(home.getByRole("textbox", { name: "Conversation message" })).toHaveAttribute("data-value", "Inspect trusted files");
+
+  await home.getByRole("button", { name: "Send" }).click();
+  await page.getByRole("dialog", { name: "Confirm full access" }).getByRole("button", { name: "Start with full access" }).click();
+  await expect.poll(() => state.runs.length).toBe(1);
+  await expect.poll(() => {
+    const snapshot = state.runs[0]?.requestSnapshot;
+    return isRecord(snapshot) ? snapshot.permissionConfirmation : undefined;
+  }).toMatchObject({
+    mode: "full_access",
+    confirmed: true,
+    reason: "user_confirmed_full_access",
+  });
+  await expect.poll(() => {
+    const snapshot = state.runs[0]?.requestSnapshot;
+    return isRecord(snapshot) ? [snapshot.authorizationMode, snapshot.workspaceAccessMode] : [];
+  }).toEqual(["always", "full_access"]);
 });
 
 test("normal conversation composer sends and replays uploaded attachments", async ({ page }) => {
@@ -1097,13 +1152,14 @@ test("sidebar text entries route to context-aware inspectors", async ({ page }) 
   const primaryNav = navigation.locator(".primary-nav");
   await expect(navigation.getByRole("button", { name: "Search or start" })).toHaveCount(0);
   await expect(navigation.getByRole("button", { name: "Run", exact: true })).toHaveCount(0);
-  await expect(primaryNav.getByRole("button")).toHaveText(["Inbox", "Image Generation", "Automations"]);
+  await expect(primaryNav.getByRole("button")).toHaveText(["Inbox", "Media Production", "Work Board", "Plugin Manager", "Automations"]);
   await expect(primaryNav.getByRole("button", { name: "AI Councils" })).toHaveCount(0);
   await expect(primaryNav.getByRole("button", { name: "AI Teammates" })).toHaveCount(0);
   await expect(navigation.getByRole("button", { name: "Settings" })).toBeVisible();
   await expect(navigation.getByRole("button", { name: "Profile" })).toHaveCount(0);
   await expect(navigation.getByRole("button", { name: "Model Workbench" })).toHaveCount(0);
-  await expect(navigation.getByRole("button", { name: "Work Board" })).toHaveCount(0);
+  await expect(primaryNav.getByRole("button", { name: "Work Board" })).toBeVisible();
+  await expect(primaryNav.getByRole("button", { name: "Plugin Manager" })).toBeVisible();
   await expect(page.getByLabel("Run context")).toHaveCount(0);
 
   await navigation.getByRole("button", { name: "New conversation" }).click();
@@ -1113,13 +1169,22 @@ test("sidebar text entries route to context-aware inspectors", async ({ page }) 
   await primaryNav.getByRole("button", { name: "Inbox" }).click();
   await expect(page.locator(".approvals-panel").getByRole("heading", { name: "Inbox" })).toBeVisible();
 
+  await primaryNav.getByRole("button", { name: "Work Board" }).click();
+  await expect(page.locator(".work-board-page")).toBeVisible();
+  await expect(page.getByLabel("Ling Stack navigation")).toBeVisible();
+
+  await primaryNav.getByRole("button", { name: "Plugin Manager" }).click();
+  await expect(page.locator(".plugin-manager-page .settings-plugin-manager")).toBeVisible();
+  await expect(page.getByLabel("Ling Stack navigation")).toBeVisible();
+
   await navigation.getByRole("button", { name: "Settings" }).click();
   const settingsSections = page.getByLabel("Settings sections");
   await expect(settingsSections).toBeVisible();
   await expect(settingsSections.getByRole("button", { name: "Model Workbench" })).toBeVisible();
   await expect(settingsSections.getByRole("button", { name: "Teammate Management" })).toBeVisible();
   await expect(settingsSections.getByRole("button", { name: "AI Teammates" })).toHaveCount(0);
-  await expect(settingsSections.getByRole("button", { name: "Work Board" })).toBeVisible();
+  await expect(settingsSections.getByRole("button", { name: "Work Board" })).toHaveCount(0);
+  await expect(settingsSections.getByRole("button", { name: "Plugin Manager" })).toHaveCount(0);
   await expect(settingsSections.getByRole("button", { name: "Council Workspace" })).toBeVisible();
   await expect(settingsSections.getByRole("button", { name: "AI Councils" })).toHaveCount(0);
   await settingsSections.getByRole("button", { name: "Council Workspace" }).click();
@@ -1141,16 +1206,16 @@ test("sidebar text entries route to context-aware inspectors", async ({ page }) 
   await expect(page.getByRole("region", { name: "Usage summary" })).toBeVisible();
   await expect(page.getByLabel("Run context")).toHaveCount(0);
   await expect(settingsSections.getByRole("button", { name: "Model Workbench" })).toBeVisible();
-  await expect(settingsSections.getByRole("button", { name: "Work Board" })).toBeVisible();
+  await expect(settingsSections.getByRole("button", { name: "Work Board" })).toHaveCount(0);
   await settingsSections.getByRole("button", { name: "Teammate Management" }).click();
   await expect(settingsSections.getByRole("button", { name: "Teammate Management" })).toHaveClass(/active/);
   await expect(page.locator(".settings-tool-return-row")).toHaveCount(0);
   await expect(page.getByLabel("Workspace teammates")).toBeVisible();
   await page.getByRole("button", { name: "Back to app" }).click();
 
-  await navigation.getByRole("button", { name: "Image Generation" }).click();
-  await expect(page.getByRole("heading", { name: "Generation tasks", level: 1 })).toBeVisible();
-  await expect(page.getByLabel("Generation task status")).toBeVisible();
+  await navigation.getByRole("button", { name: "Media Production" }).click();
+  await expect(page.locator(".media-production-page.showing-studio")).toBeVisible();
+  await expect(page.locator(".media-production-canvas-toolbar")).toContainText("Production studio");
   await expect(page.getByLabel("Run context")).toHaveCount(0);
 
   await primaryNav.getByRole("button", { name: "Automations" }).click();
@@ -1278,6 +1343,7 @@ test("conversation home model picker uses the model workbench default without ch
   await page.getByLabel("Settings sections").getByRole("button", { name: "Model Workbench" }).click();
   const geminiRow = page.locator(".provider-row").filter({ hasText: "Gemini Pro" });
   await geminiRow.getByRole("button", { name: "Set default" }).click();
+  await expect(geminiRow).toHaveClass(/selected/);
   await expect(geminiRow).toContainText("Current default");
   await expect(geminiRow.getByRole("button", { name: "Set default" })).toHaveCount(0);
   await page.getByRole("button", { name: "Back to app" }).click();
@@ -1344,7 +1410,7 @@ test("conversation home model picker uses the model workbench default without ch
   await expect(conversationPage.getByRole("button", { name: "Selected thinking mode High" })).toBeVisible();
 });
 
-test("settings workspace tools keep left navigation available on nested tool pages", async ({ page }) => {
+test("settings keeps configuration tools embedded while promoted tools use global navigation", async ({ page }) => {
   await useEnglishLocale(page);
   const state = createBaseState({ approvalStatus: "expired" });
   state.providers = [createChatProvider({
@@ -1366,7 +1432,8 @@ test("settings workspace tools keep left navigation available on nested tool pag
   await expect(settingsSections.getByRole("button", { name: "Model Workbench" })).toBeVisible();
   await expect(settingsSections.getByRole("button", { name: "Teammate Management" })).toBeVisible();
   await expect(settingsSections.getByRole("button", { name: "AI Teammates" })).toHaveCount(0);
-  await expect(settingsSections.getByRole("button", { name: "Work Board" })).toBeVisible();
+  await expect(settingsSections.getByRole("button", { name: "Work Board" })).toHaveCount(0);
+  await expect(settingsSections.getByRole("button", { name: "Plugin Manager" })).toHaveCount(0);
 
   await settingsSections.getByRole("button", { name: "Model Workbench" }).click();
   await expect(settingsSections).toBeVisible();
@@ -1388,14 +1455,9 @@ test("settings workspace tools keep left navigation available on nested tool pag
   await expect(settingsSections.getByRole("button", { name: "Teammate Management" })).toBeVisible();
   await expect(settingsSections).toBeVisible();
 
-  await settingsSections.getByRole("button", { name: "Work Board" }).click();
-  await expect(settingsSections).toBeVisible();
-  await expect(page.getByLabel("Ling Stack navigation")).toHaveCount(0);
-  await expect(settingsSections.getByRole("button", { name: "Work Board" })).toHaveClass(/active/);
   await expect(page.locator(".settings-tool-return-row")).toHaveCount(0);
+  await page.getByRole("button", { name: "Back to app" }).click();
+  await navigation.getByRole("button", { name: "Work Board" }).click();
+  await expect(page.getByLabel("Ling Stack navigation")).toBeVisible();
   await expect(page.locator(".work-board-page")).toBeVisible();
-  await expect(page.locator(".work-board-page").getByRole("heading", { name: "Needs action" })).toHaveCount(0);
-  await expect(settingsSections.getByRole("button", { name: "Work Board" })).toBeVisible();
-
-  await expect(page.locator(".settings-tool-return-row")).toHaveCount(0);
 });

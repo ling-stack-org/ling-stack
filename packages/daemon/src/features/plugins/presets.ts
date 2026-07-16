@@ -1,4 +1,4 @@
-import { accessSync, constants as fsConstants } from "node:fs";
+import { accessSync, constants as fsConstants, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { delimiter, isAbsolute, join, resolve } from "node:path";
 import type {
@@ -9,6 +9,8 @@ import type {
 
 export const CUA_DRIVER_PLUGIN_ID = "trusted-local:cua-driver";
 export const CUA_DRIVER_MCP_SERVER_ID = "mcp_cua_driver";
+export const CUA_DRIVER_DOCUMENTATION_URL = "https://cua.ai/docs/cua-driver";
+export const CUA_DRIVER_INSTALL_COMMAND = "/bin/bash -c \"$(curl -fsSL https://cua.ai/driver/install.sh)\"";
 
 const cuaDriverReadOnlyTools = new Set([
   "check_permissions",
@@ -54,6 +56,7 @@ export function createCuaDriverDescriptor(): ManagedPluginDescriptor {
 export interface CuaDriverCommandResolution {
   readonly ok: boolean;
   readonly command?: string;
+  readonly errorCode?: "plugin_binary_not_found" | "plugin_command_not_executable";
   readonly message?: string;
   readonly attempted: readonly string[];
 }
@@ -75,6 +78,7 @@ export function resolveCuaDriverCommand(options: Readonly<Record<string, unknown
     }
     return {
       ok: false,
+      errorCode: "plugin_command_not_executable",
       message: "Configured cua-driver command is not executable.",
       attempted,
     };
@@ -85,11 +89,7 @@ export function resolveCuaDriverCommand(options: Readonly<Record<string, unknown
     return { ok: true, command: pathResolved, attempted };
   }
 
-  for (const candidate of [
-    join(homedir(), ".local/bin/cua-driver"),
-    "/opt/homebrew/bin/cua-driver",
-    "/usr/local/bin/cua-driver",
-  ]) {
+  for (const candidate of defaultCuaDriverCommandCandidates()) {
     attempted.push(candidate);
     if (isExecutableFile(candidate)) {
       return { ok: true, command: candidate, attempted };
@@ -98,9 +98,22 @@ export function resolveCuaDriverCommand(options: Readonly<Record<string, unknown
 
   return {
     ok: false,
+    errorCode: "plugin_binary_not_found",
     message: "cua-driver binary was not found. Install Cua Driver or pass options.command with an absolute executable path.",
     attempted,
   };
+}
+
+export function defaultCuaDriverCommandCandidates(home = homedir()): readonly string[] {
+  return [
+    join(home, ".local/bin/cua-driver"),
+    "/opt/homebrew/bin/cua-driver",
+    "/usr/local/bin/cua-driver",
+    "/Applications/CuaDriver.app/Contents/MacOS/cua-driver",
+    "/Applications/Cua Driver.app/Contents/MacOS/cua-driver",
+    join(home, "Applications/CuaDriver.app/Contents/MacOS/cua-driver"),
+    join(home, "Applications/Cua Driver.app/Contents/MacOS/cua-driver"),
+  ];
 }
 
 export function createCuaDriverMcpServerInput(command: string, enabled: boolean): CreateMcpServerInput {
@@ -159,6 +172,9 @@ function resolveCommandCandidate(command: string): string {
 
 function isExecutableFile(path: string): boolean {
   try {
+    if (!statSync(path).isFile()) {
+      return false;
+    }
     accessSync(path, fsConstants.X_OK);
     return true;
   } catch {

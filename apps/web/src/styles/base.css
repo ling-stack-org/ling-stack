@@ -94,6 +94,18 @@
   --transition-fast: 140ms ease;
 }
 
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
 :root[data-theme="dark"] {
   color: var(--text-strong);
   background: var(--app-bg);
@@ -191,7 +203,6 @@ body {
 
 button,
 input,
-select,
 textarea {
   font: inherit;
 }
@@ -202,7 +213,6 @@ button {
 
 button,
 input,
-select,
 textarea,
 a {
   transition:
@@ -215,7 +225,6 @@ a {
 
 button:focus-visible,
 input:focus-visible,
-select:focus-visible,
 textarea:focus-visible,
 a:focus-visible {
   outline: 2px solid var(--accent-border);

@@ -22,6 +22,8 @@ import {
   visiblePlanLineageVersions,
 } from "./plan-lineage.js";
 
+import { SelectControl } from "../../../shared/components/SelectControl.js";
+
 export type PlanStatusFilter = "current" | "all" | ProposedPlanArtifact["status"];
 
 export interface PlanHistoryPageProps {
@@ -122,28 +124,31 @@ export function PlanHistoryPage({
           <div className="right-dock-plan-select-row">
             <label>
               <span>{t("Status")}</span>
-              <select value={statusFilter} onChange={(event) => onStatusFilterChange(event.target.value as PlanStatusFilter)} aria-label={t("Plan status")}>
+              <SelectControl
+              variant="compact" value={statusFilter} onChange={(event) => onStatusFilterChange(event.target.value as PlanStatusFilter)} aria-label={t("Plan status")}>
                 <option value="current">{t("Current")}</option>
                 <option value="all">{t("All")}</option>
                 <option value="draft">{t("Draft")}</option>
                 <option value="accepted">{t("Accepted")}</option>
                 <option value="superseded">{t("Superseded")}</option>
                 <option value="archived">{t("Archived")}</option>
-              </select>
+              </SelectControl>
             </label>
             <label>
               <span>{t("Agent")}</span>
-              <select value={agentFilter} onChange={(event) => setAgentFilter(event.target.value)} aria-label={t("Plan agent")}>
+              <SelectControl
+              variant="compact" value={agentFilter} onChange={(event) => setAgentFilter(event.target.value)} aria-label={t("Plan agent")}>
                 <option value="all">{t("All")}</option>
                 {agentOptions.map((agentId) => <option key={agentId} value={agentId}>{agentId}</option>)}
-              </select>
+              </SelectControl>
             </label>
             <label>
               <span>{t("Goal")}</span>
-              <select value={goalFilter} onChange={(event) => setGoalFilter(event.target.value)} aria-label={t("Plan goal")}>
+              <SelectControl
+              variant="compact" value={goalFilter} onChange={(event) => setGoalFilter(event.target.value)} aria-label={t("Plan goal")}>
                 <option value="all">{t("All")}</option>
                 {goalOptions.map((goalId) => <option key={goalId} value={goalId}>{goalId}</option>)}
-              </select>
+              </SelectControl>
             </label>
           </div>
         </div>

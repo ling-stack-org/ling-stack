@@ -14,9 +14,10 @@ The resolver is not a provider and does not replace vendor adapters. It is the s
 gate used by Model Workbench, provider Check, media job creation/running, Web filters,
 and e2e mocks.
 
-The resolver is also not an approval engine. New media job runs do not create
-`media_cost` approvals; old `media_cost` records remain readable only for workspace
-history compatibility.
+The resolver is also not an approval engine. Standalone Media Job runs do not create
+`media_cost` approvals. Media Production owns its separate user-intent boundary:
+scene runs, ordered project runs, and workflow tests create a media-owned approval
+before they dispatch the same generation runtime.
 
 ## Goals
 

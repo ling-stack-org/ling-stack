@@ -1,5 +1,6 @@
 import type {
   AiTeammate,
+  AuthorizationMode,
   PermissionConfirmation,
   PermissionPreset,
   RunSession,
@@ -8,6 +9,7 @@ import type {
   SkillOptimizationMode,
   TeammateDirectMessage,
   TeammateDirectThread,
+  WorkspaceAccessMode,
 } from "@ling-stack/core";
 import { buildPrivateChatContextView } from "../channels/context-processing/private-chat.js";
 import { renderChannelContextView } from "../channels/context-processing/render.js";
@@ -48,6 +50,8 @@ export async function createAiTeammateDirectReply(input: {
   readonly thread: TeammateDirectThread;
   readonly sourceMessage: TeammateDirectMessage;
   readonly providerPresetId?: string;
+  readonly authorizationMode?: AuthorizationMode;
+  readonly workspaceAccessMode?: WorkspaceAccessMode;
   readonly permissionPreset?: PermissionPreset;
   readonly permissionConfirmation?: PermissionConfirmation;
   readonly requestedSkillId?: string;
@@ -181,6 +185,8 @@ export async function createAiTeammateDirectReply(input: {
       workspace: input.workspace!,
       prompt: prependWebEvidenceContext(renderChannelContextView(privateChatView), webContext),
       systemPrompt,
+      authorizationMode: input.authorizationMode,
+      workspaceAccessMode: input.workspaceAccessMode,
       permissionPreset: input.permissionPreset,
       permissionConfirmation: input.permissionConfirmation,
       requestedSkillId: input.requestedSkillId,

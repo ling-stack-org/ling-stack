@@ -3,6 +3,7 @@ export type SecretStatusKind = SecretRefKind | "local";
 
 export type SecretPurpose =
   | "provider_api_key"
+  | "workflow_api_key"
   | "github_token"
   | "linear_token"
   | "webhook_secret"
@@ -11,6 +12,7 @@ export type SecretPurpose =
 
 export const secretPurposes = [
   "provider_api_key",
+  "workflow_api_key",
   "github_token",
   "linear_token",
   "webhook_secret",

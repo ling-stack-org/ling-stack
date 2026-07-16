@@ -332,7 +332,7 @@ node packages/cli/dist/index.js provider update provider_... \
   --compat-json '{"mediaVendorTransport":{"mode":"live"}}'
 ```
 
-This validates `baseUrl` and `apiKeyRef`. A live-gated media job first creates a `media_cost` approval and moves to `waiting_for_approval`; after approval, Seedream `image_generate` can call the configured OpenAI-compatible `/images/generations` endpoint. Automated tests use mock HTTP; real smoke requires `SEEDREAM_API_KEY`. The adapter records request/response metadata and downloads returned HTTP(S) image URLs into local `.ling-stack/artifacts` image artifacts without forwarding the provider authorization header to the image URL. See [Seedream live smoke](docs/seedream-live-smoke.md) for the full approval, run, artifact, and Web verification path.
+This validates `baseUrl` and `apiKeyRef`. Standalone Media Jobs execute directly after runtime readiness checks. Media Production scene runs, ordered project runs, and ComfyUI workflow tests create a scoped `media_cost` approval and wait before paid generation begins. Automated tests use mock HTTP; real smoke requires `SEEDREAM_API_KEY`. The adapter records request/response metadata and downloads returned HTTP(S) image URLs into local `.ling-stack/artifacts` image artifacts without forwarding the provider authorization header to the image URL. See [Seedream live smoke](docs/seedream-live-smoke.md) for the standalone job and artifact verification path.
 
 ```bash
 export LOCAL_RELAY_API_KEY=sk-local
@@ -623,7 +623,7 @@ Implemented:
 - Model Workbench grouping for GPT/Claude, domestic AI, OpenAI-compatible relays, custom compatible access, and media providers, with coding-task readiness shown separately from media-only capabilities.
 - Run Evidence panel with session files, summary preview, tool/approval counts, and artifact rows.
 - Automatic artifact extraction from Pi tool outputs, generated text/log/Markdown/diff content, and generated file path metadata.
-- Media job foundation with local metadata storage, `POST/GET /media-jobs`, static media provider checks, media adapter contract, provider-kind registry wiring, vendor request planning, disabled-by-default vendor transport seam, `media_cost` approval gate for live execution, Seedream `image_generate` live HTTP adapter, Seedream image URL byte artifacts, static execution adapter, local metadata artifacts, and Web Media Jobs panel. Seedream has a documented live smoke path; additional media vendors and billing stay behind the mainline Model Workbench work.
+- Media job and Media Production foundations with local metadata storage, direct standalone generation, scoped `media_cost` approval for production scenes/projects/workflow tests, recoverable provider and ComfyUI execution, local artifacts, and Web task history. Seedream has a documented live smoke path; additional media vendors and billing stay behind the mainline Model Workbench work.
 - CLI first-loop commands for init, channels, tasks, providers, runs, approvals, approval policy, daemon foreground start, and Web UI launch.
 - Initial product, architecture, daemon, provider, and Pi integration docs.
 

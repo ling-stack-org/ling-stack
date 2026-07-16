@@ -17,6 +17,8 @@ import { useI18n } from "../../i18n.js";
 import type { Channel, ExternalWorkStatusResponse } from "../../types.js";
 import { SettingsMetaLine } from "./SettingsSubnav.js";
 
+import { SelectControl } from "../../shared/components/SelectControl.js";
+
 export function ExternalWorkSettingsPanel({
   selectedChannel,
   externalWorkStatus,
@@ -156,14 +158,14 @@ export function ExternalWorkSettingsPanel({
               <div className="external-work-workflow-form">
                 <label className="field">
                   <span>{t("Source")}</span>
-                  <select
+                  <SelectControl
                     value={workflowSourceKind}
                     onChange={(event) => setWorkflowSourceKind(event.target.value === "linear" ? "linear" : "github")}
                     disabled={workflowBusy}
                   >
                     <option value="github">{t("GitHub")}</option>
                     <option value="linear">{t("Linear")}</option>
-                  </select>
+                  </SelectControl>
                 </label>
                 {workflowSourceKind === "github" ? (
                   <label className="field">

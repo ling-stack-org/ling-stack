@@ -72,9 +72,21 @@ export const LazyGlobalWorkBoardPage = lazy(() =>
   })),
 );
 
+export const LazyPluginManagerPage = lazy(() =>
+  import("../features/plugins/PluginManagerPage.js").then((module) => ({
+    default: module.PluginManagerPage,
+  })),
+);
+
 export const LazyMediaJobsPage = lazy(() =>
   import("../features/media/MediaJobsPage.js").then((module) => ({
     default: module.MediaJobsPage,
+  })),
+);
+
+export const LazyMediaProductionWorkspace = lazy(() =>
+  import("../features/media-production/MediaProductionWorkspace.js").then((module) => ({
+    default: module.MediaProductionWorkspace,
   })),
 );
 

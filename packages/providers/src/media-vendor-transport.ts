@@ -7,7 +7,13 @@ import type {
 } from "./types.js";
 import { isRecord } from "./utils.js";
 import { executeOpenAIImageGeneration } from "./vendors/openai-images.js";
-import { executeSeedanceVideoTask } from "./vendors/seedance.js";
+import {
+  cancelSeedanceVideoTask,
+  collectSeedanceVideoArtifacts,
+  executeSeedanceVideoTask,
+  pollSeedanceVideoTask,
+  submitSeedanceVideoTask,
+} from "./vendors/seedance.js";
 import { executeSeedreamImageEdit, executeSeedreamImageGeneration } from "./vendors/seedream.js";
 
 export function createDisabledMediaVendorTransport(): MediaVendorTransport {
@@ -82,7 +88,47 @@ export function createLiveMediaVendorTransport(options: LiveMediaVendorTransport
       }
       return await executeSeedreamImageGeneration(request, options);
     },
+
+    async submit(request) {
+      const failure = validateLiveMediaVendorTransport(options, request.vendor.displayName);
+      if (failure) {
+        return failure;
+      }
+      if (request.vendor.kind !== "seedance" || request.requestPlan.operation !== "video_generate") {
+        return {
+          status: "failed",
+          errorCode: "unsupported_capability",
+          errorMessage: `Live media task submission does not support ${request.vendor.kind} ${request.requestPlan.operation}.`,
+        };
+      }
+      return await submitSeedanceVideoTask(request, options);
+    },
+
+    async poll(handle) {
+      return await pollSeedanceVideoTask(handle, options);
+    },
+
+    async collectArtifacts(handle) {
+      return await collectSeedanceVideoArtifacts(handle, options);
+    },
+
+    async cancel(handle) {
+      await cancelSeedanceVideoTask(handle);
+    },
   };
+}
+
+function validateLiveMediaVendorTransport(
+  options: LiveMediaVendorTransportOptions,
+  displayName: string,
+): { readonly status: "failed"; readonly errorCode: "invalid_request" | "auth_failed"; readonly errorMessage: string } | undefined {
+  if (!options.baseUrl) {
+    return { status: "failed", errorCode: "invalid_request", errorMessage: `${displayName} live media transport requires provider baseUrl.` };
+  }
+  if (!options.apiKeyRef || !options.apiKeyConfigured || !options.apiKey) {
+    return { status: "failed", errorCode: "auth_failed", errorMessage: `${displayName} live media transport requires a configured API Key.` };
+  }
+  return undefined;
 }
 
 export function resolveMediaVendorTransportGateConfig(compat: unknown): MediaVendorTransportGateResolution {

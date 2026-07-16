@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type Dispatch, type SetStateAction } from "react";
+import { legacyPermissionFromAuthorizationAndAccess } from "@ling-stack/core/session-permissions";
 import { clearSavedLocale, readSavedLocale, type Locale } from "../i18n.js";
 import { clearSavedThemePreference, readSavedThemePreference, type ThemePreference } from "../theme.js";
 import { getEffectiveConfig } from "../api/config.js";
@@ -10,6 +11,7 @@ import type {
   UpdateWorkspaceSettingsRequest,
   WorkspaceSettings,
 } from "../types.js";
+import { resolveAuthorizationMode, resolveWorkspaceAccessMode } from "../lib/conversation-authorization.js";
 import { clearSavedWorkspaceCwd, readSavedWorkspaceCwd } from "../lib/local-storage.js";
 
 export interface WorkspaceSettingsController {
@@ -73,6 +75,14 @@ export function useWorkspaceSettingsController(input: {
           providerPresetId: response.settings.defaultProviderPresetId ?? "",
         }));
       }
+      if (
+        "defaultAuthorizationMode" in patch ||
+        "defaultWorkspaceAccessMode" in patch ||
+        "defaultPermissionMode" in patch ||
+        "defaultPermissionPreset" in patch
+      ) {
+        input.setForm((current) => syncRunFormPermissionDefaults(current, response.settings));
+      }
       setEffectiveConfig((current) =>
         current && current.cwd === workspaceCwd
           ? { ...current, layers: { ...current.layers, workspaceSettings: response.settings } }
@@ -114,11 +124,10 @@ export function useWorkspaceSettingsController(input: {
               ? response.values.locale.value
               : currentLocaleRef.current;
         setWorkspaceSettings(workspaceLayer);
-        input.setForm((current) =>
-          current.providerPresetId === (workspaceLayer.defaultProviderPresetId ?? "")
-            ? current
-            : { ...current, providerPresetId: workspaceLayer.defaultProviderPresetId ?? "" },
-        );
+        input.setForm((current) => syncRunFormPermissionDefaults({
+          ...current,
+          providerPresetId: workspaceLayer.defaultProviderPresetId ?? "",
+        }, workspaceLayer));
         setEffectiveConfig(response);
         input.setThemePreference(nextTheme);
         input.setLocale(nextLocale);
@@ -208,6 +217,7 @@ export function useWorkspaceSettingsController(input: {
             : currentLocaleRef.current;
           setWorkspaceSettings(workspaceLayer);
           setEffectiveConfig(response);
+          input.setForm((current) => syncRunFormPermissionDefaults(current, workspaceLayer));
           input.setThemePreference(nextTheme);
           input.setLocale(nextLocale);
           interfaceSettingsSyncRef.current = { cwd: workspaceCwd, theme: nextTheme, locale: nextLocale };
@@ -262,6 +272,27 @@ export function useWorkspaceSettingsController(input: {
     effectiveConfig,
     updateWorkspaceCwd,
     patchWorkspaceSettings,
+  };
+}
+
+function syncRunFormPermissionDefaults(current: RunFormState, settings: WorkspaceSettings): RunFormState {
+  const authorizationMode = resolveAuthorizationMode(
+    settings.defaultAuthorizationMode,
+    settings.defaultPermissionMode,
+    settings.defaultPermissionPreset,
+  );
+  const workspaceAccessMode = resolveWorkspaceAccessMode(
+    settings.defaultWorkspaceAccessMode,
+    settings.defaultPermissionMode,
+    settings.defaultPermissionPreset,
+  );
+  const legacy = legacyPermissionFromAuthorizationAndAccess(authorizationMode, workspaceAccessMode);
+  return {
+    ...current,
+    authorizationMode,
+    workspaceAccessMode,
+    permissionMode: legacy.permissionMode,
+    permissionPreset: legacy.permissionPreset,
   };
 }
 

@@ -1,0 +1,550 @@
+.scene-inspector-head,
+.scene-inspector-actions,
+.scene-inspector-section-head,
+.scene-run-row {
+  display: flex;
+  align-items: center;
+}
+
+.scene-inspector {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  min-width: 0;
+  min-height: 0;
+  background: var(--surface, #ffffff);
+}
+
+.scene-inspector-head {
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 76px;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--border, #e5e5e5);
+}
+
+.scene-inspector-eyebrow {
+  display: block;
+  color: var(--text-muted, #707070);
+  font-size: 11px;
+  font-weight: 650;
+  line-height: 15px;
+}
+
+.scene-inspector-head h2 {
+  margin: 3px 0 0;
+  overflow: hidden;
+  color: var(--text, #171717);
+  font-size: 15px;
+  font-weight: 720;
+  line-height: 20px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.scene-inspector-head .scene-readiness-badge {
+  margin-top: 6px;
+}
+
+.scene-inspector-scroll {
+  display: grid;
+  align-content: start;
+  gap: 16px;
+  min-height: 0;
+  overflow: auto;
+  padding: 16px;
+}
+
+.scene-inspector .field {
+  gap: 6px;
+}
+
+.scene-inspector .field > span,
+.field-label {
+  color: var(--text-muted, #707070);
+  font-size: 11px;
+  font-weight: 680;
+  line-height: 14px;
+}
+
+.scene-prompt-field textarea {
+  min-height: 126px;
+  resize: vertical;
+}
+
+.scene-inspector-section {
+  display: grid;
+  gap: 10px;
+  padding-top: 15px;
+  border-top: 1px solid var(--border, #e5e5e5);
+}
+
+.scene-parameter-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 10px;
+}
+
+.scene-inspector-hint {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  color: var(--text-muted, #707070);
+  font-size: 12px;
+  line-height: 17px;
+}
+
+.scene-inspector-section-head {
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.scene-inspector-section-head small {
+  color: var(--text-muted, #707070);
+  font-size: 10px;
+}
+
+.reference-asset-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 7px;
+  max-height: 176px;
+  overflow: auto;
+}
+
+.reference-asset {
+  position: relative;
+  aspect-ratio: 1;
+  overflow: hidden;
+  padding: 0;
+  border: 1px solid var(--border, #e5e5e5);
+  border-radius: 5px;
+  background: #f7f7f7;
+  cursor: pointer;
+}
+
+.reference-asset.selected {
+  border-color: var(--text, #171717);
+  box-shadow: inset 0 0 0 2px var(--text, #171717);
+}
+
+.reference-asset img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.reference-asset span {
+  position: absolute;
+  right: 4px;
+  bottom: 4px;
+  padding: 2px 4px;
+  border-radius: 3px;
+  background: rgba(20, 20, 20, 0.72);
+  color: #ffffff;
+  font-size: 9px;
+}
+
+.scene-run-list {
+  display: grid;
+  gap: 7px;
+}
+
+.scene-run-row {
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 44px;
+  padding: 7px 8px;
+  border: 1px solid var(--border, #e5e5e5);
+  border-radius: 5px;
+  background: var(--surface, #ffffff);
+}
+
+.scene-run-row.selected {
+  border-color: var(--text, #171717);
+  background: var(--surface-selected, #f7f7f7);
+}
+
+.scene-run-row > span {
+  display: grid;
+  gap: 2px;
+}
+
+.scene-run-row strong {
+  color: var(--text, #171717);
+  font-size: 11px;
+  line-height: 15px;
+}
+
+.scene-run-row small {
+  color: var(--text-muted, #707070);
+  font-size: 10px;
+}
+
+.scene-run-row-result {
+  margin-left: auto;
+  color: var(--text-muted, #707070);
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.scene-current-result .media-artifact-preview.scene {
+  aspect-ratio: 16 / 9;
+}
+
+.scene-latest-run-issue {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px 11px;
+  border: 1px solid color-mix(in srgb, var(--danger, #b42318) 26%, var(--border, #e5e5e5));
+  border-radius: 6px;
+  background: var(--danger-soft, #fff4f2);
+  color: var(--danger, #b42318);
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.scene-latest-run-issue svg {
+  flex: 0 0 auto;
+  margin-top: 1px;
+}
+
+.scene-latest-run-issue span {
+  display: grid;
+  gap: 2px;
+}
+
+.scene-latest-run-issue strong {
+  color: var(--text, #171717);
+}
+
+.project-run-review-overlay,
+.scene-delete-overlay,
+.scene-result-preview-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 120;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: color-mix(in srgb, var(--text, #171717) 28%, transparent);
+}
+
+.project-run-review-dialog {
+  width: min(520px, calc(100vw - 32px));
+}
+
+.project-run-review-dialog,
+.scene-delete-dialog,
+.scene-result-preview-dialog {
+  max-height: min(640px, calc(100dvh - 48px));
+  border: 1px solid var(--border, #e5e5e5);
+  border-radius: 8px;
+  background: var(--surface-panel, #ffffff);
+  box-shadow: 0 24px 70px color-mix(in srgb, var(--shadow-color, #111111) 24%, transparent);
+}
+
+.scene-delete-dialog {
+  width: min(440px, calc(100vw - 32px));
+}
+
+.scene-result-preview-dialog {
+  width: min(840px, calc(100vw - 40px));
+  background: var(--surface-panel-strong, #ffffff);
+}
+
+.scene-result-preview-dialog .create-dialog-head {
+  min-height: 0;
+  padding: 16px 18px 13px;
+}
+
+.scene-result-preview-dialog .create-dialog-title-block {
+  gap: 4px;
+}
+
+.scene-result-preview-dialog .create-dialog-title-block strong {
+  font-size: 16px;
+  line-height: 22px;
+}
+
+.scene-result-preview-dialog .create-dialog-title-block p {
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.scene-result-preview-body {
+  display: grid;
+  gap: 0;
+  padding: 0 18px;
+  overflow: auto;
+}
+
+.scene-result-preview-frame {
+  overflow: hidden;
+  border: 1px solid var(--border, #e5e5e5);
+  border-radius: 7px;
+  background: var(--surface-subtle, #f7f7f7);
+}
+
+.scene-result-preview-frame .media-artifact-preview.hero {
+  aspect-ratio: 16 / 9;
+  border: 0;
+  border-radius: 0;
+}
+
+.scene-result-preview-dialog .create-dialog-actions {
+  position: static;
+  margin: 0 -18px;
+  padding: 13px 18px 16px;
+  background: var(--surface-panel-strong, #ffffff);
+}
+
+.project-run-review-dialog .create-dialog-head {
+  min-height: 0;
+  align-items: flex-start;
+  padding: 18px 20px 14px;
+}
+
+.project-run-review-dialog .create-dialog-title-block {
+  gap: 4px;
+  padding-right: 8px;
+}
+
+.project-run-review-dialog .create-dialog-title-block strong {
+  font-size: 17px;
+  line-height: 22px;
+}
+
+.project-run-review-dialog .create-dialog-title-block p {
+  max-width: 420px;
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.project-run-review-dialog .create-dialog-head .icon-button {
+  width: 30px;
+  min-width: 30px;
+  height: 30px;
+  padding: 0;
+}
+
+.scene-delete-dialog .create-dialog-head {
+  min-height: 0;
+  align-items: flex-start;
+  padding: 20px 20px 16px;
+}
+
+.scene-delete-dialog .create-dialog-title-block {
+  gap: 5px;
+  padding-right: 8px;
+}
+
+.scene-delete-dialog .create-dialog-title-block strong {
+  font-size: 16px;
+  line-height: 22px;
+}
+
+.scene-delete-dialog .create-dialog-title-block p {
+  max-width: 350px;
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.scene-delete-dialog .create-dialog-head .icon-button {
+  width: 30px;
+  min-width: 30px;
+  height: 30px;
+  padding: 0;
+}
+
+.scene-delete-body {
+  overflow: visible;
+}
+
+.scene-delete-dialog .create-dialog-actions {
+  position: static;
+  margin: 0;
+  padding: 14px 20px 18px;
+  background: var(--surface-panel, #ffffff);
+}
+
+.scene-delete-dialog .create-dialog-actions button {
+  min-height: 36px;
+  padding: 0 14px;
+}
+
+.scene-delete-confirm {
+  border: 1px solid var(--danger, #b42318);
+  border-radius: 6px;
+  background: var(--danger, #b42318);
+  color: #ffffff;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 680;
+  cursor: pointer;
+}
+
+.scene-delete-confirm:hover:not(:disabled),
+.scene-delete-confirm:focus-visible {
+  border-color: color-mix(in srgb, var(--danger, #b42318) 82%, #000000);
+  background: color-mix(in srgb, var(--danger, #b42318) 88%, #000000);
+  outline: none;
+}
+
+.scene-delete-confirm:focus-visible {
+  box-shadow: 0 0 0 3px var(--danger-soft, #fff7f6);
+}
+
+.scene-delete-confirm:disabled {
+  opacity: 0.48;
+  cursor: not-allowed;
+}
+
+.project-run-review-body,
+.scene-delete-body {
+  display: grid;
+  gap: 16px;
+}
+
+.project-run-review-body {
+  gap: 14px;
+  padding: 14px 20px 0;
+}
+
+.project-run-review-dialog .create-dialog-actions {
+  position: sticky;
+  margin: 0 -20px;
+  padding: 12px 20px 16px;
+  background: var(--surface-panel, #ffffff);
+}
+
+.project-run-review-dialog .create-dialog-actions button {
+  min-height: 36px;
+  padding: 0 14px;
+}
+
+.project-run-review-section {
+  display: grid;
+  gap: 10px;
+}
+
+.project-run-review-section.skipped {
+  padding-top: 14px;
+  border-top: 1px solid var(--border, #e5e5e5);
+}
+
+.project-run-review-section-head {
+  display: grid;
+  gap: 3px;
+}
+
+.project-run-review-section-head strong {
+  color: var(--text, #171717);
+  font-size: 14px;
+}
+
+.project-run-review-section-head span,
+.project-run-review-list small {
+  color: var(--text-muted, #707070);
+  font-size: 12px;
+  line-height: 17px;
+}
+
+.project-run-review-list {
+  display: grid;
+  gap: 0;
+  overflow: hidden;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--border, #e5e5e5);
+  border-radius: 6px;
+  background: var(--surface, #ffffff);
+  list-style: none;
+}
+
+.project-run-review-list li {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 3px 8px;
+  align-items: center;
+  min-height: 46px;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 0;
+}
+
+.project-run-review-list li + li {
+  border-top: 1px solid var(--border, #e5e5e5);
+}
+
+.project-run-review-list.ready li {
+  grid-template-columns: 24px minmax(0, 1fr) auto;
+  gap: 8px;
+}
+
+.project-run-review-list li > span {
+  grid-row: span 2;
+  color: var(--text-muted, #707070);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.project-run-review-list.ready li > span {
+  grid-row: auto;
+}
+
+.project-run-review-list li > strong {
+  overflow: hidden;
+  color: var(--text, #171717);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-run-review-list.ready li > small {
+  justify-self: end;
+  white-space: nowrap;
+}
+
+.project-run-review-empty {
+  display: inline-flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--warning, #a16207);
+  border-radius: 5px;
+  background: var(--warning-soft, #fff9eb);
+  color: var(--text, #171717);
+  font-size: 12px;
+  line-height: 17px;
+}
+
+.scene-inspector-footer {
+  padding: 12px 16px;
+  border-top: 1px solid var(--border, #e5e5e5);
+}
+
+.scene-inspector-footer .primary-button {
+  width: 100%;
+  justify-content: center;
+}
+
+.scene-inspector-empty {
+  place-content: center;
+  justify-items: center;
+  gap: 8px;
+  padding: 24px;
+  color: var(--text-muted, #707070);
+  text-align: center;
+}
+
+.scene-inspector-empty strong {
+  color: var(--text, #171717);
+  font-size: 14px;
+}
+
+.scene-inspector-empty span {
+  font-size: 12px;
+  line-height: 17px;
+}

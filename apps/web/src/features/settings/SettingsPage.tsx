@@ -8,39 +8,30 @@ import {
   Brain,
   Database,
   GitBranch,
-  Kanban,
   Palette,
-  PlugZap,
   Shield,
   SlidersHorizontal,
   UserCircle,
   Wrench,
   type LucideIcon,
 } from "lucide-react";
-import type { RuntimeSettingsFormState } from "../../domains/settings/use-settings-domain.js";
 import type { McpBusyAction } from "../../domains/mcp/use-mcp-domain.js";
-import type { PluginActionNotice, PluginBusyAction } from "../../domains/plugins/use-plugins-domain.js";
 import { useI18n } from "../../i18n.js";
 import type {
-  ApprovalPolicy,
-  ApprovalPolicyFormState,
+  AuthorizationMode,
   Channel,
   EffectiveConfigResponse,
   ExternalWorkStatusResponse,
-  ManagedPluginApplyPresetResponse,
-  ManagedPluginRuntimePreviewResponse,
-  ManagedPluginView,
   McpServer,
   McpServerFormState,
   McpTool,
   PermissionPreset,
   ResponseLanguagePreference,
-  RunnerListItem,
   RunSession,
   SessionPermissionMode,
   StartupStatusResponse,
   UserProfile,
-  WorkspaceRuntimeSettings,
+  WorkspaceAccessMode,
 } from "../../types.js";
 import { McpToolsPage } from "../mcp/McpToolsPage.js";
 import { ArchivedSettingsPanel } from "./ArchivedSettingsPanel.js";
@@ -49,28 +40,25 @@ import { ExternalWorkSettingsPanel } from "./ExternalWorkSettingsPanel.js";
 import { StartupDiagnosticsSettingsPanel } from "./MaintenanceSettingsPanel.js";
 import { InterfacePreferencesSettingsPanel, PersonalSettingsPanel } from "./PersonalInterfaceSettingsPanel.js";
 import { PersonalizationSettingsPanel } from "./PersonalizationSettingsPanel.js";
-import { PluginManagerSettingsPanel } from "./PluginManagerSettingsPanel.js";
 import { SettingsRunDiagnosticsPanel } from "./SettingsRunDiagnosticsPanel.js";
 import { SkillLibrarySettingsPanel } from "./SkillLibrarySettingsPanel.js";
 import { useArchivedSettingsController } from "./useArchivedSettingsController.js";
 
-type SettingsSectionId =
+export type SettingsSectionId =
   | "model-workbench"
   | "ai-teammates"
   | "ai-councils"
-  | "work-board"
   | "approval-strategy"
   | "personal-profile"
   | "personalization"
   | "interface-preferences"
   | "external-work"
   | "mcp-tools"
-  | "plugin-manager"
   | "skill-library"
   | "archived-items"
   | "startup-diagnostics";
 
-type SettingsWorkspaceToolView = "" | "providers" | "teammates" | "councils" | "work_board";
+type SettingsWorkspaceToolView = "" | "providers" | "teammates" | "councils";
 
 type SettingsSectionItem = {
   readonly id: SettingsSectionId;
@@ -102,11 +90,6 @@ const settingsSectionGroups: readonly {
         pageTitle: "Council Workspace",
         label: "Council Workspace",
         icon: Brain,
-      },
-      {
-        id: "work-board",
-        label: "Work Board",
-        icon: Kanban,
       },
       {
         id: "approval-strategy",
@@ -145,11 +128,6 @@ const settingsSectionGroups: readonly {
         icon: Wrench,
       },
       {
-        id: "plugin-manager",
-        label: "Plugin Manager",
-        icon: PlugZap,
-      },
-      {
         id: "skill-library",
         label: "Skill library",
         description: "Inspect reusable skill definitions, source health, and workspace skills.",
@@ -176,11 +154,6 @@ const settingsSectionGroups: readonly {
 
 export function SettingsPage({
   cwd,
-  policy,
-  form,
-  runners,
-  runtimeSettings,
-  runtimeSettingsForm,
   skillLibraryRefreshToken,
   effectiveConfig,
   startupStatus,
@@ -192,21 +165,11 @@ export function SettingsPage({
   mcpLoading,
   mcpBusyServerId,
   mcpBusyAction,
-  plugins,
-  pluginsLoading,
-  pluginBusyId,
-  pluginBusyAction,
-  latestPluginApplyResult,
-  latestPluginRuntimePreview,
-  latestPluginNotice,
+  initialSection,
+  workspaceDefaultAuthorizationMode,
+  workspaceDefaultWorkspaceAccessMode,
   workspaceDefaultPermissionMode,
   workspaceDefaultPermissionPreset,
-  permissionMode,
-  permissionPreset,
-  isLoading,
-  runtimeSettingsLoading,
-  runtimeSettingsAction,
-  runtimeSettingsError,
   startupStatusLoading,
   startupStatusAction,
   startupStatusError,
@@ -215,28 +178,11 @@ export function SettingsPage({
   externalWorkSecretAction,
   externalWorkWorkflowAction,
   errorMessage,
-  onFormChange,
-  onPermissionModeChange,
-  onWorkspaceDefaultPermissionChange,
-  onRefresh,
-  onSave,
+  onWorkspaceDefaultAuthorizationChange,
+  onWorkspaceDefaultWorkspaceAccessChange,
   onWorkspaceResponseLanguageChange,
   onRefreshStartup,
-  onRuntimeSettingsFormChange,
-  onToggleAllowedRunner,
-  onRefreshRuntimeSettings,
-  onSaveRuntimeSettings,
   onRefreshExternalWork,
-  onRefreshPlugins,
-  onApplyPluginPreset,
-  onCheckPlugin,
-  onValidatePluginPackage,
-  onInstallPlugin,
-  onUninstallPlugin,
-  onRefreshPluginPackage,
-  onPreviewPluginRuntime,
-  onEnablePlugin,
-  onDisablePlugin,
   onExternalWorkAction,
   onConfigureExternalWorkWorkflow,
   onConfigureExternalWorkSecret,
@@ -258,7 +204,6 @@ export function SettingsPage({
   onOpenProviders,
   onOpenTeammates,
   onOpenCouncils,
-  onOpenWorkBoard,
   workspaceToolDetail,
   workspaceToolView,
   runDiagnosticsRunId,
@@ -268,11 +213,6 @@ export function SettingsPage({
   onBackToApplication,
 }: {
   readonly cwd: string;
-  readonly policy: ApprovalPolicy | undefined;
-  readonly form: ApprovalPolicyFormState;
-  readonly runners: readonly RunnerListItem[];
-  readonly runtimeSettings: WorkspaceRuntimeSettings | undefined;
-  readonly runtimeSettingsForm: RuntimeSettingsFormState;
   readonly skillLibraryRefreshToken: number;
   readonly effectiveConfig: EffectiveConfigResponse | undefined;
   readonly startupStatus: StartupStatusResponse | undefined;
@@ -284,21 +224,11 @@ export function SettingsPage({
   readonly mcpLoading: boolean;
   readonly mcpBusyServerId: string;
   readonly mcpBusyAction: McpBusyAction | undefined;
-  readonly plugins: readonly ManagedPluginView[];
-  readonly pluginsLoading: boolean;
-  readonly pluginBusyId: string;
-  readonly pluginBusyAction: PluginBusyAction | undefined;
-  readonly latestPluginApplyResult?: ManagedPluginApplyPresetResponse;
-  readonly latestPluginRuntimePreview?: ManagedPluginRuntimePreviewResponse;
-  readonly latestPluginNotice?: PluginActionNotice;
+  readonly initialSection?: SettingsSectionId;
+  readonly workspaceDefaultAuthorizationMode?: AuthorizationMode;
+  readonly workspaceDefaultWorkspaceAccessMode?: WorkspaceAccessMode;
   readonly workspaceDefaultPermissionMode?: SessionPermissionMode;
   readonly workspaceDefaultPermissionPreset?: PermissionPreset;
-  readonly permissionMode: SessionPermissionMode;
-  readonly permissionPreset?: PermissionPreset;
-  readonly isLoading: boolean;
-  readonly runtimeSettingsLoading: boolean;
-  readonly runtimeSettingsAction: "save" | undefined;
-  readonly runtimeSettingsError: string;
   readonly startupStatusLoading: boolean;
   readonly startupStatusAction: "refresh" | undefined;
   readonly startupStatusError: string;
@@ -307,28 +237,11 @@ export function SettingsPage({
   readonly externalWorkSecretAction: "configure" | "delete" | undefined;
   readonly externalWorkWorkflowAction: "configure" | undefined;
   readonly errorMessage: string;
-  readonly onFormChange: (form: ApprovalPolicyFormState) => void;
-  readonly onPermissionModeChange: (mode: SessionPermissionMode) => void;
-  readonly onWorkspaceDefaultPermissionChange: (mode: SessionPermissionMode, preset: PermissionPreset) => void;
-  readonly onRefresh: () => void;
-  readonly onSave: () => void;
+  readonly onWorkspaceDefaultAuthorizationChange: (mode: AuthorizationMode) => void;
+  readonly onWorkspaceDefaultWorkspaceAccessChange: (mode: WorkspaceAccessMode) => void;
   readonly onWorkspaceResponseLanguageChange: (language: ResponseLanguagePreference) => void;
   readonly onRefreshStartup: () => void;
-  readonly onRuntimeSettingsFormChange: (form: RuntimeSettingsFormState) => void;
-  readonly onToggleAllowedRunner: (runnerId: string, allowed: boolean) => void;
-  readonly onRefreshRuntimeSettings: () => void;
-  readonly onSaveRuntimeSettings: () => void;
   readonly onRefreshExternalWork: () => void;
-  readonly onRefreshPlugins: () => void;
-  readonly onApplyPluginPreset: (pluginId: string) => void;
-  readonly onCheckPlugin: (pluginId: string) => void;
-  readonly onValidatePluginPackage: (pluginId: string) => void;
-  readonly onInstallPlugin: (pluginId: string) => void;
-  readonly onUninstallPlugin: (pluginId: string) => void;
-  readonly onRefreshPluginPackage: (pluginId: string) => void;
-  readonly onPreviewPluginRuntime: (pluginId: string) => void;
-  readonly onEnablePlugin: (pluginId: string) => void;
-  readonly onDisablePlugin: (pluginId: string) => void;
   readonly onExternalWorkAction: (action: "poll" | "reconcile" | "start" | "stop") => void;
   readonly onConfigureExternalWorkWorkflow: (input: {
     readonly sourceKind: "github" | "linear";
@@ -354,7 +267,6 @@ export function SettingsPage({
   readonly onOpenProviders: () => void;
   readonly onOpenTeammates: () => void;
   readonly onOpenCouncils: () => void;
-  readonly onOpenWorkBoard: () => void;
   readonly workspaceToolDetail?: ReactNode;
   readonly workspaceToolView?: SettingsWorkspaceToolView;
   readonly runDiagnosticsRunId?: string;
@@ -364,7 +276,7 @@ export function SettingsPage({
   readonly onBackToApplication?: () => void;
 }): JSX.Element {
   const { t } = useI18n();
-  const [activeSection, setActiveSection] = useState<SettingsSectionId>("personal-profile");
+  const [activeSection, setActiveSection] = useState<SettingsSectionId>(initialSection ?? "personal-profile");
   const runDiagnosticsOpen = runDiagnosticsRunId !== undefined;
   const workspaceToolDetailOpen = !runDiagnosticsOpen && workspaceToolDetail !== undefined && workspaceToolDetail !== null;
   const workspaceToolSection = workspaceToolViewToSectionId(workspaceToolView);
@@ -398,10 +310,6 @@ export function SettingsPage({
     }
     if (sectionId === "ai-councils") {
       onOpenCouncils();
-      return;
-    }
-    if (sectionId === "work-board") {
-      onOpenWorkBoard();
       return;
     }
     onCloseWorkspaceTool?.();
@@ -473,30 +381,12 @@ export function SettingsPage({
 
         {visibleActiveSection === "approval-strategy" && !workspaceToolDetailOpen ? (
           <ExecutionPermissionsSettingsPanel
-            policy={policy}
-            form={form}
-            runners={runners}
-            runtimeSettings={runtimeSettings}
-            runtimeSettingsForm={runtimeSettingsForm}
-            selectedChannel={selectedChannel}
+            workspaceDefaultAuthorizationMode={workspaceDefaultAuthorizationMode}
+            workspaceDefaultWorkspaceAccessMode={workspaceDefaultWorkspaceAccessMode}
             workspaceDefaultPermissionMode={workspaceDefaultPermissionMode}
             workspaceDefaultPermissionPreset={workspaceDefaultPermissionPreset}
-            permissionMode={permissionMode}
-            permissionPreset={permissionPreset}
-            isLoading={isLoading}
-            runtimeSettingsLoading={runtimeSettingsLoading}
-            runtimeSettingsAction={runtimeSettingsAction}
-            runtimeSettingsError={runtimeSettingsError}
-            errorMessage={errorMessage}
-            onFormChange={onFormChange}
-            onPermissionModeChange={onPermissionModeChange}
-            onWorkspaceDefaultPermissionChange={onWorkspaceDefaultPermissionChange}
-            onRefresh={onRefresh}
-            onSave={onSave}
-            onRuntimeSettingsFormChange={onRuntimeSettingsFormChange}
-            onToggleAllowedRunner={onToggleAllowedRunner}
-            onRefreshRuntimeSettings={onRefreshRuntimeSettings}
-            onSaveRuntimeSettings={onSaveRuntimeSettings}
+            onWorkspaceDefaultAuthorizationChange={onWorkspaceDefaultAuthorizationChange}
+            onWorkspaceDefaultWorkspaceAccessChange={onWorkspaceDefaultWorkspaceAccessChange}
           />
         ) : null}
 
@@ -538,33 +428,6 @@ export function SettingsPage({
           </div>
         ) : null}
 
-        {visibleActiveSection === "plugin-manager" && !workspaceToolDetailOpen ? (
-          <PluginManagerSettingsPanel
-            cwd={cwd}
-            plugins={plugins}
-            isLoading={pluginsLoading}
-            busyPluginId={pluginBusyId}
-            busyAction={pluginBusyAction}
-            latestApplyResult={latestPluginApplyResult}
-            latestRuntimePreview={latestPluginRuntimePreview}
-            latestNotice={latestPluginNotice}
-            onRefresh={onRefreshPlugins}
-            onApplyPreset={onApplyPluginPreset}
-            onCheck={onCheckPlugin}
-            onValidatePackage={onValidatePluginPackage}
-            onInstall={onInstallPlugin}
-            onUninstall={onUninstallPlugin}
-            onRefreshPackage={onRefreshPluginPackage}
-            onRuntimePreview={onPreviewPluginRuntime}
-            onEnable={onEnablePlugin}
-            onDisable={onDisablePlugin}
-            onOpenMcpSettings={() => {
-              onRefreshMcp();
-              setActiveSection("mcp-tools");
-            }}
-          />
-        ) : null}
-
         {visibleActiveSection === "skill-library" && !workspaceToolDetailOpen ? (
           <SkillLibrarySettingsPanel cwd={cwd} refreshToken={skillLibraryRefreshToken} />
         ) : null}
@@ -599,12 +462,9 @@ function workspaceToolViewToSectionId(view: SettingsWorkspaceToolView | undefine
   if (view === "councils") {
     return "ai-councils";
   }
-  if (view === "work_board") {
-    return "work-board";
-  }
   return undefined;
 }
 
 function isWorkspaceToolSection(sectionId: SettingsSectionId): boolean {
-  return sectionId === "model-workbench" || sectionId === "ai-teammates" || sectionId === "ai-councils" || sectionId === "work-board";
+  return sectionId === "model-workbench" || sectionId === "ai-teammates" || sectionId === "ai-councils";
 }

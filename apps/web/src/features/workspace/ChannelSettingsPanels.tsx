@@ -11,6 +11,7 @@ import {
   X,
 } from "lucide-react";
 import { useI18n } from "../../i18n.js";
+import { SelectControl } from "../../shared/components/SelectControl.js";
 import {
   aiCouncilBoundaryLabels,
   aiCouncilCapacityLabel,
@@ -105,7 +106,7 @@ export function ChannelTeammateManagerPanel({
       )}
       <div className="channel-teammate-add-row">
         <label className="channel-teammate-select">
-          <select
+          <SelectControl
             aria-label={t("Add teammate")}
             value={pendingChannelTeammateId}
             disabled={!selectedChannelId || availableChannelTeammates.length === 0 || Boolean(channelTeammateSavingId)}
@@ -115,7 +116,7 @@ export function ChannelTeammateManagerPanel({
             {availableChannelTeammates.map((teammate) => (
               <option key={teammate.id} value={teammate.id}>{teammate.displayName}</option>
             ))}
-          </select>
+          </SelectControl>
         </label>
         <button className="primary-button compact-button" type="button" onClick={onAddSelectedChannelTeammate} disabled={!pendingChannelTeammateId || Boolean(channelTeammateSavingId)}>
           {channelTeammateSavingId === pendingChannelTeammateId ? <Loader2 className="spin" size={14} /> : <UserPlus size={14} />}
@@ -395,7 +396,7 @@ export function ChannelSettingsPanels({
               )}
               <div className="channel-teammate-add-row channel-council-add-row">
                 <label className="channel-teammate-select">
-                  <select
+                  <SelectControl
                     aria-label={t("Attach AI council")}
                     value={pendingChannelCouncilId}
                     disabled={!selectedChannelId || availableAiCouncils.length === 0 || channelCouncilSaving}
@@ -405,7 +406,7 @@ export function ChannelSettingsPanels({
                     {availableAiCouncils.map((council) => (
                       <option key={council.id} value={council.id}>{council.displayName}</option>
                     ))}
-                  </select>
+                  </SelectControl>
                 </label>
                 <button className="primary-button compact-button" type="button" onClick={onAddSelectedChannelCouncil} disabled={!pendingChannelCouncilId || channelCouncilSaving}>
                   {channelCouncilSaving ? <Loader2 className="spin" size={14} /> : <Plus size={14} />}

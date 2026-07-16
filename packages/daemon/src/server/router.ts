@@ -147,8 +147,25 @@ import {
 } from "../features/governance-notifications/routes.js";
 import { handleConversationAttachmentsCollection, handleConversationDetail, handleConversationStream, startConversationReplacementRun } from "../features/conversations/routes.js";
 import { handleConversationMessageEdit } from "../features/conversations/message-edits.js";
-import { handleRunMediaJob, syncMediaJobForApprovalDecision } from "../features/media/executor.js";
+import { dispatchMediaJobExecution, handleRunMediaJob, syncMediaJobForApprovalDecision, type RunMediaJobHooks } from "../features/media/executor.js";
 import { handleMediaJobRoute, handleMediaJobsCollection } from "../features/media/routes.js";
+import {
+  handleMediaProjectRoute,
+  handleMediaProjectsCollection,
+  handleMediaSceneRoute,
+  handleMediaSceneRunRoute,
+  parseMediaProjectRoute,
+  parseMediaSceneRoute,
+  parseMediaSceneRunRoute,
+} from "../features/media/production-routes.js";
+import {
+  handleMediaWorkflowAnalyze,
+  handleMediaWorkflowConnectionsCollection,
+  handleMediaWorkflowImport,
+  handleMediaWorkflowRoute,
+  handleMediaWorkflowsCollection,
+  parseMediaWorkflowRoute,
+} from "../features/media/workflows/workflow-routes.js";
 import { handleMcpServerItem, handleMcpServersCollection, handleMcpToolsCollection } from "../features/mcp/routes.js";
 import {
   handlePluginItem,
@@ -394,6 +411,25 @@ export async function routeRequest(
     imageVisionSummarizer,
   });
 
+  const mediaJobHooks: RunMediaJobHooks = {
+    startRuntimeWorkUnit: (input) => startRuntimeWorkUnit({ ...input, runtimeSupervisor }),
+    transitionRuntimeWorkUnitTerminal: (input) => {
+      transitionWorkUnitTerminal(input.store, {
+        workUnitId: input.workUnitId,
+        attemptId: input.attemptId,
+        event: input.event,
+        attemptStatus: input.attemptStatus,
+        runtimeEventType: input.runtimeEventType,
+        actor: input.actor,
+        now: input.now,
+        errorCode: input.errorCode,
+        errorMessage: input.errorMessage,
+      });
+    },
+  };
+  const launchMediaJob = (cwd: string, mediaJobId: string): void => {
+    dispatchMediaJobExecution({ cwd, storeRegistry, secretResolver, mediaJobId, hooks: mediaJobHooks });
+  };
   if (request.method === "GET" && url.pathname === "/health") {
     writeJson(response, 200, {
       ok: true,
@@ -633,6 +669,37 @@ export async function routeRequest(
 
   if (url.pathname === "/media-jobs") {
     await handleMediaJobsCollection(request, response, config, storeRegistry, secretResolver);
+    return;
+  }
+
+  if (url.pathname === "/media-projects") {
+    await handleMediaProjectsCollection(request, response, config, storeRegistry);
+    return;
+  }
+
+  const mediaWorkflowRouteContext = {
+    request,
+    response,
+    config,
+    storeRegistry,
+    secretResolver,
+    secretStore: externalSecretStore,
+    launchMediaJob,
+  };
+  if (url.pathname === "/media-workflow-connections") {
+    await handleMediaWorkflowConnectionsCollection(mediaWorkflowRouteContext);
+    return;
+  }
+  if (url.pathname === "/media-workflows") {
+    await handleMediaWorkflowsCollection(mediaWorkflowRouteContext);
+    return;
+  }
+  if (url.pathname === "/media-workflows/analyze") {
+    await handleMediaWorkflowAnalyze(mediaWorkflowRouteContext);
+    return;
+  }
+  if (url.pathname === "/media-workflows/import") {
+    await handleMediaWorkflowImport(mediaWorkflowRouteContext);
     return;
   }
 
@@ -2247,6 +2314,8 @@ export async function routeRequest(
               },
               tools: runRequest.tools ?? channel.allowedTools,
               approvalProfile: runRequest.approvalProfile,
+              authorizationMode: runRequest.authorizationMode,
+              workspaceAccessMode: runRequest.workspaceAccessMode,
               permissionPreset: runRequest.permissionPreset,
               permissionMode: runRequest.permissionMode,
               permissionConfirmation: runRequest.permissionConfirmation,
@@ -2298,23 +2367,48 @@ export async function routeRequest(
       mediaJobRoute.mediaJobId,
       mediaJobRoute.action,
       ({ response, url, mediaJobId }) =>
-        handleRunMediaJob(response, url, storeRegistry, secretResolver, mediaJobId, {
-          startRuntimeWorkUnit: (input) => startRuntimeWorkUnit({ ...input, runtimeSupervisor }),
-          transitionRuntimeWorkUnitTerminal: (input) => {
-            transitionWorkUnitTerminal(input.store, {
-              workUnitId: input.workUnitId,
-              attemptId: input.attemptId,
-              event: input.event,
-              attemptStatus: input.attemptStatus,
-              runtimeEventType: input.runtimeEventType,
-              actor: input.actor,
-              now: input.now,
-              errorCode: input.errorCode,
-              errorMessage: input.errorMessage,
-            });
-          },
-        }),
+        handleRunMediaJob(response, url, storeRegistry, secretResolver, mediaJobId, mediaJobHooks),
     );
+    return;
+  }
+
+  const mediaProjectRoute = parseMediaProjectRoute(url.pathname);
+  if (mediaProjectRoute) {
+    await handleMediaProjectRoute(
+      request,
+      response,
+      config,
+      storeRegistry,
+      secretResolver,
+      launchMediaJob,
+      mediaProjectRoute,
+    );
+    return;
+  }
+
+  const mediaWorkflowRoute = parseMediaWorkflowRoute(url.pathname);
+  if (mediaWorkflowRoute) {
+    await handleMediaWorkflowRoute({ ...mediaWorkflowRouteContext, route: mediaWorkflowRoute });
+    return;
+  }
+
+  const mediaSceneRoute = parseMediaSceneRoute(url.pathname);
+  if (mediaSceneRoute) {
+    await handleMediaSceneRoute(
+      request,
+      response,
+      config,
+      storeRegistry,
+      secretResolver,
+      launchMediaJob,
+      mediaSceneRoute,
+    );
+    return;
+  }
+
+  const mediaSceneRunRoute = parseMediaSceneRunRoute(url.pathname);
+  if (mediaSceneRunRoute) {
+    handleMediaSceneRunRoute(request, response, config, storeRegistry, mediaSceneRunRoute);
     return;
   }
 
@@ -2329,22 +2423,7 @@ export async function routeRequest(
         secretResolver,
         approval,
         now,
-        hooks: {
-          startRuntimeWorkUnit: (input) => startRuntimeWorkUnit({ ...input, runtimeSupervisor }),
-          transitionRuntimeWorkUnitTerminal: (input) => {
-            transitionWorkUnitTerminal(input.store, {
-              workUnitId: input.workUnitId,
-              attemptId: input.attemptId,
-              event: input.event,
-              attemptStatus: input.attemptStatus,
-              runtimeEventType: input.runtimeEventType,
-              actor: input.actor,
-              now: input.now,
-              errorCode: input.errorCode,
-              errorMessage: input.errorMessage,
-            });
-          },
-        },
+        hooks: mediaJobHooks,
       });
     });
     return;

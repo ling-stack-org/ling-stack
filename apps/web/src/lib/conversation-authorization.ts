@@ -1,6 +1,10 @@
-import type { PermissionPreset, SessionPermissionMode } from "../types.js";
+import {
+  authorizationAndAccessFromLegacyPermission,
+  legacyPermissionFromAuthorizationAndAccess,
+} from "@ling-stack/core/session-permissions";
+import type { AuthorizationMode, PermissionPreset, SessionPermissionMode, WorkspaceAccessMode } from "../types.js";
 
-export type ConversationAuthorizationMode = "ask" | "smart" | "always";
+export type ConversationAuthorizationMode = AuthorizationMode;
 
 export interface ConversationAuthorizationSelection {
   readonly permissionMode: SessionPermissionMode;
@@ -10,33 +14,38 @@ export interface ConversationAuthorizationSelection {
 export const defaultConversationAuthorizationMode: ConversationAuthorizationMode = "smart";
 
 export function authorizationModeToPermission(mode: ConversationAuthorizationMode): ConversationAuthorizationSelection {
-  if (mode === "ask") {
-    return {
-      permissionMode: "ask_everything",
-      permissionPreset: "read_only",
-    };
-  }
-  if (mode === "always") {
-    return {
-      permissionMode: "full_access",
-      permissionPreset: "full_access",
-    };
-  }
-  return {
-    permissionMode: "workspace_write",
-    permissionPreset: "workspace_collaboration",
-  };
+  return legacyPermissionFromAuthorizationAndAccess(
+    mode,
+    mode === "ask" ? "read_only" : mode === "always" ? "full_access" : "workspace_write",
+  );
 }
 
 export function permissionToAuthorizationMode(
   permissionMode: SessionPermissionMode | undefined,
   permissionPreset: PermissionPreset | undefined,
 ): ConversationAuthorizationMode {
-  if (permissionPreset === "full_access" || permissionMode === "full_access") {
-    return "always";
-  }
-  if (permissionPreset === "read_only" || permissionMode === "ask_everything") {
-    return "ask";
-  }
-  return "smart";
+  return authorizationAndAccessFromLegacyPermission(permissionMode, permissionPreset).authorizationMode;
+}
+
+export function resolveAuthorizationMode(
+  authorizationMode: AuthorizationMode | undefined,
+  permissionMode: SessionPermissionMode | undefined,
+  permissionPreset: PermissionPreset | undefined,
+): AuthorizationMode {
+  return authorizationMode ?? authorizationAndAccessFromLegacyPermission(permissionMode, permissionPreset).authorizationMode;
+}
+
+export function resolveWorkspaceAccessMode(
+  workspaceAccessMode: WorkspaceAccessMode | undefined,
+  permissionMode: SessionPermissionMode | undefined,
+  permissionPreset: PermissionPreset | undefined,
+): WorkspaceAccessMode {
+  return workspaceAccessMode ?? authorizationAndAccessFromLegacyPermission(permissionMode, permissionPreset).workspaceAccessMode;
+}
+
+export function authorizationAndAccessToLegacyPermission(
+  authorizationMode: AuthorizationMode,
+  workspaceAccessMode: WorkspaceAccessMode,
+): ConversationAuthorizationSelection {
+  return legacyPermissionFromAuthorizationAndAccess(authorizationMode, workspaceAccessMode);
 }

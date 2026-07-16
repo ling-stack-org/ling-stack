@@ -2164,7 +2164,7 @@
   -webkit-line-clamp: 2;
 }
 
-.teammate-memory-policy-row select {
+.teammate-memory-policy-row .select-control {
   width: 150px;
   min-width: 0;
 }
@@ -2419,7 +2419,7 @@
 
 .teammate-memory-edit-form input,
 .teammate-memory-edit-form textarea,
-.teammate-memory-edit-form select {
+.teammate-memory-edit-form .select-control {
   width: 100%;
 }
 
@@ -3123,7 +3123,7 @@
 }
 
 .teammate-skill-row {
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) auto;
   gap: 10px;
   min-height: 58px;
   padding: 9px;
@@ -3315,7 +3315,7 @@
 
 .teammate-skill-table {
   width: 100%;
-  min-width: 900px;
+  min-width: 820px;
   border-collapse: collapse;
   color: #111111;
   font-size: 12px;
@@ -4554,7 +4554,7 @@
   gap: 10px;
 }
 
-.teammate-council-add-row select {
+.teammate-council-add-row .select-control {
   min-width: 0;
 }
 
@@ -4975,7 +4975,6 @@
 }
 
 .teammate-create-dialog .teammate-create-fields input,
-.teammate-create-dialog .teammate-create-fields select,
 .teammate-create-dialog .teammate-create-fields textarea {
   min-height: 40px;
   border-radius: 7px;
@@ -5187,7 +5186,7 @@
 }
 
 .teammate-custom-fields input,
-.teammate-custom-fields select,
+.teammate-custom-fields .select-control,
 .teammate-custom-fields textarea {
   width: 100%;
 }

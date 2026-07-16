@@ -322,6 +322,9 @@ export async function executeRunRequest(
     const channelForPolicy = runRequest.task.channelId ? store.getChannel(runRequest.task.channelId) : undefined;
     const sessionPolicy = resolveSessionRunPolicy({
       workspacePolicy: store.getApprovalPolicy(),
+      authorizationMode: runRequest.authorizationMode,
+      workspaceAccessMode: runRequest.workspaceAccessMode,
+      permissionPreset: runRequest.permissionPreset,
       permissionMode: runRequest.permissionMode,
       channelBoundPath: channelForPolicy?.boundPath || runRequest.cwd,
       approvalProfile: runtimeApprovalProfile,
@@ -1495,7 +1498,10 @@ function resolveRunWorkUnitOwner(
 }
 
 function assertFullAccessPermissionConfirmed(runRequest: RunRequest): void {
-  if (runRequest.permissionMode !== "full_access") {
+  const fullAccessRequested = runRequest.workspaceAccessMode !== undefined
+    ? runRequest.workspaceAccessMode === "full_access"
+    : runRequest.permissionMode === "full_access" || runRequest.permissionPreset === "full_access";
+  if (!fullAccessRequested) {
     return;
   }
   const confirmation = runRequest.permissionConfirmation;

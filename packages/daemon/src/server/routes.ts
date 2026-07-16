@@ -153,6 +153,7 @@ export function parseLingThreadRoute(
   | { readonly kind: "fork-run"; readonly threadId: string }
   | { readonly kind: "archive"; readonly threadId: string }
   | { readonly kind: "unarchive"; readonly threadId: string }
+  | { readonly kind: "hard-delete"; readonly threadId: string }
   | { readonly kind: "pin"; readonly threadId: string }
   | { readonly kind: "unpin"; readonly threadId: string }
   | undefined {
@@ -212,6 +213,9 @@ export function parseLingThreadRoute(
   }
   if (segments.length === 3 && segments[0] === "threads" && segments[2] === "unarchive") {
     return { kind: "unarchive", threadId: segments[1] };
+  }
+  if (segments.length === 3 && segments[0] === "threads" && segments[2] === "hard-delete") {
+    return { kind: "hard-delete", threadId: segments[1] };
   }
   if (segments.length === 3 && segments[0] === "threads" && segments[2] === "pin") {
     return { kind: "pin", threadId: segments[1] };
@@ -555,7 +559,7 @@ export function parseManagedPluginRoute(
   pathname: string,
 ): {
   readonly pluginId: string;
-  readonly action?: "enable" | "disable" | "check" | "apply-preset" | "validate-package" | "install" | "uninstall" | "refresh-package" | "runtime-preview";
+    readonly action?: "enable" | "disable" | "check" | "connect" | "apply-preset" | "validate-package" | "install" | "uninstall" | "refresh-package" | "runtime-preview";
 } | undefined {
   const segments = pathname.split("/").filter(Boolean).map(decodeURIComponent);
   if (segments.length === 2 && segments[0] === "plugins") {
@@ -568,6 +572,7 @@ export function parseManagedPluginRoute(
       segments[2] === "enable" ||
       segments[2] === "disable" ||
       segments[2] === "check" ||
+      segments[2] === "connect" ||
       segments[2] === "apply-preset" ||
       segments[2] === "validate-package" ||
       segments[2] === "install" ||

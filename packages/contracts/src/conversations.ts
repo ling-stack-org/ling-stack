@@ -1,5 +1,5 @@
 import type { ChannelAttachmentKind, ChannelMention, ChannelMessageFileRef } from "./channels.js";
-import type { ConversationPendingReplacement, PermissionConfirmation, PermissionPreset, RunThinkingLevel, RunTool, SessionPermissionMode } from "./shared.js";
+import type { AuthorizationMode, ConversationPendingReplacement, PermissionConfirmation, PermissionPreset, RunThinkingLevel, RunTool, SessionPermissionMode, WorkspaceAccessMode } from "./shared.js";
 import type { ExecutionAction } from "./execution-actions.js";
 import type { ResponseLanguagePreference } from "./settings.js";
 import type { RunEventEnvelope, RunSession } from "./runtime.js";
@@ -35,8 +35,11 @@ export interface ConversationStreamRequest {
   readonly projectPath?: string;
   readonly providerPresetId: string;
   readonly thinkingLevel?: RunThinkingLevel;
+  readonly authorizationMode?: AuthorizationMode;
+  readonly workspaceAccessMode?: WorkspaceAccessMode;
   readonly permissionPreset?: PermissionPreset;
   readonly permissionMode?: SessionPermissionMode;
+  readonly permissionConfirmation?: PermissionConfirmation;
   readonly responseLanguage?: ResponseLanguagePreference;
   readonly tools?: readonly RunTool[];
   readonly idempotencyKey?: string;
@@ -85,6 +88,8 @@ export interface ConversationDetailResponse {
     readonly projectPath?: string;
     readonly providerPresetId?: string;
     readonly thinkingLevel?: RunThinkingLevel;
+    readonly authorizationMode?: AuthorizationMode;
+    readonly workspaceAccessMode?: WorkspaceAccessMode;
     readonly permissionPreset?: PermissionPreset;
     readonly permissionMode?: SessionPermissionMode;
   };

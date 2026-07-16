@@ -1,4 +1,5 @@
 export type * from "./shared.js";
+export type * from "./retention.js";
 export type * from "./approvals.js";
 export type * from "./artifacts.js";
 export type * from "./runtime.js";
@@ -16,6 +17,7 @@ export type * from "./workflows.js";
 export type * from "./external-work.js";
 export type * from "./work-items.js";
 export type * from "./media.js";
+export type * from "./media-workflows.js";
 export type * from "./memory.js";
 export type * from "./control-plane.js";
 export type * from "./unified-exec.js";

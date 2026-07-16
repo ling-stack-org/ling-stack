@@ -1,0 +1,91 @@
+.media-job-failure-summary {
+  display: grid;
+  gap: 14px;
+  padding: 16px;
+  border: 1px solid var(--danger-border);
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--danger-soft) 64%, var(--surface-panel));
+}
+
+.media-job-failure-main {
+  display: grid;
+  grid-template-columns: 36px minmax(0, 1fr);
+  align-items: start;
+  gap: 12px;
+  min-width: 0;
+}
+
+.media-job-failure-icon {
+  display: inline-grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 7px;
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.media-job-failure-copy {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.media-job-failure-state {
+  width: fit-content;
+  color: var(--danger);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 18px;
+}
+
+.media-job-failure-copy strong {
+  color: var(--text-strong);
+  font-size: 15px;
+  line-height: 21px;
+}
+
+.media-job-failure-copy small {
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 19px;
+}
+
+.media-job-failure-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding-left: 48px;
+}
+
+.media-job-failure-actions .primary-button,
+.media-job-failure-actions .secondary-button {
+  min-height: 38px;
+  border-radius: 7px;
+}
+
+.media-job-failure-details {
+  margin-left: 48px;
+  border-top: 1px solid var(--danger-border);
+}
+
+.media-job-failure-details summary {
+  width: fit-content;
+  padding-top: 12px;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 18px;
+  cursor: pointer;
+}
+
+.media-job-failure-details p {
+  margin: 8px 0 0;
+  color: var(--text-muted);
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 12px;
+  line-height: 19px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}

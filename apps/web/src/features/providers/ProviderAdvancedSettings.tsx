@@ -1,6 +1,8 @@
 import { useI18n } from "../../i18n.js";
 import type { ProviderFormState } from "../../types.js";
 
+import { SelectControl } from "../../shared/components/SelectControl.js";
+
 export function ProviderAdvancedSettings({
   form,
   editingProviderId,
@@ -41,7 +43,7 @@ export function ProviderAdvancedSettings({
         ) : !isCustomProvider ? (
           <label className="field wide">
             <span>{t("API protocol")}</span>
-            <select value={form.api} disabled={!canEditCustomProviderFields} onChange={(event) => {
+            <SelectControl value={form.api} disabled={!canEditCustomProviderFields} onChange={(event) => {
               const api = event.target.value as ProviderFormState["api"];
               onFormChange({ ...form, api, providerTransport: api === "openai-codex-responses" ? form.providerTransport || "auto" : "" });
             }}>
@@ -51,14 +53,14 @@ export function ProviderAdvancedSettings({
               <option value="anthropic-messages">{t("Anthropic messages")}</option>
               <option value="google-generative-ai">{t("Google generative AI")}</option>
               <option value="mistral-conversations">{t("Mistral conversations")}</option>
-            </select>
+            </SelectControl>
           </label>
         ) : null}
 
         {form.api === "openai-codex-responses" ? (
           <label className="field wide">
             <span>{t("Transport")}</span>
-            <select
+            <SelectControl
               value={form.providerTransport || "auto"}
               disabled={!canEditCustomProviderFields}
               onChange={(event) => onFormChange({ ...form, providerTransport: event.target.value as ProviderFormState["providerTransport"] })}
@@ -67,7 +69,7 @@ export function ProviderAdvancedSettings({
               <option value="websocket">{t("WebSocket")}</option>
               <option value="websocket-cached">{t("WebSocket cached")}</option>
               <option value="sse">{t("SSE")}</option>
-            </select>
+            </SelectControl>
           </label>
         ) : null}
 
