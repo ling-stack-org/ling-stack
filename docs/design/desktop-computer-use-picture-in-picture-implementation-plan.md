@@ -23,13 +23,14 @@ Status legend: `[x]` verified complete, `[~]` implemented but not release-comple
 | Coordinator, selectors, fake lifecycle | [x] | IPC ownership, truthful auto/shown/hidden intent, eager terminal suppression cleanup, first-frame, Hide/Show/Close/Stop, exact Desktop-local source generations and exact-window mismatch fail-closed handling, serialized reconnect/revision replacement, post-timeout session/revision blocking, one-second frame-gap watchdog, fail-safe/quiescent disposal, exact renderer media-release acknowledgement with forced teardown, summary-only `starting`/`waiting_for_approval` handling without an empty PiP window, placement, Reset, display recovery, bounded renderer-crash recreation, preference-failure safety, queued linger ownership, fake-source zero-residue profiling, and unsigned packaged renderer-crash recovery pass locally |
 | Renderer, shared UI, and layout | [x] | runtime overlays, direct Open/Hide/More controls, PiP-only Close window, structured Stop pending/failure/retry, safe menu grouping, hover/focus reporting, keyboard/a11y, themes, reduced motion, typed obstacle priority across channel/normal/teammate-direct surfaces, drag/resize, 180 ms drag-end four-corner snap with preferred-corner persistence, source `setAspectRatio` handling including portrait inputs, display persistence, dedicated `en-US`/`zh-CN` locale catalog and hot-switch transport, 17-case Electron DOM/media coverage, and the ten-case macOS arm64 screenshot matrix pass locally; Windows DPI/dual-display visual acceptance is external |
 | macOS current-host real capture and provenance | [x] | the dedicated non-persistent partition passes dev plus fresh unsigned arm64/x64 `.app` and mounted-DMG fake, real-window, primary-display, and provenance smokes. Exact document/navigation-bound grants, provisional idle loading before `prepare()`, the 16 ms decoded-ready poll, live-track release, crash recovery, and Cua native-window handoff in both packaged `.app` architectures pass. Signed TCC/capture-indicator/restart evidence remains external |
-| Windows provider/plugin/package boundary | [x] | maintained open-source `trycua/cua-driver-rs` `v0.8.3` is selected; Ling plugin, command, descriptor, provider verifier, and unsigned PE32+ x64 application plus NSIS cross-package gates pass locally. Interactive Windows x64 provider/source lifecycle, DPI, and dual-display evidence remains external |
+| Windows provider/plugin/package boundary | [x] | exact reviewed `trycua/cua-driver-rs` `v0.8.3` asset/SHA is allowlisted; unreviewed newer versions fail closed. Ling plugin, command, descriptor, provider verifier, branded unsigned PE32+ x64 application, and explicit per-user/asInvoker NSIS cross-package gates pass locally. The upstream provider is currently an unsigned prerelease, and interactive Windows x64 provider/source lifecycle, DPI, and dual-display evidence remains external |
 | Local production closure | [x] | G4 recovery/security, packaged provenance, bounded privacy-safe telemetry, fake and real performance harnesses, unsigned macOS arm64/x64 DMG+ZIP integrity, unsigned Windows x64 packaging, SHA-256 generation, and zero-residue checks pass |
 | External release closure | [!] | Apple Developer ID signing/notarization/Gatekeeper and denied/prompt/granted/revoked clean-host TCC/capture-indicator evidence, Windows interactive VM/provider/DPI/dual-display execution, Authenticode/SmartScreen/signed NSIS, VoiceOver/Narrator/NVDA, hosted CI, and clean-machine install/update/uninstall remain unavailable or undecided |
 
-### Rebaseline evidence (2026-07-16)
+### Rebaseline evidence (2026-07-16–17)
 
-- Desktop Node tests: **169/169** passed, including locale allowlist/snapshot propagation,
+- Desktop Node tests: **170/170** passed, including the branded application-icon contract,
+  locale allowlist/snapshot propagation,
   renderer message catalog/fallback, renderer-crash recreation, hide-before-frame,
   route-switch, terminal-during-reconnect, delayed reconnect versus Hide/revision races,
   one-second first-frame and frame-gap detection, full ten-second exhaustion without Stop,
@@ -108,17 +109,20 @@ Status legend: `[x]` verified complete, `[~]` implemented but not release-comple
   destruction listeners after consumption/release/disposal; lifecycle profiling reports no
   residual listeners.
 - Fresh unsigned macOS artifacts and SHA-256:
-  - arm64 DMG: `efeacc2dc49386364fd72808437454afe31ad7de382e20d70ee6bec2be4fa3ef`;
-  - x64 DMG: `f48cdb81f0c44b92103d0d01c01dac92a1f90f0af1d2f47b7333d43f8e9ef87a`;
-  - arm64 ZIP: `ec652852e7a767c2bc3d4119f1c8225f70986e076bac3d6be0ca7b93d92dd0d2`;
-  - x64 ZIP: `4d1052391c0a464a9f9c248bb4b5612982a059a1f0d2f44d375e5dd555bfbe2d`.
+  - arm64 DMG: `e42b944b84bf67174d18dec422637cbde6988c4d2283f503597b09aae50727fb`;
+  - x64 DMG: `a9e8aa208af6dc9baff96b9550166095660adc1b596c4f86544287ac0ca19258`;
+  - arm64 ZIP: `6c9ac51d212a7a4b930cf8bcb8c93f7e4b4f07bb17b93d1205f01b2ff99face5`;
+  - x64 ZIP: `49a8bc3d5dce9def59c49b7a53f9fb31fea72e960dd9e99f806809d995bb695e`.
 - A fresh unsigned Windows cross-package produced a PE32+ x86_64 `Ling Stack.exe`
   and an NSIS installer with no embedded certificate table. The bundled Cua Driver
   plugin shell is present. The unpacked application SHA-256 is
-  `23d3161f5e9f617c87eebfdcddcc22cb352ba0b75de1f8f3f40beb44147a4e46`, and the
-  installer SHA-256 is `f0aba26eb6b79e64fdbdb1a6bf9e85197aed1e5906877843e76a19b6cd7e18d8`.
+  `3f6ad1bbb45816bb46b15d2e23eb7a60843eb2a8fbc25ae0e541fb29af1d596e`, and the
+  installer SHA-256 is `52b115f2ef02394ed0e352c28f60052ec572eec02f708c2a942bd64d9b4de5e2`.
   This is static cross-package evidence only; it does not prove Authenticode,
   installation, execution, provider capture, or SmartScreen behavior on Windows.
+- Branded artifact chrome: both macOS bundles embed the committed Ling `icon.icns`; the
+  Windows app and NSIS embed all nine committed `icon.ico` frames instead of Electron's
+  default icon. Windows is explicitly one-click/per-user/asInvoker with no elevation helper.
   Both DMGs pass `hdiutil verify`; both ZIPs pass `unzip -t`; mounted DMGs pass fake and
   real capture plus provenance. `CFBundleIdentifier` is `com.lingstack.desktop` and
   architectures match. The Vite preview build empties its dedicated `outDir`; the final
@@ -232,16 +236,19 @@ VoiceOver/Narrator/NVDA gates.
 ### Windows provider audit (2026-07-16)
 
 The provider decision is now closed in favor of the maintained open-source
-`trycua/cua-driver-rs` provider, pinned for the Ling integration at `v0.8.3` or newer.
+`trycua/cua-driver-rs` provider, pinned for the Ling integration at the exact reviewed
+`v0.8.3` asset and SHA-256. Unreviewed newer versions fail closed until a provider-upgrade PR
+replaces the allowlist and evidence atomically.
 Its published Windows x86_64 artifact contains `cua-driver.exe`, its MCP entrypoint is
 `cua-driver mcp`, and its Windows `list_windows` structured output carries explicit
 `window_id` (HWND) and `pid` values. The provider implements the native UIA/Win32/DXGI
 capture and automation path; Ling does not copy or bundle that implementation.
 
 Electron 43.1.1 `desktopCapturer` remains the PiP presentation/capture adapter. The Ling
-plugin manifest, catalog/install/apply gates, Windows `PATH`/`PATHEXT` command resolution,
-exact source-ID matching, canonical HWND/PID validation, descriptor-bound Windows
-preflight, and a health/A-B revision/restart smoke runner are now integrated. The current
+plugin manifest, catalog/install/apply gates, Windows `PATH`/`PATHEXT` command resolution
+limited to direct-spawn `.exe`/`.com` files, exact source-ID matching, canonical HWND/PID
+validation, descriptor-bound Windows preflight, and a health/A-B revision/restart smoke
+runner are now integrated. The current
 machine still cannot execute the Windows provider path or prove source-ID mapping,
 source-ended handling, topology changes, interactive-session health, or provider signing,
 so G3 remains a VM/release gate rather than a local green check.
@@ -350,7 +357,7 @@ rather than promises.
 
 | Stage | Timebox | Deliverable | Exit gate |
 | --- | --- | --- | --- |
-| A0. Local security and unsigned baseline | complete | requester-bound capture grant and handler disposal, obstacle-kind transport, absolute ten-second exhaustion, fixed-port daemon recovery, fresh G0/G1/G4 rerun, and fresh unsigned macOS arm64/x64 packages | foreign renderer denied; grant replay denied; current 169/169 Node, 17/17 renderer, 16/16 Web, 51/51 focused contract/API/daemon/plugin cases, and 10/10 macOS screenshot baselines pass |
+| A0. Local security and unsigned baseline | complete | requester-bound capture grant and handler disposal, obstacle-kind transport, absolute ten-second exhaustion, fixed-port daemon recovery, fresh G0/G1/G4 rerun, and fresh unsigned macOS arm64/x64 packages | foreign renderer denied; grant replay denied; current 170/170 Node, 17/17 renderer, 16/16 Web, 51/51 focused contract/API/daemon/plugin cases, and 10/10 macOS screenshot baselines pass |
 | A1. Lifecycle semantic and privacy lock | complete locally | post-timeout session/revision block; fail-safe/quiescent coordinator and Desktop shutdown; exact renderer media-release request/ack with pending-acquisition drain, 500 ms timeout, exact-window mismatch denial, forced exact-window destroy, and Stop negative-ack recovery | ordinary projection updates cannot reopen after timeout; Show/revision recovery works; shutdown leaves zero timers/sources; Hide/Close waits for ACK or forced teardown; `ACK=false` restores active, returns 504, and leaves Desktop retryable; fake and real smoke reuse the acknowledged renderer |
 | A2. Local contract and state hygiene | complete | trusted authorized MCP plus approval-event lifecycle projection, no `rawName` whitelist, reserved `paused`, truthful visibility snapshot/intent, pure activation/presentation selector, summary-only active states without empty PiP, terminal suppression pruning, bounded host-layout input, full descriptor runtime schema, and expanded provenance-negative matrix | all 896 selector combinations pass; `starting`/`waiting_for_approval` summary remains visible without a preview window; initial first-frame recovery stays hidden; visible reconnect and summary remain aligned; revision-stale callbacks fail closed |
 | A3. Source identity and coordinator hardening | complete locally | Desktop-local source generation across snapshot/media/release/lifecycle IPC; stale same-revision descriptor events and exact-window mismatches rejected; safety actions precede preference persistence; linger cleanup is serialized and exact-source-bound; crash cleanup reconciles after release errors; newer active session preempts old terminal linger; fixed-port foreign-service and early-child-exit detection | source-generation renderer/IPC/coordinator regressions pass; no old descriptor event can reveal/fail the replacement or destroy a newer session; media hides/releases even if preference save fails; active summary survives cleanup errors; startup fails fast on occupied port or child exit |
@@ -501,12 +508,12 @@ work; only external platform and distribution evidence remains.
 | --- | --- | --- |
 | Slice 0 — source spike | Source-spike decision, opaque descriptor contract, provider archive verifier, schema-v1 health parser, and current-host Cua native-window identity mapping | Complete locally |
 | Slice 1 — Desktop shell | Shared Web loading, daemon ownership, preload bridge, PiP BrowserWindow, build and typecheck | Complete locally |
-| Slice 2 — contracts and daemon projection | Trusted authorized MCP/approval-event projection, reserved `paused`, snapshot/SSE replay, scoped native routes, Stop acknowledgement including negative-ack active restoration/HTTP 504, 45 focused contract/API/daemon/plugin cases | Complete locally |
-| Slice 3 — coordinator and fake lifecycle | Show/Hide/Close/Stop state machine, summary-only active states without empty PiP, first-frame gate, recovery, exact-window/revision identity, leak checks, 169 Desktop Node cases, fake smoke | Complete locally |
+| Slice 2 — contracts and daemon projection | Trusted authorized MCP/approval-event projection, reserved `paused`, snapshot/SSE replay, scoped native routes, Stop acknowledgement including negative-ack active restoration/HTTP 504, 51 focused contract/API/daemon/plugin cases | Complete locally |
+| Slice 3 — coordinator and fake lifecycle | Show/Hide/Close/Stop state machine, summary-only active states without empty PiP, first-frame gate, recovery, exact-window/revision identity, leak checks, 170 Desktop Node cases, fake smoke | Complete locally |
 | Slice 4 — renderer and layout | 17/17 renderer cases, 10/10 light/dark/reduced-motion screenshots, collision/obstacle reporting, 180 ms drag-end corner snap, preferred-corner persistence, source aspect-ratio/portrait handling, display persistence, provisional-idle startup, and decoded-ready polling | Complete locally; Windows visual/DPI evidence is an external acceptance gate |
 | Slice 5 — real cross-platform capture | Exact document/navigation-bound grants; dev and unsigned arm64/x64 `.app` plus mounted-DMG window/display/provenance smokes; both packaged `.app` Cua native handoffs; Windows descriptor/provider boundary | Complete locally; signed TCC and Windows interactive provider execution remain external |
 | Slice 6 — shared UI binding | Current-session capability slot for channel, normal conversation, and teammate-direct surfaces; 16 Web E2E cases | Complete locally |
-| Slice 7 — production closure | Local G4 recovery/security, fake and real performance, packaged provenance, final unsigned macOS/Windows artifacts, integrity checks, release manual, and SHA-256 files | Local closure complete; signing/TCC, Windows VM/provider/DPI, certificate/NSIS policy, hosted CI, and clean-machine acceptance remain external |
+| Slice 7 — production closure | Local G4 recovery/security, fake and real performance, packaged provenance, final unsigned macOS/Windows artifacts, integrity checks, release manual, and SHA-256 files | Local closure complete; signing/TCC, Windows VM/provider/DPI, legal Publisher/signing service, any separate enterprise per-machine artifact, hosted CI, and clean-machine acceptance remain external |
 
 ## Foundation Slice: Minimal Desktop Shell
 
@@ -966,6 +973,7 @@ node --test packages/api-client/test/computer-use.test.mjs \
   packages/daemon/test/computer-use-registry-retention.test.mjs \
   packages/daemon/test/computer-use-run-integration.test.mjs \
   packages/daemon/test/cua-driver-preset.test.mjs \
+  packages/daemon/test/cua-driver.test.mjs \
   packages/daemon/test/provider-health.test.mjs \
   packages/daemon/test/plugin-manager-api.test.mjs
 corepack pnpm --filter @ling-stack/desktop typecheck
@@ -1024,8 +1032,8 @@ The local dev and fresh unsigned arm64/x64 `.app`/mounted-DMG fake, window, disp
 provenance, Cua handoff, and real MediaStream performance evidence are current for this
 source. They are engineering candidates only: strict signature checks and Gatekeeper still
 fail. Add the signed macOS TCC/display/restart/capture-indicator matrix, Windows provider/VM
-capture plus DPI/dual-display smoke, certificate/NSIS decision, hosted CI, and clean-machine
-acceptance before G2/G3/G6 can close.
+capture plus DPI/dual-display smoke, legal Publisher/signing service and enterprise-artifact
+decision, hosted CI, and clean-machine acceptance before G2/G3/G6 can close.
 
 ## Parallelization Strategy
 
@@ -1075,7 +1083,7 @@ small shared patch, then both platform lanes rebase before resuming acceptance.
 - [x] **T5 (P1, human: ~2 days / Codex: ~2 h)** — capture-boundary-local — The dedicated non-persistent Session, exact loaded-document/navigation-bound single-use grant, provisional-idle load before `prepare()`, generation/revision validation, descriptor runtime schema, adapter disposal, and full real Electron provenance-negative matrix are verified. Dev plus unsigned arm64/x64 `.app` and both mounted DMGs pass fake/window/display/provenance; both packaged `.app` architectures pass Cua native-window handoff using only Cua's numeric window id and provider PID. The 16 ms identity-bounded decoded-ready poll keeps first-frame truth while avoiding hidden-window callback delay.
 - [x] **T6 (P2, human: ~1 day / Codex: ~1 h)** — layout-local — Four-corner collision avoidance, six-offset search, manual placement, 180 ms drag-end snap, preferred-corner persistence, `setAspectRatio`, portrait-source bounds, Reset, typed obstacle priority, bounded geometry/timestamps/128-obstacle IPC input, and topology recovery are implemented and locally verified.
 - [x] **T7 (P2, human: ~1 day / Codex: ~1 h)** — product-surface — Current-session Show/Hide/Stop lives in the header capability slot for channel, normal conversation, and teammate-direct surfaces. `starting`/`waiting_for_approval` remains visible as a summary without creating an empty PiP when no descriptor exists. PiP More owns Close window, which is preview-sender-scoped, releases/destroys without Stop, and is separated from the destructive Stop action. Safe visible command failure/pending feedback, ten-second hung-command timeout, Stop negative-ack failure/retry, truthful renderer `visibilityIntent`, formal Desktop auto-show control, shared-Web i18n/PiP locale handoff, and composer/dock/terminal/approval/modal/summary obstacle markers are implemented. The activation/presentation selector owns suppression, explicit Show, auto-show, preview availability, stall-timeout, renderer-crash, first-frame, reconnect, and actionable-error semantics; all 896 combinations plus focused header/geometry and coordinator race regressions pass.
-- [x] **T8 (P1, human: ~2 days / Codex: ~2 h)** — local-verification — The latest source passes 169/169 Desktop Node, 17/17 renderer, 16/16 Web, 51/51 focused contracts/API/daemon/plugin cases, and 10/10 macOS light/dark/reduced-motion screenshots. Fresh unsigned arm64/x64 `.app` and mounted-DMG fake/window/display/provenance smokes, both packaged `.app` Cua handoffs, renderer-crash recovery, DMG/ZIP integrity, PE certificate-table inspection, and zero-residue fake/real lanes pass. Real first-frame p50/p95 is **168.09/177.84 ms**, Hide p50/p95 is **2.16/3.65 ms**, 30-second CPU delta is **0.21%**, active overhead is **11,763,712 B**, and churn is **6.04% / 17,661,952 B**. Twelve activations equal twelve enumerations, with one renderer document, zero `applyConstraints()` calls, and zero residue. Fake p95 is **415.27 ms** and applies only to the fake ownership/crash lane.
+- [x] **T8 (P1, human: ~2 days / Codex: ~2 h)** — local-verification — The latest source passes 170/170 Desktop Node, 17/17 renderer, 16/16 Web, 51/51 focused contracts/API/daemon/plugin cases, and 10/10 macOS light/dark/reduced-motion screenshots. Fresh unsigned arm64/x64 `.app` and mounted-DMG fake/window/display/provenance smokes, both packaged `.app` Cua handoffs, renderer-crash recovery, branded macOS/Windows application icons, DMG/ZIP integrity, PE certificate-table inspection, and zero-residue fake/real lanes pass. Real first-frame p50/p95 is **168.09/177.84 ms**, Hide p50/p95 is **2.16/3.65 ms**, 30-second CPU delta is **0.21%**, active overhead is **11,763,712 B**, and churn is **6.04% / 17,661,952 B**. Twelve activations equal twelve enumerations, with one renderer document, zero `applyConstraints()` calls, and zero residue. Fake p95 is **415.27 ms** and applies only to the fake ownership/crash lane.
 - [x] **T9 (P1, human: ~0.5 day / Codex: ~30 min)** — recovery-semantics — An expired zero-frame recovery is blocked by session/descriptor/revision; ordinary projection updates cannot reopen it, while explicit user Show/Retry, a new descriptor identity, or an explicit Desktop restart can recover. V1 intentionally has no resume/unlock/user-active listener. Regression coverage locks timeout, blocked refresh/stale callbacks, explicit Show, and post-timeout revision recovery; terminal/removed sessions eagerly prune visibility and suppression state.
 - [x] **T10 (P1, human: ~0.5 day / Codex: ~30 min)** — shutdown-safety — Fallible subscription/display cleanup is contained in a fail-safe envelope; the coordinator quiesces before awaits, rejects late ingress, disposes the adapter exactly once, clears residue, and Desktop keeps IPC alive through dispose while continuing later cleanup after failures.
 - [x] **T11 (P1, human: ~1 day / Codex: ~45 min)** — media-release-local — Exact request/ack identity, async pending-acquisition drain, late-stream stop, replay/wrong-sender rejection, 500 ms timeout, renderer-gone release, and exact-window forced teardown are implemented. Fake and real Electron Hide/Show smokes reuse the acknowledged renderer.
@@ -1083,9 +1091,9 @@ small shared patch, then both platform lanes rebase before resuming acceptance.
 - [x] **T13 (P1, human: ~0.5 day / Codex: ~45 min)** — source-identity — Desktop allocates a monotonic `sourceGeneration` for every prepare/activation, including retries and same-revision descriptor-id replacement. Snapshot/media key, frame/activity/ended/failure IPC, and release request/ACK carry it; regressions prove every old-source callback fails closed.
 - [x] **T14 (P1, human: ~0.5 day / Codex: ~45 min)** — coordinator-fail-safety — Hide/Close/auto-show-off apply safety before best-effort persistence; terminal/source-error cleanup is serialized and exact-source-bound; crash cleanup reconciles after release errors; a newer active session preempts older terminal linger; recreation telemetry matches actual recreation.
 - [x] **T15 (P2, human: ~0.25 day / Codex: ~20 min)** — daemon-startup — Fixed-port probing distinguishes a foreign service from a free port, never spawns into an occupied port, permits an owned child to bind before health becomes ready, and aborts immediately when the owned child exits.
-- [ ] **T15.5 (P1, human: ~0.5 day / Codex: ~15 min)** — windows-release-decisions — Freeze the provider version, certificate owner, minimum Windows version, and per-user versus per-machine NSIS scope before Windows acceptance starts.
+- [~] **T15.5 (P1, human: ~0.5 day / Codex: ~15 min)** — windows-release-decisions — Exact provider allowlisting, per-user/asInvoker NSIS policy, certificate boundary, and tuple rollback are implemented and recorded. Product/release owners must still decide public acceptance of the prerelease unsigned provider, the legal Publisher/signing service, the Windows client floor, and whether an enterprise per-machine artifact is required.
   - Owner/timebox: product owner plus Windows release owner; resolve in one decision review before Stage C2, not during VM execution.
-  - Evidence artifact: a dated decision record naming the exact provider pin, certificate owner, supported Windows floor, install scope, and rollback rule.
+  - Evidence artifact: `docs/release/desktop-windows-release-decisions.md` records the exact provider pin, engineering certificate boundary, install scope, rollback rule, and four remaining owner choices.
 - [ ] **T16 (P1, human: ~1 day / Codex: ~1 h after credentials)** — macos-signed-acceptance — Produce Developer ID arm64/x64 candidates and close notarization, clean-host TCC denied/prompt/granted/revoked, window/display/restart, visible OS capture-indicator, VoiceOver, and signed real-media performance gates.
   - Owner/environment: Desktop release owner on clean arm64 and x64/Rosetta macOS hosts with Developer ID and notary credentials.
   - Entry condition: local T0-T15 baseline is green and the exact candidate hashes are frozen.
@@ -1167,15 +1175,17 @@ The feature is complete only when:
 | Separately installed Cua Driver provider | Ling ships plugin shell metadata only; it does not own the provider binary, native application, permissions, or update channel | clean-machine install resolves the pinned Cua Driver provider on macOS/Windows, plugin health passes, required macOS permissions are granted without Ling modifying TCC, and both approved-window real-source lifecycles pass |
 | Apple Developer ID and notarization credentials | no usable signing identity is installed on the current machine | signed arm64/x64 candidates with Team ID, strict codesign, Gatekeeper, notarization, and clean-host TCC evidence |
 | Clean macOS TCC test environments | current host already reports Screen Recording `granted` | denied/prompt/granted/revoked plus window/display, restart, OS capture-indicator, VoiceOver, and track-cleanup matrix without mutating TCC |
-| Maintained Windows source provider and x64 VM | The selected Cua Driver provider is external and the current machine has no Windows interactive desktop | provider `v0.8.3+` install, descriptor handoff, real authorized source lifecycle, DPI/dual-screen, Narrator/NVDA, restart, and source-ended smoke |
+| Maintained Windows source provider and x64 VM | The selected Cua Driver `v0.8.3` asset is an unsigned prerelease and the current machine has no Windows interactive desktop | exact allowlisted provider install, explicit beta-risk acceptance or a signed stable upstream asset, descriptor handoff, real authorized source lifecycle, DPI/dual-screen, Narrator/NVDA, restart, and source-ended smoke |
 | Real platform accessibility hosts | DOM/ARIA and screenshot tests cannot prove native screen-reader focus, names, ordering, or announcements | VoiceOver acceptance on signed macOS plus Narrator and NVDA acceptance on installed Windows, with status/control/failure-recovery evidence |
-| Windows certificate and NSIS policy | certificate ownership and install scope are not selected | signed x64 installer, install/uninstall/upgrade smoke, checksum, and clean-machine acceptance |
+| Windows certificate and NSIS policy | legal Publisher/signing service, supported Windows floor, and any separate enterprise per-machine artifact remain unselected; the first candidate is already fixed to per-user/asInvoker | signed x64 per-user installer, explicit enterprise-artifact decision, install/uninstall/upgrade smoke, checksum, and clean-machine acceptance |
 | Release CI secrets and clean machines | local engineering smokes do not prove repeatable distribution | CI artifact matrix, notarization/signing jobs, integrity metadata, and clean install/update E2E |
 
 ## Unresolved Decisions
 
-1. **Windows provider distribution pin:** keep the `cua-driver-rs-v0.8.3` minimum and decide
-   when to advance it; advancing without the x64 regression matrix can invalidate the HWND
-   and source-lifecycle evidence.
-2. **Windows release identity:** select certificate ownership, minimum Windows version,
-   and per-user versus per-machine NSIS behavior.
+1. **Windows provider allowlist advancement:** keep the exact reviewed
+   `cua-driver-rs-v0.8.3` allowlist and decide when a separately reviewed provider-upgrade PR
+   may advance it; accepting a newer version without the x64 regression matrix can invalidate
+   the HWND and source-lifecycle evidence.
+2. **Windows release identity:** select the legal Publisher/signing service and supported
+   Windows floor, then decide whether enterprise distribution requires a separate per-machine
+   artifact. The first candidate remains fixed to per-user/asInvoker.

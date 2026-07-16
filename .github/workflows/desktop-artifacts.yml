@@ -99,6 +99,7 @@ jobs:
           packages/daemon/test/computer-use-registry-retention.test.mjs
           packages/daemon/test/computer-use-run-integration.test.mjs
           packages/daemon/test/cua-driver-preset.test.mjs
+          packages/daemon/test/cua-driver.test.mjs
           packages/daemon/test/provider-health.test.mjs
           packages/daemon/test/plugin-manager-api.test.mjs
 
@@ -137,6 +138,10 @@ jobs:
 
           test "$(plutil -extract CFBundleIdentifier raw -o - "$arm_app/Contents/Info.plist")" = "com.lingstack.desktop"
           test "$(plutil -extract CFBundleIdentifier raw -o - "$x64_app/Contents/Info.plist")" = "com.lingstack.desktop"
+          test "$(plutil -extract CFBundleIconFile raw -o - "$arm_app/Contents/Info.plist")" = "icon.icns"
+          test "$(plutil -extract CFBundleIconFile raw -o - "$x64_app/Contents/Info.plist")" = "icon.icns"
+          cmp apps/desktop/build/icon.icns "$arm_app/Contents/Resources/icon.icns"
+          cmp apps/desktop/build/icon.icns "$x64_app/Contents/Resources/icon.icns"
           test "$(lipo -archs "$arm_app/Contents/MacOS/Ling Stack")" = "arm64"
           test "$(lipo -archs "$x64_app/Contents/MacOS/Ling Stack")" = "x86_64"
 
@@ -177,9 +182,11 @@ jobs:
           done
           test "$zip_count" -eq 2
 
-          shasum -a 256 apps/desktop/release/*.dmg apps/desktop/release/*-mac.zip \
-            > apps/desktop/release/SHA256SUMS-macos.txt
-          shasum -a 256 -c apps/desktop/release/SHA256SUMS-macos.txt
+          (
+            cd apps/desktop/release
+            shasum -a 256 *.dmg *-mac.zip > SHA256SUMS-macos.txt
+            shasum -a 256 -c SHA256SUMS-macos.txt
+          )
 
       - name: Run arm64 packaged fake smoke
         shell: bash
@@ -318,6 +325,7 @@ jobs:
           packages/daemon/test/computer-use-registry-retention.test.mjs
           packages/daemon/test/computer-use-run-integration.test.mjs
           packages/daemon/test/cua-driver-preset.test.mjs
+          packages/daemon/test/cua-driver.test.mjs
           packages/daemon/test/provider-health.test.mjs
           packages/daemon/test/plugin-manager-api.test.mjs
 
@@ -367,6 +375,10 @@ jobs:
           if (!(Test-Path $pluginManifest)) {
             throw "Bundled Cua Driver plugin shell manifest is missing"
           }
+          $elevateHelper = Join-Path $release "win-unpacked/resources/elevate.exe"
+          if (Test-Path $elevateHelper) {
+            throw "Per-user asInvoker artifact unexpectedly contains elevate.exe"
+          }
 
           $installers = @(
             Get-ChildItem -Path $release -File -Filter "*.exe" |
@@ -376,9 +388,20 @@ jobs:
           if ($installers.Count -ne 1) {
             throw ("Expected exactly one NSIS installer, found {0}" -f $installers.Count)
           }
+          $installerPath = $installers[0].FullName
+          node apps/desktop/tests/verify-windows-app-icons.mjs apps/desktop/build/icon.ico $unpackedExe $installerPath
+          if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+          }
 
-          $checksumLines = foreach ($artifact in $installers) {
-            $hash = Get-FileHash -Path $artifact.FullName -Algorithm SHA256
+          $checksumTargets = @(
+            [PSCustomObject]@{ Path = $unpackedExe; Name = "win-unpacked/Ling Stack.exe" }
+          )
+          foreach ($artifact in $installers) {
+            $checksumTargets += [PSCustomObject]@{ Path = $artifact.FullName; Name = $artifact.Name }
+          }
+          $checksumLines = foreach ($artifact in $checksumTargets) {
+            $hash = Get-FileHash -Path $artifact.Path -Algorithm SHA256
             "{0}  {1}" -f $hash.Hash.ToLowerInvariant(), $artifact.Name
           }
           $checksumLines | Set-Content -Encoding ascii (Join-Path $release "SHA256SUMS-windows.txt")
@@ -527,6 +550,7 @@ jobs:
           retention-days: 14
           path: |
             apps/desktop/release/*.exe
+            apps/desktop/release/win-unpacked/Ling Stack.exe
             apps/desktop/release/*.blockmap
             apps/desktop/release/SHA256SUMS-windows.txt
             apps/desktop/release/AUTHENTICODE-STATUS.json

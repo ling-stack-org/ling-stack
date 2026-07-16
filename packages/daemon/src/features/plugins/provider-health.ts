@@ -26,7 +26,7 @@ const REQUIRED_HEALTH_CHECK_NAMES = [
   "ax_capability",
   "screen_capture_capability",
 ] as const;
-const MINIMUM_PROVIDER_VERSION = [0, 8, 3] as const;
+export const CUA_DRIVER_SUPPORTED_VERSIONS = ["0.8.3"] as const;
 
 /**
  * Probe the provider-owned health contract on Windows. Electron's screen
@@ -97,7 +97,7 @@ export async function checkCuaDriverProviderHealth(input: {
   if (
     report.schemaVersion !== "1"
     || report.platform !== "win32"
-    || !isProviderVersionAtLeast(report.driverVersion, MINIMUM_PROVIDER_VERSION)
+    || !isSupportedProviderVersion(report.driverVersion)
   ) {
     return {
       ok: false,
@@ -107,6 +107,7 @@ export async function checkCuaDriverProviderHealth(input: {
         schemaVersion: report.schemaVersion,
         platform: report.platform,
         driverVersion: report.driverVersion,
+        supportedDriverVersions: CUA_DRIVER_SUPPORTED_VERSIONS,
       },
     };
   }
@@ -235,18 +236,9 @@ function summarizeChecks(checks: readonly StructuredHealthCheck[]): readonly Rea
   }));
 }
 
-function isProviderVersionAtLeast(version: string, minimum: readonly [number, number, number]): boolean {
-  const match = /^(\d+)\.(\d+)\.(\d+)(?:[-+].*)?$/u.exec(version.trim());
-  if (!match) {
-    return false;
-  }
-  const current: [number, number, number] = [Number(match[1]), Number(match[2]), Number(match[3])];
-  for (let index = 0; index < minimum.length; index += 1) {
-    if (current[index] !== minimum[index]) {
-      return current[index] > minimum[index];
-    }
-  }
-  return true;
+function isSupportedProviderVersion(version: string): boolean {
+  const normalized = version.trim();
+  return CUA_DRIVER_SUPPORTED_VERSIONS.some((supported) => supported === normalized);
 }
 
 function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {

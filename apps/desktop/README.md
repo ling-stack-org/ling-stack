@@ -26,6 +26,7 @@ Design source of truth:
 - [Desktop Computer Use Picture-in-Picture Detailed Design](../../docs/design/desktop-computer-use-picture-in-picture-detailed-design.md)
 - [Desktop Computer Use Picture-in-Picture Implementation Plan](../../docs/design/desktop-computer-use-picture-in-picture-implementation-plan.md)
 - [Desktop Release Acceptance](../../docs/release/desktop.md)
+- [Desktop Windows Release Decisions](../../docs/release/desktop-windows-release-decisions.md)
 
 Electron is the selected Desktop shell for the current alpha. Tauri is not an active
 implementation path for this slice; reconsidering it would be a separate architecture
@@ -33,8 +34,11 @@ decision after the daemon and capture contracts stabilize.
 
 The presentation contract targets macOS and Windows, but real source support is gated
 per platform. The selected Windows provider is the maintained open-source Cua Driver Rust
-provider (`cua-driver-rs-v0.8.3` or newer); Windows real capture remains blocked until
-the provider is installed and the x64 VM source/lifecycle matrix passes. The main window
+provider (`cua-driver-rs-v0.8.3`, exact reviewed allowlist). Its current upstream artifact
+is an unsigned prerelease, so public release remains blocked even after internal/beta VM
+acceptance unless that risk is explicitly accepted or a signed stable provider replaces it.
+Windows real capture remains blocked until the provider is installed and the x64 VM
+source/lifecycle matrix passes. The main window
 reuses the shared React application while the PiP uses a small isolated renderer plus a
 narrow capture adapter. Hide or window
 close must never stop the underlying Computer Use session; stopping remains a separate
@@ -90,9 +94,9 @@ working-set reporting. Together with the `--display` smoke it is current-host en
 evidence only; neither replaces signed/notarized release, TCC-state, capture-indicator, or
 Windows provider measurements.
 
-Current local closure evidence (2026-07-16):
+Current local closure evidence (2026-07-16–17):
 
-- the final verification matrix passes **169/169 Desktop Node tests**, **17/17 PiP renderer
+- the final verification matrix passes **170/170 Desktop Node tests**, **17/17 PiP renderer
   tests**, **51/51 focused contracts/API/daemon/plugin tests**, **16/16 focused Web
   tests**, and **10/10 macOS screenshot baselines**. Local lifecycle, corner-snap,
   aspect-ratio, and Stop
@@ -115,6 +119,10 @@ Current local closure evidence (2026-07-16):
   raw-listener residue is **0**;
 - Vite empties the preview `outDir` before building, and packaged `app.asar` contains only
   the current seven preview-subtree entries (two directories and five files).
+- macOS bundles carry the committed Ling `icon.icns`, while the Windows app and NSIS carry
+  all nine frames from the committed Ling `icon.ico`; neither package uses Electron's
+  default icon. The Windows installer is explicitly one-click, per-user, `asInvoker`, and
+  contains no elevation helper.
 
 One full daemon parallel-suite run hit scheduling-sensitive fluctuation in the
 `channel auto_route` unit test and left its worker alive. The same test passed in isolation,
@@ -125,12 +133,12 @@ Final unsigned artifact SHA-256 values:
 
 | Artifact | SHA-256 |
 | --- | --- |
-| arm64 DMG | `efeacc2dc49386364fd72808437454afe31ad7de382e20d70ee6bec2be4fa3ef` |
-| x64 DMG | `f48cdb81f0c44b92103d0d01c01dac92a1f90f0af1d2f47b7333d43f8e9ef87a` |
-| arm64 ZIP | `ec652852e7a767c2bc3d4119f1c8225f70986e076bac3d6be0ca7b93d92dd0d2` |
-| x64 ZIP | `4d1052391c0a464a9f9c248bb4b5612982a059a1f0d2f44d375e5dd555bfbe2d` |
-| Windows x64 unpacked app | `23d3161f5e9f617c87eebfdcddcc22cb352ba0b75de1f8f3f40beb44147a4e46` |
-| Windows x64 NSIS | `f0aba26eb6b79e64fdbdb1a6bf9e85197aed1e5906877843e76a19b6cd7e18d8` |
+| arm64 DMG | `e42b944b84bf67174d18dec422637cbde6988c4d2283f503597b09aae50727fb` |
+| x64 DMG | `a9e8aa208af6dc9baff96b9550166095660adc1b596c4f86544287ac0ca19258` |
+| arm64 ZIP | `6c9ac51d212a7a4b930cf8bcb8c93f7e4b4f07bb17b93d1205f01b2ff99face5` |
+| x64 ZIP | `49a8bc3d5dce9def59c49b7a53f9fb31fea72e960dd9e99f806809d995bb695e` |
+| Windows x64 unpacked app | `3f6ad1bbb45816bb46b15d2e23eb7a60843eb2a8fbc25ae0e541fb29af1d596e` |
+| Windows x64 NSIS | `52b115f2ef02394ed0e352c28f60052ec572eec02f708c2a942bd64d9b4de5e2` |
 
 Both DMGs and ZIPs pass their integrity checks. The unpacked Windows application and NSIS
 PE certificate-table sizes are both **0**, and no Apple Developer ID identity is installed.

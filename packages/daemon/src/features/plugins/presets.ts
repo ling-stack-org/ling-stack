@@ -13,6 +13,7 @@ export const CUA_DRIVER_DOCUMENTATION_URL = "https://cua.ai/docs/cua-driver";
 export const CUA_DRIVER_INSTALL_COMMAND = "/bin/bash -c \"$(curl -fsSL https://cua.ai/driver/install.sh)\"";
 
 const CUA_DRIVER_SUPPORTED_PLATFORMS = new Set<NodeJS.Platform>(["darwin", "win32"]);
+const WINDOWS_DIRECT_EXECUTABLE_EXTENSIONS = new Set([".com", ".exe"]);
 export const CUA_DRIVER_UNSUPPORTED_PLATFORM_MESSAGE =
   "Cua Driver preview integration is supported on macOS and Windows.";
 
@@ -222,7 +223,7 @@ function resolveExecutableCandidate(
 ): string | undefined {
   for (const variant of executableCandidateVariants(candidate, platform, pathExt)) {
     attempted.push(variant);
-    if (isExecutableFile(variant)) {
+    if (isExecutableFile(variant, platform, pathExt)) {
       return variant;
     }
   }
@@ -234,15 +235,14 @@ function executableCandidateVariants(
   platform: NodeJS.Platform,
   pathExt: string | undefined,
 ): readonly string[] {
-  if (platform !== "win32" || extname(candidate)) {
+  if (platform !== "win32") {
     return [candidate];
   }
-  const extensions = (pathExt || ".COM;.EXE;.BAT;.CMD")
-    .split(";")
-    .map((extension) => extension.trim())
-    .filter(Boolean)
-    .map((extension) => extension.startsWith(".") ? extension : `.${extension}`);
-  return [candidate, ...extensions.map((extension) => `${candidate}${extension.toLowerCase()}`)];
+  if (extname(candidate)) {
+    return [candidate];
+  }
+  return windowsExecutableExtensions(pathExt)
+    .map((extension) => `${candidate}${extension}`);
 }
 
 function resolveCommandCandidate(command: string, homeDir: string): string {
@@ -252,10 +252,26 @@ function resolveCommandCandidate(command: string, homeDir: string): string {
   return isAbsolute(expanded) ? expanded : resolve(expanded);
 }
 
-function isExecutableFile(path: string): boolean {
+function windowsExecutableExtensions(pathExt: string | undefined): readonly string[] {
+  return (pathExt || ".COM;.EXE;.BAT;.CMD")
+    .split(";")
+    .map((extension) => extension.trim().toLowerCase())
+    .filter(Boolean)
+    .map((extension) => extension.startsWith(".") ? extension : `.${extension}`)
+    .filter((extension) => WINDOWS_DIRECT_EXECUTABLE_EXTENSIONS.has(extension));
+}
+
+function isExecutableFile(
+  path: string,
+  platform: NodeJS.Platform,
+  pathExt: string | undefined,
+): boolean {
   try {
     if (!statSync(path).isFile()) {
       return false;
+    }
+    if (platform === "win32") {
+      return windowsExecutableExtensions(pathExt).includes(extname(path).toLowerCase());
     }
     accessSync(path, fsConstants.X_OK);
     return true;

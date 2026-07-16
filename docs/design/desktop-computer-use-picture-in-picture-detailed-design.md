@@ -49,9 +49,9 @@ sessions without a preview descriptor remain represented by the shared summary w
 creating an empty PiP. The feature must continue to consume structured projections rather
 than infer state from transcript copy.
 
-Verified on 2026-07-16 (latest local baseline):
+Verified across 2026-07-16 and 2026-07-17 (latest local baseline):
 
-- Desktop Node **169/169**, PiP renderer **17/17**, focused Web Desktop bridge and
+- Desktop Node **170/170**, PiP renderer **17/17**, focused Web Desktop bridge and
   app-shell selectors **16/16**, and the current focused contracts/API/daemon/plugin
   matrix **51/51** pass, including provider-health and plugin-manager coverage.
 - The display-media grant binds the exact loaded main document's frame token, frame-tree
@@ -904,13 +904,13 @@ display-media grant is exact-document-bound, generation-guarded, single-use, and
 with the adapter. The negative matrix covers subframes, foreign/missing webContents, wrong
 URL/query/origin/Session, audio requests, detached/destroyed/navigated frames, expiry,
 release/dispose interruption, late rearm, and replay.
-The selected Windows identity/automation provider is the maintained open-source
-`trycua/cua-driver-rs` `v0.8.3+` provider. It supplies explicit structured HWND and PID
+The selected Windows identity/automation provider is the exact reviewed open-source
+`trycua/cua-driver-rs` `v0.8.3` provider. It supplies explicit structured HWND and PID
 identity; Electron remains the PiP video capture/presentation adapter. Ling now supports
 the provider's Windows plugin/install/command boundary, requires canonical HWND+PID, binds
 preflight to the exact descriptor, and fails stale/missing descriptors closed. The plugin
-apply/check gate also requires Cua Driver `v0.8.3+`, `health_report`, `list_windows`, and
-`get_window_state`; the provider-owned schema-v1 report must pass `session_active`, UIA
+apply/check gate also requires exact-allowlisted Cua Driver `v0.8.3`, `health_report`,
+`list_windows`, and `get_window_state`; the provider-owned schema-v1 report must pass `session_active`, UIA
 (`ax_capability`), and DXGI/D3D (`screen_capture_capability`). Session 0, headless graphics,
 missing tools, incompatible schemas, or degraded reports fail closed. This is not release
 evidence: Windows x64 VM smoke must still prove HWND source mapping, first frame,
@@ -1215,5 +1215,6 @@ broader cosmetic refactoring remains out of scope.
 
 ## Open Decisions
 
-- Windows provider minimum-version advancement and clean-machine distribution policy.
-- Windows release identity, minimum supported version, and NSIS install scope.
+- Exact Windows provider allowlist advancement and public distribution risk acceptance.
+- Windows legal Publisher/signing service, supported-version floor, and whether enterprise
+  distribution needs a separate per-machine artifact; the first candidate remains per-user.

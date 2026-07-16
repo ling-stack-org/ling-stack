@@ -80,7 +80,7 @@ test("Windows provider smoke accepts only a healthy schema-v1 interactive report
   ]);
 });
 
-test("Windows provider smoke rejects old, degraded, and Session-0-like reports", () => {
+test("Windows provider smoke rejects unreviewed, degraded, and Session-0-like reports", () => {
   const base = {
     schema_version: "1",
     platform: "win32",
@@ -96,6 +96,10 @@ test("Windows provider smoke rejects old, degraded, and Session-0-like reports",
   };
   assert.throws(
     () => parseWindowsProviderHealthReport(JSON.stringify({ ...base, driver_version: "0.8.2" })),
+    /windows_provider_smoke_health_incompatible/u,
+  );
+  assert.throws(
+    () => parseWindowsProviderHealthReport(JSON.stringify({ ...base, driver_version: "0.8.4" })),
     /windows_provider_smoke_health_incompatible/u,
   );
   assert.throws(

@@ -42,6 +42,9 @@ importers:
       esbuild:
         specifier: ^0.25.12
         version: 0.25.12
+      resedit:
+        specifier: 1.7.2
+        version: 1.7.2
       vite:
         specifier: ^6.4.3
         version: 6.4.3(@types/node@26.0.0)(jiti@2.7.0)(yaml@2.9.0)

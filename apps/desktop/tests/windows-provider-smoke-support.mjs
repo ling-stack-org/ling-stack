@@ -1,5 +1,5 @@
 const MAX_WINDOWS_PID = 0xffff_ffff;
-const MINIMUM_PROVIDER_VERSION = [0, 8, 3];
+const SUPPORTED_PROVIDER_VERSIONS = new Set(["0.8.3"]);
 const REQUIRED_HEALTH_CHECKS = [
   "binary_version",
   "platform_supported",
@@ -30,7 +30,7 @@ export function parseWindowsProviderHealthReport(stdout) {
     report.schema_version !== "1"
     || report.platform !== "win32"
     || typeof report.driver_version !== "string"
-    || !isProviderVersionAtLeast(report.driver_version)
+    || !SUPPORTED_PROVIDER_VERSIONS.has(report.driver_version.trim())
     || report.overall !== "ok"
     || !Array.isArray(report.checks)
   ) {
@@ -117,20 +117,6 @@ function readProviderWindowId(value) {
   } catch {
     return undefined;
   }
-}
-
-function isProviderVersionAtLeast(version) {
-  const match = /^(\d+)\.(\d+)\.(\d+)(?:[-+].*)?$/u.exec(version.trim());
-  if (!match) {
-    return false;
-  }
-  const current = [Number(match[1]), Number(match[2]), Number(match[3])];
-  for (let index = 0; index < MINIMUM_PROVIDER_VERSION.length; index += 1) {
-    if (current[index] !== MINIMUM_PROVIDER_VERSION[index]) {
-      return current[index] > MINIMUM_PROVIDER_VERSION[index];
-    }
-  }
-  return true;
 }
 
 function isRecord(value) {

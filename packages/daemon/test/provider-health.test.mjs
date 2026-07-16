@@ -93,7 +93,7 @@ test("provider health validates the upstream schema and required capability chec
   assert.deepEqual(broker.calls[0].input, { include: requiredChecks });
 });
 
-test("provider health rejects old or malformed provider reports", async (t) => {
+test("provider health rejects unreviewed or malformed provider reports", async (t) => {
   await t.test("old version", async () => {
     const broker = createBroker({ content: [], details: { structuredContent: createReport({ driver_version: "0.8.2" }) } });
     const result = await checkCuaDriverProviderHealth(checkInput(broker));
@@ -108,6 +108,15 @@ test("provider health rejects old or malformed provider reports", async (t) => {
     assert.equal(result.ok, false);
     assert.equal(result.details?.errorCode, "plugin_provider_incompatible");
   });
+
+  const newerBroker = createBroker({
+    content: [],
+    details: { structuredContent: createReport({ driver_version: "0.8.4" }) },
+  });
+  const newerResult = await checkCuaDriverProviderHealth(checkInput(newerBroker));
+  assert.equal(newerResult.ok, false);
+  assert.equal(newerResult.details?.errorCode, "plugin_provider_incompatible");
+  assert.deepEqual(newerResult.details?.supportedDriverVersions, ["0.8.3"]);
 });
 
 test("provider health reports interactive/UIA/DXGI failures instead of claiming ready", async () => {

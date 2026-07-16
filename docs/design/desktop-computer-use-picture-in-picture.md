@@ -423,7 +423,7 @@ First-version targets on a supported laptop:
 
 The 2026-07-16 current-host real Electron baseline meets the local budgets:
 
-The final local verification matrix passes **169/169 Desktop Node tests**, **17/17 PiP
+The final local verification matrix passes **170/170 Desktop Node tests**, **17/17 PiP
 renderer tests**, **51/51 focused contracts/API/daemon/plugin tests**, **16/16 focused
 Web tests**, and **10/10 macOS screenshot baselines**. The remaining local lifecycle,
 corner-snap, aspect-ratio, and Stop
@@ -495,5 +495,6 @@ window integration, and optional rendering optimization.
 
 ## Open Decisions
 
-- Windows provider minimum-version advancement and clean-machine distribution policy.
-- Windows certificate/NSIS identity, minimum supported version, and install scope.
+- Exact Windows provider allowlist advancement and public distribution risk acceptance.
+- Windows legal Publisher/signing service, supported-version floor, and whether enterprise
+  distribution needs a separate per-machine artifact; the first candidate remains per-user.

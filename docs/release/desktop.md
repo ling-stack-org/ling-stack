@@ -4,12 +4,15 @@
 “真实平台发布证据”分开，避免把 fake source、unsigned 包或 provider 下载校验误报为
 跨平台完成。
 
+Windows provider、签名、安装范围和回滚决策见
+[Desktop Windows 发布决策记录](./desktop-windows-release-decisions.md)。
+
 ## 支持矩阵
 
 | 平台 | 目标 | 当前证据边界 |
 | --- | --- | --- |
 | macOS | arm64、x86_64 | unsigned `.app` 与 mounted DMG 的 fake/window/display provenance matrix、当前机器 Cua native handoff 和 real MediaStream 性能已有；Developer ID、TCC 矩阵和 clean machine 未闭合 |
-| Windows | x86_64 | unsigned x64 app/NSIS cross-package、Cua Driver v0.8.3 verifier，以及 health、双目标 revision、Desktop restart runner 已有；Windows 安装执行和 interactive VM real capture 未闭合 |
+| Windows | x86_64 | branded unsigned x64 app/per-user NSIS cross-package、exact Cua Driver v0.8.3 verifier/allowlist，以及 health、双目标 revision、Desktop restart runner 已有；provider 仍是 unsigned prerelease，Windows 安装执行和 interactive VM real capture 未闭合 |
 | Linux | 不支持 | provider gate 必须 fail closed |
 
 Ling 只发布 Cua Driver plugin shell metadata，不打包 provider 二进制、原生库、凭据或
@@ -19,6 +22,10 @@ Ling 只发布 Cua Driver plugin shell metadata，不打包 provider 二进制�
 trycua/cua  cua-driver-rs-v0.8.3
 SHA-256      6acdc84b98629fcd0be2368cc16565c18d5f21d9dedd4e10fdb6f58547fce9d0
 ```
+
+该上游 release 当前为 `prerelease=true`，审阅的两个 Windows provider executable 均无
+PE certificate table。它只能进入内部/beta 验收，公开发布风险和签名责任必须按 Windows
+发布决策记录显式关闭。
 
 ## 每次提交的本地基线
 
@@ -34,6 +41,7 @@ node --test \
   packages/daemon/test/computer-use-registry-retention.test.mjs \
   packages/daemon/test/computer-use-run-integration.test.mjs \
   packages/daemon/test/cua-driver-preset.test.mjs \
+  packages/daemon/test/cua-driver.test.mjs \
   packages/daemon/test/provider-health.test.mjs \
   packages/daemon/test/plugin-manager-api.test.mjs
 corepack pnpm --filter @ling-stack/desktop exec playwright test --config tests/playwright.renderer.config.mjs
@@ -48,7 +56,7 @@ corepack pnpm --filter @ling-stack/desktop exec electron tests/screenshot-app
 git diff --check
 ```
 
-2026-07-16 最终本地验证矩阵为：Desktop Node **169/169**、PiP renderer **17/17**、
+2026-07-16 至 2026-07-17 最终本地验证矩阵为：Desktop Node **170/170**、PiP renderer **17/17**、
 focused contracts/API/daemon/plugin **51/51**、focused Web **16/16**、macOS screenshot
 baseline **10/10**。本地 lifecycle、四角 snap、aspect ratio 和 Stop 交互/ack 时序缺口
 均已闭合。
@@ -88,6 +96,7 @@ unzip -t 'apps/desktop/release/Ling Stack-0.0.0-mac.zip'
 unsigned job 必须验证：
 
 - `CFBundleIdentifier=com.lingstack.desktop`；
+- `CFBundleIconFile=icon.icns`，且 arm64/x64 bundle 内图标与提交的 Ling icon 字节一致；
 - arm64/x86_64 Mach-O 架构正确；
 - bundled Cua Driver 只有 manifest、MCP metadata、README；
 - 不存在 Developer ID Authority 或 Team ID；
@@ -99,16 +108,16 @@ unsigned job 必须验证：
 
 这类包只能作为工程候选包，不能作为 Gatekeeper 或 TCC 发布证据。
 
-### 2026-07-16 最终 unsigned 产物
+### 2026-07-17 最终 unsigned 产物
 
 | 产物 | SHA-256 |
 | --- | --- |
-| `Ling Stack-0.0.0-arm64.dmg` | `efeacc2dc49386364fd72808437454afe31ad7de382e20d70ee6bec2be4fa3ef` |
-| `Ling Stack-0.0.0.dmg` | `f48cdb81f0c44b92103d0d01c01dac92a1f90f0af1d2f47b7333d43f8e9ef87a` |
-| `Ling Stack-0.0.0-arm64-mac.zip` | `ec652852e7a767c2bc3d4119f1c8225f70986e076bac3d6be0ca7b93d92dd0d2` |
-| `Ling Stack-0.0.0-mac.zip` | `4d1052391c0a464a9f9c248bb4b5612982a059a1f0d2f44d375e5dd555bfbe2d` |
-| `win-unpacked/Ling Stack.exe` | `23d3161f5e9f617c87eebfdcddcc22cb352ba0b75de1f8f3f40beb44147a4e46` |
-| `Ling Stack Setup 0.0.0.exe` | `f0aba26eb6b79e64fdbdb1a6bf9e85197aed1e5906877843e76a19b6cd7e18d8` |
+| `Ling Stack-0.0.0-arm64.dmg` | `e42b944b84bf67174d18dec422637cbde6988c4d2283f503597b09aae50727fb` |
+| `Ling Stack-0.0.0.dmg` | `a9e8aa208af6dc9baff96b9550166095660adc1b596c4f86544287ac0ca19258` |
+| `Ling Stack-0.0.0-arm64-mac.zip` | `6c9ac51d212a7a4b930cf8bcb8c93f7e4b4f07bb17b93d1205f01b2ff99face5` |
+| `Ling Stack-0.0.0-mac.zip` | `49a8bc3d5dce9def59c49b7a53f9fb31fea72e960dd9e99f806809d995bb695e` |
+| `win-unpacked/Ling Stack.exe` | `3f6ad1bbb45816bb46b15d2e23eb7a60843eb2a8fbc25ae0e541fb29af1d596e` |
+| `Ling Stack Setup 0.0.0.exe` | `52b115f2ef02394ed0e352c28f60052ec572eec02f708c2a942bd64d9b4de5e2` |
 
 两个 DMG 均通过 `hdiutil verify`，两个 ZIP 均通过 `unzip -t`。Vite preview build
 现会先清空 `outDir`；最终 `app.asar` 的 preview subtree 只有本次构建的 **7 个条目**
@@ -117,6 +126,11 @@ NSIS 使用常规 PE32 x86 bootstrap stub 承载该 x64 application。两者的 
 certificate-table size 均为 **0**，因此没有嵌入 Authenticode 签名。当前机器也没有
 Apple Developer ID identity；上述哈希和完整性检查都不能写成签名或 notarization
 结论。
+
+工程候选已替换默认 Electron 图标：两个 macOS bundle 的 `icon.icns` 与提交资源完全
+一致；Windows app 和 NSIS 的 9 个 icon frame 与 `icon.ico` 一致。Windows NSIS 明确为
+one-click、per-user、`asInvoker`，`packElevateHelper=false`；当前 unpacked 和 installer
+payload 都不存在 `elevate.exe`。
 
 ## macOS signed release
 
@@ -163,6 +177,9 @@ workflow 同时要求 unpacked smoke、静默安装、installed smoke 和静默�
 run 真正执行后才形成 installer evidence，仍不能替代 interactive provider VM。
 provider 本身的 Authenticode/SmartScreen 状态必须单独记录；Ling 不得把 archive SHA 或
 PE 架构校验写成签名结论。
+
+首个 installer 固定为当前用户安装。企业级 all-users/per-machine 包若需要，应作为
+独立 artifact 和验收通道，不能在当前候选中临时切换安装范围。
 
 ## Clean-machine 顺序
 

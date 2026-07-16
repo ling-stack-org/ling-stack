@@ -8,6 +8,7 @@ import {
   WINDOWS_CUA_DRIVER_RELEASE,
   inspectWindowsX64Pe,
   isPathWithin,
+  matchesPinnedProviderVersionOutput,
   sha256File,
   verifyPinnedWindowsProviderArchive,
 } from "./verify-windows-cua-driver-provider.mjs";
@@ -24,6 +25,11 @@ test("pins the reviewed cua-driver-rs v0.8.3 Windows x86_64 release asset", () =
     sha256: "6acdc84b98629fcd0be2368cc16565c18d5f21d9dedd4e10fdb6f58547fce9d0",
     url: "https://github.com/trycua/cua/releases/download/cua-driver-rs-v0.8.3/cua-driver-rs-0.8.3-windows-x86_64.zip",
   });
+  assert.equal(matchesPinnedProviderVersionOutput("cua-driver 0.8.3"), true);
+  assert.equal(matchesPinnedProviderVersionOutput("cua-driver v0.8.3 (reviewed build)"), true);
+  assert.equal(matchesPinnedProviderVersionOutput("cua-driver 0.8.3.1"), false);
+  assert.equal(matchesPinnedProviderVersionOutput("cua-driver 0.8.3-beta"), false);
+  assert.equal(matchesPinnedProviderVersionOutput("cua-driver 0.8.30"), false);
 });
 
 test("accepts an x86_64 PE32+ binary without treating its certificate table as trusted", () => {

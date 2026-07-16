@@ -2,7 +2,7 @@
 
 Status: initial installed `cua-driver` runtime verified on 2026-07-15; provider selection,
 current-host native handoff, unsigned packaged provenance, performance, and artifact
-integrity evidence updated on 2026-07-16. Later renderer and interaction work did not
+integrity evidence updated through 2026-07-17. Later renderer and interaction work did not
 change the transport boundary below.
 
 ## Verified Runtime Surface
@@ -167,10 +167,11 @@ third-party binaries are signed. On macOS it explicitly reports Authenticode as
 `not_checked`; checksum and PE architecture are not signature evidence.
 
 Ling's Windows apply/check gate additionally requires `health_report`, `list_windows`, and
-`get_window_state`, rejects provider versions older than `0.8.3`, and fails closed unless
-the schema-v1 report is `platform=win32`, `overall=ok`, with binary/platform/session/UIA/
-screen-capture checks all passing. This protects the runtime from Session 0, missing UIA,
-or headless/D3D-unavailable environments, but it is still not a substitute for the Windows
+`get_window_state` and accepts only the exact reviewed `0.8.3` provider; older or
+unreviewed newer versions always fail closed. The exact version must also report schema v1,
+`platform=win32`, `overall=ok`, with binary/platform/session/UIA/screen-capture checks all
+passing. This protects the runtime from Session 0, missing UIA, or
+headless/D3D-unavailable environments, but it is still not a substitute for the Windows
 x64 VM real-source matrix.
 
 ## Adapter Decision
@@ -253,7 +254,7 @@ embedded in the public fixture, so fake and real adapters exercise the same trus
 
 ## Final Local Packaging and Performance Evidence
 
-The latest mainline verification matrix passes **169/169 Desktop Node tests**, **17/17 PiP
+The latest mainline verification matrix passes **170/170 Desktop Node tests**, **17/17 PiP
 renderer tests**, **16/16 focused Web E2E tests**, **51/51 focused
 contracts/API/daemon/plugin tests**, and **10/10 macOS screenshot baselines**. The fake
 ownership/crash lane records **415.27 ms p95**.
@@ -279,12 +280,12 @@ Final unsigned artifact SHA-256 values:
 
 | Artifact | SHA-256 |
 | --- | --- |
-| arm64 DMG | `efeacc2dc49386364fd72808437454afe31ad7de382e20d70ee6bec2be4fa3ef` |
-| x64 DMG | `f48cdb81f0c44b92103d0d01c01dac92a1f90f0af1d2f47b7333d43f8e9ef87a` |
-| arm64 ZIP | `ec652852e7a767c2bc3d4119f1c8225f70986e076bac3d6be0ca7b93d92dd0d2` |
-| x64 ZIP | `4d1052391c0a464a9f9c248bb4b5612982a059a1f0d2f44d375e5dd555bfbe2d` |
-| Windows x64 unpacked app | `23d3161f5e9f617c87eebfdcddcc22cb352ba0b75de1f8f3f40beb44147a4e46` |
-| Windows x64 NSIS | `f0aba26eb6b79e64fdbdb1a6bf9e85197aed1e5906877843e76a19b6cd7e18d8` |
+| arm64 DMG | `e42b944b84bf67174d18dec422637cbde6988c4d2283f503597b09aae50727fb` |
+| x64 DMG | `a9e8aa208af6dc9baff96b9550166095660adc1b596c4f86544287ac0ca19258` |
+| arm64 ZIP | `6c9ac51d212a7a4b930cf8bcb8c93f7e4b4f07bb17b93d1205f01b2ff99face5` |
+| x64 ZIP | `49a8bc3d5dce9def59c49b7a53f9fb31fea72e960dd9e99f806809d995bb695e` |
+| Windows x64 unpacked app | `3f6ad1bbb45816bb46b15d2e23eb7a60843eb2a8fbc25ae0e541fb29af1d596e` |
+| Windows x64 NSIS | `52b115f2ef02394ed0e352c28f60052ec572eec02f708c2a942bd64d9b4de5e2` |
 
 Both DMGs pass container verification and both ZIPs pass archive integrity checks. The
 unpacked Windows application is PE32+ x86_64; the NSIS installer uses the normal PE32 x86
@@ -294,6 +295,11 @@ installed, and Developer ID/notarization/Gatekeeper, clean-host TCC/capture-indi
 Windows interactive provider/DPI/dual-display, Authenticode/SmartScreen/signed NSIS,
 hosted CI, clean-machine install/update/uninstall, and VoiceOver/Narrator/NVDA gates remain
 open.
+
+The rebuilt candidates use the committed Ling application artwork rather than Electron's
+default icon. Both macOS bundles contain the exact `icon.icns`; the Windows app and NSIS
+contain the nine `icon.ico` frames. The Windows package is explicitly per-user/asInvoker and
+contains no elevation helper.
 
 ## Reproducible Evidence Commands
 

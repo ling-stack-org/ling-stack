@@ -34,6 +34,15 @@ export async function sha256File(filePath) {
   return hash.digest("hex");
 }
 
+export function matchesPinnedProviderVersionOutput(output) {
+  const escapedVersion = WINDOWS_CUA_DRIVER_RELEASE.version.replaceAll(".", "\\.");
+  const exactVersionPattern = new RegExp(
+    `(^|[^0-9A-Za-z.+-])v?${escapedVersion}($|[^0-9A-Za-z.+-])`,
+    "u",
+  );
+  return exactVersionPattern.test(output);
+}
+
 export function inspectWindowsX64Pe(buffer, label = "Windows provider binary") {
   if (!Buffer.isBuffer(buffer) || buffer.length < 0x100) {
     throw new Error(`${label} is too small to be a PE executable`);
@@ -324,10 +333,7 @@ async function probePinnedProviderVersion(binaryPath) {
     timeoutMs: 10_000,
   });
   const output = `${result.stdout}\n${result.stderr}`.trim();
-  const expectedVersionPattern = new RegExp(
-    `(^|[^0-9])${WINDOWS_CUA_DRIVER_RELEASE.version.replaceAll(".", "\\.")}([^0-9]|$)`,
-  );
-  if (!expectedVersionPattern.test(output)) {
+  if (!matchesPinnedProviderVersionOutput(output)) {
     throw new Error(
       `Installed provider version output does not identify ${WINDOWS_CUA_DRIVER_RELEASE.version}: ${output || "<empty>"}`,
     );
