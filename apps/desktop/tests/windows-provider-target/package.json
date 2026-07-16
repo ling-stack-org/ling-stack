@@ -1,0 +1,6 @@
+{
+  "name": "ling-windows-provider-smoke-target",
+  "private": true,
+  "type": "module",
+  "main": "main.mjs"
+}

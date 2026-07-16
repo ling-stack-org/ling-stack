@@ -1,0 +1,10 @@
+{
+  "compilerOptions": {
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "strict": true,
+    "target": "ES2022",
+    "types": ["node", "electron"]
+  },
+  "include": ["preload/**/*.ts", "shared/**/*.ts", "main/platform.ts"]
+}

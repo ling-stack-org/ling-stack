@@ -150,7 +150,13 @@ export function WorkspaceTerminalPanel({
   }, [cwd, terminalSession]);
 
   return (
-    <section className={["workspace-terminal-panel", className].filter(Boolean).join(" ")} style={style} aria-label={t("Terminal session")}>
+    <section
+      className={["workspace-terminal-panel", className].filter(Boolean).join(" ")}
+      data-computer-use-obstacle="true"
+      data-computer-use-obstacle-kind="terminal"
+      style={style}
+      aria-label={t("Terminal session")}
+    >
       {resizeHandleNode}
       <header className="workspace-terminal-head">
         <span className="workspace-terminal-tab" title={cwd}>

@@ -13,9 +13,13 @@ import { materializeBundledPluginPackage } from "./package-cache.js";
 import {
   createCuaDriverMcpServerInput,
   CUA_DRIVER_MCP_SERVER_ID,
+  CUA_DRIVER_UNSUPPORTED_PLATFORM_MESSAGE,
+  isCuaDriverPlatformSupported,
   resolveCuaDriverCommand,
+  applyCuaDriverToolApprovalOverrides,
 } from "./presets.js";
 import { createPluginHealthSnapshot, ensureManagedPluginRecord } from "./catalog.js";
+import { checkCuaDriverProviderHealth } from "./provider-health.js";
 
 type ManagedPluginInstallStore =
   ManagedPluginStoreFacet &
@@ -171,10 +175,51 @@ export async function checkInstalledPluginRuntimeDependencies(input: {
   if (!server) {
     throw new HttpError(400, "plugin_linked_resource_missing", "Plugin linked MCP server is missing.");
   }
-  await input.mcpBroker.checkServer(server, {
+  const checked = await input.mcpBroker.checkServer(server, {
     secretResolver: input.secretResolver,
     now: () => input.now,
   });
+  input.store.upsertMcpStatusSnapshot(checked.statusSnapshot, input.now);
+  if (checked.statusSnapshot.status !== "ready") {
+    throw new HttpError(
+      400,
+      checked.statusSnapshot.errorCode ?? "plugin_provider_unavailable",
+      checked.statusSnapshot.message ?? "Cua Driver MCP server is not ready.",
+    );
+  }
+  if (process.platform !== "win32") {
+    return;
+  }
+  const listed = await input.mcpBroker.listTools(server, {
+    secretResolver: input.secretResolver,
+    now: () => input.now,
+  });
+  input.store.upsertMcpStatusSnapshot(listed.statusSnapshot, input.now);
+  if (listed.statusSnapshot.status !== "ready") {
+    throw new HttpError(
+      400,
+      listed.statusSnapshot.errorCode ?? "plugin_provider_unavailable",
+      listed.statusSnapshot.message ?? "Cua Driver tools are not available.",
+    );
+  }
+  const tools = applyCuaDriverToolApprovalOverrides(listed.tools);
+  input.store.replaceMcpServerTools(server.id, tools, input.now);
+  const providerHealth = await checkCuaDriverProviderHealth({
+    server,
+    mcpBroker: input.mcpBroker,
+    secretResolver: input.secretResolver,
+    now: input.now,
+    availableToolNames: tools.map((tool) => tool.rawName),
+  });
+  if (!providerHealth.ok) {
+    throw new HttpError(
+      400,
+      typeof providerHealth.details?.errorCode === "string"
+        ? providerHealth.details.errorCode
+        : "plugin_provider_health_failed",
+      providerHealth.message,
+    );
+  }
 }
 
 function validateCuaInstallEnvironment(
@@ -183,16 +228,16 @@ function validateCuaInstallEnvironment(
   options: Readonly<Record<string, unknown>>,
   now: string,
 ): void {
-  if (process.platform !== "darwin") {
+  if (!isCuaDriverPlatformSupported()) {
     ensureManagedPluginRecord({ store, descriptor, enabled: false, now });
     store.upsertManagedPluginHealthSnapshot(createPluginHealthSnapshot({
       pluginId: descriptor.id,
       now,
       status: "failed",
-      message: "Cua Driver is only supported on macOS.",
+      message: CUA_DRIVER_UNSUPPORTED_PLATFORM_MESSAGE,
       details: { errorCode: "plugin_platform_blocked" },
     }), now);
-    throw new HttpError(400, "plugin_platform_blocked", "Cua Driver is only supported on macOS.");
+    throw new HttpError(400, "plugin_platform_blocked", CUA_DRIVER_UNSUPPORTED_PLATFORM_MESSAGE);
   }
   const command = resolveCuaDriverCommand(options);
   if (!command.ok || !command.command) {

@@ -15,6 +15,26 @@ import type { LocalTeammateDraft } from "../features/teammates/index.js";
 import type { SidebarNotification } from "../features/navigation/SidebarNavigation.js";
 import { effectiveApprovalStatus } from "../lib/approvals.js";
 import { deriveChannelTasks } from "../lib/channel-artifacts.js";
+import type { ViewId } from "./view-types.js";
+
+export function selectDesktopComputerUseConversation(input: {
+  readonly activeView: ViewId;
+  readonly selectedChannelId?: string;
+  readonly selectedChannelBranchRootThreadId?: string;
+  readonly selectedConversationThreadId?: string;
+  readonly selectedAiTeammateId?: string;
+  readonly teammateDirectThreadId?: string;
+}): string | undefined {
+  if (input.activeView === "workspace") {
+    return input.selectedChannelId
+      ? input.selectedChannelBranchRootThreadId || undefined
+      : input.selectedConversationThreadId || undefined;
+  }
+  if (input.activeView === "teammates" && input.selectedAiTeammateId) {
+    return input.teammateDirectThreadId || undefined;
+  }
+  return undefined;
+}
 
 export function buildContextTaskPrompt(summary: ChannelContextSummary, decisions: readonly ChannelDecision[]): string {
   const activeDecisions = decisions.filter((decision) => summary.decisionIds.includes(decision.id) && decision.status === "active");

@@ -13,6 +13,7 @@ const cuaReadOnlyTools = new Set([
   "get_agent_cursor_state",
   "get_recording_state",
   "get_screen_size",
+  "health_report",
   "list_apps",
   "list_windows",
 ]);

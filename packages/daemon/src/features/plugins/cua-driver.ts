@@ -13,6 +13,8 @@ import {
   CUA_DRIVER_INSTALL_COMMAND,
   CUA_DRIVER_MCP_SERVER_ID,
   CUA_DRIVER_PLUGIN_ID,
+  CUA_DRIVER_UNSUPPORTED_PLATFORM_MESSAGE,
+  isCuaDriverPlatformSupported,
   resolveCuaDriverCommand,
 } from "./presets.js";
 
@@ -24,7 +26,7 @@ export function buildCuaDriverSetupView(input: {
   readonly platform?: NodeJS.Platform;
 }): ManagedPluginSetupView {
   const platform = input.platform ?? process.platform;
-  if (platform !== "darwin") {
+  if (!isCuaDriverPlatformSupported(platform)) {
     return {
       kind: "local_binary",
       state: "unsupported",
@@ -33,17 +35,21 @@ export function buildCuaDriverSetupView(input: {
   }
 
   const server = input.store.getMcpServer(CUA_DRIVER_MCP_SERVER_ID);
-  const command = resolveCuaDriverCommand(readCuaDriverCommandOptions(server));
+  const command = resolveCuaDriverCommand(readCuaDriverCommandOptions(server), { platform });
   if (!command.ok || !command.command) {
     return {
       kind: "local_binary",
       state: "missing",
       checkedAt: input.now,
-      guide: {
-        documentationUrl: CUA_DRIVER_DOCUMENTATION_URL,
-        installCommand: CUA_DRIVER_INSTALL_COMMAND,
-        supportsCustomCommand: true,
-      },
+      ...(platform === "darwin"
+        ? {
+            guide: {
+              documentationUrl: CUA_DRIVER_DOCUMENTATION_URL,
+              installCommand: CUA_DRIVER_INSTALL_COMMAND,
+              supportsCustomCommand: true,
+            },
+          }
+        : {}),
     };
   }
 
@@ -75,8 +81,8 @@ export function connectCuaDriver(input: {
   readonly platform?: NodeJS.Platform;
 }): McpServer {
   const platform = input.platform ?? process.platform;
-  if (platform !== "darwin") {
-    throw new HttpError(400, "plugin_platform_blocked", "Cua Driver is only supported on macOS.");
+  if (!isCuaDriverPlatformSupported(platform)) {
+    throw new HttpError(400, "plugin_platform_blocked", CUA_DRIVER_UNSUPPORTED_PLATFORM_MESSAGE);
   }
   if (input.command && !isAbsolute(input.command.trim())) {
     throw new HttpError(400, "plugin_command_not_executable", "Configured cua-driver command must be an absolute executable path.");
@@ -86,6 +92,7 @@ export function connectCuaDriver(input: {
     input.command
       ? { command: input.command }
       : readCuaDriverCommandOptions(existingServer),
+    { platform },
   );
   if (!command.ok || !command.command) {
     throw new HttpError(400, command.errorCode ?? "plugin_binary_not_found", command.message ?? "cua-driver binary was not found.");

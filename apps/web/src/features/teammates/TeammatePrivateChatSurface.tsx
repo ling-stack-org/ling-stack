@@ -973,6 +973,8 @@ export function TeammatePrivateChatSurface({
             <aside
               ref={summaryPlacementRef}
               className={`channel-progress-popover channel-progress-panel conversation-summary-side-panel teammate-private-summary-panel ${summaryMotionClass}`}
+              data-computer-use-obstacle="true"
+              data-computer-use-obstacle-kind="summary"
               aria-label={t("Summary")}
             >
               {summaryNode}
@@ -994,7 +996,11 @@ export function TeammatePrivateChatSurface({
             />
           ) : null}
           {privateDockController.visible ? (
-            <div className="workspace-right-dock-frame teammate-private-right-dock-frame">
+            <div
+              className="workspace-right-dock-frame teammate-private-right-dock-frame"
+              data-computer-use-obstacle="true"
+              data-computer-use-obstacle-kind="right-dock"
+            >
               <WorkspaceRightDock
                 surface="teammate_direct"
                 open={dockOpen}

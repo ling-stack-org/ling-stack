@@ -125,6 +125,8 @@ export function TeammateChatHeader({
         <div
           ref={summaryPlacementRef}
           className={`channel-progress-popover conversation-summary-popover-wrap teammate-chat-summary-popover ${summaryMotionClass}`}
+          data-computer-use-obstacle="true"
+          data-computer-use-obstacle-kind="summary"
         >
           <ConversationSummaryPopover
             title={t("Environment")}

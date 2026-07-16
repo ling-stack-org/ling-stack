@@ -1,0 +1,533 @@
+name: Desktop artifacts
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - ".github/workflows/desktop-artifacts.yml"
+      - "apps/desktop/**"
+      - "apps/web/**"
+      - "packages/api-client/**"
+      - "packages/contracts/**"
+      - "packages/core/**"
+      - "packages/daemon/**"
+      - "packages/plugin-sdk/**"
+      - "packages/providers/**"
+      - "packages/runner-pi/**"
+      - "packages/conversation-ui-core/**"
+      - "packages/conversation-ui-react/**"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/desktop-artifacts.yml"
+      - "apps/desktop/**"
+      - "apps/web/**"
+      - "packages/api-client/**"
+      - "packages/contracts/**"
+      - "packages/core/**"
+      - "packages/daemon/**"
+      - "packages/plugin-sdk/**"
+      - "packages/providers/**"
+      - "packages/runner-pi/**"
+      - "packages/conversation-ui-core/**"
+      - "packages/conversation-ui-react/**"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+
+concurrency:
+  group: desktop-artifacts-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CI: "true"
+  CSC_IDENTITY_AUTO_DISCOVERY: "false"
+
+jobs:
+  macos-unsigned:
+    name: macOS unsigned arm64 + x64
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.15.0
+
+      - name: Enable pnpm
+        run: corepack enable
+
+      - name: Install dependencies
+        run: corepack pnpm install --frozen-lockfile
+
+      - name: Install Chromium for Web E2E
+        run: corepack pnpm --filter @ling-stack/web exec playwright install chromium
+
+      - name: Typecheck Desktop
+        run: corepack pnpm --filter @ling-stack/desktop typecheck
+
+      - name: Build Desktop
+        run: corepack pnpm --filter @ling-stack/desktop build
+
+      - name: Check Web lint and i18n
+        run: |
+          corepack pnpm --filter @ling-stack/web lint
+          corepack pnpm --filter @ling-stack/web check:i18n
+
+      - name: Run Desktop Node tests
+        run: node --test apps/desktop/tests/*.test.mjs
+
+      - name: Run Computer Use contracts and provider integration tests
+        run: >-
+          node --test
+          packages/contracts/test/computer-use.test.mjs
+          packages/api-client/test/computer-use.test.mjs
+          packages/daemon/test/computer-use-api.test.mjs
+          packages/daemon/test/computer-use-producer.test.mjs
+          packages/daemon/test/computer-use-registry-retention.test.mjs
+          packages/daemon/test/computer-use-run-integration.test.mjs
+          packages/daemon/test/cua-driver-preset.test.mjs
+          packages/daemon/test/provider-health.test.mjs
+          packages/daemon/test/plugin-manager-api.test.mjs
+
+      - name: Run PiP renderer tests
+        run: corepack pnpm --filter @ling-stack/desktop exec playwright test --config tests/playwright.renderer.config.mjs
+
+      - name: Run Web Desktop bridge tests
+        run: corepack pnpm --filter @ling-stack/web exec playwright test e2e/app-shell-selectors.spec.ts e2e/desktop-computer-use-bridge.spec.ts
+
+      - name: Run fake Computer Use smoke
+        run: node apps/desktop/tests/run-computer-use-smoke.mjs
+
+      - name: Run Computer Use performance and cleanup harness
+        shell: bash
+        run: |
+          mkdir -p apps/desktop/test-results
+          node --expose-gc apps/desktop/tests/computer-use-performance-harness.mjs \
+            | tee apps/desktop/test-results/computer-use-performance-macos.json
+
+      - name: Verify Computer Use screenshot baselines
+        if: runner.arch == 'ARM64'
+        run: corepack pnpm --filter @ling-stack/desktop exec electron tests/screenshot-app
+
+      - name: Build unsigned macOS artifacts
+        run: corepack pnpm --filter @ling-stack/desktop package:mac
+
+      - name: Verify macOS bundles and archives
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          arm_app="apps/desktop/release/mac-arm64/Ling Stack.app"
+          x64_app="apps/desktop/release/mac/Ling Stack.app"
+          test -d "$arm_app"
+          test -d "$x64_app"
+
+          test "$(plutil -extract CFBundleIdentifier raw -o - "$arm_app/Contents/Info.plist")" = "com.lingstack.desktop"
+          test "$(plutil -extract CFBundleIdentifier raw -o - "$x64_app/Contents/Info.plist")" = "com.lingstack.desktop"
+          test "$(lipo -archs "$arm_app/Contents/MacOS/Ling Stack")" = "arm64"
+          test "$(lipo -archs "$x64_app/Contents/MacOS/Ling Stack")" = "x86_64"
+
+          arm_signature="$(codesign -dv --verbose=4 "$arm_app" 2>&1 || true)"
+          x64_signature="$(codesign -dv --verbose=4 "$x64_app" 2>&1 || true)"
+          signature_report="${arm_signature}"$'\n'"${x64_signature}"
+          if grep -q "Authority=Developer ID Application" <<<"$signature_report"; then
+            echo "Unsigned macOS job unexpectedly produced a Developer ID artifact" >&2
+            exit 1
+          fi
+          if grep -Eq "TeamIdentifier=[A-Z0-9]{10}" <<<"$signature_report"; then
+            echo "Unsigned macOS job unexpectedly produced a Team ID" >&2
+            exit 1
+          fi
+          printf '%s\n' "$signature_report" > apps/desktop/release/UNSIGNED-CODESIGN-STATUS.txt
+
+          test -f "$arm_app/Contents/Resources/bundled/cua-driver/.ling-plugin/plugin.json"
+          test -f "$x64_app/Contents/Resources/bundled/cua-driver/.ling-plugin/plugin.json"
+
+          preview_root="apps/desktop/dist/renderer/computer-use-preview"
+          test "$(find "$preview_root" -type f | wc -l | tr -d ' ')" -eq 5
+          test "$(find "$preview_root/assets" -maxdepth 1 -type f | wc -l | tr -d ' ')" -eq 2
+          while IFS= read -r asset; do
+            grep -Fq "./assets/$(basename "$asset")" "$preview_root/index.html"
+          done < <(find "$preview_root/assets" -maxdepth 1 -type f | sort)
+
+          dmg_count=0
+          for artifact in apps/desktop/release/*.dmg; do
+            hdiutil verify "$artifact"
+            dmg_count=$((dmg_count + 1))
+          done
+          test "$dmg_count" -eq 2
+
+          zip_count=0
+          for artifact in apps/desktop/release/*-mac.zip; do
+            unzip -t "$artifact"
+            zip_count=$((zip_count + 1))
+          done
+          test "$zip_count" -eq 2
+
+          shasum -a 256 apps/desktop/release/*.dmg apps/desktop/release/*-mac.zip \
+            > apps/desktop/release/SHA256SUMS-macos.txt
+          shasum -a 256 -c apps/desktop/release/SHA256SUMS-macos.txt
+
+      - name: Run arm64 packaged fake smoke
+        shell: bash
+        run: |
+          set -euo pipefail
+          executable="${GITHUB_WORKSPACE}/apps/desktop/release/mac-arm64/Ling Stack.app/Contents/MacOS/Ling Stack"
+          test -x "$executable"
+          LING_DESKTOP_SMOKE_EXECUTABLE="$executable" \
+            LING_DESKTOP_SMOKE_TIMEOUT_MS=50000 \
+            node apps/desktop/tests/run-computer-use-smoke.mjs
+
+      - name: Run x64 packaged fake smoke
+        shell: bash
+        run: |
+          set -euo pipefail
+          executable="${GITHUB_WORKSPACE}/apps/desktop/release/mac/Ling Stack.app/Contents/MacOS/Ling Stack"
+          test -x "$executable"
+          LING_DESKTOP_SMOKE_EXECUTABLE="$executable" \
+            LING_DESKTOP_SMOKE_TIMEOUT_MS=50000 \
+            node apps/desktop/tests/run-computer-use-smoke.mjs
+
+      - name: Run mounted-DMG fake smokes
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          mount_point=""
+          mounted=0
+          cleanup_mount() {
+            if [[ "$mounted" -eq 1 && -n "$mount_point" ]]; then
+              hdiutil detach "$mount_point" >/dev/null 2>&1 \
+                || hdiutil detach -force "$mount_point" >/dev/null 2>&1 \
+                || true
+              mounted=0
+            fi
+            if [[ -n "$mount_point" && -d "$mount_point" ]]; then
+              rmdir "$mount_point" >/dev/null 2>&1 || true
+            fi
+            mount_point=""
+          }
+          cleanup_on_exit() {
+            status=$?
+            cleanup_mount
+            trap - EXIT
+            exit "$status"
+          }
+          trap cleanup_on_exit EXIT
+
+          dmg_count=0
+          for artifact in apps/desktop/release/*.dmg; do
+            mount_point="$(mktemp -d "${RUNNER_TEMP}/ling-desktop-dmg.XXXXXX")"
+            mounted=1
+            hdiutil attach -nobrowse -readonly -mountpoint "$mount_point" "$artifact" >/dev/null
+            executable="$mount_point/Ling Stack.app/Contents/MacOS/Ling Stack"
+            test -x "$executable"
+            LING_DESKTOP_SMOKE_EXECUTABLE="$executable" \
+              LING_DESKTOP_SMOKE_TIMEOUT_MS=50000 \
+              node apps/desktop/tests/run-computer-use-smoke.mjs
+            hdiutil detach "$mount_point" >/dev/null
+            mounted=0
+            rmdir "$mount_point"
+            mount_point=""
+            dmg_count=$((dmg_count + 1))
+          done
+          test "$dmg_count" -eq 2
+          trap - EXIT
+
+      - name: Check tracked-file whitespace
+        shell: bash
+        run: |
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            git diff --check "${{ github.event.pull_request.base.sha }}...HEAD"
+          else
+            git diff-tree --check --no-commit-id -r HEAD
+          fi
+
+      - name: Upload macOS artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ling-stack-desktop-macos-unsigned
+          if-no-files-found: error
+          retention-days: 14
+          path: |
+            apps/desktop/release/*.dmg
+            apps/desktop/release/*-mac.zip
+            apps/desktop/release/SHA256SUMS-macos.txt
+            apps/desktop/release/UNSIGNED-CODESIGN-STATUS.txt
+            apps/desktop/test-results/computer-use-performance-macos.json
+
+  windows-unsigned:
+    name: Windows unsigned x64
+    runs-on: windows-2022
+    timeout-minutes: 60
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.15.0
+
+      - name: Enable pnpm
+        run: corepack enable
+
+      - name: Install dependencies
+        run: corepack pnpm install --frozen-lockfile
+
+      - name: Install Chromium for Web E2E
+        run: corepack pnpm --filter @ling-stack/web exec playwright install chromium
+
+      - name: Typecheck Desktop
+        run: corepack pnpm --filter @ling-stack/desktop typecheck
+
+      - name: Build Desktop
+        run: corepack pnpm --filter @ling-stack/desktop build
+
+      - name: Check Web lint and i18n
+        shell: pwsh
+        run: |
+          corepack pnpm --filter @ling-stack/web lint
+          corepack pnpm --filter @ling-stack/web check:i18n
+
+      - name: Run Desktop Node tests
+        run: node --test apps/desktop/tests/*.test.mjs
+
+      - name: Run Computer Use contracts and provider integration tests
+        run: >-
+          node --test
+          packages/contracts/test/computer-use.test.mjs
+          packages/api-client/test/computer-use.test.mjs
+          packages/daemon/test/computer-use-api.test.mjs
+          packages/daemon/test/computer-use-producer.test.mjs
+          packages/daemon/test/computer-use-registry-retention.test.mjs
+          packages/daemon/test/computer-use-run-integration.test.mjs
+          packages/daemon/test/cua-driver-preset.test.mjs
+          packages/daemon/test/provider-health.test.mjs
+          packages/daemon/test/plugin-manager-api.test.mjs
+
+      - name: Run PiP renderer tests
+        run: corepack pnpm --filter @ling-stack/desktop exec playwright test --config tests/playwright.renderer.config.mjs
+
+      - name: Run Web Desktop bridge tests
+        run: corepack pnpm --filter @ling-stack/web exec playwright test e2e/app-shell-selectors.spec.ts e2e/desktop-computer-use-bridge.spec.ts
+
+      - name: Run fake Computer Use smoke
+        run: node apps/desktop/tests/run-computer-use-smoke.mjs
+
+      - name: Run Computer Use performance and cleanup harness
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path apps/desktop/test-results | Out-Null
+          node --expose-gc apps/desktop/tests/computer-use-performance-harness.mjs |
+            Tee-Object -FilePath apps/desktop/test-results/computer-use-performance-windows.json
+
+      - name: Acquire and verify pinned Windows Cua Driver provider in runner temp
+        shell: pwsh
+        run: |
+          $providerDirectory = Join-Path $env:RUNNER_TEMP "ling-cua-driver-rs-v0.8.3"
+          node apps/desktop/tests/verify-windows-cua-driver-provider.mjs --output-dir $providerDirectory
+
+      - name: Build unsigned Windows artifact
+        run: corepack pnpm --filter @ling-stack/desktop package:win
+
+      - name: Verify Windows executable, installer, architecture, and checksums
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $release = (Resolve-Path "apps/desktop/release").Path
+          $unpackedExe = Join-Path $release "win-unpacked/Ling Stack.exe"
+          if (!(Test-Path $unpackedExe)) {
+            throw "win-unpacked Ling Stack.exe is missing"
+          }
+
+          $bytes = [System.IO.File]::ReadAllBytes($unpackedExe)
+          $peOffset = [System.BitConverter]::ToInt32($bytes, 0x3c)
+          $machine = [System.BitConverter]::ToUInt16($bytes, $peOffset + 4)
+          if ($machine -ne 0x8664) {
+            throw ("Expected PE32+ x64 machine 0x8664, found 0x{0:X4}" -f $machine)
+          }
+
+          $pluginManifest = Join-Path $release "win-unpacked/resources/bundled/cua-driver/.ling-plugin/plugin.json"
+          if (!(Test-Path $pluginManifest)) {
+            throw "Bundled Cua Driver plugin shell manifest is missing"
+          }
+
+          $installers = @(
+            Get-ChildItem -Path $release -File -Filter "*.exe" |
+              Where-Object { $_.Name -notmatch "__uninstaller|^Uninstall" } |
+              Sort-Object Name
+          )
+          if ($installers.Count -ne 1) {
+            throw ("Expected exactly one NSIS installer, found {0}" -f $installers.Count)
+          }
+
+          $checksumLines = foreach ($artifact in $installers) {
+            $hash = Get-FileHash -Path $artifact.FullName -Algorithm SHA256
+            "{0}  {1}" -f $hash.Hash.ToLowerInvariant(), $artifact.Name
+          }
+          $checksumLines | Set-Content -Encoding ascii (Join-Path $release "SHA256SUMS-windows.txt")
+
+          $signatureTargets = @($unpackedExe) + @($installers | ForEach-Object { $_.FullName })
+          $signatures = foreach ($artifactPath in $signatureTargets) {
+            $signature = Get-AuthenticodeSignature -FilePath $artifactPath
+            if ([string]$signature.Status -ne "NotSigned") {
+              throw ("Unsigned Windows job produced a signed or indeterminate artifact: {0} ({1})" -f $artifactPath, $signature.Status)
+            }
+            [PSCustomObject]@{
+              File = Split-Path -Leaf $artifactPath
+              Status = [string]$signature.Status
+              StatusMessage = $signature.StatusMessage
+            }
+          }
+          $signatures | ConvertTo-Json | Set-Content -Encoding utf8 (Join-Path $release "AUTHENTICODE-STATUS.json")
+
+      - name: Run packaged fake Computer Use smoke
+        shell: pwsh
+        run: |
+          $env:LING_DESKTOP_SMOKE_EXECUTABLE = (Resolve-Path "apps/desktop/release/win-unpacked/Ling Stack.exe").Path
+          $env:LING_DESKTOP_SMOKE_TIMEOUT_MS = "50000"
+          node apps/desktop/tests/run-computer-use-smoke.mjs
+
+      - name: Install, smoke, and uninstall unsigned NSIS artifact
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $release = (Resolve-Path "apps/desktop/release").Path
+          $installers = @(
+            Get-ChildItem -Path $release -File -Filter "*.exe" |
+              Where-Object { $_.Name -notmatch "__uninstaller|^Uninstall" } |
+              Sort-Object Name
+          )
+          if ($installers.Count -ne 1) {
+            throw ("Expected exactly one NSIS installer, found {0}" -f $installers.Count)
+          }
+          $installer = $installers[0]
+
+          $programsRoot = Join-Path $env:LOCALAPPDATA "Programs"
+          function Find-LingDesktopInstallRoot {
+            if (!(Test-Path $programsRoot)) {
+              return
+            }
+            Get-ChildItem -Path $programsRoot -Recurse -File -ErrorAction SilentlyContinue |
+              Where-Object { $_.Name -eq "Ling Stack.exe" -or $_.Name -eq "Uninstall Ling Stack.exe" } |
+              ForEach-Object { $_.DirectoryName } |
+              Sort-Object -Unique
+          }
+          $preexistingInstallRoots = @(Find-LingDesktopInstallRoot)
+          if ($preexistingInstallRoots.Count -ne 0) {
+            throw ("Ling Stack is already installed in the hosted runner profile: {0}" -f $preexistingInstallRoots[0])
+          }
+
+          $installRoot = $null
+          $installedExe = $null
+          $installedManifest = $null
+          $primaryFailure = $null
+          $cleanupFailure = $null
+          try {
+            $install = Start-Process -FilePath $installer.FullName -ArgumentList @("/S") -Wait -PassThru
+            if ($install.ExitCode -ne 0) {
+              throw ("NSIS installer failed with exit code {0}" -f $install.ExitCode)
+            }
+
+            $installedRoots = @(Find-LingDesktopInstallRoot)
+            if ($installedRoots.Count -ne 1) {
+              throw ("Expected exactly one Ling Stack install root, found {0}" -f $installedRoots.Count)
+            }
+            $installRoot = $installedRoots[0]
+            $installedExe = Join-Path $installRoot "Ling Stack.exe"
+            $installedManifest = Join-Path $installRoot "resources/bundled/cua-driver/.ling-plugin/plugin.json"
+            if (!(Test-Path $installedExe) -or !(Test-Path $installedManifest)) {
+              throw "Installed Desktop executable or Cua Driver plugin shell is missing"
+            }
+
+            $env:LING_DESKTOP_SMOKE_EXECUTABLE = $installedExe
+            $env:LING_DESKTOP_SMOKE_TIMEOUT_MS = "50000"
+            & node apps/desktop/tests/run-computer-use-smoke.mjs
+            if ($LASTEXITCODE -ne 0) {
+              throw ("Installed Desktop fake smoke failed with exit code {0}" -f $LASTEXITCODE)
+            }
+          } catch {
+            $primaryFailure = $_
+          } finally {
+            try {
+              if (!$installRoot) {
+                $installedRoots = @(Find-LingDesktopInstallRoot)
+                if ($installedRoots.Count -eq 1) {
+                  $installRoot = $installedRoots[0]
+                  $installedExe = Join-Path $installRoot "Ling Stack.exe"
+                  $installedManifest = Join-Path $installRoot "resources/bundled/cua-driver/.ling-plugin/plugin.json"
+                }
+              }
+              if ($installRoot -and (Test-Path $installRoot)) {
+                $uninstaller = Get-ChildItem -Path $installRoot -File -Filter "Uninstall*.exe" |
+                  Sort-Object Name |
+                  Select-Object -First 1
+                if (!$uninstaller) {
+                  throw "NSIS uninstaller is missing"
+                }
+                $uninstall = Start-Process -FilePath $uninstaller.FullName -ArgumentList @("/S") -Wait -PassThru
+                if ($uninstall.ExitCode -ne 0) {
+                  throw ("NSIS uninstaller failed with exit code {0}" -f $uninstall.ExitCode)
+                }
+                for ($attempt = 0; $attempt -lt 40 -and (Test-Path $installRoot); $attempt += 1) {
+                  Start-Sleep -Milliseconds 250
+                }
+                if (Test-Path $installRoot) {
+                  throw ("NSIS uninstall left the install root behind: {0}" -f $installRoot)
+                }
+              }
+            } catch {
+              $cleanupFailure = $_
+            }
+          }
+
+          if ($primaryFailure -and $cleanupFailure) {
+            throw ("NSIS validation failed: {0}; cleanup also failed: {1}" -f $primaryFailure.Exception.Message, $cleanupFailure.Exception.Message)
+          }
+          if ($primaryFailure) {
+            throw $primaryFailure
+          }
+          if ($cleanupFailure) {
+            throw $cleanupFailure
+          }
+
+      - name: Check tracked-file whitespace
+        shell: pwsh
+        run: |
+          if ("${{ github.event_name }}" -eq "pull_request") {
+            git diff --check "${{ github.event.pull_request.base.sha }}...HEAD"
+          } else {
+            git diff-tree --check --no-commit-id -r HEAD
+          }
+          if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+          }
+
+      - name: Upload Windows artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ling-stack-desktop-windows-x64-unsigned
+          if-no-files-found: error
+          retention-days: 14
+          path: |
+            apps/desktop/release/*.exe
+            apps/desktop/release/*.blockmap
+            apps/desktop/release/SHA256SUMS-windows.txt
+            apps/desktop/release/AUTHENTICODE-STATUS.json
+            apps/desktop/test-results/computer-use-performance-windows.json

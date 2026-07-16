@@ -3,6 +3,12 @@ import { LingDaemonError } from "./errors.js";
 export interface LingDaemonClientOptions {
   readonly baseUrl?: string;
   readonly fetch?: typeof globalThis.fetch;
+  /**
+   * Installation-scoped Computer Use route token for trusted native requests.
+   * It is attached only to `/computer-use/*` requests and never serialized in
+   * URLs or sent to unrelated daemon endpoints.
+   */
+  readonly computerUseRouteToken?: string;
 }
 
 export type Query = Record<string, string | number | boolean | undefined>;
@@ -12,6 +18,7 @@ type FetchInit = Parameters<typeof globalThis.fetch>[1];
 
 export interface LingDaemonEndpointContext {
   readonly baseUrl: string;
+  readonly computerUseRouteToken?: string;
   _fetch(input: FetchInput, init?: FetchInit): Promise<Response>;
   _get<T>(path: string, query?: Query): Promise<T>;
   _post<T>(path: string, query?: Query, body?: unknown): Promise<T>;
@@ -20,6 +27,13 @@ export interface LingDaemonEndpointContext {
   _delete<T>(path: string, query?: Query, body?: unknown): Promise<T>;
   _requestJson<T>(method: string, path: string, query?: Query, body?: unknown): Promise<T>;
   _request<T>(method: string, path: string, query?: Query, body?: unknown): Promise<T>;
+  _requestWithHeaders<T>(
+    method: string,
+    path: string,
+    query?: Query,
+    body?: unknown,
+    headers?: HeadersInit,
+  ): Promise<T>;
   _url(path: string, query?: Query): string;
 }
 
@@ -35,10 +49,12 @@ export function daemonBaseUrlFromEnv(env: Record<string, string | undefined> = {
 
 export class LingDaemonTransport implements LingDaemonEndpointContext {
   readonly baseUrl: string;
+  readonly computerUseRouteToken: string | undefined;
   private readonly fetchImpl: typeof globalThis.fetch;
 
   constructor(options: LingDaemonClientOptions = {}) {
     this.baseUrl = (options.baseUrl ?? daemonBaseUrlFromEnv()).replace(/\/$/, "");
+    this.computerUseRouteToken = options.computerUseRouteToken;
     const configuredFetch = options.fetch;
     if (configuredFetch) {
       this.fetchImpl = (input, init) => configuredFetch(input, init);
@@ -97,9 +113,26 @@ export class LingDaemonTransport implements LingDaemonEndpointContext {
 
   /** @internal */
   async _request<T>(method: string, path: string, query: Query = {}, body?: unknown): Promise<T> {
+    return this._requestWithHeaders(method, path, query, body);
+  }
+
+  /** @internal Computer Use endpoints use this to attach their scoped token. */
+  async _requestWithHeaders<T>(
+    method: string,
+    path: string,
+    query: Query = {},
+    body?: unknown,
+    headers?: HeadersInit,
+  ): Promise<T> {
     const init: RequestInit = { method };
+    if (headers) {
+      init.headers = headers;
+    }
     if (body !== undefined) {
-      init.headers = { "Content-Type": "application/json" };
+      init.headers = {
+        ...(headers ? Object.fromEntries(new Headers(headers).entries()) : {}),
+        "Content-Type": "application/json",
+      };
       init.body = JSON.stringify(body);
     }
     const response = await this.fetchImpl(this._url(path, query), init);

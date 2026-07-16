@@ -87,6 +87,7 @@ Ling Stack connects channels, tasks, runtime sessions, provider routing, artifac
 - [Desktop Computer Use Picture-in-Picture](docs/design/desktop-computer-use-picture-in-picture.md)
 - [Desktop Computer Use Picture-in-Picture detailed design](docs/design/desktop-computer-use-picture-in-picture-detailed-design.md)
 - [Desktop Computer Use Picture-in-Picture implementation plan](docs/design/desktop-computer-use-picture-in-picture-implementation-plan.md)
+- [Desktop release acceptance](docs/release/desktop.md)
 - [Secrets / Keychain](docs/design/secrets-keychain.md)
 - [State machines and recovery](docs/design/state-machine-recovery.md)
 - [Multi-channel concurrency](docs/design/multi-channel-concurrency.md)
@@ -95,7 +96,8 @@ Ling Stack connects channels, tasks, runtime sessions, provider routing, artifac
 
 ## UI Direction
 
-The Web UI and the future desktop app should follow the same product direction: a client-style AI teammate workspace, not a marketing homepage or a configuration dashboard.
+The shared Web UI and the current Electron Desktop alpha follow the same product direction:
+a client-style AI teammate workspace, not a marketing homepage or a configuration dashboard.
 
 Concept direction:
 
@@ -162,7 +164,7 @@ Ling Stack owns the workspace. Pi owns the first coding-agent runtime.
 | Runner | Execute coding-agent tasks and stream events | `packages/runner-pi` |
 | Daemon | Local API for CLI, web UI, and desktop shell | `packages/daemon` |
 | Providers | Model and media capability adapters | `packages/providers` |
-| UI | Local web and future desktop surfaces | `apps/web`, `apps/desktop` |
+| UI | Shared Web surface and Electron Desktop alpha | `apps/web`, `apps/desktop` |
 
 ## Benefits
 
@@ -174,7 +176,7 @@ Ling Stack owns the workspace. Pi owns the first coding-agent runtime.
 - **Composable skills:** AI teammates can use workflow templates inspired by gstack while execution remains governed by tools, provider capabilities, approval policy, and state machines.
 - **Approval-ready workflow:** file writes, shell commands, external sends, deployments, and high-cost media jobs can route through human review.
 - **Local-first adoption:** the first useful version can run as a CLI, local daemon, and local web UI before cloud/team sync exists.
-- **Desktop later, not blocking:** macOS, Windows, and Linux apps can wrap the local daemon after the runtime is useful.
+- **Desktop shell without a product fork:** the macOS/Windows Electron alpha wraps the local daemon and loads the same Web product; Linux packaging is not part of the current Computer Use PiP release.
 
 ## Core Principles
 
@@ -639,7 +641,8 @@ Not implemented yet:
 - Billing, cost estimation, and broader media workflow automation.
 - OS keychain integration for secrets.
 - Live media provider generation checks.
-- Desktop packaging.
+- Production Desktop packaging: Developer ID/notarized macOS artifacts, signed Windows
+  installer, clean-machine install/update/uninstall evidence, and real-platform capture gates.
 
 ## License
 

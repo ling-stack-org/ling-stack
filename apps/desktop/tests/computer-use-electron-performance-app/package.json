@@ -1,0 +1,6 @@
+{
+  "name": "ling-computer-use-electron-performance-harness",
+  "private": true,
+  "type": "module",
+  "main": "./main.mjs"
+}

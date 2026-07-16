@@ -8,7 +8,12 @@ import {
   type SecretResolver,
   redactSecrets,
 } from "@ling-stack/core";
-import type { PiRunnerMcpToolCallResult, PiRunnerMcpToolDefinition, PiRunnerRunOptions } from "@ling-stack/runner-pi";
+import type {
+  PiRunnerMcpToolCallRequest,
+  PiRunnerMcpToolCallResult,
+  PiRunnerMcpToolDefinition,
+  PiRunnerRunOptions,
+} from "@ling-stack/runner-pi";
 import type { McpBroker } from "../../context.js";
 import { mcpServerSecretRefs, mcpServerSecretStatuses } from "../mcp/secrets.js";
 import { deriveMcpServerStatus } from "../mcp/status.js";
@@ -112,6 +117,17 @@ export function createMcpToolCallHandler(
   secretResolver: SecretResolver,
   mcpBroker: McpBroker,
   tools: readonly PiRunnerMcpToolDefinition[],
+  options: {
+    readonly onStart?: (input: {
+      readonly request: PiRunnerMcpToolCallRequest;
+      readonly definition: PiRunnerMcpToolDefinition;
+    }) => void;
+    readonly onResult?: (input: {
+      readonly request: PiRunnerMcpToolCallRequest;
+      readonly definition: PiRunnerMcpToolDefinition;
+      readonly result: PiRunnerMcpToolCallResult;
+    }) => void;
+  } = {},
 ): NonNullable<PiRunnerRunOptions["onMcpToolCall"]> {
   const byRegisteredName = new Map(tools.map((tool) => [tool.registeredName, tool]));
   return async (request) => {
@@ -127,8 +143,22 @@ export function createMcpToolCallHandler(
     if (!cachedTool || !isMcpToolEnabledForServer(server, cachedTool)) {
       throw new Error(`MCP tool is disabled or missing: ${tool.rawName}`);
     }
+    try {
+      options.onStart?.({ request, definition: tool });
+    } catch {
+      // Projection observers are best-effort and must not alter the authoritative MCP call.
+    }
     const result = await mcpBroker.callTool(server, { secretResolver }, tool.rawName, request.input);
-    return redactSecrets(result, collectMcpSecretValuesForServer(server, secretResolver)) as PiRunnerMcpToolCallResult;
+    const redactedResult = redactSecrets(
+      result,
+      collectMcpSecretValuesForServer(server, secretResolver),
+    ) as PiRunnerMcpToolCallResult;
+    try {
+      options.onResult?.({ request, definition: tool, result: redactedResult });
+    } catch {
+      // Projection observers are best-effort and must not alter the authoritative MCP result.
+    }
+    return redactedResult;
   };
 }
 

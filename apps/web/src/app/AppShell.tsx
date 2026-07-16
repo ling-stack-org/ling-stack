@@ -94,6 +94,7 @@ import {
 } from "../lib/run-evidence.js";
 import { useApprovalsDomain } from "../domains/approvals/use-approvals-domain.js";
 import { useAutomationsDomain } from "../domains/automations/use-automations-domain.js";
+import { DesktopComputerUseBridge } from "./DesktopComputerUseBridge.js";
 import { useConversationDomain } from "../domains/conversations/use-conversation-domain.js";
 import { useExternalWorkDomain } from "../domains/external-work/use-external-work-domain.js";
 import { useMediaDomain } from "../domains/media/use-media-domain.js";
@@ -124,6 +125,7 @@ import { removeRecordKey } from "../lib/records.js";
 import { permissionPresetForWorkspaceAccessMode, workspaceAccessModeForPermissionPreset } from "../lib/session-permissions.js";
 import { authorizationAndAccessToLegacyPermission } from "../lib/conversation-authorization.js";
 import { StatusBadge } from "../shared/components/index.js";
+import { CurrentSessionHeaderCapabilityProvider } from "../shared/current-session/CurrentSessionHeaderCapability.js";
 import {
   aiTeammateToLocalDraft,
   buildChannelUnreadState,
@@ -131,6 +133,7 @@ import {
   buildSidebarChannelNotifications,
   buildSidebarTeammateNotifications,
   latestChannelMessageTimestamp,
+  selectDesktopComputerUseConversation,
   type ChannelUnreadState,
 } from "./app-shell-selectors.js";
 import { useAppNavigationController } from "./use-app-navigation-controller.js";
@@ -199,6 +202,7 @@ export function AppShell(): JSX.Element {
   const [settingsWorkspaceToolView, setSettingsWorkspaceToolView] = useState<SettingsWorkspaceToolView>("");
   const [settingsInitialSection, setSettingsInitialSection] = useState<SettingsSectionId | undefined>();
   const [settingsRunDiagnosticsRunId, setSettingsRunDiagnosticsRunId] = useState<string | undefined>();
+  const [desktopTeammateConversationId, setDesktopTeammateConversationId] = useState<string | undefined>();
   const [providerSetupIntent, setProviderSetupIntent] = useState<ProviderSetupIntent | "">("");
   const settingsReturnTargetRef = useRef<SettingsReturnTarget | undefined>(undefined);
   const [channelSidebarOpen, setChannelSidebarOpen] = useState(() =>
@@ -2043,6 +2047,15 @@ export function AppShell(): JSX.Element {
     showInspector && inspectorCollapsed ? "inspector-collapsed" : "",
     showInspector ? "" : "inspector-hidden",
   ].filter(Boolean).join(" ");
+  const workspaceSurfaceRef = useRef<HTMLElement>(null);
+  const desktopSelectedConversationId = selectDesktopComputerUseConversation({
+    activeView,
+    selectedChannelId,
+    selectedChannelBranchRootThreadId,
+    selectedConversationThreadId,
+    selectedAiTeammateId: selectedAiTeammate?.id,
+    teammateDirectThreadId: desktopTeammateConversationId,
+  });
 
   return (
     <main className={shellClassName}>
@@ -2101,6 +2114,7 @@ export function AppShell(): JSX.Element {
       />
       ) : null}
       <section
+        ref={workspaceSurfaceRef}
         className={
           activeView === "workspace"
             ? "workspace workspace-client-surface"
@@ -2123,12 +2137,17 @@ export function AppShell(): JSX.Element {
               : "workspace"
         }
       >
-        <LazyPageErrorBoundary
-          resetKey={`${activeView}:${selectedAiTeammate?.id ?? ""}`}
-          title={t("Page failed to load")}
-          retryLabel={t("Reload")}
-        >
-          <Suspense fallback={<div className="client-empty-state"><span>{t("Loading")}</span></div>}>
+        <CurrentSessionHeaderCapabilityProvider>
+          <DesktopComputerUseBridge
+            selectedConversationId={desktopSelectedConversationId}
+            hostRef={workspaceSurfaceRef}
+          />
+          <LazyPageErrorBoundary
+            resetKey={`${activeView}:${selectedAiTeammate?.id ?? ""}`}
+            title={t("Page failed to load")}
+            retryLabel={t("Reload")}
+          >
+            <Suspense fallback={<div className="client-empty-state"><span>{t("Loading")}</span></div>}>
             {activeView === "workspace" ? (
               selectedChannelId ? (
                 <WorkspaceClientView
@@ -2427,6 +2446,7 @@ export function AppShell(): JSX.Element {
                 onOpenRun={(runId) => void openRunFromWorkspace(runId)}
                 defaultAuthorizationMode={workspaceSettings?.defaultAuthorizationMode}
                 defaultWorkspaceAccessMode={workspaceSettings?.defaultWorkspaceAccessMode}
+                onDirectConversationChange={setDesktopTeammateConversationId}
                 defaultPermissionMode={workspaceSettings?.defaultPermissionMode}
                 defaultPermissionPreset={workspaceSettings?.defaultPermissionPreset}
                   />
@@ -2806,8 +2826,9 @@ export function AppShell(): JSX.Element {
                 )}
               </>
             )}
-          </Suspense>
-        </LazyPageErrorBoundary>
+            </Suspense>
+          </LazyPageErrorBoundary>
+        </CurrentSessionHeaderCapabilityProvider>
       </section>
       {showInspector ? (
         <aside className={inspectorCollapsed ? "right-panel collapsed" : "right-panel"} aria-label={t("Inspector")}>

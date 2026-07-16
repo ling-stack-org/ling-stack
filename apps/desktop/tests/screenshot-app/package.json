@@ -1,0 +1,6 @@
+{
+  "name": "ling-computer-use-screenshot-harness",
+  "private": true,
+  "type": "module",
+  "main": "./main.mjs"
+}

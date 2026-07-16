@@ -1,6 +1,15 @@
 # Desktop Computer Use Picture-in-Picture
 
-Status: approved design direction, implementation not started
+Status: approved design direction, implementation in progress; capture-request provenance,
+exact loaded-document and navigation binding, provisional-idle renderer startup, bounded
+zero-frame recovery, decoded-frame readiness polling, fail-safe media release, Desktop-local
+source generations, current-session controls, Cua native-window identity handoff, current-host
+real-capture performance, and the unsigned macOS arm64/x64 `.app` plus mounted-DMG packaged
+provenance matrix are verified. Apple Developer ID signing/notarization and Gatekeeper,
+signed-app clean-host TCC and operating-system capture-indicator evidence, Windows x64
+interactive provider/real-source/DPI/dual-screen VM acceptance,
+Authenticode/SmartScreen/signed NSIS, hosted CI, clean-machine install/update/uninstall,
+and real VoiceOver/Narrator/NVDA acceptance remain open release gates.
 
 Related documents:
 
@@ -23,8 +32,10 @@ the session owner, input-control owner, approval owner, or audit owner.
 
 ## Product Decision
 
-Build one shared React picture-in-picture experience inside an Electron desktop shell,
-with a narrow platform adapter for capture and window integration.
+Build one dedicated picture-in-picture renderer inside the Electron desktop shell, reuse
+shared visual tokens where practical, and keep a narrow platform adapter for capture and
+window integration. The main Ling conversation UI remains the shared Web application;
+the small PiP renderer is not a second product state store.
 
 ```text
 Computer Use runtime / plugin
@@ -33,9 +44,10 @@ Computer Use runtime / plugin
   -> Desktop main-process preview coordinator
   -> platform preview adapter
        macOS: Electron capture first, ScreenCaptureKit optimization later
-       Windows: Electron capture first, Windows Graphics Capture optimization later
+       Windows: Cua Driver supplies an exact numeric native window id and provider PID;
+                Electron capture remains the presentation adapter
   -> dedicated picture-in-picture BrowserWindow
-  -> shared React preview renderer
+  -> dedicated isolated preview renderer
 ```
 
 The visual and behavior layers are shared across macOS and Windows. Only capture,
@@ -56,11 +68,30 @@ together when the Web UI changes.
 shared Web application
   -> browser surface: no Desktop capability bridge
   -> Desktop main window: Desktop capability bridge available
+       -> report normalized en-US / zh-CN locale
+       -> Desktop main forwards locale in the sanitized PiP snapshot
+       -> dedicated PiP renderer resolves its small local message catalog
 
 Desktop-only windows
   -> Computer Use picture-in-picture renderer
   -> future quick panels or OS-owned surfaces
 ```
+
+The current shared-Web boundary is already modularized for later UI synchronization:
+
+```text
+DesktopComputerUseBridge
+  -> capability + locale + selected owner + summary + stale command lifecycle
+  -> useDesktopComputerUseHostLayoutReporter
+       -> geometry observers + modal auto-marker + cleanup
+  -> DesktopComputerUseControlSlot
+       -> movable current-session Show/Hide/Stop + status + pending/failure + ARIA
+```
+
+The current product placement is the current-session header toolbar for channel, normal
+conversation, and teammate-direct surfaces. Future conversation-UI changes may move only
+that control slot and adjust semantic marker ownership. Capture, coordinator, daemon state,
+and platform adapters do not move with it.
 
 The picture-in-picture renderer is Desktop-specific because it lives in a separate
 always-on-top operating-system window. It may reuse shared design tokens and focused
@@ -73,18 +104,19 @@ conversation UI primitives, but it must not copy the main conversation page.
 | Computer Use daemon projection | It depends on runtime identity and status, not page layout. |
 | Preview coordinator and visibility state machine | Show, Hide, Close, Stop, terminal, and recovery semantics are product rules. |
 | Platform capture adapter | It depends on an approved source descriptor, not toolbar placement. |
-| Dedicated PiP renderer snapshot | It receives sanitized state independent of the main page component tree. |
+| Dedicated PiP renderer snapshot | It receives sanitized state plus normalized locale independent of the main page component tree. Locale-only updates do not reload the window or media source. |
 | Selected conversation bridge | It reports a structured conversation id from the route controller. |
 | Host and obstacle rectangle contract | It accepts geometry without naming a specific current component. |
 
-### Deferred until the main UI settles
+### Settled shared-UI placement and deferred polish
 
-- whether `Show preview` lives in the right dock, conversation toolbar, summary popover,
-  or another current-session surface;
-- the final DOM elements that report composer, dock, terminal, modal, and approval
-  obstacle rectangles;
-- exact PiP chrome, icon placement, shadows, animation, and final screenshot baselines;
-- surface-specific copy that depends on the final conversation information architecture.
+- `Show preview`, `Hide`, and `Stop` live in the current-session header toolbar.
+- `Close window` lives only in the PiP More menu. It destroys the preview and releases
+  capture without stopping Computer Use.
+- composer, dock, terminal, modal, approval, and summary surfaces report typed obstacle
+  geometry across channel, normal conversation, and teammate-direct layouts.
+- Windows DPI/dual-display screenshots, real-platform capture visuals, and later token/motion
+  polish remain acceptance work rather than architecture decisions.
 
 ### Safe fallback while UI integration is incomplete
 
@@ -92,9 +124,10 @@ If the main UI has not reported a host layout, Desktop places the preview inside
 current display work area using the saved preferred corner. It does not inspect or infer
 private Web DOM structure.
 
-If the main UI does not yet expose `Show preview`, auto-show and the PiP window's own Hide
-and Close controls still work. This fallback is for staged implementation only; the
-release completion gate still requires a discoverable current-session Show/Hide entry.
+If a future UI refactor temporarily relocates the current working `Show preview` slot,
+auto-show, the PiP renderer's Hide control, and the native window-close path still work.
+This is a migration fallback only; release still requires broader cross-platform
+visual/accessibility acceptance.
 
 With this boundary, later UI changes affect a small capability adapter and geometry
 markers. They do not rewrite capture, runtime projection, window lifecycle, or
@@ -128,14 +161,39 @@ Three actions must remain distinct:
 | Close window | Window is destroyed and session-suppressed | Continues | Explicit `Show preview` recreates it. |
 | Stop Computer Use | Closes after stop is acknowledged | Stops or cancels through the runtime owner | A new Computer Use session is required. |
 
-The native close button and the in-preview `Hide` action are intentionally equivalent in
-session semantics: neither stops Computer Use. Close releases the window itself, while
+The native close event/window-close shortcut and the in-preview `Hide` action are
+intentionally equivalent in session semantics: neither stops Computer Use. Close releases the window itself, while
 Hide allows the coordinator to reuse it later. This prevents an ordinary window-management
 gesture from terminating an external side effect.
 
 Hide or Close suppression is scoped to the current `sessionId`. It survives a Desktop
-restart while that session is still active, then clears on terminal acknowledgement or
-after a 24-hour safety expiry. A new Computer Use session may auto-show normally.
+restart while that session is still active. At terminal acknowledgement it becomes
+behaviorally irrelevant because a new run uses a new session id. The current implementation
+eagerly removes terminal-session suppression and explicit visibility state; the existing
+24-hour safety expiry remains the fallback for abandoned local state. A new Computer Use
+session may auto-show normally.
+
+### Lifecycle trigger matrix
+
+| Trigger | Window and media action | Persistent session suppression | Runtime | Next presentation |
+| --- | --- | --- | --- | --- |
+| First valid frame for selected active session, auto-show enabled | Show/reveal after the frame gate | No | Continues | Already visible |
+| Explicit `Show preview` | Create/reveal and connect | Clear current-session suppression | Continues | Immediate after first valid frame |
+| User `Hide preview` | Hide reusable window; release media | Yes, up to 24 hours | Continues | Explicit Show |
+| Native close event or window-close shortcut | Destroy window; release media | Yes, up to 24 hours | Continues | Explicit Show recreates |
+| Route/session switch | Destroy or rebind the old preview; release old media | No user suppression | Continues | New selected session may auto-show after first frame |
+| Ten-second zero-frame deadline | Hide and release media | No user suppression | Continues; never Stop | Explicit user Show/Retry, new descriptor identity, or explicit Desktop restart |
+| Terminal projection | Freeze/linger as specified, then destroy and release | Entry becomes irrelevant and should be pruned | Ends in daemon/runtime | A new session is required |
+| Desktop quit or owner deletion | Destroy and release immediately | Clear local ownership state | Runtime follows its owner, not the PiP window | Normal startup/new session flow |
+
+Current implementation: the ten-second deadline writes a process-local
+session/descriptor/revision latch before hiding and releasing, so ordinary reconciliation
+cannot reconnect it. Explicit Show/Retry or a new descriptor identity clears the latch;
+restarting Desktop explicitly rebuilds presentation state. Desktop main also waits for an exact renderer
+release acknowledgement; the renderer drains pending acquisition and stops late streams
+before ACK. A 500 ms timeout or negative acknowledgement destroys the exact renderer/window,
+so a hung renderer cannot keep capturing behind a hidden window. V1 has no
+resume/unlock/user-active listener and never wakes the display.
 
 ## Automatic Show Rules
 
@@ -149,9 +207,18 @@ Automatically show the preview when all conditions are true:
 
 Do not open an empty floating window while capture is still starting. Starting state
 belongs in the transcript or workspace status surface until the first frame arrives.
+Because hidden BrowserWindows may defer paint-driven callbacks, the renderer also checks
+decoded readiness every 16 ms and may pass the gate only at `HAVE_CURRENT_DATA` or later.
+That poll is bound to the exact media identity and ends on Hide, revision replacement,
+reconnect, teardown, or an already reported frame.
 
 An explicit `Show preview` action overrides the global auto-show preference for the
 current session only.
+
+Turning auto-show off applies to future automatic reveals. It releases a source that is
+still connecting behind a hidden window, and late first-frame callbacks cannot reveal it.
+It does not abruptly hide a preview that is already visible; `Hide preview` remains the
+explicit action for that.
 
 ## Automatic Hide Rules
 
@@ -168,6 +235,13 @@ Hide without stopping the session when:
 
 Losing operating-system focus does not hide the preview. The purpose of picture-in-picture
 is to remain visible while the user works in another application.
+
+A sleeping display may leave the operating-system capture track alive without producing
+frames. Ling must not wake the display or stop Computer Use. After a one-second first-frame
+or frame-gap watchdog fires, it enters bounded recovery and uses a ten-second absolute
+deadline. Expiry hides the preview and releases media while the task continues.
+Recovery is explicit user Show/Retry, a new descriptor identity, or an explicit Desktop
+restart; sleep, resume, unlock, and user-active signals never auto-reopen V1.
 
 ## Automatic Close Rules
 
@@ -188,6 +262,13 @@ Terminal presentation timing:
 | Failed | Freeze the last frame and show the failure plus `Open task`. | 5 seconds; pause the timer while hovered or keyboard-focused. |
 | Permission revoked | Show `Screen access required` and `Open settings`. | 5 seconds if not acted on. |
 
+Only the actionable five-second failure and permission treatments pause while hovered or
+keyboard-focused. Success, cancellation, frame-gap detection, and reconnect backoff do
+not pause. Choosing `Open settings` counts as acting: it cancels automatic close and keeps
+the recovery entry available. A rejected Stop request keeps the task and preview running,
+shows safe assertive feedback, and offers `Try Stop again` without displaying internal
+runtime or IPC reasons.
+
 Closing the preview after a terminal event does not delete transcript, audit, approval,
 or artifact records.
 
@@ -200,8 +281,9 @@ The first version supports one visible picture-in-picture preview.
 - When Ling loses application focus, the last selected conversation remains selected so
   the preview can stay visible over another application.
 - Switching to another Ling conversation hides the previous preview immediately.
-- If the new conversation has a ready active session, the same window swaps content with
-  a short cross-fade.
+- If the new conversation has a ready active session, the current implementation destroys
+  the previous preview and recreates it for the new session. Same-window cross-fade is a
+  later visual optimization, not a lifecycle requirement.
 - Historical and completed Computer Use operations never reopen picture-in-picture.
 
 Multiple simultaneous preview windows and a stacked preview history are out of scope for
@@ -227,6 +309,19 @@ the first version.
 - global auto-show preference and per-session suppression;
 - window bounds, screen selection, always-on-top behavior, and repositioning;
 - trusted IPC between the daemon projection, main process, preload, and renderer.
+- the latest normalized `en-US | zh-CN` presentation locale reported by the shared Web UI;
+
+### Shared Web application owns
+
+- route-derived current conversation ownership and locale reporting;
+- semantic host/obstacle markers and bounded geometry reporting;
+- the movable current-session control slot and its translated status/ARIA presentation;
+- local Show/Hide/Stop pending/failure feedback, bounded command timeout, and stale
+  route/session result suppression;
+- browser-safe no-op behavior when the Desktop capability is absent.
+
+The daemon projection remains the Stop and terminal-status authority. Shared Web feedback
+must not invent a second execution lifecycle.
 
 ### Picture-in-picture renderer owns
 
@@ -235,6 +330,7 @@ the first version.
 - drag and resize affordances delegated to the Desktop main process;
 - user commands such as show, hide, open task, and stop request;
 - accessibility labels, keyboard focus, and reduced-motion behavior.
+- a small local message catalog for window title, status, controls, recovery, and ARIA copy;
 
 ### Platform adapters own
 
@@ -250,8 +346,27 @@ request is authorized.
 
 ### First implementation
 
-Use Electron's public capture and BrowserWindow APIs on macOS and Windows. This gives the
-same visual surface and state behavior on both platforms.
+Use Electron's public capture and BrowserWindow APIs for the presentation layer. macOS
+real capture is gated on a signed-app TCC verification. Windows uses the selected
+open-source Cua Driver Rust provider for explicit HWND/PID target identity and Electron
+for PiP capture; real support remains gated on the Windows x64 provider/source lifecycle
+matrix. An Electron installer by itself is not evidence of Windows Computer Use support.
+
+The Electron V1 keeps preview capture in a dedicated non-persistent Session partition.
+`session.defaultSession` is diagnostic-only because the display-media handler is
+Session-scoped and the main Ling window already uses the default Session. Each capture
+grant is single-use and bound to the exact loaded PiP document: frame token, frame-tree node,
+renderer process id, frame routing id, webContents, dedicated Session, frame URL/security
+origin, session id, descriptor id/revision, authorization expiry, and prepare generation.
+The coordinator loads a provisional `idle` snapshot before `prepare()` so the adapter binds
+the real current main document rather than a future or replaced renderer. Main-document
+navigation/reload, requester destruction, release, descriptor replacement, or adapter
+disposal invalidates the outstanding grant; disposal also removes the Session-wide handler.
+
+For native-window handoff, Ling matches the exact numeric `window_id` returned by Cua Driver
+and carries only Cua's native window id plus provider-reported owner PID into the descriptor.
+The Electron source id is a smoke-test oracle, not the production handoff. Selection never
+falls back to title matching, foreground-window state, z-order, or nearest-candidate guesses.
 
 ### Native optimization path
 
@@ -270,6 +385,8 @@ capture path.
 
 - The preview may display only the source already approved for the Computer Use session.
 - Do not expose arbitrary `desktopCapturer` source selection to an untrusted renderer.
+- Reject display-media requests that do not originate from the current PiP renderer frame;
+  Session isolation alone is not an authorization check.
 - Raw Node.js, filesystem, shell, Accessibility, UI Automation, and input-injection APIs
   must not be exposed through preload.
 - Do not persist frames, thumbnails, clipboard contents, or source-window titles in
@@ -277,6 +394,17 @@ capture path.
 - A visible recording indicator and operating-system permission UX must not be hidden.
 - `Stop Computer Use` routes through the same approval, runtime, and audit boundaries as
   stopping from the owning conversation.
+- Computer Use list/events/stream/stop routes must use a scoped local authorization or
+  same-origin/CSRF boundary; loopback plus `Access-Control-Allow-Origin: *` is not enough
+  for a destructive Stop action.
+- Browser requests with a local `Origin` use the local-origin/CSRF boundary. Native
+  requests with no `Origin` must carry the installation-scoped
+  `X-Ling-Computer-Use-Token`; the token is never accepted from a query string and is
+  attached only to Computer Use projection/control routes. The descriptor handoff keeps
+  its separate `X-Ling-Desktop-Bridge-Token` header.
+- The alpha may derive both scoped capabilities from the same per-installation secret, but
+  the HTTP headers and route checks remain separate so a bridge token is not accidentally
+  propagated to unrelated daemon APIs.
 - The preview is view-only in the first version. User takeover and direct input forwarding
   require a separate design and explicit authorization model.
 
@@ -288,16 +416,51 @@ First-version targets on a supported laptop:
 - visual latency: under 250 ms for local capture;
 - active preview CPU: under 8% of one performance core at 30 fps;
 - memory growth after ten open/close cycles: under 20 MB;
-- hidden preview releases active video tracks within 500 ms;
+- hidden preview receives renderer track-release acknowledgement within 500 ms, or
+  force-destroys the renderer/window to guarantee capture stops;
 - position update during resize or dock changes: one update per animation frame at most;
 - no main-conversation scroll or typing jank while the preview is active.
+
+The 2026-07-16 current-host real Electron baseline meets the local budgets:
+
+The final local verification matrix passes **169/169 Desktop Node tests**, **17/17 PiP
+renderer tests**, **51/51 focused contracts/API/daemon/plugin tests**, **16/16 focused
+Web tests**, and **10/10 macOS screenshot baselines**. The remaining local lifecycle,
+corner-snap, aspect-ratio, and Stop
+interaction/acknowledgement gaps are closed by this matrix.
+
+| Measure | Verified result |
+| --- | --- |
+| First decoded frame | **168.09 ms p50**, **177.84 ms p95** |
+| Hide and renderer media release | **2.16 ms p50**, **3.65 ms p95** |
+| 30-second active capture versus hidden idle | **0.21% CPU delta**, **11,763,712 B** working-set overhead |
+| Repeated activation churn | **6.04% CPU**, **17,661,952 B** working-set delta |
+| Fake ownership/crash lane | **415.27 ms p95** |
+| Capture lifecycle invariants | **12 activations = 12 source enumerations**, **1 renderer document**, **0 `applyConstraints()` calls**, **0 process/window/renderer/listener/IPC/timer/subscription/source residue** |
+
+One full daemon parallel-suite run exposed scheduling-sensitive fluctuation in the
+`channel auto_route` unit test and left its worker alive. That test passed when rerun in
+isolation, while the focused Desktop PiP daemon/plugin matrix remained **51/51**. This is
+recorded as parallel test-harness instability, not as a Desktop PiP product failure.
+
+These are current-host engineering results, not substitutes for Developer ID,
+notarization, Gatekeeper, clean-host TCC/capture-indicator, Windows interactive
+provider/DPI/dual-display, Authenticode/SmartScreen/signed NSIS, hosted CI, clean-machine
+install/update/uninstall, or VoiceOver/Narrator/NVDA release evidence.
 
 Native adapters may improve these targets later without changing the shared contracts.
 
 ## What Already Exists
 
-- The future Desktop shell already owns OS window lifecycle, notifications, and narrow
-  preload APIs.
+- The Desktop alpha shell already owns OS window lifecycle and narrow preload APIs;
+  notifications remain separate Desktop-shell scope, while packaging and release
+  hardening are still open.
+- Desktop daemon startup preserves one fixed workspace authority: compatible services are
+  reused, incompatible external services receive native Retry/Quit recovery, and Ling never
+  kills or bypasses them with a second full daemon.
+- Ling Desktop packages only the public Cua Driver plugin shell metadata. The macOS and
+  Windows `cua-driver` executables and native permissions/session ownership are installed
+  separately; a missing provider fails closed with `plugin_binary_not_found`.
 - The local daemon and control-plane event model already own durable runtime state and
   client subscriptions.
 - Conversation surfaces already distinguish current live state from historical operation
@@ -320,9 +483,17 @@ Native adapters may improve these targets later without changing the shared cont
 
 ## Final Verdict
 
-The product surface is Mac and Windows from the first implementation. The shared visual
-and behavior layer should remain the dominant implementation. Platform-specific code is
-restricted to capture, permission, window integration, and optional rendering
-optimization.
+The intended product surface is Mac and Windows, but platform support is gated independently:
+the local unsigned macOS arm64/x64 application and mounted-DMG matrix is closed, but macOS
+release still requires Developer ID/notarization/Gatekeeper plus the signed-app clean-host
+TCC/source/capture-indicator and VoiceOver matrix; the selected Cua Driver Windows provider
+still requires the interactive x64 HWND/source, DPI, dual-screen, Narrator/NVDA,
+Authenticode/SmartScreen, and signed-NSIS matrix. Hosted CI and clean-machine
+install/update/uninstall remain release gates. The shared visual and behavior layer remains
+the dominant implementation; platform-specific code is restricted to capture, permission,
+window integration, and optional rendering optimization.
 
-NO UNRESOLVED DECISIONS
+## Open Decisions
+
+- Windows provider minimum-version advancement and clean-machine distribution policy.
+- Windows certificate/NSIS identity, minimum supported version, and install scope.

@@ -9,6 +9,8 @@ build/
 .turbo/
 .vite/
 apps/web/test-results/
+apps/desktop/test-results/
+apps/desktop/release/
 
 # environment
 .env

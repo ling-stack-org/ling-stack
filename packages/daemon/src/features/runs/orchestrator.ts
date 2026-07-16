@@ -58,6 +58,8 @@ import {
 } from "../../runtime/work-units.js";
 import type { ControlPlaneEventHub } from "../control-plane/events.js";
 import { appendControlPlaneEvent } from "../control-plane/events.js";
+import { CuaDriverComputerUseProjectionProducer } from "../computer-use/cua-driver-producer.js";
+import type { ComputerUseProjectionRegistry } from "../computer-use/registry.js";
 import { renderUsedMemoryPrompt } from "../memory/prompt.js";
 import { listExecutableSkillDefinitions } from "../skills/registry.js";
 import { resolveAiTeammateReference } from "../teammates/identity.js";
@@ -108,6 +110,7 @@ export interface ExecuteRunRequestOptions {
   readonly afterRunTerminal?: (run: RunSession) => void | Promise<void>;
   readonly controlPlaneEvents?: ControlPlaneEventHub;
   readonly startupState?: StartupStateRegistry;
+  readonly computerUsePreviews?: ComputerUseProjectionRegistry;
 }
 
 export interface RunExecutionSink {
@@ -218,6 +221,7 @@ export async function executeRunRequest(
   let runId = "";
   let createdAt = "";
   let workspaceCwd = "";
+  let computerUseProducer: CuaDriverComputerUseProjectionProducer | undefined;
   try {
     workspaceCwd = runRequest.workspaceCwd ?? runRequest.cwd;
     await ensureWorkspaceStateWritableForRun(workspaceCwd);
@@ -354,7 +358,6 @@ export async function executeRunRequest(
         artifactsDir: store.paths.artifactsDir,
       },
       runtimeToolFeatures,
-      onMcpToolCall: mcpTools.length > 0 ? createMcpToolCallHandler(store, secretResolver, mcpBroker, mcpTools) : undefined,
     };
     resolvedSecretValues = [resolvedProvider.apiKey];
     runId = createRunId();
@@ -550,6 +553,34 @@ export async function executeRunRequest(
     store.linkRunToWorkUnit(run.id, workUnit.id, createdAt);
     markLingThreadRunActive(store, thread.id, run.id, createdAt);
     storeRegistry.rememberRun(run.id, store);
+    computerUseProducer = options.computerUsePreviews
+      ? new CuaDriverComputerUseProjectionProducer({
+          registry: options.computerUsePreviews,
+          cwd: workspaceCwd,
+          runId: run.id,
+          workUnitId: workUnit.id,
+          conversationId: thread.id,
+          turnId: turn.id,
+          startedAt: createdAt,
+        })
+      : undefined;
+    runnerRequest = {
+      ...runnerRequest,
+      onMcpToolCall: mcpTools.length > 0
+        ? createMcpToolCallHandler(store, secretResolver, mcpBroker, mcpTools, {
+            onStart: computerUseProducer
+              ? (input) => {
+                  computerUseProducer?.markProviderCallStarted(input);
+                }
+              : undefined,
+            onResult: computerUseProducer
+              ? (input) => {
+                  computerUseProducer?.observeToolResult(input);
+                }
+              : undefined,
+          })
+        : undefined,
+    };
     if (memoryRecall && memoryRecall.memories.length > 0) {
       store.recordUsedMemoryEvent(
         {
@@ -827,6 +858,11 @@ export async function executeRunRequest(
       syncWorkUnitForRunEvent(store, workUnit.id, attempt.id, type, envelope);
       appendRuntimeProgressForRunEvent(store, workUnit.id, attempt.id, type, envelope);
       syncLingThreadForRunEvent(store, run, type, envelope);
+      try {
+        computerUseProducer?.observeRunEvent(envelope);
+      } catch {
+        // Computer Use projection is a derived surface and cannot block the authoritative run event.
+      }
       streamEnvelope(envelope);
       return envelope;
     } catch (error) {
@@ -893,25 +929,39 @@ export async function executeRunRequest(
     if (!approvalPolicy) {
       throw new Error("Run approval policy was not initialized.");
     }
+    const runApprovalHandler = createRunApprovalHandler({
+      store,
+      run,
+      approvalPolicy,
+      effectivePolicySnapshot,
+      appendAndMaybeStream,
+      streamEnvelope,
+      signal: abortController.signal,
+      extraSecrets: resolvedSecretValues,
+      controlPlaneEvents: options.controlPlaneEvents,
+      workspaceCwd,
+      unifiedExecEnabled: runnerRequest.runtimeToolFeatures?.unifiedExec === true,
+      shellSnapshotEnabled: runnerRequest.runtimeToolFeatures?.shellSnapshot === true,
+    });
     const result = await runnerResolution.runner.adapter.runTask({
       ...runnerRequest,
       runId: run.id,
       runnerAttemptId: attempt.id,
       sandbox: sandboxBinding,
-      onApprovalRequired: createRunApprovalHandler({
-        store,
-        run,
-        approvalPolicy,
-        effectivePolicySnapshot,
-        appendAndMaybeStream,
-        streamEnvelope,
-        signal: abortController.signal,
-        extraSecrets: resolvedSecretValues,
-        controlPlaneEvents: options.controlPlaneEvents,
-        workspaceCwd,
-        unifiedExecEnabled: runnerRequest.runtimeToolFeatures?.unifiedExec === true,
-        shellSnapshotEnabled: runnerRequest.runtimeToolFeatures?.shellSnapshot === true,
-      }),
+      onApprovalRequired: async (request) => {
+        const definition = mcpTools.find((tool) => tool.registeredName === request.toolName);
+        if (definition) {
+          try {
+            computerUseProducer?.beginProviderIntent({ request, definition });
+          } catch {
+            // Projection setup is best-effort; approval policy and persistence remain authoritative.
+          }
+        }
+        if (!runApprovalHandler) {
+          return { approved: false, reason: "Run approval handler is unavailable." };
+        }
+        return runApprovalHandler(request);
+      },
       onPermissionRequired: createRunPermissionRequestHandler({
         store,
         run,
@@ -1177,6 +1227,11 @@ export async function executeRunRequest(
     try {
       const terminalRun = store.getRun(run.id);
       if (terminalRun && isTerminalRunStatus(terminalRun.status)) {
+        try {
+          computerUseProducer?.finish(terminalRun.status, terminalRun.errorMessage ?? undefined);
+        } catch {
+          // Computer Use projection finalization is best-effort and must not block run cleanup.
+        }
         await options.afterRunTerminal?.(terminalRun);
       }
     } finally {
@@ -1367,7 +1422,7 @@ function isAbortError(error: unknown): boolean {
   return error instanceof Error && error.name === "AbortError";
 }
 
-function isTerminalRunStatus(status: RunStatus): boolean {
+function isTerminalRunStatus(status: RunStatus): status is Extract<RunStatus, "succeeded" | "failed" | "cancelled"> {
   return status === "succeeded" || status === "failed" || status === "cancelled";
 }
 

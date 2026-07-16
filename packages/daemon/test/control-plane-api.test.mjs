@@ -690,6 +690,22 @@ test("local WebSocket RPC can be disabled by feature flag", async () => {
   }
 });
 
+test("daemon stop closes active local WebSocket RPC clients", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-rpc-stop-"));
+  const daemon = await startDaemonForTest();
+  const rpc = await openRpcClient(daemon.url, cwd);
+  try {
+    rpc.send(1, "initialize", {});
+    await rpc.next((message) => message.id === 1);
+
+    await daemon.close();
+    await rpc.waitForClose();
+  } finally {
+    await rpc.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("domain mutations append control-plane invalidation events", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-control-plane-mutations-"));
   const daemon = await startDaemonForTest();
@@ -1005,6 +1021,12 @@ async function openRpcClient(baseUrl, cwd) {
         once(socket, "close"),
         new Promise((resolveTimeout) => setTimeout(resolveTimeout, 250)),
       ]);
+    },
+    waitForClose: async () => {
+      if (socket.readyState === WebSocket.CLOSED) {
+        return;
+      }
+      await once(socket, "close");
     },
   };
 }

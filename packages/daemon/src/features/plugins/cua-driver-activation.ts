@@ -10,6 +10,7 @@ import type { RunStoreRegistry } from "../../runtime/store-registry.js";
 import { createPluginHealthSnapshot, ensureManagedPluginRecord } from "./catalog.js";
 import { connectCuaDriver, rollbackCuaDriverEnable } from "./cua-driver.js";
 import { applyCuaDriverToolApprovalOverrides } from "./presets.js";
+import { checkCuaDriverProviderHealth } from "./provider-health.js";
 
 export interface CuaDriverActivationResult {
   readonly statusCode: 200 | 400;
@@ -79,9 +80,6 @@ export async function activateCuaDriver(input: {
     return failActivation({ ...input, code: errorCode, message, rollback: true });
   }
   const listedSnapshot = input.store.upsertMcpStatusSnapshot(listed.statusSnapshot, input.now);
-  const tools = listedSnapshot.status === "ready"
-    ? input.store.replaceMcpServerTools(linkedServer.id, applyCuaDriverToolApprovalOverrides(listed.tools), input.now)
-    : [];
   if (listedSnapshot.status !== "ready") {
     rollbackCuaDriverEnable({
       store: input.store,
@@ -90,6 +88,47 @@ export async function activateCuaDriver(input: {
       now: input.now,
     });
   }
+  const discoveredTools = listedSnapshot.status === "ready"
+    ? applyCuaDriverToolApprovalOverrides(listed.tools)
+    : [];
+  if (listedSnapshot.status === "ready") {
+    const providerHealth = await checkCuaDriverProviderHealth({
+      server: enabledServer,
+      mcpBroker: input.mcpBroker,
+      secretResolver: input.secretResolver,
+      now: input.now,
+      availableToolNames: discoveredTools.map((tool) => tool.rawName),
+    });
+    if (!providerHealth.ok) {
+      rollbackCuaDriverEnable({
+        store: input.store,
+        descriptor: input.descriptor,
+        reason: providerHealth.message,
+        now: input.now,
+      });
+      const providerError = typeof providerHealth.details?.errorCode === "string"
+        ? providerHealth.details.errorCode
+        : "plugin_provider_health_failed";
+      return finishActivation({
+        ...input,
+        linkedMcpServerId: linkedServer.id,
+        statusSnapshot: listedSnapshot,
+        tools: [],
+        error: providerError,
+        message: providerHealth.message,
+        healthOverride: createPluginHealthSnapshot({
+          pluginId: input.pluginId,
+          now: input.now,
+          status: "failed",
+          message: providerHealth.message,
+          details: providerHealth.details,
+        }),
+      });
+    }
+  }
+  const tools = listedSnapshot.status === "ready"
+    ? input.store.replaceMcpServerTools(linkedServer.id, discoveredTools, input.now)
+    : [];
   return finishActivation({
     ...input,
     linkedMcpServerId: linkedServer.id,
@@ -183,8 +222,11 @@ function finishActivation(input: {
   readonly tools: readonly McpTool[];
   readonly error?: string;
   readonly message?: string;
+  readonly healthOverride?: ManagedPluginHealthSnapshot;
 }): CuaDriverActivationResult {
-  const health = input.statusSnapshot
+  const health = input.healthOverride
+    ? input.store.upsertManagedPluginHealthSnapshot(input.healthOverride, input.now)
+    : input.statusSnapshot
     ? input.store.upsertManagedPluginHealthSnapshot(pluginHealthFromMcpSnapshot(input.pluginId, input.statusSnapshot), input.now)
     : input.store.upsertManagedPluginHealthSnapshot(createPluginHealthSnapshot({
         pluginId: input.pluginId,

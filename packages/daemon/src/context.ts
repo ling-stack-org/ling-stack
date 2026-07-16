@@ -18,6 +18,11 @@ import type { LingImageVisionSummarizer } from "./features/channels/materializat
 import type { ExternalWorkBackgroundSchedulerRegistry } from "./features/external-work/background-scheduler.js";
 import type { ProviderStartupRefreshService } from "./features/providers/startup-refresh.js";
 import type { ControlPlaneEventHub } from "./features/control-plane/events.js";
+import type { ComputerUsePreviewProjection } from "@ling-stack/contracts";
+import type {
+  ComputerUseProjectionRegistry,
+  ComputerUseProjectionRegistryOptions,
+} from "./features/computer-use/registry.js";
 import type { ActiveDirectReplyRegistry } from "./features/teammates/direct-reply-active-registry.js";
 import type { ActiveRunRegistry } from "./runtime/active-runs.js";
 import type { RunStoreFactory } from "./runtime/store-registry.js";
@@ -75,6 +80,20 @@ export interface DaemonDependencies {
   readonly channelWebResolveHostAddresses?: (hostname: string) => Promise<readonly string[]>;
   readonly mcpBroker?: McpBroker;
   readonly imageVisionSummarizer?: LingImageVisionSummarizer;
+  readonly computerUseStop?: (input: {
+    readonly cwd: string;
+    readonly projection: ComputerUsePreviewProjection;
+    readonly reason?: string;
+  }) => Promise<{ readonly accepted: boolean; readonly acknowledged: boolean; readonly reason?: string }>;
+  readonly desktopBridgeToken?: string;
+  /**
+   * Installation-scoped token for native Computer Use list/events/stream/stop
+   * requests that cannot carry a browser Origin. Kept separate from the
+   * descriptor bridge header at the HTTP boundary even when the alpha Desktop
+   * passes the same generated secret for both capabilities.
+   */
+  readonly computerUseRouteToken?: string;
+  readonly computerUseProjectionOptions?: ComputerUseProjectionRegistryOptions;
 }
 
 export interface DaemonContext {
@@ -98,4 +117,8 @@ export interface DaemonContext {
   readonly providerStartupRefresh: ProviderStartupRefreshService;
   readonly startupState: StartupStateRegistry;
   readonly startupOptionalWarmups: StartupOptionalWarmupCoordinator;
+  readonly computerUsePreviews: ComputerUseProjectionRegistry;
+  readonly computerUseStop?: DaemonDependencies["computerUseStop"];
+  readonly desktopBridgeToken?: string;
+  readonly computerUseRouteToken?: string;
 }

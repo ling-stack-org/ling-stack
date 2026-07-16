@@ -44,9 +44,14 @@ interface RpcSubscription {
   overLimitFlushes: number;
 }
 
-export function attachRpcWebSocketServer(server: Server, context: DaemonContext): void {
+export interface RpcWebSocketServerHandle {
+  close(): void;
+}
+
+export function attachRpcWebSocketServer(server: Server, context: DaemonContext): RpcWebSocketServerHandle {
   const wss = new WebSocketServer({ noServer: true, maxPayload: 1024 * 1024 });
-  server.on("upgrade", (request, socket, head) => {
+  let closed = false;
+  const handleUpgrade: Parameters<Server["on"]>[1] = (request, socket, head) => {
     const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${context.config.host}:${context.config.port}`}`);
     if (url.pathname !== "/rpc/stream") {
       return;
@@ -62,19 +67,26 @@ export function attachRpcWebSocketServer(server: Server, context: DaemonContext)
     wss.handleUpgrade(request, socket, head, (ws) => {
       wss.emit("connection", ws, request);
     });
-  });
+  };
+  server.on("upgrade", handleUpgrade);
   wss.on("connection", (ws, request) => {
     const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${context.config.host}:${context.config.port}`}`);
     const connection = new RpcConnection(ws, url.searchParams.get("cwd") ?? context.config.defaultWorkspaceCwd, context);
     connection.start();
   });
   const closeAll = (): void => {
+    if (closed) {
+      return;
+    }
+    closed = true;
+    server.off("upgrade", handleUpgrade);
     for (const client of wss.clients) {
-      client.close(1001, "daemon_stopping");
+      client.terminate();
     }
     wss.close();
   };
   server.once("close", closeAll);
+  return { close: closeAll };
 }
 
 class RpcConnection {
@@ -260,6 +272,7 @@ class RpcConnection {
         afterRunTerminal: (terminalRun) => this.maybeContinueRunInterventions(terminalRun),
         controlPlaneEvents: this.context.controlPlaneEvents,
         startupState: this.context.startupState,
+        computerUsePreviews: this.context.computerUsePreviews,
       },
     );
     return { accepted: true };
@@ -324,6 +337,7 @@ class RpcConnection {
       mcpBroker: this.context.mcpBroker,
       controlPlaneEvents: this.context.controlPlaneEvents,
       startupState: this.context.startupState,
+      computerUsePreviews: this.context.computerUsePreviews,
     });
   }
 

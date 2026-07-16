@@ -1,4 +1,4 @@
-import type { CSSProperties, DragEventHandler, ReactNode } from "react";
+import type { CSSProperties, DragEventHandler, ReactNode, Ref } from "react";
 
 export type ConversationComposerSurface = "channel" | "normal_conversation" | "teammate_direct";
 
@@ -8,6 +8,7 @@ export interface ConversationComposerShellProps {
   readonly surface: ConversationComposerSurface;
   readonly density?: ConversationComposerDensity;
   readonly className?: string;
+  readonly rootRef?: Ref<HTMLElement>;
   readonly ariaLabel: string;
   readonly style?: CSSProperties;
   readonly toolbarClassName?: string;
@@ -55,6 +56,7 @@ export function ConversationComposerShell({
   resizeHandleNode,
   rightToolsClassName,
   rightToolsNode,
+  rootRef,
   slashPickerNode,
   statusNode,
   style,
@@ -89,7 +91,16 @@ export function ConversationComposerShell({
   ].filter(Boolean).join(" ");
 
   return (
-    <section className={rootClassName} style={style} aria-label={ariaLabel} data-surface={surface}>
+    <section
+      ref={rootRef}
+      className={rootClassName}
+      style={style}
+      aria-label={ariaLabel}
+      data-surface={surface}
+      {...(surface === "teammate_direct"
+        ? { "data-computer-use-obstacle": "true", "data-computer-use-obstacle-kind": "composer" }
+        : {})}
+    >
       {statusNode}
       {approvalNode}
       {guidanceNode}
