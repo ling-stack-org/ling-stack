@@ -12,6 +12,8 @@ import {
   type WorkflowOwnerInferenceTeammate,
 } from "./workflow-owner-inference.js";
 
+import { SelectControl } from "../../shared/components/SelectControl.js";
+
 export interface WorkflowConversionStepPreviewDraft {
   readonly title: string;
   readonly ownerId?: string;
@@ -143,7 +145,8 @@ export function WorkflowConversionPreviewDrawer({
                 <span className="workflow-preview-owner-title">{preview.title}</span>
                 <label className="workflow-preview-owner-select">
                   <span>{t("Owner")}</span>
-                  <select
+                  <SelectControl
+              variant="compact"
                     value={selectedOwnerIdFor(index)}
                     onChange={(event) => updateOwnerSelection(index, event.target.value)}
                     disabled={busy}
@@ -153,7 +156,7 @@ export function WorkflowConversionPreviewDrawer({
                     {ownerOptions.map((owner) => (
                       <option key={owner.id} value={owner.id}>{owner.displayName}</option>
                     ))}
-                  </select>
+                  </SelectControl>
                 </label>
                 <span className={`workflow-preview-confidence confidence-${preview.ownerConfidence}`}>
                   {ownerConfidenceLabel(preview.ownerConfidence, t)}

@@ -11,6 +11,8 @@ import type {
 import { ProviderAdvancedSettings } from "./ProviderAdvancedSettings.js";
 import type { ProviderSetupIntent } from "./provider-workbench-view-models.js";
 
+import { SelectControl } from "../../shared/components/SelectControl.js";
+
 export function ProviderEditorPanel({
   supplierTemplates,
   setupIntent,
@@ -70,6 +72,8 @@ export function ProviderEditorPanel({
       ? t("New chat model")
       : !editingProviderId && setupIntent === "generation"
         ? t("New image generation model")
+        : !editingProviderId && setupIntent === "video_generation"
+          ? t("New video generation model")
         : editingProviderId
           ? t("Edit preset")
           : t("New preset");
@@ -96,7 +100,7 @@ export function ProviderEditorPanel({
             ) : (
               <label className="field wide provider-template-select-field">
                 <span>{t("Model supplier")}</span>
-                <select
+                <SelectControl
                   value={selectedTemplateId}
                   onChange={(event) => {
                     const template = supplierTemplates.find((item) => item.templateId === event.target.value);
@@ -112,7 +116,7 @@ export function ProviderEditorPanel({
                       {t(template.displayName)}
                     </option>
                   ))}
-                </select>
+                </SelectControl>
               </label>
             )}
           </div>
@@ -166,7 +170,7 @@ export function ProviderEditorPanel({
               </div>
               <label className="field">
                 <span>{t("API protocol")}</span>
-                <select
+                <SelectControl
                   value={form.api}
                   onChange={(event) => {
                     const api = event.target.value as ProviderFormState["api"];
@@ -179,7 +183,7 @@ export function ProviderEditorPanel({
                   <option value="anthropic-messages">{t("Anthropic messages")}</option>
                   <option value="google-generative-ai">{t("Google generative AI")}</option>
                   <option value="mistral-conversations">{t("Mistral conversations")}</option>
-                </select>
+                </SelectControl>
               </label>
             </>
           ) : null}

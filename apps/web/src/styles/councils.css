@@ -188,15 +188,13 @@
   min-width: 0;
 }
 
-.council-filter-field select {
+.council-filter-field .select-control {
   width: 100%;
-  min-height: 34px;
-  height: 34px;
 }
 
 .council-list-toolbar .compact-button {
-  min-height: 34px;
-  height: 34px;
+  min-height: 32px;
+  height: 32px;
   padding-inline: 10px;
   border-radius: 6px;
   white-space: nowrap;

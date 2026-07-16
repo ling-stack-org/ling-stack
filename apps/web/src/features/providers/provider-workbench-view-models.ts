@@ -17,7 +17,7 @@ import type {
 } from "../../types.js";
 
 export type ProviderStatusFilter = "all" | "ready" | "needsAttention" | "missingKey" | "disabled";
-export type ProviderSetupIntent = "chat" | "generation";
+export type ProviderSetupIntent = "chat" | "generation" | "video_generation";
 export type ProviderPrimaryState =
   | "disabled"
   | "missing_api_key"
@@ -72,6 +72,9 @@ export function providerTemplateMatchesSetupIntent(
   template: ProviderTemplate,
   intent: ProviderSetupIntent,
 ): boolean {
+  if (intent === "video_generation") {
+    return template.capabilities.includes("video_generate");
+  }
   if (intent === "generation") {
     return template.api === "media-job" || hasGenerationCapability(template.capabilities);
   }
@@ -101,7 +104,11 @@ export function selectProviderTemplateForSetupIntent({
   if (!intent) {
     return fallbackTemplate;
   }
-  const preferredTemplateId = intent === "generation" ? "seedream-image" : "openai-gpt";
+  const preferredTemplateId = intent === "video_generation"
+    ? "seedance-video"
+    : intent === "generation"
+      ? "seedream-image"
+      : "openai-gpt";
   return (
     templates.find((template) => template.templateId === preferredTemplateId) ??
     templates.find((template) => providerTemplateMatchesSetupIntent(template, intent)) ??

@@ -1,4 +1,4 @@
-import type { MediaOperation } from "./media-types.js";
+import type { MediaOperation, VideoGenerationCapabilities } from "./media-types.js";
 import type {
   ProviderApi,
   ProviderCapability,
@@ -64,6 +64,7 @@ export interface GenerationProviderRuntimeState {
   readonly supportsOperation: boolean;
   readonly liveTransportEnabled: boolean;
   readonly liveAdapterSupported: boolean;
+  readonly videoGeneration?: VideoGenerationCapabilities;
   readonly canRun: boolean;
   readonly reason?: GenerationProviderRuntimeUnavailableReason;
   readonly uiCopyKey: GenerationRuntimeUiCopyKey;
@@ -144,6 +145,7 @@ export function resolveGenerationProviderRuntimeState(
     supportsOperation,
     liveTransportEnabled,
     liveAdapterSupported,
+    videoGeneration: undefined,
   };
 
   if (!isMediaProvider) {
@@ -173,7 +175,28 @@ export function resolveGenerationProviderRuntimeState(
   if (!liveAdapterSupported) {
     return unavailableState(baseState, "unsupported_live_adapter");
   }
-  return { ...baseState, canRun: true, uiCopyKey: "generation_runtime_ready" };
+  return {
+    ...baseState,
+    videoGeneration: supportedOperations.includes("video_generate")
+      ? resolveVerifiedVideoGenerationCapabilities(provider, family?.familyId)
+      : undefined,
+    canRun: true,
+    uiCopyKey: "generation_runtime_ready",
+  };
+}
+
+function resolveVerifiedVideoGenerationCapabilities(
+  provider: GenerationProviderRuntimeInput,
+  familyId: GenerationModelFamilyId | undefined,
+): VideoGenerationCapabilities | undefined {
+  if (familyId === "volcengine-seedance" && (provider.kind === "seedance" || provider.providerId === "seedance")) {
+    return {
+      inputModes: ["text"],
+      aspectRatios: ["16:9", "9:16", "1:1", "4:3", "3:4"],
+      durationsSeconds: [5, 10],
+    };
+  }
+  return undefined;
 }
 
 export function resolveMediaProviderRuntimeState(

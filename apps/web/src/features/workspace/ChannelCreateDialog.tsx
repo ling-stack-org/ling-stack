@@ -10,6 +10,8 @@ import { TeammateAvatarView } from "../teammates/TeammateAvatarView.js";
 import { LING_AGENT_AUTHOR_ID } from "./ChannelMessageRenderers.js";
 import { ChannelRuntimePolicyFields, ProviderPresetOptions } from "./WorkspaceControls.js";
 
+import { SelectControl } from "../../shared/components/SelectControl.js";
+
 export interface ChannelCreateProjectOption {
   readonly path: string;
   readonly label: string;
@@ -290,14 +292,14 @@ export function ChannelCreateDialog({
               <div className="channel-create-fields">
                 <label className="field">
                   <span>{t("Base model")}</span>
-                  <select value={form.defaultProviderPresetId} onChange={(event) => onFormChange({ ...form, defaultProviderPresetId: event.target.value })} disabled={providersLoading || providers.length === 0}>
+                  <SelectControl value={form.defaultProviderPresetId} onChange={(event) => onFormChange({ ...form, defaultProviderPresetId: event.target.value })} disabled={providersLoading || providers.length === 0}>
                     <option value="">{t("Select provider preset")}</option>
                     <ProviderPresetOptions runnableProviders={taskReadyProviders} blockedProviders={setupChatProviders} />
-                  </select>
+                  </SelectControl>
                 </label>
                 <label className="field">
                   <span>{t("AI response language")}</span>
-                  <select
+                  <SelectControl
                     value={form.responseLanguage}
                     onChange={(event) => onFormChange({ ...form, responseLanguage: event.target.value as ChannelFormState["responseLanguage"] })}
                   >
@@ -305,7 +307,7 @@ export function ChannelCreateDialog({
                     <option value="follow_user">{t("Follow user message")}</option>
                     <option value="zh-CN">{t("Chinese")}</option>
                     <option value="en-US">{t("English")}</option>
-                  </select>
+                  </SelectControl>
                 </label>
               </div>
               <ChannelRuntimePolicyFields form={form} onChange={updateRuntimeForm} />

@@ -1943,7 +1943,9 @@ export function mediaJobSelectSql(whereClause: string): string {
     SELECT
       id,
       workspace_id,
+      source_kind,
       provider_preset_id,
+      workflow_version_id,
       operation,
       prompt,
       input_json,

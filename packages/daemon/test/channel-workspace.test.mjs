@@ -9468,33 +9468,47 @@ test("skill candidate API persists manual candidates and gates review approval",
     assert.equal(reviewedDetail.reviewRecords.length, 1);
     assert.equal(reviewedDetail.reviewRecords[0].action, "approve_for_draft");
 
-    const draftResponse = await postJson(`${daemon.url}/skill-candidates/${encodeURIComponent(payload.id)}/draft?cwd=${encodeURIComponent(cwd)}`, {});
+    const draftResponse = await postJson(`${daemon.url}/skill-candidates/${encodeURIComponent(payload.id)}/draft?cwd=${encodeURIComponent(cwd)}`, {
+      content: [
+        "---",
+        "name: Edited release checklist",
+        "description: Use the reviewed release checklist with explicit evidence and validation.",
+        "---",
+        "",
+        "Collect release evidence, verify the approval record, and report failures before publishing.",
+      ].join("\n"),
+    });
     assert.equal(draftResponse.candidate.id, payload.id);
     assert.equal(draftResponse.draft.source, "custom");
     assert.equal(draftResponse.draft.sourcePath, `skill-candidates/${payload.id}`);
-    assert.equal(draftResponse.draft.definitions[0].definition.id, "reusable-release-checklist");
+    assert.equal(draftResponse.draft.packId, "ling-generated");
+    assert.equal(draftResponse.draft.definitions[0].definition.id, "edited-release-checklist");
     assert.equal("workflowPhase" in draftResponse.draft.definitions[0].definition, false);
-    assert.match(draftResponse.draft.definitions[0].definition.promptFragments[0], /repeated release checklist/);
+    assert.match(draftResponse.draft.definitions[0].definition.promptFragments[0], /Collect release evidence/);
 
     const publishedDraft = await postJson(`${daemon.url}/skills/import-drafts/${encodeURIComponent(draftResponse.draft.id)}/publish?cwd=${encodeURIComponent(cwd)}`, {});
-    assert.equal(publishedDraft.skills[0].id, "reusable-release-checklist");
+    assert.equal(publishedDraft.skills[0].id, "edited-release-checklist");
     assert.equal(publishedDraft.skills[0].packId, "ling-generated");
+    assert.equal(publishedDraft.skills[0].sourcePath, `skill-candidates/${payload.id}`);
+    const publishedCandidateDetail = await getJson(`${daemon.url}/skill-candidates/${encodeURIComponent(payload.id)}?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(publishedCandidateDetail.candidate.status, "published");
+    await postJson(`${daemon.url}/skills/import-drafts/${encodeURIComponent(draftResponse.draft.id)}/publish?cwd=${encodeURIComponent(cwd)}`, {});
     const listedSkills = await getJson(`${daemon.url}/skills?cwd=${encodeURIComponent(cwd)}`);
-    assert.ok(listedSkills.skills.some((skill) => skill.id === "reusable-release-checklist" && skill.source === "custom"));
+    assert.ok(listedSkills.skills.some((skill) => skill.id === "edited-release-checklist" && skill.source === "custom"));
     const draftEvents = await getJson(`${daemon.url}/skills/usage-events?cwd=${encodeURIComponent(cwd)}&candidateId=${encodeURIComponent(payload.id)}&limit=10`);
     assert.deepEqual(draftEvents.events.map((event) => event.kind).sort(), ["draft_created", "published"]);
 
-    const correction = await postJson(`${daemon.url}/skills/reusable-release-checklist/corrections?cwd=${encodeURIComponent(cwd)}`, {
+    const correction = await postJson(`${daemon.url}/skills/edited-release-checklist/corrections?cwd=${encodeURIComponent(cwd)}`, {
       reason: "Correction evidence should be collected before release checklist validation.",
       candidateId: payload.id,
     });
     assert.equal(correction.event.kind, "user_corrected");
-    assert.equal(correction.event.skillId, "reusable-release-checklist");
-    await postJson(`${daemon.url}/skills/reusable-release-checklist/corrections?cwd=${encodeURIComponent(cwd)}`, {
+    assert.equal(correction.event.skillId, "edited-release-checklist");
+    await postJson(`${daemon.url}/skills/edited-release-checklist/corrections?cwd=${encodeURIComponent(cwd)}`, {
       reason: "Correction repeated for health finding.",
       candidateId: payload.id,
     });
-    const usageStats = await getJson(`${daemon.url}/skills/usage-stats?cwd=${encodeURIComponent(cwd)}&skillId=reusable-release-checklist`);
+    const usageStats = await getJson(`${daemon.url}/skills/usage-stats?cwd=${encodeURIComponent(cwd)}&skillId=edited-release-checklist`);
     assert.equal(usageStats.stats[0].correctionCount, 2);
 
     const missingGate = await postJson(`${daemon.url}/skill-candidates?cwd=${encodeURIComponent(cwd)}`, {
@@ -9535,11 +9549,11 @@ test("skill candidate API persists manual candidates and gates review approval",
     ));
     assert.ok(health.report.findings.some((finding) =>
       finding.kind === "never_used_skill" &&
-      finding.skillIds.includes("reusable-release-checklist")
+      finding.skillIds.includes("edited-release-checklist")
     ));
     assert.ok(health.report.findings.some((finding) =>
       finding.kind === "high_user_correction_skill" &&
-      finding.skillIds.includes("reusable-release-checklist")
+      finding.skillIds.includes("edited-release-checklist")
     ));
 
     const duplicateConflict = await postJson(`${daemon.url}/skill-candidates?cwd=${encodeURIComponent(cwd)}`, {
@@ -9558,7 +9572,7 @@ test("skill candidate API persists manual candidates and gates review approval",
       duplicateAnalysis: {
         decision: "conflict_review",
         similarityScore: 0.8,
-        matchedSkillIds: ["reusable-release-checklist"],
+        matchedSkillIds: ["edited-release-checklist"],
         matchedCandidateIds: [],
         triggerOverlap: ["release checklist"],
         conflictingFields: ["requiredTools"],

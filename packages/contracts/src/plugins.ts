@@ -1,4 +1,4 @@
-import type { McpRuntimeStatusSnapshot, McpServer, McpTool } from "./mcp.js";
+import type { McpRuntimeStatusSnapshot, McpServer, McpServerTransport, McpTool } from "./mcp.js";
 
 export type ManagedPluginSourceKind = "built-in" | "bundled" | "trusted-local-preset";
 
@@ -9,6 +9,22 @@ export type ManagedPluginHealthStatus = "unknown" | "ready" | "failed" | "disabl
 export type ManagedPluginPackageStatus = "installed" | "uninstalled";
 
 export type ManagedPluginRuntimePreviewStatus = "injectable" | "blocked" | "disabled";
+
+export type ManagedPluginSetupState = "detected" | "missing" | "unsupported" | "connected" | "ready";
+
+export interface ManagedPluginSetupGuide {
+  readonly documentationUrl: string;
+  readonly installCommand: string;
+  readonly supportsCustomCommand: boolean;
+}
+
+export interface ManagedPluginSetupView {
+  readonly kind: "local_binary";
+  readonly state: ManagedPluginSetupState;
+  readonly checkedAt: string;
+  readonly detectedCommand?: string;
+  readonly guide?: ManagedPluginSetupGuide;
+}
 
 export type ManagedPluginContributionKind =
   | "mcp-server"
@@ -69,6 +85,7 @@ export interface ManagedPluginEvent {
     | "checked"
     | "contribution_linked"
     | "contribution_disabled"
+    | "connected"
     | "installed"
     | "uninstalled"
     | "package_refreshed"
@@ -137,6 +154,7 @@ export interface ManagedPluginView {
   readonly health?: ManagedPluginHealthSnapshot;
   readonly package?: ManagedPluginPackageView;
   readonly runtimePreview?: ManagedPluginRuntimePreview;
+  readonly setup?: ManagedPluginSetupView;
   readonly linkedResources: readonly ManagedPluginLinkedResource[];
   readonly events?: readonly ManagedPluginEvent[];
   readonly disabledReason?: string;
@@ -157,6 +175,17 @@ export interface ManagedPluginListResponse {
   readonly plugins: readonly ManagedPluginView[];
 }
 
+export interface ManagedPluginCreateRequest {
+  readonly displayName: string;
+  readonly description: string;
+  readonly transport: McpServerTransport;
+}
+
+export interface ManagedPluginCreateResponse {
+  readonly cwd: string;
+  readonly plugin: ManagedPluginView;
+}
+
 export interface ManagedPluginDetailResponse {
   readonly plugin: ManagedPluginView;
 }
@@ -172,6 +201,15 @@ export interface ManagedPluginCheckResponse {
 
 export interface ManagedPluginApplyPresetRequest {
   readonly options?: Record<string, unknown>;
+}
+
+export interface ManagedPluginConnectRequest {
+  readonly command?: string;
+}
+
+export interface ManagedPluginConnectResponse {
+  readonly plugin: ManagedPluginView;
+  readonly linkedMcpServer?: McpServer;
 }
 
 export interface ManagedPluginDisableRequest {

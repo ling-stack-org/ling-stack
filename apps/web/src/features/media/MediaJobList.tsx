@@ -1,7 +1,5 @@
 import { CircleAlert, Database, Image as ImageIcon, Loader2, Play } from "lucide-react";
-import { artifactContentUrl } from "../../api.js";
 import { useI18n } from "../../i18n.js";
-import { artifactDownloadName, isImageArtifact } from "../../lib/artifacts.js";
 import { formatDateTime } from "../../lib/formatting.js";
 import { StatusActionRow } from "../../shared/components/index.js";
 import type { MediaJob, MediaJobStatus, ProviderPreset, RunArtifact } from "../../types.js";
@@ -17,6 +15,7 @@ import {
   mediaOperationLabel,
   type MediaJobStatusFilter,
 } from "./media-job-view-models.js";
+import { MediaArtifactPreview } from "./MediaArtifactPreview.js";
 
 export function MediaJobList({
   cwd,
@@ -123,7 +122,7 @@ export function MediaJobList({
               >
                 <StatusActionRow
                   className="media-job-row-content"
-                  leading={<MediaJobResultPreview artifact={mediaArtifacts[0]} count={mediaArtifacts.length} cwd={cwd} status={job.status} displayState={displayState} />}
+                  leading={<MediaJobResultPreview artifact={mediaArtifacts[0]} cwd={cwd} status={job.status} displayState={displayState} />}
                   title={<strong>{operationLabel}</strong>}
                   description={`${provider?.displayName ?? t("Unknown provider")} · ${formatDateTime(job.createdAt)}`}
                   meta={(
@@ -162,32 +161,19 @@ export function MediaJobList({
 
 function MediaJobResultPreview({
   artifact,
-  count,
   cwd,
   status,
   displayState,
 }: {
   readonly artifact?: RunArtifact;
-  readonly count: number;
   readonly cwd: string;
   readonly status: MediaJobStatus;
   readonly displayState: ReturnType<typeof deriveMediaJobDisplayState>;
 }): JSX.Element {
   const { t } = useI18n();
-  if (artifact && isImageArtifact(artifact)) {
-    const title = artifact.title || artifactDownloadName(artifact);
-    return (
-      <a className="media-job-result-preview image" href={artifactContentUrl(artifact.id, cwd)} target="_blank" rel="noreferrer" onClick={(event) => event.stopPropagation()}>
-        <img src={artifactContentUrl(artifact.id, cwd)} alt={title} />
-        <span>{t("Result")}</span>
-      </a>
-    );
-  }
   if (artifact) {
     return (
-      <a className="media-job-result-preview file" href={artifactContentUrl(artifact.id, cwd)} target="_blank" rel="noreferrer" onClick={(event) => event.stopPropagation()} aria-label={t("{count} generated results", { count })}>
-        <ImageIcon size={20} />
-      </a>
+      <MediaArtifactPreview artifact={artifact} cwd={cwd} variant="tile" className="media-job-result-preview" />
     );
   }
   return (

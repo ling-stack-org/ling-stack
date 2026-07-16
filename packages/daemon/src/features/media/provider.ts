@@ -18,6 +18,9 @@ import { materializeProviderSecrets } from "../providers/secret-materializer.js"
 
 export function assertMediaJobProvider(store: ProviderStoreFacet, input: CreateMediaJobInput, secretResolver?: SecretResolver): ProviderPreset {
   void secretResolver;
+  if (!input.providerPresetId) {
+    throw new HttpError(400, "provider_required", "Direct media generation requires a provider preset");
+  }
   const preset = store.getProviderPreset(input.providerPresetId);
   if (!preset) {
     throw new HttpError(404, "provider_not_found", `Provider preset not found: ${input.providerPresetId}`);

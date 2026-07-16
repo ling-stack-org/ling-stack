@@ -35,6 +35,8 @@ import type {
   TeammateCreateStepState,
 } from "./types.js";
 
+import { SelectControl } from "../../shared/components/SelectControl.js";
+
 interface StepViewState {
   readonly state: TeammateCreateStepState;
   readonly message: string;
@@ -415,20 +417,20 @@ export function TeammateCreateDrawer({
 
   function renderProviderSelect(): JSX.Element {
     return (
-      <select value={selectedProviderId} onChange={(event) => setSelectedProviderId(event.target.value)} disabled={providerOptions.length === 0 || setupBusy}>
+      <SelectControl value={selectedProviderId} onChange={(event) => setSelectedProviderId(event.target.value)} disabled={providerOptions.length === 0 || setupBusy}>
         <option value="">{t("Select model")}</option>
         {providerOptions.map((provider) => (
           <option key={provider.id} value={provider.id}>
             {providerModelRouteLabel(provider)}
           </option>
         ))}
-      </select>
+      </SelectControl>
     );
   }
 
   function renderChannelSelect(): JSX.Element {
     return (
-      <select
+      <SelectControl
         value={selectedChannelIds[0] ?? ""}
         onChange={(event) => setSelectedChannelIds(event.target.value ? [event.target.value] : [])}
         disabled={channels.length === 0 || setupBusy}
@@ -439,7 +441,7 @@ export function TeammateCreateDrawer({
             {channel.name}
           </option>
         ))}
-      </select>
+      </SelectControl>
     );
   }
 

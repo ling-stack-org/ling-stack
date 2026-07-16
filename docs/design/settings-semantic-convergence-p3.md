@@ -7,6 +7,7 @@
 - [Settings Semantic Convergence P3 Implementation Plan](settings-semantic-convergence-p3-implementation-plan.md)
 - [Settings Visual Density Follow-up](settings-visual-density-followup.md)
 - [Settings Personalization And Ling Conversation Tone](settings-personalization-and-ling-tone.md)
+- [Primary Navigation Tool Promotion](primary-navigation-tool-promotion.md)
 
 ## Summary
 
@@ -23,6 +24,11 @@ supersedes this document's `Skills -> Skill policy / Skill library` grouping for
 implementation work. The follow-up moves `Skill policy` under `Personalization`, keeps
 `Skill library` as a standalone Settings item, and adds the behavior-bearing
 `Ling conversation tone` setting.
+
+IA supersession: [Primary Navigation Tool Promotion](primary-navigation-tool-promotion.md)
+moves `Work Board` and `Plugin Manager` out of Settings and into the global desktop
+navigation. The historical placement below remains useful as P3 context, but the
+promotion document is the current source of truth for those two surfaces.
 
 The product target is simple:
 
@@ -54,7 +60,8 @@ The product target is simple:
 - No route deletion and no new `ViewId`.
 - No global visual redesign.
 - No mobile acceptance scope.
-- No Work Board primary-nav promotion.
+- Work Board and Plugin Manager promotion is owned by the later primary-navigation
+  decision, not by the original P3 implementation slice.
 - No large refactor of `AppShell.tsx`.
 - No behavior change inside the 1000+ line `SkillLibrarySettingsPanel.tsx`.
 - No source-file rename churn for existing implementation components such as
@@ -86,7 +93,6 @@ Settings
       -> Teammate Management
       -> Council Workspace
     Work controls
-      -> Work Board
       -> Default authorization
 
   Personal
@@ -101,7 +107,6 @@ Settings
     Connections
       -> Work intake
       -> Tool servers
-      -> Plugin bundles
     Skills
       -> Skill policy
       -> Skill library
@@ -118,12 +123,11 @@ Settings
 | --- | --- | --- |
 | Configuration overview | Open low-frequency setup and control surfaces | Tool row details |
 | Workspace setup | Prepare the models and AI collaborators Ling uses | Model/provider detail pages |
-| Work controls | Review workspace work and default authorization | Work Board detail pages, policy details |
+| Work controls | Manage default authorization for new work | Authorization policy details |
 | Default authorization | Choose when Ling asks and the default workspace access boundary | Authorization and sandbox option explanations |
 | Connections | Connect Ling to outside systems | Detail panel names when useful |
 | Work intake | Connect external work entering a channel | GitHub/Linear setup fields |
 | Tool servers | Manage AI-accessible MCP servers | MCP detail page and server rows |
-| Plugin bundles | Manage trusted capability packages | Plugin detail cards |
 | Skill policy | Control generation, recording, and publication rules | Policy details |
 | Skill library | Inspect reusable skill definitions and source health | Registry/detail rows |
 | Archived data | Restore archived product objects | Archive item rows |
@@ -133,7 +137,7 @@ Settings
 
 - Prefer product labels in Settings navigation and subnavs.
 - Keep acronyms and implementation names only when the user is inspecting that system:
-  MCP in Tool servers, GitHub/Linear in Work intake, plugin package data in Plugin bundles,
+  MCP in Tool servers, GitHub/Linear in Work intake, and plugin package data in the global Plugin Manager,
   startup phases in System health.
 - Use "Default authorization" for the high-level default users choose before a new
   conversation.
@@ -236,12 +240,12 @@ Configuration overview tool click
   -> Settings left navigation stays available
 ```
 
-## Hard Stops
+## Historical P3 Hard Stops
 
 - Do not add Settings business logic to `AppShell.tsx`.
-- Do not add a Work Board primary sidebar entry as part of P3.
-- Do not hide or remove Model Workbench, Teammate Management, Council Workspace, Work
-  Board, Default authorization, MCP tools, plugins, archived data, or system health.
+- Work Board promotion was outside P3; the later primary-navigation decision now owns it.
+- Do not hide or remove Model Workbench, Teammate Management, Council Workspace,
+  Default authorization, MCP tools, archived data, or system health.
 - Do not rename API/storage concepts just to match UI copy.
 - Do not expand `SkillLibrarySettingsPanel.tsx` with new behavior in this pass.
 - Do not add a new visual system or palette.
@@ -257,7 +261,7 @@ Configuration overview tool click
   - Runtime page shows only `Default authorization` with the three authorization modes.
   - `Tool permission policy`, `Advanced workspace policy`, and `Execution runners` are
     absent from the ordinary Settings UI.
-  - Connections subnav has `Work intake`, `Tool servers`, and `Plugin bundles`.
+  - Connections keeps `Work intake` and `Tool servers`; Plugin Manager is global navigation.
   - Skills subnav has `Skill policy` and `Skill library`.
   - Data subnav has `Archived data` and `System health`.
   - No Settings page creates horizontal overflow at desktop width.
@@ -267,7 +271,7 @@ Configuration overview tool click
 - [x] Configuration overview shows `Workspace setup` and `Work controls` groups.
 - [x] Runtime Settings exposes only `Default authorization`; tool policy and runner
       controls remain internal.
-- [x] Connections subsections read `Work intake`, `Tool servers`, and `Plugin bundles`.
+- [x] Connections exposes `Work intake` and `Tool servers`; Plugin Manager is promoted by the later IA decision.
 - [x] Skills subsections read `Skill policy` and `Skill library`.
 - [x] Data subsections read `Archived data` and `System health`.
 - [x] Settings nested workspace tools still hide the global sidebar and return to

@@ -84,10 +84,24 @@ export function useMediaDomain(input: {
       ) {
         return current;
       }
-      const firstMediaProvider = input.providers.find((provider) => canUseGenerationProviderForOperation(provider, current.operation));
-      return firstMediaProvider ? { ...current, providerPresetId: firstMediaProvider.id } : current;
+      const operation = generationOperations.find((candidate) => input.providers.some((provider) => canUseGenerationProviderForOperation(provider, candidate)));
+      if (!operation) {
+        return current;
+      }
+      const firstMediaProvider = input.providers.find((provider) => canUseGenerationProviderForOperation(provider, operation));
+      return firstMediaProvider ? { ...current, operation, providerPresetId: firstMediaProvider.id } : current;
     });
   }, [input.providers]);
+
+  useEffect(() => {
+    if (!input.cwd || !mediaJobs.some((job) => job.status === "queued" || job.status === "running")) {
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      void refreshMediaJobs(input.cwd);
+    }, 2_000);
+    return () => window.clearTimeout(timer);
+  }, [input.cwd, mediaJobs]);
 
   async function refreshMediaJobs(cwd = input.cwd): Promise<void> {
     if (!cwd) {
@@ -234,3 +248,5 @@ export function useMediaDomain(input: {
     clearError: () => setError(undefined),
   };
 }
+
+const generationOperations: readonly MediaJobFormState["operation"][] = ["image_generate", "video_generate", "image_edit"];

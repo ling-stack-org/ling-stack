@@ -2,6 +2,8 @@ import { useI18n } from "../../i18n.js";
 import { providerModelRouteLabel, providerRunBlockerLabel } from "../../lib/providers.js";
 import type { ChannelFormState, ProviderPreset } from "../../types.js";
 
+import { SelectControl } from "../../shared/components/SelectControl.js";
+
 export function ProviderPresetOptions({
   runnableProviders,
   blockedProviders,
@@ -83,14 +85,14 @@ export function ChannelWriteLockField({
   return (
     <label className="field wide">
       <span>{t("Write lock")}</span>
-      <select
+      <SelectControl
         value={form.runtimePolicy.writeLockScope}
         onChange={(event) => updatePolicy({ writeLockScope: event.target.value as ChannelFormState["runtimePolicy"]["writeLockScope"] })}
       >
         <option value="boundPath">{t("boundPath")}</option>
         <option value="channel">{t("channel")}</option>
         <option value="workspace">{t("workspace")}</option>
-      </select>
+      </SelectControl>
     </label>
   );
 }

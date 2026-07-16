@@ -4,6 +4,8 @@ import { StatusBadge } from "../../shared/components/index.js";
 import type { AiTeammate, Channel, EffectiveTeammateSkill, Task } from "../../types.js";
 import { TeammateListSection } from "./TeammateListSection.js";
 
+import { SelectControl } from "../../shared/components/SelectControl.js";
+
 export interface TeammateTaskCreateForm {
   readonly channelId: string;
   readonly requestedSkillId: string;
@@ -46,7 +48,7 @@ export function TeammateTasksTab({
         <div className="teammate-task-create-grid">
           <label className="field">
             <span>{t("Task channel")}</span>
-            <select
+            <SelectControl
               value={taskForm.channelId}
               onChange={(event) => onTaskFormChange({ ...taskForm, channelId: event.target.value })}
               disabled={taskChannelOptions.length === 0}
@@ -57,7 +59,7 @@ export function TeammateTasksTab({
                   {channel.name}
                 </option>
               ))}
-            </select>
+            </SelectControl>
           </label>
           <label className="field">
             <span>{t("Task title")}</span>
@@ -65,7 +67,7 @@ export function TeammateTasksTab({
           </label>
           <label className="field">
             <span>{t("Requested skill")}</span>
-            <select
+            <SelectControl
               value={taskForm.requestedSkillId}
               onChange={(event) => onTaskFormChange({ ...taskForm, requestedSkillId: event.target.value })}
             >
@@ -75,7 +77,7 @@ export function TeammateTasksTab({
                   {t(skill.skill.name)}
                 </option>
               ))}
-            </select>
+            </SelectControl>
           </label>
           <label className="field wide">
             <span>{t("Task prompt")}</span>

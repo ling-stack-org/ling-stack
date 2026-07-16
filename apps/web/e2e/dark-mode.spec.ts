@@ -45,15 +45,31 @@ test("main pages and workspace tools follow dark theme tokens", async ({ page })
   const navigation = page.getByLabel("Ling Stack navigation");
   await expect(navigation.getByRole("button", { name: "收件箱" })).toBeVisible();
 
-  await navigation.getByRole("button", { name: "图像生成" }).click();
-  await expect(page.locator(".media-jobs-page")).toBeVisible();
-  await assertDarkPage(page, "generation tasks", [
+  await navigation.getByRole("button", { name: "媒体生产" }).click();
+  await expect(page.locator(".media-production-page")).toBeVisible();
+  await assertDarkPage(page, "media production studio", [
     ".workspace-generation-surface",
-    ".media-jobs-page",
-    ".media-job-list-panel",
-    ".media-job-row",
-    ".media-job-detail-panel",
+    ".media-production-page",
+    ".media-production-canvas-toolbar",
+    ".media-production-studio",
+    ".media-production-empty-state",
   ]);
+
+  await navigation.getByRole("button", { name: "插件管理" }).click();
+  await expect(page.locator(".plugin-manager-page .settings-plugin-manager")).toBeVisible();
+  await assertDarkPage(page, "plugin manager", [
+    ".workspace-plugins-surface",
+    ".plugin-manager-page",
+    ".settings-plugin-manager",
+    ".plugin-table",
+    ".plugin-table-header",
+  ]);
+  await page.locator('.plugin-table-row[data-plugin-id="trusted-local:cua-driver"]').getByRole("button", { name: "安装引导" }).click();
+  await assertDarkPage(page, "Cua Driver installation guide", [
+    ".cua-install-panel",
+    ".cua-install-command",
+  ]);
+  await page.getByRole("dialog", { name: "安装 Cua Driver" }).getByRole("button", { name: "关闭" }).click();
 
   await navigation.getByRole("button", { name: "自动化" }).click();
   await expect(page.locator(".automations-inbox-page")).toBeVisible();
@@ -76,13 +92,13 @@ test("main pages and workspace tools follow dark theme tokens", async ({ page })
   await page.getByLabel("设置分组").getByRole("button", { name: /默认授权|Default authorization/ }).click();
   await expect(page.locator(".settings-global-approval-card")).toBeVisible();
   await expect(page.locator(".runtime-runner-settings-panel")).toHaveCount(0);
-  await page.locator(".settings-choice-trigger").first().click();
+  await page.locator(".rich-choice-select-trigger").first().click();
   await assertDarkPage(page, "default authorization settings", [
     ".settings-default-authorization-section",
     ".settings-global-approval-card",
     ".settings-decision-row",
-    ".settings-choice-trigger",
-    ".settings-choice-popover",
+    ".rich-choice-select-trigger",
+    ".rich-choice-select-popover",
   ]);
 
   await page.getByLabel("设置分组").getByRole("button", { name: /智囊团工作区|Council Workspace/ }).click();
@@ -152,15 +168,6 @@ test("main pages and workspace tools follow dark theme tokens", async ({ page })
     ".mcp-empty",
   ]);
 
-  await page.getByLabel("设置分组").getByRole("button", { name: /Plugin Manager|插件管理/ }).click();
-  await expect(page.locator(".settings-plugin-manager")).toBeVisible();
-  await assertDarkPage(page, "plugin settings", [
-    ".settings-layout",
-    ".settings-plugin-manager",
-    ".settings-meta-line",
-    ".settings-plugin-row",
-  ]);
-
   await page.getByLabel("设置分组").getByRole("button", { name: /个性化|Personalization/ }).click();
   await expect(page.locator(".personalization-settings-panel")).toBeVisible();
   await expect(page.locator(".skill-governance-settings-panel")).toBeVisible();
@@ -192,18 +199,12 @@ test("main pages and workspace tools follow dark theme tokens", async ({ page })
     ".settings-skill-summary-card",
   ]);
 
-  await page.getByRole("tab", { name: /待复核|Review queue/ }).click();
-  await expect(page.locator(".settings-skill-review-stack")).toBeVisible();
-  await assertDarkPage(page, "skill library review settings", [
-    ".settings-layout",
-    ".settings-skill-library",
-    ".settings-skill-review-stack",
-    ".settings-compact-details",
-    ".settings-skill-review-queue",
-    ".settings-skill-review-filters",
-  ]);
+  await expect(page.getByRole("tab", { name: /AI 进化|AI evolution/ })).toBeVisible();
+  await expect(page.getByRole("tab", { name: /待复核|Review queue/ })).toHaveCount(0);
+  await expect(page.getByRole("tab", { name: /官方技能更新|Official skill updates/ })).toHaveCount(0);
 
-  await page.getByLabel("设置分组").getByRole("button", { name: /工作看板|Work Board/ }).click();
+  await page.getByRole("button", { name: /返回应用|Back to app/ }).click();
+  await navigation.getByRole("button", { name: /工作看板|Work Board/ }).click();
   await expect(page.locator(".work-board-page")).toBeVisible();
   await assertDarkPage(page, "work board", [
     ".work-board-page",
@@ -213,6 +214,8 @@ test("main pages and workspace tools follow dark theme tokens", async ({ page })
     ".work-board-detail",
   ]);
 
+  await navigation.getByRole("button", { name: /设置|Settings/ }).click();
+  await page.getByLabel("设置分组").getByRole("button", { name: /启动与诊断|Startup and diagnostics/ }).click();
   await page.getByRole("button", { name: /打开运行诊断|Open run diagnostics/ }).first().click();
   await expect(page.getByLabel("设置分组")).toBeVisible();
   await expect(page.getByLabel("Ling Stack navigation")).toHaveCount(0);

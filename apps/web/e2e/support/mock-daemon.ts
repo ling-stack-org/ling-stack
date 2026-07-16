@@ -156,6 +156,11 @@ export interface MockState {
   externalWorkWorkflowConfigureCalls: number;
   lastExternalWorkWorkflowConfigure?: Record<string, unknown>;
   mediaJobs: MockMediaJob[];
+  mediaProjects: MockMediaProject[];
+  mediaScenes: MockMediaScene[];
+  mediaSceneRuns: MockMediaSceneRun[];
+  mediaWorkflowConnections: Record<string, unknown>[];
+  mediaWorkflows: Record<string, unknown>[];
   workItems: MockWorkItem[];
   workUnits: MockWorkUnit[];
   runtimeRunners: RunnerListItem[];
@@ -527,13 +532,58 @@ export interface MockExternalWorkCiTriageView {
 export interface MockMediaJob {
   id: string;
   workspaceId: string;
-  providerPresetId: string;
+  providerPresetId?: string;
+  workflowVersionId?: string;
+  executionSource?: Record<string, unknown>;
   operation: string;
   prompt: string;
   input: Record<string, unknown>;
   artifactIds: string[];
   status: string;
   errorMessage?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface MockMediaProject {
+  id: string;
+  workspaceId: string;
+  name: string;
+  defaultProviderPresetId?: string;
+  defaultExecutionMode: "direct" | "workflow";
+  defaultWorkflowDefinitionId?: string;
+  canvasViewport: { x: number; y: number; zoom: number };
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface MockMediaScene {
+  id: string;
+  projectId: string;
+  sortOrder: number;
+  title: string;
+  prompt: string;
+  providerPresetId?: string;
+  executionMode: "inherit" | "direct" | "workflow";
+  workflowDefinitionId?: string;
+  workflowInputValues: Record<string, unknown>;
+  ratio: string;
+  durationSeconds: number;
+  referenceArtifactIds: string[];
+  canvasPosition: { x: number; y: number };
+  selectedMediaSceneRunId?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface MockMediaSceneRun {
+  id: string;
+  projectId: string;
+  sceneId: string;
+  mediaJobId: string;
+  providerSnapshot: Record<string, unknown>;
+  executionSnapshot: Record<string, unknown>;
+  inputSnapshot: Record<string, unknown>;
   createdAt: string;
   updatedAt: string;
 }
@@ -606,6 +656,17 @@ export interface MockManagedPlugin {
   }>;
   package?: MockManagedPluginPackage;
   runtimePreview?: MockManagedPluginRuntimePreview;
+  setup?: {
+    kind: "local_binary";
+    state: "detected" | "missing" | "unsupported" | "connected" | "ready";
+    checkedAt: string;
+    detectedCommand?: string;
+    guide?: {
+      documentationUrl: string;
+      installCommand: string;
+      supportsCustomCommand: boolean;
+    };
+  };
   events?: MockManagedPluginEvent[];
   disabledReason?: string;
   actions: {
@@ -1181,6 +1242,11 @@ export function createBaseState(options: { approvalStatus: "pending" | "expired"
     externalWorkSecretDeleteCalls: 0,
     externalWorkWorkflowConfigureCalls: 0,
     mediaJobs: [],
+    mediaProjects: [],
+    mediaScenes: [],
+    mediaSceneRuns: [],
+    mediaWorkflowConnections: [],
+    mediaWorkflows: [],
     workItems: [],
     workUnits: [],
     runtimeRunners: [
@@ -3848,7 +3914,17 @@ export function createMockManagedPlugins(): MockManagedPlugin[] {
 
 export function createMockCuaPlugin(overrides: Partial<MockManagedPlugin> = {}): MockManagedPlugin {
   const linked = overrides.linkedResources?.[0];
-  const status = overrides.status ?? (linked ? "enabled" : "available");
+  const setup = overrides.setup ?? {
+    kind: "local_binary" as const,
+    state: "missing" as const,
+    checkedAt: "2026-06-06T00:30:00.000Z",
+    guide: {
+      documentationUrl: "https://cua.ai/docs/cua-driver",
+      installCommand: "/bin/bash -c \"$(curl -fsSL https://cua.ai/driver/install.sh)\"",
+      supportsCustomCommand: true,
+    },
+  };
+  const status = overrides.status ?? (setup.state === "ready" ? "enabled" : setup.state === "connected" ? "disabled" : "available");
   const enabled = status === "enabled";
   return {
     id: "trusted-local:cua-driver",
@@ -3872,11 +3948,12 @@ export function createMockCuaPlugin(overrides: Partial<MockManagedPlugin> = {}):
       },
     ],
     health: overrides.health,
+    setup,
     linkedResources: overrides.linkedResources ?? [],
     events: overrides.events ?? [],
     disabledReason: overrides.disabledReason,
     actions: {
-      canEnable: status !== "enabled" && status !== "blocked",
+      canEnable: setup.state === "connected",
       canDisable: status === "enabled",
       canCheck: true,
       canApplyPreset: status !== "blocked",
@@ -4079,6 +4156,7 @@ export function updateMockCuaPlugin(state: MockState, patch: Partial<MockManaged
     linkedResources: patch.linkedResources ?? current?.linkedResources ?? [],
     events: patch.events ?? current?.events ?? [],
     health: patch.health ?? current?.health,
+    setup: patch.setup ?? current?.setup,
     disabledReason: patch.disabledReason,
     contributions: patch.contributions ?? current?.contributions?.map((contribution) => ({
       ...contribution,
@@ -4087,7 +4165,7 @@ export function updateMockCuaPlugin(state: MockState, patch: Partial<MockManaged
       enabled: nextStatus === "enabled",
     })),
     actions: {
-      canEnable: nextStatus !== "enabled" && nextStatus !== "blocked",
+      canEnable: (patch.setup ?? current?.setup)?.state === "connected",
       canDisable: nextStatus === "enabled",
       canCheck: true,
       canApplyPreset: nextStatus !== "blocked",
@@ -4159,6 +4237,37 @@ export function upsertMockCuaMcpServer(state: MockState, enabled: boolean): Mock
     state.mcpServers.push(server);
   }
   return server;
+}
+
+export function syncMockCuaTools(state: MockState, server: MockMcpServer): MockMcpTool[] {
+  const tools = [
+    createMockMcpTool({
+      id: "mcp_cua_driver_check_permissions",
+      serverId: server.id,
+      name: "check_permissions",
+      title: "Check permissions",
+      sideEffectLevel: "read",
+      defaultApproval: "allow",
+    }),
+    createMockMcpTool({
+      id: "mcp_cua_driver_click",
+      serverId: server.id,
+      name: "click",
+      title: "Click",
+      sideEffectLevel: "external",
+      defaultApproval: "ask",
+    }),
+    createMockMcpTool({
+      id: "mcp_cua_driver_list_windows",
+      serverId: server.id,
+      name: "list_windows",
+      title: "List windows",
+      sideEffectLevel: "read",
+      defaultApproval: "allow",
+    }),
+  ];
+  state.mcpTools = [...state.mcpTools.filter((tool) => tool.serverId !== server.id), ...tools];
+  return tools;
 }
 
 export function createDefaultProviderTemplates(): readonly Record<string, unknown>[] {
@@ -4386,6 +4495,7 @@ export function createDefaultProviderTemplates(): readonly Record<string, unknow
       providerId: "seedance",
       model: "seedance",
       api: "media-job",
+      baseUrl: "https://ark.cn-beijing.volces.com/api/v3",
       apiKeyRef: "env:SEEDANCE_API_KEY",
       capabilities: ["video_generate"],
       input: ["text", "image"],
@@ -6101,6 +6211,42 @@ function mockMediaJobOperation(value: unknown): Parameters<typeof resolveGenerat
   return undefined;
 }
 
+function completeMockMediaProductionJob(state: MockState, job: MockMediaJob): void {
+  if (job.status === "cancelled" || (job.status === "succeeded" && job.artifactIds.length > 0)) {
+    return;
+  }
+  const isVideo = job.operation === "video_generate";
+  const artifact: MockArtifact = {
+    id: `artifact_${job.id}`,
+    mediaJobId: job.id,
+    type: isVideo ? "video" : "image",
+    path: `media_jobs/${job.id}/result.${isVideo ? "mp4" : "png"}`,
+    title: isVideo ? "媒体生产视频片段" : "媒体生产图片结果",
+    contentType: isVideo ? "video/mp4" : "image/png",
+    sizeBytes: isVideo ? 1024 * 1024 * 4 : 4096,
+    createdAt: "2026-07-14T00:05:00.000Z",
+  };
+  job.status = "succeeded";
+  job.errorMessage = undefined;
+  job.artifactIds = [artifact.id];
+  job.updatedAt = artifact.createdAt;
+  state.artifactsByMediaJob[job.id] = [artifact];
+  const sceneRun = state.mediaSceneRuns.find((item) => item.mediaJobId === job.id);
+  const scene = sceneRun ? state.mediaScenes.find((item) => item.id === sceneRun.sceneId) : undefined;
+  if (scene && sceneRun && !scene.selectedMediaSceneRunId) {
+    scene.selectedMediaSceneRunId = sceneRun.id;
+  }
+}
+
+function startMockMediaProductionJob(state: MockState, job: MockMediaJob): void {
+  job.status = "running";
+  const delayMs = state.mediaJobRunDelayMs ?? 80;
+  if (delayMs < 0) {
+    return;
+  }
+  setTimeout(() => completeMockMediaProductionJob(state, job), delayMs);
+}
+
 export function buildMockExternalActionView(state: MockState, action: MockExternalWorkAction): Record<string, unknown> {
   return {
     action,
@@ -7469,7 +7615,62 @@ export async function handleDaemonRoute(
     }
   }
   if (request.method() === "GET" && path === "/plugins") {
-    await route.fulfill({ json: { cwd, plugins: state.managedPlugins } });
+    await route.fulfill({
+      json: {
+        cwd,
+        plugins: state.managedPlugins.filter((plugin) =>
+          plugin.id !== "bundled:cua-driver" && plugin.id !== "runner:pi"
+        ),
+      },
+    });
+    return;
+  }
+  if (request.method() === "POST" && path === "/plugins") {
+    const body = safePostDataJson(request);
+    const displayName = typeof body.displayName === "string" ? body.displayName.trim() : "";
+    const description = typeof body.description === "string" ? body.description.trim() : "";
+    const transport = isRecord(body.transport) ? body.transport : {};
+    if (!displayName || !description || (transport.type !== "stdio" && transport.type !== "streamable-http")) {
+      await route.fulfill({ status: 400, json: { error: "bad_request", message: "Plugin name, description, and transport are required." } });
+      return;
+    }
+    const serverId = `mcp_plugin_${state.mcpServers.length + 1}`;
+    const server = createMockMcpServerFromBody({ displayName, transport, enabled: false }, serverId);
+    state.mcpServers.push(server);
+    const plugin: MockManagedPlugin = {
+      id: `trusted-local:${serverId}`,
+      displayName,
+      version: "1.0.0",
+      sourceKind: "trusted-local-preset",
+      status: "disabled",
+      description,
+      trustSummary: "Runs through the MCP broker and existing approval policy.",
+      contributions: [{
+        kind: "mcp-server",
+        id: serverId,
+        label: displayName,
+        capabilities: [transport.type === "stdio" ? "mcp:stdio" : "mcp:streamable-http"],
+        sideEffectLevel: "external",
+        defaultApproval: "ask",
+        linkedResourceId: serverId,
+        linkedResourcePresent: true,
+        enabled: false,
+      }],
+      linkedResources: [{ kind: "mcp-server", id: serverId, present: true, enabled: false, displayName }],
+      events: [],
+      actions: {
+        canEnable: true,
+        canDisable: false,
+        canCheck: true,
+        canApplyPreset: false,
+        canInstall: false,
+        canUninstall: false,
+        canRefreshPackage: false,
+        canRuntimePreview: false,
+      },
+    };
+    state.managedPlugins.push(plugin);
+    await route.fulfill({ status: 201, json: { cwd, plugin } });
     return;
   }
   if (request.method() === "GET" && path === "/plugins/sources") {
@@ -7511,6 +7712,34 @@ export async function handleDaemonRoute(
     const plugin = state.managedPlugins[pluginIndex];
     if (!action && request.method() === "GET") {
       await route.fulfill({ json: { plugin } });
+      return;
+    }
+    if (action === "connect" && request.method() === "POST") {
+      if (plugin.id !== "trusted-local:cua-driver") {
+        await route.fulfill({ status: 400, json: { error: "plugin_connect_not_supported" } });
+        return;
+      }
+      const body = safePostDataJson(request);
+      const requestedCommand = typeof body.command === "string" ? body.command.trim() : "";
+      const detectedCommand = requestedCommand || plugin.setup?.detectedCommand;
+      if (!detectedCommand || detectedCommand.includes("missing")) {
+        await route.fulfill({ status: 400, json: { error: requestedCommand ? "plugin_command_not_executable" : "plugin_binary_not_found", message: "cua-driver binary was not found." } });
+        return;
+      }
+      const server = upsertMockCuaMcpServer(state, false);
+      server.command = detectedCommand;
+      const updated = updateMockCuaPlugin(state, {
+        status: "disabled",
+        setup: {
+          kind: "local_binary",
+          state: "connected",
+          checkedAt: "2026-06-06T00:31:00.000Z",
+          detectedCommand,
+        },
+        linkedResources: [{ kind: "mcp-server", id: server.id, present: true, enabled: false, displayName: server.displayName }],
+        events: appendMockPluginEvent(plugin, "connected", `Connected MCP server ${server.id}.`, { linkedResourceId: server.id }),
+      });
+      await route.fulfill({ json: { plugin: updated, linkedMcpServer: toPublicMockMcpServer(server, state) } });
       return;
     }
     if (action === "validate-package" && request.method() === "POST") {
@@ -7605,35 +7834,15 @@ export async function handleDaemonRoute(
         return;
       }
       const server = upsertMockCuaMcpServer(state, true);
-      const tools = [
-        createMockMcpTool({
-          id: "mcp_cua_driver_check_permissions",
-          serverId: server.id,
-          name: "check_permissions",
-          title: "Check permissions",
-          sideEffectLevel: "read",
-          defaultApproval: "allow",
-        }),
-        createMockMcpTool({
-          id: "mcp_cua_driver_click",
-          serverId: server.id,
-          name: "click",
-          title: "Click",
-          sideEffectLevel: "external",
-          defaultApproval: "ask",
-        }),
-        createMockMcpTool({
-          id: "mcp_cua_driver_list_windows",
-          serverId: server.id,
-          name: "list_windows",
-          title: "List windows",
-          sideEffectLevel: "read",
-          defaultApproval: "allow",
-        }),
-      ];
-      state.mcpTools = [...state.mcpTools.filter((tool) => tool.serverId !== server.id), ...tools];
+      const tools = syncMockCuaTools(state, server);
       const updated = updateMockCuaPlugin(state, {
         status: "enabled",
+        setup: {
+          kind: "local_binary",
+          state: "ready",
+          checkedAt: "2026-06-06T00:32:00.000Z",
+          detectedCommand: server.command,
+        },
         linkedResources: [{ kind: "mcp-server", id: server.id, present: true, enabled: true, displayName: server.displayName }],
         health: createMockPluginHealth("trusted-local:cua-driver", "ready", "3 tools discovered"),
         events: appendMockPluginEvent(plugin, "preset_applied", "Preset applied. 3 MCP tool(s) synced.", { status: "ready", mcpServerId: server.id, toolCount: 3 }),
@@ -7649,7 +7858,8 @@ export async function handleDaemonRoute(
       return;
     }
     if (action === "check" && request.method() === "POST") {
-      const server = state.mcpServers.find((item) => item.id === "mcp_cua_driver");
+      const linkedServerId = plugin.linkedResources.find((resource) => resource.kind === "mcp-server")?.id;
+      const server = state.mcpServers.find((item) => item.id === linkedServerId);
       const health = server
         ? createMockPluginHealth(plugin.id, server.enabled ? "ready" : "disabled", server.enabled ? "MCP server is reachable." : "MCP server is disabled.")
         : createMockPluginHealth(plugin.id, "ready", plugin.id === "trusted-local:cua-driver"
@@ -7666,19 +7876,29 @@ export async function handleDaemonRoute(
     }
     if (action === "disable" && request.method() === "POST") {
       const reason = safePostDataJson(request).reason;
-      const server = state.mcpServers.find((item) => item.id === "mcp_cua_driver");
-      if ((plugin.id === "trusted-local:cua-driver" || plugin.id === "bundled:cua-driver") && server) {
+      const linkedServerId = plugin.linkedResources.find((resource) => resource.kind === "mcp-server")?.id;
+      const server = state.mcpServers.find((item) => item.id === linkedServerId);
+      if (server) {
         server.enabled = false;
         server.status = "disabled";
         server.updatedAt = "2026-06-06T00:31:00.000Z";
       }
       const patch = {
         status: "disabled",
+        ...(plugin.id === "trusted-local:cua-driver" ? {
+          setup: {
+            kind: "local_binary" as const,
+            state: "connected" as const,
+            checkedAt: "2026-06-06T00:31:00.000Z",
+            detectedCommand: server?.command,
+          },
+        } : {}),
         disabledReason: typeof reason === "string" ? reason : undefined,
         linkedResources: plugin.linkedResources.map((resource) =>
           resource.id === "mcp_cua_driver" ? { ...resource, enabled: false } : resource
         ),
         contributions: plugin.contributions.map((contribution) => ({ ...contribution, enabled: false })),
+        actions: { ...plugin.actions, canEnable: true, canDisable: false },
         events: appendMockPluginEvent(plugin, "disabled", "Plugin disabled.", {}),
       };
       const updated = updateMockPlugin(state, plugin.id, plugin.id === "bundled:cua-driver"
@@ -7692,20 +7912,33 @@ export async function handleDaemonRoute(
       return;
     }
     if (action === "enable" && request.method() === "POST") {
-      const server = state.mcpServers.find((item) => item.id === "mcp_cua_driver");
-      if ((plugin.id === "trusted-local:cua-driver" || plugin.id === "bundled:cua-driver") && server) {
+      const linkedServerId = plugin.linkedResources.find((resource) => resource.kind === "mcp-server")?.id;
+      const server = state.mcpServers.find((item) => item.id === linkedServerId);
+      if (server) {
         server.enabled = true;
         server.status = "ready";
         server.updatedAt = "2026-06-06T00:32:00.000Z";
+      }
+      if (plugin.id === "trusted-local:cua-driver" && server) {
+        syncMockCuaTools(state, server);
       }
       const linkedResources = plugin.linkedResources.map((resource) =>
         resource.id === "mcp_cua_driver" ? { ...resource, enabled: true } : resource
       );
       const patch = {
         status: "enabled",
+        ...(plugin.id === "trusted-local:cua-driver" ? {
+          setup: {
+            kind: "local_binary" as const,
+            state: "ready" as const,
+            checkedAt: "2026-06-06T00:32:00.000Z",
+            detectedCommand: server?.command,
+          },
+        } : {}),
         disabledReason: undefined,
         linkedResources,
         contributions: plugin.contributions.map((contribution) => ({ ...contribution, enabled: true })),
+        actions: { ...plugin.actions, canEnable: false, canDisable: true },
         events: appendMockPluginEvent(plugin, "enabled", "Plugin enabled.", {}),
       };
       const updated = updateMockPlugin(state, plugin.id, plugin.id === "bundled:cua-driver"
@@ -12573,6 +12806,493 @@ export async function handleDaemonRoute(
     await route.fulfill({ json: { cwd, mediaJobs: state.mediaJobs } });
     return;
   }
+  if (request.method() === "GET" && path === "/media-workflow-connections") {
+    await route.fulfill({ json: { cwd, connections: state.mediaWorkflowConnections } });
+    return;
+  }
+  if (request.method() === "POST" && path === "/media-workflow-connections") {
+    const body = await request.postDataJSON() as Record<string, unknown>;
+    const timestamp = "2026-07-14T00:00:00.000Z";
+    const connection = {
+      id: `media_workflow_connection_${state.mediaWorkflowConnections.length + 1}`,
+      workspaceId: "workspace_default",
+      name: typeof body.name === "string" ? body.name : "ComfyUI",
+      adapterKind: "comfyui",
+      baseUrl: typeof body.baseUrl === "string" ? body.baseUrl : "http://127.0.0.1:8188",
+      authMode: body.authMode === "bearer" ? "bearer" : "none",
+      secretConfigured: body.authMode !== "bearer" || typeof body.apiKey === "string",
+      networkPolicy: body.networkPolicy === "public_only" ? "public_only" : "trusted_private_network",
+      protocolVariant: body.protocolVariant === "jobs_v1" || body.protocolVariant === "prompt_legacy" ? body.protocolVariant : "auto",
+      status: "unchecked",
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    };
+    state.mediaWorkflowConnections.unshift(connection);
+    await route.fulfill({ status: 201, json: { connection } });
+    return;
+  }
+  const mediaWorkflowConnectionCheckMatch = /^\/media-workflow-connections\/([^/]+)\/check$/.exec(path);
+  if (request.method() === "POST" && mediaWorkflowConnectionCheckMatch) {
+    const connection = state.mediaWorkflowConnections.find((item) => item.id === decodeURIComponent(mediaWorkflowConnectionCheckMatch[1]));
+    if (!connection) {
+      await route.fulfill({ status: 404, json: { error: "media_workflow_connection_not_found" } });
+      return;
+    }
+    Object.assign(connection, {
+      status: "ready",
+      health: { ok: true, message: "连接正常，已读取 18 种节点。", checkedAt: "2026-07-14T00:01:00.000Z", protocolVariant: "prompt_legacy", nodeCount: 18 },
+      updatedAt: "2026-07-14T00:01:00.000Z",
+    });
+    await route.fulfill({ json: { connection } });
+    return;
+  }
+  const mediaWorkflowConnectionMatch = /^\/media-workflow-connections\/([^/]+)$/.exec(path);
+  if (mediaWorkflowConnectionMatch) {
+    const connectionId = decodeURIComponent(mediaWorkflowConnectionMatch[1]);
+    const connection = state.mediaWorkflowConnections.find((item) => item.id === connectionId);
+    if (!connection) {
+      await route.fulfill({ status: 404, json: { error: "media_workflow_connection_not_found" } });
+      return;
+    }
+    if (request.method() === "PATCH") {
+      const body = await request.postDataJSON() as Record<string, unknown>;
+      for (const key of ["name", "baseUrl", "authMode", "networkPolicy", "protocolVariant"] as const) {
+        if (typeof body[key] === "string") connection[key] = body[key];
+      }
+      if (typeof body.apiKey === "string" && body.apiKey) connection.secretConfigured = true;
+      connection.status = "unchecked";
+      delete connection.health;
+      connection.updatedAt = "2026-07-14T00:02:00.000Z";
+      await route.fulfill({ json: { connection } });
+      return;
+    }
+    if (request.method() === "DELETE") {
+      state.mediaWorkflowConnections = state.mediaWorkflowConnections.filter((item) => item.id !== connectionId);
+      await route.fulfill({ json: { deleted: true, connectionId } });
+      return;
+    }
+  }
+  if (request.method() === "GET" && path === "/media-workflows") {
+    await route.fulfill({ json: { cwd, workflows: state.mediaWorkflows } });
+    return;
+  }
+  if (request.method() === "POST" && path === "/media-workflows/analyze") {
+    const body = await request.postDataJSON() as Record<string, unknown>;
+    const graph = isRecord(body.graph) ? body.graph : {};
+    await route.fulfill({ json: mockMediaWorkflowAnalysis(graph) });
+    return;
+  }
+  if (request.method() === "POST" && path === "/media-workflows/import") {
+    const body = await request.postDataJSON() as Record<string, unknown>;
+    const graph = isRecord(body.graph) ? body.graph : {};
+    const analysis = mockMediaWorkflowAnalysis(graph);
+    const timestamp = "2026-07-14T00:03:00.000Z";
+    const definition = {
+      id: `media_workflow_${state.mediaWorkflows.length + 1}`,
+      workspaceId: "workspace_default",
+      connectionId: typeof body.connectionId === "string" ? body.connectionId : "",
+      name: typeof body.name === "string" ? body.name : "未命名生产流程",
+      description: typeof body.description === "string" ? body.description : undefined,
+      status: analysis.validation.ok ? "draft" : "blocked",
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    };
+    const version = {
+      id: `media_workflow_version_${state.mediaWorkflows.length + 1}`,
+      workflowDefinitionId: definition.id,
+      version: 1,
+      sourceFormat: "comfy_api_json",
+      sourceDigest: analysis.sourceDigest,
+      graphSnapshot: graph,
+      inputFields: Array.isArray(body.inputFields) ? body.inputFields : analysis.inputFields,
+      outputRules: Array.isArray(body.outputRules) ? body.outputRules : analysis.outputRules,
+      validation: analysis.validation,
+      createdAt: timestamp,
+    };
+    const detail = { definition, versions: [version] };
+    state.mediaWorkflows.unshift(detail);
+    await route.fulfill({ status: 201, json: { ...detail, importedVersion: version, analysis } });
+    return;
+  }
+  const mediaWorkflowActionMatch = /^\/media-workflows\/([^/]+)\/(test|activate|archive)$/.exec(path);
+  if (request.method() === "POST" && mediaWorkflowActionMatch) {
+    const workflowId = decodeURIComponent(mediaWorkflowActionMatch[1]);
+    const action = mediaWorkflowActionMatch[2];
+    const detail = state.mediaWorkflows.find((item) => isRecord(item.definition) && item.definition.id === workflowId);
+    if (!detail || !isRecord(detail.definition) || !Array.isArray(detail.versions) || !isRecord(detail.versions[0])) {
+      await route.fulfill({ status: 404, json: { error: "media_workflow_not_found" } });
+      return;
+    }
+    const version = detail.versions[0];
+    if (action === "test") {
+      const job: MockMediaJob = {
+        id: `media_job_${state.mediaJobs.length + 1}`,
+        workspaceId: "workspace_default",
+        workflowVersionId: String(version.id),
+        executionSource: { kind: "workflow", workflowVersionId: version.id },
+        operation: "video_generate",
+        prompt: "工作流试运行",
+        input: { workflowTest: true },
+        artifactIds: [],
+        status: "queued",
+        createdAt: "2026-07-14T00:04:00.000Z",
+        updatedAt: "2026-07-14T00:04:00.000Z",
+      };
+      version.testMediaJobId = job.id;
+      state.mediaJobs.unshift(job);
+      startMockMediaProductionJob(state, job);
+      await route.fulfill({ status: 202, json: { mediaJob: job, workflowDefinitionId: workflowId, workflowVersionId: version.id } });
+      return;
+    }
+    if (action === "activate") {
+      detail.definition.status = "ready";
+      detail.definition.currentVersionId = version.id;
+      detail.currentVersion = version;
+      await route.fulfill({ json: detail });
+      return;
+    }
+    detail.definition.status = "archived";
+    await route.fulfill({ json: detail });
+    return;
+  }
+  const mediaWorkflowMatch = /^\/media-workflows\/([^/]+)$/.exec(path);
+  if (mediaWorkflowMatch) {
+    const workflowId = decodeURIComponent(mediaWorkflowMatch[1]);
+    const detail = state.mediaWorkflows.find((item) => isRecord(item.definition) && item.definition.id === workflowId);
+    if (!detail) {
+      await route.fulfill({ status: 404, json: { error: "media_workflow_not_found" } });
+      return;
+    }
+    if (request.method() === "GET") {
+      await route.fulfill({ json: detail });
+      return;
+    }
+    if (request.method() === "DELETE") {
+      state.mediaWorkflows = state.mediaWorkflows.filter((item) => item !== detail);
+      await route.fulfill({ json: { deleted: true, workflowDefinitionId: workflowId } });
+      return;
+    }
+  }
+  if (request.method() === "GET" && path === "/media-projects") {
+    await route.fulfill({ json: { cwd, mediaProjects: state.mediaProjects } });
+    return;
+  }
+  if (request.method() === "POST" && path === "/media-projects") {
+    const body = await request.postDataJSON() as Record<string, unknown>;
+    const timestamp = "2026-07-13T00:00:00.000Z";
+    const project: MockMediaProject = {
+      id: `media_project_${state.mediaProjects.length + 1}`,
+      workspaceId: "workspace_default",
+      name: typeof body.name === "string" ? body.name : "未命名媒体项目",
+      defaultProviderPresetId: typeof body.defaultProviderPresetId === "string" ? body.defaultProviderPresetId : undefined,
+      defaultExecutionMode: body.defaultExecutionMode === "workflow" ? "workflow" : "direct",
+      defaultWorkflowDefinitionId: typeof body.defaultWorkflowDefinitionId === "string" ? body.defaultWorkflowDefinitionId : undefined,
+      canvasViewport: isRecord(body.canvasViewport) ? {
+        x: typeof body.canvasViewport.x === "number" ? body.canvasViewport.x : 0,
+        y: typeof body.canvasViewport.y === "number" ? body.canvasViewport.y : 0,
+        zoom: typeof body.canvasViewport.zoom === "number" ? body.canvasViewport.zoom : 1,
+      } : { x: 0, y: 0, zoom: 1 },
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    };
+    state.mediaProjects.unshift(project);
+    await route.fulfill({ status: 201, json: { mediaProject: project, scenes: [], sceneRuns: [] } });
+    return;
+  }
+
+  const mediaProjectMatch = /^\/media-projects\/([^/]+)$/.exec(path);
+  if (mediaProjectMatch) {
+    const projectId = decodeURIComponent(mediaProjectMatch[1]);
+    const project = state.mediaProjects.find((item) => item.id === projectId);
+    if (!project) {
+      await route.fulfill({ status: 404, json: { error: "media_project_not_found" } });
+      return;
+    }
+    if (request.method() === "GET") {
+      await route.fulfill({ json: mockMediaProjectDetail(state, project) });
+      return;
+    }
+    if (request.method() === "PATCH") {
+      const body = await request.postDataJSON() as Record<string, unknown>;
+      if (typeof body.name === "string") project.name = body.name;
+      if (typeof body.defaultProviderPresetId === "string") project.defaultProviderPresetId = body.defaultProviderPresetId;
+      if (body.defaultProviderPresetId === null) delete project.defaultProviderPresetId;
+      if (body.defaultExecutionMode === "direct" || body.defaultExecutionMode === "workflow") project.defaultExecutionMode = body.defaultExecutionMode;
+      if (typeof body.defaultWorkflowDefinitionId === "string") project.defaultWorkflowDefinitionId = body.defaultWorkflowDefinitionId;
+      if (body.defaultWorkflowDefinitionId === null) delete project.defaultWorkflowDefinitionId;
+      project.updatedAt = "2026-07-13T00:01:00.000Z";
+      await route.fulfill({ json: mockMediaProjectDetail(state, project) });
+      return;
+    }
+    if (request.method() === "DELETE") {
+      state.mediaProjects = state.mediaProjects.filter((item) => item.id !== projectId);
+      state.mediaScenes = state.mediaScenes.filter((item) => item.projectId !== projectId);
+      await route.fulfill({ json: { deleted: true, mediaProjectId: projectId } });
+      return;
+    }
+  }
+
+  const mediaProjectScenesMatch = /^\/media-projects\/([^/]+)\/scenes$/.exec(path);
+  if (request.method() === "POST" && mediaProjectScenesMatch) {
+    const projectId = decodeURIComponent(mediaProjectScenesMatch[1]);
+    const body = await request.postDataJSON() as Record<string, unknown>;
+    const scene: MockMediaScene = {
+      id: `media_scene_${state.mediaScenes.length + 1}`,
+      projectId,
+      sortOrder: state.mediaScenes.filter((item) => item.projectId === projectId).length,
+      title: typeof body.title === "string" ? body.title : "场景",
+      prompt: typeof body.prompt === "string" ? body.prompt : "",
+      providerPresetId: typeof body.providerPresetId === "string" ? body.providerPresetId : undefined,
+      executionMode: body.executionMode === "direct" || body.executionMode === "workflow" ? body.executionMode : "inherit",
+      workflowDefinitionId: typeof body.workflowDefinitionId === "string" ? body.workflowDefinitionId : undefined,
+      workflowInputValues: isRecord(body.workflowInputValues) ? body.workflowInputValues : {},
+      ratio: typeof body.ratio === "string" ? body.ratio : "16:9",
+      durationSeconds: typeof body.durationSeconds === "number" ? body.durationSeconds : 5,
+      referenceArtifactIds: Array.isArray(body.referenceArtifactIds) ? body.referenceArtifactIds.filter((value): value is string => typeof value === "string") : [],
+      canvasPosition: isRecord(body.canvasPosition) ? {
+        x: typeof body.canvasPosition.x === "number" ? body.canvasPosition.x : 0,
+        y: typeof body.canvasPosition.y === "number" ? body.canvasPosition.y : 0,
+      } : { x: 0, y: 0 },
+      createdAt: "2026-07-13T00:00:00.000Z",
+      updatedAt: "2026-07-13T00:00:00.000Z",
+    };
+    state.mediaScenes.push(scene);
+    await route.fulfill({ status: 201, json: { mediaScene: scene } });
+    return;
+  }
+
+  const mediaProjectReorderMatch = /^\/media-projects\/([^/]+)\/reorder$/.exec(path);
+  if (request.method() === "POST" && mediaProjectReorderMatch) {
+    const projectId = decodeURIComponent(mediaProjectReorderMatch[1]);
+    const body = await request.postDataJSON() as Record<string, unknown>;
+    const sceneIds = Array.isArray(body.sceneIds) ? body.sceneIds.filter((value): value is string => typeof value === "string") : [];
+    sceneIds.forEach((sceneId, sortOrder) => {
+      const scene = state.mediaScenes.find((item) => item.id === sceneId && item.projectId === projectId);
+      if (scene) scene.sortOrder = sortOrder;
+    });
+    await route.fulfill({ json: { mediaProjectId: projectId, scenes: state.mediaScenes.filter((item) => item.projectId === projectId).sort((left, right) => left.sortOrder - right.sortOrder) } });
+    return;
+  }
+
+  const mediaSceneMatch = /^\/media-scenes\/([^/]+)$/.exec(path);
+  if (mediaSceneMatch) {
+    const sceneId = decodeURIComponent(mediaSceneMatch[1]);
+    const scene = state.mediaScenes.find((item) => item.id === sceneId);
+    if (!scene) {
+      await route.fulfill({ status: 404, json: { error: "media_scene_not_found" } });
+      return;
+    }
+    if (request.method() === "GET") {
+      await route.fulfill({ json: { mediaScene: scene, mediaSceneRuns: state.mediaSceneRuns.filter((item) => item.sceneId === sceneId) } });
+      return;
+    }
+    if (request.method() === "PATCH") {
+      const body = await request.postDataJSON() as Record<string, unknown>;
+      if (typeof body.title === "string") scene.title = body.title;
+      if (typeof body.prompt === "string") scene.prompt = body.prompt;
+      if (typeof body.providerPresetId === "string") scene.providerPresetId = body.providerPresetId;
+      if (body.providerPresetId === null) delete scene.providerPresetId;
+      if (body.executionMode === "inherit" || body.executionMode === "direct" || body.executionMode === "workflow") scene.executionMode = body.executionMode;
+      if (typeof body.workflowDefinitionId === "string") scene.workflowDefinitionId = body.workflowDefinitionId;
+      if (body.workflowDefinitionId === null) delete scene.workflowDefinitionId;
+      if (isRecord(body.workflowInputValues)) scene.workflowInputValues = body.workflowInputValues;
+      if (typeof body.ratio === "string") scene.ratio = body.ratio;
+      if (typeof body.durationSeconds === "number") scene.durationSeconds = body.durationSeconds;
+      if (Array.isArray(body.referenceArtifactIds)) scene.referenceArtifactIds = body.referenceArtifactIds.filter((value): value is string => typeof value === "string");
+      if (isRecord(body.canvasPosition)) scene.canvasPosition = { x: typeof body.canvasPosition.x === "number" ? body.canvasPosition.x : scene.canvasPosition.x, y: typeof body.canvasPosition.y === "number" ? body.canvasPosition.y : scene.canvasPosition.y };
+      await route.fulfill({ json: { mediaScene: scene } });
+      return;
+    }
+    if (request.method() === "DELETE") {
+      state.mediaScenes = state.mediaScenes.filter((item) => item.id !== sceneId);
+      await route.fulfill({ json: { deleted: true, mediaSceneId: sceneId } });
+      return;
+    }
+  }
+
+  const mediaSceneDuplicateMatch = /^\/media-scenes\/([^/]+)\/duplicate$/.exec(path);
+  if (request.method() === "POST" && mediaSceneDuplicateMatch) {
+    const original = state.mediaScenes.find((item) => item.id === decodeURIComponent(mediaSceneDuplicateMatch[1]));
+    if (!original) {
+      await route.fulfill({ status: 404, json: { error: "media_scene_not_found" } });
+      return;
+    }
+    const copy = { ...original, id: `media_scene_${state.mediaScenes.length + 1}`, sortOrder: state.mediaScenes.filter((item) => item.projectId === original.projectId).length, title: `${original.title} 副本`, canvasPosition: { x: original.canvasPosition.x + 56, y: original.canvasPosition.y + 48 } };
+    state.mediaScenes.push(copy);
+    await route.fulfill({ status: 201, json: { mediaScene: copy } });
+    return;
+  }
+
+  const mediaSceneRunMatch = /^\/media-scenes\/([^/]+)\/run$/.exec(path);
+  if (request.method() === "POST" && mediaSceneRunMatch) {
+    const scene = state.mediaScenes.find((item) => item.id === decodeURIComponent(mediaSceneRunMatch[1]));
+    if (!scene) {
+      await route.fulfill({ status: 404, json: { error: "media_scene_not_found" } });
+      return;
+    }
+    const project = state.mediaProjects.find((item) => item.id === scene.projectId);
+    const executionMode = scene.executionMode === "inherit" ? project?.defaultExecutionMode ?? "direct" : scene.executionMode;
+    const providerPresetId = scene.providerPresetId ?? project?.defaultProviderPresetId;
+    const workflowDefinitionId = scene.workflowDefinitionId ?? project?.defaultWorkflowDefinitionId;
+    const workflow = executionMode === "workflow"
+      ? state.mediaWorkflows.find((item) => isRecord(item.definition) && item.definition.id === workflowDefinitionId)
+      : undefined;
+    const workflowVersion = workflow && isRecord(workflow.currentVersion) ? workflow.currentVersion : undefined;
+    if (executionMode === "direct" && (!providerPresetId || !scene.prompt.trim())) {
+      await route.fulfill({ status: 400, json: { error: "invalid_request", message: "请先填写画面提示并选择视频模型。" } });
+      return;
+    }
+    if (executionMode === "workflow" && (!workflowDefinitionId || !workflowVersion)) {
+      await route.fulfill({ status: 400, json: { error: "workflow_not_ready", message: "请选择已启用的生产流程。" } });
+      return;
+    }
+    const activeRun = state.mediaSceneRuns.find((run) => run.sceneId === scene.id && state.mediaJobs.some((job) => (
+      job.id === run.mediaJobId && (job.status === "queued" || job.status === "running" || job.status === "waiting_for_approval")
+    )));
+    if (activeRun) {
+      await route.fulfill({ status: 409, json: { error: "media_scene_run_active", message: "该场景已有生成任务，请等待完成或先取消后再试。" } });
+      return;
+    }
+    const job: MockMediaJob = {
+      id: `media_job_${state.mediaJobs.length + 1}`,
+      workspaceId: "workspace_default",
+      providerPresetId: executionMode === "direct" ? providerPresetId : undefined,
+      workflowVersionId: executionMode === "workflow" && typeof workflowVersion?.id === "string" ? workflowVersion.id : undefined,
+      executionSource: executionMode === "workflow"
+        ? { kind: "workflow", workflowVersionId: workflowVersion?.id }
+        : { kind: "provider", providerPresetId },
+      operation: "video_generate",
+      prompt: scene.prompt,
+      input: executionMode === "workflow"
+        ? { workflowInputValues: scene.workflowInputValues }
+        : { ratio: scene.ratio, duration: scene.durationSeconds },
+      artifactIds: [],
+      status: "queued",
+      createdAt: "2026-07-13T00:03:00.000Z",
+      updatedAt: "2026-07-13T00:03:00.000Z",
+    };
+    const sceneRun: MockMediaSceneRun = {
+      id: `media_scene_run_${state.mediaSceneRuns.length + 1}`,
+      projectId: scene.projectId,
+      sceneId: scene.id,
+      mediaJobId: job.id,
+      providerSnapshot: executionMode === "direct" ? { providerPresetId } : {},
+      executionSnapshot: executionMode === "workflow"
+        ? { kind: "workflow", workflowDefinitionId, workflowName: isRecord(workflow?.definition) ? workflow.definition.name : "生产流程" }
+        : { kind: "provider", providerPresetId },
+      inputSnapshot: { prompt: scene.prompt, ...job.input },
+      createdAt: job.createdAt,
+      updatedAt: job.updatedAt,
+    };
+    state.mediaJobs.unshift(job);
+    state.mediaSceneRuns.unshift(sceneRun);
+    startMockMediaProductionJob(state, job);
+    await route.fulfill({ status: 202, json: { mediaJob: job, mediaSceneRun: sceneRun } });
+    return;
+  }
+
+  const mediaSceneRunCancelMatch = /^\/media-scene-runs\/([^/]+)\/cancel$/.exec(path);
+  if (request.method() === "POST" && mediaSceneRunCancelMatch) {
+    const sceneRun = state.mediaSceneRuns.find((item) => item.id === decodeURIComponent(mediaSceneRunCancelMatch[1]));
+    const mediaJob = sceneRun ? state.mediaJobs.find((item) => item.id === sceneRun.mediaJobId) : undefined;
+    if (!sceneRun || !mediaJob) {
+      await route.fulfill({ status: 404, json: { error: "media_scene_run_not_found" } });
+      return;
+    }
+    mediaJob.status = "cancelled";
+    mediaJob.errorMessage = "已取消场景生成。";
+    const pendingApproval = state.approvals.find((item) => item.mediaJobId === mediaJob.id && item.actionType === "media_cost" && item.status === "pending");
+    if (pendingApproval) {
+      pendingApproval.status = "cancelled";
+      pendingApproval.resolvedAt = "2026-07-14T00:04:00.000Z";
+      pendingApproval.resolvedBy = "local-user";
+      pendingApproval.decisionReason = "用户取消了媒体生产任务。";
+    }
+    await route.fulfill({ json: { mediaJob, mediaSceneRun: sceneRun } });
+    return;
+  }
+
+  const mediaProjectRunMatch = /^\/media-projects\/([^/]+)\/run$/.exec(path);
+  if (request.method() === "POST" && mediaProjectRunMatch) {
+    const project = state.mediaProjects.find((item) => item.id === decodeURIComponent(mediaProjectRunMatch[1]));
+    if (!project) {
+      await route.fulfill({ status: 404, json: { error: "media_project_not_found" } });
+      return;
+    }
+    const body = await request.postDataJSON() as { readonly sceneIds?: readonly string[] };
+    const requestedIds = new Set(body.sceneIds ?? state.mediaScenes.filter((scene) => scene.projectId === project.id).map((scene) => scene.id));
+    const targets = state.mediaScenes
+      .filter((scene) => scene.projectId === project.id && requestedIds.has(scene.id))
+      .sort((left, right) => left.sortOrder - right.sortOrder);
+    const created = targets.map((scene) => {
+      const executionMode = scene.executionMode === "inherit" ? project.defaultExecutionMode ?? "direct" : scene.executionMode;
+      const workflowDefinitionId = scene.workflowDefinitionId ?? project.defaultWorkflowDefinitionId;
+      const workflow = executionMode === "workflow"
+        ? state.mediaWorkflows.find((item) => isRecord(item.definition) && item.definition.id === workflowDefinitionId)
+        : undefined;
+      const workflowVersion = workflow && isRecord(workflow.currentVersion) ? workflow.currentVersion : undefined;
+      const providerPresetId = scene.providerPresetId ?? project.defaultProviderPresetId;
+      const createdAt = new Date(Date.parse("2026-07-13T00:03:00.000Z") + state.mediaSceneRuns.length + 1).toISOString();
+      const job: MockMediaJob = {
+        id: `media_job_${state.mediaJobs.length + 1}`,
+        workspaceId: "workspace_default",
+        providerPresetId: executionMode === "direct" ? providerPresetId : undefined,
+        workflowVersionId: executionMode === "workflow" && typeof workflowVersion?.id === "string" ? workflowVersion.id : undefined,
+        executionSource: executionMode === "workflow"
+          ? { kind: "workflow", workflowVersionId: workflowVersion?.id }
+          : { kind: "provider", providerPresetId },
+        operation: "video_generate",
+        prompt: scene.prompt,
+        input: executionMode === "workflow"
+          ? { workflowInputValues: scene.workflowInputValues }
+          : { ratio: scene.ratio, duration: scene.durationSeconds },
+        artifactIds: [],
+        status: "queued",
+        createdAt,
+        updatedAt: createdAt,
+      };
+      const sceneRun: MockMediaSceneRun = {
+        id: `media_scene_run_${state.mediaSceneRuns.length + 1}`,
+        projectId: scene.projectId,
+        sceneId: scene.id,
+        mediaJobId: job.id,
+        providerSnapshot: executionMode === "direct" ? { providerPresetId } : {},
+        executionSnapshot: executionMode === "workflow"
+          ? { kind: "workflow", workflowDefinitionId, workflowName: isRecord(workflow?.definition) ? workflow.definition.name : "生产流程" }
+          : { kind: "provider", providerPresetId },
+        inputSnapshot: { prompt: scene.prompt, ...job.input },
+        createdAt,
+        updatedAt: createdAt,
+      };
+      state.mediaJobs.unshift(job);
+      state.mediaSceneRuns.unshift(sceneRun);
+      startMockMediaProductionJob(state, job);
+      return { mediaJob: job, mediaSceneRun: sceneRun };
+    });
+    await route.fulfill({
+      status: 202,
+      json: {
+        mediaProject: project,
+        mediaSceneRuns: created.map((item) => item.mediaSceneRun),
+        mediaJobs: created.map((item) => item.mediaJob),
+      },
+    });
+    return;
+  }
+
+  const mediaSceneSelectRunMatch = /^\/media-scenes\/([^/]+)\/select-run$/.exec(path);
+  if (request.method() === "POST" && mediaSceneSelectRunMatch) {
+    const scene = state.mediaScenes.find((item) => item.id === decodeURIComponent(mediaSceneSelectRunMatch[1]));
+    const body = await request.postDataJSON() as Record<string, unknown>;
+    if (!scene || typeof body.mediaSceneRunId !== "string") {
+      await route.fulfill({ status: 404, json: { error: "media_scene_run_not_found" } });
+      return;
+    }
+    scene.selectedMediaSceneRunId = body.mediaSceneRunId;
+    const mediaSceneRun = state.mediaSceneRuns.find((item) => item.id === body.mediaSceneRunId);
+    await route.fulfill({ json: { mediaScene: scene, mediaSceneRun } });
+    return;
+  }
   if (request.method() === "POST" && path === "/media-jobs") {
     const body = (await request.postDataJSON()) as {
       providerPresetId: string;
@@ -12888,8 +13608,11 @@ export async function handleDaemonRoute(
       const mediaJob = state.mediaJobs.find((item) => item.id === approval.mediaJobId);
       if (mediaJob) {
         mediaJob.status = approval.status === "approved" ? "queued" : "failed";
-        mediaJob.errorMessage = approval.status === "denied" ? "Media cost approval denied before live media execution." : undefined;
+        mediaJob.errorMessage = approval.status === "denied" ? "媒体生成费用确认未通过，任务没有执行。" : undefined;
         mediaJob.updatedAt = approval.resolvedAt;
+        if (approval.status === "approved" && mediaJob.input.approvalGate === "media_cost") {
+          completeMockMediaProductionJob(state, mediaJob);
+        }
       }
     }
     if (approval.externalWorkActionId) {
@@ -12899,7 +13622,8 @@ export async function handleDaemonRoute(
         action.updatedAt = approval.resolvedAt;
       }
     }
-    await route.fulfill({ json: { approval } });
+    const mediaJob = approval.mediaJobId ? state.mediaJobs.find((item) => item.id === approval.mediaJobId) : undefined;
+    await route.fulfill({ json: { approval, ...(mediaJob ? { mediaJob } : {}) } });
     return;
   }
 
@@ -13986,6 +14710,57 @@ function readMockPostData(request: Request): Record<string, unknown> {
   } catch {
     return {};
   }
+}
+
+function mockMediaProjectDetail(state: MockDaemonState, mediaProject: MockMediaProject): {
+  readonly mediaProject: MockMediaProject;
+  readonly scenes: readonly MockMediaScene[];
+  readonly sceneRuns: readonly MockMediaSceneRun[];
+} {
+  return {
+    mediaProject,
+    scenes: state.mediaScenes
+      .filter((scene) => scene.projectId === mediaProject.id)
+      .sort((left, right) => left.sortOrder - right.sortOrder),
+    sceneRuns: state.mediaSceneRuns
+      .filter((run) => run.projectId === mediaProject.id)
+      .sort((left, right) => right.createdAt.localeCompare(left.createdAt)),
+  };
+}
+
+function mockMediaWorkflowAnalysis(graph: Record<string, unknown>) {
+  const inputFields: Record<string, unknown>[] = [];
+  const outputRules: Record<string, unknown>[] = [];
+  const nodeClasses: string[] = [];
+  for (const [nodeId, rawNode] of Object.entries(graph)) {
+    if (!isRecord(rawNode) || typeof rawNode.class_type !== "string" || !isRecord(rawNode.inputs)) continue;
+    nodeClasses.push(rawNode.class_type);
+    if (typeof rawNode.inputs.text === "string" && /cliptext|prompt|text/iu.test(rawNode.class_type)) {
+      inputFields.push({
+        id: `${nodeId}.text`,
+        label: "提示词",
+        kind: "text",
+        semantic: "prompt",
+        required: true,
+        nodeId,
+        inputName: "text",
+        defaultValue: rawNode.inputs.text,
+      });
+    }
+    if (/savevideo|video|vhs|webm|mp4/iu.test(rawNode.class_type)) {
+      outputRules.push({ nodeId, artifactType: "video", collect: "all" });
+    } else if (/saveimage|previewimage/iu.test(rawNode.class_type)) {
+      outputRules.push({ nodeId, artifactType: "image", collect: "all" });
+    }
+  }
+  const errors = outputRules.length ? [] : ["没有识别到图片或视频输出节点，请在映射步骤中指定输出节点。"];
+  return {
+    sourceDigest: "mock-workflow-digest",
+    inputFields,
+    outputRules,
+    validation: { ok: errors.length === 0, errors, warnings: [], checkedAt: "2026-07-14T00:02:00.000Z" },
+    nodeClasses,
+  };
 }
 
 export function isRecord(value: unknown): value is Record<string, unknown> {

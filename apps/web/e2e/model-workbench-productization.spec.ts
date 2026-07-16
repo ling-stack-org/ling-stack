@@ -40,7 +40,7 @@ test("P13 shows one neutral summary and one product state per model route", asyn
   const summary = page.locator(".provider-readiness-summary");
   await expect(summary).toContainText("4 models");
   await expect(summary).toContainText("1 chat ready");
-  await expect(summary).toContainText("1 image ready");
+  await expect(summary).toContainText("1 generation ready");
   await expect(summary).toContainText("1 need API key");
   await expect(summary).toContainText("1 disabled");
   await expect(page.locator(".provider-readiness-strip")).toHaveCount(0);

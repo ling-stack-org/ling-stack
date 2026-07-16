@@ -134,7 +134,6 @@ small,
 }
 
 input,
-select,
 textarea {
   border: 1px solid var(--border);
   background: var(--surface-panel-strong);
@@ -148,7 +147,6 @@ textarea::placeholder {
 }
 
 input:focus,
-select:focus,
 textarea:focus {
   border-color: var(--accent-border);
   box-shadow:
@@ -158,7 +156,6 @@ textarea:focus {
 }
 
 input:disabled,
-select:disabled,
 textarea:disabled {
   background: var(--surface-pressed);
   color: var(--text-soft);
@@ -5635,7 +5632,6 @@ code,
 
 :root[data-theme="dark"] .channel-tab,
 :root[data-theme="dark"] .segmented-control button,
-:root[data-theme="dark"] .mention-picker select,
 :root[data-theme="dark"] .link-preview-input input {
   color: var(--text-muted);
 }
@@ -6930,13 +6926,8 @@ code,
   min-width: min(220px, 100%);
 }
 
-.channel-teammate-select select {
-  height: 36px;
-  min-height: 36px;
-  padding: 0 34px 0 12px;
-  border-radius: 7px;
-  font-size: 13px;
-  font-weight: 650;
+.channel-teammate-select .select-control {
+  width: 100%;
 }
 
 .channel-teammate-list {
@@ -9847,16 +9838,9 @@ code,
   text-transform: uppercase;
 }
 
-.right-dock-plan-select-row select {
+.right-dock-plan-select-row .select-control {
+  width: 100%;
   min-width: 0;
-  height: 28px;
-  padding: 0 7px;
-  border: 1px solid var(--border);
-  border-radius: 7px;
-  background: var(--surface);
-  color: var(--text);
-  font-size: 11px;
-  font-weight: 620;
 }
 
 .right-dock-plan-list {
@@ -10375,15 +10359,9 @@ code,
   text-transform: uppercase;
 }
 
-.workflow-preview-owner-select select {
+.workflow-preview-owner-select .select-control {
   min-width: 0;
   width: 100%;
-  height: 30px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--surface);
-  color: var(--text);
-  font: inherit;
 }
 
 .workflow-preview-confidence {
@@ -12689,7 +12667,7 @@ code,
 }
 
 .channel-proposal-edit-form input,
-.channel-proposal-edit-form select,
+.channel-proposal-edit-form .select-control,
 .channel-proposal-edit-form textarea {
   width: 100%;
   min-width: 0;
@@ -13087,12 +13065,6 @@ code,
   gap: 6px;
   min-width: 0;
   width: 100%;
-  height: 34px;
-  padding: 0 8px;
-  border: 1px solid var(--border);
-  border-radius: 7px;
-  background: rgba(255, 255, 255, 0.68);
-  color: var(--text-muted);
 }
 
 .activity-view-select span {
@@ -13101,16 +13073,9 @@ code,
   white-space: nowrap;
 }
 
-.activity-view-select select {
+.activity-view-select .select-control {
   width: 100%;
   min-width: 0;
-  height: 28px;
-  padding: 0 20px 0 6px;
-  border: 0;
-  background: transparent;
-  color: var(--text);
-  font-size: 12px;
-  font-weight: 720;
 }
 
 .activity-saved-view-actions {
@@ -15634,15 +15599,8 @@ code,
   width: min(100%, 320px);
 }
 
-.thread-resume-panel select {
+.thread-resume-panel .select-control {
   width: 100%;
-  min-height: 36px;
-  padding: 8px 10px;
-  border: 1px solid var(--border);
-  border-radius: 7px;
-  background: var(--surface-panel-strong);
-  color: var(--text);
-  font: inherit;
 }
 
 .context-packet {
@@ -16458,7 +16416,6 @@ body {
 }
 
 input,
-select,
 textarea {
   border-color: rgba(37, 42, 45, 0.12);
   background: rgba(255, 255, 255, 0.62);
@@ -16490,7 +16447,6 @@ textarea {
 }
 
 input,
-select,
 textarea {
   border-color: var(--border);
   background: var(--surface-panel-strong);
@@ -16499,7 +16455,6 @@ textarea {
 }
 
 input:disabled,
-select:disabled,
 textarea:disabled {
   background: var(--surface-pressed);
   color: var(--text-muted);
@@ -16711,7 +16666,6 @@ textarea:disabled {
 }
 
 :root[data-theme="dark"] input:disabled,
-:root[data-theme="dark"] select:disabled,
 :root[data-theme="dark"] textarea:disabled {
   background: color-mix(in srgb, var(--surface-pressed) 74%, var(--surface-panel-strong));
   color: var(--text-muted);

@@ -31,6 +31,8 @@ import type {
 } from "../../types.js";
 import { WorkItemRow } from "./WorkItemRow.js";
 
+import { SelectControl } from "../../shared/components/SelectControl.js";
+
 export type WorkBoardScope = "actionable" | "global" | "channel" | "mine" | "blocked" | "history";
 
 const workBoardScopeOrder: readonly WorkBoardScope[] = ["actionable", "global", "channel", "mine", "blocked", "history"];
@@ -192,31 +194,35 @@ export function GlobalWorkBoardPage({
     <div className="work-board-filters">
       <label>
         <span>{t("Channel")}</span>
-        <select value={channelFilter} onChange={(event) => setChannelFilter(event.target.value)}>
+        <SelectControl
+              variant="compact" value={channelFilter} onChange={(event) => setChannelFilter(event.target.value)}>
           <option value="">{t("All")}</option>
           {channels.map((channel) => <option key={channel.id} value={channel.id}>{channel.name}</option>)}
-        </select>
+        </SelectControl>
       </label>
       <label>
         <span>{t("Status")}</span>
-        <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as WorkItemStatus | "")}>
+        <SelectControl
+              variant="compact" value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as WorkItemStatus | "")}>
           <option value="">{t("All")}</option>
           {workItemStatusOrder.map((status) => <option key={status} value={status}>{t(workItemStatusLabel(status))}</option>)}
-        </select>
+        </SelectControl>
       </label>
       <label>
         <span>{t("Source")}</span>
-        <select value={sourceFilter} onChange={(event) => setSourceFilter(event.target.value as WorkItemSourceType | "")}>
+        <SelectControl
+              variant="compact" value={sourceFilter} onChange={(event) => setSourceFilter(event.target.value as WorkItemSourceType | "")}>
           <option value="">{t("All")}</option>
           {sourceOptions.map((source) => <option key={source} value={source}>{t(source)}</option>)}
-        </select>
+        </SelectControl>
       </label>
       <label>
         <span>{t("Waiting reason")}</span>
-        <select value={waitingFilter} onChange={(event) => setWaitingFilter(event.target.value as WorkItemWaitingReason | "")}>
+        <SelectControl
+              variant="compact" value={waitingFilter} onChange={(event) => setWaitingFilter(event.target.value as WorkItemWaitingReason | "")}>
           <option value="">{t("All")}</option>
           {waitingOptions.map((reason) => <option key={reason} value={reason}>{t(reason)}</option>)}
-        </select>
+        </SelectControl>
       </label>
     </div>
   );
@@ -779,14 +785,15 @@ function WorkItemDetailDrawer({
 
       {canRoute ? (
         <div className="work-board-detail-route">
-          <select
+          <SelectControl
+              variant="compact"
             aria-label={t("Route to channel")}
             value={targetChannelId}
             disabled={routing}
             onChange={(event) => setRouteChannelId(event.target.value)}
           >
             {channels.map((channel) => <option key={channel.id} value={channel.id}>{channel.name}</option>)}
-          </select>
+          </SelectControl>
           <button
             className="secondary-button compact-button"
             type="button"

@@ -861,8 +861,11 @@
 }
 
 .automation-popover-form input,
-.automation-popover-form select {
+.automation-popover-form .select-control {
   width: 100%;
+}
+
+.automation-popover-form input {
   border: 1px solid var(--border-subtle);
   border-radius: 8px;
   background: var(--surface-panel-strong);
@@ -1118,13 +1121,19 @@
 }
 
 .automation-draft-form input,
-.automation-draft-form select,
+.automation-draft-form .select-control,
 .automation-draft-form textarea,
 .automation-modal-form input,
-.automation-modal-form select,
+.automation-modal-form .select-control,
 .automation-modal-form textarea {
   width: 100%;
   min-width: 0;
+}
+
+.automation-draft-form input,
+.automation-draft-form textarea,
+.automation-modal-form input,
+.automation-modal-form textarea {
   border: 1px solid var(--border-subtle);
   border-radius: 8px;
   background: var(--surface-panel-strong);

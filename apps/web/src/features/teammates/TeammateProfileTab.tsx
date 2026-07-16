@@ -4,6 +4,8 @@ import { StatusBadge } from "../../shared/components/index.js";
 import type { AiTeammate, TeammatePersonaDraft } from "../../types.js";
 import { TeammateAvatarView } from "./TeammateAvatarView.js";
 
+import { SelectControl } from "../../shared/components/SelectControl.js";
+
 interface TeammateProfileSettingsForm {
   readonly displayName: string;
   readonly description: string;
@@ -154,11 +156,11 @@ export function TeammateProfileTab({
           <>
             <label className="field">
               <span>{t("Status")}</span>
-              <select value={settingsForm.status} onChange={(event) => onSettingsFormChange({ ...settingsForm, status: event.target.value as AiTeammate["status"] })}>
+              <SelectControl value={settingsForm.status} onChange={(event) => onSettingsFormChange({ ...settingsForm, status: event.target.value as AiTeammate["status"] })}>
                 <option value="active">{t("active")}</option>
                 <option value="paused">{t("paused")}</option>
                 <option value="disabled">{t("disabled")}</option>
-              </select>
+              </SelectControl>
             </label>
             <label className="teammate-toggle inline-toggle">
               <input type="checkbox" checked={settingsForm.pinned} onChange={(event) => onSettingsFormChange({ ...settingsForm, pinned: event.target.checked })} />

@@ -10,6 +10,7 @@ import {
 } from "@ling-stack/core/builtin-skill-packs";
 import { useI18n } from "../i18n.js";
 import { useTheme } from "../theme.js";
+import { useLingToast } from "../shared/feedback/LingToastProvider.js";
 import type {
   Channel,
   ChannelBranch,
@@ -53,7 +54,9 @@ import {
   LazyCouncilWorkspacePage as CouncilWorkspacePage,
   LazyGlobalWorkBoardPage as GlobalWorkBoardPage,
   LazyMediaJobsPage as MediaJobsPage,
+  LazyMediaProductionWorkspace as MediaProductionWorkspace,
   LazyPageErrorBoundary,
+  LazyPluginManagerPage as PluginManagerPage,
   LazyProfilePage as ProfilePage,
   LazyProviderSettings as ProviderSettings,
   LazyRunHistory as RunHistory,
@@ -62,6 +65,7 @@ import {
   LazyThreadPage as ThreadPage,
   LazyWorkspaceClientView as WorkspaceClientView,
 } from "./lazy-pages.js";
+import type { SettingsSectionId } from "../features/settings/SettingsPage.js";
 import type { WorkBoardScope } from "../features/work-board/GlobalWorkBoardPage.js";
 import { selectDefaultTeammateProvider } from "../features/teammates/teammate-create-defaults.js";
 import { TeammateCreateDrawer } from "../features/teammates/TeammateCreateDrawer.js";
@@ -170,10 +174,10 @@ type SettingsReturnTarget = {
   readonly threadPageTargetId: string;
 };
 
-type SettingsWorkspaceToolView = "" | "providers" | "teammates" | "councils" | "work_board";
+type SettingsWorkspaceToolView = "" | "providers" | "teammates" | "councils";
 
 function isSettingsWorkspaceToolView(view: ViewId): view is Exclude<SettingsWorkspaceToolView, ""> {
-  return view === "providers" || view === "teammates" || view === "councils" || view === "work_board";
+  return view === "providers" || view === "teammates" || view === "councils";
 }
 
 const narrowChannelDrawerQuery = "(max-width: 900px)";
@@ -181,6 +185,7 @@ const narrowChannelDrawerQuery = "(max-width: 900px)";
 export function AppShell(): JSX.Element {
   const { locale, setLocale, t } = useI18n();
   const { preference: themePreference, setPreference: setThemePreference } = useTheme();
+  const { showToast } = useLingToast();
   const initialWorkspaceCwd = readInitialWorkspaceCwd();
   const [form, setForm] = useState<RunFormState>(() => ({
     ...defaultForm,
@@ -192,6 +197,7 @@ export function AppShell(): JSX.Element {
   const [activeSidebarTarget, setActiveSidebarTarget] = useState<SidebarTarget>("workspace");
   const [workBoardRequestedScope, setWorkBoardRequestedScope] = useState<WorkBoardScope>("actionable");
   const [settingsWorkspaceToolView, setSettingsWorkspaceToolView] = useState<SettingsWorkspaceToolView>("");
+  const [settingsInitialSection, setSettingsInitialSection] = useState<SettingsSectionId | undefined>();
   const [settingsRunDiagnosticsRunId, setSettingsRunDiagnosticsRunId] = useState<string | undefined>();
   const [providerSetupIntent, setProviderSetupIntent] = useState<ProviderSetupIntent | "">("");
   const settingsReturnTargetRef = useRef<SettingsReturnTarget | undefined>(undefined);
@@ -616,19 +622,23 @@ export function AppShell(): JSX.Element {
     cwd: form.cwd.trim(),
     translate: t,
     setErrorMessage,
+    notify: (notice) => showToast({
+      message: notice.message,
+      tone: notice.tone,
+      scope: `plugin:${notice.pluginId}:${notice.action}`,
+    }),
   });
   const {
     plugins,
     pluginsLoading,
     pluginBusyId,
     pluginBusyAction,
-    latestApplyResult: latestPluginApplyResult,
-    latestRuntimePreview: latestPluginRuntimePreview,
-    latestNotice: latestPluginNotice,
   } = pluginsDomain.state;
   const {
     refreshPlugins,
+    createPlugin,
     applyPluginPreset,
+    connectPlugin,
     checkPlugin,
     validatePackage,
     installPlugin,
@@ -1200,6 +1210,7 @@ export function AppShell(): JSX.Element {
   function openSettingsView(): void {
     clearSettingsWorkspaceToolView();
     closeSettingsRunDiagnostics();
+    setSettingsInitialSection(undefined);
     if (activeView !== "settings") {
       settingsReturnTargetRef.current = {
         activeView,
@@ -1219,6 +1230,7 @@ export function AppShell(): JSX.Element {
     settingsReturnTargetRef.current = undefined;
     clearSettingsWorkspaceToolView();
     closeSettingsRunDiagnostics();
+    setSettingsInitialSection(undefined);
     if (!target || target.activeView === "settings") {
       setActiveView("workspace");
       setActiveSidebarTarget("workspace");
@@ -1297,10 +1309,8 @@ export function AppShell(): JSX.Element {
     }
     rememberSettingsReturnTarget();
     closeSettingsRunDiagnostics();
+    setSettingsInitialSection(undefined);
     setSettingsWorkspaceToolView(view);
-    if (view === "work_board") {
-      setWorkBoardRequestedScope("actionable");
-    }
     if (view === "providers") {
       setProviderSetupIntent(setupIntent);
       void Promise.all([
@@ -1329,15 +1339,26 @@ export function AppShell(): JSX.Element {
     activateSettingsView();
   }
 
-  function openSettingsWorkBoard(scope: WorkBoardScope = "actionable"): void {
-    openSettingsWorkspaceTool("work_board");
+  function openWorkBoard(scope: WorkBoardScope = "actionable"): void {
+    clearSettingsWorkspaceToolView();
+    closeSettingsRunDiagnostics();
     setWorkBoardRequestedScope(scope);
+    openPlainView("work_board");
+  }
+
+  function openSettingsSection(sectionId: SettingsSectionId): void {
+    rememberSettingsReturnTarget();
+    clearSettingsWorkspaceToolView();
+    closeSettingsRunDiagnostics();
+    setSettingsInitialSection(sectionId);
+    activateSettingsView();
   }
 
   function openSettingsRunDiagnostics(runId?: string): void {
     rememberSettingsReturnTarget();
     const targetRunId = runId || activeRunId || runs[0]?.id || "";
     setSettingsWorkspaceToolView("");
+    setSettingsInitialSection(undefined);
     setSettingsRunDiagnosticsRunId(targetRunId);
     activateSettingsView();
     void refreshRuns();
@@ -1521,6 +1542,9 @@ export function AppShell(): JSX.Element {
       void refreshApprovals();
       void refreshExternalWorkCiTriage();
       void refreshWorkItems();
+    }
+    if (activeView === "plugins") {
+      void refreshPlugins();
     }
     if (activeView === "runs") {
       void refreshRuns();
@@ -1984,56 +2008,6 @@ export function AppShell(): JSX.Element {
         onOpenProviders={() => openSettingsWorkspaceTool("providers")}
         settingsToolMode
       />
-    ) : settingsWorkspaceToolView === "work_board" ? (
-      <GlobalWorkBoardPage
-        channels={channels}
-        tasks={tasks}
-        runs={runs}
-        approvals={approvals}
-        workflowSteps={channelWorkflowSteps}
-        externalActionDetails={externalActionDetails}
-        externalWorkCiTriage={externalWorkCiTriage}
-        artifactsByRun={channelArtifactsByRun}
-        durableWorkItems={durableWorkItems}
-        onRefresh={() => {
-          void Promise.all([
-            refreshTasks(),
-            refreshRuns(),
-            refreshApprovals(),
-            refreshExternalWorkCiTriage(),
-            refreshWorkItems(),
-          ]);
-        }}
-        onOpenTask={(taskId) => {
-          clearSettingsWorkspaceToolView();
-          closeSettingsRunDiagnostics();
-          openTaskFromWorkBoard(taskId);
-        }}
-        onOpenRun={(runId) => {
-          openSettingsRunDiagnostics(runId);
-        }}
-        onOpenApproval={(approvalId) => {
-          clearSettingsWorkspaceToolView();
-          closeSettingsRunDiagnostics();
-          setSelectedApprovalId(approvalId);
-          openPlainView("approvals");
-        }}
-        onOpenChannel={(channelId) => {
-          clearSettingsWorkspaceToolView();
-          closeSettingsRunDiagnostics();
-          selectWorkspaceChannel(channelId);
-        }}
-        onRouteExternalWork={(externalWorkId, channelId) => void routeExternalWorkToChannel(externalWorkId, channelId)}
-        onClaimWorkItem={(workItemId) => void claimDurableWorkItem(workItemId)}
-        onHeartbeatWorkItem={(workItemId, claimToken) => void heartbeatDurableWorkItem(workItemId, claimToken)}
-        onReleaseWorkItem={(workItemId, claimToken) => void releaseDurableWorkItem(workItemId, claimToken)}
-        onCompleteWorkItem={(workItemId, claimToken) => void completeDurableWorkItem(workItemId, claimToken)}
-        onFailWorkItem={(workItemId, claimToken) => void failDurableWorkItem(workItemId, claimToken)}
-        routingExternalWorkId={routingExternalWorkId}
-        busyWorkItemId={busyWorkItemId}
-        requestedScope={workBoardRequestedScope}
-        settingsToolMode
-      />
     ) : settingsWorkspaceToolView === "councils" ? (
       <CouncilWorkspacePage
         cwd={form.cwd}
@@ -2054,7 +2028,7 @@ export function AppShell(): JSX.Element {
     ) : undefined;
 
   const settingsFullscreen = activeView === "settings";
-  const showInspector = !["workspace", "providers", "teammates", "councils", "runs", "threads", "automations", "approvals", "work_board", "media", "profile", "settings"].includes(activeView);
+  const showInspector = !["workspace", "providers", "plugins", "teammates", "councils", "runs", "threads", "automations", "approvals", "work_board", "media", "profile", "settings"].includes(activeView);
   const selectedChannelForRun = channels.find((channel) => channel.id === selectedChannelId);
   const selectedProviderIdForRun =
     taskRunProviderId || selectedChannelForRun?.defaultProviderPresetId || workspaceDefaultProviderPresetId || "";
@@ -2089,6 +2063,10 @@ export function AppShell(): JSX.Element {
         onOpenView={(view) => {
           if (view === "workspace") {
             openConversationHome();
+            return;
+          }
+          if (view === "work_board") {
+            openWorkBoard();
             return;
           }
           openPlainViewWithoutSettingsReturn(view);
@@ -2134,6 +2112,8 @@ export function AppShell(): JSX.Element {
                 ? "workspace workspace-councils-surface"
               : activeView === "providers"
                 ? "workspace workspace-provider-surface"
+              : activeView === "plugins"
+                ? "workspace workspace-plugins-surface"
               : activeView === "automations"
                 ? "workspace workspace-automations-surface"
               : activeView === "media"
@@ -2418,7 +2398,7 @@ export function AppShell(): JSX.Element {
               )
             ) : (
               <>
-                {activeView === "providers" || activeView === "automations" || activeView === "profile" || activeView === "media" || activeView === "teammates" || activeView === "councils" || activeView === "settings" ? null : (
+                {activeView === "providers" || activeView === "plugins" || activeView === "automations" || activeView === "profile" || activeView === "media" || activeView === "teammates" || activeView === "councils" || activeView === "settings" ? null : (
                   <div className="workspace-head">
                     <div>
                       <h1>{selectedAiTeammate ? selectedAiTeammate.displayName : t(viewTitle(activeView))}</h1>
@@ -2613,6 +2593,29 @@ export function AppShell(): JSX.Element {
                 onClearCheckFeedback={clearProviderCheckFeedback}
                 onClearRepair={() => setProviderRepairRunId("")}
                   />
+                ) : activeView === "plugins" ? (
+                  <PluginManagerPage
+                    plugins={plugins}
+                    isLoading={pluginsLoading}
+                    busyPluginId={pluginBusyId}
+                    busyAction={pluginBusyAction}
+                    onRefresh={() => void refreshPlugins()}
+                    onCreate={createPlugin}
+                    onApplyPreset={(pluginId) => void applyPluginPreset(pluginId)}
+                    onConnect={connectPlugin}
+                    onCheck={(pluginId) => void checkPlugin(pluginId)}
+                    onValidatePackage={(pluginId) => void validatePackage(pluginId)}
+                    onInstall={(pluginId) => void installPlugin(pluginId)}
+                    onUninstall={(pluginId) => void uninstallPlugin(pluginId)}
+                    onRefreshPackage={(pluginId) => void refreshPluginPackage(pluginId)}
+                    onRuntimePreview={(pluginId) => void previewPluginRuntime(pluginId)}
+                    onEnable={(pluginId) => void enablePlugin(pluginId)}
+                    onDisable={(pluginId) => void disablePlugin(pluginId)}
+                    onOpenMcpSettings={() => {
+                      void refreshMcp();
+                      openSettingsSection("mcp-tools");
+                    }}
+                  />
                 ) : activeView === "work_board" ? (
                   <GlobalWorkBoardPage
                     channels={channels}
@@ -2661,22 +2664,33 @@ export function AppShell(): JSX.Element {
                     requestedScope={workBoardRequestedScope}
                   />
                 ) : activeView === "media" ? (
-                  <MediaJobsPage
-                cwd={form.cwd}
-                providers={providers}
-                jobs={mediaJobs}
-                artifactsByJob={mediaJobArtifacts}
-                form={mediaJobForm}
-                selectedJobId={selectedMediaJobId}
-                isLoading={mediaJobsLoading}
-                runningJobId={runningMediaJobId}
-                errorMessage={errorMessage}
-                onFormChange={setMediaJobForm}
-                onRefresh={() => void refreshMediaJobs()}
-                onCreate={() => void saveMediaJob()}
-                onSelectJob={setSelectedMediaJobId}
-                onRun={executeMediaJob}
-                onOpenProviders={() => openSettingsWorkspaceTool("providers", "generation")}
+                  <MediaProductionWorkspace
+                    cwd={form.cwd}
+                    providers={providers}
+                    mediaJobs={mediaJobs}
+                    mediaArtifactsByJob={mediaJobArtifacts}
+                    onJobsChanged={() => void refreshMediaJobs()}
+                    onConfigureVideoModel={() => openSettingsWorkspaceTool("providers", "video_generation")}
+                    jobsPanel={(
+                      <MediaJobsPage
+                        cwd={form.cwd}
+                        providers={providers}
+                        jobs={mediaJobs}
+                        artifactsByJob={mediaJobArtifacts}
+                        form={mediaJobForm}
+                        selectedJobId={selectedMediaJobId}
+                        isLoading={mediaJobsLoading}
+                        runningJobId={runningMediaJobId}
+                        errorMessage={errorMessage}
+                        onFormChange={setMediaJobForm}
+                        onRefresh={() => void refreshMediaJobs()}
+                        onCreate={() => void saveMediaJob()}
+                        onSelectJob={setSelectedMediaJobId}
+                        onRun={executeMediaJob}
+                        onOpenProviders={() => openSettingsWorkspaceTool("providers", "generation")}
+                        embedded
+                      />
+                    )}
                   />
                 ) : activeView === "profile" ? (
                   <ProfilePage cwd={form.cwd} onProfileChange={setUserProfile} />
@@ -2694,13 +2708,7 @@ export function AppShell(): JSX.Element {
                     mcpLoading={mcpLoading}
                     mcpBusyServerId={mcpBusyServerId}
                     mcpBusyAction={mcpBusyAction}
-                    plugins={plugins}
-                    pluginsLoading={pluginsLoading}
-                    pluginBusyId={pluginBusyId}
-                    pluginBusyAction={pluginBusyAction}
-                    latestPluginApplyResult={latestPluginApplyResult}
-                    latestPluginRuntimePreview={latestPluginRuntimePreview}
-                    latestPluginNotice={latestPluginNotice}
+                    initialSection={settingsInitialSection}
                     onBackToApplication={returnFromSettingsView}
                     workspaceDefaultAuthorizationMode={workspaceSettings?.defaultAuthorizationMode}
                     workspaceDefaultWorkspaceAccessMode={workspaceSettings?.defaultWorkspaceAccessMode}
@@ -2719,16 +2727,6 @@ export function AppShell(): JSX.Element {
                     onWorkspaceResponseLanguageChange={(responseLanguage) => patchWorkspaceSettings({ responseLanguage })}
                     onRefreshStartup={() => void refreshStartupDiagnostics()}
                     onRefreshExternalWork={() => void refreshExternalWorkStatus()}
-                    onRefreshPlugins={() => void refreshPlugins()}
-                    onApplyPluginPreset={(pluginId) => void applyPluginPreset(pluginId)}
-                    onCheckPlugin={(pluginId) => void checkPlugin(pluginId)}
-                    onValidatePluginPackage={(pluginId) => void validatePackage(pluginId)}
-                    onInstallPlugin={(pluginId) => void installPlugin(pluginId)}
-                    onUninstallPlugin={(pluginId) => void uninstallPlugin(pluginId)}
-                    onRefreshPluginPackage={(pluginId) => void refreshPluginPackage(pluginId)}
-                    onPreviewPluginRuntime={(pluginId) => void previewPluginRuntime(pluginId)}
-                    onEnablePlugin={(pluginId) => void enablePlugin(pluginId)}
-                    onDisablePlugin={(pluginId) => void disablePlugin(pluginId)}
                     onExternalWorkAction={(action) => void runExternalWorkStatusAction(action)}
                     onConfigureExternalWorkWorkflow={(input) => configureExternalWorkWorkflowAction(input)}
                     onConfigureExternalWorkSecret={(token) => configureExternalWorkSecretAction(token)}
@@ -2750,7 +2748,6 @@ export function AppShell(): JSX.Element {
                     onOpenProviders={() => openSettingsWorkspaceTool("providers")}
                     onOpenTeammates={() => openSettingsWorkspaceTool("teammates")}
                     onOpenCouncils={() => openSettingsWorkspaceTool("councils")}
-                    onOpenWorkBoard={() => openSettingsWorkBoard()}
                     workspaceToolDetail={settingsWorkspaceToolDetail}
                     workspaceToolView={settingsWorkspaceToolView}
                     runDiagnosticsRunId={settingsRunDiagnosticsRunId}
@@ -2798,7 +2795,7 @@ export function AppShell(): JSX.Element {
                   void openRunFromWorkspace(runId);
                 }}
                 onOpenWorkBoard={(scope) => {
-                  openSettingsWorkBoard(scope ?? "actionable");
+                  openWorkBoard(scope ?? "actionable");
                 }}
                 onClearRepair={() => setApprovalRepairRunId("")}
                 channels={channels}

@@ -17,6 +17,7 @@ import {
   providerCheckDisplayMessage,
   providerCheckMessage,
   providerCheckStatusLabel,
+  providerModelDiscoveryErrorMessage,
   providerFormToTemplate,
   providerFormWithSelectedModel,
   providerModelRouteLabel,
@@ -146,7 +147,7 @@ export function ProviderSettings({
   const [isEditorOpen, setIsEditorOpen] = useState(false);
   const [providerSearch, setProviderSearch] = useState("");
   const [providerStatusFilter, setProviderStatusFilter] = useState<ProviderStatusFilter>("all");
-  const [showApiKey, setShowApiKey] = useState(true);
+  const [showApiKey, setShowApiKey] = useState(false);
   const [modelOptions, setModelOptions] = useState<readonly ProviderModelOption[]>([]);
   const [modelOptionsContext, setModelOptionsContext] = useState<ProviderFormState | undefined>(undefined);
   const [modelOptionsSource, setModelOptionsSource] = useState("");
@@ -201,15 +202,21 @@ export function ProviderSettings({
     }),
     [providerSearch, providerStatusFilter, providers, selectedProviderId],
   );
+  const setupModelOptions = useMemo(() => {
+    if (activeEditorSetupIntent !== "video_generation") {
+      return modelOptions;
+    }
+    return modelOptions.filter((model) => model.capabilities?.includes("video_generate"));
+  }, [activeEditorSetupIntent, modelOptions]);
   const visibleModelOptions = useMemo(() => {
     const query = modelSearch.trim().toLowerCase();
     if (!query) {
-      return modelOptions;
+      return setupModelOptions;
     }
-    return modelOptions.filter((model) =>
+    return setupModelOptions.filter((model) =>
       [model.id, model.displayName ?? "", model.ownedBy ?? ""].some((value) => value.toLowerCase().includes(query)),
     );
-  }, [modelOptions, modelSearch]);
+  }, [modelSearch, setupModelOptions]);
   const selectedImportModels = useMemo(
     () => modelOptions
       .filter((model) => selectedModelIds.includes(model.id))
@@ -278,7 +285,7 @@ export function ProviderSettings({
     });
     onNew(nextTemplate);
     setActiveEditorSetupIntent(intent);
-    setShowApiKey(true);
+    setShowApiKey(false);
     setEditorErrorMessage("");
     setEditorWarningMessage("");
     resetModelDiscovery();
@@ -288,7 +295,7 @@ export function ProviderSettings({
   function openEditProviderSheet(provider: ProviderPreset): void {
     onEdit(provider);
     setActiveEditorSetupIntent("");
-    setShowApiKey(true);
+    setShowApiKey(false);
     setEditorErrorMessage("");
     setEditorWarningMessage("");
     resetModelDiscovery();
@@ -367,7 +374,7 @@ export function ProviderSettings({
       setModelOptions([]);
       setModelOptionsContext(undefined);
       setModelOptionsSource("");
-      setModelFetchError(error instanceof Error ? error.message : String(error));
+      setModelFetchError(providerModelDiscoveryErrorMessage(error, t));
     } finally {
       setIsFetchingModels(false);
     }
@@ -497,7 +504,7 @@ export function ProviderSettings({
           canEditCustomProviderFields={canEditCustomProviderFields}
           modelImportPanel={(
             <ProviderModelImportPanel
-              modelOptions={modelOptions}
+              modelOptions={setupModelOptions}
               visibleModelOptions={visibleModelOptions}
               modelOptionsSource={modelOptionsSource}
               modelSearch={modelSearch}

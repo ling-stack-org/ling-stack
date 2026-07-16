@@ -24,6 +24,7 @@ import { readTaskTitle } from "../../lib/run-evidence.js";
 import type { ApprovalRequest, Channel, ExternalWorkActionView, RunSession } from "../../types.js";
 import { ApprovalCard, type ExternalActionBusyState } from "./ApprovalCard.js";
 import type { ApprovalResolution } from "./types.js";
+import { SelectControl } from "../../shared/components/SelectControl.js";
 
 export function ApprovalsPage({
   cwd,
@@ -525,14 +526,15 @@ function ReviewQueueRouteControl({
   return (
     <div className="review-queue-route-control">
       <span>{t("Route")}</span>
-      <select
+      <SelectControl
+              variant="compact"
         aria-label={t("Route to channel")}
         value={targetChannelId}
         disabled={routing}
         onChange={(event) => setTargetChannelId(event.target.value)}
       >
         {channels.map((channel) => <option key={channel.id} value={channel.id}>{channel.name}</option>)}
-      </select>
+      </SelectControl>
       <button
         className="secondary-button compact-button"
         type="button"

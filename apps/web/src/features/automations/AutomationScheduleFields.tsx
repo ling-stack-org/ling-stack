@@ -1,3 +1,4 @@
+import { SelectControl } from "../../shared/components/SelectControl.js";
 export type AutomationScheduleChoice = "daily" | "workdays" | "weekly" | "custom";
 
 export function AutomationScheduleFields({
@@ -25,17 +26,17 @@ export function AutomationScheduleFields({
     <div className="automation-popover-form">
       <label>
         <span>{t("Plan")}</span>
-        <select value={scheduleMode} onChange={(event) => onScheduleModeChange(event.target.value as AutomationScheduleChoice)}>
+        <SelectControl value={scheduleMode} onChange={(event) => onScheduleModeChange(event.target.value as AutomationScheduleChoice)}>
           <option value="daily">{t("Daily")}</option>
           <option value="workdays">{t("Workdays")}</option>
           <option value="weekly">{t("Weekly")}</option>
           <option value="custom">{t("Custom RRULE")}</option>
-        </select>
+        </SelectControl>
       </label>
       {scheduleMode === "weekly" ? (
         <label>
           <span>{t("Weekday")}</span>
-          <select value={weekday} onChange={(event) => onWeekdayChange(event.target.value)}>
+          <SelectControl value={weekday} onChange={(event) => onWeekdayChange(event.target.value)}>
             <option value="1">{t("Monday")}</option>
             <option value="2">{t("Tuesday")}</option>
             <option value="3">{t("Wednesday")}</option>
@@ -43,7 +44,7 @@ export function AutomationScheduleFields({
             <option value="5">{t("Friday")}</option>
             <option value="6">{t("Saturday")}</option>
             <option value="0">{t("Sunday")}</option>
-          </select>
+          </SelectControl>
         </label>
       ) : null}
       {scheduleMode === "custom" ? (

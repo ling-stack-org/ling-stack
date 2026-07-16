@@ -208,6 +208,10 @@ const REMOVE_SKILL_WORKFLOW_PHASE_MIGRATION_NAME = "remove_skill_workflow_phase_
 const MANAGED_OFFICIAL_SKILL_SOURCE_MIGRATION_VERSION = 101;
 const MANAGED_OFFICIAL_SKILL_SOURCE_MIGRATION_NAME = "create_managed_official_skill_source";
 const AI_EVOLUTION_SKILL_LIFECYCLE_MIGRATION_VERSION = 102;
+const MEDIA_PRODUCTION_STUDIO_MIGRATION_VERSION = 103;
+const MEDIA_PRODUCTION_STUDIO_MIGRATION_NAME = "create_media_production_studio";
+const MEDIA_EXTERNAL_WORKFLOWS_MIGRATION_VERSION = 104;
+const MEDIA_EXTERNAL_WORKFLOWS_MIGRATION_NAME = "create_media_external_workflows";
 const AI_EVOLUTION_SKILL_LIFECYCLE_MIGRATION_NAME = "repair_ai_evolution_skill_lifecycle";
 
 export function configureSqliteRunStoreDatabase(database: DatabaseSync): void {
@@ -4723,8 +4727,245 @@ export function applySqliteRunStoreMigrations(context: SqliteRunStoreMigrationCo
       }
     }
 
-    if (!context.hasMigration(REMOVE_SKILL_WORKFLOW_PHASE_MIGRATION_VERSION)) {
-      removeLegacySkillWorkflowPhaseMetadata(context);
-      context.recordMigration(REMOVE_SKILL_WORKFLOW_PHASE_MIGRATION_VERSION, REMOVE_SKILL_WORKFLOW_PHASE_MIGRATION_NAME);
+    const hasMediaProductionStudioMigration = context.hasMigration(MEDIA_PRODUCTION_STUDIO_MIGRATION_VERSION);
+    if (
+      !hasMediaProductionStudioMigration ||
+      !context.hasTable("media_projects") ||
+      !context.hasTable("media_scenes") ||
+      !context.hasTable("media_scene_runs") ||
+      !context.hasTable("media_job_execution_handles")
+    ) {
+      database.exec(`
+        CREATE TABLE IF NOT EXISTS media_projects (
+          id TEXT PRIMARY KEY,
+          workspace_id TEXT NOT NULL,
+          name TEXT NOT NULL,
+          default_provider_preset_id TEXT,
+          canvas_viewport_json TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          FOREIGN KEY(workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_media_projects_workspace_updated
+        ON media_projects(workspace_id, updated_at DESC);
+
+        CREATE TABLE IF NOT EXISTS media_scenes (
+          id TEXT PRIMARY KEY,
+          project_id TEXT NOT NULL,
+          sort_order INTEGER NOT NULL,
+          title TEXT NOT NULL,
+          prompt TEXT NOT NULL,
+          provider_preset_id TEXT,
+          ratio TEXT NOT NULL,
+          duration_seconds INTEGER NOT NULL,
+          reference_artifact_ids_json TEXT NOT NULL,
+          canvas_position_json TEXT NOT NULL,
+          selected_media_scene_run_id TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          FOREIGN KEY(project_id) REFERENCES media_projects(id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_media_scenes_project_sort
+        ON media_scenes(project_id, sort_order, created_at);
+
+        CREATE TABLE IF NOT EXISTS media_scene_runs (
+          id TEXT PRIMARY KEY,
+          project_id TEXT NOT NULL,
+          scene_id TEXT NOT NULL,
+          media_job_id TEXT NOT NULL,
+          provider_snapshot_json TEXT NOT NULL,
+          input_snapshot_json TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          FOREIGN KEY(media_job_id) REFERENCES media_jobs(id) ON DELETE RESTRICT
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_media_scene_runs_project_created
+        ON media_scene_runs(project_id, created_at DESC);
+
+        CREATE INDEX IF NOT EXISTS idx_media_scene_runs_scene_created
+        ON media_scene_runs(scene_id, created_at DESC);
+
+        CREATE INDEX IF NOT EXISTS idx_media_scene_runs_media_job
+        ON media_scene_runs(media_job_id);
+
+        CREATE TABLE IF NOT EXISTS media_job_execution_handles (
+          media_job_id TEXT PRIMARY KEY,
+          adapter_kind TEXT NOT NULL,
+          external_operation_id TEXT NOT NULL,
+          recovery_json TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          FOREIGN KEY(media_job_id) REFERENCES media_jobs(id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_media_job_execution_handles_updated
+        ON media_job_execution_handles(updated_at);
+      `);
+      if (!hasMediaProductionStudioMigration) {
+        context.recordMigration(MEDIA_PRODUCTION_STUDIO_MIGRATION_VERSION, MEDIA_PRODUCTION_STUDIO_MIGRATION_NAME);
+      }
     }
+
+    const hasMediaExternalWorkflowsMigration = context.hasMigration(MEDIA_EXTERNAL_WORKFLOWS_MIGRATION_VERSION);
+    if (
+      !hasMediaExternalWorkflowsMigration ||
+      !context.hasTable("media_workflow_connections") ||
+      !context.hasTable("media_workflow_definitions") ||
+      !context.hasTable("media_workflow_versions") ||
+      !context.hasColumn("media_jobs", "source_kind")
+    ) {
+      database.exec(`
+        CREATE TABLE IF NOT EXISTS media_workflow_connections (
+          id TEXT PRIMARY KEY,
+          workspace_id TEXT NOT NULL,
+          name TEXT NOT NULL,
+          adapter_kind TEXT NOT NULL,
+          base_url TEXT NOT NULL,
+          auth_mode TEXT NOT NULL,
+          secret_ref TEXT,
+          network_policy TEXT NOT NULL,
+          protocol_variant TEXT NOT NULL,
+          status TEXT NOT NULL,
+          health_json TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          FOREIGN KEY(workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_media_workflow_connections_workspace
+        ON media_workflow_connections(workspace_id, updated_at DESC);
+
+        CREATE TABLE IF NOT EXISTS media_workflow_definitions (
+          id TEXT PRIMARY KEY,
+          workspace_id TEXT NOT NULL,
+          connection_id TEXT NOT NULL,
+          name TEXT NOT NULL,
+          description TEXT,
+          status TEXT NOT NULL,
+          current_version_id TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          FOREIGN KEY(workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE,
+          FOREIGN KEY(connection_id) REFERENCES media_workflow_connections(id) ON DELETE RESTRICT
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_media_workflow_definitions_workspace
+        ON media_workflow_definitions(workspace_id, status, updated_at DESC);
+
+        CREATE INDEX IF NOT EXISTS idx_media_workflow_definitions_connection
+        ON media_workflow_definitions(connection_id, status);
+
+        CREATE TABLE IF NOT EXISTS media_workflow_versions (
+          id TEXT PRIMARY KEY,
+          workflow_definition_id TEXT NOT NULL,
+          version INTEGER NOT NULL,
+          source_format TEXT NOT NULL,
+          source_digest TEXT NOT NULL,
+          graph_snapshot_json TEXT NOT NULL,
+          input_fields_json TEXT NOT NULL,
+          output_rules_json TEXT NOT NULL,
+          validation_json TEXT NOT NULL,
+          test_media_job_id TEXT,
+          created_at TEXT NOT NULL,
+          UNIQUE(workflow_definition_id, version),
+          FOREIGN KEY(workflow_definition_id) REFERENCES media_workflow_definitions(id) ON DELETE CASCADE,
+          FOREIGN KEY(test_media_job_id) REFERENCES media_jobs(id) ON DELETE SET NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_media_workflow_versions_definition
+        ON media_workflow_versions(workflow_definition_id, version DESC);
+
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_media_workflow_versions_digest
+        ON media_workflow_versions(workflow_definition_id, source_digest);
+      `);
+
+      if (!context.hasColumn("media_projects", "default_execution_mode")) {
+        database.exec("ALTER TABLE media_projects ADD COLUMN default_execution_mode TEXT NOT NULL DEFAULT 'direct';");
+      }
+      if (!context.hasColumn("media_projects", "default_workflow_definition_id")) {
+        database.exec("ALTER TABLE media_projects ADD COLUMN default_workflow_definition_id TEXT;");
+      }
+      if (!context.hasColumn("media_scenes", "execution_mode")) {
+        database.exec("ALTER TABLE media_scenes ADD COLUMN execution_mode TEXT NOT NULL DEFAULT 'direct';");
+      }
+      if (!context.hasColumn("media_scenes", "workflow_definition_id")) {
+        database.exec("ALTER TABLE media_scenes ADD COLUMN workflow_definition_id TEXT;");
+      }
+      if (!context.hasColumn("media_scenes", "workflow_input_values_json")) {
+        database.exec("ALTER TABLE media_scenes ADD COLUMN workflow_input_values_json TEXT NOT NULL DEFAULT '{}';");
+      }
+      if (!context.hasColumn("media_scene_runs", "execution_snapshot_json")) {
+        database.exec("ALTER TABLE media_scene_runs ADD COLUMN execution_snapshot_json TEXT NOT NULL DEFAULT '{}';");
+        database.exec("UPDATE media_scene_runs SET execution_snapshot_json = provider_snapshot_json WHERE execution_snapshot_json = '{}';");
+      }
+      if (!context.hasColumn("media_job_execution_handles", "next_poll_at")) {
+        database.exec("ALTER TABLE media_job_execution_handles ADD COLUMN next_poll_at TEXT;");
+      }
+      if (!context.hasColumn("media_job_execution_handles", "poll_attempts")) {
+        database.exec("ALTER TABLE media_job_execution_handles ADD COLUMN poll_attempts INTEGER NOT NULL DEFAULT 0;");
+      }
+      if (!context.hasColumn("media_job_execution_handles", "work_unit_id")) {
+        database.exec("ALTER TABLE media_job_execution_handles ADD COLUMN work_unit_id TEXT;");
+      }
+      if (!context.hasColumn("media_job_execution_handles", "attempt_id")) {
+        database.exec("ALTER TABLE media_job_execution_handles ADD COLUMN attempt_id TEXT;");
+      }
+
+      if (!context.hasColumn("media_jobs", "source_kind")) {
+        database.exec("PRAGMA foreign_keys = OFF;");
+        database.exec(`
+          CREATE TABLE media_jobs_workflow_migration (
+            id TEXT PRIMARY KEY,
+            workspace_id TEXT NOT NULL,
+            source_kind TEXT NOT NULL,
+            provider_preset_id TEXT,
+            workflow_version_id TEXT,
+            operation TEXT NOT NULL,
+            prompt TEXT NOT NULL,
+            input_json TEXT NOT NULL,
+            artifact_ids_json TEXT NOT NULL,
+            status TEXT NOT NULL,
+            error_message TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            CHECK(
+              (source_kind = 'provider' AND provider_preset_id IS NOT NULL AND workflow_version_id IS NULL)
+              OR (source_kind = 'workflow' AND provider_preset_id IS NULL AND workflow_version_id IS NOT NULL)
+            ),
+            FOREIGN KEY(workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE,
+            FOREIGN KEY(workflow_version_id) REFERENCES media_workflow_versions(id) ON DELETE RESTRICT
+          );
+
+          INSERT INTO media_jobs_workflow_migration (
+            id, workspace_id, source_kind, provider_preset_id, workflow_version_id, operation,
+            prompt, input_json, artifact_ids_json, status, error_message, created_at, updated_at
+          )
+          SELECT id, workspace_id, 'provider', provider_preset_id, NULL, operation,
+                 prompt, input_json, artifact_ids_json, status, error_message, created_at, updated_at
+          FROM media_jobs;
+
+          DROP TABLE media_jobs;
+          ALTER TABLE media_jobs_workflow_migration RENAME TO media_jobs;
+
+          CREATE INDEX IF NOT EXISTS idx_media_jobs_workspace ON media_jobs(workspace_id);
+          CREATE INDEX IF NOT EXISTS idx_media_jobs_provider ON media_jobs(provider_preset_id);
+          CREATE INDEX IF NOT EXISTS idx_media_jobs_workflow_version ON media_jobs(workflow_version_id);
+          CREATE INDEX IF NOT EXISTS idx_media_jobs_status ON media_jobs(status);
+          CREATE INDEX IF NOT EXISTS idx_media_jobs_created_at ON media_jobs(created_at);
+        `);
+        database.exec("PRAGMA foreign_keys = ON;");
+      }
+
+      database.exec(`
+        CREATE INDEX IF NOT EXISTS idx_media_job_execution_handles_next_poll
+        ON media_job_execution_handles(next_poll_at, updated_at);
+      `);
+      if (!hasMediaExternalWorkflowsMigration) {
+        context.recordMigration(MEDIA_EXTERNAL_WORKFLOWS_MIGRATION_VERSION, MEDIA_EXTERNAL_WORKFLOWS_MIGRATION_NAME);
+      }
+    }
+
 }

@@ -540,6 +540,78 @@ test("sqlite store persists media jobs and status updates", async () => {
   }
 });
 
+test("sqlite store keeps media production run history when scenes and projects are removed", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-core-media-production-"));
+  const createdAt = "2026-07-13T00:00:00.000Z";
+  const updatedAt = "2026-07-13T00:02:00.000Z";
+  const store = createSqliteRunStore(cwd);
+  try {
+    const project = store.createMediaProject({
+      name: "Launch storyboard",
+      defaultProviderPresetId: "provider_seedance",
+      canvasViewport: { x: 10, y: -6, zoom: 1.2 },
+    }, createdAt);
+    const firstScene = store.createMediaScene({
+      projectId: project.id,
+      title: "Opening",
+      prompt: "A cinematic product reveal.",
+      ratio: "16:9",
+      durationSeconds: 5,
+      canvasPosition: { x: 40, y: 72 },
+    }, createdAt);
+    const secondScene = store.createMediaScene({
+      projectId: project.id,
+      title: "Close up",
+      prompt: "A close up of the material.",
+      ratio: "16:9",
+      durationSeconds: 5,
+      canvasPosition: { x: 360, y: 72 },
+    }, createdAt);
+    assert.deepEqual(store.listMediaScenes(project.id).map((scene) => scene.id), [firstScene.id, secondScene.id]);
+
+    const reordered = store.reorderMediaScenes(project.id, [secondScene.id, firstScene.id], updatedAt);
+    assert.deepEqual(reordered.map((scene) => scene.id), [secondScene.id, firstScene.id]);
+    assert.deepEqual(reordered.map((scene) => scene.sortOrder), [0, 1]);
+
+    const job = store.createMediaJob({
+      providerPresetId: "provider_seedance",
+      operation: "video_generate",
+      prompt: secondScene.prompt,
+      input: { ratio: "16:9", duration: 5 },
+    }, updatedAt);
+    const sceneRun = store.createMediaSceneRun({
+      projectId: project.id,
+      sceneId: secondScene.id,
+      mediaJobId: job.id,
+      providerSnapshot: { model: "seedance-1-0-pro" },
+      inputSnapshot: { prompt: secondScene.prompt, apiKey: "sk-secret" },
+    }, updatedAt);
+    assert.deepEqual(store.getMediaSceneRunByMediaJobId(job.id), sceneRun);
+    assert.equal(store.getMediaSceneRunByMediaJobId("media_job_missing"), undefined);
+    const handle = store.upsertMediaJobExecutionHandle({
+      mediaJobId: job.id,
+      adapterKind: "seedance",
+      externalOperationId: "task_123",
+      recovery: { statusEndpoint: "https://example.invalid/tasks/task_123", authorization: "Bearer secret" },
+    }, updatedAt);
+    assert.equal(handle.externalOperationId, "task_123");
+    assert.equal(handle.recovery.authorization, "[REDACTED]");
+
+    const selected = store.updateMediaScene(secondScene.id, { selectedMediaSceneRunId: sceneRun.id }, updatedAt);
+    assert.equal(selected?.selectedMediaSceneRunId, sceneRun.id);
+    assert.equal(store.deleteMediaScene(secondScene.id), true);
+    assert.equal(store.getMediaSceneRun(sceneRun.id)?.mediaJobId, job.id);
+    assert.equal(store.getMediaJob(job.id)?.id, job.id);
+
+    assert.equal(store.deleteMediaProject(project.id), true);
+    assert.equal(store.getMediaSceneRun(sceneRun.id)?.sceneId, secondScene.id);
+    assert.equal(store.getMediaJobExecutionHandle(job.id)?.externalOperationId, "task_123");
+  } finally {
+    store.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("sqlite store expires pending approval requests", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-core-approval-expiry-"));
   const now = "2026-05-22T00:00:00.000Z";

@@ -21,6 +21,8 @@ import {
   truncateMemoryBody,
 } from "./teammate-workspace-utils.js";
 
+import { SelectControl } from "../../shared/components/SelectControl.js";
+
 export interface MemoryReviewEditForm {
   readonly title: string;
   readonly body: string;
@@ -258,7 +260,8 @@ export function TeammateMemoryTab({
           <strong>{t("Memory review mode")}</strong>
           <small>{t(memoryReviewModeDescription(memoryReviewPolicy?.mode ?? "balanced"))}</small>
         </span>
-        <select
+        <SelectControl
+              variant="compact"
           aria-label={t("Memory review mode")}
           value={memoryReviewPolicy?.mode ?? "balanced"}
           onChange={(event) => void onChangeMemoryReviewMode(event.currentTarget.value as MemoryReviewMode)}
@@ -267,7 +270,7 @@ export function TeammateMemoryTab({
           <option value="conservative">{t("Conservative")}</option>
           <option value="balanced">{t("Balanced")}</option>
           <option value="fast">{t("Fast")}</option>
-        </select>
+        </SelectControl>
       </article>
       <div className="teammate-memory-review-head">
         <span>
@@ -319,11 +322,11 @@ export function TeammateMemoryTab({
                     </label>
                     <label>
                       {t("Sensitivity")}
-                      <select value={memoryEditForm.sensitivity} onChange={(event) => onMemoryEditFormChange((current) => ({ ...current, sensitivity: event.currentTarget.value as MemoryObject["sensitivity"] }))}>
+                      <SelectControl value={memoryEditForm.sensitivity} onChange={(event) => onMemoryEditFormChange((current) => ({ ...current, sensitivity: event.currentTarget.value as MemoryObject["sensitivity"] }))}>
                         <option value="normal">{t("normal")}</option>
                         <option value="private">{t("private")}</option>
                         <option value="secret-adjacent">{t("secret-adjacent")}</option>
-                      </select>
+                      </SelectControl>
                     </label>
                   </div>
                 ) : null}

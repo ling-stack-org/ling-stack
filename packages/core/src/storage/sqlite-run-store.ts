@@ -348,11 +348,32 @@ import {
   type WorkflowTransitionEvent,
 } from "../state-machines.js";
 import {
+  type CreateMediaProjectInput,
   type CreateMediaJobInput,
+  type CreateMediaSceneInput,
+  type CreateMediaSceneRunInput,
   type ListMediaJobsOptions,
+  type MediaJobExecutionHandle,
   type MediaJob,
+  type MediaProject,
+  type MediaScene,
+  type MediaSceneRun,
+  type UpdateMediaProjectInput,
   type UpdateMediaJobStatusInput,
+  type UpdateMediaSceneInput,
+  type UpsertMediaJobExecutionHandleInput,
 } from "../media-types.js";
+import {
+  type CreateMediaWorkflowConnectionInput,
+  type CreateMediaWorkflowDefinitionInput,
+  type CreateMediaWorkflowVersionInput,
+  type ListMediaWorkflowDefinitionsOptions,
+  type MediaWorkflowConnection,
+  type MediaWorkflowDefinition,
+  type MediaWorkflowVersion,
+  type UpdateMediaWorkflowConnectionInput,
+  type UpdateMediaWorkflowDefinitionInput,
+} from "../media-workflow-types.js";
 import {
   type CreateMemoryConsolidationJobInput,
   type ListMemoryConsolidationJobsOptions,
@@ -463,6 +484,7 @@ import { SqliteProviderStore } from "./sqlite/provider-store.js";
 import { SqliteMcpStore } from "./sqlite/mcp-store.js";
 import { SqliteManagedPluginStore } from "./sqlite/managed-plugin-store.js";
 import { SqliteMediaStore } from "./sqlite/media-store.js";
+import { SqliteMediaWorkflowStore } from "./sqlite/media-workflow-store.js";
 import { SqliteApprovalPolicyStore } from "./sqlite/approval-policy-store.js";
 import { SqliteApprovalRequestStore } from "./sqlite/approval-request-store.js";
 import { SqliteApprovalCheckpointStore } from "./sqlite/approval-checkpoint-store.js";
@@ -538,6 +560,7 @@ export class SqliteRunStore implements RunStore {
   private readonly mcps: SqliteMcpStore;
   private readonly managedPlugins: SqliteManagedPluginStore;
   private readonly mediaJobs: SqliteMediaStore;
+  private readonly mediaWorkflows: SqliteMediaWorkflowStore;
   private readonly approvalPolicies: SqliteApprovalPolicyStore;
   private readonly approvalCheckpoints: SqliteApprovalCheckpointStore;
   private readonly approvalRequests: SqliteApprovalRequestStore;
@@ -613,6 +636,7 @@ export class SqliteRunStore implements RunStore {
     );
     this.managedPlugins = new SqliteManagedPluginStore({ database: this.database });
     this.mediaJobs = new SqliteMediaStore({ database: this.database });
+    this.mediaWorkflows = new SqliteMediaWorkflowStore({ database: this.database });
     this.approvalPolicies = new SqliteApprovalPolicyStore({ database: this.database });
     this.approvalCheckpoints = new SqliteApprovalCheckpointStore({ database: this.database });
     this.approvalRequests = new SqliteApprovalRequestStore(
@@ -2988,6 +3012,138 @@ export class SqliteRunStore implements RunStore {
 
   updateMediaJobStatus(id: string, input: UpdateMediaJobStatusInput, now: string): MediaJob | undefined {
     return this.mediaJobs.updateMediaJobStatus(id, input, now);
+  }
+
+  createMediaProject(input: CreateMediaProjectInput, now: string): MediaProject {
+    return this.mediaJobs.createMediaProject(input, now);
+  }
+
+  getMediaProject(id: string): MediaProject | undefined {
+    return this.mediaJobs.getMediaProject(id);
+  }
+
+  listMediaProjects(): MediaProject[] {
+    return this.mediaJobs.listMediaProjects();
+  }
+
+  updateMediaProject(id: string, input: UpdateMediaProjectInput, now: string): MediaProject | undefined {
+    return this.mediaJobs.updateMediaProject(id, input, now);
+  }
+
+  deleteMediaProject(id: string): boolean {
+    return this.mediaJobs.deleteMediaProject(id);
+  }
+
+  createMediaScene(input: CreateMediaSceneInput, now: string): MediaScene {
+    return this.mediaJobs.createMediaScene(input, now);
+  }
+
+  getMediaScene(id: string): MediaScene | undefined {
+    return this.mediaJobs.getMediaScene(id);
+  }
+
+  listMediaScenes(projectId: string): MediaScene[] {
+    return this.mediaJobs.listMediaScenes(projectId);
+  }
+
+  updateMediaScene(id: string, input: UpdateMediaSceneInput, now: string): MediaScene | undefined {
+    return this.mediaJobs.updateMediaScene(id, input, now);
+  }
+
+  reorderMediaScenes(projectId: string, sceneIds: readonly string[], now: string): MediaScene[] {
+    return this.mediaJobs.reorderMediaScenes(projectId, sceneIds, now);
+  }
+
+  deleteMediaScene(id: string): boolean {
+    return this.mediaJobs.deleteMediaScene(id);
+  }
+
+  createMediaSceneRun(input: CreateMediaSceneRunInput, now: string): MediaSceneRun {
+    return this.mediaJobs.createMediaSceneRun(input, now);
+  }
+
+  listMediaSceneRuns(options: { readonly projectId?: string; readonly sceneId?: string }): MediaSceneRun[] {
+    return this.mediaJobs.listMediaSceneRuns(options);
+  }
+
+  getMediaSceneRun(id: string): MediaSceneRun | undefined {
+    return this.mediaJobs.getMediaSceneRun(id);
+  }
+
+  getMediaSceneRunByMediaJobId(mediaJobId: string): MediaSceneRun | undefined {
+    return this.mediaJobs.getMediaSceneRunByMediaJobId(mediaJobId);
+  }
+
+  upsertMediaJobExecutionHandle(input: UpsertMediaJobExecutionHandleInput, now: string): MediaJobExecutionHandle {
+    return this.mediaJobs.upsertMediaJobExecutionHandle(input, now);
+  }
+
+  getMediaJobExecutionHandle(mediaJobId: string): MediaJobExecutionHandle | undefined {
+    return this.mediaJobs.getMediaJobExecutionHandle(mediaJobId);
+  }
+
+  listMediaJobExecutionHandles(): MediaJobExecutionHandle[] {
+    return this.mediaJobs.listMediaJobExecutionHandles();
+  }
+
+  deleteMediaJobExecutionHandle(mediaJobId: string): boolean {
+    return this.mediaJobs.deleteMediaJobExecutionHandle(mediaJobId);
+  }
+
+  createMediaWorkflowConnection(input: CreateMediaWorkflowConnectionInput, now: string): MediaWorkflowConnection {
+    return this.mediaWorkflows.createConnection(input, now);
+  }
+
+  getMediaWorkflowConnection(id: string): MediaWorkflowConnection | undefined {
+    return this.mediaWorkflows.getConnection(id);
+  }
+
+  listMediaWorkflowConnections(): MediaWorkflowConnection[] {
+    return this.mediaWorkflows.listConnections();
+  }
+
+  updateMediaWorkflowConnection(id: string, input: UpdateMediaWorkflowConnectionInput, now: string): MediaWorkflowConnection | undefined {
+    return this.mediaWorkflows.updateConnection(id, input, now);
+  }
+
+  deleteMediaWorkflowConnection(id: string): boolean {
+    return this.mediaWorkflows.deleteConnection(id);
+  }
+
+  createMediaWorkflowDefinition(input: CreateMediaWorkflowDefinitionInput, now: string): MediaWorkflowDefinition {
+    return this.mediaWorkflows.createDefinition(input, now);
+  }
+
+  getMediaWorkflowDefinition(id: string): MediaWorkflowDefinition | undefined {
+    return this.mediaWorkflows.getDefinition(id);
+  }
+
+  listMediaWorkflowDefinitions(options: ListMediaWorkflowDefinitionsOptions = {}): MediaWorkflowDefinition[] {
+    return this.mediaWorkflows.listDefinitions(options);
+  }
+
+  updateMediaWorkflowDefinition(id: string, input: UpdateMediaWorkflowDefinitionInput, now: string): MediaWorkflowDefinition | undefined {
+    return this.mediaWorkflows.updateDefinition(id, input, now);
+  }
+
+  deleteMediaWorkflowDefinition(id: string): boolean {
+    return this.mediaWorkflows.deleteDefinition(id);
+  }
+
+  createMediaWorkflowVersion(input: CreateMediaWorkflowVersionInput, now: string): MediaWorkflowVersion {
+    return this.mediaWorkflows.createVersion(input, now);
+  }
+
+  getMediaWorkflowVersion(id: string): MediaWorkflowVersion | undefined {
+    return this.mediaWorkflows.getVersion(id);
+  }
+
+  listMediaWorkflowVersions(workflowDefinitionId: string): MediaWorkflowVersion[] {
+    return this.mediaWorkflows.listVersions(workflowDefinitionId);
+  }
+
+  setMediaWorkflowVersionTestJob(id: string, mediaJobId: string): MediaWorkflowVersion | undefined {
+    return this.mediaWorkflows.setVersionTestJob(id, mediaJobId);
   }
 
   createApprovalRequest(input: CreateApprovalRequestInput, now: string): ApprovalRequest {

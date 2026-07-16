@@ -12,6 +12,8 @@ export { OperationEmptyState } from "./OperationEmptyState.js";
 export { PageActionHeader } from "./PageActionHeader.js";
 export { createAttachmentPreviewUrl, createLocalComposerAssetId, pendingAssetLabel, pendingPreviewLabel, revokeObjectUrl, revokePendingAttachmentPreview, revokePendingAttachmentPreviews, type PendingAssetState, type PendingAttachmentItem } from "./composer-pending-assets.js";
 export { RunRepairHintBanner } from "./RunRepairHintBanner.js";
+export { RichChoiceSelect, type RichChoiceOption } from "./RichChoiceSelect.js";
+export { SelectControl, type SelectControlProps, type SelectControlVariant } from "./SelectControl.js";
 export { StatusActionRow } from "./StatusActionRow.js";
 export { StatusBadge } from "./StatusBadge.js";
 export { TokenizedComposerInput, type TokenizedComposerInputHandle, type TokenizedComposerInputProps } from "@ling-stack/conversation-ui-react";

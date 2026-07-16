@@ -6,6 +6,7 @@
 - [Settings Diagnostic Density P8](settings-diagnostic-density-p8.md)
 - [P9 Implementation Plan](settings-interaction-depth-p9-implementation-plan.md)
 - [Settings Full-Surface Productization P10](settings-full-surface-productization-p10.md)
+- [Skill Source Sync Simplification P15](skill-source-sync-simplification-p15.md)
 
 ## Summary
 

@@ -140,7 +140,7 @@ test("sidebar selection is exclusive and conversation sections stay below primar
   const commandButtonWidth = await newConversationButton.evaluate((button) => Math.round(button.getBoundingClientRect().width));
   expect(commandButtonWidth).toBeGreaterThan(100);
   expect(commandButtonWidth).toBeLessThan(320);
-  await expect(primaryNav.getByRole("button")).toHaveText(["Inbox", "Image Generation", "Automations"]);
+  await expect(primaryNav.getByRole("button")).toHaveText(["Inbox", "Media Production", "Work Board", "Plugin Manager", "Automations"]);
   await expect(primaryNav.getByRole("button", { name: "AI Councils" })).toHaveCount(0);
   await expect(navigation.getByRole("button", { name: "Workspace" })).toHaveCount(0);
   await expect(navigation.getByRole("button", { name: "Tasks" })).toHaveCount(0);
@@ -1152,13 +1152,14 @@ test("sidebar text entries route to context-aware inspectors", async ({ page }) 
   const primaryNav = navigation.locator(".primary-nav");
   await expect(navigation.getByRole("button", { name: "Search or start" })).toHaveCount(0);
   await expect(navigation.getByRole("button", { name: "Run", exact: true })).toHaveCount(0);
-  await expect(primaryNav.getByRole("button")).toHaveText(["Inbox", "Image Generation", "Automations"]);
+  await expect(primaryNav.getByRole("button")).toHaveText(["Inbox", "Media Production", "Work Board", "Plugin Manager", "Automations"]);
   await expect(primaryNav.getByRole("button", { name: "AI Councils" })).toHaveCount(0);
   await expect(primaryNav.getByRole("button", { name: "AI Teammates" })).toHaveCount(0);
   await expect(navigation.getByRole("button", { name: "Settings" })).toBeVisible();
   await expect(navigation.getByRole("button", { name: "Profile" })).toHaveCount(0);
   await expect(navigation.getByRole("button", { name: "Model Workbench" })).toHaveCount(0);
-  await expect(navigation.getByRole("button", { name: "Work Board" })).toHaveCount(0);
+  await expect(primaryNav.getByRole("button", { name: "Work Board" })).toBeVisible();
+  await expect(primaryNav.getByRole("button", { name: "Plugin Manager" })).toBeVisible();
   await expect(page.getByLabel("Run context")).toHaveCount(0);
 
   await navigation.getByRole("button", { name: "New conversation" }).click();
@@ -1168,13 +1169,22 @@ test("sidebar text entries route to context-aware inspectors", async ({ page }) 
   await primaryNav.getByRole("button", { name: "Inbox" }).click();
   await expect(page.locator(".approvals-panel").getByRole("heading", { name: "Inbox" })).toBeVisible();
 
+  await primaryNav.getByRole("button", { name: "Work Board" }).click();
+  await expect(page.locator(".work-board-page")).toBeVisible();
+  await expect(page.getByLabel("Ling Stack navigation")).toBeVisible();
+
+  await primaryNav.getByRole("button", { name: "Plugin Manager" }).click();
+  await expect(page.locator(".plugin-manager-page .settings-plugin-manager")).toBeVisible();
+  await expect(page.getByLabel("Ling Stack navigation")).toBeVisible();
+
   await navigation.getByRole("button", { name: "Settings" }).click();
   const settingsSections = page.getByLabel("Settings sections");
   await expect(settingsSections).toBeVisible();
   await expect(settingsSections.getByRole("button", { name: "Model Workbench" })).toBeVisible();
   await expect(settingsSections.getByRole("button", { name: "Teammate Management" })).toBeVisible();
   await expect(settingsSections.getByRole("button", { name: "AI Teammates" })).toHaveCount(0);
-  await expect(settingsSections.getByRole("button", { name: "Work Board" })).toBeVisible();
+  await expect(settingsSections.getByRole("button", { name: "Work Board" })).toHaveCount(0);
+  await expect(settingsSections.getByRole("button", { name: "Plugin Manager" })).toHaveCount(0);
   await expect(settingsSections.getByRole("button", { name: "Council Workspace" })).toBeVisible();
   await expect(settingsSections.getByRole("button", { name: "AI Councils" })).toHaveCount(0);
   await settingsSections.getByRole("button", { name: "Council Workspace" }).click();
@@ -1196,16 +1206,16 @@ test("sidebar text entries route to context-aware inspectors", async ({ page }) 
   await expect(page.getByRole("region", { name: "Usage summary" })).toBeVisible();
   await expect(page.getByLabel("Run context")).toHaveCount(0);
   await expect(settingsSections.getByRole("button", { name: "Model Workbench" })).toBeVisible();
-  await expect(settingsSections.getByRole("button", { name: "Work Board" })).toBeVisible();
+  await expect(settingsSections.getByRole("button", { name: "Work Board" })).toHaveCount(0);
   await settingsSections.getByRole("button", { name: "Teammate Management" }).click();
   await expect(settingsSections.getByRole("button", { name: "Teammate Management" })).toHaveClass(/active/);
   await expect(page.locator(".settings-tool-return-row")).toHaveCount(0);
   await expect(page.getByLabel("Workspace teammates")).toBeVisible();
   await page.getByRole("button", { name: "Back to app" }).click();
 
-  await navigation.getByRole("button", { name: "Image Generation" }).click();
-  await expect(page.getByRole("heading", { name: "Generation tasks", level: 1 })).toBeVisible();
-  await expect(page.getByLabel("Generation task status")).toBeVisible();
+  await navigation.getByRole("button", { name: "Media Production" }).click();
+  await expect(page.locator(".media-production-page.showing-studio")).toBeVisible();
+  await expect(page.locator(".media-production-canvas-toolbar")).toContainText("Production studio");
   await expect(page.getByLabel("Run context")).toHaveCount(0);
 
   await primaryNav.getByRole("button", { name: "Automations" }).click();
@@ -1400,7 +1410,7 @@ test("conversation home model picker uses the model workbench default without ch
   await expect(conversationPage.getByRole("button", { name: "Selected thinking mode High" })).toBeVisible();
 });
 
-test("settings workspace tools keep left navigation available on nested tool pages", async ({ page }) => {
+test("settings keeps configuration tools embedded while promoted tools use global navigation", async ({ page }) => {
   await useEnglishLocale(page);
   const state = createBaseState({ approvalStatus: "expired" });
   state.providers = [createChatProvider({
@@ -1422,7 +1432,8 @@ test("settings workspace tools keep left navigation available on nested tool pag
   await expect(settingsSections.getByRole("button", { name: "Model Workbench" })).toBeVisible();
   await expect(settingsSections.getByRole("button", { name: "Teammate Management" })).toBeVisible();
   await expect(settingsSections.getByRole("button", { name: "AI Teammates" })).toHaveCount(0);
-  await expect(settingsSections.getByRole("button", { name: "Work Board" })).toBeVisible();
+  await expect(settingsSections.getByRole("button", { name: "Work Board" })).toHaveCount(0);
+  await expect(settingsSections.getByRole("button", { name: "Plugin Manager" })).toHaveCount(0);
 
   await settingsSections.getByRole("button", { name: "Model Workbench" }).click();
   await expect(settingsSections).toBeVisible();
@@ -1444,14 +1455,9 @@ test("settings workspace tools keep left navigation available on nested tool pag
   await expect(settingsSections.getByRole("button", { name: "Teammate Management" })).toBeVisible();
   await expect(settingsSections).toBeVisible();
 
-  await settingsSections.getByRole("button", { name: "Work Board" }).click();
-  await expect(settingsSections).toBeVisible();
-  await expect(page.getByLabel("Ling Stack navigation")).toHaveCount(0);
-  await expect(settingsSections.getByRole("button", { name: "Work Board" })).toHaveClass(/active/);
   await expect(page.locator(".settings-tool-return-row")).toHaveCount(0);
+  await page.getByRole("button", { name: "Back to app" }).click();
+  await navigation.getByRole("button", { name: "Work Board" }).click();
+  await expect(page.getByLabel("Ling Stack navigation")).toBeVisible();
   await expect(page.locator(".work-board-page")).toBeVisible();
-  await expect(page.locator(".work-board-page").getByRole("heading", { name: "Needs action" })).toHaveCount(0);
-  await expect(settingsSections.getByRole("button", { name: "Work Board" })).toBeVisible();
-
-  await expect(page.locator(".settings-tool-return-row")).toHaveCount(0);
 });

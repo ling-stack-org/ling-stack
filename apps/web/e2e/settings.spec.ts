@@ -296,16 +296,16 @@ test("settings default authorization hides internal tool policy and runner contr
   await expect(authorizationPanel).toBeVisible();
   await expect(authorizationPanel.getByText("Default authorization", { exact: true })).toBeVisible();
   await expect(authorizationPanel.getByText("Sandbox settings", { exact: true })).toBeVisible();
-  await expect(authorizationPanel.locator(".settings-choice-trigger")).toHaveCount(2);
+  await expect(authorizationPanel.locator(".rich-choice-select-trigger")).toHaveCount(2);
   await authorizationPanel.getByRole("button", { name: "Authorization mode: Smart authorization" }).click();
-  await expect(authorizationPanel.getByRole("menuitemradio", { name: /Ask first/ })).toBeVisible();
-  await expect(authorizationPanel.getByRole("menuitemradio", { name: /Smart authorization/ })).toBeVisible();
-  await expect(authorizationPanel.getByRole("menuitemradio", { name: /Always authorize/ })).toBeVisible();
+  await expect(authorizationPanel.getByRole("option", { name: /Ask first/ })).toBeVisible();
+  await expect(authorizationPanel.getByRole("option", { name: /Smart authorization/ })).toBeVisible();
+  await expect(authorizationPanel.getByRole("option", { name: /Always authorize/ })).toBeVisible();
   await page.keyboard.press("Escape");
   await authorizationPanel.getByRole("button", { name: "Sandbox settings: Workspace write" }).click();
-  await expect(authorizationPanel.getByRole("menuitemradio", { name: /Read only/ })).toBeVisible();
-  await expect(authorizationPanel.getByRole("menuitemradio", { name: /Workspace write/ })).toBeVisible();
-  await expect(authorizationPanel.getByRole("menuitemradio", { name: /Full access/ })).toBeVisible();
+  await expect(authorizationPanel.getByRole("option", { name: /Read only/ })).toBeVisible();
+  await expect(authorizationPanel.getByRole("option", { name: /Workspace write/ })).toBeVisible();
+  await expect(authorizationPanel.getByRole("option", { name: /Full access/ })).toBeVisible();
   await expect(page.locator(".runtime-runner-settings-panel")).toHaveCount(0);
   await expect(page.getByText("Pi Runner", { exact: true })).toHaveCount(0);
   await expect(page.getByText("Codex App Server", { exact: true })).toHaveCount(0);
@@ -606,7 +606,8 @@ test("settings configuration entries open nested tools directly", async ({ page 
   await expect(settingsSections.getByRole("button", { name: "Council Workspace" })).toBeVisible();
   await expect(settingsSections.getByRole("button", { name: "Council Workspace" })).toHaveAttribute("title", "Council Workspace");
   await expect(settingsSections.getByRole("button", { name: "AI Councils" })).toHaveCount(0);
-  await expect(settingsSections.getByRole("button", { name: "Work Board" })).toBeVisible();
+  await expect(settingsSections.getByRole("button", { name: "Work Board" })).toHaveCount(0);
+  await expect(settingsSections.getByRole("button", { name: "Plugin Manager" })).toHaveCount(0);
   await expect(settingsSections.getByRole("button", { name: "Default authorization" })).toBeVisible();
   await expect(page.locator(".settings-page-section-head")).toHaveCount(0);
   await expect(page.locator(".settings-subnav-description")).toHaveCount(0);
@@ -632,9 +633,9 @@ test("settings configuration entries open nested tools directly", async ({ page 
   await expect(page.getByText("Advanced workspace policy", { exact: true })).toHaveCount(0);
   await expect(page.getByLabel("Effective permissions")).toHaveCount(0);
   await expect(page.getByRole("tab", { name: /Default authorization|Tool permission policy|Execution runners/ })).toHaveCount(0);
-  await expect(page.locator(".settings-global-approval-card").locator(".settings-choice-trigger")).toHaveCount(2);
+  await expect(page.locator(".settings-global-approval-card").locator(".rich-choice-select-trigger")).toHaveCount(2);
   await page.locator(".settings-global-approval-card").getByRole("button", { name: "Authorization mode: Smart authorization" }).click();
-  await page.locator(".settings-global-approval-card").getByRole("menuitemradio", { name: /Ask first/ }).click();
+  await page.locator(".settings-global-approval-card").getByRole("option", { name: /Ask first/ }).click();
   await expect.poll(() => state.workspaceSettings.defaultAuthorizationMode).toBe("ask");
   await expect.poll(() => state.workspaceSettings.defaultWorkspaceAccessMode).toBe("workspace_write");
 });
@@ -652,27 +653,27 @@ test("settings default authorization persists each supported mode without exposi
   const authorizationPanel = page.locator(".settings-global-approval-card");
 
   await authorizationPanel.getByRole("button", { name: "Authorization mode: Smart authorization" }).click();
-  await authorizationPanel.getByRole("menuitemradio", { name: /Ask first/ }).click();
+  await authorizationPanel.getByRole("option", { name: /Ask first/ }).click();
   await expect.poll(() => state.workspaceSettings.defaultAuthorizationMode).toBe("ask");
   await expect.poll(() => state.workspaceSettings.defaultWorkspaceAccessMode).toBe("workspace_write");
   await expect.poll(() => state.workspaceSettings.defaultPermissionMode).toBe("custom");
   await expect.poll(() => state.workspaceSettings.defaultPermissionPreset).toBe("custom");
 
   await authorizationPanel.getByRole("button", { name: "Sandbox settings: Workspace write" }).click();
-  await authorizationPanel.getByRole("menuitemradio", { name: /Read only/ }).click();
+  await authorizationPanel.getByRole("option", { name: /Read only/ }).click();
   await expect.poll(() => state.workspaceSettings.defaultAuthorizationMode).toBe("ask");
   await expect.poll(() => state.workspaceSettings.defaultWorkspaceAccessMode).toBe("read_only");
   await expect.poll(() => state.workspaceSettings.defaultPermissionMode).toBe("ask_everything");
   await expect.poll(() => state.workspaceSettings.defaultPermissionPreset).toBe("read_only");
 
   await authorizationPanel.getByRole("button", { name: "Authorization mode: Ask first" }).click();
-  await authorizationPanel.getByRole("menuitemradio", { name: /Always authorize/ }).click();
+  await authorizationPanel.getByRole("option", { name: /Always authorize/ }).click();
   await expect.poll(() => state.workspaceSettings.defaultAuthorizationMode).toBe("always");
   await expect.poll(() => state.workspaceSettings.defaultWorkspaceAccessMode).toBe("read_only");
   await expect.poll(() => state.workspaceSettings.defaultPermissionMode).toBe("custom");
 
   await authorizationPanel.getByRole("button", { name: "Sandbox settings: Read only" }).click();
-  await authorizationPanel.getByRole("menuitemradio", { name: /Full access/ }).click();
+  await authorizationPanel.getByRole("option", { name: /Full access/ }).click();
   await expect.poll(() => state.workspaceSettings.defaultAuthorizationMode).toBe("always");
   await expect.poll(() => state.workspaceSettings.defaultWorkspaceAccessMode).toBe("full_access");
   await expect.poll(() => state.workspaceSettings.defaultPermissionMode).toBe("full_access");
@@ -688,105 +689,60 @@ test("settings default authorization persists each supported mode without exposi
   }
 });
 
-test("settings plugins page applies and controls the CUA trusted-local preset without teammate authorization", async ({ page }) => {
+test("shared select controls preserve native sizing and rich choice keyboard flow", async ({ page }) => {
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");
   });
   const state = createBaseState({ approvalStatus: "expired" });
-  state.aiTeammates = [createMockTeammate({ id: "teammate_builtin_engineer", displayName: "Engineer" })];
   await mockDaemon(page, state);
   await page.goto("/");
 
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Engineering" }).click();
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
-  await page.getByLabel("Settings sections").getByRole("button", { name: /Plugin Manager/ }).click();
-  await expect(page.locator(".external-work-settings-panel")).toHaveCount(0);
-  await expect(page.locator(".mcp-page")).toHaveCount(0);
+  await page.getByLabel("Settings sections").getByRole("button", { name: /Default authorization/ }).click();
+  const authorizationPanel = page.locator(".settings-global-approval-card");
+  const authorizationTrigger = authorizationPanel.getByRole("button", { name: /Authorization mode:/ });
+  await authorizationTrigger.focus();
+  await page.keyboard.press("ArrowDown");
+  const authorizationListbox = authorizationPanel.getByRole("listbox", { name: "Authorization mode" });
+  await expect(authorizationListbox).toBeVisible();
+  await expect(authorizationListbox.getByRole("option", { name: /Smart authorization/ })).toBeFocused();
+  await page.keyboard.press("End");
+  await expect(authorizationListbox.getByRole("option", { name: /Always authorize/ })).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect.poll(() => state.workspaceSettings.defaultAuthorizationMode).toBe("always");
+  await expect(authorizationTrigger).toBeFocused();
 
-  const pluginsPanel = page.locator(".settings-plugin-manager");
-  await expect(pluginsPanel).toContainText("Cua Driver");
-  await expect(pluginsPanel).toContainText("Trusted local");
-  await expect(pluginsPanel).toContainText("Bundled");
-  await expect(pluginsPanel).not.toContainText("Marketplace");
+  await page.keyboard.press("ArrowDown");
+  await expect(authorizationListbox).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(authorizationListbox).toHaveCount(0);
+  await expect(authorizationTrigger).toBeFocused();
 
-  const bundledRow = pluginsPanel.locator(".settings-plugin-row").filter({ hasText: "Bundled" });
-  const bundledSummary = bundledRow.locator(".settings-plugin-row-summary");
-  await expect(bundledSummary).toContainText("Bundled");
-  await expect(bundledSummary).not.toContainText("not installed");
-  await expect(bundledSummary).not.toContainText("Not installed");
-  await expect(bundledSummary).not.toContainText("bundled:cua-driver");
-  await expect(bundledSummary).not.toContainText("mockhash1234");
-  await expect(bundledRow.getByRole("button", { name: "Apply preset" })).toHaveCount(0);
-  await bundledRow.getByRole("button", { name: "Install" }).click();
-  await expect(pluginsPanel.locator(".settings-plugin-action-notice")).toContainText("Plugin package installed.");
-  await expect(bundledRow).toContainText("installed");
-  const bundledDetails = bundledRow.locator(".settings-plugin-details");
-  await bundledDetails.getByText("Details and diagnostics").click();
-  await expect(bundledDetails).toContainText("bundled:cua-driver");
-  await expect(bundledRow).toContainText("mockhash1234");
-  await bundledRow.getByRole("button", { name: "Runtime preview" }).click();
-  const runtimePreview = pluginsPanel.locator(".settings-plugin-runtime-preview");
-  await expect(runtimePreview).toContainText("Runtime preview blocked.");
-  await runtimePreview.getByText("Runtime preview details").click();
-  await expect(runtimePreview).toContainText("Runtime disabled");
-  await expect(pluginsPanel.locator(".settings-plugin-action-notice")).toContainText("Runtime preview blocked.");
-  await bundledRow.getByRole("button", { name: "Enable" }).click();
-  await expect(pluginsPanel.locator(".settings-plugin-action-notice")).toContainText("Plugin enabled.");
-  await bundledRow.getByRole("button", { name: "Runtime preview" }).click();
-  await expect(runtimePreview).toContainText("Runtime preview ready.");
-  await runtimePreview.getByText("Runtime preview details").click();
-  await expect(runtimePreview).toContainText("Runtime ready");
-  await expect(runtimePreview).toContainText("2 policy overlays");
-  await bundledRow.getByRole("button", { name: "Uninstall" }).click();
-  await expect(pluginsPanel.locator(".settings-plugin-action-notice")).toContainText("Plugin package uninstalled.");
-  await expect(bundledRow).toContainText("uninstalled");
-  await bundledRow.getByRole("button", { name: "Validate package" }).click();
-  await expect(pluginsPanel.locator(".settings-plugin-action-notice")).toContainText("Package validation passed.");
+  await page.getByLabel("Settings sections").getByRole("button", { name: /Interface preferences/ }).click();
+  const fieldSelect = page.getByLabel("AI response language");
+  await expect(fieldSelect).toHaveClass(/select-control-native/);
+  const fieldShell = fieldSelect.locator("xpath=..");
+  await expect(fieldShell).toHaveAttribute("data-select-control", "field");
+  await fieldSelect.focus();
+  await expect(fieldSelect).toBeFocused();
+  await fieldSelect.selectOption("zh-CN");
+  await expect(fieldSelect).toHaveValue("zh-CN");
+  const fieldHeight = await fieldSelect.evaluate((element) => element.getBoundingClientRect().height);
+  expect(fieldHeight).toBeGreaterThanOrEqual(35);
+  expect(fieldHeight).toBeLessThanOrEqual(37);
 
-  const cuaRow = pluginsPanel.locator(".settings-plugin-row").filter({ hasText: "Trusted local" });
-  const cuaSummary = cuaRow.locator(".settings-plugin-row-summary");
-  await expect(cuaSummary).toContainText("Preset ready to apply");
-  await expect(cuaSummary).not.toContainText("trusted-local:cua-driver");
-  await expect(cuaSummary).not.toContainText("mcp-server: Cua Driver MCP server");
-  const cuaDetails = cuaRow.locator(".settings-plugin-details");
-  await cuaDetails.getByText("Details and diagnostics").click();
-  await expect(cuaDetails).toContainText("trusted-local:cua-driver");
-  await expect(cuaDetails).toContainText("mcp-server: Cua Driver MCP server");
-  await cuaRow.getByRole("button", { name: "Apply preset" }).click();
-  const applyResult = pluginsPanel.locator(".settings-plugin-apply-result");
-  await applyResult.getByText("Preset details").click();
-  await expect(applyResult).toContainText("mcp_cua_driver");
-  await expect(pluginsPanel.locator(".settings-plugin-apply-result")).toContainText("3 tools");
-  await expect(pluginsPanel.locator(".settings-plugin-action-notice")).toContainText("Preset applied");
-  await expect(cuaRow).toContainText("mcp_cua_driver");
-  expect(state.mcpServers.find((server) => server.id === "mcp_cua_driver")?.enabled).toBe(true);
-  expect(state.mcpTools.filter((tool) => tool.serverId === "mcp_cua_driver").map((tool) => [tool.rawName, tool.defaultApproval])).toEqual([
-    ["check_permissions", "allow"],
-    ["click", "ask"],
-    ["list_windows", "allow"],
-  ]);
-  expect(state.teammateMcpBindings).toEqual([]);
-
-  await cuaRow.getByRole("button", { name: "Check" }).click();
-  await expect(pluginsPanel.locator(".settings-plugin-action-notice")).toContainText("Plugin check completed.");
-  await expect(cuaRow).toContainText("MCP server is reachable.");
-
-  await cuaRow.getByRole("button", { name: "Disable" }).click();
-  await expect(pluginsPanel.locator(".settings-plugin-action-notice")).toContainText("Plugin disabled.");
-  expect(state.mcpServers.find((server) => server.id === "mcp_cua_driver")?.enabled).toBe(false);
-  await expect(cuaRow).toContainText("disabled");
-
-  await cuaRow.getByRole("button", { name: "Enable" }).click();
-  await expect(pluginsPanel.locator(".settings-plugin-action-notice")).toContainText("Plugin enabled.");
-  expect(state.mcpServers.find((server) => server.id === "mcp_cua_driver")?.enabled).toBe(true);
-
-  await pluginsPanel.getByRole("button", { name: "MCP settings" }).click();
-  await expect(page.getByLabel("Settings sections").getByRole("button", { name: /MCP tool servers/ })).toHaveClass(/active/);
-  await expect(page.getByRole("tab", { name: /MCP tool servers/ })).toHaveCount(0);
-  await expect(page.locator(".mcp-server-row").filter({ hasText: "Cua Driver" })).toBeVisible();
+  await page.getByRole("button", { name: "Back to app" }).click();
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Engineering" }).click();
+  await openChannelChatTools(page);
+  const compactSelect = page.locator('select[aria-label="Saved views"]');
+  await expect(compactSelect).toHaveClass(/select-control-native/);
+  await expect(compactSelect.locator("xpath=..")).toHaveAttribute("data-select-control", "compact");
+  const compactHeight = await compactSelect.evaluate((element) => element.getBoundingClientRect().height);
+  expect(compactHeight).toBeGreaterThanOrEqual(31);
+  expect(compactHeight).toBeLessThanOrEqual(33);
 });
 
-test("settings skill library shows read-only skill health findings", async ({ page }) => {
+test("settings skill library keeps ownership management focused", async ({ page }) => {
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");
   });
@@ -858,7 +814,8 @@ test("settings skill library shows read-only skill health findings", async ({ pa
   });
   expect(skillLibraryLayout.contentExpanded).toBe(true);
   expect(skillLibraryLayout.panelWidth).toBeGreaterThan(1050);
-  expect(skillLibraryLayout.bodyHeight).toBeGreaterThanOrEqual(500);
+  expect(skillLibraryLayout.bodyHeight).toBeGreaterThan(40);
+  expect(skillLibraryLayout.bodyHeight).toBeLessThanOrEqual(220);
   expect(skillLibraryLayout.tableWidth).toBeGreaterThanOrEqual(1000);
   expect(skillLibraryLayout.drawerWidth).toBe(0);
   await expect.poll(() => readHorizontalOverflow(page, ".settings-skill-library-body, .settings-skill-table-wrap, .settings-skill-detail-drawer")).toEqual([]);
@@ -886,187 +843,15 @@ test("settings skill library shows read-only skill health findings", async ({ pa
   await expect(panel.getByRole("button", { name: "Archive source snapshot" })).toHaveCount(0);
   await expect(panel.getByRole("button", { name: "Rollback" })).toHaveCount(0);
 
-  await page.getByRole("tab", { name: /Source sync/ }).click();
-  await expect(page.getByRole("tab", { name: /Source sync/ })).toHaveAttribute("aria-selected", "true");
-  const sourceHealthDetails = panel.locator(".settings-skill-review-diagnostics").filter({ hasText: "Skill source health diagnostics" });
-  await expect(sourceHealthDetails).toBeVisible();
-  await expect.poll(() => sourceHealthDetails.evaluate((element) => element.hasAttribute("open"))).toBe(false);
-  await sourceHealthDetails.getByText("Skill source health diagnostics").click();
-  const sourceHealthPanel = sourceHealthDetails.getByRole("region", { name: "Skill Source Health" });
-  await expect(sourceHealthPanel).toContainText("Source-backed");
-  await expect(sourceHealthPanel).toContainText("Missing source");
-  const sourceHealthLayout = await sourceHealthDetails.evaluate((element) => {
-    const findings = element.querySelector(".settings-skill-health-findings");
-    const style = getComputedStyle(element);
-    return {
-      height: element.getBoundingClientRect().height,
-      overflow: style.overflow,
-      findingsOverflowY: findings ? getComputedStyle(findings).overflowY : "",
-      findingCount: findings?.querySelectorAll(".settings-skill-health-finding").length ?? 0,
-      findingsScrollHeight: findings?.scrollHeight ?? 0,
-      findingsClientHeight: findings?.clientHeight ?? 0,
-      hidesFindingsByDefault: element.textContent?.includes("more source findings hidden by default") ?? false,
-    };
-  });
-  expect(sourceHealthLayout.height).toBeGreaterThanOrEqual(350);
-  expect(sourceHealthLayout.height).toBeLessThanOrEqual(430);
-  expect(sourceHealthLayout.overflow).toBe("hidden");
-  expect(sourceHealthLayout.findingsOverflowY).toBe("auto");
-  expect(sourceHealthLayout.findingCount).toBeGreaterThan(0);
-  expect(sourceHealthLayout.findingsScrollHeight).toBeGreaterThanOrEqual(sourceHealthLayout.findingsClientHeight);
-  expect(sourceHealthLayout.hidesFindingsByDefault).toBe(false);
-  await expect(panel).not.toContainText("Persona cannot grant tools");
-  const sourceSyncPanel = panel.getByRole("region", { name: "gstack source sync" });
-  await expect(sourceSyncPanel).toBeVisible();
-  await expect(sourceSyncPanel).toContainText("Prompt before publish");
-  const sourceSyncOptions = sourceSyncPanel.locator(".settings-skill-source-sync-options");
-  await expect(sourceSyncOptions).toBeVisible();
-  await expect(sourceSyncOptions).toContainText("Include detected roots");
-  await expect(sourceSyncOptions).toContainText("Allow new skills");
-  await expect(sourceSyncPanel).toContainText("Advanced source roots");
-  await expect(sourceSyncPanel.getByLabel("Include detected roots")).toBeChecked();
-  await expect(sourceSyncPanel.getByLabel("Allow new skills")).not.toBeChecked();
-  await sourceSyncPanel.getByRole("button", { name: "Preview" }).click();
-  await expect(sourceSyncPanel).toContainText("Attachable");
-  await expect(sourceSyncPanel).toContainText("Drifted");
-  await expect(sourceSyncPanel).toContainText("New skills");
-  await expect(sourceSyncPanel).toContainText("gstack-danger-demo");
-  await expect(sourceSyncPanel).toContainText("Context: 1");
-  await expect(sourceSyncPanel).toContainText("Selected");
-  const reviewSyncRecord = sourceSyncPanel.locator(".settings-skill-source-sync-record").filter({ hasText: "Code Review" });
-  await expect(reviewSyncRecord.locator(".settings-skill-source-sync-title")).not.toContainText("sha256:review-mock");
-  await expect(reviewSyncRecord.locator(".settings-skill-source-sync-meta")).not.toContainText("Drift diff");
-  const reviewEvidence = reviewSyncRecord.locator(".settings-skill-source-sync-details");
-  await reviewEvidence.getByText("Source evidence").click();
-  await expect(reviewEvidence).toContainText("Drift diff");
-  await expect(reviewEvidence).toContainText("sha256:review-mock");
-  await expect(reviewEvidence).toContainText("sha256:review-sync");
-  const dangerSyncRecord = sourceSyncPanel.locator(".settings-skill-source-sync-record").filter({ hasText: "gstack-danger-demo" });
-  const dangerEvidence = dangerSyncRecord.locator(".settings-skill-source-sync-details");
-  await dangerEvidence.getByText("Source evidence").click();
-  await expect(dangerEvidence).toContainText("Manual optimization review");
-  await expect(sourceSyncPanel.getByLabel("Select implement")).toBeChecked();
-  await expect(sourceSyncPanel.getByLabel("Select review")).toBeChecked();
-  await expect(sourceSyncPanel.getByLabel("Select gstack-design-review")).toBeDisabled();
-  await sourceSyncPanel.getByRole("button", { name: "Publish selected" }).click();
-  await expect(panel).toContainText("Published 2 skill sources");
-  await expect.poll(() => state.skillSourceSnapshots.some((item) => isRecord(item) && item.skillId === "implement" && item.reviewStatus === "published")).toBe(true);
-  await page.getByRole("tab", { name: /Built-in skills/ }).click();
-  const implementSkillRow = panel.locator(".settings-skill-table tbody tr").filter({ hasText: "Implementation" }).first();
-  await expect(implementSkillRow).toBeVisible();
-
-  await page.getByRole("tab", { name: /Review queue/ }).click();
-  const healthDetails = panel.locator(".settings-skill-review-diagnostics").filter({ hasText: "Skill health diagnostics" });
-  await expect(healthDetails).toBeVisible();
-  await expect.poll(() => healthDetails.evaluate((element) => element.hasAttribute("open"))).toBe(false);
-  await healthDetails.getByText("Skill health diagnostics").click();
-  const healthLayout = await healthDetails.evaluate((element) => {
-    const findings = element.querySelector(".settings-skill-health-findings");
-    const style = getComputedStyle(element);
-    return {
-      height: element.getBoundingClientRect().height,
-      overflow: style.overflow,
-      findingsOverflowY: findings ? getComputedStyle(findings).overflowY : "",
-    };
-  });
-  expect(healthLayout.height).toBeGreaterThanOrEqual(250);
-  expect(healthLayout.height).toBeLessThanOrEqual(370);
-  expect(healthLayout.overflow).toBe("hidden");
-  expect(healthLayout.findingsOverflowY).toBe("auto");
-  const healthPanel = healthDetails.getByRole("region", { name: "Skill Health" });
-  await expect(healthPanel).toContainText("Duplicate clusters");
-  await expect(healthPanel).toContainText("Duplicate skill cluster");
-  await expect(healthPanel).toContainText("Conflicting skill triggers");
-  await healthPanel.getByText("Finding details").first().click();
-  await expect(healthPanel).toContainText("implement-duplicate");
-  const reviewQueuePanel = panel.getByRole("region", { name: "Skill review queue" });
-  const reviewQueueLayout = await reviewQueuePanel.evaluate((element) => {
-    const list = element.querySelector(".settings-skill-review-queue-list");
-    const style = getComputedStyle(element);
-    return {
-      height: element.getBoundingClientRect().height,
-      overflow: style.overflow,
-      listOverflowY: list ? getComputedStyle(list).overflowY : "",
-    };
-  });
-  expect(reviewQueueLayout.height).toBeGreaterThanOrEqual(175);
-  expect(reviewQueueLayout.height).toBeLessThanOrEqual(250);
-  expect(reviewQueueLayout.overflow).toBe("hidden");
-  expect(reviewQueueLayout.listOverflowY).toBe("auto");
-  await expect(reviewQueuePanel.getByRole("tab", { name: /All/ })).toHaveAttribute("aria-selected", "true");
-  await expect(reviewQueuePanel.getByRole("tab", { name: /Skill candidates/ })).toBeVisible();
-  await expect(reviewQueuePanel.getByRole("tab", { name: /Candidate Clusters/ })).toBeVisible();
-  await expect(reviewQueuePanel.getByRole("tab", { name: /Playbooks/ })).toBeVisible();
-  await reviewQueuePanel.getByRole("tab", { name: /Skill candidates/ }).click();
-  await expect(reviewQueuePanel.getByRole("tab", { name: /Skill candidates/ })).toHaveAttribute("aria-selected", "true");
-  await expect(reviewQueuePanel.locator(".settings-skill-candidate-card[data-review-kind='skill_candidates']")).toHaveCount(1);
-  await expect(reviewQueuePanel.locator(".settings-skill-candidate-card[data-review-kind='clusters']")).toHaveCount(0);
-  await expect(reviewQueuePanel.locator(".settings-skill-candidate-card[data-review-kind='playbooks']")).toHaveCount(0);
-  await reviewQueuePanel.getByRole("tab", { name: /All/ }).click();
-  const candidateCard = reviewQueuePanel.locator(".settings-skill-candidate-card[data-review-kind='skill_candidates']").filter({ hasText: "Channel canvas protocol skill" });
-  await expect(candidateCard).toContainText("Channel canvas protocol skill");
-  await expect(candidateCard).toContainText("No overlap");
-  await candidateCard.getByText("Candidate details").click();
-  await expect(candidateCard).toContainText("Draft gates clear");
-  await candidateCard.getByRole("button", { name: "Approve for draft" }).click();
-  await expect(candidateCard).toContainText("Approved for draft");
-  await candidateCard.getByRole("button", { name: "Create registry draft" }).click();
-  await expect(panel.locator(".settings-skill-import-preview")).toContainText("Channel canvas protocol skill");
-  await panel.locator(".settings-skill-import-preview").getByText("Check details").click();
-  await expect(panel.locator(".settings-skill-import-preview")).toContainText("Weak routing description");
-  await panel.getByRole("button", { name: "Publish", exact: true }).click();
-  await expect(panel).toContainText("Published 1 skills");
-  await expect.poll(() => state.skillRegistryEntries.some((item) => isRecord(item) && item.id === "channel-canvas-protocol-skill")).toBe(true);
-  await expect(panel.locator(".settings-skill-table")).toContainText("Channel canvas protocol skill");
-  await page.getByRole("tab", { name: /Review queue/ }).click();
-  await candidateCard.getByRole("button", { name: "Reject candidate" }).click();
-  await expect(reviewQueuePanel).not.toContainText("Channel canvas protocol skill");
-
-  const seededPlaybook = reviewQueuePanel.locator(".settings-skill-candidate-card[data-review-kind='playbooks']").filter({ hasText: "Deployment rollback playbook" });
-  await expect(seededPlaybook).toContainText("Deployment rollback playbook");
-  await seededPlaybook.getByText("Playbook details").click();
-  await expect(seededPlaybook).toContainText("docs-only change");
-  await seededPlaybook.getByRole("button", { name: "Reject playbook" }).click();
-  await expect.poll(() => {
-    const candidate = state.channelPlaybookCandidates.find((item) => isRecord(item) && item.id === "channel_playbook_candidate_rollback");
-    return isRecord(candidate) ? candidate.status : "";
-  }).toBe("cancelled");
-  await expect(panel).toContainText("Playbook candidate rejected");
-
-  const clusterPanel = reviewQueuePanel.locator(".settings-skill-candidate-card[data-review-kind='clusters']");
-  const channelProtocolCluster = clusterPanel.filter({ hasText: "Channel canvas handoff protocol" });
-  await expect(channelProtocolCluster).toContainText("Channel canvas handoff protocol");
-  await expect(channelProtocolCluster).toContainText("Create channel protocol candidate");
-  await channelProtocolCluster.getByRole("button", { name: "Create protocol candidate" }).click();
-  await expect.poll(() => state.channelProtocolDrafts.length).toBe(1);
-  await expect.poll(() => {
-    const draft = state.channelProtocolDrafts[0];
-    return isRecord(draft) && isRecord(draft.proposedPatch) && Array.isArray(draft.proposedPatch.reviewRules)
-      ? draft.proposedPatch.reviewRules.join("\n")
-      : "";
-  }).toContain("Channel canvas handoff protocol");
-  await expect(panel).toContainText("Protocol candidate created");
-  const releasePlaybookCluster = clusterPanel.filter({ hasText: "Release verification playbook" });
-  await expect(releasePlaybookCluster).toContainText("Release verification playbook");
-  await expect(releasePlaybookCluster).toContainText("Create playbook candidate");
-  await releasePlaybookCluster.getByRole("button", { name: "Create playbook candidate" }).click();
-  await expect.poll(() => state.channelPlaybookCandidates.length).toBe(2);
-  await expect.poll(() => {
-    const candidate = state.channelPlaybookCandidates[0];
-    return isRecord(candidate) && typeof candidate.title === "string" ? candidate.title : "";
-  }).toContain("Release verification playbook");
-  await expect(panel).toContainText("Playbook candidate created");
-  const releasePlaybook = reviewQueuePanel.locator(".settings-skill-candidate-card[data-review-kind='playbooks']").filter({ hasText: "Release verification playbook" });
-  await expect(releasePlaybook).toContainText("Release verification playbook");
-  await releasePlaybook.getByRole("button", { name: "Approve playbook" }).click();
-  await expect.poll(() => {
-    const candidate = state.channelPlaybookCandidates.find((item) => isRecord(item) && typeof item.title === "string" && item.title.includes("Release verification playbook"));
-    return isRecord(candidate) ? candidate.status : "";
-  }).toBe("active");
-  await expect(panel).toContainText("Playbook activated");
-  const blockedSkillCluster = clusterPanel.filter({ hasText: "Generated skill missing gates" });
-  await expect(blockedSkillCluster).toContainText("Generated skill missing gates");
-  await expect(blockedSkillCluster).toContainText("Append evidence");
+  await expect(panel.getByRole("tab")).toHaveCount(3);
+  await expect(panel.getByRole("tab", { name: /Review queue/ })).toHaveCount(0);
+  await panel.getByRole("tab", { name: /AI evolution/ }).click();
+  await expect(panel.getByRole("region", { name: "AI evolution" })).toBeVisible();
+  await expect(panel).toContainText("Deployment rollback playbook");
+  await expect(panel.getByRole("tab", { name: /Official skill updates/ })).toHaveCount(0);
+  await expect(panel.locator(".settings-skill-review-diagnostics")).toHaveCount(0);
+  await expect(panel.getByRole("region", { name: "Skill Health" })).toHaveCount(0);
+  await expect(panel.getByRole("region", { name: "Official skill updates" })).toHaveCount(0);
 });
 
 test("settings skill governance saves policy from a separate section", async ({ page }) => {

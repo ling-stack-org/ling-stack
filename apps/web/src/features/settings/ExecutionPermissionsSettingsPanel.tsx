@@ -1,8 +1,8 @@
 import { Eye, FolderOpen, Hand, Shield, ShieldCheck } from "lucide-react";
 import { useI18n } from "../../i18n.js";
 import { resolveAuthorizationMode, resolveWorkspaceAccessMode } from "../../lib/conversation-authorization.js";
+import { RichChoiceSelect, type RichChoiceOption } from "../../shared/components/RichChoiceSelect.js";
 import type { AuthorizationMode, PermissionPreset, SessionPermissionMode, WorkspaceAccessMode } from "../../types.js";
-import { SettingsChoiceMenu, type SettingsChoiceOption } from "./SettingsChoiceMenu.js";
 
 export function ExecutionPermissionsSettingsPanel({
   workspaceDefaultPermissionMode,
@@ -30,7 +30,7 @@ export function ExecutionPermissionsSettingsPanel({
     workspaceDefaultPermissionMode,
     workspaceDefaultPermissionPreset,
   );
-  const authorizationOptions: readonly SettingsChoiceOption<AuthorizationMode>[] = [
+  const authorizationOptions: readonly RichChoiceOption<AuthorizationMode>[] = [
     {
       value: "ask",
       label: t("Ask first"),
@@ -50,7 +50,7 @@ export function ExecutionPermissionsSettingsPanel({
       icon: ShieldCheck,
     },
   ];
-  const accessOptions: readonly SettingsChoiceOption<WorkspaceAccessMode>[] = [
+  const accessOptions: readonly RichChoiceOption<WorkspaceAccessMode>[] = [
     {
       value: "read_only",
       label: t("Read only"),
@@ -79,7 +79,7 @@ export function ExecutionPermissionsSettingsPanel({
             <strong>{t("Default authorization")}</strong>
             <small>{t("Choose when Ling asks before acting.")}</small>
           </div>
-          <SettingsChoiceMenu
+          <RichChoiceSelect
             ariaLabel={t("Authorization mode")}
             value={authorizationMode}
             options={authorizationOptions}
@@ -91,7 +91,7 @@ export function ExecutionPermissionsSettingsPanel({
             <strong>{t("Sandbox settings")}</strong>
             <small>{t("Limit the files and commands Ling can use by default.")}</small>
           </div>
-          <SettingsChoiceMenu
+          <RichChoiceSelect
             ariaLabel={t("Sandbox settings")}
             value={workspaceAccessMode}
             options={accessOptions}

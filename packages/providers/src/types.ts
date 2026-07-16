@@ -111,6 +111,21 @@ export interface MediaExecutionResult {
   readonly errorMessage?: string;
 }
 
+export interface MediaExecutionHandle {
+  readonly adapterKind: string;
+  readonly externalOperationId: string;
+  readonly recovery: Record<string, unknown>;
+}
+
+export type MediaExecutionSubmission =
+  | { readonly status: "submitted"; readonly handle: MediaExecutionHandle }
+  | { readonly status: "failed"; readonly errorCode?: MediaAdapterErrorCode; readonly errorMessage: string };
+
+export type MediaExecutionPollResult =
+  | { readonly status: "pending" }
+  | { readonly status: "succeeded"; readonly recovery: Record<string, unknown> }
+  | { readonly status: "failed"; readonly errorCode?: MediaAdapterErrorCode; readonly errorMessage: string };
+
 export interface MediaAdapter {
   readonly id: string;
   readonly displayName: string;
@@ -118,6 +133,10 @@ export interface MediaAdapter {
 
   supports(operation: MediaOperation): boolean;
   execute(request: MediaExecutionRequest): Promise<MediaExecutionResult>;
+  submit?(request: MediaExecutionRequest): Promise<MediaExecutionSubmission>;
+  poll?(handle: MediaExecutionHandle): Promise<MediaExecutionPollResult>;
+  collectArtifacts?(handle: MediaExecutionHandle): Promise<MediaExecutionResult>;
+  cancel?(handle: MediaExecutionHandle): Promise<void>;
 }
 
 export interface MediaAdapterResolution {
@@ -178,6 +197,10 @@ export interface MediaVendorTransportResult {
 export interface MediaVendorTransport {
   readonly mode: MediaVendorTransportMode;
   execute(request: MediaVendorTransportRequest): Promise<MediaVendorTransportResult>;
+  submit?(request: MediaVendorTransportRequest): Promise<MediaExecutionSubmission>;
+  poll?(handle: MediaExecutionHandle): Promise<MediaExecutionPollResult>;
+  collectArtifacts?(handle: MediaExecutionHandle): Promise<MediaExecutionResult>;
+  cancel?(handle: MediaExecutionHandle): Promise<void>;
 }
 
 export type MediaVendorTransportGateMode = "disabled" | "live";

@@ -33,7 +33,7 @@ export function readOptionalMediaJobStatusQuery(url: URL): MediaJobStatus | unde
 }
 
 function validateMediaJobInput(input: CreateMediaJobInput): void {
-  if (!input.providerPresetId.trim()) {
+  if (!input.providerPresetId?.trim()) {
     throw new Error("providerPresetId must be a non-empty string");
   }
   if (!input.prompt.trim()) {

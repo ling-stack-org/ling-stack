@@ -36,6 +36,8 @@ import {
 } from "../../shared/components/index.js";
 import { TeammateAvatarView } from "../teammates/TeammateAvatarView.js";
 
+import { SelectControl } from "../../shared/components/SelectControl.js";
+
 type CouncilActionKind = "create" | "clone" | "archive" | "";
 type CouncilDetailTab = "members" | "channels" | "settings";
 
@@ -181,7 +183,8 @@ export function CouncilWorkspacePanels(props: CouncilWorkspacePanelsProps): JSX.
 
           <div className="council-list-toolbar">
             <label className="field council-filter-field">
-              <select
+              <SelectControl
+              variant="compact"
                 aria-label={t("Filter councils by health")}
                 value={props.councilHealthFilter}
                 onChange={(event) => props.onCouncilHealthFilterChange(event.target.value as AiCouncilHealthFilter)}
@@ -190,7 +193,7 @@ export function CouncilWorkspacePanels(props: CouncilWorkspacePanelsProps): JSX.
                 {aiCouncilHealthFilters.map((filter) => (
                   <option key={filter} value={filter}>{aiCouncilHealthFilterLabel(filter, t)}</option>
                 ))}
-              </select>
+              </SelectControl>
             </label>
             <button className="secondary-button compact-button" type="button" onClick={() => props.onCreateCouncilOpenChange(!props.createCouncilOpen)}>
               <Plus size={14} />
@@ -456,7 +459,8 @@ function CouncilMembersPanel(props: CouncilWorkspacePanelsProps & { readonly mut
         <OperationEmptyState compact className="council-member-add-empty" title={t("No teammates available to add")} description={t("Create or unhide teammates before adding them to this council.")} />
       ) : (
         <div className="council-member-add-row">
-          <select
+          <SelectControl
+              variant="compact"
             aria-label={t("Add teammate to council")}
             value={props.pendingTeammateId}
             onChange={(event) => props.onPendingTeammateChange(event.target.value)}
@@ -466,7 +470,7 @@ function CouncilMembersPanel(props: CouncilWorkspacePanelsProps & { readonly mut
             {props.availableTeammates.map((teammate) => (
               <option key={teammate.id} value={teammate.id}>{teammate.displayName}</option>
             ))}
-          </select>
+          </SelectControl>
           <button className="secondary-button compact-button" type="button" onClick={props.onAddMember} disabled={!props.pendingTeammateId || props.membersLoading || props.membersSaving}>
             <Plus size={14} />
             {t("Add member")}
@@ -535,7 +539,7 @@ function CouncilChannelPanel(props: CouncilWorkspacePanelsProps): JSX.Element {
         <div className="council-channel-policy">
           <label className="field council-channel-select-field">
             <span>{t("Selected channel")}</span>
-            <select
+            <SelectControl
               aria-label={t("Select channel for council")}
               value={props.selectedChannel?.id ?? props.selectedChannelId}
               onChange={(event) => props.onSelectedChannelChange(event.target.value)}
@@ -544,7 +548,7 @@ function CouncilChannelPanel(props: CouncilWorkspacePanelsProps): JSX.Element {
               {props.visibleChannels.map((channel) => (
                 <option key={channel.id} value={channel.id}>{channel.name}</option>
               ))}
-            </select>
+            </SelectControl>
           </label>
 
           {props.channelPolicyError ? <p className="inline-error">{props.channelPolicyError}</p> : null}

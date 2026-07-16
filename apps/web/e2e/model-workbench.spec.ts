@@ -407,6 +407,35 @@ test("model workbench localizes unsupported daemon model discovery errors", asyn
   await expect(page.getByText("No route for POST /provider-models")).toHaveCount(0);
 });
 
+test("model workbench keeps model discovery network failures productized", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.locale", "zh-CN");
+  });
+  await mockDaemon(page, createBaseState({ approvalStatus: "expired" }), {
+    templates: createDefaultProviderTemplates(),
+  });
+  await page.route("**/provider-models?*", async (route) => {
+    await route.fulfill({
+      status: 400,
+      contentType: "application/json",
+      body: JSON.stringify({
+        error: "network_failed",
+        message: "Provider model discovery failed: The operation was aborted due to timeout",
+      }),
+    });
+  });
+  await page.goto("/");
+
+  await openModelWorkbench(page);
+  await page.getByRole("button", { name: "添加模型" }).first().click();
+  await page.getByLabel("模型供应商").selectOption("custom-openai-compatible");
+  await page.getByLabel("API Key", { exact: true }).fill("test-visible-key");
+  await page.getByRole("button", { name: "获取模型" }).click();
+
+  await expect(page.getByText("无法连接模型供应商。请检查 Base URL、代理或本地中转后重试。")).toBeVisible();
+  await expect(page.getByText("Provider model discovery failed: The operation was aborted due to timeout")).toHaveCount(0);
+});
+
 test("model workbench save validates before persisting and keeps errors inside the sheet", async ({ page }) => {
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "zh-CN");
@@ -776,16 +805,16 @@ test("model workbench creates custom OpenAI-compatible presets and surfaces read
   await expect(page.getByLabel("Base URL")).toHaveValue("https://api.example.com/v1");
   await expect(page.getByLabel("API protocol")).toBeEnabled();
   await expect(page.getByLabel("API key", { exact: true })).toHaveValue("");
-  await expect(page.getByLabel("API key", { exact: true })).toHaveAttribute("type", "text");
-  await page.getByLabel("API key", { exact: true }).fill("test-visible-key");
-  const apiKeyVisibilityButton = page.getByRole("button", { name: "Hide API key" });
-  await expect(apiKeyVisibilityButton.locator(".lucide-eye")).toBeVisible();
-  await apiKeyVisibilityButton.click();
   await expect(page.getByLabel("API key", { exact: true })).toHaveAttribute("type", "password");
-  const showApiKeyButton = page.getByRole("button", { name: "Show API key" });
-  await expect(showApiKeyButton.locator(".lucide-eye-off")).toBeVisible();
-  await showApiKeyButton.click();
+  await page.getByLabel("API key", { exact: true }).fill("test-visible-key");
+  const apiKeyVisibilityButton = page.getByRole("button", { name: "Show API key" });
+  await expect(apiKeyVisibilityButton.locator(".lucide-eye-off")).toBeVisible();
+  await apiKeyVisibilityButton.click();
   await expect(page.getByLabel("API key", { exact: true })).toHaveAttribute("type", "text");
+  const hideApiKeyButton = page.getByRole("button", { name: "Hide API key" });
+  await expect(hideApiKeyButton.locator(".lucide-eye")).toBeVisible();
+  await hideApiKeyButton.click();
+  await expect(page.getByLabel("API key", { exact: true })).toHaveAttribute("type", "password");
   await expect(page.getByRole("button", { name: "Clear API key" })).toHaveCount(0);
   const inlineClearButton = page.locator(".provider-secret-input .provider-secret-clear");
   await expect(inlineClearButton).toBeVisible();
@@ -854,7 +883,8 @@ test("model workbench creates custom OpenAI-compatible presets and surfaces read
   await expect(page.getByLabel("Provider ID")).toHaveCount(0);
   await expect(page.getByLabel("API protocol")).toBeEnabled();
   await expect(page.getByLabel("API key", { exact: true })).toHaveValue("test-visible-key");
-  await expect(page.getByRole("button", { name: "Hide API key" }).locator(".lucide-eye")).toBeVisible();
+  await expect(page.getByLabel("API key", { exact: true })).toHaveAttribute("type", "password");
+  await expect(page.getByRole("button", { name: "Show API key" }).locator(".lucide-eye-off")).toBeVisible();
   await page.getByRole("button", { name: "Fetch models" }).click();
   await expect(page.locator(".provider-model-card")).toHaveCount(10);
   await expect(page.getByText("0 selected")).toBeVisible();

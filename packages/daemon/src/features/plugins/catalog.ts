@@ -12,6 +12,8 @@ import type {
   RunStorePathsFacet,
 } from "@ling-stack/core";
 import { CUA_DRIVER_PLUGIN_ID, CUA_DRIVER_MCP_SERVER_ID, listTrustedLocalPresetDescriptors } from "./presets.js";
+import { BUNDLED_CUA_DRIVER_PLUGIN_ID } from "./bundled-index.js";
+import { buildCuaDriverSetupView } from "./cua-driver.js";
 import { listBundledPackageDescriptors } from "./source-index.js";
 import { buildManagedPluginRuntimePreview, toManagedPluginPackageView } from "./runtime-injection.js";
 
@@ -32,6 +34,7 @@ export function listManagedPluginViews(input: {
   readonly store: ManagedPluginCatalogStore;
   readonly now: string;
   readonly includeEvents?: boolean;
+  readonly includeHidden?: boolean;
 }): readonly ManagedPluginView[] {
   const descriptors = buildDescriptorMap(input.extensionRegistry, input.store);
   const records = new Map(input.store.listManagedPlugins({ limit: 500 }).map((record) => [record.id, record]));
@@ -45,8 +48,11 @@ export function listManagedPluginViews(input: {
       events: input.includeEvents ? input.store.listManagedPluginEvents({ pluginId: descriptor.id, limit: 20 }) : undefined,
       store: input.store,
       cwd: input.cwd,
+      now: input.now,
     }));
-  return views.sort(compareManagedPluginViews);
+  return views
+    .filter((view) => input.includeHidden || view.id !== BUNDLED_CUA_DRIVER_PLUGIN_ID)
+    .sort(compareManagedPluginViews);
 }
 
 export function getManagedPluginView(input: {
@@ -57,7 +63,7 @@ export function getManagedPluginView(input: {
   readonly now: string;
   readonly includeEvents?: boolean;
 }): ManagedPluginView | undefined {
-  return listManagedPluginViews(input).find((plugin) => plugin.id === input.pluginId);
+  return listManagedPluginViews({ ...input, includeHidden: true }).find((plugin) => plugin.id === input.pluginId);
 }
 
 export function getManagedPluginDescriptor(
@@ -165,9 +171,22 @@ function createManagedPluginView(input: {
   readonly health?: ManagedPluginHealthSnapshot;
   readonly events?: readonly ManagedPluginEvent[];
   readonly store: ManagedPluginCatalogStore;
+  readonly now: string;
 }): ManagedPluginView {
   const blocked = getDescriptorBlocker(input.descriptor);
-  const recordEnabled = input.record?.enabled;
+  const cuaDriverServer = input.descriptor.id === CUA_DRIVER_PLUGIN_ID
+    ? input.store.getMcpServer(CUA_DRIVER_MCP_SERVER_ID)
+    : undefined;
+  const setup = input.descriptor.id === CUA_DRIVER_PLUGIN_ID
+    ? buildCuaDriverSetupView({ store: input.store, now: input.now })
+    : undefined;
+  const recordEnabled = input.descriptor.id === CUA_DRIVER_PLUGIN_ID
+    ? setup?.state === "ready"
+      ? true
+      : input.record?.enabled === false
+        ? false
+        : undefined
+    : input.record?.enabled;
   const status = blocked
     ? "blocked"
     : recordEnabled === true
@@ -182,12 +201,14 @@ function createManagedPluginView(input: {
   );
   const contributions = input.descriptor.contributions.map((contribution) => {
     const record = contributionRecordByKey.get(`${contribution.kind}:${contribution.id}`);
-    const linkedResourcePresent = record?.linkedResourceId ? isLinkedResourcePresent(input.store, contribution.kind, record.linkedResourceId) : undefined;
+    const linkedResourceId = record?.linkedResourceId
+      ?? (cuaDriverServer && contribution.kind === "mcp-server" ? cuaDriverServer.id : undefined);
+    const linkedResourcePresent = linkedResourceId ? isLinkedResourcePresent(input.store, contribution.kind, linkedResourceId) : undefined;
     return {
       ...contribution,
-      linkedResourceId: record?.linkedResourceId,
+      linkedResourceId,
       linkedResourcePresent,
-      enabled: record?.enabled ?? status === "enabled",
+      enabled: record?.enabled ?? (input.descriptor.id === CUA_DRIVER_PLUGIN_ID ? setup?.state === "ready" : status === "enabled"),
     };
   });
   const linkedResources = input.contributionRecords
@@ -202,6 +223,15 @@ function createManagedPluginView(input: {
         displayName: linked.displayName,
       };
     });
+  if (cuaDriverServer && !linkedResources.some((resource) => resource.id === cuaDriverServer.id)) {
+    linkedResources.push({
+      kind: "mcp-server",
+      id: cuaDriverServer.id,
+      present: true,
+      enabled: cuaDriverServer.enabled,
+      displayName: cuaDriverServer.displayName,
+    });
+  }
   const packageRecord = input.store.getManagedPluginPackage(input.descriptor.id);
   const packageView = packageRecord ? toManagedPluginPackageView(packageRecord) : undefined;
   const runtimePreview = input.descriptor.sourceKind === "bundled"
@@ -212,7 +242,6 @@ function createManagedPluginView(input: {
         now: new Date().toISOString(),
       })
     : undefined;
-
   return {
     id: input.descriptor.id,
     displayName: input.descriptor.displayName,
@@ -236,11 +265,12 @@ function createManagedPluginView(input: {
       : input.health,
     package: packageView,
     runtimePreview,
+    setup,
     linkedResources,
     events: input.events,
     disabledReason: input.record?.disabledReason,
     actions: {
-      canEnable: !blocked && status !== "enabled",
+      canEnable: !blocked && status !== "enabled" && (input.descriptor.id !== CUA_DRIVER_PLUGIN_ID || setup?.state === "connected"),
       canDisable: status === "enabled",
       canCheck: input.descriptor.id === CUA_DRIVER_PLUGIN_ID || linkedResources.length > 0 || input.descriptor.sourceKind === "built-in" || input.descriptor.sourceKind === "bundled",
       canApplyPreset: !blocked && input.descriptor.id === CUA_DRIVER_PLUGIN_ID,

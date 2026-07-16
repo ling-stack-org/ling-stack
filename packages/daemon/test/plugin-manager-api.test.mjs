@@ -34,12 +34,18 @@ test("daemon exposes managed plugin catalog and runtime extension diagnostics", 
       assert.equal(ids.has(toolId), false);
     }
     assert.equal(ids.has(cuaPluginId), true);
-    assert.equal(ids.has(bundledCuaPluginId), true);
+    assert.equal(ids.has(bundledCuaPluginId), false);
+    assert.equal(catalog.plugins.filter((plugin) => plugin.displayName === "Cua Driver").length, 1);
 
     const cua = catalog.plugins.find((plugin) => plugin.id === cuaPluginId);
     assert.equal(cua.sourceKind, "trusted-local-preset");
     assert.equal(cua.actions.canApplyPreset, process.platform === "darwin");
-    const bundledCua = catalog.plugins.find((plugin) => plugin.id === bundledCuaPluginId);
+    assert.equal(cua.setup.kind, "local_binary");
+    assert.equal(["detected", "missing", "unsupported", "connected", "ready"].includes(cua.setup.state), true);
+    assert.equal(cua.setup.state === "missing", Boolean(cua.setup.guide));
+
+    const bundledDetail = await getJson(`${daemon.url}/plugins/${encodeURIComponent(bundledCuaPluginId)}?cwd=${encodeURIComponent(cwd)}`);
+    const bundledCua = bundledDetail.plugin;
     assert.equal(bundledCua.sourceKind, "bundled");
     assert.equal(bundledCua.actions.canApplyPreset, false);
     assert.deepEqual(bundledCua.contributions.map((contribution) => contribution.kind), ["mcp-server"]);
@@ -92,6 +98,60 @@ test("daemon exposes bundled plugin sources packages and side-effect-free valida
   }
 });
 
+test("daemon creates a disabled trusted local MCP plugin with a real linked server", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-plugin-create-"));
+  const broker = new FakePluginMcpBroker();
+  const daemon = await startDaemonForTest(broker);
+  try {
+    const created = await postJson(`${daemon.url}/plugins?cwd=${encodeURIComponent(cwd)}`, {
+      displayName: "Filesystem helper",
+      description: "Reads selected workspace files through a local MCP server.",
+      transport: {
+        type: "stdio",
+        command: "npx",
+        args: ["-y", "@modelcontextprotocol/server-filesystem", cwd],
+        env: {},
+        secretEnvRefs: {},
+      },
+    });
+    assert.equal(created.plugin.displayName, "Filesystem helper");
+    assert.equal(created.plugin.description, "Reads selected workspace files through a local MCP server.");
+    assert.equal(created.plugin.sourceKind, "trusted-local-preset");
+    assert.equal(created.plugin.status, "disabled");
+    assert.equal(created.plugin.linkedResources.length, 1);
+    assert.equal(created.plugin.linkedResources[0].present, true);
+    assert.equal(created.plugin.linkedResources[0].enabled, false);
+
+    const serversBeforeEnable = await getJson(`${daemon.url}/mcp/servers?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(serversBeforeEnable.servers.length, 1);
+    assert.equal(serversBeforeEnable.servers[0].enabled, false);
+    assert.equal(serversBeforeEnable.servers[0].transport.command, "npx");
+
+    const checkedDisabled = await postJson(`${daemon.url}/plugins/${encodeURIComponent(created.plugin.id)}/check?cwd=${encodeURIComponent(cwd)}`, {});
+    assert.equal(checkedDisabled.health.status, "disabled");
+    assert.equal(broker.checks.length, 1);
+
+    const enabled = await postJson(`${daemon.url}/plugins/${encodeURIComponent(created.plugin.id)}/enable?cwd=${encodeURIComponent(cwd)}`, {});
+    assert.equal(enabled.plugin.status, "enabled");
+    assert.equal(enabled.plugin.linkedResources[0].enabled, true);
+    const serversAfterEnable = await getJson(`${daemon.url}/mcp/servers?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(serversAfterEnable.servers[0].enabled, true);
+
+    const checkedEnabled = await postJson(`${daemon.url}/plugins/${encodeURIComponent(created.plugin.id)}/check?cwd=${encodeURIComponent(cwd)}`, {});
+    assert.equal(checkedEnabled.health.status, "ready");
+    assert.equal(broker.checks.length, 2);
+
+    const invalid = await requestJson(`${daemon.url}/plugins?cwd=${encodeURIComponent(cwd)}`, {
+      method: "POST",
+      body: { displayName: "Missing description", description: "", transport: { type: "stdio", command: "npx", args: [] } },
+    });
+    assert.equal(invalid.status, 400);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("bundled plugin package cache uses resolved workspace plugin cache path", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-plugin-cache-cwd-"));
   const userRoot = await mkdtemp(resolve(tmpdir(), "ling-stack-plugin-cache-user-"));
@@ -126,8 +186,8 @@ test("daemon installs bundled cua package cache and previews runtime injection",
   const broker = new FakePluginMcpBroker();
   const daemon = await startDaemonForTest(broker, new SnapshotRunner());
   try {
-    const initial = await getJson(`${daemon.url}/plugins?cwd=${encodeURIComponent(cwd)}`);
-    const initialBundled = initial.plugins.find((plugin) => plugin.id === bundledCuaPluginId);
+    const initial = await getJson(`${daemon.url}/plugins/${encodeURIComponent(bundledCuaPluginId)}?cwd=${encodeURIComponent(cwd)}`);
+    const initialBundled = initial.plugin;
     assert.equal(initialBundled.actions.canInstall, true);
     assert.equal(initialBundled.actions.canApplyPreset, false);
     assert.equal(initialBundled.package, undefined);
@@ -206,8 +266,8 @@ test("daemon rejects bundled cua install without leaking command paths", { skip:
     assert.equal(missing.status, 400);
     assert.equal(missing.json.error, "plugin_binary_not_found");
     assert.equal(JSON.stringify(missing.json).includes(missingCommand), false);
-    const catalog = await getJson(`${daemon.url}/plugins?cwd=${encodeURIComponent(cwd)}`);
-    const bundled = catalog.plugins.find((plugin) => plugin.id === bundledCuaPluginId);
+    const detail = await getJson(`${daemon.url}/plugins/${encodeURIComponent(bundledCuaPluginId)}?cwd=${encodeURIComponent(cwd)}`);
+    const bundled = detail.plugin;
     assert.equal(bundled.package, undefined);
     assert.equal(bundled.health.status, "failed");
   } finally {
@@ -264,7 +324,7 @@ test("daemon applies cua-driver preset idempotently without teammate authorizati
   try {
     const preApplyCheck = await postJson(`${daemon.url}/plugins/${encodeURIComponent(cuaPluginId)}/check?cwd=${encodeURIComponent(cwd)}`, {});
     assert.equal(preApplyCheck.health.status, "ready");
-    assert.equal(JSON.stringify(preApplyCheck).includes(command), false);
+    assert.equal(preApplyCheck.plugin.setup.detectedCommand, command);
     assert.deepEqual(preApplyCheck.health.details, { binaryFound: true });
 
     const missing = await requestJson(`${daemon.url}/plugins/${encodeURIComponent(cuaPluginId)}/apply-preset?cwd=${encodeURIComponent(cwd)}`, {
@@ -272,10 +332,25 @@ test("daemon applies cua-driver preset idempotently without teammate authorizati
       body: { options: { command: join(cwd, "missing-cua-driver") } },
     });
     assert.equal(missing.status, 400);
-    assert.equal(missing.json.error, "plugin_binary_not_found");
+    assert.equal(missing.json.error, "plugin_command_not_executable");
     assert.equal(missing.json.plugin.id, cuaPluginId);
     assert.equal(JSON.stringify(missing.json).includes(join(cwd, "missing-cua-driver")), false);
-    assert.deepEqual(missing.json.health.details, { errorCode: "plugin_binary_not_found" });
+    assert.deepEqual(missing.json.health.details, { errorCode: "plugin_command_not_executable" });
+
+    const relative = await requestJson(`${daemon.url}/plugins/${encodeURIComponent(cuaPluginId)}/connect?cwd=${encodeURIComponent(cwd)}`, {
+      method: "POST",
+      body: { command: "relative/cua-driver" },
+    });
+    assert.equal(relative.status, 400);
+    assert.equal(relative.json.error, "plugin_command_not_executable");
+
+    const connected = await postJson(`${daemon.url}/plugins/${encodeURIComponent(cuaPluginId)}/connect?cwd=${encodeURIComponent(cwd)}`, { command });
+    assert.equal(connected.plugin.status, "disabled");
+    assert.equal(connected.plugin.setup.state, "connected");
+    assert.equal(connected.linkedMcpServer.enabled, false);
+    const connectedAgain = await postJson(`${daemon.url}/plugins/${encodeURIComponent(cuaPluginId)}/connect?cwd=${encodeURIComponent(cwd)}`, { command });
+    assert.equal(connectedAgain.linkedMcpServer.id, "mcp_cua_driver");
+    assert.equal((await getJson(`${daemon.url}/mcp/servers?cwd=${encodeURIComponent(cwd)}`)).servers.length, 1);
 
     const applied = await postJson(`${daemon.url}/plugins/${encodeURIComponent(cuaPluginId)}/apply-preset?cwd=${encodeURIComponent(cwd)}`, {
       options: { command },
@@ -321,7 +396,7 @@ test("daemon applies cua-driver preset idempotently without teammate authorizati
 
     const checked = await postJson(`${daemon.url}/plugins/${encodeURIComponent(cuaPluginId)}/check?cwd=${encodeURIComponent(cwd)}`, {});
     assert.equal(checked.health.status, "ready");
-    assert.equal(broker.checks.length, 3);
+    assert.equal(broker.checks.length, 4);
     assert.ok(checked.plugin.events.some((event) => event.type === "preset_applied"));
   } finally {
     await daemon.close();
@@ -330,6 +405,32 @@ test("daemon applies cua-driver preset idempotently without teammate authorizati
     } else {
       process.env.PATH = originalPath;
     }
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("daemon rolls Cua Driver back to disabled when enable check fails", { skip: process.platform !== "darwin" }, async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-plugin-enable-failure-"));
+  const command = join(cwd, "cua-driver");
+  await writeFile(command, "#!/bin/sh\nexit 0\n");
+  await chmod(command, 0o755);
+  const daemon = await startDaemonForTest(new FailingPluginMcpBroker());
+  try {
+    const connected = await postJson(`${daemon.url}/plugins/${encodeURIComponent(cuaPluginId)}/connect?cwd=${encodeURIComponent(cwd)}`, { command });
+    assert.equal(connected.plugin.setup.state, "connected");
+
+    const enabled = await requestJson(`${daemon.url}/plugins/${encodeURIComponent(cuaPluginId)}/enable?cwd=${encodeURIComponent(cwd)}`, {
+      method: "POST",
+      body: {},
+    });
+    assert.equal(enabled.status, 400);
+    assert.equal(enabled.json.error, "plugin_enable_failed");
+    assert.equal(enabled.json.plugin.status, "disabled");
+    assert.equal(enabled.json.plugin.setup.state, "connected");
+    assert.equal(enabled.json.plugin.linkedResources[0].enabled, false);
+    assert.equal((await getJson(`${daemon.url}/mcp/servers?cwd=${encodeURIComponent(cwd)}`)).servers[0].enabled, false);
+  } finally {
+    await daemon.close();
     await rm(cwd, { recursive: true, force: true });
   }
 });
@@ -413,6 +514,25 @@ class FakePluginMcpBroker {
 
   async callTool() {
     throw new Error("callTool is not used in plugin manager tests");
+  }
+}
+
+class FailingPluginMcpBroker extends FakePluginMcpBroker {
+  async checkServer(server, options) {
+    const now = options.now();
+    this.checks.push({ server });
+    return {
+      statusSnapshot: {
+        serverId: server.id,
+        status: "failed",
+        authStatus: { kind: "not_required", refs: [], missingRefs: [] },
+        missingSecretRefs: [],
+        message: "Cua Driver failed to start.",
+        errorCode: "mcp_process_failed",
+        checkedAt: now,
+        expiresAt: new Date(Date.parse(now) + 5 * 60 * 1000).toISOString(),
+      },
+    };
   }
 }
 

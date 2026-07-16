@@ -52,6 +52,8 @@ import type {
   WorkflowEvidenceDiagnostic,
 } from "../../types.js";
 
+import { SelectControl } from "../../shared/components/SelectControl.js";
+
 function uniqueStrings(values: readonly string[]): readonly string[] {
   return [...new Set(values.filter(Boolean))];
 }
@@ -1099,14 +1101,14 @@ export function ChannelExecutionProposalCard({
           </label>
           <label>
             <span>{t("Assignee")}</span>
-            <select value={draft.assigneeTeammateId} onChange={(event) => setDraft({ ...draft, assigneeTeammateId: event.currentTarget.value })}>
+            <SelectControl value={draft.assigneeTeammateId} onChange={(event) => setDraft({ ...draft, assigneeTeammateId: event.currentTarget.value })}>
               {teammates.map((teammate) => (
                 <option key={teammate.id} value={teammate.id}>{teammate.label}</option>
               ))}
               {teammates.some((teammate) => teammate.id === draft.assigneeTeammateId) ? null : (
                 <option value={draft.assigneeTeammateId}>{teammateLabel(draft.assigneeTeammateId, teammates, t("Deleted teammate"))}</option>
               )}
-            </select>
+            </SelectControl>
           </label>
           <label>
             <span>{t("Acceptance criteria")}</span>
@@ -1134,19 +1136,21 @@ export function ChannelExecutionProposalCard({
             </div>
             {draft.collaborationSteps.map((step, index) => (
               <div className="channel-proposal-edit-step" key={`${index}-${step.teammateId}-${step.action}`}>
-                <select value={step.teammateId} onChange={(event) => updateStep(index, { teammateId: event.currentTarget.value })}>
+                <SelectControl
+              variant="compact" value={step.teammateId} onChange={(event) => updateStep(index, { teammateId: event.currentTarget.value })}>
                   {teammates.map((teammate) => (
                     <option key={teammate.id} value={teammate.id}>{teammate.label}</option>
                   ))}
                   {teammates.some((teammate) => teammate.id === step.teammateId) ? null : (
                     <option value={step.teammateId}>{teammateLabel(step.teammateId, teammates, t("Deleted teammate"))}</option>
                   )}
-                </select>
-                <select value={step.action} onChange={(event) => updateStep(index, { action: event.currentTarget.value as ChannelProposalStepDraft["action"] })}>
+                </SelectControl>
+                <SelectControl
+              variant="compact" value={step.action} onChange={(event) => updateStep(index, { action: event.currentTarget.value as ChannelProposalStepDraft["action"] })}>
                   {proposalStepActions.map((action) => (
                     <option key={action} value={action}>{t(proposalStepActionLabel(action))}</option>
                   ))}
-                </select>
+                </SelectControl>
                 <textarea rows={2} value={step.summary} onChange={(event) => updateStep(index, { summary: event.currentTarget.value })} />
                 <button className="secondary-button danger compact-button" type="button" onClick={() => removeStep(index)} disabled={draft.collaborationSteps.length <= 1}>
                   <Trash2 size={14} />

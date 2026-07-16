@@ -467,14 +467,15 @@ test("global sidebar keeps fixed chrome, scrollable recents, and a true compact 
   await expect(navigation.getByRole("button", { name: "Search or start" })).toHaveCount(0);
   await expect(navigation.getByRole("button", { name: "Run", exact: true })).toHaveCount(0);
   await expect(navigation.getByRole("button", { name: "Inbox" })).toBeVisible();
-  await expect(navigation.getByRole("button", { name: "Image Generation" })).toBeVisible();
+  await expect(navigation.getByRole("button", { name: "Media Production" })).toBeVisible();
+  await expect(navigation.getByRole("button", { name: "Work Board" })).toBeVisible();
+  await expect(navigation.getByRole("button", { name: "Plugin Manager" })).toBeVisible();
   await expect(navigation.locator(".primary-nav").getByRole("button", { name: "AI Teammates" })).toHaveCount(0);
   await expect(navigation.getByRole("button", { name: "AI Teammates" })).toBeVisible();
   await expect(navigation.getByRole("button", { name: "Automations" })).toBeVisible();
   await expect(navigation.getByRole("button", { name: "Settings" })).toBeVisible();
   await expect(navigation.getByRole("button", { name: "Profile" })).toHaveCount(0);
   await expect(navigation.getByRole("button", { name: "Model Workbench" })).toHaveCount(0);
-  await expect(navigation.getByRole("button", { name: "Work Board" })).toHaveCount(0);
   await navigation.getByRole("button", { name: "Engineering" }).click();
 
   const expanded = await page.evaluate(() => {
@@ -603,7 +604,7 @@ test("global sidebar keeps fixed chrome, scrollable recents, and a true compact 
   await navigation.getByRole("button", { name: "Settings" }).hover();
   await expect(sidebarTooltip).toHaveText("Settings");
 
-  await navigation.getByRole("button", { name: "Image Generation" }).click();
+  await navigation.getByRole("button", { name: "Media Production" }).click();
   await expect(page.getByRole("heading", { name: "Generation tasks", level: 1 })).toBeVisible();
   await navigation.getByRole("button", { name: "Automations" }).click();
   await expect(page.getByRole("heading", { name: "Automations", level: 1 })).toBeVisible();

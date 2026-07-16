@@ -3,7 +3,6 @@ import type {
   ManagedPluginDescriptor,
   ManagedPluginHealthSnapshot,
   ManagedPluginPackageRecord,
-  McpRuntimeStatusSnapshot,
   PublicMcpServer,
   SecretResolver,
 } from "@ling-stack/core";
@@ -22,19 +21,24 @@ import {
   listManagedPluginViews,
 } from "./catalog.js";
 import {
-  applyCuaDriverToolApprovalOverrides,
-  createCuaDriverMcpServerInput,
   CUA_DRIVER_MCP_SERVER_ID,
   CUA_DRIVER_PLUGIN_ID,
   resolveCuaDriverCommand,
 } from "./presets.js";
 import {
   parseManagedPluginApplyPresetRequest,
+  parseManagedPluginConnectRequest,
+  parseManagedPluginCreateRequest,
   parseManagedPluginDisableRequest,
   parseManagedPluginInstallRequest,
   parseManagedPluginUninstallRequest,
   parseManagedPluginValidatePackageRequest,
 } from "./schemas.js";
+import {
+  configuredCuaDriverCommand,
+  connectCuaDriver,
+} from "./cua-driver.js";
+import { activateCuaDriver, pluginHealthFromMcpSnapshot } from "./cua-driver-activation.js";
 import { toPublicMcpServer } from "../mcp/secrets.js";
 import {
   getBundledPluginPackage,
@@ -47,11 +51,12 @@ import {
   uninstallManagedPluginPackage,
 } from "./install.js";
 import { buildManagedPluginRuntimePreview } from "./runtime-injection.js";
+import { createTrustedLocalMcpPlugin } from "./create-local-plugin.js";
 
 export type ManagedPluginRoute =
   | {
       readonly pluginId: string;
-      readonly action?: "enable" | "disable" | "check" | "apply-preset" | "validate-package" | "install" | "uninstall" | "refresh-package" | "runtime-preview";
+      readonly action?: "enable" | "disable" | "check" | "connect" | "apply-preset" | "validate-package" | "install" | "uninstall" | "refresh-package" | "runtime-preview";
     };
 
 export async function handlePluginsCollection(
@@ -67,21 +72,38 @@ export async function handlePluginsCollection(
     writeJson(response, 400, { error: "bad_request", message: "cwd query parameter is required" });
     return;
   }
-  if (request.method !== "GET") {
-    writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for /plugins` });
-    return;
-  }
   try {
     const store = storeRegistry.getStore(cwd);
-    writeJson(response, 200, {
-      cwd,
-      plugins: listManagedPluginViews({
+    if (request.method === "GET") {
+      writeJson(response, 200, {
         cwd,
-        extensionRegistry,
-        store,
-        now: new Date().toISOString(),
-      }),
-    });
+        plugins: listManagedPluginViews({
+          cwd,
+          extensionRegistry,
+          store,
+          now: new Date().toISOString(),
+        }),
+      });
+      return;
+    }
+    if (request.method === "POST") {
+      const body = await readJsonBody(request, config.maxBodyBytes);
+      const input = parseManagedPluginCreateRequest(body);
+      const now = new Date().toISOString();
+      const created = createTrustedLocalMcpPlugin({ store, ...input, now });
+      writeJson(response, 201, {
+        cwd,
+        plugin: getRequiredPluginView({
+          cwd,
+          extensionRegistry,
+          store,
+          pluginId: created.pluginId,
+          includeEvents: true,
+        }),
+      });
+      return;
+    }
+    writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for /plugins` });
   } catch (error) {
     writeRouteError(response, error);
   }
@@ -215,7 +237,51 @@ export async function handlePluginItem(
       return;
     }
 
+    if (request.method === "POST" && route.action === "connect") {
+      if (route.pluginId !== CUA_DRIVER_PLUGIN_ID) {
+        throw new HttpError(400, "plugin_connect_not_supported", `Plugin does not support connect: ${route.pluginId}`);
+      }
+      const body = await readJsonBody(request, config.maxBodyBytes);
+      const input = parseManagedPluginConnectRequest(body);
+      const now = new Date().toISOString();
+      let linkedServer;
+      try {
+        linkedServer = connectCuaDriver({
+          store,
+          descriptor,
+          command: input.command,
+          now,
+        });
+      } catch (error) {
+        if (error instanceof HttpError) {
+          throw error;
+        }
+        throw new HttpError(400, "plugin_connect_failed", "Cua Driver could not be connected.");
+      }
+      writeJson(response, 200, {
+        plugin: getRequiredPluginView({ cwd, extensionRegistry, store, pluginId: route.pluginId, includeEvents: true }),
+        linkedMcpServer: publicMcpServer(store, linkedServer.id, secretResolver, now),
+      });
+      return;
+    }
+
     if (request.method === "POST" && route.action === "enable") {
+      if (route.pluginId === CUA_DRIVER_PLUGIN_ID) {
+        const configuredCommand = configuredCuaDriverCommand(store);
+        await handlePluginApplyPreset({
+          response,
+          cwd,
+          descriptor,
+          extensionRegistry,
+          store,
+          pluginId: route.pluginId,
+          options: configuredCommand ? { command: configuredCommand } : {},
+          operation: "enable",
+          mcpBroker,
+          secretResolver,
+        });
+        return;
+      }
       const now = new Date().toISOString();
       ensureManagedPluginRecord({ store, descriptor, enabled: true, now });
       setLinkedContributionsEnabled(store, route.pluginId, true, now);
@@ -333,6 +399,7 @@ export async function handlePluginItem(
         store,
         pluginId: route.pluginId,
         options: input.options,
+        operation: "apply",
         mcpBroker,
         secretResolver,
       });
@@ -408,6 +475,7 @@ async function handlePluginApplyPreset(input: {
   readonly store: ReturnType<RunStoreRegistry["getStore"]>;
   readonly pluginId: string;
   readonly options: Readonly<Record<string, unknown>>;
+  readonly operation: "apply" | "enable";
   readonly mcpBroker: McpBroker;
   readonly secretResolver: SecretResolver;
 }): Promise<void> {
@@ -415,148 +483,19 @@ async function handlePluginApplyPreset(input: {
     throw new HttpError(400, "plugin_preset_not_applicable", `Plugin does not support apply-preset: ${input.pluginId}`);
   }
   const now = new Date().toISOString();
-  if (process.platform !== "darwin") {
-    const record = ensureManagedPluginRecord({ store: input.store, descriptor: input.descriptor, enabled: false, now });
-    const health = input.store.upsertManagedPluginHealthSnapshot(createPluginHealthSnapshot({
-      pluginId: input.pluginId,
-      now,
-      status: "failed",
-      message: "Cua Driver is only supported on macOS.",
-      details: { errorCode: "plugin_platform_blocked" },
-    }), now);
-    input.store.appendManagedPluginEvent({
-      pluginId: record.id,
-      type: "checked",
-      actor: "local-user",
-      message: health.message,
-      data: { status: health.status, errorCode: "plugin_platform_blocked" },
-    }, now);
-    writeJson(input.response, 400, {
-      error: "plugin_platform_blocked",
-      message: health.message,
-      plugin: getRequiredPluginView({
-        cwd: input.cwd,
-        extensionRegistry: input.extensionRegistry,
-        store: input.store,
-        pluginId: input.pluginId,
-        includeEvents: true,
-      }),
-      health,
-      tools: [],
-    });
-    return;
-  }
-  const command = resolveCuaDriverCommand(input.options);
-  if (!command.ok || !command.command) {
-    const record = ensureManagedPluginRecord({ store: input.store, descriptor: input.descriptor, enabled: false, now });
-    const health = input.store.upsertManagedPluginHealthSnapshot(createPluginHealthSnapshot({
-      pluginId: input.pluginId,
-      now,
-      status: "failed",
-      message: command.message ?? "cua-driver binary was not found.",
-      details: { errorCode: "plugin_binary_not_found" },
-    }), now);
-    input.store.appendManagedPluginEvent({
-      pluginId: record.id,
-      type: "checked",
-      actor: "local-user",
-      message: health.message,
-      data: { status: health.status, errorCode: "plugin_binary_not_found" },
-    }, now);
-    writeJson(input.response, 400, {
-      error: "plugin_binary_not_found",
-      message: health.message,
-      plugin: getRequiredPluginView({
-        cwd: input.cwd,
-        extensionRegistry: input.extensionRegistry,
-        store: input.store,
-        pluginId: input.pluginId,
-        includeEvents: true,
-      }),
-      health,
-      tools: [],
-    });
-    return;
-  }
-
-  const existingRecord = input.store.getManagedPlugin(input.pluginId);
-  const existingLinks = input.store.listManagedPluginContributions(input.pluginId);
-  const record = ensureManagedPluginRecord({
+  const command = typeof input.options.command === "string" ? input.options.command : undefined;
+  const result = await activateCuaDriver({
     store: input.store,
     descriptor: input.descriptor,
-    enabled: existingRecord?.enabled === false && existingLinks.length > 0 ? false : true,
+    pluginId: input.pluginId,
+    command,
+    operation: input.operation,
+    mcpBroker: input.mcpBroker,
+    secretResolver: input.secretResolver,
     now,
   });
-  const mcpInput = createCuaDriverMcpServerInput(command.command, record.enabled);
-  const existingServer = input.store.getMcpServer(CUA_DRIVER_MCP_SERVER_ID);
-  const linkedServer = existingServer
-    ? input.store.updateMcpServer(CUA_DRIVER_MCP_SERVER_ID, mcpInput, now) ?? existingServer
-    : input.store.createMcpServer(mcpInput, now);
-  input.store.replaceManagedPluginContributions(input.pluginId, [
-    {
-      contributionKind: "mcp-server",
-      contributionId: CUA_DRIVER_MCP_SERVER_ID,
-      linkedResourceId: linkedServer.id,
-      enabled: record.enabled,
-    },
-  ], now);
-  input.store.appendManagedPluginEvent({
-    pluginId: input.pluginId,
-    type: "contribution_linked",
-    actor: "system",
-    message: `Linked MCP server ${linkedServer.id}.`,
-    data: { linkedResourceId: linkedServer.id },
-  }, now);
-
-  const checked = await input.mcpBroker.checkServer(linkedServer, {
-    secretResolver: input.secretResolver,
-    now: () => now,
-  });
-  const checkedSnapshot = input.store.upsertMcpStatusSnapshot(checked.statusSnapshot, now);
-  if (checkedSnapshot.status !== "ready") {
-    const health = input.store.upsertManagedPluginHealthSnapshot(pluginHealthFromMcpSnapshot(input.pluginId, checkedSnapshot), now);
-    input.store.appendManagedPluginEvent({
-      pluginId: input.pluginId,
-      type: "preset_applied",
-      actor: "local-user",
-      message: health.message ?? "Preset applied but MCP check failed.",
-      data: { status: health.status, mcpServerId: linkedServer.id },
-    }, now);
-    writeJson(input.response, 400, {
-      error: "plugin_apply_failed",
-      message: health.message ?? "Plugin preset apply failed.",
-      plugin: getRequiredPluginView({
-        cwd: input.cwd,
-        extensionRegistry: input.extensionRegistry,
-        store: input.store,
-        pluginId: input.pluginId,
-        includeEvents: true,
-      }),
-      linkedMcpServer: publicMcpServer(input.store, linkedServer.id, input.secretResolver, now),
-      statusSnapshot: checkedSnapshot,
-      tools: [],
-    });
-    return;
-  }
-
-  const listed = await input.mcpBroker.listTools(linkedServer, {
-    secretResolver: input.secretResolver,
-    now: () => now,
-  });
-  const listedSnapshot = input.store.upsertMcpStatusSnapshot(listed.statusSnapshot, now);
-  const tools = listedSnapshot.status === "ready"
-    ? input.store.replaceMcpServerTools(linkedServer.id, applyCuaDriverToolApprovalOverrides(listed.tools), now)
-    : [];
-  const health = input.store.upsertManagedPluginHealthSnapshot(pluginHealthFromMcpSnapshot(input.pluginId, listedSnapshot), now);
-  input.store.appendManagedPluginEvent({
-    pluginId: input.pluginId,
-    type: "preset_applied",
-    actor: "local-user",
-    message: listedSnapshot.status === "ready" ? `Preset applied. ${tools.length} MCP tool(s) synced.` : health.message,
-    data: { status: health.status, mcpServerId: linkedServer.id, toolCount: tools.length },
-  }, now);
-  writeJson(input.response, listedSnapshot.status === "ready" ? 200 : 400, {
-    ...(listedSnapshot.status === "ready" ? {} : { error: "plugin_apply_failed", message: health.message ?? "Plugin preset apply failed." }),
+  writeJson(input.response, result.statusCode, {
+    ...(result.error ? { error: result.error, message: result.message ?? result.health.message ?? "Cua Driver activation failed." } : {}),
     plugin: getRequiredPluginView({
       cwd: input.cwd,
       extensionRegistry: input.extensionRegistry,
@@ -564,9 +503,10 @@ async function handlePluginApplyPreset(input: {
       pluginId: input.pluginId,
       includeEvents: true,
     }),
-    linkedMcpServer: publicMcpServer(input.store, linkedServer.id, input.secretResolver, now),
-    statusSnapshot: listedSnapshot,
-    tools,
+    ...(result.linkedMcpServerId ? { linkedMcpServer: publicMcpServer(input.store, result.linkedMcpServerId, input.secretResolver, now) } : {}),
+    ...(result.statusSnapshot ? { statusSnapshot: result.statusSnapshot } : {}),
+    health: result.health,
+    tools: result.tools,
   });
 }
 
@@ -609,6 +549,28 @@ async function checkPluginHealth(input: {
         : { errorCode: "plugin_binary_not_found" },
     });
   }
+  const mcpContribution = input.store.listManagedPluginContributions(input.descriptor.id)
+    .find((contribution) => contribution.contributionKind === "mcp-server");
+  if (input.descriptor.contributions.some((contribution) => contribution.kind === "mcp-server")) {
+    const linkedServer = mcpContribution?.linkedResourceId
+      ? input.store.getMcpServer(mcpContribution.linkedResourceId)
+      : undefined;
+    if (!linkedServer) {
+      return createPluginHealthSnapshot({
+        pluginId: input.descriptor.id,
+        now: input.now,
+        status: "failed",
+        message: "Linked MCP server is missing.",
+        details: { errorCode: "plugin_linked_resource_missing" },
+      });
+    }
+    const result = await input.mcpBroker.checkServer(linkedServer, {
+      secretResolver: input.secretResolver,
+      now: () => input.now,
+    });
+    const statusSnapshot = input.store.upsertMcpStatusSnapshot(result.statusSnapshot, input.now);
+    return pluginHealthFromMcpSnapshot(input.descriptor.id, statusSnapshot);
+  }
   return createPluginHealthSnapshot({
     pluginId: input.descriptor.id,
     now: input.now,
@@ -617,31 +579,6 @@ async function checkPluginHealth(input: {
   });
 }
 
-function pluginHealthFromMcpSnapshot(pluginId: string, snapshot: McpRuntimeStatusSnapshot): ManagedPluginHealthSnapshot {
-  const status = snapshot.status === "ready"
-    ? "ready"
-    : snapshot.status === "disabled"
-      ? "disabled"
-      : snapshot.status === "expired"
-        ? "expired"
-        : "failed";
-  return {
-    pluginId,
-    checkedAt: snapshot.checkedAt,
-    expiresAt: snapshot.expiresAt,
-    status,
-    message: snapshot.message,
-    details: {
-      mcpServerId: snapshot.serverId,
-      mcpStatus: snapshot.status,
-      errorCode: snapshot.errorCode,
-      toolCount: snapshot.toolCount,
-      missingSecretRefs: snapshot.missingSecretRefs,
-      authStatus: snapshot.authStatus.kind,
-      latencyMs: snapshot.latencyMs,
-    },
-  };
-}
 
 function setLinkedContributionsEnabled(
   store: ReturnType<RunStoreRegistry["getStore"]>,

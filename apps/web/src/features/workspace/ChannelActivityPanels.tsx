@@ -39,6 +39,8 @@ import type {
 import { formatDateTime } from "../../lib/formatting.js";
 import { MetaRow } from "../../shared/components/index.js";
 
+import { SelectControl } from "../../shared/components/SelectControl.js";
+
 type ActivityCategoryFilter = ChannelActivityViewCategoryFilter;
 type ActivityAttentionFilter = ChannelActivityViewAttentionFilter;
 
@@ -102,7 +104,8 @@ export function ActivityFilterToolbar({
       <div className="activity-view-control" aria-label={t("Saved views")}>
         <label className="activity-view-select">
           <span>{t("View")}</span>
-          <select
+          <SelectControl
+              variant="compact"
             aria-label={t("Saved views")}
             value={activeSavedViewId}
             onChange={(event) => {
@@ -117,7 +120,7 @@ export function ActivityFilterToolbar({
                 {savedViewLabel(view, t)} ({savedViewCounts[view.id] ?? 0})
               </option>
             ))}
-          </select>
+          </SelectControl>
         </label>
       </div>
       <label className="activity-search-field">

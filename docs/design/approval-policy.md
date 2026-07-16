@@ -121,7 +121,7 @@ Default classification:
 | `git_push` | approval required | External side effect |
 | `external_send` | approval required | Sends data outside local workspace |
 | `deploy` | approval required | Production or environment mutation |
-| `media_cost` | legacy only | Historical paid media approval records |
+| `media_cost` | Media Production confirmation | Scene runs, ordered project runs, workflow tests, and historical paid media records |
 | `credential_change` | critical approval required | Secret and auth boundary |
 | `provider_change` | medium approval or explicit user action | Affects model routing/cost |
 
@@ -726,15 +726,15 @@ Media jobs are not Pi coding tools and are controlled directly by Ling Stack's m
 
 Current behavior:
 
-- New image/video generation jobs do not create `media_cost` approvals.
-- Generation execution is gated by provider runtime readiness, configured secret, connected adapter support, and the media job state machine.
-- Provider account billing still applies outside Ling; Ling does not estimate or approve per-job media cost in v0.1.
+- Standalone image/video jobs created and run from the Generation Tasks surface execute directly after runtime readiness checks.
+- Media Production scene runs, ordered project runs, and ComfyUI workflow tests create one `media_cost` approval per Media Job and remain in `waiting_for_approval` until approved.
+- Approval changes only the dispatch boundary. Provider runtime readiness, configured secrets, adapter support, concurrency, recovery, cancellation, and artifact checks still apply after approval.
+- Ling does not estimate a currency amount in v0.1; the approval confirms that an external paid generation may begin.
 
 Legacy compatibility:
 
-- `media_cost` remains an approval action type so old workspace records can be listed and resolved.
-- Historical media approvals are owned by `mediaJobId`, not `runId`.
-- Old media jobs in `waiting_for_approval` can be run directly after the new runtime readiness checks pass.
+- New and historical media approvals are owned by `mediaJobId`, not `runId`.
+- Old standalone media jobs in `waiting_for_approval` can still be run directly after runtime readiness checks pass.
 
 ## Provider Change Approval
 

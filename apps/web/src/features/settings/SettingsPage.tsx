@@ -8,9 +8,7 @@ import {
   Brain,
   Database,
   GitBranch,
-  Kanban,
   Palette,
-  PlugZap,
   Shield,
   SlidersHorizontal,
   UserCircle,
@@ -18,16 +16,12 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import type { McpBusyAction } from "../../domains/mcp/use-mcp-domain.js";
-import type { PluginActionNotice, PluginBusyAction } from "../../domains/plugins/use-plugins-domain.js";
 import { useI18n } from "../../i18n.js";
 import type {
   AuthorizationMode,
   Channel,
   EffectiveConfigResponse,
   ExternalWorkStatusResponse,
-  ManagedPluginApplyPresetResponse,
-  ManagedPluginRuntimePreviewResponse,
-  ManagedPluginView,
   McpServer,
   McpServerFormState,
   McpTool,
@@ -46,28 +40,25 @@ import { ExternalWorkSettingsPanel } from "./ExternalWorkSettingsPanel.js";
 import { StartupDiagnosticsSettingsPanel } from "./MaintenanceSettingsPanel.js";
 import { InterfacePreferencesSettingsPanel, PersonalSettingsPanel } from "./PersonalInterfaceSettingsPanel.js";
 import { PersonalizationSettingsPanel } from "./PersonalizationSettingsPanel.js";
-import { PluginManagerSettingsPanel } from "./PluginManagerSettingsPanel.js";
 import { SettingsRunDiagnosticsPanel } from "./SettingsRunDiagnosticsPanel.js";
 import { SkillLibrarySettingsPanel } from "./SkillLibrarySettingsPanel.js";
 import { useArchivedSettingsController } from "./useArchivedSettingsController.js";
 
-type SettingsSectionId =
+export type SettingsSectionId =
   | "model-workbench"
   | "ai-teammates"
   | "ai-councils"
-  | "work-board"
   | "approval-strategy"
   | "personal-profile"
   | "personalization"
   | "interface-preferences"
   | "external-work"
   | "mcp-tools"
-  | "plugin-manager"
   | "skill-library"
   | "archived-items"
   | "startup-diagnostics";
 
-type SettingsWorkspaceToolView = "" | "providers" | "teammates" | "councils" | "work_board";
+type SettingsWorkspaceToolView = "" | "providers" | "teammates" | "councils";
 
 type SettingsSectionItem = {
   readonly id: SettingsSectionId;
@@ -99,11 +90,6 @@ const settingsSectionGroups: readonly {
         pageTitle: "Council Workspace",
         label: "Council Workspace",
         icon: Brain,
-      },
-      {
-        id: "work-board",
-        label: "Work Board",
-        icon: Kanban,
       },
       {
         id: "approval-strategy",
@@ -140,11 +126,6 @@ const settingsSectionGroups: readonly {
         id: "mcp-tools",
         label: "MCP tool servers",
         icon: Wrench,
-      },
-      {
-        id: "plugin-manager",
-        label: "Plugin Manager",
-        icon: PlugZap,
       },
       {
         id: "skill-library",
@@ -184,13 +165,7 @@ export function SettingsPage({
   mcpLoading,
   mcpBusyServerId,
   mcpBusyAction,
-  plugins,
-  pluginsLoading,
-  pluginBusyId,
-  pluginBusyAction,
-  latestPluginApplyResult,
-  latestPluginRuntimePreview,
-  latestPluginNotice,
+  initialSection,
   workspaceDefaultAuthorizationMode,
   workspaceDefaultWorkspaceAccessMode,
   workspaceDefaultPermissionMode,
@@ -208,16 +183,6 @@ export function SettingsPage({
   onWorkspaceResponseLanguageChange,
   onRefreshStartup,
   onRefreshExternalWork,
-  onRefreshPlugins,
-  onApplyPluginPreset,
-  onCheckPlugin,
-  onValidatePluginPackage,
-  onInstallPlugin,
-  onUninstallPlugin,
-  onRefreshPluginPackage,
-  onPreviewPluginRuntime,
-  onEnablePlugin,
-  onDisablePlugin,
   onExternalWorkAction,
   onConfigureExternalWorkWorkflow,
   onConfigureExternalWorkSecret,
@@ -239,7 +204,6 @@ export function SettingsPage({
   onOpenProviders,
   onOpenTeammates,
   onOpenCouncils,
-  onOpenWorkBoard,
   workspaceToolDetail,
   workspaceToolView,
   runDiagnosticsRunId,
@@ -260,13 +224,7 @@ export function SettingsPage({
   readonly mcpLoading: boolean;
   readonly mcpBusyServerId: string;
   readonly mcpBusyAction: McpBusyAction | undefined;
-  readonly plugins: readonly ManagedPluginView[];
-  readonly pluginsLoading: boolean;
-  readonly pluginBusyId: string;
-  readonly pluginBusyAction: PluginBusyAction | undefined;
-  readonly latestPluginApplyResult?: ManagedPluginApplyPresetResponse;
-  readonly latestPluginRuntimePreview?: ManagedPluginRuntimePreviewResponse;
-  readonly latestPluginNotice?: PluginActionNotice;
+  readonly initialSection?: SettingsSectionId;
   readonly workspaceDefaultAuthorizationMode?: AuthorizationMode;
   readonly workspaceDefaultWorkspaceAccessMode?: WorkspaceAccessMode;
   readonly workspaceDefaultPermissionMode?: SessionPermissionMode;
@@ -284,16 +242,6 @@ export function SettingsPage({
   readonly onWorkspaceResponseLanguageChange: (language: ResponseLanguagePreference) => void;
   readonly onRefreshStartup: () => void;
   readonly onRefreshExternalWork: () => void;
-  readonly onRefreshPlugins: () => void;
-  readonly onApplyPluginPreset: (pluginId: string) => void;
-  readonly onCheckPlugin: (pluginId: string) => void;
-  readonly onValidatePluginPackage: (pluginId: string) => void;
-  readonly onInstallPlugin: (pluginId: string) => void;
-  readonly onUninstallPlugin: (pluginId: string) => void;
-  readonly onRefreshPluginPackage: (pluginId: string) => void;
-  readonly onPreviewPluginRuntime: (pluginId: string) => void;
-  readonly onEnablePlugin: (pluginId: string) => void;
-  readonly onDisablePlugin: (pluginId: string) => void;
   readonly onExternalWorkAction: (action: "poll" | "reconcile" | "start" | "stop") => void;
   readonly onConfigureExternalWorkWorkflow: (input: {
     readonly sourceKind: "github" | "linear";
@@ -319,7 +267,6 @@ export function SettingsPage({
   readonly onOpenProviders: () => void;
   readonly onOpenTeammates: () => void;
   readonly onOpenCouncils: () => void;
-  readonly onOpenWorkBoard: () => void;
   readonly workspaceToolDetail?: ReactNode;
   readonly workspaceToolView?: SettingsWorkspaceToolView;
   readonly runDiagnosticsRunId?: string;
@@ -329,7 +276,7 @@ export function SettingsPage({
   readonly onBackToApplication?: () => void;
 }): JSX.Element {
   const { t } = useI18n();
-  const [activeSection, setActiveSection] = useState<SettingsSectionId>("personal-profile");
+  const [activeSection, setActiveSection] = useState<SettingsSectionId>(initialSection ?? "personal-profile");
   const runDiagnosticsOpen = runDiagnosticsRunId !== undefined;
   const workspaceToolDetailOpen = !runDiagnosticsOpen && workspaceToolDetail !== undefined && workspaceToolDetail !== null;
   const workspaceToolSection = workspaceToolViewToSectionId(workspaceToolView);
@@ -363,10 +310,6 @@ export function SettingsPage({
     }
     if (sectionId === "ai-councils") {
       onOpenCouncils();
-      return;
-    }
-    if (sectionId === "work-board") {
-      onOpenWorkBoard();
       return;
     }
     onCloseWorkspaceTool?.();
@@ -485,33 +428,6 @@ export function SettingsPage({
           </div>
         ) : null}
 
-        {visibleActiveSection === "plugin-manager" && !workspaceToolDetailOpen ? (
-          <PluginManagerSettingsPanel
-            cwd={cwd}
-            plugins={plugins}
-            isLoading={pluginsLoading}
-            busyPluginId={pluginBusyId}
-            busyAction={pluginBusyAction}
-            latestApplyResult={latestPluginApplyResult}
-            latestRuntimePreview={latestPluginRuntimePreview}
-            latestNotice={latestPluginNotice}
-            onRefresh={onRefreshPlugins}
-            onApplyPreset={onApplyPluginPreset}
-            onCheck={onCheckPlugin}
-            onValidatePackage={onValidatePluginPackage}
-            onInstall={onInstallPlugin}
-            onUninstall={onUninstallPlugin}
-            onRefreshPackage={onRefreshPluginPackage}
-            onRuntimePreview={onPreviewPluginRuntime}
-            onEnable={onEnablePlugin}
-            onDisable={onDisablePlugin}
-            onOpenMcpSettings={() => {
-              onRefreshMcp();
-              setActiveSection("mcp-tools");
-            }}
-          />
-        ) : null}
-
         {visibleActiveSection === "skill-library" && !workspaceToolDetailOpen ? (
           <SkillLibrarySettingsPanel cwd={cwd} refreshToken={skillLibraryRefreshToken} />
         ) : null}
@@ -546,12 +462,9 @@ function workspaceToolViewToSectionId(view: SettingsWorkspaceToolView | undefine
   if (view === "councils") {
     return "ai-councils";
   }
-  if (view === "work_board") {
-    return "work-board";
-  }
   return undefined;
 }
 
 function isWorkspaceToolSection(sectionId: SettingsSectionId): boolean {
-  return sectionId === "model-workbench" || sectionId === "ai-teammates" || sectionId === "ai-councils" || sectionId === "work-board";
+  return sectionId === "model-workbench" || sectionId === "ai-teammates" || sectionId === "ai-councils";
 }

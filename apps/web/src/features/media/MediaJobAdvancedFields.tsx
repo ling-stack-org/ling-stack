@@ -1,39 +1,43 @@
-import type { MediaJobFormState } from "../../types.js";
+import type { MediaJobFormState, VideoGenerationCapabilities } from "../../types.js";
 import { useI18n } from "../../i18n.js";
+
+import { SelectControl } from "../../shared/components/SelectControl.js";
 
 export function MediaJobAdvancedFields({
   form,
   onFormChange,
+  videoGeneration,
+  videoFields = "all",
 }: {
   readonly form: MediaJobFormState;
   readonly onFormChange: (form: MediaJobFormState) => void;
+  readonly videoGeneration?: VideoGenerationCapabilities;
+  readonly videoFields?: "all" | "core" | "watermark";
 }): JSX.Element {
   const { t } = useI18n();
   return (
     <div className="media-structured-fields">
       {form.operation === "video_generate" ? (
         <>
-          <label className="field">
-            <span>{t("Aspect ratio")}</span>
-            <select value={form.ratio} onChange={(event) => onFormChange({ ...form, ratio: event.target.value })}>
-              <option value="16:9">16:9</option>
-              <option value="9:16">9:16</option>
-              <option value="1:1">1:1</option>
-              <option value="4:3">4:3</option>
-              <option value="3:4">3:4</option>
-            </select>
-          </label>
-          <label className="field">
-            <span>{t("Video duration")}</span>
-            <input
-              inputMode="numeric"
-              min="1"
-              placeholder="5"
-              value={form.duration}
-              onChange={(event) => onFormChange({ ...form, duration: event.target.value })}
-            />
-          </label>
-          <WatermarkField form={form} onFormChange={onFormChange} />
+          {videoFields !== "watermark" ? <>
+            <label className="field">
+              <span>{t("Aspect ratio")}</span>
+              <SelectControl value={form.ratio} onChange={(event) => onFormChange({ ...form, ratio: event.target.value })}>
+                {(videoGeneration?.aspectRatios ?? ["16:9", "9:16", "1:1", "4:3", "3:4"]).map((ratio) => <option value={ratio} key={ratio}>{ratio}</option>)}
+              </SelectControl>
+            </label>
+            <label className="field">
+              <span>{t("Video duration")}</span>
+              {videoGeneration?.durationsSeconds?.length ? (
+                <SelectControl value={form.duration} onChange={(event) => onFormChange({ ...form, duration: event.target.value })}>
+                  {videoGeneration.durationsSeconds.map((duration) => <option value={duration} key={duration}>{t("{count} seconds", { count: duration })}</option>)}
+                </SelectControl>
+              ) : (
+                <input inputMode="numeric" min="1" placeholder="5" value={form.duration} onChange={(event) => onFormChange({ ...form, duration: event.target.value })} />
+              )}
+            </label>
+          </> : null}
+          {videoFields !== "core" ? <WatermarkField form={form} onFormChange={onFormChange} /> : null}
         </>
       ) : form.operation === "image_edit" ? (
         <>
@@ -58,14 +62,14 @@ export function MediaJobAdvancedFields({
         <>
           <label className="field">
             <span>{t("Image size")}</span>
-            <select value={form.size} onChange={(event) => onFormChange({ ...form, size: event.target.value })}>
+            <SelectControl value={form.size} onChange={(event) => onFormChange({ ...form, size: event.target.value })}>
               <option value="">{t("Model default")}</option>
               <option value="1024x1024">1024x1024</option>
               <option value="1536x1024">1536x1024</option>
               <option value="1024x1536">1024x1536</option>
               <option value="2K">2K</option>
               <option value="4K">4K</option>
-            </select>
+            </SelectControl>
           </label>
           <label className="field">
             <span>{t("Result count")}</span>
@@ -104,11 +108,11 @@ function WatermarkField({
   return (
     <label className="field">
       <span>{t("Watermark")}</span>
-      <select value={form.watermark} onChange={(event) => onFormChange({ ...form, watermark: event.target.value as MediaJobFormState["watermark"] })}>
+      <SelectControl value={form.watermark} onChange={(event) => onFormChange({ ...form, watermark: event.target.value as MediaJobFormState["watermark"] })}>
         <option value="">{t("Model default")}</option>
         <option value="false">{t("Off")}</option>
         <option value="true">{t("On")}</option>
-      </select>
+      </SelectControl>
     </label>
   );
 }

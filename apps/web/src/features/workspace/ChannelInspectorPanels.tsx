@@ -39,6 +39,8 @@ import type {
   WorkUnit,
 } from "../../types.js";
 
+import { SelectControl } from "../../shared/components/SelectControl.js";
+
 function teammateLabel(
   teammateId: string | undefined,
   teammates: readonly ChannelMention[],
@@ -567,7 +569,7 @@ function ChannelProtocolEditor({
           </div>
           <label className="field wide">
             <span>{t("AI response language")}</span>
-            <select
+            <SelectControl
               value={draft.responseLanguage}
               onChange={(event) => setDraft({ ...draft, responseLanguage: event.target.value as ChannelProtocolDraft["responseLanguage"] })}
               disabled={!channel || saving}
@@ -576,7 +578,7 @@ function ChannelProtocolEditor({
               <option value="follow_user">{t("Follow user")}</option>
               <option value="zh-CN">{t("Chinese")}</option>
               <option value="en-US">{t("English")}</option>
-            </select>
+            </SelectControl>
           </label>
           <div className="task-strip-head">
             <span><Info size={15} /><strong>{t("Read-only protocol defaults")}</strong></span>

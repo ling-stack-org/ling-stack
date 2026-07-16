@@ -45,14 +45,15 @@ test("work board merges durable items and supports claim heartbeat", async ({ pa
   await expect(channelBoard).toContainText("Durable inspect handoff");
   await expect(channelBoard).toContainText("durable");
 
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
-  await page.getByLabel("Settings sections").getByRole("button", { name: "Work Board" }).click();
+  const navigation = page.getByLabel("Ling Stack navigation");
+  await navigation.getByRole("button", { name: "Work Board" }).click();
+  await expect(navigation).toBeVisible();
   await expect(page.locator(".settings-tool-return-row")).toHaveCount(0);
-  await expect(page.locator(".work-board-page").getByRole("heading", { name: "Needs action" })).toHaveCount(0);
+  await expect(page.locator(".work-board-page").getByRole("heading", { name: "Needs action" })).toBeVisible();
   await page.getByLabel("Work board views").getByRole("button", { name: "All active" }).click();
-  await expect(page.locator(".work-board-page").getByRole("heading", { name: "All active work" })).toHaveCount(0);
+  await expect(page.locator(".work-board-page").getByRole("heading", { name: "All active work" })).toBeVisible();
   await page.getByLabel("Work board views").getByRole("button", { name: "History" }).click();
-  await expect(page.locator(".work-board-page").getByRole("heading", { name: "Work history" })).toHaveCount(0);
+  await expect(page.locator(".work-board-page").getByRole("heading", { name: "Work history" })).toBeVisible();
   await page.getByLabel("Work board views").getByRole("button", { name: "Needs action" }).click();
   const durableRow = page.locator(".work-item-row").filter({ hasText: "Durable inspect handoff" });
   await expect(durableRow).toContainText("durable");

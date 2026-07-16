@@ -2,7 +2,6 @@ import {
   Bot,
   Box,
   Brain,
-  Kanban,
   ShieldCheck,
   type LucideIcon,
 } from "lucide-react";
@@ -15,11 +14,10 @@ export interface WorkspaceToolCounts {
   readonly readyProviderCount: number;
   readonly visibleTeammateCount: number;
   readonly activeCouncilCount: number;
-  readonly openWorkItemCount: number;
 }
 
 interface WorkspaceToolItem {
-  readonly id: "providers" | "teammates" | "councils" | "work-board" | "approval";
+  readonly id: "providers" | "teammates" | "councils" | "approval";
   readonly title: string;
   readonly chipLabel: string;
   readonly actionLabel: string;
@@ -42,7 +40,6 @@ export function SettingsWorkspaceToolsPanel({
   onOpenProviders,
   onOpenTeammates,
   onOpenCouncils,
-  onOpenWorkBoard,
   onOpenApprovalPolicy,
 }: {
   readonly counts: WorkspaceToolCounts;
@@ -52,7 +49,6 @@ export function SettingsWorkspaceToolsPanel({
   readonly onOpenProviders: () => void;
   readonly onOpenTeammates: () => void;
   readonly onOpenCouncils: () => void;
-  readonly onOpenWorkBoard: () => void;
   readonly onOpenApprovalPolicy: () => void;
 }): JSX.Element {
   const { t } = useI18n();
@@ -88,14 +84,6 @@ export function SettingsWorkspaceToolsPanel({
       onOpen: onOpenCouncils,
     },
     {
-      id: "work-board",
-      title: t("Work Board"),
-      chipLabel: t("{count} pending work items", { count: counts.openWorkItemCount }),
-      actionLabel: t("Open Work Board"),
-      icon: Kanban,
-      onOpen: onOpenWorkBoard,
-    },
-    {
       id: "approval",
       title: t("Default authorization"),
       chipLabel: t("Default: {mode}", { mode: authorizationLabel }),
@@ -114,8 +102,8 @@ export function SettingsWorkspaceToolsPanel({
     {
       id: "controls",
       title: t("Work controls"),
-      description: t("Review workspace work and default authorization."),
-      tools: tools.filter((tool) => tool.id === "work-board" || tool.id === "approval"),
+      description: t("Manage default authorization for new work."),
+      tools: tools.filter((tool) => tool.id === "approval"),
     },
   ];
 

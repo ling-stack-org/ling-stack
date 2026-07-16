@@ -3,6 +3,8 @@ import { useI18n } from "../../i18n.js";
 import { MetaRow, StatusBadge } from "../../shared/components/index.js";
 import type { AiTeammate, ProviderPreset } from "../../types.js";
 
+import { SelectControl } from "../../shared/components/SelectControl.js";
+
 interface TeammateModelSettingsForm {
   readonly displayName: string;
   readonly description: string;
@@ -51,14 +53,14 @@ export function TeammateModelTab({
         <div className="teammate-settings-grid">
           <label className="field wide">
             <span>{t("Provider")}</span>
-            <select value={settingsForm.providerPresetId} onChange={(event) => onSettingsFormChange({ ...settingsForm, providerPresetId: event.target.value })}>
+            <SelectControl value={settingsForm.providerPresetId} onChange={(event) => onSettingsFormChange({ ...settingsForm, providerPresetId: event.target.value })}>
               <option value="">{t("None")}</option>
               {providers.map((item) => (
                 <option key={item.id} value={item.id}>
                   {item.displayName} / {item.model}
                 </option>
               ))}
-            </select>
+            </SelectControl>
           </label>
         </div>
       ) : null}

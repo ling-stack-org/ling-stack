@@ -6,6 +6,8 @@ import { isTerminalWorkItemView, workItemNextActionLabel, type WorkItemView } fr
 import type { Channel } from "../../types.js";
 import { StatusBadge } from "../../shared/components/index.js";
 
+import { SelectControl } from "../../shared/components/SelectControl.js";
+
 export function WorkItemRow({
   item,
   channelName,
@@ -155,14 +157,15 @@ export function WorkItemRow({
         ) : null}
         {canRoute ? (
           <div className="work-item-route-control">
-            <select
+            <SelectControl
+              variant="compact"
               aria-label={t("Route to channel")}
               value={targetChannelId}
               disabled={routing}
               onChange={(event) => setRouteChannelId(event.target.value)}
             >
               {routeChannels.map((channel) => <option key={channel.id} value={channel.id}>{channel.name}</option>)}
-            </select>
+            </SelectControl>
             <button
               className="secondary-button compact-button"
               type="button"

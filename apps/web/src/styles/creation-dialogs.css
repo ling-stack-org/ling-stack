@@ -371,9 +371,7 @@
 }
 
 .channel-create-dialog-clean input,
-.channel-create-dialog-clean select,
-.teammate-create-dialog input,
-.teammate-create-dialog select {
+.teammate-create-dialog input {
   min-height: 40px;
   border-radius: 7px;
 }

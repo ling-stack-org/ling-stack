@@ -11,10 +11,8 @@ import {
   Archive,
   Bot,
   ChevronDown,
-  Database,
   GitBranch,
   Hash,
-  Inbox,
   MessageSquare,
   MoreHorizontal,
   PanelLeftClose,
@@ -22,7 +20,6 @@ import {
   PlugZap,
   Plus,
   Settings,
-  Timer,
 } from "lucide-react";
 import { useI18n } from "../../i18n.js";
 import { ActionMenuItem } from "../../shared/components/index.js";
@@ -35,6 +32,8 @@ import {
 import { effectiveApprovalStatus } from "../../lib/approvals.js";
 import type { AiTeammate, ApprovalRequest, Channel, ChannelBranch } from "../../types.js";
 import { TeammateAvatarView } from "../teammates/TeammateAvatarView.js";
+import { SidebarPrimaryNavigation, type SidebarTooltipBindings } from "./SidebarPrimaryNavigation.js";
+import { channelAvatarMeta } from "./sidebar-channel-avatar.js";
 
 export interface SidebarNotification {
   readonly count?: number;
@@ -57,14 +56,6 @@ type SidebarTooltipState = {
 };
 
 type SidebarSectionId = "channels" | "teammates" | "recent";
-
-type SidebarTooltipBindings = {
-  readonly "data-sidebar-tooltip": string;
-  readonly onMouseEnter: (event: ReactMouseEvent<HTMLElement>) => void;
-  readonly onMouseLeave: () => void;
-  readonly onFocus: (event: ReactFocusEvent<HTMLElement>) => void;
-  readonly onBlur: (event: ReactFocusEvent<HTMLElement>) => void;
-};
 
 export function SidebarNavigation({
   activeSidebarTarget,
@@ -244,11 +235,12 @@ export function SidebarNavigation({
           ) : null}
         </div>
 
-        <nav className="primary-nav">
-          <NavItem icon={<Inbox />} label={t("Inbox")} active={activeSidebarTarget === "approvals"} onClick={() => onOpenView("approvals")} tooltipProps={tooltipProps(inboxTooltip)} />
-          <NavItem icon={<Database />} label={t("Image Generation")} active={activeSidebarTarget === "media"} onClick={() => onOpenView("media")} tooltipProps={tooltipProps(t("Image Generation"))} />
-          <NavItem icon={<Timer />} label={t("Automations")} active={activeSidebarTarget === "automations"} onClick={() => onOpenView("automations")} tooltipProps={tooltipProps(t("Automations"))} />
-        </nav>
+        <SidebarPrimaryNavigation
+          activeSidebarTarget={activeSidebarTarget}
+          inboxTooltip={inboxTooltip}
+          onOpenView={onOpenView}
+          tooltipProps={tooltipProps}
+        />
       </div>
 
       <div className="sidebar-scroll-region" aria-label={t("Recent")} onScroll={() => hideSidebarTooltip()}>
@@ -781,71 +773,5 @@ function renderRecentRailPreview(conversations: readonly SidebarRecentConversati
       ))}
       {extraCount > 0 ? <span className="sidebar-rail-stack-more">+{extraCount}</span> : null}
     </span>
-  );
-}
-
-function NavItem({
-  icon,
-  label,
-  active = false,
-  disabled = false,
-  onClick,
-  ariaLabel,
-  tooltipProps,
-}: {
-  readonly icon: JSX.Element;
-  readonly label: string;
-  readonly active?: boolean;
-  readonly disabled?: boolean;
-  readonly onClick?: () => void;
-  readonly ariaLabel?: string;
-  readonly tooltipProps?: SidebarTooltipBindings;
-}): JSX.Element {
-  return (
-    <button className={active ? "nav-item active" : "nav-item"} type="button" disabled={disabled} onClick={onClick} aria-label={ariaLabel ?? label} title={ariaLabel ?? label} {...tooltipProps}>
-      {icon}
-      <span>{label}</span>
-    </button>
-  );
-}
-
-const channelAvatarTones = ["tone-slate", "tone-blue", "tone-teal", "tone-amber", "tone-rose", "tone-violet"] as const;
-
-function channelAvatarMeta(channel: Channel): { readonly label: string; readonly tone: (typeof channelAvatarTones)[number] } {
-  const seed = channel.id || channel.name;
-  let hash = 0;
-  for (const char of seed) {
-    hash = (hash * 31 + char.charCodeAt(0)) >>> 0;
-  }
-  return {
-    label: channelInitialsFromName(channel.name),
-    tone: channelAvatarTones[hash % channelAvatarTones.length] ?? "tone-slate",
-  };
-}
-
-function channelInitialsFromName(name: string): string {
-  const value = name.trim();
-  if (!value) {
-    return "#";
-  }
-  const compact = Array.from(value.replace(/\s+/g, ""));
-  const firstChar = compact[0] ?? "#";
-  if (isCjkCharacter(firstChar)) {
-    return firstChar;
-  }
-  const tokens = value.match(/[A-Za-z0-9]+/g) ?? [];
-  if (tokens.length >= 2) {
-    return `${tokens[0]?.[0] ?? ""}${tokens[1]?.[0] ?? ""}`.toUpperCase();
-  }
-  const token = tokens[0] ?? compact.join("");
-  return Array.from(token).slice(0, 2).join("").toUpperCase() || firstChar.toUpperCase();
-}
-
-function isCjkCharacter(char: string): boolean {
-  const code = char.codePointAt(0) ?? 0;
-  return (
-    (code >= 0x4e00 && code <= 0x9fff) ||
-    (code >= 0x3400 && code <= 0x4dbf) ||
-    (code >= 0x20000 && code <= 0x2a6df)
   );
 }

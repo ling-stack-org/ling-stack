@@ -2,6 +2,10 @@ import type {
   ManagedPluginApplyPresetRequest,
   ManagedPluginApplyPresetResponse,
   ManagedPluginCheckResponse,
+  ManagedPluginConnectRequest,
+  ManagedPluginConnectResponse,
+  ManagedPluginCreateRequest,
+  ManagedPluginCreateResponse,
   ManagedPluginDisableRequest,
   ManagedPluginInstallRequest,
   ManagedPluginInstallResponse,
@@ -21,6 +25,10 @@ export async function listManagedPlugins(cwd: string): Promise<ManagedPluginList
   return daemonClient.listManagedPlugins(cwd);
 }
 
+export async function createManagedPlugin(cwd: string, input: ManagedPluginCreateRequest): Promise<ManagedPluginCreateResponse> {
+  return daemonClient.createManagedPlugin(cwd, input);
+}
+
 export async function enableManagedPlugin(cwd: string, pluginId: string): Promise<ManagedPluginMutationResponse> {
   return daemonClient.enableManagedPlugin(cwd, pluginId);
 }
@@ -31,6 +39,14 @@ export async function disableManagedPlugin(cwd: string, pluginId: string, input:
 
 export async function checkManagedPlugin(cwd: string, pluginId: string): Promise<ManagedPluginCheckResponse> {
   return daemonClient.checkManagedPlugin(cwd, pluginId);
+}
+
+export async function connectManagedPlugin(
+  cwd: string,
+  pluginId: string,
+  input: ManagedPluginConnectRequest = {},
+): Promise<ManagedPluginConnectResponse> {
+  return daemonClient.connectManagedPlugin(cwd, pluginId, input);
 }
 
 export async function applyManagedPluginPreset(

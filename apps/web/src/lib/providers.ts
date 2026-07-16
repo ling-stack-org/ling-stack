@@ -848,6 +848,24 @@ export function providerCheckDisplayGuidance(result: ProviderCheckResult, provid
   return providerCheckGuidance(result, provider, t);
 }
 
+export function providerModelDiscoveryErrorMessage(error: unknown, t?: ProviderTranslate): string {
+  const message = error instanceof Error ? error.message : String(error);
+  const normalized = message.toLowerCase();
+  if (normalized.includes("no route for post /provider-models")) {
+    return translateProviderText(t, "No route for POST /provider-models");
+  }
+  if (normalized.includes("api key missing") || normalized.includes("secret_missing")) {
+    return translateProviderText(t, "API key missing. Add an API key before fetching models.");
+  }
+  if (normalized.includes("auth_failed") || normalized.includes("401") || normalized.includes("403")) {
+    return translateProviderText(t, "The API key was rejected. Check the key and account permission, then try again.");
+  }
+  if (normalized.includes("timeout") || normalized.includes("network") || normalized.includes("operation was aborted")) {
+    return translateProviderText(t, "Could not reach the provider. Check Base URL, proxy, and local relay, then try again.");
+  }
+  return translateProviderText(t, "Could not fetch the model list. Check the provider configuration and try again.");
+}
+
 export function providerCheckGuidance(result: ProviderCheckResult, provider: Pick<ProviderPreset, "api"> | undefined, t?: ProviderTranslate): string {
   if (result.ok) {
     if (provider?.api === "media-job") {
