@@ -210,6 +210,7 @@ import {
   type ListSkillSourceArtifactOptions,
   type ListSkillRegistryOptions,
   type ListSkillSourceSnapshotOptions,
+  type PublishSkillRevisionDraftInput,
   type SkillCompiledRuntimeViewRecord,
   type SkillImportDraft,
   type SkillRegressionRun,
@@ -226,6 +227,10 @@ import {
   type SkillCandidate,
   type SkillCandidateReviewRecord,
 } from "../skill-candidate-types.js";
+import type {
+  OfficialSkillSourceSubscription,
+  UpsertOfficialSkillSourceSubscriptionInput,
+} from "../managed-official-skill-source-types.js";
 import type {
   CandidateGenerationDecision,
   CreateCandidateGenerationDecisionInput,
@@ -1806,6 +1811,14 @@ export class SqliteRunStore implements RunStore {
     return this.skillRegistry.rollbackSkillSourceSnapshot(snapshotId, now);
   }
 
+  getOfficialSkillSourceSubscription(): OfficialSkillSourceSubscription | undefined {
+    return this.skillRegistry.getOfficialSkillSourceSubscription();
+  }
+
+  upsertOfficialSkillSourceSubscription(input: UpsertOfficialSkillSourceSubscriptionInput, now: string): OfficialSkillSourceSubscription {
+    return this.skillRegistry.upsertOfficialSkillSourceSubscription(input, now);
+  }
+
   getSkillSourceUpgradePolicy(now?: string): SkillSourceUpgradePolicy {
     return this.skillRegistry.getSkillSourceUpgradePolicy(now);
   }
@@ -1866,8 +1879,16 @@ export class SqliteRunStore implements RunStore {
     return this.skillRegistry.publishSkillImportDraft(id, now);
   }
 
+  publishSkillRevisionDraft(input: PublishSkillRevisionDraftInput, now: string): SkillRegistryEntry {
+    return this.skillRegistry.publishSkillRevisionDraft(input, now);
+  }
+
   archiveSkillRegistryEntry(id: string, now: string): SkillRegistryEntry | undefined {
     return this.skillRegistry.archiveSkillRegistryEntry(id, now);
+  }
+
+  hardDeleteSkillRegistryEntry(id: string): import("../skill-types.js").SkillHardDeleteResult {
+    return this.skillRegistry.hardDeleteSkillRegistryEntry(id);
   }
 
   createSkillCandidate(input: CreateSkillCandidateInput, now: string): SkillCandidate {
@@ -1891,6 +1912,10 @@ export class SqliteRunStore implements RunStore {
     now: string,
   ): { readonly candidate: SkillCandidate; readonly action: SkillCandidateReviewRecord } {
     return this.skillCandidates.applySkillCandidateReviewAction(input, now);
+  }
+
+  markSkillCandidatePublished(candidateId: string, now: string): SkillCandidate {
+    return this.skillCandidates.markSkillCandidatePublished(candidateId, now);
   }
 
   createProcedureObservation(input: CreateProcedureObservationInput, now: string): ProcedureObservation {

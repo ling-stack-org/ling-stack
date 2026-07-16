@@ -1,9 +1,14 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { execFile as execFileCallback } from "node:child_process";
+import { appendFile, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import test from "node:test";
+import { promisify } from "node:util";
+import { createSqliteRunStore } from "@ling-stack/core";
 import { createDaemonServer } from "../dist/index.js";
+
+const execFile = promisify(execFileCallback);
 
 async function withTempDir(prefix, fn) {
   const root = await mkdtemp(resolve(tmpdir(), prefix));
@@ -19,6 +24,35 @@ async function writeSkill(root, markdown, reference = "# QA checklist\n") {
   await mkdir(resolve(skillDir, "references"), { recursive: true });
   await writeFile(resolve(skillDir, "SKILL.md"), markdown);
   await writeFile(resolve(skillDir, "references", "checklist.md"), reference);
+}
+
+async function createManagedOfficialGstackCache(userRoot) {
+  const remoteRoot = resolve(userRoot, "fixture-official-gstack.git");
+  const workRoot = resolve(userRoot, "fixture-official-gstack-work");
+  const cacheRoot = resolve(userRoot, "sources", "official-gstack");
+  await execFile("git", ["init", "--bare", remoteRoot]);
+  await execFile("git", ["clone", remoteRoot, workRoot]);
+  await execFile("git", ["config", "user.email", "test@example.com"], { cwd: workRoot });
+  await execFile("git", ["config", "user.name", "Ling Test"], { cwd: workRoot });
+  await mkdir(resolve(workRoot, ".agents", "skills", "gstack-safe-sync"), { recursive: true });
+  await writeFile(resolve(workRoot, "package.json"), JSON.stringify({ name: "gstack", version: "9.8.7" }));
+  await writeFile(resolve(workRoot, ".agents", "skills", "gstack-safe-sync", "SKILL.md"), [
+    "---",
+    "name: safe-sync",
+    "description: Apply a focused source synchronization update after a reviewed official change.",
+    "---",
+    "# Safe Sync",
+    "Apply the reviewed update and validate the result.",
+  ].join("\n"));
+  await execFile("git", ["add", "."], { cwd: workRoot });
+  await execFile("git", ["commit", "-m", "seed official skills"], { cwd: workRoot });
+  await execFile("git", ["branch", "-M", "main"], { cwd: workRoot });
+  await execFile("git", ["push", "origin", "main"], { cwd: workRoot });
+  await mkdir(resolve(cacheRoot, ".."), { recursive: true });
+  await execFile("git", ["clone", remoteRoot, cacheRoot]);
+  await execFile("git", ["remote", "set-url", "origin", "https://github.com/garrytan/gstack.git"], { cwd: cacheRoot });
+  await appendFile(resolve(cacheRoot, ".git", "config"), `\n[url "file://${remoteRoot}"]\n\tinsteadOf = https://github.com/garrytan/gstack.git\n`);
+  return { workRoot, cacheRoot };
 }
 
 test("skill source upgrade API checks updates, publishes artifacts, and rolls back", async () => {
@@ -125,6 +159,87 @@ test("skill source upgrade API checks updates, publishes artifacts, and rolls ba
         assert.equal(rolledBack.snapshot.sourceChecksum, published.snapshots[0].sourceChecksum);
       } finally {
         await daemon.stop();
+      }
+    });
+  });
+});
+
+test("gstack source apply refreshes the managed official cache without a local connection or source path", async () => {
+  await withTempDir("ling-stack-skill-source-apply-cwd-", async (cwd) => {
+    await withTempDir("ling-stack-skill-source-apply-user-", async (userRoot) => {
+      const previousLingStackHome = process.env.LING_STACK_HOME;
+      process.env.LING_STACK_HOME = userRoot;
+      const { workRoot, cacheRoot } = await createManagedOfficialGstackCache(userRoot);
+      const daemon = createDaemonServer({ host: "127.0.0.1", port: 0 });
+      await daemon.start();
+      const address = daemon.server.address();
+      assert.ok(address && typeof address === "object");
+      const baseUrl = `http://127.0.0.1:${address.port}`;
+      const syncUrl = `${baseUrl}/skills/sync/gstack`;
+      try {
+        const initial = await getJson(`${syncUrl}/status?cwd=${encodeURIComponent(cwd)}`);
+        assert.equal(initial.status, "ready");
+        assert.equal(initial.source.originUrl, "https://github.com/garrytan/gstack.git");
+        assert.equal(initial.source.repoRoot, undefined);
+        const rejectedInput = await postRaw(`${syncUrl}/apply?cwd=${encodeURIComponent(cwd)}`, { skillRoots: [resolve(cwd, "ignored-skills")] });
+        assert.equal(rejectedInput.status, 400);
+        assert.match(await rejectedInput.text(), /official_skill_source_input_not_supported/);
+        const imported = await postJson(`${syncUrl}/apply?cwd=${encodeURIComponent(cwd)}`, {});
+        assert.equal(imported.summary.synced, 1);
+        assert.equal(imported.summary.unchanged, 0);
+        assert.equal(imported.skills.some((skill) => skill.id === "safe-sync"), true);
+        assert.equal(imported.source.originUrl, "https://github.com/garrytan/gstack.git");
+        assert.ok(imported.source.revision);
+        assert.equal(imported.source.repoRoot, undefined);
+
+        await writeFile(resolve(workRoot, ".agents", "skills", "gstack-safe-sync", "SKILL.md"), [
+          "---",
+          "name: safe-sync",
+          "description: Apply a focused source synchronization update after a reviewed official change.",
+          "---",
+          "# Safe Sync",
+          "Run rm -rf only after an explicit user confirmation.",
+        ].join("\n"));
+        await execFile("git", ["add", "."], { cwd: workRoot });
+        await execFile("git", ["commit", "-m", "update official skill"], { cwd: workRoot });
+        await execFile("git", ["push", "origin", "main"], { cwd: workRoot });
+        const applied = await postJson(`${syncUrl}/apply?cwd=${encodeURIComponent(cwd)}`, {});
+        assert.equal(applied.summary.synced, 1);
+        assert.equal(applied.snapshots.length, 1);
+        assert.equal(applied.policy.lastCheckedAt, applied.completedAt);
+
+        const unchanged = await postJson(`${syncUrl}/apply?cwd=${encodeURIComponent(cwd)}`, {});
+        assert.equal(unchanged.summary.synced, 0);
+        assert.equal(unchanged.summary.unchanged, 1);
+
+        const newSkill = resolve(workRoot, ".agents", "skills", "gstack-new-skill");
+        await mkdir(newSkill, { recursive: true });
+        await writeFile(resolve(newSkill, "SKILL.md"), "---\nname: new-skill\ndescription: Imported directly from the managed official source.\n---\n# New skill\n");
+        await execFile("git", ["add", "."], { cwd: workRoot });
+        await execFile("git", ["commit", "-m", "add official skill"], { cwd: workRoot });
+        await execFile("git", ["push", "origin", "main"], { cwd: workRoot });
+        const newSkillResult = await postJson(`${syncUrl}/apply?cwd=${encodeURIComponent(cwd)}`, {});
+        assert.equal(newSkillResult.summary.synced, 1);
+        assert.equal(newSkillResult.summary.unchanged, 1);
+        assert.equal(newSkillResult.skills.some((skill) => skill.id === "new-skill"), true);
+
+        const lastSuccessfulStatus = await getJson(`${syncUrl}/status?cwd=${encodeURIComponent(cwd)}`);
+        await execFile("git", ["rm", ".agents/skills/gstack-safe-sync/SKILL.md"], { cwd: workRoot });
+        await execFile("git", ["commit", "-m", "remove required skill"], { cwd: workRoot });
+        await execFile("git", ["push", "origin", "main"], { cwd: workRoot });
+        const missingResult = await postRaw(`${syncUrl}/apply?cwd=${encodeURIComponent(cwd)}`, {});
+        assert.equal(missingResult.status, 409);
+        assert.match(await missingResult.text(), /gstack_source_sync_unavailable/);
+        const afterFailedSyncStatus = await getJson(`${syncUrl}/status?cwd=${encodeURIComponent(cwd)}`);
+        assert.equal(afterFailedSyncStatus.source.revision, lastSuccessfulStatus.source.revision);
+      } finally {
+        await daemon.stop();
+        if (previousLingStackHome === undefined) {
+          delete process.env.LING_STACK_HOME;
+        } else {
+          process.env.LING_STACK_HOME = previousLingStackHome;
+        }
+        assert.equal(cacheRoot.includes(resolve(userRoot, "sources")), true);
       }
     });
   });

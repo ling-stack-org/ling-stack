@@ -3,6 +3,7 @@ import type { SkillApprovalProfile } from "./approvals.js";
 import type { ProviderCapability } from "./providers.js";
 import type { AiTeammateRoleKey } from "./teammates.js";
 import type { SkillGovernanceGenerationMode, SkillGovernanceRecordingMode } from "./settings.js";
+import type { OfficialSkillSourceState } from "./official-skill-source.js";
 
 export type TeammateSkillBindingSource = "template" | "user";
 
@@ -15,7 +16,7 @@ export interface TeammateSkillBinding {
   readonly updatedAt: string;
 }
 
-export type SkillWorkflowPhase =
+export type WorkflowPhase =
   | "discover"
   | "plan"
   | "design"
@@ -26,6 +27,9 @@ export type SkillWorkflowPhase =
   | "ship"
   | "document"
   | "operate";
+
+/** @deprecated Use WorkflowPhase for workflow objects. Skills do not have phases. */
+export type SkillWorkflowPhase = WorkflowPhase;
 
 export type SkillStateEffect =
   | "creates_plan"
@@ -43,7 +47,6 @@ export interface SkillDefinition {
   readonly name: string;
   readonly summary: string;
   readonly roleAffinity: readonly AiTeammateRoleKey[];
-  readonly workflowPhase: SkillWorkflowPhase;
   readonly promptFragments: readonly string[];
   readonly requiredTools: readonly ToolName[];
   readonly requiredProviderCapabilities: readonly ProviderCapability[];
@@ -990,7 +993,6 @@ export interface SkillCandidateValidationStep {
 }
 
 export interface SkillCandidateDraftDefinition {
-  readonly workflowPhase: SkillWorkflowPhase | string;
   readonly positiveTriggers: readonly string[];
   readonly negativeTriggers: readonly string[];
   readonly procedureSteps: readonly SkillCandidateProcedureStep[];
@@ -1072,6 +1074,10 @@ export interface SkillCandidateReviewResponse {
   readonly action: SkillCandidateReviewRecord;
 }
 
+export interface SkillCandidateDraftRequest {
+  readonly content?: string;
+}
+
 export interface SkillCandidateDraftResponse {
   readonly cwd: string;
   readonly candidate: SkillCandidate;
@@ -1087,7 +1093,6 @@ export interface SkillCandidateHealthInput {
   readonly targetSkillId?: string;
   readonly title: string;
   readonly summary: string;
-  readonly workflowPhase: SkillWorkflowPhase | string;
   readonly positiveTriggers: readonly string[];
   readonly negativeTriggers: readonly string[];
   readonly procedureSteps?: readonly {
@@ -1246,6 +1251,8 @@ export interface SkillImportDraft {
   readonly updatedAt: string;
 }
 
+export type SkillImportPreview = Omit<SkillImportDraft, "id" | "workspaceId" | "createdAt" | "updatedAt">;
+
 export interface SkillRegistryListResponse {
   readonly cwd: string;
   readonly skills: readonly SkillRegistryEntry[];
@@ -1302,6 +1309,21 @@ export interface SkillSourceSyncPublishResponse {
   readonly skills: readonly SkillRegistryEntry[];
   readonly snapshots: readonly SkillSourceSnapshot[];
   readonly artifacts: readonly SkillSourceArtifact[];
+}
+
+export interface SkillSourceSyncApplySummary {
+  readonly synced: number;
+  readonly unchanged: number;
+}
+
+export interface SkillSourceSyncApplyResponse {
+  readonly cwd: string;
+  readonly completedAt: string;
+  readonly policy: SkillSourceUpgradePolicy;
+  readonly source: OfficialSkillSourceState;
+  readonly summary: SkillSourceSyncApplySummary;
+  readonly skills: readonly SkillRegistryEntry[];
+  readonly snapshots: readonly SkillSourceSnapshot[];
 }
 
 export interface SkillSourceUpgradePolicyUpdateRequest {
@@ -1390,6 +1412,12 @@ export interface SkillImportDraftResponse {
   readonly contextFindings: readonly SkillSourceContextHealthFinding[];
 }
 
+export interface SkillImportPreviewResponse {
+  readonly cwd: string;
+  readonly preview: SkillImportPreview;
+  readonly contextFindings: readonly SkillSourceContextHealthFinding[];
+}
+
 export interface SkillImportPublishResponse {
   readonly cwd: string;
   readonly draftId: string;
@@ -1399,6 +1427,65 @@ export interface SkillImportPublishResponse {
 export interface SkillRegistryMutationResponse {
   readonly cwd: string;
   readonly skill: SkillRegistryEntry;
+}
+
+export interface SkillEditableDefinition {
+  readonly name: string;
+  readonly summary: string;
+  readonly promptFragments: readonly string[];
+  readonly requiredTools: readonly ToolName[];
+  readonly requiredProviderCapabilities: readonly ProviderCapability[];
+  readonly approvalProfile: SkillApprovalProfile;
+}
+
+export interface SkillRevisionAuthoritySnapshot {
+  readonly requiredTools: readonly ToolName[];
+  readonly requiredProviderCapabilities: readonly ProviderCapability[];
+  readonly approvalProfile: SkillApprovalProfile;
+}
+
+export interface SkillRevisionAuthorityDiff {
+  readonly changed: boolean;
+  readonly requiredToolsChanged: boolean;
+  readonly requiredProviderCapabilitiesChanged: boolean;
+  readonly approvalProfileChanged: boolean;
+  readonly before: SkillRevisionAuthoritySnapshot;
+  readonly after: SkillRevisionAuthoritySnapshot;
+}
+
+export interface SkillRevisionPreviewRequest {
+  readonly expectedUpdatedAt: string;
+  readonly definition: SkillEditableDefinition;
+}
+
+export interface SkillRevisionPublishRequest extends SkillRevisionPreviewRequest {
+  readonly confirmAuthorityChanges?: boolean;
+}
+
+export interface SkillRevisionPreview {
+  readonly definition: SkillDefinition;
+  readonly warnings: readonly SkillImportWarning[];
+  readonly authorityDiff: SkillRevisionAuthorityDiff;
+  readonly requiresConfirmation: boolean;
+  readonly canPublish: boolean;
+}
+
+export interface SkillRevisionPreviewResponse {
+  readonly cwd: string;
+  readonly skillId: string;
+  readonly preview: SkillRevisionPreview;
+}
+
+export interface SkillRevisionPublishResponse {
+  readonly cwd: string;
+  readonly draftId: string;
+  readonly skill: SkillRegistryEntry;
+}
+
+export interface SkillHardDeleteResponse {
+  readonly cwd: string;
+  readonly deletedSkillId: string;
+  readonly deletedAt: string;
 }
 
 export type EffectiveSkillBlockedReasonCode =

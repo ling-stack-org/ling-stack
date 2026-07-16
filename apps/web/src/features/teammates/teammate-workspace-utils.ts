@@ -96,7 +96,6 @@ export function filterTeammateSkillRows(
         row.id,
         row.skill?.name ?? "",
         row.skill?.summary ?? "",
-        row.skill?.workflowPhase ?? "",
         ...(row.skill?.requiredTools ?? []),
         ...(row.skill?.requiredProviderCapabilities ?? []),
         row.sourceSnapshot?.sourcePath ?? "",

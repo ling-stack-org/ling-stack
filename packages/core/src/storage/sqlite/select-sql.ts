@@ -727,6 +727,23 @@ export function skillSourceSnapshotSelectSql(whereClause: string): string {
   `;
 }
 
+export function officialSkillSourceSubscriptionSelectSql(whereClause: string): string {
+  return `
+    SELECT
+      workspace_id,
+      source_id,
+      origin_url,
+      ref,
+      revision,
+      version,
+      last_synced_at,
+      created_at,
+      updated_at
+    FROM official_skill_source_subscriptions
+    ${whereClause}
+  `;
+}
+
 export function skillSourceArtifactSelectSql(whereClause: string): string {
   return `
     SELECT

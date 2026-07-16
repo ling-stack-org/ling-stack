@@ -13,18 +13,25 @@ import {
   type ListSkillCompiledRuntimeViewOptions,
   type ListSkillRegistryOptions,
   type ListSkillSourceSnapshotOptions,
+  type PublishSkillRevisionDraftInput,
   type SkillImportDraft,
+  type SkillHardDeleteBlocker,
+  type SkillHardDeleteResult,
   type SkillCompiledRuntimeViewRecord,
+  type SkillDefinition,
   type SkillRegistryEntry,
   type SkillSourceArtifact,
   type SkillSourceSnapshot,
   type SkillSourceUpgradePolicy,
   type SkillVisibility,
+  SkillRevisionStoreError,
   type UpdateSkillSourceUpgradePolicyInput,
+  isManuallyImportedSkillSource,
 } from "../../skill-types.js";
+import type { OfficialSkillSourceSubscription, UpsertOfficialSkillSourceSubscriptionInput } from "../../managed-official-skill-source-types.js";
 import { omitUndefined, stringifyJson } from "./helpers.js";
-import { mapSkillCompiledRuntimeView, mapSkillImportDraft, mapSkillRegistryEntry, mapSkillSourceArtifact, mapSkillSourceSnapshot, mapSkillSourceUpgradePolicy } from "./task-skill-mappers.js";
-import { skillCompiledRuntimeViewSelectSql, skillImportDraftSelectSql, skillRegistryEntrySelectSql, skillSourceArtifactSelectSql, skillSourceSnapshotSelectSql, skillSourceUpgradePolicySelectSql } from "./select-sql.js";
+import { mapOfficialSkillSourceSubscription, mapSkillCompiledRuntimeView, mapSkillImportDraft, mapSkillRegistryEntry, mapSkillSourceArtifact, mapSkillSourceSnapshot, mapSkillSourceUpgradePolicy } from "./task-skill-mappers.js";
+import { officialSkillSourceSubscriptionSelectSql, skillCompiledRuntimeViewSelectSql, skillImportDraftSelectSql, skillRegistryEntrySelectSql, skillSourceArtifactSelectSql, skillSourceSnapshotSelectSql, skillSourceUpgradePolicySelectSql } from "./select-sql.js";
 import type { SqliteStoreContext } from "./store-context.js";
 
 export class SqliteSkillRegistryStore {
@@ -205,6 +212,61 @@ export class SqliteSkillRegistryStore {
       warnings: existing.warnings,
       reviewStatus: "published",
     }, now);
+  }
+
+  getOfficialSkillSourceSubscription(): OfficialSkillSourceSubscription | undefined {
+    const row = this.context.database
+      .prepare(officialSkillSourceSubscriptionSelectSql("WHERE workspace_id = ? AND source_id = ?"))
+      .get(DEFAULT_WORKSPACE_ID, "official-gstack");
+    return row ? mapOfficialSkillSourceSubscription(row as Record<string, SQLOutputValue>) : undefined;
+  }
+
+  upsertOfficialSkillSourceSubscription(input: UpsertOfficialSkillSourceSubscriptionInput, now: string): OfficialSkillSourceSubscription {
+    const existing = this.getOfficialSkillSourceSubscription();
+    const subscription: OfficialSkillSourceSubscription = omitUndefined({
+      workspaceId: DEFAULT_WORKSPACE_ID,
+      sourceId: input.sourceId,
+      originUrl: input.originUrl,
+      ref: input.ref,
+      revision: input.revision,
+      version: input.version,
+      lastSyncedAt: input.lastSyncedAt,
+      createdAt: existing?.createdAt ?? now,
+      updatedAt: now,
+    });
+    this.context.database
+      .prepare(`
+        INSERT INTO official_skill_source_subscriptions (
+          workspace_id,
+          source_id,
+          origin_url,
+          ref,
+          revision,
+          version,
+          last_synced_at,
+          created_at,
+          updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(workspace_id, source_id) DO UPDATE SET
+          origin_url = excluded.origin_url,
+          ref = excluded.ref,
+          revision = excluded.revision,
+          version = excluded.version,
+          last_synced_at = excluded.last_synced_at,
+          updated_at = excluded.updated_at
+      `)
+      .run(
+        subscription.workspaceId,
+        subscription.sourceId,
+        subscription.originUrl,
+        subscription.ref,
+        subscription.revision ?? null,
+        subscription.version ?? null,
+        subscription.lastSyncedAt ?? null,
+        subscription.createdAt,
+        subscription.updatedAt,
+      );
+    return this.getOfficialSkillSourceSubscription() ?? subscription;
   }
 
   getSkillSourceUpgradePolicy(now = new Date().toISOString()): SkillSourceUpgradePolicy {
@@ -472,7 +534,10 @@ export class SqliteSkillRegistryStore {
       name: input.name,
       version: input.version,
       description: input.description,
-      definitions: input.definitions,
+      definitions: input.definitions.map((item) => ({
+        ...item,
+        definition: withoutLegacySkillWorkflowPhase(item.definition),
+      })),
       warnings: input.warnings ?? [],
       createdAt: now,
       updatedAt: now,
@@ -624,6 +689,63 @@ export class SqliteSkillRegistryStore {
       .filter((entry): entry is SkillRegistryEntry => Boolean(entry));
   }
 
+  publishSkillRevisionDraft(input: PublishSkillRevisionDraftInput, now: string): SkillRegistryEntry {
+    const draft = this.getSkillImportDraft(input.draftId);
+    if (!draft) {
+      throw new SkillRevisionStoreError("skill_revision_draft_not_found", `Skill revision draft not found: ${input.draftId}`);
+    }
+    if (draft.definitions.length !== 1 || draft.definitions[0]?.definition.id !== input.skillId) {
+      throw new SkillRevisionStoreError("skill_revision_invalid", "Skill revision draft must contain exactly the target skill definition");
+    }
+    const allWarnings = [
+      ...draft.warnings,
+      ...draft.definitions.flatMap((definition) => definition.warnings ?? []),
+    ];
+    if (allWarnings.some((warning) => warning.severity === "error")) {
+      throw new SkillRevisionStoreError("skill_revision_invalid", "Skill revision draft has error warnings and cannot be published");
+    }
+
+    this.context.database.exec("BEGIN IMMEDIATE");
+    try {
+      const existing = this.getSkillRegistryEntry(input.skillId);
+      if (!existing) {
+        throw new SkillRevisionStoreError("skill_revision_invalid", `Skill not found: ${input.skillId}`);
+      }
+      if (existing.updatedAt !== input.expectedUpdatedAt) {
+        throw new SkillRevisionStoreError("skill_revision_conflict", "Skill changed after the editor was opened");
+      }
+      const result = this.context.database
+        .prepare(`
+          UPDATE skill_definitions
+          SET definition_json = ?, updated_at = ?
+          WHERE workspace_id = ? AND id = ? AND updated_at = ?
+        `)
+        .run(
+          stringifyJson(withoutLegacySkillWorkflowPhase(draft.definitions[0].definition)),
+          now,
+          DEFAULT_WORKSPACE_ID,
+          input.skillId,
+          input.expectedUpdatedAt,
+        );
+      if (result.changes !== 1) {
+        throw new SkillRevisionStoreError("skill_revision_conflict", "Skill changed before the revision could be published");
+      }
+      this.context.database
+        .prepare("UPDATE skill_import_drafts SET updated_at = ? WHERE workspace_id = ? AND id = ?")
+        .run(now, DEFAULT_WORKSPACE_ID, input.draftId);
+      this.context.database.exec("COMMIT");
+    } catch (error) {
+      this.context.database.exec("ROLLBACK");
+      throw error;
+    }
+
+    const updated = this.getSkillRegistryEntry(input.skillId);
+    if (!updated) {
+      throw new SkillRevisionStoreError("skill_revision_invalid", `Skill disappeared after revision: ${input.skillId}`);
+    }
+    return updated;
+  }
+
   archiveSkillRegistryEntry(id: string, now: string): SkillRegistryEntry | undefined {
     const existing = this.getSkillRegistryEntry(id);
     if (!existing) {
@@ -634,6 +756,110 @@ export class SqliteSkillRegistryStore {
       .run(now, DEFAULT_WORKSPACE_ID, id);
     return this.getSkillRegistryEntry(id);
   }
+
+  hardDeleteSkillRegistryEntry(id: string): SkillHardDeleteResult {
+    const existing = this.getSkillRegistryEntry(id);
+    if (!existing) {
+      return { status: "not_found" };
+    }
+    if (!isManuallyImportedSkillSource(existing.source)) {
+      return { status: "not_imported", skill: existing };
+    }
+
+    const blockers = this.listHardDeleteBlockers(id);
+    if (blockers.length > 0) {
+      return { status: "blocked", skill: existing, blockers };
+    }
+
+    const artifactStorageRefs = this.listArtifactStorageRefs(id);
+    this.context.database.exec("BEGIN");
+    try {
+      this.context.database
+        .prepare("DELETE FROM skill_source_snapshots WHERE workspace_id = ? AND skill_id = ?")
+        .run(DEFAULT_WORKSPACE_ID, id);
+      this.context.database
+        .prepare("DELETE FROM skill_definitions WHERE workspace_id = ? AND id = ?")
+        .run(DEFAULT_WORKSPACE_ID, id);
+      this.context.database
+        .prepare(`
+          DELETE FROM skill_packs
+          WHERE workspace_id = ?
+            AND id = ?
+            AND NOT EXISTS (
+              SELECT 1 FROM skill_definitions
+              WHERE skill_definitions.workspace_id = skill_packs.workspace_id
+                AND skill_definitions.pack_id = skill_packs.id
+            )
+        `)
+        .run(DEFAULT_WORKSPACE_ID, existing.packId);
+      this.context.database.exec("COMMIT");
+    } catch (error) {
+      this.context.database.exec("ROLLBACK");
+      throw error;
+    }
+    return { status: "deleted", skill: existing, artifactStorageRefs };
+  }
+
+  private listHardDeleteBlockers(skillId: string): SkillHardDeleteBlocker[] {
+    const database = this.context.database;
+    return [
+      ...deleteBlockersFromRows(
+        "teammate_binding",
+        database.prepare("SELECT teammate_id AS id FROM teammate_skill_bindings WHERE skill_id = ?").all(skillId),
+      ),
+      ...deleteBlockersFromRows(
+        "active_task",
+        database.prepare(`
+          SELECT id FROM tasks
+          WHERE workspace_id = ?
+            AND requested_skill_id = ?
+            AND status NOT IN ('done', 'failed', 'cancelled')
+        `).all(DEFAULT_WORKSPACE_ID, skillId),
+      ),
+      ...deleteBlockersFromRows(
+        "active_run",
+        database.prepare(`
+          SELECT id FROM run_sessions
+          WHERE selected_skill_id = ?
+            AND status NOT IN ('succeeded', 'failed', 'cancelled')
+        `).all(skillId),
+      ),
+      ...deleteBlockersFromRows(
+        "automation",
+        database.prepare(`
+          SELECT id FROM automation_definitions
+          WHERE workspace_id = ?
+            AND json_extract(execution_policy_json, '$.requestedSkillId') = ?
+        `).all(DEFAULT_WORKSPACE_ID, skillId),
+      ),
+    ];
+  }
+
+  private listArtifactStorageRefs(skillId: string): string[] {
+    const rows = this.context.database.prepare(`
+      SELECT artifacts.storage_ref AS storage_ref
+      FROM skill_source_artifacts AS artifacts
+      INNER JOIN skill_source_snapshots AS snapshots ON snapshots.id = artifacts.snapshot_id
+      WHERE snapshots.workspace_id = ? AND snapshots.skill_id = ?
+    `).all(DEFAULT_WORKSPACE_ID, skillId) as Record<string, SQLOutputValue>[];
+    return rows.flatMap((row) => typeof row.storage_ref === "string" ? [row.storage_ref] : []);
+  }
+}
+
+function deleteBlockersFromRows(
+  kind: SkillHardDeleteBlocker["kind"],
+  rows: unknown,
+): SkillHardDeleteBlocker[] {
+  if (!Array.isArray(rows)) {
+    return [];
+  }
+  return rows.flatMap((row) => {
+    if (!row || typeof row !== "object" || Array.isArray(row)) {
+      return [];
+    }
+    const id = (row as Record<string, unknown>).id;
+    return typeof id === "string" ? [{ kind, id }] : [];
+  });
 }
 
 function defaultSkillVisibility(): SkillVisibility {
@@ -641,4 +867,9 @@ function defaultSkillVisibility(): SkillVisibility {
     workspaceVisible: true,
     promotableToWorkspace: true,
   };
+}
+
+function withoutLegacySkillWorkflowPhase(definition: SkillDefinition): SkillDefinition {
+  const { workflowPhase: _legacyWorkflowPhase, ...currentDefinition } = definition as SkillDefinition & { readonly workflowPhase?: unknown };
+  return currentDefinition;
 }

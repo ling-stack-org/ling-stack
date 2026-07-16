@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { RunTool } from "./approval-policy.js";
 import type { ProviderCapability } from "./provider-types.js";
-import type { SkillDefinition, SkillWorkflowPhase } from "./skill-types.js";
+import type { SkillDefinition } from "./skill-types.js";
 import type {
   SkillDuplicateAnalysis,
   SkillHealthFinding,
@@ -59,7 +59,6 @@ export interface SkillCandidateValidationStep {
 }
 
 export interface SkillCandidateDraftDefinition {
-  readonly workflowPhase: SkillWorkflowPhase | string;
   readonly positiveTriggers: readonly string[];
   readonly negativeTriggers: readonly string[];
   readonly procedureSteps: readonly SkillCandidateProcedureStep[];

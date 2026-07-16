@@ -10,11 +10,7 @@ import type {
   SkillPackSource,
   SkillRegistryEntry,
   SkillSourceHealthReport,
-  SkillSourceSemanticDiffItem,
   SkillSourceSnapshot,
-  SkillSourceSyncDiffItem,
-  SkillSourceSyncPreviewRecord,
-  SkillSourceSyncRecordState,
   TeammateSkillBinding,
 } from "../../types.js";
 
@@ -96,99 +92,6 @@ export function skillSourceSnapshotState(
     return { label: t("{count} warnings", { count: snapshot.warnings.length }), tone: "warning" };
   }
   return { label: t("Source-backed"), tone: "backed" };
-}
-
-export function defaultSelectedSyncSkillIds(records: readonly SkillSourceSyncPreviewRecord[], allowNewSkills: boolean): readonly string[] {
-  return records
-    .filter((record) => record.state === "attachable" || record.state === "drifted" || (allowNewSkills && record.state === "new"))
-    .filter((record) => isSelectableSyncRecord(record, allowNewSkills))
-    .map((record) => record.skillId);
-}
-
-export function isSelectableSyncRecord(record: SkillSourceSyncPreviewRecord, allowNewSkills: boolean): boolean {
-  if (record.semanticDiff.some((item) => item.severity === "error")) {
-    return false;
-  }
-  if (record.state === "new") {
-    return allowNewSkills && !record.warnings.some((warning) => warning.severity === "error");
-  }
-  if (record.state === "attachable" || record.state === "drifted" || record.state === "unchanged") {
-    return !record.warnings.some((warning) => warning.severity === "error");
-  }
-  return false;
-}
-
-export function syncRecordTitle(record: SkillSourceSyncPreviewRecord): string {
-  return record.definitionPreview?.name ?? record.frontMatter?.name ?? record.agentMetadata?.displayName ?? record.skillId;
-}
-
-export function skillSourceSyncStateLabel(state: SkillSourceSyncRecordState, t: (key: string) => string): string {
-  switch (state) {
-    case "attachable":
-      return t("Attachable");
-    case "unchanged":
-      return t("Unchanged");
-    case "drifted":
-      return t("Drifted");
-    case "new":
-      return t("New");
-    case "missing":
-      return t("Missing");
-    case "blocked":
-      return t("Blocked");
-    case "orphaned":
-      return t("Orphaned");
-  }
-}
-
-export function skillSourceSyncDiffLabel(item: SkillSourceSyncDiffItem, t: (key: string) => string): string {
-  switch (item.field) {
-    case "sourceChecksum":
-      return t("Checksum");
-    case "upstreamVersion":
-      return t("Upstream version");
-    case "upstreamSkillPath":
-      return t("Skill path");
-    case "sourceLengthChars":
-      return t("Source length");
-    case "referencedFiles":
-      return t("Referenced files");
-    case "warnings":
-      return t("Warnings");
-    case "frontMatterName":
-      return t("Front matter name");
-    case "frontMatterDescription":
-      return t("Front matter description");
-    case "agentDisplayName":
-      return t("Agent display name");
-    case "agentShortDescription":
-      return t("Agent short description");
-    case "agentAllowImplicitInvocation":
-      return t("Implicit invocation");
-  }
-}
-
-export function skillSourceSemanticDiffLabel(item: SkillSourceSemanticDiffItem, t: (key: string) => string): string {
-  switch (item.kind) {
-    case "copy_change":
-      return t("Copy");
-    case "workflow_change":
-      return t("Workflow");
-    case "gate_change":
-      return t("Gate");
-    case "tool_claim_change":
-      return t("Tool claim");
-    case "host_claim_change":
-      return t("Host claim");
-    case "external_action_change":
-      return t("External action");
-    case "destructive_claim_change":
-      return t("Destructive claim");
-    case "secret_claim_change":
-      return t("Secret claim");
-    case "referenced_file_change":
-      return t("Referenced files");
-  }
 }
 
 export function sourceHealthKindLabel(kind: string, t: (key: string) => string): string {
@@ -347,19 +250,19 @@ export function skillCandidateGate(candidate: SkillCandidate, t: SettingsTransla
 export function skillCandidateStatusLabel(status: SkillCandidate["status"], t: (key: string) => string): string {
   switch (status) {
     case "pending":
-      return t("Pending");
+      return t("Needs review");
     case "needs_edit":
-      return t("Needs edit");
+      return t("Needs changes");
     case "approved_for_draft":
-      return t("Approved for draft");
+      return t("Editing");
     case "published":
-      return t("Published");
+      return t("Generated");
     case "rejected":
-      return t("Rejected");
+      return t("Ignored");
     case "quarantined":
-      return t("Quarantined");
+      return t("Safety check failed");
     case "superseded":
-      return t("Superseded");
+      return t("Replaced");
     case "expired":
       return t("Expired");
   }
@@ -368,47 +271,47 @@ export function skillCandidateStatusLabel(status: SkillCandidate["status"], t: (
 export function playbookCandidateStatusLabel(status: ChannelPlaybookCandidate["status"], t: (key: string) => string): string {
   switch (status) {
     case "draft":
-      return t("Draft");
+      return t("Needs review");
     case "active":
-      return t("Active");
+      return t("Enabled");
     case "cancelled":
-      return t("Cancelled");
+      return t("Ignored");
     case "stale":
-      return t("Stale");
+      return t("Expired");
   }
 }
 
 export function procedureObservationClusterStatusLabel(status: ProcedureObservationCluster["status"], t: (key: string) => string): string {
   switch (status) {
     case "collecting":
-      return t("Collecting");
+      return t("Gathering examples");
     case "ready_for_review":
-      return t("Ready for review");
+      return t("Needs review");
     case "blocked":
-      return t("Blocked");
+      return t("Not ready");
     case "routed_elsewhere":
-      return t("Routed elsewhere");
+      return t("Moved elsewhere");
   }
 }
 
 export function procedureObservationClusterActionLabel(action: ProcedureObservationCluster["recommendedAction"], t: (key: string) => string): string {
   switch (action) {
     case "append_evidence":
-      return t("Append evidence");
+      return t("Gather more examples");
     case "create_skill_candidate":
-      return t("Create skill candidate");
+      return t("Create a skill to review");
     case "create_channel_protocol_candidate":
-      return t("Create channel protocol candidate");
+      return t("Turn into channel rules");
     case "create_playbook_candidate":
-      return t("Create playbook candidate");
+      return t("Turn into channel flow");
     case "create_memory_candidate":
-      return t("Create memory candidate");
+      return t("Save as memory");
     case "create_automation_candidate":
-      return t("Create automation candidate");
+      return t("Create automation");
     case "policy_review":
-      return t("Policy review");
+      return t("Review permissions");
     case "dismiss":
-      return t("Dismiss");
+      return t("No action needed");
   }
 }
 
@@ -417,17 +320,17 @@ export function candidateRouteKindLabel(routeKind: ProcedureObservationCluster["
     case "memory":
       return t("Memory");
     case "channel_protocol":
-      return t("Channel protocol");
+      return t("Channel rules");
     case "playbook":
-      return t("Playbook");
+      return t("Channel flow");
     case "automation":
       return t("Automation");
     case "skill":
       return t("Skill");
     case "approval_policy_review":
-      return t("Approval policy review");
+      return t("Permission review");
     case "reject":
-      return t("Reject");
+      return t("No action needed");
   }
 }
 
@@ -455,13 +358,13 @@ export function candidateRouteBlockerLabel(blocker: ProcedureObservationCluster[
 export function skillCandidateOriginLabel(origin: SkillCandidate["origin"], t: (key: string) => string): string {
   switch (origin) {
     case "ling-generated":
-      return t("Ling generated");
+      return t("AI discovery");
     case "recording":
-      return t("Recording");
+      return t("Found in conversation");
     case "manual-draft":
-      return t("Manual draft");
+      return t("Created manually");
     case "import-overlay":
-      return t("Import overlay");
+      return t("Imported content");
   }
 }
 
@@ -498,7 +401,7 @@ export function skillCandidateReviewMessage(action: SkillCandidateReviewAction, 
     return t("Candidate approved for draft");
   }
   if (action === "reject") {
-    return t("Candidate rejected");
+    return t("Moved to ignored");
   }
   if (action === "request_changes") {
     return t("Candidate marked needs edit");
@@ -513,7 +416,7 @@ export function playbookCandidateReviewReason(action: ChannelPlaybookCandidateRe
 }
 
 export function playbookCandidateReviewMessage(action: ChannelPlaybookCandidateReviewAction, t: (key: string) => string): string {
-  return action === "approve" ? t("Playbook activated") : t("Playbook candidate rejected");
+  return action === "approve" ? t("Channel flow enabled") : t("Moved to ignored");
 }
 
 export function boundTeammateNames(skillId: string, summaries: readonly TeammateSkillBindingSummary[]): readonly string[] {

@@ -1,40 +1,24 @@
 import { useEffect, useMemo, useState } from "react";
 import {
-  AlertTriangle,
-  Plus,
-  RefreshCw,
-  Search,
-  Upload,
-} from "lucide-react";
-import {
   archiveSkill,
   archiveSkillSourceSnapshot,
-  checkGstackSkillSourceUpdates,
   createChannelPlaybookCandidateFromCluster,
   createChannelProtocolCandidateFromCluster,
   createSkillCandidateDraft,
-  createSkillImportDraft,
-  getSkillHealth,
   getSkillSourceHealth,
-  getSkillSourceUpgradePolicy,
-  listSkillSourceArtifacts,
+  hardDeleteSkill,
   listChannelPlaybookCandidates,
   listChannels,
   listAiTeammates,
   listProcedureObservationClusters,
   listSkillCandidates,
+  listSkillSourceArtifacts,
   listSkills,
   listTeammateSkills,
-  previewGstackSkillSourceSync,
-  previewSkillImportDraftOptimization,
   previewSkillOptimization,
-  publishGstackSkillSourceSync,
-  publishSkillImportDraft,
-  refreshGstackSkillSourceSync,
   reviewChannelPlaybookCandidate,
   reviewSkillCandidate,
   rollbackSkillSourceSnapshot,
-  updateSkillSourceUpgradePolicy,
 } from "../../api.js";
 import { useI18n } from "../../i18n.js";
 import type {
@@ -44,50 +28,36 @@ import type {
   ProcedureObservationCluster,
   SkillCandidate,
   SkillCandidateReviewAction,
-  SkillHealthReport,
-  SkillImportDraft,
   SkillOptimizationPreview,
   SkillRegistryEntry,
   SkillSourceArtifact,
-  SkillSourceContextHealthFinding,
-  SkillSourceHealthReport,
   SkillSourceSnapshot,
-  SkillSourceSyncPreviewRecord,
-  SkillSourceSyncPreviewReport,
-  SkillSourceSyncRequest,
-  SkillSourceUpgradePolicy,
 } from "../../types.js";
+import { SkillImportDialog } from "./SkillImportDialog.js";
+import { SkillEditorDialog } from "./SkillEditorDialog.js";
+import { SkillEvolutionSection } from "./SkillEvolutionSection.js";
+import { SkillLibraryNavigation } from "./SkillLibraryNavigation.js";
+import { SkillLibraryRegistrySection } from "./SkillLibraryRegistrySection.js";
 import {
-  SkillHealthPanel,
-  SkillSourceHealthPanel,
-  SkillSourceSyncPanel,
-  boundTeammateNames,
-  defaultSelectedSyncSkillIds,
-  isOpenSkillCandidateStatus,
-  isSelectableSyncRecord,
   playbookCandidateReviewMessage,
   playbookCandidateReviewReason,
   skillCandidateReviewMessage,
   skillCandidateReviewReason,
-  skillLibraryFilterLabel,
-  type SkillLibraryFilter,
   type TeammateSkillBindingSummary,
 } from "./SkillLibraryWidgets.js";
-import { SkillCompactInspector } from "./SkillCompactInspector.js";
-import { SkillImportDialog, initialSkillImportForm, type SkillImportForm } from "./SkillImportDialog.js";
-import { SkillLibraryTable } from "./SkillLibraryTable.js";
-import { SkillReviewQueuePanel } from "./SkillReviewQueuePanels.js";
-import { SettingsSubnav } from "./SettingsSubnav.js";
-
-type SkillLibrarySubsectionId = "skills" | "review" | "source";
+import {
+  currentUserSkillCount,
+  partitionSkillRegistry,
+  type SkillEvolutionViewId,
+  type SkillLibrarySectionId,
+} from "./skill-library-view-models.js";
+import { useSkillImportController } from "./useSkillImportController.js";
+import { useSkillEditorController } from "./useSkillEditorController.js";
 
 export function SkillLibrarySettingsPanel({ cwd, refreshToken = 0 }: { readonly cwd: string; readonly refreshToken?: number }): JSX.Element {
   const { t } = useI18n();
   const [skills, setSkills] = useState<readonly SkillRegistryEntry[]>([]);
-  const [skillHealth, setSkillHealth] = useState<SkillHealthReport | undefined>();
-  const [skillSourceHealth, setSkillSourceHealth] = useState<SkillSourceHealthReport | undefined>();
   const [skillSourceSnapshots, setSkillSourceSnapshots] = useState<readonly SkillSourceSnapshot[]>([]);
-  const [skillSourceUpgradePolicy, setSkillSourceUpgradePolicy] = useState<SkillSourceUpgradePolicy | undefined>();
   const [skillSourceArtifacts, setSkillSourceArtifacts] = useState<readonly SkillSourceArtifact[]>([]);
   const [skillOptimizationPreview, setSkillOptimizationPreview] = useState<SkillOptimizationPreview | undefined>();
   const [skillCandidates, setSkillCandidates] = useState<readonly SkillCandidate[]>([]);
@@ -96,28 +66,41 @@ export function SkillLibrarySettingsPanel({ cwd, refreshToken = 0 }: { readonly 
   const [observationClusters, setObservationClusters] = useState<readonly ProcedureObservationCluster[]>([]);
   const [bindingSummaries, setBindingSummaries] = useState<readonly TeammateSkillBindingSummary[]>([]);
   const [selectedSkillId, setSelectedSkillId] = useState("");
-  const [searchQuery, setSearchQuery] = useState("");
-  const [filter, setFilter] = useState<SkillLibraryFilter>("all");
-  const [sortMode, setSortMode] = useState<"updated" | "name">("updated");
-  const [importOpen, setImportOpen] = useState(false);
-  const [importForm, setImportForm] = useState<SkillImportForm>(initialSkillImportForm);
-  const [importDraft, setImportDraft] = useState<SkillImportDraft | undefined>();
-  const [importContextFindings, setImportContextFindings] = useState<readonly SkillSourceContextHealthFinding[]>([]);
-  const [importOptimizationPreview, setImportOptimizationPreview] = useState<SkillOptimizationPreview | undefined>();
-  const [activeSubsection, setActiveSubsection] = useState<SkillLibrarySubsectionId>("skills");
-  const [syncRootPath, setSyncRootPath] = useState("");
-  const [syncIncludeDetectedRoots, setSyncIncludeDetectedRoots] = useState(true);
-  const [syncAllowNewSkills, setSyncAllowNewSkills] = useState(false);
-  const [syncPreview, setSyncPreview] = useState<SkillSourceSyncPreviewReport | undefined>();
-  const [selectedSyncSkillIds, setSelectedSyncSkillIds] = useState<readonly string[]>([]);
-  const [syncing, setSyncing] = useState(false);
-  const [checkingSourceUpdates, setCheckingSourceUpdates] = useState(false);
+  const [activeSubsection, setActiveSubsection] = useState<SkillLibrarySectionId>("mine");
+  const [evolutionView, setEvolutionView] = useState<SkillEvolutionViewId>("pending");
   const [optimizationPreviewLoading, setOptimizationPreviewLoading] = useState(false);
-  const [importOptimizationPreviewLoading, setImportOptimizationPreviewLoading] = useState(false);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
+  const skillImport = useSkillImportController({
+    cwd,
+    t,
+    onPublished: async (publishedSkills) => {
+      await refresh();
+      setActiveSubsection("mine");
+      setSelectedSkillId(publishedSkills[0]?.id ?? "");
+    },
+  });
+  const skillEditor = useSkillEditorController({
+    cwd,
+    t,
+    onCompleted: async ({ skills: completedSkills, candidateId, mode }) => {
+      await refresh();
+      if (candidateId || mode === "candidate") {
+        setActiveSubsection("evolution");
+        setEvolutionView("generated");
+        setSelectedSkillId(completedSkills[0]?.id ?? "");
+        return;
+      }
+      if (mode === "revision" && completedSkills[0]) {
+        setSelectedSkillId(completedSkills[0].id);
+        return;
+      }
+      setActiveSubsection("mine");
+      setSelectedSkillId(completedSkills[0]?.id ?? "");
+    },
+  });
 
   useEffect(() => {
     void refresh();
@@ -135,76 +118,16 @@ export function SkillLibrarySettingsPanel({ cwd, refreshToken = 0 }: { readonly 
     return history;
   }, [skillSourceSnapshots]);
 
-  const stats = useMemo(() => {
-    const bindable = skills.filter((entry) => entry.reviewStatus === "builtin" || entry.reviewStatus === "published").length;
-    const draft = skills.filter((entry) => entry.reviewStatus === "draft").length;
-    const blocked = skills.filter((entry) => entry.reviewStatus === "disabled").length;
-    return {
-      total: skills.length,
-      bindable,
-      draft,
-      blocked,
-      sourceBacked: skillSourceHealth?.summary.sourceBackedSkills ?? skillSourceSnapshots.length,
-      missingSource: skillSourceHealth?.summary.missingSourceSnapshots ?? 0,
-    };
-  }, [skillSourceHealth, skillSourceSnapshots.length, skills]);
-
-  const reviewQueueCount = useMemo(() => {
-    const healthFindings = skillHealth?.findings.length ?? 0;
-    const openSkillCandidates = skillCandidates.filter((candidate) => isOpenSkillCandidateStatus(candidate.status)).length;
-    const reviewableClusters = observationClusters.filter((cluster) => cluster.status === "ready_for_review").length;
-    const draftPlaybooks = playbookCandidates.filter((candidate) => candidate.status === "draft").length;
-    return healthFindings + openSkillCandidates + reviewableClusters + draftPlaybooks;
-  }, [observationClusters, playbookCandidates, skillCandidates, skillHealth]);
-
-  const sourceAttentionCount = useMemo(() => {
-    return (skillSourceHealth?.findings.length ?? 0) + stats.missingSource;
-  }, [skillSourceHealth, stats.missingSource]);
-
-  const filteredSkills = useMemo(() => {
-    const query = searchQuery.trim().toLowerCase();
-    const rows = skills.filter((entry) => {
-      if (filter === "builtin" && entry.source !== "builtin" && entry.reviewStatus !== "builtin") {
-        return false;
-      }
-      if (filter === "custom" && (entry.source === "builtin" || entry.reviewStatus === "builtin")) {
-        return false;
-      }
-      if (filter === "draft" && entry.reviewStatus !== "draft") {
-        return false;
-      }
-      if (filter === "archived" && entry.reviewStatus !== "archived") {
-        return false;
-      }
-      if (!query) {
-        return true;
-      }
-      const haystack = [
-        entry.id,
-        entry.definition.name,
-        entry.definition.summary,
-        entry.source,
-        entry.sourcePath ?? "",
-        sourceSnapshotBySkillId.get(entry.id)?.sourcePath ?? "",
-        sourceSnapshotBySkillId.get(entry.id)?.upstreamSkillPath ?? "",
-        sourceSnapshotBySkillId.get(entry.id)?.sourceChecksum ?? "",
-        entry.definition.workflowPhase,
-        ...entry.definition.requiredTools,
-        ...entry.definition.requiredProviderCapabilities,
-      ].join(" ").toLowerCase();
-      return haystack.includes(query);
-    });
-    return [...rows].sort((left, right) => {
-      if (sortMode === "name") {
-        return left.definition.name.localeCompare(right.definition.name);
-      }
-      return right.updatedAt.localeCompare(left.updatedAt);
-    });
-  }, [filter, searchQuery, skills, sortMode, sourceSnapshotBySkillId]);
-
+  const ownershipPartition = useMemo(() => partitionSkillRegistry(skills), [skills]);
+  const evolutionCount = useMemo(() => {
+    const managedSkillCandidates = skillCandidates.filter((candidate) => candidate.status !== "published").length;
+    const managedClusters = observationClusters.filter((cluster) => cluster.status !== "collecting").length;
+    return ownershipPartition.evolved.filter((skill) => skill.reviewStatus !== "archived").length +
+      managedSkillCandidates + managedClusters + playbookCandidates.length;
+  }, [observationClusters, ownershipPartition.evolved, playbookCandidates, skillCandidates]);
   const selectedSkill = useMemo(() => {
-    return selectedSkillId ? filteredSkills.find((entry) => entry.id === selectedSkillId) : undefined;
-  }, [filteredSkills, selectedSkillId]);
+    return selectedSkillId ? skills.find((entry) => entry.id === selectedSkillId) : undefined;
+  }, [selectedSkillId, skills]);
 
   useEffect(() => {
     if (!selectedSkill && selectedSkillId) {
@@ -229,13 +152,11 @@ export function SkillLibrarySettingsPanel({ cwd, refreshToken = 0 }: { readonly 
     setLoading(true);
     try {
       setError("");
-      const [skillsResponse, skillHealthResponse, skillSourceHealthResponse, skillSourcePolicyResponse, clustersResponse, candidatesResponse, channelsResponse, teammatesResponse] = await Promise.all([
+      const [skillsResponse, skillSourceHealthResponse, clustersResponse, candidatesResponse, channelsResponse, teammatesResponse] = await Promise.all([
         listSkills(workspaceCwd),
-        getSkillHealth(workspaceCwd, { limit: 6 }),
-        getSkillSourceHealth(workspaceCwd, { limit: 6 }),
-        getSkillSourceUpgradePolicy(workspaceCwd),
-        listProcedureObservationClusters(workspaceCwd, { limit: 8 }),
-        listSkillCandidates(workspaceCwd, { limit: 8 }),
+        getSkillSourceHealth(workspaceCwd, { limit: 100 }),
+        listProcedureObservationClusters(workspaceCwd, { limit: 100 }),
+        listSkillCandidates(workspaceCwd, { limit: 100 }),
         listChannels(workspaceCwd),
         listAiTeammates(workspaceCwd),
       ]);
@@ -247,23 +168,36 @@ export function SkillLibrarySettingsPanel({ cwd, refreshToken = 0 }: { readonly 
             bindings: (await listTeammateSkills(workspaceCwd, teammate.id)).bindings,
           })),
         ),
-        Promise.all(channelsResponse.channels.map((channel) => listChannelPlaybookCandidates(workspaceCwd, channel.id, { limit: 8 }))),
+        Promise.all(channelsResponse.channels.map((channel) => listChannelPlaybookCandidates(workspaceCwd, channel.id, { limit: 100 }))),
       ]);
       setSkills(skillsResponse.skills);
-      setSkillHealth(skillHealthResponse.report);
-      setSkillSourceHealth(skillSourceHealthResponse.report);
       setSkillSourceSnapshots(skillSourceHealthResponse.snapshots);
-      setSkillSourceUpgradePolicy(skillSourcePolicyResponse.policy);
       setObservationClusters(clustersResponse.clusters);
       setSkillCandidates(candidatesResponse.candidates);
       setPlaybookCandidates(playbookCandidateResponses.flatMap((response) => response.candidates));
       setChannels(channelsResponse.channels);
       setBindingSummaries(teammateSkillResponses);
-      setMessage(t("Skill library refreshed"));
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : String(loadError));
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function reloadSkillEditorRevision(): Promise<void> {
+    const skillId = skillEditor.skill?.id;
+    if (!skillId) return;
+    try {
+      const response = await listSkills(cwd.trim());
+      setSkills(response.skills);
+      const latest = response.skills.find((entry) => entry.id === skillId);
+      if (!latest) {
+        setError(t("Skill not found."));
+        return;
+      }
+      skillEditor.reloadRevision(latest);
+    } catch (reloadError) {
+      setError(reloadError instanceof Error ? reloadError.message : String(reloadError));
     }
   }
 
@@ -278,196 +212,6 @@ export function SkillLibrarySettingsPanel({ cwd, refreshToken = 0 }: { readonly 
       setSkillSourceArtifacts(response.artifacts);
     } catch {
       setSkillSourceArtifacts([]);
-    }
-  }
-
-  async function previewImportDraft(): Promise<void> {
-    if (!importForm.content.trim() || saving) {
-      setMessage(t("Paste skill content first"));
-      return;
-    }
-    setSaving(true);
-    try {
-      setError("");
-      setMessage("");
-      const response = await createSkillImportDraft(cwd.trim(), {
-        content: importForm.content,
-        source: importForm.source,
-        sourcePath: importForm.sourcePath.trim() || undefined,
-        name: importForm.name.trim() || undefined,
-      });
-      setImportDraft(response.draft);
-      setImportContextFindings(response.contextFindings ?? []);
-      setImportOptimizationPreview(undefined);
-      setMessage(t("Draft ready"));
-    } catch (draftError) {
-      setError(draftError instanceof Error ? draftError.message : String(draftError));
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  async function previewImportDraftOptimization(): Promise<void> {
-    if (!importDraft || !importForm.content.trim() || importOptimizationPreviewLoading) {
-      return;
-    }
-    setImportOptimizationPreviewLoading(true);
-    try {
-      setError("");
-      const response = await previewSkillImportDraftOptimization(cwd.trim(), {
-        content: importForm.content,
-        source: importForm.source,
-        sourcePath: importForm.sourcePath.trim() || undefined,
-        name: importForm.name.trim() || undefined,
-        mode: "preview_on_demand",
-      });
-      setImportOptimizationPreview(response.preview);
-    } catch (previewError) {
-      setError(previewError instanceof Error ? previewError.message : String(previewError));
-    } finally {
-      setImportOptimizationPreviewLoading(false);
-    }
-  }
-
-  async function publishImportDraft(): Promise<void> {
-    if (!importDraft || saving) {
-      return;
-    }
-    setSaving(true);
-    try {
-      setError("");
-      const response = await publishSkillImportDraft(cwd.trim(), importDraft.id);
-      setImportDraft(undefined);
-      setImportContextFindings([]);
-      setImportOptimizationPreview(undefined);
-      setImportForm(initialSkillImportForm);
-      setImportOpen(false);
-      await refresh();
-      setActiveSubsection("skills");
-      setMessage(t("Published {count} skills", { count: response.skills.length }));
-    } catch (publishError) {
-      setError(publishError instanceof Error ? publishError.message : String(publishError));
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  function buildSkillSourceSyncRequest(): SkillSourceSyncRequest {
-    const skillRoots = syncRootPath
-      .split(/\r?\n/)
-      .map((item) => item.trim())
-      .filter(Boolean);
-    return {
-      skillRoots: skillRoots.length > 0 ? skillRoots : undefined,
-      includeDetectedRoots: syncIncludeDetectedRoots,
-    };
-  }
-
-  async function previewSkillSourceSync(mode: "preview" | "refresh"): Promise<void> {
-    if (syncing) {
-      return;
-    }
-    const workspaceCwd = cwd.trim();
-    if (!workspaceCwd) {
-      setError(t("Workspace path is required."));
-      return;
-    }
-    if (!syncIncludeDetectedRoots && !syncRootPath.trim()) {
-      setMessage(t("Add a skill root path or enable detected roots"));
-      return;
-    }
-    setSyncing(true);
-    try {
-      setError("");
-      const input = buildSkillSourceSyncRequest();
-      const response = mode === "refresh"
-        ? await refreshGstackSkillSourceSync(workspaceCwd, input)
-        : await previewGstackSkillSourceSync(workspaceCwd, input);
-      setSyncPreview(response.preview);
-      setSelectedSyncSkillIds(defaultSelectedSyncSkillIds(response.preview.records, syncAllowNewSkills));
-      setMessage(mode === "refresh" ? t("Source scan refreshed") : t("Source preview ready"));
-    } catch (syncError) {
-      setError(syncError instanceof Error ? syncError.message : String(syncError));
-    } finally {
-      setSyncing(false);
-    }
-  }
-
-  async function checkSkillSourceUpdates(): Promise<void> {
-    if (checkingSourceUpdates || syncing) {
-      return;
-    }
-    const workspaceCwd = cwd.trim();
-    if (!workspaceCwd) {
-      setError(t("Workspace path is required."));
-      return;
-    }
-    setCheckingSourceUpdates(true);
-    try {
-      setError("");
-      const response = await checkGstackSkillSourceUpdates(workspaceCwd, buildSkillSourceSyncRequest());
-      setSkillSourceUpgradePolicy(response.policy);
-      setSyncPreview(response.preview);
-      setSelectedSyncSkillIds(defaultSelectedSyncSkillIds(response.preview.records, syncAllowNewSkills));
-      setActiveSubsection("source");
-      setMessage(t("Source update check complete"));
-    } catch (checkError) {
-      setError(checkError instanceof Error ? checkError.message : String(checkError));
-    } finally {
-      setCheckingSourceUpdates(false);
-    }
-  }
-
-  async function changeSkillSourceUpgradeMode(mode: SkillSourceUpgradePolicy["mode"]): Promise<void> {
-    const workspaceCwd = cwd.trim();
-    if (!workspaceCwd || !skillSourceUpgradePolicy) {
-      return;
-    }
-    setSaving(true);
-    try {
-      setError("");
-      const response = await updateSkillSourceUpgradePolicy(workspaceCwd, {
-        mode,
-        approvedRootIds: skillSourceUpgradePolicy.approvedRootIds,
-        allowNewSkills: skillSourceUpgradePolicy.allowNewSkills,
-      });
-      setSkillSourceUpgradePolicy(response.policy);
-      setMessage(t("Source upgrade policy updated"));
-    } catch (policyError) {
-      setError(policyError instanceof Error ? policyError.message : String(policyError));
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  async function publishSkillSourceSync(): Promise<void> {
-    if (syncing || selectedSyncSkillIds.length === 0) {
-      setMessage(t("Select skill source records first"));
-      return;
-    }
-    const workspaceCwd = cwd.trim();
-    if (!workspaceCwd) {
-      setError(t("Workspace path is required."));
-      return;
-    }
-    setSyncing(true);
-    try {
-      setError("");
-      const response = await publishGstackSkillSourceSync(workspaceCwd, {
-        ...buildSkillSourceSyncRequest(),
-        selectedSkillIds: selectedSyncSkillIds,
-        allowNewSkills: syncAllowNewSkills,
-        publishArtifacts: true,
-      });
-      setSyncPreview(response.preview);
-      setSelectedSyncSkillIds([]);
-      await refresh();
-      setActiveSubsection("source");
-      setMessage(t("Published {count} skill sources", { count: response.snapshots.length }));
-    } catch (syncError) {
-      setError(syncError instanceof Error ? syncError.message : String(syncError));
-    } finally {
-      setSyncing(false);
     }
   }
 
@@ -515,15 +259,6 @@ export function SkillLibrarySettingsPanel({ cwd, refreshToken = 0 }: { readonly 
     }
   }
 
-  function toggleSyncSkillId(record: SkillSourceSyncPreviewRecord): void {
-    if (!isSelectableSyncRecord(record, syncAllowNewSkills)) {
-      return;
-    }
-    setSelectedSyncSkillIds((current) => current.includes(record.skillId)
-      ? current.filter((skillId) => skillId !== record.skillId)
-      : [...current, record.skillId]);
-  }
-
   async function reviewCandidate(candidateId: string, action: SkillCandidateReviewAction): Promise<void> {
     if (saving) {
       return;
@@ -542,6 +277,9 @@ export function SkillLibrarySettingsPanel({ cwd, refreshToken = 0 }: { readonly 
       });
       setSkillCandidates((current) => current.map((candidate) => candidate.id === candidateId ? response.candidate : candidate));
       await refresh();
+      if (action === "reject") {
+        setEvolutionView("ignored");
+      }
       setMessage(skillCandidateReviewMessage(action, t));
     } catch (reviewError) {
       setError(reviewError instanceof Error ? reviewError.message : String(reviewError));
@@ -550,7 +288,7 @@ export function SkillLibrarySettingsPanel({ cwd, refreshToken = 0 }: { readonly 
     }
   }
 
-  async function createDraftFromCandidate(candidateId: string): Promise<void> {
+  async function adoptCandidate(candidateId: string): Promise<void> {
     if (saving) {
       return;
     }
@@ -562,12 +300,19 @@ export function SkillLibrarySettingsPanel({ cwd, refreshToken = 0 }: { readonly 
     setSaving(true);
     try {
       setError("");
+      const candidate = skillCandidates.find((item) => item.id === candidateId);
+      if (!candidate) {
+        throw new Error(t("Skill candidate not found."));
+      }
+      if (candidate.status !== "approved_for_draft") {
+        const review = await reviewSkillCandidate(workspaceCwd, candidateId, {
+          action: "approve_for_draft",
+          reason: skillCandidateReviewReason("approve_for_draft", t),
+        });
+        setSkillCandidates((current) => current.map((item) => item.id === candidateId ? review.candidate : item));
+      }
       const response = await createSkillCandidateDraft(workspaceCwd, candidateId);
-      setImportDraft(response.draft);
-      setImportContextFindings(response.contextFindings ?? []);
-      setImportOptimizationPreview(undefined);
-      setImportOpen(true);
-      setMessage(t("Draft ready"));
+      skillEditor.openCandidate(response.draft, candidateId);
     } catch (draftError) {
       setError(draftError instanceof Error ? draftError.message : String(draftError));
     } finally {
@@ -627,7 +372,7 @@ export function SkillLibrarySettingsPanel({ cwd, refreshToken = 0 }: { readonly 
     }
   }
 
-  async function reviewPlaybookCandidate(candidate: ChannelPlaybookCandidate, action: ChannelPlaybookCandidateReviewAction): Promise<void> {
+  async function reviewPlaybook(candidate: ChannelPlaybookCandidate, action: ChannelPlaybookCandidateReviewAction): Promise<void> {
     if (saving) {
       return;
     }
@@ -645,6 +390,11 @@ export function SkillLibrarySettingsPanel({ cwd, refreshToken = 0 }: { readonly 
       });
       setPlaybookCandidates((current) => current.map((item) => item.id === candidate.id ? response.candidate : item));
       await refresh();
+      if (action === "reject") {
+        setEvolutionView("ignored");
+      } else if (action === "approve") {
+        setEvolutionView("generated");
+      }
       setMessage(playbookCandidateReviewMessage(action, t));
     } catch (reviewError) {
       setError(reviewError instanceof Error ? reviewError.message : String(reviewError));
@@ -670,6 +420,31 @@ export function SkillLibrarySettingsPanel({ cwd, refreshToken = 0 }: { readonly 
     }
   }
 
+  async function hardDeleteRegistrySkill(skill: SkillRegistryEntry): Promise<void> {
+    if (saving) {
+      return;
+    }
+    const confirmation = [
+      t("Delete skill {name}?", { name: skill.definition.name }),
+      t("This cannot be undone. Remove teammate bindings and active work references before deleting this skill."),
+    ].join("\n");
+    if (!window.confirm(confirmation)) {
+      return;
+    }
+    setSaving(true);
+    try {
+      setError("");
+      await hardDeleteSkill(cwd.trim(), skill.id);
+      setSelectedSkillId((current) => current === skill.id ? "" : current);
+      await refresh();
+      setMessage(t("Skill deleted"));
+    } catch (deleteError) {
+      setError(hardDeleteSkillErrorMessage(deleteError, t));
+    } finally {
+      setSaving(false);
+    }
+  }
+
   async function archiveSourceSnapshot(skillId: string): Promise<void> {
     if (saving) {
       return;
@@ -689,227 +464,124 @@ export function SkillLibrarySettingsPanel({ cwd, refreshToken = 0 }: { readonly 
 
   return (
     <section
-      className={activeSubsection === "skills" ? "settings-skill-library settings-skill-library--skills" : "settings-skill-library"}
-      aria-labelledby="settings-skill-library-title"
+      className={activeSubsection === "evolution"
+        ? "settings-skill-library settings-skill-library--evolution"
+        : "settings-skill-library settings-skill-library--skills"}
+      aria-label={t("Skill library")}
     >
-      <header className="settings-skill-library-head">
-        <div>
-          <h2 id="settings-skill-library-title">{t("Skill library")}</h2>
-        </div>
-        <div className="settings-skill-library-actions">
-          <button
-            className="secondary-button compact-button"
-            type="button"
-            onClick={() => setActiveSubsection("source")}
-            aria-pressed={activeSubsection === "source"}
-          >
-            <RefreshCw size={15} />
-            {t("Sync gstack source")}
-          </button>
-          <button className="primary-button compact-button" type="button" onClick={() => setImportOpen(true)}>
-            <Upload size={15} />
-            {t("Import skill")}
-          </button>
-          <button
-            className="secondary-button compact-button"
-            type="button"
-            onClick={() => {
-              setImportOpen(true);
-              setImportDraft(undefined);
-              setImportForm(initialSkillImportForm);
-            }}
-          >
-            <Plus size={15} />
-            {t("New draft")}
-          </button>
-          <button className="icon-button" type="button" onClick={() => void refresh()} disabled={loading} aria-label={t("Refresh")}>
-            <RefreshCw size={15} className={loading ? "spin" : undefined} />
-          </button>
-        </div>
-      </header>
-
-      {error ? <div className="inline-error">{error}</div> : null}
-
-      <div className="settings-skill-library-stats" aria-label={t("Skill library stats")}>
-        <span><small>{t("Total skills")}</small><strong>{stats.total}</strong></span>
-        <span><small>{t("Bindable")}</small><strong>{stats.bindable}</strong></span>
-        <span><small>{t("Blocked")}</small><strong>{stats.blocked}</strong></span>
-        <span><small>{t("Missing source")}</small><strong>{stats.missingSource}</strong></span>
-      </div>
-
-      <SettingsSubnav
-        label="Skill library sections"
-        activeId={activeSubsection}
-        onChange={(id) => setActiveSubsection(id as SkillLibrarySubsectionId)}
-        options={[
-          {
-            id: "skills",
-            label: "Skills list",
-            description: "Search registry definitions, inspect requirements, and archive custom skills.",
-            badge: `${filteredSkills.length}`,
-          },
-          {
-            id: "review",
-            label: "Review queue",
-            description: "Resolve health findings, skill candidates, candidate clusters, and playbook proposals.",
-            badge: `${reviewQueueCount}`,
-          },
-          {
-            id: "source",
-            label: "Source sync",
-            description: "Check source snapshots, preview gstack updates, and publish selected source records.",
-            badge: `${sourceAttentionCount}`,
-          },
-        ]}
+      <SkillLibraryNavigation
+        activeSection={activeSubsection}
+        currentUserCount={currentUserSkillCount(skills)}
+        evolutionCount={evolutionCount}
+        builtinCount={ownershipPartition.builtin.length}
+        onSectionChange={(section) => {
+          setActiveSubsection(section);
+          setSelectedSkillId("");
+        }}
       />
 
-      {activeSubsection === "skills" ? (
-        <>
-          {reviewQueueCount > 0 ? (
-            <div className="settings-skill-attention-line">
-              <button type="button" className="ghost-button compact-button" onClick={() => setActiveSubsection("review")}>
-                <AlertTriangle size={14} />
-                {t("{count} skill review items", { count: reviewQueueCount })}
-              </button>
-            </div>
-          ) : null}
+      {error ? <div className="inline-error">{error}</div> : null}
+      {skillImport.notice ? <div className="settings-inline-tip" role="status" aria-live="polite">{skillImport.notice}</div> : null}
+      {skillEditor.notice ? <div className="settings-inline-tip" role="status" aria-live="polite">{skillEditor.notice}</div> : null}
 
-          <div className="settings-skill-library-toolbar">
-            <label className="settings-skill-search">
-              <Search size={15} />
-              <input value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} placeholder={t("Search Skill, source, or tool")} />
-            </label>
-            <div className="settings-skill-filters" role="tablist" aria-label={t("Skill filters")}>
-              {(["all", "builtin", "custom", "draft", "archived"] as const).map((item) => (
-                <button key={item} type="button" className={filter === item ? "active" : ""} onClick={() => setFilter(item)}>
-                  {skillLibraryFilterLabel(item, t)}
-                </button>
-              ))}
-            </div>
-            <select value={sortMode} onChange={(event) => setSortMode(event.target.value === "name" ? "name" : "updated")} aria-label={t("Sort skills")}>
-              <option value="updated">{t("Sort by updated")}</option>
-              <option value="name">{t("Sort by name")}</option>
-            </select>
-          </div>
-        </>
-      ) : null}
-
-      {importOpen ? (
+      {skillImport.open ? (
         <SkillImportDialog
-          form={importForm}
-          draft={importDraft}
-          contextFindings={importContextFindings}
-          optimizationPreview={importOptimizationPreview}
-          saving={saving}
-          optimizationPreviewLoading={importOptimizationPreviewLoading}
-          onClose={() => setImportOpen(false)}
-          onFormChange={setImportForm}
-          onPreviewDraft={() => void previewImportDraft()}
-          onPreviewOptimization={() => void previewImportDraftOptimization()}
-          onPublish={() => void publishImportDraft()}
+          form={skillImport.form}
+          busy={skillImport.busy}
+          error={skillImport.error}
+          blockingIssues={skillImport.blockingIssues}
+          onClose={skillImport.closeImport}
+          onLoadFile={(file) => void skillImport.loadFile(file)}
+          onImport={() => void skillImport.importFile()}
           t={t}
         />
       ) : null}
 
-      {activeSubsection === "review" ? (
-        <div className="settings-skill-review-stack">
-          <details className="settings-compact-details settings-skill-review-diagnostics">
-            <summary>{t("Skill health diagnostics")}</summary>
-            <SkillHealthPanel report={skillHealth} loading={loading} t={t} />
-          </details>
-          <SkillReviewQueuePanel
-            skillCandidates={skillCandidates}
-            clusters={observationClusters}
-            playbookCandidates={playbookCandidates}
-            channels={channels}
-            loading={loading}
-            saving={saving}
-            onReviewSkillCandidate={(candidateId, action) => void reviewCandidate(candidateId, action)}
-            onCreateDraft={(candidateId) => void createDraftFromCandidate(candidateId)}
-            onCreateProtocolCandidate={(cluster) => void createProtocolCandidateFromCluster(cluster)}
-            onCreatePlaybookCandidate={(cluster) => void createPlaybookCandidateFromCluster(cluster)}
-            onReviewPlaybookCandidate={(candidate, action) => void reviewPlaybookCandidate(candidate, action)}
-            t={t}
-          />
-        </div>
+      {skillEditor.open ? (
+        <SkillEditorDialog
+          mode={skillEditor.mode}
+          sourceKind={skillEditor.sourceKind}
+          form={skillEditor.form}
+          dirty={skillEditor.dirty}
+          busy={skillEditor.busy}
+          error={skillEditor.error}
+          conflict={skillEditor.conflict}
+          preview={skillEditor.preview}
+          authorityConfirmation={skillEditor.authorityConfirmation}
+          discardConfirmation={skillEditor.discardConfirmation}
+          onFormChange={skillEditor.setForm}
+          onClose={skillEditor.requestClose}
+          onDiscard={skillEditor.discardChanges}
+          onContinueEditing={skillEditor.continueEditing}
+          onSave={() => void skillEditor.save()}
+          onConfirmAuthorityChanges={() => void skillEditor.confirmAuthorityChanges()}
+          onReload={() => void reloadSkillEditorRevision()}
+          t={t}
+        />
       ) : null}
 
-      {activeSubsection === "source" ? (
-        <div className="settings-skill-source-stack">
-          <SkillSourceSyncPanel
-            preview={syncPreview}
-            policy={skillSourceUpgradePolicy}
-            rootPath={syncRootPath}
-            includeDetectedRoots={syncIncludeDetectedRoots}
-            allowNewSkills={syncAllowNewSkills}
-            selectedSkillIds={selectedSyncSkillIds}
-            loading={loading}
-            syncing={syncing || checkingSourceUpdates}
-            onRootPathChange={setSyncRootPath}
-            onIncludeDetectedRootsChange={setSyncIncludeDetectedRoots}
-            onAllowNewSkillsChange={(allow) => {
-              setSyncAllowNewSkills(allow);
-              if (!allow && syncPreview) {
-                const newSkillIds = new Set(syncPreview.records.filter((record) => record.state === "new").map((record) => record.skillId));
-                setSelectedSyncSkillIds((current) => current.filter((skillId) => !newSkillIds.has(skillId)));
-              }
-            }}
-            onPreview={() => void previewSkillSourceSync("preview")}
-            onRefresh={() => void previewSkillSourceSync("refresh")}
-            onCheckUpdates={() => void checkSkillSourceUpdates()}
-            onPolicyModeChange={(mode) => void changeSkillSourceUpgradeMode(mode)}
-            onPublish={() => void publishSkillSourceSync()}
-            onToggleRecord={toggleSyncSkillId}
-            t={t}
-          />
-          <details className="settings-compact-details settings-skill-review-diagnostics settings-skill-source-diagnostics">
-            <summary>{t("Skill source health diagnostics")}</summary>
-            <SkillSourceHealthPanel report={skillSourceHealth} snapshots={skillSourceSnapshots} loading={loading} t={t} />
-          </details>
-        </div>
-      ) : null}
-
-      {activeSubsection === "skills" ? (
-      <div className="settings-skill-library-body">
-        <SkillLibraryTable
-          entries={filteredSkills}
+      {activeSubsection === "evolution" ? (
+        <SkillEvolutionSection
+          view={evolutionView}
+          skills={skills}
+          skillCandidates={skillCandidates}
+          clusters={observationClusters}
+          playbookCandidates={playbookCandidates}
+          channels={channels}
           loading={loading}
           saving={saving}
           selectedSkillId={selectedSkill?.id}
           bindingSummaries={bindingSummaries}
           sourceSnapshotBySkillId={sourceSnapshotBySkillId}
+          sourceHistoryBySkillId={sourceSnapshotHistoryBySkillId}
+          artifacts={skillSourceArtifacts}
+          optimizationPreview={skillOptimizationPreview}
+          optimizationPreviewLoading={optimizationPreviewLoading}
+          cwd={cwd.trim()}
+          onViewChange={(view) => {
+            setEvolutionView(view);
+            setSelectedSkillId("");
+          }}
           onSelectSkill={setSelectedSkillId}
           onArchiveSkill={(skillId) => void archiveRegistrySkill(skillId)}
+          onDeleteSkill={(skill) => void hardDeleteRegistrySkill(skill)}
+          onEditSkill={skillEditor.openRevision}
+          onPreviewOptimization={() => void previewSelectedSkillOptimization()}
+          onArchiveSource={(skillId) => void archiveSourceSnapshot(skillId)}
+          onRollbackSource={(snapshotId) => void rollbackSelectedSkillSource(snapshotId)}
+          onAdoptSkillCandidate={(candidateId) => void adoptCandidate(candidateId)}
+          onReviewSkillCandidate={(candidateId, action) => void reviewCandidate(candidateId, action)}
+          onCreateProtocolCandidate={(cluster) => void createProtocolCandidateFromCluster(cluster)}
+          onCreatePlaybookCandidate={(cluster) => void createPlaybookCandidateFromCluster(cluster)}
+          onReviewPlaybookCandidate={(candidate, action) => void reviewPlaybook(candidate, action)}
           t={t}
         />
-
-        <aside className="settings-skill-inspector" aria-label={t("Skill detail")}>
-          {selectedSkill ? (
-            <SkillCompactInspector
-              skill={selectedSkill}
-              sourceSnapshot={sourceSnapshotBySkillId.get(selectedSkill.id)}
-              sourceHistory={sourceSnapshotHistoryBySkillId.get(selectedSkill.id) ?? []}
-              artifacts={skillSourceArtifacts}
-              optimizationPreview={skillOptimizationPreview}
-              optimizationPreviewLoading={optimizationPreviewLoading}
-              cwd={cwd.trim()}
-              saving={saving}
-              boundTeammates={boundTeammateNames(selectedSkill.id, bindingSummaries)}
-              onPreviewOptimization={() => void previewSelectedSkillOptimization()}
-              onArchiveSource={() => void archiveSourceSnapshot(selectedSkill.id)}
-              onRollbackSource={(snapshotId) => void rollbackSelectedSkillSource(snapshotId)}
-              t={t}
-            />
-          ) : (
-            <div className="compact-empty settings-skill-search-empty">
-              <Search size={16} />
-              <span>{t("No skill selected")}</span>
-              <small>{t("Choose Details on a row to inspect source, policy, and raw evidence.")}</small>
-            </div>
-          )}
-        </aside>
-      </div>
-      ) : null}
+      ) : (
+        <SkillLibraryRegistrySection
+          mode={activeSubsection === "mine" ? "user" : "builtin"}
+          skills={skills}
+          loading={loading}
+          saving={saving}
+          selectedSkillId={selectedSkill?.id}
+          bindingSummaries={bindingSummaries}
+          sourceSnapshotBySkillId={sourceSnapshotBySkillId}
+          sourceHistoryBySkillId={sourceSnapshotHistoryBySkillId}
+          artifacts={skillSourceArtifacts}
+          optimizationPreview={skillOptimizationPreview}
+          optimizationPreviewLoading={optimizationPreviewLoading}
+          cwd={cwd.trim()}
+          onSelectSkill={setSelectedSkillId}
+          onArchiveSkill={(skillId) => void archiveRegistrySkill(skillId)}
+          onDeleteSkill={(skill) => void hardDeleteRegistrySkill(skill)}
+          onEditSkill={skillEditor.openRevision}
+          onPreviewOptimization={() => void previewSelectedSkillOptimization()}
+          onArchiveSource={(skillId) => void archiveSourceSnapshot(skillId)}
+          onRollbackSource={(snapshotId) => void rollbackSelectedSkillSource(snapshotId)}
+          onImport={skillImport.openImport}
+          onNewDraft={skillEditor.openCreate}
+          t={t}
+        />
+      )}
 
       {message ? (
         <footer className="settings-skill-audit-note">
@@ -918,4 +590,15 @@ export function SkillLibrarySettingsPanel({ cwd, refreshToken = 0 }: { readonly 
       ) : null}
     </section>
   );
+}
+
+function hardDeleteSkillErrorMessage(error: unknown, t: (key: string) => string): string {
+  const message = error instanceof Error ? error.message : String(error);
+  if (message.includes("skill_delete_not_imported")) {
+    return t("Only manually imported skills can be deleted.");
+  }
+  if (message.includes("skill_delete_blocked")) {
+    return t("This skill is still in use. Remove its teammate bindings or active work references first.");
+  }
+  return message;
 }

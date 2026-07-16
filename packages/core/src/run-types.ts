@@ -26,6 +26,10 @@ import type {
 } from "./provider-types.js";
 import type { LingStackRuntimePaths } from "./runtime-paths.js";
 import type {
+  OfficialSkillSourceSubscription,
+  UpsertOfficialSkillSourceSubscriptionInput,
+} from "./managed-official-skill-source-types.js";
+import type {
   CreateMediaJobInput,
   ListMediaJobsOptions,
   MediaJob,
@@ -281,7 +285,9 @@ import type {
   ListSkillSourceArtifactOptions,
   ListSkillRegistryOptions,
   ListSkillSourceSnapshotOptions,
+  PublishSkillRevisionDraftInput,
   SkillCompiledRuntimeViewRecord,
+  SkillHardDeleteResult,
   SkillImportDraft,
   SkillRegressionRun,
   SkillRegistryEntry,
@@ -1821,6 +1827,8 @@ export interface RunStore {
   upsertSkillSourceSnapshot(input: CreateSkillSourceSnapshotInput, now: string): SkillSourceSnapshot;
   archiveSkillSourceSnapshot(skillId: string, now: string): SkillSourceSnapshot | undefined;
   rollbackSkillSourceSnapshot(snapshotId: string, now: string): SkillSourceSnapshot | undefined;
+  getOfficialSkillSourceSubscription(): OfficialSkillSourceSubscription | undefined;
+  upsertOfficialSkillSourceSubscription(input: UpsertOfficialSkillSourceSubscriptionInput, now: string): OfficialSkillSourceSubscription;
   getSkillSourceUpgradePolicy(now?: string): SkillSourceUpgradePolicy;
   updateSkillSourceUpgradePolicy(input: UpdateSkillSourceUpgradePolicyInput, now: string): SkillSourceUpgradePolicy;
   upsertSkillSourceArtifact(input: CreateSkillSourceArtifactInput, now: string): SkillSourceArtifact;
@@ -1836,7 +1844,9 @@ export interface RunStore {
   createSkillImportDraft(input: CreateSkillImportDraftInput, now: string): SkillImportDraft;
   getSkillImportDraft(id: string): SkillImportDraft | undefined;
   publishSkillImportDraft(id: string, now: string): SkillRegistryEntry[];
+  publishSkillRevisionDraft(input: PublishSkillRevisionDraftInput, now: string): SkillRegistryEntry;
   archiveSkillRegistryEntry(id: string, now: string): SkillRegistryEntry | undefined;
+  hardDeleteSkillRegistryEntry(id: string): SkillHardDeleteResult;
   createSkillCandidate(input: CreateSkillCandidateInput, now: string): SkillCandidate;
   getSkillCandidate(id: string): SkillCandidate | undefined;
   listSkillCandidates(options?: ListSkillCandidatesOptions): SkillCandidate[];
@@ -1845,6 +1855,7 @@ export interface RunStore {
     input: ApplySkillCandidateReviewActionInput,
     now: string,
   ): { readonly candidate: SkillCandidate; readonly action: SkillCandidateReviewRecord };
+  markSkillCandidatePublished(candidateId: string, now: string): SkillCandidate;
   createProcedureObservation(input: CreateProcedureObservationInput, now: string): ProcedureObservation;
   listProcedureObservations(options?: ListProcedureObservationsOptions): ProcedureObservation[];
   listProcedureObservationClusters(options?: ListProcedureObservationClustersOptions): ProcedureObservationCluster[];
@@ -2256,6 +2267,8 @@ export type SkillRegistryStoreFacet = RunStoreFacet<
   | "upsertSkillSourceSnapshot"
   | "archiveSkillSourceSnapshot"
   | "rollbackSkillSourceSnapshot"
+  | "getOfficialSkillSourceSubscription"
+  | "upsertOfficialSkillSourceSubscription"
   | "getSkillSourceUpgradePolicy"
   | "updateSkillSourceUpgradePolicy"
   | "upsertSkillSourceArtifact"
@@ -2271,7 +2284,9 @@ export type SkillRegistryStoreFacet = RunStoreFacet<
   | "createSkillImportDraft"
   | "getSkillImportDraft"
   | "publishSkillImportDraft"
+  | "publishSkillRevisionDraft"
   | "archiveSkillRegistryEntry"
+  | "hardDeleteSkillRegistryEntry"
 >;
 
 export type SkillCandidateStoreFacet = RunStoreFacet<
@@ -2280,6 +2295,7 @@ export type SkillCandidateStoreFacet = RunStoreFacet<
   | "listSkillCandidates"
   | "listSkillCandidateReviewRecords"
   | "applySkillCandidateReviewAction"
+  | "markSkillCandidatePublished"
 >;
 
 export type ProcedureObservationStoreFacet = RunStoreFacet<

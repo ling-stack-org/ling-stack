@@ -1,7 +1,7 @@
 import type {
   AiTeammateTemplate,
   SkillApprovalProfile,
-  SkillDefinition,
+  WorkflowPhase,
 } from "@ling-stack/core/skill-types";
 import type { Translate } from "../../i18n.js";
 import type { AvatarTone } from "../../shared/components/index.js";
@@ -63,7 +63,7 @@ export function roleLabel(roleKey: AiTeammateTemplate["roleKey"], t: Translate):
   return t(`role.${roleKey}`);
 }
 
-export function workflowPhaseLabel(phase: SkillDefinition["workflowPhase"], t: Translate): string {
+export function workflowPhaseLabel(phase: WorkflowPhase, t: Translate): string {
   return t(`phase.${phase}`);
 }
 

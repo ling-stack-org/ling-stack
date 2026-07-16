@@ -5,7 +5,6 @@ import type {
   SkillApprovalProfile,
   SkillDefinition,
   SkillPack,
-  SkillWorkflowPhase,
   WorkflowStepTemplate,
   WorkflowTemplate,
 } from "./skill-types.js";
@@ -56,7 +55,6 @@ function skill(input: {
   readonly name: string;
   readonly summary: string;
   readonly roleAffinity: readonly SkillDefinition["roleAffinity"][number][];
-  readonly workflowPhase: SkillWorkflowPhase;
   readonly promptFragments: readonly string[];
   readonly requiredTools?: readonly RunTool[];
   readonly requiredProviderCapabilities?: readonly ProviderCapability[];
@@ -78,7 +76,6 @@ const gstackDefaultSkills: readonly SkillDefinition[] = [
     name: "Office Hours",
     summary: "Challenge the product premise, clarify demand, and frame the work before implementation.",
     roleAffinity: ["product"],
-    workflowPhase: "discover",
     promptFragments: [
       "Find the real user pain, the status quo, and the smallest high-leverage next slice.",
       "Prefer hard tradeoffs and explicit scope over broad brainstorming.",
@@ -90,7 +87,6 @@ const gstackDefaultSkills: readonly SkillDefinition[] = [
     name: "CEO Plan Review",
     summary: "Review scope and strategy before the team spends engineering time.",
     roleAffinity: ["product"],
-    workflowPhase: "plan",
     promptFragments: [
       "Decide whether to expand, hold, reduce, or redirect scope.",
       "Surface the one product decision that most affects user value.",
@@ -102,7 +98,6 @@ const gstackDefaultSkills: readonly SkillDefinition[] = [
     name: "Engineering Plan Review",
     summary: "Lock architecture, data flow, edge cases, and the test plan before implementation.",
     roleAffinity: ["architect", "engineer"],
-    workflowPhase: "plan",
     promptFragments: [
       "Identify irreversible decisions, state ownership, and integration boundaries.",
       "Require a concrete validation path before build work starts.",
@@ -114,7 +109,6 @@ const gstackDefaultSkills: readonly SkillDefinition[] = [
     name: "Design Plan Review",
     summary: "Review UX direction, visual system, hierarchy, and interaction gaps before UI build.",
     roleAffinity: ["designer", "product"],
-    workflowPhase: "design",
     promptFragments: [
       "Check whether the interface is a useful product surface, not a decorative mockup.",
       "Call out layout, hierarchy, and responsiveness decisions that must be settled.",
@@ -126,7 +120,6 @@ const gstackDefaultSkills: readonly SkillDefinition[] = [
     name: "Developer Experience Plan Review",
     summary: "Review developer-facing flows, onboarding friction, API ergonomics, and docs strategy before build.",
     roleAffinity: ["product", "architect", "docs"],
-    workflowPhase: "plan",
     promptFragments: [
       "Evaluate the target developer persona, time-to-hello-world, setup path, and error recovery before implementation.",
       "Convert DX ambition into concrete acceptance criteria, docs requirements, and instrumentation points.",
@@ -138,7 +131,6 @@ const gstackDefaultSkills: readonly SkillDefinition[] = [
     name: "Autoplan",
     summary: "Run product, design, engineering, and developer-experience reviews into one execution plan.",
     roleAffinity: ["product", "architect", "designer", "docs"],
-    workflowPhase: "plan",
     promptFragments: [
       "Compile the relevant strategy, design, engineering, and DX checks before implementation starts.",
       "Surface unresolved taste decisions and scope tradeoffs as explicit gates instead of silently deciding.",
@@ -150,7 +142,6 @@ const gstackDefaultSkills: readonly SkillDefinition[] = [
     name: "Spec",
     summary: "Turn vague intent into a precise, executable spec with scope, constraints, and validation.",
     roleAffinity: ["product", "architect", "engineer"],
-    workflowPhase: "plan",
     promptFragments: [
       "Read the relevant code and docs before drafting the spec.",
       "Produce an implementation-ready scope with non-goals, acceptance criteria, and failure modes.",
@@ -162,7 +153,6 @@ const gstackDefaultSkills: readonly SkillDefinition[] = [
     name: "Design Consultation",
     summary: "Create or refresh the product design system, visual language, and DESIGN.md direction.",
     roleAffinity: ["designer", "product"],
-    workflowPhase: "design",
     promptFragments: [
       "Understand the product surface and audience before recommending visual language.",
       "Record durable design-system decisions in docs rather than leaving them as chat-only taste.",
@@ -174,7 +164,6 @@ const gstackDefaultSkills: readonly SkillDefinition[] = [
     name: "Design Shotgun",
     summary: "Explore multiple design directions and capture structured tradeoffs before committing to one.",
     roleAffinity: ["designer", "product"],
-    workflowPhase: "design",
     promptFragments: [
       "Generate several materially different design directions, not tiny color variants.",
       "Compare options through user workflow fit, visual hierarchy, and implementation cost.",
@@ -186,7 +175,6 @@ const gstackDefaultSkills: readonly SkillDefinition[] = [
     name: "Design HTML",
     summary: "Turn an approved design direction into production-quality frontend code under approval policy.",
     roleAffinity: ["designer", "engineer"],
-    workflowPhase: "implement",
     promptFragments: [
       "Implement the approved visual direction with responsive layout, real states, and accessible controls.",
       "Keep design implementation scoped to the selected surface and verify rendered behavior.",
@@ -201,7 +189,6 @@ const gstackDefaultSkills: readonly SkillDefinition[] = [
     name: "Implementation",
     summary: "Turn an approved plan into scoped code changes while preserving approval and state boundaries.",
     roleAffinity: ["engineer"],
-    workflowPhase: "implement",
     promptFragments: [
       "Implement only the approved slice and keep unrelated refactors out of scope.",
       "Use state machines, approval policy, and tool boundaries as hard constraints.",
@@ -216,7 +203,6 @@ const gstackDefaultSkills: readonly SkillDefinition[] = [
     name: "Investigate",
     summary: "Trace a bug or failure from evidence to root cause before proposing fixes.",
     roleAffinity: ["engineer", "qa", "security"],
-    workflowPhase: "review",
     promptFragments: [
       "Reproduce or locate evidence before changing code.",
       "Separate symptoms, root cause, and fix validation.",
@@ -230,7 +216,6 @@ const gstackDefaultSkills: readonly SkillDefinition[] = [
     name: "Health",
     summary: "Run the project's existing quality checks and summarize codebase health with trends and blockers.",
     roleAffinity: ["engineer", "qa", "architect"],
-    workflowPhase: "review",
     promptFragments: [
       "Prefer the repository's existing typecheck, lint, test, and build commands over invented checks.",
       "Report health as actionable blockers, regressions, and missing validation, not a vanity score.",
@@ -245,7 +230,6 @@ const gstackDefaultSkills: readonly SkillDefinition[] = [
     name: "Code Review",
     summary: "Find behavioral bugs, missing tests, risky assumptions, and production failure modes.",
     roleAffinity: ["architect", "engineer", "security"],
-    workflowPhase: "review",
     promptFragments: [
       "Find concrete issues first, ordered by severity and backed by file references.",
       "Prefer defects and missing validation over style commentary.",
@@ -257,7 +241,6 @@ const gstackDefaultSkills: readonly SkillDefinition[] = [
     name: "Design Review",
     summary: "Audit the live UI for visual quality, interaction issues, and design regressions.",
     roleAffinity: ["designer", "qa", "engineer"],
-    workflowPhase: "review",
     promptFragments: [
       "Review the rendered surface, not just component code.",
       "Call out visual hierarchy, spacing, responsive states, and interaction problems with reproducible evidence.",
@@ -272,7 +255,6 @@ const gstackDefaultSkills: readonly SkillDefinition[] = [
     name: "QA",
     summary: "Exercise the built experience, verify user-facing behavior, and capture regressions.",
     roleAffinity: ["qa", "designer"],
-    workflowPhase: "test",
     promptFragments: [
       "Test the real surface, not just static code paths.",
       "Record failures as reproducible scenarios with expected and actual behavior.",
@@ -287,7 +269,6 @@ const gstackDefaultSkills: readonly SkillDefinition[] = [
     name: "QA Only",
     summary: "Test the product surface and return a structured bug report without making code changes.",
     roleAffinity: ["qa", "designer"],
-    workflowPhase: "test",
     promptFragments: [
       "Exercise the real user flow and stop at a clear report; do not mutate source files.",
       "Include repro steps, expected behavior, actual behavior, and severity for every finding.",
@@ -302,7 +283,6 @@ const gstackDefaultSkills: readonly SkillDefinition[] = [
     name: "Developer Experience Review",
     summary: "Test onboarding, docs, CLI/API affordances, and error recovery from a developer's perspective.",
     roleAffinity: ["docs", "qa", "engineer"],
-    workflowPhase: "test",
     promptFragments: [
       "Run the getting-started path like a new developer and measure friction from first contact to useful output.",
       "Compare observed DX against the plan, then report broken docs, setup traps, and unclear errors.",
@@ -317,7 +297,6 @@ const gstackDefaultSkills: readonly SkillDefinition[] = [
     name: "Benchmark",
     summary: "Measure performance-sensitive surfaces and compare results against an agreed baseline.",
     roleAffinity: ["qa", "engineer", "release"],
-    workflowPhase: "test",
     promptFragments: [
       "Define the target pages, flows, or commands before measuring.",
       "Separate noisy timing evidence from real regressions and record the baseline used for comparison.",
@@ -332,7 +311,6 @@ const gstackDefaultSkills: readonly SkillDefinition[] = [
     name: "Benchmark Models",
     summary: "Compare model latency, cost, token use, and task quality across providers for a specific skill.",
     roleAffinity: ["qa", "engineer", "architect"],
-    workflowPhase: "test",
     promptFragments: [
       "Run the same prompt or workflow through comparable model/provider paths.",
       "Separate latency, cost, token use, and quality evidence before recommending a default.",
@@ -347,7 +325,6 @@ const gstackDefaultSkills: readonly SkillDefinition[] = [
     name: "Browse",
     summary: "Drive a browser-style QA pass, verify page state, and capture reproducible UI evidence.",
     roleAffinity: ["qa", "designer", "engineer"],
-    workflowPhase: "test",
     promptFragments: [
       "Use browser evidence for rendered behavior, screenshots, forms, dialogs, and responsive layouts.",
       "Keep browser actions scoped to the requested QA or dogfood flow.",
@@ -362,7 +339,6 @@ const gstackDefaultSkills: readonly SkillDefinition[] = [
     name: "Scrape",
     summary: "Extract read-only structured data from a webpage or browser-visible source.",
     roleAffinity: ["docs", "qa", "engineer"],
-    workflowPhase: "operate",
     promptFragments: [
       "Extract only read-only data and return structured output with source context.",
       "Do not use scrape-style workflows for form submissions, account changes, purchases, or other mutations.",
@@ -377,7 +353,6 @@ const gstackDefaultSkills: readonly SkillDefinition[] = [
     name: "Skillify",
     summary: "Turn a successful repeated read-only scrape flow into a reusable browser skill artifact.",
     roleAffinity: ["engineer", "docs"],
-    workflowPhase: "implement",
     promptFragments: [
       "Codify only a proven read-only extraction flow with tests and fixtures.",
       "Ask for review before making a browser automation flow durable.",
@@ -392,7 +367,6 @@ const gstackDefaultSkills: readonly SkillDefinition[] = [
     name: "Open GStack Browser",
     summary: "Launch or attach to a visible gstack browser session for watched browser work.",
     roleAffinity: ["qa", "engineer"],
-    workflowPhase: "operate",
     promptFragments: [
       "Use this when the user explicitly wants the gstack browser surface, not ordinary in-app browser control.",
       "Keep account, checkout, credential, and other mutating flows behind explicit user confirmation.",
@@ -407,7 +381,6 @@ const gstackDefaultSkills: readonly SkillDefinition[] = [
     name: "Diagram",
     summary: "Create architecture, flow, or process diagrams from implementation-backed source material.",
     roleAffinity: ["architect", "docs", "designer"],
-    workflowPhase: "document",
     promptFragments: [
       "Represent complex flows as editable diagram source plus rendered artifacts when the environment supports it.",
       "Use diagrams to clarify ownership, state transitions, and integration boundaries.",
@@ -421,7 +394,6 @@ const gstackDefaultSkills: readonly SkillDefinition[] = [
     name: "Make PDF",
     summary: "Turn markdown or documentation into a publication-quality PDF artifact.",
     roleAffinity: ["docs", "release"],
-    workflowPhase: "document",
     promptFragments: [
       "Generate a finished PDF artifact from existing markdown or explicitly supplied content.",
       "Keep source documentation and generated artifact provenance clear.",
@@ -435,7 +407,6 @@ const gstackDefaultSkills: readonly SkillDefinition[] = [
     name: "Claude",
     summary: "Use Claude as an outside review, challenge, or read-only consultation path when available.",
     roleAffinity: ["architect", "engineer", "security"],
-    workflowPhase: "review",
     promptFragments: [
       "Use external model consultation as evidence input, not as authority to override local validation.",
       "Prefer challenge and review modes for failure-mode discovery and independent diff review.",
@@ -450,7 +421,6 @@ const gstackDefaultSkills: readonly SkillDefinition[] = [
     name: "Security Review",
     summary: "Review trust boundaries, secrets, supply chain, and high-impact abuse paths.",
     roleAffinity: ["security"],
-    workflowPhase: "secure",
     promptFragments: [
       "Focus on exploitable paths and false-positive reduction.",
       "Do not perform credential, deploy, or external-send actions without explicit approval.",
@@ -463,7 +433,6 @@ const gstackDefaultSkills: readonly SkillDefinition[] = [
     name: "Careful",
     summary: "Activate destructive-command caution for live, shared, or high-risk work.",
     roleAffinity: ["security", "release", "engineer"],
-    workflowPhase: "secure",
     promptFragments: [
       "Treat destructive commands, production mutation, reset, force push, and credential operations as explicit gates.",
       "Prefer read-only probes and narrow validation before risky actions.",
@@ -475,7 +444,6 @@ const gstackDefaultSkills: readonly SkillDefinition[] = [
     name: "Guard",
     summary: "Combine destructive-command caution with directory-scoped edit constraints.",
     roleAffinity: ["security", "release", "engineer"],
-    workflowPhase: "secure",
     promptFragments: [
       "Set a clear edit boundary before changing files in a risky workspace.",
       "Block or escalate destructive and out-of-scope actions rather than relying on after-the-fact cleanup.",
@@ -488,7 +456,6 @@ const gstackDefaultSkills: readonly SkillDefinition[] = [
     name: "Freeze",
     summary: "Restrict edits to a selected directory or module boundary for the current work.",
     roleAffinity: ["engineer", "security"],
-    workflowPhase: "secure",
     promptFragments: [
       "Use a narrow edit boundary when the requested work must not spill into unrelated files.",
       "Report the active boundary and stop if the requested fix requires leaving it.",
@@ -500,7 +467,6 @@ const gstackDefaultSkills: readonly SkillDefinition[] = [
     name: "Unfreeze",
     summary: "Clear a previously selected edit boundary after the user widens the work scope.",
     roleAffinity: ["engineer", "security"],
-    workflowPhase: "secure",
     promptFragments: [
       "Remove the edit boundary only when the user approves a wider scope.",
       "Preserve the prior scope decision in the final report.",
@@ -512,7 +478,6 @@ const gstackDefaultSkills: readonly SkillDefinition[] = [
     name: "Landing Report",
     summary: "Inspect release queue state, open work, and version-slot risk without mutating the workspace.",
     roleAffinity: ["release", "architect"],
-    workflowPhase: "ship",
     promptFragments: [
       "Summarize what is already in flight before selecting a release path.",
       "Do not claim version slots, push commits, or merge work from a read-only landing report.",
@@ -524,7 +489,6 @@ const gstackDefaultSkills: readonly SkillDefinition[] = [
     name: "Setup Deploy",
     summary: "Document deployment configuration, production URLs, health checks, and release commands.",
     roleAffinity: ["release", "docs"],
-    workflowPhase: "ship",
     promptFragments: [
       "Discover deploy configuration from repository files and documented platform settings.",
       "Treat deploy configuration changes as release-sensitive and keep production mutation behind explicit approval.",
@@ -538,7 +502,6 @@ const gstackDefaultSkills: readonly SkillDefinition[] = [
     name: "Ship",
     summary: "Prepare release checks, commits, pushes, PRs, and deploy handoff under strict approval.",
     roleAffinity: ["release"],
-    workflowPhase: "ship",
     promptFragments: [
       "Synchronize with the base branch, run the agreed validation, and publish only approved changes.",
       "Git push, deploy, and external notifications require explicit approval gates.",
@@ -553,7 +516,6 @@ const gstackDefaultSkills: readonly SkillDefinition[] = [
     name: "Land and Deploy",
     summary: "Coordinate merge, deploy handoff, CI verification, and post-merge production checks.",
     roleAffinity: ["release"],
-    workflowPhase: "ship",
     promptFragments: [
       "Land only reviewed and approved work, then verify CI and production health before closing the loop.",
       "Treat git push, merge, deploy, and external notification as explicit approval-gated actions.",
@@ -568,7 +530,6 @@ const gstackDefaultSkills: readonly SkillDefinition[] = [
     name: "Canary",
     summary: "Monitor a shipped surface for console errors, health failures, and performance regressions.",
     roleAffinity: ["release", "qa"],
-    workflowPhase: "operate",
     promptFragments: [
       "Watch the deployed surface after release and compare against the expected healthy baseline.",
       "Escalate production anomalies with evidence, timestamps, and the rollback or mitigation decision needed.",
@@ -583,7 +544,6 @@ const gstackDefaultSkills: readonly SkillDefinition[] = [
     name: "Context Save",
     summary: "Capture current git state, decisions, validation, and remaining work for later resumption.",
     roleAffinity: ["engineer", "release", "docs"],
-    workflowPhase: "operate",
     promptFragments: [
       "Save the minimum durable state needed for a future session to resume without re-discovery.",
       "Separate completed work, active blockers, dirty files, and next commands.",
@@ -597,7 +557,6 @@ const gstackDefaultSkills: readonly SkillDefinition[] = [
     name: "Context Restore",
     summary: "Restore prior saved work context before continuing a paused or transferred task.",
     roleAffinity: ["engineer", "release", "docs"],
-    workflowPhase: "operate",
     promptFragments: [
       "Load the relevant saved context and verify it against the current git and runtime state.",
       "Call out stale context before relying on it.",
@@ -609,7 +568,6 @@ const gstackDefaultSkills: readonly SkillDefinition[] = [
     name: "Checkpoint",
     summary: "Save or restore working-state checkpoints for long or interrupted sessions.",
     roleAffinity: ["engineer", "release", "docs"],
-    workflowPhase: "operate",
     promptFragments: [
       "Use checkpointing to preserve handoff state across branches, workspaces, and sessions.",
       "Prefer context-save/context-restore names where the host reserves checkpoint for another operation.",
@@ -623,7 +581,6 @@ const gstackDefaultSkills: readonly SkillDefinition[] = [
     name: "Document Generate",
     summary: "Create missing documentation for a feature, module, or workflow from implementation evidence.",
     roleAffinity: ["docs", "engineer"],
-    workflowPhase: "document",
     promptFragments: [
       "Read the code and existing docs before writing new documentation.",
       "Choose the right documentation shape: tutorial, how-to, reference, or explanation.",
@@ -637,7 +594,6 @@ const gstackDefaultSkills: readonly SkillDefinition[] = [
     name: "Document Release",
     summary: "Update product and technical documentation so shipped behavior remains discoverable.",
     roleAffinity: ["docs", "release"],
-    workflowPhase: "document",
     promptFragments: [
       "Document shipped behavior, public interfaces, and user-visible workflow changes.",
       "Keep docs as a source of truth for later implementation and support.",
@@ -652,7 +608,6 @@ const gstackDefaultSkills: readonly SkillDefinition[] = [
     name: "Retro",
     summary: "Review recent engineering work, shipped outcomes, quality signals, and follow-up risks.",
     roleAffinity: ["docs", "release", "architect"],
-    workflowPhase: "review",
     promptFragments: [
       "Summarize what changed, what validation caught, and which risks remain for the next slice.",
       "Separate team/process learnings from product or architecture decisions that should become durable docs.",
@@ -664,7 +619,6 @@ const gstackDefaultSkills: readonly SkillDefinition[] = [
     name: "Learn",
     summary: "Inspect and curate durable project learnings so future work can reuse prior decisions.",
     roleAffinity: ["docs", "product", "engineer"],
-    workflowPhase: "operate",
     promptFragments: [
       "Look for previous decisions, pitfalls, and reusable project patterns before proposing new work.",
       "Treat learnings as evidence-backed context, not permission to silently change behavior.",
@@ -676,7 +630,6 @@ const gstackDefaultSkills: readonly SkillDefinition[] = [
     name: "Plan Tune",
     summary: "Review and tune planning question sensitivity and developer workflow preferences.",
     roleAffinity: ["product", "architect", "docs"],
-    workflowPhase: "operate",
     promptFragments: [
       "Inspect repeated clarification prompts and convert durable preferences into explicit workflow guidance.",
       "Treat question tuning as observational unless the user approves changing behavior.",
@@ -688,7 +641,6 @@ const gstackDefaultSkills: readonly SkillDefinition[] = [
     name: "Pair Agent",
     summary: "Pair another agent with a scoped browser session or shared automation surface.",
     roleAffinity: ["security", "engineer", "qa"],
-    workflowPhase: "operate",
     promptFragments: [
       "Grant shared browser or automation access only after the user confirms the intended scope.",
       "Prefer least-privilege access and record the remote-agent boundary.",
@@ -703,7 +655,6 @@ const gstackDefaultSkills: readonly SkillDefinition[] = [
     name: "Setup Browser Cookies",
     summary: "Import or prepare browser cookies for authenticated browser testing.",
     roleAffinity: ["security", "qa"],
-    workflowPhase: "operate",
     promptFragments: [
       "Treat browser cookie import as credential-adjacent work requiring explicit approval.",
       "Never expose cookie values in logs, docs, or final reports.",
@@ -718,7 +669,6 @@ const gstackDefaultSkills: readonly SkillDefinition[] = [
     name: "Setup GBrain",
     summary: "Set up a local gbrain memory/search backend and its agent integration.",
     roleAffinity: ["engineer", "docs"],
-    workflowPhase: "operate",
     promptFragments: [
       "Configure local memory/search infrastructure only with explicit scope and trust boundaries.",
       "Keep secrets and remote trust policy out of public repo content.",
@@ -733,7 +683,6 @@ const gstackDefaultSkills: readonly SkillDefinition[] = [
     name: "Sync GBrain",
     summary: "Refresh gbrain indexing and agent search guidance for the current repository.",
     roleAffinity: ["engineer", "docs"],
-    workflowPhase: "operate",
     promptFragments: [
       "Refresh repo search surfaces from current code and verify the resulting guidance.",
       "Keep generated guidance scoped to the current repository and avoid leaking private paths or secrets.",
@@ -748,7 +697,6 @@ const gstackDefaultSkills: readonly SkillDefinition[] = [
     name: "GStack Upgrade",
     summary: "Upgrade the local gstack installation and report what changed.",
     roleAffinity: ["release", "engineer"],
-    workflowPhase: "operate",
     promptFragments: [
       "Detect global versus vendored installation before changing gstack.",
       "Do not mutate the installed toolchain unless the user explicitly asks for the upgrade.",
@@ -763,7 +711,6 @@ const gstackDefaultSkills: readonly SkillDefinition[] = [
     name: "iOS QA",
     summary: "Run live-device or simulator-backed iOS QA with screen evidence and bug reports.",
     roleAffinity: ["qa", "engineer"],
-    workflowPhase: "test",
     promptFragments: [
       "Use iOS runtime evidence to exercise real screens and report reproducible bugs.",
       "Keep device, signing, and instrumentation requirements explicit.",
@@ -778,7 +725,6 @@ const gstackDefaultSkills: readonly SkillDefinition[] = [
     name: "iOS Design Review",
     summary: "Audit an iOS app's visual design and interaction quality with runtime screenshots.",
     roleAffinity: ["designer", "qa"],
-    workflowPhase: "review",
     promptFragments: [
       "Review real iOS screens against product intent, platform conventions, and visual quality.",
       "Report concrete screen-level issues with evidence instead of generic design advice.",
@@ -793,7 +739,6 @@ const gstackDefaultSkills: readonly SkillDefinition[] = [
     name: "iOS Fix",
     summary: "Fix and verify an iOS issue found by QA within the app's existing build path.",
     roleAffinity: ["engineer", "qa"],
-    workflowPhase: "implement",
     promptFragments: [
       "Patch the smallest source change that addresses the observed iOS bug.",
       "Rebuild and verify the affected runtime path when iOS tooling is available.",
@@ -808,7 +753,6 @@ const gstackDefaultSkills: readonly SkillDefinition[] = [
     name: "iOS Sync",
     summary: "Regenerate or update iOS debug bridge instrumentation from the latest templates.",
     roleAffinity: ["engineer"],
-    workflowPhase: "implement",
     promptFragments: [
       "Update generated iOS instrumentation only inside the app-side debug bridge boundary.",
       "Verify release-build guards and avoid shipping debug-only hooks by accident.",
@@ -823,7 +767,6 @@ const gstackDefaultSkills: readonly SkillDefinition[] = [
     name: "iOS Clean",
     summary: "Remove gstack iOS debug bridge instrumentation and verify release-safe cleanup.",
     roleAffinity: ["engineer", "release"],
-    workflowPhase: "implement",
     promptFragments: [
       "Remove debug bridge packages, overlays, generated accessors, and app-side hooks as a scoped cleanup.",
       "Verify release-build behavior after instrumentation is removed.",

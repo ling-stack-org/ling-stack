@@ -10,6 +10,7 @@ import type {
   ProcedureObservationJobResponse,
   ProcedureObservationRequest,
   ProcedureObservationResponse,
+  SkillCandidateDraftRequest,
   SkillCandidateDraftResponse,
   SkillCandidateListResponse,
   SkillCandidateOrigin,
@@ -18,6 +19,7 @@ import type {
   SkillCandidateReviewRequest,
   SkillCandidateReviewResponse,
   SkillCandidateStatus,
+  OfficialSkillSourceStatusResponse,
   CandidateRouteKind,
   SkillInvocationSuggestionRequest,
   SkillInvocationSuggestionResponse,
@@ -27,8 +29,10 @@ import type {
   SkillImportDraftOptimizationPreviewRequest,
   SkillImportDraftRequest,
   SkillImportDraftResponse,
+  SkillImportPreviewResponse,
   SkillImportPublishResponse,
   SkillHealthResponse,
+  SkillHardDeleteResponse,
   SkillOptimizationPreviewRequest,
   SkillOptimizationPreviewResponse,
   SkillRecordingEligibilityResponse,
@@ -39,12 +43,17 @@ import type {
   SkillRegistryListResponse,
   SkillRegistryMutationResponse,
   SkillRegistryRefreshResponse,
+  SkillRevisionPreviewRequest,
+  SkillRevisionPreviewResponse,
+  SkillRevisionPublishRequest,
+  SkillRevisionPublishResponse,
   SkillSourceHealthResponse,
   SkillSourceArtifactListResponse,
   SkillSourceSnapshotArchiveResponse,
   SkillSourceSnapshotRollbackRequest,
   SkillSourceSnapshotRollbackResponse,
   SkillSourceSnapshotResponse,
+  SkillSourceSyncApplyResponse,
   SkillSourceSyncCheckUpdatesResponse,
   SkillSourceSyncPreviewResponse,
   SkillSourceSyncPublishRequest,
@@ -60,6 +69,10 @@ import type {
 import type { LingDaemonEndpointContext, PublicEndpointGroup } from "../transport.js";
 
 export const skillEndpoints = {
+  async getOfficialSkillSourceStatus(this: LingDaemonEndpointContext, cwd: string): Promise<OfficialSkillSourceStatusResponse> {
+    return this._get("/skills/sync/gstack/status", { cwd });
+  },
+
   async listSkills(this: LingDaemonEndpointContext, cwd: string): Promise<SkillRegistryListResponse> {
     return this._get("/skills", { cwd });
   },
@@ -136,6 +149,10 @@ export const skillEndpoints = {
 
   async previewGstackSkillSourceSync(this: LingDaemonEndpointContext, cwd: string, input: SkillSourceSyncRequest = {}): Promise<SkillSourceSyncPreviewResponse> {
     return this._post("/skills/sync/gstack/preview", { cwd }, input);
+  },
+
+  async applyGstackSkillSourceSync(this: LingDaemonEndpointContext, cwd: string): Promise<SkillSourceSyncApplyResponse> {
+    return this._post("/skills/sync/gstack/apply", { cwd }, {});
   },
 
   async checkGstackSkillSourceUpdates(this: LingDaemonEndpointContext, cwd: string, input: SkillSourceSyncRequest = {}): Promise<SkillSourceSyncCheckUpdatesResponse> {
@@ -346,8 +363,9 @@ export const skillEndpoints = {
     this: LingDaemonEndpointContext,
     cwd: string,
     candidateId: string,
+    input: SkillCandidateDraftRequest = {},
   ): Promise<SkillCandidateDraftResponse> {
-    return this._post(`/skill-candidates/${encodeURIComponent(candidateId)}/draft`, { cwd }, {});
+    return this._post(`/skill-candidates/${encodeURIComponent(candidateId)}/draft`, { cwd }, input);
   },
 
   async refreshSkills(this: LingDaemonEndpointContext, cwd: string): Promise<SkillRegistryRefreshResponse> {
@@ -356,6 +374,28 @@ export const skillEndpoints = {
 
   async createSkillImportDraft(this: LingDaemonEndpointContext, cwd: string, input: SkillImportDraftRequest): Promise<SkillImportDraftResponse> {
     return this._post("/skills/import-draft", { cwd }, input);
+  },
+
+  async previewSkillImport(this: LingDaemonEndpointContext, cwd: string, input: SkillImportDraftRequest): Promise<SkillImportPreviewResponse> {
+    return this._post("/skills/import-preview", { cwd }, input);
+  },
+
+  async previewSkillRevision(
+    this: LingDaemonEndpointContext,
+    cwd: string,
+    skillId: string,
+    input: SkillRevisionPreviewRequest,
+  ): Promise<SkillRevisionPreviewResponse> {
+    return this._post(`/skills/${encodeURIComponent(skillId)}/revision-preview`, { cwd }, input);
+  },
+
+  async publishSkillRevision(
+    this: LingDaemonEndpointContext,
+    cwd: string,
+    skillId: string,
+    input: SkillRevisionPublishRequest,
+  ): Promise<SkillRevisionPublishResponse> {
+    return this._post(`/skills/${encodeURIComponent(skillId)}/revisions`, { cwd }, input);
   },
 
   async getSkillImportDraft(this: LingDaemonEndpointContext, cwd: string, draftId: string): Promise<SkillImportDraftResponse> {
@@ -368,6 +408,10 @@ export const skillEndpoints = {
 
   async archiveSkill(this: LingDaemonEndpointContext, cwd: string, skillId: string): Promise<SkillRegistryMutationResponse> {
     return this._request("DELETE", `/skills/${encodeURIComponent(skillId)}`, { cwd });
+  },
+
+  async hardDeleteSkill(this: LingDaemonEndpointContext, cwd: string, skillId: string): Promise<SkillHardDeleteResponse> {
+    return this._post(`/skills/${encodeURIComponent(skillId)}/hard-delete`, { cwd }, {});
   },
 };
 

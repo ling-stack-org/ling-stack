@@ -5,6 +5,8 @@ import type {
   SkillGovernanceRecordingMode,
 } from "../../types.js";
 
+import { SelectControl } from "../../shared/components/SelectControl.js";
+
 type SettingsTranslator = (key: string, values?: Readonly<Record<string, string | number>>) => string;
 
 export const defaultSkillGovernancePolicy: SkillGovernancePolicy = {
@@ -62,7 +64,7 @@ export function SkillGovernanceSettingsPanel({
       <div className="settings-skill-governance-grid">
         <label className="settings-skill-governance-field">
           <span>{t("Candidate generation")}</span>
-          <select
+          <SelectControl
             aria-label={t("Skill candidate generation mode")}
             disabled={!supported || saving}
             value={policy.generationMode}
@@ -71,12 +73,12 @@ export function SkillGovernanceSettingsPanel({
             {skillGovernanceGenerationModes.map((mode) => (
               <option key={mode} value={mode}>{skillGovernanceGenerationModeLabel(mode, t)}</option>
             ))}
-          </select>
+          </SelectControl>
           <small>{skillGovernanceGenerationModeDescription(policy.generationMode, t)}</small>
         </label>
         <label className="settings-skill-governance-field">
           <span>{t("Recording")}</span>
-          <select
+          <SelectControl
             aria-label={t("Skill recording mode")}
             disabled={!supported || saving}
             value={policy.recordingMode}
@@ -85,7 +87,7 @@ export function SkillGovernanceSettingsPanel({
             {skillGovernanceRecordingModes.map((mode) => (
               <option key={mode} value={mode}>{skillGovernanceRecordingModeLabel(mode, t)}</option>
             ))}
-          </select>
+          </SelectControl>
           <small>{skillGovernanceRecordingModeDescription(policy.recordingMode, t)}</small>
         </label>
       </div>

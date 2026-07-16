@@ -117,6 +117,7 @@ test("gstack default skills use supported tools and provider capabilities", () =
   assert.ok(pack);
 
   for (const skill of pack.skills) {
+    assert.equal("workflowPhase" in skill, false, `${skill.id} should not carry workflow stage metadata`);
     for (const tool of skill.requiredTools) {
       assert.equal(validTools.has(tool), true, `${skill.id} references unsupported tool ${tool}`);
     }
