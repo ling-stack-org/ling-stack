@@ -2,9 +2,9 @@
 
 ## Status
 
-Approved architecture direction. Packaging has not started. The minimal Electron shell
-required by Computer Use picture-in-picture is the first concrete implementation target;
-tray, updater, and full keychain UX remain later shell slices.
+Approved architecture direction. The minimal Electron shell and Computer Use
+picture-in-picture packaging baseline are implemented; signed release closure, tray,
+updater, full keychain UX, and bundled native-provider hosting remain later shell slices.
 
 ## Purpose
 
@@ -26,6 +26,9 @@ contracts, and approval boundaries.
 - Add OS keychain, tray/menu bar, notifications, file picker, and update UX.
 - Add cross-platform floating Computer Use preview windows without owning Computer Use
   runtime state or approval policy.
+- Host reviewed embedded native providers when platform process responsibility,
+  permission attribution or interactive-session lifecycle requires the signed Desktop
+  app to own the direct child process.
 - Keep Desktop downstream of daemon state machines, approvals, leases, and audit logs.
 - Render the shared `ConversationTranscript` contract from the daemon instead of copying
   Web-only conversation grouping logic.
@@ -100,8 +103,31 @@ apps/desktop/
       # dedicated Desktop-only PiP renderer
   resources/
     icons/
+    providers/
+      cua-driver/
   tests/
 ```
+
+## Embedded Native Provider Boundary
+
+Desktop may own a native provider process when the operating system binds permissions to
+the GUI application's process responsibility chain. This does not move MCP authorization
+or tool policy into Desktop.
+
+For Cua Driver on packaged macOS and Windows:
+
+- Desktop packages and directly spawns the locked provider;
+- on macOS, Desktop owns TCC permission UX and signed-host attribution;
+- on Windows, Desktop owns interactive-session readiness, lock/disconnect invalidation,
+  the retained child handle and `KILL_ON_JOB_CLOSE` Job Object lifecycle;
+- Desktop owns bridge publication and process cleanup on both platforms;
+- the daemon owns plugin state, MCP health, tool synchronization, approvals, bindings,
+  audit, and run snapshots;
+- the shared renderer never receives provider stdio, path, endpoint, or secrets;
+- provider enablement remains an explicit user action.
+
+See [Bundled Embedded Cua Driver](cua-driver-bundled-embedded.md) and its
+[Detailed Design](cua-driver-bundled-embedded-detailed-design.md).
 
 ## Responsibilities
 
@@ -115,9 +141,11 @@ Desktop owns:
 - OS notifications,
 - OS keychain access,
 - update UX,
-- crash/restart affordances.
+- crash/restart affordances,
 - Computer Use picture-in-picture BrowserWindow lifecycle, screen placement, local
-  visibility preferences, capture-adapter lifecycle, and media cleanup.
+  visibility preferences, capture-adapter lifecycle, and media cleanup,
+- reviewed embedded Cua Driver artifact verification, platform adapters, direct-child
+  process groups, platform readiness controllers, MCP proxies, and lease publication.
 
 Desktop does not own:
 
@@ -129,7 +157,7 @@ Desktop does not own:
 - conversation transcript projection,
 - intent routing or target resolution,
 - runner execution,
-- provider adapters,
+- model/media provider routing adapters or daemon-owned provider selection and tool policy,
 - GitHub automation logic,
 - workspace persistence schema.
 - Computer Use session legality, stop authorization, approval state, durable audit state,

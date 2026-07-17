@@ -405,6 +405,9 @@ async function inspectAuthenticode(binaryPaths) {
   }
   const command = [
     "$ErrorActionPreference = 'Stop'",
+    "$securityModulePath = [System.IO.Path]::Combine($PSHOME, 'Modules', 'Microsoft.PowerShell.Security', 'Microsoft.PowerShell.Security.psd1')",
+    "if (![System.IO.File]::Exists($securityModulePath)) { throw \"Trusted Windows PowerShell security module is missing: $securityModulePath\" }",
+    "Microsoft.PowerShell.Core\\Import-Module -Name $securityModulePath -Force -ErrorAction Stop",
     "$signature = Microsoft.PowerShell.Security\\Get-AuthenticodeSignature -FilePath $env:LING_CUA_PROVIDER_BINARY",
     "$certificateSha256 = if ($signature.SignerCertificate) { $sha256 = [System.Security.Cryptography.SHA256]::Create(); try { ([System.BitConverter]::ToString($sha256.ComputeHash($signature.SignerCertificate.RawData))).Replace('-', '').ToLowerInvariant() } finally { $sha256.Dispose() } } else { $null }",
     "[PSCustomObject]@{ Path = $env:LING_CUA_PROVIDER_BINARY; Status = [string]$signature.Status; StatusMessage = $signature.StatusMessage; SignerSubject = if ($signature.SignerCertificate) { $signature.SignerCertificate.Subject } else { $null }; CertificateSha256 = $certificateSha256 } | ConvertTo-Json -Compress",

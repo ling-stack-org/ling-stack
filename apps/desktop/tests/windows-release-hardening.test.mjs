@@ -25,11 +25,12 @@ test("Windows PowerShell acceptance is bounded, tree-cleaning, and stale-report 
   assert.match(source, /function Stop-NativeProcessTree/u);
   assert.match(source, /System32\\taskkill\.exe/u);
   assert.match(source, /WaitForExit\(\$TimeoutMilliseconds\)/u);
+  assert.doesNotMatch(source, /\b\d+_\d+\b/u);
   assert.match(source, /Remove-Item -LiteralPath \$outputPath -Force/u);
   assert.match(source, /function Resolve-TrustedToolPath/u);
   assert.match(source, /resolved outside a trusted tool root/u);
-  assert.match(source, /-TimeoutMilliseconds 90_000/u);
-  assert.match(source, /-TimeoutMilliseconds 120_000/u);
+  assert.match(source, /-TimeoutMilliseconds 90000/u);
+  assert.match(source, /-TimeoutMilliseconds 120000/u);
   assert.doesNotMatch(source, /Get-Command\s+nvda\.exe/u);
   assert.match(source, /Microsoft\.PowerShell\.Security\\Get-AuthenticodeSignature/u);
   assert.match(source, /Microsoft\.PowerShell\.Utility\\Get-FileHash/u);
@@ -97,6 +98,9 @@ test("provider verifier does not resolve PowerShell or unzip through PATH", asyn
   assert.match(source, /resolveWindowsSystemExecutable\(/u);
   assert.match(source, /resolveWindowsSystemExecutable\("taskkill\.exe"\)/u);
   assert.match(source, /resolveUnzipExecutable\(/u);
+  assert.match(source, /\[System\.IO\.Path\]::Combine\(\$PSHOME/u);
+  assert.match(source, /Microsoft\.PowerShell\.Core\\+Import-Module/u);
+  assert.match(source, /Microsoft\.PowerShell\.Security\\+Get-AuthenticodeSignature/u);
   assert.doesNotMatch(source, /runChild\(\s*["']powershell\.exe["']/u);
   assert.doesNotMatch(source, /runChild\(\s*["']unzip["']/u);
   assert.match(source, /detached: process\.platform !== "win32"/u);

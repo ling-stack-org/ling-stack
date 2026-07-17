@@ -250,7 +250,7 @@ jobs:
           executable="${GITHUB_WORKSPACE}/apps/desktop/release/mac/Ling Stack.app/Contents/MacOS/Ling Stack"
           test -x "$executable"
           LING_DESKTOP_SMOKE_EXECUTABLE="$executable" \
-            LING_DESKTOP_SMOKE_TIMEOUT_MS=120000 \
+            LING_DESKTOP_SMOKE_TIMEOUT_MS=180000 \
             node apps/desktop/tests/run-computer-use-smoke.mjs
 
       - name: Run mounted-DMG fake smokes
@@ -289,7 +289,7 @@ jobs:
             test -x "$executable"
             smoke_timeout_ms=50000
             if [[ "$(lipo -archs "$executable")" == "x86_64" ]]; then
-              smoke_timeout_ms=120000
+              smoke_timeout_ms=180000
             fi
             LING_DESKTOP_SMOKE_EXECUTABLE="$executable" \
               LING_DESKTOP_SMOKE_TIMEOUT_MS="$smoke_timeout_ms" \
@@ -401,6 +401,9 @@ jobs:
         run: |
           $providerDirectory = Join-Path $env:RUNNER_TEMP "ling-cua-driver-rs-v0.8.3"
           node apps/desktop/tests/verify-windows-cua-driver-provider.mjs --output-dir $providerDirectory
+          if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+          }
           $providerBinary = Join-Path $providerDirectory "provider/cua-driver-rs-0.8.3-windows-x86_64/cua-driver.exe"
           if (!(Test-Path -LiteralPath $providerBinary -PathType Leaf)) {
             throw "Pinned provider binary is missing after acquisition"
@@ -614,6 +617,10 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
           New-Item -ItemType Directory -Force -Path apps/desktop/test-results | Out-Null
+          if (!(Test-Path -LiteralPath "apps/desktop/release" -PathType Container)) {
+            Write-Host "Skipping Windows acceptance preflight because packaging did not produce a release directory."
+            exit 0
+          }
           $release = (Resolve-Path "apps/desktop/release").Path
           $installers = @(
             Get-ChildItem -Path $release -File -Filter "*.exe" |

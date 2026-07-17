@@ -43,7 +43,10 @@ test("daemon exposes managed plugin catalog and runtime extension diagnostics", 
     assert.equal(cua.actions.canApplyPreset, supportedDesktop);
     assert.equal(cua.setup.kind, "local_binary");
     assert.equal(["detected", "missing", "unsupported", "connected", "ready"].includes(cua.setup.state), true);
-    assert.equal(cua.setup.state === "missing", Boolean(cua.setup.guide));
+    assert.equal(
+      Boolean(cua.setup.guide),
+      process.platform === "darwin" && cua.setup.state === "missing",
+    );
 
     const bundledDetail = await getJson(`${daemon.url}/plugins/${encodeURIComponent(bundledCuaPluginId)}?cwd=${encodeURIComponent(cwd)}`);
     const bundledCua = bundledDetail.plugin;
@@ -181,9 +184,7 @@ test("bundled plugin package cache uses resolved workspace plugin cache path", a
 
 test("daemon installs bundled cua package cache and previews runtime injection", { skip: !supportedDesktop }, async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-plugin-install-"));
-  const command = join(cwd, "cua-driver");
-  await writeFile(command, "#!/bin/sh\nexit 0\n");
-  await chmod(command, 0o755);
+  const command = await createCuaDriverFixture(cwd);
   const broker = new FakePluginMcpBroker();
   const daemon = await startDaemonForTest(broker, new SnapshotRunner());
   try {
@@ -254,9 +255,7 @@ test("daemon installs bundled cua package cache and previews runtime injection",
 
 test("bundled Cua Driver enable fails closed before runtime injection", { skip: !supportedDesktop }, async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-plugin-bundled-enable-failure-"));
-  const command = join(cwd, "cua-driver");
-  await writeFile(command, "#!/bin/sh\nexit 0\n");
-  await chmod(command, 0o755);
+  const command = await createCuaDriverFixture(cwd);
   const daemon = await startDaemonForTest(new FailingPluginMcpBroker());
   try {
     await postJson(
@@ -292,9 +291,7 @@ test("bundled Cua Driver enable fails closed before runtime injection", { skip: 
 
 test("bundled Cua Driver rejects shared legacy ownership until reinstall migrates it", { skip: !supportedDesktop }, async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-plugin-shared-cua-owner-"));
-  const command = join(cwd, "cua-driver");
-  await writeFile(command, "#!/bin/sh\nexit 0\n");
-  await chmod(command, 0o755);
+  const command = await createCuaDriverFixture(cwd);
   const daemon = await startDaemonForTest(new FakePluginMcpBroker());
   try {
     await postJson(
@@ -392,12 +389,14 @@ test("daemon rejects invalid plugin package contribution paths with redacted dia
 
 test("daemon applies cua-driver preset idempotently without teammate authorization", { skip: !supportedDesktop }, async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-plugin-apply-"));
-  const command = join(cwd, "cua-driver");
-  await writeFile(command, "#!/bin/sh\nexit 0\n");
-  await chmod(command, 0o755);
+  const command = await createCuaDriverFixture(cwd);
   const originalPath = process.env.PATH;
+  const originalPathExt = process.env.PATHEXT;
   const pathDelimiter = process.platform === "win32" ? ";" : ":";
   process.env.PATH = `${cwd}${originalPath ? `${pathDelimiter}${originalPath}` : ""}`;
+  if (process.platform === "win32") {
+    process.env.PATHEXT = ".EXE";
+  }
   const broker = new FakePluginMcpBroker();
   const daemon = await startDaemonForTest(broker);
   try {
@@ -488,6 +487,11 @@ test("daemon applies cua-driver preset idempotently without teammate authorizati
     } else {
       process.env.PATH = originalPath;
     }
+    if (originalPathExt === undefined) {
+      delete process.env.PATHEXT;
+    } else {
+      process.env.PATHEXT = originalPathExt;
+    }
     await rm(cwd, { recursive: true, force: true });
   }
 });
@@ -517,6 +521,15 @@ test("daemon rolls Cua Driver back to disabled when enable check fails", { skip:
     await rm(cwd, { recursive: true, force: true });
   }
 });
+
+async function createCuaDriverFixture(cwd) {
+  const command = join(cwd, process.platform === "win32" ? "cua-driver.exe" : "cua-driver");
+  await writeFile(command, process.platform === "win32" ? "windows provider fixture\n" : "#!/bin/sh\nexit 0\n");
+  if (process.platform !== "win32") {
+    await chmod(command, 0o755);
+  }
+  return command;
+}
 
 class FakePluginMcpBroker {
   constructor() {

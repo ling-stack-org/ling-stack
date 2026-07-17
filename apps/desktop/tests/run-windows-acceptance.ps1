@@ -496,7 +496,7 @@ function Invoke-NativeCapture {
     [Parameter(Mandatory = $true)][string]$FilePath,
     [string[]]$ArgumentList = @(),
     [AllowNull()][string]$WorkingDirectory,
-    [int]$TimeoutMilliseconds = 120_000
+    [int]$TimeoutMilliseconds = 120000
   )
 
   if ($TimeoutMilliseconds -le 0) {
@@ -533,7 +533,7 @@ function Invoke-NativeCapture {
     $stderrTask = $process.StandardError.ReadToEndAsync()
     if (-not $process.WaitForExit($TimeoutMilliseconds)) {
       Stop-NativeProcessTree -ProcessId $process.Id
-      [void]$process.WaitForExit(5_000)
+      [void]$process.WaitForExit(5000)
       if (-not $process.HasExited) {
         try {
           $process.Kill()
@@ -569,7 +569,7 @@ function Invoke-NativeCapture {
 
 function Get-GitCommit {
   $status = Invoke-NativeCapture -FilePath $gitPath `
-    -ArgumentList @("status", "--porcelain=v1", "--untracked-files=all") -WorkingDirectory $repoRoot -TimeoutMilliseconds 10_000
+    -ArgumentList @("status", "--porcelain=v1", "--untracked-files=all") -WorkingDirectory $repoRoot -TimeoutMilliseconds 10000
   if ($status.exitCode -ne 0 -or $status.error) {
     throw "windows_release_harness_git_status_failed"
   }
@@ -577,7 +577,7 @@ function Get-GitCommit {
     throw "windows_release_harness_worktree_dirty"
   }
   $probe = Invoke-NativeCapture -FilePath $gitPath `
-    -ArgumentList @("rev-parse", "HEAD") -WorkingDirectory $repoRoot -TimeoutMilliseconds 10_000
+    -ArgumentList @("rev-parse", "HEAD") -WorkingDirectory $repoRoot -TimeoutMilliseconds 10000
   if ($probe.exitCode -eq 0 -and $probe.output -match "^[0-9a-fA-F]{40,64}$") {
     return $probe.output.Trim().ToLowerInvariant()
   }
@@ -1007,7 +1007,7 @@ function Invoke-InstallerPayloadVerification {
   $primaryError = $null
   $cleanupError = $null
   try {
-    $install = Invoke-NativeCapture -FilePath $InstallerPath -ArgumentList @("/S") -TimeoutMilliseconds 120_000
+    $install = Invoke-NativeCapture -FilePath $InstallerPath -ArgumentList @("/S") -TimeoutMilliseconds 120000
     if ($install.exitCode -ne 0 -or $install.error) {
       throw ("signed_installer_failed:{0}" -f $(if ($install.error) { $install.error } else { $install.exitCode }))
     }
@@ -1066,7 +1066,7 @@ function Invoke-InstallerPayloadVerification {
         ) {
           throw "signed_installer_cleanup_uninstaller_signature_invalid"
         }
-        $uninstall = Invoke-NativeCapture -FilePath $uninstaller.FullName -ArgumentList @("/S") -TimeoutMilliseconds 120_000
+        $uninstall = Invoke-NativeCapture -FilePath $uninstaller.FullName -ArgumentList @("/S") -TimeoutMilliseconds 120000
         if ($uninstall.exitCode -ne 0 -or $uninstall.error) {
           throw ("signed_uninstaller_failed:{0}" -f $(if ($uninstall.error) { $uninstall.error } else { $uninstall.exitCode }))
         }
@@ -1129,7 +1129,7 @@ function Invoke-ProviderVerification {
   }
   $probe = Invoke-NativeCapture -FilePath $nodePath `
     -ArgumentList @($providerVerifier, "--installed-binary", $Path) `
-    -WorkingDirectory $repoRoot -TimeoutMilliseconds 90_000
+    -WorkingDirectory $repoRoot -TimeoutMilliseconds 90000
   $parsedReport = $null
   $parseError = $null
   if ($probe.exitCode -eq 0 -and -not [string]::IsNullOrWhiteSpace($probe.output)) {
@@ -1207,7 +1207,7 @@ function Invoke-ProviderSmoke {
     $env:LING_DESKTOP_SMOKE_TIMEOUT_MS = "60000"
     $probe = Invoke-NativeCapture -FilePath $nodePath `
       -ArgumentList @($providerSmokeRunner) `
-      -WorkingDirectory $repoRoot -TimeoutMilliseconds 120_000
+      -WorkingDirectory $repoRoot -TimeoutMilliseconds 120000
     return [ordered]@{
       attempted = $true
       passed = $probe.exitCode -eq 0
@@ -1405,7 +1405,7 @@ try {
   }
   $reportBuild = Invoke-NativeCapture -FilePath $nodePath `
     -ArgumentList $reportArguments `
-    -WorkingDirectory $repoRoot -TimeoutMilliseconds 60_000
+    -WorkingDirectory $repoRoot -TimeoutMilliseconds 60000
   if ($reportBuild.exitCode -ne 0) {
     $reportFailure = if ($reportBuild.output) { $reportBuild.output } else { $reportBuild.error }
     throw "Windows acceptance report builder failed: $reportFailure"

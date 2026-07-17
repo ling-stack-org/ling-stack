@@ -8,6 +8,12 @@ Implementation-shaped detailed design for
 Implementation sequencing:
 [Desktop Computer Use Picture-in-Picture Implementation Plan](desktop-computer-use-picture-in-picture-implementation-plan.md).
 
+The current provider distribution baseline remains external. The approved packaged
+macOS and Windows Desktop provider boundary is defined by
+[Bundled Embedded Cua Driver](cua-driver-bundled-embedded.md) and its
+[Detailed Design](cua-driver-bundled-embedded-detailed-design.md); standalone/dev mode
+retains explicit external provider support.
+
 This document fixes the state model, selection rules, Desktop IPC, window behavior,
 layout algorithm, platform adapter, recovery timers, and test cases. The local implementation
 baseline is verified; the companion implementation plan is the source of truth for what is
@@ -982,12 +988,18 @@ test-only oracle, and then forwards only Cua's canonical native window id plus t
 provider-reported owner PID. Title matching, active-window state, z-order, and nearest-candidate
 fallback are forbidden because they can silently reveal the wrong source.
 
-For macOS and Windows V1, Ling packages only the Cua Driver plugin shell metadata. The `cua-driver`
-executable, native application, permissions, and update channel remain separately installed
-provider responsibilities. The daemon resolves an explicit command or supported local
-installation path and reports `plugin_binary_not_found` when the provider is absent. A
-clean-machine real-capture test must install and permission that external provider before
-starting Ling; no renderer or public contract may depend on its installation path.
+The current verified baseline packages only the Cua Driver plugin shell metadata. The
+target distribution is now platform-specific:
+
+| Platform/runtime | Provider boundary |
+| --- | --- |
+| Packaged macOS Desktop | Ling packages locked `0.8.3 (Ling build 1)`, Electron main spawns it in embedded mode, and Ling owns the TCC identity |
+| macOS standalone/dev/external override | daemon resolves an explicit or supported external command and fails missing providers closed |
+| Packaged Windows Desktop | bundled source-built x64 `0.8.3 (Ling build 1)` in Desktop-owned embedded mode; standard integrity tier, Windows-team VM acceptance required |
+| Windows standalone/dev/external override | separately installed exact-reviewed provider remains available |
+
+No renderer or public Computer Use contract may depend on a native installation path. The
+cross-platform process/bridge details live in the Bundled Embedded Cua Driver detailed design.
 
 ## Visual Contract
 
@@ -1274,6 +1286,9 @@ broader cosmetic refactoring remains out of scope.
 
 ## Open Decisions
 
-- Exact Windows provider allowlist advancement and public distribution risk acceptance.
-- Windows legal Publisher/signing service, supported-version floor, and whether enterprise
-  distribution needs a separate per-machine artifact; the first candidate remains per-user.
+- Exact Windows source/build lock and Ling distribution-revision advancement, including
+  public risk acceptance for a prerelease source pin.
+- Windows legal Publisher/signing service, minimum supported Windows build and
+  policy-pinned VM matrix, whether full UIAccess is required, and whether enterprise
+  distribution needs a separate per-machine artifact; the first standard candidate
+  remains per-user.

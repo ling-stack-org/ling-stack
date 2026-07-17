@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { cp, mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, relative, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import test from "node:test";
 import {
   DESKTOP_BUNDLED_PLUGINS_RESOURCE_DIRECTORY,
@@ -48,8 +48,10 @@ test("packaged daemon resolves the copied Cua Driver manifest from Electron reso
 
     const resolvedRoot = resolveBundledPackageRoot("cua-driver", {
       resourcesPath,
-      moduleUrl: new URL("file:///virtual/app.asar/dist/daemon/cli.mjs").href,
-      cwd: "/virtual/workspace",
+      moduleUrl: pathToFileURL(
+        resolve(resourcesPath, "virtual", "app.asar", "dist", "daemon", "cli.mjs"),
+      ).href,
+      cwd: resolve(resourcesPath, "virtual-workspace"),
     });
     assert.equal(resolvedRoot, packagedRoot);
 

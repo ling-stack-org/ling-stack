@@ -28,16 +28,20 @@ JSON document matching a schema is not proof by itself.
 - `windows-release-policy.schema.json` records the approved policy version, approver,
   approval time, exact Ling/provider signer subjects, signer certificate SHA-256 values,
   the explicit supported Windows build allowlist, reviewer/build-attestor identities, and
-  their canonical SPKI SHA-256 fingerprints. Signer identities and keys are read from this
+  their canonical SPKI SHA-256 fingerprints. Bundled Slice 8 versions this schema to add
+  explicit `requiredAcceptanceCells`; allowlist membership for one host is not matrix
+  coverage. Signer identities and keys are read from this
   content-addressed policy, not accepted as command-line assertions. Reviewer and
   candidate-build roles must be disjoint by identity, key ID, and SPKI fingerprint.
-- `windows-candidate-manifest.schema.json` freezes the commit, approved policy hash, exact
-  reviewed upstream archive tuple, fixed `cua-driver.exe` and `cua-driver-uia.exe` hashes,
-  Ling app/installer hashes, and the clean-commit daemon payload strategy/tree fingerprint
-  before Windows Full acceptance. The PowerShell runner refuses to execute a Full provider
-  smoke until this tuple matches.
-- `windows-full-manual-evidence.schema.json` is the shared content contract for six distinct
-  Full evidence kinds: supported Windows build, dual-display/DPI visuals, Narrator, NVDA,
+- `windows-candidate-manifest.schema.json` currently freezes the external/reference
+  baseline: commit, approved policy hash, reviewed upstream archive tuple, both reference
+  PE hashes, Ling app/installer hashes, and daemon payload strategy/tree fingerprint.
+  Bundled Slice 8 must supersede those runtime fields with the source/build lock, packaged
+  main-PE seal, signed provider catalog/path and an audit-only UIAccess hash. Until that
+  schema migration lands, this contract must not be read as the bundled target.
+- `windows-full-manual-evidence.schema.json` is the current external-baseline shared
+  content contract for six Full evidence kinds: supported Windows build,
+  dual-display/DPI visuals, Narrator, NVDA,
   SmartScreen, and install/update/uninstall. Each document binds the candidate-manifest
   hash and exact host/session/build, derives PASS/FAIL from its case content, requires a
   reviewer-routing claim after the operator completes the case, and references at least one
@@ -45,6 +49,13 @@ JSON document matching a schema is not proof by itself.
   and cannot promote a release. Attachments must remain relative to their evidence document.
   One evidence document or attachment reference cannot be reused to close another evidence
   kind.
+  Bundled Slice 8 versions display evidence so one immutable report represents one exact
+  single- or dual-display/DPI cell instead of forcing every report to be dual-display.
+- Bundled Slice 8 adds per-cell handoff/report schemas plus a Windows signed-acceptance
+  matrix schema. Each producer uses exclusive-create, binds report-relative attachments,
+  binds a common `handoffIndexSha256` and unique `cellManifestSha256`, and is aggregated
+  by `finalize-windows-signed-acceptance.mjs`, which requires every policy cell exactly
+  once and remains `MANUAL_REVIEW_REQUIRED`.
 - `windows-review-attestation.schema.json` is the detached reviewer signature over the
   canonical Full report evidence digest.
 - `windows-candidate-build-attestation.schema.json` is the detached build-attestor signature
@@ -55,9 +66,15 @@ JSON document matching a schema is not proof by itself.
 
 macOS evidence paths are report-relative. Retain each report, its logs/evidence, and the
 candidate's relative artifact tree together. The Windows CLI reads and validates the JSON
-content and every attachment hash; a
-boolean switch, empty file, self-declared signer subject, or archive checksum that proves
-only download integrity cannot close Full acceptance.
+content and every attachment hash; a boolean switch, empty file, self-declared signer
+subject, or archive checksum that proves only download integrity cannot close Full
+acceptance.
+
+Bundled Windows lifecycle evidence also binds the active child PID/nonce match, host and
+provider integrity levels, Job Object assignment/`KILL_ON_JOB_CLOSE`, old/new lease
+generations, lock/revoke/unlock/reprobe ordering and zero main-child/grandchild residue.
+One-shot diagnostics may support preflight evidence but can never substitute for the
+active-child readiness record.
 
 Every macOS producer and the finalizer bind their required harness scripts to the current
 commit twice: the report retains each working file's raw SHA-256 and its Git blob object ID,

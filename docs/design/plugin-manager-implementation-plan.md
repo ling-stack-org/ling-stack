@@ -14,6 +14,11 @@ third-party plugin APIs, marketplace installation, and untrusted sandboxing.
 This document also records the follow-up Stage 4-5 implementation design so the later
 work can be picked up without reopening the product boundary.
 
+The Stage 4-5 Cua Driver package-shell text describes the implemented external baseline.
+It is not the target packaged Desktop provider boundary. The superseding macOS and
+Windows target is [Bundled Embedded Cua Driver](cua-driver-bundled-embedded.md), while
+standalone/dev and explicit external fallback keep the existing shell/preset behavior.
+
 ## Outcome
 
 After slices 1-3, Ling Stack should let a user:
@@ -902,8 +907,11 @@ Stage 4 definition of done:
 
 ### Stage 4 CUA Bundled Plugin Shell
 
-CUA should be the first bundled package, but only as a Ling plugin shell. The package does
-not contain `CuaDriver.app` or a `cua-driver` binary.
+The implemented CUA plugin package remains a metadata-only Ling plugin shell. The plugin
+package itself does not contain `CuaDriver.app` or a `cua-driver` binary. The approved
+packaged macOS and Windows providers are separate Desktop resources owned by the Bundled
+Embedded Cua Driver boundary; standalone/dev and explicit external fallback continue to
+link this shell to an external binary.
 
 Example manifest:
 
@@ -1204,7 +1212,8 @@ Required tests:
 - runtime preview excludes disabled plugins;
 - run/session snapshot freezes enabled plugin capabilities;
 - policy overlay precedence cannot weaken workspace/user deny rules;
-- CUA shell install does not require or contain `CuaDriver.app`;
+- CUA shell install does not require or contain native provider binaries; packaged macOS
+  and Windows provider resources are validated separately by Desktop release gates;
 - missing CUA binary produces a redacted blocker;
 - CUA screenshot and GUI mutation tools default to `ask`;
 - no install path creates teammate tool bindings automatically.

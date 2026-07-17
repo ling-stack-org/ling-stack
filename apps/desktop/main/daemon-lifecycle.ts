@@ -203,10 +203,9 @@ export class DesktopDaemonLifecycle {
       resolveChildExit(exit);
     });
 
-    // A cold packaged x64 build launched through Rosetta can spend almost eight
-    // seconds starting the bundled daemon from a mounted DMG. Keep the timeout
-    // bounded, but leave enough margin for real packaged cold starts rather
-    // than racing the health probe at the old eight-second boundary.
+    // Keep ordinary startup bounded. Callers that intentionally exercise a
+    // translated cold-start path may supply a larger budget without relaxing
+    // native product behavior.
     const deadline = Date.now() + (this.options.startupTimeoutMs ?? DEFAULT_DAEMON_STARTUP_TIMEOUT_MS);
     while (Date.now() < deadline) {
       this.assertStartupCurrent(startupGeneration);

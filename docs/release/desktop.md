@@ -11,12 +11,14 @@ Windows provider、签名、安装范围和回滚决策见
 
 | 平台 | 目标 | 当前证据边界 |
 | --- | --- | --- |
-| macOS | arm64、x86_64 | unsigned `.app` 与 mounted DMG 的 fake/window/display provenance matrix、当前机器 Cua native handoff 和 real MediaStream 性能已有；Developer ID、TCC 矩阵和 clean machine 未闭合 |
-| Windows | x86_64 | branded unsigned x64 app/per-user NSIS cross-package、exact Cua Driver v0.8.3 verifier/allowlist，以及 health、双目标 revision、Desktop restart runner 已有；provider 仍是 unsigned prerelease，Windows 安装执行和 interactive VM real capture 未闭合 |
+| macOS | arm64、x86_64 | 当前 unsigned baseline 仍是 external provider；目标改为从锁定 tag/Cargo.lock 加 `ling-managed-embedded-v1` patch series 构建 `0.8.3 (Ling build 1)` 并由 Desktop embedded 托管，post-sign seal、Developer ID、单一 Ling TCC、macOS 13/14/15/26、clean machine、升级回滚尚未闭合 |
+| Windows | x86_64 | 当前实现仍是 external baseline；目标改为从锁定 tag/Cargo.lock/patch series 构建 bundled `0.8.3 (Ling build 1)`，由 Desktop 在 interactive session 托管并声明 standard integrity tier；main-PE post-sign seal、signed resource catalog、Publisher/SmartScreen、Windows-team VM/DPI/双屏/Narrator/NVDA、安装生命周期尚未闭合 |
 | Linux | 不支持 | provider gate 必须 fail closed |
 
-Ling 只发布 Cua Driver plugin shell metadata，不打包 provider 二进制、原生库、凭据或
-权限状态。Windows provider 当前固定审阅基线为：
+当前已验证 artifact 只发布 Cua Driver plugin shell metadata。批准后的 macOS 和 Windows
+target 将打包锁定的 Ling source build 和 version-isolated provider state contract，但
+仍不打包权限或验收状态；在各自 embedded release gate 完成前不能写成已交付能力。
+Windows 上游参考基线为：
 
 ```text
 trycua/cua  cua-driver-rs-v0.8.3
@@ -115,7 +117,10 @@ unsigned job 必须验证：
 - `CFBundleIdentifier=com.lingstack.desktop`；
 - `CFBundleIconFile=icon.icns`，且 arm64/x64 bundle 内图标与提交的 Ling icon 字节一致；
 - arm64/x86_64 Mach-O 架构正确；
-- bundled Cua Driver 只有 manifest、MCP metadata、README；
+- 当前 baseline 的 bundled Cua Driver 只有 manifest、MCP metadata、README；切换到
+  embedded macOS target 前，workflow 必须改为验证 exact source/patch/toolchain lock、
+  post-sign provider seal、binary、license、架构、exact entitlements、state isolation 和
+  无 standalone app/updater script，而不能继续沿用本断言；
 - 不存在 Developer ID Authority 或 Team ID；
 - fake、real-window、primary-display packaged provenance smoke 在 arm64 和 x86_64
   两个 `.app` 以及挂载后的两个 DMG 中都通过；
@@ -180,17 +185,23 @@ tree fingerprint 和 CDHash 绑定到 standalone app。缺任一架构、DMG、Z
 目录；复制到 clean host 时必须保留 report 与 `release/` 树的相对布局，不能依赖 signing
 host 的绝对路径。
 
-签名矩阵必须在 clean machine 覆盖：Screen Recording denied、prompt、granted、revoked，
+签名矩阵必须在 dedicated clean machine 覆盖：Screen Recording denied、prompt、granted、
+revoked 后 re-granted，
 窗口捕获、display 捕获、source ended、descriptor revision、Desktop restart、track
-释放和系统 capture indicator。测试不得修改用户原有 TCC 状态。
+释放和系统 capture indicator。脚本不得调用 `tccutil`；人工授权变化必须在同一 case
+结束前恢复到 granted，并记录完整转换顺序。
 
-每个 TCC case 使用 `run-macos-tcc-acceptance.mjs` 生成独立 JSON。arm64、x86_64 各自
-必须生成 denied/prompt/granted/revoked 四份，共八份；finalizer 校验 host architecture、
-实际执行架构和 candidate executable SHA，universal binary 不能在单一 host 上替另一架构
-关门。脚本会在目标 host
+每个 TCC case 使用 `run-macos-tcc-acceptance.mjs` 生成独立 JSON。provider lock 中的
+macOS 13/14/15/26 × arm64/x86_64 每个 cell 都必须生成
+denied/prompt/granted/revoked 四份，初始矩阵共 32 份。report 必须同时记录完整
+`host.macosVersion` 和规范化 `host.macosMajor`；finalizer 从实际 `sw_vers` 结果重算 major，
+并校验 major、host architecture、实际执行架构和 candidate executable SHA。universal
+binary 不能在单一 host 或单一 OS 上替另一架构/major 关门。脚本会在目标 host
 重新执行完整 signed-candidate verifier，而不是信任可编辑报告中的 PASS。`granted`
-必须带 window/display capture-indicator 证据、运行两个真实 smoke，并以同一个 signed
-executable 连续完成两次 Desktop launch/recovered projection。`revoked` 先运行：
+必须带该 cell 独立的 window/display capture-indicator、AX、AppKit input、
+Chromium/Electron background input、cursor 和 SkyLight behavior 证据，运行两个真实
+smoke，并以同一个 signed executable 连续完成两次 Desktop launch/recovered
+projection。`revoked` 先运行：
 
 ```bash
 node apps/desktop/tests/run-macos-tcc-revocation.mjs \
@@ -198,17 +209,17 @@ node apps/desktop/tests/run-macos-tcc-revocation.mjs \
   --signed-candidate-report '<candidate.json>' \
   --operator '<name>' \
   --capture-indicator-evidence '<revocation recording>' \
-  --output '<revocation-arm64-or-x86_64.json>'
+  --output '<revocation-macos-major-architecture.json>'
 ```
 
 runner 启动 signed display capture 并输出 READY；操作员在 System Settings 撤权并等待
 系统 capture indicator 清除后按 Enter。Desktop 随后机器观察 source ended/permission
-failure、runtime 未 Stop 和 `stopRequestCount=0`，退出后再 probe denied/restricted。
-TCC revoked case 必须消费
-符合 [revocation schema](./evidence/macos-tcc-revocation.schema.json) 的两阶段证据，证明
-活跃捕获后人工撤权、source ended/permission failure、runtime 未被 Stop，以及系统
-indicator 清除。脚本不得调用 `tccutil`；任何 setup/probe/smoke 异常仍须原子写出
-`verdict=FAIL` 报告。
+failure、runtime 未 Stop 和 `stopRequestCount=0`。随后操作员在同一 cell 重新授权，
+Desktop 必须重启 child，重新完成 health、live capture 和 background input smoke，才可
+结束 case。目标 revocation schema 从现有两阶段扩为 ordered 三阶段证据，绑定同一
+candidate/cell 的 active -> revoked -> re-granted/recovered 时间线、capture indicator
+清除与恢复、child generation 变化和 capability 恢复。任何阶段缺失、乱序或
+setup/probe/smoke 异常仍须原子写出 `verdict=FAIL` 报告。
 
 每个架构还必须生成 packaged signed performance：
 
@@ -231,9 +242,14 @@ node apps/desktop/tests/finalize-macos-signed-acceptance.mjs \
   --output apps/desktop/test-results/macos-signed-acceptance.json
 ```
 
-finalizer 会重新运行完整 candidate verifier，读取并重算所有 nested SHA-256，验证八份
-TCC 的 permission semantics、host/execution architecture、smoke/restart/revocation logs，
-并把 capture-indicator refs 绑定到各架构 granted case。每个 DMG/ZIP 都必须有
+finalizer 会重新运行完整 candidate verifier，读取并重算所有 nested SHA-256，按
+`macOS major + execution architecture` 验证 32 份 TCC 的 permission semantics、
+host/execution cell、smoke/restart/revocation/provider logs，并把 capture-indicator refs
+绑定到每个 cell 的 granted case。manifest、schema 和 finalizer 必须拒绝 report
+path/digest 跨 cell 复用、major 缺失/不匹配和 coverage 缺口。当前仅按 architecture
+索引且只识别两阶段 revocation 的 finalizer 不足以关闭 bundled provider gate；升级后
+还必须验证每个 cell 的 revoked -> re-granted 顺序、child restart 和 recovered
+capability。每个 DMG/ZIP 都必须有
 `notarytool` `Accepted` JSON log，其 job id 与 artifact SHA 绑定；signed performance 也须
 在两个架构上分别绑定 candidate executable、producer 和 raw cycle logs。最终报告结构见
 [macOS signed acceptance schema](./evidence/macos-signed-acceptance.schema.json)。本地
@@ -282,7 +298,28 @@ unsigned hosted workflow 会在安装/卸载后运行诊断性 `Preflight` 并�
 NVDA 或签名时状态保持 `BLOCKED`，但不会让 unsigned job 因预期阻塞失败；真实残留或
 内部矛盾证据仍返回失败。`Preflight.summary.status=PASS` 也绝不等于 Full release PASS。
 
-Windows `Full` 必须通过 `run-windows-acceptance.ps1 -Mode Full`，并额外提供：
+以下 `Full` runner/policy/candidate-manifest 细节描述当前已实现的 external-provider
+baseline。Bundled implementation plan 的 Slice 8 必须把 upstream signer、archive hash 和
+`-ProviderBinary` 输入迁移为 Ling source-build lock、main-PE post-sign seal、signed
+resource catalog 和 packaged provider path；迁移前这段不能作为 bundled target
+contract。
+
+Bundled target 不再让操作员手工拼接这些参数。Slice 8 产出每个 immutable cell 的
+`windows-cell-handoff.json`，Windows 同事只运行：
+
+```powershell
+& apps/desktop/tests/run-windows-acceptance.ps1 `
+  -HandoffManifest <windows-cell-handoff.json>
+```
+
+每次运行 exclusive-create 一个 cell report。共同 `handoff-index.json` 固定
+candidate/policy/artifact anchors 与 required cells；每个报告同时绑定共同 index digest
+和独立 cell-manifest digest。`finalize-windows-signed-acceptance.mjs` 必须验证 release
+policy 的全部 `requiredAcceptanceCells`、相同 candidate/seal/catalog/policy/harness
+closure，拒绝 missing/extra/duplicate/cross-cell evidence，并固定输出
+`MANUAL_REVIEW_REQUIRED`，直到外部 reviewer/build-attestor 验签。
+
+Windows `Full` 当前必须通过 `run-windows-acceptance.ps1 -Mode Full`，并额外提供：
 
 - 经负责人批准的 release policy，包含固定 policy version、approver、approval time、Ling
   Publisher subject、provider upstream signer subject、双方签名证书 SHA-256 和支持的
@@ -380,14 +417,50 @@ runner 只经过 Node 静态契约验证，PowerShell parser/runtime 和真实 W
 
 ## Clean-machine 顺序
 
-1. 校验 Ling artifact checksum、架构、bundle/app identity 和签名。
-2. 安装 Ling；确认 daemon 只绑定自己的 loopback/workspace。
-3. 单独安装 pinned Cua Driver provider，记录 provider 版本和 Authenticode 状态。
-4. 运行 `health_report`，确认 interactive session、UIA、DXGI/screen capture 均通过。
-5. 运行 real source smoke：首帧、Hide/Show、Close-without-Stop、Stop ACK、source ended。
-6. 重启 Desktop，验证 projection/descriptor replay 和用户隐藏状态。
-7. 升级到下一 provider/Ling 版本，重复 health 和 source lifecycle。
-8. 卸载 Ling 和 provider，记录 orphan process、cache、user-data 保留策略。
+### macOS bundled embedded target
+
+1. 校验 Ling artifact checksum、架构、bundle/app identity、source/patch/toolchain lock、
+   post-sign provider seal、exact entitlements 和 outer code-resource seal。
+2. 将 Ling 安装到 `/Applications`；不得从 mounted DMG 完成首次 TCC 授权。
+3. 不单独安装 Cua Driver；确认 packaged `0.8.3 (Ling build 1)` 由 Electron main 直接
+   embedded spawn，daemon 在同一 lease generation 内只建立一个长期 MCP client。
+4. 用 `health_report({"skip":["bundle_identity"]})` 和
+   `check_permissions({"prompt":false})` 验证协议、核心 health、host attribution 和 live
+   capturability；System Settings 只出现 Ling。
+5. 写入 bundled config 并重启，确认 versioned `CUA_DRIVER_STATE_HOME` 生效且已有 external
+   `~/.cua-driver` 字节不变。
+6. 运行 real source smoke：首帧、Hide/Show、Close-without-Stop、Stop ACK、source ended。
+7. 在每个声明的 macOS 13/14/15/26 与架构 cell 验证 AX、capture、AppKit 和
+   Chromium/Electron background input、cursor、SkyLight failure behavior 和 cleanup。
+8. 重启 Desktop，验证 lease generation、provider restart、projection replay 和用户隐藏状态。
+9. 升级/回滚整个 Ling artifact，验证 provider 与隔离状态目录随版本切换且 TCC 恢复行为明确。
+10. 卸载 Ling，记录 provider/proxy orphan process、cache 和 user-data 保留策略。
+
+### Windows bundled standard-tier provider
+
+1. 校验 Ling artifact checksum、x64 架构、app/NSIS identity 和签名。
+2. 安装 Ling；不得单独安装 Cua Driver，确认 packaged `0.8.3 (Ling build 1)` 的
+   main-provider post-sign seal 与 signed resource catalog 有效，standard 包内不存在
+   `cua-driver-uia.exe`。Candidate manifest 只做 release provenance。
+3. 启用后确认 Electron main 在同一非零 interactive session 直接 spawn
+   `cua-driver.exe mcp --embedded --host-bundle-id com.lingstack.desktop`。Rust child
+   建立不可继承的 `KILL_ON_JOB_CLOSE` Job Object；Desktop 仅通过持有的 child handle
+   终止主进程，生产路径不得按数字 PID 调 `taskkill /T`。
+4. Activation 通过当前 MCP child 的 `ling/managed_readiness` 验证 PID/内存 nonce、
+   host/provider Medium integrity、session/input-desktop、Job Object、UIA-runtime 和
+   D3D/WGC API；Windows acceptance 再对 test-owned target 独立验证 UIA、ordinary
+   input 和真实 WGC frame。不得用 one-shot diagnostics 或 upstream 固定 PASS 的
+   `session_active` 把 runtime 标记为 ready。
+5. 验证 ready -> lock/disconnect -> lease/tools revoke ->
+   `interactive_session_required` -> unlock -> fresh child/generation -> ready；旧 child、
+   lease、readiness 和 late notification 必须全部失效，PiP 不因 provider recovery 自动重开。
+5. 确认 per-user/asInvoker candidate 投影 `standard` integrity coverage；elevated/UWP
+   pixel/SendInput 返回 `cua_windows_uiaccess_required`，不得启动 LocalAppData helper
+   冒充 UIAccess。
+6. 运行 real source、Desktop/daemon restart、DPI/双屏、Narrator/NVDA、SmartScreen、
+   Ling/provider tuple upgrade/rollback、uninstall 和零 process/pipe/state residue。
+7. Windows 同事生成并签字 Full evidence；本地/非 Windows CI 只能验证 schema、runner、
+   package 和 fail-closed fixtures，不能生成 Windows PASS。
 
 ## 关闭条件
 
@@ -395,7 +468,9 @@ runner 只经过 Node 静态契约验证，PowerShell parser/runtime 和真实 W
 
 - Windows x64 interactive VM real-source evidence；
 - macOS signed TCC/capture-indicator evidence；
+- macOS 13/14/15/26 每个声明架构 cell 的 signed installed-app provider/SkyLight evidence；
 - Developer ID/notarization/Gatekeeper 和严格 macOS 签名验证；
+- locked source patch/toolchain、post-sign provider seal、exact entitlements 和 state-isolation evidence；
 - Authenticode/SmartScreen/signed NSIS；
 - clean-machine install/update/uninstall evidence；
 - signed/packaged real MediaStream performance report that meets the release budgets；
@@ -405,8 +480,9 @@ runner 只经过 Node 静态契约验证，PowerShell parser/runtime 和真实 W
 - clean candidate commit 确定性重建并签名的 daemon tree fingerprint，或 signed candidate
   内嵌 daemon 的等价 provenance 证据。
 
-当前这些外部门禁仍全部开放：Apple Developer ID/notarization/Gatekeeper、clean-host
-TCC denied/prompt/granted/revoked 与系统 capture indicator、Windows x64 interactive
-VM/provider/DPI/双屏、Authenticode/SmartScreen/signed NSIS、hosted signed CI execution、clean-machine
-install/update/uninstall、VoiceOver/Narrator/NVDA、外部 detached signatures，以及真实
-candidate daemon provenance。
+当前这些外部门禁仍全部开放：Apple Developer ID/notarization/Gatekeeper、locked
+source-patch/toolchain 与 post-sign provider seal、clean-host TCC
+denied/prompt/granted/revoked、macOS 13/14/15/26 声明 cell 与系统 capture indicator、
+Windows x64 interactive VM/provider/DPI/双屏、Authenticode/SmartScreen/signed NSIS、
+hosted signed CI execution、clean-machine install/update/uninstall、
+VoiceOver/Narrator/NVDA、外部 detached signatures，以及真实 candidate daemon provenance。

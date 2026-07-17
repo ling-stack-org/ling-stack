@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import { createServer } from "node:net";
+import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 import { DesktopDaemonLifecycle } from "../dist/main/daemon-lifecycle.js";
@@ -33,8 +34,11 @@ test("Desktop daemon starts in the selected workspace and stops the owned child"
   assert.equal(status.state, "connected");
   assert.equal(status.ownedByDesktop, true);
   assert.equal(spawnInputs.length, 1);
-  assert.equal(spawnInputs[0].cwd, "/tmp/ling-desktop-workspace");
-  assert.equal(spawnInputs[0].env.LING_STACK_DEFAULT_WORKSPACE_CWD, "/tmp/ling-desktop-workspace");
+  assert.equal(spawnInputs[0].cwd, canonicalWorkspace("/tmp/ling-desktop-workspace"));
+  assert.equal(
+    spawnInputs[0].env.LING_STACK_DEFAULT_WORKSPACE_CWD,
+    canonicalWorkspace("/tmp/ling-desktop-workspace"),
+  );
   assert.equal(spawnInputs[0].env.ELECTRON_RUN_AS_NODE, "1");
 
   const repeatedStatus = await lifecycle.ensureStarted();
@@ -88,7 +92,7 @@ test("Desktop reuses a healthy daemon only after the authenticated preview hands
         capabilities: ["preview-source"],
         bridgeTokenAccepted: true,
         routeTokenAccepted: true,
-        defaultWorkspaceCwd: "/tmp/ling-desktop-compatible-workspace",
+        defaultWorkspaceCwd: canonicalWorkspace("/tmp/ling-desktop-compatible-workspace"),
       });
     },
     spawnDaemon: () => {
@@ -155,7 +159,7 @@ test("Desktop requires the handshake to authorize its secret for scoped Computer
         capabilities: ["preview-source"],
         bridgeTokenAccepted: true,
         routeTokenAccepted: false,
-        defaultWorkspaceCwd,
+        defaultWorkspaceCwd: canonicalWorkspace(defaultWorkspaceCwd),
       });
     },
     spawnDaemon: () => {
@@ -189,7 +193,7 @@ test("Desktop requires health and handshake to report the same canonical workspa
         capabilities: ["preview-source"],
         bridgeTokenAccepted: true,
         routeTokenAccepted: true,
-        defaultWorkspaceCwd: "/tmp/ling-desktop-other-handshake-workspace",
+        defaultWorkspaceCwd: canonicalWorkspace("/tmp/ling-desktop-other-handshake-workspace"),
       });
     },
     spawnDaemon: () => {
@@ -592,7 +596,7 @@ test("Desktop passes its bridge token to an owned daemon and verifies the same p
         capabilities: ["preview-source"],
         bridgeTokenAccepted: true,
         routeTokenAccepted: true,
-        defaultWorkspaceCwd: "/tmp/ling-desktop-owned-bridge-workspace",
+        defaultWorkspaceCwd: canonicalWorkspace("/tmp/ling-desktop-owned-bridge-workspace"),
       });
     },
     probePort: async () => "free",
@@ -735,8 +739,12 @@ function createFakeChild(options = {}) {
 function daemonHealth(defaultWorkspaceCwd) {
   return Response.json({
     service: "ling-stack-daemon",
-    defaultWorkspaceCwd,
+    defaultWorkspaceCwd: canonicalWorkspace(defaultWorkspaceCwd),
   });
+}
+
+function canonicalWorkspace(path) {
+  return resolve(path);
 }
 
 function deferred() {
