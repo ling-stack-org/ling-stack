@@ -1,6 +1,6 @@
 import { accessSync, constants as fsConstants, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { delimiter, extname, isAbsolute, join, resolve } from "node:path";
+import { delimiter, extname, isAbsolute, join, posix, resolve } from "node:path";
 import type {
   CreateMcpServerInput,
   ManagedPluginDescriptor,
@@ -151,13 +151,13 @@ export function resolveCuaDriverCommand(
 
 export function defaultCuaDriverCommandCandidates(home = homedir()): readonly string[] {
   return [
-    join(home, ".local/bin/cua-driver"),
+    posix.join(home, ".local", "bin", "cua-driver"),
     "/opt/homebrew/bin/cua-driver",
     "/usr/local/bin/cua-driver",
     "/Applications/CuaDriver.app/Contents/MacOS/cua-driver",
     "/Applications/Cua Driver.app/Contents/MacOS/cua-driver",
-    join(home, "Applications/CuaDriver.app/Contents/MacOS/cua-driver"),
-    join(home, "Applications/Cua Driver.app/Contents/MacOS/cua-driver"),
+    posix.join(home, "Applications", "CuaDriver.app", "Contents", "MacOS", "cua-driver"),
+    posix.join(home, "Applications", "Cua Driver.app", "Contents", "MacOS", "cua-driver"),
   ];
 }
 

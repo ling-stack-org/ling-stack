@@ -1,5 +1,5 @@
 import { readFileSync, realpathSync } from "node:fs";
-import { isAbsolute, resolve } from "node:path";
+import { isAbsolute, relative, sep, resolve } from "node:path";
 import type {
   ManagedPluginContributionDescriptor,
   ManagedPluginDescriptor,
@@ -148,7 +148,11 @@ function validateContributionPaths(
 }
 
 function isPathInside(root: string, target: string): boolean {
-  return target === root || target.startsWith(`${root}/`);
+  const relativePath = relative(root, target);
+  return relativePath === ""
+    || (relativePath !== ".."
+      && !relativePath.startsWith(`..${sep}`)
+      && !isAbsolute(relativePath));
 }
 
 function redactValidationMessage(error: unknown): string {
