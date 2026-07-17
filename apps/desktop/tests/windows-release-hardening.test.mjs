@@ -25,11 +25,12 @@ test("Windows PowerShell acceptance is bounded, tree-cleaning, and stale-report 
   assert.match(source, /function Stop-NativeProcessTree/u);
   assert.match(source, /System32\\taskkill\.exe/u);
   assert.match(source, /WaitForExit\(\$TimeoutMilliseconds\)/u);
+  assert.doesNotMatch(source, /\b\d+_\d+\b/u);
   assert.match(source, /Remove-Item -LiteralPath \$outputPath -Force/u);
   assert.match(source, /function Resolve-TrustedToolPath/u);
   assert.match(source, /resolved outside a trusted tool root/u);
-  assert.match(source, /-TimeoutMilliseconds 90_000/u);
-  assert.match(source, /-TimeoutMilliseconds 120_000/u);
+  assert.match(source, /-TimeoutMilliseconds 90000/u);
+  assert.match(source, /-TimeoutMilliseconds 120000/u);
   assert.doesNotMatch(source, /Get-Command\s+nvda\.exe/u);
   assert.match(source, /Microsoft\.PowerShell\.Security\\Get-AuthenticodeSignature/u);
   assert.match(source, /Microsoft\.PowerShell\.Utility\\Get-FileHash/u);
