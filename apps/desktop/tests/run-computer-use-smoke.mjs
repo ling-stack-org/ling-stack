@@ -41,6 +41,9 @@ try {
     },
   });
   const output = `${result.stdout}\n${result.stderr}`;
+  if (result.timedOut) {
+    throw new Error(`Desktop fake Computer Use smoke timed out after ${smokeTimeoutMs}ms:\n${output}`);
+  }
   if (result.exitCode !== 0) {
     throw new Error(`Desktop fake Computer Use smoke exited ${result.exitCode ?? result.signal ?? "unknown"}:\n${output}`);
   }
@@ -78,6 +81,7 @@ async function runElectron({ executable, args, env }) {
     });
     let stdout = "";
     let stderr = "";
+    let timedOut = false;
     child.stdout.setEncoding("utf8");
     child.stderr.setEncoding("utf8");
     child.stdout.on("data", (chunk) => {
@@ -87,6 +91,7 @@ async function runElectron({ executable, args, env }) {
       stderr = boundedAppend(stderr, chunk);
     });
     const timeout = setTimeout(() => {
+      timedOut = true;
       child.kill("SIGTERM");
       setTimeout(() => child.kill("SIGKILL"), 2_000).unref();
     }, smokeTimeoutMs);
@@ -96,7 +101,7 @@ async function runElectron({ executable, args, env }) {
     });
     child.once("close", (exitCode, signal) => {
       clearTimeout(timeout);
-      resolve({ exitCode, signal, stdout, stderr });
+      resolve({ exitCode, signal, stdout, stderr, timedOut });
     });
   });
 }

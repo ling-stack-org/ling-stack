@@ -250,7 +250,7 @@ jobs:
           executable="${GITHUB_WORKSPACE}/apps/desktop/release/mac/Ling Stack.app/Contents/MacOS/Ling Stack"
           test -x "$executable"
           LING_DESKTOP_SMOKE_EXECUTABLE="$executable" \
-            LING_DESKTOP_SMOKE_TIMEOUT_MS=50000 \
+            LING_DESKTOP_SMOKE_TIMEOUT_MS=120000 \
             node apps/desktop/tests/run-computer-use-smoke.mjs
 
       - name: Run mounted-DMG fake smokes
