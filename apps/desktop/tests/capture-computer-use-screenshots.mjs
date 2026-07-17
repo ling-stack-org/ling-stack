@@ -55,7 +55,26 @@ async function run() {
         } else {
           const baselinePng = await readFile(baselinePath);
           const baseline = nativeImage.createFromBuffer(baselinePng);
-          assertSameImageSize(filename, baseline, image);
+          const expectedSize = baseline.getSize();
+          const actualSize = image.getSize();
+          if (expectedSize.width !== actualSize.width || expectedSize.height !== actualSize.height) {
+            await writeMismatchDiagnostics({
+              actualPng: png,
+              baselinePng,
+              comparison: {
+                changedPixelRatio: 1,
+                maximumChannelDelta: 255,
+                expectedSize,
+                actualSize,
+              },
+              filename,
+              theme,
+            });
+            throw new Error(
+              `${filename} dimensions differ: baseline ${expectedSize.width}x${expectedSize.height}, ` +
+              `capture ${actualSize.width}x${actualSize.height}; diagnostics: ${diagnosticDirectory}`,
+            );
+          }
           const comparison = compareImages(baseline, image);
           if (comparison.changedPixelRatio > 0.005) {
             await writeMismatchDiagnostics({
@@ -63,6 +82,7 @@ async function run() {
               baselinePng,
               comparison,
               filename,
+              theme,
             });
             throw new Error(
               `${filename} changed ${(comparison.changedPixelRatio * 100).toFixed(3)}% ` +
@@ -96,7 +116,7 @@ async function run() {
   }
 }
 
-async function writeMismatchDiagnostics({ actualPng, baselinePng, comparison, filename }) {
+async function writeMismatchDiagnostics({ actualPng, baselinePng, comparison, filename, theme }) {
   await mkdir(diagnosticDirectory, { recursive: true });
   await Promise.all([
     writeFile(join(diagnosticDirectory, `actual-${filename}`), actualPng),
@@ -111,6 +131,7 @@ async function writeMismatchDiagnostics({ actualPng, baselinePng, comparison, fi
         electron: process.versions.electron,
         chrome: process.versions.chrome,
         filename,
+        theme,
         comparison,
       }, null, 2)}\n`,
       "utf8",
@@ -241,17 +262,6 @@ async function captureScreenshot({ width, height, scenario = "live", theme }) {
       window.webContents.debugger.detach();
     }
     window.destroy();
-  }
-}
-
-function assertSameImageSize(filename, expected, actual) {
-  const expectedSize = expected.getSize();
-  const actualSize = actual.getSize();
-  if (expectedSize.width !== actualSize.width || expectedSize.height !== actualSize.height) {
-    throw new Error(
-      `${filename} dimensions differ: baseline ${expectedSize.width}x${expectedSize.height}, ` +
-      `capture ${actualSize.width}x${actualSize.height}`,
-    );
   }
 }
 
