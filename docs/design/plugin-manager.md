@@ -77,10 +77,10 @@ resolution, third-party install APIs, and remote marketplaces stay deferred.
 - Preserve the existing internal registry and MCP server APIs.
 - Add `cua-driver` as the first high-risk trusted local preset.
 
-The implemented trusted-local preset remains the external fallback. Packaged macOS
-Desktop may project the same stable product id through `bundled_embedded` distribution,
-while the daemon keeps MCP policy and audit authority. The distribution-specific contract
-lives in the Bundled Embedded Cua Driver documents.
+The implemented trusted-local preset remains the external fallback. Packaged macOS and
+Windows Desktop may project the same stable product id through `bundled_embedded`
+distribution, while the daemon keeps MCP policy and audit authority. The
+distribution-specific contract lives in the Bundled Embedded Cua Driver documents.
 
 ## Non-Goals
 

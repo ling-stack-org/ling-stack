@@ -8,11 +8,11 @@ Implementation-shaped detailed design for
 Implementation sequencing:
 [Desktop Computer Use Picture-in-Picture Implementation Plan](desktop-computer-use-picture-in-picture-implementation-plan.md).
 
-The current provider distribution baseline remains external. The approved next macOS
-Desktop provider boundary is defined by
+The current provider distribution baseline remains external. The approved packaged
+macOS and Windows Desktop provider boundary is defined by
 [Bundled Embedded Cua Driver](cua-driver-bundled-embedded.md) and its
-[Detailed Design](cua-driver-bundled-embedded-detailed-design.md). Windows distribution
-is unchanged.
+[Detailed Design](cua-driver-bundled-embedded-detailed-design.md); standalone/dev mode
+retains explicit external provider support.
 
 This document fixes the state model, selection rules, Desktop IPC, window behavior,
 layout algorithm, platform adapter, recovery timers, and test cases. The local implementation
@@ -995,10 +995,11 @@ target distribution is now platform-specific:
 | --- | --- |
 | Packaged macOS Desktop | Ling packages locked `0.8.3 (Ling build 1)`, Electron main spawns it in embedded mode, and Ling owns the TCC identity |
 | macOS standalone/dev/external override | daemon resolves an explicit or supported external command and fails missing providers closed |
-| Windows | separately installed exact-reviewed `0.8.3` provider; current allowlist and VM gates remain unchanged |
+| Packaged Windows Desktop | bundled source-built x64 `0.8.3 (Ling build 1)` in Desktop-owned embedded mode; standard integrity tier, Windows-team VM acceptance required |
+| Windows standalone/dev/external override | separately installed exact-reviewed provider remains available |
 
 No renderer or public Computer Use contract may depend on a native installation path. The
-macOS process/bridge details live in the Bundled Embedded Cua Driver detailed design.
+cross-platform process/bridge details live in the Bundled Embedded Cua Driver detailed design.
 
 ## Visual Contract
 
@@ -1285,6 +1286,9 @@ broader cosmetic refactoring remains out of scope.
 
 ## Open Decisions
 
-- Exact Windows provider allowlist advancement and public distribution risk acceptance.
-- Windows legal Publisher/signing service, supported-version floor, and whether enterprise
-  distribution needs a separate per-machine artifact; the first candidate remains per-user.
+- Exact Windows source/build lock and Ling distribution-revision advancement, including
+  public risk acceptance for a prerelease source pin.
+- Windows legal Publisher/signing service, minimum supported Windows build and
+  policy-pinned VM matrix, whether full UIAccess is required, and whether enterprise
+  distribution needs a separate per-machine artifact; the first standard candidate
+  remains per-user.

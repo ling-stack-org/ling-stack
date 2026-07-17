@@ -1,0 +1,948 @@
+# Bundled Embedded Cua Driver Implementation Plan
+
+## Status
+
+Planned, not implemented.
+
+This plan implements the approved macOS and Windows bundled-provider direction defined in:
+
+- [Bundled Embedded Cua Driver](cua-driver-bundled-embedded.md)
+- [Bundled Embedded Cua Driver Detailed Design](cua-driver-bundled-embedded-detailed-design.md)
+
+The first Windows target is the current per-user/asInvoker `standard` integrity tier.
+Windows real-machine acceptance is executed and signed off by the Windows team. Ling's
+implementation scope includes the code, package, static and automated Windows-native
+validation, evidence schemas, matrix finalizer, runner and handoff bundle; it does not
+include self-attesting Windows PASS evidence.
+
+## Delivery Outcome
+
+After the required slices land:
+
+- packaged macOS and Windows Desktop contain the locked `0.8.3 (Ling build 1)` provider;
+- normal users do not download or separately update Cua Driver;
+- Desktop owns the provider process group, isolated state, MCP proxy and daemon lease;
+- packaged mode never falls back to a random executable on `PATH`;
+- macOS projects Ling-owned TCC readiness;
+- Windows projects content-free interactive-session readiness and a ready
+  `standard` integrity tier with explicit capability limitations;
+- standalone/dev mode retains the existing explicit external-provider path;
+- Windows colleagues receive a deterministic signed-candidate acceptance package.
+
+This plan does not claim full Windows elevated/UWP pixel-input parity. That requires the
+conditional UIAccess slice described at the end.
+
+## What Already Exists
+
+The implementation should extend these shipped or already-tested boundaries instead of
+creating parallel systems:
+
+| Existing boundary | Reuse decision |
+| --- | --- |
+| Canonical `trusted-local:cua-driver` plugin, `mcp_cua_driver`, connect/enable rollback and external install guide | Keep ids and external behavior; add distribution-aware runtime and setup projection |
+| Desktop authenticated daemon bridge and fixed workspace authority | Add provider lease publication to the existing authenticated bridge; do not add a second daemon |
+| MCP broker, approvals, tool sync, audit and run snapshots | Keep all execution authority here; add the lease-generation client pool and activation fence |
+| Computer Use descriptor/PiP coordinator and exact PID/HWND handoff | Reuse provider descriptors; bundled distribution must not create a second preview state machine |
+| macOS release-evidence schemas and signed-candidate finalizers | Extend with provider lock/seal and embedded TCC identity rather than inventing a second evidence framework |
+| Windows provider verifier, candidate manifest, PowerShell runner and acceptance report | Change input from separately installed upstream asset to bundled source-built candidate; reuse external reviewer/build-attestor promotion and trusted system verification tools, while replacing PID-only cleanup with retained-handle plus Rust Job Object ownership |
+| Electron-builder macOS/NSIS packaging and bundled-resource assertions | Add versioned provider resources and platform signing order; keep one Ling release/rollback tuple |
+
+## NOT In Scope
+
+- Windows ARM64 and Linux provider support; neither is required for the first bundled
+  release.
+- Runtime provider download, public installer execution or an independent provider update
+  channel.
+- Full Windows UIAccess capability in the required slices; it remains Conditional Slice 9.
+- Changing the whole Windows Desktop installer to per-machine solely for UIAccess.
+- A renderer-to-provider API, a second daemon, a second Computer Use state machine or a
+  bypass around approvals/audit.
+- Importing or mutating external Cua Driver config/state.
+- Our team generating or approving Windows real-machine PASS evidence; Windows colleagues
+  own that acceptance.
+
+## End-To-End Data Flow
+
+```text
+User Enable
+   |
+   v
+daemon persists requestedEnabled + revision
+   |
+   v
+Desktop validates lock + platform post-sign seal/catalog
+   |
+   +-- invalid ------------------------------> corrupt / incompatible, tools hidden
+   |
+   v
+Desktop publishes generation-scoped lease
+   |
+   v
+daemon acquires one pooled MCP client
+   |
+   v
+Desktop lazily starts platform provider process group
+   |
+   v
+initialize -> health -> platform readiness -> list tools -> approval overlay
+   |
+   +-- macOS grant missing ------------------> permission_required, intent retained
+   +-- Windows session invalid --------------> interactive_session_required, intent retained
+   +-- Windows UIA/WGC unavailable ----------> platform_unavailable, intent retained
+   +-- Windows standard tier ----------------> ready + standard coverage + limitations
+   +-- stale generation / disable -----------x discard every result, no store write
+   |
+   v
+single activation CAS commits tools + effective enabled flags
+   |
+   v
+normal calls: daemon policy -> pooled client -> Desktop proxy -> bundled provider
+```
+
+Files that should carry short inline versions of this diagram during implementation:
+
+- daemon activation service: requested versus effective state and final CAS;
+- daemon lease-client pool: instance epoch/generation ownership and late-result fence;
+- Desktop provider coordinator: lease/process-group lifecycle;
+- Windows adapter: interactive-session and optional UIAccess tier decision.
+
+## Non-Negotiable Boundaries
+
+- Keep product ids `trusted-local:cua-driver` and `mcp_cua_driver` stable.
+- Keep requested enablement separate from effective enablement.
+- Persisted plugin, contribution and MCP `enabled` flags remain false until one final
+  generation-fenced activation commit.
+- One Desktop lease generation owns one initialized daemon MCP client and one provider
+  stdio session.
+- Every asynchronous result is fenced by Desktop instance id/epoch, bridge connection id,
+  daemon authority epoch, lease generation, lock/seal/catalog digests, activation epoch
+  and requested-enable revision.
+- Request enable, not-ready status, retry, effective enable and disable use one
+  `commitCuaDriverActivation()` Store API and one `BEGIN IMMEDIATE` transaction for
+  tools/status plus plugin/contribution/MCP effective flags.
+- Windows normal activation is content-free. Real WGC/UIA/input probes use a test-owned
+  target only in Windows acceptance.
+- The Windows standard user package contains no `cua-driver-uia.exe`.
+- Windows readiness comes from the active MCP child and must match its retained PID,
+  memory-only nonce, generation, session, Medium integrity and Job Object boundary.
+  One-shot diagnostics are build/preflight evidence only.
+- Windows managed production mode never calls `taskkill /T`; graceful timeout terminates
+  only the retained ChildProcess handle and Rust `KILL_ON_JOB_CLOSE` owns descendants.
+- Lock, disconnect, fast-user-switch, session mismatch or input-desktop change revokes the
+  call gate, lease, tools and effective flags. Unlock starts a fresh child/generation and
+  never reuses prior readiness.
+- Do not fetch provider assets or execute provider installers at runtime.
+- Do not expose proxy secrets, screenshots, AX trees, typed text or raw MCP payloads in
+  ordinary logs.
+- Preserve the canonical dirty worktree; implementation slices should use clean shipping
+  worktrees and merge independently.
+
+## Recommended Slice Sequence
+
+### Slice -1 — Electron Builder Provider-Signing Feasibility Gate
+
+Goal: prove the actual `electron-builder@26.15.3` hook and signing order on both package
+platforms before provider seals or catalogs depend on it.
+
+Changes:
+
+- add instrumented macOS and Windows package fixtures using disposable CI signing
+  identities;
+- exercise `afterPack`, the platform signing hook, `afterSign`, and
+  `artifactBuildCompleted`;
+- in `afterPack`, sign the staged macOS provider and derive its seal from final Mach-O
+  identity; on Windows sign the staged PE, derive `provider-seal.json`, generate the
+  catalog over the exact payload, and sign the catalog;
+- make the platform signing hook skip the canonical sealed provider path only after its
+  expected digest matches, while signing/delegating outer Ling app, uninstaller,
+  installer and other eligible executables normally;
+- reject any second provider signing operation or provider mutation after seal generation;
+- in `afterSign` and `artifactBuildCompleted`, rehash and reverify the unpacked provider,
+  seal, platform identity/catalog membership and provider bytes extracted from final
+  DMG/ZIP/NSIS artifacts;
+- retain the ordered hook trace and every digest transition as CI evidence.
+
+Exit criteria:
+
+- the provider digest at seal generation, `afterSign`, unpacked verification and final
+  artifact verification is identical;
+- outer macOS app/DMG/ZIP and Windows app/uninstaller/NSIS remain correctly test-signed;
+- hosted macOS/Windows jobs fail if Electron Builder changes hook order or mutates the
+  provider after sealing.
+
+Estimated engineering time: 2–3 days.
+
+### Slice 0 — Cross-Platform Contracts And Feature Flags
+
+Goal: create the shared vocabulary without changing the active external runtime.
+
+Changes:
+
+- add `bundled_embedded` distribution and platform readiness contracts;
+- retain `kind="local_binary"` and the legacy setup-state projection; add schema V2
+  `providerState` values `included`, `permission_required`,
+  `interactive_session_required`, `platform_unavailable`, `ready`, `incompatible`,
+  `corrupt` and `desktop_unavailable`;
+- add `platform`, `integrityCoverage`, `limitations[]`, provider revision,
+  seal digest and optional Windows catalog digest fields;
+- add a packaged-provider feature gate defaulting off until each platform package passes;
+- version the Desktop lease and provider-lock schemas.
+
+Likely files:
+
+- `packages/contracts/src/plugins.ts`
+- `packages/api-client/src/plugins.ts`
+- `packages/daemon/src/features/plugins/*`
+- `apps/desktop/main/*`
+- contract, API client and daemon tests
+
+Exit criteria:
+
+- old clients continue to receive known `kind`/legacy-state values, while new clients use
+  `providerState`;
+- external provider behavior is unchanged while the feature gate is off;
+- no second Cua Driver row or MCP server is created.
+
+Estimated engineering time: 1–2 days.
+
+### Slice 1 — Reproducible Provider Source Build
+
+Goal: produce deterministic source-built provider inputs for macOS and Windows.
+
+Changes:
+
+- commit the cross-platform provider lock and exact upstream source provenance;
+- add the locked `ling-managed-embedded-v1` patch series for state isolation, no-content
+  active-child Windows readiness, host-death/stdio-EOF closure, Rust
+  `KILL_ON_JOB_CLOSE` lifetime ownership, WTS/input-desktop invalidation and structured
+  UIAccess capability errors;
+- lock Rust/Cargo, Xcode/macOS SDK and MSVC/Windows SDK inputs;
+- build macOS universal `cua-driver` and Windows x64 `cua-driver.exe` for shipped
+  packages;
+- build `cua-driver-uia.exe` only as a non-shipping CI audit output so upstream drift is
+  visible; do not copy, sign or seal it into Desktop resources;
+- compare upstream reference assets without copying them into the package;
+- verify version, MCP response protocol `2025-06-18`, health schema, platform tool digest,
+  PE manifests, architectures and state isolation;
+- generate license, third-party notice and SBOM material.
+
+New build artifacts:
+
+```text
+apps/desktop/resources/providers/cua-driver/0.8.3-ling.1/
+  provider-lock.json
+  LICENSE.md
+  THIRD_PARTY_NOTICES.md
+  darwin/cua-driver
+  win32-x64/payload/cua-driver.exe
+```
+
+Exit criteria:
+
+- repeated same-platform builds have stable pre-sign digests;
+- embedded config writes only to `CUA_DRIVER_STATE_HOME`;
+- one-shot `diagnostics --managed-readiness --json` remains preflight evidence, while the
+  active embedded child answers `ling/managed_readiness` with the locked no-content
+  PID/nonce/session/integrity/Job Object schema;
+- main child and nested worker fixtures exit on stdin EOF, exact host-PID death and
+  retained-handle termination with zero residue;
+- macOS external home and Windows external profile state remain byte-identical;
+- telemetry, startup update checks and updater tools are disabled in managed mode.
+
+Estimated engineering time: 3–5 days. Signing credentials are not required for the
+pre-sign build, but exact toolchain values are.
+
+### Slice 2 — Shared Desktop Provider Supervisor
+
+Goal: introduce the platform-neutral process, proxy and lease core.
+
+Modules:
+
+```text
+apps/desktop/main/cua-driver/
+  artifact-lock.ts
+  provider-seal.ts
+  windows-integrity.ts
+  resource-path.ts
+  state-root.ts
+  provider-host.ts
+  mcp-proxy.ts
+  lease-publisher.ts
+  readiness-controller.ts
+  coordinator.ts
+  telemetry.ts
+```
+
+Changes:
+
+- validate the lock and platform seal before process start;
+- on Windows, validate the installed app signer and the signed provider catalog/membership
+  before parsing loose lock/seal resources; candidate-manifest JSON is not a runtime
+  integrity anchor;
+- resolve only the versioned resource path outside `app.asar`;
+- create the isolated platform state root;
+- own one lazy provider stdio session per lease generation;
+- expose one authenticated loopback Streamable HTTP session;
+- publish, renew, rotate and revoke an in-memory Desktop lease using daemon-issued
+  `desktopInstanceEpoch` and `bridgeConnectionId`; generation is monotonic only inside
+  one instance epoch;
+- stop the provider group on disable, Desktop quit, authority-epoch change or unexpected
+  MCP session loss;
+- add Rust host-PID/stdio-EOF lifetime closure, a private non-inheritable
+  `KILL_ON_JOB_CLOSE` Job Object with no breakaway descendants, retained-handle shutdown,
+  bounded crash retry and residue checks;
+- generate a random memory-only child nonce per spawn and serialize
+  `ling/managed_readiness` with normal stdio requests;
+- consume nonce/generation/sequence-bound WTS/input-desktop invalidation, close the proxy
+  call gate immediately, and coordinate fresh-generation recovery after unlock;
+- introduce no Node N-API addon and no PID-only process-tree kill.
+
+Lifecycle behavior:
+
+- Desktop/window open alone does not start the provider;
+- explicit enable records requested intent;
+- the first authenticated daemon session lazily starts the provider;
+- hiding or closing a BrowserWindow does not stop an enabled provider while Desktop runs;
+- disable, Desktop quit, incompatible lease or repeated crash stops it;
+- no event selects an external executable automatically.
+
+Exit criteria:
+
+- one generation produces exactly one initialize and one child session;
+- wrong token/origin/workspace/generation fails closed;
+- daemon restart rotates the generation and cannot reuse the old stdio child;
+- a new Desktop instance with generation `1` fences an older instance with a larger
+  generation;
+- graceful quit, unexpected child stdout EOF and hard Desktop kill leave zero
+  child/grandchild/proxy/listener/pipe residue;
+- ready -> locked/disconnected -> revoked -> fresh-generation recovery cannot expose the
+  old client, tools, child or late readiness notification.
+
+Estimated engineering time: 4–6 days.
+
+### Slice 3 — Daemon Pool And Activation Transaction
+
+Goal: keep daemon policy authoritative without exposing tools before readiness.
+
+Changes:
+
+- add the in-memory Desktop lease registry;
+- resolve bundled runtime through the lease rather than the persisted command;
+- add one pooled MCP client keyed by logical id, Desktop instance, authority epoch,
+  instance epoch, bridge connection id, generation, endpoint and lock/seal/catalog
+  digests;
+- replace per-check client creation for bundled mode;
+- add the durable `cua_driver_activation_state` migration with requested intent,
+  requested revision and activation epoch;
+- before daemon routes become ready, atomically advance every bundled activation epoch,
+  empty tools, project `desktop_unavailable` or `included` from retained intent, and clear
+  all effective flags;
+- implement the single `commitCuaDriverActivation()` Store API using
+  `BEGIN IMMEDIATE`;
+- probe through an activation-local server view while all persisted effective flags stay
+  false;
+- run initialize, filtered health, platform readiness and tool sync;
+- consume active-child readiness only through the current generation's pooled session;
+- atomically commit tools, status and plugin/contribution/server enabled flags only after
+  the full token compare-and-swap;
+- route request-enable, not-ready, retry and disable through the same Store fence;
+- discard every late result from an older generation or user intent.
+
+Required race tests:
+
+- generation G health finishes after G+1 is ready;
+- disable races with list-tools and tool sync;
+- daemon restart races with activation;
+- daemon API snapshot/tool call arrives after process start but before Desktop bridge
+  reconnect; old tools and effective flags remain unavailable while intent is retained;
+- lock/unlock and fast-user-switch race with activation and a running tool call;
+- generation G readiness/notification finishes after G+1 is ready;
+- duplicate enable requests remain idempotent;
+- stale health cannot overwrite current status or catalog;
+- two SQLite connections race activation versus disable and only one CAS succeeds;
+- inject a crash after tools, status, plugin flag, contribution flag, MCP flag and fence
+  writes; every case rolls back completely.
+
+Exit criteria:
+
+- no run snapshot or tool catalog sees activation-local tools;
+- raw HTTP tool-list fallback is unreachable in bundled mode;
+- external mode retains current behavior.
+
+Estimated engineering time: 3–5 days.
+
+### Slice 4 — macOS Adapter And Signed Package Contract
+
+Goal: implement the already-approved macOS embedded path.
+
+Changes:
+
+- direct `cua-driver mcp --embedded --host-bundle-id com.lingstack.desktop` spawn with
+  matching locked environment values;
+- host-owned Accessibility and Screen Recording controller;
+- post-grant child restart and live capturability check;
+- Mach-O architecture/minimum-version checks;
+- nested Developer ID signing, exact entitlements, hardened runtime and post-sign seal;
+- outer app/ZIP/DMG signing, notarization and Gatekeeper evidence;
+- macOS 13/14/15/26 evidence-schema/finalizer updates.
+
+Exit criteria:
+
+- packaged app ignores `PATH` and external `CuaDriver.app`;
+- only Ling appears in the TCC flow;
+- denied/granted/revoked/re-granted transitions fence readiness correctly;
+- current signed-matrix requirements remain release gates, not local-development claims.
+
+Estimated engineering time: 3–5 days excluding access to signing/notary credentials and
+external clean-host matrix execution.
+
+### Slice 5 — Windows Standard Adapter
+
+Goal: bundle Windows without changing the current per-user/asInvoker installer contract.
+
+Changes:
+
+- validate the final signed `cua-driver.exe`, signed resource catalog and exact package
+  membership; assert that the standard package contains no `cua-driver-uia.exe`;
+- directly spawn `cua-driver.exe mcp --embedded --host-bundle-id com.lingstack.desktop`
+  in the Desktop interactive session with matching locked environment values;
+- keep one-shot diagnostics as preflight evidence only; after initialize call
+  `ling/managed_readiness` over the active child session and verify retained PID,
+  memory-only nonce, current generation, matching non-zero host/provider sessions,
+  Medium integrity for both processes, Job Object flags, default/unlocked input desktop,
+  UIA runtime, D3D11 and WGC API;
+- own the retained ChildProcess handle, attempt bounded graceful shutdown, then terminate
+  only through that handle; Rust `KILL_ON_JOB_CLOSE` removes descendants;
+- consume WTS/input-desktop invalidation, atomically project
+  `interactive_session_required`, stop the old generation and start a fresh probe only
+  after a valid unlock/session-active hint;
+- verify exact provider path, PE x64 identity, seal and catalog;
+- project `providerState=ready`, `integrityCoverage=standard` and limitations
+  `elevated_pixel_input` / `uwp_send_input`;
+- reject UIAccess-only elevated/UWP pixel/SendInput actions with
+  structured `cua_windows_uiaccess_required` details produced by target/action
+  classification, never error-text matching;
+- pre-bind incompatible fake servers on `\\.\pipe\cua-driver` and
+  `\\.\pipe\cua-driver-uia`, put an old external provider first on `PATH`, and prove
+  bundled initialize/list/call use the exact child stdio with zero fake-pipe connections;
+- prove the child exits after hard Desktop kill through host-PID/stdio EOF and leaves no
+  residue, including a provider-created grandchild.
+
+Exit criteria on cross-platform CI:
+
+- TypeScript, lock/seal/catalog/schema, PE parser and package-layout tests pass;
+- Session 0, wrong session, locked desktop and bad no-content readiness fixtures fail
+  closed;
+- process-group, Job Object, nonce/generation, lock/unlock and error-mapping logic has
+  deterministic unit tests;
+- hosted or managed automated Windows CI builds the Rust target, uses a disposable test
+  certificate for PE/catalog verification, proves embedded stdio ignores fake global
+  pipes/PATH, exercises hard-kill plus grandchild cleanup, and runs test-owned Win32 and
+  installable/removable MSIX/UWP targets. Windows colleagues are not the first native-code
+  testers.
+
+Real signed build/DPI/display/accessibility/SmartScreen acceptance remains owned by the
+Windows team in Slice 8; the automated Windows-native gates above are owned by us.
+
+Estimated engineering time: 4–6 days.
+
+### Slice 6 — Packaging Staging, Migration And Rollback
+
+Goal: stage the versioned provider and make bundled mode the packaged default without
+coupling migration logic to signing credentials.
+
+Changes:
+
+- stage only the enabled platform resources through Electron packaging outside
+  `app.asar`;
+- update package assertions to reject missing, extra, symlinked, reparse-point or
+  wrong-architecture provider files and to reject `cua-driver-uia.exe` in standard mode;
+- keep candidate manifests as release provenance, not runtime integrity anchors;
+- migrate packaged macOS and Windows to `bundled_embedded` by default behind independent
+  platform gates;
+- retain saved external commands for audit but do not silently prefer them;
+- make explicit developer override reversible;
+- keep provider version upgrade/rollback tied to the Ling release tuple.
+
+Exit criteria:
+
+- clean packaged machines need no provider download;
+- a conflicting external version does not affect packaged mode;
+- upgrade and rollback restore the exact locked tuple;
+- no runtime symlink/junction or independent provider updater is used.
+
+### Slice 6A — Electron Builder Platform-Signing Closure
+
+Goal: implement the signing order proven by Slice -1 without allowing post-seal
+mutation.
+
+Dependencies: Slice -1, Slice 1, the active platform adapter and Slice 6 staging.
+
+Changes:
+
+- install platform-aware Electron Builder hooks and process only the currently enabled
+  package platform;
+- on macOS, sign the nested provider before generating its seal, then allow Electron
+  Builder to sign the outer app;
+- on Windows, sign `payload/cua-driver.exe`, generate the seal from the final PE, generate
+  and sign the outer `provider-integrity.cat`, then prevent the generic signer from
+  touching the sealed provider;
+- make the custom signing hook fail on an unexpected executable under the provider
+  payload instead of silently signing or ignoring it;
+- reverify the provider tuple after outer-app signing and after each DMG/ZIP/NSIS artifact
+  completes;
+- use identical hook code with disposable CI certificates and release-policy credentials;
+  only credential selection may differ;
+- verify the Windows catalog at runtime through the absolute in-box Windows PowerShell
+  path with `-NoProfile -NonInteractive`, fixed UTF-8 locale-independent JSON and strict
+  stdout/stderr byte limits. Missing/blocked PowerShell, WDAC/AppLocker denial, absent
+  catalog cmdlets, oversized/malformed output or no verdict maps to
+  `cua_windows_integrity_verifier_unavailable` / `platform_unavailable`; a successful
+  verifier that reports invalid signature/signer/member/hash maps to `corrupt`;
+- retain a future direct WinVerifyTrust binding as an implementation swap that preserves
+  the same state/error contract.
+
+Windows signing contract:
+
+- main provider PE, catalog, Ling app, uninstaller and NSIS use release-policy-pinned
+  identities; catalog signer matches the installed Ling app signer policy;
+- seal fields include final main-PE SHA, manifest digest, Publisher subject, certificate
+  SHA and timestamp status;
+- the catalog sits outside and covers only `payload/cua-driver.exe` plus
+  `payload/provider-seal.json`; the covered seal anchors the root provider-lock digest;
+- the unsigned upstream zip remains reference evidence only.
+
+Exit criteria:
+
+- no shipped provider byte changes after its seal is generated;
+- final artifacts contain the exact verified tuple from the unpacked app;
+- test-certificate signing/catalog/package tests pass on automated Windows CI;
+- platform packaging gates remain independently switchable.
+
+Estimated engineering time: Slice 6 plus Slice 6A remains 4–7 days, with release-signing
+service availability as an external dependency.
+
+### Slice 7 — Plugin Manager And Product States
+
+Goal: expose one honest cross-platform Cua Driver surface.
+
+Changes:
+
+- show one canonical Cua Driver row;
+- packaged Desktop hides the external installation drawer;
+- macOS shows included/permission/ready/corrupt/incompatible states;
+- Windows shows included/interactive-session/platform-unavailable/ready/corrupt/
+  incompatible states, with standard coverage and limitations as detail/badges;
+- standalone/dev external mode keeps missing/detected/connected/ready/install-guide;
+- enabling never grants permissions, creates teammate bindings or bypasses approvals;
+- add Chinese/English copy and dark/reduced-motion coverage.
+
+Exit criteria:
+
+- no duplicate row, MCP server or contribution;
+- install guidance appears only for `external_local + external_missing`;
+- window hide/close does not imply provider disable;
+- disable and Desktop quit are visibly and behaviorally distinct.
+
+Estimated engineering time: 2–4 days.
+
+### Slice 8 — CI, Evidence Schemas And Windows Handoff
+
+Goal: finish our responsibility and hand a runnable acceptance package to Windows owners.
+
+Changes:
+
+- extend provider verifier from upstream-asset-only to source-build lock, final main-PE
+  seal and signed-catalog validation;
+- version the release policy with explicit `requiredAcceptanceCells`; keep
+  `supportedWindowsBuilds` as an allowlist, not proof that every build ran;
+- produce one exclusive-create immutable report per exact Windows build/architecture/
+  display-topology/DPI cell; a rerun gets a new `runId` and file;
+- add `finalize-windows-signed-acceptance.mjs`, require every policy cell exactly once,
+  reject missing/extra/duplicate/cross-cell evidence, and rehash every report/attachment;
+- add a common `handoff-index.json` containing candidate/policy/artifact anchors and exact
+  required cell definitions; require every cell report to bind the same index digest plus
+  its own unique cell-manifest digest;
+- require all cells to bind the same candidate commit, app/installer hashes, provider
+  seal, catalog, policy, handoff-index digest and harness closure;
+- extend `run-windows-acceptance.ps1` for bundled active-child identity, standard
+  limitations, lock/revoke/unlock recovery, test-owned WGC/UIA/input targets, pre-bound
+  global-pipe conflicts, hard Desktop kill, Job Object cleanup and residue evidence;
+- produce a handoff root with the common index plus one manifest per cell containing
+  `handoffIndexSha256`, required expected values, paths, hashes, evidence inputs, output
+  and tool versions;
+- update static schema tests plus automated Windows Rust/build/package/catalog/install/
+  Win32/MSIX gates;
+- keep cell and matrix outputs `MANUAL_REVIEW_REQUIRED`; only the external detached
+  reviewer/build-attestor verifier may emit release-ready.
+
+Full mode accepts one operator-supplied input:
+
+```powershell
+pwsh -File apps/desktop/tests/run-windows-acceptance.ps1 `
+  -HandoffManifest <windows-cell-handoff.json>
+```
+
+Every manifest-relative path must remain beneath the handoff root without symlink or
+reparse escape. The per-cell manifest is operator convenience, not a trust root: each
+report binds the common `handoffIndexSha256` and its unique `cellManifestSha256`, while
+the finalizer receives expected index/candidate/policy digests from the protected release
+workflow or a policy-pinned detached signature.
+
+Responsibility split:
+
+| Gate | Ling implementation team | Windows colleagues |
+| --- | --- | --- |
+| Rust x64 build, injectable native readiness fixtures | Automated Windows CI | Not first-line debugging |
+| Test-certificate PE/catalog and Electron Builder hook order | Automated Windows CI | Not responsible |
+| Embedded stdio, fake global pipes, old PATH provider | Automated Windows CI | Reverify final candidate |
+| Retained-handle hard kill, Job Object descendants, strict residue | Automated Windows CI | Reverify final candidate |
+| Package allowlist, silent install/uninstall, Win32 and installable/removable MSIX | Automated Windows CI or managed pool | Reverify release lifecycle |
+| Real Windows build cells, DPI/display, Narrator/NVDA, SmartScreen, final signatures | Do not self-attest PASS | Execute, review and sign evidence |
+
+Required Windows evidence:
+
+- signed installed app, NSIS, main-PE seal and signed provider catalog;
+- Windows build/session/input desktop;
+- WGC, UIA and ordinary input against test-owned Win32/UWP targets plus explicit
+  structured UIAccess limitations;
+- bundled stdio ignores conflicting global driver/UIA pipes and a PATH-first old provider;
+- one/two displays and at least two DPI profiles;
+- every explicit `requiredAcceptanceCells` entry, with at least one single-display and one
+  dual-display mixed-DPI cell per supported build;
+- Narrator, NVDA and SmartScreen;
+- install, update, rollback and uninstall;
+- provider stdout EOF, hard Desktop crash, daemon restart and graceful-timeout recovery
+  with zero process/pipe/state residue;
+- independent reviewer and candidate-build attestor detached signatures.
+
+Exit criteria for our team:
+
+- all static and hosted build/package gates pass;
+- automated Windows CI has already exercised native Rust fixtures, test-certificate
+  provider/catalog signing, hook order, embedded stdio/global-pipe conflict, hard-kill and
+  grandchild cleanup, PowerShell verifier failures, package allowlist, silent
+  install/uninstall, and test-owned Win32 plus installable/removable MSIX/UWP targets;
+- the cell handoff command, matrix finalizer and schemas are versioned and reproducible;
+- no report can promote itself from local evidence to release PASS;
+- Windows owner is named in the release policy or handoff manifest.
+
+Exit criteria for Windows support claim:
+
+- Windows colleagues return a policy-complete reviewed acceptance bundle. This occurs
+  after implementation and is not a blocker for merging code behind the feature gate;
+- Windows colleagues own real build/DPI/display, Narrator/NVDA, SmartScreen,
+  installation-lifecycle and final signed evidence. They are not the first testers of
+  native code or packaging.
+
+Estimated engineering time: 4–7 days for implementation/handoff; Windows execution time
+is owned and scheduled separately by the Windows team.
+
+## Conditional Slice 9 — Full Windows UIAccess Tier
+
+Trigger: product/release owner decides Windows must drive elevated/UWP targets through
+pixel/SendInput, not only the standard tier.
+
+Recommended direction: ship a separately signed per-machine Computer Use helper under a
+release-policy-approved `Program Files` path while keeping the main Desktop install
+per-user. Do not weaken `EnableSecureUIAPaths` and do not silently change all Desktop
+users to a per-machine install.
+
+Required work:
+
+- define install/update/rollback/uninstall ownership for the secure helper;
+- sign the main/helper tuple and validate the UIAccess manifest;
+- launch the helper through ShellExecute and obtain/verify its exact PID;
+- patch or adapt the upstream worker contract to use a generation-scoped named pipe with
+  server-PID validation and deterministic shutdown; if exact PID/pipe ownership is not
+  sufficient, freeze a separate native lifecycle design before implementation rather
+  than silently adding a Node addon;
+- route only the intended tool calls through the helper without bypassing daemon policy;
+- add elevated Win32/UWP acceptance and helper crash/residue tests;
+- extend the package tuple and release evidence to include the helper installer.
+
+This slice is not safe to implement as `extraResources` only. Without secure-path,
+Authenticode, ShellExecute and lifecycle closure, Windows will reject UIAccess or Ling may
+connect to the wrong global worker.
+
+Estimated engineering time: 1–2 additional weeks plus signing/installer review and
+Windows-team acceptance.
+
+## Parallelization
+
+Slice -1 closes signing/catalog feasibility. After Slice 0 freezes contracts, Slice 1
+source build and Slice 2 supervisor interface can run in parallel; Slice 7 UI and Slice 8
+schema work may scaffold, but their final E2E/runner closure waits for runtime semantics
+and signed packages.
+
+The required standard-capability path is approximately 6–10 engineering weeks for one
+engineer, or 4–6 weeks for two engineers splitting shared/macOS and Windows/release lanes.
+This includes automated Windows gates and handoff/finalizer implementation, but excludes
+signing/notary queue time and Windows-team matrix scheduling. Re-estimate after Slice -1.
+
+Dependency and conflict view:
+
+| Step | Modules | Depends on |
+| --- | --- | --- |
+| Signing feasibility | Desktop package hooks, Windows test certificates | — |
+| Contracts | contracts, API client, daemon plugin types | — |
+| Source build | provider patches, Desktop resources, release workflow | Contracts lock schema |
+| Shared supervisor | Desktop main, bridge | Contracts |
+| Daemon activation | daemon plugins, MCP broker | Shared supervisor lease shape |
+| macOS adapter | Desktop main, macOS release evidence | Shared supervisor + source build |
+| Windows adapter | Desktop main, Windows acceptance | Shared supervisor + source build |
+| Product states | Web Plugin Manager, i18n | Contracts scaffold; final E2E waits for daemon/platform states |
+| Package staging | Desktop package resources, migration | Source build + active adapters |
+| Signing closure | Desktop hooks, release workflows | Signing feasibility + source build + active adapters + staging |
+| Evidence scaffold | Windows schemas | Contracts |
+| Runner/finalizer/handoff | Windows release evidence | Windows adapter + signing closure |
+
+Lane A: Slice -1 signing feasibility.
+
+Lane B: Contracts -> shared supervisor -> daemon activation.
+
+Lane C: Contracts -> source build -> macOS and Windows adapters in parallel -> package
+staging -> signing closure.
+
+Lane D: Contracts -> UI scaffold; final E2E waits for Lane B/C state semantics.
+
+Lane E: Contracts -> evidence schema scaffold; runner/finalizer/handoff waits for Windows
+adapter plus signing closure.
+
+Conflict flags: macOS and Windows adapters both touch the Desktop coordinator and package
+manifest. Freeze the adapter interface first, keep platform files separate, and merge the
+shared coordinator before parallel platform work.
+
+## Failure Modes And User Recovery
+
+| Failure | Required test | Handling | User-visible result |
+| --- | --- | --- | --- |
+| Packaged bytes or signing identity differ from the seal | corrupted fixture for every platform identity field | refuse spawn and lease | `corrupt`; reinstall/update Ling |
+| Generation G finishes after G+1 | delayed initialize/health/list race | compare-and-swap before every write | no stale status or tool flash |
+| New daemon serves a snapshot before Desktop reconnect | startup ordering plus two-connection Store fixture | pre-route startup transaction advances epoch, empties tools, projects status from intent and clears effective flags | `desktop_unavailable` if requested, otherwise `included`; no stale tools |
+| User disables during activation | disable at each await boundary plus crash injection | first atomically commit intent/tools/status/effective flags disabled, then drain/cancel/stop idempotently | disabled; no tools remain |
+| State root escapes through symlink/reparse point | macOS symlink and Windows junction fixtures | reject before provider start | `corrupt`; no external state mutation |
+| Windows launches in Session 0/locked desktop | session/input-desktop fixtures plus Windows host evidence | fail closed before tool sync | `interactive_session_required` |
+| Windows locks, disconnects or switches input desktop after ready | WTS/heartbeat/pre-call fixtures plus automated Windows integration | close call gate, revoke lease/client, atomically hide tools, stop G, retain intent, probe fresh G+1 after unlock | `interactive_session_required`, then recover |
+| One-shot diagnostics passes but active child PID/nonce/session/integrity differs | active-child mismatch fixtures | discard result and stop generation; one-shot evidence never makes runtime ready | `platform_unavailable`; no tools |
+| Rust Job Object boundary cannot be established | injectable native failure fixture | exit before initialize; never spawn workers outside ownership | `platform_unavailable` |
+| UIAccess helper unexpectedly appears in the standard package | extra-file package fixture | reject catalog/package before spawn | `corrupt`; reinstall/update Ling |
+| Signed catalog, member hash or signer differs | catalog/signature/member fixtures | reject before reading loose lock/seal or spawning | `corrupt`; reinstall/update Ling |
+| Trusted Windows PowerShell verifier is missing, blocked or cannot return bounded UTF-8 JSON | missing executable/access denied/WDAC/AppLocker/cmdlet/oversize fixtures | fail closed without calling the package corrupt or parsing localized stderr | `platform_unavailable`; repair Windows policy/update Ling |
+| New Desktop instance starts at generation 1 after old generation 9 | instance-epoch race fixture | newer daemon-issued instance epoch fences the old instance | no stale renewal/status |
+| Global driver/UIA pipes and old PATH provider already exist | pre-bound fake-pipe integration | exact sealed child stdio only; zero pipe connections | no visible error; conflicting install ignored |
+| Desktop hard-crashes mid-call | child+grandchild kill-parent integration plus residue probe | child host-PID/stdio-EOF exit closes Rust Job Object, lease expires, no retry until residue clears | `desktop_unavailable`, then recover |
+| Provider stdout closes unexpectedly | half-closed stdio fixture | fence lease first, cancel pool, bounded serialized restart | retryable unavailable state |
+| Graceful stop times out while Desktop is alive | hung child plus grandchild fixture | terminate the retained ChildProcess handle; `KILL_ON_JOB_CLOSE` removes descendants; never issue PID-only kill | disabled/unavailable; zero residue |
+| Local acceptance report edits itself to PASS | schema/finalizer negative fixtures | external detached-signature verifier only | remains `MANUAL_REVIEW_REQUIRED` |
+
+No critical silent failure is accepted: every row must have a negative test, a stable
+state/error and a recovery action before its slice is complete.
+
+## Performance Budgets
+
+The feature gate remains off until the implementation records a pinned-provider baseline.
+The numeric thresholds below are provisional until one signed macOS and one signed
+Windows standard candidate complete the protocol:
+
+- one provider process group, one stdio session, one proxy session and one daemon MCP
+  client per lease generation;
+- `catalogVerifyMs` on Windows, `spawnToReadyMs`, and `endToEndEnableMs` are reported
+  separately; `spawnToReadyMs` p95 is at or below 2 seconds after the platform is already
+  permission/session ready;
+- proxy overhead for non-image MCP requests: p95 at or below 10 ms versus direct stdio on
+  the same host;
+- enabled but idle provider: at or below 1% of one logical core;
+- Desktop plus provider steady-state RSS increase: at or below 150 MB before image payloads;
+- readiness content remains empty: one active-child probe per activation/recovery plus the
+  locked WTS/input-desktop heartbeat and pre-call guard; real Windows WGC/UIA targets run
+  only in automated/test acceptance lanes;
+- zero residue has no tolerance for provider/helper processes, named-pipe endpoints,
+  Desktop proxy listeners, unexpected install roots, registry entries, shortcuts or
+  contract-owned state locks;
+- generic Electron/Node handles, timers, JS heap and RSS are performance metrics rather
+  than residue: after warmup they show no monotonic growth and remain inside a versioned
+  finite platform tolerance.
+
+Measurement protocol:
+
+- record candidate commit, lock/catalog/seal digests, OS/build, CPU model/logical cores,
+  RAM, power mode, display/DPI layout and signing state;
+- PR smoke runs at least 30 process-cold activations and 30 warm recoveries;
+- signed baseline and release gating run at least 100 cold and 100 warm samples per
+  platform, retain raw samples, use documented nearest-rank percentiles and perform no
+  silent outlier removal; report p50/p95/max for each named timing;
+- measure proxy overhead after 50 warmups over at least 1,000 non-image requests against a
+  direct-stdio baseline on the same host;
+- after a 10-second settle, sample enabled-idle CPU and RSS once per second for 60 seconds;
+  report mean/max CPU and baseline-delta/max RSS;
+- run at least 30 enable/disable/restart cycles in PR smoke and 100 in release baseline;
+  assert strict-zero owned residue separately from finite-tolerance handle/timer/heap/RSS
+  metrics;
+- extend the existing Computer Use performance harness instead of creating a second
+  result format.
+
+The first signed baselines may tune the provisional thresholds through a reviewed
+release-policy change. After that freeze, thresholds and a greater-than-20% p95/RSS
+regression both gate the platform; no silent threshold increase is allowed.
+
+## Test Coverage Map
+
+```text
+LOCK / PACKAGE
+  + exact source/tag/tree/Cargo.lock/toolchain ........ unit + hosted build
+  + patch/state isolation ............................ Rust integration
+  + Electron Builder hook/sign/mutation ordering ..... hosted Windows test-certificate package
+  + macOS post-sign identity ......................... signed candidate verifier
+  + Windows main-PE seal + signed catalog ............ PE/catalog + hosted package
+  + PowerShell missing/blocked/malformed verdict ..... hosted Windows negative fixtures
+  + UIAccess audit output excluded from package ...... build/package negative test
+
+RUNTIME
+  + valid enable -> ready + capability metadata ...... daemon + Desktop integration
+  + permission/session/capability not ready .......... platform fixture + host evidence
+  + active-child PID/nonce/integrity/Job Object ....... Rust + Desktop integration
+  + daemon boot before Desktop reconnect ............. SQLite startup transaction + API race
+  + ready -> lock/revoke -> fresh unlock generation ... Windows integration + deterministic races
+  + activation/disable two-writer CAS rollback ....... SQLite integration
+  + disable/crash/restart/generation race ............ deterministic fake integration
+  + hard Desktop kill / stdout EOF + grandchild ...... Job Object process integration
+  + external override and rollback ................... daemon/Web E2E
+
+USER FLOWS
+  + packaged first enable ............................ Web/Desktop E2E
+  + macOS permission repair .......................... signed clean-host acceptance
+  + Windows standard limitation copy/error ........... Web E2E + Windows acceptance
+  + Windows test-owned WGC/UIA/input target ........... Windows acceptance
+  + automated Win32 + installable/removable MSIX ..... automated Windows CI
+  + reinstall/update/rollback repair ................. release acceptance
+
+SECURITY / RELEASE
+  + PATH/junction/symlink substitution ............... negative package/runtime tests
+  + signed-catalog/member substitution ................ Windows package/runtime tests
+  + global named-pipe collision ignored ............... Windows integration
+  + proxy token/origin/stale instance/lease ........... Desktop integration
+  + self-attested evidence promotion ................. schema/finalizer negative tests
+  + missing/duplicate/cross-cell matrix evidence ...... Windows matrix finalizer tests
+  + handoff path/hash/reparse escape .................. schema + PowerShell negative tests
+```
+
+## Merge Strategy
+
+Prefer small independently reviewable PRs:
+
+1. Electron Builder signing/catalog feasibility spike;
+2. contracts and lock schema;
+3. source patch-series/build pipeline;
+4. Desktop host/proxy/lease;
+5. daemon pool/activation;
+6. macOS adapter;
+7. Windows standard adapter plus automated native gates;
+8. package staging/migration;
+9. signing closure;
+10. Plugin Manager states;
+11. CI/evidence cells/finalizer/handoff.
+
+Keep the packaged feature gate off until source build, platform package assertions and
+runtime fail-closed tests for that platform are all merged. macOS and Windows gates may
+be enabled independently.
+
+## Verification Commands
+
+At minimum, every slice runs the narrow affected tests plus:
+
+```bash
+corepack pnpm --filter @ling-stack/desktop typecheck
+corepack pnpm --filter @ling-stack/desktop build
+corepack pnpm --filter @ling-stack/desktop verify:release-schemas
+corepack pnpm --filter @ling-stack/web typecheck
+corepack pnpm --filter @ling-stack/daemon test
+node --test apps/desktop/tests/*.test.mjs
+corepack pnpm typecheck
+corepack pnpm lint
+git diff --check
+```
+
+Package slices additionally run macOS and Windows packaging workflows, platform
+seal/catalog verifiers, bundled-resource assertions, smoke tests and actionlint. Real signed macOS and
+Windows acceptance remains external machine evidence.
+
+## Definition Of Done
+
+The required implementation is done when:
+
+- cross-platform design, lock, seal and state contracts are implemented;
+- the Electron Builder hook order is proven and every final artifact preserves the exact
+  post-seal provider tuple;
+- packaged macOS and Windows use bundled mode by default behind closed platform gates;
+- shared lifecycle, proxy, instance-epoch lease, pooling and atomic activation races are
+  tested, including SQLite crash injection;
+- macOS and Windows standard adapters fail closed on their platform readiness rules;
+- Windows active-child identity, Job Object ownership and lock/revoke/fresh-generation
+  recovery pass automated Windows gates before colleague handoff;
+- Plugin Manager and migration show one canonical provider;
+- package/signing pipelines produce deterministic provider seals and the Windows signed
+  catalog, with no UIAccess helper in the standard package;
+- Windows immutable cell runner, matrix finalizer, schemas and one-input handoff bundle are
+  ready for the Windows team;
+- no unresolved standard-tier architecture decision remains.
+
+Release readiness is a later, platform-specific verdict. Missing Windows owner evidence
+does not make the implementation incomplete, but it prevents declaring Windows support
+ready for release.
+
+## Release Inputs And Optional Follow-Up
+
+There is no unresolved decision for the required standard-capability implementation.
+
+External release inputs still need concrete values: macOS Team ID/toolchain, Windows
+Publisher/certificate/toolchain, supported Windows build allowlist and Windows acceptance
+owner identities. Missing values block signed candidates and release evidence.
+
+The only optional architecture decision is whether to implement Conditional Slice 9.
+Deferring it preserves the current per-user Windows installer and blocks only full
+elevated/UWP pixel-input parity.
+
+## Implementation Tasks
+
+- [ ] **T1 (P1, human: ~2–3 days / Codex: ~4–8 h)** — Prove Electron Builder hook order,
+  test-identity provider/seal/catalog signing and final-artifact byte stability on macOS
+  and Windows.
+- [ ] **T2 (P1, human: ~1–2 days / Codex: ~3–5 h)** — Freeze schema V2, signed-catalog,
+  active-child readiness, Job Object, instance-epoch lease, activation fence and
+  capability-limitation contracts.
+- [ ] **T3 (P1, human: ~3–5 days / Codex: ~1–2 days)** — Build the locked Rust patch
+  series and deterministic macOS/main-Windows outputs; retain UIAccess as audit-only.
+- [ ] **T4 (P1, human: ~4–6 days / Codex: ~1–2 days)** — Implement Desktop artifact
+  verification, host/proxy lifecycle, active-child nonce/readiness, WTS invalidation,
+  host-death/stdio-EOF cleanup and lease publication.
+- [ ] **T5 (P1, human: ~3–5 days / Codex: ~1 day)** — Implement daemon pooling and
+  `commitCuaDriverActivation()` with two-connection CAS and crash-injection coverage.
+- [ ] **T6 (P1, human: ~3–5 days / Codex: ~1 day)** — Implement and package the macOS
+  adapter/TCC/signing path.
+- [ ] **T7 (P1, human: ~4–6 days / Codex: ~1–2 days)** — Implement the Windows standard
+  adapter, content-free active-child readiness, Job Object lifecycle, structured
+  limitations and global-pipe regression.
+- [ ] **T8 (P1, human: ~4–7 days / Codex: ~1–2 days)** — Add package staging, signing
+  hooks, the Windows signed catalog, PowerShell verifier classification, migration and
+  rollback tuple.
+- [ ] **T9 (P2, human: ~2–4 days / Codex: ~4–8 h)** — Update the one-row Plugin Manager
+  states, copy, i18n and E2E coverage.
+- [ ] **T10 (P1, human: ~4–7 days / Codex: ~1–2 days)** — Migrate Windows evidence to
+  immutable cells, add the matrix finalizer and produce the deterministic one-input
+  handoff bundle for Windows-team execution.
+
+## GSTACK REVIEW REPORT
+
+| Review | Trigger | Why | Runs | Status | Findings |
+| --- | --- | --- | ---: | --- | --- |
+| CEO Review | `/plan-ceo-review` | Scope and strategy | 0 | Not run | Not required for this architecture-only expansion |
+| Codex Review | `/codex review` | Independent second opinion | 0 | Not run | Two independent engineering subreviews were used instead |
+| Eng Review | `/plan-eng-review` | Architecture, tests and performance | 1 | CLEAR | 18 high-confidence P1/P2 gaps folded into the design and plan |
+| Design Review | `/plan-design-review` | UI/UX gaps | 0 | Not run | No new visual system; state semantics are specified |
+| DX Review | `/plan-devex-review` | Developer experience | 0 | Not run | Handoff and verification commands are in scope of implementation |
+
+**VERDICT:** ENG CLEARED — ready to implement behind independent macOS and Windows
+platform gates.
+
+NO UNRESOLVED DECISIONS

@@ -25,6 +25,7 @@ Design source of truth:
 - [Desktop Shell](../../docs/design/desktop-shell.md)
 - [Bundled Embedded Cua Driver](../../docs/design/cua-driver-bundled-embedded.md)
 - [Bundled Embedded Cua Driver Detailed Design](../../docs/design/cua-driver-bundled-embedded-detailed-design.md)
+- [Bundled Embedded Cua Driver Implementation Plan](../../docs/design/cua-driver-bundled-embedded-implementation-plan.md)
 - [Desktop Computer Use Picture-in-Picture](../../docs/design/desktop-computer-use-picture-in-picture.md)
 - [Desktop Computer Use Picture-in-Picture Detailed Design](../../docs/design/desktop-computer-use-picture-in-picture-detailed-design.md)
 - [Desktop Computer Use Picture-in-Picture Implementation Plan](../../docs/design/desktop-computer-use-picture-in-picture-implementation-plan.md)
@@ -36,12 +37,12 @@ implementation path for this slice; reconsidering it would be a separate archite
 decision after the daemon and capture contracts stabilize.
 
 The presentation contract targets macOS and Windows, but real source support is gated
-per platform. The selected Windows provider is the maintained open-source Cua Driver Rust
-provider (`cua-driver-rs-v0.8.3`, exact reviewed allowlist). Its current upstream artifact
-is an unsigned prerelease, so public release remains blocked even after internal/beta VM
-acceptance unless that risk is explicitly accepted or a signed stable provider replaces it.
-Windows real capture remains blocked until the provider is installed and the x64 VM
-source/lifecycle matrix passes. The main window
+per platform. The current Windows implementation baseline resolves the exact reviewed
+upstream `cua-driver-rs-v0.8.3` asset externally; that reference asset is an unsigned
+prerelease and still requires separate installation. The approved target replaces that
+distribution boundary with Ling's locked source-built and signed `0.8.3 (Ling build 1)`
+inside packaged Desktop. Windows release readiness remains blocked until Windows
+colleagues run the signed bundled x64 VM source/lifecycle matrix. The main window
 reuses the shared React application while the PiP uses a small isolated renderer plus a
 narrow capture adapter. Hide or window
 close must never stop the underlying Computer Use session; stopping remains a separate
@@ -55,19 +56,22 @@ same workspace. Startup is single-flight, and headless smoke remains fail-closed
 After a ten-second zero-frame deadline, V1 does not listen for resume/unlock/user-active.
 Recovery requires explicit Show/Retry, a new descriptor identity, or an explicit Desktop
 restart; the Computer Use task continues throughout.
+This rule is only about PiP presentation. The bundled Windows provider readiness monitor
+must still revoke tools on lock/session/input-desktop change and start a fresh provider
+generation after unlock; that recovery never auto-opens PiP.
 
 Packaged Desktop builds copy the bundled Cua Driver plugin shell into
 `resources/bundled/cua-driver`. That resource contains only the Ling plugin
 manifest, MCP configuration metadata, and README. It deliberately does not include the
 user-installed `cua-driver` binary, native app bundles, credentials, or permission state.
 
-That paragraph describes the current implementation. The approved next macOS Desktop
-direction is to package the locked `0.8.3 (Ling build 1)` source build, including its
-embedded-only state-isolation patch and post-sign provider seal, then run it as a direct
-embedded child of Electron main, as defined by the Bundled Embedded Cua Driver documents
-above.
-Windows keeps the current separately installed provider boundary. Until that slice lands,
-the packaged artifact remains plugin-shell-only.
+That paragraph describes the current implementation. The approved next macOS and Windows
+Desktop direction is to package the locked `0.8.3 (Ling build 1)` source build, including
+its managed-embedding patch series and platform post-sign seal/catalog contract, then run
+the main provider as a Desktop-owned embedded child, as defined by the Bundled Embedded
+Cua Driver documents above. Windows starts with the existing per-user/asInvoker standard
+integrity tier; UIAccess-only elevated/UWP pixel input remains a separate secure-helper
+release decision. Until those slices land, packaged artifacts remain plugin-shell-only.
 
 The Desktop main window must load the shared Web application instead of copying its page
 tree. This lets the shell, contracts, coordinator, and fake PiP renderer land before the

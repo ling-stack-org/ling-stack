@@ -11,14 +11,14 @@ Windows provider、签名、安装范围和回滚决策见
 
 | 平台 | 目标 | 当前证据边界 |
 | --- | --- | --- |
-| macOS | arm64、x86_64 | 当前 unsigned baseline 仍是 external provider；目标改为从锁定 tag/Cargo.lock 加 `ling-embedded-state-home-v1` 构建 `0.8.3 (Ling build 1)` 并由 Desktop embedded 托管，post-sign seal、Developer ID、单一 Ling TCC、macOS 13/14/15/26、clean machine、升级回滚尚未闭合 |
-| Windows | x86_64 | branded unsigned x64 app/per-user NSIS cross-package、exact Cua Driver v0.8.3 verifier/allowlist，以及 health、双目标 revision、Desktop restart runner 已有；provider 仍是 unsigned prerelease，Windows 安装执行和 interactive VM real capture 未闭合 |
+| macOS | arm64、x86_64 | 当前 unsigned baseline 仍是 external provider；目标改为从锁定 tag/Cargo.lock 加 `ling-managed-embedded-v1` patch series 构建 `0.8.3 (Ling build 1)` 并由 Desktop embedded 托管，post-sign seal、Developer ID、单一 Ling TCC、macOS 13/14/15/26、clean machine、升级回滚尚未闭合 |
+| Windows | x86_64 | 当前实现仍是 external baseline；目标改为从锁定 tag/Cargo.lock/patch series 构建 bundled `0.8.3 (Ling build 1)`，由 Desktop 在 interactive session 托管并声明 standard integrity tier；main-PE post-sign seal、signed resource catalog、Publisher/SmartScreen、Windows-team VM/DPI/双屏/Narrator/NVDA、安装生命周期尚未闭合 |
 | Linux | 不支持 | provider gate 必须 fail closed |
 
-当前已验证 artifact 只发布 Cua Driver plugin shell metadata。批准后的 macOS target
-将打包锁定的 Ling source build 和 version-isolated provider state contract，但仍不打包
-权限状态；在 embedded release gate 完成前不能把该 target 写成已交付能力。Windows
-继续只发布 plugin shell，provider 固定审阅基线为：
+当前已验证 artifact 只发布 Cua Driver plugin shell metadata。批准后的 macOS 和 Windows
+target 将打包锁定的 Ling source build 和 version-isolated provider state contract，但
+仍不打包权限或验收状态；在各自 embedded release gate 完成前不能写成已交付能力。
+Windows 上游参考基线为：
 
 ```text
 trycua/cua  cua-driver-rs-v0.8.3
@@ -298,7 +298,28 @@ unsigned hosted workflow 会在安装/卸载后运行诊断性 `Preflight` 并�
 NVDA 或签名时状态保持 `BLOCKED`，但不会让 unsigned job 因预期阻塞失败；真实残留或
 内部矛盾证据仍返回失败。`Preflight.summary.status=PASS` 也绝不等于 Full release PASS。
 
-Windows `Full` 必须通过 `run-windows-acceptance.ps1 -Mode Full`，并额外提供：
+以下 `Full` runner/policy/candidate-manifest 细节描述当前已实现的 external-provider
+baseline。Bundled implementation plan 的 Slice 8 必须把 upstream signer、archive hash 和
+`-ProviderBinary` 输入迁移为 Ling source-build lock、main-PE post-sign seal、signed
+resource catalog 和 packaged provider path；迁移前这段不能作为 bundled target
+contract。
+
+Bundled target 不再让操作员手工拼接这些参数。Slice 8 产出每个 immutable cell 的
+`windows-cell-handoff.json`，Windows 同事只运行：
+
+```powershell
+& apps/desktop/tests/run-windows-acceptance.ps1 `
+  -HandoffManifest <windows-cell-handoff.json>
+```
+
+每次运行 exclusive-create 一个 cell report。共同 `handoff-index.json` 固定
+candidate/policy/artifact anchors 与 required cells；每个报告同时绑定共同 index digest
+和独立 cell-manifest digest。`finalize-windows-signed-acceptance.mjs` 必须验证 release
+policy 的全部 `requiredAcceptanceCells`、相同 candidate/seal/catalog/policy/harness
+closure，拒绝 missing/extra/duplicate/cross-cell evidence，并固定输出
+`MANUAL_REVIEW_REQUIRED`，直到外部 reviewer/build-attestor 验签。
+
+Windows `Full` 当前必须通过 `run-windows-acceptance.ps1 -Mode Full`，并额外提供：
 
 - 经负责人批准的 release policy，包含固定 policy version、approver、approval time、Ling
   Publisher subject、provider upstream signer subject、双方签名证书 SHA-256 和支持的
@@ -415,13 +436,31 @@ runner 只经过 Node 静态契约验证，PowerShell parser/runtime 和真实 W
 9. 升级/回滚整个 Ling artifact，验证 provider 与隔离状态目录随版本切换且 TCC 恢复行为明确。
 10. 卸载 Ling，记录 provider/proxy orphan process、cache 和 user-data 保留策略。
 
-### Windows external provider
+### Windows bundled standard-tier provider
 
-1. 校验 Ling artifact checksum、架构、app identity 和签名。
-2. 安装 Ling；确认 daemon 只绑定自己的 loopback/workspace。
-3. 单独安装 pinned Cua Driver provider，记录版本和 Authenticode 状态。
-4. 运行 `health_report`，确认 interactive session、UIA、DXGI/screen capture 均通过。
-5. 运行 real source smoke、Desktop restart、provider/Ling upgrade 和卸载残留检查。
+1. 校验 Ling artifact checksum、x64 架构、app/NSIS identity 和签名。
+2. 安装 Ling；不得单独安装 Cua Driver，确认 packaged `0.8.3 (Ling build 1)` 的
+   main-provider post-sign seal 与 signed resource catalog 有效，standard 包内不存在
+   `cua-driver-uia.exe`。Candidate manifest 只做 release provenance。
+3. 启用后确认 Electron main 在同一非零 interactive session 直接 spawn
+   `cua-driver.exe mcp --embedded --host-bundle-id com.lingstack.desktop`。Rust child
+   建立不可继承的 `KILL_ON_JOB_CLOSE` Job Object；Desktop 仅通过持有的 child handle
+   终止主进程，生产路径不得按数字 PID 调 `taskkill /T`。
+4. Activation 通过当前 MCP child 的 `ling/managed_readiness` 验证 PID/内存 nonce、
+   host/provider Medium integrity、session/input-desktop、Job Object、UIA-runtime 和
+   D3D/WGC API；Windows acceptance 再对 test-owned target 独立验证 UIA、ordinary
+   input 和真实 WGC frame。不得用 one-shot diagnostics 或 upstream 固定 PASS 的
+   `session_active` 把 runtime 标记为 ready。
+5. 验证 ready -> lock/disconnect -> lease/tools revoke ->
+   `interactive_session_required` -> unlock -> fresh child/generation -> ready；旧 child、
+   lease、readiness 和 late notification 必须全部失效，PiP 不因 provider recovery 自动重开。
+5. 确认 per-user/asInvoker candidate 投影 `standard` integrity coverage；elevated/UWP
+   pixel/SendInput 返回 `cua_windows_uiaccess_required`，不得启动 LocalAppData helper
+   冒充 UIAccess。
+6. 运行 real source、Desktop/daemon restart、DPI/双屏、Narrator/NVDA、SmartScreen、
+   Ling/provider tuple upgrade/rollback、uninstall 和零 process/pipe/state residue。
+7. Windows 同事生成并签字 Full evidence；本地/非 Windows CI 只能验证 schema、runner、
+   package 和 fail-closed fixtures，不能生成 Windows PASS。
 
 ## 关闭条件
 

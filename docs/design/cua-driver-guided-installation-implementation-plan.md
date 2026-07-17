@@ -2,10 +2,10 @@
 
 ## Status
 
-本计划已经实现 external provider fallback。Packaged macOS Desktop 的新默认路径
+本计划已经实现 external provider fallback。Packaged macOS 和 Windows Desktop 的新默认路径
 不在本计划内，改由 [Bundled Embedded Cua Driver](cua-driver-bundled-embedded.md)
-及其 [Detailed Design](cua-driver-bundled-embedded-detailed-design.md) 定义。
-Windows 保持当前 external provider 设计。
+、[Detailed Design](cua-driver-bundled-embedded-detailed-design.md) 和
+[Implementation Plan](cua-driver-bundled-embedded-implementation-plan.md) 定义。
 
 ## Slice 1: Contracts And Catalog
 
@@ -26,14 +26,16 @@ Windows 保持当前 external provider 设计。
 - Plugin Manager 只渲染一个 Cua Driver。
 - domain 在检测到未接入时自动 connect 一次，不自动启用。
 - 新增轻量安装引导抽屉，支持官方文档、复制命令、自定义路径和重新检测。
-- 只有 `missing` 状态展示安装引导；其他状态完全隐藏安装提示。
+- 只有 `missing + setup.guide` 展示安装引导；当前 macOS 返回 guide，Windows missing
+  不展示不适用的 Bash 安装命令。
 - 更新中文/英文产品文案和暗色样式。
 
 ## Slice 4: Compatibility And Tests
 
 - API client 覆盖 connect URL/body。
 - daemon 覆盖检测、单入口、幂等连接、旧 bundled 兼容、启用同步和失败回滚。
-- Web E2E 覆盖 missing/detected/connected/ready、自定义路径、只连接一次和抽屉交互。
+- Web E2E 覆盖 missing/detected/connected/ready、自定义路径、只连接一次、macOS 抽屉
+  交互和 Windows missing 无 Bash guide。
 - 保留旧 apply-preset 测试，更新不再成立的双条目断言。
 
 ## Verification

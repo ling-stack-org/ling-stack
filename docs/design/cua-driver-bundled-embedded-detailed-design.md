@@ -2,18 +2,23 @@
 
 ## Status
 
-Detailed design for the approved internal macOS Desktop alpha direction. This document
-defines the target contracts; the current code still uses the external provider path.
+Detailed design for the approved internal macOS and Windows Desktop alpha direction.
+This document defines the target contracts; the current code still uses the external
+provider path on both platforms.
 
 The paired product and architecture decision is
 [Bundled Embedded Cua Driver](cua-driver-bundled-embedded.md).
+The staged delivery plan is
+[Bundled Embedded Cua Driver Implementation Plan](cua-driver-bundled-embedded-implementation-plan.md).
 
 ## Design Goals
 
-- Ship one reviewed Cua Driver version with packaged macOS Desktop.
+- Ship one reviewed Cua Driver version with packaged macOS and Windows Desktop.
 - Remove the normal user's separate driver download and install step.
 - Make Ling Stack the only macOS Accessibility and Screen Recording identity required by
   the embedded path.
+- Keep the Windows provider in the Desktop user's interactive session and state its
+  integrity coverage without pretending a per-user install satisfies UIAccess.
 - Keep the daemon as the authority for MCP tools, approvals, bindings, health, audit, and
   run snapshots.
 - Work when Desktop reuses a compatible daemon that it did not spawn.
@@ -21,16 +26,20 @@ The paired product and architecture decision is
   mismatch.
 - Preserve the current external provider flow for standalone/dev use without silently
   selecting it in packaged Desktop.
-- Leave Windows behavior unchanged.
+- Produce a deterministic Windows acceptance handoff even though Windows colleagues own
+  real-machine execution and sign-off.
 
 ## Terminology And Stable Identities
 
 | Term | Meaning |
 | --- | --- |
 | Plugin shell | Ling metadata under `packages/daemon/src/features/plugins/bundled/cua-driver`; it is not the native provider |
-| Provider | The Ling-carried Mach-O built from upstream `cua-driver-rs-v0.8.3` plus the locked embedded-state patch |
-| Embedded host | The Electron main process inside signed `Ling Stack.app` |
-| Provider host | Desktop module that owns the child process and stdio MCP connection |
+| Provider distribution | The Ling-carried platform binaries built from upstream `cua-driver-rs-v0.8.3` plus the locked managed-embedding patch series |
+| Embedded host | The Electron main process inside signed Ling Desktop |
+| Provider host | Desktop module that owns the platform process group and stdio MCP connection |
+| macOS provider | Universal Mach-O `cua-driver` launched directly in upstream embedded mode |
+| Windows main provider | x64 `cua-driver.exe` launched directly in upstream embedded mode in the Desktop session |
+| Windows UIAccess helper | Future x64 `cua-driver-uia.exe` secure-path artifact; audit-only in V1 and unusable unless signing, installer, ShellExecute, PID, routing and live UIAccess gates pass |
 | MCP proxy | Desktop loopback Streamable HTTP surface that proxies to the child stdio session |
 | Desktop lease | Short-lived daemon memory record advertising one authenticated proxy generation |
 | Bundled mode | `bundled_embedded`; the packaged provider is authoritative |
@@ -68,13 +77,23 @@ CUA_DRIVER_HOST_BUNDLE_ID=com.lingstack.desktop
 Only the exact string `1` enables embedded mode. The host bundle id is diagnostic text,
 not authentication.
 
-Embedded mode disables the provider's standalone responsibility-disclaim and
-LaunchServices relaunch paths. The host must still spawn the executable directly and
-communicate through line-delimited MCP JSON-RPC on stdin/stdout.
+Embedded mode disables the provider's standalone proxy/relaunch selection and keeps the
+provider in its host process context. On macOS that preserves the TCC responsibility
+chain. On Windows it preserves the interactive session, desktop and integrity level. The
+host must still spawn the executable directly and communicate through line-delimited MCP
+JSON-RPC on stdin/stdout.
 
-Packaging also carries one source-level state-root patch because upstream `0.8.3` does
-not isolate driver-owned config from the user's standalone Cua installation. That patch
-does not change MCP tools or native automation behavior and is locked separately below.
+Upstream explicitly documents one Windows exception: embedded mode does not route tool
+calls through a running `cua-driver-uia.exe`. Ling therefore treats ordinary embedded
+Windows execution and optional full-UIAccess execution as separate capability tiers. The
+initial per-user/asInvoker package implements the ordinary Medium-IL tier. A future full
+tier must add a signed secure-path helper lifecycle; simply shipping the second PE is not
+sufficient.
+
+Packaging carries one reviewed `ling-managed-embedded-v1` patch series because upstream
+`0.8.3` does not isolate driver-owned config, expose a deterministic Windows managed
+readiness contract, or return stable capability codes for UIAccess-only action paths.
+Every patch and touched path is locked below; standalone behavior remains unchanged.
 
 ## Module Boundaries
 
@@ -85,20 +104,26 @@ apps/desktop/
   main/
     cua-driver/
       artifact-lock.ts          # read and validate the packaged lock
-      provider-seal.ts          # validate the final post-sign helper identity
+      provider-seal.ts          # validate platform-specific final post-sign identities
+      windows-integrity.ts      # signed catalog + system-tool verification
       resource-path.ts          # resolve only the packaged absolute path
       state-root.ts             # create the version-isolated provider state root
-      embedded-host.ts          # direct child lifecycle and stdio MCP session
+      provider-host.ts          # shared process-group lifecycle and stdio MCP session
+      adapters/
+        darwin.ts               # TCC, Mach-O, direct embedded child
+        win32.ts                # session/desktop, PE seal, exact-PID process-tree cleanup
+      windows-uia.ts            # conditional secure-path UIAccess helper, not V1 package
       mcp-proxy.ts              # authenticated loopback Streamable HTTP proxy
       lease-publisher.ts        # publish/renew/revoke the daemon lease
-      permission-controller.ts  # host-owned AX and Screen Recording UX/state
+      readiness-controller.ts   # macOS permissions or Windows session/integrity state
       coordinator.ts            # enable/disable/restart reconciliation
       telemetry.ts              # bounded Desktop diagnostics
   resources/
     providers/cua-driver/0.8.3-ling.1/
-      cua-driver
+      darwin/{cua-driver,provider-seal.json}
+      win32-x64/provider-integrity.cat
+      win32-x64/payload/{cua-driver.exe,provider-seal.json}
       provider-lock.json
-      provider-seal.json
       LICENSE.md
       THIRD_PARTY_NOTICES.md
 
@@ -121,26 +146,40 @@ component.
 
 ## Provider Lock
 
-The reviewed provider input is represented by a committed lock file. The initial schema
-is:
+The reviewed provider input is represented by one committed cross-platform lock. Shared
+source provenance and distribution policy live at the top level; platform artifacts use
+discriminated records. The existing macOS record becomes:
 
 ```ts
-interface BundledCuaDriverLockV1 {
+interface BundledCuaDriverUpstreamV1 {
+  readonly repository: "https://github.com/trycua/cua";
+  readonly tag: "cua-driver-rs-v0.8.3";
+  readonly commit: "0612c26b2c7b8556f6de7f6b4f3927ecac914e4f";
+  readonly tree: "831819eaf2b79c4d81c2b68773cd5920772e91e9";
+  readonly version: "0.8.3";
+  readonly releaseStage: "prerelease";
+  readonly license: "MIT";
+  readonly licenseSha256: string;
+}
+
+interface LingManagedEmbeddedPatchSetV1 {
+  readonly id: "ling-managed-embedded-v1";
+  readonly sha256: string;
+  readonly patches: readonly [
+    { readonly id: "ling-embedded-state-home-v1"; readonly sha256: string },
+    { readonly id: "ling-managed-readiness-v1"; readonly sha256: string },
+    { readonly id: "ling-managed-lifetime-v1"; readonly sha256: string },
+    { readonly id: "ling-windows-capability-errors-v1"; readonly sha256: string },
+  ];
+  readonly touchedPaths: readonly string[];
+}
+
+interface DarwinBundledCuaDriverLockV1 {
   readonly schemaVersion: 1;
   readonly componentId: "cua-driver-darwin";
   readonly integrationMode: "embedded-stdio";
   readonly distributionRevision: "ling.1";
   readonly productVersionLabel: "0.8.3 (Ling build 1)";
-  readonly upstream: {
-    readonly repository: "https://github.com/trycua/cua";
-    readonly tag: "cua-driver-rs-v0.8.3";
-    readonly commit: "0612c26b2c7b8556f6de7f6b4f3927ecac914e4f";
-    readonly tree: "831819eaf2b79c4d81c2b68773cd5920772e91e9";
-    readonly version: "0.8.3";
-    readonly releaseStage: "prerelease";
-    readonly license: "MIT";
-    readonly licenseSha256: string;
-  };
   readonly referenceReleaseArtifact: {
     readonly filename: "cua-driver-rs-0.8.3-darwin-universal-binary.tar.gz";
     readonly sizeBytes: 15320898;
@@ -158,11 +197,7 @@ interface BundledCuaDriverLockV1 {
     readonly xcodeBuildVersion: string;
     readonly macOSSDKVersion: string;
     readonly targets: readonly ["aarch64-apple-darwin", "x86_64-apple-darwin"];
-    readonly patchSet: {
-      readonly id: "ling-embedded-state-home-v1";
-      readonly sha256: string;
-      readonly touchedPaths: readonly string[];
-    };
+    readonly patchSet: LingManagedEmbeddedPatchSetV1;
     readonly universalBinarySha256BeforeSigning: string;
   };
   readonly binary: {
@@ -203,15 +238,118 @@ interface BundledCuaDriverLockV1 {
 }
 ```
 
-`licenseSha256`, the exact source-build toolchain fields, patch digest and path list,
-`universalBinarySha256BeforeSigning`, and `toolsListSha256` must contain reviewed values
-before packaging can be enabled. They are not runtime-generated placeholders.
+The same lock contains a Windows x64 record:
 
-The upstream release binary remains reference evidence for the reviewed `0.8.3` release;
-it is not the binary shipped by Ling. `CUA_DRIVER_STATE_HOME` does not exist in upstream
-`0.8.3`, so the packaged helper must be built from the exact tag commit, `Cargo.lock`, and
-the one committed Ling patch. The product-visible label is `0.8.3 (Ling build 1)` while
-the upstream semantic version remains `0.8.3`.
+```ts
+interface WindowsBundledCuaDriverLockV1 {
+  readonly schemaVersion: 1;
+  readonly componentId: "cua-driver-win32-x64";
+  readonly integrationMode: "embedded-stdio";
+  readonly distributionRevision: "ling.1";
+  readonly productVersionLabel: "0.8.3 (Ling build 1)";
+  readonly referenceReleaseArtifact: {
+    readonly filename: "cua-driver-rs-0.8.3-windows-x86_64.zip";
+    readonly sizeBytes: 10585087;
+    readonly sha256: "6acdc84b98629fcd0be2368cc16565c18d5f21d9dedd4e10fdb6f58547fce9d0";
+    readonly binaries: {
+      readonly "cua-driver.exe": {
+        readonly sha256: "3cc33572defac29e23bc07e211c20245da9f6ebe8e6481f865b31534b1de8cee";
+      };
+      readonly "cua-driver-uia.exe": {
+        readonly sha256: "1b35a27d41008507d66f819248751b9e79a15c9e6e03390c56749c6fe5daca1c";
+      };
+    };
+    readonly authenticodeStatus: "unsigned-reference";
+  };
+  readonly sourceBuild: {
+    readonly cargoLockSha256: "098b0527c35def4fdd1d08e5dd3d1b0d5f5dda9a04b1888ec1bf15b52311c51b";
+    readonly rustcVersion: string;
+    readonly cargoVersion: string;
+    readonly windowsSdkVersion: string;
+    readonly msvcToolsetVersion: string;
+    readonly target: "x86_64-pc-windows-msvc";
+    readonly patchSet: LingManagedEmbeddedPatchSetV1;
+    readonly binariesSha256BeforeSigning: {
+      readonly main: string;
+      readonly uiaAuditArtifact: string;
+    };
+  };
+  readonly binary: {
+    readonly architecture: "x86_64";
+    readonly expectedUpstreamVersion: "0.8.3";
+    readonly lingBuild: 1;
+    readonly mainRelativePath: "payload/cua-driver.exe";
+    readonly providerSealRelativePath: "payload/provider-seal.json";
+    readonly mainManifestCanonicalSha256: string;
+    readonly integrityCatalogRelativePath: "provider-integrity.cat";
+    readonly packagedFiles: readonly [
+      "provider-integrity.cat",
+      "payload/cua-driver.exe",
+      "payload/provider-seal.json",
+    ];
+    readonly uiaAuditArtifact: {
+      readonly packaged: false;
+      readonly relativeBuildOutput: "cua-driver-uia.exe";
+      readonly manifestCanonicalSha256: string;
+      readonly requestedExecutionLevel: "asInvoker";
+      readonly uiAccess: true;
+    };
+  };
+  readonly runtime: {
+    readonly args: readonly ["mcp", "--embedded", "--host-bundle-id", "com.lingstack.desktop"];
+    readonly requiredSession: "interactive-user";
+    readonly rejectSessionZero: true;
+    readonly stateHomeEnvironmentVariable: "CUA_DRIVER_STATE_HOME";
+    readonly stateSchemaVersion: 1;
+    readonly telemetryEnabled: false;
+    readonly startupUpdateCheckEnabled: false;
+    readonly managedUpdaterToolsAllowed: false;
+    readonly defaultIntegrityCoverage: "standard";
+    readonly managedReadinessMethod: "ling/managed_readiness";
+    readonly managedReadinessChangedNotification: "ling/managed_readiness_changed";
+    readonly childInstanceNonceEnvironmentVariable: "CUA_DRIVER_CHILD_INSTANCE_NONCE";
+    readonly leaseGenerationEnvironmentVariable: "CUA_DRIVER_LEASE_GENERATION";
+    readonly readinessHeartbeatMs: 1000;
+    readonly requiredHostIntegrityLevel: "medium";
+    readonly requiredProviderIntegrityLevel: "medium";
+    readonly killOnJobCloseRequired: true;
+    readonly limitations: readonly ["elevated_pixel_input", "uwp_send_input"];
+    readonly uiaHelperActivation: "not-packaged-until-secure-path-contract";
+  };
+  readonly compatibility: {
+    readonly mcpClientSdk: "@modelcontextprotocol/sdk@1.29.0";
+    readonly clientInitializeProtocolVersion: "2025-11-25";
+    readonly serverInitializeProtocolVersion: "2025-06-18";
+    readonly healthSchemaVersion: "1";
+    readonly toolsListSha256: string;
+  };
+}
+
+interface BundledCuaDriverDistributionLockV2 {
+  readonly schemaVersion: 2;
+  readonly componentId: "cua-driver";
+  readonly distributionRevision: "ling.1";
+  readonly upstream: BundledCuaDriverUpstreamV1;
+  readonly enabledPlatforms: readonly ("darwin" | "win32-x64")[];
+  readonly platforms: {
+    readonly darwin?: DarwinBundledCuaDriverLockV1;
+    readonly win32X64?: WindowsBundledCuaDriverLockV1;
+  };
+}
+```
+
+The shared upstream record and every platform named in `enabledPlatforms` must contain
+reviewed non-placeholder toolchain, patch, pre-sign binary, manifest and tool-list values
+before that platform's packaging gate can be enabled. A complete macOS record does not
+wait for Windows values, and a complete Windows record does not wait for macOS values.
+Missing or incomplete data for the active platform fails its package.
+
+The upstream release binaries remain reference evidence for the reviewed `0.8.3` release;
+they are not the binaries shipped by Ling. `CUA_DRIVER_STATE_HOME` does not exist in
+upstream `0.8.3`, so every packaged provider binary must be built from the exact tag
+commit, `Cargo.lock`, and the committed `ling-managed-embedded-v1` patch series. The
+product-visible label is `0.8.3 (Ling build 1)` while the upstream semantic version
+remains `0.8.3`.
 
 Entitlement digests are computed from canonical JSON, not raw plist bytes: parse the
 entitlement plist into key/value data, recursively sort keys, retain JSON booleans, and
@@ -221,8 +359,9 @@ the package.
 
 `toolsListSha256` is computed from canonical UTF-8 JSON: sort tools by raw name, retain
 name, description, input schema, and MCP annotations, recursively sort object keys, and
-serialize without insignificant whitespace. CI must fail if two platforms or repeated
-runs of the same locked macOS provider produce different canonical bytes.
+serialize without insignificant whitespace. Each platform records its own digest because
+native tool availability may differ. CI must fail if repeated builds for the same locked
+platform produce different canonical bytes without a lock update.
 
 Protocol fields distinguish request from response. Ling's locked MCP SDK `1.29.0` sends
 `2025-11-25` in the initialize request and accepts the older supported response. Cua
@@ -233,44 +372,65 @@ client input, not the `0.8.3` server response contract.
 Any MCP SDK upgrade that changes the request version or supported-version set requires a
 provider-lock change and compatibility rerun.
 
-The lock file records source provenance. Apple code signing seals the final nested
-executable and outer app. Runtime integrity uses the final post-sign provider seal and
-the outer app code-resource seal, never the pre-sign source-build hash.
+The lock file records source provenance. Runtime integrity uses platform-specific final
+post-sign provider seals plus the macOS outer code-resource seal or Windows signed
+resource catalog, never only a pre-sign source-build hash or candidate manifest. Apple
+and Windows signing fields are intentionally not shared.
 
 ## Build-Time Acquisition
 
-The release workflow builds the provider before Electron packaging:
+Each platform release workflow builds only its enabled provider before Electron
+packaging; a macOS package does not wait for Windows output, and a Windows package does
+not wait for macOS output:
 
 1. Fetch the exact upstream tag commit and require the locked Git tree id.
 2. Verify `Cargo.lock`, the committed patch-series digest, and the patch touched-path
    allowlist. Reject uncommitted source changes or a patch that applies with fuzz.
-3. Download, safely extract, and verify the locked upstream release binary, source signer,
-   hardened runtime, and entitlement digest as reference evidence only. It is never copied
-   into the Ling package.
-4. Apply `ling-embedded-state-home-v1`, then build `cua-driver` for
-   `aarch64-apple-darwin` and `x86_64-apple-darwin` with the exact locked Rust, Cargo,
-   Xcode, and macOS SDK versions using Cargo's locked dependency mode.
-5. Combine the two slices with `lipo`, then verify architectures, deployment target,
-   upstream `--version`, initialize response, health schema, tool digest, and the embedded
-   state-isolation contract.
+3. Download, safely extract, and verify the active platform's locked upstream release
+   asset as reference evidence only. On macOS verify signer/runtime/entitlements; on
+   Windows verify zip size, binary hashes, PE32+ x64 headers, manifests and
+   unsigned-reference status. Reference binaries are never copied into the Ling package.
+4. Apply the exact `ling-managed-embedded-v1` patch series, then build `cua-driver` for
+   the enabled platform targets: both `aarch64-apple-darwin` and
+   `x86_64-apple-darwin` for macOS, or `x86_64-pc-windows-msvc` for Windows. The Windows
+   workflow also builds `cua-driver-uia` as a CI audit output. The audit output is verified
+   against the reference manifest but is not staged into the V1 user package. Use the
+   platform's exact locked Rust/Cargo and native SDK toolchain with Cargo locked dependency
+   mode.
+5. Combine the macOS slices with `lipo`. Verify every output architecture, deployment or
+   subsystem target, PE manifests, upstream `--version`, initialize response, health
+   schema, per-platform tool digest, and embedded state-isolation contract.
 6. Copy the exact upstream MIT license from the locked tag and verify its digest.
 7. Generate or refresh third-party Rust dependency notices/SBOM; do not assume the root
    MIT text alone covers every statically linked dependency notice obligation.
-8. Stage the provider into the Desktop resource tree and sign the nested helper with the
-   Ling release Developer ID, exact required entitlements, and hardened runtime.
-9. Re-read the signed helper and generate `provider-seal.json` from its final bytes and
-   final code-signing identity.
-10. Sign the outer Electron application after both the helper and provider seal are final.
-11. Record outer artifact hashes, notarization, Gatekeeper, build inputs, and the provider
-    seal digest in release evidence.
+8. Stage each provider into the platform Desktop resource tree. Sign macOS with the Ling
+   release Developer ID, exact required entitlements and hardened runtime. Sign only the
+   Windows standard-tier `cua-driver.exe` with the release-policy-pinned Authenticode
+   identity and timestamp policy.
+9. Re-read every signed shipped binary and generate the platform `provider-seal.json`
+   from final bytes, manifests and final code-signing identity.
+10. On Windows, generate and sign `provider-integrity.cat` outside the covered
+    `win32-x64/payload` directory. The catalog covers exactly
+    `payload/cua-driver.exe` and `payload/provider-seal.json`; the covered seal contains
+    the exact provider-lock digest. This avoids catalog self-reference. License/notices
+    remain package-asserted release material, not executable trust anchors.
+    Candidate-manifest JSON is release evidence and is not a runtime integrity anchor.
+11. Sign the outer Electron application and installer artifacts after provider binaries,
+    seals and the Windows catalog are final.
+12. Record outer artifact hashes, macOS notary/Gatekeeper evidence, Windows app/NSIS and
+    catalog Authenticode evidence, build inputs, audit-only UIAccess hash and provider-seal
+    digests in release evidence.
 
 Source, reference artifact, and toolchain downloads are controlled build inputs. None is
 fetched by the installed product.
 
-### Signing choice
+### Platform signing choices
 
-The packaged helper is a Ling source build and must be signed by the Ling release
-pipeline. TCC access is still attributed to the responsible Ling host, not merely to the
+Every packaged provider is a Ling source build and must be signed by the Ling release
+pipeline. Ling is not re-signing an upstream release binary; it is signing its own locked
+source build while retaining upstream provenance and notices.
+
+On macOS, TCC access is still attributed to the responsible Ling host, not merely to the
 helper's Team ID.
 
 After signing, both Mach-O slices must report hardened runtime and the exact entitlement
@@ -280,9 +440,18 @@ signature can still omit or add entitlements.
 The release policy must supply the expected Ling Team ID. A locally ad-hoc signed helper
 can be used only for development and cannot satisfy packaged TCC or public release gates.
 
+On Windows V1, `cua-driver.exe` and `provider-integrity.cat` require valid Authenticode
+signatures from the release-policy-pinned Publisher and certificate SHA-256. The catalog
+must match the signer of the installed Ling executable and cover every file in the
+dedicated payload directory. The audit-only UIAccess output is not signed or packaged for users. A future
+UIAccess helper additionally requires its own Authenticode identity, `uiAccess=true`
+manifest, ShellExecute launch and Windows secure path. Signing any shipped file after its
+seal or catalog is generated is forbidden.
+
 ## Post-Sign Provider Seal
 
-The package contains a generated manifest for the final signed helper:
+The package contains a generated manifest for each platform's final signed binaries. The
+macOS shape remains:
 
 ```ts
 interface BundledProviderSealV1 {
@@ -311,19 +480,86 @@ interface BundledProviderSealV1 {
 }
 ```
 
-Generation order is strict:
+The Windows shape is separate rather than overloading Apple fields:
 
-1. finish the nested helper's Ling Developer ID signature;
-2. compute the post-sign SHA-256, per-architecture CDHashes, Team ID, designated
-   requirement, hardened-runtime state, and canonical entitlement digest;
-3. write `provider-seal.json` and forbid any later helper mutation;
-4. sign the outer app so its code-resource seal protects both files.
+```ts
+interface WindowsBundledProviderSealV1 {
+  readonly schemaVersion: 1;
+  readonly componentId: "cua-driver-win32-x64";
+  readonly lockSha256: string;
+  readonly distributionRevision: "ling.1";
+  readonly providerVersion: "0.8.3";
+  readonly serverInitializeProtocolVersion: "2025-06-18";
+  readonly healthSchemaVersion: "1";
+  readonly toolsListCanonicalSha256: string;
+  readonly stateSchemaVersion: 1;
+  readonly main: WindowsSignedPeIdentity;
+  readonly integrityCatalogRelativePath: "provider-integrity.cat";
+  readonly limitations: readonly ["elevated_pixel_input", "uwp_send_input"];
+}
 
-Outer app, ZIP, and DMG hashes remain in release evidence because placing them inside the
-provider seal would create a signing cycle. At activation, Ling validates the outer app
-signature, the seal's lock digest, the actual helper bytes and code identity, and the
-outer code-resource seal. A pre-sign SHA match cannot make a post-sign helper trusted.
-The designated requirement is stored as normalized UTF-8 text with normalized line
+interface WindowsBundledIntegrityCatalogEvidenceV1 {
+  readonly catalogRelativePath: "provider-integrity.cat";
+  readonly authenticodeStatus: "Valid";
+  readonly signerSubject: string;
+  readonly certificateSha256: string;
+  readonly timestampStatus: "Valid";
+  readonly members: readonly {
+    readonly relativePath: string;
+    readonly sha256: string;
+  }[];
+}
+
+interface WindowsSignedPeIdentity {
+  readonly relativePath: string;
+  readonly sha256: string;
+  readonly architecture: "x86_64";
+  readonly peManifestCanonicalSha256: string;
+  readonly authenticodeStatus: "Valid";
+  readonly signerSubject: string;
+  readonly certificateSha256: string;
+  readonly timestampStatus: "Valid";
+}
+```
+
+Generation order is strict on both platforms:
+
+1. finish every shipped nested provider signature;
+2. compute the platform identity: macOS SHA/CDHashes/Team ID/designated requirement/
+   entitlements, or Windows main-PE SHA/manifest/Publisher/certificate/timestamp;
+3. write `provider-seal.json` and forbid any later provider mutation;
+4. on Windows, generate and sign `provider-integrity.cat` outside and over the exact
+   two-file payload directory;
+5. sign the outer app and installer.
+
+`electron-builder@26.15.3` must prove this order in instrumented macOS and Windows package
+spikes before the release pipeline relies on it. The implementation contract is:
+
+1. `afterPack` signs the staged macOS provider and writes its seal from final Mach-O
+   identity; on Windows it signs the staged PE, derives `provider-seal.json`, generates
+   the catalog over the dedicated payload and signs the catalog;
+2. the platform signing hook skips that canonical sealed provider path only after its
+   expected digest matches, while delegating outer app/uninstaller/installer executables
+   to normal signing;
+3. any second provider signing attempt, unexpected executable in the payload or
+   post-seal provider mutation fails the package;
+4. `afterSign` rehashes and reverifies the unpacked provider tuple;
+5. `artifactBuildCompleted` extracts/reopens each final DMG/ZIP/NSIS artifact and proves
+   its provider bytes, seal and platform identity/catalog are identical to the verified
+   unpacked tuple.
+
+Hosted macOS and Windows CI use disposable test identities to exercise the identical hook
+code. Release lanes change credentials only. An Electron Builder upgrade must rerun the
+hook-order spikes and cannot inherit the prior result by version assumption.
+
+Outer app, ZIP, DMG and NSIS hashes remain in release evidence because placing them inside
+the provider seal would create a signing cycle. At Windows activation, Ling validates the
+installed app signature, the catalog signature/signer, catalog membership, then the seal's
+lock digest and actual main-PE identity. A candidate manifest or pre-sign SHA match cannot
+make installed loose resources trusted. The V1 threat model detects accidental or
+unauthorized resource replacement; it does not claim protection after the same user has
+fully replaced both the Desktop runtime and its verification code.
+For macOS, the designated requirement is stored as normalized UTF-8 text with normalized line
 endings and its digest; CDHashes are collected separately for both universal slices.
 
 ## Packaged Resource Layout
@@ -332,17 +568,20 @@ The provider must be outside `app.asar` and addressed by an absolute path derive
 `process.resourcesPath`:
 
 ```text
-Ling Stack.app/
-  Contents/
-    Resources/
-      providers/
-        cua-driver/
-          0.8.3-ling.1/
-            cua-driver
-            provider-lock.json
-            provider-seal.json
-            LICENSE.md
-            THIRD_PARTY_NOTICES.md
+providers/
+  cua-driver/
+    0.8.3-ling.1/
+      provider-lock.json
+      LICENSE.md
+      THIRD_PARTY_NOTICES.md
+      darwin/
+        cua-driver
+        provider-seal.json
+      win32-x64/
+        provider-integrity.cat
+        payload/
+          cua-driver.exe
+          provider-seal.json
 ```
 
 The packaging spike may move the executable to a standard nested-helper directory if
@@ -351,29 +590,45 @@ must remain deterministic.
 
 Packaged path resolution rules:
 
-1. Read the committed provider lock.
-2. Build the absolute packaged path.
-3. Reject symlinks and any real path outside the expected provider root.
-4. Require an executable regular file.
-5. Validate the outer signature, post-sign provider seal, lock digest, and packaged
-   helper identity before starting the proxy lease.
-6. Never consult `PATH`, Homebrew, `~/.local/bin`, or `/Applications/CuaDriver.app` in
+1. Build the absolute platform path from the compile-time distribution id and
+   `process.resourcesPath`; do not trust a path read from the lock itself.
+2. Reject symlinks, reparse points, junctions and any canonical path outside the expected
+   provider root.
+3. On Windows, verify the installed Ling executable and signed provider catalog with the
+   absolute in-box Windows PowerShell path, `-NoProfile -NonInteractive`, fixed UTF-8
+   locale-independent JSON and bounded stdout/stderr. Require matching release-policy
+   signer identity and run `Test-FileCatalog` against only the dedicated two-file payload
+   directory. Missing PowerShell, process-launch denial, WDAC/AppLocker blocking,
+   unavailable catalog cmdlets, oversized output or inability to obtain a verdict maps to
+   `cua_windows_integrity_verifier_unavailable` / `platform_unavailable`; it does not
+   claim the artifact is corrupt. A successfully executed verifier that reports an
+   invalid signature, signer, member or hash maps to `corrupt`. Never classify by parsing
+   localized stderr text.
+4. Read the catalog-covered seal, hash the actual root provider lock, require
+   `seal.lockSha256` to match it, then validate both records.
+5. Require the main provider to be an executable regular file with exact platform
+   identity before starting the proxy lease.
+6. Never consult `PATH`, Homebrew, user install junctions, `~/.local/bin`,
+   `/Applications/CuaDriver.app`, or `%LOCALAPPDATA%\Programs\Cua` in
    `bundled_embedded` mode.
 
 Source/dev builds may accept an explicit fixture or developer path, but must label the
 mode `external_local` unless the build produced a validated local provider asset.
 
-## Ling-Carried Embedded State Isolation Patch
+## Ling-Carried Managed Embedded Patch Series
 
 Upstream `0.8.3` reads and writes driver configuration at
 `$HOME/.cua-driver/config.json`. That silently inherits standalone-driver values such as
 `capture_scope=desktop` and `max_image_dimension`, and `set_config` can modify the same
-file. Ling therefore carries one minimal source patch that introduces
-`CUA_DRIVER_STATE_HOME` for driver-owned state.
+file. Ling therefore carries one reviewed patch series. Its state-isolation member introduces
+`CUA_DRIVER_STATE_HOME` for driver-owned state; later sections define the managed
+readiness and structured capability-error members.
 
-Patch contract:
+Patch-series contract:
 
 - only upstream commit `0612c26b2c7b8556f6de7f6b4f3927ecac914e4f` is an accepted base;
+- the complete ordered patch list, each patch SHA and the union of touched paths match the
+  provider lock with no fuzzy application;
 - `CUA_DRIVER_STATE_HOME` is consulted only when upstream embedded mode is active;
 - packaged embedded startup fails closed when the value is absent, empty, relative,
   symlink-escaped, or outside the Desktop-created provider state root;
@@ -386,11 +641,13 @@ Patch contract:
   accurately instead of claiming embedded writes still target `~/.cua-driver`;
 - explicit user output paths, browser profiles, application data, and files under the
   real home are not redirected;
-- no external `~/.cua-driver` or `~/.cua-driver-rs` state is imported automatically.
+- no external macOS home or Windows profile `.cua-driver` / `.cua-driver-rs` state is
+  imported automatically.
 
-Desktop derives the root from Electron `app.getPath("userData")`, isolates it by state
-schema and provider distribution revision, creates directories with mode `0700`, creates
-files with mode `0600`, and rejects symlinks:
+Desktop derives the root from Electron `app.getPath("userData")` and isolates it by state
+schema and provider distribution revision. macOS creates directories with mode `0700`
+and files with mode `0600`. Windows applies a current-user-only ACL and rejects reparse
+points, junction escapes and paths outside the canonical userData root.
 
 ```text
 <Desktop userData>/providers/cua-driver/state/v1/0.8.3-ling.1/
@@ -406,16 +663,28 @@ defaults unless a future explicit migration is designed. The initial defaults re
 The patch acceptance test launches embedded mode with a sentinel-filled temporary real
 `HOME`, reads and writes config, restarts the child, and runs health. External
 `$HOME/.cua-driver` and `$HOME/.cua-driver-rs` must remain absent or byte-identical, while
-all driver-owned writes land under the locked state root. The same binary launched in
-non-embedded mode must ignore `CUA_DRIVER_STATE_HOME` and retain upstream path semantics.
+all driver-owned writes land under the locked state root. The same platform binary
+launched in non-embedded mode must ignore `CUA_DRIVER_STATE_HOME` and retain upstream
+path semantics. Separate Windows patch tests validate the exact no-content readiness JSON,
+structured UIAccess capability details, stdin EOF, half-closed stdout and exact host-PID
+death. Standalone mode must not gain Ling-only lifecycle or capability behavior.
 
 ## Runtime Environment
 
-The child process receives a narrow, explicit environment:
+The main provider process uses the exact locked argv on both platforms:
+
+```text
+mcp --embedded --host-bundle-id com.lingstack.desktop
+```
+
+It also receives a narrow, explicit environment:
 
 ```text
 CUA_DRIVER_EMBEDDED=1
 CUA_DRIVER_HOST_BUNDLE_ID=com.lingstack.desktop
+CUA_DRIVER_HOST_PID=<electron-main-pid>
+CUA_DRIVER_CHILD_INSTANCE_NONCE=<memory-only-random-nonce>
+CUA_DRIVER_LEASE_GENERATION=<positive-integer>
 CUA_DRIVER_STATE_HOME=<Desktop userData>/providers/cua-driver/state/v1/0.8.3-ling.1
 CUA_DRIVER_TELEMETRY_HOME=<CUA_DRIVER_STATE_HOME>/telemetry
 CUA_DRIVER_RS_TELEMETRY_ENABLED=false
@@ -423,9 +692,12 @@ CUA_DRIVER_RS_UPDATE_CHECK=false
 ```
 
 The first two values enforce the upstream embedding path. The state variables isolate
-driver-owned data without replacing the user's real `HOME`. The final two prevent the
+driver-owned data without replacing the user's real home/profile. The final two prevent the
 Ling-managed child from sending default product telemetry or making the independent
 GitHub release check performed by `mcp`, `serve`, and `doctor`.
+
+The child nonce and lease generation bind private readiness messages to the exact spawn;
+they are never persisted or logged.
 
 Rules:
 
@@ -437,43 +709,175 @@ Rules:
   operations and never performs background provider downloads. Upstream `0.8.3` still
   contains the standalone CLI command `update --apply`; direct user or generic shell
   execution of that command is outside this provider-integration boundary.
-- Inherit only environment variables required for normal macOS application interaction.
+- Inherit only environment variables required for native application interaction.
   Do not pass Ling secrets, provider API keys, release credentials, or bridge tokens to
   Cua Driver.
+- On Windows, also inherit only the logged-in user's interactive session environment. Do
+  not use a service token, Session 0, or a scheduled-task daemon as the bundled provider.
 - Keep stderr diagnostic-only, bounded, and redacted. MCP stdout is protocol data and
   must never be mixed with product logs.
 
 ## Process Ownership
 
-The accepted process tree is:
+The accepted process trees are:
 
 ```text
-launchservices / user session
+macOS LaunchServices / user session
   -> Ling Stack.app Electron main
        -> packaged cua-driver mcp --embedded
+
+Windows interactive user session
+  -> Ling Stack.exe Electron main
+       -> packaged cua-driver.exe mcp --embedded
+       -. optional future full tier .-> signed secure-path cua-driver-uia.exe
 ```
 
 These shapes are rejected:
 
 ```text
 Ling daemon -> cua-driver --embedded
+Windows service / Session 0 -> cua-driver.exe --embedded
+scheduled task daemon -> cua-driver.exe
 terminal -> cua-driver --embedded
 open / NSWorkspace -> CuaDriver.app -> cua-driver
 renderer -> cua-driver
 ```
 
-The reason is macOS responsibility attribution, not ordinary parent-pid aesthetics.
-Desktop can reuse a daemon started outside Ling, so the daemon cannot be trusted to carry
-the GUI application's TCC identity.
+The reason is platform authority, not ordinary parent-pid aesthetics. macOS requires the
+Ling TCC responsibility chain. Windows requires the same logged-in interactive session,
+input desktop and expected integrity tier. Desktop can reuse a daemon started outside
+Ling, so that daemon cannot be trusted to carry either authority.
 
 Runtime `check_permissions.source.attribution === "host"` is required but not sufficient.
 Clean-host acceptance also verifies the real process ancestry, TCC AttributionChain logs,
 and Privacy & Security rows.
 
+Windows activation verifies Desktop/provider session ids, integrity levels, input desktop,
+exact PID/nonce and executable identity through a content-free managed-readiness request
+sent to the active MCP child. Windows acceptance
+then uses a test-owned synthetic target for real WGC/UIA/input probes and process-tree
+cleanup. Upstream
+`health_report.session_active` is not accepted as proof because `0.8.3` reports that
+check as a fixed pass on Windows.
+
+### Windows managed readiness and lifetime boundary
+
+Windows native checks live in the locked Rust patch series. Electron main does not add a
+Node FFI or N-API addon. The bounded one-shot command remains build, preflight and
+acceptance evidence only:
+
+```text
+cua-driver.exe diagnostics --managed-readiness --json
+```
+
+Its process identity can never make the runtime ready. After the long-lived child
+completes MCP initialize, the provider host sends the embedded-only
+`ling/managed_readiness` request over that child's existing stdio MCP session. The
+response is authoritative only for the current lease generation and is never exposed as
+a user-callable tool.
+
+The one-shot stdout contract is evidence-only:
+
+```ts
+interface WindowsManagedPreflightV1 {
+  readonly schemaVersion: 1;
+  readonly evidenceOnly: true;
+  readonly diagnosticProcessId: number;
+  readonly diagnosticSessionId: number;
+  readonly diagnosticIntegrityLevel: "medium" | "high" | "system" | "unknown";
+  readonly inputDesktop:
+    | "default_unlocked"
+    | "locked"
+    | "non_default"
+    | "unavailable";
+  readonly jobObjectApiAvailable: boolean;
+  readonly uiaRuntime: "available" | "unavailable";
+  readonly d3d11: "available" | "unavailable";
+  readonly wgcApi: "supported" | "unsupported" | "unavailable";
+  readonly contentObserved: false;
+}
+```
+
+The active-child control response contract is:
+
+```ts
+interface WindowsManagedReadinessRequestV1 {
+  readonly schemaVersion: 1;
+  readonly childInstanceNonce: string;
+  readonly leaseGeneration: number;
+}
+
+interface WindowsManagedReadinessV1 {
+  readonly schemaVersion: 1;
+  readonly childInstanceNonce: string;
+  readonly leaseGeneration: number;
+  readonly readinessSequence: number;
+  readonly hostProcessId: number;
+  readonly hostSessionId: number;
+  readonly hostIntegrityLevel: "medium" | "high" | "system" | "unknown";
+  readonly providerProcessId: number;
+  readonly providerSessionId: number;
+  readonly providerIntegrityLevel: "medium" | "high" | "system" | "unknown";
+  readonly inputDesktop:
+    | "default_unlocked"
+    | "locked"
+    | "non_default"
+    | "unavailable";
+  readonly jobObjectAssigned: boolean;
+  readonly killOnJobClose: boolean;
+  readonly uiaRuntime: "available" | "unavailable";
+  readonly d3d11: "available" | "unavailable";
+  readonly wgcApi: "supported" | "unsupported" | "unavailable";
+  readonly contentObserved: false;
+}
+
+interface WindowsManagedReadinessChangedV1 extends WindowsManagedReadinessV1 {
+  readonly reason:
+    | "lock"
+    | "unlock"
+    | "disconnect"
+    | "logoff"
+    | "fast_user_switch"
+    | "session_mismatch"
+    | "input_desktop_changed"
+    | "heartbeat";
+}
+```
+
+Desktop generates the nonce and generation before spawn and passes them only through the
+two locked environment variables above plus the private request. The child rejects a
+missing or mismatched request/environment tuple. `readinessSequence` starts at `1` for
+each new child nonce/generation and increases for every response or changed notification;
+Desktop discards any sequence not greater than the last accepted value. Neither value is
+persisted or logged.
+
+The implementation reuses upstream Windows diagnostics around
+`ProcessIdToSessionId`, token integrity, `OpenInputDesktop`, UI Automation initialization,
+D3D11 and WGC API support. It must not enumerate user windows, return AX content, capture
+a frame, or perform input. Desktop cross-checks the retained ChildProcess PID, Electron
+main PID, a random memory-only `childInstanceNonce` supplied at spawn, both non-zero equal
+session ids, both Medium integrity levels, Job Object flags, the echoed lease generation
+and a strictly increasing readiness sequence.
+The nonce is never logged or persisted. Extra stdout, an unknown schema field or any
+identity mismatch fails closed.
+
+For the long-lived embedded process, the Rust patch opens a `SYNCHRONIZE` handle to the
+exact `CUA_DRIVER_HOST_PID` before reporting ready. Before creating any worker it also
+creates a private non-inheritable Job Object, assigns the active MCP process to it, sets
+`JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`, and forbids breakaway descendants. Failure to
+establish that boundary exits before initialize and projects
+`cua_windows_lifecycle_unavailable` / `platform_unavailable`. Stdin EOF,
+stdout/protocol closure, host-process death or main-process termination closes the Job
+Object and removes every provider descendant within the locked managed-exit deadline.
+Child-created workers must not inherit host/provider stdio or Job Object handles.
+Path/reparse validation remains in TypeScript through `lstat` plus canonical `realpath`;
+ACL evidence may use the absolute trusted `%SystemRoot%\System32\icacls.exe`.
+
 ## Embedded Provider Host
 
-`EmbeddedCuaDriverHost` owns one child and one stdio MCP session per active Desktop lease
-generation.
+`CuaDriverProviderHost` owns one main provider process and one stdio MCP session per
+active Desktop lease generation. A future full Windows tier may additionally own one
+UIAccess helper; the initial standard tier owns none.
 
 Responsibilities:
 
@@ -484,14 +888,21 @@ Responsibilities:
 - stderr capture with secret/content redaction;
 - cancellation and request-id tracking;
 - graceful shutdown followed by bounded termination;
-- orphan detection and cleanup;
+- treat stdin EOF, child stdout EOF and host-process death as terminal lifecycle signals;
+- orphan detection and cleanup; while Desktop remains alive, Windows first closes
+  MCP/stdin and waits, then may terminate only through the retained ChildProcess handle.
+  Managed production mode never invokes `taskkill.exe /PID ... /T`;
+- hard Desktop crash relies on the child host-death/stdio-EOF contract and the Rust-owned
+  `KILL_ON_JOB_CLOSE` boundary. Main-child, grandchild and repeated-restart zero-orphan
+  tests are required; no Node N-API addon is introduced;
+- independently check process/pipe/listener residue before restart or shutdown completes;
 - generation replacement after child crash, permission change, unexpected MCP session
   loss, daemon authority-epoch change, or Desktop restart.
 
 The child starts lazily on the first authenticated daemon MCP session. Starting Desktop
 alone does not activate Computer Use or raise permission prompts.
 
-One provider session is sufficient because Desktop is bound to one daemon authority per
+One provider MCP session is sufficient because Desktop is bound to one daemon authority per
 workspace. The daemon must reuse one initialized MCP client for the entire lease
 generation. A second HTTP initialize/session for that generation is rejected; it never
 creates another child or replays initialize onto the existing stdio server.
@@ -513,12 +924,21 @@ Proxy rules:
 - bind only to `127.0.0.1` or `::1` with an explicit loopback policy;
 - choose an ephemeral port;
 - require a per-Desktop-instance authorization secret derived from the existing Desktop
-  bridge secret plus the Desktop instance id and lease generation;
+  bridge secret plus the daemon-issued Desktop instance epoch, bridge connection id and
+  lease generation;
 - reject browser Origin/CORS access and non-MCP routes;
 - never persist the endpoint or authorization secret;
 - accept exactly one initialized Streamable HTTP session for the current lease generation;
 - preserve MCP request ids, notifications, cancellation, errors, content blocks, and
-  structured content without interpreting tool semantics or remapping ids across clients;
+  structured content without interpreting tool semantics or remapping ids across clients,
+  except for the locked embedded-control namespace below;
+- reserve string request ids beginning `ling-control:` and methods beginning `ling/` for
+  Desktop-owned embedded control. Reject daemon-originated ids/methods in that namespace;
+  serialize `ling/managed_readiness` after initialize and before activation continues,
+  intercept its response, and never expose it as an MCP tool;
+- intercept `ling/managed_readiness_changed` notifications carrying nonce, generation and
+  monotonic sequence for the Windows readiness controller. All non-reserved standard MCP
+  traffic remains transparent;
 - cap request, response, image, and stderr sizes using the same or stricter limits as the
   daemon MCP broker;
 - close the stdio child when the accepted session is released for disable or Desktop quit;
@@ -540,6 +960,8 @@ The daemon keeps the live Desktop provider route in memory only:
 interface DesktopCuaDriverLease {
   readonly providerId: "cua-driver";
   readonly desktopInstanceId: string;
+  readonly desktopInstanceEpoch: number;
+  readonly bridgeConnectionId: string;
   readonly generation: number;
   readonly daemonAuthorityEpoch: string;
   readonly workspaceCwd: string;
@@ -550,6 +972,10 @@ interface DesktopCuaDriverLease {
   readonly expiresAt: string;
   readonly lockDigest: string;
   readonly providerSealDigest: string;
+  readonly providerCatalogDigest?: string;
+  readonly platform: "darwin" | "win32";
+  readonly architecture: "arm64" | "x86_64";
+  readonly integrityCoverage?: "standard" | "uiaccess";
 }
 ```
 
@@ -560,7 +986,7 @@ Suggested route contract:
 
 ```text
 PUT    /desktop/capabilities/cua-driver/lease
-DELETE /desktop/capabilities/cua-driver/lease/:generation
+DELETE /desktop/capabilities/cua-driver/lease/:desktopInstanceEpoch/:generation
 ```
 
 Both routes require the existing Desktop bridge token and exact workspace authority.
@@ -570,13 +996,16 @@ Lease behavior:
 - Desktop publishes after artifact validation and proxy bind, before the child starts.
 - Desktop renews periodically; the daemon expires a missing heartbeat within a bounded
   interval.
-- The Desktop bridge handshake carries a daemon authority epoch. A changed epoch means the
-  daemon restarted or authority changed, so Desktop rotates the provider generation even
-  if the Desktop process remained alive.
-- A higher generation atomically replaces the previous generation.
-- Replacement invalidates the old pooled client and every activation token before the
-  new generation can publish ready state.
-- A stale generation cannot replace, renew, or revoke the current lease.
+- The authenticated bridge handshake carries the daemon authority epoch and issues a
+  random `bridgeConnectionId` plus a `desktopInstanceEpoch` that increases
+  monotonically within that daemon authority epoch.
+- Before accepting the first lease from a new bridge connection, the daemon atomically
+  fences the previous Desktop instance, pool entries and activation tokens.
+- A newer Desktop instance epoch replaces an older instance regardless of their numeric
+  generations. Within one instance epoch, only a higher generation can replace the
+  current generation; a new Desktop process may restart generation at `1`.
+- Renew and revoke require the exact authority epoch, instance epoch, bridge connection
+  id and generation. An older instance cannot replace, renew or revoke the current lease.
 - Desktop quit performs best-effort revoke; expiry is the crash-safe authority.
 - The lease is never written to SQLite, plugin events, ordinary logs, or run snapshots.
 
@@ -597,8 +1026,9 @@ external_local
 The lease transport and pooled client are not saved back into the MCP server row. This
 prevents stale ports and proxy secrets from surviving a Desktop restart.
 
-Packaged macOS chooses `bundled_embedded` by default. It returns a stable
-`desktop_provider_unavailable` error if no valid lease exists. It must not fall through
+Packaged macOS and Windows choose `bundled_embedded` by default. They return a stable
+`cua_desktop_lease_unavailable` transport error if no valid lease exists. The UI projects
+`desktop_unavailable`. It must not fall through
 to an existing external command.
 
 A reused daemon must advertise support for the lease protocol during the existing Desktop
@@ -609,8 +1039,9 @@ rather than opening the product with a partially working provider path.
 
 The current broker creates, initializes, and closes an MCP client for every check, list,
 and tool call. Bundled embedded mode must replace that behavior with a pool entry keyed by
-logical server id, Desktop instance id, daemon authority epoch, lease generation,
-endpoint, and lock digest.
+logical server id, Desktop instance id, Desktop instance epoch, bridge connection id,
+daemon authority epoch, lease generation, endpoint, lock digest, provider-seal digest and
+optional Windows catalog digest.
 
 Each entry owns:
 
@@ -629,8 +1060,9 @@ reopen or retain the prior client. Closing waits a bounded interval for active o
 then cancels them and closes the SDK client exactly once.
 
 Client cancellation is not a persistence fence. Every asynchronous check, list, health,
-and activation result carries the captured Desktop instance id, daemon authority epoch,
-lease generation, lock digest, activation epoch, and requested-enable revision. Before
+and activation result carries the captured Desktop instance id/epoch, bridge connection
+id, daemon authority epoch, lease generation, lock/seal/catalog digests, activation epoch,
+and requested-enable revision. Before
 any status, tool catalog, or enabled flag is written, the daemon performs a generation
 compare-and-swap against current state. Results
 from a replaced generation or superseded user intent are discarded even if the old
@@ -644,7 +1076,7 @@ Bundled mode separates durable user intent from effective tool availability:
 
 ```text
 requestedEnabled = user wants the provider on
-effectiveEnabled = artifact + lease + protocol + health + permissions all pass
+effectiveEnabled = artifact + lease + protocol + health + platform readiness all pass
 ```
 
 The user enable action persists `requestedEnabled=true` and increments a requested-enable
@@ -653,13 +1085,57 @@ effective availability and remain false until the transaction commits. This lets
 permission flow survive a Desktop restart without making tools eligible early. Disable
 clears the requested flag and advances the revision before process shutdown.
 
+### Durable activation fence and Store API
+
+The workspace store adds one Cua-specific fence row:
+
+```sql
+CREATE TABLE cua_driver_activation_state (
+  plugin_id TEXT PRIMARY KEY,
+  requested_enabled INTEGER NOT NULL CHECK (requested_enabled IN (0, 1)),
+  requested_revision INTEGER NOT NULL CHECK (requested_revision >= 0),
+  activation_epoch INTEGER NOT NULL CHECK (activation_epoch >= 0),
+  updated_at TEXT NOT NULL
+);
+```
+
+Migration seeds `requested_enabled` from the existing canonical plugin effective flag so
+an already-enabled external installation is not silently forgotten. Every intent,
+not-ready, retry, effective-enable and disable transition uses one synchronous Store entry
+point, `commitCuaDriverActivation()`. Its input carries expected requested revision and
+activation epoch, the next requested/effective values, optional revision/epoch advances,
+the exact tool replacement, MCP/plugin health status and the three effective flag groups.
+
+The Store method executes `BEGIN IMMEDIATE`, reads and compares the fence, replaces tools
+and status, writes plugin/contribution/logical-MCP enabled flags, updates the fence, then
+commits. A mismatch returns `committed:false` without any write; any exception rolls back
+the complete transition. Request-enable and disable use the same API. Lease replacement,
+daemon-authority replacement and serialized retry advance `activation_epoch` before a new
+lease becomes usable. Immediately before the synchronous Store call, the activation
+service rechecks the in-memory lease token with no intervening `await`.
+
+Before a newly started daemon binds public HTTP/SSE/MCP routes or reports ready, one
+startup Store transaction enumerates every `bundled_embedded` Cua Driver row, advances
+its `activation_epoch`, preserves `requested_enabled` and `requested_revision`, replaces
+tools with empty, writes `desktop_unavailable` when requested intent is enabled or
+`included` when it is disabled, and clears plugin/contribution/logical-MCP effective
+flags. External-provider rows are untouched. If this transaction fails, daemon startup
+fails closed. Therefore a client snapshot arriving before Desktop reconnect can observe
+retained user intent but can never observe the old daemon's tools or ready flags.
+
+Required Store tests use two SQLite connections to race activation against disable and
+inject failure after tool replacement, status write, each enabled-flag group and fence
+update. Exactly one matching CAS may commit and every injected crash must leave all rows
+at the pre-transaction state.
+
 Bundled activation is:
 
-1. Confirm packaged macOS and `bundled_embedded` distribution.
+1. Confirm a supported packaged Desktop platform and `bundled_embedded` distribution.
 2. Require an active compatible Desktop lease.
 3. Issue a monotonic activation epoch and capture a token containing it, requested-enable
-   revision, Desktop instance id, daemon authority epoch, lease generation, lock digest,
-   and provider seal digest. Keep all persisted effective enabled flags false.
+   revision, Desktop instance id/epoch, bridge connection id, daemon authority epoch,
+   lease generation, lock digest, provider seal digest, and optional Windows catalog
+   digest. Keep all persisted effective enabled flags false.
 4. Create an in-memory activation server view with `enabled=true` and acquire the
    lease-generation pooled MCP client. This internal view permits probing without making
    the persisted contribution or tools eligible. The Desktop proxy lazily starts the
@@ -670,40 +1146,58 @@ Bundled activation is:
 6. Call `health_report` with `{"skip":["bundle_identity"]}` and require schema `1`.
    Upstream `0.8.3` hard-codes that check to standalone `com.trycua.driver`, so it is not
    a valid embedded identity check. Bundled mode consumes structured status only and never
-   displays raw upstream health hints, because several `0.8.3` macOS hints direct users to
-   standalone `CuaDriver.app`; Ling's permission controller supplies embedded repair UX.
-7. Call `check_permissions` with `{"prompt":false}` and verify
-   `source.attribution === "host"` as a sanity check.
-8. If permissions are missing and the activation token is still current, keep effective
-   enabled flags false, retain the user's requested-enabled intent, and project
-   `permission_required`; Desktop owns the next user-triggered permission action.
-9. If permissions are ready, list tools, apply the Cua approval overlay, and remove denied
+   displays raw upstream health hints. Ling's readiness controller supplies the correct
+   embedded repair UX for the active platform.
+7. Run platform readiness. On macOS call `check_permissions` with `{"prompt":false}` and
+   require host attribution plus live capturability. On Windows call
+   `ling/managed_readiness` over the active child's existing stdio session and consume the
+   structured no-content report: exact child PID/nonce/generation, matching non-zero
+   host/provider session ids, Medium integrity for both processes, assigned
+   `KILL_ON_JOB_CLOSE` boundary, default/unlocked input desktop, UIA runtime
+   initialization, D3D11 device creation and WGC API support. Normal activation must not
+   enumerate a user target, capture a frame, inspect AX content or perform input.
+8. If readiness is incomplete and the activation token is still current, keep effective
+   enabled flags false and retain the user's requested-enabled intent. Project
+   `permission_required` for macOS TCC, `interactive_session_required` for Windows
+   Session 0/locked/wrong input desktop, or `platform_unavailable` for a failed standard
+   UIA runtime or WGC/D3D capability probe.
+9. If the declared platform tier is ready, set activation-local
+   `providerState="ready"`. The Windows standard tier also sets
+   `integrityCoverage="standard"` and limitations
+   `["elevated_pixel_input","uwp_send_input"]`. Then list tools, apply the Cua approval
+   overlay, and remove denied
    updater tools in memory.
 10. Compare-and-swap the activation token against current intent and lease state. Only on
-    an exact match atomically replace tools and set the plugin, contribution, and logical
-    MCP server effective-enabled flags true.
+    an exact match call `commitCuaDriverActivation()` to replace tools/status and set the
+    plugin, contribution, and logical MCP server effective-enabled flags in one
+    `BEGIN IMMEDIATE` transaction.
 11. Freeze the final committed capability set into subsequent run snapshots.
 
 Intermediate ready snapshots and discovered tools remain activation-local. A current
 token may persist normalized `permission_required` or failure health while effective
-flags remain false; final `ready`, tools, and enabled flags commit in one store
-transaction. No run snapshot can observe the activation-local catalog.
+flags remain false; final `ready`, integrity coverage, limitations, tools, status and
+enabled flags commit in one store transaction. No run snapshot can observe the
+activation-local catalog.
 
-For the filtered health report, `binary_version`, `platform_supported`, and
-`session_active` must pass. TCC or live capability failures project
-`permission_required`; malformed schema or core-check failure is incompatible. Host
-identity remains proven by the actual parent process, `check_permissions`, signed
-clean-host TCC AttributionChain evidence, and Privacy & Security rows.
+For the filtered health report, `binary_version` and `platform_supported` must pass.
+`session_active` is useful on macOS but does not replace Ling's Windows session probe.
+TCC failures project `permission_required`; Windows session failures project
+`interactive_session_required`; Windows standard no-content UIA-runtime/WGC-D3D failures project
+`platform_unavailable`; malformed schema or core-check failure is incompatible.
+Host identity remains proven by platform-native evidence rather than health text alone.
 
 Any artifact, lease, connection, version, protocol, health, or tool-sync failure leaves
 the plugin, contribution, and logical MCP server disabled/unavailable. A stale activation
 result is discarded without changing current health, tools, or enablement.
 
-Permission-required is recoverable setup state, not artifact corruption. After the host
-obtains a grant, Desktop restarts the child and the daemon resumes the requested activation
-transaction without requiring a second Enable click.
+Platform readiness failures are recoverable setup state, not artifact corruption. After
+the macOS host obtains a grant or the Windows host returns to a valid interactive desktop,
+Desktop restarts the provider generation and the daemon resumes requested activation
+without requiring a second Enable click.
 
-## Permission Controller
+## Platform Readiness Controller
+
+### macOS permissions
 
 Desktop owns both macOS permission flows.
 
@@ -734,6 +1228,79 @@ The shared Web surface reaches the host permission controller only through a nar
 Desktop preload capability, for example `computerUse.requestHostPermissions()`. The
 capability returns normalized permission state only. Browser/standalone surfaces do not
 receive this method and show `desktop_unavailable` or the external fallback instead.
+
+### Windows interactive session and integrity
+
+Windows readiness has no permission prompt. The exact signed active MCP child reports and
+Desktop verifies:
+
+- active child PID and memory-only nonce match the retained ChildProcess and current
+  generation;
+- Desktop and provider `ProcessIdToSessionId` values are equal and greater than zero;
+- Desktop and provider token integrity levels are both `medium` for standard tier;
+- the provider Job Object is assigned with `KILL_ON_JOB_CLOSE` and no breakaway path;
+- the current process is attached to the default interactive input desktop and the user
+  session is not locked;
+- D3D11 feature level 11 device creation and Windows Graphics Capture API support;
+- UI Automation runtime initialization without enumerating user content;
+- provider PID, executable path, PE seal and architecture match the package;
+- `integrityCoverage="standard"` for the current per-user/asInvoker candidate.
+
+The active Rust child owns the authoritative Windows session monitor. WTS session-change
+signals provide immediate hints, and a locked at-most-one-second heartbeat rechecks the
+child session and `OpenInputDesktop` so missed notifications or secure-desktop switches
+cannot leave stale readiness. Electron lock/unlock events are recovery hints, not the
+source of truth. Every notification carries the child nonce, lease generation and a
+monotonic readiness sequence. A lock, disconnect, logoff, fast-user-switch, session
+mismatch, non-default/unavailable input desktop or expired heartbeat triggers:
+
+```text
+ready(G)
+  -> revoking(G): close proxy call gate; reject new and stale calls
+  -> revoke lease/client and atomically commit disabled tools/effective flags
+  -> project interactive_session_required; retain requestedEnabled=true
+  -> cancel calls and stop child G
+  -> unlock/session-active hint starts probing(G+1)
+  -> fresh child -> initialize -> active-child readiness -> exact CAS -> ready(G+1)
+```
+
+Unlock never restores `ready` directly and never reuses the old child, readiness result or
+lease. Stale notifications are discarded by nonce/generation/sequence. Rapid transitions
+are single-flight with bounded backoff. The provider also rechecks session/input-desktop
+state before each tool dispatch so a call cannot slip through the notification window.
+Readiness recovery does not reopen PiP; presentation still follows descriptor, first-frame
+and user-hide rules.
+
+Windows acceptance, not normal activation, creates a test-owned synthetic target window
+and known-content surface to prove real UIA actions, WGC frames and ordinary input. The
+Windows team owns that evidence.
+
+A future `uiaccess` tier additionally requires:
+
+- valid final Authenticode identity for both PEs;
+- `cua-driver-uia.exe` installed below a release-policy-approved secure path, normally
+  `Program Files`, without disabling `EnableSecureUIAPaths`;
+- ShellExecute launch, server PID verification, exact worker seal and a live elevated/UWP
+  pixel-input probe;
+- lifecycle ownership through an exact-PID shutdown contract, with no global pipe
+  collision or surviving helper. If exact PID/pipe ownership is insufficient, that
+  future slice must freeze a separate native lifecycle design; the standard tier does not
+  preselect one.
+
+The initial package contains no UIAccess helper. Calls that require UIAccess-only
+pixel/SendInput semantics return a structured error:
+
+```ts
+{
+  code: "cua_windows_uiaccess_required",
+  requiredIntegrityCoverage: "uiaccess",
+  limitation: "elevated_pixel_input" | "uwp_send_input"
+}
+```
+
+The locked Rust patch produces this code from target/action capability classification;
+Ling never matches upstream error text. Element actions and ordinary Medium-IL input
+remain supported and are validated separately.
 
 ## Supported macOS Matrix
 
@@ -790,34 +1357,88 @@ insufficient.
 Developer-beta macOS runs are early-warning evidence, not a GA release gate. Adding or
 dropping a supported major requires an explicit release-policy and matrix update.
 
+## Supported Windows Matrix And Handoff
+
+The engineering baseline for the first bundled Windows implementation is Windows 11 x64 in a logged-in,
+unlocked interactive user session. Upstream WGC requires Windows 10 1903+ and D3D11
+feature level 11, but neither the engineering baseline nor those framework limits are a
+final Ling support claim. The release owner still must name every accepted Windows build;
+Windows 10 and Windows ARM64 remain unclaimed until separately added.
+
+Two capability tiers are explicit:
+
+| Tier | Installer/runtime contract | Declared capability |
+| --- | --- | --- |
+| `standard` | Existing per-user, LocalAppData, `asInvoker`; bundled signed main PE plus signed resource catalog in embedded stdio mode | Normal Medium-IL Win32/UWP element actions, WGC capture, ordinary input |
+| `uiaccess` | Future release-policy-approved secure-path helper artifact, valid main/helper Authenticode, ShellExecute and live UIAccess proof | Adds elevated/UWP pixel and SendInput coverage |
+
+The standard tier is part of this implementation plan. The UIAccess tier is a separate
+release slice and cannot be simulated by setting `EnableSecureUIAPaths=0`, launching an
+unsigned helper or treating file presence as readiness.
+
+Windows acceptance covers, for each release-policy build and DPI profile:
+
+- installed signed Ling app, NSIS, main provider seal and signed resource catalog;
+- exact provider PID/path/session plus default input desktop and unlocked-session proof;
+- normal Win32 and UWP UIA, ordinary input and real WGC frames against a test-owned
+  synthetic target, plus window/source revision and Desktop restart;
+- one and two displays with at least 100% and 150%/200% DPI coverage;
+- Narrator and NVDA operation, SmartScreen, install, update, rollback and uninstall;
+- child crash, Desktop crash, daemon restart and zero process/pipe/state
+  residue;
+- explicit `standard` limitation tests, or elevated/UWP pixel-input tests when the
+  candidate claims `uiaccess`.
+
+Ling's implementation owner must produce the candidate, schemas, runner, verifier,
+release-policy template and deterministic handoff manifest. Windows colleagues own the
+actual Windows host execution, evidence capture, review and PASS/FAIL sign-off. A macOS
+or hosted non-interactive check can validate scripts and schemas but cannot close a
+Windows acceptance cell.
+
 ## Setup Projection
 
-The current `local_binary` setup model must distinguish distribution, integrity, bridge,
-and permission state.
+The current `local_binary` setup model is retained for wire compatibility. Schema V2 adds
+a detailed provider state beside the existing legacy state instead of replacing the
+existing `kind` or state values.
 
 Target wire shape:
 
 ```ts
 type CuaDriverDistribution = "bundled_embedded" | "external_local";
 
-type CuaDriverSetupState =
+type LegacyManagedPluginSetupState =
+  | "detected"
+  | "missing"
+  | "unsupported"
+  | "connected"
+  | "ready";
+
+type CuaDriverProviderState =
   | "included"
   | "desktop_unavailable"
   | "permission_required"
+  | "interactive_session_required"
+  | "platform_unavailable"
   | "ready"
   | "incompatible"
   | "corrupt"
   | "external_missing"
   | "external_detected"
-  | "external_connected";
+  | "external_connected"
+  | "unsupported";
 
 interface CuaDriverSetupView {
-  readonly kind: "computer_use_provider";
+  readonly kind: "local_binary";
+  readonly schemaVersion: 2;
   readonly distribution: CuaDriverDistribution;
-  readonly state: CuaDriverSetupState;
+  readonly platform: "darwin" | "win32" | "unsupported";
+  readonly state: LegacyManagedPluginSetupState;
+  readonly providerState: CuaDriverProviderState;
   readonly checkedAt: string;
   readonly requestedEnabled: boolean;
   readonly effectiveEnabled: boolean;
+  readonly integrityCoverage?: "standard" | "uiaccess";
+  readonly limitations: readonly CuaDriverLimitation[];
   readonly providerVersion?: string;
   readonly providerDistributionRevision?: string;
   readonly providerDisplayVersion?: string;
@@ -829,13 +1450,39 @@ interface CuaDriverSetupView {
     readonly screenRecording: "granted" | "denied" | "prompt" | "unknown";
     readonly capturable?: boolean;
   };
+  readonly windowsReadiness?: {
+    readonly interactiveSession: "ready" | "session_zero" | "locked" | "unknown";
+    readonly wgcApi: "supported" | "unsupported" | "unavailable" | "unknown";
+    readonly d3d11: "available" | "unavailable" | "unknown";
+    readonly uiaRuntime: "available" | "unavailable" | "unknown";
+    readonly contentObserved: false;
+    readonly integrityCoverage: "standard" | "uiaccess" | "unknown";
+    readonly uiaHelper: "not_required" | "ready" | "unavailable" | "invalid";
+  };
   readonly externalOverride?: {
     readonly command: string;
     readonly explicit: true;
   };
   readonly guide?: ManagedPluginInstallGuide;
 }
+
+type CuaDriverLimitation =
+  | "elevated_pixel_input"
+  | "uwp_send_input";
 ```
+
+Legacy mapping is deterministic:
+
+| Provider state | Legacy `state` |
+| --- | --- |
+| `external_missing` | `missing` |
+| `external_detected` | `detected` |
+| `included`, `external_connected`, `permission_required`, `interactive_session_required`, `platform_unavailable`, `incompatible`, `corrupt`, `desktop_unavailable` | `connected` |
+| `ready` | `ready` |
+| `unsupported` | `unsupported` |
+
+New clients use `providerState`; existing clients continue to receive a known `kind` and
+legacy `state`. `externalOverride` is a badge/detail field, not a state.
 
 The external install guide is returned only for `external_local` plus
 `external_missing`. A damaged bundled component directs the user to update or reinstall
@@ -843,58 +1490,76 @@ Ling, never to run the Cua public installer.
 
 ## Visible State Matrix
 
-| Condition | State | Enabled tools | User action |
-| --- | --- | --- | --- |
-| Valid packaged artifact, plugin disabled | `included` | None | Enable |
-| Desktop lease missing | `desktop_unavailable` | None | Open/restart Desktop |
-| Version/protocol mismatch | `incompatible` | None | Update/reinstall Ling |
-| Signature/hash/path invalid | `corrupt` | None | Reinstall Ling |
-| AX or screen grant missing | `permission_required` | None | Review permissions |
-| Artifact, lease, health, and permissions pass | `ready` | Policy-filtered catalog | Disable |
-| Explicit external command missing | `external_missing` | None | External install guide/path |
-| Explicit external command found but disabled | `external_connected` | None | Enable override |
+| Condition | Provider state | Legacy state | Enabled tools | User action |
+| --- | --- | --- | --- | --- |
+| Valid packaged artifact, plugin disabled | `included` | `connected` | None | Enable |
+| Desktop lease missing | `desktop_unavailable` | `connected` | None | Open/restart Desktop |
+| Version/protocol mismatch | `incompatible` | `connected` | None | Update/reinstall Ling |
+| Signature/hash/path invalid | `corrupt` | `connected` | None | Reinstall Ling |
+| AX or screen grant missing | `permission_required` | `connected` | None | Review permissions |
+| Windows Session 0, locked or non-interactive desktop | `interactive_session_required` | `connected` | None | Return to interactive desktop / restart Ling |
+| Windows standard UIA runtime or WGC/D3D capability probe fails | `platform_unavailable` | `connected` | None | Restart/update Ling or Windows; inspect support bundle |
+| Windows trusted integrity verifier missing or blocked | `platform_unavailable` | `connected` | None | Update/repair Windows policy or Ling; inspect support bundle |
+| Windows standard tier is ready | `ready` | `ready` | Policy-filtered standard catalog | Disable; detail shows `integrityCoverage=standard` and both limitations |
+| Artifact, lease, health, and platform readiness pass | `ready` | `ready` | Policy-filtered catalog | Disable |
+| Explicit external command missing | `external_missing` | `missing` | None | External install guide/path |
+| External command found but not connected | `external_detected` | `detected` | None | Automatic connect / retry detection |
+| Explicit external command connected but disabled | `external_connected` | `connected` | None | Enable override |
+| Linux or another unsupported packaged platform | `unsupported` | `unsupported` | None | None |
 
 ## Disable, Quit, Crash, And Restart
 
 ### Disable
 
-1. Clear durable requested-enabled intent and prevent new provider calls.
+1. Through one `commitCuaDriverActivation()` transaction, clear durable
+   requested-enabled intent, replace tools/status with disabled state, and clear the
+   contribution, server, plugin and logical-MCP effective flags; reject new provider calls.
 2. Wait a bounded interval for active calls or cancel them.
 3. Close the daemon MCP client.
-4. Ask Desktop proxy to stop the child.
-5. Mark contribution, server, and plugin disabled.
-6. Keep macOS grants unchanged.
+4. Ask Desktop proxy to stop the provider process group.
+5. Confirm the already-committed disabled projection still matches the current revision
+   fence; stale cleanup completion must not alter a newer enable request.
+6. Keep macOS grants unchanged; Windows has no equivalent stored grant.
 
 ### Window close or hide
 
-Do not stop the child while the Desktop application remains running and the plugin is
+Do not stop the provider process group while the Desktop application remains running and the plugin is
 enabled. Provider lifetime follows the app process, not BrowserWindow visibility.
 
 ### Desktop quit
 
-Revoke the lease, close the proxy, terminate the child, and leave the external/reused
+Revoke the lease, close the proxy, terminate the provider process group, and leave the external/reused
 daemon running. Active provider calls fail with a stable unavailable/cancelled result;
-unrelated work continues.
+unrelated work continues. A hard Desktop crash cannot run `taskkill`; it is closed by the
+child's host-process-death/stdin-EOF contract and verified by a bounded zero-orphan test.
 
-### Child crash
+### Provider crash
 
-Invalidate the current MCP session and health, capture bounded exit diagnostics, and
+Invalidate the current lease/session before publishing any replacement, capture bounded
+exit diagnostics for child exit or unexpected stdout EOF, and
 allow one serialized restart when the plugin remains enabled. Repeated crashes enter a
 failed state and require user retry; they do not loop forever or select an external
 binary.
 
 ### Desktop restart
 
-Publish a new instance id and lease generation. The daemon discards the old generation,
-reconnects, rechecks version/permissions, and synchronizes tools before marking ready.
+Complete a new authenticated bridge handshake, receive a newer Desktop instance epoch,
+then publish generation `1` for the new instance. The daemon fences the old instance
+regardless of its prior numeric generation, reconnects, rechecks version/platform
+readiness, and synchronizes tools before marking ready.
 
 ### Daemon restart or MCP session loss
 
-When Desktop remains alive but the daemon authority epoch changes or the accepted MCP
-session disappears unexpectedly, Desktop stops the current child and proxy session,
-increments the lease generation, and republishes a fresh endpoint. The new daemon may
+On daemon startup, before serving any client, the Store startup transaction advances the
+durable activation epoch, empties tools, projects `desktop_unavailable` or `included`
+from retained intent and clears every bundled effective flag. When Desktop observes the
+new authority epoch or the
+accepted MCP session disappears unexpectedly, it stops the current provider process group
+and proxy session, increments the lease generation and republishes a fresh endpoint after
+bridge reconnection. The new daemon may
 initialize only that new generation. A bounded serialized restart prevents reconnect
-storms; repeated loss enters `desktop_provider_unavailable` until user retry.
+storms; repeated loss returns `cua_desktop_lease_unavailable` and projects
+`desktop_unavailable` until user retry.
 
 ## Upgrade And Rollback
 
@@ -904,22 +1569,25 @@ here.
 
 Upgrade sequence:
 
-1. Stop the old Desktop child before replacing the application.
+1. Stop the old Desktop provider process group before replacing the application.
 2. Install the signed Ling update containing the new reviewed provider and lock.
-3. Start Desktop with the same Ling bundle id and release Team ID.
+3. Start Desktop with the same platform product identity: macOS bundle id/Team ID or
+   Windows Publisher/certificate policy.
 4. Validate the new artifact and publish a new lease generation.
-5. Recheck TCC, live capture, MCP protocol, health schema, and tool catalog.
-6. Require re-grant UX if macOS invalidated the previous signing requirement.
+5. Recheck MCP protocol, health schema and tool catalog plus macOS live capture or
+   Windows no-content managed readiness as applicable.
+6. Require re-grant UX if macOS invalidated the previous signing requirement; on Windows
+   require the accepted interactive session and declared integrity tier.
 
 Rollback sequence:
 
-1. Quit Desktop and its child.
+1. Quit Desktop and its provider process group.
 2. Reinstall the previous accepted Ling artifact.
 3. Validate the previous lock and provider.
-4. Re-run the same permission and health checks.
+4. Re-run the same platform-readiness and health checks.
 
-Do not replace the provider inside an already signed Ling app, repoint a runtime symlink,
-or call the Cua installer. The rollback unit is the signed Ling release.
+Do not replace the provider inside an already signed Ling app/package, repoint a runtime
+symlink/junction, or call the Cua installer. The rollback unit is the signed Ling release.
 
 Release retention must keep the previous Ling artifact, provider lock, upstream asset
 digest, third-party notices, and acceptance report for the supported rollback window.
@@ -933,7 +1601,7 @@ Rules:
 
 - The user or developer must explicitly select `external_local` and an absolute command.
 - Packaged UI labels the active override and its detected version.
-- Switching modes disables the current MCP session, stops the child, and performs a full
+- Switching modes disables the current MCP session, stops the provider process group, and performs a full
   health/tool resync.
 - Removing the override restores the bundled provider on the next enable.
 - A saved legacy command is retained for audit but does not become an implicit override.
@@ -962,14 +1630,19 @@ not create teammate bindings or add tools to an existing run snapshot retroactiv
 | Threat | Required control |
 | --- | --- |
 | Malicious `cua-driver` earlier on `PATH` | Packaged mode resolves only the validated in-app absolute path |
-| Tampered nested executable | Source digest, extracted binary digest, nested signing, outer signing, strict notarization/Gatekeeper |
+| Tampered macOS nested executable | Source/reference digest, post-sign seal, nested signing and signed outer package |
+| Tampered Windows loose provider resource | Authenticode-signed catalog, exact catalog membership, main-PE seal and fail-closed runtime verification |
 | Local browser calls the proxy | Loopback bind, no CORS, origin rejection, per-instance secret, no renderer disclosure |
-| Stale Desktop endpoint reused | Memory-only lease, expiry, instance id, monotonic generation |
+| Stale Desktop endpoint reused | Memory-only lease, expiry, daemon-issued instance epoch/bridge connection id, then monotonic per-instance generation |
 | Reused daemon spawns its own provider | Runtime resolution uses the Desktop lease; daemon spawn is forbidden in bundled mode |
 | Provider escapes Ling TCC identity | Direct child requirement, embedded mode, process/TCC acceptance evidence |
+| Windows provider runs in Session 0 or another user session | Structured no-content session/input-desktop check plus exact PID/path; real target probes remain acceptance-only |
+| UIAccess helper appears in the standard package | Exact signed-catalog/package member allowlist rejects the extra file |
+| Unsigned or LocalAppData UIAccess helper is treated as ready | Future helper seal plus Authenticode, secure-path, ShellExecute and live UIAccess gates |
+| Old/global Windows driver or UIA named pipe answers requests | Standard bundled mode uses exact child stdio only; pre-bound-pipe regression requires zero connection attempts |
 | Provider sends telemetry or update-check traffic during managed use | Explicit environment opt-outs, isolated state, denied update tool, and network-free managed-path test |
 | Provider bypasses daemon approvals | Proxy is transport-only; agent calls originate in daemon broker/policy path |
-| Crash leaves input-capable orphan | Desktop-owned child handle, quit cleanup, lease expiry, process residue test |
+| Crash leaves input-capable orphan | Host PID monitor plus stdin EOF, Desktop-live exact-PID fallback, lease expiry and hard-crash residue tests |
 | Old external install answers requests | No standalone daemon handoff; acceptance checks process path and instance generation |
 | External config widens capture or changes image behavior | Embedded-only state root, reviewed defaults, version isolation, and no import from the real home |
 | SkyLight SPI drifts across macOS releases | Disclosed private dependency plus signed per-major compatibility cells; no support extrapolation from deployment target |
@@ -983,7 +1656,7 @@ Allowed ordinary diagnostics:
 - lock digest prefix;
 - bridge state and generation without endpoint/token;
 - permission enum values without screen content;
-- child exit class and bounded timing;
+- platform readiness/integrity tier and provider exit class with bounded timing;
 - health check names and pass/fail state.
 
 Never log:
@@ -1012,6 +1685,12 @@ Suggested error codes:
 | `cua_embedded_permission_required` | Host Accessibility or Screen Recording is not ready |
 | `cua_embedded_attribution_invalid` | Embedded sanity/acceptance identity checks failed |
 | `cua_embedded_child_exited` | Child exited during an active session |
+| `cua_windows_interactive_session_required` | Windows provider is in Session 0, locked, or on the wrong input desktop |
+| `cua_windows_lifecycle_unavailable` | Windows Job Object/exact-handle lifetime boundary could not be established |
+| `cua_windows_integrity_verifier_unavailable` | Trusted Windows signature/catalog verifier could not produce a bounded integrity verdict |
+| `cua_windows_platform_unavailable` | Standard Windows UIA runtime or WGC/D3D capability readiness failed |
+| `cua_windows_uiaccess_required` | Requested target/action needs the unconfigured UIAccess tier |
+| `cua_windows_uia_helper_invalid` | Optional helper signature, path, manifest, PID, pipe or live probe failed |
 | `cua_external_override_invalid` | Explicit external command is absent or incompatible |
 
 Messages shown to users must not expose absolute internal resource paths, tokens, raw
@@ -1021,20 +1700,24 @@ stderr, or signature internals. Those details belong in redacted release/support
 
 ### Lock and supply chain
 
-- exact tag, commit, Git tree, prerelease state, reference-asset filename, size, and SHA;
+- exact tag, commit, Git tree, prerelease state, both reference-asset filenames, sizes,
+  SHA values and extracted binary identities;
 - traversal- and symlink-safe reference archive extraction;
-- exact `Cargo.lock`, Rust/Cargo/Xcode/SDK versions, patch digest, and touched-path allowlist;
-- clean patch application and universal binary SHA before signing;
-- arm64 and x86_64 slices;
-- minimum macOS, upstream `0.8.3`, and Ling distribution revision `ling.1`;
-- reference-release signer plus final hardened-runtime and exact entitlement allowlist;
+- exact `Cargo.lock`, Rust/Cargo, Xcode/macOS SDK, MSVC/Windows SDK versions, patch digest,
+  and touched-path allowlist;
+- clean patch-series application and every platform binary SHA before signing;
+- macOS arm64/x86_64 slices plus Windows PE32+ x86_64 main and audit-only UIAccess output;
+- minimum macOS, Windows product policy, upstream `0.8.3`, and Ling revision `ling.1`;
+- macOS reference signer/runtime/entitlements, Windows unsigned-reference status, and
+  final platform signing identities;
 - MIT license digest and third-party notices/SBOM;
 - SDK request `2025-11-25`, provider response `2025-06-18`, health schema, embedded
   health skip list, and tools-list digest.
 
 ### Package
 
-- arm64 and x64 Ling artifacts contain one locked provider outside `app.asar`;
+- macOS arm64/x64 and Windows x64 Ling artifacts contain the locked platform provider
+  outside `app.asar`;
 - no standalone `CuaDriver.app`, installer, updater script, or PATH shim is packaged;
 - nested helper and outer app pass `codesign --verify --deep --strict`;
 - final helper bytes, per-slice CDHashes, Team ID, designated requirement, hardened
@@ -1042,17 +1725,29 @@ stderr, or signature internals. Those details belong in redacted release/support
 - the outer app code-resource seal covers both the final helper and provider seal;
 - DMG and ZIP contents bind to the same provider identity;
 - notarization, staple, Gatekeeper, and mounted-DMG smoke pass;
-- packaged tests prove a conflicting PATH version is ignored.
+- packaged tests prove a conflicting PATH version is ignored;
+- Windows standard packages contain only the expected main PE, exact main manifest and
+  final Authenticode seal inside the two-file payload, plus an outer valid signed catalog
+  covering that payload; the covered seal anchors the lock. Extra
+  `cua-driver-uia.exe`, downloader or external install junction fails package;
+- the installed Ling executable, provider catalog and release policy signer identities
+  agree; candidate-manifest data alone cannot satisfy runtime integrity;
+- the initial Windows package projects `standard` coverage and both limitations.
 
 ### Runtime and bridge
 
-- Desktop main is the direct child owner;
+- Desktop main is the direct provider process-group owner;
 - compatible reused daemon uses the Desktop lease rather than spawning a provider;
-- wrong token, origin, workspace, expired lease, and stale generation fail closed;
+- wrong token, origin, workspace, expired lease, stale instance epoch/bridge connection
+  and stale generation fail closed;
 - one lease generation creates one daemon MCP client, one initialize sequence, one proxy
   session, and one child; a second initialize is rejected;
+- one-shot diagnostics PASS cannot make runtime ready; active-child PID/nonce/session/
+  integrity/Job Object mismatch fails, and generation G readiness arriving after G+1 is
+  discarded;
 - requested enable keeps persisted plugin/contribution/MCP flags false until the final
-  generation compare-and-swap commits, so probing never exposes tools early;
+  `BEGIN IMMEDIATE` revision/epoch CAS commits tools, status and all effective flags;
+  two-connection races and crash injection prove complete rollback;
 - check/list/health/call concurrency reuses the pooled client and preserves MCP calls,
   notifications, cancellation, content, and structured errors;
 - delayed generation G check/list/health results cannot overwrite generation G+1 status,
@@ -1061,10 +1756,20 @@ stderr, or signature internals. Those details belong in redacted release/support
   child, rotates authority epoch/generation, republishes, and completes exactly one fresh
   initialize without reusing the old stdio session;
 - bundled mode never enters the raw HTTP tools-list fallback;
-- `health_report` skips `bundle_identity`, while core checks, `check_permissions`, process
-  ancestry, and TCC evidence enforce embedded health and host identity;
+- `health_report` skips `bundle_identity`; macOS adds `check_permissions` and TCC evidence,
+  while Windows consumes the content-free managed-readiness schema;
+- with incompatible servers pre-bound on `\\.\pipe\cua-driver` and
+  `\\.\pipe\cua-driver-uia`, plus an old external binary first on `PATH`, bundled
+  initialize/list/call still come from the sealed child PID/path over stdio and both fake
+  servers observe zero connections;
 - enable/disable, child crash, Desktop restart, and daemon reconnect are single-flight;
-- Desktop quit leaves no provider or proxy process/listener residue.
+- lock/disconnect/input-desktop change closes the proxy call gate, atomically hides tools,
+  stops the old generation and requires fresh-child readiness after unlock;
+- graceful quit, provider stdout EOF and hard Desktop kill each leave no provider,
+  grandchild, helper, pipe, proxy process or listener residue before retry completes;
+- missing/blocked PowerShell, WDAC/AppLocker denial, unavailable catalog cmdlets and
+  oversized/malformed UTF-8 JSON map to verifier unavailable, while an executed invalid
+  signature/catalog maps to corrupt.
 
 ### State isolation
 
@@ -1072,7 +1777,9 @@ stderr, or signature internals. Those details belong in redacted release/support
   Desktop `userData` and rejects symlink escape;
 - config read/write, restart, PiP config, telemetry markers, and version-check state touch
   only the locked state root;
-- sentinel external `~/.cua-driver` and `~/.cua-driver-rs` remain absent or byte-identical;
+- sentinel external macOS home and Windows profile `.cua-driver` / `.cua-driver-rs` roots
+  remain absent or byte-identical;
+- macOS symlink and Windows reparse-point/junction escape attempts fail closed;
 - non-embedded mode ignores the Ling variable and retains upstream standalone semantics;
 - upgrade and rollback do not silently migrate state across distribution revisions.
 
@@ -1104,10 +1811,98 @@ stderr, or signature internals. Those details belong in redacted release/support
   every other shipped Mach-O deployment target is at or below `13.0`;
 - no support claim is extrapolated from `minos`, notarization, or another macOS major.
 
+### Windows acceptance handoff
+
+The release policy freezes explicit immutable cells rather than treating one host whose
+build appears in an allowlist as matrix coverage:
+
+```ts
+interface WindowsAcceptanceCellV1 {
+  readonly id: string;
+  readonly windowsBuild: string;
+  readonly architecture: "x64";
+  readonly displayTopology: "single" | "dual";
+  readonly displayScalePercents: readonly (100 | 150 | 200)[];
+  readonly requiredEvidenceKinds: readonly string[];
+}
+```
+
+A `single` cell has exactly one scale entry. A `dual` cell has exactly two entries; a
+required mixed-DPI cell must contain two distinct values. The finalizer derives topology
+and DPI coverage from this array rather than accepting a free-form label.
+
+`supportedWindowsBuilds` remains a validity allowlist. Separate
+`requiredAcceptanceCells` defines what must run; each supported build includes at least
+one single-display cell and one dual-display mixed-DPI cell covering 100% plus 150% or
+200%. The runner creates one report with exclusive-create semantics for one exact cell.
+A rerun gets a new `runId` and file; PASS/FAIL and attachments are never modified in
+place. Every attachment is report-relative and SHA-256-bound.
+
+`handoff-index.json` contains the common candidate/policy/artifact anchors and exact
+required cell definitions, but not per-cell manifest hashes or output paths. Each cell
+manifest binds the common `handoffIndexSha256` and adds its own evidence/output paths;
+each cell report binds both that common digest and its unique `cellManifestSha256`.
+
+`finalize-windows-signed-acceptance.mjs` rereads and hashes the index, every cell manifest,
+report and attachment, requires every policy/index cell exactly once, rejects
+missing/extra/duplicate/cross-cell evidence, and requires the same candidate commit,
+app/installer hashes, provider seal, catalog, policy, handoff-index digest and harness
+closure. Cell and matrix outputs remain
+`MANUAL_REVIEW_REQUIRED`; only the detached reviewer/build-attestor verifier may produce
+`releaseReady=true`.
+
+Full mode accepts one operator-supplied input:
+
+```powershell
+pwsh -File apps/desktop/tests/run-windows-acceptance.ps1 `
+  -HandoffManifest <windows-cell-handoff.json>
+```
+
+The per-cell manifest contains `handoffIndexSha256`, cell id, expected candidate commit, a manifest-relative
+clean repository root, candidate/policy/artifact/evidence/output paths and hashes, harness
+closure and required tool versions. Every relative path resolves beneath the handoff root
+without symlink or reparse escape. The manifest improves operator usability but is not a
+trust root: the protected release workflow or a policy-pinned detached signature supplies
+the expected handoff-index, candidate and policy digests; the finalizer independently
+rehashes every unique cell manifest.
+
+- static tests validate the Windows lock, main-PE manifest, audit-only UIAccess manifest,
+  seal/catalog schema, package layout,
+  exact runner files and release-policy/candidate-manifest bindings on non-Windows hosts;
+- Ling-owned automated Windows CI builds the Rust target, exercises injectable native
+  session/integrity/API fixtures, test-certificate PE/catalog signing, Electron Builder
+  hook ordering, embedded stdio/global-pipe conflicts, retained-handle/Job Object cleanup,
+  PowerShell verifier failures, package allowlists, silent install/uninstall, and
+  test-owned Win32 plus installable/removable MSIX/UWP targets before handoff. If public
+  hosted runners cannot install the test-signed target, a managed automated Windows pool
+  closes the gate; it is not deferred to manual acceptance;
+- Windows colleagues run the signed installed candidate on every policy-pinned Windows 11
+  x64 build and DPI/display cell; Ling maintainers do not self-attest those cells;
+- Session 0, locked desktop, wrong active-child PID/nonce/path/session/integrity, missing
+  Job Object boundary and failed managed-readiness capabilities fail closed without
+  observing user content;
+- ready -> locked/disconnected -> revoked -> fresh-generation unlocked recovery is proven;
+  the old child, lease, tool catalog and late readiness/notification never become usable;
+- standard-tier evidence proves normal Win32/UWP element actions and explicit rejection of
+  UIAccess-only pixel/SendInput cases through structured capability codes;
+- a test-owned target proves real UIA, ordinary input and WGC content; pre-bound global
+  driver/UIA pipes and a conflicting PATH provider receive zero bundled connections;
+- a future uiaccess-tier candidate additionally proves signed secure-path ShellExecute,
+  exact worker PID/pipe, elevated/UWP pixel input and zero helper residue;
+- SmartScreen, Narrator, NVDA, install/update/rollback/uninstall and crash cleanup evidence
+  bind to the exact signed app, NSIS, main-provider seal/catalog, candidate commit and
+  release policy;
+- the report remains `MANUAL_REVIEW_REQUIRED` until independent reviewer and build-attestor
+  detached signatures pass the existing promotion verifier.
+
+Windows colleagues own final real-build/DPI/display, Narrator/NVDA, SmartScreen,
+installation-lifecycle and signed evidence. They are not the first testers of Windows
+native code, catalog verification, packaging hooks or process cleanup.
+
 ### Upgrade and rollback
 
 - N-1 Ling plus provider to N Ling plus provider;
-- no old child or daemon handoff survives update;
+- no old provider process, helper, pipe or daemon handoff survives update;
 - same Ling bundle/team identity preserves grants where macOS permits;
 - changed or revoked grants produce explicit recovery instead of false readiness;
 - reinstalling N-1 restores its locked provider and protocol surface;
@@ -1116,22 +1911,34 @@ stderr, or signature internals. Those details belong in redacted release/support
 
 ### Product and compatibility
 
-- packaged macOS shows included/permission/ready/repair states, not the install drawer;
+- packaged macOS and Windows show bundled provider states, not the install drawer;
+- Windows distinguishes interactive-session failure, standard integrity coverage and full
+  UIAccess readiness without claiming unsupported targets;
 - standalone/dev external mode keeps missing/detected/connected/ready and install guide;
 - historical plugin records do not produce duplicate rows or MCP resources;
 - GUI mutation tools remain approval-gated;
-- no Windows provider, NSIS, allowlist, or acceptance fixture changes.
+- Windows verifier/runner/schema changes remain compatible with externally produced
+  acceptance evidence and never synthesize a local PASS.
 
 ## Release Gates
 
-Internal alpha can ship only after:
+Implementation is complete only after:
 
 - the complete provider lock contains reviewed non-placeholder values;
-- the source patch, post-sign provider seal, package, state, and runtime matrices pass;
-- all claimed macOS-major and architecture cells pass signed installed-app acceptance;
+- the source patch series, post-sign provider seal/catalog, package, state, and runtime
+  matrices pass;
 - managed-path telemetry and update network checks are proven disabled;
 - the Desktop-owned process and lease architecture passes with a reused daemon;
-- signed clean-host TCC evidence proves the single Ling permission identity.
+- both platform adapters, setup states, package assertions and acceptance handoff artifacts
+  are implemented and statically verified;
+- Windows handoff documentation names the acceptance owner and produces no self-attested
+  Windows PASS.
+
+A platform may be declared release-ready only after its external machine evidence closes:
+
+- macOS: all claimed major/architecture cells plus signed clean-host TCC evidence;
+- Windows: all release-policy build/DPI/display/accessibility/lifecycle cells signed off by
+  the Windows acceptance owner.
 
 Public release additionally requires one of:
 
@@ -1141,18 +1948,27 @@ Public release additionally requires one of:
 
 ## Unresolved Decisions
 
-No product or architecture choice remains open for the internal alpha:
+No product or architecture choice remains open for the standard-capability internal alpha:
 
-- provider: upstream Cua Driver Rust `0.8.3` plus locked Ling build `1` state patch;
-- ownership: Electron main direct child;
+- provider: upstream Cua Driver Rust `0.8.3` plus locked Ling build `1` managed
+  embedded patch series;
+- ownership: Electron main provider process group;
 - transport: Desktop stdio-to-Streamable-HTTP proxy plus memory-only daemon lease;
-- permission identity: Ling Stack;
+- platform authority: Ling TCC identity on macOS; Ling interactive session and declared
+  integrity tier on Windows;
 - update and rollback unit: signed Ling Desktop release;
 - external provider: explicit fallback only;
-- Windows: unchanged.
+- Windows: bundled x64 main provider in standard Medium-IL mode; real-machine acceptance
+  is owned by the Windows team.
 
-Two release inputs still require concrete values before implementation can package a
-candidate: the exact Ling release Team ID and exact Rust/Cargo/Xcode/macOS SDK toolchain.
-Deferring either prevents reproducible signing and makes the provider lock incomplete; it
-does not reopen the architecture. Public distribution separately remains gated on a
-stable upstream provider or an explicit prerelease exception.
+Release inputs still require concrete values before packaging a candidate: the macOS Team
+ID/toolchain, Windows Publisher/certificate/toolchain, and exact supported Windows build
+allowlist. Deferring any of them prevents reproducible signed release evidence; it does
+not reopen the standard architecture.
+
+One future capability decision remains: whether public Windows support must include
+UIAccess-only elevated/UWP pixel input. If yes, a separate secure-path/per-machine helper
+installation strategy must be approved and implemented. Deferring it blocks full
+integrity-level parity, but not the bundled Windows standard tier. Public distribution on
+either platform separately remains gated on a stable upstream provider or an explicit
+prerelease exception.

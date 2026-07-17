@@ -3,9 +3,10 @@
 ## Status
 
 Provider-distribution note: this plan records the currently verified external-provider
-baseline. The packaged macOS target has since been superseded by
+baseline. The packaged macOS and Windows targets have since been superseded by
 [Bundled Embedded Cua Driver](cua-driver-bundled-embedded.md); its implementation and
-release closure are new work. Windows remains on the external `0.8.3` path described here.
+release closure are new work. The staged replacement lives in
+[Bundled Embedded Cua Driver Implementation Plan](cua-driver-bundled-embedded-implementation-plan.md).
 
 Local implementation baseline verified on 2026-07-16/17. The design and detailed design are complete. Original Slices 0-6
 are complete locally, and Slice 7 has closed its local G4, unsigned-artifact, performance,
@@ -24,10 +25,12 @@ Every macOS release-harness script is bound to its recorded harness-commit Git b
 and SHA-256; hidden `assume-unchanged` modifications fail closed. The finalizer reruns candidate
 verification, parses artifact-bound notary logs, and rehashes every nested artifact, but
 deliberately stops at `MANUAL_REVIEW_REQUIRED`; a separate trusted
-detached-signature verifier is required to promote the evidence externally. Windows
-Preflight/Full reports bind the app,
-installer, both provider executables, signer identities, candidate manifest, real dual-screen/
-DPI, Narrator/NVDA, SmartScreen, install/update/uninstall, and smoke evidence. Full validation
+detached-signature verifier is required to promote the evidence externally. The current
+external-provider Windows Preflight/Full reports bind the app, installer, both reference
+provider executables, signer identities, candidate manifest, real dual-screen/DPI,
+Narrator/NVDA, SmartScreen, install/update/uninstall, and smoke evidence. The bundled
+target replaces that tuple with the source-built main PE, signed payload catalog,
+audit-only UIAccess hash, immutable per-cell reports and a matrix finalizer. Full validation
 also requires caller-fixed expected candidate commit, clean repository root, and release-policy
 SHA-256 trust anchors. Those anchors do not authenticate a reviewer self-reported in manual
 evidence. Full now stays `releaseReady=false` until an independent verifier validates the canonical
@@ -329,10 +332,11 @@ Do not claim cross-platform real capture until the Windows x64 matrix passes. Do
    `X-Ling-Computer-Use-Token`. The private descriptor endpoint retains its separate bridge
    token and no-CORS policy.
 6. **Provider distribution boundary:** closed for the implemented external baseline and
-   reopened for the approved packaged macOS target. Resource resolution and structured
+   reopened for the approved packaged macOS and Windows targets. Resource resolution and structured
    missing-binary failure remain covered for external mode; bundled artifact acquisition,
    Desktop-owned embedded MCP bridging, single-host TCC, and signed clean-host verification
-   are tracked by the Bundled Embedded Cua Driver design. Windows remains external.
+   are tracked by the Bundled Embedded Cua Driver design; the external path remains only
+   for standalone/dev and explicit override.
 7. **Reconnect lifecycle race:** closed for pending and in-flight retries. Hide records
    suppression before async persistence, reconnect work is serialized with projection
    reconciliation, and permission/prepare awaits revalidate session, descriptor revision,
@@ -423,7 +427,7 @@ rather than promises.
 | B1. Shared UI and PiP control acceptance | complete locally | current-session header Show/Hide/Stop, summary-only starting/approval states, PiP-only Close window, menu separation, responsive 34 px actions, 180 ms drag-end four-corner snap, preferred-corner persistence, source aspect-ratio/portrait handling, and channel/normal/teammate-direct obstacle reporting | G1/G4/G5 non-platform cases pass; no preview descriptor means no empty PiP; Close destroys PiP and never sends Stop; capability stays a narrow shared-Web slot rather than a Desktop UI fork |
 | B2. Windows visual acceptance | blocked with G3 | Windows screenshot, DPI, dual-display, placement, and real-source acceptance | Windows x64 VM visual and geometry matrix passes with the selected real provider |
 | C1. Signed macOS acceptance | ~1 day after identity and clean hosts are available | Developer ID arm64/x64 candidates, notarization, TCC denied/prompt/granted/revoked, window/display/restart, OS capture indicator, VoiceOver, and signed real-media profiling | G2 plus the macOS half of G5/G6 pass with archived logs, screenshots, profiles, and signed artifacts |
-| C2. Windows VM/provider acceptance | ~1–3 days after provider and VM are available | pinned separately installed Cua Driver provider, x64 real-source lifecycle, DPI/dual-display visuals, Narrator/NVDA, restart, source-ended, Authenticode/SmartScreen evidence | G3 plus the Windows half of G5/G6 pass with VM logs, screenshots, accessibility notes, and signed artifacts |
+| C2. Windows VM/provider acceptance | ~1–3 days after signed bundled candidate and VM are available | bundled locked Cua Driver provider, standard-integrity boundary, x64 real-source lifecycle, DPI/dual-display visuals, Narrator/NVDA, restart, source-ended, Authenticode/SmartScreen evidence | Windows colleagues return G3 plus the Windows half of G5/G6 with VM logs, screenshots, accessibility notes, and signed artifacts |
 | D. Release hardening | ~1 day after C1 and C2 | hosted CI, signed DMG/ZIP and NSIS, checksums, clean-machine install/update/uninstall, final cross-platform performance and accessibility evidence | G6 artifacts install and meet security, latency, CPU, memory, visual, and accessibility budgets |
 
 Do not call the feature cross-platform complete after B1. A working Electron package on
@@ -1090,7 +1094,7 @@ codesign --verify --deep --strict apps/desktop/release/mac-arm64/Ling\ Stack.app
 codesign --verify --deep --strict apps/desktop/release/mac/Ling\ Stack.app
 spctl -a -vv apps/desktop/release/mac-arm64/Ling\ Stack.app
 spctl -a -vv apps/desktop/release/mac/Ling\ Stack.app
-# Run on an unlocked Windows x64 VM with the selected Cua Driver provider installed:
+# Run on an unlocked Windows x64 VM with the signed bundled provider candidate:
 corepack pnpm --filter @ling-stack/desktop package:win
 corepack pnpm --filter @ling-stack/desktop smoke:computer-use:windows-provider
 python3 -c 'import json; from pathlib import Path; from jsonschema import Draft202012Validator; [Draft202012Validator.check_schema(json.loads(p.read_text())) for p in Path("docs/release/evidence").glob("*.schema.json")]'
@@ -1161,14 +1165,14 @@ small shared patch, then both platform lanes rebase before resuming acceptance.
 - [x] **T13 (P1, human: ~0.5 day / Codex: ~45 min)** — source-identity — Desktop allocates a monotonic `sourceGeneration` for every prepare/activation, including retries and same-revision descriptor-id replacement. Snapshot/media key, frame/activity/ended/failure IPC, and release request/ACK carry it; regressions prove every old-source callback fails closed.
 - [x] **T14 (P1, human: ~0.5 day / Codex: ~45 min)** — coordinator-fail-safety — Hide/Close/auto-show-off apply safety before best-effort persistence; terminal/source-error cleanup is serialized and exact-source-bound; crash cleanup reconciles after release errors; a newer active session preempts older terminal linger; recreation telemetry matches actual recreation.
 - [x] **T15 (P2, human: ~0.25 day / Codex: ~20 min)** — daemon-startup — Fixed-port probing distinguishes a foreign service from a free port, never spawns into an occupied port, permits an owned child to bind before health becomes ready, and aborts immediately when the owned child exits.
-- [~] **T15.5 (P1, human: ~0.5 day / Codex: ~15 min)** — windows-release-decisions — Exact provider allowlisting, per-user/asInvoker NSIS policy, certificate boundary, and tuple rollback are implemented and recorded. Product/release owners must still decide public acceptance of the prerelease unsigned provider, the legal Publisher/signing service, the Windows client floor, and whether an enterprise per-machine artifact is required.
+- [~] **T15.5 (P1, human: ~0.5 day / Codex: ~15 min)** — windows-release-decisions — Exact source/build locking, per-user/asInvoker standard-tier NSIS policy, main-PE plus signed-catalog boundary, audit-only UIAccess output, and tuple rollback are recorded. Product/release owners must still decide public acceptance of the prerelease source pin, the legal Publisher/signing service, the exact Windows build allowlist, whether full UIAccess is required, and whether an enterprise all-users artifact is required.
   - Owner/timebox: product owner plus Windows release owner; resolve in one decision review before Stage C2, not during VM execution.
-  - Evidence artifact: `docs/release/desktop-windows-release-decisions.md` records the exact provider pin, engineering certificate boundary, install scope, rollback rule, and four remaining owner choices.
+  - Evidence artifact: `docs/release/desktop-windows-release-decisions.md` records the exact source/build pin, certificate boundary, standard-tier install scope, rollback rule, and five remaining owner choices.
 - [~] **T16 (P1, human: ~1 day / Codex: ~1 h after credentials)** — macos-signed-acceptance — The local signed-candidate verifier, eight-case TCC runner, interactive machine-observed revoke runner, two-launch restart evidence, packaged signed performance producer, bundle-tree/CDHash binding, unique artifact-bound notary jobs, report-relative evidence contracts, and live-reverifying finalizer are implemented and tested. Every harness script is bound to its recorded harness-commit Git blob, current file bytes, and SHA-256, including detection of hidden `assume-unchanged` edits. The finalizer deliberately returns `MANUAL_REVIEW_REQUIRED`; external execution must still produce Developer ID arm64/x64 candidates, run the clean-host capture-indicator/VoiceOver gates, and verify a detached reviewer signature outside the self-reporting process.
   - Owner/environment: Desktop release owner on clean arm64 and x64/Rosetta macOS hosts with Developer ID and notary credentials.
   - Entry condition: local T0-T15 baseline is green and the exact candidate hashes are frozen.
   - Evidence artifact: signed DMG/ZIP, Team ID/codesign/notary logs, TCC matrix, capture-indicator recording, VoiceOver notes, smoke JSON, and performance report.
-- [~] **T17 (P1, human: ~1–3 days / Codex: ~2 h after environment)** — windows-vm-acceptance — The local Preflight/Full report builder and PowerShell runner are implemented and statically contract-tested from Node. Installer and uninstaller signatures are checked before either executable runs; the installed app must match the manifest, and harness scripts are bound to the candidate commit and rehashed against Git blobs. Full also requires the release orchestrator to supply fixed expected candidate commit, clean repository root, and release-policy SHA-256 anchors; the validator cross-checks all three independently from report-owned paths. The builder cannot self-promote: even with Full gates PASS it emits `releaseReady=false` until the separate verifier checks a detached reviewer signature and candidate-build/daemon-tree attestation against policy-pinned SPKI fingerprints. This macOS host has neither `pwsh` nor Windows PowerShell, so real PowerShell parsing/runtime remains unverified. Full still cannot pass without an x64 host, both provider executables, cross-display/two-DPI visual evidence, Narrator/NVDA acceptance, SmartScreen without warning/Run anyway, install/update/uninstall, and zero residue. The real VM execution and real detached signatures remain pending.
+- [~] **T17 (P1, human: ~1–3 days / Codex: ~2 h after environment)** — windows-vm-acceptance — The local Preflight/Full report builder and PowerShell runner are implemented and statically contract-tested from Node. Installer and uninstaller signatures are checked before either executable runs; the installed app must match the manifest, and harness scripts are bound to the candidate commit and rehashed against Git blobs. Full also requires the release orchestrator to supply fixed expected candidate commit, clean repository root, and release-policy SHA-256 anchors; the validator cross-checks all three independently from report-owned paths. The builder cannot self-promote: even with Full gates PASS it emits `releaseReady=false` until the separate verifier checks a detached reviewer signature and candidate-build/daemon-tree attestation against policy-pinned SPKI fingerprints. This macOS host has neither `pwsh` nor Windows PowerShell, so real PowerShell parsing/runtime remains unverified. Full still cannot pass without an x64 host, the bundled main provider PE plus its signed payload catalog, the audit-only UIAccess hash, cross-display/two-DPI visual evidence, Narrator/NVDA acceptance, SmartScreen without warning/Run anyway, install/update/uninstall, and zero residue. The real VM execution and real detached signatures remain pending.
   - Owner/environment: Windows/Desktop owner on an unlocked Windows x64 VM with the provider, two-display/DPI profiles, and the selected certificate policy.
   - Entry condition: T15.5 is accepted; local unsigned package and verifier are green.
   - Evidence artifact: provider health/descriptor logs, VM smoke output, screenshots, Narrator/NVDA notes, PE signature inspection, and install/update/uninstall transcript.
@@ -1244,10 +1248,10 @@ The feature is complete only when:
 | Dependency | Why it is external | What closes it |
 | --- | --- | --- |
 | Bundled embedded macOS Cua Driver | target design is approved but the current artifact still ships shell metadata only | build and package locked `0.8.3 (Ling build 1)`, bridge it from a Desktop-owned direct child, prove one Ling TCC identity, and pass signed clean-host state/upgrade/rollback acceptance |
-| Separately installed Windows Cua Driver provider | Windows keeps the external exact-reviewed prerelease provider and Ling does not own its update/signing channel | clean-machine Windows install resolves the allowlisted provider and passes x64 interactive source, DPI/dual-screen, accessibility, signing, and lifecycle gates |
+| Bundled Windows Cua Driver provider | target source build/signing/package work is owned by Ling; Windows real-machine acceptance is owned by Windows colleagues | package locked `0.8.3 (Ling build 1)`, prove standard integrity/session/WGC/UIA behavior, and pass x64 DPI/dual-screen/accessibility/signing/lifecycle gates |
 | Apple Developer ID and notarization credentials | no usable signing identity is installed on the current machine | signed arm64/x64 candidates with Team ID, strict codesign, Gatekeeper, notarization, and clean-host TCC evidence |
 | Clean macOS TCC test environments | current host already reports Screen Recording `granted` | denied/prompt/granted/revoked plus window/display, restart, OS capture-indicator, VoiceOver, and track-cleanup matrix without mutating TCC |
-| Maintained Windows source provider and x64 VM | The selected Cua Driver `v0.8.3` asset is an unsigned prerelease and the current machine has no Windows interactive desktop | exact allowlisted provider install, explicit beta-risk acceptance or a signed stable upstream asset, descriptor handoff, real authorized source lifecycle, DPI/dual-screen, Narrator/NVDA, restart, and source-ended smoke |
+| Maintained Windows source provider and x64 VM | The selected Cua Driver `v0.8.3` source pin is a prerelease and the current machine has no Windows interactive desktop | bundled locked source build, explicit beta-risk acceptance or a stable reviewed source release, descriptor handoff, real authorized source lifecycle, DPI/dual-screen, Narrator/NVDA, restart, and source-ended smoke |
 | Real platform accessibility hosts | DOM/ARIA and screenshot tests cannot prove native screen-reader focus, names, ordering, or announcements | VoiceOver acceptance on signed macOS plus Narrator and NVDA acceptance on installed Windows, with status/control/failure-recovery evidence |
 | External macOS review trust anchor | the finalizer cannot safely accept a caller-supplied assertion that its own manual evidence is trusted | a separate verifier recomputes the evidence digest and verifies a detached signature against a release-policy-pinned reviewer key |
 | Candidate daemon build provenance | the v3 manifest and detached build-attestation verifier now define the fail-closed trust contract, but no real release attestor has signed clean-candidate daemon bytes | deterministically rebuild and fingerprint the dist tree from the clean candidate commit, or use only the daemon embedded in the signed candidate, then sign that exact manifest with a policy-pinned build key |
@@ -1256,13 +1260,14 @@ The feature is complete only when:
 
 ## Unresolved Decisions
 
-1. **Windows provider allowlist advancement:** keep the exact reviewed
-   `cua-driver-rs-v0.8.3` allowlist and decide when a separately reviewed provider-upgrade PR
+1. **Windows provider lock advancement:** keep the exact reviewed
+   `cua-driver-rs-v0.8.3` source/build lock and decide when a separately reviewed provider-upgrade PR
    may advance it; accepting a newer version without the x64 regression matrix can invalidate
    the HWND and source-lifecycle evidence.
-2. **Windows release identity:** select the legal Publisher/signing service and supported
-   Windows floor, then decide whether enterprise distribution requires a separate per-machine
-   artifact. The first candidate remains fixed to per-user/asInvoker.
+2. **Windows release identity and tier:** select the legal Publisher/signing service and
+   exact Windows build allowlist, decide whether full UIAccess is required, then decide
+   whether enterprise distribution needs a separate per-machine artifact. The first
+   candidate remains per-user/asInvoker with standard integrity coverage.
 3. **macOS reviewer trust anchor:** choose the detached-signature format and the
    release-policy-pinned reviewer key set. Until this exists, the local finalizer must remain
    `MANUAL_REVIEW_REQUIRED` even when every machine-produced case passes.
