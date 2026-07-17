@@ -156,12 +156,19 @@ async function captureScreenshot({ width, height, scenario = "live", theme }) {
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
+      offscreen: {
+        deviceScaleFactor: 1,
+        useSharedTexture: false,
+      },
       sandbox: true,
       ...(scenario === "stop-failed" ? { preload: rendererHarnessPreloadPath } : {}),
     },
   });
   let debuggerAttached = false;
   try {
+    if (!window.webContents.isOffscreen()) {
+      throw new Error("computer_use_screenshot_offscreen_surface_not_enabled");
+    }
     await window.loadFile(previewIndexPath);
     window.webContents.debugger.attach("1.3");
     debuggerAttached = true;
@@ -221,6 +228,12 @@ async function captureScreenshot({ width, height, scenario = "live", theme }) {
           transition: none !important;
         }
       `);
+    const loadedInterFaces = await window.webContents.executeJavaScript(
+      `document.fonts.load('12px "Inter Variable"', 'Example Browser').then((faces) => faces.length)`,
+    );
+    if (loadedInterFaces < 1) {
+      throw new Error("computer_use_screenshot_font_not_loaded:Inter Variable");
+    }
     await window.webContents.executeJavaScript("document.fonts.ready.then(() => true)");
     await delay(50);
     const contentBounds = window.getContentBounds();

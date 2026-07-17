@@ -30,6 +30,12 @@ importers:
         specifier: 1.1.1
         version: 1.1.1
     devDependencies:
+      '@electron/asar':
+        specifier: 3.4.1
+        version: 3.4.1
+      '@fontsource-variable/inter':
+        specifier: 5.2.8
+        version: 5.2.8
       '@playwright/test':
         specifier: ^1.55.0
         version: 1.60.0
@@ -673,6 +679,9 @@ packages:
     engines: {node: '>=18'}
     cpu: [x64]
     os: [win32]
+
+  '@fontsource-variable/inter@5.2.8':
+    resolution: {integrity: sha512-kOfP2D+ykbcX/P3IFnokOhVRNoTozo5/JxhAIVYLpea/UBmCQ/YWPBfWIDuBImXX/15KH+eKh4xpEUyS2sQQGQ==}
 
   '@google/genai@1.52.0':
     resolution: {integrity: sha512-gwSvbpiN/17O9TbsqSsE/OzZcpv5Fo4RQjdngGgogtuB9RsyJ8ZHhX5KjHj1bp5N9snN2eK8LDGXSaWW2hof8Q==}
@@ -4010,6 +4019,8 @@ snapshots:
 
   '@esbuild/win32-x64@0.25.12':
     optional: true
+
+  '@fontsource-variable/inter@5.2.8': {}
 
   '@google/genai@1.52.0(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))':
     dependencies:

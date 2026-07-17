@@ -178,11 +178,40 @@ jobs:
           test -f "$x64_app/Contents/Resources/bundled/cua-driver/.ling-plugin/plugin.json"
 
           preview_root="apps/desktop/dist/renderer/computer-use-preview"
-          test "$(find "$preview_root" -type f | wc -l | tr -d ' ')" -eq 5
-          test "$(find "$preview_root/assets" -maxdepth 1 -type f | wc -l | tr -d ' ')" -eq 2
+          test "$(find "$preview_root" -type f | wc -l | tr -d ' ')" -eq 13
+          test "$(find "$preview_root/assets" -maxdepth 1 -type f | wc -l | tr -d ' ')" -eq 9
+          test "$(find "$preview_root/assets" -maxdepth 1 -type f -name '*.woff2' | wc -l | tr -d ' ')" -eq 7
+          test -f "$preview_root/third-party-licenses/Inter-OFL-1.1.txt"
           while IFS= read -r asset; do
             grep -Fq "./assets/$(basename "$asset")" "$preview_root/index.html"
-          done < <(find "$preview_root/assets" -maxdepth 1 -type f | sort)
+          done < <(find "$preview_root/assets" -maxdepth 1 -type f \( -name '*.css' -o -name '*.js' \) | sort)
+          preview_stylesheet="$(find "$preview_root/assets" -maxdepth 1 -type f -name '*.css' -print -quit)"
+          test -n "$preview_stylesheet"
+          while IFS= read -r font; do
+            grep -Fq "$(basename "$font")" "$preview_stylesheet"
+          done < <(find "$preview_root/assets" -maxdepth 1 -type f -name '*.woff2' | sort)
+
+          verify_packaged_preview() {
+            local app_bundle="$1"
+            local asar_path="${GITHUB_WORKSPACE}/${app_bundle}/Contents/Resources/app.asar"
+            local listing
+            listing="$(mktemp)"
+            corepack pnpm --filter @ling-stack/desktop exec asar list "$asar_path" > "$listing"
+            test "$(grep -Ec '^/dist/renderer/computer-use-preview/assets/[^/]+\.woff2$' "$listing")" -eq 7
+            test "$(grep -Ec '^/dist/renderer/computer-use-preview/assets/[^/]+\.css$' "$listing")" -eq 1
+            test "$(grep -Ec '^/dist/renderer/computer-use-preview/assets/[^/]+\.js$' "$listing")" -eq 1
+            grep -Fxq '/dist/renderer/computer-use-preview/index.html' "$listing"
+            grep -Fxq '/dist/renderer/computer-use-preview/messages.js' "$listing"
+            grep -Fxq '/dist/renderer/computer-use-preview/preview-view-model.js' "$listing"
+            grep -Fxq '/dist/renderer/computer-use-preview/third-party-licenses/Inter-OFL-1.1.txt' "$listing"
+            if grep -Fq '/node_modules/@fontsource-variable/inter' "$listing"; then
+              echo "Packaged app unexpectedly contains the build-time Fontsource package" >&2
+              return 1
+            fi
+            rm -f "$listing"
+          }
+          verify_packaged_preview "$arm_app"
+          verify_packaged_preview "$x64_app"
 
           dmg_count=0
           for artifact in apps/desktop/release/*.dmg; do

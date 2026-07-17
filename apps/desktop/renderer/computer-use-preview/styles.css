@@ -1,6 +1,6 @@
 :root {
   color-scheme: light dark;
-  font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-family: "Inter Variable", ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --pip-bg: #090b0f;
   --pip-frame: #07090c;
   --pip-text: #f7f9fc;
