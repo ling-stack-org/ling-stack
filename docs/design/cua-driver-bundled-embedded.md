@@ -472,7 +472,7 @@ Desktop plus its reviewed provider.
 - The current per-user candidate reports `standard` integrity coverage and returns a
   structured `cua_windows_uiaccess_required` capability error for elevated/UWP
   pixel/SendInput cases instead of silently claiming success or parsing error copy.
-- Ling-owned automated Windows CI already covers native readiness fixtures,
+- Ling-owned automated Windows CI must cover native readiness fixtures before handoff,
   test-certificate PE/catalog signing, Electron Builder hook order, embedded stdio/global
   pipe conflicts, Job Object cleanup, PowerShell verifier failures, package allowlists,
   silent install/uninstall and test-owned Win32/MSIX targets.

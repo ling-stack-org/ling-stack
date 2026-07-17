@@ -86,6 +86,7 @@ Ling Stack connects channels, tasks, runtime sessions, provider routing, artifac
 - [Desktop Shell](docs/design/desktop-shell.md)
 - [Bundled Embedded Cua Driver](docs/design/cua-driver-bundled-embedded.md)
 - [Bundled Embedded Cua Driver detailed design](docs/design/cua-driver-bundled-embedded-detailed-design.md)
+- [Bundled Embedded Cua Driver implementation plan](docs/design/cua-driver-bundled-embedded-implementation-plan.md)
 - [Desktop Computer Use Picture-in-Picture](docs/design/desktop-computer-use-picture-in-picture.md)
 - [Desktop Computer Use Picture-in-Picture detailed design](docs/design/desktop-computer-use-picture-in-picture-detailed-design.md)
 - [Desktop Computer Use Picture-in-Picture implementation plan](docs/design/desktop-computer-use-picture-in-picture-implementation-plan.md)
