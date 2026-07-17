@@ -287,8 +287,12 @@ jobs:
             hdiutil attach -nobrowse -readonly -mountpoint "$mount_point" "$artifact" >/dev/null
             executable="$mount_point/Ling Stack.app/Contents/MacOS/Ling Stack"
             test -x "$executable"
+            smoke_timeout_ms=50000
+            if [[ "$(lipo -archs "$executable")" == "x86_64" ]]; then
+              smoke_timeout_ms=120000
+            fi
             LING_DESKTOP_SMOKE_EXECUTABLE="$executable" \
-              LING_DESKTOP_SMOKE_TIMEOUT_MS=50000 \
+              LING_DESKTOP_SMOKE_TIMEOUT_MS="$smoke_timeout_ms" \
               node apps/desktop/tests/run-computer-use-smoke.mjs
             hdiutil detach "$mount_point" >/dev/null
             mounted=0
