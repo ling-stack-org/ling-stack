@@ -2,6 +2,11 @@
 
 ## Status
 
+Provider-distribution note: this plan records the currently verified external-provider
+baseline. The packaged macOS target has since been superseded by
+[Bundled Embedded Cua Driver](cua-driver-bundled-embedded.md); its implementation and
+release closure are new work. Windows remains on the external `0.8.3` path described here.
+
 Local implementation baseline verified on 2026-07-16/17. The design and detailed design are complete. Original Slices 0-6
 are complete locally, and Slice 7 has closed its local G4, unsigned-artifact, performance,
 and packaged-provenance work. The remaining work is external release evidence: Developer ID
@@ -323,11 +328,11 @@ Do not claim cross-platform real capture until the Windows x64 matrix passes. Do
    checks protect browser calls, and native no-Origin calls require
    `X-Ling-Computer-Use-Token`. The private descriptor endpoint retains its separate bridge
    token and no-CORS policy.
-6. **Provider distribution boundary:** closed for V1. Ling packages only the public Cua
-   Driver plugin shell metadata; the executable, native application, permissions, and update
-   channel remain separately installed provider responsibilities. Resource resolution and
-   structured missing-binary failure are covered; clean-machine provider installation and
-   signed real-capture verification remain release gates.
+6. **Provider distribution boundary:** closed for the implemented external baseline and
+   reopened for the approved packaged macOS target. Resource resolution and structured
+   missing-binary failure remain covered for external mode; bundled artifact acquisition,
+   Desktop-owned embedded MCP bridging, single-host TCC, and signed clean-host verification
+   are tracked by the Bundled Embedded Cua Driver design. Windows remains external.
 7. **Reconnect lifecycle race:** closed for pending and in-flight retries. Hide records
    suppression before async persistence, reconnect work is serialized with projection
    reconciliation, and permission/prepare awaits revalidate session, descriptor revision,
@@ -783,7 +788,9 @@ Done when:
 - Renderer code is identical across both platforms.
 - Exact window mismatch is denied rather than falling back to title, foreground, or z-order
   matching.
-- No private API is required.
+- Ling's PiP presentation and capture adapter uses public Electron APIs. The bundled macOS
+  provider separately uses disclosed SkyLight SPI for background input, so its per-macOS-
+  major compatibility matrix remains a release gate.
 
 ## Slice 5: Preview Renderer And Controls
 
@@ -1227,7 +1234,8 @@ The feature is complete only when:
   acquisition/release, without hiding or spoofing the platform permission UX;
 - VoiceOver on macOS and Narrator plus NVDA on Windows can identify status and controls,
   traverse actions in order, and recover from permission/Stop failures;
-- private APIs are absent;
+- Ling PiP introduces no private capture or composition API; the bundled macOS provider's
+  disclosed SkyLight SPI dependency has signed per-major acceptance evidence;
 - media tracks and windows clean up under repeat and crash tests;
 - all specified unit, integration, E2E, accessibility, and performance checks pass.
 
@@ -1235,7 +1243,8 @@ The feature is complete only when:
 
 | Dependency | Why it is external | What closes it |
 | --- | --- | --- |
-| Separately installed Cua Driver provider | Ling ships plugin shell metadata only; it does not own the provider binary, native application, permissions, or update channel | clean-machine install resolves the pinned Cua Driver provider on macOS/Windows, plugin health passes, required macOS permissions are granted without Ling modifying TCC, and both approved-window real-source lifecycles pass |
+| Bundled embedded macOS Cua Driver | target design is approved but the current artifact still ships shell metadata only | build and package locked `0.8.3 (Ling build 1)`, bridge it from a Desktop-owned direct child, prove one Ling TCC identity, and pass signed clean-host state/upgrade/rollback acceptance |
+| Separately installed Windows Cua Driver provider | Windows keeps the external exact-reviewed prerelease provider and Ling does not own its update/signing channel | clean-machine Windows install resolves the allowlisted provider and passes x64 interactive source, DPI/dual-screen, accessibility, signing, and lifecycle gates |
 | Apple Developer ID and notarization credentials | no usable signing identity is installed on the current machine | signed arm64/x64 candidates with Team ID, strict codesign, Gatekeeper, notarization, and clean-host TCC evidence |
 | Clean macOS TCC test environments | current host already reports Screen Recording `granted` | denied/prompt/granted/revoked plus window/display, restart, OS capture-indicator, VoiceOver, and track-cleanup matrix without mutating TCC |
 | Maintained Windows source provider and x64 VM | The selected Cua Driver `v0.8.3` asset is an unsigned prerelease and the current machine has no Windows interactive desktop | exact allowlisted provider install, explicit beta-risk acceptance or a signed stable upstream asset, descriptor handoff, real authorized source lifecycle, DPI/dual-screen, Narrator/NVDA, restart, and source-ended smoke |

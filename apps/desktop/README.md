@@ -23,6 +23,8 @@ plus daemon/API-client data, not from copied Web DOM labels or Web-only helpers.
 Design source of truth:
 
 - [Desktop Shell](../../docs/design/desktop-shell.md)
+- [Bundled Embedded Cua Driver](../../docs/design/cua-driver-bundled-embedded.md)
+- [Bundled Embedded Cua Driver Detailed Design](../../docs/design/cua-driver-bundled-embedded-detailed-design.md)
 - [Desktop Computer Use Picture-in-Picture](../../docs/design/desktop-computer-use-picture-in-picture.md)
 - [Desktop Computer Use Picture-in-Picture Detailed Design](../../docs/design/desktop-computer-use-picture-in-picture-detailed-design.md)
 - [Desktop Computer Use Picture-in-Picture Implementation Plan](../../docs/design/desktop-computer-use-picture-in-picture-implementation-plan.md)
@@ -58,6 +60,14 @@ Packaged Desktop builds copy the bundled Cua Driver plugin shell into
 `resources/bundled/cua-driver`. That resource contains only the Ling plugin
 manifest, MCP configuration metadata, and README. It deliberately does not include the
 user-installed `cua-driver` binary, native app bundles, credentials, or permission state.
+
+That paragraph describes the current implementation. The approved next macOS Desktop
+direction is to package the locked `0.8.3 (Ling build 1)` source build, including its
+embedded-only state-isolation patch and post-sign provider seal, then run it as a direct
+embedded child of Electron main, as defined by the Bundled Embedded Cua Driver documents
+above.
+Windows keeps the current separately installed provider boundary. Until that slice lands,
+the packaged artifact remains plugin-shell-only.
 
 The Desktop main window must load the shared Web application instead of copying its page
 tree. This lets the shell, contracts, coordinator, and fake PiP renderer land before the

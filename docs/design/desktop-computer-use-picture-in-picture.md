@@ -29,6 +29,8 @@ and real VoiceOver/Narrator/NVDA acceptance remain open release gates.
 Related documents:
 
 - [Desktop Shell](desktop-shell.md)
+- [Bundled Embedded Cua Driver](cua-driver-bundled-embedded.md)
+- [Bundled Embedded Cua Driver Detailed Design](cua-driver-bundled-embedded-detailed-design.md)
 - [Desktop Computer Use Picture-in-Picture Detailed Design](desktop-computer-use-picture-in-picture-detailed-design.md)
 - [Desktop Computer Use Picture-in-Picture Implementation Plan](desktop-computer-use-picture-in-picture-implementation-plan.md)
 - [Platform Architecture](platform-architecture.md)
@@ -485,9 +487,11 @@ Native adapters may improve these targets later without changing the shared cont
 - Desktop daemon startup preserves one fixed workspace authority: compatible services are
   reused, incompatible external services receive native Retry/Quit recovery, and Ling never
   kills or bypasses them with a second full daemon.
-- Ling Desktop packages only the public Cua Driver plugin shell metadata. The macOS and
-  Windows `cua-driver` executables and native permissions/session ownership are installed
-  separately; a missing provider fails closed with `plugin_binary_not_found`.
+- The current verified package baseline contains only the public Cua Driver plugin shell
+  metadata. That remains the Windows and explicit external fallback boundary. The approved
+  packaged macOS target instead carries the locked provider and runs it as a Desktop-owned
+  embedded child; until that slice lands, a missing external provider still fails closed
+  with `plugin_binary_not_found`.
 - The local daemon and control-plane event model already own durable runtime state and
   client subscriptions.
 - Conversation surfaces already distinguish current live state from historical operation

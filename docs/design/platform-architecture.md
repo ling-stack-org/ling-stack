@@ -854,7 +854,9 @@ Initial scope:
 - built-in registry metadata visibility,
 - bundled/trusted-local plugin descriptors,
 - MCP preset apply flow,
-- `cua-driver` as the first trusted local high-risk preset,
+- `cua-driver` as the first high-risk capability with an external preset and a packaged
+  macOS `bundled_embedded` distribution defined by
+  [Bundled Embedded Cua Driver](cua-driver-bundled-embedded.md),
 - health checks, approval defaults, and audit events.
 
 Explicitly defer:

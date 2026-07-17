@@ -1,5 +1,16 @@
 # Cua Driver 自动检测与安装引导细节设计
 
+## Status And Scope
+
+本文是已实现 external provider fallback 的细节设计，适用于 standalone daemon、
+Web/CLI、source/dev Desktop 和显式 `external_local` override。
+
+Packaged macOS Desktop 的默认 provider、进程责任链、bridge lease、TCC、版本锁和
+升级策略由
+[Bundled Embedded Cua Driver Detailed Design](cua-driver-bundled-embedded-detailed-design.md)
+定义。本文中的 `local_binary`、PATH 检测和安装抽屉不得覆盖 bundled embedded
+状态。
+
 ## Canonical Model
 
 `trusted-local:cua-driver` 是唯一产品条目。daemon 在构建 catalog 时继续读取
@@ -10,7 +21,7 @@ canonical 条目通过固定 MCP id `mcp_cua_driver` 识别现有接入，不依
 plugin id。连接时重新写入 canonical contribution，旧 bundled 记录保持禁用且
 不可见，不做数据库迁移。
 
-## Setup Projection
+## External Setup Projection
 
 `ManagedPluginView.setup`：
 
@@ -49,7 +60,7 @@ event 或数据库。优先级为显式路径、`PATH`、`~/.local/bin`、Homebr
 `/usr/local/bin`、系统 `/Applications/CuaDriver.app` 和用户 `~/Applications`
 中的 App Bundle 可执行文件。
 
-## Connect API
+## External Connect API
 
 ```text
 POST /plugins/trusted-local:cua-driver/connect?cwd=...
@@ -77,7 +88,7 @@ Content-Type: application/json
 
 旧 `apply-preset` 继续兼容，内部执行 connect 后再走显式启用和工具同步。
 
-## Automatic Web Reconciliation
+## External Automatic Web Reconciliation
 
 Web 列表刷新后，只对 canonical Cua Driver 执行一次自动接入：
 
@@ -106,7 +117,7 @@ and current refresh generation has not attempted connect
 只读工具如 `check_permissions`、`list_windows` 默认允许；点击、输入、录制等外部
 副作用工具保持询问。
 
-## Web Presentation
+## External Web Presentation
 
 - Cua Driver 行不显示 `Bundled`/`Trusted local` 双条目。
 - `missing`：显示“尚未安装 Cua Driver”和主按钮“安装引导”。

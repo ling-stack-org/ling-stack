@@ -1,5 +1,11 @@
 # 插件管理表格与详情抽屉
 
+## Status
+
+本文记录当前 external Cua Driver UI 基线。Packaged macOS 后续会按
+[Bundled Embedded Cua Driver](cua-driver-bundled-embedded.md) 增加 included、权限、
+损坏、版本不兼容和 external override 状态；该扩展不属于本表格切片。
+
 ## Summary
 
 插件管理使用紧凑表格承载多插件扫描和操作，不再把每个插件渲染成可展开卡片。

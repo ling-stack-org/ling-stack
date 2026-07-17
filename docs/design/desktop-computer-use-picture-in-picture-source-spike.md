@@ -5,6 +5,10 @@ current-host native handoff, unsigned packaged provenance, performance, and arti
 integrity evidence updated through 2026-07-17. Later renderer and interaction work did not
 change the transport boundary below.
 
+This is a historical source baseline. Its packaged macOS external-distribution conclusion
+is superseded by [Bundled Embedded Cua Driver](cua-driver-bundled-embedded.md). The source
+identity findings and Windows conclusions remain current until separately replaced.
+
 ## Verified Runtime Surface
 
 The locally installed runtime reports `cua-driver 0.2.0`. Its public CLI/MCP surface

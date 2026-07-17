@@ -1,5 +1,12 @@
 # Cua Driver 自动检测与安装引导实施计划
 
+## Status
+
+本计划已经实现 external provider fallback。Packaged macOS Desktop 的新默认路径
+不在本计划内，改由 [Bundled Embedded Cua Driver](cua-driver-bundled-embedded.md)
+及其 [Detailed Design](cua-driver-bundled-embedded-detailed-design.md) 定义。
+Windows 保持当前 external provider 设计。
+
 ## Slice 1: Contracts And Catalog
 
 - 增加 setup state/view、connect request/response contracts 和 API client 方法。
