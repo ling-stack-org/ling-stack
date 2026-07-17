@@ -9,6 +9,7 @@ import { createManagedPluginRuntimeSnapshot } from "../dist/features/plugins/run
 import { listBundledPackageDescriptors } from "../dist/features/plugins/source-index.js";
 import {
   addLegacyCuaProviderOwner,
+  approvedWindowsCuaHealthDetails,
   CUA_MCP_SERVER_ID,
   seedManagedCuaProvider,
 } from "./computer-use-test-fixtures.mjs";
@@ -20,7 +21,7 @@ test("Cua projection eligibility requires the approved bundled package and exact
   try {
     seedManagedCuaProvider(store, {
       now,
-      pluginHealthDetails: approvedWindowsHealthDetails("0.8.3"),
+      pluginHealthDetails: approvedWindowsCuaHealthDetails("0.8.3"),
     });
     const descriptors = listBundledPackageDescriptors();
     const approvedSnapshot = createManagedPluginRuntimeSnapshot({
@@ -67,7 +68,7 @@ test("Cua projection eligibility requires the approved bundled package and exact
       status: "ready",
       checkedAt: now,
       expiresAt,
-      details: approvedWindowsHealthDetails("0.8.4"),
+      details: approvedWindowsCuaHealthDetails("0.8.4"),
     }, now);
     const unapprovedProviderSnapshot = createManagedPluginRuntimeSnapshot({
       cwd,
@@ -104,7 +105,7 @@ test("Cua projection eligibility requires the approved bundled package and exact
       status: "ready",
       checkedAt: now,
       expiresAt,
-      details: approvedWindowsHealthDetails("0.8.3"),
+      details: approvedWindowsCuaHealthDetails("0.8.3"),
     }, now);
     const unapprovedPackageSnapshot = createManagedPluginRuntimeSnapshot({
       cwd,
@@ -169,18 +170,3 @@ test("Cua projection eligibility requires the approved bundled package and exact
     await rm(cwd, { recursive: true, force: true });
   }
 });
-
-function approvedWindowsHealthDetails(driverVersion) {
-  return {
-    driverVersion,
-    platform: "win32",
-    overall: "ok",
-    checks: [
-      "binary_version",
-      "platform_supported",
-      "session_active",
-      "ax_capability",
-      "screen_capture_capability",
-    ].map((name) => ({ name, status: "pass" })),
-  };
-}

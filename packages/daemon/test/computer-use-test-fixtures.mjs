@@ -6,6 +6,21 @@ import { createCuaDriverDescriptor } from "../dist/features/plugins/presets.js";
 export const BUNDLED_CUA_PLUGIN_ID = "bundled:cua-driver";
 export const CUA_MCP_SERVER_ID = "mcp_cua_driver";
 
+export function approvedWindowsCuaHealthDetails(driverVersion = "0.8.3") {
+  return {
+    driverVersion,
+    platform: "win32",
+    overall: "ok",
+    checks: [
+      "binary_version",
+      "platform_supported",
+      "session_active",
+      "ax_capability",
+      "screen_capture_capability",
+    ].map((name) => ({ name, status: "pass" })),
+  };
+}
+
 export function createCapturedStoreFactory() {
   const capture = { store: undefined };
   return {
@@ -89,10 +104,13 @@ export function seedManagedCuaProvider(store, options = {}) {
     status: options.pluginHealthStatus ?? "ready",
     checkedAt: now,
     expiresAt,
-    details: options.pluginHealthDetails ?? {
-      mcpStatus: options.mcpHealthStatus ?? "ready",
-      toolCount: options.tools?.length ?? 0,
-    },
+    details: options.pluginHealthDetails
+      ?? (process.platform === "win32"
+        ? approvedWindowsCuaHealthDetails()
+        : {
+            mcpStatus: options.mcpHealthStatus ?? "ready",
+            toolCount: options.tools?.length ?? 0,
+          }),
   }, now);
   if (options.tools) {
     store.replaceMcpServerTools(server.id, options.tools, now);
