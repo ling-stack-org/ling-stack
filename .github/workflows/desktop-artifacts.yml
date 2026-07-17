@@ -401,6 +401,9 @@ jobs:
         run: |
           $providerDirectory = Join-Path $env:RUNNER_TEMP "ling-cua-driver-rs-v0.8.3"
           node apps/desktop/tests/verify-windows-cua-driver-provider.mjs --output-dir $providerDirectory
+          if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+          }
           $providerBinary = Join-Path $providerDirectory "provider/cua-driver-rs-0.8.3-windows-x86_64/cua-driver.exe"
           if (!(Test-Path -LiteralPath $providerBinary -PathType Leaf)) {
             throw "Pinned provider binary is missing after acquisition"

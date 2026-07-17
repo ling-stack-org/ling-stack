@@ -97,6 +97,9 @@ test("provider verifier does not resolve PowerShell or unzip through PATH", asyn
   assert.match(source, /resolveWindowsSystemExecutable\(/u);
   assert.match(source, /resolveWindowsSystemExecutable\("taskkill\.exe"\)/u);
   assert.match(source, /resolveUnzipExecutable\(/u);
+  assert.match(source, /\[System\.IO\.Path\]::Combine\(\$PSHOME/u);
+  assert.match(source, /Microsoft\.PowerShell\.Core\\+Import-Module/u);
+  assert.match(source, /Microsoft\.PowerShell\.Security\\+Get-AuthenticodeSignature/u);
   assert.doesNotMatch(source, /runChild\(\s*["']powershell\.exe["']/u);
   assert.doesNotMatch(source, /runChild\(\s*["']unzip["']/u);
   assert.match(source, /detached: process\.platform !== "win32"/u);
