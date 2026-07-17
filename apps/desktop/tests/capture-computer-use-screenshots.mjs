@@ -1,6 +1,7 @@
-import { app, BrowserWindow, nativeImage, nativeTheme } from "electron";
+import { app, BrowserWindow, nativeImage } from "electron";
 import { createHash } from "node:crypto";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { release as osRelease, version as osVersion } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -19,6 +20,12 @@ const rendererHarnessPreloadPath = join(
 );
 const platformKey = `${process.platform}-${process.arch}`;
 const baselineDirectory = join(desktopRoot, "tests", "screenshots", "computer-use-preview", platformKey);
+const diagnosticDirectory = join(
+  desktopRoot,
+  "test-results",
+  "computer-use-screenshot-baselines",
+  platformKey,
+);
 
 app.commandLine.appendSwitch("force-device-scale-factor", "1");
 app.setName("Ling Computer Use Screenshot Harness");
@@ -34,11 +41,10 @@ void app.whenReady().then(run).catch((error) => {
 
 async function run() {
   try {
+    await rm(diagnosticDirectory, { recursive: true, force: true });
     await mkdir(baselineDirectory, { recursive: true });
     const manifest = [];
     for (const theme of computerUseScreenshotThemes) {
-      nativeTheme.themeSource = theme;
-      await delay(50);
       for (const screenshotCase of computerUseScreenshotCases) {
         const image = await captureScreenshot({ ...screenshotCase, theme });
         const filename = `${screenshotCase.id}-${theme}.png`;
@@ -47,13 +53,21 @@ async function run() {
         if (update) {
           await writeFile(baselinePath, png);
         } else {
-          const baseline = nativeImage.createFromBuffer(await readFile(baselinePath));
+          const baselinePng = await readFile(baselinePath);
+          const baseline = nativeImage.createFromBuffer(baselinePng);
           assertSameImageSize(filename, baseline, image);
           const comparison = compareImages(baseline, image);
           if (comparison.changedPixelRatio > 0.005) {
+            await writeMismatchDiagnostics({
+              actualPng: png,
+              baselinePng,
+              comparison,
+              filename,
+            });
             throw new Error(
               `${filename} changed ${(comparison.changedPixelRatio * 100).toFixed(3)}% ` +
-              `(allowed 0.5%, maximum channel delta ${comparison.maximumChannelDelta})`,
+              `(allowed 0.5%, maximum channel delta ${comparison.maximumChannelDelta}); ` +
+              `diagnostics: ${diagnosticDirectory}`,
             );
           }
         }
@@ -78,12 +92,33 @@ async function run() {
       process.stdout.write(`Verified ${manifest.length} Computer Use screenshot baselines for ${platformKey}\n`);
     }
   } finally {
-    nativeTheme.themeSource = "system";
     app.quit();
   }
 }
 
-async function captureScreenshot({ width, height, scenario = "live" }) {
+async function writeMismatchDiagnostics({ actualPng, baselinePng, comparison, filename }) {
+  await mkdir(diagnosticDirectory, { recursive: true });
+  await Promise.all([
+    writeFile(join(diagnosticDirectory, `actual-${filename}`), actualPng),
+    writeFile(join(diagnosticDirectory, `expected-${filename}`), baselinePng),
+    writeFile(
+      join(diagnosticDirectory, "environment.json"),
+      `${JSON.stringify({
+        platform: process.platform,
+        arch: process.arch,
+        osRelease: osRelease(),
+        osVersion: osVersion(),
+        electron: process.versions.electron,
+        chrome: process.versions.chrome,
+        filename,
+        comparison,
+      }, null, 2)}\n`,
+      "utf8",
+    ),
+  ]);
+}
+
+async function captureScreenshot({ width, height, scenario = "live", theme }) {
   const reducedMotion = scenario === "reduced-motion";
   const window = new BrowserWindow({
     width,
@@ -116,7 +151,10 @@ async function captureScreenshot({ width, height, scenario = "live" }) {
       mobile: false,
     });
     await window.webContents.debugger.sendCommand("Emulation.setEmulatedMedia", {
-      features: [{ name: "prefers-reduced-motion", value: reducedMotion ? "reduce" : "no-preference" }],
+      features: [
+        { name: "prefers-color-scheme", value: theme },
+        { name: "prefers-reduced-motion", value: reducedMotion ? "reduce" : "no-preference" },
+      ],
     });
     if (scenario === "stop-failed") {
       await window.webContents.executeJavaScript(`
@@ -141,9 +179,15 @@ async function captureScreenshot({ width, height, scenario = "live" }) {
         });
       `);
     }
-    const reducedMotionMatches = await window.webContents.executeJavaScript(
-      "window.matchMedia('(prefers-reduced-motion: reduce)').matches",
-    );
+    const mediaMatches = await window.webContents.executeJavaScript(`({
+      dark: window.matchMedia('(prefers-color-scheme: dark)').matches,
+      reducedMotion: window.matchMedia('(prefers-reduced-motion: reduce)').matches,
+    })`);
+    const expectedDark = theme === "dark";
+    if (mediaMatches.dark !== expectedDark) {
+      throw new Error(`color_scheme_media_query_mismatch:${theme}:${String(mediaMatches.dark)}`);
+    }
+    const reducedMotionMatches = mediaMatches.reducedMotion;
     if (reducedMotion !== reducedMotionMatches) {
       throw new Error(`reduced_motion_media_query_mismatch:${String(reducedMotionMatches)}`);
     }

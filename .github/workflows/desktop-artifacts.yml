@@ -130,6 +130,14 @@ jobs:
         if: runner.arch == 'ARM64'
         run: corepack pnpm --filter @ling-stack/desktop exec electron tests/screenshot-app
 
+      - name: Upload Computer Use screenshot diagnostics
+        if: failure() && runner.arch == 'ARM64'
+        uses: actions/upload-artifact@v4
+        with:
+          name: computer-use-screenshot-diagnostics-macos-arm64
+          path: apps/desktop/test-results/computer-use-screenshot-baselines
+          if-no-files-found: ignore
+
       - name: Build unsigned macOS artifacts
         run: corepack pnpm --filter @ling-stack/desktop package:mac
 
