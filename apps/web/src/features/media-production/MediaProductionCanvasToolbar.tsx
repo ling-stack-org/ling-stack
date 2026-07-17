@@ -1,4 +1,4 @@
-import { Clapperboard, ListVideo, PanelsTopLeft, Play, Settings2 } from "lucide-react";
+import { Clapperboard, ListChecks, ListVideo, PanelsTopLeft, Play, Settings2 } from "lucide-react";
 import { useI18n } from "../../i18n.js";
 import type { MediaProductionView } from "./media-production-types.js";
 
@@ -6,8 +6,8 @@ export function MediaProductionCanvasToolbar({
   projectName,
   sceneCount,
   view,
-  canRun,
-  hasVideoModel,
+  readyCount,
+  hasGenerationSource,
   busy,
   onViewChange,
   onOpenProjectDock,
@@ -17,8 +17,8 @@ export function MediaProductionCanvasToolbar({
   readonly projectName?: string;
   readonly sceneCount: number;
   readonly view: MediaProductionView;
-  readonly canRun: boolean;
-  readonly hasVideoModel: boolean;
+  readonly readyCount: number;
+  readonly hasGenerationSource: boolean;
   readonly busy: boolean;
   readonly onViewChange: (view: MediaProductionView) => void;
   readonly onOpenProjectDock: () => void;
@@ -45,9 +45,13 @@ export function MediaProductionCanvasToolbar({
       {view === "studio" && projectName ? (
         <>
           <span className="media-production-toolbar-divider" aria-hidden="true" />
-          {hasVideoModel ? (
-            <button className="primary-button compact-button" type="button" onClick={onRunProject} disabled={busy} title={canRun ? "确认本次要生成的场景" : "查看需要完善的场景"}>
-              <Play size={15} /> 按顺序生成
+          {readyCount > 0 ? (
+            <button className="primary-button compact-button" type="button" onClick={onRunProject} disabled={busy} title={`确认并生成 ${readyCount} 个场景`}>
+              <Play size={15} /> 生成 {readyCount} 个场景
+            </button>
+          ) : hasGenerationSource ? (
+            <button className="secondary-button compact-button" type="button" onClick={onRunProject} disabled={busy} title="查看需要完善或已完成的场景">
+              <ListChecks size={15} /> 检查场景
             </button>
           ) : (
             <button className="secondary-button compact-button" type="button" onClick={onConfigureVideoModel} disabled={busy}>

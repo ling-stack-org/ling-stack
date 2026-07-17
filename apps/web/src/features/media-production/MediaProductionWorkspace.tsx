@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { resolveMediaProviderRuntimeState } from "@ling-stack/core/provider-media-normalization";
 import { Clapperboard, FolderPlus } from "lucide-react";
 import type { MediaProductionPageProps, MediaProductionView, StoryboardFocusRequest } from "./media-production-types.js";
+import type { MediaJobDisplayContextMap } from "../media/media-job-display-context.js";
 import { useMediaProductionController } from "./use-media-production-controller.js";
 import { StoryboardCanvas } from "./StoryboardCanvas.js";
 import { SceneInspector } from "./SceneInspector.js";
@@ -17,6 +18,7 @@ import { useLingToast } from "../../shared/feedback/LingToastProvider.js";
 import { useMediaWorkflowController } from "./workflows/use-media-workflow-controller.js";
 import { MediaWorkflowLibraryOverlay } from "./workflows/MediaWorkflowLibraryOverlay.js";
 import type { MediaWorkflowLibraryTab } from "./workflows/media-workflow-types.js";
+import { mediaProductionDocksAreExclusive } from "./media-production-layout.js";
 
 const leftDockPreferenceKey = "ling-stack.media-production.left-dock-open";
 
@@ -40,7 +42,10 @@ export function MediaProductionWorkspace({
   const [isProjectRunReviewOpen, setProjectRunReviewOpen] = useState(false);
   const [scenePendingDelete, setScenePendingDelete] = useState<import("../../types.js").MediaScene | undefined>();
   const [previewSceneId, setPreviewSceneId] = useState("");
+  const [canvasStageWidth, setCanvasStageWidth] = useState(0);
   const lastProjectJobSignature = useRef<{ readonly projectId: string; readonly signature: string }>();
+  const canvasStageRef = useRef<HTMLDivElement>(null);
+  const selectionContextRef = useRef({ projectId: "", sceneId: "" });
   const { state, actions } = useMediaProductionController({ cwd, onJobsChanged });
   const workflowController = useMediaWorkflowController({ cwd, onJobsChanged });
   const project = state.project;
@@ -62,6 +67,17 @@ export function MediaProductionWorkspace({
     }))
     : [], [mediaArtifactsByJob, mediaJobs, project, providers, workflowController.state.workflows]);
   const projectRunReview = useMemo(() => deriveProjectRunReview(sceneReadiness), [sceneReadiness]);
+  const jobContext = useMemo<MediaJobDisplayContextMap>(() => {
+    if (!project) {
+      return {};
+    }
+    const scenesById = new Map(project.scenes.map((scene) => [scene.id, scene]));
+    return Object.fromEntries(project.sceneRuns.flatMap((run) => {
+      const scene = scenesById.get(run.sceneId);
+      return scene ? [[run.mediaJobId, { projectName: project.mediaProject.name, sceneName: scene.title }]] : [];
+    }));
+  }, [project]);
+  const docksAreExclusive = mediaProductionDocksAreExclusive(canvasStageWidth);
   const previewReadiness = sceneReadiness.find((item) => item.sceneId === previewSceneId);
   const previewScene = project?.scenes.find((scene) => scene.id === previewSceneId);
   const projectJobSignature = useMemo(() => {
@@ -84,14 +100,6 @@ export function MediaProductionWorkspace({
   }, [showToast, state.noticeMessage, t]);
 
   useEffect(() => {
-    try {
-      window.localStorage.setItem(leftDockPreferenceKey, String(leftDockOpen));
-    } catch {
-      // The layout still works when browser storage is unavailable.
-    }
-  }, [leftDockOpen]);
-
-  useEffect(() => {
     const projectId = project?.mediaProject.id;
     if (!projectId) {
       lastProjectJobSignature.current = undefined;
@@ -111,13 +119,40 @@ export function MediaProductionWorkspace({
   }, [previewReadiness?.currentArtifact, previewScene, previewSceneId]);
 
   useEffect(() => {
-    if (selectedScene) {
-      setRightDockOpen(true);
-      setStoryboardFocusRequest((current) => current.sceneId === selectedScene.id
-        ? current
-        : { sceneId: selectedScene.id, sequence: current.sequence + 1 });
+    const projectId = project?.mediaProject.id ?? "";
+    const sceneId = selectedScene?.id ?? "";
+    const previous = selectionContextRef.current;
+    selectionContextRef.current = { projectId, sceneId };
+    if (!projectId || previous.projectId !== projectId) {
+      setRightDockOpen(false);
+      return;
     }
-  }, [selectedScene?.id]);
+    if (sceneId && previous.sceneId !== sceneId) {
+      if (docksAreExclusive) {
+        setLeftDockOpen(false);
+      }
+      setRightDockOpen(true);
+      setStoryboardFocusRequest((current) => ({ sceneId, sequence: current.sequence + 1 }));
+    }
+  }, [docksAreExclusive, project?.mediaProject.id, selectedScene?.id]);
+
+  useEffect(() => {
+    if (docksAreExclusive && leftDockOpen && rightDockOpen) {
+      setLeftDockOpen(false);
+    }
+  }, [docksAreExclusive, leftDockOpen, rightDockOpen]);
+
+  useEffect(() => {
+    const stage = canvasStageRef.current;
+    if (!stage || view !== "studio") {
+      return;
+    }
+    const updateWidth = (): void => setCanvasStageWidth(stage.clientWidth);
+    updateWidth();
+    const observer = new ResizeObserver(updateWidth);
+    observer.observe(stage);
+    return () => observer.disconnect();
+  }, [project?.mediaProject.id, view]);
 
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent): void {
@@ -133,6 +168,7 @@ export function MediaProductionWorkspace({
       } else if (leftDockOpen) {
         event.preventDefault();
         setLeftDockOpen(false);
+        writeLeftDockPreference(false);
       }
     }
     document.addEventListener("keydown", onKeyDown);
@@ -140,10 +176,14 @@ export function MediaProductionWorkspace({
   }, [leftDockOpen, rightDockOpen, workflowLibraryOpen]);
 
   const selectScene = useCallback((sceneId: string): void => {
+    selectionContextRef.current = { projectId: project?.mediaProject.id ?? "", sceneId };
     actions.selectScene(sceneId);
+    if (docksAreExclusive) {
+      setLeftDockOpen(false);
+    }
     setRightDockOpen(true);
     setStoryboardFocusRequest((current) => ({ sceneId, sequence: current.sequence + 1 }));
-  }, [actions]);
+  }, [actions, docksAreExclusive, project?.mediaProject.id]);
 
   const previewSceneResult = useCallback((sceneId: string): void => {
     const target = sceneReadiness.find((item) => item.sceneId === sceneId);
@@ -153,8 +193,44 @@ export function MediaProductionWorkspace({
   }, [sceneReadiness]);
 
   function createScene(): void {
-    setRightDockOpen(true);
     void actions.createScene();
+  }
+
+  function openLeftDock(): void {
+    if (docksAreExclusive) {
+      setRightDockOpen(false);
+    }
+    setLeftDockOpen(true);
+    writeLeftDockPreference(true);
+  }
+
+  function toggleLeftDock(): void {
+    if (leftDockOpen) {
+      setLeftDockOpen(false);
+      writeLeftDockPreference(false);
+      return;
+    }
+    openLeftDock();
+  }
+
+  function closeLeftDock(): void {
+    setLeftDockOpen(false);
+    writeLeftDockPreference(false);
+  }
+
+  function toggleRightDock(): void {
+    if (!selectedScene) {
+      return;
+    }
+    if (rightDockOpen) {
+      setRightDockOpen(false);
+      return;
+    }
+    if (docksAreExclusive) {
+      setLeftDockOpen(false);
+    }
+    setRightDockOpen(true);
+    setStoryboardFocusRequest((current) => ({ sceneId: selectedScene.id, sequence: current.sequence + 1 }));
   }
 
   return (
@@ -163,20 +239,20 @@ export function MediaProductionWorkspace({
         projectName={project?.mediaProject.name}
         sceneCount={project?.scenes.length ?? 0}
         view={view}
-        canRun={projectRunReview.ready.length > 0}
-        hasVideoModel={videoProviders.length > 0}
+        readyCount={projectRunReview.ready.length}
+        hasGenerationSource={videoProviders.length > 0 || workflowController.state.workflows.some((item) => item.definition.status === "ready" && item.currentVersion)}
         busy={Boolean(state.busyAction)}
         onViewChange={setView}
-        onOpenProjectDock={() => setLeftDockOpen(true)}
+        onOpenProjectDock={openLeftDock}
         onRunProject={() => setProjectRunReviewOpen(true)}
         onConfigureVideoModel={onConfigureVideoModel}
       />
 
-      {view === "jobs" ? <div className="media-production-jobs-view">{jobsPanel}</div> : (
+      {view === "jobs" ? <div className="media-production-jobs-view">{jobsPanel(jobContext)}</div> : (
         <div className="media-production-studio">
           {state.errorMessage ? <div className="inline-error media-production-error">{state.errorMessage}</div> : null}
           {project ? (
-            <div className="media-production-canvas-stage">
+            <div ref={canvasStageRef} className="media-production-canvas-stage" data-exclusive-docks={docksAreExclusive ? "true" : "false"}>
               <StoryboardCanvas
                 key={project.mediaProject.id}
                 scenes={project.scenes}
@@ -195,8 +271,8 @@ export function MediaProductionWorkspace({
                 leftOpen={leftDockOpen}
                 rightOpen={rightDockOpen}
                 rightAvailable={Boolean(selectedScene)}
-                onToggleLeft={() => setLeftDockOpen((current) => !current)}
-                onToggleRight={() => setRightDockOpen((current) => selectedScene ? !current : current)}
+                onToggleLeft={toggleLeftDock}
+                onToggleRight={toggleRightDock}
               />
               <div className={`media-production-dock-panel left${leftDockOpen ? " is-open" : ""}`} aria-hidden={!leftDockOpen}>
                 <ProjectSceneOutline
@@ -211,7 +287,7 @@ export function MediaProductionWorkspace({
                   actions={actions}
                   onConfigureVideoModel={onConfigureVideoModel}
                   onOpenWorkflowLibrary={() => { setWorkflowLibraryTab("workflows"); setWorkflowLibraryOpen(true); }}
-                  onClose={() => setLeftDockOpen(false)}
+                  onClose={closeLeftDock}
                   onSceneSelect={selectScene}
                   onRequestDelete={setScenePendingDelete}
                 />
@@ -302,6 +378,14 @@ function readLeftDockPreference(): boolean {
     return window.localStorage.getItem(leftDockPreferenceKey) !== "false";
   } catch {
     return true;
+  }
+}
+
+function writeLeftDockPreference(open: boolean): void {
+  try {
+    window.localStorage.setItem(leftDockPreferenceKey, String(open));
+  } catch {
+    // The layout still works when browser storage is unavailable.
   }
 }
 

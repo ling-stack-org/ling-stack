@@ -80,7 +80,7 @@ export function ProjectSceneOutline({
         <details className="project-outline-settings">
           <summary>
             <span>项目设置</span>
-            <small>{project.mediaProject.defaultExecutionMode === "workflow" ? defaultWorkflow?.definition.name ?? "选择生产流程" : defaultProvider ? `${defaultProvider.displayName} · ${defaultProvider.model}` : "每个场景单独选择"}</small>
+            <small>{project.mediaProject.defaultExecutionMode === "workflow" ? defaultWorkflow?.definition.name ?? "选择生产流程" : defaultProvider?.displayName ?? "每个场景单独选择"}</small>
           </summary>
           <div className="project-outline-settings-body">
             <label className="field project-outline-name">
@@ -164,9 +164,8 @@ export function ProjectSceneOutline({
                 <span className="project-outline-scene-order">{String(index + 1).padStart(2, "0")}</span>
                 <span className="project-outline-scene-copy">
                   <strong>{scene.title}</strong>
-                  <small>{item?.reason ?? "正在读取场景状态。"}</small>
+                  <small title={item?.reason}>{sceneOutlineStatus(item)}</small>
                 </span>
-                <span className={`scene-readiness-badge ${item?.state ?? "needs_model"}`}>{item?.label ?? "待完善"}</span>
               </button>
               <span className="project-outline-scene-order-actions" aria-label={`调整${scene.title}顺序`}>
                 <button className="project-outline-sort-button" type="button" onClick={() => moveScene(scene.id, -1)} disabled={Boolean(busyAction) || index === 0} title="上移场景" aria-label="上移场景"><ChevronUp size={14} /></button>
@@ -186,4 +185,12 @@ export function ProjectSceneOutline({
       </aside>
     </>
   );
+}
+
+function sceneOutlineStatus(readiness: SceneReadiness | undefined): string {
+  if (!readiness) return "读取中";
+  if (readiness.currentArtifact && readiness.latestIssue) return "已生成 · 上次失败";
+  if (readiness.currentArtifact) return readiness.isRegenerating ? "已生成 · 正在更新" : "已生成 · 批量时跳过";
+  if (readiness.state === "needs_attention") return "上次未完成 · 可重试";
+  return readiness.label;
 }

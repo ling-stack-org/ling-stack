@@ -8,6 +8,7 @@
 
 - [媒体生产体验收口](media-production-experience-refinement.md)
 - [模型工作台视频生产台](model-workbench-video-production-studio.md)
+- [媒体生产画布优先体验优化](media-production-canvas-priority-refinement.md)（覆盖默认右检查器、MiniMap 阈值和零场景批量动作规则）
 
 ## 1. 决策
 

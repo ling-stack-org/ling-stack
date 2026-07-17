@@ -1,0 +1,173 @@
+/* Follow-up rules for the canvas-priority media production contract. */
+.scene-inspector {
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
+}
+
+.scene-inspector-head {
+  min-height: 64px;
+}
+
+.scene-inspector-head h2 {
+  margin-top: 0;
+}
+
+.scene-inspector-tabs {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 3px;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border, #e5e5e5);
+  background: color-mix(in srgb, var(--surface, #ffffff) 94%, transparent);
+}
+
+.scene-inspector-tabs button {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-width: 0;
+  min-height: 30px;
+  padding: 0 7px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-muted, #707070);
+  font: inherit;
+  font-size: 11px;
+  font-weight: 680;
+  cursor: pointer;
+}
+
+.scene-inspector-tabs button:hover,
+.scene-inspector-tabs button:focus-visible,
+.scene-inspector-tabs button.active {
+  background: var(--surface-selected, #f3f3f3);
+  color: var(--text, #171717);
+  outline: none;
+}
+
+.scene-inspector-tabs small {
+  color: inherit;
+  font-size: 9px;
+}
+
+.scene-inspector-tab-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--success, #2d7a46);
+}
+
+.scene-inspector-tab-dot.attention {
+  background: var(--danger, #b42318);
+}
+
+.scene-result-view {
+  display: grid;
+  align-content: start;
+  gap: 14px;
+}
+
+.scene-result-view .scene-inspector-section {
+  padding-top: 0;
+  border-top: 0;
+}
+
+.scene-result-empty {
+  display: grid;
+  justify-items: center;
+  gap: 7px;
+  padding: 28px 18px;
+  border: 1px dashed var(--border, #e5e5e5);
+  border-radius: 6px;
+  color: var(--text-muted, #707070);
+  text-align: center;
+}
+
+.scene-result-empty strong {
+  color: var(--text, #171717);
+  font-size: 13px;
+}
+
+.scene-result-empty span {
+  max-width: 250px;
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.scene-result-view .scene-latest-run-issue {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+}
+
+.scene-result-view .scene-latest-run-issue details {
+  grid-column: 2;
+  color: var(--text-muted, #707070);
+}
+
+.scene-result-view .scene-latest-run-issue summary {
+  width: fit-content;
+  cursor: pointer;
+}
+
+.scene-result-view .scene-latest-run-issue p {
+  margin: 6px 0 0;
+  overflow-wrap: anywhere;
+  color: var(--text-muted, #707070);
+}
+
+.project-outline-scene-main {
+  padding-top: 8px;
+  padding-bottom: 8px;
+}
+
+.project-outline-sort-button,
+.project-outline-scene-delete {
+  width: 26px;
+  min-width: 26px;
+  height: 26px;
+}
+
+.project-outline-scene-order-actions {
+  gap: 0;
+  padding-right: 3px;
+}
+
+.media-workflow-onboarding {
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 9px;
+  height: 100%;
+  min-height: 0;
+  padding: 32px;
+  color: var(--text-muted, #707070);
+  text-align: center;
+}
+
+.media-workflow-onboarding strong {
+  color: var(--text, #171717);
+  font-size: 15px;
+}
+
+.media-workflow-onboarding span {
+  max-width: 360px;
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.media-workflow-onboarding .primary-button {
+  margin-top: 5px;
+}
+
+.media-workflow-dialog.empty-workflows-view {
+  width: min(720px, calc(100vw - 48px));
+  height: min(460px, calc(100dvh - 48px));
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .storyboard-canvas .react-flow__viewport {
+    transition: none;
+  }
+}
