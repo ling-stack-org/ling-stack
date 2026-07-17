@@ -336,7 +336,7 @@ test("keeps document.title synchronized with the current target", async () => {
   expect(await page.title()).not.toContain("Example Browser");
 });
 
-test("serializes display-media startup across repeated same-source snapshots", async () => {
+test("serializes pending display-media acquisition across repeated same-source snapshots", async () => {
   await page.evaluate(() => {
     window.lingPreviewTestHarness.clearCalls();
     window.lingPreviewTestHarness.pushSnapshot({ statusDetail: "Connecting capture 1" });
@@ -347,6 +347,7 @@ test("serializes display-media startup across repeated same-source snapshots", a
     .getDisplayMediaRequestCount()))
     .toBe(1);
   await expect.poll(() => displayMediaState()).toMatchObject({
+    pendingCount: 1,
     requests: [{
       audio: false,
       video: {
@@ -356,10 +357,9 @@ test("serializes display-media startup across repeated same-source snapshots", a
       },
     }],
   });
-  await expect.poll(() => page.evaluate(() => window.lingPreviewTestHarness
-    .getCalls()
-    .filter((call) => call.name === "reportFrameReady").length))
-    .toBe(1);
+  expect(await page.evaluate(() => window.lingPreviewTestHarness
+    .resolveNextDisplayMediaAcquisition())).toBe(true);
+  await expect.poll(() => callCount("reportFrameReady")).toBe(1);
 });
 
 test("display-media fallback waits for decoded data before reporting the first frame", async () => {
