@@ -12,6 +12,7 @@ import { getBundledPluginPackage } from "../dist/features/plugins/source-index.j
 
 const cuaPluginId = "trusted-local:cua-driver";
 const bundledCuaPluginId = "bundled:cua-driver";
+const supportedDesktop = process.platform === "darwin" || process.platform === "win32";
 const coreToolIds = [
   "tool:read",
   "tool:grep",
@@ -39,7 +40,7 @@ test("daemon exposes managed plugin catalog and runtime extension diagnostics", 
 
     const cua = catalog.plugins.find((plugin) => plugin.id === cuaPluginId);
     assert.equal(cua.sourceKind, "trusted-local-preset");
-    assert.equal(cua.actions.canApplyPreset, process.platform === "darwin");
+    assert.equal(cua.actions.canApplyPreset, supportedDesktop);
     assert.equal(cua.setup.kind, "local_binary");
     assert.equal(["detected", "missing", "unsupported", "connected", "ready"].includes(cua.setup.state), true);
     assert.equal(cua.setup.state === "missing", Boolean(cua.setup.guide));
@@ -178,7 +179,7 @@ test("bundled plugin package cache uses resolved workspace plugin cache path", a
   }
 });
 
-test("daemon installs bundled cua package cache and previews runtime injection", { skip: process.platform !== "darwin" }, async () => {
+test("daemon installs bundled cua package cache and previews runtime injection", { skip: !supportedDesktop }, async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-plugin-install-"));
   const command = join(cwd, "cua-driver");
   await writeFile(command, "#!/bin/sh\nexit 0\n");
@@ -200,7 +201,7 @@ test("daemon installs bundled cua package cache and previews runtime injection",
     assert.equal(installed.plugin.id, bundledCuaPluginId);
     assert.equal(installed.plugin.status, "disabled");
     assert.equal(installed.package.status, "installed");
-    assert.equal(installed.package.cacheRef.startsWith("bundled/cua-driver/0.1.0/"), true);
+    assert.equal(installed.package.cacheRef.startsWith("bundled/cua-driver/0.2.0/"), true);
     assert.equal(typeof installed.package.packageHash, "string");
     assert.equal(JSON.stringify(installed).includes(command), false);
     assert.equal(existsSync(join(cwd, ".ling-stack", "plugins", "cache", installed.package.cacheRef)), true);
@@ -216,9 +217,6 @@ test("daemon installs bundled cua package cache and previews runtime injection",
     assert.equal(disabledPreview.preview.status, "disabled");
     assert.equal(disabledPreview.preview.blockers.includes("Plugin is disabled."), true);
 
-    await postJson(`${daemon.url}/plugins/${encodeURIComponent(cuaPluginId)}/apply-preset?cwd=${encodeURIComponent(cwd)}`, {
-      options: { command },
-    });
     await postJson(`${daemon.url}/plugins/${encodeURIComponent(bundledCuaPluginId)}/enable?cwd=${encodeURIComponent(cwd)}`, {});
     await postJson(`${daemon.url}/plugins/${encodeURIComponent(bundledCuaPluginId)}/check?cwd=${encodeURIComponent(cwd)}`, {});
 
@@ -254,7 +252,87 @@ test("daemon installs bundled cua package cache and previews runtime injection",
   }
 });
 
-test("daemon rejects bundled cua install without leaking command paths", { skip: process.platform !== "darwin" }, async () => {
+test("bundled Cua Driver enable fails closed before runtime injection", { skip: !supportedDesktop }, async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-plugin-bundled-enable-failure-"));
+  const command = join(cwd, "cua-driver");
+  await writeFile(command, "#!/bin/sh\nexit 0\n");
+  await chmod(command, 0o755);
+  const daemon = await startDaemonForTest(new FailingPluginMcpBroker());
+  try {
+    await postJson(
+      `${daemon.url}/plugins/${encodeURIComponent(bundledCuaPluginId)}/install?cwd=${encodeURIComponent(cwd)}`,
+      { options: { command } },
+    );
+    const enabled = await requestJson(
+      `${daemon.url}/plugins/${encodeURIComponent(bundledCuaPluginId)}/enable?cwd=${encodeURIComponent(cwd)}`,
+      { method: "POST", body: {} },
+    );
+    assert.equal(enabled.status, 400);
+    assert.equal(enabled.json.error, "mcp_process_failed");
+
+    const detail = await getJson(
+      `${daemon.url}/plugins/${encodeURIComponent(bundledCuaPluginId)}?cwd=${encodeURIComponent(cwd)}`,
+    );
+    assert.equal(detail.plugin.status, "disabled");
+    assert.equal(detail.plugin.linkedResources[0].enabled, false);
+    assert.equal(detail.plugin.health.status, "failed");
+    const preview = await getJson(
+      `${daemon.url}/plugins/${encodeURIComponent(bundledCuaPluginId)}/runtime-preview?cwd=${encodeURIComponent(cwd)}`,
+    );
+    assert.equal(preview.preview.status, "disabled");
+    assert.equal(
+      preview.preview.blockers.some((blocker) => blocker.includes("Cua Driver failed to start")),
+      true,
+    );
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("bundled Cua Driver rejects shared legacy ownership until reinstall migrates it", { skip: !supportedDesktop }, async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-plugin-shared-cua-owner-"));
+  const command = join(cwd, "cua-driver");
+  await writeFile(command, "#!/bin/sh\nexit 0\n");
+  await chmod(command, 0o755);
+  const daemon = await startDaemonForTest(new FakePluginMcpBroker());
+  try {
+    await postJson(
+      `${daemon.url}/plugins/${encodeURIComponent(bundledCuaPluginId)}/install?cwd=${encodeURIComponent(cwd)}`,
+      { options: { command } },
+    );
+    await postJson(`${daemon.url}/plugins/${encodeURIComponent(bundledCuaPluginId)}/enable?cwd=${encodeURIComponent(cwd)}`, {});
+    await postJson(`${daemon.url}/plugins/${encodeURIComponent(cuaPluginId)}/connect?cwd=${encodeURIComponent(cwd)}`, { command });
+
+    for (const action of ["check", "enable"]) {
+      const rejected = await requestJson(
+        `${daemon.url}/plugins/${encodeURIComponent(bundledCuaPluginId)}/${action}?cwd=${encodeURIComponent(cwd)}`,
+        { method: "POST", body: {} },
+      );
+      assert.equal(rejected.status, 409);
+      assert.equal(rejected.json.error, "plugin_linked_resource_conflict");
+    }
+
+    await postJson(
+      `${daemon.url}/plugins/${encodeURIComponent(bundledCuaPluginId)}/install?cwd=${encodeURIComponent(cwd)}`,
+      { options: { command } },
+    );
+    await postJson(`${daemon.url}/plugins/${encodeURIComponent(bundledCuaPluginId)}/enable?cwd=${encodeURIComponent(cwd)}`, {});
+    const legacy = await getJson(`${daemon.url}/plugins/${encodeURIComponent(cuaPluginId)}?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(legacy.plugin.status, "disabled");
+    assert.equal(legacy.plugin.setup.state, "detected");
+    assert.equal(legacy.plugin.contributions[0].enabled, false);
+    const preview = await getJson(
+      `${daemon.url}/plugins/${encodeURIComponent(bundledCuaPluginId)}/runtime-preview?cwd=${encodeURIComponent(cwd)}`,
+    );
+    assert.equal(preview.preview.status, "injectable");
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("daemon rejects bundled cua install without leaking command paths", { skip: !supportedDesktop }, async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-plugin-install-missing-"));
   const daemon = await startDaemonForTest();
   try {
@@ -312,13 +390,14 @@ test("daemon rejects invalid plugin package contribution paths with redacted dia
   }
 });
 
-test("daemon applies cua-driver preset idempotently without teammate authorization", { skip: process.platform !== "darwin" }, async () => {
+test("daemon applies cua-driver preset idempotently without teammate authorization", { skip: !supportedDesktop }, async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-plugin-apply-"));
   const command = join(cwd, "cua-driver");
   await writeFile(command, "#!/bin/sh\nexit 0\n");
   await chmod(command, 0o755);
   const originalPath = process.env.PATH;
-  process.env.PATH = `${cwd}${originalPath ? `:${originalPath}` : ""}`;
+  const pathDelimiter = process.platform === "win32" ? ";" : ":";
+  process.env.PATH = `${cwd}${originalPath ? `${pathDelimiter}${originalPath}` : ""}`;
   const broker = new FakePluginMcpBroker();
   const daemon = await startDaemonForTest(broker);
   try {
@@ -363,6 +442,8 @@ test("daemon applies cua-driver preset idempotently without teammate authorizati
     assert.deepEqual(applied.tools.map((tool) => [tool.rawName, tool.sideEffectLevel, tool.defaultApproval]), [
       ["check_permissions", "read", "allow"],
       ["click", "external", "ask"],
+      ["get_window_state", "external", "ask"],
+      ["health_report", "read", "allow"],
       ["list_windows", "read", "allow"],
     ]);
 
@@ -376,6 +457,8 @@ test("daemon applies cua-driver preset idempotently without teammate authorizati
     assert.deepEqual(tools.tools.map((tool) => [tool.rawName, tool.defaultApproval]), [
       ["check_permissions", "allow"],
       ["click", "ask"],
+      ["get_window_state", "ask"],
+      ["health_report", "allow"],
       ["list_windows", "allow"],
     ]);
 
@@ -472,10 +555,10 @@ class FakePluginMcpBroker {
           missingRefs: [],
         },
         missingSecretRefs: [],
-        message: "3 tools discovered",
+        message: "5 tools discovered",
         checkedAt: now,
         expiresAt: new Date(Date.parse(now) + 5 * 60 * 1000).toISOString(),
-        toolCount: 3,
+        toolCount: 5,
       },
       tools: [
         {
@@ -499,6 +582,26 @@ class FakePluginMcpBroker {
           enabled: true,
         },
         {
+          rawName: "get_window_state",
+          displayName: "Get window state",
+          inputSchema: { type: "object" },
+          callableNamespace: server.id,
+          callableName: "get_window_state",
+          sideEffectLevel: "external",
+          defaultApproval: "ask",
+          enabled: true,
+        },
+        {
+          rawName: "health_report",
+          displayName: "Health report",
+          inputSchema: { type: "object" },
+          callableNamespace: server.id,
+          callableName: "health_report",
+          sideEffectLevel: "external",
+          defaultApproval: "ask",
+          enabled: true,
+        },
+        {
           rawName: "list_windows",
           displayName: "List windows",
           inputSchema: { type: "object" },
@@ -512,8 +615,35 @@ class FakePluginMcpBroker {
     };
   }
 
-  async callTool() {
-    throw new Error("callTool is not used in plugin manager tests");
+  async callTool(server, options, toolName, input) {
+    assert.equal(toolName, "health_report");
+    assert.deepEqual(input, {
+      include: [
+        "binary_version",
+        "platform_supported",
+        "session_active",
+        "ax_capability",
+        "screen_capture_capability",
+      ],
+    });
+    return {
+      content: [],
+      details: {
+        structuredContent: {
+          schema_version: "1",
+          platform: "win32",
+          driver_version: "0.8.3",
+          overall: "ok",
+          checks: [
+            "binary_version",
+            "platform_supported",
+            "session_active",
+            "ax_capability",
+            "screen_capture_capability",
+          ].map((name) => ({ name, status: "pass", message: `${name} passed` })),
+        },
+      },
+    };
   }
 }
 

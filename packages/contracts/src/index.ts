@@ -38,3 +38,5 @@ export type * from "./workspace-changes.js";
 export type * from "./terminal-reports.js";
 export type * from "./startup.js";
 export type * from "./profile.js";
+export * from "./computer-use.js";
+export * from "./computer-use-validation.js";

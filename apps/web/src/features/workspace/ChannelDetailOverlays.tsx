@@ -47,7 +47,12 @@ export function ConversationDetailOverlay({
 }): JSX.Element {
   const { t } = useI18n();
   return (
-    <section className="conversation-detail-overlay" aria-label={title}>
+    <section
+      className="conversation-detail-overlay"
+      data-computer-use-obstacle="true"
+      data-computer-use-obstacle-kind="modal"
+      aria-label={title}
+    >
       <header className="conversation-detail-overlay-head">
         <span>
           {icon}

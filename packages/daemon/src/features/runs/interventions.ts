@@ -37,6 +37,7 @@ import { readJsonBody, readOptionalIntegerQuery } from "../../shared/request.js"
 import { writeJson } from "../../shared/response.js";
 import { isRecord, readOptionalString, readOptionalStringArray, readString } from "../../shared/validation.js";
 import type { ControlPlaneEventHub } from "../control-plane/events.js";
+import type { ComputerUseProjectionRegistry } from "../computer-use/registry.js";
 import {
   createDetachedRunExecutionSink,
   executeRunRequest,
@@ -56,6 +57,7 @@ export async function handleRunInterventions(
   runtimeSupervisor: RuntimeSupervisor,
   secretResolver: SecretResolver,
   mcpBroker: McpBroker,
+  computerUsePreviews: ComputerUseProjectionRegistry,
   controlPlaneEvents: ControlPlaneEventHub,
   startupState: StartupStateRegistry | undefined,
   sourceRunId: string,
@@ -137,6 +139,7 @@ export async function handleRunInterventions(
         runtimeSupervisor,
         secretResolver,
         mcpBroker,
+        computerUsePreviews,
         controlPlaneEvents,
         startupState,
       });
@@ -211,6 +214,7 @@ export function handleRunInterventionPromote(
   runtimeSupervisor: RuntimeSupervisor,
   secretResolver: SecretResolver,
   mcpBroker: McpBroker,
+  computerUsePreviews: ComputerUseProjectionRegistry,
   controlPlaneEvents: ControlPlaneEventHub,
   startupState: StartupStateRegistry | undefined,
   interventionId: string,
@@ -254,6 +258,7 @@ export function handleRunInterventionPromote(
       runtimeSupervisor,
       secretResolver,
       mcpBroker,
+      computerUsePreviews,
       controlPlaneEvents,
       startupState,
     }).catch(() => {});
@@ -291,6 +296,7 @@ export function handleRunInterventionPromote(
     runtimeSupervisor,
     secretResolver,
     mcpBroker,
+    computerUsePreviews,
     controlPlaneEvents,
     startupState,
   }).catch(() => {});
@@ -312,6 +318,7 @@ export async function maybeStartNextRunInterventionContinuation(input: {
   readonly runtimeSupervisor: RuntimeSupervisor;
   readonly secretResolver: SecretResolver;
   readonly mcpBroker: McpBroker;
+  readonly computerUsePreviews: ComputerUseProjectionRegistry;
   readonly controlPlaneEvents: ControlPlaneEventHub;
   readonly startupState?: StartupStateRegistry;
 }): Promise<void> {
@@ -354,6 +361,7 @@ export async function maybeStartNextRunInterventionContinuation(input: {
       {
         controlPlaneEvents: input.controlPlaneEvents,
         startupState: input.startupState,
+        computerUsePreviews: input.computerUsePreviews,
         onRunReady: (runId) => {
           const run = input.store.getRun(runId);
           input.store.updateRunInterventionStatus({

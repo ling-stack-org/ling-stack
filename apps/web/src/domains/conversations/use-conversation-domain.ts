@@ -60,7 +60,11 @@ export function useConversationDomain(input: {
     readonly refreshConversationThreads: (cwd?: string) => Promise<void>;
     readonly refreshSelectedConversation: (cwd?: string) => Promise<void>;
     readonly openNewConversation: () => void;
-    readonly selectConversationThread: (threadId: string, cwd?: string) => Promise<void>;
+    readonly selectConversationThread: (
+      threadId: string,
+      cwd?: string,
+      shouldCommit?: () => boolean,
+    ) => Promise<boolean>;
     readonly archiveConversationThread: (threadId: string, cwd?: string) => Promise<void>;
     readonly archiveAllConversationThreads: (cwd?: string) => Promise<void>;
     readonly sendConversationMessage: (message: ConversationSendInput, handlers?: ConversationStreamHandlers) => Promise<void>;
@@ -95,23 +99,42 @@ export function useConversationDomain(input: {
     setSelectedConversationDetail(undefined);
   }, []);
 
-  const selectConversationThread = useCallback(async (threadId: string, cwd = input.cwd): Promise<void> => {
+  const selectConversationThread = useCallback(async (
+    threadId: string,
+    cwd = input.cwd,
+    shouldCommit: () => boolean = () => true,
+  ): Promise<boolean> => {
     const workspaceCwd = cwd.trim();
     if (!workspaceCwd || !threadId) {
-      openNewConversation();
-      return;
+      if (shouldCommit()) {
+        openNewConversation();
+      }
+      return false;
     }
-    setSelectedConversationThreadId(threadId);
+    if (!shouldCommit()) {
+      return false;
+    }
     setConversationsLoading(true);
     try {
       const detail = await getConversation(workspaceCwd, threadId);
+      if (!shouldCommit()) {
+        return false;
+      }
+      setSelectedConversationThreadId(threadId);
       setSelectedConversationDetail(detail);
       input.setErrorMessage("");
+      return true;
     } catch (error) {
+      if (!shouldCommit()) {
+        return false;
+      }
       input.setErrorMessage(error instanceof Error ? error.message : String(error));
       setSelectedConversationDetail(undefined);
+      return false;
     } finally {
-      setConversationsLoading(false);
+      if (shouldCommit()) {
+        setConversationsLoading(false);
+      }
     }
   }, [input, openNewConversation]);
 

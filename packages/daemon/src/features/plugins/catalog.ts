@@ -11,7 +11,13 @@ import type {
   McpStoreFacet,
   RunStorePathsFacet,
 } from "@ling-stack/core";
-import { CUA_DRIVER_PLUGIN_ID, CUA_DRIVER_MCP_SERVER_ID, listTrustedLocalPresetDescriptors } from "./presets.js";
+import {
+  CUA_DRIVER_PLUGIN_ID,
+  CUA_DRIVER_MCP_SERVER_ID,
+  CUA_DRIVER_UNSUPPORTED_PLATFORM_MESSAGE,
+  isCuaDriverPlatformSupported,
+  listTrustedLocalPresetDescriptors,
+} from "./presets.js";
 import { BUNDLED_CUA_DRIVER_PLUGIN_ID } from "./bundled-index.js";
 import { buildCuaDriverSetupView } from "./cua-driver.js";
 import { listBundledPackageDescriptors } from "./source-index.js";
@@ -178,7 +184,11 @@ function createManagedPluginView(input: {
     ? input.store.getMcpServer(CUA_DRIVER_MCP_SERVER_ID)
     : undefined;
   const setup = input.descriptor.id === CUA_DRIVER_PLUGIN_ID
-    ? buildCuaDriverSetupView({ store: input.store, now: input.now })
+    ? buildCuaDriverSetupView({
+        store: input.store,
+        now: input.now,
+        platform: process.platform,
+      })
     : undefined;
   const recordEnabled = input.descriptor.id === CUA_DRIVER_PLUGIN_ID
     ? setup?.state === "ready"
@@ -283,8 +293,8 @@ function createManagedPluginView(input: {
 }
 
 function getDescriptorBlocker(descriptor: ManagedPluginDescriptor): string | undefined {
-  if (descriptor.id === CUA_DRIVER_PLUGIN_ID && process.platform !== "darwin") {
-    return "Cua Driver is only supported on macOS.";
+  if (descriptor.id === CUA_DRIVER_PLUGIN_ID && !isCuaDriverPlatformSupported()) {
+    return CUA_DRIVER_UNSUPPORTED_PLATFORM_MESSAGE;
   }
   return undefined;
 }

@@ -26,7 +26,14 @@ export function InlineApprovalStrip({
   const highestRisk = primaryApproval?.approval.risk ?? "low";
 
   return (
-    <div className="composer-approval-overlay inline-approval-strip" role="status" aria-live="polite" aria-label={t("Composer approval overlay")}>
+    <div
+      className="composer-approval-overlay inline-approval-strip"
+      data-computer-use-obstacle="true"
+      data-computer-use-obstacle-kind="approval"
+      role="status"
+      aria-live="polite"
+      aria-label={t("Composer approval overlay")}
+    >
       <div className="inline-approval-strip-head">
         <span>
           <ShieldCheck size={15} />

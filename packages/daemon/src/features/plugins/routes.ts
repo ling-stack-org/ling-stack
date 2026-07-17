@@ -21,10 +21,16 @@ import {
   listManagedPluginViews,
 } from "./catalog.js";
 import {
+  applyCuaDriverToolApprovalOverrides,
   CUA_DRIVER_MCP_SERVER_ID,
   CUA_DRIVER_PLUGIN_ID,
+  CUA_DRIVER_UNSUPPORTED_PLATFORM_MESSAGE,
+  isCuaDriverPlatformSupported,
   resolveCuaDriverCommand,
 } from "./presets.js";
+import {
+  checkCuaDriverProviderHealth,
+} from "./provider-health.js";
 import {
   parseManagedPluginApplyPresetRequest,
   parseManagedPluginConnectRequest,
@@ -46,6 +52,8 @@ import {
   toPluginPackageView,
 } from "./source-index.js";
 import {
+  checkInstalledPluginRuntimeDependencies,
+  assertExclusiveBundledCuaMcpServerOwnership,
   installBundledPluginPackage,
   refreshManagedPluginPackage,
   uninstallManagedPluginPackage,
@@ -283,8 +291,30 @@ export async function handlePluginItem(
         return;
       }
       const now = new Date().toISOString();
+      if (route.pluginId === "bundled:cua-driver") {
+        assertExclusiveBundledCuaMcpServerOwnership({ store, descriptor, now });
+      }
       ensureManagedPluginRecord({ store, descriptor, enabled: true, now });
       setLinkedContributionsEnabled(store, route.pluginId, true, now);
+      try {
+        await checkInstalledPluginRuntimeDependencies({
+          descriptor,
+          store,
+          mcpBroker,
+          secretResolver,
+          now,
+        });
+      } catch (error) {
+        ensureManagedPluginRecord({
+          store,
+          descriptor,
+          enabled: false,
+          disabledReason: error instanceof Error ? error.message : "Plugin runtime dependency check failed.",
+          now,
+        });
+        setLinkedContributionsEnabled(store, route.pluginId, false, now);
+        throw error;
+      }
       store.appendManagedPluginEvent({
         pluginId: route.pluginId,
         type: "enabled",
@@ -517,14 +547,21 @@ async function checkPluginHealth(input: {
   readonly secretResolver: SecretResolver;
   readonly now: string;
 }): Promise<ManagedPluginHealthSnapshot> {
-  if (input.descriptor.id === CUA_DRIVER_PLUGIN_ID) {
-    if (process.platform !== "darwin") {
+  if (input.descriptor.id === CUA_DRIVER_PLUGIN_ID || input.descriptor.id === "bundled:cua-driver") {
+    if (!isCuaDriverPlatformSupported()) {
       return createPluginHealthSnapshot({
         pluginId: input.descriptor.id,
         now: input.now,
         status: "failed",
-        message: "Cua Driver is only supported on macOS.",
+        message: CUA_DRIVER_UNSUPPORTED_PLATFORM_MESSAGE,
         details: { errorCode: "plugin_platform_blocked" },
+      });
+    }
+    if (input.descriptor.id === "bundled:cua-driver") {
+      assertExclusiveBundledCuaMcpServerOwnership({
+        store: input.store,
+        descriptor: input.descriptor,
+        now: input.now,
       });
     }
     const linkedServer = input.store.getMcpServer(CUA_DRIVER_MCP_SERVER_ID);
@@ -534,6 +571,35 @@ async function checkPluginHealth(input: {
         now: () => input.now,
       });
       const statusSnapshot = input.store.upsertMcpStatusSnapshot(result.statusSnapshot, input.now);
+      if (statusSnapshot.status !== "ready") {
+        return pluginHealthFromMcpSnapshot(input.descriptor.id, statusSnapshot);
+      }
+      if (process.platform === "win32") {
+        const listed = await input.mcpBroker.listTools(linkedServer, {
+          secretResolver: input.secretResolver,
+          now: () => input.now,
+        });
+        const listedSnapshot = input.store.upsertMcpStatusSnapshot(listed.statusSnapshot, input.now);
+        if (listedSnapshot.status !== "ready") {
+          return pluginHealthFromMcpSnapshot(input.descriptor.id, listedSnapshot);
+        }
+        const tools = applyCuaDriverToolApprovalOverrides(listed.tools);
+        input.store.replaceMcpServerTools(linkedServer.id, tools, input.now);
+        const providerHealth = await checkCuaDriverProviderHealth({
+          server: linkedServer,
+          mcpBroker: input.mcpBroker,
+          secretResolver: input.secretResolver,
+          now: input.now,
+          availableToolNames: tools.map((tool) => tool.rawName),
+        });
+        return createPluginHealthSnapshot({
+          pluginId: input.descriptor.id,
+          now: input.now,
+          status: providerHealth.ok ? "ready" : "failed",
+          message: providerHealth.message,
+          details: providerHealth.details,
+        });
+      }
       return pluginHealthFromMcpSnapshot(input.descriptor.id, statusSnapshot);
     }
     const command = resolveCuaDriverCommand();

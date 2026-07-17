@@ -1,0 +1,83 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ling-stack.dev/schemas/windows-release-verification-v1.json",
+  "title": "Ling Desktop Windows External Release Verification",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "kind",
+    "verifiedAt",
+    "reportEvidenceSha256",
+    "candidateManifestSha256",
+    "releasePolicySha256",
+    "verifier",
+    "reviewer",
+    "candidateBuild",
+    "verdict"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "kind": { "const": "ling.windows.release-verification" },
+    "verifiedAt": { "type": "string", "format": "date-time" },
+    "reportEvidenceSha256": { "$ref": "#/$defs/sha256" },
+    "candidateManifestSha256": { "$ref": "#/$defs/sha256" },
+    "releasePolicySha256": { "$ref": "#/$defs/sha256" },
+    "verifier": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "harnessCommit"],
+      "properties": {
+        "name": { "const": "ling.windows.release-attestation-verifier" },
+        "harnessCommit": { "type": "string", "pattern": "^[0-9a-f]{40}([0-9a-f]{24})?$" }
+      }
+    },
+    "reviewer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "keyId", "reviewedAt", "verification"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "keyId": { "type": "string", "minLength": 1 },
+        "reviewedAt": { "type": "string", "format": "date-time" },
+        "verification": { "const": "trusted_external_signature" }
+      }
+    },
+    "candidateBuild": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "attestorId",
+        "keyId",
+        "attestedAt",
+        "strategy",
+        "daemonTreeSha256",
+        "verification"
+      ],
+      "properties": {
+        "attestorId": { "type": "string", "minLength": 1 },
+        "keyId": { "type": "string", "minLength": 1 },
+        "attestedAt": { "type": "string", "format": "date-time" },
+        "strategy": {
+          "enum": ["deterministic-rebuild", "signed-candidate-embedded-daemon"]
+        },
+        "daemonTreeSha256": { "$ref": "#/$defs/sha256" },
+        "verification": { "const": "trusted_external_signature" }
+      }
+    },
+    "verdict": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "fullAcceptanceStatus", "releaseReady", "releaseBlockers"],
+      "properties": {
+        "status": { "const": "PASS" },
+        "fullAcceptanceStatus": { "const": "PASS" },
+        "releaseReady": { "const": true },
+        "releaseBlockers": { "type": "array", "maxItems": 0 }
+      }
+    }
+  },
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+  }
+}

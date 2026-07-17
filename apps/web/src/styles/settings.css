@@ -1046,6 +1046,25 @@
   line-height: 18px;
 }
 
+.interface-preference-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-soft);
+  font-size: 12px;
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+.interface-preference-toggle input {
+  accent-color: var(--accent);
+}
+
+.interface-preference-error {
+  grid-column: 1 / -1;
+  color: var(--danger);
+}
+
 .ling-tone-options {
   display: inline-grid;
   grid-template-columns: repeat(2, minmax(120px, 1fr));

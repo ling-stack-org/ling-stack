@@ -1,13 +1,13 @@
 {
   "id": "bundled:cua-driver",
   "displayName": "Cua Driver",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "lingInterfaceVersion": "1",
   "sourceKind": "bundled",
   "trustLevel": "trusted-local-preset",
   "description": "Connects Ling to an already installed Cua Driver MCP server.",
-  "trustSummary": "Controls native macOS apps through Accessibility and Screen Recording permissions. Ling only manages the plugin shell and MCP configuration metadata.",
-  "platforms": ["darwin"],
+  "trustSummary": "Controls native macOS and Windows apps through the permissions and interactive desktop owned by the separately installed Cua Driver. Ling only manages the plugin shell and MCP configuration metadata.",
+  "platforms": ["darwin", "win32"],
   "contributions": [
     {
       "kind": "mcp-server",

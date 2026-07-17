@@ -194,6 +194,7 @@ export function TeammateWorkspace({
   onOpenRun,
   defaultAuthorizationMode,
   defaultWorkspaceAccessMode,
+  onDirectConversationChange,
   defaultPermissionMode,
   defaultPermissionPreset,
 }: {
@@ -215,6 +216,7 @@ export function TeammateWorkspace({
   readonly onOpenRun?: (runId: string) => void;
   readonly defaultAuthorizationMode?: AuthorizationMode;
   readonly defaultWorkspaceAccessMode?: WorkspaceAccessMode;
+  readonly onDirectConversationChange?: (threadId?: string) => void;
   readonly defaultPermissionMode?: SessionPermissionMode;
   readonly defaultPermissionPreset?: PermissionPreset;
 }): JSX.Element {
@@ -234,6 +236,12 @@ export function TeammateWorkspace({
   const [directExecutionActions, setDirectExecutionActions] = useState<readonly ExecutionAction[]>([]);
   const [directRuntime, setDirectRuntime] = useState<TeammateDirectRuntimeResponse | undefined>();
   const [directWorkspace, setDirectWorkspace] = useState<DirectWorkspaceResponse | undefined>();
+
+  useEffect(() => {
+    onDirectConversationChange?.(workspaceView === "chat" ? directWorkspace?.threadId : undefined);
+  }, [directWorkspace?.threadId, onDirectConversationChange, workspaceView]);
+
+  useEffect(() => () => onDirectConversationChange?.(undefined), [onDirectConversationChange]);
   const [directReplyOptimisticActive, setDirectReplyOptimisticActive] = useState(false);
   const [directGuidanceSubmitting, setDirectGuidanceSubmitting] = useState<"queue_followup" | "interrupt_redirect" | "stop" | "">("");
   const [directGuidanceCancelingId, setDirectGuidanceCancelingId] = useState("");

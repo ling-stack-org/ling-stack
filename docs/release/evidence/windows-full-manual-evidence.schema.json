@@ -1,0 +1,234 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ling-stack.dev/schemas/windows-full-manual-evidence-v2.json",
+  "title": "Ling Desktop Windows Full Manual Evidence",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "kind",
+    "candidateManifestSha256",
+    "host",
+    "operator",
+    "reviewer",
+    "case",
+    "details",
+    "attachments"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 2 },
+    "kind": {
+      "enum": [
+        "ling.windows.full-evidence.windows-version",
+        "ling.windows.full-evidence.display",
+        "ling.windows.full-evidence.narrator",
+        "ling.windows.full-evidence.nvda",
+        "ling.windows.full-evidence.smartscreen",
+        "ling.windows.full-evidence.install-lifecycle"
+      ]
+    },
+    "candidateManifestSha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "host": { "$ref": "#/$defs/host" },
+    "operator": { "$ref": "#/$defs/operator" },
+    "reviewer": { "$ref": "#/$defs/reviewer" },
+    "case": { "$ref": "#/$defs/case" },
+    "details": { "type": "object" },
+    "attachments": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/fileReference" }
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "kind": { "const": "ling.windows.full-evidence.windows-version" } } },
+      "then": { "properties": { "details": { "$ref": "#/$defs/windowsVersionDetails" } } }
+    },
+    {
+      "if": { "properties": { "kind": { "const": "ling.windows.full-evidence.display" } } },
+      "then": { "properties": { "details": { "$ref": "#/$defs/displayDetails" } } }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "enum": [
+              "ling.windows.full-evidence.narrator",
+              "ling.windows.full-evidence.nvda"
+            ]
+          }
+        }
+      },
+      "then": { "properties": { "details": { "$ref": "#/$defs/screenReaderDetails" } } }
+    },
+    {
+      "if": { "properties": { "kind": { "const": "ling.windows.full-evidence.smartscreen" } } },
+      "then": { "properties": { "details": { "$ref": "#/$defs/smartScreenDetails" } } }
+    },
+    {
+      "if": { "properties": { "kind": { "const": "ling.windows.full-evidence.install-lifecycle" } } },
+      "then": { "properties": { "details": { "$ref": "#/$defs/installLifecycleDetails" } } }
+    },
+    {
+      "if": {
+        "required": ["kind", "case"],
+        "properties": {
+          "kind": { "const": "ling.windows.full-evidence.smartscreen" },
+          "case": {
+            "type": "object",
+            "required": ["outcome"],
+            "properties": { "outcome": { "const": "PASS" } }
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "details": {
+            "type": "object",
+            "properties": {
+              "reputationEstablished": { "const": true },
+              "warningDisplayed": { "const": false },
+              "runAnywayUsed": { "const": false },
+              "installerLaunchAllowed": { "const": true }
+            }
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "host": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["machineName", "platform", "architecture", "windowsBuild", "session"],
+      "properties": {
+        "machineName": { "type": "string", "minLength": 1 },
+        "platform": { "const": "win32" },
+        "architecture": { "const": "x64" },
+        "windowsBuild": { "type": "string", "minLength": 1 },
+        "session": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["id", "name", "interactive", "locked"],
+          "properties": {
+            "id": { "type": "integer", "minimum": 1 },
+            "name": { "type": ["string", "null"] },
+            "interactive": { "const": true },
+            "locked": { "const": false }
+          }
+        }
+      }
+    },
+    "operator": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id"],
+      "properties": { "id": { "type": "string", "minLength": 1 } }
+    },
+    "reviewer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "reviewedAt", "status"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "reviewedAt": { "type": "string", "format": "date-time" },
+        "status": {
+          "const": "review_claimed_unverified",
+          "description": "Operator-supplied routing metadata only. Release promotion requires the separate detached reviewer signature."
+        }
+      }
+    },
+    "case": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["outcome", "summary", "completedAt", "error"],
+      "properties": {
+        "outcome": { "enum": ["PASS", "FAIL"] },
+        "summary": { "type": "string", "minLength": 1 },
+        "completedAt": { "type": "string", "format": "date-time" },
+        "error": { "type": ["string", "null"] }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "outcome": { "const": "PASS" } } },
+          "then": { "properties": { "error": { "const": null } } },
+          "else": { "properties": { "error": { "type": "string", "minLength": 1 } } }
+        }
+      ]
+    },
+    "fileReference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256"],
+      "properties": {
+        "path": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^(?![A-Za-z]:[\\\\/])(?![\\\\/])(?!.*(?:^|[\\\\/])\\.\\.(?:[\\\\/]|$)).+"
+        },
+        "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      }
+    },
+    "windowsVersionDetails": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["supportedBuild"],
+      "properties": { "supportedBuild": { "type": "boolean" } }
+    },
+    "displayDetails": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["displayIds", "dpiProfiles", "crossDisplayCapturePassed", "visualReviewPassed"],
+      "properties": {
+        "displayIds": { "type": "array", "minItems": 2, "uniqueItems": true, "items": { "type": "string", "minLength": 1 } },
+        "dpiProfiles": { "type": "array", "minItems": 2, "uniqueItems": true, "items": { "type": "number", "exclusiveMinimum": 0 } },
+        "crossDisplayCapturePassed": { "type": "boolean" },
+        "visualReviewPassed": { "type": "boolean" }
+      }
+    },
+    "screenReaderDetails": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["focusPassed", "namesPassed", "orderPassed", "announcementsPassed", "failureRecoveryPassed"],
+      "properties": {
+        "focusPassed": { "type": "boolean" },
+        "namesPassed": { "type": "boolean" },
+        "orderPassed": { "type": "boolean" },
+        "announcementsPassed": { "type": "boolean" },
+        "failureRecoveryPassed": { "type": "boolean" }
+      }
+    },
+    "smartScreenDetails": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["reputationEstablished", "warningDisplayed", "runAnywayUsed", "installerLaunchAllowed"],
+      "properties": {
+        "reputationEstablished": { "type": "boolean" },
+        "warningDisplayed": { "type": "boolean" },
+        "runAnywayUsed": { "type": "boolean" },
+        "installerLaunchAllowed": { "type": "boolean" }
+      }
+    },
+    "installLifecycleDetails": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "cleanBaselinePassed",
+        "installPassed",
+        "installedSmokePassed",
+        "updatePassed",
+        "uninstallPassed",
+        "finalResidueCount"
+      ],
+      "properties": {
+        "cleanBaselinePassed": { "type": "boolean" },
+        "installPassed": { "type": "boolean" },
+        "installedSmokePassed": { "type": "boolean" },
+        "updatePassed": { "type": "boolean" },
+        "uninstallPassed": { "type": "boolean" },
+        "finalResidueCount": { "type": "integer", "minimum": 0 }
+      }
+    }
+  }
+}

@@ -359,6 +359,27 @@ test("saved workspace path wins over daemon default", async ({ page }) => {
   await expect.poll(() => page.evaluate(() => localStorage.getItem("ling-stack.workspaceCwd"))).toBeNull();
 });
 
+test("desktop host ignores a saved workspace path and uses its daemon authority", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.locale", "en-US");
+    localStorage.setItem("ling-stack.workspaceCwd", "/tmp/saved-workspace");
+    Object.defineProperty(window, "lingDesktop", {
+      configurable: true,
+      value: {
+        platform: "macos",
+        daemonBaseUrl: "http://127.0.0.1:17891",
+      },
+    });
+  });
+  const daemonCwd = "/tmp/daemon-default-workspace";
+  const state = createBaseState({ approvalStatus: "expired" });
+  await mockDaemon(page, state, { defaultWorkspaceCwd: daemonCwd });
+  await page.goto("/");
+
+  await expect.poll(() => state.workspaceSettings.workspaceCwd).toBe(daemonCwd);
+  await expect.poll(() => page.evaluate(() => localStorage.getItem("ling-stack.workspaceCwd"))).toBeNull();
+});
+
 test("succeeded workspace tasks show a clear result action", async ({ page }) => {
   await useEnglishLocale(page);
   const state = createBaseState({ approvalStatus: "expired" });

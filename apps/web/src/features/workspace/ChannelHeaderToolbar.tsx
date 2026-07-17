@@ -1,5 +1,6 @@
 import { ListChecks, Loader2, PanelBottom, PanelBottomClose, PanelRightClose, PanelRightOpen, RefreshCw, UserPlus } from "lucide-react";
 import type { ReactNode, Ref } from "react";
+import { CurrentSessionHeaderCapabilitySlot } from "../../shared/current-session/CurrentSessionHeaderCapability.js";
 import {
   WorkspaceToolbarIconButton,
   WorkspaceTopRightToolbar,
@@ -62,6 +63,7 @@ export function ChannelHeaderToolbar({
 }: ChannelHeaderToolbarProps): JSX.Element {
   return (
     <WorkspaceTopRightToolbar className="channel-header-actions" ariaLabel={ariaLabel}>
+      <CurrentSessionHeaderCapabilitySlot />
       {settingsPageOpen ? (
         <button className="secondary-button compact-button channel-settings-refresh-button" type="button" onClick={onRefreshSettings} disabled={settingsRefreshDisabled}>
           {settingsLoading ? <Loader2 className="spin" size={14} /> : <RefreshCw size={14} />}

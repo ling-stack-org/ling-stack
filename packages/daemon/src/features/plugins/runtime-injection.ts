@@ -37,7 +37,11 @@ export function buildManagedPluginRuntimePreview(input: {
     blockers.push("Installed plugin package cache is missing.");
   }
   const health = input.store.getManagedPluginHealthSnapshot(input.descriptor.id, input.now);
-  if (health?.status === "failed" || health?.status === "expired") {
+  if (input.descriptor.id === "bundled:cua-driver" && health?.status !== "ready") {
+    blockers.push(
+      health?.message ?? "Cua Driver runtime health has not been verified.",
+    );
+  } else if (health?.status === "failed" || health?.status === "expired") {
     blockers.push(health.message ?? `Plugin health is ${health.status}.`);
   }
 

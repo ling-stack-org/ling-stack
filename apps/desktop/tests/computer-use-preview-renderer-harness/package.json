@@ -1,0 +1,6 @@
+{
+  "name": "ling-computer-use-preview-renderer-harness",
+  "private": true,
+  "type": "module",
+  "main": "main.mjs"
+}

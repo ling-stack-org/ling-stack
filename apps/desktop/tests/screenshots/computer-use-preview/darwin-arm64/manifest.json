@@ -1,0 +1,86 @@
+{
+  "platform": "darwin",
+  "arch": "arm64",
+  "cases": [
+    {
+      "filename": "minimum-light.png",
+      "theme": "light",
+      "width": 320,
+      "height": 200,
+      "reducedMotion": false,
+      "sha256": "d796f64c66c5e663a4518d0a07335d8bde4b2b76dd954fc65b483ab00daf0542"
+    },
+    {
+      "filename": "default-light.png",
+      "theme": "light",
+      "width": 420,
+      "height": 263,
+      "reducedMotion": false,
+      "sha256": "5a3592a5934d694d261ceae67f4c4cad9320c6724230a05736193842ed1e90f5"
+    },
+    {
+      "filename": "maximum-light.png",
+      "theme": "light",
+      "width": 480,
+      "height": 300,
+      "reducedMotion": false,
+      "sha256": "2e773857f9a89787a90af2e8be598b733d36c0903b632560e77f6f54d1a3eedf"
+    },
+    {
+      "filename": "stop-failed-light.png",
+      "theme": "light",
+      "width": 420,
+      "height": 263,
+      "reducedMotion": false,
+      "sha256": "79e859ce45eae997a9ee162e1e847a721387c4752117fe1111d9ede9b4528a66"
+    },
+    {
+      "filename": "reduced-motion-light.png",
+      "theme": "light",
+      "width": 420,
+      "height": 263,
+      "reducedMotion": true,
+      "sha256": "5a3592a5934d694d261ceae67f4c4cad9320c6724230a05736193842ed1e90f5"
+    },
+    {
+      "filename": "minimum-dark.png",
+      "theme": "dark",
+      "width": 320,
+      "height": 200,
+      "reducedMotion": false,
+      "sha256": "ae1615d73e50e1231bb8fadf46d65fcb9bdd7c2f85e8fdd4d7164a502b229183"
+    },
+    {
+      "filename": "default-dark.png",
+      "theme": "dark",
+      "width": 420,
+      "height": 263,
+      "reducedMotion": false,
+      "sha256": "d399b20bdf5b7bd702bd06e367669be6ffce383b4f1b272a4641ab37dde02d95"
+    },
+    {
+      "filename": "maximum-dark.png",
+      "theme": "dark",
+      "width": 480,
+      "height": 300,
+      "reducedMotion": false,
+      "sha256": "312920130f9cae885c59c264ee6f8beadb7221d4123848972225f62cf10a8bb0"
+    },
+    {
+      "filename": "stop-failed-dark.png",
+      "theme": "dark",
+      "width": 420,
+      "height": 263,
+      "reducedMotion": false,
+      "sha256": "486d2c4e86b00ad1a598534d3a2052aabffe063a3fb2468054afee8a09e571c9"
+    },
+    {
+      "filename": "reduced-motion-dark.png",
+      "theme": "dark",
+      "width": 420,
+      "height": 263,
+      "reducedMotion": true,
+      "sha256": "d399b20bdf5b7bd702bd06e367669be6ffce383b4f1b272a4641ab37dde02d95"
+    }
+  ]
+}

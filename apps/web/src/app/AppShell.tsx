@@ -88,12 +88,18 @@ import {
   getChannelCouncilPolicy,
   updateChannelCouncilPolicy,
 } from "../api/ai-councils.js";
-import { getViteDefaultWorkspaceCwd, readInitialWorkspaceCwd, readSavedWorkspaceCwd } from "../lib/local-storage.js";
+import {
+  clearSavedWorkspaceCwd,
+  getViteDefaultWorkspaceCwd,
+  readInitialWorkspaceCwd,
+  readSavedWorkspaceCwd,
+} from "../lib/local-storage.js";
 import {
   readRunWorkspaceCwd,
 } from "../lib/run-evidence.js";
 import { useApprovalsDomain } from "../domains/approvals/use-approvals-domain.js";
 import { useAutomationsDomain } from "../domains/automations/use-automations-domain.js";
+import { DesktopComputerUseBridge } from "./DesktopComputerUseBridge.js";
 import { useConversationDomain } from "../domains/conversations/use-conversation-domain.js";
 import { useExternalWorkDomain } from "../domains/external-work/use-external-work-domain.js";
 import { useMediaDomain } from "../domains/media/use-media-domain.js";
@@ -124,6 +130,7 @@ import { removeRecordKey } from "../lib/records.js";
 import { permissionPresetForWorkspaceAccessMode, workspaceAccessModeForPermissionPreset } from "../lib/session-permissions.js";
 import { authorizationAndAccessToLegacyPermission } from "../lib/conversation-authorization.js";
 import { StatusBadge } from "../shared/components/index.js";
+import { CurrentSessionHeaderCapabilityProvider } from "../shared/current-session/CurrentSessionHeaderCapability.js";
 import {
   aiTeammateToLocalDraft,
   buildChannelUnreadState,
@@ -131,6 +138,7 @@ import {
   buildSidebarChannelNotifications,
   buildSidebarTeammateNotifications,
   latestChannelMessageTimestamp,
+  selectDesktopComputerUseConversation,
   type ChannelUnreadState,
 } from "./app-shell-selectors.js";
 import { useAppNavigationController } from "./use-app-navigation-controller.js";
@@ -141,6 +149,7 @@ import { useProviderUsageController } from "./use-provider-usage-controller.js";
 import { useSlashCommandRegistry } from "./use-slash-command-registry.js";
 import { useTaskRunController } from "./use-task-run-controller.js";
 import { useWorkspaceSettingsController } from "./use-workspace-settings-controller.js";
+import { useDesktopNavigationIntents } from "./use-desktop-navigation-intents.js";
 
 const builtinSkillPack = getBuiltinSkillPack(GSTACK_DEFAULT_SKILL_PACK_ID);
 const builtinTeammateTemplates = builtinSkillPack?.teammateTemplates ?? [];
@@ -186,7 +195,8 @@ export function AppShell(): JSX.Element {
   const { locale, setLocale, t } = useI18n();
   const { preference: themePreference, setPreference: setThemePreference } = useTheme();
   const { showToast } = useLingToast();
-  const initialWorkspaceCwd = readInitialWorkspaceCwd();
+  const desktopHosted = typeof window !== "undefined" && Boolean(window.lingDesktop);
+  const initialWorkspaceCwd = desktopHosted ? "" : readInitialWorkspaceCwd();
   const [form, setForm] = useState<RunFormState>(() => ({
     ...defaultForm,
     cwd: initialWorkspaceCwd,
@@ -199,6 +209,7 @@ export function AppShell(): JSX.Element {
   const [settingsWorkspaceToolView, setSettingsWorkspaceToolView] = useState<SettingsWorkspaceToolView>("");
   const [settingsInitialSection, setSettingsInitialSection] = useState<SettingsSectionId | undefined>();
   const [settingsRunDiagnosticsRunId, setSettingsRunDiagnosticsRunId] = useState<string | undefined>();
+  const [desktopTeammateConversationId, setDesktopTeammateConversationId] = useState<string | undefined>();
   const [providerSetupIntent, setProviderSetupIntent] = useState<ProviderSetupIntent | "">("");
   const settingsReturnTargetRef = useRef<SettingsReturnTarget | undefined>(undefined);
   const [channelSidebarOpen, setChannelSidebarOpen] = useState(() =>
@@ -414,6 +425,7 @@ export function AppShell(): JSX.Element {
     archiveAllConversationThreads,
     sendConversationMessage,
   } = conversationDomain.actions;
+  useDesktopNavigationIntents(Boolean(form.cwd.trim()), openConversationThread);
   const automationsDomain = useAutomationsDomain({
     cwd: form.cwd.trim(),
     channels,
@@ -771,7 +783,7 @@ export function AppShell(): JSX.Element {
     abortCurrentRun,
     cancelRunOrWorkUnit,
   } = runsDomain.actions;
-  const { workspaceSettings, effectiveConfig, patchWorkspaceSettings } = useWorkspaceSettingsController({
+  const { workspaceSettings, effectiveConfig, updateWorkspaceCwd, patchWorkspaceSettings } = useWorkspaceSettingsController({
     daemonHealthy,
     form,
     setForm,
@@ -1268,8 +1280,20 @@ export function AppShell(): JSX.Element {
     setActiveSidebarTarget("workspace");
   }
 
-  function selectRecentConversation(conversation: SidebarRecentConversation): void {
+  async function openConversationThread(
+    conversationId: string,
+    isCurrentIntent: () => boolean = () => true,
+  ): Promise<boolean> {
+    if (!isCurrentIntent()) {
+      return false;
+    }
+    settingsReturnTargetRef.current = undefined;
     clearSettingsWorkspaceToolView();
+    closeSettingsRunDiagnostics();
+    setSettingsInitialSection(undefined);
+    setProviderSetupIntent("");
+    setDesktopTeammateConversationId(undefined);
+    setTeammateCreateOpen(false);
     setThreadPageTargetId("");
     setChannelCreateOpen(false);
     setSelectedChannelBranchId("");
@@ -1278,7 +1302,16 @@ export function AppShell(): JSX.Element {
     setTaskRunProviderId("");
     setActiveView("workspace");
     setActiveSidebarTarget("workspace");
-    void selectConversationThread(conversation.id);
+    const opened = await selectConversationThread(conversationId, undefined, isCurrentIntent);
+    if (!opened || !isCurrentIntent()) {
+      return false;
+    }
+    window.lingDesktop?.computerUse.reportSelectedConversation(conversationId);
+    return true;
+  }
+
+  function selectRecentConversation(conversation: SidebarRecentConversation): void {
+    void openConversationThread(conversation.id);
   }
 
   async function refreshArchivedSidebarItems(): Promise<void> {
@@ -1730,20 +1763,30 @@ export function AppShell(): JSX.Element {
       });
       const viteDefaultWorkspaceCwd = getViteDefaultWorkspaceCwd();
       const defaultWorkspaceCwd = health.defaultWorkspaceCwd?.trim() || viteDefaultWorkspaceCwd;
+      const savedWorkspaceCwd = readSavedWorkspaceCwd();
       const canApplyDaemonDefault =
-        !readSavedWorkspaceCwd() &&
-        (!form.cwd.trim() || form.cwd.trim() === viteDefaultWorkspaceCwd);
+        desktopHosted ||
+        (!savedWorkspaceCwd && (!form.cwd.trim() || form.cwd.trim() === viteDefaultWorkspaceCwd));
       if (health.ok && defaultWorkspaceCwd && canApplyDaemonDefault) {
-        setForm((current) =>
-          current.cwd.trim() && current.cwd.trim() !== viteDefaultWorkspaceCwd
-            ? current
-            : { ...current, cwd: defaultWorkspaceCwd },
-        );
-        setChannelForm((current) =>
-          current.boundPath.trim() && current.boundPath.trim() !== viteDefaultWorkspaceCwd
-            ? current
-            : { ...current, boundPath: defaultWorkspaceCwd },
-        );
+        if (desktopHosted) {
+          if (savedWorkspaceCwd) {
+            clearSavedWorkspaceCwd();
+          }
+          if (form.cwd.trim() !== defaultWorkspaceCwd) {
+            updateWorkspaceCwd(defaultWorkspaceCwd);
+          }
+        } else {
+          setForm((current) =>
+            current.cwd.trim() && current.cwd.trim() !== viteDefaultWorkspaceCwd
+              ? current
+              : { ...current, cwd: defaultWorkspaceCwd },
+          );
+          setChannelForm((current) =>
+            current.boundPath.trim() && current.boundPath.trim() !== viteDefaultWorkspaceCwd
+              ? current
+              : { ...current, boundPath: defaultWorkspaceCwd },
+          );
+        }
         void Promise.all([
           refreshProviders(defaultWorkspaceCwd),
           refreshChannels(defaultWorkspaceCwd),
@@ -2043,6 +2086,15 @@ export function AppShell(): JSX.Element {
     showInspector && inspectorCollapsed ? "inspector-collapsed" : "",
     showInspector ? "" : "inspector-hidden",
   ].filter(Boolean).join(" ");
+  const workspaceSurfaceRef = useRef<HTMLElement>(null);
+  const desktopSelectedConversationId = selectDesktopComputerUseConversation({
+    activeView,
+    selectedChannelId,
+    selectedChannelBranchRootThreadId,
+    selectedConversationThreadId,
+    selectedAiTeammateId: selectedAiTeammate?.id,
+    teammateDirectThreadId: desktopTeammateConversationId,
+  });
 
   return (
     <main className={shellClassName}>
@@ -2101,6 +2153,7 @@ export function AppShell(): JSX.Element {
       />
       ) : null}
       <section
+        ref={workspaceSurfaceRef}
         className={
           activeView === "workspace"
             ? "workspace workspace-client-surface"
@@ -2123,12 +2176,17 @@ export function AppShell(): JSX.Element {
               : "workspace"
         }
       >
-        <LazyPageErrorBoundary
-          resetKey={`${activeView}:${selectedAiTeammate?.id ?? ""}`}
-          title={t("Page failed to load")}
-          retryLabel={t("Reload")}
-        >
-          <Suspense fallback={<div className="client-empty-state"><span>{t("Loading")}</span></div>}>
+        <CurrentSessionHeaderCapabilityProvider>
+          <DesktopComputerUseBridge
+            selectedConversationId={desktopSelectedConversationId}
+            hostRef={workspaceSurfaceRef}
+          />
+          <LazyPageErrorBoundary
+            resetKey={`${activeView}:${selectedAiTeammate?.id ?? ""}`}
+            title={t("Page failed to load")}
+            retryLabel={t("Reload")}
+          >
+            <Suspense fallback={<div className="client-empty-state"><span>{t("Loading")}</span></div>}>
             {activeView === "workspace" ? (
               selectedChannelId ? (
                 <WorkspaceClientView
@@ -2427,6 +2485,7 @@ export function AppShell(): JSX.Element {
                 onOpenRun={(runId) => void openRunFromWorkspace(runId)}
                 defaultAuthorizationMode={workspaceSettings?.defaultAuthorizationMode}
                 defaultWorkspaceAccessMode={workspaceSettings?.defaultWorkspaceAccessMode}
+                onDirectConversationChange={setDesktopTeammateConversationId}
                 defaultPermissionMode={workspaceSettings?.defaultPermissionMode}
                 defaultPermissionPreset={workspaceSettings?.defaultPermissionPreset}
                   />
@@ -2807,8 +2866,9 @@ export function AppShell(): JSX.Element {
                 )}
               </>
             )}
-          </Suspense>
-        </LazyPageErrorBoundary>
+            </Suspense>
+          </LazyPageErrorBoundary>
+        </CurrentSessionHeaderCapabilityProvider>
       </section>
       {showInspector ? (
         <aside className={inspectorCollapsed ? "right-panel collapsed" : "right-panel"} aria-label={t("Inspector")}>

@@ -46,6 +46,7 @@ import { writeJson } from "./shared/response.js";
 import { StartupOptionalWarmupCoordinator } from "./startup/optional-warmups.js";
 import { StartupStateRegistry } from "./startup/state.js";
 import { warmDefaultWorkspaceStartup } from "./startup/warmup.js";
+import { ComputerUseProjectionRegistry } from "./features/computer-use/registry.js";
 
 export { defaultDaemonConfig } from "./config.js";
 export type { DaemonConfig, ResolvedDaemonConfig } from "./config.js";
@@ -75,6 +76,7 @@ export interface DaemonServer {
   readonly config: ResolvedDaemonConfig;
   readonly extensionRegistry: LingExtensionRegistry;
   readonly startupState: StartupStateRegistry;
+  readonly computerUsePreviews: ComputerUseProjectionRegistry;
   start(): Promise<void>;
   stop(): Promise<void>;
 }
@@ -95,6 +97,7 @@ export function createDaemonServer(
   const mcpBroker = dependencies.mcpBroker ?? createDefaultMcpBroker();
   const controlPlaneEvents = new ControlPlaneEventHub();
   const startupState = new StartupStateRegistry();
+  const computerUsePreviews = new ComputerUseProjectionRegistry(dependencies.computerUseProjectionOptions);
   const providerStartupRefresh = new ProviderStartupRefreshService({ secretResolver, controlPlaneEvents, startupState });
   let automationSchedulers: AutomationSchedulerRegistry;
   let startupOptionalWarmups: StartupOptionalWarmupCoordinator;
@@ -138,6 +141,7 @@ export function createDaemonServer(
     runtimeSupervisor,
     secretResolver,
     mcpBroker,
+    computerUsePreviews,
     controlPlaneEvents,
     startupState,
   );
@@ -168,6 +172,15 @@ export function createDaemonServer(
     providerStartupRefresh,
     startupState,
     startupOptionalWarmups,
+    computerUsePreviews,
+    computerUseStop: dependencies.computerUseStop,
+    desktopBridgeToken: dependencies.desktopBridgeToken ?? process.env.LING_DESKTOP_BRIDGE_TOKEN,
+    computerUseRouteToken:
+      dependencies.computerUseRouteToken
+      ?? process.env.LING_COMPUTER_USE_ROUTE_TOKEN
+      ?? dependencies.desktopBridgeToken
+      ?? process.env.LING_DESKTOP_BRIDGE_TOKEN,
+    computerUseTargetOwnershipTimeoutMs: dependencies.computerUseTargetOwnershipTimeoutMs,
   };
   const server = createServer(async (request, response) => {
     try {
@@ -183,13 +196,14 @@ export function createDaemonServer(
       }
     }
   });
-  attachRpcWebSocketServer(server, context);
+  const rpcWebSocketServer = attachRpcWebSocketServer(server, context);
 
   return {
     server,
     config: resolvedConfig,
     extensionRegistry,
     startupState,
+    computerUsePreviews,
     start: async () => {
       await new Promise<void>((resolve, reject) => {
         server.once("error", reject);
@@ -236,6 +250,8 @@ export function createDaemonServer(
         backgroundSchedulers.stopAll();
         automationSchedulers.stopAll();
         controlPlaneEvents.closeAll();
+        computerUsePreviews.closeAll();
+        rpcWebSocketServer.close();
         server.close((error) => {
           if (error) {
             reject(error);
@@ -243,6 +259,7 @@ export function createDaemonServer(
           }
           resolve();
         });
+        server.closeAllConnections();
       });
       await activeRuns.waitForIdle();
       storeRegistry.closeAll();

@@ -1,0 +1,92 @@
+{
+  "name": "@ling-stack/desktop",
+  "version": "0.0.0",
+  "description": "Ling Stack desktop shell with shared Web UI and Computer Use picture-in-picture.",
+  "license": "MIT",
+  "author": "Ling Stack contributors",
+  "type": "module",
+  "private": true,
+  "main": "./dist/main/main.js",
+  "scripts": {
+    "build": "corepack pnpm --filter @ling-stack/web build && corepack pnpm --filter @ling-stack/daemon build && tsc -p tsconfig.main.json && esbuild preload/main-window.ts preload/computer-use-preview.ts --bundle --platform=node --format=cjs --external:electron --outdir=dist/preload --out-extension:.js=.cjs && esbuild ../../packages/daemon/dist/cli.js --bundle --platform=node --format=esm --banner:js=\"import { createRequire as __lingCreateRequire } from 'node:module'; const require = __lingCreateRequire(import.meta.url);\" --outfile=dist/daemon/cli.mjs && vite build --config vite.config.ts",
+    "typecheck": "corepack pnpm --filter @ling-stack/api-client build && tsc -p tsconfig.main.json --noEmit && tsc -p tsconfig.preload.json --noEmit && tsc -p tsconfig.renderer.json --noEmit",
+    "dev": "corepack pnpm build && electron .",
+    "start": "electron .",
+    "lint": "echo \"lint not configured yet\"",
+    "test": "corepack pnpm build && node --test tests/*.test.mjs && playwright test --config tests/playwright.renderer.config.mjs",
+    "test:renderer": "vite build --config vite.config.ts && playwright test --config tests/playwright.renderer.config.mjs",
+    "performance:computer-use": "corepack pnpm build && node --expose-gc tests/computer-use-performance-harness.mjs",
+    "performance:computer-use:real": "corepack pnpm build && node --expose-gc tests/computer-use-performance-harness.mjs --real",
+    "smoke:computer-use": "corepack pnpm build && node tests/run-computer-use-smoke.mjs",
+    "smoke:computer-use:real": "corepack pnpm build && node tests/run-computer-use-smoke.mjs --real",
+    "smoke:computer-use:windows-provider": "corepack pnpm build && node tests/run-windows-provider-smoke.mjs",
+    "verify:release-schemas": "node tests/validate-release-evidence-schemas.mjs",
+    "verify:windows-provider": "node tests/verify-windows-cua-driver-provider.mjs",
+    "screenshots:update:computer-use": "corepack pnpm build && electron tests/screenshot-app --update",
+    "screenshots:verify:computer-use": "corepack pnpm build && electron tests/screenshot-app",
+    "package:mac": "corepack pnpm build && electron-builder --mac dmg zip --arm64 --x64",
+    "package:win": "corepack pnpm build && electron-builder --win nsis --x64"
+  },
+  "dependencies": {
+    "@ling-stack/api-client": "workspace:*",
+    "@ling-stack/contracts": "workspace:*",
+    "mammoth": "1.12.0",
+    "pdf-parse": "1.1.1"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.55.0",
+    "ajv": "8.20.0",
+    "ajv-formats": "3.0.1",
+    "electron": "^43.1.1",
+    "electron-builder": "^26.15.3",
+    "esbuild": "^0.25.12",
+    "resedit": "1.7.2",
+    "vite": "^6.4.3"
+  },
+  "build": {
+    "appId": "com.lingstack.desktop",
+    "productName": "Ling Stack",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "../web/dist",
+        "to": "web"
+      },
+      {
+        "from": "../../packages/daemon/src/features/plugins/bundled",
+        "to": "bundled",
+        "filter": [
+          "cua-driver/.ling-plugin/plugin.json",
+          "cua-driver/mcp-server.json",
+          "cua-driver/README.md"
+        ]
+      }
+    ],
+    "mac": {
+      "category": "public.app-category.developer-tools",
+      "icon": "build/icon.icns",
+      "target": [
+        "dmg",
+        "zip"
+      ]
+    },
+    "win": {
+      "icon": "build/icon.ico",
+      "requestedExecutionLevel": "asInvoker",
+      "target": [
+        "nsis"
+      ]
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "packElevateHelper": false
+    }
+  }
+}

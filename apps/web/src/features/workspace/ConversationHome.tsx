@@ -1297,13 +1297,23 @@ export function ConversationHome({
             }}
           />
         )}
-        composerNode={<div className="normal-conversation-composer-stack">{composerNode}</div>}
+        composerNode={(
+          <div
+            className="normal-conversation-composer-stack"
+            data-computer-use-obstacle="true"
+            data-computer-use-obstacle-kind="composer"
+          >
+            {composerNode}
+          </div>
+        )}
         sideNode={(
           <>
             {conversationSummaryInMainLayout ? (
               <aside
                 ref={conversationSummaryPlacementRef}
                 className={`channel-progress-popover channel-progress-panel conversation-summary-side-panel normal-conversation-summary-panel ${conversationSummaryPanel.motionClass}`}
+                data-computer-use-obstacle="true"
+                data-computer-use-obstacle-kind="summary"
                 aria-label={t("Summary")}
               >
                 {conversationSummaryNode}
@@ -1325,7 +1335,11 @@ export function ConversationHome({
               />
             ) : null}
             {conversationDockController.visible ? (
-              <div className="workspace-right-dock-frame normal-conversation-right-dock-frame">
+              <div
+                className="workspace-right-dock-frame normal-conversation-right-dock-frame"
+                data-computer-use-obstacle="true"
+                data-computer-use-obstacle-kind="right-dock"
+              >
                 <WorkspaceRightDock
                   surface="normal_conversation"
                   open={conversationDockOpen}

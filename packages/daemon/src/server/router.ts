@@ -122,6 +122,7 @@ import {
   handleExternalWorkWorkflowConfigure,
 } from "../features/external-work/workflow.js";
 import { handleControlPlaneRoute } from "../features/control-plane/routes.js";
+import { handleComputerUseRoute } from "../features/computer-use/routes.js";
 import { handleExternalGitHubImport, handleExternalLinearImport } from "../features/external-work/imports.js";
 import {
   handleExternalGitHubPoll,
@@ -349,6 +350,7 @@ export async function routeRequest(
     controlPlaneEvents,
     providerStartupRefresh,
     startupState,
+    computerUsePreviews,
   } = context;
   setCorsHeaders(response);
 
@@ -383,6 +385,7 @@ export async function routeRequest(
       mcpBroker,
       controlPlaneEvents,
       startupState,
+      computerUsePreviews,
     });
   };
   const startTeammateDirectRun = async (runRequest: RunRequest, sink: RunExecutionSink): Promise<string | undefined> =>
@@ -399,6 +402,7 @@ export async function routeRequest(
         afterRunTerminal: maybeContinueRunInterventions,
         controlPlaneEvents,
         startupState,
+        computerUsePreviews,
       },
     );
   const directReplyControl = new DirectReplyControlService({
@@ -453,6 +457,10 @@ export async function routeRequest(
   }
 
   if (await handleControlPlaneRoute(request, response, context)) {
+    return;
+  }
+
+  if (await handleComputerUseRoute(request, response, context)) {
     return;
   }
 
@@ -607,6 +615,7 @@ export async function routeRequest(
               },
               controlPlaneEvents,
               startupState,
+              computerUsePreviews,
             },
           )),
       automationSchedulers,
@@ -793,6 +802,7 @@ export async function routeRequest(
             afterRunTerminal: maybeContinueRunInterventions,
             controlPlaneEvents,
             startupState,
+            computerUsePreviews,
           },
         );
       },
@@ -942,6 +952,7 @@ export async function routeRequest(
           afterRunTerminal: maybeContinueRunInterventions,
           controlPlaneEvents,
           startupState,
+          computerUsePreviews,
         },
       ), imageVisionSummarizer);
     return;
@@ -1001,6 +1012,7 @@ export async function routeRequest(
               afterRunTerminal: maybeContinueRunInterventions,
               controlPlaneEvents,
               startupState,
+              computerUsePreviews,
             },
           )),
       startForkRun: async (runRequest) =>
@@ -1019,6 +1031,7 @@ export async function routeRequest(
               afterRunTerminal: maybeContinueRunInterventions,
               controlPlaneEvents,
               startupState,
+              computerUsePreviews,
             },
           )),
     });
@@ -1217,6 +1230,7 @@ export async function routeRequest(
           afterRunTerminal: maybeContinueRunInterventions,
           controlPlaneEvents,
           startupState,
+          computerUsePreviews,
         },
       ));
     return;
@@ -1243,6 +1257,7 @@ export async function routeRequest(
       runtimeSupervisor,
       secretResolver,
       mcpBroker,
+      computerUsePreviews,
       controlPlaneEvents,
       startupState,
       runRoute.runId,
@@ -1308,6 +1323,7 @@ export async function routeRequest(
         runtimeSupervisor,
         secretResolver,
         mcpBroker,
+        computerUsePreviews,
         controlPlaneEvents,
         startupState,
         runInterventionRoute.interventionId,
@@ -1495,6 +1511,7 @@ export async function routeRequest(
             },
             controlPlaneEvents,
             startupState,
+            computerUsePreviews,
           },
         ).then(resolveOnce, () => resolveOnce(undefined));
       });
@@ -1836,6 +1853,7 @@ export async function routeRequest(
               afterRunTerminal: maybeContinueRunInterventions,
               controlPlaneEvents,
               startupState,
+              computerUsePreviews,
             },
           ),
       );
@@ -2335,6 +2353,7 @@ export async function routeRequest(
               afterRunTerminal: maybeContinueRunInterventions,
               controlPlaneEvents,
               startupState,
+              computerUsePreviews,
             },
           );
         },

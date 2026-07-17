@@ -12,6 +12,7 @@ import type { RunStoreRegistry } from "../../runtime/store-registry.js";
 import type { RuntimeSupervisor } from "../../runtime/supervisor.js";
 import type { StartupStateRegistry } from "../../startup/state.js";
 import type { ControlPlaneEventHub } from "../control-plane/events.js";
+import type { ComputerUseProjectionRegistry } from "../computer-use/registry.js";
 import { createDetachedRunExecutionSink, executeRunRequest } from "../runs/orchestrator.js";
 import { maybeStartNextRunInterventionContinuation } from "../runs/interventions.js";
 import { runAutomation } from "./run.js";
@@ -57,6 +58,7 @@ export class AutomationSchedulerRegistry {
     private readonly runtimeSupervisor: RuntimeSupervisor,
     private readonly secretResolver: SecretResolver,
     private readonly mcpBroker: McpBroker,
+    private readonly computerUsePreviews: ComputerUseProjectionRegistry,
     private readonly controlPlaneEvents: ControlPlaneEventHub,
     private readonly startupState?: StartupStateRegistry,
   ) {}
@@ -223,6 +225,7 @@ export class AutomationSchedulerRegistry {
               },
               controlPlaneEvents: this.controlPlaneEvents,
               startupState: this.startupState,
+              computerUsePreviews: this.computerUsePreviews,
             },
           ),
       });
@@ -280,6 +283,7 @@ export class AutomationSchedulerRegistry {
       mcpBroker: this.mcpBroker,
       controlPlaneEvents: this.controlPlaneEvents,
       startupState: this.startupState,
+      computerUsePreviews: this.computerUsePreviews,
     });
   }
 

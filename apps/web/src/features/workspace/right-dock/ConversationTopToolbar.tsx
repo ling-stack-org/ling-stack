@@ -1,4 +1,5 @@
 import { ListChecks, PanelBottom, PanelBottomClose, PanelRightClose, PanelRightOpen, RefreshCw, Search } from "lucide-react";
+import { CurrentSessionHeaderCapabilitySlot } from "../../../shared/current-session/CurrentSessionHeaderCapability.js";
 import {
   WorkspaceToolbarIconButton,
   WorkspaceTopRightToolbar,
@@ -49,6 +50,7 @@ export function ConversationTopToolbar({
 }: ConversationTopToolbarProps): JSX.Element {
   return (
     <WorkspaceTopRightToolbar className="conversation-top-toolbar" ariaLabel={ariaLabel}>
+      <CurrentSessionHeaderCapabilitySlot />
       <WorkspaceToolbarIconButton
         active={searchActive}
         className="icon-button conversation-toolbar-search"

@@ -3939,7 +3939,7 @@ export function createMockCuaPlugin(overrides: Partial<MockManagedPlugin> = {}):
         kind: "mcp-server",
         id: "mcp_cua_driver",
         label: "Cua Driver MCP server",
-        capabilities: ["mcp:stdio", "computer-use:macos"],
+        capabilities: ["mcp:stdio", "computer-use:macos", "computer-use:windows"],
         sideEffectLevel: "external",
         defaultApproval: "ask",
         linkedResourceId: linked?.id,
@@ -3973,7 +3973,7 @@ export function createMockBundledCuaPlugin(overrides: Partial<MockManagedPlugin>
   return {
     id: "bundled:cua-driver",
     displayName: "Cua Driver",
-    version: "0.1.0",
+    version: "0.2.0",
     sourceKind: "bundled",
     status,
     description: "Bundled Ling plugin shell for Cua Driver.",
@@ -4018,9 +4018,9 @@ export function createMockBundledCuaPackageRecord(): MockManagedPluginPackage {
   return {
     pluginId: "bundled:cua-driver",
     sourceKind: "bundled",
-    version: "0.1.0",
+    version: "0.2.0",
     status: "installed",
-    cacheRef: "bundled/cua-driver/0.1.0/mockhash1234",
+    cacheRef: "bundled/cua-driver/0.2.0/mockhash1234",
     packageHash: "mockhash1234567890",
     installedAt: "2026-06-06T00:20:00.000Z",
     updatedAt: "2026-06-06T00:20:00.000Z",
@@ -4082,13 +4082,13 @@ export function createMockBundledCuaPackage(): Record<string, unknown> {
     manifest: {
       id: "bundled:cua-driver",
       displayName: "Cua Driver",
-      version: "0.1.0",
+      version: "0.2.0",
       lingInterfaceVersion: "1",
       sourceKind: "bundled",
       trustLevel: "trusted-local-preset",
       description: "Connects Ling to an already installed Cua Driver MCP server.",
-      trustSummary: "Controls native macOS apps through Accessibility and Screen Recording permissions.",
-      platforms: ["darwin"],
+      trustSummary: "Controls native macOS and Windows apps through permissions owned by the separately installed Cua Driver.",
+      platforms: ["darwin", "win32"],
       contributions: [{ kind: "mcp-server", id: "mcp:cua-driver", path: "./mcp-server.json" }],
     },
     validation: {
@@ -4098,9 +4098,9 @@ export function createMockBundledCuaPackage(): Record<string, unknown> {
       compiledDescriptor: {
         id: "bundled:cua-driver",
         displayName: "Cua Driver",
-        version: "0.1.0",
+        version: "0.2.0",
         sourceKind: "bundled",
-        trustSummary: "Controls native macOS apps through Accessibility and Screen Recording permissions.",
+        trustSummary: "Controls native macOS and Windows apps through permissions owned by the separately installed Cua Driver.",
         contributions: [
           {
             kind: "mcp-server",

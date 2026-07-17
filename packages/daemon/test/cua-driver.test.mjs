@@ -8,12 +8,18 @@ import { defaultCuaDriverCommandCandidates, resolveCuaDriverCommand } from "../d
 
 test("Cua Driver detection resolves PATH and explicit executable paths", async () => {
   const root = await mkdtemp(resolve(tmpdir(), "ling-stack-cua-detection-"));
-  const command = join(root, "cua-driver");
+  const command = join(root, process.platform === "win32" ? "cua-driver.exe" : "cua-driver");
   const originalPath = process.env.PATH;
+  const originalPathExt = process.env.PATHEXT;
   try {
     await writeFile(command, "#!/bin/sh\nexit 0\n");
-    await chmod(command, 0o755);
+    if (process.platform !== "win32") {
+      await chmod(command, 0o755);
+    }
     process.env.PATH = root;
+    if (process.platform === "win32") {
+      process.env.PATHEXT = ".EXE";
+    }
 
     assert.deepEqual(resolveCuaDriverCommand(), {
       ok: true,
@@ -31,6 +37,11 @@ test("Cua Driver detection resolves PATH and explicit executable paths", async (
     } else {
       process.env.PATH = originalPath;
     }
+    if (originalPathExt === undefined) {
+      delete process.env.PATHEXT;
+    } else {
+      process.env.PATHEXT = originalPathExt;
+    }
     await rm(root, { recursive: true, force: true });
   }
 });
@@ -38,14 +49,49 @@ test("Cua Driver detection resolves PATH and explicit executable paths", async (
 test("Cua Driver detection rejects non-executable files and directories", async () => {
   const root = await mkdtemp(resolve(tmpdir(), "ling-stack-cua-invalid-"));
   try {
-    const file = join(root, "cua-driver");
+    const file = join(root, process.platform === "win32" ? "cua-driver.txt" : "cua-driver");
     const directory = join(root, "cua-driver-directory");
     await writeFile(file, "not executable\n");
     await mkdir(directory);
-    await chmod(directory, 0o755);
+    if (process.platform !== "win32") {
+      await chmod(directory, 0o755);
+    }
 
     assert.equal(resolveCuaDriverCommand({ command: file }).errorCode, "plugin_command_not_executable");
     assert.equal(resolveCuaDriverCommand({ command: directory }).errorCode, "plugin_command_not_executable");
+    const windowsRoot = join(root, "windows");
+    await mkdir(windowsRoot);
+    const extensionless = join(windowsRoot, "cua-driver");
+    const executable = join(windowsRoot, "cua-driver.exe");
+    await writeFile(extensionless, "not a Windows executable\n");
+    await writeFile(executable, "fixture\n");
+
+    const environment = {
+      platform: "win32",
+      path: windowsRoot,
+      pathExt: ".EXE;.CMD",
+      homeDir: windowsRoot,
+      localAppData: join(windowsRoot, "local-app-data"),
+    };
+    assert.deepEqual(resolveCuaDriverCommand({}, environment), {
+      ok: true,
+      command: executable,
+      attempted: [join(windowsRoot, "cua-driver.exe")],
+    });
+    await rm(executable);
+    assert.equal(
+      resolveCuaDriverCommand({ command: extensionless }, environment).errorCode,
+      "plugin_command_not_executable",
+    );
+    const commandScript = join(windowsRoot, "cua-driver.cmd");
+    await writeFile(commandScript, "@exit /b 0\n");
+    assert.equal(
+      resolveCuaDriverCommand({ command: commandScript }, {
+        ...environment,
+        pathExt: ".CMD",
+      }).errorCode,
+      "plugin_command_not_executable",
+    );
   } finally {
     await rm(root, { recursive: true, force: true });
   }

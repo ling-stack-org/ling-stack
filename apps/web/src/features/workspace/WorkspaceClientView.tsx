@@ -4565,7 +4565,12 @@ export function WorkspaceClientView({
           } : undefined}
         />
         {progressPopoverInMainLayout ? (
-          <aside className={`channel-progress-popover channel-progress-panel ${progressPopoverMotionClass}`} aria-label={t("Summary")}>
+          <aside
+            className={`channel-progress-popover channel-progress-panel ${progressPopoverMotionClass}`}
+            data-computer-use-obstacle="true"
+            data-computer-use-obstacle-kind="summary"
+            aria-label={t("Summary")}
+          >
             {progressPopoverNode}
           </aside>
         ) : null}
@@ -4588,6 +4593,8 @@ export function WorkspaceClientView({
         {channelRightDockVisible ? (
           <div
             className="channel-side-panel-frame"
+            data-computer-use-obstacle="true"
+            data-computer-use-obstacle-kind="right-dock"
             aria-hidden={channelRightDockExpanded ? undefined : true}
           >
             <WorkspaceRightDock

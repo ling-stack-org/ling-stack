@@ -7,7 +7,7 @@ import type {
   ReactNode,
   Ref,
 } from "react";
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import {
   AtSign,
   ChevronDown,
@@ -258,6 +258,20 @@ export function ChannelComposer({
   const goalPaused = goal?.status === "paused";
   const goalContinueDisabled = goalBusy || goalPaused;
   const goalStatusLabel = goal ? t(`goal.status.${goal.status}`) : "";
+  const composerRootRef = useRef<HTMLElement>(null);
+
+  useLayoutEffect(() => {
+    const root = composerRootRef.current;
+    if (!root) {
+      return undefined;
+    }
+    root.dataset.computerUseObstacle = "true";
+    root.dataset.computerUseObstacleKind = "composer";
+    return () => {
+      delete root.dataset.computerUseObstacle;
+      delete root.dataset.computerUseObstacleKind;
+    };
+  }, []);
 
   useEffect(() => {
     if (!addMenuOpen || typeof document === "undefined") {
@@ -288,6 +302,7 @@ export function ChannelComposer({
       surface="channel"
       density="docked"
       className="channel-composer"
+      rootRef={composerRootRef}
       ariaLabel={t("Channel composer")}
       leftToolsAriaLabel={t("Message tools")}
       statusNode={statusNode}

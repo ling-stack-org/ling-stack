@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ling-stack.dev/schemas/macos-acceptance-failure-v1.json",
+  "title": "Ling Desktop macOS Acceptance Failure Envelope",
+  "description": "Diagnostic output written when a macOS acceptance producer fails before it can emit a success evidence document. It never closes a release gate.",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["schemaVersion", "kind", "generatedAt", "failure", "error", "verdict"],
+  "properties": {
+    "schemaVersion": { "enum": [1, 2] },
+    "kind": {
+      "enum": [
+        "ling-desktop-macos-tcc-case",
+        "ling-desktop-macos-tcc-revocation",
+        "ling-desktop-macos-signed-acceptance",
+        "ling-desktop-macos-signed-performance"
+      ]
+    },
+    "generatedAt": { "type": "string", "format": "date-time" },
+    "failure": { "const": true },
+    "error": {
+      "type": "object",
+      "required": ["name", "message"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "message": { "type": "string", "minLength": 1 },
+        "stack": { "type": "string" }
+      }
+    },
+    "verdict": {
+      "type": "object",
+      "required": ["status", "pass"],
+      "properties": {
+        "status": { "const": "FAIL" },
+        "pass": { "const": false }
+      }
+    }
+  }
+}

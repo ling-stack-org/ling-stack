@@ -2,6 +2,7 @@ import { expect, test } from "@playwright/test";
 import {
   buildChannelUnreadState,
   buildSidebarChannelNotifications,
+  selectDesktopComputerUseConversation,
   type ChannelUnreadState,
 } from "../src/app/app-shell-selectors.js";
 import type { ApprovalRequest, ChannelMessage } from "../src/types.js";
@@ -88,4 +89,53 @@ test("sidebar channel notifications honor all, mentions, muted, and approval blo
     channel_mentions: { unread: true },
     channel_default: { unread: true },
   });
+});
+
+test("Desktop Computer Use selection follows structured workspace and teammate thread ids", () => {
+  expect(selectDesktopComputerUseConversation({
+    activeView: "workspace",
+    selectedChannelId: "channel-1",
+    selectedChannelBranchRootThreadId: "channel-thread-1",
+    selectedConversationThreadId: "normal-thread-ignored",
+  })).toBe("channel-thread-1");
+
+  expect(selectDesktopComputerUseConversation({
+    activeView: "workspace",
+    selectedConversationThreadId: "normal-thread-1",
+  })).toBe("normal-thread-1");
+
+  expect(selectDesktopComputerUseConversation({
+    activeView: "workspace",
+    selectedChannelId: "channel-without-branch",
+    selectedConversationThreadId: "normal-thread-must-not-leak",
+  })).toBeUndefined();
+
+  expect(selectDesktopComputerUseConversation({
+    activeView: "workspace",
+    selectedChannelId: "",
+    selectedConversationThreadId: "normal-thread-after-empty-channel",
+  })).toBe("normal-thread-after-empty-channel");
+
+  expect(selectDesktopComputerUseConversation({
+    activeView: "teammates",
+    selectedAiTeammateId: "teammate-1",
+    teammateDirectThreadId: "direct-thread-1",
+  })).toBe("direct-thread-1");
+
+  expect(selectDesktopComputerUseConversation({
+    activeView: "teammates",
+    selectedAiTeammateId: "teammate-without-thread",
+  })).toBeUndefined();
+
+  expect(selectDesktopComputerUseConversation({
+    activeView: "teammates",
+    teammateDirectThreadId: "orphan-direct-thread",
+  })).toBeUndefined();
+
+  expect(selectDesktopComputerUseConversation({
+    activeView: "settings",
+    selectedConversationThreadId: "normal-thread-1",
+    selectedAiTeammateId: "teammate-1",
+    teammateDirectThreadId: "direct-thread-1",
+  })).toBeUndefined();
 });
