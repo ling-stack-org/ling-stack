@@ -277,6 +277,7 @@ async function openMainWindowOnce(attempt: DesktopStartupOpenAttempt): Promise<b
     daemonEntryPath: resources.daemonEntryPath,
     defaultWorkspaceCwd,
     desktopBridgeToken: bridgeToken,
+    ...(smokeHeadless && app.runningUnderARM64Translation ? { startupTimeoutMs: 60_000 } : {}),
     onDiagnostic: logStartup,
   });
   const daemonStartup = await ensureDesktopDaemonWithStartupRecovery({
