@@ -16,6 +16,7 @@ import {
   type MediaJobStatusFilter,
 } from "./media-job-view-models.js";
 import { MediaArtifactPreview } from "./MediaArtifactPreview.js";
+import type { MediaJobDisplayContextMap } from "./media-job-display-context.js";
 
 export function MediaJobList({
   cwd,
@@ -27,6 +28,7 @@ export function MediaJobList({
   startingJobId,
   isLoading,
   statusFilter,
+  jobContext,
   onStatusFilterChange,
   onSelectJob,
   onRun,
@@ -40,6 +42,7 @@ export function MediaJobList({
   readonly startingJobId: string;
   readonly isLoading: boolean;
   readonly statusFilter: MediaJobStatusFilter;
+  readonly jobContext: MediaJobDisplayContextMap;
   readonly onStatusFilterChange: (filter: MediaJobStatusFilter) => void;
   readonly onSelectJob: (jobId: string) => void;
   readonly onRun: (jobId: string) => void;
@@ -97,6 +100,10 @@ export function MediaJobList({
               isStarting: isStartingJob,
             });
             const operationLabel = t(mediaOperationLabel(job.operation));
+            const context = jobContext[job.id];
+            const promptSummary = summarizeMediaJobPrompt(job.prompt);
+            const rowTitle = context ? `${context.projectName} · ${context.sceneName}` : promptSummary || operationLabel;
+            const rowDescription = context ? promptSummary || operationLabel : `${operationLabel} · ${provider?.displayName ?? t("Unknown provider")}`;
             const statusLabel = t(mediaJobDisplayStateLabel(displayState));
             const disabledReason = mediaJobRunDisabledReason({
               job,
@@ -123,10 +130,11 @@ export function MediaJobList({
                 <StatusActionRow
                   className="media-job-row-content"
                   leading={<MediaJobResultPreview artifact={mediaArtifacts[0]} cwd={cwd} status={job.status} displayState={displayState} />}
-                  title={<strong>{operationLabel}</strong>}
-                  description={`${provider?.displayName ?? t("Unknown provider")} · ${formatDateTime(job.createdAt)}`}
+                  title={<strong>{rowTitle}</strong>}
+                  description={rowDescription}
                   meta={(
                     <>
+                      {context ? <span>{provider?.displayName ?? t("Unknown provider")}</span> : null}
                       <span>{t("{count} generated results", { count: mediaArtifacts.length })}</span>
                       <time>{formatDateTime(job.updatedAt)}</time>
                     </>
@@ -157,6 +165,11 @@ export function MediaJobList({
       </div>
     </section>
   );
+}
+
+function summarizeMediaJobPrompt(prompt: string): string {
+  const normalized = prompt.replace(/\s+/g, " ").trim();
+  return normalized.length > 48 ? `${normalized.slice(0, 48)}…` : normalized;
 }
 
 function MediaJobResultPreview({

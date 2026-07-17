@@ -9,6 +9,7 @@ import type {
   VideoGenerationCapabilities,
 } from "../../types.js";
 import type { ReactNode } from "react";
+import type { MediaJobDisplayContextMap } from "../media/media-job-display-context.js";
 
 export type MediaProductionView = "studio" | "jobs";
 
@@ -61,7 +62,7 @@ export interface MediaProductionPageProps {
   readonly mediaArtifactsByJob: Readonly<Record<string, readonly RunArtifact[]>>;
   readonly onJobsChanged: () => void;
   readonly onConfigureVideoModel: () => void;
-  readonly jobsPanel: ReactNode;
+  readonly jobsPanel: (context: MediaJobDisplayContextMap) => ReactNode;
 }
 
 export interface SceneCapabilityContext {

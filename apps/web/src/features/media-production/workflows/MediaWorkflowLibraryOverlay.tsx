@@ -41,9 +41,12 @@ export function MediaWorkflowLibraryOverlay({
   }, [onClose, open]);
 
   if (!open) return null;
+  const emptyWorkflowLibrary = tab === "workflows"
+    && !state.importDraft
+    && state.workflows.every((item) => item.definition.status === "archived");
   return (
     <div className="media-workflow-overlay" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
-      <section className={`media-workflow-dialog ${tab === "connections" ? "connections-view" : "workflows-view"}`} role="dialog" aria-modal="true" aria-label="生产流程库">
+      <section className={`media-workflow-dialog ${tab === "connections" ? "connections-view" : "workflows-view"}${emptyWorkflowLibrary ? " empty-workflows-view" : ""}`} role="dialog" aria-modal="true" aria-label="生产流程库">
         <header className="media-workflow-dialog-head">
           <div>
             <span className="media-workflow-eyebrow">媒体生产</span>
