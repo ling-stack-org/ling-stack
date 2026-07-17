@@ -15,6 +15,7 @@ import {
   type ComputerUsePreviewTranslate,
 } from "./messages.js";
 import { subscribeWithInitialRead } from "../../shared/initial-state-subscription.js";
+import "@fontsource-variable/inter";
 import "./styles.css";
 
 const root = document.getElementById("preview-root");

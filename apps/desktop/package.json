@@ -34,6 +34,8 @@
     "pdf-parse": "1.1.1"
   },
   "devDependencies": {
+    "@electron/asar": "3.4.1",
+    "@fontsource-variable/inter": "5.2.8",
     "@playwright/test": "^1.55.0",
     "ajv": "8.20.0",
     "ajv-formats": "3.0.1",

@@ -1,8 +1,13 @@
-import { app, BrowserWindow, nativeImage, nativeTheme } from "electron";
+import { app, BrowserWindow, nativeImage } from "electron";
 import { createHash } from "node:crypto";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { release as osRelease, version as osVersion } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  computerUseScreenshotCases,
+  computerUseScreenshotThemes,
+} from "./computer-use-screenshot-cases.mjs";
 
 const update = process.argv.includes("--update");
 const desktopRoot = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -15,13 +20,12 @@ const rendererHarnessPreloadPath = join(
 );
 const platformKey = `${process.platform}-${process.arch}`;
 const baselineDirectory = join(desktopRoot, "tests", "screenshots", "computer-use-preview", platformKey);
-const cases = [
-  { id: "minimum", width: 320, height: 200 },
-  { id: "default", width: 420, height: 263 },
-  { id: "maximum", width: 480, height: 300 },
-  { id: "stop-failed", width: 420, height: 263, scenario: "stop-failed" },
-  { id: "reduced-motion", width: 420, height: 263, scenario: "reduced-motion" },
-];
+const diagnosticDirectory = join(
+  desktopRoot,
+  "test-results",
+  "computer-use-screenshot-baselines",
+  platformKey,
+);
 
 app.commandLine.appendSwitch("force-device-scale-factor", "1");
 app.setName("Ling Computer Use Screenshot Harness");
@@ -37,12 +41,11 @@ void app.whenReady().then(run).catch((error) => {
 
 async function run() {
   try {
+    await rm(diagnosticDirectory, { recursive: true, force: true });
     await mkdir(baselineDirectory, { recursive: true });
     const manifest = [];
-    for (const theme of ["light", "dark"]) {
-      nativeTheme.themeSource = theme;
-      await delay(50);
-      for (const screenshotCase of cases) {
+    for (const theme of computerUseScreenshotThemes) {
+      for (const screenshotCase of computerUseScreenshotCases) {
         const image = await captureScreenshot({ ...screenshotCase, theme });
         const filename = `${screenshotCase.id}-${theme}.png`;
         const baselinePath = join(baselineDirectory, filename);
@@ -50,12 +53,41 @@ async function run() {
         if (update) {
           await writeFile(baselinePath, png);
         } else {
-          const baseline = nativeImage.createFromBuffer(await readFile(baselinePath));
+          const baselinePng = await readFile(baselinePath);
+          const baseline = nativeImage.createFromBuffer(baselinePng);
+          const expectedSize = baseline.getSize();
+          const actualSize = image.getSize();
+          if (expectedSize.width !== actualSize.width || expectedSize.height !== actualSize.height) {
+            await writeMismatchDiagnostics({
+              actualPng: png,
+              baselinePng,
+              comparison: {
+                changedPixelRatio: 1,
+                maximumChannelDelta: 255,
+                expectedSize,
+                actualSize,
+              },
+              filename,
+              theme,
+            });
+            throw new Error(
+              `${filename} dimensions differ: baseline ${expectedSize.width}x${expectedSize.height}, ` +
+              `capture ${actualSize.width}x${actualSize.height}; diagnostics: ${diagnosticDirectory}`,
+            );
+          }
           const comparison = compareImages(baseline, image);
           if (comparison.changedPixelRatio > 0.005) {
+            await writeMismatchDiagnostics({
+              actualPng: png,
+              baselinePng,
+              comparison,
+              filename,
+              theme,
+            });
             throw new Error(
               `${filename} changed ${(comparison.changedPixelRatio * 100).toFixed(3)}% ` +
-              `(allowed 0.5%, maximum channel delta ${comparison.maximumChannelDelta})`,
+              `(allowed 0.5%, maximum channel delta ${comparison.maximumChannelDelta}); ` +
+              `diagnostics: ${diagnosticDirectory}`,
             );
           }
         }
@@ -80,12 +112,34 @@ async function run() {
       process.stdout.write(`Verified ${manifest.length} Computer Use screenshot baselines for ${platformKey}\n`);
     }
   } finally {
-    nativeTheme.themeSource = "system";
     app.quit();
   }
 }
 
-async function captureScreenshot({ width, height, scenario = "live" }) {
+async function writeMismatchDiagnostics({ actualPng, baselinePng, comparison, filename, theme }) {
+  await mkdir(diagnosticDirectory, { recursive: true });
+  await Promise.all([
+    writeFile(join(diagnosticDirectory, `actual-${filename}`), actualPng),
+    writeFile(join(diagnosticDirectory, `expected-${filename}`), baselinePng),
+    writeFile(
+      join(diagnosticDirectory, "environment.json"),
+      `${JSON.stringify({
+        platform: process.platform,
+        arch: process.arch,
+        osRelease: osRelease(),
+        osVersion: osVersion(),
+        electron: process.versions.electron,
+        chrome: process.versions.chrome,
+        filename,
+        theme,
+        comparison,
+      }, null, 2)}\n`,
+      "utf8",
+    ),
+  ]);
+}
+
+async function captureScreenshot({ width, height, scenario = "live", theme }) {
   const reducedMotion = scenario === "reduced-motion";
   const window = new BrowserWindow({
     width,
@@ -102,17 +156,33 @@ async function captureScreenshot({ width, height, scenario = "live" }) {
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
+      offscreen: {
+        deviceScaleFactor: 1,
+        useSharedTexture: false,
+      },
       sandbox: true,
       ...(scenario === "stop-failed" ? { preload: rendererHarnessPreloadPath } : {}),
     },
   });
   let debuggerAttached = false;
   try {
+    if (!window.webContents.isOffscreen()) {
+      throw new Error("computer_use_screenshot_offscreen_surface_not_enabled");
+    }
     await window.loadFile(previewIndexPath);
     window.webContents.debugger.attach("1.3");
     debuggerAttached = true;
+    await window.webContents.debugger.sendCommand("Emulation.setDeviceMetricsOverride", {
+      width,
+      height,
+      deviceScaleFactor: 1,
+      mobile: false,
+    });
     await window.webContents.debugger.sendCommand("Emulation.setEmulatedMedia", {
-      features: [{ name: "prefers-reduced-motion", value: reducedMotion ? "reduce" : "no-preference" }],
+      features: [
+        { name: "prefers-color-scheme", value: theme },
+        { name: "prefers-reduced-motion", value: reducedMotion ? "reduce" : "no-preference" },
+      ],
     });
     if (scenario === "stop-failed") {
       await window.webContents.executeJavaScript(`
@@ -137,9 +207,15 @@ async function captureScreenshot({ width, height, scenario = "live" }) {
         });
       `);
     }
-    const reducedMotionMatches = await window.webContents.executeJavaScript(
-      "window.matchMedia('(prefers-reduced-motion: reduce)').matches",
-    );
+    const mediaMatches = await window.webContents.executeJavaScript(`({
+      dark: window.matchMedia('(prefers-color-scheme: dark)').matches,
+      reducedMotion: window.matchMedia('(prefers-reduced-motion: reduce)').matches,
+    })`);
+    const expectedDark = theme === "dark";
+    if (mediaMatches.dark !== expectedDark) {
+      throw new Error(`color_scheme_media_query_mismatch:${theme}:${String(mediaMatches.dark)}`);
+    }
+    const reducedMotionMatches = mediaMatches.reducedMotion;
     if (reducedMotion !== reducedMotionMatches) {
       throw new Error(`reduced_motion_media_query_mismatch:${String(reducedMotionMatches)}`);
     }
@@ -152,9 +228,48 @@ async function captureScreenshot({ width, height, scenario = "live" }) {
           transition: none !important;
         }
       `);
+    const loadedInterFaces = await window.webContents.executeJavaScript(
+      `document.fonts.load('12px "Inter Variable"', 'Example Browser').then((faces) => faces.length)`,
+    );
+    if (loadedInterFaces < 1) {
+      throw new Error("computer_use_screenshot_font_not_loaded:Inter Variable");
+    }
     await window.webContents.executeJavaScript("document.fonts.ready.then(() => true)");
     await delay(50);
-    return await window.webContents.capturePage();
+    const contentBounds = window.getContentBounds();
+    if (contentBounds.width !== width || contentBounds.height !== height) {
+      throw new Error(
+        `Screenshot window content size ${contentBounds.width}x${contentBounds.height} ` +
+        `does not match requested logical size ${width}x${height}`,
+      );
+    }
+    const rendererMetrics = await window.webContents.executeJavaScript(
+      "({ width: window.innerWidth, height: window.innerHeight, devicePixelRatio: window.devicePixelRatio })",
+    );
+    if (
+      rendererMetrics.width !== width ||
+      rendererMetrics.height !== height ||
+      rendererMetrics.devicePixelRatio !== 1
+    ) {
+      throw new Error(
+        `Screenshot renderer metrics ${rendererMetrics.width}x${rendererMetrics.height} ` +
+        `at ${rendererMetrics.devicePixelRatio}x do not match ${width}x${height} at 1x`,
+      );
+    }
+    const screenshot = await window.webContents.debugger.sendCommand("Page.captureScreenshot", {
+      format: "png",
+      fromSurface: true,
+      captureBeyondViewport: false,
+    });
+    const image = nativeImage.createFromBuffer(Buffer.from(screenshot.data, "base64"));
+    const imageSize = image.getSize();
+    if (imageSize.width !== width || imageSize.height !== height) {
+      throw new Error(
+        `Canonical screenshot size ${imageSize.width}x${imageSize.height} ` +
+        `does not match requested logical size ${width}x${height}`,
+      );
+    }
+    return image;
   } finally {
     if (debuggerAttached && !window.isDestroyed()) {
       window.webContents.debugger.detach();
@@ -165,10 +280,6 @@ async function captureScreenshot({ width, height, scenario = "live" }) {
 
 function compareImages(expected, actual) {
   const expectedSize = expected.getSize();
-  const actualSize = actual.getSize();
-  if (expectedSize.width !== actualSize.width || expectedSize.height !== actualSize.height) {
-    return { changedPixelRatio: 1, maximumChannelDelta: 255 };
-  }
   const left = expected.toBitmap();
   const right = actual.toBitmap();
   let changedPixels = 0;
