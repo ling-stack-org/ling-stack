@@ -2671,7 +2671,7 @@ export function AppShell(): JSX.Element {
                     mediaArtifactsByJob={mediaJobArtifacts}
                     onJobsChanged={() => void refreshMediaJobs()}
                     onConfigureVideoModel={() => openSettingsWorkspaceTool("providers", "video_generation")}
-                    jobsPanel={(
+                    jobsPanel={(jobContext) => (
                       <MediaJobsPage
                         cwd={form.cwd}
                         providers={providers}
@@ -2688,6 +2688,7 @@ export function AppShell(): JSX.Element {
                         onSelectJob={setSelectedMediaJobId}
                         onRun={executeMediaJob}
                         onOpenProviders={() => openSettingsWorkspaceTool("providers", "generation")}
+                        jobContext={jobContext}
                         embedded
                       />
                     )}

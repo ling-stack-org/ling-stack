@@ -125,7 +125,7 @@ test("generation tasks page lists, runs, and creates generation tasks", async ({
 
   const failedJob = jobRows.nth(0);
   await expect(failedJob).toContainText("Needs attention");
-  await expect(failedJob).not.toContainText("Live product mockup.");
+  await expect(failedJob).toContainText("Live product mockup.");
   await expect(detailPanel).toContainText("Live product mockup.");
   await expect(detailPanel).toContainText("The provider limited this request");
   const failureSummary = detailPanel.locator(".media-job-failure-summary");
@@ -158,7 +158,7 @@ test("generation tasks page lists, runs, and creates generation tasks", async ({
 
   const existingJob = jobRows.nth(2);
   await existingJob.click();
-  await expect(existingJob).not.toContainText("Existing product mockup.");
+  await expect(existingJob).toContainText("Existing product mockup.");
   await expect(detailPanel).toContainText("Existing product mockup.");
   await existingJob.getByRole("button", { name: "Start generation" }).click();
   await expect(existingJob).toContainText("Starting generation");

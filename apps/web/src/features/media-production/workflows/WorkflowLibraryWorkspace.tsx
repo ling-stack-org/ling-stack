@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { forwardRef, useEffect, useMemo, useRef, useState } from "react";
 import { Archive, FileJson, Play, Plus, Workflow } from "lucide-react";
 import type { MediaJob, MediaWorkflowDefinitionDetail, RunArtifact } from "../../../types.js";
 import type { MediaWorkflowControllerActions, MediaWorkflowControllerState } from "./media-workflow-types.js";
@@ -31,19 +31,21 @@ export function WorkflowLibraryWorkspace({
     fileInputRef.current?.click();
   }
 
+  if (activeWorkflows.length === 0 && !state.importDraft) {
+    return (
+      <div className="media-workflow-onboarding">
+        <WorkflowFileInput ref={fileInputRef} onFile={(file) => void actions.inspectImportFile(file, selectedConnectionId)} />
+        <FileJson size={28} strokeWidth={1.6} />
+        <strong>导入第一个生产流程</strong>
+        <span>从 ComfyUI 导出 API Format JSON，Ling 会先检查节点和输出映射。</span>
+        <button className="primary-button" type="button" onClick={chooseFile} disabled={Boolean(state.busyAction)}>导入流程</button>
+      </div>
+    );
+  }
+
   return (
     <div className="media-workflow-split-view workflow-library-workspace">
-      <input
-        ref={fileInputRef}
-        type="file"
-        accept="application/json,.json"
-        hidden
-        onChange={(event) => {
-          const file = event.target.files?.[0];
-          if (file) void actions.inspectImportFile(file, selectedConnectionId);
-          event.currentTarget.value = "";
-        }}
-      />
+      <WorkflowFileInput ref={fileInputRef} onFile={(file) => void actions.inspectImportFile(file, selectedConnectionId)} />
       <div className="media-workflow-list-pane">
         <div className="media-workflow-list-head">
           <div><strong>生产流程</strong><span>{activeWorkflows.length} 个可管理</span></div>
@@ -64,14 +66,6 @@ export function WorkflowLibraryWorkspace({
               <i className={`media-workflow-status-dot ${item.definition.status}`} />
             </button>
           ))}
-          {activeWorkflows.length === 0 ? (
-            <div className="media-workflow-list-empty">
-              <FileJson size={22} />
-              <strong>还没有生产流程</strong>
-              <span>从 ComfyUI 导出 API Format JSON 后导入。</span>
-              <button className="secondary-button compact-button" type="button" onClick={chooseFile}>导入流程</button>
-            </div>
-          ) : null}
         </div>
       </div>
 
@@ -97,6 +91,22 @@ export function WorkflowLibraryWorkspace({
     </div>
   );
 }
+
+const WorkflowFileInput = forwardRef<HTMLInputElement, { readonly onFile: (file: File) => void }>(function WorkflowFileInput({ onFile }, ref) {
+  return (
+    <input
+      ref={ref}
+      type="file"
+      accept="application/json,.json"
+      hidden
+      onChange={(event) => {
+        const file = event.target.files?.[0];
+        if (file) onFile(file);
+        event.currentTarget.value = "";
+      }}
+    />
+  );
+});
 
 function ImportDetail({
   state,

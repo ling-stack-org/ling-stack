@@ -1,10 +1,14 @@
 import { useEffect, useMemo, useState } from "react";
-import { CircleAlert, Copy, Play, RotateCw, Trash2, X } from "lucide-react";
+import { CircleAlert, Copy, History, Play, RotateCw, Settings2, Trash2, X } from "lucide-react";
 import type { MediaJob, MediaProject, MediaScene, MediaSceneRun, MediaWorkflowDefinitionDetail, ProviderPreset, RunArtifact } from "../../types.js";
 import { MediaArtifactPreview } from "../media/MediaArtifactPreview.js";
 import type { MediaProductionActions } from "./media-production-types.js";
 import type { SceneReadiness } from "./media-production-view-models.js";
 import { SceneExecutionSettings } from "./SceneExecutionSettings.js";
+import { mediaJobFailureRecoveryView } from "../media/media-job-view-models.js";
+import { useI18n } from "../../i18n.js";
+
+type SceneInspectorView = "settings" | "result" | "history";
 
 interface SceneInspectorProps {
   readonly cwd: string;
@@ -43,8 +47,10 @@ export function SceneInspector({
   onConfigureVideoModel,
   onOpenWorkflowLibrary,
 }: SceneInspectorProps): JSX.Element {
+  const { t } = useI18n();
   const [title, setTitle] = useState(scene?.title ?? "");
   const [prompt, setPrompt] = useState(scene?.prompt ?? "");
+  const [view, setView] = useState<SceneInspectorView>("settings");
   const orderedRuns = useMemo(() => scene
     ? sceneRuns.filter((run) => run.sceneId === scene.id)
     : [], [scene, sceneRuns]);
@@ -53,6 +59,8 @@ export function SceneInspector({
     setTitle(scene?.title ?? "");
     setPrompt(scene?.prompt ?? "");
   }, [scene?.id, scene?.title, scene?.prompt]);
+
+  useEffect(() => setView("settings"), [scene?.id]);
 
   if (!scene) {
     return (
@@ -68,6 +76,13 @@ export function SceneInspector({
   const canRun = Boolean(readiness?.canRun);
   const hasCurrentResult = Boolean(readiness?.currentRun && readiness.currentJob?.status === "succeeded");
   const isSubmitting = busyAction === `run-scene:${scene.id}`;
+  const latestRecoveryView = readiness?.latestJob && readiness.latestIssue
+    ? mediaJobFailureRecoveryView({
+        job: readiness.latestJob,
+        artifacts: artifactsByJob[readiness.latestJob.id] ?? [],
+        t,
+      })
+    : undefined;
   const generationLabel = isSubmitting
     ? "提交中"
     : readiness?.isRegenerating ? "重新生成中"
@@ -77,10 +92,9 @@ export function SceneInspector({
   return (
     <aside className="scene-inspector" aria-label="场景检查器">
       <div className="scene-inspector-head">
-          <div>
-            <span className="scene-inspector-eyebrow">场景 {scene.sortOrder + 1}</span>
-            <h2>{scene.title}</h2>
-            <span className={`scene-readiness-badge ${readiness?.state ?? "needs_model"}`}>{readiness?.label ?? "待完善"}</span>
+        <div>
+          <h2>{scene.title}</h2>
+          <span className={`scene-readiness-badge ${readiness?.state ?? "needs_model"}`}>{readiness?.label ?? "待完善"}</span>
         </div>
         <div className="scene-inspector-actions">
           {onClose ? <button type="button" className="icon-button" title="关闭场景检查器" aria-label="关闭场景检查器" onClick={onClose}><X size={16} /></button> : null}
@@ -93,63 +107,64 @@ export function SceneInspector({
         </div>
       </div>
 
+      <nav className="scene-inspector-tabs" aria-label="场景信息">
+        <button className={view === "settings" ? "active" : ""} type="button" onClick={() => setView("settings")}><Settings2 size={14} /> 设置</button>
+        <button className={view === "result" ? "active" : ""} type="button" onClick={() => setView("result")}>
+          <Play size={14} /> 结果
+          {readiness?.currentArtifact || readiness?.latestIssue ? <span className={`scene-inspector-tab-dot${readiness.latestIssue ? " attention" : ""}`} aria-hidden="true" /> : null}
+        </button>
+        <button className={view === "history" ? "active" : ""} type="button" onClick={() => setView("history")}><History size={14} /> 历史{orderedRuns.length ? <small>{orderedRuns.length}</small> : null}</button>
+      </nav>
+
       <div className="scene-inspector-scroll">
-        <label className="field">
-          <span>场景名称</span>
-          <input
-            value={title}
-            onChange={(event) => setTitle(event.target.value)}
-            onBlur={() => title.trim() !== scene.title && void actions.updateScene(scene.id, { title: title.trim() || scene.title })}
+        {view === "settings" ? (
+          <>
+            <label className="field">
+              <span>场景名称</span>
+              <input
+                value={title}
+                onChange={(event) => setTitle(event.target.value)}
+                onBlur={() => title.trim() !== scene.title && void actions.updateScene(scene.id, { title: title.trim() || scene.title })}
+              />
+            </label>
+
+            <label className="field scene-prompt-field">
+              <span>画面提示</span>
+              <textarea
+                value={prompt}
+                onChange={(event) => setPrompt(event.target.value)}
+                onBlur={() => prompt !== scene.prompt && void actions.updateScene(scene.id, { prompt })}
+                placeholder="描述主体、动作、镜头和氛围"
+                rows={6}
+              />
+            </label>
+
+            <SceneExecutionSettings
+              cwd={cwd}
+              scene={scene}
+              project={project}
+              providers={providers}
+              workflows={workflows}
+              imageArtifacts={imageArtifacts}
+              isSaving={isSaving}
+              actions={actions}
+              onConfigureVideoModel={onConfigureVideoModel}
+              onOpenWorkflowLibrary={onOpenWorkflowLibrary}
+            />
+          </>
+        ) : view === "result" ? (
+          <SceneResultView cwd={cwd} readiness={readiness} recoveryView={latestRecoveryView} />
+        ) : (
+          <SceneRunHistory
+            scene={scene}
+            runs={orderedRuns}
+            jobs={jobs}
+            artifactsByJob={artifactsByJob}
+            busyAction={busyAction}
+            onSelectRun={(sceneRunId) => void actions.selectSceneRun(scene.id, sceneRunId)}
+            onCancelRun={(sceneRunId) => void actions.cancelSceneRun(sceneRunId)}
           />
-        </label>
-
-        <label className="field scene-prompt-field">
-          <span>画面提示</span>
-          <textarea
-            value={prompt}
-            onChange={(event) => setPrompt(event.target.value)}
-            onBlur={() => prompt !== scene.prompt && void actions.updateScene(scene.id, { prompt })}
-            placeholder="描述主体、动作、镜头和氛围"
-            rows={6}
-          />
-        </label>
-
-        <SceneExecutionSettings
-          cwd={cwd}
-          scene={scene}
-          project={project}
-          providers={providers}
-          workflows={workflows}
-          imageArtifacts={imageArtifacts}
-          isSaving={isSaving}
-          actions={actions}
-          onConfigureVideoModel={onConfigureVideoModel}
-          onOpenWorkflowLibrary={onOpenWorkflowLibrary}
-        />
-
-        {readiness?.currentArtifact ? (
-          <section className="scene-inspector-section scene-current-result">
-            <div className="scene-inspector-section-head"><span className="field-label">当前结果</span><small>当前选用</small></div>
-            <MediaArtifactPreview artifact={readiness.currentArtifact} cwd={cwd} variant="scene" />
-          </section>
-        ) : null}
-
-        {readiness?.currentArtifact && readiness.latestIssue ? (
-          <div className="scene-latest-run-issue" role="status">
-            <CircleAlert size={15} aria-hidden="true" />
-            <span><strong>上次重新生成失败</strong>{readiness.latestIssue}</span>
-          </div>
-        ) : null}
-
-        <SceneRunHistory
-          scene={scene}
-          runs={orderedRuns}
-          jobs={jobs}
-          artifactsByJob={artifactsByJob}
-          busyAction={busyAction}
-          onSelectRun={(sceneRunId) => void actions.selectSceneRun(scene.id, sceneRunId)}
-          onCancelRun={(sceneRunId) => void actions.cancelSceneRun(sceneRunId)}
-        />
+        )}
       </div>
 
       <div className="scene-inspector-footer">
@@ -159,6 +174,44 @@ export function SceneInspector({
         </button>
       </div>
     </aside>
+  );
+}
+
+function SceneResultView({
+  cwd,
+  readiness,
+  recoveryView,
+}: {
+  readonly cwd: string;
+  readonly readiness?: SceneReadiness;
+  readonly recoveryView?: ReturnType<typeof mediaJobFailureRecoveryView>;
+}): JSX.Element {
+  return (
+    <div className="scene-result-view">
+      {readiness?.currentArtifact ? (
+        <section className="scene-inspector-section scene-current-result">
+          <div className="scene-inspector-section-head"><span className="field-label">当前结果</span><small>当前选用</small></div>
+          <MediaArtifactPreview artifact={readiness.currentArtifact} cwd={cwd} variant="scene" />
+        </section>
+      ) : (
+        <div className="scene-result-empty">
+          <Play size={22} strokeWidth={1.6} />
+          <strong>还没有生成结果</strong>
+          <span>完成场景设置后，可使用底部按钮生成第一个视频片段。</span>
+        </div>
+      )}
+
+      {recoveryView ? (
+        <div className="scene-latest-run-issue" role="status">
+          <CircleAlert size={16} aria-hidden="true" />
+          <span><strong>{recoveryView.title}</strong>{recoveryView.description}</span>
+          <details>
+            <summary>技术信息</summary>
+            <p>{recoveryView.rawDetails}</p>
+          </details>
+        </div>
+      ) : null}
+    </div>
   );
 }
 

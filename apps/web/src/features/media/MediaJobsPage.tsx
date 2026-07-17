@@ -32,6 +32,7 @@ import {
 } from "./media-job-view-models.js";
 
 import { SelectControl } from "../../shared/components/SelectControl.js";
+import type { MediaJobDisplayContextMap } from "./media-job-display-context.js";
 
 export function MediaJobsPage({
   cwd,
@@ -49,6 +50,7 @@ export function MediaJobsPage({
   onSelectJob,
   onRun,
   onOpenProviders,
+  jobContext = {},
   embedded = false,
 }: {
   readonly cwd: string;
@@ -66,6 +68,7 @@ export function MediaJobsPage({
   readonly onSelectJob: (jobId: string) => void;
   readonly onRun: (jobId: string) => void | Promise<void>;
   readonly onOpenProviders: () => void;
+  readonly jobContext?: MediaJobDisplayContextMap;
   readonly embedded?: boolean;
 }): JSX.Element {
   const { t } = useI18n();
@@ -209,6 +212,7 @@ export function MediaJobsPage({
           startingJobId={startingJobId}
           isLoading={isLoading}
           statusFilter={statusFilter}
+          jobContext={jobContext}
           onStatusFilterChange={setStatusFilter}
           onSelectJob={onSelectJob}
           onRun={(jobId) => void runGenerationJob(jobId)}

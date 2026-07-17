@@ -18,6 +18,7 @@ import { Clapperboard, ImageIcon, Play, Plus, Sparkles } from "lucide-react";
 import type { MediaScene } from "../../types.js";
 import type { StoryboardFocusRequest } from "./media-production-types.js";
 import type { SceneReadiness } from "./media-production-view-models.js";
+import { shouldShowStoryboardMiniMap, storyboardCanvasSafeArea } from "./media-production-layout.js";
 
 interface StoryboardCanvasProps {
   readonly scenes: readonly MediaScene[];
@@ -93,6 +94,13 @@ function StoryboardSceneNode({ data }: NodeProps<Node<StoryboardNodeData>>): JSX
 
 const nodeTypes = { scene: StoryboardSceneNode };
 
+type StoryboardFitViewPadding = {
+  readonly top: `${number}px`;
+  readonly right: `${number}px`;
+  readonly bottom: `${number}px`;
+  readonly left: `${number}px`;
+};
+
 export function StoryboardCanvas({
   scenes,
   readiness,
@@ -113,30 +121,55 @@ export function StoryboardCanvas({
   const [nodes, setNodes] = useState<Node<StoryboardNodeData>[]>(initialNodes);
   const flowInstance = useRef<ReactFlowInstance<Node<StoryboardNodeData>, Edge> | null>(null);
   const canvasElement = useRef<HTMLDivElement>(null);
+  const lastFocusSequence = useRef(focusRequest.sequence);
+  const [canvasSize, setCanvasSize] = useState({ width: 0, height: 0 });
+  const miniMapVisible = shouldShowStoryboardMiniMap({
+    scenes,
+    canvasWidth: canvasSize.width,
+    canvasHeight: canvasSize.height,
+    leftDockOpen,
+    rightDockOpen,
+  });
+  const fitViewPadding = useMemo(
+    () => storyboardFitViewPadding({ leftDockOpen, rightDockOpen, miniMapVisible }),
+    [leftDockOpen, miniMapVisible, rightDockOpen],
+  );
 
   useEffect(() => {
     setNodes((current) => reconcileSceneNodes(current, initialNodes));
   }, [initialNodes]);
 
   useEffect(() => {
-    if (!focusRequest.sceneId) {
+    const canvas = canvasElement.current;
+    if (!canvas) {
       return;
     }
+    const updateSize = (): void => setCanvasSize({ width: canvas.clientWidth, height: canvas.clientHeight });
+    updateSize();
+    const observer = new ResizeObserver(updateSize);
+    observer.observe(canvas);
+    return () => observer.disconnect();
+  }, [scenes.length === 0]);
+
+  useEffect(() => {
+    const focusChanged = focusRequest.sequence !== lastFocusSequence.current;
+    const visibleSceneIds = storyboardFocusSceneIds(scenes, focusRequest.sceneId);
+    lastFocusSequence.current = focusRequest.sequence;
     let secondFrame = 0;
     const firstFrame = window.requestAnimationFrame(() => {
-      if (focusScene(flowInstance.current, canvasElement.current, focusRequest.sceneId, {
+      if (focusChanged && focusRequest.sceneId && focusScene(flowInstance.current, canvasElement.current, focusRequest.sceneId, visibleSceneIds, {
         leftDockOpen,
         rightDockOpen,
-        miniMapVisible: scenes.length >= 2,
+        miniMapVisible,
       })) {
         return;
       }
       secondFrame = window.requestAnimationFrame(() => {
-        focusScene(flowInstance.current, canvasElement.current, focusRequest.sceneId, {
-          leftDockOpen,
-          rightDockOpen,
-          miniMapVisible: scenes.length >= 2,
-        });
+        if (focusChanged && focusRequest.sceneId) {
+          focusScene(flowInstance.current, canvasElement.current, focusRequest.sceneId, visibleSceneIds, { leftDockOpen, rightDockOpen, miniMapVisible });
+        } else {
+          fitStoryboard(flowInstance.current, fitViewPadding);
+        }
       });
     });
     return () => {
@@ -145,7 +178,7 @@ export function StoryboardCanvas({
         window.cancelAnimationFrame(secondFrame);
       }
     };
-  }, [focusRequest.sceneId, focusRequest.sequence]);
+  }, [canvasSize.height, canvasSize.width, fitViewPadding, focusRequest.sceneId, focusRequest.sequence, leftDockOpen, miniMapVisible, rightDockOpen, scenes.length]);
 
   const edges = useMemo<Edge[]>(() => scenes.slice(1).map((scene, index) => ({
     id: `sequence:${scenes[index]?.id ?? "start"}:${scene.id}`,
@@ -176,8 +209,9 @@ export function StoryboardCanvas({
   return (
     <div
       ref={canvasElement}
-      className={`storyboard-canvas${leftDockOpen ? " has-left-dock" : ""}${rightDockOpen ? " has-right-dock" : ""}${scenes.length >= 2 ? " has-minimap" : ""}`}
+      className={`storyboard-canvas${leftDockOpen ? " has-left-dock" : ""}${rightDockOpen ? " has-right-dock" : ""}${miniMapVisible ? " has-minimap" : ""}`}
       aria-label="分镜画布"
+      data-minimap-visible={miniMapVisible ? "true" : "false"}
     >
       <ReactFlow
         nodes={nodes}
@@ -188,25 +222,19 @@ export function StoryboardCanvas({
         onNodeDragStop={(_, node) => onMoveScene(node.id, node.position)}
         onInit={(instance) => {
           flowInstance.current = instance;
-          if (focusRequest.sceneId) {
-            window.requestAnimationFrame(() => focusScene(instance, canvasElement.current, focusRequest.sceneId, {
-              leftDockOpen,
-              rightDockOpen,
-              miniMapVisible: scenes.length >= 2,
-            }));
-          }
+          window.requestAnimationFrame(() => fitStoryboard(instance, fitViewPadding));
         }}
         nodesDraggable={!isBusy}
         nodesConnectable={false}
         elementsSelectable={!isBusy}
         fitView
-        fitViewOptions={{ padding: 0.28, maxZoom: 1 }}
+        fitViewOptions={{ padding: fitViewPadding, maxZoom: 1 }}
         minZoom={0.25}
         maxZoom={1.8}
         proOptions={{ hideAttribution: true }}
       >
         <Background gap={20} size={1} color="var(--border-subtle, #e7e7e7)" />
-        {scenes.length >= 2 ? (
+        {miniMapVisible ? (
           <MiniMap
             ariaLabel="分镜缩略图"
             pannable
@@ -224,7 +252,7 @@ export function StoryboardCanvas({
         <Controls
           position="bottom-center"
           showInteractive={false}
-          fitViewOptions={{ padding: 0.28, maxZoom: 1 }}
+          fitViewOptions={{ padding: fitViewPadding, maxZoom: 1 }}
         />
       </ReactFlow>
       {scenes.length > 1 ? <div className="storyboard-canvas-legend">
@@ -239,6 +267,7 @@ function focusScene(
   instance: ReactFlowInstance<Node<StoryboardNodeData>, Edge> | null,
   canvas: HTMLDivElement | null,
   sceneId: string,
+  visibleSceneIds: readonly string[],
   layout: {
     readonly leftDockOpen: boolean;
     readonly rightDockOpen: boolean;
@@ -252,22 +281,67 @@ function focusScene(
   if (!node) {
     return false;
   }
+  const visibleNodes = visibleSceneIds.flatMap((id) => {
+    const visibleNode = instance.getNode(id);
+    return visibleNode ? [visibleNode] : [];
+  });
+  if (visibleNodes.length > 1) {
+    void instance.fitView({
+      nodes: visibleNodes,
+      padding: storyboardFitViewPadding(layout),
+      maxZoom: Math.min(instance.getZoom(), 1),
+      duration: 250,
+    });
+    return true;
+  }
   const width = node.measured?.width ?? node.width ?? 218;
   const height = node.measured?.height ?? node.height ?? 104;
   const zoom = instance.getZoom();
-  const leftInset = layout.leftDockOpen ? 320 : 16;
-  const rightInset = layout.rightDockOpen ? 392 : 16;
-  const topInset = 72;
-  const bottomInset = layout.miniMapVisible ? 144 : 56;
-  const safeWidth = Math.max(0, canvas.clientWidth - leftInset - rightInset);
-  const safeHeight = Math.max(0, canvas.clientHeight - topInset - bottomInset);
-  const targetX = leftInset + safeWidth / 2;
-  const targetY = topInset + safeHeight / 2;
+  const safeArea = storyboardCanvasSafeArea({
+    width: canvas.clientWidth,
+    height: canvas.clientHeight,
+    ...layout,
+  });
+  const targetX = safeArea.left + safeArea.width / 2;
+  const targetY = safeArea.top + safeArea.height / 2;
   void instance.setViewport({
     x: targetX - (node.position.x + width / 2) * zoom,
     y: targetY - (node.position.y + height / 2) * zoom,
     zoom,
   }, { duration: 250 });
+  return true;
+}
+
+function storyboardFocusSceneIds(scenes: readonly MediaScene[], sceneId: string): readonly string[] {
+  const index = scenes.findIndex((scene) => scene.id === sceneId);
+  if (index < 0) {
+    return sceneId ? [sceneId] : [];
+  }
+  return scenes.slice(Math.max(0, index - 1), Math.min(scenes.length, index + 2)).map((scene) => scene.id);
+}
+
+function storyboardFitViewPadding(layout: {
+  readonly leftDockOpen: boolean;
+  readonly rightDockOpen: boolean;
+  readonly miniMapVisible: boolean;
+}): StoryboardFitViewPadding {
+  const safeArea = storyboardCanvasSafeArea({ width: 0, height: 0, ...layout });
+  return {
+    top: `${safeArea.top}px` as const,
+    right: `${safeArea.right}px` as const,
+    bottom: `${safeArea.bottom}px` as const,
+    left: `${safeArea.left}px` as const,
+  };
+}
+
+function fitStoryboard(
+  instance: ReactFlowInstance<Node<StoryboardNodeData>, Edge> | null,
+  padding: StoryboardFitViewPadding,
+): boolean {
+  if (!instance?.viewportInitialized) {
+    return false;
+  }
+  void instance.fitView({ padding, maxZoom: 1, duration: 220 });
   return true;
 }
 
