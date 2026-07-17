@@ -52,6 +52,8 @@ import {
   toPluginPackageView,
 } from "./source-index.js";
 import {
+  checkInstalledPluginRuntimeDependencies,
+  assertExclusiveBundledCuaMcpServerOwnership,
   installBundledPluginPackage,
   refreshManagedPluginPackage,
   uninstallManagedPluginPackage,
@@ -289,8 +291,30 @@ export async function handlePluginItem(
         return;
       }
       const now = new Date().toISOString();
+      if (route.pluginId === "bundled:cua-driver") {
+        assertExclusiveBundledCuaMcpServerOwnership({ store, descriptor, now });
+      }
       ensureManagedPluginRecord({ store, descriptor, enabled: true, now });
       setLinkedContributionsEnabled(store, route.pluginId, true, now);
+      try {
+        await checkInstalledPluginRuntimeDependencies({
+          descriptor,
+          store,
+          mcpBroker,
+          secretResolver,
+          now,
+        });
+      } catch (error) {
+        ensureManagedPluginRecord({
+          store,
+          descriptor,
+          enabled: false,
+          disabledReason: error instanceof Error ? error.message : "Plugin runtime dependency check failed.",
+          now,
+        });
+        setLinkedContributionsEnabled(store, route.pluginId, false, now);
+        throw error;
+      }
       store.appendManagedPluginEvent({
         pluginId: route.pluginId,
         type: "enabled",
@@ -531,6 +555,13 @@ async function checkPluginHealth(input: {
         status: "failed",
         message: CUA_DRIVER_UNSUPPORTED_PLATFORM_MESSAGE,
         details: { errorCode: "plugin_platform_blocked" },
+      });
+    }
+    if (input.descriptor.id === "bundled:cua-driver") {
+      assertExclusiveBundledCuaMcpServerOwnership({
+        store: input.store,
+        descriptor: input.descriptor,
+        now: input.now,
       });
     }
     const linkedServer = input.store.getMcpServer(CUA_DRIVER_MCP_SERVER_ID);

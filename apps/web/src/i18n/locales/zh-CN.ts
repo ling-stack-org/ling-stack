@@ -4805,6 +4805,7 @@ export const zhCN = {
   "Automatically show Computer Use picture-in-picture": "自动展示 Computer Use 画中画",
   "Automatically show the approved Computer Use preview on Desktop": "在 Desktop 中自动展示已授权的 Computer Use 预览",
   "Unable to save Desktop preview preference": "Desktop 预览设置保存失败",
+  "Changed for this session, but not saved. It may revert after restart.": "已在本次会话生效，但未能保存；重启后可能恢复原设置。",
   "Live": "实时预览",
   "Computer Use preview controls": "Computer Use 预览控制",
   "Showing": "正在显示",

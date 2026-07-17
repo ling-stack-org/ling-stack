@@ -7,6 +7,7 @@ export interface DesktopComputerUseControlSummary {
   readonly conversationId: string;
   readonly status: "starting" | "running" | "waiting_for_approval" | "paused" | "stopping" | "succeeded" | "failed" | "cancelled";
   readonly targetLabel: string;
+  readonly previewAvailable: boolean;
   readonly visible: boolean;
 }
 
@@ -41,7 +42,7 @@ export function DesktopComputerUseControlSlot({
     ? t(visibilityPending === "show" ? "Showing" : "Hiding")
     : summary.visible ? t("Hide") : t("Show");
   const stopLabel = stopPending || stopping ? t("Stopping") : t("Stop");
-  const visibilityActionAvailable = !stopping || summary.visible;
+  const visibilityActionAvailable = summary.visible || (summary.previewAvailable && !stopping);
 
   return (
     <aside

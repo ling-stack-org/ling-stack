@@ -3,8 +3,13 @@ import type {
   ComputerUsePreviewEvent,
   ComputerUsePreviewProjection,
 } from "@ling-stack/contracts";
-import { COMPUTER_USE_ROUTE_TOKEN_HEADER } from "@ling-stack/contracts";
+import {
+  COMPUTER_USE_ROUTE_TOKEN_HEADER,
+  parseComputerUsePreviewEvent as parseComputerUsePreviewEventValue,
+  parseComputerUsePreviewSnapshotResponse,
+} from "@ling-stack/contracts";
 import type {
+  ComputerUseProjectionConnectionState,
   ComputerUseProjectionClient,
   ComputerUseProjectionSubscription,
 } from "./projection-client.js";
@@ -19,6 +24,7 @@ export class DaemonComputerUseProjectionClient implements ComputerUseProjectionC
     private readonly wait: (milliseconds: number, signal: AbortSignal) => Promise<void> = waitForDelay,
     fetchImpl: typeof globalThis.fetch = globalThis.fetch,
     computerUseRouteToken?: string,
+    private readonly streamLivenessTimeoutMs = 35_000,
   ) {
     this.client = new LingDaemonClient({
       baseUrl,
@@ -33,9 +39,12 @@ export class DaemonComputerUseProjectionClient implements ComputerUseProjectionC
     return snapshot.projections;
   }
 
-  subscribe(listener: (event: ComputerUsePreviewEvent) => void): ComputerUseProjectionSubscription {
+  subscribe(
+    listener: (event: ComputerUsePreviewEvent) => void,
+    onConnectionStateChanged?: (state: ComputerUseProjectionConnectionState) => void,
+  ): ComputerUseProjectionSubscription {
     const controller = new AbortController();
-    void this.consume(listener, controller.signal);
+    void this.consume(listener, onConnectionStateChanged ?? (() => undefined), controller.signal);
     return { close: () => controller.abort() };
   }
 
@@ -43,12 +52,24 @@ export class DaemonComputerUseProjectionClient implements ComputerUseProjectionC
     return this.client.stopComputerUse(this.cwd, sessionId, reason ? { reason } : {});
   }
 
-  private async consume(listener: (event: ComputerUsePreviewEvent) => void, signal: AbortSignal): Promise<void> {
+  private async consume(
+    listener: (event: ComputerUsePreviewEvent) => void,
+    onConnectionStateChanged: (state: ComputerUseProjectionConnectionState) => void,
+    signal: AbortSignal,
+  ): Promise<void> {
     let afterSeq = 0;
     let attempt = 0;
     let lastSnapshotSeq: number | undefined;
     let streamEpoch = 0;
     let forceSnapshotReset = false;
+    let connectionState: ComputerUseProjectionConnectionState | undefined;
+    const reportConnectionState = (state: ComputerUseProjectionConnectionState): void => {
+      if (connectionState === state) {
+        return;
+      }
+      connectionState = state;
+      onConnectionStateChanged(state);
+    };
     while (!signal.aborted) {
       try {
         const snapshot = await this.refreshSnapshot(
@@ -68,41 +89,52 @@ export class DaemonComputerUseProjectionClient implements ComputerUseProjectionC
         afterSeq = snapshot.latestSeq;
 
         const connectionEpoch = streamEpoch;
-        const response = await this.client.streamComputerUsePreviews(this.cwd, afterSeq, signal);
-        if (!response.body) {
-          throw new Error("computer_use_stream_body_missing");
-        }
-        for await (const message of readSseMessages(response.body, signal)) {
-          if (connectionEpoch !== streamEpoch) {
-            throw new Error("computer_use_stream_epoch_changed");
+        const connection = createStreamLivenessSignal(signal, this.streamLivenessTimeoutMs);
+        try {
+          const response = await this.client.streamComputerUsePreviews(
+            this.cwd,
+            afterSeq,
+            connection.signal,
+          );
+          if (!response.body) {
+            throw new Error("computer_use_stream_body_missing");
           }
-          if (message.event === "heartbeat") {
-            const latestSeq = readHeartbeatLatestSeq(message.data);
-            if (latestSeq !== undefined && latestSeq < afterSeq) {
+          reportConnectionState("connected");
+          for await (const message of readSseMessages(response.body, connection.signal)) {
+            connection.touch();
+            if (connectionEpoch !== streamEpoch) {
+              throw new Error("computer_use_stream_epoch_changed");
+            }
+            if (message.event === "heartbeat") {
+              const latestSeq = readHeartbeatLatestSeq(message.data);
+              if (latestSeq !== undefined && latestSeq < afterSeq) {
+                streamEpoch += 1;
+                forceSnapshotReset = true;
+                throw new Error("computer_use_stream_epoch_reset");
+              }
+              continue;
+            }
+            if (message.event !== "computer_use_event") {
+              continue;
+            }
+            const event = parseComputerUsePreviewEvent(message.data);
+            if (!event) {
+              throw new Error("computer_use_stream_event_invalid");
+            }
+            if (event.seq <= afterSeq) {
+              continue;
+            }
+            if (event.seq > afterSeq + 1) {
               streamEpoch += 1;
               forceSnapshotReset = true;
-              throw new Error("computer_use_stream_epoch_reset");
+              throw new Error("computer_use_stream_gap");
             }
-            continue;
+            afterSeq = event.seq;
+            this.rememberEvent(event);
+            listener(event);
           }
-          if (message.event !== "computer_use_event") {
-            continue;
-          }
-          const event = parseComputerUsePreviewEvent(message.data);
-          if (!event) {
-            continue;
-          }
-          if (event.seq <= afterSeq) {
-            continue;
-          }
-          if (event.seq > afterSeq + 1) {
-            streamEpoch += 1;
-            forceSnapshotReset = true;
-            throw new Error("computer_use_stream_gap");
-          }
-          afterSeq = event.seq;
-          this.rememberEvent(event);
-          listener(event);
+        } finally {
+          connection.dispose();
         }
         if (!signal.aborted) {
           throw new Error("computer_use_stream_closed");
@@ -112,6 +144,7 @@ export class DaemonComputerUseProjectionClient implements ComputerUseProjectionC
         if (signal.aborted) {
           return;
         }
+        reportConnectionState("disconnected");
         attempt += 1;
         await this.wait(Math.min(5_000, 250 * 2 ** Math.min(attempt - 1, 5)), signal).catch(() => undefined);
       }
@@ -184,10 +217,11 @@ export class DaemonComputerUseProjectionClient implements ComputerUseProjectionC
       throw new Error(`computer_use_snapshot_http_${response.status}`);
     }
     const value = await response.json() as unknown;
-    if (!isComputerUseProjectionSnapshot(value)) {
+    const parsed = parseComputerUsePreviewSnapshotResponse(value, this.cwd);
+    if (!parsed) {
       throw new Error("computer_use_snapshot_invalid");
     }
-    return value;
+    return parsed;
   }
 
   private rememberSnapshot(projections: readonly ComputerUsePreviewProjection[]): void {
@@ -213,6 +247,10 @@ async function* readSseMessages(
   const reader = stream.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
+  const onAbort = (): void => {
+    void reader.cancel(signal.reason).catch(() => undefined);
+  };
+  signal.addEventListener("abort", onAbort, { once: true });
   try {
     while (!signal.aborted) {
       const result = await reader.read();
@@ -232,9 +270,47 @@ async function* readSseMessages(
       }
     }
   } finally {
+    signal.removeEventListener("abort", onAbort);
     await reader.cancel().catch(() => undefined);
     reader.releaseLock();
   }
+}
+
+function createStreamLivenessSignal(parent: AbortSignal, timeoutMs: number): {
+  readonly signal: AbortSignal;
+  touch(): void;
+  dispose(): void;
+} {
+  const controller = new AbortController();
+  const onParentAbort = (): void => controller.abort(parent.reason);
+  parent.addEventListener("abort", onParentAbort, { once: true });
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  const touch = (): void => {
+    if (timeout !== undefined) {
+      clearTimeout(timeout);
+    }
+    timeout = setTimeout(() => {
+      controller.abort(new Error("computer_use_stream_liveness_timeout"));
+    }, timeoutMs);
+  };
+  touch();
+  if (parent.aborted) {
+    onParentAbort();
+  }
+  return {
+    signal: controller.signal,
+    touch,
+    dispose: () => {
+      if (timeout !== undefined) {
+        clearTimeout(timeout);
+        timeout = undefined;
+      }
+      parent.removeEventListener("abort", onParentAbort);
+      if (!controller.signal.aborted) {
+        controller.abort(new Error("computer_use_stream_connection_disposed"));
+      }
+    },
+  };
 }
 
 function parseSseBlock(block: string): { readonly event: string; readonly data: string } | undefined {
@@ -252,17 +328,7 @@ function parseSseBlock(block: string): { readonly event: string; readonly data: 
 
 function parseComputerUsePreviewEvent(value: string): ComputerUsePreviewEvent | undefined {
   try {
-    const parsed = JSON.parse(value) as unknown;
-    if (!isRecord(parsed) || typeof parsed.seq !== "number" || typeof parsed.sessionId !== "string") {
-      return undefined;
-    }
-    if (parsed.kind !== "upsert" && parsed.kind !== "remove") {
-      return undefined;
-    }
-    if (typeof parsed.occurredAt !== "string") {
-      return undefined;
-    }
-    return parsed as unknown as ComputerUsePreviewEvent;
+    return parseComputerUsePreviewEventValue(JSON.parse(value) as unknown);
   } catch {
     return undefined;
   }
@@ -271,7 +337,10 @@ function parseComputerUsePreviewEvent(value: string): ComputerUsePreviewEvent | 
 function readHeartbeatLatestSeq(value: string): number | undefined {
   try {
     const parsed = JSON.parse(value) as unknown;
-    return isRecord(parsed) && typeof parsed.latestSeq === "number" && Number.isFinite(parsed.latestSeq)
+    return isRecord(parsed) &&
+      typeof parsed.latestSeq === "number" &&
+      Number.isSafeInteger(parsed.latestSeq) &&
+      parsed.latestSeq >= 0
       ? parsed.latestSeq
       : undefined;
   } catch {
@@ -283,27 +352,22 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-interface ComputerUseProjectionSnapshot {
-  readonly cwd: string;
-  readonly projections: readonly ComputerUsePreviewProjection[];
-  readonly latestSeq: number;
-}
+type ComputerUseProjectionSnapshot = import("@ling-stack/contracts").ComputerUsePreviewSnapshotResponse;
 
-function isComputerUseProjectionSnapshot(value: unknown): value is ComputerUseProjectionSnapshot {
-  return isRecord(value)
-    && typeof value.cwd === "string"
-    && Array.isArray(value.projections)
-    && typeof value.latestSeq === "number"
-    && Number.isInteger(value.latestSeq)
-    && value.latestSeq >= 0;
-}
-
-function waitForDelay(milliseconds: number, signal: AbortSignal): Promise<void> {
+export function waitForDelay(milliseconds: number, signal: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
-    const timeout = setTimeout(resolve, milliseconds);
-    signal.addEventListener("abort", () => {
+    const onAbort = (): void => {
       clearTimeout(timeout);
+      signal.removeEventListener("abort", onAbort);
       reject(signal.reason);
-    }, { once: true });
+    };
+    const timeout = setTimeout(() => {
+      signal.removeEventListener("abort", onAbort);
+      resolve();
+    }, milliseconds);
+    signal.addEventListener("abort", onAbort, { once: true });
+    if (signal.aborted) {
+      onAbort();
+    }
   });
 }

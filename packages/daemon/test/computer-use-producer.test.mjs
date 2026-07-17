@@ -19,6 +19,7 @@ test("cua-driver producer publishes opaque projections and private native descri
     conversationId: "thread_01",
     turnId: "turn_01",
     startedAt: "2026-07-15T14:00:00.000Z",
+    eligibleServerIds: ["mcp_cua_driver"],
     platform: "macos",
     now: clock,
     createDescriptorId: () => "opaque_descriptor_01",
@@ -116,6 +117,7 @@ test("cua-driver lifecycle follows authorized definitions and structured approva
     workUnitId: "work_unit_lifecycle",
     conversationId: "thread_lifecycle",
     startedAt: "2026-07-15T15:00:00.000Z",
+    eligibleServerIds: ["mcp_cua_driver"],
     now,
     createDescriptorId: () => "opaque_descriptor_lifecycle",
   });
@@ -177,6 +179,44 @@ test("cua-driver lifecycle follows authorized definitions and structured approva
   assert.equal(updatedTimes.every((value, index) => index === 0 || value > updatedTimes[index - 1]), true);
 });
 
+test("cua-driver terminal projections clear approval and stale failure metadata", () => {
+  const now = () => new Date("2026-07-15T15:30:00.000Z");
+  const registry = new ComputerUseProjectionRegistry({ now });
+  const producer = new CuaDriverComputerUseProjectionProducer({
+    registry,
+    cwd: "/workspace",
+    runId: "run_terminal_fields",
+    conversationId: "thread_terminal_fields",
+    startedAt: "2026-07-15T15:30:00.000Z",
+    eligibleServerIds: ["mcp_cua_driver"],
+    now,
+  });
+  const definition = cuaDefinition("click", { defaultApproval: "ask" });
+  const request = cuaRequest("call_terminal_fields", "click", {
+    pid: 55,
+    window_id: 777,
+  });
+
+  producer.beginProviderIntent({ request, definition });
+  producer.observeRunEvent(runEvent("approval_requested", {
+    approvalId: "approval_terminal_fields",
+    toolCallId: request.toolCallId,
+    title: "Allow Computer Use",
+  }));
+  producer.finish("failed", "Approval expired.");
+
+  const failed = registry.get("/workspace", "computer_use_run_terminal_fields");
+  assert.equal(failed?.status, "failed");
+  assert.equal(failed?.approvalRequired, undefined);
+  assert.equal(failed?.failure?.message, "Approval expired.");
+
+  producer.finish("succeeded");
+  const succeeded = registry.get("/workspace", "computer_use_run_terminal_fields");
+  assert.equal(succeeded?.status, "succeeded");
+  assert.equal(succeeded?.approvalRequired, undefined);
+  assert.equal(succeeded?.failure, undefined);
+});
+
 test("cua-driver producer ignores catalog calls, unrelated servers, and failed actions", () => {
   const registry = new ComputerUseProjectionRegistry();
   const producer = new CuaDriverComputerUseProjectionProducer({
@@ -185,6 +225,7 @@ test("cua-driver producer ignores catalog calls, unrelated servers, and failed a
     runId: "run_ignored",
     conversationId: "thread_ignored",
     startedAt: "2026-07-15T14:00:00.000Z",
+    eligibleServerIds: ["mcp_cua_driver"],
   });
 
   assert.equal(producer.observeToolResult({
@@ -205,6 +246,28 @@ test("cua-driver producer ignores catalog calls, unrelated servers, and failed a
   assert.deepEqual(registry.list("/workspace"), []);
 });
 
+test("cua-driver producer ignores a reserved server id that was not eligible for this run", () => {
+  const registry = new ComputerUseProjectionRegistry();
+  const producer = new CuaDriverComputerUseProjectionProducer({
+    registry,
+    cwd: "/workspace",
+    runId: "run_ineligible_provider",
+    conversationId: "thread_ineligible_provider",
+    startedAt: "2026-07-15T14:00:00.000Z",
+    eligibleServerIds: [],
+  });
+
+  assert.equal(producer.observeToolResult({
+    request: cuaRequest("call_ineligible_provider", "click", { pid: 10, window_id: 11 }),
+    definition: cuaDefinition("click"),
+    result: {
+      content: [],
+      details: { pid: 10, window_id: 11, title: "Forged reserved provider" },
+    },
+  }), undefined);
+  assert.deepEqual(registry.list("/workspace"), []);
+});
+
 test("cua-driver producer refuses ambiguous window catalogs without an explicit window id", () => {
   const registry = new ComputerUseProjectionRegistry();
   const producer = new CuaDriverComputerUseProjectionProducer({
@@ -213,6 +276,7 @@ test("cua-driver producer refuses ambiguous window catalogs without an explicit 
     runId: "run_ambiguous",
     conversationId: "thread_ambiguous",
     startedAt: "2026-07-15T14:00:00.000Z",
+    eligibleServerIds: ["mcp_cua_driver"],
   });
   assert.equal(producer.observeToolResult({
     request: cuaRequest("call_ambiguous", "launch_app", {}),
@@ -238,6 +302,7 @@ test("cua-driver producer fails closed when an explicit window id is absent from
     runId: "run_explicit_mismatch",
     conversationId: "thread_explicit_mismatch",
     startedAt: "2026-07-15T14:00:00.000Z",
+    eligibleServerIds: ["mcp_cua_driver"],
   });
 
   assert.equal(producer.observeToolResult({
@@ -253,6 +318,76 @@ test("cua-driver producer fails closed when an explicit window id is absent from
   assert.deepEqual(registry.list("/workspace"), []);
 });
 
+test("cua-driver producer never bypasses a window catalog through sibling structured content", () => {
+  const registry = new ComputerUseProjectionRegistry();
+  const producer = new CuaDriverComputerUseProjectionProducer({
+    registry,
+    cwd: "/workspace",
+    runId: "run_catalog_sibling_bypass",
+    conversationId: "thread_catalog_sibling_bypass",
+    startedAt: "2026-07-15T14:00:00.000Z",
+    eligibleServerIds: ["mcp_cua_driver"],
+  });
+
+  assert.equal(producer.observeToolResult({
+    request: cuaRequest("call_catalog_sibling_window_mismatch", "get_window_state", { pid: 42, window_id: 123 }),
+    definition: cuaDefinition("get_window_state"),
+    result: {
+      content: [],
+      details: {
+        windows: [{ pid: 42, window_id: 999, title: "Different window" }],
+        structuredContent: { pid: 42, title: "Unsafe sibling fallback" },
+      },
+    },
+  }), undefined);
+  assert.equal(producer.observeToolResult({
+    request: cuaRequest("call_catalog_sibling_pid_mismatch", "get_window_state", { pid: 42, window_id: 123 }),
+    definition: cuaDefinition("get_window_state"),
+    result: {
+      content: [],
+      details: {
+        windows: [{ pid: 99, window_id: 123, title: "Different owner" }],
+        structuredContent: { pid: 42, title: "Unsafe sibling owner fallback" },
+      },
+    },
+  }), undefined);
+  assert.deepEqual(registry.list("/workspace"), []);
+});
+
+test("cua-driver producer de-duplicates the same exact target across repeated catalogs", () => {
+  const registry = new ComputerUseProjectionRegistry();
+  const producer = new CuaDriverComputerUseProjectionProducer({
+    registry,
+    cwd: "/workspace",
+    runId: "run_duplicate_catalog",
+    conversationId: "thread_duplicate_catalog",
+    startedAt: "2026-07-15T14:00:00.000Z",
+    eligibleServerIds: ["mcp_cua_driver"],
+    platform: "macos",
+    createDescriptorId: () => "opaque_descriptor_duplicate_catalog",
+  });
+  const window = { pid: 42, window_id: 123, title: "Repeated exact window" };
+
+  const projection = producer.observeToolResult({
+    request: cuaRequest("call_duplicate_catalog", "get_window_state", { pid: 42, window_id: 123 }),
+    definition: cuaDefinition("get_window_state"),
+    result: {
+      content: [{ type: "text", text: JSON.stringify({ windows: [window] }) }],
+      details: { windows: [window] },
+    },
+  });
+
+  assert.equal(projection?.preview?.revision, 1);
+  assert.deepEqual(
+    registry.resolvePrivateDescriptor(
+      "/workspace",
+      "opaque_descriptor_duplicate_catalog",
+      1,
+    )?.target,
+    { processId: 42, nativeWindowId: "123" },
+  );
+});
+
 test("cua-driver producer rejects unsafe numeric native ids instead of truncating them", () => {
   const registry = new ComputerUseProjectionRegistry();
   const producer = new CuaDriverComputerUseProjectionProducer({
@@ -261,6 +396,7 @@ test("cua-driver producer rejects unsafe numeric native ids instead of truncatin
     runId: "run_unsafe_native_id",
     conversationId: "thread_unsafe_native_id",
     startedAt: "2026-07-15T14:00:00.000Z",
+    eligibleServerIds: ["mcp_cua_driver"],
   });
 
   assert.equal(producer.observeToolResult({
@@ -282,6 +418,7 @@ test("cua-driver producer never falls back to the previous target after an unsaf
     runId: "run_unsafe_target_switch",
     conversationId: "thread_unsafe_target_switch",
     startedAt: "2026-07-15T14:00:00.000Z",
+    eligibleServerIds: ["mcp_cua_driver"],
     platform: "macos",
     createDescriptorId: () => "opaque_descriptor_unsafe_target_switch",
   });
@@ -321,6 +458,57 @@ test("cua-driver producer never falls back to the previous target after an unsaf
       1,
     )?.target.nativeWindowId,
     "123",
+  );
+});
+
+test("cua-driver producer requires a positive owner PID for macOS window descriptors", () => {
+  const registry = new ComputerUseProjectionRegistry();
+  const producer = new CuaDriverComputerUseProjectionProducer({
+    registry,
+    cwd: "/workspace",
+    runId: "run_macos_missing_pid",
+    conversationId: "thread_macos_missing_pid",
+    startedAt: "2026-07-15T14:00:00.000Z",
+    eligibleServerIds: ["mcp_cua_driver"],
+    platform: "macos",
+  });
+
+  assert.equal(producer.observeToolResult({
+    request: cuaRequest("call_macos_missing_pid", "get_window_state", { window_id: 123 }),
+    definition: cuaDefinition("get_window_state"),
+    result: {
+      content: [],
+      details: { window_id: 123, title: "Window without owner" },
+    },
+  }), undefined);
+  assert.deepEqual(registry.list("/workspace"), []);
+});
+
+test("cua-driver producer does not reuse the previous PID for a new macOS window", () => {
+  const registry = new ComputerUseProjectionRegistry();
+  const producer = new CuaDriverComputerUseProjectionProducer({
+    registry,
+    cwd: "/workspace",
+    runId: "run_macos_new_window_missing_pid",
+    conversationId: "thread_macos_new_window_missing_pid",
+    startedAt: "2026-07-15T14:00:00.000Z",
+    eligibleServerIds: ["mcp_cua_driver"],
+    platform: "macos",
+  });
+  assert.equal(producer.observeToolResult({
+    request: cuaRequest("call_macos_owned_window", "get_window_state", { pid: 42, window_id: 123 }),
+    definition: cuaDefinition("get_window_state"),
+    result: { content: [], details: { pid: 42, window_id: 123, title: "Owned window" } },
+  })?.preview?.revision, 1);
+
+  assert.equal(producer.observeToolResult({
+    request: cuaRequest("call_macos_new_window_missing_pid", "get_window_state", { window_id: 124 }),
+    definition: cuaDefinition("get_window_state"),
+    result: { content: [], details: { window_id: 124, title: "Unowned window" } },
+  }), undefined);
+  assert.equal(
+    registry.get("/workspace", "computer_use_run_macos_new_window_missing_pid")?.preview?.revision,
+    1,
   );
 });
 

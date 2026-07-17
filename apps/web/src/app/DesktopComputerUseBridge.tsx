@@ -10,6 +10,8 @@ import {
 import { useDesktopComputerUseHostLayoutReporter } from "./use-desktop-computer-use-host-layout-reporter.js";
 
 const DESKTOP_COMMAND_TIMEOUT_MS = 10_000;
+const DESKTOP_STOP_CONVERGENCE_TIMEOUT_MS = 10_000;
+const DESKTOP_VISIBILITY_CONVERGENCE_TIMEOUT_MS = 10_000;
 
 type DesktopCommandResult = Awaited<ReturnType<NonNullable<Window["lingDesktop"]>["computerUse"]["stop"]>>;
 
@@ -66,23 +68,41 @@ export function DesktopComputerUseBridge({
   const [visibilityRequest, setVisibilityRequest] = useState<VisibilityRequestState | undefined>();
   const stopRequestSequenceRef = useRef(0);
   const pendingStopRequestRef = useRef<PendingStopRequest | undefined>();
+  const stopConvergenceTimeoutIdRef = useRef<number | undefined>();
   const visibilityRequestSequenceRef = useRef(0);
   const pendingVisibilityRequestRef = useRef<PendingVisibilityRequest | undefined>();
+  const visibilityConvergenceTimeoutIdRef = useRef<number | undefined>();
   const activeSummarySessionIdRef = useRef<string | undefined>();
   const selectedConversationIdRef = useRef(selectedConversationId);
   selectedConversationIdRef.current = selectedConversationId;
 
+  const clearStopConvergenceTimeout = useCallback((): void => {
+    if (stopConvergenceTimeoutIdRef.current !== undefined) {
+      window.clearTimeout(stopConvergenceTimeoutIdRef.current);
+      stopConvergenceTimeoutIdRef.current = undefined;
+    }
+  }, []);
+
   const invalidateStopRequest = useCallback((): void => {
+    clearStopConvergenceTimeout();
     stopRequestSequenceRef.current += 1;
     pendingStopRequestRef.current = undefined;
     setStopRequest(undefined);
+  }, [clearStopConvergenceTimeout]);
+
+  const clearVisibilityConvergenceTimeout = useCallback((): void => {
+    if (visibilityConvergenceTimeoutIdRef.current !== undefined) {
+      window.clearTimeout(visibilityConvergenceTimeoutIdRef.current);
+      visibilityConvergenceTimeoutIdRef.current = undefined;
+    }
   }, []);
 
   const invalidateVisibilityRequest = useCallback((): void => {
+    clearVisibilityConvergenceTimeout();
     visibilityRequestSequenceRef.current += 1;
     pendingVisibilityRequestRef.current = undefined;
     setVisibilityRequest(undefined);
-  }, []);
+  }, [clearVisibilityConvergenceTimeout]);
 
   useEffect(() => {
     capabilities?.reportLocale(locale);
@@ -90,8 +110,11 @@ export function DesktopComputerUseBridge({
 
   useEffect(() => {
     capabilities?.reportSelectedConversation(selectedConversationId);
-    return () => capabilities?.reportSelectedConversation(undefined);
   }, [capabilities, selectedConversationId]);
+
+  useEffect(() => {
+    return () => capabilities?.reportSelectedConversation(undefined);
+  }, [capabilities]);
 
   useEffect(() => {
     if (!capabilities) {
@@ -154,6 +177,7 @@ export function DesktopComputerUseBridge({
     : undefined;
   const visibilityFailure = visibilityRequest?.sessionId === summary.sessionId
     && visibilityRequest.status === "failed"
+    && summary.visible !== (visibilityRequest.action === "show")
     ? { action: visibilityRequest.action, failureKind: visibilityRequest.failureKind }
     : undefined;
   const requestVisibility = async (action: VisibilityAction): Promise<void> => {
@@ -197,7 +221,29 @@ export function DesktopComputerUseBridge({
           status: "failed",
           failureKind: "not-accepted",
         });
+        return;
       }
+      clearVisibilityConvergenceTimeout();
+      visibilityConvergenceTimeoutIdRef.current = window.setTimeout(() => {
+        visibilityConvergenceTimeoutIdRef.current = undefined;
+        if (!isCurrentVisibilityRequest(
+          pendingRequest,
+          visibilityRequestSequenceRef.current,
+          pendingVisibilityRequestRef.current,
+          activeSummarySessionIdRef.current,
+          selectedConversationIdRef.current,
+        )) {
+          return;
+        }
+        pendingVisibilityRequestRef.current = undefined;
+        setVisibilityRequest({
+          requestId,
+          sessionId: summary.sessionId,
+          action,
+          status: "failed",
+          failureKind: "unavailable",
+        });
+      }, DESKTOP_VISIBILITY_CONVERGENCE_TIMEOUT_MS);
     } catch {
       if (!isCurrentVisibilityRequest(
         pendingRequest,
@@ -208,6 +254,7 @@ export function DesktopComputerUseBridge({
       )) {
         return;
       }
+      clearVisibilityConvergenceTimeout();
       pendingVisibilityRequestRef.current = undefined;
       setVisibilityRequest({
         requestId,
@@ -254,7 +301,28 @@ export function DesktopComputerUseBridge({
           status: "failed",
           failureKind: "not-accepted",
         });
+        return;
       }
+      clearStopConvergenceTimeout();
+      stopConvergenceTimeoutIdRef.current = window.setTimeout(() => {
+        stopConvergenceTimeoutIdRef.current = undefined;
+        if (!isCurrentStopRequest(
+          pendingRequest,
+          stopRequestSequenceRef.current,
+          pendingStopRequestRef.current,
+          activeSummarySessionIdRef.current,
+          selectedConversationIdRef.current,
+        )) {
+          return;
+        }
+        pendingStopRequestRef.current = undefined;
+        setStopRequest({
+          requestId,
+          sessionId: summary.sessionId,
+          status: "failed",
+          failureKind: "unavailable",
+        });
+      }, DESKTOP_STOP_CONVERGENCE_TIMEOUT_MS);
     } catch {
       if (!isCurrentStopRequest(
         pendingRequest,
@@ -265,6 +333,7 @@ export function DesktopComputerUseBridge({
       )) {
         return;
       }
+      clearStopConvergenceTimeout();
       pendingStopRequestRef.current = undefined;
       setStopRequest({
         requestId,

@@ -1,0 +1,151 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ling-stack.dev/schemas/macos-tcc-revocation-v2.json",
+  "title": "Ling Desktop macOS TCC Revocation Evidence",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "kind",
+    "generatedAt",
+    "operator",
+    "candidate",
+    "host",
+    "permissionBefore",
+    "permissionAfter",
+    "observation",
+    "evidence",
+    "verdict"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 2 },
+    "kind": { "const": "ling-desktop-macos-tcc-revocation" },
+    "harness": { "$ref": "#/$defs/releaseHarness" },
+    "generatedAt": { "type": "string", "format": "date-time" },
+    "operator": { "type": "string", "minLength": 1 },
+    "candidate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["reportSha256", "executableSha256", "bundleFingerprint", "teamId", "executionArchitecture"],
+      "properties": {
+        "reportSha256": { "$ref": "#/$defs/sha256" },
+        "executableSha256": { "$ref": "#/$defs/sha256" },
+        "bundleFingerprint": { "$ref": "#/$defs/bundleFingerprint" },
+        "teamId": { "type": "string", "pattern": "^[A-Z0-9]{10}$" },
+        "executionArchitecture": { "$ref": "#/$defs/architecture" }
+      }
+    },
+    "host": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["platform", "architecture", "macosVersion"],
+      "properties": {
+        "platform": { "const": "darwin" },
+        "architecture": { "$ref": "#/$defs/architecture" },
+        "macosVersion": { "type": "string", "minLength": 1 }
+      }
+    },
+    "permissionBefore": { "const": "granted" },
+    "permissionAfter": { "enum": ["denied", "restricted"] },
+    "observation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "activeCaptureBeforeRevocation",
+        "sourceEndedOrPermissionFailureObserved",
+        "runtimeContinuedWithoutStop",
+        "stopRequestCount",
+        "captureIndicatorCleared"
+      ],
+      "properties": {
+        "activeCaptureBeforeRevocation": { "const": true },
+        "sourceEndedOrPermissionFailureObserved": { "const": true },
+        "runtimeContinuedWithoutStop": { "const": true },
+        "stopRequestCount": { "const": 0 },
+        "captureIndicatorCleared": { "const": true }
+      }
+    },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["machineLog", "captureIndicator"],
+      "properties": {
+        "machineLog": { "$ref": "#/$defs/evidenceReference" },
+        "captureIndicator": { "$ref": "#/$defs/evidenceReference" }
+      }
+    },
+    "verdict": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "pass"],
+      "properties": {
+        "status": { "enum": ["PASS", "MANUAL_REVIEW_REQUIRED", "FAIL"] },
+        "pass": { "type": "boolean" },
+        "machinePass": { "type": "boolean" }
+      },
+      "oneOf": [
+        {
+          "properties": {
+            "status": { "const": "PASS" },
+            "pass": { "const": true },
+            "machinePass": { "type": "boolean" }
+          }
+        },
+        {
+          "properties": {
+            "status": { "enum": ["MANUAL_REVIEW_REQUIRED", "FAIL"] },
+            "pass": { "const": false },
+            "machinePass": { "type": "boolean" }
+          }
+        }
+      ]
+    }
+  },
+  "$defs": {
+    "architecture": { "enum": ["arm64", "x86_64"] },
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "releaseHarness": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["commit", "files"],
+      "properties": {
+        "commit": { "type": "string", "pattern": "^[0-9a-f]{40}([0-9a-f]{24})?$" },
+        "files": {
+          "type": "array",
+          "minItems": 2,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["path", "sha256", "gitBlobObjectId"],
+            "properties": {
+              "path": { "type": "string", "minLength": 1 },
+              "sha256": { "$ref": "#/$defs/sha256" },
+              "gitBlobObjectId": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{40}([0-9a-f]{24})?$"
+              }
+            }
+          }
+        }
+      }
+    },
+    "bundleFingerprint": {
+      "type": "object",
+      "required": ["treeSha256", "cdhash"],
+      "properties": {
+        "treeSha256": { "$ref": "#/$defs/sha256" },
+        "cdhash": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+        "cdhashFull": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      }
+    },
+    "evidenceReference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256"],
+      "properties": {
+        "path": { "type": "string", "minLength": 1 },
+        "sha256": { "$ref": "#/$defs/sha256" }
+      }
+    }
+  }
+}

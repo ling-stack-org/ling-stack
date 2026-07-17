@@ -254,10 +254,15 @@ embedded in the public fixture, so fake and real adapters exercise the same trus
 
 ## Final Local Packaging and Performance Evidence
 
-The latest mainline verification matrix passes **170/170 Desktop Node tests**, **17/17 PiP
-renderer tests**, **16/16 focused Web E2E tests**, **51/51 focused
-contracts/API/daemon/plugin tests**, and **10/10 macOS screenshot baselines**. The fake
-ownership/crash lane records **415.27 ms p95**.
+The 2026-07-17 pre-finalization worktree baseline (not commit-bound) passes **196/196
+Desktop Node tests**, **17/17 PiP renderer tests**, **16/16 focused Web E2E tests**,
+**51/51 focused contracts/API/daemon/plugin tests**, and **10/10 macOS screenshot
+baselines**. The fake ownership/crash lane records **415.27 ms p95**.
+
+`git show e20777f5` records **170/170 Desktop Node tests**; the `196/196` count above is
+not attributable to that commit. These figures are historical engineering references.
+Post-baseline work in the current worktree requires a fresh matrix before any result is
+called current or release evidence.
 
 The final current-host real MediaStream run passed the local comparison budgets with:
 
@@ -276,7 +281,7 @@ The Vite preview build now empties its `outDir` before emitting a new bundle. Th
 `app.asar` preview subtree therefore contains exactly the current seven subtree entries
 (two directories and five files), with no stale hashed preview asset from an earlier build.
 
-Final unsigned artifact SHA-256 values:
+Baseline unsigned artifact SHA-256 values @ `e20777f5` (regenerate after the final diff):
 
 | Artifact | SHA-256 |
 | --- | --- |

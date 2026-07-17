@@ -169,14 +169,15 @@ export class ComputerUseProjectionRegistry {
     if (isTerminalComputerUseStatus(projection.status) && projection.preview) {
       this.revokePrivateDescriptor(normalizedCwd, projection.preview.descriptorId);
     }
+    const seq = state.nextSeq;
+    state.nextSeq += 1;
     this.publish(normalizedCwd, {
-      seq: state.nextSeq,
+      seq,
       kind: "upsert",
       sessionId: projection.sessionId,
       projection,
       occurredAt,
     });
-    state.nextSeq += 1;
     return projection;
   }
 
@@ -191,13 +192,14 @@ export class ComputerUseProjectionRegistry {
     if (previous?.preview) {
       this.revokePrivateDescriptor(normalizedCwd, previous.preview.descriptorId);
     }
+    const seq = state.nextSeq;
+    state.nextSeq += 1;
     this.publish(normalizedCwd, {
-      seq: state.nextSeq,
+      seq,
       kind: "remove",
       sessionId,
       occurredAt,
     });
-    state.nextSeq += 1;
     return true;
   }
 
@@ -248,7 +250,7 @@ export class ComputerUseProjectionRegistry {
   }
 
   registerPrivateDescriptor(cwd: string, descriptor: ComputerUsePrivatePreviewDescriptor): void {
-    if (!descriptor.descriptorId.trim() || !Number.isInteger(descriptor.revision) || descriptor.revision < 0) {
+    if (!descriptor.descriptorId.trim() || !Number.isSafeInteger(descriptor.revision) || descriptor.revision < 0) {
       throw new Error("Computer Use private descriptor identity is invalid");
     }
     if (!descriptor.authorization.grantId.trim() || !Number.isFinite(Date.parse(descriptor.authorization.expiresAt))) {
@@ -333,8 +335,16 @@ export class ComputerUseProjectionRegistry {
     return lease.descriptor;
   }
 
-  revokePrivateDescriptor(cwd: string, descriptorId: string): void {
-    this.privateDescriptors.get(normalizeCwd(cwd))?.delete(descriptorId);
+  revokePrivateDescriptor(cwd: string, descriptorId: string, revision?: number): void {
+    const descriptors = this.privateDescriptors.get(normalizeCwd(cwd));
+    if (revision === undefined) {
+      descriptors?.delete(descriptorId);
+      return;
+    }
+    const lease = descriptors?.get(descriptorId);
+    if (lease?.descriptor.revision === revision) {
+      descriptors?.delete(descriptorId);
+    }
   }
 
   /**
@@ -407,9 +417,15 @@ export class ComputerUseProjectionRegistry {
     if (state.events.length > this.maxEventCount) {
       state.events.splice(0, state.events.length - this.maxEventCount);
     }
-    for (const listener of this.listeners) {
+    for (const listener of [...this.listeners]) {
       if (listener.cwd === cwd) {
-        listener.onEvent(event);
+        try {
+          listener.onEvent(event);
+        } catch {
+          // A disconnected or buggy subscriber must not roll back an event that
+          // is already committed to the registry or block healthy subscribers.
+          this.listeners.delete(listener);
+        }
       }
     }
   }
@@ -439,14 +455,15 @@ export class ComputerUseProjectionRegistry {
     if (previous?.preview) {
       this.revokePrivateDescriptor(normalizedCwd, previous.preview.descriptorId);
     }
+    const seq = state.nextSeq;
+    state.nextSeq += 1;
     const event: ComputerUsePreviewEvent = {
-      seq: state.nextSeq,
+      seq,
       kind: "remove",
       sessionId,
       occurredAt,
     };
     this.publish(normalizedCwd, event);
-    state.nextSeq += 1;
     return true;
   }
 }
@@ -500,7 +517,12 @@ function validateProjection(projection: ComputerUsePreviewProjection): void {
   if (!Number.isFinite(Date.parse(projection.startedAt)) || !Number.isFinite(Date.parse(projection.updatedAt))) {
     throw new Error("startedAt and updatedAt must be valid ISO timestamps");
   }
-  if (projection.preview && (!projection.preview.descriptorId.trim() || projection.preview.revision < 0)) {
+  if (
+    projection.preview &&
+    (!projection.preview.descriptorId.trim() ||
+      !Number.isSafeInteger(projection.preview.revision) ||
+      projection.preview.revision < 0)
+  ) {
     throw new Error("preview descriptorId and non-negative revision are required");
   }
 }

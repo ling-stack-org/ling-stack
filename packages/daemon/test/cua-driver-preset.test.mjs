@@ -5,6 +5,7 @@ import { join, resolve } from "node:path";
 import test from "node:test";
 import {
   createCuaDriverDescriptor,
+  defaultCuaDriverCommandCandidates,
   isCuaDriverPlatformSupported,
   resolveCuaDriverCommand,
 } from "../dist/features/plugins/presets.js";
@@ -65,6 +66,35 @@ test("Cua Driver command resolution knows the official Windows install location"
     });
     assert.equal(resolution.ok, true);
     assert.equal(resolution.command, executable);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("Cua Driver command resolution retains macOS app-bundle discovery", async () => {
+  const root = await mkdtemp(resolve(tmpdir(), "ling-cua-driver-macos-app-"));
+  const executable = join(
+    root,
+    "Applications",
+    "CuaDriver.app",
+    "Contents",
+    "MacOS",
+    "cua-driver",
+  );
+  await mkdir(resolve(executable, ".."), { recursive: true });
+  await writeFile(executable, "#!/bin/sh\nexit 0\n");
+  await chmod(executable, 0o755);
+  try {
+    const resolution = resolveCuaDriverCommand({}, {
+      platform: "darwin",
+      path: "",
+      homeDir: root,
+    });
+    assert.equal(resolution.ok, true);
+    assert.equal(
+      defaultCuaDriverCommandCandidates(root).includes(resolution.command),
+      true,
+    );
   } finally {
     await rm(root, { recursive: true, force: true });
   }

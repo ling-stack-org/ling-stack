@@ -9,9 +9,42 @@ import {
   inspectWindowsX64Pe,
   isPathWithin,
   matchesPinnedProviderVersionOutput,
+  resolveUnzipExecutable,
+  resolveWindowsSystemExecutable,
+  runChild,
   sha256File,
   verifyPinnedWindowsProviderArchive,
+  verifyWindowsProviderBinary,
 } from "./verify-windows-cua-driver-provider.mjs";
+
+test("external provider tooling resolves to fixed system paths instead of PATH", () => {
+  assert.equal(
+    resolveWindowsSystemExecutable("taskkill.exe", { SystemRoot: "C:\\Windows" }),
+    "C:\\Windows\\System32\\taskkill.exe",
+  );
+  assert.equal(
+    resolveWindowsSystemExecutable(
+      "WindowsPowerShell\\v1.0\\powershell.exe",
+      { SystemRoot: "D:\\Windows" },
+    ),
+    "D:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+  );
+  assert.equal(resolveUnzipExecutable("linux"), "/usr/bin/unzip");
+  assert.throws(() => resolveUnzipExecutable("win32"), /not used on Windows/u);
+});
+
+test("provider verifier child execution has a bounded timeout", async () => {
+  const startedAt = Date.now();
+  await assert.rejects(
+    runChild(
+      process.execPath,
+      ["-e", "setInterval(() => {}, 1000)"],
+      { timeoutMs: 25 },
+    ),
+    /timed out after 25ms/u,
+  );
+  assert.ok(Date.now() - startedAt < 2_000);
+});
 
 test("pins the reviewed cua-driver-rs v0.8.3 Windows x86_64 release asset", () => {
   assert.deepEqual(WINDOWS_CUA_DRIVER_RELEASE, {
@@ -23,6 +56,14 @@ test("pins the reviewed cua-driver-rs v0.8.3 Windows x86_64 release asset", () =
     assetRoot: "cua-driver-rs-0.8.3-windows-x86_64",
     assetBytes: 10_585_087,
     sha256: "6acdc84b98629fcd0be2368cc16565c18d5f21d9dedd4e10fdb6f58547fce9d0",
+    binaries: {
+      "cua-driver.exe": {
+        sha256: "3cc33572defac29e23bc07e211c20245da9f6ebe8e6481f865b31534b1de8cee",
+      },
+      "cua-driver-uia.exe": {
+        sha256: "1b35a27d41008507d66f819248751b9e79a15c9e6e03390c56749c6fe5daca1c",
+      },
+    },
     url: "https://github.com/trycua/cua/releases/download/cua-driver-rs-v0.8.3/cua-driver-rs-0.8.3-windows-x86_64.zip",
   });
   assert.equal(matchesPinnedProviderVersionOutput("cua-driver 0.8.3"), true);
@@ -30,6 +71,20 @@ test("pins the reviewed cua-driver-rs v0.8.3 Windows x86_64 release asset", () =
   assert.equal(matchesPinnedProviderVersionOutput("cua-driver 0.8.3.1"), false);
   assert.equal(matchesPinnedProviderVersionOutput("cua-driver 0.8.3-beta"), false);
   assert.equal(matchesPinnedProviderVersionOutput("cua-driver 0.8.30"), false);
+});
+
+test("installed provider verification rejects a PE with an unreviewed binary hash before execution", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "ling-cua-provider-binary-test-"));
+  try {
+    const binaryPath = join(directory, "cua-driver.exe");
+    await writeFile(binaryPath, fakePe());
+    await assert.rejects(
+      verifyWindowsProviderBinary(binaryPath, "cua-driver.exe"),
+      /SHA-256 mismatch/u,
+    );
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
 });
 
 test("accepts an x86_64 PE32+ binary without treating its certificate table as trusted", () => {

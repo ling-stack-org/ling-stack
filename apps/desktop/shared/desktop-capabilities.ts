@@ -74,12 +74,31 @@ export interface ComputerUsePreviewSummary {
   readonly conversationId: string;
   readonly status: ComputerUseRuntimeStatus;
   readonly targetLabel: string;
+  readonly previewAvailable: boolean;
   readonly visible: boolean;
 }
 
 export interface DesktopCommandResult {
   readonly accepted: boolean;
   readonly reason?: string;
+}
+
+export interface DesktopNavigationIntent {
+  readonly kind: "open_conversation";
+  readonly requestId: number;
+  readonly conversationId: string;
+}
+
+export function isDesktopNavigationIntent(value: unknown): value is DesktopNavigationIntent {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return false;
+  }
+  const candidate = value as Partial<DesktopNavigationIntent>;
+  return candidate.kind === "open_conversation"
+    && Number.isSafeInteger(candidate.requestId)
+    && (candidate.requestId ?? 0) > 0
+    && typeof candidate.conversationId === "string"
+    && candidate.conversationId.trim().length > 0;
 }
 
 export interface ComputerUsePreviewInteraction {
@@ -119,6 +138,10 @@ export interface ComputerUsePreviewPreferences {
 export interface LingDesktopCapabilities {
   readonly platform: DesktopPlatform;
   readonly daemonBaseUrl: string;
+  readonly navigation: {
+    acknowledgeIntent(requestId: number): Promise<DesktopCommandResult>;
+    onIntent(listener: (intent: DesktopNavigationIntent) => void): () => void;
+  };
   readonly daemon: {
     getStatus(): Promise<DesktopDaemonStatus>;
     restart(): Promise<DesktopDaemonStatus>;

@@ -60,6 +60,31 @@ test("Computer Use descriptor re-registration does not reset an existing revisio
   assert.equal(registry.resolvePrivateDescriptor("/workspace", "descriptor-1", 1, now), undefined);
 });
 
+test("Computer Use registry isolates throwing subscribers and never reuses an event sequence", () => {
+  const registry = new ComputerUseProjectionRegistry();
+  const delivered = [];
+  let brokenCalls = 0;
+  registry.subscribe("/workspace", () => {
+    brokenCalls += 1;
+    throw new Error("disconnected subscriber");
+  });
+  registry.subscribe("/workspace", (event) => delivered.push(event.seq));
+
+  assert.doesNotThrow(() => registry.upsert("/workspace", projection()));
+  assert.doesNotThrow(() => registry.upsert("/workspace", projection({
+    status: "stopping",
+    updatedAt: "2026-07-16T00:00:01.000Z",
+  })));
+
+  assert.equal(brokenCalls, 1);
+  assert.deepEqual(delivered, [1, 2]);
+  assert.deepEqual(
+    registry.listEvents("/workspace").events.map((event) => event.seq),
+    [1, 2],
+  );
+  assert.equal(registry.snapshot("/workspace").latestSeq, 2);
+});
+
 function projection(overrides = {}) {
   return {
     sessionId: "session-1",

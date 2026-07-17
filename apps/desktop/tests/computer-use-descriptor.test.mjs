@@ -39,7 +39,7 @@ test("daemon descriptor resolver keeps the bridge token in the main process requ
         revision: 4,
         platform: "macos",
         sourceKind: "window",
-        target: { nativeWindowId: "7788" },
+        target: { processId: 4321, nativeWindowId: "7788" },
         authorization: { grantId: "grant-1", expiresAt: "2099-01-01T00:00:00.000Z" },
       });
     },
@@ -156,12 +156,38 @@ test("daemon descriptor resolver rejects malformed target fields instead of part
       /computer_use_descriptor_response_invalid/,
     );
   }
+
+  for (const target of [
+    { nativeWindowId: "7788" },
+    { processId: 4321, nativeWindowId: "0" },
+    { processId: 4321, nativeWindowId: "07788" },
+    { processId: 4321, nativeWindowId: "4294967296" },
+    { processId: 4321, electronSourceId: "window:7788:0" },
+  ]) {
+    await assert.rejects(
+      () => daemonResolverFor({
+        ...valid,
+        platform: "macos",
+        sourceKind: "window",
+        target,
+      }).resolve("opaque-1", 4),
+      /computer_use_descriptor_response_invalid/,
+    );
+  }
 });
 
 test("daemon descriptor resolver accepts a canonical Windows provider HWND and pid", async () => {
   const descriptor = await daemonResolverFor({
     ...validDaemonDescriptor(),
     platform: "windows",
+    target: { processId: 4321, nativeWindowId: "7788" },
+  }).resolve("opaque-1", 4);
+  assert.deepEqual(descriptor.target, { processId: 4321, nativeWindowId: "7788" });
+});
+
+test("daemon descriptor resolver accepts a canonical macOS provider window id and pid", async () => {
+  const descriptor = await daemonResolverFor({
+    ...validDaemonDescriptor(),
     target: { processId: 4321, nativeWindowId: "7788" },
   }).resolve("opaque-1", 4);
   assert.deepEqual(descriptor.target, { processId: 4321, nativeWindowId: "7788" });
@@ -244,7 +270,7 @@ function validDaemonDescriptor() {
     revision: 4,
     platform: "macos",
     sourceKind: "window",
-    target: { nativeWindowId: "7788" },
+    target: { processId: 4321, nativeWindowId: "7788" },
     authorization: { grantId: "grant-1", expiresAt: "2099-01-01T00:00:00.000Z" },
   };
 }

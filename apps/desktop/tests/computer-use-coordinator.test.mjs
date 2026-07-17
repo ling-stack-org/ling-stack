@@ -91,6 +91,47 @@ test("locale changes update renderer copy without reopening the window or source
   await coordinator.dispose();
 });
 
+test("dispose while the initial projection list is pending prevents a late subscription", async () => {
+  const client = new DeferredListProjectionClient(FAKE_COMPUTER_USE_PROJECTION);
+  const adapter = new FakeComputerUsePreviewPlatformAdapter();
+  const coordinator = createCoordinator({
+    client,
+    adapter,
+    preferences: new MemoryPreferenceStore(),
+    windows: [],
+  });
+
+  const startup = coordinator.start();
+  await client.listStarted.promise;
+  await coordinator.dispose();
+  client.allowList.resolve();
+  await startup;
+
+  assert.equal(client.subscribeCount, 0, "startup must not subscribe after disposal has completed");
+  assert.equal(adapter.disposeCount, 1);
+});
+
+test("a subscription returned after reentrant disposal is closed immediately", async () => {
+  const client = new ReentrantDisposeProjectionClient(FAKE_COMPUTER_USE_PROJECTION);
+  const adapter = new FakeComputerUsePreviewPlatformAdapter();
+  const coordinator = createCoordinator({
+    client,
+    adapter,
+    preferences: new MemoryPreferenceStore(),
+    windows: [],
+  });
+  client.onSubscribe = () => {
+    void coordinator.dispose();
+  };
+
+  await coordinator.start();
+  await coordinator.dispose();
+
+  assert.equal(client.subscribeCount, 1);
+  assert.equal(client.closeCount, 1, "reentrant disposal must close the just-created subscription exactly once");
+  assert.equal(adapter.disposeCount, 1);
+});
+
 test("coordinator disposal completes and disposes the platform adapter when subscription close throws", async () => {
   const adapter = new FakeComputerUsePreviewPlatformAdapter();
   const coordinator = createCoordinator({
@@ -476,6 +517,94 @@ test("renderer crash cannot reopen a user-hidden session", async () => {
   assert.equal(windows[0].destroyCount, 1);
   assert.equal(windows.length, 1);
   assert.equal(coordinator.getSummary()?.visible, false);
+  await coordinator.dispose();
+});
+
+test("snapshot send failure is isolated and enters renderer recovery without stopping runtime", async () => {
+  const windows = [];
+  const client = new CountingProjectionClient(FAKE_COMPUTER_USE_PROJECTION);
+  const coordinator = createCoordinator({
+    client,
+    adapter: new FakeComputerUsePreviewPlatformAdapter(),
+    preferences: new MemoryPreferenceStore(),
+    windows,
+  });
+  await coordinator.start();
+  coordinator.reportSelectedConversation(FAKE_COMPUTER_USE_PROJECTION.conversationId);
+  await flush();
+
+  const failedWindow = windows[0];
+  failedWindow.sendThrows = true;
+  assert.doesNotThrow(() => coordinator.reportLocale("zh-CN"));
+  await flush();
+
+  assert.equal(failedWindow.destroyCount, 1);
+  assert.equal(windows.length, 2);
+  assert.equal(client.stopCount, 0);
+  assert.equal(coordinator.getSummary()?.status, "running");
+  await coordinator.dispose();
+});
+
+test("throwing summary listeners are removed without blocking healthy listeners or state changes", async () => {
+  const windows = [];
+  const coordinator = createCoordinator({
+    client: new CountingProjectionClient(FAKE_COMPUTER_USE_PROJECTION),
+    adapter: new FakeComputerUsePreviewPlatformAdapter(),
+    preferences: new MemoryPreferenceStore(),
+    windows,
+  });
+  const healthySummaries = [];
+  coordinator.onSummaryChanged((summary) => {
+    if (summary) {
+      throw new Error("broken_summary_consumer");
+    }
+  });
+  coordinator.onSummaryChanged((summary) => healthySummaries.push(summary));
+
+  await coordinator.start();
+  coordinator.reportSelectedConversation(FAKE_COMPUTER_USE_PROJECTION.conversationId);
+  await flush();
+  coordinator.reportFrameReady(FAKE_COMPUTER_USE_PROJECTION.sessionId);
+
+  assert.equal(coordinator.getSummary()?.visible, true);
+  assert.equal(healthySummaries.some((summary) => summary?.visible === true), true);
+  await coordinator.dispose();
+});
+
+test("projection disconnect releases media and blocks stale capture until reconnect", async () => {
+  const windows = [];
+  const adapter = new FakeComputerUsePreviewPlatformAdapter();
+  const client = new CountingProjectionClient(FAKE_COMPUTER_USE_PROJECTION);
+  const coordinator = createCoordinator({
+    client,
+    adapter,
+    preferences: new MemoryPreferenceStore(),
+    windows,
+  });
+  await coordinator.start();
+  coordinator.reportSelectedConversation(FAKE_COMPUTER_USE_PROJECTION.conversationId);
+  await flush();
+  coordinator.reportFrameReady(FAKE_COMPUTER_USE_PROJECTION.sessionId);
+  const prepareCountBeforeDisconnect = adapter.prepareCount;
+
+  client.emitConnectionState("disconnected");
+  await flush();
+
+  assert.equal(adapter.releaseCount > 0, true);
+  assert.equal(coordinator.getRendererSnapshot()?.sourceStatus, "stalled");
+  assert.equal(coordinator.getRendererSnapshot()?.frameReady, false);
+  assert.deepEqual(await coordinator.show(FAKE_COMPUTER_USE_PROJECTION.sessionId), {
+    accepted: true,
+  });
+  assert.equal(adapter.prepareCount, prepareCountBeforeDisconnect);
+  assert.deepEqual(await coordinator.stop(FAKE_COMPUTER_USE_PROJECTION.sessionId), {
+    accepted: false,
+    reason: "computer_use_projection_disconnected",
+  });
+
+  client.emitConnectionState("connected");
+  await flush();
+  assert.equal(adapter.prepareCount > prepareCountBeforeDisconnect, true);
   await coordinator.dispose();
 });
 
@@ -953,7 +1082,12 @@ test("starting and approval projections remain visible in the Desktop summary be
     conversationId: starting.conversationId,
     status: "starting",
     targetLabel: starting.target.displayName,
+    previewAvailable: false,
     visible: false,
+  });
+  assert.deepEqual(await coordinator.show(starting.sessionId), {
+    accepted: false,
+    reason: "computer_use_preview_unavailable",
   });
   assert.equal(windows.length, 0);
 
@@ -968,6 +1102,7 @@ test("starting and approval projections remain visible in the Desktop summary be
   });
   await flush();
   assert.equal(coordinator.getSummary()?.status, "waiting_for_approval");
+  assert.equal(coordinator.getSummary()?.previewAvailable, false);
   assert.equal(windows.length, 0, "runtime status is shown in shared UI without opening an empty PiP");
   await coordinator.dispose();
 });
@@ -2808,6 +2943,41 @@ class ThrowingCloseProjectionClient extends CountingProjectionClient {
       close() {
         subscription.close();
         throw new Error("projection_subscription_close_failed");
+      },
+    };
+  }
+}
+
+class DeferredListProjectionClient extends CountingProjectionClient {
+  listStarted = deferred();
+  allowList = deferred();
+  subscribeCount = 0;
+
+  async list() {
+    this.listStarted.resolve();
+    await this.allowList.promise;
+    return super.list();
+  }
+
+  subscribe(listener, onConnectionStateChanged) {
+    this.subscribeCount += 1;
+    return super.subscribe(listener, onConnectionStateChanged);
+  }
+}
+
+class ReentrantDisposeProjectionClient extends CountingProjectionClient {
+  onSubscribe;
+  subscribeCount = 0;
+  closeCount = 0;
+
+  subscribe(listener, onConnectionStateChanged) {
+    this.subscribeCount += 1;
+    const subscription = super.subscribe(listener, onConnectionStateChanged);
+    this.onSubscribe?.();
+    return {
+      close: () => {
+        this.closeCount += 1;
+        subscription.close();
       },
     };
   }

@@ -95,21 +95,29 @@ export class ElectronComputerUsePreviewPlatformAdapter implements ComputerUsePre
         types: [approvedSource.type],
         thumbnailSize: { width: 0, height: 0 },
         fetchWindowIcons: false,
-      }).then((sources) => {
-        const source = this.displayMediaGrants.isCurrent(approved.generation)
+      }).then(async (sources) => {
+        let source = this.displayMediaGrants.isCurrent(approved.generation)
           ? sources.find((candidate) => sourceMatchesDescriptor(
               candidate,
               approvedSource.type,
               approvedSource.target,
             ))
           : undefined;
+        let targetOwnershipValidated = approvedSource.type !== "window";
+        if (source && !targetOwnershipValidated) {
+          targetOwnershipValidated = await this.isTargetStillAuthorized(approved);
+          if (!targetOwnershipValidated) {
+            source = undefined;
+          }
+        }
         this.onDiagnostic?.("computer_use.capture_source_resolved", {
           sourceCount: sources.length,
           matched: Boolean(source),
           approvalStillCurrent: this.displayMediaGrants.isCurrent(approved.generation),
+          targetOwnershipValidated,
         });
         respond(source ? { video: { id: source.id, name: source.name } } : {});
-      }, (error) => {
+      }).catch((error) => {
         this.onDiagnostic?.("computer_use.capture_source_failed", {
           message: error instanceof Error ? error.message : String(error),
         });
@@ -184,6 +192,7 @@ export class ElectronComputerUsePreviewPlatformAdapter implements ComputerUsePre
       source: {
         type: sourceType,
         target: {
+          processId: descriptor.target.processId,
           electronSourceId: descriptor.target.electronSourceId,
           nativeWindowId: descriptor.target.nativeWindowId,
         },
@@ -229,6 +238,47 @@ export class ElectronComputerUsePreviewPlatformAdapter implements ComputerUsePre
       ? "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture"
       : "ms-settings:privacy-graphicscaptureprogrammatic";
     await shell.openExternal(url);
+  }
+
+  private async isTargetStillAuthorized(approved: {
+    readonly generation: number;
+    readonly descriptorId: string;
+    readonly revision: number;
+    readonly authorizationGrantId: string;
+    readonly source: {
+      readonly type: "screen" | "window";
+      readonly target: {
+        readonly processId?: number;
+        readonly nativeWindowId?: string;
+        readonly electronSourceId?: string;
+      };
+    };
+  }): Promise<boolean> {
+    const expected = approved.source.target;
+    if (
+      expected.processId === undefined ||
+      expected.nativeWindowId === undefined ||
+      !this.displayMediaGrants.isCurrent(approved.generation)
+    ) {
+      return false;
+    }
+    try {
+      const descriptor = await this.descriptorResolver.resolve(
+        approved.descriptorId,
+        approved.revision,
+      );
+      return (
+        this.displayMediaGrants.isCurrent(approved.generation) &&
+        descriptor.platform === this.platform &&
+        descriptor.sourceKind === "window" &&
+        descriptor.authorization.grantId === approved.authorizationGrantId &&
+        descriptor.target.processId === expected.processId &&
+        descriptor.target.nativeWindowId === expected.nativeWindowId &&
+        descriptor.target.electronSourceId === expected.electronSourceId
+      );
+    } catch {
+      return false;
+    }
   }
 
   private bindGrantRequester(generation: number, requester: WebContents): void {

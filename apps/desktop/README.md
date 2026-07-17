@@ -9,8 +9,9 @@ fake/window/display provenance matrix, Cua native-window handoff, and real Media
 performance comparison. The unresolved release gates are Developer ID
 signing/notarization and Gatekeeper,
 clean-host TCC plus the operating-system capture indicator, Windows interactive
-provider/DPI/dual-display acceptance, Authenticode/SmartScreen/signed NSIS, hosted CI,
-clean-machine install/update/uninstall, and real VoiceOver/Narrator/NVDA acceptance.
+provider/DPI/dual-display acceptance, Authenticode/SmartScreen/signed NSIS, hosted signed CI,
+clean-machine install/update/uninstall, external detached-signature review, deterministic
+candidate `daemon/dist` provenance, and real VoiceOver/Narrator/NVDA acceptance.
 
 The desktop app should be a shell over the local daemon and shared Web UI. It should own
 daemon lifecycle, menu/tray, notifications, file picker, keychain, and update UX, but it
@@ -94,13 +95,19 @@ working-set reporting. Together with the `--display` smoke it is current-host en
 evidence only; neither replaces signed/notarized release, TCC-state, capture-indicator, or
 Windows provider measurements.
 
-Current local closure evidence (2026-07-16–17):
+Latest confirmed final pre-commit local evidence (2026-07-17, current worktree):
 
-- the final verification matrix passes **170/170 Desktop Node tests**, **17/17 PiP renderer
-  tests**, **51/51 focused contracts/API/daemon/plugin tests**, **16/16 focused Web
-  tests**, and **10/10 macOS screenshot baselines**. Local lifecycle, corner-snap,
-  aspect-ratio, and Stop
-  interaction/acknowledgement gaps are closed;
+- Desktop Node passes **291/291**, PiP renderer passes **20/20**, and Web E2E passes
+  **35/35**;
+- contracts pass **5/5**, API client passes **48/48**, and the full daemon suite passes
+  **629/629**;
+- macOS release-focused cases pass **28/28**, Windows acceptance/provider/release focused
+  cases pass **57/57**, and the strict Ajv Draft 2020-12 compiler validates all **11/11**
+  release-evidence schemas;
+- the Desktop production build, Web production build/typecheck/lint/i18n checks, workspace
+  typecheck/lint, and actionlint all pass. `docs/release/evidence/**` is included in the Desktop
+  artifact workflow path filters, so a schema-only pull request or `main` push runs the schema
+  gate;
 - packaged arm64/x64 `.app` bundles and both mounted DMGs pass fake, real-window, and
   primary-display provenance smokes;
 - Cua native-window handoff passes in dev Electron and both packaged `.app` bundles.
@@ -118,18 +125,13 @@ Current local closure evidence (2026-07-16–17):
 - final window, renderer, process, track, timer, subscription, IPC, adapter-source, and
   raw-listener residue is **0**;
 - Vite empties the preview `outDir` before building, and packaged `app.asar` contains only
-  the current seven preview-subtree entries (two directories and five files).
+  the current seven preview-subtree entries (two directories and five files);
 - macOS bundles carry the committed Ling `icon.icns`, while the Windows app and NSIS carry
   all nine frames from the committed Ling `icon.ico`; neither package uses Electron's
   default icon. The Windows installer is explicitly one-click, per-user, `asInvoker`, and
   contains no elevation helper.
 
-One full daemon parallel-suite run hit scheduling-sensitive fluctuation in the
-`channel auto_route` unit test and left its worker alive. The same test passed in isolation,
-and the focused contracts/API/daemon/plugin matrix remained **51/51**; this is a parallel
-test-harness issue, not a Desktop PiP product failure.
-
-Final unsigned artifact SHA-256 values:
+Historical unsigned artifact SHA-256 baseline at `e20777f5` (not hashes of the current diff):
 
 | Artifact | SHA-256 |
 | --- | --- |
@@ -144,5 +146,31 @@ Both DMGs and ZIPs pass their integrity checks. The unpacked Windows application
 PE certificate-table sizes are both **0**, and no Apple Developer ID identity is installed.
 Developer ID signing/notarization/Gatekeeper, clean-host TCC/capture-indicator evidence,
 Windows interactive provider/DPI/dual-display execution,
-Authenticode/SmartScreen/signed NSIS, hosted CI, clean-machine install/update/uninstall,
+Authenticode/SmartScreen/signed NSIS, hosted signed CI execution, clean-machine install/update/uninstall,
 and VoiceOver/Narrator/NVDA evidence are still open release gates.
+
+Local release tooling is present but deliberately cannot close those gates by itself:
+`verify-macos-signed-candidate.mjs` requires a content-bound arm64/x86_64 app+DMG+ZIP matrix,
+`run-macos-tcc-acceptance.mjs` live-reverifies that candidate and writes eight architecture-
+specific case reports, `run-macos-tcc-revocation.mjs` derives the interactive revoke transition,
+`run-macos-signed-performance.mjs` profiles the packaged signed executable, and
+`finalize-macos-signed-acceptance.mjs` rehashes, live-reverifies, and cross-binds final evidence
+while deliberately stopping at `MANUAL_REVIEW_REQUIRED`.
+All macOS artifact/evidence paths are report-relative for clean-host portability. Every macOS
+release-harness script is bound to its recorded harness-commit Git blob, current file bytes, and
+SHA-256; a hidden `assume-unchanged` modification fails the binding check. The
+  `run-windows-acceptance.ps1` keeps Full acceptance BLOCKED until the fixed reviewed
+provider tuple, approved release policy, content-bound candidate, and six independent
+host/session-bound visual/accessibility/SmartScreen/lifecycle evidence documents exist; it
+  also verifies installer/uninstaller signatures before execution and binds its harness scripts
+  to the candidate commit. Even with every Full gate PASS, its builder fixes `releaseReady=false`
+  until detached reviewer and candidate-build attestations verify. Windows Full requires three
+  caller-fixed external trust anchors:
+the expected candidate commit, clean repository root, and release-policy SHA-256. This macOS
+host has neither `pwsh` nor Windows PowerShell, so the PowerShell surface has only Node-based
+static contract coverage; real PowerShell parsing/runtime and Windows execution remain
+unverified. The independent Windows verifier now recomputes the canonical evidence digest and
+checks both RSA signatures against SPKI fingerprints pinned by the externally anchored policy;
+manual-evidence reviewer strings alone cannot promote a release. Real detached reviewer/build
+signatures and deterministic candidate `daemon/dist` evidence remain external release gates, as
+does macOS external reviewer-signature verification.

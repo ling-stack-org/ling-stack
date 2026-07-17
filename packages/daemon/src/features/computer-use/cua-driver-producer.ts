@@ -11,7 +11,6 @@ import type {
 } from "@ling-stack/runner-pi";
 import type { ComputerUseProjectionRegistry } from "./registry.js";
 
-const CUA_DRIVER_SERVER_IDS = new Set(["mcp_cua_driver", "mcp:cua-driver"]);
 const DESCRIPTOR_GRANT_TTL_MS = 15 * 60 * 1_000;
 
 type ActiveComputerUseRuntimeStatus = Extract<
@@ -20,7 +19,7 @@ type ActiveComputerUseRuntimeStatus = Extract<
 >;
 
 interface CuaDriverCaptureTarget {
-  readonly processId?: number;
+  readonly processId: number;
   readonly nativeWindowId: string;
   readonly displayName: string;
   readonly applicationId?: string;
@@ -35,6 +34,7 @@ export interface CuaDriverComputerUseProjectionProducerOptions {
   readonly conversationId: string;
   readonly turnId?: string;
   readonly startedAt: string;
+  readonly eligibleServerIds: readonly string[];
   readonly platform?: "macos" | "windows";
   readonly now?: () => Date;
   readonly createDescriptorId?: () => string;
@@ -43,6 +43,7 @@ export interface CuaDriverComputerUseProjectionProducerOptions {
 export class CuaDriverComputerUseProjectionProducer {
   private readonly now: () => Date;
   private readonly createDescriptorId: () => string;
+  private readonly eligibleServerIds: ReadonlySet<string>;
   private readonly sessionId: string;
   private descriptorId: string | undefined;
   private descriptorRevision = 0;
@@ -53,6 +54,7 @@ export class CuaDriverComputerUseProjectionProducer {
   constructor(private readonly options: CuaDriverComputerUseProjectionProducerOptions) {
     this.now = options.now ?? (() => new Date());
     this.createDescriptorId = options.createDescriptorId ?? (() => `computer_use_descriptor_${randomUUID()}`);
+    this.eligibleServerIds = new Set(options.eligibleServerIds);
     this.sessionId = `computer_use_${options.runId}`;
   }
 
@@ -60,7 +62,7 @@ export class CuaDriverComputerUseProjectionProducer {
     readonly request: Pick<PiRunnerMcpToolCallRequest, "toolCallId">;
     readonly definition: PiRunnerMcpToolDefinition;
   }): ComputerUsePreviewProjection | undefined {
-    if (!isCuaDriverDefinition(input.definition)) {
+    if (!this.isEligibleProviderDefinition(input.definition)) {
       return undefined;
     }
     this.cuaToolCallIds.add(input.request.toolCallId);
@@ -129,7 +131,7 @@ export class CuaDriverComputerUseProjectionProducer {
     readonly result: PiRunnerMcpToolCallResult;
   }): ComputerUsePreviewProjection | undefined {
     if (
-      !isCuaDriverDefinition(input.definition) ||
+      !this.isEligibleProviderDefinition(input.definition) ||
       input.result.isError === true
     ) {
       return undefined;
@@ -188,15 +190,14 @@ export class CuaDriverComputerUseProjectionProducer {
     this.options.registry.upsert(this.options.cwd, {
       ...current,
       status,
-      ...(status === "failed"
+      approvalRequired: undefined,
+      failure: status === "failed"
         ? {
-            failure: {
-              code: "computer_use_run_failed",
-              message: message?.trim() || "Computer Use run failed.",
-              recoverable: false,
-            },
+            code: "computer_use_run_failed",
+            message: message?.trim() || "Computer Use run failed.",
+            recoverable: false,
           }
-        : {}),
+        : undefined,
       updatedAt: terminalAt,
       terminalAt,
     });
@@ -258,6 +259,12 @@ export class CuaDriverComputerUseProjectionProducer {
     return this.options.registry.get(this.options.cwd, this.sessionId);
   }
 
+  private isEligibleProviderDefinition(
+    definition: Pick<PiRunnerMcpToolDefinition, "serverId">,
+  ): boolean {
+    return this.eligibleServerIds.has(definition.serverId);
+  }
+
   private nextUpdatedAt(): string {
     const currentTime = Date.parse(this.currentProjection()?.updatedAt ?? "");
     const now = this.now().getTime();
@@ -276,60 +283,49 @@ function extractCaptureTarget(
   if (inputWindowId === INVALID_OPTIONAL || inputProcessId === INVALID_OPTIONAL) {
     return undefined;
   }
-  let explicitWindowCatalogMismatch = false;
-  for (const candidate of structuredResultCandidates(result)) {
-    const windows = Array.isArray(candidate.windows) ? candidate.windows.filter(isRecord) : [];
-    const selectedWindow = selectWindow(windows, inputWindowId);
-    if (inputWindowId && windows.length > 0 && !selectedWindow) {
-      explicitWindowCatalogMismatch = true;
-      continue;
-    }
-    const selectedWindowId = selectedWindow
-      ? readOptionalWindowId(selectedWindow, "window_id")
-      : undefined;
+  const candidates = structuredResultCandidates(result);
+  const catalogs = candidates
+    .filter((candidate) => Array.isArray(candidate.windows))
+    .map((candidate) => ({
+      candidate,
+      windows: (candidate.windows as readonly unknown[]).filter(isRecord),
+    }));
+  if (catalogs.length > 0) {
+    return extractCatalogCaptureTarget(
+      catalogs,
+      inputWindowId,
+      inputProcessId,
+      current,
+    );
+  }
+
+  for (const candidate of candidates) {
     const candidateWindowId = readOptionalWindowId(candidate, "window_id");
-    const selectedProcessId = selectedWindow
-      ? readOptionalPositiveInteger(selectedWindow, "pid")
-      : undefined;
     const candidateProcessId = readOptionalPositiveInteger(candidate, "pid");
     if (
-      selectedWindowId === INVALID_OPTIONAL
-      || candidateWindowId === INVALID_OPTIONAL
-      || selectedProcessId === INVALID_OPTIONAL
+      candidateWindowId === INVALID_OPTIONAL
       || candidateProcessId === INVALID_OPTIONAL
     ) {
       return undefined;
     }
-    if (
-      selectedWindow
-      && !inputWindowId
-      && !current
-      && !candidateWindowId
-      && !candidateProcessId
-      && !readNonEmptyString(candidate.bundle_id)
-      && !readNonEmptyString(candidate.name)
-    ) {
-      continue;
-    }
-    const nativeWindowId = selectedWindowId ??
-      candidateWindowId ??
+    const nativeWindowId = candidateWindowId ??
       inputWindowId ??
       current?.nativeWindowId;
     if (!nativeWindowId) {
       continue;
     }
-    const processId = selectedProcessId ??
-      candidateProcessId ??
-      inputProcessId ??
-      current?.processId;
-    const displayName = readNonEmptyString(selectedWindow?.title) ??
-      readNonEmptyString(candidate.title) ??
+    const explicitProcessId = candidateProcessId ??
+      inputProcessId;
+    const processId = explicitProcessId
+      ?? (nativeWindowId === current?.nativeWindowId ? current.processId : undefined);
+    if (!processId) {
+      continue;
+    }
+    const displayName = readNonEmptyString(candidate.title) ??
       readNonEmptyString(candidate.name) ??
       current?.displayName ??
       "Computer Use";
-    const bounds = isRecord(selectedWindow?.bounds)
-      ? selectedWindow.bounds
-      : isRecord(candidate.bounds) ? candidate.bounds : undefined;
+    const bounds = isRecord(candidate.bounds) ? candidate.bounds : undefined;
     return {
       processId,
       nativeWindowId,
@@ -339,15 +335,76 @@ function extractCaptureTarget(
     };
   }
 
-  if (explicitWindowCatalogMismatch || (!inputWindowId && !current?.nativeWindowId)) {
+  if (!inputWindowId && !current?.nativeWindowId) {
+    return undefined;
+  }
+  const nativeWindowId = inputWindowId ?? current?.nativeWindowId as string;
+  const processId = inputProcessId
+    ?? (nativeWindowId === current?.nativeWindowId ? current.processId : undefined);
+  if (!processId) {
     return undefined;
   }
   return {
-    processId: inputProcessId ?? current?.processId,
-    nativeWindowId: inputWindowId ?? current?.nativeWindowId as string,
+    processId,
+    nativeWindowId,
     displayName: current?.displayName ?? "Computer Use",
     applicationId: current?.applicationId,
     aspectRatio: current?.aspectRatio,
+  };
+}
+
+function extractCatalogCaptureTarget(
+  catalogs: readonly {
+    readonly candidate: Record<string, unknown>;
+    readonly windows: readonly Record<string, unknown>[];
+  }[],
+  inputWindowId: string | undefined,
+  inputProcessId: number | undefined,
+  current: CuaDriverCaptureTarget | undefined,
+): CuaDriverCaptureTarget | undefined {
+  const hasExplicitIdentity = inputWindowId !== undefined || inputProcessId !== undefined;
+  const expectedWindowId = inputWindowId ?? (!hasExplicitIdentity ? current?.nativeWindowId : undefined);
+  const expectedProcessId = inputProcessId ?? (!hasExplicitIdentity ? current?.processId : undefined);
+  const matches = catalogs.flatMap(({ candidate, windows }) => windows.flatMap((window) => {
+    const nativeWindowId = readOptionalWindowId(window, "window_id");
+    const processId = readOptionalPositiveInteger(window, "pid");
+    if (
+      nativeWindowId === INVALID_OPTIONAL
+      || processId === INVALID_OPTIONAL
+      || nativeWindowId === undefined
+      || processId === undefined
+      || (expectedWindowId !== undefined && nativeWindowId !== expectedWindowId)
+      || (expectedProcessId !== undefined && processId !== expectedProcessId)
+    ) {
+      return [];
+    }
+    return [{ candidate, window, nativeWindowId, processId }];
+  }));
+  const matchesByIdentity = new Map<string, (typeof matches)[number]>();
+  for (const match of matches) {
+    const identity = `${match.processId}:${match.nativeWindowId}`;
+    if (!matchesByIdentity.has(identity)) {
+      matchesByIdentity.set(identity, match);
+    }
+  }
+  if (matchesByIdentity.size !== 1) {
+    return undefined;
+  }
+  const [{ candidate, window, nativeWindowId, processId }] = matchesByIdentity.values();
+  const displayName = readNonEmptyString(window.title) ??
+    readNonEmptyString(candidate.title) ??
+    readNonEmptyString(candidate.name) ??
+    current?.displayName ??
+    "Computer Use";
+  const bounds = isRecord(window.bounds)
+    ? window.bounds
+    : isRecord(candidate.bounds) ? candidate.bounds : undefined;
+  return {
+    processId,
+    nativeWindowId,
+    displayName,
+    applicationId: readNonEmptyString(candidate.bundle_id) ?? current?.applicationId,
+    aspectRatio: readAspectRatio(bounds) ?? current?.aspectRatio,
   };
 }
 
@@ -377,18 +434,6 @@ function appendStructuredCandidate(candidates: Record<string, unknown>[], value:
       candidates.push(value[key]);
     }
   }
-}
-
-function selectWindow(
-  windows: readonly Record<string, unknown>[],
-  requestedWindowId: string | undefined,
-): Record<string, unknown> | undefined {
-  if (requestedWindowId) {
-    return windows.find((window) => readWindowId(window.window_id) === requestedWindowId);
-  }
-  // A result with exactly one window is unambiguous. Never choose among multiple
-  // windows using z-order, current Space, visibility, or title heuristics.
-  return windows.length === 1 ? windows[0] : undefined;
 }
 
 function readAspectRatio(bounds: Record<string, unknown> | undefined): number | undefined {
@@ -439,11 +484,7 @@ function readNonEmptyString(value: unknown): string | undefined {
 }
 
 function targetKey(target: CuaDriverCaptureTarget): string {
-  return `${target.processId ?? ""}:${target.nativeWindowId}`;
-}
-
-function isCuaDriverDefinition(definition: Pick<PiRunnerMcpToolDefinition, "serverId">): boolean {
-  return CUA_DRIVER_SERVER_IDS.has(definition.serverId);
+  return `${target.processId}:${target.nativeWindowId}`;
 }
 
 function isTerminalProjection(projection: ComputerUsePreviewProjection): boolean {

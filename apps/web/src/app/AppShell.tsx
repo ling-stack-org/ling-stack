@@ -88,7 +88,12 @@ import {
   getChannelCouncilPolicy,
   updateChannelCouncilPolicy,
 } from "../api/ai-councils.js";
-import { getViteDefaultWorkspaceCwd, readInitialWorkspaceCwd, readSavedWorkspaceCwd } from "../lib/local-storage.js";
+import {
+  clearSavedWorkspaceCwd,
+  getViteDefaultWorkspaceCwd,
+  readInitialWorkspaceCwd,
+  readSavedWorkspaceCwd,
+} from "../lib/local-storage.js";
 import {
   readRunWorkspaceCwd,
 } from "../lib/run-evidence.js";
@@ -144,6 +149,7 @@ import { useProviderUsageController } from "./use-provider-usage-controller.js";
 import { useSlashCommandRegistry } from "./use-slash-command-registry.js";
 import { useTaskRunController } from "./use-task-run-controller.js";
 import { useWorkspaceSettingsController } from "./use-workspace-settings-controller.js";
+import { useDesktopNavigationIntents } from "./use-desktop-navigation-intents.js";
 
 const builtinSkillPack = getBuiltinSkillPack(GSTACK_DEFAULT_SKILL_PACK_ID);
 const builtinTeammateTemplates = builtinSkillPack?.teammateTemplates ?? [];
@@ -189,7 +195,8 @@ export function AppShell(): JSX.Element {
   const { locale, setLocale, t } = useI18n();
   const { preference: themePreference, setPreference: setThemePreference } = useTheme();
   const { showToast } = useLingToast();
-  const initialWorkspaceCwd = readInitialWorkspaceCwd();
+  const desktopHosted = typeof window !== "undefined" && Boolean(window.lingDesktop);
+  const initialWorkspaceCwd = desktopHosted ? "" : readInitialWorkspaceCwd();
   const [form, setForm] = useState<RunFormState>(() => ({
     ...defaultForm,
     cwd: initialWorkspaceCwd,
@@ -418,6 +425,7 @@ export function AppShell(): JSX.Element {
     archiveAllConversationThreads,
     sendConversationMessage,
   } = conversationDomain.actions;
+  useDesktopNavigationIntents(Boolean(form.cwd.trim()), openConversationThread);
   const automationsDomain = useAutomationsDomain({
     cwd: form.cwd.trim(),
     channels,
@@ -775,7 +783,7 @@ export function AppShell(): JSX.Element {
     abortCurrentRun,
     cancelRunOrWorkUnit,
   } = runsDomain.actions;
-  const { workspaceSettings, effectiveConfig, patchWorkspaceSettings } = useWorkspaceSettingsController({
+  const { workspaceSettings, effectiveConfig, updateWorkspaceCwd, patchWorkspaceSettings } = useWorkspaceSettingsController({
     daemonHealthy,
     form,
     setForm,
@@ -1272,8 +1280,20 @@ export function AppShell(): JSX.Element {
     setActiveSidebarTarget("workspace");
   }
 
-  function selectRecentConversation(conversation: SidebarRecentConversation): void {
+  async function openConversationThread(
+    conversationId: string,
+    isCurrentIntent: () => boolean = () => true,
+  ): Promise<boolean> {
+    if (!isCurrentIntent()) {
+      return false;
+    }
+    settingsReturnTargetRef.current = undefined;
     clearSettingsWorkspaceToolView();
+    closeSettingsRunDiagnostics();
+    setSettingsInitialSection(undefined);
+    setProviderSetupIntent("");
+    setDesktopTeammateConversationId(undefined);
+    setTeammateCreateOpen(false);
     setThreadPageTargetId("");
     setChannelCreateOpen(false);
     setSelectedChannelBranchId("");
@@ -1282,7 +1302,16 @@ export function AppShell(): JSX.Element {
     setTaskRunProviderId("");
     setActiveView("workspace");
     setActiveSidebarTarget("workspace");
-    void selectConversationThread(conversation.id);
+    const opened = await selectConversationThread(conversationId, undefined, isCurrentIntent);
+    if (!opened || !isCurrentIntent()) {
+      return false;
+    }
+    window.lingDesktop?.computerUse.reportSelectedConversation(conversationId);
+    return true;
+  }
+
+  function selectRecentConversation(conversation: SidebarRecentConversation): void {
+    void openConversationThread(conversation.id);
   }
 
   async function refreshArchivedSidebarItems(): Promise<void> {
@@ -1734,20 +1763,30 @@ export function AppShell(): JSX.Element {
       });
       const viteDefaultWorkspaceCwd = getViteDefaultWorkspaceCwd();
       const defaultWorkspaceCwd = health.defaultWorkspaceCwd?.trim() || viteDefaultWorkspaceCwd;
+      const savedWorkspaceCwd = readSavedWorkspaceCwd();
       const canApplyDaemonDefault =
-        !readSavedWorkspaceCwd() &&
-        (!form.cwd.trim() || form.cwd.trim() === viteDefaultWorkspaceCwd);
+        desktopHosted ||
+        (!savedWorkspaceCwd && (!form.cwd.trim() || form.cwd.trim() === viteDefaultWorkspaceCwd));
       if (health.ok && defaultWorkspaceCwd && canApplyDaemonDefault) {
-        setForm((current) =>
-          current.cwd.trim() && current.cwd.trim() !== viteDefaultWorkspaceCwd
-            ? current
-            : { ...current, cwd: defaultWorkspaceCwd },
-        );
-        setChannelForm((current) =>
-          current.boundPath.trim() && current.boundPath.trim() !== viteDefaultWorkspaceCwd
-            ? current
-            : { ...current, boundPath: defaultWorkspaceCwd },
-        );
+        if (desktopHosted) {
+          if (savedWorkspaceCwd) {
+            clearSavedWorkspaceCwd();
+          }
+          if (form.cwd.trim() !== defaultWorkspaceCwd) {
+            updateWorkspaceCwd(defaultWorkspaceCwd);
+          }
+        } else {
+          setForm((current) =>
+            current.cwd.trim() && current.cwd.trim() !== viteDefaultWorkspaceCwd
+              ? current
+              : { ...current, cwd: defaultWorkspaceCwd },
+          );
+          setChannelForm((current) =>
+            current.boundPath.trim() && current.boundPath.trim() !== viteDefaultWorkspaceCwd
+              ? current
+              : { ...current, boundPath: defaultWorkspaceCwd },
+          );
+        }
         void Promise.all([
           refreshProviders(defaultWorkspaceCwd),
           refreshChannels(defaultWorkspaceCwd),

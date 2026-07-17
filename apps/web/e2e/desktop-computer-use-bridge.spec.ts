@@ -3,6 +3,7 @@ import { mockDaemon } from "./support/mock-daemon";
 import { createBaseState, createMockTeammate, cwd, type MockState } from "./support/mock-state";
 
 const DESKTOP_BRIDGE_THREAD_ID = "thread_channel_branch_desktop_bridge";
+const DESKTOP_BRIDGE_STALE_THREAD_ID = "thread_desktop_bridge_stale";
 const DESKTOP_BRIDGE_TEAMMATE_ID = "teammate_desktop_bridge";
 const DESKTOP_BRIDGE_TEAMMATE_THREAD_ID = `tdthread_${DESKTOP_BRIDGE_TEAMMATE_ID}`;
 
@@ -11,7 +12,14 @@ interface DesktopComputerUseTestSummary {
   readonly conversationId: string;
   readonly status: "starting" | "running" | "waiting_for_approval" | "paused" | "stopping" | "succeeded" | "failed" | "cancelled";
   readonly targetLabel: string;
+  readonly previewAvailable: boolean;
   readonly visible: boolean;
+}
+
+interface DesktopNavigationTestIntent {
+  readonly kind: "open_conversation";
+  readonly requestId: number;
+  readonly conversationId: string;
 }
 
 interface DesktopComputerUseTestHostLayout {
@@ -27,6 +35,7 @@ interface DesktopComputerUseTestHostLayout {
 }
 
 interface DesktopComputerUseTestControl {
+  emitNavigationIntent(intent: DesktopNavigationTestIntent): void;
   emit(summary: DesktopComputerUseTestSummary | undefined): void;
   rejectNextHide(message: string): void;
   rejectNextShow(message: string): void;
@@ -34,8 +43,11 @@ interface DesktopComputerUseTestControl {
   resolveNextHide(result: { readonly accepted: boolean; readonly reason?: string }): void;
   resolveNextShow(result: { readonly accepted: boolean; readonly reason?: string }): void;
   resolveNextStop(result: { readonly accepted: boolean; readonly reason?: string }): void;
+  setAutoShowResult(result: { readonly accepted: boolean; readonly reason?: string }): void;
   snapshot(): {
     readonly hideCalls: readonly string[];
+    readonly navigationAckCalls: readonly number[];
+    readonly navigationListenerCount: number;
     readonly latestHostLayout?: DesktopComputerUseTestHostLayout;
     readonly latestLocale?: "en-US" | "zh-CN";
     readonly pendingHideCount: number;
@@ -65,6 +77,10 @@ test.beforeEach(async ({ page }) => {
     const reportedLocales: Array<"en-US" | "zh-CN"> = [];
     let subscribeCalls = 0;
     let unsubscribeCalls = 0;
+    let autoShowResult: { readonly accepted: boolean; readonly reason?: string } = { accepted: true };
+    let pendingNavigationIntent: DesktopNavigationTestIntent | undefined;
+    const navigationAckCalls: number[] = [];
+    const navigationListeners = new Set<(intent: DesktopNavigationTestIntent) => void>();
     const showCalls: string[] = [];
     const hideCalls: string[] = [];
     const stopCalls: string[] = [];
@@ -82,6 +98,10 @@ test.beforeEach(async ({ page }) => {
     }> = [];
     const listeners = new Set<(summary: DesktopComputerUseTestSummary | undefined) => void>();
     window.__desktopComputerUseTest = {
+      emitNavigationIntent(intent) {
+        pendingNavigationIntent = intent;
+        navigationListeners.forEach((listener) => listener(intent));
+      },
       emit(summary) {
         listeners.forEach((listener) => listener(summary));
       },
@@ -103,9 +123,14 @@ test.beforeEach(async ({ page }) => {
       resolveNextStop(result) {
         pendingStops.shift()?.resolve(result);
       },
+      setAutoShowResult(result) {
+        autoShowResult = result;
+      },
       snapshot() {
         return {
           hideCalls: [...hideCalls],
+          navigationAckCalls: [...navigationAckCalls],
+          navigationListenerCount: navigationListeners.size,
           latestHostLayout,
           latestLocale: reportedLocales.at(-1),
           pendingHideCount: pendingHides.length,
@@ -126,6 +151,27 @@ test.beforeEach(async ({ page }) => {
       value: {
         platform: "macos",
         daemonBaseUrl: "http://127.0.0.1:17891",
+        navigation: {
+          async acknowledgeIntent(requestId: number) {
+            navigationAckCalls.push(requestId);
+            if (pendingNavigationIntent?.requestId !== requestId) {
+              return { accepted: false, reason: "stale_navigation_intent" };
+            }
+            pendingNavigationIntent = undefined;
+            return { accepted: true };
+          },
+          onIntent(listener: (intent: DesktopNavigationTestIntent) => void) {
+            navigationListeners.add(listener);
+            if (pendingNavigationIntent) {
+              queueMicrotask(() => {
+                if (pendingNavigationIntent) {
+                  listener(pendingNavigationIntent);
+                }
+              });
+            }
+            return () => navigationListeners.delete(listener);
+          },
+        },
         computerUse: {
           reportLocale(locale: "en-US" | "zh-CN") {
             reportedLocales.push(locale);
@@ -155,7 +201,7 @@ test.beforeEach(async ({ page }) => {
             });
           },
           getPreferences: async () => ({ previewAutoShow: true }),
-          setAutoShow: async () => ({ accepted: true }),
+          setAutoShow: async () => autoShowResult,
           onSummaryChanged(listener: (summary: DesktopComputerUseTestSummary | undefined) => void) {
             subscribeCalls += 1;
             listeners.add(listener);
@@ -202,6 +248,133 @@ test("reports initial and runtime locale changes through the narrow Desktop capa
   expect(compacted).toEqual(["en-US", "zh-CN", "en-US"]);
 });
 
+test("keeps a session-only auto-show change and warns when Desktop cannot persist it", async ({ page }) => {
+  await page.evaluate(() => window.__desktopComputerUseTest.setAutoShowResult({
+    accepted: true,
+    reason: "desktop_preferences_not_persisted",
+  }));
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
+  await page.getByLabel("Settings sections").getByRole("button", { name: /Interface preferences/ }).click();
+
+  const toggle = page.getByLabel("Automatically show Computer Use picture-in-picture");
+  await expect(toggle).toBeChecked();
+  await toggle.uncheck();
+
+  await expect(toggle).not.toBeChecked();
+  await expect(page.getByRole("status")).toContainText(
+    "Changed for this session, but not saved. It may revert after restart.",
+  );
+});
+
+test("Open task intent leaves Settings, teammate, or a blank home and selects the requested conversation", async ({ page }) => {
+  await expect.poll(async () => (await desktopControlSnapshot(page)).navigationListenerCount).toBe(1);
+  const navigation = page.getByLabel("Ling Stack navigation");
+
+  await navigation.getByRole("button", { name: "Settings" }).click();
+  await expect(page.getByLabel("Settings sections")).toBeVisible();
+  await emitDesktopNavigationIntent(page, 1, DESKTOP_BRIDGE_THREAD_ID);
+  await expect(page.locator(".normal-conversation-header")).toBeVisible();
+  await expect(page.getByText("The header capability slot is ready.")).toBeVisible();
+  await expect.poll(async () => (await desktopControlSnapshot(page)).navigationAckCalls).toEqual([1]);
+  await expect.poll(async () => (await desktopControlSnapshot(page)).selectedConversationId)
+    .toBe(DESKTOP_BRIDGE_THREAD_ID);
+
+  await openDesktopBridgeTeammate(page);
+  await expect.poll(async () => (await desktopControlSnapshot(page)).selectedConversationId)
+    .toBe(DESKTOP_BRIDGE_TEAMMATE_THREAD_ID);
+  await emitDesktopNavigationIntent(page, 2, DESKTOP_BRIDGE_THREAD_ID);
+  await expect(page.locator(".normal-conversation-header")).toBeVisible();
+  await expect.poll(async () => (await desktopControlSnapshot(page)).navigationAckCalls).toEqual([1, 2]);
+
+  await navigation.getByRole("button", { name: "New conversation" }).click();
+  await expect(page.getByLabel("Conversation home")).toBeVisible();
+  await expect(page.locator(".normal-conversation-header")).toHaveCount(0);
+  await emitDesktopNavigationIntent(page, 3, DESKTOP_BRIDGE_THREAD_ID);
+  await expect(page.locator(".normal-conversation-header")).toBeVisible();
+  await expect(page.getByText("The header capability slot is ready.")).toBeVisible();
+  await expect.poll(async () => (await desktopControlSnapshot(page)).navigationAckCalls).toEqual([1, 2, 3]);
+});
+
+test("a newer Open task intent wins while an older conversation lookup is still settling", async ({ page }) => {
+  const staleDetail = await page.evaluate(async ({ threadId, workspaceCwd }) => {
+    const response = await fetch(
+      `http://127.0.0.1:17891/conversations/${encodeURIComponent(threadId)}?cwd=${encodeURIComponent(workspaceCwd)}`,
+    );
+    return response.json();
+  }, { threadId: DESKTOP_BRIDGE_STALE_THREAD_ID, workspaceCwd: cwd });
+  let releaseStaleLookup: (() => void) | undefined;
+  let markStaleLookupStarted: (() => void) | undefined;
+  const staleLookupStarted = new Promise<void>((resolve) => {
+    markStaleLookupStarted = resolve;
+  });
+  const staleLookupRelease = new Promise<void>((resolve) => {
+    releaseStaleLookup = resolve;
+  });
+  await page.route(`**/conversations/${DESKTOP_BRIDGE_STALE_THREAD_ID}*`, async (route) => {
+    markStaleLookupStarted?.();
+    await staleLookupRelease;
+    await route.fulfill({ json: staleDetail });
+  });
+
+  await page.evaluate((targetConversationId) => {
+    window.__desktopComputerUseTest.emitNavigationIntent({
+      kind: "open_conversation",
+      requestId: 41,
+      conversationId: "thread_desktop_bridge_stale",
+    });
+  }, DESKTOP_BRIDGE_THREAD_ID);
+  await staleLookupStarted;
+  await page.evaluate((targetConversationId) => {
+    window.__desktopComputerUseTest.emitNavigationIntent({
+      kind: "open_conversation",
+      requestId: 42,
+      conversationId: targetConversationId,
+    });
+  }, DESKTOP_BRIDGE_THREAD_ID);
+
+  await expect(page.locator(".normal-conversation-header")).toBeVisible();
+  await expect(page.getByText("The header capability slot is ready.")).toBeVisible();
+  await expect.poll(async () => (await desktopControlSnapshot(page)).navigationAckCalls).toEqual([42]);
+  await expect.poll(async () => (await desktopControlSnapshot(page)).selectedConversationId)
+    .toBe(DESKTOP_BRIDGE_THREAD_ID);
+  releaseStaleLookup?.();
+  await page.waitForTimeout(100);
+  await expect.poll(async () => (await desktopControlSnapshot(page)).navigationAckCalls).toEqual([42]);
+  await expect.poll(async () => (await desktopControlSnapshot(page)).selectedConversationId)
+    .toBe(DESKTOP_BRIDGE_THREAD_ID);
+});
+
+test("Open task waits for the Desktop workspace authority before acknowledging navigation", async ({ page }) => {
+  await page.route("http://127.0.0.1:17891/health", async (route) => {
+    await new Promise((resolve) => setTimeout(resolve, 750));
+    await route.fulfill({
+      json: {
+        ok: true,
+        service: "ling-stack-daemon",
+        defaultWorkspaceCwd: cwd,
+        features: {
+          channels: { autoRoute: false },
+        },
+      },
+    });
+  });
+
+  await page.reload();
+  await page.evaluate((targetConversationId) => {
+    window.__desktopComputerUseTest.emitNavigationIntent({
+      kind: "open_conversation",
+      requestId: 51,
+      conversationId: targetConversationId,
+    });
+  }, DESKTOP_BRIDGE_THREAD_ID);
+
+  await expect.poll(async () => (await desktopControlSnapshot(page)).navigationAckCalls).toEqual([]);
+  await expect.poll(async () => (await desktopControlSnapshot(page)).navigationListenerCount).toBe(1);
+  await expect(page.locator(".normal-conversation-header")).toBeVisible();
+  await expect(page.getByText("The header capability slot is ready.")).toBeVisible();
+  await expect.poll(async () => (await desktopControlSnapshot(page)).navigationAckCalls).toEqual([51]);
+});
+
 test("mounts the current Computer Use entry in channel, normal conversation, and teammate-direct headers", async ({ page }) => {
   await emitComputerUseSummary(page, { sessionId: "computer-use-channel" });
   await expect(page.locator(".channel-header").getByLabel("Computer Use preview controls")).toBeVisible();
@@ -221,16 +394,19 @@ test("keeps active and stopping states in the header with state-specific tone, t
   const controls = page.getByLabel("Computer Use preview controls");
   const dot = controls.locator(".desktop-computer-use-control-dot");
 
-  await emitComputerUseSummary(page, { status: "starting" });
+  await emitComputerUseSummary(page, { status: "starting", previewAvailable: false, visible: false });
   await expect(controls).toHaveAttribute("data-status", "starting");
+  await expect(controls.getByRole("button", { name: "Show" })).toHaveCount(0);
+  await expect(controls.getByRole("button", { name: "Stop" })).toBeEnabled();
   const startingTone = await dot.evaluate((element) => getComputedStyle(element).backgroundColor);
 
   await emitComputerUseSummary(page, { status: "running" });
   await expect(controls).toHaveAttribute("data-status", "running");
   const runningTone = await dot.evaluate((element) => getComputedStyle(element).backgroundColor);
 
-  await emitComputerUseSummary(page, { status: "waiting_for_approval" });
+  await emitComputerUseSummary(page, { status: "waiting_for_approval", previewAvailable: false, visible: false });
   await expect(controls).toHaveAttribute("data-status", "waiting_for_approval");
+  await expect(controls.getByRole("button", { name: "Show" })).toHaveCount(0);
   const approvalTone = await dot.evaluate((element) => getComputedStyle(element).backgroundColor);
   expect(new Set([startingTone, runningTone, approvalTone]).size).toBe(3);
 
@@ -379,6 +555,40 @@ test("Show and Hide suppress duplicates, wait for projection ownership, and expo
   ]);
 });
 
+test("accepted Show and Hide fail retryably when the authoritative summary never converges", async ({ page }) => {
+  await page.clock.install();
+  await emitComputerUseSummary(page, {
+    sessionId: "computer-use-visibility-convergence",
+    visible: false,
+  });
+  const controls = page.getByLabel("Computer Use preview controls");
+  const visibilityAlert = controls.locator("[data-visibility-error-action]");
+
+  await controls.getByRole("button", { name: "Show" }).click();
+  await page.evaluate(() => window.__desktopComputerUseTest.resolveNextShow({ accepted: true }));
+  await expect(controls.getByRole("button", { name: "Showing" })).toBeDisabled();
+
+  await page.clock.fastForward(10_001);
+  await expect(visibilityAlert).toHaveAttribute("data-visibility-error-action", "show");
+  await expect(visibilityAlert).toHaveAttribute("data-visibility-error-kind", "unavailable");
+  await expect(controls.getByRole("button", { name: "Show" })).toBeEnabled();
+
+  await emitComputerUseSummary(page, {
+    sessionId: "computer-use-visibility-convergence",
+    visible: true,
+  });
+  await expect(visibilityAlert).toHaveCount(0);
+
+  await controls.getByRole("button", { name: "Hide" }).click();
+  await page.evaluate(() => window.__desktopComputerUseTest.resolveNextHide({ accepted: true }));
+  await expect(controls.getByRole("button", { name: "Hiding" })).toBeDisabled();
+
+  await page.clock.fastForward(10_001);
+  await expect(visibilityAlert).toHaveAttribute("data-visibility-error-action", "hide");
+  await expect(visibilityAlert).toHaveAttribute("data-visibility-error-kind", "unavailable");
+  await expect(controls.getByRole("button", { name: "Hide" })).toBeEnabled();
+});
+
 test("Stop prevents duplicate requests and exposes safe assertive feedback", async ({ page }) => {
   await emitComputerUseSummary(page, { sessionId: "computer-use-1" });
   const controls = page.getByLabel("Computer Use preview controls");
@@ -439,6 +649,27 @@ test("accepted Stop remains pending until the projection enters stopping", async
   await emitComputerUseSummary(page, { sessionId: "computer-use-accepted", status: "stopping" });
   await expect(controls.getByRole("button", { name: "Stopping" })).toBeDisabled();
   await expect(controls).toContainText("Stopping");
+});
+
+test("accepted Stop fails retryably when the authoritative projection never converges", async ({ page }) => {
+  await page.clock.install();
+  await emitComputerUseSummary(page, { sessionId: "computer-use-stop-convergence" });
+  const controls = page.getByLabel("Computer Use preview controls");
+  await controls.getByRole("button", { name: "Stop" }).click();
+  await page.evaluate(() => window.__desktopComputerUseTest.resolveNextStop({ accepted: true }));
+  await expect(controls.getByRole("button", { name: "Stopping" })).toBeDisabled();
+
+  await page.clock.fastForward(10_001);
+  const alert = controls.getByRole("alert");
+  await expect(alert).toHaveAttribute("data-stop-error-kind", "unavailable");
+  await expect(controls.getByRole("button", { name: "Stop" })).toBeEnabled();
+
+  await emitComputerUseSummary(page, {
+    sessionId: "computer-use-stop-convergence",
+    status: "stopping",
+  });
+  await expect(alert).toHaveCount(0);
+  await expect(controls.getByRole("button", { name: "Stopping" })).toBeDisabled();
 });
 
 test("a hung Desktop command times out and ignores its late result", async ({ page }) => {
@@ -646,6 +877,7 @@ async function emitComputerUseSummary(
       conversationId: activeConversationId,
       status: "running",
       targetLabel: "Authorized browser target",
+      previewAvailable: true,
       visible: true,
       ...summaryOverrides,
     });
@@ -654,6 +886,20 @@ async function emitComputerUseSummary(
 
 async function desktopControlSnapshot(page: Page): Promise<ReturnType<DesktopComputerUseTestControl["snapshot"]>> {
   return page.evaluate(() => window.__desktopComputerUseTest.snapshot());
+}
+
+async function emitDesktopNavigationIntent(
+  page: Page,
+  requestId: number,
+  conversationId: string,
+): Promise<void> {
+  await page.evaluate(({ navigationRequestId, targetConversationId }) => {
+    window.__desktopComputerUseTest.emitNavigationIntent({
+      kind: "open_conversation",
+      requestId: navigationRequestId,
+      conversationId: targetConversationId,
+    });
+  }, { navigationRequestId: requestId, targetConversationId: conversationId });
 }
 
 async function openDesktopBridgeChannel(page: Page): Promise<void> {
@@ -720,6 +966,15 @@ function seedDesktopBridgeConversationSurfaces(state: MockState): void {
     objective: "Verify the current-session header capability slot.",
     status: "succeeded",
     lastRunId: runId,
+    createdAt,
+    updatedAt: completedAt,
+  }, {
+    id: DESKTOP_BRIDGE_STALE_THREAD_ID,
+    workspaceId: "workspace_default",
+    kind: "conversation",
+    title: "Desktop stale conversation",
+    objective: "Exercise stale Desktop navigation lookup suppression.",
+    status: "succeeded",
     createdAt,
     updatedAt: completedAt,
   }];

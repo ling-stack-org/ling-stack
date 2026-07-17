@@ -5,6 +5,7 @@
  * the descriptor trust boundary.
  */
 export interface ComputerUseCaptureTargetIdentity {
+  readonly processId?: number;
   readonly nativeWindowId?: string;
   readonly electronSourceId?: string;
 }

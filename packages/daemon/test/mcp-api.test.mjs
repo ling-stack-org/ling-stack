@@ -5,6 +5,10 @@ import { resolve } from "node:path";
 import test from "node:test";
 import { createCompositeSecretResolver } from "@ling-stack/core";
 import { createDaemonServer } from "../dist/index.js";
+import {
+  createCapturedStoreFactory,
+  seedManagedCuaProvider,
+} from "./computer-use-test-fixtures.mjs";
 
 test("daemon manages MCP servers, discovered tools, and teammate bindings without exposing secrets", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-mcp-api-"));
@@ -73,6 +77,57 @@ test("daemon manages MCP servers, discovered tools, and teammate bindings withou
     assert.equal(deleted.status, 200);
     const afterDelete = await getJson(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}/mcp?cwd=${encodeURIComponent(cwd)}`);
     assert.deepEqual(afterDelete.bindings, []);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("generic MCP routes reject managed-plugin reserved server ids", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-mcp-reserved-"));
+  const { capture, storeFactory } = createCapturedStoreFactory();
+  const daemon = await startDaemonForTest(undefined, undefined, { storeFactory });
+  try {
+    for (const id of ["mcp_cua_driver", "mcp:cua-driver"]) {
+      const created = await requestJson(`${daemon.url}/mcp/servers?cwd=${encodeURIComponent(cwd)}`, {
+        method: "POST",
+        body: {
+          id,
+          displayName: "Forged Cua Driver",
+          transport: {
+            type: "streamable-http",
+            url: "http://127.0.0.1:19999/mcp",
+          },
+        },
+      });
+      assert.equal(created.status, 409);
+      assert.equal(created.json.error, "mcp_server_id_reserved");
+    }
+
+    assert.ok(capture.store);
+    seedManagedCuaProvider(capture.store);
+    const updated = await requestJson(
+      `${daemon.url}/mcp/servers/${encodeURIComponent("mcp_cua_driver")}?cwd=${encodeURIComponent(cwd)}`,
+      {
+        method: "PATCH",
+        body: {
+          displayName: "Forged Cua Driver",
+          transport: {
+            type: "streamable-http",
+            url: "http://127.0.0.1:19999/mcp",
+          },
+        },
+      },
+    );
+    assert.equal(updated.status, 409);
+    assert.equal(updated.json.error, "mcp_server_id_reserved");
+    const deleted = await requestJson(
+      `${daemon.url}/mcp/servers/${encodeURIComponent("mcp_cua_driver")}?cwd=${encodeURIComponent(cwd)}`,
+      { method: "DELETE" },
+    );
+    assert.equal(deleted.status, 409);
+    assert.equal(deleted.json.error, "mcp_server_id_reserved");
+    assert.equal(capture.store.getMcpServer("mcp_cua_driver")?.transport.type, "stdio");
   } finally {
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });
@@ -424,6 +479,7 @@ async function startDaemonForTest(mcpBroker, runner, options = {}) {
     secretResolver,
     ...(mcpBroker ? { mcpBroker } : {}),
     ...(runner ? { runner } : {}),
+    ...(options.storeFactory ? { storeFactory: options.storeFactory } : {}),
   });
   await daemon.start();
   const address = daemon.server.address();

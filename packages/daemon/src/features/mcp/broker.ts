@@ -137,7 +137,7 @@ export function createDefaultMcpBroker(): McpBroker {
             arguments: isRecord(input) ? input : {},
           },
           undefined,
-          { timeout: timeoutMs },
+          { timeout: timeoutMs, signal: options.signal },
         );
         return mcpSdkCallToolResultToRunnerResult(result);
       });
@@ -159,7 +159,10 @@ async function withMcpClient<T>(
     processLauncher,
   });
   try {
-    await client.connect(resolved.transport, { timeout: (server.startupTimeoutSec ?? 30) * 1000 });
+    await client.connect(resolved.transport, {
+      timeout: (server.startupTimeoutSec ?? 30) * 1000,
+      signal: options.signal,
+    });
     return {
       result: await callback(client),
       secretStatuses: resolved.secretStatuses,

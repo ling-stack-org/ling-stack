@@ -1,0 +1,283 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ling-stack.dev/schemas/macos-signed-acceptance-v2.json",
+  "title": "Ling Desktop macOS Signed Acceptance Evidence",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "kind",
+    "candidate",
+    "notarization",
+    "tccCases",
+    "captureIndicator",
+    "voiceOver",
+    "performance",
+    "review",
+    "verdict"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 2 },
+    "kind": { "const": "ling-desktop-macos-signed-acceptance" },
+    "harness": { "$ref": "#/$defs/releaseHarness" },
+    "candidate": { "$ref": "#/$defs/evidenceReference" },
+    "notarization": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["submissions", "ticketStapled"],
+      "properties": {
+        "submissions": {
+          "type": "array",
+          "minItems": 4,
+          "description": "The finalizer requires one distinct Accepted notary log for every arm64/x86_64 DMG and ZIP artifact and rejects duplicate or missing coverage.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["submissionId", "artifactSha256", "log"],
+            "properties": {
+              "submissionId": { "type": "string", "minLength": 1 },
+              "artifactSha256": { "$ref": "#/$defs/sha256" },
+              "log": { "$ref": "#/$defs/evidenceReference" }
+            }
+          }
+        },
+        "ticketStapled": { "const": true }
+      }
+    },
+    "tccCases": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["denied", "prompt", "granted", "revoked"],
+      "properties": {
+        "denied": { "$ref": "#/$defs/architectureEvidence" },
+        "prompt": { "$ref": "#/$defs/architectureEvidence" },
+        "granted": { "$ref": "#/$defs/architectureEvidence" },
+        "revoked": { "$ref": "#/$defs/architectureEvidence" }
+      }
+    },
+    "captureIndicator": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["arm64", "x86_64"],
+      "properties": {
+        "arm64": { "$ref": "#/$defs/captureIndicatorEvidence" },
+        "x86_64": { "$ref": "#/$defs/captureIndicatorEvidence" }
+      }
+    },
+    "voiceOver": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["operator", "focusOrder", "names", "statusAnnouncements", "recoveryActions", "evidence"],
+      "properties": {
+        "operator": { "type": "string", "minLength": 1 },
+        "focusOrder": { "const": true },
+        "names": { "const": true },
+        "statusAnnouncements": { "const": true },
+        "recoveryActions": { "const": true },
+        "evidence": { "$ref": "#/$defs/evidenceReference" }
+      }
+    },
+    "performance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["arm64", "x86_64"],
+      "properties": {
+        "arm64": { "$ref": "#/$defs/evidenceReference" },
+        "x86_64": { "$ref": "#/$defs/evidenceReference" }
+      }
+    },
+    "review": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["reviewedBy", "reviewedAt", "evidenceSha256", "verification"],
+      "properties": {
+        "reviewedBy": { "type": "string", "minLength": 1 },
+        "reviewedAt": { "type": "string", "format": "date-time" },
+        "evidenceSha256": { "$ref": "#/$defs/sha256" },
+        "attestation": { "$ref": "#/$defs/evidenceReference" },
+        "verification": {
+          "oneOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["status"],
+              "properties": { "status": { "const": "not_verified" } }
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["status", "verifier", "keyId"],
+              "properties": {
+                "status": { "const": "trusted_external_signature" },
+                "verifier": { "type": "string", "minLength": 1 },
+                "keyId": { "type": "string", "minLength": 1 }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "verdict": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "pass", "signedReleaseEvidence", "manualReviewRequired"],
+      "properties": {
+        "status": { "enum": ["PASS", "MANUAL_REVIEW_REQUIRED", "FAIL"] },
+        "pass": { "type": "boolean" },
+        "signedReleaseEvidence": { "type": "boolean" },
+        "manualReviewRequired": { "type": "boolean" }
+      },
+      "oneOf": [
+        {
+          "properties": {
+            "status": { "const": "PASS" },
+            "pass": { "const": true },
+            "signedReleaseEvidence": { "const": true },
+            "manualReviewRequired": { "const": false }
+          }
+        },
+        {
+          "properties": {
+            "status": { "const": "MANUAL_REVIEW_REQUIRED" },
+            "pass": { "const": false },
+            "signedReleaseEvidence": { "const": false },
+            "manualReviewRequired": { "const": true }
+          }
+        },
+        {
+          "properties": {
+            "status": { "const": "FAIL" },
+            "pass": { "const": false },
+            "signedReleaseEvidence": { "const": false },
+            "manualReviewRequired": { "const": false }
+          }
+        }
+      ]
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "verdict": {
+            "type": "object",
+            "properties": { "status": { "const": "PASS" } },
+            "required": ["status"]
+          }
+        },
+        "required": ["verdict"]
+      },
+      "then": {
+        "properties": {
+          "review": {
+            "type": "object",
+            "required": ["attestation"],
+            "properties": {
+              "attestation": { "$ref": "#/$defs/evidenceReference" },
+              "verification": {
+                "type": "object",
+                "required": ["status", "verifier", "keyId"],
+                "properties": {
+                  "status": { "const": "trusted_external_signature" },
+                  "verifier": { "type": "string", "minLength": 1 },
+                  "keyId": { "type": "string", "minLength": 1 }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "verdict": {
+            "type": "object",
+            "properties": {
+              "status": { "const": "MANUAL_REVIEW_REQUIRED" }
+            },
+            "required": ["status"]
+          }
+        },
+        "required": ["verdict"]
+      },
+      "then": {
+        "properties": {
+          "review": {
+            "type": "object",
+            "not": {
+              "type": "object",
+              "required": ["attestation"],
+              "properties": { "attestation": true }
+            },
+            "properties": {
+              "attestation": { "$ref": "#/$defs/evidenceReference" },
+              "verification": {
+                "type": "object",
+                "properties": { "status": { "const": "not_verified" } },
+                "required": ["status"]
+              }
+            }
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "releaseHarness": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["commit", "files"],
+      "properties": {
+        "commit": { "type": "string", "pattern": "^[0-9a-f]{40}([0-9a-f]{24})?$" },
+        "files": {
+          "type": "array",
+          "minItems": 2,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["path", "sha256", "gitBlobObjectId"],
+            "properties": {
+              "path": { "type": "string", "minLength": 1 },
+              "sha256": { "$ref": "#/$defs/sha256" },
+              "gitBlobObjectId": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{40}([0-9a-f]{24})?$"
+              }
+            }
+          }
+        }
+      }
+    },
+    "evidenceReference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256"],
+      "properties": {
+        "path": { "type": "string", "minLength": 1 },
+        "sha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "architectureEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["arm64", "x86_64"],
+      "properties": {
+        "arm64": { "$ref": "#/$defs/evidenceReference" },
+        "x86_64": { "$ref": "#/$defs/evidenceReference" }
+      }
+    },
+    "captureIndicatorEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["window", "display", "clearedAfterHide", "clearedAfterExit"],
+      "properties": {
+        "window": { "$ref": "#/$defs/evidenceReference" },
+        "display": { "$ref": "#/$defs/evidenceReference" },
+        "clearedAfterHide": { "const": true },
+        "clearedAfterExit": { "const": true }
+      }
+    }
+  }
+}

@@ -13,6 +13,7 @@ import { materializeBundledPluginPackage } from "./package-cache.js";
 import {
   createCuaDriverMcpServerInput,
   CUA_DRIVER_MCP_SERVER_ID,
+  CUA_DRIVER_PLUGIN_ID,
   CUA_DRIVER_UNSUPPORTED_PLATFORM_MESSAGE,
   isCuaDriverPlatformSupported,
   resolveCuaDriverCommand,
@@ -20,6 +21,7 @@ import {
 } from "./presets.js";
 import { createPluginHealthSnapshot, ensureManagedPluginRecord } from "./catalog.js";
 import { checkCuaDriverProviderHealth } from "./provider-health.js";
+import { pluginHealthFromMcpSnapshot } from "./cua-driver-activation.js";
 
 type ManagedPluginInstallStore =
   ManagedPluginStoreFacet &
@@ -49,6 +51,7 @@ export async function installBundledPluginPackage(input: {
 
   if (input.pluginId === "bundled:cua-driver") {
     validateCuaInstallEnvironment(input.store, descriptor, input.options, input.now);
+    assertBundledCuaMcpServerOwnershipMigratable(input.store, descriptor);
   }
 
   const materialized = materializeBundledPluginPackage({
@@ -175,27 +178,61 @@ export async function checkInstalledPluginRuntimeDependencies(input: {
   if (!server) {
     throw new HttpError(400, "plugin_linked_resource_missing", "Plugin linked MCP server is missing.");
   }
-  const checked = await input.mcpBroker.checkServer(server, {
-    secretResolver: input.secretResolver,
-    now: () => input.now,
+  assertExclusiveBundledCuaMcpServerOwnership({
+    store: input.store,
+    descriptor: input.descriptor,
+    now: input.now,
   });
+  let checked;
+  try {
+    checked = await input.mcpBroker.checkServer(server, {
+      secretResolver: input.secretResolver,
+      now: () => input.now,
+    });
+  } catch (error) {
+    input.store.upsertManagedPluginHealthSnapshot(createPluginHealthSnapshot({
+      pluginId: input.descriptor.id,
+      now: input.now,
+      status: "failed",
+      message: error instanceof Error ? error.message : String(error),
+      details: { errorCode: "plugin_provider_unavailable" },
+    }), input.now);
+    throw new HttpError(400, "plugin_provider_unavailable", "Cua Driver MCP server could not be checked.");
+  }
   input.store.upsertMcpStatusSnapshot(checked.statusSnapshot, input.now);
   if (checked.statusSnapshot.status !== "ready") {
+    input.store.upsertManagedPluginHealthSnapshot(
+      pluginHealthFromMcpSnapshot(input.descriptor.id, checked.statusSnapshot),
+      input.now,
+    );
     throw new HttpError(
       400,
       checked.statusSnapshot.errorCode ?? "plugin_provider_unavailable",
       checked.statusSnapshot.message ?? "Cua Driver MCP server is not ready.",
     );
   }
-  if (process.platform !== "win32") {
-    return;
+  let listed;
+  try {
+    listed = await input.mcpBroker.listTools(server, {
+      secretResolver: input.secretResolver,
+      now: () => input.now,
+    });
+  } catch (error) {
+    input.store.upsertManagedPluginHealthSnapshot(createPluginHealthSnapshot({
+      pluginId: input.descriptor.id,
+      now: input.now,
+      status: "failed",
+      message: error instanceof Error ? error.message : String(error),
+      details: { errorCode: "plugin_provider_unavailable" },
+    }), input.now);
+    throw new HttpError(400, "plugin_provider_unavailable", "Cua Driver tools could not be listed.");
   }
-  const listed = await input.mcpBroker.listTools(server, {
-    secretResolver: input.secretResolver,
-    now: () => input.now,
-  });
   input.store.upsertMcpStatusSnapshot(listed.statusSnapshot, input.now);
   if (listed.statusSnapshot.status !== "ready") {
+    input.store.upsertManagedPluginHealthSnapshot(
+      pluginHealthFromMcpSnapshot(input.descriptor.id, listed.statusSnapshot),
+      input.now,
+    );
     throw new HttpError(
       400,
       listed.statusSnapshot.errorCode ?? "plugin_provider_unavailable",
@@ -212,6 +249,13 @@ export async function checkInstalledPluginRuntimeDependencies(input: {
     availableToolNames: tools.map((tool) => tool.rawName),
   });
   if (!providerHealth.ok) {
+    input.store.upsertManagedPluginHealthSnapshot(createPluginHealthSnapshot({
+      pluginId: input.descriptor.id,
+      now: input.now,
+      status: "failed",
+      message: providerHealth.message,
+      details: providerHealth.details,
+    }), input.now);
     throw new HttpError(
       400,
       typeof providerHealth.details?.errorCode === "string"
@@ -220,6 +264,17 @@ export async function checkInstalledPluginRuntimeDependencies(input: {
       providerHealth.message,
     );
   }
+  input.store.upsertManagedPluginHealthSnapshot(createPluginHealthSnapshot({
+    pluginId: input.descriptor.id,
+    now: input.now,
+    status: "ready",
+    message: providerHealth.message,
+    details: {
+      mcpStatus: listed.statusSnapshot.status,
+      toolCount: tools.length,
+      ...providerHealth.details,
+    },
+  }), input.now);
 }
 
 function validateCuaInstallEnvironment(
@@ -260,6 +315,17 @@ function linkCuaMcpServer(input: {
   readonly options: Readonly<Record<string, unknown>>;
   readonly now: string;
 }): void {
+  const contribution = input.descriptor.contributions.find(
+    (candidate) => candidate.kind === "mcp-server",
+  );
+  if (!contribution) {
+    throw new HttpError(400, "plugin_contribution_missing", "Cua Driver plugin has no MCP server contribution.");
+  }
+  migrateLegacyCuaMcpServerOwnershipForBundledInstall({
+    store: input.store,
+    descriptor: input.descriptor,
+    now: input.now,
+  });
   const command = resolveCuaDriverCommand(input.options);
   if (!command.ok || !command.command) {
     throw new HttpError(400, "plugin_binary_not_found", command.message ?? "cua-driver binary was not found.");
@@ -272,7 +338,7 @@ function linkCuaMcpServer(input: {
   input.store.replaceManagedPluginContributions(input.descriptor.id, [
     {
       contributionKind: "mcp-server",
-      contributionId: CUA_DRIVER_MCP_SERVER_ID,
+      contributionId: contribution.id,
       linkedResourceId: linkedServer.id,
       enabled: input.enabled,
     },
@@ -284,4 +350,97 @@ function linkCuaMcpServer(input: {
     message: `Linked MCP server ${linkedServer.id}.`,
     data: { linkedResourceId: linkedServer.id },
   }, input.now);
+}
+
+export function assertExclusiveBundledCuaMcpServerOwnership(input: {
+  readonly store: ManagedPluginInstallStore;
+  readonly descriptor: ManagedPluginDescriptor;
+  readonly now: string;
+}): void {
+  const contribution = input.descriptor.contributions.find(
+    (candidate) => candidate.kind === "mcp-server",
+  );
+  if (!contribution) {
+    throw new HttpError(400, "plugin_contribution_missing", "Cua Driver plugin has no MCP server contribution.");
+  }
+  const owners = cuaMcpServerOwners(input.store);
+  const foreignOwners = owners.filter((owner) => owner.pluginId !== input.descriptor.id);
+  if (foreignOwners.length > 0) {
+    throw new HttpError(
+      409,
+      "plugin_linked_resource_conflict",
+      "Cua Driver MCP server is already linked to another managed plugin. Reinstall the bundled Cua Driver plugin to migrate ownership safely.",
+    );
+  }
+  if (owners.length === 0) {
+    throw new HttpError(400, "plugin_linked_resource_missing", "Plugin linked MCP server contribution is missing.");
+  }
+  if (owners.length !== 1 || owners[0]?.contributionId !== contribution.id) {
+    const enabled = owners.some((owner) => owner.enabled);
+    input.store.replaceManagedPluginContributions(input.descriptor.id, [{
+      contributionKind: "mcp-server",
+      contributionId: contribution.id,
+      linkedResourceId: CUA_DRIVER_MCP_SERVER_ID,
+      enabled,
+    }], input.now);
+  }
+  const normalizedOwners = cuaMcpServerOwners(input.store);
+  if (
+    normalizedOwners.length !== 1
+    || normalizedOwners[0]?.pluginId !== input.descriptor.id
+    || normalizedOwners[0]?.contributionId !== contribution.id
+  ) {
+    throw new HttpError(409, "plugin_linked_resource_conflict", "Cua Driver MCP server ownership is ambiguous.");
+  }
+}
+
+function migrateLegacyCuaMcpServerOwnershipForBundledInstall(input: {
+  readonly store: ManagedPluginInstallStore;
+  readonly descriptor: ManagedPluginDescriptor;
+  readonly now: string;
+}): void {
+  const foreignOwners = cuaMcpServerOwners(input.store).filter(
+    (owner) => owner.pluginId !== input.descriptor.id,
+  );
+  assertBundledCuaMcpServerOwnershipMigratable(input.store, input.descriptor);
+  if (foreignOwners.length === 0) {
+    return;
+  }
+  const legacyRecord = input.store.getManagedPlugin(CUA_DRIVER_PLUGIN_ID);
+  if (legacyRecord) {
+    input.store.updateManagedPlugin(CUA_DRIVER_PLUGIN_ID, {
+      enabled: false,
+      disabledReason: "Migrated to bundled:cua-driver.",
+    }, input.now);
+    input.store.replaceManagedPluginContributions(CUA_DRIVER_PLUGIN_ID, [], input.now);
+    input.store.appendManagedPluginEvent({
+      pluginId: CUA_DRIVER_PLUGIN_ID,
+      type: "disabled",
+      actor: "system",
+      message: "Legacy Cua Driver ownership migrated to the bundled plugin.",
+    }, input.now);
+  }
+}
+
+function assertBundledCuaMcpServerOwnershipMigratable(
+  store: ManagedPluginInstallStore,
+  descriptor: ManagedPluginDescriptor,
+): void {
+  const unsupportedOwners = cuaMcpServerOwners(store).filter(
+    (owner) => owner.pluginId !== descriptor.id && owner.pluginId !== CUA_DRIVER_PLUGIN_ID,
+  );
+  if (unsupportedOwners.length > 0) {
+    throw new HttpError(
+      409,
+      "plugin_linked_resource_conflict",
+      "Cua Driver MCP server is linked to an unsupported managed plugin owner.",
+    );
+  }
+}
+
+function cuaMcpServerOwners(store: ManagedPluginInstallStore) {
+  return store.listManagedPluginContributions().filter(
+    (contribution) => contribution.contributionKind === "mcp-server"
+      && contribution.linkedResourceId === CUA_DRIVER_MCP_SERVER_ID,
+  );
 }

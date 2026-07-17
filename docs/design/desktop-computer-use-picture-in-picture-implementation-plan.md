@@ -2,13 +2,43 @@
 
 ## Status
 
-In progress on 2026-07-16. The design and detailed design are complete. Original Slices 0-6
+Local implementation baseline verified on 2026-07-16/17. The design and detailed design are complete. Original Slices 0-6
 are complete locally, and Slice 7 has closed its local G4, unsigned-artifact, performance,
 and packaged-provenance work. The remaining work is external release evidence: Developer ID
 signing/notarization/Gatekeeper, clean-host TCC and operating-system capture-indicator states,
 Windows x64 interactive provider/DPI/dual-display execution, Authenticode/SmartScreen/signed
-NSIS, real VoiceOver/Narrator/NVDA acceptance, hosted CI, and clean-machine
-install/update/uninstall.
+NSIS, real VoiceOver/Narrator/NVDA acceptance, hosted signed CI, clean-machine
+install/update/uninstall, external detached signatures, and real candidate-daemon provenance.
+
+The local release-acceptance harness is now implemented and fail-closed. macOS candidate
+verification requires a content-bound arm64/x86_64 app+DMG+ZIP matrix; TCC cases live-reverify
+the candidate and write atomic failure reports; arm64/x86_64 each require all four TCC cases,
+granted includes a two-launch restart gate, revoked is machine-observed, and packaged signed
+performance is candidate-bound. Report-relative paths keep the retained artifact tree portable.
+Every macOS release-harness script is bound to its recorded harness-commit Git blob, current file bytes,
+and SHA-256; hidden `assume-unchanged` modifications fail closed. The finalizer reruns candidate
+verification, parses artifact-bound notary logs, and rehashes every nested artifact, but
+deliberately stops at `MANUAL_REVIEW_REQUIRED`; a separate trusted
+detached-signature verifier is required to promote the evidence externally. Windows
+Preflight/Full reports bind the app,
+installer, both provider executables, signer identities, candidate manifest, real dual-screen/
+DPI, Narrator/NVDA, SmartScreen, install/update/uninstall, and smoke evidence. Full validation
+also requires caller-fixed expected candidate commit, clean repository root, and release-policy
+SHA-256 trust anchors. Those anchors do not authenticate a reviewer self-reported in manual
+evidence. Full now stays `releaseReady=false` until an independent verifier validates the canonical
+evidence digest, detached reviewer signature, and candidate-build/daemon-tree attestation against
+cross-role-disjoint policy-pinned identities, key IDs, and SPKI fingerprints. The PowerShell
+surface is only statically contract-tested from Node on this macOS
+host because neither `pwsh` nor Windows PowerShell is installed. The strict Ajv Draft 2020-12
+gate compiles all eleven evidence schemas, and schema-only changes under
+`docs/release/evidence/**` trigger the Desktop artifact workflow. Missing external evidence
+remains `BLOCKED`; the unsigned hosted workflow uploads a diagnostic Preflight without mistaking
+it for release closure.
+
+The granted-case restart fixture starts the production daemon registry once, seeds one active
+projection, and runs two Desktop launches against that same daemon/workspace/token. This proves
+transport-level projection replay and Stop acknowledgement; it does not close the separate
+provider, clean-host TCC, capture-indicator, accessibility, signing, or notarization gates.
 
 Status legend: `[x]` verified complete, `[~]` implemented but not release-complete,
 `[ ]` pending, `[!]` blocked by an external/platform prerequisite.
@@ -21,15 +51,30 @@ Status legend: `[x]` verified complete, `[~]` implemented but not release-comple
 | Electron Desktop shell and shared Web loading | [x] | shared Web loading, sandbox/preload boundaries, daemon ownership, bounded cold-start handling, fixed-port incompatible-daemon Retry/Quit recovery, startup single-flight, bundled plugin metadata, macOS arm64/x64 packages, and the unsigned Windows x64 cross-package pass locally. The Vite preview build empties its dedicated `outDir`; the packaged `app.asar` preview subtree contains only the current seven entries |
 | Contracts, daemon projection, SSE/API, Stop acknowledgement | [x] | structured projection is driven only by trusted authorized MCP definitions and run approval events; the current authoritative sequence is `starting -> waiting_for_approval -> starting -> running -> terminal`, `paused` is reserved, the lifecycle `rawName` whitelist is removed, and revision, atomic snapshot/subscribe replay, SSE epoch, bridge handshake, scoped native route token, bounded terminal/event retention, descriptor lease/revocation, and Stop acknowledgement pass. A negative Stop acknowledgement restores the active projection and returns HTTP 504 |
 | Coordinator, selectors, fake lifecycle | [x] | IPC ownership, truthful auto/shown/hidden intent, eager terminal suppression cleanup, first-frame, Hide/Show/Close/Stop, exact Desktop-local source generations and exact-window mismatch fail-closed handling, serialized reconnect/revision replacement, post-timeout session/revision blocking, one-second frame-gap watchdog, fail-safe/quiescent disposal, exact renderer media-release acknowledgement with forced teardown, summary-only `starting`/`waiting_for_approval` handling without an empty PiP window, placement, Reset, display recovery, bounded renderer-crash recreation, preference-failure safety, queued linger ownership, fake-source zero-residue profiling, and unsigned packaged renderer-crash recovery pass locally |
-| Renderer, shared UI, and layout | [x] | runtime overlays, direct Open/Hide/More controls, PiP-only Close window, structured Stop pending/failure/retry, safe menu grouping, hover/focus reporting, keyboard/a11y, themes, reduced motion, typed obstacle priority across channel/normal/teammate-direct surfaces, drag/resize, 180 ms drag-end four-corner snap with preferred-corner persistence, source `setAspectRatio` handling including portrait inputs, display persistence, dedicated `en-US`/`zh-CN` locale catalog and hot-switch transport, 17-case Electron DOM/media coverage, and the ten-case macOS arm64 screenshot matrix pass locally; Windows DPI/dual-display visual acceptance is external |
+| Renderer, shared UI, and layout | [x] | runtime overlays, direct Open/Hide/More controls, PiP-only Close window, structured Stop pending/failure/retry, safe menu grouping, hover/focus reporting, keyboard/a11y, themes, reduced motion, typed obstacle priority across channel/normal/teammate-direct surfaces, drag/resize, 180 ms drag-end four-corner snap with preferred-corner persistence, source `setAspectRatio` handling including portrait inputs, display persistence, dedicated `en-US`/`zh-CN` locale catalog and hot-switch transport, Electron DOM/media coverage, the final pre-commit PiP renderer **20/20**, and the ten-case macOS arm64 screenshot matrix pass locally; Windows DPI/dual-display visual acceptance is external |
 | macOS current-host real capture and provenance | [x] | the dedicated non-persistent partition passes dev plus fresh unsigned arm64/x64 `.app` and mounted-DMG fake, real-window, primary-display, and provenance smokes. Exact document/navigation-bound grants, provisional idle loading before `prepare()`, the 16 ms decoded-ready poll, live-track release, crash recovery, and Cua native-window handoff in both packaged `.app` architectures pass. Signed TCC/capture-indicator/restart evidence remains external |
 | Windows provider/plugin/package boundary | [x] | exact reviewed `trycua/cua-driver-rs` `v0.8.3` asset/SHA is allowlisted; unreviewed newer versions fail closed. Ling plugin, command, descriptor, provider verifier, branded unsigned PE32+ x64 application, and explicit per-user/asInvoker NSIS cross-package gates pass locally. The upstream provider is currently an unsigned prerelease, and interactive Windows x64 provider/source lifecycle, DPI, and dual-display evidence remains external |
 | Local production closure | [x] | G4 recovery/security, packaged provenance, bounded privacy-safe telemetry, fake and real performance harnesses, unsigned macOS arm64/x64 DMG+ZIP integrity, unsigned Windows x64 packaging, SHA-256 generation, and zero-residue checks pass |
-| External release closure | [!] | Apple Developer ID signing/notarization/Gatekeeper and denied/prompt/granted/revoked clean-host TCC/capture-indicator evidence, Windows interactive VM/provider/DPI/dual-display execution, Authenticode/SmartScreen/signed NSIS, VoiceOver/Narrator/NVDA, hosted CI, and clean-machine install/update/uninstall remain unavailable or undecided |
+| Release acceptance harness | [~] | macOS signed candidate/TCC/finalizer plus Windows Preflight/Full builder, PowerShell runner, bundle-tree/CDHash, notary job/artifact, candidate-commit/harness, pre-execution Authenticode, immutable-manifest, and manual-evidence gates are implemented locally. macOS scripts are Git-blob/worktree/SHA-bound; Windows Full has caller-fixed commit/root/policy-SHA anchors, a fail-closed `releaseReady=false` builder, and an independent verifier for policy-pinned reviewer plus candidate-build detached signatures; the eleven-schema Draft 2020-12 compiler and schema-only CI trigger are complete. External signed attestations, PowerShell parser/runtime, and real deterministic/signed-candidate daemon provenance evidence remain pending |
+| External release closure | [!] | Apple Developer ID signing/notarization/Gatekeeper and denied/prompt/granted/revoked clean-host TCC/capture-indicator evidence, Windows interactive VM/provider/DPI/dual-display execution, Authenticode/SmartScreen/signed NSIS, VoiceOver/Narrator/NVDA, hosted signed CI execution, clean-machine install/update/uninstall, external detached signatures, and real candidate-daemon provenance remain unavailable or undecided |
 
-### Rebaseline evidence (2026-07-16–17)
+### Latest confirmed local verification (2026-07-17, current worktree)
 
-- Desktop Node tests: **170/170** passed, including the branded application-icon contract,
+The final pre-commit matrix passes Desktop Node **291/291**, PiP renderer **20/20**, Web E2E
+**35/35**, contracts **5/5**, API client **48/48**, full daemon **629/629**, macOS
+release-focused **28/28**, Windows acceptance/provider/release focused **57/57**, and all
+**11/11** strict Ajv Draft 2020-12 release-evidence schemas. The Desktop production build, Web
+production build/typecheck/lint/i18n checks, workspace typecheck/lint, and actionlint also pass.
+`docs/release/evidence/**` is in the workflow path filters, so schema-only pull requests and
+`main` pushes execute the schema gate.
+
+These results are current local engineering evidence against the final pre-commit diff, not a
+cross-platform release closure. Fixed artifact hashes labeled `baseline @ e20777f5` remain
+historical references; signed clean-host macOS, interactive Windows, hosted signed CI,
+clean-machine lifecycle, detached-signature, and candidate-daemon provenance evidence remains
+external and pending.
+
+- Desktop Node coverage includes the branded application-icon contract,
   locale allowlist/snapshot propagation,
   renderer message catalog/fallback, renderer-crash recreation, hide-before-frame,
   route-switch, terminal-during-reconnect, delayed reconnect versus Hide/revision races,
@@ -44,29 +89,38 @@ Status legend: `[x]` verified complete, `[~]` implemented but not release-comple
   cancellation while connecting, terminal route switching, late failure isolation,
   native-Close persistence, stall/crash block composition, same-revision descriptor
   replacement with exact source generation, preference-failure safety, queued linger
-  ownership, foreign fixed-port detection, early child exit, and descriptor revision versus
-  user suppression.
-- Real Electron renderer DOM/keyboard/media tests: **17/17** passed. They cover live
+  ownership, foreign fixed-port detection, early child exit, startup-failure cleanup of an
+  owned daemon/window/coordinator, descriptor revision versus user suppression, independent
+  Stop single-flight ownership, provider-call cancellation/deadline cleanup, and catalog-first
+  exact window/PID matching.
+- Release acceptance cases add signed candidate matrix/content binding, live signed-candidate
+  re-verification, distinct revoked transition evidence, atomic TCC failure reports, hash-based
+  final evidence derivation, Windows probe-invariant rejection, expected Publisher binding,
+  provider-helper coverage, and mandatory visual/accessibility/SmartScreen/install lifecycle
+  evidence. A hand-edited PASS cannot validate against contradictory or missing inputs.
+- Real Electron renderer DOM/keyboard/media coverage exercises live
   `en-US` -> `zh-CN` title/action/status/ARIA switching without media reacquisition,
   direct action
   order, Close-window separation from Stop, menu grouping/navigation and focus retention,
   Escape safety, interaction-edge
   reporting, Stop not-accepted/rejected/pending/stale results, aria-live, dynamic title,
-  serialized display-media startup, live-track release, late pending stream cleanup before
-  ACK, and identity mismatch without stopping a newer revision.
-- Shared Web Desktop bridge and app-shell selector E2E: **16/16** passed, including
+  serialized display-media startup, decoded-data gating when
+  `requestVideoFrameCallback` is unavailable, live-track release, late pending stream cleanup
+  before ACK, and identity mismatch without stopping a newer revision.
+- Shared Web Desktop bridge, workspace, and app-shell selector E2E coverage includes
   initial/runtime locale reporting,
   Show/Hide/Stop duplicate suppression, safe assertive failure copy, accepted-pending
   projection ownership, stale session/request isolation, bounded command timeout with late
   result rejection, current-session header placement across channel/normal/teammate-direct
   surfaces, responsive action targets, teammate-direct composer/summary/dock/terminal
   geometry, obstacle-kind normalization, dynamic modal-marker release, and the three
-  app-shell selector cases.
-- Focused contracts/API/daemon/plugin Computer Use matrix: **51/51** passed. It includes
-  Cua Driver preset,
-  provider schema/health, and plugin-manager integration coverage. The API-client and
-  Desktop projection tests also verify the scoped `X-Ling-Computer-Use-Token`
-  header and the absence of the private bridge token on native routes.
+  app-shell selector cases, plus latest-intent-wins navigation while an older lookup succeeds
+  late.
+- The final pre-commit contracts suite passes **5/5**, API client passes **48/48**, and the full
+  daemon suite passes **629/629**, including Cua Driver preset, provider schema/health, Stop
+  single-flight, provider cancellation/deadline, and exact catalog ownership coverage.
+  API-client and Desktop projection tests also verify the scoped
+  `X-Ling-Computer-Use-Token` header and the absence of the private bridge token on native routes.
 - Lifecycle projection now derives only from a trusted authorized MCP definition plus run
   approval events. The observed path is `starting -> waiting_for_approval -> starting ->
   running -> terminal`; the lifecycle `rawName` whitelist is gone, and `paused` remains a
@@ -79,10 +133,9 @@ Status legend: `[x]` verified complete, `[~]` implemented but not release-comple
 - A `starting` or `waiting_for_approval` projection without a preview descriptor remains
   visible in the shared current-session summary. Desktop does not create a BrowserWindow or
   show an empty PiP until a preview source is available.
-- Web typecheck and production build: passed; only pre-existing Rollup circular-chunk and
+- Desktop production build, Web production build/typecheck/lint/i18n checks, workspace
+  typecheck/lint, and actionlint: passed. Only pre-existing Web Rollup circular-chunk and
   large-chunk warnings remain.
-- Desktop main/preload/renderer TypeScript `noEmit`: passed.
-- Desktop production build: passed.
 - Built Electron fake and real smokes: first frame -> Hide -> Show -> first frame ->
   app blur/main-window minimize -> forced renderer crash/recreation -> acknowledged Stop ->
   terminal close passed. Hide -> Show preserves the same preview
@@ -108,14 +161,15 @@ Status legend: `[x]` verified complete, `[~]` implemented but not release-comple
   and replay while permitting one authorized use. The adapter removes its navigation and
   destruction listeners after consumption/release/disposal; lifecycle profiling reports no
   residual listeners.
-- Fresh unsigned macOS artifacts and SHA-256:
+- Fresh unsigned macOS artifacts and SHA-256 (fixed artifact baseline @ `e20777f5`, not current-candidate hashes):
   - arm64 DMG: `e42b944b84bf67174d18dec422637cbde6988c4d2283f503597b09aae50727fb`;
   - x64 DMG: `a9e8aa208af6dc9baff96b9550166095660adc1b596c4f86544287ac0ca19258`;
   - arm64 ZIP: `6c9ac51d212a7a4b930cf8bcb8c93f7e4b4f07bb17b93d1205f01b2ff99face5`;
   - x64 ZIP: `49a8bc3d5dce9def59c49b7a53f9fb31fea72e960dd9e99f806809d995bb695e`.
-- A fresh unsigned Windows cross-package produced a PE32+ x86_64 `Ling Stack.exe`
+- A historical unsigned Windows cross-package produced a PE32+ x86_64 `Ling Stack.exe`
   and an NSIS installer with no embedded certificate table. The bundled Cua Driver
-  plugin shell is present. The unpacked application SHA-256 is
+  plugin shell is present. Its fixed application and installer SHA-256 values are retained
+  as `baseline @ e20777f5`: the unpacked application hash is
   `3f6ad1bbb45816bb46b15d2e23eb7a60843eb2a8fbc25ae0e541fb29af1d596e`, and the
   installer SHA-256 is `52b115f2ef02394ed0e352c28f60052ec572eec02f708c2a942bd64d9b4de5e2`.
   This is static cross-package evidence only; it does not prove Authenticode,
@@ -180,7 +234,7 @@ These close the local G4, unsigned-artifact, packaged-provenance, and current-ho
 work. They do not close signed macOS TCC/capture-indicator evidence, the Windows interactive
 provider/DPI/dual-display matrix, Developer ID/notarization/Gatekeeper,
 Authenticode/SmartScreen/signed NSIS, hosted CI, clean-machine install/update/uninstall, or
-VoiceOver/Narrator/NVDA gates.
+VoiceOver/Narrator/NVDA, external detached-signature, or real candidate-daemon provenance gates.
 
 ### Capture stability decision (2026-07-16)
 
@@ -357,7 +411,7 @@ rather than promises.
 
 | Stage | Timebox | Deliverable | Exit gate |
 | --- | --- | --- | --- |
-| A0. Local security and unsigned baseline | complete | requester-bound capture grant and handler disposal, obstacle-kind transport, absolute ten-second exhaustion, fixed-port daemon recovery, fresh G0/G1/G4 rerun, and fresh unsigned macOS arm64/x64 packages | foreign renderer denied; grant replay denied; current 170/170 Node, 17/17 renderer, 16/16 Web, 51/51 focused contract/API/daemon/plugin cases, and 10/10 macOS screenshot baselines pass |
+| A0. Local security and unsigned baseline | complete | requester-bound capture grant and handler disposal, obstacle-kind transport, absolute ten-second exhaustion, fixed-port daemon recovery, fresh G0/G1/G4 rerun, and fresh unsigned macOS arm64/x64 packages | foreign renderer denied; grant replay denied; final pre-commit local matrix is green; fixed `e20777f5` artifact hashes remain historical baselines rather than current candidate hashes |
 | A1. Lifecycle semantic and privacy lock | complete locally | post-timeout session/revision block; fail-safe/quiescent coordinator and Desktop shutdown; exact renderer media-release request/ack with pending-acquisition drain, 500 ms timeout, exact-window mismatch denial, forced exact-window destroy, and Stop negative-ack recovery | ordinary projection updates cannot reopen after timeout; Show/revision recovery works; shutdown leaves zero timers/sources; Hide/Close waits for ACK or forced teardown; `ACK=false` restores active, returns 504, and leaves Desktop retryable; fake and real smoke reuse the acknowledged renderer |
 | A2. Local contract and state hygiene | complete | trusted authorized MCP plus approval-event lifecycle projection, no `rawName` whitelist, reserved `paused`, truthful visibility snapshot/intent, pure activation/presentation selector, summary-only active states without empty PiP, terminal suppression pruning, bounded host-layout input, full descriptor runtime schema, and expanded provenance-negative matrix | all 896 selector combinations pass; `starting`/`waiting_for_approval` summary remains visible without a preview window; initial first-frame recovery stays hidden; visible reconnect and summary remain aligned; revision-stale callbacks fail closed |
 | A3. Source identity and coordinator hardening | complete locally | Desktop-local source generation across snapshot/media/release/lifecycle IPC; stale same-revision descriptor events and exact-window mismatches rejected; safety actions precede preference persistence; linger cleanup is serialized and exact-source-bound; crash cleanup reconciles after release errors; newer active session preempts old terminal linger; fixed-port foreign-service and early-child-exit detection | source-generation renderer/IPC/coordinator regressions pass; no old descriptor event can reveal/fail the replacement or destroy a newer session; media hides/releases even if preference save fails; active summary survives cleanup errors; startup fails fast on occupied port or child exit |
@@ -471,6 +525,7 @@ The main Ling UI is not a prerequisite for most implementation work.
 - fake adapter and dedicated PiP renderer shell;
 - normalized Web-to-Desktop locale transport and renderer-local `en-US`/`zh-CN` catalog;
 - modular shared-Web bridge, host-layout reporter, and current-session header control slot;
+- structured Desktop navigation-intent delivery with successful-selection-before-ACK semantics;
 - PiP-only Close window action with preview-sender-scoped IPC and no Stop side effect;
 - typed channel, normal-conversation, and teammate-direct obstacle markers;
 - platform adapter boundary and lifecycle tests;
@@ -480,14 +535,19 @@ The main Ling UI is not a prerequisite for most implementation work.
 
 ### Remaining local work
 
-- No known local functional gap. Re-run the focused and full local matrix whenever the
+- No known local product-function gap. Re-run the focused and full local matrix whenever the
   shared header, PiP menu, coordinator, IPC, or geometry markers change.
+- Before release evidence can be trusted, build the ignored `packages/daemon/dist` tree from
+  the clean candidate commit and bind its deterministic fingerprint, or execute only the
+  daemon embedded in the signed candidate package.
 
 ### Future shared-UI synchronization
 
 - Keep Show/Hide/Stop in the current-session header unless product design intentionally
   selects a replacement current-session surface.
-- Move only the capability slot and typed geometry markers during UI refactors.
+- Preserve `useDesktopNavigationIntents`, structured `open_conversation` selection, and
+  successful-selection-before-ACK behavior during route refactors; move only the capability
+  slot and typed geometry markers otherwise.
 - Keep Close inside PiP More and separate from Stop.
 - Treat PiP token/motion polish and Windows screenshot baselines as acceptance work, not a
   reason to reopen daemon, coordinator, or capture contracts.
@@ -508,12 +568,12 @@ work; only external platform and distribution evidence remains.
 | --- | --- | --- |
 | Slice 0 — source spike | Source-spike decision, opaque descriptor contract, provider archive verifier, schema-v1 health parser, and current-host Cua native-window identity mapping | Complete locally |
 | Slice 1 — Desktop shell | Shared Web loading, daemon ownership, preload bridge, PiP BrowserWindow, build and typecheck | Complete locally |
-| Slice 2 — contracts and daemon projection | Trusted authorized MCP/approval-event projection, reserved `paused`, snapshot/SSE replay, scoped native routes, Stop acknowledgement including negative-ack active restoration/HTTP 504, 51 focused contract/API/daemon/plugin cases | Complete locally |
-| Slice 3 — coordinator and fake lifecycle | Show/Hide/Close/Stop state machine, summary-only active states without empty PiP, first-frame gate, recovery, exact-window/revision identity, leak checks, 170 Desktop Node cases, fake smoke | Complete locally |
-| Slice 4 — renderer and layout | 17/17 renderer cases, 10/10 light/dark/reduced-motion screenshots, collision/obstacle reporting, 180 ms drag-end corner snap, preferred-corner persistence, source aspect-ratio/portrait handling, display persistence, provisional-idle startup, and decoded-ready polling | Complete locally; Windows visual/DPI evidence is an external acceptance gate |
+| Slice 2 — contracts and daemon projection | Trusted authorized MCP/approval-event projection, reserved `paused`, snapshot/SSE replay, scoped native routes, Stop acknowledgement including negative-ack active restoration/HTTP 504; final pre-commit contracts **5/5**, API client **48/48**, and full daemon **629/629** | Complete locally |
+| Slice 3 — coordinator and fake lifecycle | Show/Hide/Close/Stop state machine, summary-only active states without empty PiP, first-frame gate, recovery, exact-window/revision identity, leak checks, Desktop Node **291/291**, fake smoke | Complete locally |
+| Slice 4 — renderer and layout | PiP renderer **20/20**, 10/10 light/dark/reduced-motion screenshots, collision/obstacle reporting, 180 ms drag-end corner snap, preferred-corner persistence, source aspect-ratio/portrait handling, display persistence, provisional-idle startup, and decoded-ready polling | Complete locally; Windows visual/DPI evidence is an external acceptance gate |
 | Slice 5 — real cross-platform capture | Exact document/navigation-bound grants; dev and unsigned arm64/x64 `.app` plus mounted-DMG window/display/provenance smokes; both packaged `.app` Cua native handoffs; Windows descriptor/provider boundary | Complete locally; signed TCC and Windows interactive provider execution remain external |
-| Slice 6 — shared UI binding | Current-session capability slot for channel, normal conversation, and teammate-direct surfaces; 16 Web E2E cases | Complete locally |
-| Slice 7 — production closure | Local G4 recovery/security, fake and real performance, packaged provenance, final unsigned macOS/Windows artifacts, integrity checks, release manual, and SHA-256 files | Local closure complete; signing/TCC, Windows VM/provider/DPI, legal Publisher/signing service, any separate enterprise per-machine artifact, hosted CI, and clean-machine acceptance remain external |
+| Slice 6 — shared UI binding | Current-session capability slot for channel, normal conversation, and teammate-direct surfaces; final pre-commit Web E2E **35/35** | Complete locally |
+| Slice 7 — production closure | Local G4 recovery/security, fake and real performance, packaged provenance, final unsigned macOS/Windows artifacts, integrity checks, release manual, and SHA-256 files | Local closure complete; signing/TCC, Windows VM/provider/DPI, legal Publisher/signing service, any separate enterprise per-machine artifact, hosted CI, clean-machine acceptance, external detached signatures, and real candidate-daemon provenance remain external |
 
 ## Foundation Slice: Minimal Desktop Shell
 
@@ -998,6 +1058,7 @@ corepack pnpm --filter @ling-stack/web lint
 corepack pnpm --filter @ling-stack/web check:i18n
 corepack pnpm --filter @ling-stack/web exec playwright test e2e/app-shell-selectors.spec.ts
 corepack pnpm --filter @ling-stack/web exec playwright test e2e/desktop-computer-use-bridge.spec.ts
+corepack pnpm --filter @ling-stack/web exec playwright test e2e/workspace.spec.ts
 corepack pnpm --filter @ling-stack/desktop package:mac
 for executable in \
   "apps/desktop/release/mac-arm64/Ling Stack.app/Contents/MacOS/Ling Stack" \
@@ -1025,6 +1086,8 @@ spctl -a -vv apps/desktop/release/mac/Ling\ Stack.app
 # Run on an unlocked Windows x64 VM with the selected Cua Driver provider installed:
 corepack pnpm --filter @ling-stack/desktop package:win
 corepack pnpm --filter @ling-stack/desktop smoke:computer-use:windows-provider
+python3 -c 'import json; from pathlib import Path; from jsonschema import Draft202012Validator; [Draft202012Validator.check_schema(json.loads(p.read_text())) for p in Path("docs/release/evidence").glob("*.schema.json")]'
+go run github.com/rhysd/actionlint/cmd/actionlint@latest .github/workflows/desktop-artifacts.yml
 git diff --check
 ```
 
@@ -1079,11 +1142,11 @@ small shared patch, then both platform lanes rebase before resuming acceptance.
 - [x] **T1 (P1, human: ~1 day / Codex: ~45 min)** — contracts — Add the structured Computer Use preview projection and status contracts, bind lifecycle to trusted authorized MCP definitions plus run approval events, remove lifecycle `rawName` allowlisting, and reserve `paused` until an authoritative event exists.
 - [x] **T2 (P1, human: ~2 days / Codex: ~2 h)** — daemon — Atomic snapshot/SSE ordering, bridge compatibility, authoritative `starting -> waiting_for_approval -> starting -> running -> terminal` projection, Stop acknowledgement including `ACK=false` active restoration/HTTP 504, Origin checks, scoped native route tokens, bounded terminal/event pruning, and descriptor lease/revocation policy are implemented and verified.
 - [x] **T3 (P1, human: ~2 days / Codex: ~2 h)** — desktop-main-local — IPC ownership, truthful visibility intent, eager terminal suppression cleanup, summary-only active state without empty PiP, one-second first-frame/frame-gap watchdogs, absolute ten-second exhaustion without Stop, post-timeout reopen blocking, fail-safe/quiescent disposal, exact-window mismatch rejection, exact release ACK/forced teardown, serialized reconnect/revision replacement, placement, persistence, Reset, display recovery, bounded renderer recreation, real Electron zero-residue profiling, and unsigned packaged renderer-crash recovery are implemented and locally verified.
-- [x] **T4 (P1, human: ~2 days / Codex: ~2 h)** — desktop-renderer-local — Runtime overlays with reserved-paused semantics, Codex-like hover-only live chrome, direct Open/Hide/More controls, PiP-only Close window separated from Stop, structured Stop failure/retry, stable menu focus, keyboard/a11y semantics, themes, high contrast, reduced motion, portrait/aspect-fit rendering, generation-safe track release and pending-acquisition ACK, typed `en-US`/`zh-CN` catalog and hot-switch transport, 17/17 Electron DOM/media tests, and the macOS arm64 10/10 screenshot matrix are implemented and locally verified.
+- [x] **T4 (P1, human: ~2 days / Codex: ~2 h)** — desktop-renderer-local — Runtime overlays with reserved-paused semantics, Codex-like hover-only live chrome, direct Open/Hide/More controls, PiP-only Close window separated from Stop, structured Stop failure/retry, stable menu focus, keyboard/a11y semantics, themes, high contrast, reduced motion, portrait/aspect-fit rendering, generation-safe track release and pending-acquisition ACK, typed `en-US`/`zh-CN` catalog and hot-switch transport, Electron DOM/media coverage, final pre-commit PiP renderer **20/20**, and the macOS arm64 10/10 screenshot matrix are implemented and locally verified.
 - [x] **T5 (P1, human: ~2 days / Codex: ~2 h)** — capture-boundary-local — The dedicated non-persistent Session, exact loaded-document/navigation-bound single-use grant, provisional-idle load before `prepare()`, generation/revision validation, descriptor runtime schema, adapter disposal, and full real Electron provenance-negative matrix are verified. Dev plus unsigned arm64/x64 `.app` and both mounted DMGs pass fake/window/display/provenance; both packaged `.app` architectures pass Cua native-window handoff using only Cua's numeric window id and provider PID. The 16 ms identity-bounded decoded-ready poll keeps first-frame truth while avoiding hidden-window callback delay.
 - [x] **T6 (P2, human: ~1 day / Codex: ~1 h)** — layout-local — Four-corner collision avoidance, six-offset search, manual placement, 180 ms drag-end snap, preferred-corner persistence, `setAspectRatio`, portrait-source bounds, Reset, typed obstacle priority, bounded geometry/timestamps/128-obstacle IPC input, and topology recovery are implemented and locally verified.
 - [x] **T7 (P2, human: ~1 day / Codex: ~1 h)** — product-surface — Current-session Show/Hide/Stop lives in the header capability slot for channel, normal conversation, and teammate-direct surfaces. `starting`/`waiting_for_approval` remains visible as a summary without creating an empty PiP when no descriptor exists. PiP More owns Close window, which is preview-sender-scoped, releases/destroys without Stop, and is separated from the destructive Stop action. Safe visible command failure/pending feedback, ten-second hung-command timeout, Stop negative-ack failure/retry, truthful renderer `visibilityIntent`, formal Desktop auto-show control, shared-Web i18n/PiP locale handoff, and composer/dock/terminal/approval/modal/summary obstacle markers are implemented. The activation/presentation selector owns suppression, explicit Show, auto-show, preview availability, stall-timeout, renderer-crash, first-frame, reconnect, and actionable-error semantics; all 896 combinations plus focused header/geometry and coordinator race regressions pass.
-- [x] **T8 (P1, human: ~2 days / Codex: ~2 h)** — local-verification — The latest source passes 170/170 Desktop Node, 17/17 renderer, 16/16 Web, 51/51 focused contracts/API/daemon/plugin cases, and 10/10 macOS light/dark/reduced-motion screenshots. Fresh unsigned arm64/x64 `.app` and mounted-DMG fake/window/display/provenance smokes, both packaged `.app` Cua handoffs, renderer-crash recovery, branded macOS/Windows application icons, DMG/ZIP integrity, PE certificate-table inspection, and zero-residue fake/real lanes pass. Real first-frame p50/p95 is **168.09/177.84 ms**, Hide p50/p95 is **2.16/3.65 ms**, 30-second CPU delta is **0.21%**, active overhead is **11,763,712 B**, and churn is **6.04% / 17,661,952 B**. Twelve activations equal twelve enumerations, with one renderer document, zero `applyConstraints()` calls, and zero residue. Fake p95 is **415.27 ms** and applies only to the fake ownership/crash lane.
+- [x] **T8 (P1, human: ~2 days / Codex: ~2 h)** — local-verification — Final pre-commit verification passes Desktop Node **291/291**, PiP renderer **20/20**, Web E2E **35/35**, contracts **5/5**, API client **48/48**, full daemon **629/629**, macOS release-focused **28/28**, Windows acceptance/provider/release focused **57/57**, and all **11/11** release-evidence schema compilations. Desktop production build, Web production build/typecheck/lint/i18n checks, workspace typecheck/lint, and actionlint pass. Fresh unsigned arm64/x64 `.app` and mounted-DMG fake/window/display/provenance smokes, both packaged `.app` Cua handoffs, renderer-crash recovery, branded macOS/Windows application icons, DMG/ZIP integrity, PE certificate-table inspection, and zero-residue fake/real lanes pass. Real first-frame p50/p95 is **168.09/177.84 ms**, Hide p50/p95 is **2.16/3.65 ms**, 30-second CPU delta is **0.21%**, active overhead is **11,763,712 B**, and churn is **6.04% / 17,661,952 B**. Twelve activations equal twelve enumerations, with one renderer document, zero `applyConstraints()` calls, and zero residue. Fake p95 is **415.27 ms** and applies only to the fake ownership/crash lane. These are local engineering results; external signed/interactive release gates remain open.
 - [x] **T9 (P1, human: ~0.5 day / Codex: ~30 min)** — recovery-semantics — An expired zero-frame recovery is blocked by session/descriptor/revision; ordinary projection updates cannot reopen it, while explicit user Show/Retry, a new descriptor identity, or an explicit Desktop restart can recover. V1 intentionally has no resume/unlock/user-active listener. Regression coverage locks timeout, blocked refresh/stale callbacks, explicit Show, and post-timeout revision recovery; terminal/removed sessions eagerly prune visibility and suppression state.
 - [x] **T10 (P1, human: ~0.5 day / Codex: ~30 min)** — shutdown-safety — Fallible subscription/display cleanup is contained in a fail-safe envelope; the coordinator quiesces before awaits, rejects late ingress, disposes the adapter exactly once, clears residue, and Desktop keeps IPC alive through dispose while continuing later cleanup after failures.
 - [x] **T11 (P1, human: ~1 day / Codex: ~45 min)** — media-release-local — Exact request/ack identity, async pending-acquisition drain, late-stream stop, replay/wrong-sender rejection, 500 ms timeout, renderer-gone release, and exact-window forced teardown are implemented. Fake and real Electron Hide/Show smokes reuse the acknowledged renderer.
@@ -1094,15 +1157,15 @@ small shared patch, then both platform lanes rebase before resuming acceptance.
 - [~] **T15.5 (P1, human: ~0.5 day / Codex: ~15 min)** — windows-release-decisions — Exact provider allowlisting, per-user/asInvoker NSIS policy, certificate boundary, and tuple rollback are implemented and recorded. Product/release owners must still decide public acceptance of the prerelease unsigned provider, the legal Publisher/signing service, the Windows client floor, and whether an enterprise per-machine artifact is required.
   - Owner/timebox: product owner plus Windows release owner; resolve in one decision review before Stage C2, not during VM execution.
   - Evidence artifact: `docs/release/desktop-windows-release-decisions.md` records the exact provider pin, engineering certificate boundary, install scope, rollback rule, and four remaining owner choices.
-- [ ] **T16 (P1, human: ~1 day / Codex: ~1 h after credentials)** — macos-signed-acceptance — Produce Developer ID arm64/x64 candidates and close notarization, clean-host TCC denied/prompt/granted/revoked, window/display/restart, visible OS capture-indicator, VoiceOver, and signed real-media performance gates.
+- [~] **T16 (P1, human: ~1 day / Codex: ~1 h after credentials)** — macos-signed-acceptance — The local signed-candidate verifier, eight-case TCC runner, interactive machine-observed revoke runner, two-launch restart evidence, packaged signed performance producer, bundle-tree/CDHash binding, unique artifact-bound notary jobs, report-relative evidence contracts, and live-reverifying finalizer are implemented and tested. Every harness script is bound to its recorded harness-commit Git blob, current file bytes, and SHA-256, including detection of hidden `assume-unchanged` edits. The finalizer deliberately returns `MANUAL_REVIEW_REQUIRED`; external execution must still produce Developer ID arm64/x64 candidates, run the clean-host capture-indicator/VoiceOver gates, and verify a detached reviewer signature outside the self-reporting process.
   - Owner/environment: Desktop release owner on clean arm64 and x64/Rosetta macOS hosts with Developer ID and notary credentials.
   - Entry condition: local T0-T15 baseline is green and the exact candidate hashes are frozen.
   - Evidence artifact: signed DMG/ZIP, Team ID/codesign/notary logs, TCC matrix, capture-indicator recording, VoiceOver notes, smoke JSON, and performance report.
-- [ ] **T17 (P1, human: ~1–3 days / Codex: ~2 h after environment)** — windows-vm-acceptance — Install the pinned Cua Driver provider and close x64 real-source, source-ended/revision/restart, DPI/dual-display visual, Narrator/NVDA, Authenticode, SmartScreen, and NSIS behavior.
+- [~] **T17 (P1, human: ~1–3 days / Codex: ~2 h after environment)** — windows-vm-acceptance — The local Preflight/Full report builder and PowerShell runner are implemented and statically contract-tested from Node. Installer and uninstaller signatures are checked before either executable runs; the installed app must match the manifest, and harness scripts are bound to the candidate commit and rehashed against Git blobs. Full also requires the release orchestrator to supply fixed expected candidate commit, clean repository root, and release-policy SHA-256 anchors; the validator cross-checks all three independently from report-owned paths. The builder cannot self-promote: even with Full gates PASS it emits `releaseReady=false` until the separate verifier checks a detached reviewer signature and candidate-build/daemon-tree attestation against policy-pinned SPKI fingerprints. This macOS host has neither `pwsh` nor Windows PowerShell, so real PowerShell parsing/runtime remains unverified. Full still cannot pass without an x64 host, both provider executables, cross-display/two-DPI visual evidence, Narrator/NVDA acceptance, SmartScreen without warning/Run anyway, install/update/uninstall, and zero residue. The real VM execution and real detached signatures remain pending.
   - Owner/environment: Windows/Desktop owner on an unlocked Windows x64 VM with the provider, two-display/DPI profiles, and the selected certificate policy.
   - Entry condition: T15.5 is accepted; local unsigned package and verifier are green.
   - Evidence artifact: provider health/descriptor logs, VM smoke output, screenshots, Narrator/NVDA notes, PE signature inspection, and install/update/uninstall transcript.
-- [ ] **T18 (P1, human: ~1 day / Codex: ~2 h after T16/T17)** — release-closure — Run hosted CI and clean-machine distribution acceptance for the exact signed macOS and Windows candidates.
+- [~] **T18 (P1, human: ~1 day / Codex: ~2 h after T16/T17)** — release-closure — The unsigned artifact workflow emits and uploads a diagnostic Windows Preflight while asserting it cannot claim Full acceptance. Its path filters include `docs/release/evidence/**`, and the strict eleven-schema Draft 2020-12 compile step makes schema-only changes run a real CI gate. Both macOS and Windows hosted daemon matrices include provider-eligibility and Windows target-validation coverage. Signed jobs, secrets, hosted execution, macOS external reviewer-signature verification, real Windows detached reviewer/build attestations, clean-commit daemon provenance evidence, and clean-machine distribution acceptance remain pending.
   - Owner/environment: release owner with CI signing/notary secrets and disposable clean macOS/Windows machines.
   - Entry condition: T16 and T17 evidence is accepted with immutable candidate hashes.
   - Evidence artifact: CI run links, signed SHA-256 manifest, install/update/uninstall results, final performance comparison, accessibility acceptance index, and release checklist sign-off.
@@ -1177,6 +1240,8 @@ The feature is complete only when:
 | Clean macOS TCC test environments | current host already reports Screen Recording `granted` | denied/prompt/granted/revoked plus window/display, restart, OS capture-indicator, VoiceOver, and track-cleanup matrix without mutating TCC |
 | Maintained Windows source provider and x64 VM | The selected Cua Driver `v0.8.3` asset is an unsigned prerelease and the current machine has no Windows interactive desktop | exact allowlisted provider install, explicit beta-risk acceptance or a signed stable upstream asset, descriptor handoff, real authorized source lifecycle, DPI/dual-screen, Narrator/NVDA, restart, and source-ended smoke |
 | Real platform accessibility hosts | DOM/ARIA and screenshot tests cannot prove native screen-reader focus, names, ordering, or announcements | VoiceOver acceptance on signed macOS plus Narrator and NVDA acceptance on installed Windows, with status/control/failure-recovery evidence |
+| External macOS review trust anchor | the finalizer cannot safely accept a caller-supplied assertion that its own manual evidence is trusted | a separate verifier recomputes the evidence digest and verifies a detached signature against a release-policy-pinned reviewer key |
+| Candidate daemon build provenance | the v3 manifest and detached build-attestation verifier now define the fail-closed trust contract, but no real release attestor has signed clean-candidate daemon bytes | deterministically rebuild and fingerprint the dist tree from the clean candidate commit, or use only the daemon embedded in the signed candidate, then sign that exact manifest with a policy-pinned build key |
 | Windows certificate and NSIS policy | legal Publisher/signing service, supported Windows floor, and any separate enterprise per-machine artifact remain unselected; the first candidate is already fixed to per-user/asInvoker | signed x64 per-user installer, explicit enterprise-artifact decision, install/uninstall/upgrade smoke, checksum, and clean-machine acceptance |
 | Release CI secrets and clean machines | local engineering smokes do not prove repeatable distribution | CI artifact matrix, notarization/signing jobs, integrity metadata, and clean install/update E2E |
 
@@ -1189,3 +1254,9 @@ The feature is complete only when:
 2. **Windows release identity:** select the legal Publisher/signing service and supported
    Windows floor, then decide whether enterprise distribution requires a separate per-machine
    artifact. The first candidate remains fixed to per-user/asInvoker.
+3. **macOS reviewer trust anchor:** choose the detached-signature format and the
+   release-policy-pinned reviewer key set. Until this exists, the local finalizer must remain
+   `MANUAL_REVIEW_REQUIRED` even when every machine-produced case passes.
+4. **release daemon provenance:** choose deterministic clean-commit `daemon/dist` rebuild plus
+   tree fingerprint, or candidate-package-only daemon execution. Deferring this leaves a gap
+   between reviewed source/harness scripts and the daemon bytes exercised by release smokes.

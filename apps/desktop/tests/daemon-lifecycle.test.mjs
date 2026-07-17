@@ -19,7 +19,7 @@ test("Desktop daemon starts in the selected workspace and stops the owned child"
       healthChecks += 1;
       return healthChecks === 1
         ? Promise.reject(new TypeError("fetch failed"))
-        : Response.json({ service: "ling-stack-daemon" });
+        : daemonHealth("/tmp/ling-desktop-workspace");
     },
     probePort: async () => "free",
     spawnDaemon: (input) => {
@@ -79,7 +79,7 @@ test("Desktop reuses a healthy daemon only after the authenticated preview hands
       const url = new URL(String(input));
       requests.push({ pathname: url.pathname, headers: init?.headers });
       if (url.pathname === "/health") {
-        return Response.json({ service: "ling-stack-daemon" });
+        return daemonHealth("/tmp/ling-desktop-compatible-workspace");
       }
       assert.equal(url.pathname, "/computer-use/desktop-bridge/handshake");
       assert.equal(new Headers(init?.headers).get("X-Ling-Desktop-Bridge-Token"), "bridge-token");
@@ -87,6 +87,8 @@ test("Desktop reuses a healthy daemon only after the authenticated preview hands
         protocolVersion: 1,
         capabilities: ["preview-source"],
         bridgeTokenAccepted: true,
+        routeTokenAccepted: true,
+        defaultWorkspaceCwd: "/tmp/ling-desktop-compatible-workspace",
       });
     },
     spawnDaemon: () => {
@@ -104,6 +106,103 @@ test("Desktop reuses a healthy daemon only after the authenticated preview hands
   ]);
 });
 
+test("Desktop refuses to reuse the same bridge token for a different workspace", async () => {
+  let handshakeCount = 0;
+  let spawnCount = 0;
+  const lifecycle = new DesktopDaemonLifecycle({
+    baseUrl: "http://127.0.0.1:17999",
+    daemonEntryPath: existingEntryPath,
+    defaultWorkspaceCwd: "/tmp/ling-desktop-authoritative-workspace",
+    desktopBridgeToken: "shared-bridge-token",
+    fetch: async (input) => {
+      const pathname = new URL(String(input)).pathname;
+      if (pathname === "/health") {
+        return daemonHealth("/tmp/ling-desktop-other-workspace");
+      }
+      handshakeCount += 1;
+      return Response.json({});
+    },
+    spawnDaemon: () => {
+      spawnCount += 1;
+      return createFakeChild();
+    },
+  });
+
+  await assert.rejects(
+    lifecycle.ensureStarted(),
+    (error) => error?.code === "bridge_incompatible" && error?.occupant === "ling_daemon",
+  );
+
+  assert.equal(handshakeCount, 0, "workspace mismatch must fail before the authenticated handshake");
+  assert.equal(spawnCount, 0);
+});
+
+test("Desktop requires the handshake to authorize its secret for scoped Computer Use routes", async () => {
+  let spawnCount = 0;
+  const defaultWorkspaceCwd = "/tmp/ling-desktop-route-authority-workspace";
+  const lifecycle = new DesktopDaemonLifecycle({
+    baseUrl: "http://127.0.0.1:18000",
+    daemonEntryPath: existingEntryPath,
+    defaultWorkspaceCwd,
+    desktopBridgeToken: "shared-bridge-token",
+    fetch: async (input) => {
+      const pathname = new URL(String(input)).pathname;
+      if (pathname === "/health") {
+        return daemonHealth(defaultWorkspaceCwd);
+      }
+      return Response.json({
+        protocolVersion: 1,
+        capabilities: ["preview-source"],
+        bridgeTokenAccepted: true,
+        routeTokenAccepted: false,
+        defaultWorkspaceCwd,
+      });
+    },
+    spawnDaemon: () => {
+      spawnCount += 1;
+      return createFakeChild();
+    },
+  });
+
+  await assert.rejects(
+    lifecycle.ensureStarted(),
+    (error) => error?.code === "bridge_incompatible" && error?.occupant === "ling_daemon",
+  );
+
+  assert.equal(spawnCount, 0);
+});
+
+test("Desktop requires health and handshake to report the same canonical workspace", async () => {
+  const defaultWorkspaceCwd = "/tmp/ling-desktop-handshake-workspace";
+  const lifecycle = new DesktopDaemonLifecycle({
+    baseUrl: "http://127.0.0.1:18001",
+    daemonEntryPath: existingEntryPath,
+    defaultWorkspaceCwd,
+    desktopBridgeToken: "shared-bridge-token",
+    fetch: async (input) => {
+      const pathname = new URL(String(input)).pathname;
+      if (pathname === "/health") {
+        return daemonHealth(defaultWorkspaceCwd);
+      }
+      return Response.json({
+        protocolVersion: 1,
+        capabilities: ["preview-source"],
+        bridgeTokenAccepted: true,
+        routeTokenAccepted: true,
+        defaultWorkspaceCwd: "/tmp/ling-desktop-other-handshake-workspace",
+      });
+    },
+    spawnDaemon: () => {
+      throw new Error("mismatched daemon must not be reused or replaced");
+    },
+  });
+
+  await assert.rejects(
+    lifecycle.ensureStarted(),
+    (error) => error?.code === "bridge_incompatible" && error?.occupant === "ling_daemon",
+  );
+});
+
 test("Desktop fails closed when a healthy daemon rejects the bridge token", async () => {
   let spawnCount = 0;
   const lifecycle = new DesktopDaemonLifecycle({
@@ -114,7 +213,7 @@ test("Desktop fails closed when a healthy daemon rejects the bridge token", asyn
     fetch: async (input) => {
       const pathname = new URL(String(input)).pathname;
       return pathname === "/health"
-        ? Response.json({ service: "ling-stack-daemon" })
+        ? daemonHealth("/tmp/ling-desktop-incompatible-workspace")
         : new Response(null, { status: 403 });
     },
     spawnDaemon: () => {
@@ -142,7 +241,7 @@ test("concurrent ensureStarted calls share one startup and spawn one daemon", as
       healthChecks += 1;
       return healthChecks === 1
         ? Promise.reject(new TypeError("fetch failed"))
-        : Response.json({ service: "ling-stack-daemon" });
+        : daemonHealth("/tmp/ling-desktop-single-flight-workspace");
     },
     probePort: async () => "free",
     spawnDaemon: () => {
@@ -157,6 +256,316 @@ test("concurrent ensureStarted calls share one startup and spawn one daemon", as
   assert.equal(first.ownedByDesktop, true);
   assert.deepEqual(second, first);
   await lifecycle.stopOwnedDaemon();
+});
+
+test("stopping during an in-flight port probe cancels startup before spawning", async () => {
+  const probeStarted = deferred();
+  const allowProbe = deferred();
+  let spawnCount = 0;
+  const lifecycle = new DesktopDaemonLifecycle({
+    baseUrl: "http://127.0.0.1:18002",
+    daemonEntryPath: existingEntryPath,
+    defaultWorkspaceCwd: "/tmp/ling-desktop-cancelled-startup-workspace",
+    fetch: async () => Promise.reject(new TypeError("fetch failed")),
+    probePort: async () => {
+      probeStarted.resolve();
+      await allowProbe.promise;
+      return "free";
+    },
+    spawnDaemon: () => {
+      spawnCount += 1;
+      return createFakeChild();
+    },
+  });
+
+  const startup = lifecycle.ensureStarted();
+  await probeStarted.promise;
+  const rejectedStartup = assert.rejects(startup, /daemon_start_cancelled/);
+
+  await lifecycle.stopOwnedDaemon();
+  allowProbe.resolve();
+  await rejectedStartup;
+
+  assert.equal(spawnCount, 0, "shutdown must invalidate startup before it can spawn an owned daemon");
+  assert.equal(lifecycle.status.state, "disconnected");
+  assert.equal(lifecycle.status.ownedByDesktop, false);
+});
+
+test("an older stop cannot overwrite a newer owned daemon connection", async () => {
+  const oldChild = createFakeChild({ exitOnTerm: false });
+  const newChild = createFakeChild();
+  const children = [oldChild, newChild];
+  const defaultWorkspaceCwd = "/tmp/ling-desktop-stop-restart-race-workspace";
+  let healthChecks = 0;
+  let spawnCount = 0;
+  const lifecycle = new DesktopDaemonLifecycle({
+    baseUrl: "http://127.0.0.1:18003",
+    daemonEntryPath: existingEntryPath,
+    defaultWorkspaceCwd,
+    shutdownTimeoutMs: 1_000,
+    fetch: async () => {
+      healthChecks += 1;
+      return healthChecks % 2 === 1
+        ? Promise.reject(new TypeError("fetch failed"))
+        : daemonHealth(defaultWorkspaceCwd);
+    },
+    probePort: async () => "free",
+    spawnDaemon: () => children[spawnCount++],
+  });
+
+  await lifecycle.ensureStarted();
+  const stoppingOldChild = lifecycle.stopOwnedDaemon();
+  assert.deepEqual(oldChild.killSignals, ["SIGTERM"]);
+
+  const restarting = lifecycle.ensureStarted();
+  oldChild.signalCode = "SIGTERM";
+  oldChild.emit("exit", null, "SIGTERM");
+  const restarted = await restarting;
+  assert.equal(restarted.state, "connected");
+  assert.equal(restarted.ownedByDesktop, true);
+  assert.equal(spawnCount, 2);
+
+  await stoppingOldChild;
+
+  assert.equal(lifecycle.status.state, "connected");
+  assert.equal(lifecycle.status.ownedByDesktop, true);
+  assert.deepEqual(newChild.killSignals, []);
+  await lifecycle.stopOwnedDaemon();
+});
+
+test("ensureStarted waits for an in-flight stop before probing daemon health", async () => {
+  const oldChild = createFakeChild({ exitOnTerm: false });
+  const newChild = createFakeChild();
+  const children = [oldChild, newChild];
+  const defaultWorkspaceCwd = "/tmp/ling-desktop-stop-health-race-workspace";
+  let oldChildAlive = true;
+  let newChildSpawned = false;
+  let healthChecks = 0;
+  let spawnCount = 0;
+  const lifecycle = new DesktopDaemonLifecycle({
+    baseUrl: "http://127.0.0.1:18004",
+    daemonEntryPath: existingEntryPath,
+    defaultWorkspaceCwd,
+    shutdownTimeoutMs: 50,
+    fetch: async () => {
+      healthChecks += 1;
+      if (healthChecks === 1) {
+        throw new TypeError("fetch failed");
+      }
+      if (healthChecks === 2 || oldChildAlive || newChildSpawned) {
+        return daemonHealth(defaultWorkspaceCwd);
+      }
+      throw new TypeError("fetch failed");
+    },
+    probePort: async () => "free",
+    spawnDaemon: () => {
+      const child = children[spawnCount++];
+      newChildSpawned = spawnCount === 2;
+      return child;
+    },
+  });
+
+  await lifecycle.ensureStarted();
+  const stoppingOldChild = lifecycle.stopOwnedDaemon();
+  assert.deepEqual(oldChild.killSignals, ["SIGTERM"]);
+
+  let restartSettled = false;
+  const restarting = lifecycle.ensureStarted();
+  restarting.then(
+    () => { restartSettled = true; },
+    () => { restartSettled = true; },
+  );
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.equal(healthChecks, 2, "startup must not probe while the old daemon is still stopping");
+  assert.equal(restartSettled, false);
+
+  oldChildAlive = false;
+  oldChild.signalCode = "SIGTERM";
+  oldChild.emit("exit", null, "SIGTERM");
+  const restarted = await restarting;
+  await stoppingOldChild;
+
+  assert.equal(restarted.state, "connected");
+  assert.equal(restarted.ownedByDesktop, true);
+  assert.equal(spawnCount, 2);
+  assert.equal(lifecycle.status.state, "connected");
+  await lifecycle.stopOwnedDaemon();
+});
+
+test("concurrent stopOwnedDaemon calls share the same child termination", async () => {
+  const child = createFakeChild({ exitOnTerm: false });
+  const defaultWorkspaceCwd = "/tmp/ling-desktop-stop-single-flight-workspace";
+  let healthChecks = 0;
+  const lifecycle = new DesktopDaemonLifecycle({
+    baseUrl: "http://127.0.0.1:18005",
+    daemonEntryPath: existingEntryPath,
+    defaultWorkspaceCwd,
+    shutdownTimeoutMs: 50,
+    fetch: async () => {
+      healthChecks += 1;
+      return healthChecks === 1
+        ? Promise.reject(new TypeError("fetch failed"))
+        : daemonHealth(defaultWorkspaceCwd);
+    },
+    probePort: async () => "free",
+    spawnDaemon: () => child,
+  });
+
+  await lifecycle.ensureStarted();
+  const firstStop = lifecycle.stopOwnedDaemon();
+  let secondStopSettled = false;
+  const secondStop = lifecycle.stopOwnedDaemon();
+  secondStop.then(
+    () => { secondStopSettled = true; },
+    () => { secondStopSettled = true; },
+  );
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.deepEqual(child.killSignals, ["SIGTERM"]);
+  assert.equal(secondStopSettled, false, "all stop callers must await the same child exit barrier");
+
+  child.signalCode = "SIGTERM";
+  child.emit("exit", null, "SIGTERM");
+  await Promise.all([firstStop, secondStop]);
+  assert.equal(lifecycle.status.state, "disconnected");
+});
+
+test("restart waits for an in-flight owned stop before probing daemon health", async () => {
+  const oldChild = createFakeChild({ exitOnTerm: false });
+  const newChild = createFakeChild();
+  const children = [oldChild, newChild];
+  const defaultWorkspaceCwd = "/tmp/ling-desktop-restart-stop-barrier-workspace";
+  let oldChildAlive = true;
+  let newChildSpawned = false;
+  let healthChecks = 0;
+  let spawnCount = 0;
+  const lifecycle = new DesktopDaemonLifecycle({
+    baseUrl: "http://127.0.0.1:18006",
+    daemonEntryPath: existingEntryPath,
+    defaultWorkspaceCwd,
+    shutdownTimeoutMs: 50,
+    fetch: async () => {
+      healthChecks += 1;
+      if (healthChecks === 1) {
+        throw new TypeError("fetch failed");
+      }
+      if (oldChildAlive || newChildSpawned) {
+        return daemonHealth(defaultWorkspaceCwd);
+      }
+      throw new TypeError("fetch failed");
+    },
+    probePort: async () => "free",
+    spawnDaemon: () => {
+      const child = children[spawnCount++];
+      newChildSpawned = spawnCount === 2;
+      return child;
+    },
+  });
+
+  await lifecycle.ensureStarted();
+  const stoppingOldChild = lifecycle.stopOwnedDaemon();
+  assert.deepEqual(oldChild.killSignals, ["SIGTERM"]);
+
+  let restartSettled = false;
+  const restarting = lifecycle.restart();
+  restarting.then(
+    () => { restartSettled = true; },
+    () => { restartSettled = true; },
+  );
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.equal(healthChecks, 2, "restart must not probe the still-live child after stop detached it");
+  assert.equal(restartSettled, false);
+
+  oldChildAlive = false;
+  oldChild.signalCode = "SIGTERM";
+  oldChild.emit("exit", null, "SIGTERM");
+  const restarted = await restarting;
+  await stoppingOldChild;
+
+  assert.equal(restarted.state, "connected");
+  assert.equal(restarted.ownedByDesktop, true);
+  assert.equal(spawnCount, 2);
+  await lifecycle.stopOwnedDaemon();
+});
+
+test("concurrent restart calls share one stop and one replacement startup", async () => {
+  const oldChild = createFakeChild({ exitOnTerm: false });
+  const newChild = createFakeChild();
+  const children = [oldChild, newChild];
+  const defaultWorkspaceCwd = "/tmp/ling-desktop-restart-single-flight-workspace";
+  let oldChildAlive = true;
+  let newChildSpawned = false;
+  let healthChecks = 0;
+  let spawnCount = 0;
+  const lifecycle = new DesktopDaemonLifecycle({
+    baseUrl: "http://127.0.0.1:18007",
+    daemonEntryPath: existingEntryPath,
+    defaultWorkspaceCwd,
+    shutdownTimeoutMs: 50,
+    fetch: async () => {
+      healthChecks += 1;
+      if (healthChecks === 1) {
+        throw new TypeError("fetch failed");
+      }
+      if (oldChildAlive || newChildSpawned) {
+        return daemonHealth(defaultWorkspaceCwd);
+      }
+      throw new TypeError("fetch failed");
+    },
+    probePort: async () => "free",
+    spawnDaemon: () => {
+      const child = children[spawnCount++];
+      newChildSpawned = spawnCount === 2;
+      return child;
+    },
+  });
+
+  await lifecycle.ensureStarted();
+  const firstRestart = lifecycle.restart();
+  const secondRestart = lifecycle.restart();
+  const sharedRestart = firstRestart === secondRestart;
+  await new Promise((resolve) => setImmediate(resolve));
+
+  oldChildAlive = false;
+  oldChild.signalCode = "SIGTERM";
+  oldChild.emit("exit", null, "SIGTERM");
+  const [firstStatus, secondStatus] = await Promise.all([firstRestart, secondRestart]);
+
+  assert.equal(sharedRestart, true, "restart callers must receive the same in-flight operation");
+  assert.equal(firstStatus.ownedByDesktop, true);
+  assert.deepEqual(secondStatus, firstStatus);
+  assert.equal(spawnCount, 2, "concurrent restarts must spawn exactly one replacement daemon");
+  assert.deepEqual(oldChild.killSignals, ["SIGTERM"]);
+  await lifecycle.stopOwnedDaemon();
+});
+
+test("restart leaves a compatible external daemon running", async () => {
+  const defaultWorkspaceCwd = "/tmp/ling-desktop-external-restart-workspace";
+  let healthChecks = 0;
+  let spawnCount = 0;
+  const lifecycle = new DesktopDaemonLifecycle({
+    baseUrl: "http://127.0.0.1:18008",
+    daemonEntryPath: existingEntryPath,
+    defaultWorkspaceCwd,
+    fetch: async () => {
+      healthChecks += 1;
+      return daemonHealth(defaultWorkspaceCwd);
+    },
+    spawnDaemon: () => {
+      spawnCount += 1;
+      return createFakeChild();
+    },
+  });
+
+  const status = await lifecycle.restart();
+
+  assert.equal(status.state, "connected");
+  assert.equal(status.ownedByDesktop, false);
+  assert.match(status.message, /not owned by Desktop/i);
+  assert.equal(healthChecks, 1);
+  assert.equal(spawnCount, 0);
 });
 
 test("Desktop passes its bridge token to an owned daemon and verifies the same protocol", async () => {
@@ -175,13 +584,15 @@ test("Desktop passes its bridge token to an owned daemon and verifies the same p
           firstHealthProbe = false;
           throw new TypeError("fetch failed");
         }
-        return Response.json({ service: "ling-stack-daemon" });
+        return daemonHealth("/tmp/ling-desktop-owned-bridge-workspace");
       }
       assert.equal(new Headers(init?.headers).get("X-Ling-Desktop-Bridge-Token"), "owned-bridge-token");
       return Response.json({
         protocolVersion: 1,
         capabilities: ["preview-source"],
         bridgeTokenAccepted: true,
+        routeTokenAccepted: true,
+        defaultWorkspaceCwd: "/tmp/ling-desktop-owned-bridge-workspace",
       });
     },
     probePort: async () => "free",
@@ -195,6 +606,7 @@ test("Desktop passes its bridge token to an owned daemon and verifies the same p
 
   assert.equal(status.ownedByDesktop, true);
   assert.equal(spawnInputs[0].env.LING_DESKTOP_BRIDGE_TOKEN, "owned-bridge-token");
+  assert.equal(spawnInputs[0].env.LING_COMPUTER_USE_ROUTE_TOKEN, "owned-bridge-token");
   await lifecycle.stopOwnedDaemon();
 });
 
@@ -212,7 +624,7 @@ test("owned child may bind the port before health becomes ready", async () => {
       }
       return healthChecks === 2
         ? new Response(null, { status: 503 })
-        : Response.json({ service: "ling-stack-daemon" });
+        : daemonHealth("/tmp/ling-desktop-bound-before-ready-workspace");
     },
     probePort: async () => "free",
     spawnDaemon: () => child,
@@ -318,4 +730,19 @@ function createFakeChild(options = {}) {
     },
   });
   return child;
+}
+
+function daemonHealth(defaultWorkspaceCwd) {
+  return Response.json({
+    service: "ling-stack-daemon",
+    defaultWorkspaceCwd,
+  });
+}
+
+function deferred() {
+  let resolve;
+  const promise = new Promise((settle) => {
+    resolve = settle;
+  });
+  return { promise, resolve };
 }

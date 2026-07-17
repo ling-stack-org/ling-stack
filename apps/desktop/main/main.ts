@@ -8,6 +8,10 @@ import {
   webContents,
   type WebFrameMain,
 } from "electron";
+import {
+  parseComputerUsePreviewProjection,
+  type ComputerUsePreviewProjection,
+} from "@ling-stack/contracts";
 import { execFile } from "node:child_process";
 import { appendFileSync, mkdirSync } from "node:fs";
 import { resolve } from "node:path";
@@ -40,19 +44,46 @@ import {
 } from "./daemon-startup-recovery.js";
 import { loadOrCreateDesktopBridgeToken } from "./bridge-token.js";
 import { registerDesktopIpc } from "./ipc.js";
+import { DesktopNavigationIntentStore } from "./navigation-intent.js";
+import { openDesktopOwnerWindow } from "./owner-window.js";
 import { DesktopPreferenceStore } from "./preferences.js";
 import { resolveDesktopResourcePaths } from "./resource-paths.js";
+import { sendToLiveDesktopWindow } from "./safe-window-send.js";
+import { establishDesktopSingleInstanceAuthority } from "./single-instance.js";
+import {
+  createDesktopExitLifecycle,
+  createDesktopStartupOpenCoordinator,
+  runDesktopStartup,
+  type DesktopStartupOpenAttempt,
+} from "./startup-lifecycle.js";
 import { createMainWindow } from "./window-factory.js";
 import type { DesktopDisplayWorkArea, DesktopRect } from "../shared/desktop-capabilities.js";
 
 const daemonBaseUrl = process.env.LING_STACK_DAEMON_URL ?? "http://127.0.0.1:17891";
 const execFileAsync = promisify(execFile);
 const smokeHeadless = process.argv.includes("--ling-desktop-smoke-headless");
+const performanceHoldMs = (() => {
+  const value = Number(process.env.LING_DESKTOP_SIGNED_PERFORMANCE_HOLD_MS ?? "0");
+  return Number.isInteger(value) && value > 0 ? Math.min(value, 30_000) : 0;
+})();
 const screenPermissionProbe = process.argv.includes("--ling-desktop-screen-permission-probe");
 const fakeComputerUseMode = process.env.LING_DESKTOP_FAKE_COMPUTER_USE === "1" ||
-  process.argv.includes("--ling-desktop-fake-computer-use");
+    process.argv.includes("--ling-desktop-fake-computer-use");
+const daemonProjectionSmokeMode = process.env.LING_DESKTOP_DAEMON_PROJECTION_SMOKE === "1";
+const preserveDaemonProjectionAfterSmoke =
+  process.env.LING_DESKTOP_SMOKE_PRESERVE_DAEMON_PROJECTION === "1";
+if (daemonProjectionSmokeMode && fakeComputerUseMode) {
+  throw new Error("desktop_daemon_projection_smoke_cannot_use_fake_mode");
+}
+if (preserveDaemonProjectionAfterSmoke && !daemonProjectionSmokeMode) {
+  throw new Error("desktop_projection_preserve_requires_daemon_mode");
+}
+const macosTccRevocationSmokeMode = process.argv.includes(
+  "--ling-desktop-macos-tcc-revocation-smoke",
+);
 const directRealWindowCaptureSmokeMode = process.argv.includes("--ling-desktop-real-capture-smoke");
-const directRealDisplayCaptureSmokeMode = process.argv.includes("--ling-desktop-real-display-capture-smoke");
+const directRealDisplayCaptureSmokeMode = process.argv.includes("--ling-desktop-real-display-capture-smoke") ||
+  macosTccRevocationSmokeMode;
 const directRealCaptureSmokeMode = directRealWindowCaptureSmokeMode || directRealDisplayCaptureSmokeMode;
 const windowsProviderCaptureRestartSmokeMode = process.argv.includes(
   "--ling-desktop-windows-provider-capture-restart-smoke",
@@ -68,11 +99,16 @@ const windowsProviderSmokeCommandReader = windowsProviderCaptureSmokeMode
   ? createInterface({ input: process.stdin, crlfDelay: Infinity })
   : undefined;
 const windowsProviderSmokeCommandIterator = windowsProviderSmokeCommandReader?.[Symbol.asyncIterator]();
+const macosTccRevocationCommandReader = macosTccRevocationSmokeMode
+  ? createInterface({ input: process.stdin, crlfDelay: Infinity })
+  : undefined;
+const macosTccRevocationCommandIterator = macosTccRevocationCommandReader?.[Symbol.asyncIterator]();
 let windowsProviderSmokeRestarting = false;
 const fixedComputerUseConversationId = process.argv
   .find((argument) => argument.startsWith("--ling-desktop-computer-use-conversation="))
   ?.slice("--ling-desktop-computer-use-conversation=".length)
   .trim() || undefined;
+const smokeComputerUseProjection = resolveSmokeComputerUseProjection();
 
 app.setName("Ling Stack");
 
@@ -81,97 +117,143 @@ if (app.isPackaged && !isLoopbackDaemonUrl(daemonBaseUrl)) {
 }
 
 let mainWindow: BrowserWindow | undefined;
+let loadingMainWindow: BrowserWindow | undefined;
 const captureSmokeTargetWindows: BrowserWindow[] = [];
 let realCaptureSmokeDescriptor: ResolvedComputerUsePreviewDescriptor | undefined;
 let realCaptureSmokeDescriptorRegistry: InMemoryComputerUsePreviewDescriptorRegistry | undefined;
 let realCaptureSmokeProjectionClient: FakeComputerUseProjectionClient | undefined;
+let smokeProjectionSource: "daemon" | "fake" = "fake";
 let unregisterIpc: (() => void) | undefined;
 let daemon: DesktopDaemonLifecycle | undefined;
 let computerUse: ComputerUsePreviewCoordinator | undefined;
-let cleanupStarted = false;
-let cleanupComplete = false;
+const desktopNavigationIntents = new DesktopNavigationIntentStore();
 const startupLogPath = resolve(app.getPath("userData"), "desktop-startup.log");
-
-logStartup("app.module_loaded", { packaged: app.isPackaged, smokeHeadless });
-
-app.on("window-all-closed", () => {
-  if (process.platform !== "darwin") {
-    app.quit();
-  }
-});
-
-app.on("activate", () => {
-  if (!mainWindow) {
-    void openMainWindow();
-  }
-});
-
-app.on("before-quit", (event) => {
-  if (cleanupComplete) {
-    return;
-  }
-  event.preventDefault();
-  if (cleanupStarted) {
-    return;
-  }
-  cleanupStarted = true;
-  void shutdown().finally(() => {
-    cleanupComplete = true;
-    app.quit();
-  });
-});
-
-void app.whenReady()
-  .then(async () => {
-    logStartup("app.ready", { packaged: app.isPackaged, smokeHeadless });
-    if (screenPermissionProbe) {
-      const status = process.platform === "darwin"
-        ? systemPreferences.getMediaAccessStatus("screen")
-        : "unsupported";
-      console.log(`Ling Stack Desktop screen permission: ${status}`);
-      app.quit();
-      return;
-    }
-    if (realCaptureSmokeMode) {
-      realCaptureSmokeDescriptor = await prepareRealCaptureSmokeDescriptor();
-    }
-    const opened = await openMainWindow();
-    if (!opened) {
-      return;
-    }
-    if (smokeHeadless) {
-      if (fakeComputerUseMode || realCaptureSmokeMode) {
-        await runComputerUseSmoke();
-        if (windowsProviderSmokeRestarting) {
-          return;
-        }
-        console.log(
-          directRealCaptureSmokeMode
-            ? "Ling Stack Desktop direct Electron Computer Use capture lifecycle passed"
-            : windowsProviderCaptureSmokeMode
-              ? "Ling Stack Desktop Windows provider capture lifecycle passed"
-            : "Ling Stack Desktop fake Computer Use lifecycle passed",
-        );
-      } else {
-        console.log("Ling Stack Desktop smoke ready");
-      }
-      app.quit();
-    }
-  })
-  .catch((error: unknown) => {
-    logStartup("app.startup_failed", {
+const desktopExitLifecycle = createDesktopExitLifecycle({
+  shutdown,
+  quit: () => app.quit(),
+  exit: (exitCode) => app.exit(exitCode),
+  onShutdownError: (error) => {
+    logStartup("app.shutdown_failed", {
       error: error instanceof Error ? error.stack ?? error.message : String(error),
     });
-    console.error("Ling Stack Desktop startup failed", error);
-    app.exit(1);
+    console.error("Ling Stack Desktop shutdown failed", error);
+  },
+});
+const mainWindowOpenCoordinator = createDesktopStartupOpenCoordinator({
+  requestExit: (exitCode) => {
+    void desktopExitLifecycle.requestExit(exitCode);
+  },
+});
+
+establishDesktopSingleInstanceAuthority({
+  requestSingleInstanceLock: () => app.requestSingleInstanceLock(),
+  registerSecondInstanceHandler: (listener) => app.on("second-instance", listener),
+  quitSecondaryInstance: () => app.quit(),
+  startPrimaryInstance: registerPrimaryDesktopLifecycle,
+  getMainWindow: () => mainWindow,
+  openMainWindow,
+  onSecondInstance: (focusedExistingWindow) => {
+    logStartup("app.second_instance", { focusedExistingWindow });
+  },
+});
+
+function registerPrimaryDesktopLifecycle(): void {
+  logStartup("app.module_loaded", { packaged: app.isPackaged, smokeHeadless });
+
+  app.on("window-all-closed", () => {
+    if (process.platform !== "darwin") {
+      void desktopExitLifecycle.requestExit(0);
+    }
   });
 
+  app.on("activate", () => {
+    if (!mainWindow && !desktopExitLifecycle.isExitRequested()) {
+      void openMainWindow();
+    }
+  });
+
+  app.on("before-quit", (event) => {
+    if (desktopExitLifecycle.isCleanupComplete()) {
+      return;
+    }
+    event.preventDefault();
+    void desktopExitLifecycle.requestExit(0);
+  });
+
+  void runDesktopStartup({
+    start: async () => {
+      await app.whenReady();
+      logStartup("app.ready", { packaged: app.isPackaged, smokeHeadless });
+      if (screenPermissionProbe) {
+        const status = process.platform === "darwin"
+          ? systemPreferences.getMediaAccessStatus("screen")
+          : "unsupported";
+        console.log(`Ling Stack Desktop screen permission: ${status}`);
+        await desktopExitLifecycle.requestExit(0);
+        return;
+      }
+      if (realCaptureSmokeMode) {
+        realCaptureSmokeDescriptor = await prepareRealCaptureSmokeDescriptor();
+      }
+      const opened = await openMainWindow();
+      if (!opened) {
+        return;
+      }
+      if (smokeHeadless) {
+        if (macosTccRevocationSmokeMode) {
+          const result = await runMacosTccRevocationSmoke();
+          console.log(`LING_MACOS_TCC_REVOCATION_RESULT=${JSON.stringify(result)}`);
+        } else if (fakeComputerUseMode || realCaptureSmokeMode) {
+          await runComputerUseSmoke();
+          if (windowsProviderSmokeRestarting) {
+            return;
+          }
+          console.log(
+            directRealCaptureSmokeMode
+              ? "Ling Stack Desktop direct Electron Computer Use capture lifecycle passed"
+              : windowsProviderCaptureSmokeMode
+                ? "Ling Stack Desktop Windows provider capture lifecycle passed"
+              : "Ling Stack Desktop fake Computer Use lifecycle passed",
+          );
+        } else {
+          console.log("Ling Stack Desktop smoke ready");
+        }
+        await desktopExitLifecycle.requestExit(0);
+      }
+    },
+    requestExit: (exitCode) => desktopExitLifecycle.requestExit(exitCode),
+    onStartupError: (error) => {
+      logStartup("app.startup_failed", {
+        error: error instanceof Error ? error.stack ?? error.message : String(error),
+      });
+      console.error("Ling Stack Desktop startup failed", error);
+    },
+  });
+}
+
 async function openMainWindow(): Promise<boolean> {
+  if (desktopExitLifecycle.isExitRequested()) {
+    return false;
+  }
+  if (mainWindow) {
+    mainWindow.show();
+    return true;
+  }
+  return mainWindowOpenCoordinator.run(openMainWindowOnce);
+}
+
+async function openMainWindowOnce(attempt: DesktopStartupOpenAttempt): Promise<boolean> {
+  if (!attempt.isCurrent() || desktopExitLifecycle.isExitRequested()) {
+    return false;
+  }
   if (mainWindow) {
     mainWindow.show();
     return true;
   }
   const resources = await resolveDesktopResourcePaths(app);
+  if (!attempt.isCurrent()) {
+    return false;
+  }
   logStartup("resources.resolved", {
     webIndexPath: resources.webIndexPath,
     daemonEntryPath: resources.daemonEntryPath,
@@ -179,11 +261,17 @@ async function openMainWindow(): Promise<boolean> {
   });
   if (realCaptureSmokeMode && realCaptureSmokeDescriptor) {
     await verifyRealCaptureRequestProvenance(resources.previewIndexPath, realCaptureSmokeDescriptor);
+    if (!attempt.isCurrent()) {
+      return false;
+    }
   }
-  const defaultWorkspaceCwd = process.env.LING_STACK_DEFAULT_WORKSPACE_CWD ?? (
+  const defaultWorkspaceCwd = resolve(process.env.LING_STACK_DEFAULT_WORKSPACE_CWD ?? (
     app.isPackaged ? resolve(app.getPath("userData"), "workspace") : resolve(app.getAppPath(), "../..")
-  );
+  ));
   const bridgeToken = await loadOrCreateDesktopBridgeToken(resolve(app.getPath("userData"), "desktop-bridge-token"));
+  if (!attempt.isCurrent()) {
+    return false;
+  }
   daemon ??= new DesktopDaemonLifecycle({
     baseUrl: daemonBaseUrl,
     daemonEntryPath: resources.daemonEntryPath,
@@ -196,9 +284,12 @@ async function openMainWindow(): Promise<boolean> {
     allowInteractiveRecovery: !smokeHeadless,
     prompt: promptForIncompatibleDaemon,
   });
+  if (!attempt.isCurrent()) {
+    return false;
+  }
   if (daemonStartup === "quit") {
     logStartup("daemon.recovery_quit", { baseUrl: daemonBaseUrl });
-    app.quit();
+    attempt.requestExit(0);
     return false;
   }
   logStartup("daemon.connected", { ownedByDesktop: daemon.status.ownedByDesktop });
@@ -220,16 +311,19 @@ async function openMainWindow(): Promise<boolean> {
         );
     const smokeProjection = (windowsProviderCaptureRestartSmokeMode || windowsProviderCaptureRestartPhase) && realCaptureSmokeDescriptor
       ? {
-          ...FAKE_COMPUTER_USE_PROJECTION,
+          ...smokeComputerUseProjection,
           preview: {
-            ...FAKE_COMPUTER_USE_PROJECTION.preview!,
+            ...smokeComputerUseProjection.preview!,
             revision: realCaptureSmokeDescriptor.revision,
           },
         }
-      : FAKE_COMPUTER_USE_PROJECTION;
-    const projectionClient = fakeComputerUseMode || realCaptureSmokeMode
-      ? new FakeComputerUseProjectionClient(smokeProjection)
-      : new DaemonComputerUseProjectionClient(defaultWorkspaceCwd, daemonBaseUrl, undefined, undefined, bridgeToken);
+      : smokeComputerUseProjection;
+    const projectionClient = daemonProjectionSmokeMode || (!fakeComputerUseMode && !realCaptureSmokeMode)
+      ? new DaemonComputerUseProjectionClient(defaultWorkspaceCwd, daemonBaseUrl, undefined, undefined, bridgeToken)
+      : new FakeComputerUseProjectionClient(smokeProjection);
+    smokeProjectionSource = projectionClient instanceof DaemonComputerUseProjectionClient
+      ? "daemon"
+      : "fake";
     if (realCaptureSmokeMode && projectionClient instanceof FakeComputerUseProjectionClient) {
       realCaptureSmokeProjectionClient = projectionClient;
     }
@@ -262,37 +356,109 @@ async function openMainWindow(): Promise<boolean> {
           screen.off("display-metrics-changed", listener);
         };
       },
-      openOwnerConversation: async () => {
-        mainWindow?.show();
-        mainWindow?.focus();
+      openOwnerConversation: async (conversationId) => {
+        const intent = desktopNavigationIntents.requestOpenConversation(conversationId);
+        if (!intent) {
+          return;
+        }
+        const opened = await openDesktopOwnerWindow({
+          openMainWindow,
+          getMainWindow: () => mainWindow,
+        });
+        if (!opened) {
+          desktopNavigationIntents.discard(intent.requestId);
+        }
       },
     });
     await computerUse.start();
+    if (!attempt.isCurrent()) {
+      return false;
+    }
     logStartup("computer_use.started", { fakeMode: fakeComputerUseMode, realCaptureSmokeMode });
     computerUse.onSummaryChanged((summary) => {
-      mainWindow?.webContents.send("ling-desktop:computer-use:summary-changed", summary);
+      sendToLiveDesktopWindow(
+        mainWindow ?? loadingMainWindow,
+        "ling-desktop:computer-use:summary-changed",
+        summary,
+      );
     });
   }
   unregisterIpc ??= registerDesktopIpc({
     daemon,
     computerUse,
-    getMainWindow: () => mainWindow,
+    getMainWindow: () => mainWindow ?? loadingMainWindow,
+    navigationIntents: desktopNavigationIntents,
     ...(fakeComputerUseMode || realCaptureSmokeMode || fixedComputerUseConversationId
-      ? { fixedComputerUseConversationId: fixedComputerUseConversationId ?? FAKE_COMPUTER_USE_PROJECTION.conversationId }
+      ? { fixedComputerUseConversationId: fixedComputerUseConversationId ?? smokeComputerUseProjection.conversationId }
       : {}),
   });
-  mainWindow = await createMainWindow({
-    daemonBaseUrl,
-    webIndexPath: resources.webIndexPath,
-    showWhenReady: !smokeHeadless,
-  });
+  let createdWindow: BrowserWindow | undefined;
+  try {
+    const loadedWindow = await createMainWindow({
+      daemonBaseUrl,
+      webIndexPath: resources.webIndexPath,
+      showWhenReady: !smokeHeadless,
+      onWindowCreated: (window) => {
+        createdWindow = window;
+        if (!attempt.isCurrent()) {
+          try {
+            window.destroy();
+          } catch {
+            // Shutdown already owns the process exit; do not revive this window.
+          }
+          return;
+        }
+        loadingMainWindow = window;
+        window.once("closed", () => {
+          if (loadingMainWindow === window) {
+            loadingMainWindow = undefined;
+          }
+          if (mainWindow === window) {
+            mainWindow = undefined;
+          }
+        });
+      },
+    });
+    if (!attempt.isCurrent()) {
+      if (loadingMainWindow === loadedWindow) {
+        loadingMainWindow = undefined;
+      }
+      if (!loadedWindow.isDestroyed()) {
+        try {
+          loadedWindow.destroy();
+        } catch {
+          // Shutdown will continue even if Electron already destroyed it.
+        }
+      }
+      return false;
+    }
+    if (loadedWindow.isDestroyed()) {
+      if (loadingMainWindow === loadedWindow) {
+        loadingMainWindow = undefined;
+      }
+      return false;
+    }
+    mainWindow = loadedWindow;
+    if (loadingMainWindow === loadedWindow) {
+      loadingMainWindow = undefined;
+    }
+  } catch (error) {
+    if (loadingMainWindow === createdWindow) {
+      loadingMainWindow = undefined;
+    }
+    if (createdWindow && !createdWindow.isDestroyed()) {
+      try {
+        createdWindow.destroy();
+      } catch {
+        // Preserve the original window-load failure.
+      }
+    }
+    throw error;
+  }
   logStartup("main_window.loaded");
   if (fakeComputerUseMode || realCaptureSmokeMode || fixedComputerUseConversationId) {
-    computerUse.reportSelectedConversation(fixedComputerUseConversationId ?? FAKE_COMPUTER_USE_PROJECTION.conversationId);
+    computerUse.reportSelectedConversation(fixedComputerUseConversationId ?? smokeComputerUseProjection.conversationId);
   }
-  mainWindow.once("closed", () => {
-    mainWindow = undefined;
-  });
   return true;
 }
 
@@ -383,6 +549,30 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+function resolveSmokeComputerUseProjection(): ComputerUsePreviewProjection {
+  const encoded = process.env.LING_DESKTOP_SMOKE_PROJECTION_JSON?.trim();
+  if (!encoded) {
+    if (daemonProjectionSmokeMode) {
+      throw new Error("desktop_daemon_projection_smoke_projection_missing");
+    }
+    return FAKE_COMPUTER_USE_PROJECTION;
+  }
+  if (!daemonProjectionSmokeMode) {
+    throw new Error("desktop_smoke_projection_json_requires_daemon_mode");
+  }
+  let value: unknown;
+  try {
+    value = JSON.parse(encoded);
+  } catch {
+    throw new Error("desktop_daemon_projection_smoke_projection_invalid");
+  }
+  const projection = parseComputerUsePreviewProjection(value);
+  if (!projection || !projection.preview || projection.status !== "running") {
+    throw new Error("desktop_daemon_projection_smoke_projection_invalid");
+  }
+  return projection;
+}
+
 async function runComputerUseSmoke(): Promise<void> {
   const coordinator = computerUse;
   if (!coordinator) {
@@ -400,8 +590,19 @@ async function runComputerUseSmoke(): Promise<void> {
   if (initialPreviewWebContentsId === undefined) {
     throw new Error("desktop_preview_smoke_renderer_missing");
   }
+  console.log(`LING_DESKTOP_PROJECTION_ID=${JSON.stringify({
+    sessionId,
+    conversationId: coordinator.getSummary()?.conversationId,
+    sourceRevision: coordinator.getRendererSnapshot()?.sourceRevision,
+    projectionSource: smokeProjectionSource,
+  })}`);
   if (realCaptureSmokeMode) {
     await assertSmokeRendererMediaState(initialPreviewWebContentsId, "live");
+  }
+  if (performanceHoldMs > 0) {
+    console.log("LING_DESKTOP_SIGNED_PERFORMANCE_HOLD_READY");
+    await new Promise<void>((resolveWait) => setTimeout(resolveWait, performanceHoldMs));
+    console.log("LING_DESKTOP_SIGNED_PERFORMANCE_HOLD_COMPLETE");
   }
   const hidden = await coordinator.hide(sessionId);
   if (!hidden.accepted) {
@@ -437,13 +638,17 @@ async function runComputerUseSmoke(): Promise<void> {
   if (fakeComputerUseMode || directRealCaptureSmokeMode) {
     await exerciseSmokeRendererCrash(coordinator, sessionId, directRealCaptureSmokeMode);
   }
-  if (directRealWindowCaptureSmokeMode) {
+  if (directRealWindowCaptureSmokeMode && !daemonProjectionSmokeMode) {
     await exerciseRealCaptureRevisionAndSourceEnd(coordinator);
   } else if (windowsProviderCaptureRestartPhase) {
     await exerciseWindowsProviderRestartRecovery(coordinator);
     return;
   } else if (windowsProviderCaptureSmokeMode) {
     await exerciseWindowsProviderRevisionAndTargetClose(coordinator);
+    return;
+  }
+  if (preserveDaemonProjectionAfterSmoke) {
+    console.log("Ling Stack Desktop daemon projection persistence checkpoint passed");
     return;
   }
   const stopped = await coordinator.stop(sessionId);
@@ -454,6 +659,69 @@ async function runComputerUseSmoke(): Promise<void> {
     () => coordinator.getSummary() === undefined,
     "desktop_preview_smoke_terminal_close_timeout",
   );
+}
+
+async function runMacosTccRevocationSmoke(): Promise<{
+  readonly activeCaptureBeforeRevocation: true;
+  readonly sourceEndedOrPermissionFailureObserved: true;
+  readonly runtimeContinuedWithoutStop: true;
+  readonly stopRequestCount: 0;
+}> {
+  if (process.platform !== "darwin") {
+    throw new Error("desktop_macos_tcc_revocation_requires_darwin");
+  }
+  const coordinator = computerUse;
+  const projectionClient = realCaptureSmokeProjectionClient;
+  if (!coordinator || !projectionClient) {
+    throw new Error("desktop_macos_tcc_revocation_fixture_missing");
+  }
+  await waitForSmokeCondition(
+    () => {
+      const snapshot = coordinator.getRendererSnapshot();
+      return coordinator.getSummary()?.visible === true &&
+        snapshot?.frameReady === true &&
+        snapshot.sourceStatus === "live";
+    },
+    "desktop_macos_tcc_revocation_first_frame_timeout",
+    30_000,
+  );
+  const webContentsId = coordinator.getPreviewWebContentsId();
+  if (webContentsId === undefined) {
+    throw new Error("desktop_macos_tcc_revocation_renderer_missing");
+  }
+  await assertSmokeRendererMediaState(webContentsId, "live");
+  if (systemPreferences.getMediaAccessStatus("screen") !== "granted") {
+    throw new Error("desktop_macos_tcc_revocation_permission_not_granted");
+  }
+  console.log(
+    `LING_MACOS_TCC_REVOCATION_READY=${JSON.stringify({
+      sessionId: coordinator.getSummary()?.sessionId,
+      sourceRevision: coordinator.getRendererSnapshot()?.sourceRevision,
+    })}`,
+  );
+  await readMacosTccRevocationCommand(10 * 60_000);
+  await waitForSmokeCondition(
+    () => {
+      const sourceStatus = coordinator.getRendererSnapshot()?.sourceStatus;
+      return sourceStatus === "stalled" ||
+        sourceStatus === "permission_denied" ||
+        sourceStatus === "failed";
+    },
+    "desktop_macos_tcc_revocation_source_end_timeout",
+    30_000,
+  );
+  if (coordinator.getSummary()?.status !== "running") {
+    throw new Error("desktop_macos_tcc_revocation_stopped_runtime");
+  }
+  if (projectionClient.getStopRequestCount() !== 0) {
+    throw new Error("desktop_macos_tcc_revocation_stop_requested");
+  }
+  return {
+    activeCaptureBeforeRevocation: true,
+    sourceEndedOrPermissionFailureObserved: true,
+    runtimeContinuedWithoutStop: true,
+    stopRequestCount: 0,
+  };
 }
 
 async function exerciseSmokeHostWindowFocusLifecycle(
@@ -551,14 +819,14 @@ async function prepareRealCaptureSmokeDescriptor(): Promise<ResolvedComputerUseP
   if (windowsProviderCaptureSmokeMode) {
     return createWindowsProviderSmokeDescriptor();
   }
-  return createRealCaptureSmokeDescriptor(FAKE_COMPUTER_USE_PROJECTION.preview?.revision ?? 1);
+  return createRealCaptureSmokeDescriptor(smokeComputerUseProjection.preview?.revision ?? 1);
 }
 
 function createWindowsProviderSmokeDescriptor(): ResolvedComputerUsePreviewDescriptor {
   if (process.platform !== "win32") {
     throw new Error("desktop_windows_provider_smoke_platform_unsupported");
   }
-  const preview = FAKE_COMPUTER_USE_PROJECTION.preview;
+  const preview = smokeComputerUseProjection.preview;
   if (!preview) {
     throw new Error("desktop_windows_provider_smoke_preview_missing");
   }
@@ -580,7 +848,7 @@ function createWindowsProviderSmokeDescriptorForRevision(
   value: unknown,
   revision: number,
 ): ResolvedComputerUsePreviewDescriptor {
-  const preview = FAKE_COMPUTER_USE_PROJECTION.preview;
+  const preview = smokeComputerUseProjection.preview;
   if (!preview) {
     throw new Error("desktop_windows_provider_smoke_preview_missing");
   }
@@ -840,7 +1108,7 @@ async function createRealCaptureSmokeDescriptor(revision: number): Promise<Resol
   if (process.platform !== "darwin" && process.platform !== "win32") {
     throw new Error("desktop_real_capture_smoke_platform_unsupported");
   }
-  const preview = FAKE_COMPUTER_USE_PROJECTION.preview;
+  const preview = smokeComputerUseProjection.preview;
   if (!preview) {
     throw new Error("desktop_real_capture_smoke_preview_missing");
   }
@@ -898,8 +1166,8 @@ async function createRealCaptureSmokeDescriptor(revision: number): Promise<Resol
   }
   const electronSourceId = matches[0].id;
   const nativeWindowId = parseElectronWindowSourceId(electronSourceId);
-  if (process.platform === "win32" && !nativeWindowId) {
-    throw new Error("desktop_real_capture_smoke_windows_source_id_invalid");
+  if (!nativeWindowId) {
+    throw new Error("desktop_real_capture_smoke_native_source_id_invalid");
   }
   const cuaNativeIdentity = process.platform === "darwin" &&
       process.env.LING_DESKTOP_CUA_NATIVE_HANDOFF_SMOKE === "1"
@@ -912,9 +1180,8 @@ async function createRealCaptureSmokeDescriptor(revision: number): Promise<Resol
     sourceKind: "window",
     target: cuaNativeIdentity ?? {
       electronSourceId,
-      ...(process.platform === "win32"
-        ? { processId: process.pid, nativeWindowId: nativeWindowId as string }
-        : {}),
+      processId: process.pid,
+      nativeWindowId,
     },
     authorization: {
       grantId: `desktop_real_capture_smoke_grant_${revision}`,
@@ -991,13 +1258,13 @@ async function exerciseRealCaptureRevisionAndSourceEnd(
   if (!registry || !projectionClient || !previousTarget) {
     throw new Error("desktop_real_capture_smoke_revision_fixture_missing");
   }
-  const replacementRevision = (FAKE_COMPUTER_USE_PROJECTION.preview?.revision ?? 1) + 1;
+  const replacementRevision = (smokeComputerUseProjection.preview?.revision ?? 1) + 1;
   const replacement = await createRealCaptureSmokeDescriptor(replacementRevision);
   registry.register(replacement);
   projectionClient.emit({
-    ...FAKE_COMPUTER_USE_PROJECTION,
+    ...smokeComputerUseProjection,
     preview: {
-      ...FAKE_COMPUTER_USE_PROJECTION.preview!,
+      ...smokeComputerUseProjection.preview!,
       revision: replacementRevision,
     },
     updatedAt: new Date().toISOString(),
@@ -1036,7 +1303,7 @@ async function exerciseWindowsProviderRevisionAndTargetClose(
   if (!registry || !projectionClient) {
     throw new Error("desktop_windows_provider_smoke_revision_fixture_missing");
   }
-  const initialRevision = FAKE_COMPUTER_USE_PROJECTION.preview?.revision ?? 1;
+  const initialRevision = smokeComputerUseProjection.preview?.revision ?? 1;
   assertWindowsProviderSmokeSourceLive(coordinator, initialRevision, "descriptor_a_not_live");
   console.log("Ling Stack Desktop Windows provider descriptor A live");
 
@@ -1048,9 +1315,9 @@ async function exerciseWindowsProviderRevisionAndTargetClose(
   );
   registry.register(replacement);
   projectionClient.emit({
-    ...FAKE_COMPUTER_USE_PROJECTION,
+    ...smokeComputerUseProjection,
     preview: {
-      ...FAKE_COMPUTER_USE_PROJECTION.preview!,
+      ...smokeComputerUseProjection.preview!,
       revision: replacementRevision,
     },
     updatedAt: new Date().toISOString(),
@@ -1073,7 +1340,7 @@ async function exerciseWindowsProviderRevisionAndTargetClose(
     await readWindowsProviderSmokeCommand("restart_desktop", 30_000);
     windowsProviderSmokeRestarting = true;
     console.log("Ling Stack Desktop Windows provider restart requested");
-    app.quit();
+    await desktopExitLifecycle.requestExit(0);
     return;
   }
 
@@ -1132,6 +1399,41 @@ type WindowsProviderSmokeCommand =
   | { readonly type: "replace_descriptor"; readonly descriptor: unknown }
   | { readonly type: "old_target_closed" }
   | { readonly type: "restart_desktop" };
+
+async function readMacosTccRevocationCommand(timeoutMs: number): Promise<void> {
+  const iterator = macosTccRevocationCommandIterator;
+  if (!iterator) {
+    throw new Error("desktop_macos_tcc_revocation_command_channel_missing");
+  }
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const next = await Promise.race([
+      iterator.next(),
+      new Promise<never>((_resolve, reject) => {
+        timeout = setTimeout(
+          () => reject(new Error("desktop_macos_tcc_revocation_command_timeout")),
+          timeoutMs,
+        );
+      }),
+    ]);
+    if (next.done) {
+      throw new Error("desktop_macos_tcc_revocation_command_channel_closed");
+    }
+    let command: unknown;
+    try {
+      command = JSON.parse(next.value);
+    } catch {
+      throw new Error("desktop_macos_tcc_revocation_command_invalid");
+    }
+    if (!isRecord(command) || command.type !== "permission_revoked") {
+      throw new Error("desktop_macos_tcc_revocation_command_unexpected");
+    }
+  } finally {
+    if (timeout) {
+      clearTimeout(timeout);
+    }
+  }
+}
 
 async function readWindowsProviderSmokeCommand<T extends WindowsProviderSmokeCommand["type"]>(
   expectedType: T,
@@ -1192,6 +1494,7 @@ async function waitForSmokeCondition(
 }
 
 async function shutdown(): Promise<void> {
+  const activeMainWindowOpen = mainWindowOpenCoordinator.stopAcceptingAndWait();
   let firstCleanupError: unknown;
   let cleanupFailed = false;
   const attemptCleanup = async (cleanup: () => void | Promise<void>): Promise<void> => {
@@ -1207,7 +1510,7 @@ async function shutdown(): Promise<void> {
 
   let mainSession: Electron.Session | undefined;
   await attemptCleanup(() => {
-    mainSession = mainWindow?.webContents.session;
+    mainSession = (mainWindow ?? loadingMainWindow)?.webContents.session;
   });
 
   const activeComputerUse = computerUse;
@@ -1215,18 +1518,23 @@ async function shutdown(): Promise<void> {
   await attemptCleanup(() => activeComputerUse?.dispose());
 
   await attemptCleanup(() => windowsProviderSmokeCommandReader?.close());
+  await attemptCleanup(() => macosTccRevocationCommandReader?.close());
 
   const activeUnregisterIpc = unregisterIpc;
   unregisterIpc = undefined;
   await attemptCleanup(() => activeUnregisterIpc?.());
 
   const activeMainWindow = mainWindow;
+  const activeLoadingMainWindow = loadingMainWindow;
   mainWindow = undefined;
-  await attemptCleanup(() => {
-    if (activeMainWindow && !activeMainWindow.isDestroyed()) {
-      activeMainWindow.destroy();
-    }
-  });
+  loadingMainWindow = undefined;
+  for (const window of new Set([activeMainWindow, activeLoadingMainWindow])) {
+    await attemptCleanup(() => {
+      if (window && !window.isDestroyed()) {
+        window.destroy();
+      }
+    });
+  }
 
   const smokeTargets = captureSmokeTargetWindows.splice(0);
   for (const target of smokeTargets) {
@@ -1246,6 +1554,7 @@ async function shutdown(): Promise<void> {
   const activeDaemon = daemon;
   daemon = undefined;
   await attemptCleanup(() => activeDaemon?.stopOwnedDaemon());
+  await attemptCleanup(() => activeMainWindowOpen);
 
   if (cleanupFailed) {
     throw firstCleanupError;

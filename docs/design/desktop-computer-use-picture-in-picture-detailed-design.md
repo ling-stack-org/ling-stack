@@ -9,8 +9,8 @@ Implementation sequencing:
 [Desktop Computer Use Picture-in-Picture Implementation Plan](desktop-computer-use-picture-in-picture-implementation-plan.md).
 
 This document fixes the state model, selection rules, Desktop IPC, window behavior,
-layout algorithm, platform adapter, recovery timers, and test cases. Implementation is
-now in progress; the companion implementation plan is the source of truth for what is
+layout algorithm, platform adapter, recovery timers, and test cases. The local implementation
+baseline is verified; the companion implementation plan is the source of truth for what is
 verified, partial, blocked by platform prerequisites, or still pending.
 
 ## Current Code Anchors
@@ -34,11 +34,37 @@ requester-bound single-use capture grants, typed obstacle transport, bounded fir
 recovery, and fresh unsigned macOS arm64/x64 package smokes. It is not release-complete:
 Apple Developer ID signing/notarization/Gatekeeper and the signed macOS clean-host
 TCC/capture-indicator matrix, Windows interactive provider/real-source/DPI/dual-screen VM
-evidence, Authenticode/SmartScreen/signed NSIS, hosted CI, clean-machine
+evidence, Authenticode/SmartScreen/signed NSIS, hosted signed CI, clean-machine
 install/update/uninstall, VoiceOver/Narrator/NVDA acceptance, and release distribution
-remain open. Current-host real MediaStream profiling meets the product budgets. The shared
+remain open. The local macOS harness uses report-relative artifacts, live candidate
+reverification, an eight-cell architecture/TCC matrix, machine-observed revocation,
+two-launch restart evidence, artifact-bound notary logs, and packaged signed performance;
+every harness script is bound to its recorded harness-commit Git blob, current file bytes, and
+SHA-256, so an `assume-unchanged` worktree modification cannot hide from validation;
+its finalizer rejects summary-only PASS reports and unbound nested evidence, and deliberately
+returns `MANUAL_REVIEW_REQUIRED` until a separate detached-signature verifier is available.
+Windows Preflight/Full applies the same fail-closed principle, including pre-execution
+installer/uninstaller signature checks, candidate-commit harness binding, and three
+caller-fixed external trust anchors: expected candidate commit, clean repository root, and
+release-policy SHA-256. They do not authenticate the reviewer name self-reported by a manual
+evidence JSON. Full therefore remains `releaseReady=false` until an independent verifier validates
+the canonical report digest, detached reviewer signature, and candidate-build/daemon-tree
+attestation against cross-role-disjoint policy-pinned identities, key IDs, and SPKI fingerprints.
+The PowerShell surface is statically
+contract-tested from Node, but this macOS host
+has neither `pwsh` nor Windows PowerShell, so its parser/runtime and real VM execution remain
+unverified. The strict Ajv Draft 2020-12 gate compiles all eleven evidence schemas, and
+`docs/release/evidence/**` path filters make schema-only changes run the Desktop artifact
+workflow. Current-host real MediaStream profiling
+meets the product budgets. The shared
 Web locale handoff, strict locale IPC validation, renderer-local `en-US`/`zh-CN` catalog,
 and live copy refresh without window or media restart are implemented and verified.
+
+The macOS two-launch restart check uses a production daemon registry/SSE fixture with one
+seeded active projection. It verifies Desktop bridge handshakes, snapshot/replay, Hide/Show,
+renderer recovery, and Stop acknowledgement against the same daemon identity; it is a
+transport/restart acceptance fixture, not a substitute for a real provider run, clean-host
+TCC/capture-indicator, VoiceOver, signing, or notarization gate.
 Post-timeout reopen blocking, fail-safe disposal, and renderer media-release
 acknowledgement are implemented and verified locally. Host-layout IPC bounds, full daemon
 descriptor runtime validation, truthful visibility intent, eager terminal suppression cleanup,
@@ -46,14 +72,20 @@ the provenance-negative matrix, Desktop-local source generations, header capabil
 PiP Close action, teammate-direct obstacle markers, debounced corner snapping, and native
 source-aspect-ratio propagation are also closed locally. Starting and approval-waiting
 sessions without a preview descriptor remain represented by the shared summary without
-creating an empty PiP. The feature must continue to consume structured projections rather
+creating an empty PiP. Stop requests are independently single-flight per workspace/session;
+provider ownership validation is deadline/cancellation bound; explicit window catalogs cannot
+be bypassed by sibling structured output; and startup failure cleans Desktop-owned resources
+before process exit. The feature must continue to consume structured projections rather
 than infer state from transcript copy.
 
-Verified across 2026-07-16 and 2026-07-17 (latest local baseline):
+Local engineering evidence recorded across 2026-07-16 and 2026-07-17:
 
-- Desktop Node **170/170**, PiP renderer **17/17**, focused Web Desktop bridge and
-  app-shell selectors **16/16**, and the current focused contracts/API/daemon/plugin
-  matrix **51/51** pass, including provider-health and plugin-manager coverage.
+- Final pre-commit verification on the current worktree passes Desktop Node **291/291**, PiP
+  renderer **20/20**, Web E2E **35/35**, contracts **5/5**, API client **48/48**, full daemon
+  **629/629**, macOS release-focused **28/28**, Windows acceptance/provider/release focused
+  **57/57**, and all **11/11** strict Draft 2020-12 release-evidence schemas. The Desktop
+  production build, Web production build/typecheck/lint/i18n checks, workspace typecheck/lint,
+  and actionlint also pass.
 - The display-media grant binds the exact loaded main document's frame token, frame-tree
   node, renderer process id, routing id, webContents, dedicated Session, URL/origin,
   authorization expiry, descriptor identity, and prepare generation. Wrong URL or Session,
@@ -70,7 +102,7 @@ Verified across 2026-07-16 and 2026-07-17 (latest local baseline):
   exactly **12** descriptor-matching source enumerations, reuse **1** renderer document, make
   **0** post-acquisition `applyConstraints()` calls, and leave **0** process/window/renderer/
   listener/IPC/timer/subscription/source residue.
-- The screenshot matrix passes **10/10** macOS arm64 baselines across light, dark, and an
+- The baseline screenshot matrix passes **10/10** macOS arm64 baselines across light, dark, and an
   explicitly emulated `prefers-reduced-motion: reduce` media query. This is visual evidence
   for the PiP renderer only; Windows visual/DPI acceptance remains a VM gate.
 - The renderer release protocol binds a 500 ms request to the exact webContents, session,
@@ -95,10 +127,16 @@ Verified across 2026-07-16 and 2026-07-17 (latest local baseline):
   the Cua-derived native window id and provider-reported owner PID into the Ling descriptor.
   It never selects by title, foreground window, z-order, or candidate proximity. The arm64
   and x64 packaged real-window application lanes pass this handoff.
-- A Windows x64 cross-package now produces an unsigned PE32+ application and NSIS
+- A historical unsigned Windows x64 cross-package produces an unsigned PE32+ application and NSIS
   installer with the plugin shell and checksum present. Because neither artifact has run
   on Windows, installation, Authenticode, SmartScreen, and real provider behavior remain
   external release gates.
+
+These final pre-commit counts are current local engineering evidence for the worktree. Fixed
+artifact fingerprints explicitly labeled `baseline @ e20777f5` remain commit-bound historical
+references rather than current candidate hashes. Signed clean-host, interactive Windows VM,
+hosted signed CI, clean-machine lifecycle, detached-signature, and real candidate-daemon
+provenance gates remain separate external evidence.
 
 ## Target Module Structure
 
@@ -162,6 +200,10 @@ DesktopComputerUseBridge
   -> optional Desktop capability, locale, selected-conversation, summary subscription
   -> Show/Hide/Stop pending/failure state and stale session/request invalidation
 
+useDesktopNavigationIntents
+  -> pending open-conversation intent delivery
+  -> route selection and ACK only after getConversation succeeds
+
 useDesktopComputerUseHostLayoutReporter
   -> requestAnimationFrame coalescing
   -> ResizeObserver / MutationObserver / scroll / visualViewport reporting
@@ -187,6 +229,16 @@ Desktop injects capabilities through one renderer provider:
 export interface LingDesktopCapabilities {
   readonly platform: "macos" | "windows" | "linux";
   readonly daemonBaseUrl: string;
+  readonly navigation: {
+    acknowledgeIntent(requestId: number): Promise<DesktopCommandResult>;
+    onIntent(
+      listener: (intent: {
+        readonly kind: "open_conversation";
+        readonly requestId: number;
+        readonly conversationId: string;
+      }) => void,
+    ): () => void;
+  };
   readonly daemon: {
     getStatus(): Promise<DesktopDaemonStatus>;
     restart(): Promise<DesktopDaemonStatus>;
@@ -222,6 +274,9 @@ Rules:
 
 - Route or surface controllers report structured conversation ids. Desktop must not read
   breadcrumbs, headings, CSS selectors, or transcript text to determine selection.
+- `open_conversation` intents are consumed by `useDesktopNavigationIntents`; the Web route
+  controller ACKs only after the conversation lookup and selection succeed. A missing or
+  failed target remains unacknowledged so a later renderer can retry it.
 - The current shared adapter covers channel branch root threads, normal conversation
   threads, and AI-teammate direct threads. Settings or diagnostics views report no owner.
 - Capability absence is normal browser behavior, not an error state.
@@ -297,6 +352,9 @@ conversation layout
 
 current-session action surface
   -> Show preview / Hide preview / Stop Computer Use
+
+Desktop navigation intent
+  -> open_conversation -> route selection -> acknowledgeIntent(requestId)
 ```
 
 UI-bound integration uses one AppShell bridge fed by the structured ownership selector and
@@ -313,6 +371,7 @@ When the shared Web UI changes:
 | Toolbar or right-dock relocation | Move only the current-session PiP control slot. |
 | Composer/dock/modal DOM restructuring | Update geometry marker ownership, not layout math. |
 | Conversation route refactor | Preserve the structured selected-conversation callback. |
+| Desktop Open-task navigation refactor | Preserve `open_conversation` delivery, successful-selection-before-ACK, and latest-selection replay semantics. |
 | Transcript rendering change | No PiP change; daemon projection remains authoritative. |
 | New Desktop-only OS feature | Extend the narrow capability provider, not shared product state. |
 
@@ -940,7 +999,7 @@ Default preview chrome:
 - black or near-black letterbox background;
 - ordinary live mode is content-first: title, live badge, and controls stay hidden until
   hover or keyboard focus;
-- paused, approval, reconnect, permission, terminal, and failure states keep their status
+- authoritative paused, approval, reconnect, permission, terminal, and failure states keep their status
   chrome visible;
 - bottom-right resize affordance uses the operating-system window resize behavior;
 - no permanent red border or recording decoration beyond the required operating-system

@@ -26,7 +26,11 @@ import {
   restoreComputerUsePipNormalizedPlacement,
 } from "./layout.js";
 import type { ComputerUsePreviewPlatformAdapter } from "./platform-adapter.js";
-import type { ComputerUseProjectionClient, ComputerUseProjectionSubscription } from "./projection-client.js";
+import type {
+  ComputerUseProjectionClient,
+  ComputerUseProjectionConnectionState,
+  ComputerUseProjectionSubscription,
+} from "./projection-client.js";
 import { ComputerUseRecoveryTimers } from "./recovery-timers.js";
 import {
   compareLatestComputerUseProjection,
@@ -83,6 +87,7 @@ export class ComputerUsePreviewCoordinator {
   private readonly projections = new Map<string, ComputerUsePreviewProjection>();
   private readonly explicitShownSessions = new Set<string>();
   private readonly summaryListeners = new Set<(summary: ComputerUsePreviewSummary | undefined) => void>();
+  private readonly rendererSendFailureWindows = new WeakSet<ComputerUsePreviewWindow>();
   private readonly sourceSession = new ComputerUsePreviewSourceSession();
   private readonly recoveryTimers: ComputerUseRecoveryTimers;
   private readonly telemetry: ComputerUsePreviewTelemetry;
@@ -98,6 +103,7 @@ export class ComputerUsePreviewCoordinator {
   private selectedConversationId: string | undefined;
   private hostLayout: ComputerUseHostLayout | undefined;
   private subscription: ComputerUseProjectionSubscription | undefined;
+  private projectionConnected = false;
   private window: ComputerUsePreviewWindow | undefined;
   private loadedRendererWindow: ComputerUsePreviewWindow | undefined;
   private currentProjection: ComputerUsePreviewProjection | undefined;
@@ -163,21 +169,59 @@ export class ComputerUsePreviewCoordinator {
   }
 
   async start(): Promise<void> {
+    if (this.isQuiescing()) {
+      return;
+    }
     this.preferences = await this.options.preferenceStore.load();
-    this.displayChangeUnsubscribe = this.options.onDisplaysChanged?.(() => this.reportDisplayTopologyChanged());
-    for (const projection of await this.options.projectionClient.list()) {
+    if (this.isQuiescing()) {
+      return;
+    }
+    const displayChangeUnsubscribe = this.options.onDisplaysChanged?.(
+      () => this.reportDisplayTopologyChanged(),
+    );
+    if (this.isQuiescing()) {
+      displayChangeUnsubscribe?.();
+      return;
+    }
+    this.displayChangeUnsubscribe = displayChangeUnsubscribe;
+    const projections = await this.options.projectionClient.list();
+    if (this.isQuiescing()) {
+      return;
+    }
+    for (const projection of projections) {
       this.projections.set(projection.sessionId, projection);
       if (isTerminalComputerUseStatus(projection.status)) {
         await this.clearSessionLocalState(projection.sessionId);
+        if (this.isQuiescing()) {
+          return;
+        }
       }
     }
-    this.subscription = this.options.projectionClient.subscribe((event) => this.handleProjectionEvent(event));
+    if (this.isQuiescing()) {
+      return;
+    }
+    this.projectionConnected = true;
+    const subscription = this.options.projectionClient.subscribe(
+      (event) => this.handleProjectionEvent(event),
+      (state) => this.handleProjectionConnectionState(state),
+    );
+    if (this.isQuiescing()) {
+      this.projectionConnected = false;
+      try {
+        subscription.close();
+      } catch {
+        // Disposal is best-effort and must not let a late subscription escape.
+      }
+      return;
+    }
+    this.subscription = subscription;
     await this.enqueueReconcile();
   }
 
   dispose(): Promise<void> {
     if (!this.disposePromise) {
       this.disposing = true;
+      this.projectionConnected = false;
       this.disposePromise = this.disposeInternal();
     }
     return this.disposePromise;
@@ -222,8 +266,12 @@ export class ComputerUsePreviewCoordinator {
   }
 
   onSummaryChanged(listener: (summary: ComputerUsePreviewSummary | undefined) => void): () => void {
+    try {
+      listener(this.currentSummary());
+    } catch {
+      return () => undefined;
+    }
     this.summaryListeners.add(listener);
-    listener(this.currentSummary());
     return () => this.summaryListeners.delete(listener);
   }
 
@@ -237,9 +285,8 @@ export class ComputerUsePreviewCoordinator {
 
   async setAutoShow(enabled: boolean): Promise<DesktopCommandResult> {
     this.preferences = { ...this.preferences, previewAutoShow: enabled };
-    const preferences = this.preferences;
     await this.enqueueReconcile();
-    return this.persistPreferencesAfterSafety(preferences);
+    return this.persistPreferencesAfterSafety();
   }
 
   sessionIdForDescriptor(descriptorId: string): string | undefined {
@@ -288,6 +335,9 @@ export class ComputerUsePreviewCoordinator {
     if (projection.conversationId !== this.selectedConversationId) {
       return { accepted: false, reason: "computer_use_session_not_selected" };
     }
+    if (!projection.preview) {
+      return { accepted: false, reason: "computer_use_preview_unavailable" };
+    }
     this.explicitShownSessions.add(sessionId);
     this.stallTimeoutBlocks.delete(sessionId);
     // A second renderer crash blocks only automatic reopening. An explicit
@@ -297,9 +347,8 @@ export class ComputerUsePreviewCoordinator {
     const suppressions = { ...this.preferences.hiddenSessionSuppressions };
     delete suppressions[sessionId];
     this.preferences = { ...this.preferences, hiddenSessionSuppressions: suppressions };
-    const preferences = this.preferences;
     await this.enqueueReconcile();
-    return this.persistPreferencesAfterSafety(preferences);
+    return this.persistPreferencesAfterSafety();
   }
 
   async hide(sessionId: string): Promise<DesktopCommandResult> {
@@ -314,7 +363,6 @@ export class ComputerUsePreviewCoordinator {
       this.clearPlacementSnapTimer();
     }
     this.suppressSessionInMemory(sessionId);
-    const preferences = this.preferences;
     let actionError: unknown;
     await this.enqueueOperation(async () => {
       if (this.currentProjection?.sessionId === sessionId) {
@@ -333,7 +381,7 @@ export class ComputerUsePreviewCoordinator {
     }).catch((error: unknown) => {
       actionError = error;
     });
-    const persistence = await this.persistPreferencesAfterSafety(preferences);
+    const persistence = await this.persistPreferencesAfterSafety();
     if (actionError !== undefined) {
       throw actionError;
     }
@@ -348,7 +396,6 @@ export class ComputerUsePreviewCoordinator {
       this.clearReconnectTimer(true);
     }
     this.suppressSessionInMemory(sessionId);
-    const preferences = this.preferences;
     let actionError: unknown;
     await this.enqueueOperation(async () => {
       if (this.currentProjection?.sessionId === sessionId) {
@@ -358,7 +405,7 @@ export class ComputerUsePreviewCoordinator {
     }).catch((error: unknown) => {
       actionError = error;
     });
-    const persistence = await this.persistPreferencesAfterSafety(preferences);
+    const persistence = await this.persistPreferencesAfterSafety();
     if (actionError !== undefined) {
       throw actionError;
     }
@@ -369,6 +416,9 @@ export class ComputerUsePreviewCoordinator {
     const projection = this.projections.get(sessionId);
     if (!projection || isTerminalComputerUseStatus(projection.status)) {
       return { accepted: false, reason: "computer_use_session_not_active" };
+    }
+    if (!this.projectionConnected) {
+      return { accepted: false, reason: "computer_use_projection_disconnected" };
     }
     this.telemetry.record({ name: "preview_stop_requested" });
     try {
@@ -636,6 +686,47 @@ export class ComputerUsePreviewCoordinator {
     void this.enqueueReconcile();
   }
 
+  private handleProjectionConnectionState(state: ComputerUseProjectionConnectionState): void {
+    const connected = state === "connected";
+    if (this.isQuiescing() || this.projectionConnected === connected) {
+      return;
+    }
+    this.projectionConnected = connected;
+    void this.enqueueOperation(async () => {
+      if (connected) {
+        if (this.snapshot?.sourceStatus === "stalled") {
+          this.snapshot = {
+            ...this.snapshot,
+            sourceStatus: "idle",
+            statusDetail: undefined,
+          };
+          this.sendSnapshot();
+        }
+        await this.reconcile();
+        return;
+      }
+      this.clearReconnectTimer(true);
+      this.recoveryTimers.clearSourceErrorTimer();
+      try {
+        await this.releaseMedia();
+      } catch {
+        // The source session is invalidated before cleanup can fail, so stale
+        // renderer/provider callbacks cannot retain capture authority.
+      }
+      this.frameReady = false;
+      if (this.snapshot) {
+        this.snapshot = {
+          ...this.snapshot,
+          sourceStatus: "stalled",
+          frameReady: false,
+          statusDetail: "Computer Use connection lost. Reconnecting.",
+        };
+        this.sendSnapshot();
+      }
+      this.emitSummary();
+    });
+  }
+
   private enqueueReconcile(): Promise<void> {
     return this.enqueueOperation(() => this.reconcile());
   }
@@ -784,7 +875,7 @@ export class ComputerUsePreviewCoordinator {
   }
 
   private async openPreview(projection: ComputerUsePreviewProjection): Promise<void> {
-    if (!projection.preview || !this.isSourceProjectionCurrent(projection)) {
+    if (!this.projectionConnected || !projection.preview || !this.isSourceProjectionCurrent(projection)) {
       return;
     }
     const sourceGeneration = this.sourceSession.beginSourceActivation();
@@ -831,8 +922,7 @@ export class ComputerUsePreviewCoordinator {
         this.frameReady = false;
         if (shouldSuppress && this.currentProjection) {
           this.suppressSessionInMemory(this.currentProjection.sessionId);
-          const preferences = this.preferences;
-          void this.persistPreferencesAfterSafety(preferences);
+          void this.persistPreferencesAfterSafety();
         }
         if (shouldSuppress) {
           void this.options.platformAdapter.release();
@@ -1261,7 +1351,8 @@ export class ComputerUsePreviewCoordinator {
   }
 
   private isSourceProjectionCurrent(projection: ComputerUsePreviewProjection): boolean {
-    return this.isSourceIdentityCurrent(projection)
+    return this.projectionConnected
+      && this.isSourceIdentityCurrent(projection)
       && this.presentationDecisionFor(projection.sessionId).sourceActivationAllowed;
   }
 
@@ -1300,11 +1391,9 @@ export class ComputerUsePreviewCoordinator {
     };
   }
 
-  private async persistPreferencesAfterSafety(
-    preferences: DesktopPreferences,
-  ): Promise<DesktopCommandResult> {
+  private async persistPreferencesAfterSafety(): Promise<DesktopCommandResult> {
     try {
-      await this.options.preferenceStore.save(preferences);
+      await this.options.preferenceStore.save(this.preferences);
       return { accepted: true };
     } catch {
       return { accepted: true, reason: PREFERENCES_NOT_PERSISTED_REASON };
@@ -1651,10 +1740,10 @@ export class ComputerUsePreviewCoordinator {
     this.sourceAttemptStartedAtMs = undefined;
     this.stallStartedAtMs = undefined;
     let firstError: unknown;
-    let suppressedPreferences: DesktopPreferences | undefined;
+    let shouldPersistSuppression = false;
     if (suppress && this.currentProjection) {
       this.suppressSessionInMemory(this.currentProjection.sessionId);
-      suppressedPreferences = this.preferences;
+      shouldPersistSuppression = true;
     }
     if (this.window || this.currentProjection || this.snapshot) {
       try {
@@ -1675,8 +1764,8 @@ export class ComputerUsePreviewCoordinator {
     this.currentProjection = undefined;
     this.sourceSession.clear();
     this.emitSummary();
-    if (suppressedPreferences) {
-      await this.persistPreferencesAfterSafety(suppressedPreferences);
+    if (shouldPersistSuppression) {
+      await this.persistPreferencesAfterSafety();
     }
     if (firstError !== undefined) {
       throw firstError;
@@ -1941,8 +2030,19 @@ export class ComputerUsePreviewCoordinator {
   }
 
   private sendSnapshot(): void {
-    if (this.window && !this.window.isDestroyed()) {
-      this.window.webContents.send(DESKTOP_IPC_CHANNELS.computerUsePreviewSnapshotChanged, this.snapshot);
+    const window = this.window;
+    if (!window || window.isDestroyed()) {
+      return;
+    }
+    try {
+      window.webContents.send(DESKTOP_IPC_CHANNELS.computerUsePreviewSnapshotChanged, this.snapshot);
+    } catch {
+      if (this.rendererSendFailureWindows.has(window)) {
+        return;
+      }
+      this.rendererSendFailureWindows.add(window);
+      this.sourceSession.reportRendererGone(window.webContents.id);
+      void this.enqueueRendererCrashRecovery(window, { reason: "snapshot_send_failed" });
     }
   }
 
@@ -2004,6 +2104,7 @@ export class ComputerUsePreviewCoordinator {
       conversationId: projection.conversationId,
       status: projection.status,
       targetLabel: projection.target.displayName,
+      previewAvailable: projection.preview !== undefined,
       visible: Boolean(this.window && !this.window.isDestroyed() && this.window.isVisible()),
     };
   }
@@ -2011,7 +2112,11 @@ export class ComputerUsePreviewCoordinator {
   private emitSummary(): void {
     const summary = this.currentSummary();
     for (const listener of this.summaryListeners) {
-      listener(summary);
+      try {
+        listener(summary);
+      } catch {
+        this.summaryListeners.delete(listener);
+      }
     }
   }
 

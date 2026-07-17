@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ling-stack.dev/schemas/windows-review-attestation-v1.json",
+  "title": "Ling Desktop Windows Detached Reviewer Attestation",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "kind",
+    "scope",
+    "evidenceSha256",
+    "candidateManifestSha256",
+    "releasePolicySha256",
+    "reviewerId",
+    "keyId",
+    "reviewedAt",
+    "verdict",
+    "signature"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "kind": { "const": "ling.windows.review-attestation" },
+    "scope": { "const": "windows-full-acceptance" },
+    "evidenceSha256": { "$ref": "#/$defs/sha256" },
+    "candidateManifestSha256": { "$ref": "#/$defs/sha256" },
+    "releasePolicySha256": { "$ref": "#/$defs/sha256" },
+    "reviewerId": { "type": "string", "minLength": 1 },
+    "keyId": { "type": "string", "minLength": 1 },
+    "reviewedAt": { "type": "string", "format": "date-time" },
+    "verdict": { "const": "PASS" },
+    "signature": { "$ref": "#/$defs/signature" }
+  },
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "signature": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["algorithm", "valueBase64"],
+      "properties": {
+        "algorithm": { "const": "RSA-SHA256" },
+        "valueBase64": {
+          "type": "string",
+          "minLength": 4,
+          "pattern": "^[A-Za-z0-9+/]+={0,2}$"
+        }
+      }
+    }
+  }
+}

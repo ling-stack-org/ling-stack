@@ -14,6 +14,7 @@ import {
   normalizeComputerUsePreviewLocale,
   type ComputerUsePreviewTranslate,
 } from "./messages.js";
+import { subscribeWithInitialRead } from "../../shared/initial-state-subscription.js";
 import "./styles.css";
 
 const root = document.getElementById("preview-root");
@@ -38,6 +39,7 @@ const fallbackSnapshot: ComputerUsePipRendererSnapshot = {
   canStop: true,
   canOpenSettings: false,
 };
+const RENDERER_COMMAND_TIMEOUT_MS = 10_000;
 
 interface StoppedTrackBatch {
   readonly tracks: readonly MediaStreamTrack[];
@@ -77,6 +79,7 @@ let focusAfterRender:
 let lastFrameActivityReportAt = 0;
 let stopCommandState: ComputerUsePreviewStopCommandState = "idle";
 let stopRequestSequence = 0;
+let stopConvergenceTimeoutId: number | undefined;
 let rendering = false;
 const interactionState = { hover: false, focus: false };
 const capabilities = window.lingComputerUsePreview;
@@ -90,9 +93,12 @@ previewRoot.addEventListener("focusin", () => reportInteraction("focus", true));
 previewRoot.addEventListener("focusout", handlePreviewFocusOut);
 window.addEventListener("blur", () => reportInteraction("focus", false));
 if (capabilities) {
-  capabilities.onSnapshotChanged((next) => applySnapshot(next));
+  subscribeWithInitialRead({
+    read: () => capabilities.getSnapshot(),
+    subscribe: (listener) => capabilities.onSnapshotChanged(listener),
+    onValue: applySnapshot,
+  });
   capabilities.onReleaseMedia((request) => releaseMediaForRequest(request));
-  void capabilities.getSnapshot().then((next) => applySnapshot(next));
 } else {
   void syncSource();
 }
@@ -286,17 +292,17 @@ async function invokeAction(action: ComputerUsePreviewActionId): Promise<void> {
     return;
   }
   if (action === "open") {
-    await current.openOwnerConversation();
+    await waitForRendererCommand(current.openOwnerConversation());
   } else if (action === "reset") {
-    await current.resetPosition();
+    await waitForRendererCommand(current.resetPosition());
   } else if (action === "settings") {
-    await current.openScreenPermissionSettings();
+    await waitForRendererCommand(current.openScreenPermissionSettings());
   } else if (action === "retry") {
-    await current.retryCapture();
+    await waitForRendererCommand(current.retryCapture());
   } else if (action === "hide") {
-    await current.hide();
+    await waitForRendererCommand(current.hide());
   } else if (action === "close") {
-    await current.close();
+    await waitForRendererCommand(current.close());
   } else if (action === "stop") {
     await requestStop(current);
   }
@@ -313,20 +319,62 @@ async function requestStop(current: NonNullable<typeof capabilities>): Promise<v
   focusAfterRender = undefined;
   render();
   try {
-    const result = await current.requestStop();
+    const result = await waitForRendererCommand(current.requestStop());
     if (requestSequence !== stopRequestSequence || snapshot.sessionId !== sessionId) {
       return;
     }
     if (!result.accepted) {
       stopCommandState = "failed";
       render();
+      return;
     }
+    startStopConvergenceTimeout(requestSequence, sessionId);
   } catch {
     if (requestSequence !== stopRequestSequence || snapshot.sessionId !== sessionId) {
       return;
     }
     stopCommandState = "failed";
     render();
+  }
+}
+
+function startStopConvergenceTimeout(requestSequence: number, sessionId: string): void {
+  clearStopConvergenceTimeout();
+  stopConvergenceTimeoutId = window.setTimeout(() => {
+    stopConvergenceTimeoutId = undefined;
+    if (
+      requestSequence !== stopRequestSequence ||
+      snapshot.sessionId !== sessionId ||
+      stopCommandState !== "pending"
+    ) {
+      return;
+    }
+    stopCommandState = "failed";
+    render();
+  }, RENDERER_COMMAND_TIMEOUT_MS);
+}
+
+function clearStopConvergenceTimeout(): void {
+  if (stopConvergenceTimeoutId !== undefined) {
+    window.clearTimeout(stopConvergenceTimeoutId);
+    stopConvergenceTimeoutId = undefined;
+  }
+}
+
+async function waitForRendererCommand<T>(command: Promise<T>): Promise<T> {
+  let timeoutId: number | undefined;
+  try {
+    return await new Promise<T>((resolve, reject) => {
+      timeoutId = window.setTimeout(
+        () => reject(new Error("computer_use_renderer_command_timeout")),
+        RENDERER_COMMAND_TIMEOUT_MS,
+      );
+      command.then(resolve, reject);
+    });
+  } finally {
+    if (timeoutId !== undefined) {
+      window.clearTimeout(timeoutId);
+    }
   }
 }
 
@@ -401,6 +449,7 @@ function preserveCurrentFocus(): void {
 }
 
 function resetStopCommandState(invalidateRequest: boolean): void {
+  clearStopConvergenceTimeout();
   stopCommandState = "idle";
   if (invalidateRequest) {
     stopRequestSequence += 1;
@@ -501,7 +550,8 @@ async function syncSource(): Promise<void> {
       frameReported ||
       !isCurrentMediaIdentity(mediaKey, requestGeneration) ||
       currentStream !== stream ||
-      track?.readyState === "ended"
+      track?.readyState === "ended" ||
+      video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA
     ) {
       return;
     }
@@ -536,7 +586,6 @@ async function syncSource(): Promise<void> {
         window.lingComputerUsePreview?.reportFrameActivity(sessionId, revision, sourceGeneration);
       }
     });
-    setTimeout(reportFrameReady, 0);
   }
   // Hidden/occluded BrowserWindows can defer loadeddata and
   // requestVideoFrameCallback even after Chromium has decoded current data.

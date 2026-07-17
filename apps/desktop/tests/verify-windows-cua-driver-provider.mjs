@@ -3,7 +3,15 @@ import { createHash } from "node:crypto";
 import { createReadStream, createWriteStream } from "node:fs";
 import { access, mkdir, mkdtemp, readFile, realpath, rename, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import {
+  dirname,
+  isAbsolute,
+  join,
+  relative,
+  resolve,
+  sep,
+  win32 as windowsPath,
+} from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { parseArgs } from "node:util";
@@ -18,6 +26,14 @@ export const WINDOWS_CUA_DRIVER_RELEASE = Object.freeze({
   assetRoot: "cua-driver-rs-0.8.3-windows-x86_64",
   assetBytes: 10_585_087,
   sha256: "6acdc84b98629fcd0be2368cc16565c18d5f21d9dedd4e10fdb6f58547fce9d0",
+  binaries: Object.freeze({
+    "cua-driver.exe": Object.freeze({
+      sha256: "3cc33572defac29e23bc07e211c20245da9f6ebe8e6481f865b31534b1de8cee",
+    }),
+    "cua-driver-uia.exe": Object.freeze({
+      sha256: "1b35a27d41008507d66f819248751b9e79a15c9e6e03390c56749c6fe5daca1c",
+    }),
+  }),
   url: "https://github.com/trycua/cua/releases/download/cua-driver-rs-v0.8.3/cua-driver-rs-0.8.3-windows-x86_64.zip",
 });
 
@@ -25,6 +41,25 @@ const EXPECTED_PE_MACHINE = 0x8664;
 const EXPECTED_OPTIONAL_HEADER_MAGIC = 0x20b;
 const DOWNLOAD_ATTEMPTS = 3;
 const CHILD_OUTPUT_LIMIT = 32_768;
+
+export function resolveWindowsSystemExecutable(name, environment = process.env) {
+  const systemRoot = environment.SystemRoot ?? environment.windir;
+  if (typeof systemRoot !== "string" || systemRoot.trim().length === 0) {
+    throw new Error("Windows SystemRoot is unavailable");
+  }
+  const executable = windowsPath.join(systemRoot, "System32", name);
+  return executable;
+}
+
+export function resolveUnzipExecutable(platform = process.platform) {
+  if (platform === "win32") {
+    throw new Error("unzip is not used on Windows");
+  }
+  // Do not resolve archive tooling through PATH. The verifier runs before any
+  // provider code and must not let a repository-local unzip shadow the system
+  // utility. Both hosted macOS and Linux images provide this absolute path.
+  return "/usr/bin/unzip";
+}
 
 export async function sha256File(filePath) {
   const hash = createHash("sha256");
@@ -121,10 +156,21 @@ export async function verifyPinnedWindowsProviderArchive(archivePath) {
 
 export async function verifyWindowsProviderBinary(binaryPath, label) {
   const bytes = await readFile(binaryPath);
+  const expectedSha256 = WINDOWS_CUA_DRIVER_RELEASE.binaries[label]?.sha256;
+  if (!expectedSha256) {
+    throw new Error(`Unexpected Windows provider binary: ${label}`);
+  }
+  const sha256 = createHash("sha256").update(bytes).digest("hex");
+  if (sha256 !== expectedSha256) {
+    throw new Error(
+      `${label} SHA-256 mismatch: expected ${expectedSha256}, found ${sha256}`,
+    );
+  }
   return {
     name: label,
     path: resolve(binaryPath),
     bytes: bytes.length,
+    sha256,
     ...inspectWindowsX64Pe(bytes, label),
   };
 }
@@ -308,16 +354,20 @@ async function extractZip(archivePath, destinationPath) {
       "$ErrorActionPreference = 'Stop'",
       "Expand-Archive -LiteralPath $env:LING_CUA_PROVIDER_ARCHIVE -DestinationPath $env:LING_CUA_PROVIDER_DESTINATION",
     ].join("; ");
-    await runChild("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", command], {
-      env: {
-        ...process.env,
-        LING_CUA_PROVIDER_ARCHIVE: archivePath,
-        LING_CUA_PROVIDER_DESTINATION: destinationPath,
+    await runChild(
+      resolveWindowsSystemExecutable("WindowsPowerShell\\v1.0\\powershell.exe"),
+      ["-NoProfile", "-NonInteractive", "-Command", command],
+      {
+        env: {
+          ...process.env,
+          LING_CUA_PROVIDER_ARCHIVE: archivePath,
+          LING_CUA_PROVIDER_DESTINATION: destinationPath,
+        },
       },
-    });
+    );
     return;
   }
-  await runChild("unzip", ["-q", archivePath, "-d", destinationPath]);
+  await runChild(resolveUnzipExecutable(), ["-q", archivePath, "-d", destinationPath]);
 }
 
 async function probePinnedProviderVersion(binaryPath) {
@@ -355,13 +405,14 @@ async function inspectAuthenticode(binaryPaths) {
   }
   const command = [
     "$ErrorActionPreference = 'Stop'",
-    "$signature = Get-AuthenticodeSignature -FilePath $env:LING_CUA_PROVIDER_BINARY",
-    "[PSCustomObject]@{ Path = $env:LING_CUA_PROVIDER_BINARY; Status = [string]$signature.Status; StatusMessage = $signature.StatusMessage; SignerSubject = $signature.SignerCertificate.Subject } | ConvertTo-Json -Compress",
+    "$signature = Microsoft.PowerShell.Security\\Get-AuthenticodeSignature -FilePath $env:LING_CUA_PROVIDER_BINARY",
+    "$certificateSha256 = if ($signature.SignerCertificate) { $sha256 = [System.Security.Cryptography.SHA256]::Create(); try { ([System.BitConverter]::ToString($sha256.ComputeHash($signature.SignerCertificate.RawData))).Replace('-', '').ToLowerInvariant() } finally { $sha256.Dispose() } } else { $null }",
+    "[PSCustomObject]@{ Path = $env:LING_CUA_PROVIDER_BINARY; Status = [string]$signature.Status; StatusMessage = $signature.StatusMessage; SignerSubject = if ($signature.SignerCertificate) { $signature.SignerCertificate.Subject } else { $null }; CertificateSha256 = $certificateSha256 } | ConvertTo-Json -Compress",
   ].join("; ");
   const items = await Promise.all(
     binaryPaths.map(async (binaryPath) => {
       const result = await runChild(
-        "powershell.exe",
+        resolveWindowsSystemExecutable("WindowsPowerShell\\v1.0\\powershell.exe"),
         ["-NoProfile", "-NonInteractive", "-Command", command],
         {
           env: {
@@ -381,25 +432,52 @@ async function inspectAuthenticode(binaryPaths) {
       status: item.Status,
       statusMessage: item.StatusMessage,
       signerSubject: item.SignerSubject || null,
+      certificateSha256: item.CertificateSha256 || null,
     })),
   };
 }
 
-async function runChild(command, args, { cwd, env, timeoutMs = 30_000 } = {}) {
+export async function runChild(
+  command,
+  args,
+  { cwd, env, timeoutMs = 30_000 } = {},
+) {
   return new Promise((resolvePromise, rejectPromise) => {
     const child = spawn(command, args, {
       cwd,
       env,
       windowsHide: true,
+      detached: process.platform !== "win32",
       stdio: ["ignore", "pipe", "pipe"],
     });
     let stdout = "";
     let stderr = "";
     let timedOut = false;
+    let settled = false;
+    let forcedSettlement;
     const timeout = setTimeout(() => {
       timedOut = true;
-      child.kill();
+      void terminateChildTree(child)
+        .catch(() => {})
+        .finally(() => {
+          if (child.exitCode === null && child.signalCode === null) {
+            child.kill("SIGKILL");
+          }
+        });
+      forcedSettlement = setTimeout(() => {
+        settleReject(new Error(`${command} timed out after ${timeoutMs}ms`));
+      }, 10_000);
     }, timeoutMs);
+    const settleReject = (error) => {
+      if (settled) return;
+      settled = true;
+      rejectPromise(error);
+    };
+    const settleResolve = (value) => {
+      if (settled) return;
+      settled = true;
+      resolvePromise(value);
+    };
     child.stdout.setEncoding("utf8");
     child.stderr.setEncoding("utf8");
     child.stdout.on("data", (chunk) => {
@@ -410,23 +488,56 @@ async function runChild(command, args, { cwd, env, timeoutMs = 30_000 } = {}) {
     });
     child.once("error", (error) => {
       clearTimeout(timeout);
-      rejectPromise(error);
+      clearTimeout(forcedSettlement);
+      settleReject(error);
     });
     child.once("close", (exitCode, signal) => {
       clearTimeout(timeout);
+      clearTimeout(forcedSettlement);
       if (timedOut) {
-        rejectPromise(new Error(`${command} timed out after ${timeoutMs}ms`));
+        settleReject(new Error(`${command} timed out after ${timeoutMs}ms`));
       } else if (exitCode !== 0) {
-        rejectPromise(
+        settleReject(
           new Error(
             `${command} exited ${exitCode ?? signal ?? "unknown"}: ${`${stdout}\n${stderr}`.trim() || "<no output>"}`,
           ),
         );
       } else {
-        resolvePromise({ stdout, stderr });
+        settleResolve({ stdout, stderr });
       }
     });
   });
+}
+
+async function terminateChildTree(child) {
+  if (!child?.pid) return;
+  if (process.platform === "win32") {
+    await new Promise((resolvePromise) => {
+      const killer = spawn(
+        resolveWindowsSystemExecutable("taskkill.exe"),
+        ["/PID", String(child.pid), "/T", "/F"],
+        { windowsHide: true, stdio: "ignore" },
+      );
+      const fallback = setTimeout(() => {
+        killer.kill();
+        resolvePromise();
+      }, 5_000);
+      killer.once("error", () => {
+        clearTimeout(fallback);
+        resolvePromise();
+      });
+      killer.once("close", () => {
+        clearTimeout(fallback);
+        resolvePromise();
+      });
+    });
+    return;
+  }
+  try {
+    process.kill(-child.pid, "SIGKILL");
+  } catch {
+    child.kill("SIGKILL");
+  }
 }
 
 function appendBounded(current, chunk) {

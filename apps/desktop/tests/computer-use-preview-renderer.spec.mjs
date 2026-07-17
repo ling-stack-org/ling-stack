@@ -241,6 +241,46 @@ test("keeps Stop pending until the runtime projection acknowledges it", async ()
   await expect(page.locator(".preview-status-overlay")).toContainText("Stopped");
 });
 
+test("times out a hung Stop command and ignores its late result", async () => {
+  await page.clock.install();
+  await page.evaluate(() => {
+    window.lingPreviewTestHarness.clearCalls();
+    window.lingPreviewTestHarness.setCommandPending("requestStop");
+  });
+
+  await invokeStop();
+  const shell = page.locator(".preview-shell");
+  await expect(shell).toHaveAttribute("data-stop-command", "pending");
+  await page.clock.fastForward(10_001);
+
+  await expect(shell).toHaveAttribute("data-stop-command", "failed");
+  await expect(page.getByRole("button", { name: "Try Stop again" })).toBeVisible();
+  expect(await page.evaluate(() => window.lingPreviewTestHarness.resolveCommand(
+    "requestStop",
+    { accepted: true },
+  ))).toBe(true);
+  await expect(shell).toHaveAttribute("data-stop-command", "failed");
+  expect(await callCount("requestStop")).toBe(1);
+});
+
+test("accepted Stop fails retryably when the authoritative snapshot never converges", async () => {
+  await page.clock.install();
+  await page.evaluate(() => {
+    window.lingPreviewTestHarness.clearCalls();
+    window.lingPreviewTestHarness.setCommandResult("requestStop", { accepted: true });
+  });
+
+  await invokeStop();
+  const shell = page.locator(".preview-shell");
+  await expect(shell).toHaveAttribute("data-stop-command", "pending");
+  await page.clock.fastForward(10_001);
+
+  await expect(shell).toHaveAttribute("data-stop-command", "failed");
+  await expect(page.getByRole("button", { name: "Try Stop again" })).toBeVisible();
+  await page.evaluate(() => window.lingPreviewTestHarness.pushSnapshot({ runtimeStatus: "stopping" }));
+  await expect(shell).toHaveAttribute("data-stop-command", "idle");
+});
+
 test("ignores a stale Stop result after the renderer switches sessions", async () => {
   await page.evaluate(() => {
     window.lingPreviewTestHarness.clearCalls();
@@ -286,7 +326,7 @@ test("exposes status transitions through an observable aria-live region", async 
 test("keeps document.title synchronized with the current target", async () => {
   const initialTitle = await page.title();
   expect(initialTitle).toContain("Example Browser");
-  expect(initialTitle.toLowerCase()).toContain("computer use");
+  expect(initialTitle.toLowerCase()).toContain("computer use preview");
 
   await page.evaluate(() => window.lingPreviewTestHarness.pushSnapshot({
     targetLabel: "Updated Spreadsheet Target",
@@ -320,6 +360,28 @@ test("serializes display-media startup across repeated same-source snapshots", a
     .getCalls()
     .filter((call) => call.name === "reportFrameReady").length))
     .toBe(1);
+});
+
+test("display-media fallback waits for decoded data before reporting the first frame", async () => {
+  await expect.poll(() => callCount("reportFrameReady")).toBe(1);
+  expect(await page.evaluate(() => window.lingPreviewTestHarness.forceNoDecodedFrameFallback())).toBe(true);
+  await page.evaluate(() => {
+    window.lingPreviewTestHarness.clearCalls();
+    window.lingPreviewTestHarness.pushSnapshot({
+      sourceGeneration: 2,
+      sourceStatus: "connecting",
+      frameReady: false,
+      statusDetail: "Waiting for decoded data",
+    });
+  });
+  await expect.poll(() => page.evaluate(() => window.lingPreviewTestHarness
+    .getDisplayMediaRequestCount()))
+    .toBe(2);
+  await page.waitForTimeout(100);
+  expect(await callCount("reportFrameReady")).toBe(0);
+
+  expect(await page.evaluate(() => window.lingPreviewTestHarness.restoreDecodedFrameFallback())).toBe(true);
+  await expect.poll(() => callCount("reportFrameReady")).toBe(1);
 });
 
 test("display-media locale changes do not reacquire the source or report another first frame", async () => {

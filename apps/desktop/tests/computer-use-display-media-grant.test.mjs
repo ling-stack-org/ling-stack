@@ -66,6 +66,7 @@ test("display-media grant is bound to the exact PiP main frame and consumed once
     sessionId: "session-1",
     descriptorId: "descriptor-1",
     revision: 4,
+    authorizationGrantId: "grant-1",
   });
   assert.equal(grants.consume(request), undefined);
 });
@@ -306,5 +307,6 @@ function expectedConsumedGrant(generation = 1) {
     sessionId: "session-1",
     descriptorId: "descriptor-1",
     revision: 4,
+    authorizationGrantId: "grant-1",
   };
 }

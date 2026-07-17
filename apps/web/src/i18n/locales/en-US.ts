@@ -3085,6 +3085,7 @@ export const enUS = {
     "Automatically show Computer Use picture-in-picture": "Automatically show Computer Use picture-in-picture",
     "Automatically show the approved Computer Use preview on Desktop": "Automatically show the approved Computer Use preview on Desktop",
     "Unable to save Desktop preview preference": "Unable to save Desktop preview preference",
+    "Changed for this session, but not saved. It may revert after restart.": "Changed for this session, but not saved. It may revert after restart.",
     "Live": "Live",
     "Computer Use preview controls": "Computer Use preview controls",
     "Showing": "Showing",

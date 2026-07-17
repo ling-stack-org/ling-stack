@@ -180,6 +180,7 @@ export function createDaemonServer(
       ?? process.env.LING_COMPUTER_USE_ROUTE_TOKEN
       ?? dependencies.desktopBridgeToken
       ?? process.env.LING_DESKTOP_BRIDGE_TOKEN,
+    computerUseTargetOwnershipTimeoutMs: dependencies.computerUseTargetOwnershipTimeoutMs,
   };
   const server = createServer(async (request, response) => {
     try {

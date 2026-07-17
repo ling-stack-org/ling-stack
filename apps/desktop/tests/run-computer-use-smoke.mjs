@@ -7,8 +7,12 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const desktopRoot = dirname(dirname(fileURLToPath(import.meta.url)));
-const userDataDirectory = await mkdtemp(join(tmpdir(), "ling-desktop-computer-use-smoke-"));
-const daemonPort = await availablePort();
+const suppliedUserDataDirectory = process.env.LING_DESKTOP_SMOKE_USER_DATA_DIR?.trim();
+const ownsUserDataDirectory = !suppliedUserDataDirectory;
+const userDataDirectory = suppliedUserDataDirectory ||
+  await mkdtemp(join(tmpdir(), "ling-desktop-computer-use-smoke-"));
+const suppliedDaemonUrl = process.env.LING_STACK_DAEMON_URL?.trim();
+const daemonUrl = suppliedDaemonUrl || `http://127.0.0.1:${await availablePort()}`;
 const packagedExecutableValue = process.env.LING_DESKTOP_SMOKE_EXECUTABLE?.trim();
 const packagedExecutable = packagedExecutableValue ? resolve(packagedExecutableValue) : undefined;
 const smokeTimeoutMs = positiveInteger(process.env.LING_DESKTOP_SMOKE_TIMEOUT_MS, 20_000);
@@ -31,8 +35,9 @@ try {
     env: {
       ...process.env,
       ...(realCapture || realDisplayCapture ? {} : { LING_DESKTOP_FAKE_COMPUTER_USE: "1" }),
-      LING_STACK_DAEMON_URL: `http://127.0.0.1:${daemonPort}`,
-      LING_STACK_DEFAULT_WORKSPACE_CWD: dirname(dirname(desktopRoot)),
+      LING_STACK_DAEMON_URL: daemonUrl,
+      LING_STACK_DEFAULT_WORKSPACE_CWD:
+        process.env.LING_STACK_DEFAULT_WORKSPACE_CWD ?? dirname(dirname(desktopRoot)),
     },
   });
   const output = `${result.stdout}\n${result.stderr}`;
@@ -45,13 +50,23 @@ try {
   if (!output.includes(expectedMarker)) {
     throw new Error(`Desktop fake Computer Use smoke did not complete the lifecycle:\n${output}`);
   }
+  for (const line of output.split(/\r?\n/u)) {
+    if (
+      line.startsWith("LING_DESKTOP_PROJECTION_ID=") ||
+      line.includes("Ling Stack Desktop daemon projection persistence checkpoint passed")
+    ) {
+      process.stdout.write(`${line}\n`);
+    }
+  }
   process.stdout.write(
     realCapture || realDisplayCapture
       ? "Desktop direct Electron Computer Use capture first-frame/hide/show/stop smoke passed\n"
       : "Desktop fake Computer Use first-frame/hide/show/stop smoke passed\n",
   );
 } finally {
-  await rm(userDataDirectory, { recursive: true, force: true });
+  if (ownsUserDataDirectory) {
+    await rm(userDataDirectory, { recursive: true, force: true });
+  }
 }
 
 async function runElectron({ executable, args, env }) {

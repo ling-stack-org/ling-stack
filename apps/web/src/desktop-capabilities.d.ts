@@ -2,6 +2,14 @@ interface Window {
   readonly lingDesktop?: {
     readonly platform: "macos" | "windows" | "linux";
     readonly daemonBaseUrl: string;
+    readonly navigation: {
+      acknowledgeIntent(requestId: number): Promise<{ readonly accepted: boolean; readonly reason?: string }>;
+      onIntent(listener: (intent: {
+        readonly kind: "open_conversation";
+        readonly requestId: number;
+        readonly conversationId: string;
+      }) => void): () => void;
+    };
     readonly computerUse: {
       reportLocale(locale: "en-US" | "zh-CN"): void;
       reportSelectedConversation(conversationId?: string): void;
@@ -34,6 +42,7 @@ interface Window {
         readonly conversationId: string;
         readonly status: "starting" | "running" | "waiting_for_approval" | "paused" | "stopping" | "succeeded" | "failed" | "cancelled";
         readonly targetLabel: string;
+        readonly previewAvailable: boolean;
         readonly visible: boolean;
       } | undefined) => void): () => void;
     };

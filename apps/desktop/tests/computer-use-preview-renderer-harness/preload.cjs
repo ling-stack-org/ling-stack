@@ -163,6 +163,56 @@ contextBridge.exposeInMainWorld("lingPreviewTestHarness", {
       return true;
     },
   }),
+  forceNoDecodedFrameFallback: () => contextBridge.executeInMainWorld({
+    func: () => {
+      const state = globalThis.__lingDisplayMediaHarness;
+      if (!state) {
+        return false;
+      }
+      state.videoFrameCallbackPrototypeDescriptor = Object.getOwnPropertyDescriptor(
+        HTMLVideoElement.prototype,
+        "requestVideoFrameCallback",
+      );
+      state.readyStatePrototypeDescriptor = Object.getOwnPropertyDescriptor(
+        HTMLMediaElement.prototype,
+        "readyState",
+      );
+      Object.defineProperty(HTMLVideoElement.prototype, "requestVideoFrameCallback", {
+        configurable: true,
+        value: undefined,
+      });
+      Object.defineProperty(HTMLMediaElement.prototype, "readyState", {
+        configurable: true,
+        get: () => HTMLMediaElement.HAVE_NOTHING,
+      });
+      return true;
+    },
+  }),
+  restoreDecodedFrameFallback: () => contextBridge.executeInMainWorld({
+    func: () => {
+      const state = globalThis.__lingDisplayMediaHarness;
+      if (!state) {
+        return false;
+      }
+      for (const [target, property, descriptor] of [
+        [
+          HTMLVideoElement.prototype,
+          "requestVideoFrameCallback",
+          state.videoFrameCallbackPrototypeDescriptor,
+        ],
+        [HTMLMediaElement.prototype, "readyState", state.readyStatePrototypeDescriptor],
+      ]) {
+        if (descriptor) {
+          Object.defineProperty(target, property, descriptor);
+        } else {
+          delete target[property];
+        }
+      }
+      delete state.videoFrameCallbackPrototypeDescriptor;
+      delete state.readyStatePrototypeDescriptor;
+      return true;
+    },
+  }),
   pushSnapshot: (overrides) => {
     snapshot = { ...snapshot, ...overrides };
     for (const listener of snapshotListeners) {

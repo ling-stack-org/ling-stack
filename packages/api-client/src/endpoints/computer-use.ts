@@ -5,27 +5,49 @@ import type {
   StopComputerUseRequest,
   StopComputerUseResponse,
 } from "@ling-stack/contracts";
-import { COMPUTER_USE_ROUTE_TOKEN_HEADER } from "@ling-stack/contracts";
+import {
+  COMPUTER_USE_ROUTE_TOKEN_HEADER,
+  parseComputerUsePreviewEventsResponse,
+  parseComputerUsePreviewListResponse,
+  parseComputerUsePreviewSnapshotResponse,
+  parseStopComputerUseResponse,
+} from "@ling-stack/contracts";
 import { LingDaemonError } from "../errors.js";
 import { readErrorMessage } from "../transport.js";
 import type { LingDaemonEndpointContext, PublicEndpointGroup } from "../transport.js";
 
 export const computerUseEndpoints = {
   async listComputerUsePreviews(this: LingDaemonEndpointContext, cwd: string): Promise<ComputerUsePreviewListResponse> {
-    return this._requestWithHeaders("GET", "/computer-use/sessions", { cwd }, undefined, computerUseRouteHeaders(this));
+    const value = await this._requestWithHeaders<unknown>(
+      "GET",
+      "/computer-use/sessions",
+      { cwd },
+      undefined,
+      computerUseRouteHeaders(this),
+    );
+    const parsed = parseComputerUsePreviewListResponse(value, cwd);
+    if (!parsed) {
+      throw new Error("computer_use_list_response_invalid");
+    }
+    return parsed;
   },
 
   async getComputerUsePreviewSnapshot(
     this: LingDaemonEndpointContext,
     cwd: string,
   ): Promise<ComputerUsePreviewSnapshotResponse> {
-    return this._requestWithHeaders(
+    const value = await this._requestWithHeaders<unknown>(
       "GET",
       "/computer-use/snapshot",
       { cwd },
       undefined,
       computerUseRouteHeaders(this),
     );
+    const parsed = parseComputerUsePreviewSnapshotResponse(value, cwd);
+    if (!parsed) {
+      throw new Error("computer_use_snapshot_response_invalid");
+    }
+    return parsed;
   },
 
   async listComputerUsePreviewEvents(
@@ -34,13 +56,18 @@ export const computerUseEndpoints = {
     afterSeq = 0,
     limit = 500,
   ): Promise<ComputerUsePreviewEventsResponse> {
-    return this._requestWithHeaders(
+    const value = await this._requestWithHeaders<unknown>(
       "GET",
       "/computer-use/events",
       { cwd, afterSeq, limit },
       undefined,
       computerUseRouteHeaders(this),
     );
+    const parsed = parseComputerUsePreviewEventsResponse(value, cwd);
+    if (!parsed) {
+      throw new Error("computer_use_events_response_invalid");
+    }
+    return parsed;
   },
 
   async streamComputerUsePreviews(
@@ -69,13 +96,18 @@ export const computerUseEndpoints = {
     sessionId: string,
     input: StopComputerUseRequest = {},
   ): Promise<StopComputerUseResponse> {
-    return this._requestWithHeaders(
+    const value = await this._requestWithHeaders<unknown>(
       "POST",
       `/computer-use/sessions/${encodeURIComponent(sessionId)}/stop`,
       { cwd },
       input,
       computerUseRouteHeaders(this),
     );
+    const parsed = parseStopComputerUseResponse(value, sessionId);
+    if (!parsed) {
+      throw new Error("computer_use_stop_response_invalid");
+    }
+    return parsed;
   },
 };
 

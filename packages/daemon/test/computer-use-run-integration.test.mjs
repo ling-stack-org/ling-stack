@@ -4,6 +4,10 @@ import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import test from "node:test";
 import { createDaemonServer } from "../dist/index.js";
+import {
+  createCapturedStoreFactory,
+  seedManagedCuaProvider,
+} from "./computer-use-test-fixtures.mjs";
 
 const DESKTOP_BRIDGE_TOKEN = "desktop-computer-use-integration-token";
 const COMPUTER_USE_ROUTE_TOKEN = "computer-use-route-integration-token";
@@ -12,6 +16,7 @@ test("cua-driver MCP results publish a private preview and Stop waits for the li
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-computer-use-run-"));
   const runner = new BlockingComputerUseRunner();
   const mcpBroker = new FakeCuaDriverBroker();
+  const { capture, storeFactory } = createCapturedStoreFactory();
   const daemon = createDaemonServer(
     { host: "127.0.0.1", port: 0, defaultWorkspaceCwd: cwd },
     {
@@ -19,6 +24,7 @@ test("cua-driver MCP results publish a private preview and Stop waits for the li
       mcpBroker,
       desktopBridgeToken: DESKTOP_BRIDGE_TOKEN,
       computerUseRouteToken: COMPUTER_USE_ROUTE_TOKEN,
+      storeFactory,
     },
   );
   let runBodyPromise;
@@ -28,19 +34,14 @@ test("cua-driver MCP results publish a private preview and Stop waits for the li
     assert.ok(address && typeof address === "object");
     const baseUrl = `http://127.0.0.1:${address.port}`;
 
-    const server = await postJson(`${baseUrl}/mcp/servers?cwd=${encodeURIComponent(cwd)}`, {
-      id: "mcp_cua_driver",
-      displayName: "CuaDriver",
-      transport: { type: "streamable-http", url: "http://127.0.0.1:19999/mcp" },
+    assert.ok(capture.store);
+    const { server } = seedManagedCuaProvider(capture.store, {
+      tools: [screenshotTool()],
     });
-    await postJson(
-      `${baseUrl}/mcp/servers/${encodeURIComponent(server.server.id)}/sync-tools?cwd=${encodeURIComponent(cwd)}`,
-      {},
-    );
     await putJson(`${baseUrl}/teammates/teammate_builtin_engineer/mcp?cwd=${encodeURIComponent(cwd)}`, {
       bindings: [
         {
-          serverId: server.server.id,
+          serverId: server.id,
           mode: "selected",
           selectedToolNames: ["screenshot"],
           enabled: true,
@@ -119,6 +120,7 @@ test("cua-driver approval lifecycle is projected from authorized MCP and run eve
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-computer-use-approval-"));
   const runner = new ApprovalComputerUseRunner();
   const mcpBroker = new ApprovalCuaDriverBroker();
+  const { capture, storeFactory } = createCapturedStoreFactory();
   const daemon = createDaemonServer(
     { host: "127.0.0.1", port: 0, defaultWorkspaceCwd: cwd },
     {
@@ -126,6 +128,7 @@ test("cua-driver approval lifecycle is projected from authorized MCP and run eve
       mcpBroker,
       desktopBridgeToken: DESKTOP_BRIDGE_TOKEN,
       computerUseRouteToken: COMPUTER_USE_ROUTE_TOKEN,
+      storeFactory,
     },
   );
   let runBodyPromise;
@@ -135,19 +138,14 @@ test("cua-driver approval lifecycle is projected from authorized MCP and run eve
     assert.ok(address && typeof address === "object");
     const baseUrl = `http://127.0.0.1:${address.port}`;
 
-    const server = await postJson(`${baseUrl}/mcp/servers?cwd=${encodeURIComponent(cwd)}`, {
-      id: "mcp_cua_driver",
-      displayName: "CuaDriver",
-      transport: { type: "streamable-http", url: "http://127.0.0.1:19999/mcp" },
+    assert.ok(capture.store);
+    const { server } = seedManagedCuaProvider(capture.store, {
+      tools: [approvalTool()],
     });
-    await postJson(
-      `${baseUrl}/mcp/servers/${encodeURIComponent(server.server.id)}/sync-tools?cwd=${encodeURIComponent(cwd)}`,
-      {},
-    );
     await putJson(`${baseUrl}/teammates/teammate_builtin_engineer/mcp?cwd=${encodeURIComponent(cwd)}`, {
       bindings: [
         {
-          serverId: server.server.id,
+          serverId: server.id,
           mode: "selected",
           selectedToolNames: ["future_authorized_action"],
           enabled: true,
@@ -234,6 +232,65 @@ test("cua-driver approval lifecycle is projected from authorized MCP and run eve
   }
 });
 
+for (const scenario of [
+  { name: "unlinked", seedOptions: { linked: false } },
+  { name: "unhealthy", seedOptions: { pluginHealthStatus: "failed" } },
+]) {
+  test(`same-id ${scenario.name} Cua MCP server cannot publish a Computer Use projection`, async () => {
+    const cwd = await mkdtemp(resolve(tmpdir(), `ling-stack-computer-use-${scenario.name}-`));
+    const runner = new CompletingComputerUseRunner();
+    const mcpBroker = new FakeCuaDriverBroker();
+    const { capture, storeFactory } = createCapturedStoreFactory();
+    const daemon = createDaemonServer(
+      { host: "127.0.0.1", port: 0, defaultWorkspaceCwd: cwd },
+      {
+        runner,
+        mcpBroker,
+        storeFactory,
+        computerUseRouteToken: COMPUTER_USE_ROUTE_TOKEN,
+      },
+    );
+    await daemon.start();
+    try {
+      const address = daemon.server.address();
+      assert.ok(address && typeof address === "object");
+      const baseUrl = `http://127.0.0.1:${address.port}`;
+      assert.ok(capture.store);
+      const { server } = seedManagedCuaProvider(capture.store, {
+        ...scenario.seedOptions,
+        tools: [screenshotTool()],
+      });
+      await putJson(`${baseUrl}/teammates/teammate_builtin_engineer/mcp?cwd=${encodeURIComponent(cwd)}`, {
+        bindings: [{
+          serverId: server.id,
+          mode: "selected",
+          selectedToolNames: ["screenshot"],
+          enabled: true,
+        }],
+      });
+
+      const response = await fetch(`${baseUrl}/runs`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(runBody(cwd, `task_computer_use_${scenario.name}`)),
+      });
+      if (!response.ok) {
+        assert.fail(`${response.status} ${response.statusText}: ${await response.text()}`);
+      }
+      await response.text();
+      assert.equal(runner.callCompleted, true);
+      const listed = await getJson(
+        `${baseUrl}/computer-use/sessions?cwd=${encodeURIComponent(cwd)}`,
+        { "X-Ling-Computer-Use-Token": COMPUTER_USE_ROUTE_TOKEN },
+      );
+      assert.deepEqual(listed.projections, []);
+    } finally {
+      await daemon.stop().catch(() => undefined);
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+}
+
 class FakeCuaDriverBroker {
   async checkServer(server, options) {
     const checkedAt = options.now?.() ?? new Date().toISOString();
@@ -246,23 +303,22 @@ class FakeCuaDriverBroker {
     const checkedAt = options.now?.() ?? new Date().toISOString();
     return {
       statusSnapshot: readyStatus(server.id, checkedAt, 1),
-      tools: [
-        {
-          rawName: "screenshot",
-          displayName: "Screenshot",
-          description: "Capture the authorized application window.",
-          inputSchema: { type: "object", properties: {} },
-          callableNamespace: "mcp_cua_driver",
-          callableName: "screenshot",
-          sideEffectLevel: "read",
-          defaultApproval: "allow",
-          enabled: true,
-        },
-      ],
+      tools: [screenshotTool()],
     };
   }
 
-  async callTool(_server, _options, toolName) {
+  async callTool(_server, _options, toolName, input) {
+    if (toolName === "list_windows") {
+      assert.deepEqual(input, { pid: 4321 });
+      return {
+        content: [],
+        details: {
+          structuredContent: {
+            windows: [{ pid: 4321, window_id: "7788" }],
+          },
+        },
+      };
+    }
     assert.equal(toolName, "screenshot");
     return {
       content: [{ type: "text", text: JSON.stringify({ ok: true }) }],
@@ -330,19 +386,7 @@ class ApprovalCuaDriverBroker extends FakeCuaDriverBroker {
     const checkedAt = options.now?.() ?? new Date().toISOString();
     return {
       statusSnapshot: readyStatus(server.id, checkedAt, 1),
-      tools: [
-        {
-          rawName: "future_authorized_action",
-          displayName: "Future authorized action",
-          description: "Operate an explicitly authorized application window.",
-          inputSchema: { type: "object", properties: {} },
-          callableNamespace: "mcp_cua_driver",
-          callableName: "future_authorized_action",
-          sideEffectLevel: "write",
-          defaultApproval: "ask",
-          enabled: true,
-        },
-      ],
+      tools: [approvalTool()],
     };
   }
 
@@ -364,6 +408,74 @@ class ApprovalCuaDriverBroker extends FakeCuaDriverBroker {
   releaseResult() {
     this.resolveResult();
   }
+}
+
+class CompletingComputerUseRunner {
+  callCompleted = false;
+
+  async runTask(options) {
+    const tool = options.mcpTools?.find((candidate) => candidate.rawName === "screenshot");
+    assert.ok(tool);
+    assert.ok(options.onMcpToolCall);
+    await options.onMcpToolCall({
+      toolCallId: "cua_driver_ineligible_screenshot",
+      registeredName: tool.registeredName,
+      serverId: tool.serverId,
+      rawName: tool.rawName,
+      input: {},
+      task: options.task,
+      cwd: options.cwd,
+      defaultApproval: tool.defaultApproval,
+    });
+    this.callCompleted = true;
+    return {
+      taskId: options.task.id,
+      events: [],
+      messages: [{ role: "assistant", content: "done" }],
+    };
+  }
+}
+
+function screenshotTool() {
+  return {
+    rawName: "screenshot",
+    displayName: "Screenshot",
+    description: "Capture the authorized application window.",
+    inputSchema: { type: "object", properties: {} },
+    callableNamespace: "mcp_cua_driver",
+    callableName: "screenshot",
+    sideEffectLevel: "read",
+    defaultApproval: "allow",
+    enabled: true,
+  };
+}
+
+function approvalTool() {
+  return {
+    rawName: "future_authorized_action",
+    displayName: "Future authorized action",
+    description: "Operate an explicitly authorized application window.",
+    inputSchema: { type: "object", properties: {} },
+    callableNamespace: "mcp_cua_driver",
+    callableName: "future_authorized_action",
+    sideEffectLevel: "write",
+    defaultApproval: "ask",
+    enabled: true,
+  };
+}
+
+function runBody(cwd, taskId) {
+  return {
+    cwd,
+    teammateId: "teammate_builtin_engineer",
+    task: {
+      id: taskId,
+      title: taskId,
+      prompt: "Use the authorized browser window.",
+    },
+    provider: { provider: "static-chat", model: "static-model" },
+    tools: ["read"],
+  };
 }
 
 class ApprovalComputerUseRunner extends BlockingComputerUseRunner {

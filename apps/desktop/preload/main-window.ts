@@ -4,10 +4,13 @@ import type {
   ComputerUsePreviewLocale,
   ComputerUsePreviewPreferences,
   ComputerUsePreviewSummary,
+  DesktopNavigationIntent,
   LingDesktopCapabilities,
 } from "../shared/desktop-capabilities.js";
+import { isDesktopNavigationIntent } from "../shared/desktop-capabilities.js";
 import { DESKTOP_IPC_CHANNELS } from "../shared/ipc-channels.js";
 import { desktopPlatform } from "../main/platform.js";
+import { subscribeWithInitialRead } from "../shared/initial-state-subscription.js";
 
 const daemonBaseUrl = process.argv
   .find((argument) => argument.startsWith("--ling-daemon-base-url="))
@@ -16,6 +19,32 @@ const daemonBaseUrl = process.argv
 const capabilities: LingDesktopCapabilities = {
   platform: desktopPlatform(),
   daemonBaseUrl,
+  navigation: {
+    acknowledgeIntent: (requestId: number) =>
+      ipcRenderer.invoke(DESKTOP_IPC_CHANNELS.navigationIntentAck, requestId),
+    onIntent: (listener: (intent: DesktopNavigationIntent) => void) => {
+      return subscribeWithInitialRead<DesktopNavigationIntent | undefined>({
+        read: async () => {
+          const intent: unknown = await ipcRenderer.invoke(DESKTOP_IPC_CHANNELS.navigationIntentGet);
+          return isDesktopNavigationIntent(intent) ? intent : undefined;
+        },
+        subscribe: (onIntent) => {
+          const wrapped = (_event: Electron.IpcRendererEvent, intent: unknown): void => {
+            if (isDesktopNavigationIntent(intent)) {
+              onIntent(intent);
+            }
+          };
+          ipcRenderer.on(DESKTOP_IPC_CHANNELS.navigationIntentChanged, wrapped);
+          return () => ipcRenderer.off(DESKTOP_IPC_CHANNELS.navigationIntentChanged, wrapped);
+        },
+        onValue: (intent) => {
+          if (intent) {
+            listener(intent);
+          }
+        },
+      });
+    },
+  },
   daemon: {
     getStatus: () => ipcRenderer.invoke(DESKTOP_IPC_CHANNELS.daemonStatus),
     restart: () => ipcRenderer.invoke(DESKTOP_IPC_CHANNELS.daemonRestart),
@@ -36,18 +65,18 @@ const capabilities: LingDesktopCapabilities = {
     getPreferences: () => ipcRenderer.invoke(DESKTOP_IPC_CHANNELS.computerUseAutoShowGet) as Promise<ComputerUsePreviewPreferences>,
     setAutoShow: (enabled: boolean) => ipcRenderer.invoke(DESKTOP_IPC_CHANNELS.computerUseAutoShowSet, enabled),
     onSummaryChanged: (listener: (summary: ComputerUsePreviewSummary | undefined) => void) => {
-      let active = true;
-      const wrapped = (_event: Electron.IpcRendererEvent, summary: ComputerUsePreviewSummary | undefined): void => listener(summary);
-      ipcRenderer.on(DESKTOP_IPC_CHANNELS.computerUseSummaryChanged, wrapped);
-      void ipcRenderer.invoke(DESKTOP_IPC_CHANNELS.computerUseSummaryGet).then((summary: ComputerUsePreviewSummary | undefined) => {
-        if (active) {
-          listener(summary);
-        }
+      return subscribeWithInitialRead({
+        read: () => ipcRenderer.invoke(DESKTOP_IPC_CHANNELS.computerUseSummaryGet) as Promise<ComputerUsePreviewSummary | undefined>,
+        subscribe: (onSummary) => {
+          const wrapped = (
+            _event: Electron.IpcRendererEvent,
+            summary: ComputerUsePreviewSummary | undefined,
+          ): void => onSummary(summary);
+          ipcRenderer.on(DESKTOP_IPC_CHANNELS.computerUseSummaryChanged, wrapped);
+          return () => ipcRenderer.off(DESKTOP_IPC_CHANNELS.computerUseSummaryChanged, wrapped);
+        },
+        onValue: listener,
       });
-      return () => {
-        active = false;
-        ipcRenderer.off(DESKTOP_IPC_CHANNELS.computerUseSummaryChanged, wrapped);
-      };
     },
   },
 };

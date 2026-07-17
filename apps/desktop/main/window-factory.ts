@@ -5,6 +5,7 @@ export interface MainWindowFactoryInput {
   readonly daemonBaseUrl: string;
   readonly webIndexPath: string;
   readonly createWindow?: (options: BrowserWindowConstructorOptions) => BrowserWindow;
+  readonly onWindowCreated?: (window: BrowserWindow) => void;
   readonly showWhenReady?: boolean;
 }
 
@@ -26,6 +27,7 @@ export async function createMainWindow(input: MainWindowFactoryInput): Promise<B
       additionalArguments: [`--ling-daemon-base-url=${input.daemonBaseUrl}`],
     },
   });
+  input.onWindowCreated?.(window);
   if (input.showWhenReady !== false) {
     window.once("ready-to-show", () => window.show());
   }

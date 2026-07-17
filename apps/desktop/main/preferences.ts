@@ -1,4 +1,5 @@
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { mkdir, open, readFile, rename, rm } from "node:fs/promises";
 import { dirname } from "node:path";
 import type {
   ComputerUsePipCorner,
@@ -27,6 +28,8 @@ const DEFAULT_PREFERENCES: DesktopPreferences = {
 };
 
 export class DesktopPreferenceStore {
+  private saveQueue: Promise<void> = Promise.resolve();
+
   constructor(
     private readonly filePath: string,
     private readonly now: () => Date = () => new Date(),
@@ -45,10 +48,35 @@ export class DesktopPreferenceStore {
   }
 
   async save(preferences: DesktopPreferences): Promise<void> {
+    const sanitized = sanitizePreferences(preferences, this.now());
+    const operation = this.saveQueue.then(() => this.writePreferences(sanitized));
+    this.saveQueue = operation.catch(() => undefined);
+    return operation;
+  }
+
+  private async writePreferences(preferences: DesktopPreferences): Promise<void> {
     await mkdir(dirname(this.filePath), { recursive: true });
-    const temporaryPath = `${this.filePath}.tmp`;
-    await writeFile(temporaryPath, `${JSON.stringify(sanitizePreferences(preferences, this.now()), null, 2)}\n`, "utf8");
-    await rename(temporaryPath, this.filePath);
+    const temporaryPath = `${this.filePath}.${process.pid}.${randomUUID()}.tmp`;
+    try {
+      const file = await open(temporaryPath, "wx", 0o600);
+      try {
+        await file.writeFile(`${JSON.stringify(preferences, null, 2)}\n`, "utf8");
+        await file.sync();
+      } finally {
+        await file.close();
+      }
+      await rename(temporaryPath, this.filePath);
+      if (process.platform !== "win32") {
+        const directory = await open(dirname(this.filePath), "r");
+        try {
+          await directory.sync();
+        } finally {
+          await directory.close();
+        }
+      }
+    } finally {
+      await rm(temporaryPath, { force: true }).catch(() => undefined);
+    }
   }
 }
 

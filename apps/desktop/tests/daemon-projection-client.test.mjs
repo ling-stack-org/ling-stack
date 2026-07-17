@@ -1,6 +1,123 @@
 import assert from "node:assert/strict";
+import { getEventListeners } from "node:events";
 import test from "node:test";
-import { DaemonComputerUseProjectionClient } from "../dist/main/computer-use/daemon-projection-client.js";
+import {
+  DaemonComputerUseProjectionClient,
+  waitForDelay,
+} from "../dist/main/computer-use/daemon-projection-client.js";
+
+test("projection reconnect delay removes abort listeners after normal completion", async () => {
+  const controller = new AbortController();
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    await waitForDelay(0, controller.signal);
+  }
+  assert.equal(getEventListeners(controller.signal, "abort").length, 0);
+});
+
+test("Computer Use projection client rejects a snapshot from another workspace", async () => {
+  const client = new DaemonComputerUseProjectionClient(
+    "/workspace",
+    "http://daemon.test",
+    undefined,
+    async () => Response.json({
+      cwd: "/other-workspace",
+      projections: [],
+      latestSeq: 0,
+    }),
+  );
+
+  await assert.rejects(client.list(), /computer_use_snapshot_invalid/);
+});
+
+test("Computer Use projection subscription reconnects after a malformed upsert", async () => {
+  const currentProjection = projection("session-valid", "2026-07-15T00:00:01.000Z");
+  let streamCalls = 0;
+  const fetch = async (input) => {
+    const url = new URL(String(input));
+    if (url.pathname === "/computer-use/snapshot") {
+      return Response.json({ cwd: "/workspace", projections: [], latestSeq: 0 });
+    }
+    if (url.pathname === "/computer-use/stream") {
+      streamCalls += 1;
+      return streamCalls === 1
+        ? sse("computer_use_event", {
+            seq: 1,
+            kind: "upsert",
+            sessionId: "session-mismatch",
+            projection: currentProjection,
+            occurredAt: currentProjection.updatedAt,
+          })
+        : sse("computer_use_event", {
+            seq: 1,
+            kind: "upsert",
+            sessionId: currentProjection.sessionId,
+            projection: currentProjection,
+            occurredAt: currentProjection.updatedAt,
+          });
+    }
+    throw new Error(`Unexpected request: ${url}`);
+  };
+  const client = new DaemonComputerUseProjectionClient(
+    "/workspace",
+    "http://daemon.test",
+    async (_milliseconds, signal) => {
+      if (signal.aborted) {
+        throw signal.reason;
+      }
+      await Promise.resolve();
+    },
+    fetch,
+  );
+
+  let subscription;
+  const completed = new Promise((resolve) => {
+    subscription = client.subscribe((event) => {
+      if (event.kind === "upsert") {
+        subscription.close();
+        resolve();
+      }
+    });
+  });
+  await withTimeout(completed, 1_000);
+  assert.equal(streamCalls, 2);
+});
+
+test("Computer Use projection subscription reports a half-open stream as disconnected", async () => {
+  const connectionStates = [];
+  let streamCalls = 0;
+  const client = new DaemonComputerUseProjectionClient(
+    "/workspace",
+    "http://daemon.test",
+    async (_milliseconds, signal) => new Promise((resolve, reject) => {
+      signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+    }),
+    async (input) => {
+      const url = new URL(String(input));
+      if (url.pathname === "/computer-use/snapshot") {
+        return Response.json({ cwd: "/workspace", projections: [], latestSeq: 0 });
+      }
+      if (url.pathname === "/computer-use/stream") {
+        streamCalls += 1;
+        return new Response(new ReadableStream({ start() {} }), {
+          headers: { "Content-Type": "text/event-stream" },
+        });
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    },
+    undefined,
+    15,
+  );
+
+  const subscription = client.subscribe(
+    () => undefined,
+    (state) => connectionStates.push(state),
+  );
+  await withTimeout(waitFor(() => connectionStates.includes("disconnected")), 1_000);
+  subscription.close();
+
+  assert.deepEqual(connectionStates.slice(0, 2), ["connected", "disconnected"]);
+  assert.equal(streamCalls, 1);
+});
 
 test("Computer Use projection subscription refreshes after a daemon epoch reset", async () => {
   const firstProjection = projection("session-a", "2026-07-15T00:00:01.000Z");
@@ -309,5 +426,11 @@ async function withTimeout(promise, milliseconds) {
     ]);
   } finally {
     clearTimeout(timeout);
+  }
+}
+
+async function waitFor(predicate) {
+  while (!predicate()) {
+    await new Promise((resolve) => setTimeout(resolve, 1));
   }
 }

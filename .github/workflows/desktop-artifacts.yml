@@ -16,6 +16,7 @@ on:
       - "packages/runner-pi/**"
       - "packages/conversation-ui-core/**"
       - "packages/conversation-ui-react/**"
+      - "docs/release/evidence/**"
       - "package.json"
       - "pnpm-lock.yaml"
       - "pnpm-workspace.yaml"
@@ -35,6 +36,7 @@ on:
       - "packages/runner-pi/**"
       - "packages/conversation-ui-core/**"
       - "packages/conversation-ui-react/**"
+      - "docs/release/evidence/**"
       - "package.json"
       - "pnpm-lock.yaml"
       - "pnpm-workspace.yaml"
@@ -95,6 +97,7 @@ jobs:
           packages/contracts/test/computer-use.test.mjs
           packages/api-client/test/computer-use.test.mjs
           packages/daemon/test/computer-use-api.test.mjs
+          packages/daemon/test/computer-use-provider-eligibility.test.mjs
           packages/daemon/test/computer-use-producer.test.mjs
           packages/daemon/test/computer-use-registry-retention.test.mjs
           packages/daemon/test/computer-use-run-integration.test.mjs
@@ -102,12 +105,16 @@ jobs:
           packages/daemon/test/cua-driver.test.mjs
           packages/daemon/test/provider-health.test.mjs
           packages/daemon/test/plugin-manager-api.test.mjs
+          packages/daemon/test/windows-target-validation.test.mjs
+
+      - name: Validate release evidence schemas
+        run: corepack pnpm --filter @ling-stack/desktop verify:release-schemas
 
       - name: Run PiP renderer tests
         run: corepack pnpm --filter @ling-stack/desktop exec playwright test --config tests/playwright.renderer.config.mjs
 
       - name: Run Web Desktop bridge tests
-        run: corepack pnpm --filter @ling-stack/web exec playwright test e2e/app-shell-selectors.spec.ts e2e/desktop-computer-use-bridge.spec.ts
+        run: corepack pnpm --filter @ling-stack/web exec playwright test e2e/app-shell-selectors.spec.ts e2e/desktop-computer-use-bridge.spec.ts e2e/workspace.spec.ts
 
       - name: Run fake Computer Use smoke
         run: node apps/desktop/tests/run-computer-use-smoke.mjs
@@ -321,6 +328,7 @@ jobs:
           packages/contracts/test/computer-use.test.mjs
           packages/api-client/test/computer-use.test.mjs
           packages/daemon/test/computer-use-api.test.mjs
+          packages/daemon/test/computer-use-provider-eligibility.test.mjs
           packages/daemon/test/computer-use-producer.test.mjs
           packages/daemon/test/computer-use-registry-retention.test.mjs
           packages/daemon/test/computer-use-run-integration.test.mjs
@@ -328,12 +336,13 @@ jobs:
           packages/daemon/test/cua-driver.test.mjs
           packages/daemon/test/provider-health.test.mjs
           packages/daemon/test/plugin-manager-api.test.mjs
+          packages/daemon/test/windows-target-validation.test.mjs
 
       - name: Run PiP renderer tests
         run: corepack pnpm --filter @ling-stack/desktop exec playwright test --config tests/playwright.renderer.config.mjs
 
       - name: Run Web Desktop bridge tests
-        run: corepack pnpm --filter @ling-stack/web exec playwright test e2e/app-shell-selectors.spec.ts e2e/desktop-computer-use-bridge.spec.ts
+        run: corepack pnpm --filter @ling-stack/web exec playwright test e2e/app-shell-selectors.spec.ts e2e/desktop-computer-use-bridge.spec.ts e2e/workspace.spec.ts
 
       - name: Run fake Computer Use smoke
         run: node apps/desktop/tests/run-computer-use-smoke.mjs
@@ -350,6 +359,11 @@ jobs:
         run: |
           $providerDirectory = Join-Path $env:RUNNER_TEMP "ling-cua-driver-rs-v0.8.3"
           node apps/desktop/tests/verify-windows-cua-driver-provider.mjs --output-dir $providerDirectory
+          $providerBinary = Join-Path $providerDirectory "provider/cua-driver-rs-0.8.3-windows-x86_64/cua-driver.exe"
+          if (!(Test-Path -LiteralPath $providerBinary -PathType Leaf)) {
+            throw "Pinned provider binary is missing after acquisition"
+          }
+          "LING_WINDOWS_ACCEPTANCE_PROVIDER=$providerBinary" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Build unsigned Windows artifact
         run: corepack pnpm --filter @ling-stack/desktop package:win
@@ -452,6 +466,28 @@ jobs:
               ForEach-Object { $_.DirectoryName } |
               Sort-Object -Unique
           }
+          function Invoke-BoundedProcess {
+            param(
+              [Parameter(Mandatory = $true)][string]$FilePath,
+              [string[]]$ArgumentList = @(),
+              [int]$TimeoutSeconds = 120
+            )
+            $process = Start-Process -FilePath $FilePath -ArgumentList $ArgumentList -PassThru
+            if (!$process.WaitForExit($TimeoutSeconds * 1000)) {
+              $taskkill = Join-Path $env:WINDIR "System32/taskkill.exe"
+              if (Test-Path -LiteralPath $taskkill -PathType Leaf) {
+                & $taskkill /PID $process.Id /T /F *> $null
+              } else {
+                try {
+                  $process.Kill()
+                } catch {
+                  # The timeout remains fatal even if direct process cleanup fails.
+                }
+              }
+              throw ("Process timed out after {0}s: {1}" -f $TimeoutSeconds, $FilePath)
+            }
+            return [int]$process.ExitCode
+          }
           $preexistingInstallRoots = @(Find-LingDesktopInstallRoot)
           if ($preexistingInstallRoots.Count -ne 0) {
             throw ("Ling Stack is already installed in the hosted runner profile: {0}" -f $preexistingInstallRoots[0])
@@ -463,9 +499,9 @@ jobs:
           $primaryFailure = $null
           $cleanupFailure = $null
           try {
-            $install = Start-Process -FilePath $installer.FullName -ArgumentList @("/S") -Wait -PassThru
-            if ($install.ExitCode -ne 0) {
-              throw ("NSIS installer failed with exit code {0}" -f $install.ExitCode)
+            $installExitCode = Invoke-BoundedProcess -FilePath $installer.FullName -ArgumentList @("/S") -TimeoutSeconds 120
+            if ($installExitCode -ne 0) {
+              throw ("NSIS installer failed with exit code {0}" -f $installExitCode)
             }
 
             $installedRoots = @(Find-LingDesktopInstallRoot)
@@ -504,9 +540,9 @@ jobs:
                 if (!$uninstaller) {
                   throw "NSIS uninstaller is missing"
                 }
-                $uninstall = Start-Process -FilePath $uninstaller.FullName -ArgumentList @("/S") -Wait -PassThru
-                if ($uninstall.ExitCode -ne 0) {
-                  throw ("NSIS uninstaller failed with exit code {0}" -f $uninstall.ExitCode)
+                $uninstallExitCode = Invoke-BoundedProcess -FilePath $uninstaller.FullName -ArgumentList @("/S") -TimeoutSeconds 120
+                if ($uninstallExitCode -ne 0) {
+                  throw ("NSIS uninstaller failed with exit code {0}" -f $uninstallExitCode)
                 }
                 for ($attempt = 0; $attempt -lt 40 -and (Test-Path $installRoot); $attempt += 1) {
                   Start-Sleep -Milliseconds 250
@@ -529,6 +565,53 @@ jobs:
           if ($cleanupFailure) {
             throw $cleanupFailure
           }
+
+      - name: Write diagnostic Windows acceptance preflight
+        if: always()
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          New-Item -ItemType Directory -Force -Path apps/desktop/test-results | Out-Null
+          $release = (Resolve-Path "apps/desktop/release").Path
+          $installers = @(
+            Get-ChildItem -Path $release -File -Filter "*.exe" |
+              Where-Object { $_.Name -notmatch "__uninstaller|^Uninstall" } |
+              Sort-Object Name
+          )
+          $installerPath = if ($installers.Count -eq 1) { $installers[0].FullName } else { $null }
+          & apps/desktop/tests/run-windows-acceptance.ps1 `
+            -Mode Preflight `
+            -Output apps/desktop/test-results/windows-acceptance-preflight.json `
+            -LingAppPath "apps/desktop/release/win-unpacked/Ling Stack.exe" `
+            -LingInstallerPath $installerPath `
+            -ProviderBinary $env:LING_WINDOWS_ACCEPTANCE_PROVIDER
+          if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+          }
+          $report = Get-Content apps/desktop/test-results/windows-acceptance-preflight.json -Raw | ConvertFrom-Json -Depth 32
+          if ($report.summary.releaseReady -eq $true -or $report.summary.fullAcceptanceStatus -eq "PASS") {
+            throw "Unsigned diagnostic preflight must never claim Full Windows acceptance"
+          }
+          foreach ($gateId in @("candidate-binding", "install-cleanliness", "provider-verification")) {
+            $gate = @($report.gates | Where-Object { $_.id -eq $gateId })
+            if ($gate.Count -ne 1 -or $gate[0].status -ne "PASS") {
+              $observed = if ($gate.Count -eq 1) { $gate[0].status } else { "missing" }
+              throw ("Unsigned diagnostic preflight did not prove {0}: {1}" -f $gateId, $observed)
+            }
+          }
+          $providerSmokeGate = @($report.gates | Where-Object { $_.id -eq "provider-smoke" })
+          if ($providerSmokeGate.Count -ne 1 -or $providerSmokeGate[0].status -ne "SKIP") {
+            throw "Unsigned diagnostic preflight must skip, not pass or fail, real provider smoke"
+          }
+
+      - name: Upload Windows acceptance preflight
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ling-stack-desktop-windows-acceptance-preflight
+          if-no-files-found: warn
+          retention-days: 14
+          path: apps/desktop/test-results/windows-acceptance-preflight.json
 
       - name: Check tracked-file whitespace
         shell: pwsh

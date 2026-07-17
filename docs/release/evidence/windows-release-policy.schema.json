@@ -1,0 +1,72 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ling-stack.dev/schemas/windows-release-policy-v2.json",
+  "title": "Ling Desktop Windows Approved Release Policy",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "kind",
+    "policyVersion",
+    "status",
+    "approvedBy",
+    "approvedAt",
+    "lingSignerSubject",
+    "providerSignerSubject",
+    "lingSignerCertificateSha256",
+    "providerSignerCertificateSha256",
+    "supportedWindowsBuilds",
+    "manualEvidenceReviewers",
+    "reviewerKeys",
+    "candidateBuildAttestors"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 2 },
+    "kind": { "const": "ling.windows.release-policy" },
+    "policyVersion": { "const": 2 },
+    "status": { "const": "approved" },
+    "approvedBy": { "type": "string", "minLength": 1 },
+    "approvedAt": { "type": "string", "format": "date-time" },
+    "lingSignerSubject": { "type": "string", "minLength": 1 },
+    "providerSignerSubject": { "type": "string", "minLength": 1 },
+    "lingSignerCertificateSha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "providerSignerCertificateSha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "supportedWindowsBuilds": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "manualEvidenceReviewers": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "reviewerKeys": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/attestorKey" }
+    },
+    "candidateBuildAttestors": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/attestorKey" }
+    }
+  },
+  "$defs": {
+    "attestorKey": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "keyId", "algorithm", "publicKeySpkiSha256"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "keyId": { "type": "string", "minLength": 1 },
+        "algorithm": { "const": "RSA-SHA256" },
+        "publicKeySpkiSha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      }
+    }
+  }
+}

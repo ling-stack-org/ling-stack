@@ -1,6 +1,9 @@
 export const DESKTOP_IPC_CHANNELS = {
   daemonStatus: "ling-desktop:daemon:status",
   daemonRestart: "ling-desktop:daemon:restart",
+  navigationIntentGet: "ling-desktop:navigation:intent-get",
+  navigationIntentChanged: "ling-desktop:navigation:intent-changed",
+  navigationIntentAck: "ling-desktop:navigation:intent-ack",
   computerUseReportLocale: "ling-desktop:computer-use:report-locale",
   computerUseReportSelectedConversation: "ling-desktop:computer-use:report-selected-conversation",
   computerUseReportHostLayout: "ling-desktop:computer-use:report-host-layout",

@@ -59,6 +59,7 @@ import {
 import type { ControlPlaneEventHub } from "../control-plane/events.js";
 import { appendControlPlaneEvent } from "../control-plane/events.js";
 import { CuaDriverComputerUseProjectionProducer } from "../computer-use/cua-driver-producer.js";
+import { resolveEligibleCuaDriverProjectionServerIds } from "../computer-use/provider-eligibility.js";
 import type { ComputerUseProjectionRegistry } from "../computer-use/registry.js";
 import { renderUsedMemoryPrompt } from "../memory/prompt.js";
 import { listExecutableSkillDefinitions } from "../skills/registry.js";
@@ -502,12 +503,22 @@ export async function executeRunRequest(
         runId,
       },
     });
+    const managedPluginDescriptors = listBundledPackageDescriptors();
     const managedPluginRuntime = createManagedPluginRuntimeSnapshot({
       cwd: runRequest.cwd,
       runId,
       store,
-      descriptors: listBundledPackageDescriptors(),
+      descriptors: managedPluginDescriptors,
       now: createdAt,
+    });
+    const eligibleComputerUseProviderServerIds = resolveEligibleCuaDriverProjectionServerIds({
+      store,
+      descriptors: managedPluginDescriptors,
+      runtimeSnapshot: managedPluginRuntime,
+      runId,
+      cwd: runRequest.cwd,
+      now: createdAt,
+      authorizedServerIds: mcpTools.map((tool) => tool.serverId),
     });
     appendWorkUnitTransitionControlPlaneEvent(store, options.controlPlaneEvents, workspaceCwd, workUnit.id, "queued", "claimed", runId, createdAt);
     run = store.createRun({
@@ -553,7 +564,7 @@ export async function executeRunRequest(
     store.linkRunToWorkUnit(run.id, workUnit.id, createdAt);
     markLingThreadRunActive(store, thread.id, run.id, createdAt);
     storeRegistry.rememberRun(run.id, store);
-    computerUseProducer = options.computerUsePreviews
+    computerUseProducer = options.computerUsePreviews && eligibleComputerUseProviderServerIds.length > 0
       ? new CuaDriverComputerUseProjectionProducer({
           registry: options.computerUsePreviews,
           cwd: workspaceCwd,
@@ -562,6 +573,7 @@ export async function executeRunRequest(
           conversationId: thread.id,
           turnId: turn.id,
           startedAt: createdAt,
+          eligibleServerIds: eligibleComputerUseProviderServerIds,
         })
       : undefined;
     runnerRequest = {

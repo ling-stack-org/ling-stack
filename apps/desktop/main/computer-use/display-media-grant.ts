@@ -1,6 +1,7 @@
 export interface ComputerUseDisplayMediaSourceGrant {
   readonly type: "screen" | "window";
   readonly target: {
+    readonly processId?: number;
     readonly nativeWindowId?: string;
     readonly electronSourceId?: string;
   };
@@ -45,6 +46,7 @@ export interface ConsumedComputerUseDisplayMediaGrant {
   readonly sessionId: string;
   readonly descriptorId: string;
   readonly revision: number;
+  readonly authorizationGrantId: string;
 }
 
 /**
@@ -115,6 +117,7 @@ export class ComputerUseDisplayMediaGrantStore {
       sessionId: current.sessionId,
       descriptorId: current.descriptorId,
       revision: current.revision,
+      authorizationGrantId: current.authorizationGrantId,
     };
   }
 

@@ -127,7 +127,9 @@ export function resolveCuaDriverCommand(
         join(homeDir, ".cua-driver", "packages", "current", "cua-driver.exe"),
         join(homeDir, ".local", "bin", "cua-driver.exe"),
       ]
-    : [
+    : platform === "darwin"
+      ? defaultCuaDriverCommandCandidates(homeDir)
+      : [
         join(homeDir, ".local/bin/cua-driver"),
         "/opt/homebrew/bin/cua-driver",
         "/usr/local/bin/cua-driver",

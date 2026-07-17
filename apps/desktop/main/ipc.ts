@@ -13,6 +13,8 @@ import {
 import { DESKTOP_IPC_CHANNELS } from "../shared/ipc-channels.js";
 import type { ComputerUsePreviewCoordinator } from "./computer-use/coordinator.js";
 import type { DesktopDaemonLifecycle } from "./daemon-lifecycle.js";
+import { DesktopNavigationIntentStore } from "./navigation-intent.js";
+import { sendToLiveDesktopWindow } from "./safe-window-send.js";
 
 const MAX_HOST_OBSTACLES = 128;
 const MAX_DESKTOP_COORDINATE = 1_000_000;
@@ -24,10 +26,16 @@ export function registerDesktopIpc(input: {
   readonly daemon: DesktopDaemonLifecycle;
   readonly computerUse: ComputerUsePreviewCoordinator;
   readonly getMainWindow: () => BrowserWindow | undefined;
+  readonly navigationIntents?: DesktopNavigationIntentStore;
   readonly fixedComputerUseConversationId?: string;
   readonly ipcMainImpl?: Pick<IpcMain, "handle" | "on" | "removeHandler" | "removeAllListeners">;
 }): () => void {
   const desktopIpcMain = input.ipcMainImpl ?? resolveIpcMain();
+  const navigationIntents = input.navigationIntents ?? new DesktopNavigationIntentStore();
+  let pendingRendererSelectionObserved = false;
+  let pendingRendererSelection: string | undefined;
+  let pendingRendererSelectionApplied = false;
+  let pendingRendererSelectionAppliedValue: string | undefined;
   const isMainWindowSender = (event: Electron.IpcMainInvokeEvent | Electron.IpcMainEvent): boolean =>
     input.getMainWindow()?.webContents.id === event.sender.id;
   const isPreviewSender = (event: Electron.IpcMainInvokeEvent | Electron.IpcMainEvent): boolean =>
@@ -39,6 +47,29 @@ export function registerDesktopIpc(input: {
     isMainWindowSender(event)
       ? input.daemon.restart()
       : { state: "disconnected", baseUrl: "", ownedByDesktop: false, message: "unauthorized_sender" });
+  desktopIpcMain.handle(DESKTOP_IPC_CHANNELS.navigationIntentGet, async (event) =>
+    isMainWindowSender(event) ? navigationIntents.getPendingIntent() : undefined);
+  desktopIpcMain.handle(DESKTOP_IPC_CHANNELS.navigationIntentAck, async (event, requestId: unknown) => {
+    if (!isMainWindowSender(event) || !isPositiveSafeInteger(requestId)) {
+      return { accepted: false, reason: "unauthorized_or_invalid_navigation_intent" };
+    }
+    const result = navigationIntents.acknowledge(requestId);
+    if (
+      result.accepted
+      && !navigationIntents.getPendingIntent()
+      && pendingRendererSelectionObserved
+      && (!pendingRendererSelectionApplied || pendingRendererSelectionAppliedValue !== pendingRendererSelection)
+    ) {
+      input.computerUse.reportSelectedConversation(pendingRendererSelection);
+    }
+    if (result.accepted && !navigationIntents.getPendingIntent()) {
+      pendingRendererSelectionObserved = false;
+      pendingRendererSelection = undefined;
+      pendingRendererSelectionApplied = false;
+      pendingRendererSelectionAppliedValue = undefined;
+    }
+    return result;
+  });
   desktopIpcMain.handle(DESKTOP_IPC_CHANNELS.computerUseSummaryGet, async (event) =>
     isMainWindowSender(event) ? input.computerUse.getSummary() : undefined);
   desktopIpcMain.handle(DESKTOP_IPC_CHANNELS.computerUseAutoShowGet, async (event) =>
@@ -74,10 +105,27 @@ export function registerDesktopIpc(input: {
     if (!isMainWindowSender(event)) {
       return;
     }
-    input.computerUse.reportSelectedConversation(
-      input.fixedComputerUseConversationId ??
-        (typeof conversationId === "string" && conversationId.trim() ? conversationId : undefined),
-    );
+    const selectedConversationId = input.fixedComputerUseConversationId ??
+      (typeof conversationId === "string" && conversationId.trim() ? conversationId.trim() : undefined);
+    if (navigationIntents.getPendingIntent()) {
+      pendingRendererSelectionObserved = true;
+      pendingRendererSelection = selectedConversationId;
+    }
+    if (!navigationIntents.acceptRendererSelection(selectedConversationId)) {
+      return;
+    }
+    const selectionToApply = !navigationIntents.getPendingIntent() && pendingRendererSelectionObserved
+      ? pendingRendererSelection
+      : selectedConversationId;
+    input.computerUse.reportSelectedConversation(selectionToApply);
+    pendingRendererSelectionApplied = true;
+    pendingRendererSelectionAppliedValue = selectionToApply;
+    if (!navigationIntents.getPendingIntent()) {
+      pendingRendererSelectionObserved = false;
+      pendingRendererSelection = undefined;
+      pendingRendererSelectionApplied = false;
+      pendingRendererSelectionAppliedValue = undefined;
+    }
   });
   desktopIpcMain.on(DESKTOP_IPC_CHANNELS.computerUseReportHostLayout, (event, layout: unknown) => {
     if (!isMainWindowSender(event)) {
@@ -216,10 +264,22 @@ export function registerDesktopIpc(input: {
   });
 
   const unsubscribeStatus = input.daemon.onStatusChanged((status) => {
-    input.getMainWindow()?.webContents.send(DESKTOP_IPC_CHANNELS.daemonStatus, status);
+    sendToLiveDesktopWindow(input.getMainWindow(), DESKTOP_IPC_CHANNELS.daemonStatus, status);
+  });
+  const unsubscribeNavigationIntents = navigationIntents.onIntentChanged((intent) => {
+    pendingRendererSelectionObserved = false;
+    pendingRendererSelection = undefined;
+    pendingRendererSelectionApplied = false;
+    pendingRendererSelectionAppliedValue = undefined;
+    sendToLiveDesktopWindow(
+      input.getMainWindow(),
+      DESKTOP_IPC_CHANNELS.navigationIntentChanged,
+      intent,
+    );
   });
   return () => {
     unsubscribeStatus();
+    unsubscribeNavigationIntents();
     for (const channel of Object.values(DESKTOP_IPC_CHANNELS)) {
       desktopIpcMain.removeHandler(channel);
       desktopIpcMain.removeAllListeners(channel);

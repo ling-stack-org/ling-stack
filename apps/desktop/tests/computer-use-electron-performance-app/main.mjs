@@ -1269,11 +1269,9 @@ async function createRealCaptureTargetDescriptor() {
     throw new Error(`electron_real_capture_perf_source_ambiguous:${matches.length}`);
   }
   const electronSourceId = matches[0].id;
-  const nativeWindowId = process.platform === "win32"
-    ? parseElectronWindowSourceId(electronSourceId)
-    : undefined;
-  if (process.platform === "win32" && !nativeWindowId) {
-    throw new Error("electron_real_capture_perf_windows_source_id_invalid");
+  const nativeWindowId = parseElectronWindowSourceId(electronSourceId);
+  if (!nativeWindowId) {
+    throw new Error("electron_real_capture_perf_native_source_id_invalid");
   }
   const descriptorId = `preview_real_capture_perf_descriptor_${process.pid}`;
     return {
@@ -1285,7 +1283,8 @@ async function createRealCaptureTargetDescriptor() {
         sourceKind: "window",
         target: {
           electronSourceId,
-          ...(process.platform === "win32" ? { processId: process.pid, nativeWindowId } : {}),
+          processId: process.pid,
+          nativeWindowId,
         },
         authorization: {
           grantId: `preview_real_capture_perf_grant_${process.pid}`,

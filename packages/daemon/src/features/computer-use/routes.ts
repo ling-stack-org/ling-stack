@@ -1,5 +1,6 @@
 import { randomUUID, timingSafeEqual } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
+import { resolve } from "node:path";
 import type {
   ComputerUsePreviewProjection,
   StopComputerUseRequest,
@@ -14,8 +15,13 @@ import { ensureRunCancelled } from "../runs/cancellation.js";
 import { isAllowedLocalOrigin } from "../../shared/local-workspace-access.js";
 import { readOptionalJsonBody } from "../../shared/request.js";
 import { writeJson, writeSse, writeSseHead } from "../../shared/response.js";
+import { listBundledPackageDescriptors } from "../plugins/source-index.js";
+import { resolveManagedCuaDriverProvider } from "./provider-eligibility.js";
+import { validateProviderTargetOwnership } from "./windows-target-validation.js";
 
 const STOP_ACK_TIMEOUT_MS = 10_000;
+const PRIVATE_SOURCE_OWNERSHIP_TIMEOUT_MS = 1_500;
+const stopRequestsInFlight = new WeakMap<DaemonContext, Map<string, Set<string>>>();
 
 export async function handleComputerUseRoute(
   request: IncomingMessage,
@@ -63,6 +69,11 @@ export async function handleComputerUseRoute(
         protocolVersion: 1,
         capabilities: ["preview-source"],
         bridgeTokenAccepted: true,
+        routeTokenAccepted: configuredTokenMatches(
+          context.computerUseRouteToken,
+          request.headers["x-ling-desktop-bridge-token"],
+        ),
+        defaultWorkspaceCwd: context.config.defaultWorkspaceCwd,
       });
       return true;
     }
@@ -99,7 +110,11 @@ export async function handleComputerUseRoute(
         return true;
       }
       const cwd = readCwd(url);
-      writeJson(response, 200, { cwd, projections: context.computerUsePreviews.list(cwd) });
+      const snapshot = context.computerUsePreviews.snapshot(cwd);
+      writeJson(response, 200, {
+        cwd: snapshot.cwd,
+        projections: snapshot.projections,
+      });
       return true;
     }
 
@@ -172,7 +187,7 @@ export async function handleComputerUseRoute(
         writeJson(response, 405, { error: "method_not_allowed", message: "Computer Use private source supports GET only." });
         return true;
       }
-      handlePrivatePreviewSource(request, response, url, context, sourceRoute.sessionId);
+      await handlePrivatePreviewSource(request, response, url, context, sourceRoute.sessionId);
       return true;
     }
 
@@ -197,13 +212,13 @@ export async function handleComputerUseRoute(
   }
 }
 
-function handlePrivatePreviewSource(
+async function handlePrivatePreviewSource(
   request: IncomingMessage,
   response: ServerResponse,
   url: URL,
   context: DaemonContext,
   sessionId: string,
-): void {
+): Promise<void> {
   response.removeHeader("Access-Control-Allow-Origin");
   const tokenStatus = desktopBridgeTokenStatus(request, context);
   if (tokenStatus === "unavailable") {
@@ -215,7 +230,7 @@ function handlePrivatePreviewSource(
     return;
   }
   const cwd = readCwd(url);
-  const projection = context.computerUsePreviews.get(cwd, sessionId);
+  let projection = context.computerUsePreviews.get(cwd, sessionId);
   if (!projection?.preview) {
     writePrivateJson(response, 404, { error: "computer_use_preview_not_found", message: "The Computer Use preview projection is unavailable." });
     return;
@@ -225,15 +240,94 @@ function handlePrivatePreviewSource(
     projection.preview.descriptorId,
     projection.preview.revision,
   );
-  const descriptor = resolvedDescriptor
-    ? context.computerUsePreviews.renewPrivateDescriptor(
+  if (!resolvedDescriptor) {
+    writePrivateJson(response, 404, { error: "computer_use_descriptor_not_found", message: "The authorized preview descriptor is unavailable or expired." });
+    return;
+  }
+  if (resolvedDescriptor.sourceKind === "window") {
+    const processId = resolvedDescriptor.target.processId;
+    const nativeWindowId = resolvedDescriptor.target.nativeWindowId;
+    const store = context.storeRegistry.getStore(cwd);
+    const now = new Date().toISOString();
+    const server = resolveManagedCuaDriverProvider({
+      store,
+      descriptors: listBundledPackageDescriptors(),
+      now,
+      platform: resolvedDescriptor.platform === "windows" ? "win32" : "darwin",
+    })?.server;
+    const ownershipAbort = createPrivateSourceOwnershipAbort(
+      request,
+      response,
+      context.computerUseTargetOwnershipTimeoutMs ?? PRIVATE_SOURCE_OWNERSHIP_TIMEOUT_MS,
+    );
+    let targetOwned: boolean;
+    try {
+      targetOwned = Boolean(
+        server &&
+        processId !== undefined &&
+        nativeWindowId &&
+        await validateProviderTargetOwnership({
+          platform: resolvedDescriptor.platform,
+          server,
+          mcpBroker: context.mcpBroker,
+          secretResolver: context.secretResolver,
+          processId,
+          nativeWindowId,
+          now,
+          signal: ownershipAbort.signal,
+        }),
+      );
+    } catch (error) {
+      if (!ownershipAbort.signal.aborted) {
+        throw error;
+      }
+      if (ownershipAbort.timedOut() && !response.destroyed && !response.writableEnded) {
+        writePrivateJson(response, 504, {
+          error: "computer_use_descriptor_target_validation_timeout",
+          message: "The provider did not validate the current target before the descriptor deadline.",
+        });
+      }
+      return;
+    } finally {
+      ownershipAbort.close();
+    }
+    if (!targetOwned) {
+      context.computerUsePreviews.revokePrivateDescriptor(
         cwd,
         resolvedDescriptor.descriptorId,
         resolvedDescriptor.revision,
-      ) ?? resolvedDescriptor
-    : undefined;
+      );
+      writePrivateJson(response, 404, {
+        error: "computer_use_descriptor_target_owner_mismatch",
+        message: "The authorized target is no longer owned by the expected process.",
+      });
+      return;
+    }
+  }
+  const currentProjection = context.computerUsePreviews.get(cwd, sessionId);
+  if (
+    !currentProjection
+    || currentProjection.sessionId !== sessionId
+    || isTerminalComputerUseStatus(currentProjection.status)
+    || currentProjection.preview?.descriptorId !== resolvedDescriptor.descriptorId
+    || currentProjection.preview.revision !== resolvedDescriptor.revision
+  ) {
+    writePrivateJson(response, 404, {
+      error: "computer_use_descriptor_not_found",
+      message: "The authorized preview descriptor is no longer current.",
+    });
+    return;
+  }
+  const descriptor = context.computerUsePreviews.renewPrivateDescriptor(
+    cwd,
+    resolvedDescriptor.descriptorId,
+    resolvedDescriptor.revision,
+  );
   if (!descriptor) {
-    writePrivateJson(response, 404, { error: "computer_use_descriptor_not_found", message: "The authorized preview descriptor is unavailable or expired." });
+    writePrivateJson(response, 404, {
+      error: "computer_use_descriptor_not_found",
+      message: "The authorized preview descriptor is unavailable or expired.",
+    });
     return;
   }
   writePrivateJson(response, 200, descriptor);
@@ -247,7 +341,7 @@ async function handleStopComputerUse(
   sessionId: string,
 ): Promise<void> {
   const cwd = readCwd(url);
-  const projection = context.computerUsePreviews.get(cwd, sessionId);
+  let projection = context.computerUsePreviews.get(cwd, sessionId);
   if (!projection) {
     writeJson(response, 404, { error: "computer_use_session_not_found", message: `Computer Use session was not found: ${sessionId}` });
     return;
@@ -256,60 +350,165 @@ async function handleStopComputerUse(
     writeJson(response, 409, { error: "computer_use_session_terminal", message: `Computer Use session is already ${projection.status}.` });
     return;
   }
+  if (projection.status === "stopping") {
+    writeJson(response, 409, { error: "computer_use_session_stopping", message: `Computer Use session is already stopping: ${sessionId}` });
+    return;
+  }
 
-  const body = readStopRequest(await readOptionalJsonBody(request, context.config.maxBodyBytes));
-  const requestedAt = new Date().toISOString();
-  const auditId = `computer_use_stop_${randomUUID()}`;
-  const stopping = context.computerUsePreviews.upsert(cwd, {
-    ...projection,
-    status: "stopping",
-    updatedAt: requestedAt,
-  });
-  const result = await requestRuntimeStop(context, cwd, stopping, body.reason);
-  const acknowledgedAt = result.acknowledged ? new Date().toISOString() : undefined;
-  const currentProjection = context.computerUsePreviews.get(cwd, sessionId);
-  const finalProjection = result.acknowledged
-    ? context.computerUsePreviews.upsert(cwd, {
-        ...stopping,
-        status: "cancelled",
-        updatedAt: acknowledgedAt as string,
-        terminalAt: acknowledgedAt,
-      })
-    : currentProjection?.status === "stopping"
-      ? context.computerUsePreviews.upsert(cwd, {
-          ...projection,
-          updatedAt: nextIsoTimestampAfter(stopping.updatedAt),
-        })
-      : currentProjection ?? projection;
-  context.computerUsePreviews.recordStopAudit({
-    auditId,
-    cwd,
-    sessionId,
-    requestedAt,
-    reason: body.reason,
-    accepted: result.accepted,
-    acknowledged: result.acknowledged,
-    acknowledgedAt,
-    resultReason: result.reason,
-  });
-  const responseBody: StopComputerUseResponse & { readonly error?: string; readonly message?: string } = {
-    sessionId,
-    accepted: result.accepted,
-    acknowledged: result.acknowledged,
-    auditId,
-    projection: finalProjection,
-    reason: result.reason,
-    acknowledgedAt,
-    ...(!result.acknowledged
-      ? {
-          error: result.reason ?? "computer_use_stop_not_acknowledged",
-          message: result.accepted
-            ? "Computer Use runtime did not acknowledge Stop. The task may still be running; retry Stop."
-            : "Computer Use Stop was rejected before runtime acknowledgement.",
-        }
-      : {}),
+  if (!beginStopRequest(context, cwd, sessionId)) {
+    writeJson(response, 409, { error: "computer_use_session_stopping", message: `Computer Use session is already stopping: ${sessionId}` });
+    return;
+  }
+  try {
+    const body = readStopRequest(await readOptionalJsonBody(request, context.config.maxBodyBytes));
+    projection = context.computerUsePreviews.get(cwd, sessionId);
+    if (!projection) {
+      writeJson(response, 404, { error: "computer_use_session_not_found", message: `Computer Use session was not found: ${sessionId}` });
+      return;
+    }
+    if (isTerminalComputerUseStatus(projection.status)) {
+      writeJson(response, 409, { error: "computer_use_session_terminal", message: `Computer Use session is already ${projection.status}.` });
+      return;
+    }
+    if (projection.status === "stopping") {
+      writeJson(response, 409, { error: "computer_use_session_stopping", message: `Computer Use session is already stopping: ${sessionId}` });
+      return;
+    }
+    const requestedAt = new Date().toISOString();
+    const auditId = `computer_use_stop_${randomUUID()}`;
+    const stopping = context.computerUsePreviews.upsert(cwd, {
+      ...projection,
+      status: "stopping",
+      updatedAt: requestedAt,
+    });
+    const result: Awaited<ReturnType<typeof requestRuntimeStop>> = await requestRuntimeStop(
+      context,
+      cwd,
+      stopping,
+      body.reason,
+    ).catch(() => ({
+      accepted: false,
+      acknowledged: false,
+      reason: "computer_use_stop_handler_failed",
+    }));
+    const acknowledgedAt = result.acknowledged ? new Date().toISOString() : undefined;
+    const currentProjection = context.computerUsePreviews.get(cwd, sessionId);
+    const terminalBase = currentProjection ?? stopping;
+    const finalProjection = result.acknowledged
+      ? currentProjection && isTerminalComputerUseStatus(currentProjection.status)
+        ? currentProjection
+        : context.computerUsePreviews.upsert(cwd, {
+            ...terminalBase,
+            status: result.terminalStatus ?? "cancelled",
+            updatedAt: acknowledgedAt as string,
+            terminalAt: acknowledgedAt,
+          })
+      : currentProjection?.status === "stopping"
+        ? context.computerUsePreviews.upsert(cwd, {
+            ...currentProjection,
+            status: projection.status,
+            updatedAt: nextIsoTimestampAfter(currentProjection.updatedAt),
+          })
+        : currentProjection ?? projection;
+    context.computerUsePreviews.recordStopAudit({
+      auditId,
+      cwd,
+      sessionId,
+      requestedAt,
+      reason: body.reason,
+      accepted: result.accepted,
+      acknowledged: result.acknowledged,
+      acknowledgedAt,
+      resultReason: result.reason,
+    });
+    const responseBody: StopComputerUseResponse & { readonly error?: string; readonly message?: string } = {
+      sessionId,
+      accepted: result.accepted,
+      acknowledged: result.acknowledged,
+      auditId,
+      projection: finalProjection,
+      reason: result.reason,
+      acknowledgedAt,
+      ...(!result.acknowledged
+        ? {
+            error: result.reason ?? "computer_use_stop_not_acknowledged",
+            message: result.accepted
+              ? "Computer Use runtime did not acknowledge Stop. The task may still be running; retry Stop."
+              : "Computer Use Stop was rejected before runtime acknowledgement.",
+          }
+        : {}),
+    };
+    writeJson(response, result.acknowledged ? 200 : result.accepted ? 504 : 409, responseBody);
+  } finally {
+    endStopRequest(context, cwd, sessionId);
+  }
+}
+
+function beginStopRequest(context: DaemonContext, cwd: string, sessionId: string): boolean {
+  const normalizedCwd = resolve(cwd);
+  let workspaces = stopRequestsInFlight.get(context);
+  if (!workspaces) {
+    workspaces = new Map();
+    stopRequestsInFlight.set(context, workspaces);
+  }
+  let sessions = workspaces.get(normalizedCwd);
+  if (!sessions) {
+    sessions = new Set();
+    workspaces.set(normalizedCwd, sessions);
+  }
+  if (sessions.has(sessionId)) {
+    return false;
+  }
+  sessions.add(sessionId);
+  return true;
+}
+
+function endStopRequest(context: DaemonContext, cwd: string, sessionId: string): void {
+  const workspaces = stopRequestsInFlight.get(context);
+  const normalizedCwd = resolve(cwd);
+  const sessions = workspaces?.get(normalizedCwd);
+  sessions?.delete(sessionId);
+  if (sessions?.size === 0) {
+    workspaces?.delete(normalizedCwd);
+  }
+  if (workspaces?.size === 0) {
+    stopRequestsInFlight.delete(context);
+  }
+}
+
+function createPrivateSourceOwnershipAbort(
+  request: IncomingMessage,
+  response: ServerResponse,
+  timeoutMs: number,
+): {
+  readonly signal: AbortSignal;
+  readonly timedOut: () => boolean;
+  readonly close: () => void;
+} {
+  const controller = new AbortController();
+  let deadlineReached = false;
+  const abortForClientDisconnect = (): void => {
+    controller.abort(new Error("computer_use_descriptor_client_disconnected"));
   };
-  writeJson(response, result.acknowledged ? 200 : result.accepted ? 504 : 409, responseBody);
+  const timeout = setTimeout(() => {
+    deadlineReached = true;
+    controller.abort(new Error("computer_use_descriptor_target_validation_timeout"));
+  }, timeoutMs);
+  timeout.unref?.();
+  request.once("aborted", abortForClientDisconnect);
+  response.once("close", abortForClientDisconnect);
+  if (request.aborted || response.destroyed) {
+    abortForClientDisconnect();
+  }
+  return {
+    signal: controller.signal,
+    timedOut: () => deadlineReached,
+    close: () => {
+      clearTimeout(timeout);
+      request.off("aborted", abortForClientDisconnect);
+      response.off("close", abortForClientDisconnect);
+    },
+  };
 }
 
 function nextIsoTimestampAfter(value: string): string {
@@ -321,7 +520,15 @@ async function requestRuntimeStop(
   cwd: string,
   projection: ComputerUsePreviewProjection,
   reason: string | undefined,
-): Promise<{ readonly accepted: boolean; readonly acknowledged: boolean; readonly reason?: string }> {
+): Promise<{
+  readonly accepted: boolean;
+  readonly acknowledged: boolean;
+  readonly reason?: string;
+  readonly terminalStatus?: Extract<
+    ComputerUsePreviewProjection["status"],
+    "succeeded" | "failed" | "cancelled"
+  >;
+}> {
   if (context.computerUseStop) {
     return context.computerUseStop({ cwd, projection, reason });
   }
@@ -334,7 +541,12 @@ async function requestRuntimeStop(
     return { accepted: false, acknowledged: false, reason: "computer_use_run_not_found" };
   }
   if (run.status === "succeeded" || run.status === "failed" || run.status === "cancelled") {
-    return { accepted: true, acknowledged: true, reason: `run_already_${run.status}` };
+    return {
+      accepted: true,
+      acknowledged: true,
+      reason: `run_already_${run.status}`,
+      terminalStatus: run.status,
+    };
   }
   const activeRun = context.activeRuns.get(run.id);
   if (!activeRun?.completion) {
@@ -354,10 +566,20 @@ async function requestRuntimeStop(
     return { accepted: true, acknowledged: false, reason: "computer_use_stop_ack_timeout" };
   }
   const terminalRun = store.getRun(run.id);
-  if (!terminalRun || !["succeeded", "failed", "cancelled"].includes(terminalRun.status)) {
+  if (
+    !terminalRun ||
+    (terminalRun.status !== "succeeded" &&
+      terminalRun.status !== "failed" &&
+      terminalRun.status !== "cancelled")
+  ) {
     return { accepted: true, acknowledged: false, reason: "computer_use_run_not_terminal" };
   }
-  return { accepted: true, acknowledged: true, reason: `run_${terminalRun.status}` };
+  return {
+    accepted: true,
+    acknowledged: true,
+    reason: `run_${terminalRun.status}`,
+    terminalStatus: terminalRun.status,
+  };
 }
 
 async function waitForRuntimeCompletion(completion: Promise<unknown>, timeoutMs: number): Promise<boolean> {
@@ -426,7 +648,7 @@ function readIntegerQuery(url: URL, key: string, fallback: number, minimum: numb
     return fallback;
   }
   const value = Number.parseInt(raw, 10);
-  if (!Number.isInteger(value) || value < minimum || String(value) !== raw) {
+  if (!Number.isSafeInteger(value) || value < minimum || String(value) !== raw) {
     throw new Error(`${key} must be an integer greater than or equal to ${minimum}`);
   }
   return value;
@@ -450,8 +672,7 @@ function desktopBridgeTokenStatus(
   if (!configuredToken) {
     return "unavailable";
   }
-  const providedToken = request.headers["x-ling-desktop-bridge-token"];
-  return typeof providedToken === "string" && safeTokenEquals(providedToken, configuredToken)
+  return configuredTokenMatches(configuredToken, request.headers["x-ling-desktop-bridge-token"])
     ? "accepted"
     : "forbidden";
 }
@@ -471,10 +692,22 @@ function computerUseRouteAuthorization(
   if (!configuredToken) {
     return "unavailable";
   }
-  const providedToken = request.headers[COMPUTER_USE_ROUTE_TOKEN_HEADER.toLowerCase()];
-  return typeof providedToken === "string" && safeTokenEquals(providedToken, configuredToken)
+  return configuredTokenMatches(
+    configuredToken,
+    request.headers[COMPUTER_USE_ROUTE_TOKEN_HEADER.toLowerCase()],
+  )
     ? "accepted"
     : "forbidden";
+}
+
+function configuredTokenMatches(
+  configuredToken: string | undefined,
+  providedToken: string | readonly string[] | undefined,
+): boolean {
+  return typeof configuredToken === "string" &&
+    configuredToken.length > 0 &&
+    typeof providedToken === "string" &&
+    safeTokenEquals(providedToken, configuredToken);
 }
 
 function writePrivateJson(response: ServerResponse, statusCode: number, body: unknown): void {

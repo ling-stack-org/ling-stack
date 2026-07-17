@@ -1,14 +1,29 @@
 # Desktop Computer Use Picture-in-Picture
 
-Status: approved design direction, implementation in progress; capture-request provenance,
+Status: approved design direction; the local implementation baseline is verified and release
+acceptance remains in progress. Capture-request provenance,
 exact loaded-document and navigation binding, provisional-idle renderer startup, bounded
 zero-frame recovery, decoded-frame readiness polling, fail-safe media release, Desktop-local
 source generations, current-session controls, Cua native-window identity handoff, current-host
 real-capture performance, and the unsigned macOS arm64/x64 `.app` plus mounted-DMG packaged
-provenance matrix are verified. Apple Developer ID signing/notarization and Gatekeeper,
+provenance matrix are verified. Fail-closed signed-candidate/TCC/final-evidence and Windows
+Preflight/Full acceptance harnesses are also implemented locally. The macOS harness binds each
+release script to its recorded harness-commit Git blob, current file bytes, and SHA-256; Windows Full
+requires caller-fixed candidate-commit, clean-repository-root, and release-policy-SHA trust
+anchors. Those anchors do not authenticate a reviewer self-reported inside Windows manual
+evidence. The builder therefore keeps `releaseReady=false`; the independent verifier must validate
+both a detached reviewer signature and a candidate-build/daemon-tree attestation against
+cross-role-disjoint policy-pinned identities, key IDs, and SPKI fingerprints. The strict
+eleven-schema Draft 2020-12 compiler is wired into CI,
+including schema-only workflow path changes.
+The macOS finalizer cannot self-promote manual evidence to PASS, this macOS host cannot execute
+the PowerShell runner because neither `pwsh` nor Windows PowerShell is installed, and release
+smokes still need real signed deterministic provenance for the candidate `daemon/dist` bytes.
+Apple Developer ID
+signing/notarization and Gatekeeper,
 signed-app clean-host TCC and operating-system capture-indicator evidence, Windows x64
 interactive provider/real-source/DPI/dual-screen VM acceptance,
-Authenticode/SmartScreen/signed NSIS, hosted CI, clean-machine install/update/uninstall,
+Authenticode/SmartScreen/signed NSIS, hosted signed CI execution, clean-machine install/update/uninstall,
 and real VoiceOver/Narrator/NVDA acceptance remain open release gates.
 
 Related documents:
@@ -82,6 +97,7 @@ The current shared-Web boundary is already modularized for later UI synchronizat
 ```text
 DesktopComputerUseBridge
   -> capability + locale + selected owner + summary + stale command lifecycle
+  -> useDesktopNavigationIntents -> structured open-conversation route + ACK after selection succeeds
   -> useDesktopComputerUseHostLayoutReporter
        -> geometry observers + modal auto-marker + cleanup
   -> DesktopComputerUseControlSlot
@@ -90,8 +106,8 @@ DesktopComputerUseBridge
 
 The current product placement is the current-session header toolbar for channel, normal
 conversation, and teammate-direct surfaces. Future conversation-UI changes may move only
-that control slot and adjust semantic marker ownership. Capture, coordinator, daemon state,
-and platform adapters do not move with it.
+that control slot, adjust semantic marker ownership, and preserve the structured navigation
+intent hook. Capture, coordinator, daemon state, and platform adapters do not move with it.
 
 The picture-in-picture renderer is Desktop-specific because it lives in a separate
 always-on-top operating-system window. It may reuse shared design tokens and focused
@@ -106,11 +122,15 @@ conversation UI primitives, but it must not copy the main conversation page.
 | Platform capture adapter | It depends on an approved source descriptor, not toolbar placement. |
 | Dedicated PiP renderer snapshot | It receives sanitized state plus normalized locale independent of the main page component tree. Locale-only updates do not reload the window or media source. |
 | Selected conversation bridge | It reports a structured conversation id from the route controller. |
+| Open-task navigation intent | It carries an opaque conversation id and is ACKed only after the route controller successfully selects it. |
 | Host and obstacle rectangle contract | It accepts geometry without naming a specific current component. |
 
 ### Settled shared-UI placement and deferred polish
 
 - `Show preview`, `Hide`, and `Stop` live in the current-session header toolbar.
+- `Open task` uses the Desktop navigation intent bridge; the intent is acknowledged only after
+  the target conversation is actually selected. A missing conversation remains pending for a
+  later renderer instead of being falsely acknowledged.
 - `Close window` lives only in the PiP More menu. It destroys the preview and releases
   capture without stopping Computer Use.
 - composer, dock, terminal, modal, approval, and summary surfaces report typed obstacle
@@ -129,14 +149,16 @@ auto-show, the PiP renderer's Hide control, and the native window-close path sti
 This is a migration fallback only; release still requires broader cross-platform
 visual/accessibility acceptance.
 
-With this boundary, later UI changes affect a small capability adapter and geometry
-markers. They do not rewrite capture, runtime projection, window lifecycle, or
+With this boundary, later UI changes affect a small capability adapter, navigation hook, and
+geometry markers. They do not rewrite capture, runtime projection, window lifecycle, or
 cross-platform behavior.
 
 ## User Experience
 
 The user sees a small floating preview when the currently selected Ling conversation has
-an active Computer Use session and the first valid frame is ready.
+an active Computer Use session and the first valid frame is ready. If capture permission or
+the source fails before a frame, Desktop may instead show a bounded actionable recovery
+surface (for example, Screen access required) without claiming that a live frame exists.
 
 The preview:
 
@@ -146,8 +168,8 @@ The preview:
 - can be dragged, resized, and snapped to a screen corner;
 - avoids the Ling composer, modal dialogs, and right dock while it is anchored to the
   main Ling window;
-- shows the current target application, session status, and paused or approval-required
-  overlays;
+- shows the current target application, session status, approval-required overlays, and a
+  paused overlay only when the daemon emits an authoritative `paused` projection;
 - exposes `Open task`, `Hide preview`, and a separate `Stop Computer Use` action;
 - never treats the window close button as permission to stop the Computer Use session.
 
@@ -421,13 +443,19 @@ First-version targets on a supported laptop:
 - position update during resize or dock changes: one update per animation frame at most;
 - no main-conversation scroll or typing jank while the preview is active.
 
-The 2026-07-16 current-host real Electron baseline meets the local budgets:
+The 2026-07-16/17 current-host real Electron measurements meet the local budgets. Final
+pre-commit verification on the current worktree passes Desktop Node **291/291**, PiP renderer
+**20/20**, Web E2E **35/35**, contracts **5/5**, API client **48/48**, full daemon **629/629**,
+macOS release-focused **28/28**, Windows acceptance/provider/release focused **57/57**, and all
+**11/11** strict Draft 2020-12 release-evidence schemas. The Desktop production build, Web
+production build/typecheck/lint/i18n checks, workspace typecheck/lint, and actionlint also pass;
+schema-only changes under `docs/release/evidence/**` trigger the Desktop artifact workflow.
 
-The final local verification matrix passes **170/170 Desktop Node tests**, **17/17 PiP
-renderer tests**, **51/51 focused contracts/API/daemon/plugin tests**, **16/16 focused
-Web tests**, and **10/10 macOS screenshot baselines**. The remaining local lifecycle,
-corner-snap, aspect-ratio, and Stop
-interaction/acknowledgement gaps are closed by this matrix.
+This is current local engineering evidence against the final pre-commit diff. The fixed artifact
+fingerprints labeled `baseline @ e20777f5` remain historical references rather than current
+candidate hashes. None of this closes Developer ID/TCC/capture-indicator/VoiceOver or Windows
+VM/provider/DPI/SmartScreen/Narrator/NVDA, hosted signed CI, clean-machine lifecycle, detached
+signature, or real candidate-daemon provenance gates.
 
 | Measure | Verified result |
 | --- | --- |
@@ -438,15 +466,14 @@ interaction/acknowledgement gaps are closed by this matrix.
 | Fake ownership/crash lane | **415.27 ms p95** |
 | Capture lifecycle invariants | **12 activations = 12 source enumerations**, **1 renderer document**, **0 `applyConstraints()` calls**, **0 process/window/renderer/listener/IPC/timer/subscription/source residue** |
 
-One full daemon parallel-suite run exposed scheduling-sensitive fluctuation in the
-`channel auto_route` unit test and left its worker alive. That test passed when rerun in
-isolation, while the focused Desktop PiP daemon/plugin matrix remained **51/51**. This is
-recorded as parallel test-harness instability, not as a Desktop PiP product failure.
+The final full daemon suite passes **629/629** on the current worktree, so the earlier isolated
+`channel auto_route` scheduling fluctuation is not an open local pre-commit verification gap.
 
 These are current-host engineering results, not substitutes for Developer ID,
 notarization, Gatekeeper, clean-host TCC/capture-indicator, Windows interactive
-provider/DPI/dual-display, Authenticode/SmartScreen/signed NSIS, hosted CI, clean-machine
-install/update/uninstall, or VoiceOver/Narrator/NVDA release evidence.
+provider/DPI/dual-display, Authenticode/SmartScreen/signed NSIS, hosted signed CI execution, clean-machine
+install/update/uninstall, VoiceOver/Narrator/NVDA, external detached signatures, or real
+candidate-daemon provenance evidence.
 
 Native adapters may improve these targets later without changing the shared contracts.
 

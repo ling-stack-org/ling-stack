@@ -9,6 +9,8 @@ import type {
  * `getMediaAccessStatus("screen")` is documented as always granted. Bind the
  * preflight to the exact daemon-issued provider descriptor instead so a
  * missing, stale, cross-platform, or identity-poor provider cannot fail open.
+ * The source endpoint and display-media callback revalidate HWND ownership;
+ * this function only reports whether that fail-closed path is available.
  */
 export async function resolveWindowsProviderPermissionState(
   descriptorResolver: ComputerUsePreviewDescriptorResolver,

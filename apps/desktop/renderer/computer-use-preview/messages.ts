@@ -5,7 +5,7 @@ import {
 } from "../../shared/desktop-capabilities.js";
 
 const enUS = {
-  windowTitle: "{target} — {status} — Ling Computer Use",
+  windowTitle: "{target} — {status} — Ling Computer Use preview",
   previewLabel: "Computer Use preview for {target}",
   livePreviewLabel: "Live Computer Use preview",
   inProgressLabel: "In progress",
@@ -49,7 +49,7 @@ const enUS = {
 export type ComputerUsePreviewMessageKey = keyof typeof enUS;
 
 const zhCN = {
-  windowTitle: "{target} — {status} — Ling Computer Use",
+  windowTitle: "{target} — {status} — Ling Computer Use 预览",
   previewLabel: "{target} 的 Computer Use 预览",
   livePreviewLabel: "实时 Computer Use 预览",
   inProgressLabel: "进行中",

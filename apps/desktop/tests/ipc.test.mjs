@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { registerDesktopIpc } from "../dist/main/ipc.js";
+import { DesktopNavigationIntentStore } from "../dist/main/navigation-intent.js";
 import { DESKTOP_IPC_CHANNELS } from "../dist/shared/ipc-channels.js";
 
 test("Desktop IPC scopes privileged actions and strictly validates preview media release ACKs", async () => {
@@ -439,6 +440,109 @@ test("Desktop IPC scopes privileged actions and strictly validates preview media
     const normalizedReportedAt = Date.parse(hostLayouts.at(-1).reportedAt);
     assert.ok(normalizedReportedAt >= before && normalizedReportedAt <= after);
   }
+
+  unregister();
+});
+
+test("Desktop IPC authorizes, retains, and settles Open task navigation intents", async () => {
+  const ipc = new FakeIpcMain();
+  const navigationIntents = new DesktopNavigationIntentStore();
+  const selectedConversations = [];
+  const unregister = registerDesktopIpc({
+    ipcMainImpl: ipc,
+    daemon: {
+      status: { state: "connected", baseUrl: "http://127.0.0.1:1", ownedByDesktop: true },
+      onStatusChanged: () => () => {},
+    },
+    computerUse: {
+      ownsPreviewWebContents: () => false,
+      reportSelectedConversation: (conversationId) => selectedConversations.push(conversationId),
+    },
+    getMainWindow: () => ({ webContents: { id: 11 } }),
+    navigationIntents,
+  });
+  const mainEvent = { sender: { id: 11 } };
+  const foreignEvent = { sender: { id: 33 } };
+  const intent = navigationIntents.requestOpenConversation("conversation-owner");
+
+  assert.deepEqual(await ipc.invoke(DESKTOP_IPC_CHANNELS.navigationIntentGet, mainEvent), intent);
+  assert.equal(await ipc.invoke(DESKTOP_IPC_CHANNELS.navigationIntentGet, foreignEvent), undefined);
+  ipc.emit(DESKTOP_IPC_CHANNELS.computerUseReportSelectedConversation, mainEvent, undefined);
+  ipc.emit(DESKTOP_IPC_CHANNELS.computerUseReportSelectedConversation, mainEvent, "conversation-stale");
+  assert.deepEqual(selectedConversations, []);
+
+  assert.deepEqual(
+    await ipc.invoke(DESKTOP_IPC_CHANNELS.navigationIntentAck, foreignEvent, intent.requestId),
+    { accepted: false, reason: "unauthorized_or_invalid_navigation_intent" },
+  );
+  assert.deepEqual(
+    await ipc.invoke(DESKTOP_IPC_CHANNELS.navigationIntentAck, mainEvent, "1"),
+    { accepted: false, reason: "unauthorized_or_invalid_navigation_intent" },
+  );
+  assert.deepEqual(
+    await ipc.invoke(DESKTOP_IPC_CHANNELS.navigationIntentAck, mainEvent, intent.requestId),
+    { accepted: true },
+  );
+  assert.deepEqual(await ipc.invoke(DESKTOP_IPC_CHANNELS.navigationIntentGet, mainEvent), intent);
+
+  ipc.emit(
+    DESKTOP_IPC_CHANNELS.computerUseReportSelectedConversation,
+    mainEvent,
+    " conversation-owner ",
+  );
+  assert.deepEqual(selectedConversations, ["conversation-owner"]);
+  assert.equal(await ipc.invoke(DESKTOP_IPC_CHANNELS.navigationIntentGet, mainEvent), undefined);
+
+  unregister();
+});
+
+test("Desktop IPC replays the renderer's latest real selection after Open task settles", async () => {
+  const ipc = new FakeIpcMain();
+  const navigationIntents = new DesktopNavigationIntentStore();
+  const selectedConversations = [];
+  const unregister = registerDesktopIpc({
+    ipcMainImpl: ipc,
+    daemon: {
+      status: { state: "connected", baseUrl: "http://127.0.0.1:1", ownedByDesktop: true },
+      onStatusChanged: () => () => {},
+    },
+    computerUse: {
+      ownsPreviewWebContents: () => false,
+      reportSelectedConversation: (conversationId) => selectedConversations.push(conversationId),
+    },
+    getMainWindow: () => ({ webContents: { id: 11 } }),
+    navigationIntents,
+  });
+  const mainEvent = { sender: { id: 11 } };
+  const intent = navigationIntents.requestOpenConversation("conversation-owner");
+
+  ipc.emit(
+    DESKTOP_IPC_CHANNELS.computerUseReportSelectedConversation,
+    mainEvent,
+    "conversation-owner",
+  );
+  assert.deepEqual(selectedConversations, ["conversation-owner"]);
+
+  ipc.emit(
+    DESKTOP_IPC_CHANNELS.computerUseReportSelectedConversation,
+    mainEvent,
+    "conversation-user-selected",
+  );
+  assert.deepEqual(
+    selectedConversations,
+    ["conversation-owner"],
+    "the pending intent must not expose a different session before it settles",
+  );
+
+  assert.deepEqual(
+    await ipc.invoke(DESKTOP_IPC_CHANNELS.navigationIntentAck, mainEvent, intent.requestId),
+    { accepted: true },
+  );
+  assert.deepEqual(
+    selectedConversations,
+    ["conversation-owner", "conversation-user-selected"],
+    "the user's latest route selection must become authoritative after ACK",
+  );
 
   unregister();
 });

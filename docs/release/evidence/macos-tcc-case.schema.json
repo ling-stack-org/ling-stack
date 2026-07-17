@@ -1,0 +1,138 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ling-stack.dev/schemas/macos-tcc-case-v2.json",
+  "title": "Ling Desktop macOS TCC Case Evidence",
+  "type": "object",
+  "required": [
+    "schemaVersion",
+    "kind",
+    "generatedAt",
+    "caseId",
+    "operator",
+    "expectedPermission",
+    "permissionBefore",
+    "permissionAfter",
+    "host",
+    "executable",
+    "signedCandidateReport",
+    "smokes",
+    "evidence",
+    "tccMutationCommandUsed",
+    "verdict"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 2 },
+    "kind": { "const": "ling-desktop-macos-tcc-case" },
+    "harness": { "$ref": "#/$defs/releaseHarness" },
+    "generatedAt": { "type": "string", "format": "date-time" },
+    "caseId": { "enum": ["denied", "prompt", "granted", "revoked"] },
+    "operator": { "type": "string", "minLength": 1 },
+    "expectedPermission": { "type": "string", "minLength": 1 },
+    "permissionBefore": { "type": "string", "minLength": 1 },
+    "permissionAfter": { "type": "string", "minLength": 1 },
+    "host": {
+      "type": "object",
+      "required": ["platform", "architecture", "macosVersion"],
+      "properties": {
+        "platform": { "const": "darwin" },
+        "architecture": { "$ref": "#/$defs/architecture" },
+        "macosVersion": { "type": "string", "minLength": 1 }
+      }
+    },
+    "signedCandidateReport": {
+      "type": "object",
+      "required": ["path", "sha256"],
+      "properties": {
+        "path": { "type": "string", "minLength": 1 },
+        "sha256": { "$ref": "#/$defs/sha256" },
+        "teamId": { "type": "string", "minLength": 1 },
+        "liveVerificationGeneratedAt": { "type": "string", "format": "date-time" }
+      }
+    },
+    "tccMutationCommandUsed": { "const": false },
+    "executable": {
+      "type": "object",
+      "required": ["sha256", "architectures", "executionArchitecture", "bundleFingerprint"],
+      "properties": {
+        "sha256": { "$ref": "#/$defs/sha256" },
+        "architectures": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/architecture" } },
+        "executionArchitecture": { "$ref": "#/$defs/architecture" },
+        "bundleFingerprint": { "$ref": "#/$defs/bundleFingerprint" }
+      }
+    },
+    "restart": {
+      "type": "object",
+      "properties": {
+        "sameDaemonProjection": { "const": true },
+        "projectionRecovered": { "const": true }
+      }
+    },
+    "smokes": {
+      "type": "object",
+      "required": ["window", "display"],
+      "properties": {
+        "window": { "type": "object" },
+        "display": { "type": "object" }
+      }
+    },
+    "evidence": { "type": "array", "items": { "type": "object" } },
+    "verdict": {
+      "type": "object",
+      "required": ["status", "pass", "overallReleaseGateClosed"],
+      "oneOf": [
+        {
+          "properties": {
+            "status": { "const": "PASS" },
+            "pass": { "const": true },
+            "overallReleaseGateClosed": { "const": false }
+          }
+        },
+        {
+          "properties": {
+            "status": { "const": "FAIL" },
+            "pass": { "const": false },
+            "overallReleaseGateClosed": { "const": false }
+          }
+        }
+      ]
+    }
+  },
+  "$defs": {
+    "architecture": { "enum": ["arm64", "x86_64"] },
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "releaseHarness": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["commit", "files"],
+      "properties": {
+        "commit": { "type": "string", "pattern": "^[0-9a-f]{40}([0-9a-f]{24})?$" },
+        "files": {
+          "type": "array",
+          "minItems": 2,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["path", "sha256", "gitBlobObjectId"],
+            "properties": {
+              "path": { "type": "string", "minLength": 1 },
+              "sha256": { "$ref": "#/$defs/sha256" },
+              "gitBlobObjectId": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{40}([0-9a-f]{24})?$"
+              }
+            }
+          }
+        }
+      }
+    },
+    "bundleFingerprint": {
+      "type": "object",
+      "required": ["treeSha256", "cdhash"],
+      "properties": {
+        "treeSha256": { "$ref": "#/$defs/sha256" },
+        "cdhash": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+        "cdhashFull": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      }
+    }
+  }
+}

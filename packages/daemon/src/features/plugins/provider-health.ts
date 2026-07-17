@@ -19,7 +19,7 @@ export const CUA_DRIVER_REQUIRED_TOOL_NAMES = [
   "get_window_state",
 ] as const;
 
-const REQUIRED_HEALTH_CHECK_NAMES = [
+export const CUA_DRIVER_REQUIRED_HEALTH_CHECK_NAMES = [
   "binary_version",
   "platform_supported",
   "session_active",
@@ -66,7 +66,7 @@ export async function checkCuaDriverProviderHealth(input: {
       input.server,
       { secretResolver: input.secretResolver, now: () => input.now },
       "health_report",
-      { include: [...REQUIRED_HEALTH_CHECK_NAMES] },
+      { include: [...CUA_DRIVER_REQUIRED_HEALTH_CHECK_NAMES] },
     );
   } catch (error) {
     return {
@@ -120,7 +120,7 @@ export async function checkCuaDriverProviderHealth(input: {
       details: {
         errorCode: "plugin_provider_incompatible",
         driverVersion: report.driverVersion,
-        requiredChecks: REQUIRED_HEALTH_CHECK_NAMES,
+        requiredChecks: CUA_DRIVER_REQUIRED_HEALTH_CHECK_NAMES,
       },
     };
   }
@@ -221,10 +221,10 @@ function readRequiredChecks(checks: readonly unknown[]): readonly StructuredHeal
     }];
   });
   const byName = new Map(parsed.map((check) => [check.name, check]));
-  if (byName.size !== parsed.length || REQUIRED_HEALTH_CHECK_NAMES.some((name) => !byName.has(name))) {
+  if (byName.size !== parsed.length || CUA_DRIVER_REQUIRED_HEALTH_CHECK_NAMES.some((name) => !byName.has(name))) {
     return undefined;
   }
-  return REQUIRED_HEALTH_CHECK_NAMES.map((name) => byName.get(name) as StructuredHealthCheck);
+  return CUA_DRIVER_REQUIRED_HEALTH_CHECK_NAMES.map((name) => byName.get(name) as StructuredHealthCheck);
 }
 
 function summarizeChecks(checks: readonly StructuredHealthCheck[]): readonly Readonly<Record<string, string>>[] {

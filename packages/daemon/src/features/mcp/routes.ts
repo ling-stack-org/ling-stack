@@ -10,6 +10,7 @@ import type { RunStoreRegistry } from "../../runtime/store-registry.js";
 import { readJsonBody, readOptionalBooleanQuery, readOptionalIntegerQuery } from "../../shared/request.js";
 import { writeJson } from "../../shared/response.js";
 import { parseMcpServerCreateRequest, parseMcpServerUpdateRequest } from "./schemas.js";
+import { isPluginReservedMcpServerId } from "./reserved-ids.js";
 import { toPublicMcpServer } from "./secrets.js";
 
 export async function handleMcpServersCollection(
@@ -43,6 +44,13 @@ export async function handleMcpServersCollection(
     if (request.method === "POST") {
       const body = await readJsonBody(request, config.maxBodyBytes);
       const input = parseMcpServerCreateRequest(body);
+      if (input.serverInput.id && isPluginReservedMcpServerId(input.serverInput.id)) {
+        throw new HttpError(
+          409,
+          "mcp_server_id_reserved",
+          `MCP server id is reserved for a managed plugin contribution: ${input.serverInput.id}`,
+        );
+      }
       const now = new Date().toISOString();
       const server = store.createMcpServer(input.serverInput, now);
       appendMcpServerUpdatedEvent(store, controlPlaneEvents, cwd, server.id, server.enabled, now);
@@ -215,6 +223,13 @@ export async function handleMcpServerItem(
     }
 
     if (request.method === "PATCH") {
+      if (isPluginReservedMcpServerId(server.id)) {
+        throw new HttpError(
+          409,
+          "mcp_server_id_reserved",
+          `MCP server id is managed by a plugin and cannot be updated through generic MCP routes: ${server.id}`,
+        );
+      }
       const body = await readJsonBody(request, config.maxBodyBytes);
       const input = parseMcpServerUpdateRequest(body);
       const now = new Date().toISOString();
@@ -226,6 +241,13 @@ export async function handleMcpServerItem(
     }
 
     if (request.method === "DELETE") {
+      if (isPluginReservedMcpServerId(server.id)) {
+        throw new HttpError(
+          409,
+          "mcp_server_id_reserved",
+          `MCP server id is managed by a plugin and cannot be deleted through generic MCP routes: ${server.id}`,
+        );
+      }
       const now = new Date().toISOString();
       store.deleteMcpServer(server.id);
       appendMcpServerUpdatedEvent(store, controlPlaneEvents, cwd, server.id, false, now);

@@ -217,9 +217,6 @@ test("daemon installs bundled cua package cache and previews runtime injection",
     assert.equal(disabledPreview.preview.status, "disabled");
     assert.equal(disabledPreview.preview.blockers.includes("Plugin is disabled."), true);
 
-    await postJson(`${daemon.url}/plugins/${encodeURIComponent(cuaPluginId)}/apply-preset?cwd=${encodeURIComponent(cwd)}`, {
-      options: { command },
-    });
     await postJson(`${daemon.url}/plugins/${encodeURIComponent(bundledCuaPluginId)}/enable?cwd=${encodeURIComponent(cwd)}`, {});
     await postJson(`${daemon.url}/plugins/${encodeURIComponent(bundledCuaPluginId)}/check?cwd=${encodeURIComponent(cwd)}`, {});
 
@@ -249,6 +246,86 @@ test("daemon installs bundled cua package cache and previews runtime injection",
     const blockedPreview = await getJson(`${daemon.url}/plugins/${encodeURIComponent(bundledCuaPluginId)}/runtime-preview?cwd=${encodeURIComponent(cwd)}`);
     assert.equal(blockedPreview.preview.status, "disabled");
     assert.equal(blockedPreview.preview.blockers.includes("Plugin package is not installed."), true);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("bundled Cua Driver enable fails closed before runtime injection", { skip: !supportedDesktop }, async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-plugin-bundled-enable-failure-"));
+  const command = join(cwd, "cua-driver");
+  await writeFile(command, "#!/bin/sh\nexit 0\n");
+  await chmod(command, 0o755);
+  const daemon = await startDaemonForTest(new FailingPluginMcpBroker());
+  try {
+    await postJson(
+      `${daemon.url}/plugins/${encodeURIComponent(bundledCuaPluginId)}/install?cwd=${encodeURIComponent(cwd)}`,
+      { options: { command } },
+    );
+    const enabled = await requestJson(
+      `${daemon.url}/plugins/${encodeURIComponent(bundledCuaPluginId)}/enable?cwd=${encodeURIComponent(cwd)}`,
+      { method: "POST", body: {} },
+    );
+    assert.equal(enabled.status, 400);
+    assert.equal(enabled.json.error, "mcp_process_failed");
+
+    const detail = await getJson(
+      `${daemon.url}/plugins/${encodeURIComponent(bundledCuaPluginId)}?cwd=${encodeURIComponent(cwd)}`,
+    );
+    assert.equal(detail.plugin.status, "disabled");
+    assert.equal(detail.plugin.linkedResources[0].enabled, false);
+    assert.equal(detail.plugin.health.status, "failed");
+    const preview = await getJson(
+      `${daemon.url}/plugins/${encodeURIComponent(bundledCuaPluginId)}/runtime-preview?cwd=${encodeURIComponent(cwd)}`,
+    );
+    assert.equal(preview.preview.status, "disabled");
+    assert.equal(
+      preview.preview.blockers.some((blocker) => blocker.includes("Cua Driver failed to start")),
+      true,
+    );
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("bundled Cua Driver rejects shared legacy ownership until reinstall migrates it", { skip: !supportedDesktop }, async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-plugin-shared-cua-owner-"));
+  const command = join(cwd, "cua-driver");
+  await writeFile(command, "#!/bin/sh\nexit 0\n");
+  await chmod(command, 0o755);
+  const daemon = await startDaemonForTest(new FakePluginMcpBroker());
+  try {
+    await postJson(
+      `${daemon.url}/plugins/${encodeURIComponent(bundledCuaPluginId)}/install?cwd=${encodeURIComponent(cwd)}`,
+      { options: { command } },
+    );
+    await postJson(`${daemon.url}/plugins/${encodeURIComponent(bundledCuaPluginId)}/enable?cwd=${encodeURIComponent(cwd)}`, {});
+    await postJson(`${daemon.url}/plugins/${encodeURIComponent(cuaPluginId)}/connect?cwd=${encodeURIComponent(cwd)}`, { command });
+
+    for (const action of ["check", "enable"]) {
+      const rejected = await requestJson(
+        `${daemon.url}/plugins/${encodeURIComponent(bundledCuaPluginId)}/${action}?cwd=${encodeURIComponent(cwd)}`,
+        { method: "POST", body: {} },
+      );
+      assert.equal(rejected.status, 409);
+      assert.equal(rejected.json.error, "plugin_linked_resource_conflict");
+    }
+
+    await postJson(
+      `${daemon.url}/plugins/${encodeURIComponent(bundledCuaPluginId)}/install?cwd=${encodeURIComponent(cwd)}`,
+      { options: { command } },
+    );
+    await postJson(`${daemon.url}/plugins/${encodeURIComponent(bundledCuaPluginId)}/enable?cwd=${encodeURIComponent(cwd)}`, {});
+    const legacy = await getJson(`${daemon.url}/plugins/${encodeURIComponent(cuaPluginId)}?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(legacy.plugin.status, "disabled");
+    assert.equal(legacy.plugin.setup.state, "detected");
+    assert.equal(legacy.plugin.contributions[0].enabled, false);
+    const preview = await getJson(
+      `${daemon.url}/plugins/${encodeURIComponent(bundledCuaPluginId)}/runtime-preview?cwd=${encodeURIComponent(cwd)}`,
+    );
+    assert.equal(preview.preview.status, "injectable");
   } finally {
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });

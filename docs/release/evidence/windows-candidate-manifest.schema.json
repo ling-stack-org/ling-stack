@@ -1,0 +1,89 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ling-stack.dev/schemas/windows-candidate-manifest-v3.json",
+  "title": "Ling Desktop Windows Candidate Manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "kind",
+    "commit",
+    "releasePolicySha256",
+    "providerRelease",
+    "daemonPayload",
+    "artifacts"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 3 },
+    "kind": { "const": "ling.windows.candidate-manifest" },
+    "commit": { "type": "string", "pattern": "^[0-9a-f]{40}([0-9a-f]{24})?$" },
+    "releasePolicySha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "providerRelease": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "repository",
+        "component",
+        "version",
+        "tag",
+        "assetName",
+        "assetBytes",
+        "archiveSha256",
+        "providerSha256",
+        "providerHelperSha256"
+      ],
+      "properties": {
+        "repository": { "const": "trycua/cua" },
+        "component": { "const": "cua-driver-rs" },
+        "version": { "const": "0.8.3" },
+        "tag": { "const": "cua-driver-rs-v0.8.3" },
+        "assetName": { "const": "cua-driver-rs-0.8.3-windows-x86_64.zip" },
+        "assetBytes": { "const": 10585087 },
+        "archiveSha256": {
+          "const": "6acdc84b98629fcd0be2368cc16565c18d5f21d9dedd4e10fdb6f58547fce9d0"
+        },
+        "providerSha256": {
+          "const": "3cc33572defac29e23bc07e211c20245da9f6ebe8e6481f865b31534b1de8cee"
+        },
+        "providerHelperSha256": {
+          "const": "1b35a27d41008507d66f819248751b9e79a15c9e6e03390c56749c6fe5daca1c"
+        }
+      }
+    },
+    "daemonPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sourceCommit", "strategy", "treeSha256"],
+      "properties": {
+        "sourceCommit": { "type": "string", "pattern": "^[0-9a-f]{40}([0-9a-f]{24})?$" },
+        "strategy": {
+          "enum": [
+            "deterministic-rebuild",
+            "signed-candidate-embedded-daemon"
+          ]
+        },
+        "treeSha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      }
+    },
+    "artifacts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "lingAppSha256",
+        "lingInstallerSha256",
+        "providerSha256",
+        "providerHelperSha256"
+      ],
+      "properties": {
+        "lingAppSha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "lingInstallerSha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "providerSha256": {
+          "const": "3cc33572defac29e23bc07e211c20245da9f6ebe8e6481f865b31534b1de8cee"
+        },
+        "providerHelperSha256": {
+          "const": "1b35a27d41008507d66f819248751b9e79a15c9e6e03390c56749c6fe5daca1c"
+        }
+      }
+    }
+  }
+}

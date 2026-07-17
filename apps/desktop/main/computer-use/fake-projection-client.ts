@@ -4,13 +4,16 @@ import type {
   StopComputerUseResponse,
 } from "@ling-stack/contracts";
 import type {
+  ComputerUseProjectionConnectionState,
   ComputerUseProjectionClient,
   ComputerUseProjectionSubscription,
 } from "./projection-client.js";
 
 export class FakeComputerUseProjectionClient implements ComputerUseProjectionClient {
   private readonly listeners = new Set<(event: ComputerUsePreviewEvent) => void>();
+  private readonly connectionListeners = new Set<(state: ComputerUseProjectionConnectionState) => void>();
   private seq = 0;
+  private stopRequestCount = 0;
 
   constructor(private projection: ComputerUsePreviewProjection) {}
 
@@ -18,12 +21,26 @@ export class FakeComputerUseProjectionClient implements ComputerUseProjectionCli
     return [this.projection];
   }
 
-  subscribe(listener: (event: ComputerUsePreviewEvent) => void): ComputerUseProjectionSubscription {
+  subscribe(
+    listener: (event: ComputerUsePreviewEvent) => void,
+    onConnectionStateChanged?: (state: ComputerUseProjectionConnectionState) => void,
+  ): ComputerUseProjectionSubscription {
     this.listeners.add(listener);
-    return { close: () => this.listeners.delete(listener) };
+    if (onConnectionStateChanged) {
+      this.connectionListeners.add(onConnectionStateChanged);
+    }
+    return {
+      close: () => {
+        this.listeners.delete(listener);
+        if (onConnectionStateChanged) {
+          this.connectionListeners.delete(onConnectionStateChanged);
+        }
+      },
+    };
   }
 
   async stop(sessionId: string): Promise<StopComputerUseResponse> {
+    this.stopRequestCount += 1;
     const acknowledgedAt = new Date().toISOString();
     this.emit({ ...this.projection, status: "stopping", updatedAt: acknowledgedAt });
     this.emit({ ...this.projection, status: "cancelled", updatedAt: acknowledgedAt, terminalAt: acknowledgedAt });
@@ -35,6 +52,16 @@ export class FakeComputerUseProjectionClient implements ComputerUseProjectionCli
       projection: this.projection,
       acknowledgedAt,
     };
+  }
+
+  getStopRequestCount(): number {
+    return this.stopRequestCount;
+  }
+
+  emitConnectionState(state: ComputerUseProjectionConnectionState): void {
+    for (const listener of this.connectionListeners) {
+      listener(state);
+    }
   }
 
   emit(projection: ComputerUsePreviewProjection): void {

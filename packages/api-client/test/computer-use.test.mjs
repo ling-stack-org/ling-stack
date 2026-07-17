@@ -54,6 +54,7 @@ test("Computer Use native requests carry only the scoped route token", async () 
     computerUseRouteToken: "route-secret",
     fetch: async (url, init) => {
       requests.push({ url: String(url), init });
+      const pathname = new URL(String(url)).pathname;
       if (String(url).includes("/stream")) {
         return new Response(new ReadableStream(), {
           headers: { "Content-Type": "text/event-stream" },
@@ -67,6 +68,12 @@ test("Computer Use native requests carry only the scoped route token", async () 
           auditId: "audit-1",
           projection: projection("cancelled"),
         });
+      }
+      if (pathname === "/computer-use/snapshot") {
+        return Response.json({ cwd: "/workspace", projections: [], latestSeq: 0 });
+      }
+      if (pathname === "/computer-use/events") {
+        return Response.json({ cwd: "/workspace", afterSeq: 3, latestSeq: 3, events: [] });
       }
       return Response.json({ cwd: "/workspace", projections: [] });
     },
@@ -97,6 +104,33 @@ test("Computer Use browser client does not invent a native route token", async (
   });
   await client.listComputerUsePreviews("/workspace");
   assert.equal(receivedHeaders.get("X-Ling-Computer-Use-Token"), null);
+});
+
+test("Computer Use client rejects malformed daemon payloads before returning them", async () => {
+  const client = new LingDaemonClient({
+    baseUrl: "http://daemon.test",
+    fetch: async (url) => {
+      if (String(url).includes("/stop")) {
+        return Response.json({
+          sessionId: "session-1",
+          accepted: true,
+          acknowledged: true,
+          auditId: "audit-1",
+          projection: { ...projection("running"), sessionId: "other-session" },
+        });
+      }
+      return Response.json({ cwd: "/wrong-workspace", projections: [projection("running")] });
+    },
+  });
+
+  await assert.rejects(
+    client.listComputerUsePreviews("/workspace"),
+    /computer_use_list_response_invalid/,
+  );
+  await assert.rejects(
+    client.stopComputerUse("/workspace", "session-1"),
+    /computer_use_stop_response_invalid/,
+  );
 });
 
 function projection(status) {

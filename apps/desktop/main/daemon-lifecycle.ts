@@ -2,6 +2,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { access, mkdir } from "node:fs/promises";
 import { connect } from "node:net";
+import { resolve as resolvePath } from "node:path";
 import type { DesktopDaemonStatus } from "../shared/desktop-capabilities.js";
 
 const DEFAULT_DAEMON_STARTUP_TIMEOUT_MS = 20_000;
@@ -55,12 +56,18 @@ export interface DesktopDaemonLifecycleOptions {
 export class DesktopDaemonLifecycle {
   private readonly events = new EventEmitter();
   private readonly fetchImpl: typeof globalThis.fetch;
+  private readonly defaultWorkspaceCwd: string;
   private child: ChildProcess | undefined;
   private statusValue: DesktopDaemonStatus;
   private ensureStartedPromise: Promise<DesktopDaemonStatus> | undefined;
+  private restartPromise: Promise<DesktopDaemonStatus> | undefined;
+  private stopOwnedDaemonPromise: Promise<void> | undefined;
+  private startupGeneration = 0;
+  private statusGeneration = 0;
 
   constructor(private readonly options: DesktopDaemonLifecycleOptions) {
     this.fetchImpl = options.fetch ?? globalThis.fetch;
+    this.defaultWorkspaceCwd = resolvePath(options.defaultWorkspaceCwd);
     this.statusValue = {
       state: "checking",
       baseUrl: options.baseUrl,
@@ -84,7 +91,9 @@ export class DesktopDaemonLifecycle {
     if (this.ensureStartedPromise) {
       return this.ensureStartedPromise;
     }
-    const pending = this.ensureStartedInternal();
+    this.statusGeneration += 1;
+    const startupGeneration = this.startupGeneration;
+    const pending = this.ensureStartedInternal(startupGeneration);
     this.ensureStartedPromise = pending;
     pending.then(
       () => {
@@ -101,9 +110,16 @@ export class DesktopDaemonLifecycle {
     return pending;
   }
 
-  private async ensureStartedInternal(): Promise<DesktopDaemonStatus> {
+  private async ensureStartedInternal(startupGeneration: number): Promise<DesktopDaemonStatus> {
+    this.assertStartupCurrent(startupGeneration);
     this.update({ state: "checking", baseUrl: this.options.baseUrl, ownedByDesktop: false });
+    const stoppingOwnedDaemon = this.stopOwnedDaemonPromise;
+    if (stoppingOwnedDaemon) {
+      await stoppingOwnedDaemon;
+      this.assertStartupCurrent(startupGeneration);
+    }
     const existingProbe = await this.probeDaemon();
+    this.assertStartupCurrent(startupGeneration);
     if (existingProbe === "compatible") {
       this.options.onDiagnostic?.("daemon.reused", { baseUrl: this.options.baseUrl });
       return this.update({ state: "connected", baseUrl: this.options.baseUrl, ownedByDesktop: false });
@@ -135,23 +151,34 @@ export class DesktopDaemonLifecycle {
     }
 
     await access(this.options.daemonEntryPath);
-    await mkdir(this.options.defaultWorkspaceCwd, { recursive: true });
+    this.assertStartupCurrent(startupGeneration);
+    await mkdir(this.defaultWorkspaceCwd, { recursive: true });
+    this.assertStartupCurrent(startupGeneration);
     this.update({ state: "starting", baseUrl: this.options.baseUrl, ownedByDesktop: true });
     const url = new URL(this.options.baseUrl);
     const spawnDaemon = this.options.spawnDaemon ?? defaultSpawnDaemon;
     const child = spawnDaemon({
       executable: this.options.executablePath ?? process.execPath,
       args: [this.options.daemonEntryPath],
-      cwd: this.options.defaultWorkspaceCwd,
+      cwd: this.defaultWorkspaceCwd,
       env: {
         ...process.env,
         ELECTRON_RUN_AS_NODE: "1",
         LING_STACK_HOST: url.hostname,
         LING_STACK_PORT: url.port || (url.protocol === "https:" ? "443" : "80"),
-        LING_STACK_DEFAULT_WORKSPACE_CWD: this.options.defaultWorkspaceCwd,
-        ...(this.options.desktopBridgeToken ? { LING_DESKTOP_BRIDGE_TOKEN: this.options.desktopBridgeToken } : {}),
+        LING_STACK_DEFAULT_WORKSPACE_CWD: this.defaultWorkspaceCwd,
+        ...(this.options.desktopBridgeToken
+          ? {
+              LING_DESKTOP_BRIDGE_TOKEN: this.options.desktopBridgeToken,
+              LING_COMPUTER_USE_ROUTE_TOKEN: this.options.desktopBridgeToken,
+            }
+          : {}),
       },
     });
+    if (!this.isStartupCurrent(startupGeneration)) {
+      await this.stopChild(child);
+      throw new Error("daemon_start_cancelled");
+    }
     this.options.onDiagnostic?.("daemon.spawned", { pid: child.pid ?? null, baseUrl: this.options.baseUrl });
     this.child = child;
     let resolveChildExit: (exit: OwnedDaemonExit) => void = () => undefined;
@@ -182,6 +209,7 @@ export class DesktopDaemonLifecycle {
     // than racing the health probe at the old eight-second boundary.
     const deadline = Date.now() + (this.options.startupTimeoutMs ?? DEFAULT_DAEMON_STARTUP_TIMEOUT_MS);
     while (Date.now() < deadline) {
+      this.assertStartupCurrent(startupGeneration);
       const readiness = await Promise.race([
         this.probeDaemon().then((probe) => ({ kind: "probe" as const, probe })),
         childExit.then((exit) => ({ kind: "child_exit" as const, exit })),
@@ -189,6 +217,7 @@ export class DesktopDaemonLifecycle {
       if (readiness.kind === "child_exit") {
         throw new DesktopDaemonLifecycleError("child_exited", this.options.baseUrl);
       }
+      this.assertStartupCurrent(startupGeneration);
       const probe = readiness.probe;
       if (probe === "compatible") {
         if (this.child !== child || child.exitCode !== null || child.signalCode !== null) {
@@ -216,6 +245,7 @@ export class DesktopDaemonLifecycle {
       if (pause.kind === "child_exit") {
         throw new DesktopDaemonLifecycleError("child_exited", this.options.baseUrl);
       }
+      this.assertStartupCurrent(startupGeneration);
     }
     if (this.child !== child || child.exitCode !== null || child.signalCode !== null) {
       throw new DesktopDaemonLifecycleError("child_exited", this.options.baseUrl);
@@ -232,9 +262,48 @@ export class DesktopDaemonLifecycle {
     throw new DesktopDaemonLifecycleError("start_timeout", this.options.baseUrl);
   }
 
-  async restart(): Promise<DesktopDaemonStatus> {
-    if (!this.child) {
+  restart(): Promise<DesktopDaemonStatus> {
+    if (this.restartPromise) {
+      return this.restartPromise;
+    }
+    const pending = this.restartInternal();
+    this.restartPromise = pending;
+    pending.then(
+      () => {
+        if (this.restartPromise === pending) {
+          this.restartPromise = undefined;
+        }
+      },
+      () => {
+        if (this.restartPromise === pending) {
+          this.restartPromise = undefined;
+        }
+      },
+    );
+    return pending;
+  }
+
+  private async restartInternal(): Promise<DesktopDaemonStatus> {
+    while (true) {
+      const stoppingOwnedDaemon = this.stopOwnedDaemonPromise;
+      if (stoppingOwnedDaemon) {
+        await stoppingOwnedDaemon;
+        continue;
+      }
+      if (this.child) {
+        await this.stopOwnedDaemon();
+        return this.ensureStarted();
+      }
+
+      const probeStatusGeneration = this.statusGeneration;
       const probe = await this.probeDaemon();
+      if (
+        probeStatusGeneration !== this.statusGeneration
+        || this.child
+        || this.stopOwnedDaemonPromise
+      ) {
+        continue;
+      }
       if (probe === "compatible") {
         return this.update({
           state: "connected",
@@ -263,27 +332,62 @@ export class DesktopDaemonLifecycle {
         });
         throw new DesktopDaemonLifecycleError("bridge_incompatible", this.options.baseUrl, "foreign_service");
       }
+      await this.stopOwnedDaemon();
+      return this.ensureStarted();
     }
-    await this.stopOwnedDaemon();
-    return this.ensureStarted();
   }
 
-  async stopOwnedDaemon(): Promise<void> {
-    const child = this.child;
-    if (!child) {
+  stopOwnedDaemon(): Promise<void> {
+    const stopStatusGeneration = ++this.statusGeneration;
+    this.startupGeneration += 1;
+    this.ensureStartedPromise = undefined;
+    let pending = this.stopOwnedDaemonPromise;
+    if (!pending) {
+      const child = this.child;
+      this.child = undefined;
+      pending = child ? this.stopChild(child) : Promise.resolve();
+      this.stopOwnedDaemonPromise = pending;
+      pending.then(
+        () => {
+          if (this.stopOwnedDaemonPromise === pending) {
+            this.stopOwnedDaemonPromise = undefined;
+          }
+        },
+        () => {
+          if (this.stopOwnedDaemonPromise === pending) {
+            this.stopOwnedDaemonPromise = undefined;
+          }
+        },
+      );
+    }
+    return pending.then(() => {
+      if (stopStatusGeneration === this.statusGeneration) {
+        this.update({ state: "disconnected", baseUrl: this.options.baseUrl, ownedByDesktop: false });
+      }
+    });
+  }
+
+  private async stopChild(child: ChildProcess): Promise<void> {
+    if (child.exitCode !== null || child.signalCode !== null) {
       return;
     }
-    this.child = undefined;
-    if (child.exitCode === null && child.signalCode === null) {
-      child.kill("SIGTERM");
-      const exited = await waitForExit(child, this.options.shutdownTimeoutMs ?? 3_000);
-      if (!exited && child.exitCode === null && child.signalCode === null) {
-        this.options.onDiagnostic?.("daemon.force_killed", { pid: child.pid ?? null });
-        child.kill("SIGKILL");
-        await waitForExit(child, 1_000);
-      }
+    child.kill("SIGTERM");
+    const exited = await waitForExit(child, this.options.shutdownTimeoutMs ?? 3_000);
+    if (!exited && child.exitCode === null && child.signalCode === null) {
+      this.options.onDiagnostic?.("daemon.force_killed", { pid: child.pid ?? null });
+      child.kill("SIGKILL");
+      await waitForExit(child, 1_000);
     }
-    this.update({ state: "disconnected", baseUrl: this.options.baseUrl, ownedByDesktop: false });
+  }
+
+  private isStartupCurrent(startupGeneration: number): boolean {
+    return startupGeneration === this.startupGeneration;
+  }
+
+  private assertStartupCurrent(startupGeneration: number): void {
+    if (!this.isStartupCurrent(startupGeneration)) {
+      throw new Error("daemon_start_cancelled");
+    }
   }
 
   private async probeDaemon(): Promise<DaemonProbeResult> {
@@ -298,9 +402,15 @@ export class DesktopDaemonLifecycle {
     if (!response.ok) {
       return "occupied";
     }
-    const body = await response.json().catch(() => ({})) as { service?: unknown };
+    const body = await response.json().catch(() => ({})) as {
+      service?: unknown;
+      defaultWorkspaceCwd?: unknown;
+    };
     if (body.service !== "ling-stack-daemon") {
       return "occupied";
+    }
+    if (body.defaultWorkspaceCwd !== this.defaultWorkspaceCwd) {
+      return "incompatible";
     }
     if (!this.options.desktopBridgeToken) {
       return "compatible";
@@ -320,11 +430,15 @@ export class DesktopDaemonLifecycle {
         protocolVersion?: unknown;
         capabilities?: unknown;
         bridgeTokenAccepted?: unknown;
+        routeTokenAccepted?: unknown;
+        defaultWorkspaceCwd?: unknown;
       };
       return compatibility.protocolVersion === 1
         && Array.isArray(compatibility.capabilities)
         && compatibility.capabilities.includes("preview-source")
         && compatibility.bridgeTokenAccepted === true
+        && compatibility.routeTokenAccepted === true
+        && compatibility.defaultWorkspaceCwd === this.defaultWorkspaceCwd
         ? "compatible"
         : "incompatible";
     } catch {

@@ -115,13 +115,12 @@ function readTarget(
   }
   if (
     (sourceKind === "display" && electronSourceId === undefined) ||
-    (sourceKind === "window" && nativeWindowId === undefined && electronSourceId === undefined) ||
     (
-      platform === "windows" && sourceKind === "window" &&
+      sourceKind === "window" &&
       (
         processId === undefined ||
         nativeWindowId === undefined ||
-        !isCanonicalWindowsHandle(nativeWindowId)
+        !isCanonicalNativeWindowId(platform, nativeWindowId)
       )
     )
   ) {
@@ -136,8 +135,30 @@ function readTarget(
   };
 }
 
+function isCanonicalNativeWindowId(
+  platform: ResolvedComputerUsePreviewDescriptor["platform"],
+  value: string,
+): boolean {
+  return platform === "windows" ? isCanonicalWindowsHandle(value) : isCanonicalMacosWindowId(value);
+}
+
 function isCanonicalWindowsHandle(value: string): boolean {
-  return /^[1-9]\d{0,19}$/u.test(value);
+  if (!/^[1-9]\d{0,19}$/u.test(value)) {
+    return false;
+  }
+  try {
+    return BigInt(value) <= 0xffff_ffff_ffff_ffffn;
+  } catch {
+    return false;
+  }
+}
+
+function isCanonicalMacosWindowId(value: string): boolean {
+  if (!/^[1-9]\d{0,9}$/u.test(value)) {
+    return false;
+  }
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) && parsed <= 0xffff_ffff;
 }
 
 function readAuthorization(

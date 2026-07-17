@@ -89,6 +89,7 @@ function DesktopComputerUsePreference(): JSX.Element | null {
   const [enabled, setEnabled] = useState(true);
   const [loading, setLoading] = useState(Boolean(desktopComputerUse));
   const [error, setError] = useState(false);
+  const [notPersisted, setNotPersisted] = useState(false);
   const mountedRef = useRef(true);
 
   useEffect(() => {
@@ -104,6 +105,7 @@ function DesktopComputerUsePreference(): JSX.Element | null {
       if (mountedRef.current) {
         setEnabled(preferences.previewAutoShow);
         setError(false);
+        setNotPersisted(false);
       }
     }).catch(() => {
       if (mountedRef.current) {
@@ -127,12 +129,18 @@ function DesktopComputerUsePreference(): JSX.Element | null {
     const previous = enabled;
     setEnabled(next);
     setError(false);
+    setNotPersisted(false);
     setLoading(true);
     void desktopComputerUse.setAutoShow(next).then((result) => {
-      if (!result.accepted && mountedRef.current) {
+      if (!mountedRef.current) {
+        return;
+      }
+      if (!result.accepted) {
         setEnabled(previous);
         setError(true);
+        return;
       }
+      setNotPersisted(result.reason === "desktop_preferences_not_persisted");
     }).catch(() => {
       if (mountedRef.current) {
         setEnabled(previous);
@@ -163,6 +171,11 @@ function DesktopComputerUsePreference(): JSX.Element | null {
         <span>{enabled ? t("On") : t("Off")}</span>
       </label>
       {error ? <small className="interface-preference-error" role="alert">{t("Unable to save Desktop preview preference")}</small> : null}
+      {notPersisted ? (
+        <small className="interface-preference-error" role="status" aria-live="polite">
+          {t("Changed for this session, but not saved. It may revert after restart.")}
+        </small>
+      ) : null}
     </div>
   );
 }

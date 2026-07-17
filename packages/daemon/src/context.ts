@@ -59,6 +59,7 @@ export interface McpBroker {
 export interface McpBrokerOptions {
   readonly secretResolver: SecretResolver;
   readonly now?: () => string;
+  readonly signal?: AbortSignal;
 }
 
 export interface ExternalSecretStore extends SecretResolver {
@@ -84,7 +85,15 @@ export interface DaemonDependencies {
     readonly cwd: string;
     readonly projection: ComputerUsePreviewProjection;
     readonly reason?: string;
-  }) => Promise<{ readonly accepted: boolean; readonly acknowledged: boolean; readonly reason?: string }>;
+  }) => Promise<{
+    readonly accepted: boolean;
+    readonly acknowledged: boolean;
+    readonly reason?: string;
+    readonly terminalStatus?: Extract<
+      ComputerUsePreviewProjection["status"],
+      "succeeded" | "failed" | "cancelled"
+    >;
+  }>;
   readonly desktopBridgeToken?: string;
   /**
    * Installation-scoped token for native Computer Use list/events/stream/stop
@@ -94,6 +103,7 @@ export interface DaemonDependencies {
    */
   readonly computerUseRouteToken?: string;
   readonly computerUseProjectionOptions?: ComputerUseProjectionRegistryOptions;
+  readonly computerUseTargetOwnershipTimeoutMs?: number;
 }
 
 export interface DaemonContext {
@@ -121,4 +131,5 @@ export interface DaemonContext {
   readonly computerUseStop?: DaemonDependencies["computerUseStop"];
   readonly desktopBridgeToken?: string;
   readonly computerUseRouteToken?: string;
+  readonly computerUseTargetOwnershipTimeoutMs?: number;
 }
