@@ -1,4 +1,16 @@
 import type { McpRuntimeStatusSnapshot, McpServer, McpServerTransport, McpTool } from "./mcp.js";
+import type {
+  CuaDriverBridgeStatus,
+  CuaDriverDistribution,
+  CuaDriverExternalOverride,
+  CuaDriverIntegrityCoverage,
+  CuaDriverIntegrityStatus,
+  CuaDriverLimitation,
+  CuaDriverPermissionSnapshot,
+  CuaDriverPlatform,
+  CuaDriverProviderState,
+  CuaDriverWindowsReadinessSnapshot,
+} from "./cua-driver-bundled.js";
 
 export type ManagedPluginSourceKind = "built-in" | "bundled" | "trusted-local-preset";
 
@@ -24,6 +36,43 @@ export interface ManagedPluginSetupView {
   readonly checkedAt: string;
   readonly detectedCommand?: string;
   readonly guide?: ManagedPluginSetupGuide;
+  /** Present on the opt-in Cua Driver V2 projection. */
+  readonly schemaVersion?: 2;
+  readonly distribution?: CuaDriverDistribution;
+  readonly platform?: CuaDriverPlatform;
+  readonly providerState?: CuaDriverProviderState;
+  readonly requestedEnabled?: boolean;
+  readonly effectiveEnabled?: boolean;
+  readonly integrityCoverage?: CuaDriverIntegrityCoverage;
+  readonly limitations?: readonly CuaDriverLimitation[];
+  readonly providerVersion?: string;
+  readonly providerDistributionRevision?: string;
+  readonly providerRevision?: string;
+  readonly providerDisplayVersion?: string;
+  readonly expectedProviderVersion?: string;
+  readonly providerSealDigest?: string;
+  readonly providerCatalogDigest?: string;
+  readonly sealDigest?: string;
+  readonly catalogDigest?: string;
+  readonly integrity?: CuaDriverIntegrityStatus;
+  readonly bridge?: CuaDriverBridgeStatus;
+  readonly permissions?: CuaDriverPermissionSnapshot;
+  readonly windowsReadiness?: CuaDriverWindowsReadinessSnapshot;
+  readonly externalOverride?: CuaDriverExternalOverride;
+}
+
+/**
+ * Detailed Cua Driver wire projection. It refines, rather than replaces, the
+ * legacy local_binary setup fields so old clients always see known values.
+ */
+export interface CuaDriverSetupView extends ManagedPluginSetupView {
+  readonly schemaVersion: 2;
+  readonly distribution: CuaDriverDistribution;
+  readonly platform: CuaDriverPlatform;
+  readonly providerState: CuaDriverProviderState;
+  readonly requestedEnabled: boolean;
+  readonly effectiveEnabled: boolean;
+  readonly limitations: readonly CuaDriverLimitation[];
 }
 
 export type ManagedPluginContributionKind =

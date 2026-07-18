@@ -11,6 +11,24 @@ export interface DaemonConfig {
   readonly runtimeTools?: RuntimeToolFeatureConfig;
   readonly transports?: TransportFeatureConfig;
   readonly channels?: ChannelFeatureConfig;
+  readonly cuaDriver?: CuaDriverFeatureConfig;
+}
+
+/**
+ * Bundled Cua Driver gates are intentionally opt-in per platform. A platform
+ * gate may be enabled only after its packaged provider and acceptance baseline
+ * have passed; the default keeps the existing external-local path active.
+ */
+export interface CuaDriverFeatureConfig {
+  readonly bundledEmbedded?: {
+    readonly darwin?: boolean;
+    readonly win32?: boolean;
+  };
+  /** Set only by a packaged Desktop after its provider resource assertion. */
+  readonly packagedProvider?: {
+    readonly darwin?: boolean;
+    readonly win32?: boolean;
+  };
 }
 
 export interface ChannelFeatureConfig {
@@ -111,6 +129,16 @@ export interface ResolvedDaemonConfig {
   readonly runtimeTools: RuntimeToolFeatureConfig;
   readonly transports: Required<TransportFeatureConfig>;
   readonly channels: ChannelFeatureConfig;
+  readonly cuaDriver: {
+    readonly bundledEmbedded: {
+      readonly darwin: boolean;
+      readonly win32: boolean;
+    };
+    readonly packagedProvider: {
+      readonly darwin: boolean;
+      readonly win32: boolean;
+    };
+  };
 }
 
 export const defaultDaemonConfig: DaemonConfig = {
@@ -139,6 +167,20 @@ export function resolveConfig(config: DaemonConfig): ResolvedDaemonConfig {
       intentSelector: config.channels?.intentSelector ?? readBooleanEnv(process.env.LING_STACK_CHANNEL_INTENT_SELECTOR, true),
       teamObserverBus: config.channels?.teamObserverBus ?? readBooleanEnv(process.env.LING_STACK_CHANNEL_TEAM_OBSERVER_BUS, false),
       terminalReports: config.channels?.terminalReports ?? readBooleanEnv(process.env.LING_STACK_CHANNEL_TERMINAL_REPORTS, true),
+    },
+    cuaDriver: {
+      bundledEmbedded: {
+        darwin: config.cuaDriver?.bundledEmbedded?.darwin
+          ?? readBooleanEnv(process.env.LING_STACK_CUA_DRIVER_BUNDLED_EMBEDDED_DARWIN, false),
+        win32: config.cuaDriver?.bundledEmbedded?.win32
+          ?? readBooleanEnv(process.env.LING_STACK_CUA_DRIVER_BUNDLED_EMBEDDED_WIN32, false),
+      },
+      packagedProvider: {
+        darwin: config.cuaDriver?.packagedProvider?.darwin
+          ?? readBooleanEnv(process.env.LING_DESKTOP_CUA_DRIVER_PACKAGED_PROVIDER_DARWIN, false),
+        win32: config.cuaDriver?.packagedProvider?.win32
+          ?? readBooleanEnv(process.env.LING_DESKTOP_CUA_DRIVER_PACKAGED_PROVIDER_WIN32, false),
+      },
     },
   };
 }

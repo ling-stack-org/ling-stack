@@ -3,7 +3,12 @@ import { EventEmitter } from "node:events";
 import { access, mkdir } from "node:fs/promises";
 import { connect } from "node:net";
 import { resolve as resolvePath } from "node:path";
+import type { CuaDriverFeatureFlags } from "@ling-stack/contracts";
 import type { DesktopDaemonStatus } from "../shared/desktop-capabilities.js";
+import {
+  desktopCuaDriverDaemonFeatureEnvironment,
+  resolveDesktopCuaDriverFeatureFlags,
+} from "./cua-driver/feature-gates.js";
 
 const DEFAULT_DAEMON_STARTUP_TIMEOUT_MS = 20_000;
 
@@ -50,6 +55,7 @@ export interface DesktopDaemonLifecycleOptions {
   }) => ChildProcess;
   readonly executablePath?: string;
   readonly desktopBridgeToken?: string;
+  readonly cuaDriverFeatureFlags?: CuaDriverFeatureFlags;
   readonly onDiagnostic?: (event: string, details?: Readonly<Record<string, unknown>>) => void;
 }
 
@@ -163,6 +169,9 @@ export class DesktopDaemonLifecycle {
       cwd: this.defaultWorkspaceCwd,
       env: {
         ...process.env,
+        ...desktopCuaDriverDaemonFeatureEnvironment(
+          this.options.cuaDriverFeatureFlags ?? resolveDesktopCuaDriverFeatureFlags(),
+        ),
         ELECTRON_RUN_AS_NODE: "1",
         LING_STACK_HOST: url.hostname,
         LING_STACK_PORT: url.port || (url.protocol === "https:" ? "443" : "80"),

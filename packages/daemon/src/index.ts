@@ -70,6 +70,11 @@ export { RuntimeSupervisor } from "./runtime/supervisor.js";
 export { StartupStateRegistry } from "./startup/state.js";
 export type { RunStoreFactory } from "./runtime/store-registry.js";
 export type { RunRequest } from "./features/runs/schemas.js";
+export {
+  bundledEmbeddedCuaDriverGateEnabled,
+  cuaDriverFeatureFlagsFromConfig,
+  resolveCuaDriverDistribution,
+} from "./features/plugins/cua-driver-feature-gates.js";
 
 export interface DaemonServer {
   readonly server: Server;
