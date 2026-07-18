@@ -1,0 +1,434 @@
+diff --git a/libs/cua-driver/rust/crates/cua-driver/src/ling_managed_lifetime.rs b/libs/cua-driver/rust/crates/cua-driver/src/ling_managed_lifetime.rs
+new file mode 100644
+index 0000000..afa797b
+--- /dev/null
++++ b/libs/cua-driver/rust/crates/cua-driver/src/ling_managed_lifetime.rs
+@@ -0,0 +1,207 @@
++//! Ling-managed process-lifetime identity and exact host-death watcher.
++
++pub const LING_MANAGED_ENV: &str = "CUA_DRIVER_LING_MANAGED";
++pub const HOST_PID_ENV: &str = "CUA_DRIVER_HOST_PID";
++pub const CHILD_INSTANCE_NONCE_ENV: &str = "CUA_DRIVER_CHILD_INSTANCE_NONCE";
++pub const LEASE_GENERATION_ENV: &str = "CUA_DRIVER_LEASE_GENERATION";
++
++#[derive(Debug, Clone, PartialEq, Eq)]
++pub struct ManagedLifetimeIdentity {
++    pub host_pid: u32,
++    pub child_instance_nonce: String,
++    pub lease_generation: u64,
++}
++
++#[derive(Debug, PartialEq, Eq)]
++pub enum ManagedLifetimeError {
++    Missing(&'static str),
++    InvalidPositiveInteger(&'static str),
++    EmbeddedModeRequired,
++    ExactHostWatcherUnavailable,
++}
++
++impl std::fmt::Display for ManagedLifetimeError {
++    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
++        match self {
++            Self::Missing(name) => write!(formatter, "{name} is required in Ling-managed mode"),
++            Self::InvalidPositiveInteger(name) => {
++                write!(formatter, "{name} must be a positive integer")
++            }
++            Self::EmbeddedModeRequired => {
++                formatter.write_str("Ling-managed mode requires upstream embedded mode")
++            }
++            Self::ExactHostWatcherUnavailable => {
++                formatter.write_str("exact Ling host-process watcher is unavailable")
++            }
++        }
++    }
++}
++impl std::error::Error for ManagedLifetimeError {}
++
++pub fn managed_lifetime_identity() -> Result<Option<ManagedLifetimeIdentity>, ManagedLifetimeError>
++{
++    if std::env::var_os(LING_MANAGED_ENV).as_deref() != Some(std::ffi::OsStr::new("1")) {
++        return Ok(None);
++    }
++    if !cua_driver_core::embedded_mode() {
++        return Err(ManagedLifetimeError::EmbeddedModeRequired);
++    }
++    let host_pid = positive_u32(HOST_PID_ENV)?;
++    let lease_generation = positive_u64(LEASE_GENERATION_ENV)?;
++    let child_instance_nonce = required(CHILD_INSTANCE_NONCE_ENV)?;
++    if child_instance_nonce.is_empty() {
++        return Err(ManagedLifetimeError::Missing(CHILD_INSTANCE_NONCE_ENV));
++    }
++    Ok(Some(ManagedLifetimeIdentity {
++        host_pid,
++        child_instance_nonce,
++        lease_generation,
++    }))
++}
++
++fn required(name: &'static str) -> Result<String, ManagedLifetimeError> {
++    std::env::var(name).map_err(|_| ManagedLifetimeError::Missing(name))
++}
++
++fn positive_u32(name: &'static str) -> Result<u32, ManagedLifetimeError> {
++    let value = required(name)?;
++    value
++        .parse::<u32>()
++        .ok()
++        .filter(|value| *value > 0)
++        .ok_or(ManagedLifetimeError::InvalidPositiveInteger(name))
++}
++
++fn positive_u64(name: &'static str) -> Result<u64, ManagedLifetimeError> {
++    let value = required(name)?;
++    value
++        .parse::<u64>()
++        .ok()
++        .filter(|value| *value > 0)
++        .ok_or(ManagedLifetimeError::InvalidPositiveInteger(name))
++}
++
++/// Open a retained kernel identity for the exact host process before the MCP
++/// child can initialize, then wait on that identity in a dedicated thread.
++/// This cannot follow a recycled PID. The stdio loop independently returns on
++/// EOF, so either host death signal closes the managed process.
++pub fn start_host_watcher() -> Result<(), ManagedLifetimeError> {
++    let Some(identity) = managed_lifetime_identity()? else {
++        return Ok(());
++    };
++    if identity.host_pid == std::process::id() {
++        return Err(ManagedLifetimeError::InvalidPositiveInteger(HOST_PID_ENV));
++    }
++    start_exact_host_watcher(identity.host_pid)
++}
++
++#[cfg(target_os = "macos")]
++fn start_exact_host_watcher(host_pid: u32) -> Result<(), ManagedLifetimeError> {
++    let queue = register_darwin_process_exit(host_pid)?;
++    std::thread::Builder::new()
++        .name("ling-cua-host-watch".to_owned())
++        .spawn(move || {
++            let _ = wait_darwin_process_exit(queue);
++            std::process::exit(0);
++        })
++        .map(|_| ())
++        .map_err(|_| {
++            unsafe {
++                libc::close(queue);
++            }
++            ManagedLifetimeError::ExactHostWatcherUnavailable
++        })
++}
++
++#[cfg(target_os = "macos")]
++fn register_darwin_process_exit(host_pid: u32) -> Result<libc::c_int, ManagedLifetimeError> {
++    let queue = unsafe { libc::kqueue() };
++    if queue < 0 {
++        return Err(ManagedLifetimeError::ExactHostWatcherUnavailable);
++    }
++    let change = libc::kevent {
++        ident: host_pid as libc::uintptr_t,
++        filter: libc::EVFILT_PROC,
++        flags: libc::EV_ADD | libc::EV_ENABLE | libc::EV_ONESHOT,
++        fflags: libc::NOTE_EXIT,
++        data: 0,
++        udata: std::ptr::null_mut(),
++    };
++    let registered =
++        unsafe { libc::kevent(queue, &change, 1, std::ptr::null_mut(), 0, std::ptr::null()) };
++    if registered < 0 {
++        unsafe {
++            libc::close(queue);
++        }
++        return Err(ManagedLifetimeError::ExactHostWatcherUnavailable);
++    }
++    Ok(queue)
++}
++
++#[cfg(target_os = "macos")]
++fn wait_darwin_process_exit(queue: libc::c_int) -> bool {
++    let mut event: libc::kevent = unsafe { std::mem::zeroed() };
++    let observed =
++        unsafe { libc::kevent(queue, std::ptr::null(), 0, &mut event, 1, std::ptr::null()) };
++    unsafe {
++        libc::close(queue);
++    }
++    observed == 1 && event.filter == libc::EVFILT_PROC && event.fflags & libc::NOTE_EXIT != 0
++}
++
++#[cfg(target_os = "linux")]
++fn start_exact_host_watcher(host_pid: u32) -> Result<(), ManagedLifetimeError> {
++    let descriptor = unsafe { libc::syscall(libc::SYS_pidfd_open, host_pid as libc::pid_t, 0) };
++    if descriptor < 0 {
++        return Err(ManagedLifetimeError::ExactHostWatcherUnavailable);
++    }
++    let descriptor = descriptor as libc::c_int;
++    std::thread::Builder::new()
++        .name("ling-cua-host-watch".to_owned())
++        .spawn(move || {
++            let mut poll = libc::pollfd {
++                fd: descriptor,
++                events: libc::POLLIN,
++                revents: 0,
++            };
++            unsafe {
++                let _ = libc::poll(&mut poll, 1, -1);
++                libc::close(descriptor);
++            }
++            std::process::exit(0);
++        })
++        .map(|_| ())
++        .map_err(|_| {
++            unsafe {
++                libc::close(descriptor);
++            }
++            ManagedLifetimeError::ExactHostWatcherUnavailable
++        })
++}
++
++#[cfg(target_os = "windows")]
++fn start_exact_host_watcher(host_pid: u32) -> Result<(), ManagedLifetimeError> {
++    platform_windows::managed_lifetime::start_host_watcher(host_pid)
++        .map_err(|_| ManagedLifetimeError::ExactHostWatcherUnavailable)
++}
++
++#[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
++fn start_exact_host_watcher(_host_pid: u32) -> Result<(), ManagedLifetimeError> {
++    Err(ManagedLifetimeError::ExactHostWatcherUnavailable)
++}
++
++#[cfg(all(test, target_os = "macos"))]
++mod darwin_tests {
++    use super::*;
++
++    #[test]
++    fn kqueue_tracks_the_exact_child_until_exit() {
++        let mut child = std::process::Command::new("/bin/sh")
++            .args(["-c", "sleep 0.05"])
++            .spawn()
++            .unwrap();
++        let queue = register_darwin_process_exit(child.id()).unwrap();
++        assert!(wait_darwin_process_exit(queue));
++        assert!(child.wait().unwrap().success());
++    }
++}
+diff --git a/libs/cua-driver/rust/crates/cua-driver/src/main.rs b/libs/cua-driver/rust/crates/cua-driver/src/main.rs
+index 6aabae5..7af7e59 100644
+--- a/libs/cua-driver/rust/crates/cua-driver/src/main.rs
++++ b/libs/cua-driver/rust/crates/cua-driver/src/main.rs
+@@ -29,6 +29,7 @@ mod bundle;
+ mod cli;
+ mod doctor;
+ mod mcp_http;
++mod ling_managed_lifetime;
+ mod proxy;
+ mod responsibility;
+ mod serve;
+@@ -66,11 +67,19 @@ fn validate_ling_managed_environment() {
+         eprintln!("cua-driver: invalid Ling-managed environment: {error}");
+         std::process::exit(78);
+     }
++    if let Err(error) = ling_managed_lifetime::start_host_watcher() {
++        eprintln!("cua-driver: invalid Ling-managed lifetime: {error}");
++        std::process::exit(78);
++    }
+ }
+ 
+ fn register_managed_readiness_provider() {
+     #[cfg(target_os = "windows")]
+     if cua_driver_core::ling_managed::is_managed() {
++        if let Err(error) = platform_windows::managed_lifetime::ensure_kill_on_close_job() {
++            eprintln!("cua-driver: {error}");
++            std::process::exit(78);
++        }
+         if !platform_windows::managed_readiness::register() {
+             eprintln!("cua-driver: managed readiness provider registration failed");
+             std::process::exit(78);
+diff --git a/libs/cua-driver/rust/crates/platform-windows/Cargo.toml b/libs/cua-driver/rust/crates/platform-windows/Cargo.toml
+index bd64e08..c293697 100644
+--- a/libs/cua-driver/rust/crates/platform-windows/Cargo.toml
++++ b/libs/cua-driver/rust/crates/platform-windows/Cargo.toml
+@@ -28,6 +28,7 @@ windows = { version = "0.58", features = [
+     "Win32_UI_Accessibility",
+     "Win32_UI_WindowsAndMessaging",
+     "Win32_System_Threading",
++    "Win32_System_JobObjects",
+     "Win32_System_Diagnostics_ToolHelp",
+     "Win32_Graphics_Gdi",
+     "Win32_Graphics_Dwm",
+diff --git a/libs/cua-driver/rust/crates/platform-windows/src/lib.rs b/libs/cua-driver/rust/crates/platform-windows/src/lib.rs
+index df36a69..ab9534a 100644
+--- a/libs/cua-driver/rust/crates/platform-windows/src/lib.rs
++++ b/libs/cua-driver/rust/crates/platform-windows/src/lib.rs
+@@ -23,6 +23,7 @@ pub mod overlay;
+ pub mod diagnostics;
+ pub mod health_report;
+ pub mod managed_readiness;
++pub mod managed_lifetime;
+ pub mod recording_hooks;
+ pub mod pip;
+ pub mod terminal;
+diff --git a/libs/cua-driver/rust/crates/platform-windows/src/managed_lifetime.rs b/libs/cua-driver/rust/crates/platform-windows/src/managed_lifetime.rs
+new file mode 100644
+index 0000000..7a8ff53
+--- /dev/null
++++ b/libs/cua-driver/rust/crates/platform-windows/src/managed_lifetime.rs
+@@ -0,0 +1,159 @@
++//! Windows retained-process and Job Object ownership for Ling-managed mode.
++
++#[cfg(target_os = "windows")]
++use std::sync::OnceLock;
++
++#[cfg(target_os = "windows")]
++static JOB_HANDLE: OnceLock<usize> = OnceLock::new();
++
++/// Attach the current provider process to a private, non-inheritable Job
++/// Object. The default job policy forbids breakaway; KILL_ON_JOB_CLOSE removes
++/// every descendant when the provider process closes its retained job handle.
++#[cfg(target_os = "windows")]
++pub fn ensure_kill_on_close_job() -> Result<(), String> {
++    use windows::Win32::System::Threading::GetCurrentProcess;
++
++    if JOB_HANDLE.get().is_some() {
++        return Ok(());
++    }
++    let job = create_kill_on_close_job()?;
++    if let Err(error) = assign_process_to_job(job, unsafe { GetCurrentProcess() }) {
++        close_handle(job);
++        return Err(error);
++    }
++    JOB_HANDLE.set(job.0 as usize).map_err(|_| {
++        close_handle(job);
++        "cua_windows_lifecycle_unavailable:job race".to_owned()
++    })?;
++    crate::managed_readiness::set_job_object_state(true, true);
++    Ok(())
++}
++
++#[cfg(not(target_os = "windows"))]
++pub fn ensure_kill_on_close_job() -> Result<(), String> {
++    Ok(())
++}
++
++/// Open the exact host process before returning, then retain that SYNCHRONIZE
++/// handle in the watcher thread. A recycled PID cannot satisfy the wait.
++#[cfg(target_os = "windows")]
++pub fn start_host_watcher(host_pid: u32) -> Result<(), String> {
++    let handle = open_process_for_synchronize(host_pid)?;
++    let raw = handle.0 as usize;
++    std::thread::Builder::new()
++        .name("ling-cua-host-watch".to_owned())
++        .spawn(move || {
++            let handle = windows::Win32::Foundation::HANDLE(raw as *mut _);
++            let _ = wait_for_process_handle(handle);
++            close_handle(handle);
++            std::process::exit(0);
++        })
++        .map(|_| ())
++        .map_err(|error| {
++            close_handle(handle);
++            format!("cua_windows_lifecycle_unavailable:{error}")
++        })
++}
++
++#[cfg(not(target_os = "windows"))]
++pub fn start_host_watcher(_host_pid: u32) -> Result<(), String> {
++    Err("cua_windows_lifecycle_unavailable:not Windows".to_owned())
++}
++
++#[cfg(target_os = "windows")]
++fn create_kill_on_close_job() -> Result<windows::Win32::Foundation::HANDLE, String> {
++    use std::ffi::c_void;
++    use windows::Win32::System::JobObjects::{
++        CreateJobObjectW, JobObjectExtendedLimitInformation, SetInformationJobObject,
++        JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
++    };
++
++    let job = unsafe { CreateJobObjectW(None, windows::core::PCWSTR::null()) }
++        .map_err(|error| format!("cua_windows_lifecycle_unavailable:{error}"))?;
++    let mut info = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
++    info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
++    let result = unsafe {
++        SetInformationJobObject(
++            job,
++            JobObjectExtendedLimitInformation,
++            &info as *const _ as *const c_void,
++            std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
++        )
++    };
++    if let Err(error) = result {
++        close_handle(job);
++        return Err(format!("cua_windows_lifecycle_unavailable:{error}"));
++    }
++    Ok(job)
++}
++
++#[cfg(target_os = "windows")]
++fn assign_process_to_job(
++    job: windows::Win32::Foundation::HANDLE,
++    process: windows::Win32::Foundation::HANDLE,
++) -> Result<(), String> {
++    use windows::Win32::System::JobObjects::AssignProcessToJobObject;
++    unsafe { AssignProcessToJobObject(job, process) }
++        .map_err(|error| format!("cua_windows_lifecycle_unavailable:{error}"))
++}
++
++#[cfg(target_os = "windows")]
++fn open_process_for_synchronize(
++    host_pid: u32,
++) -> Result<windows::Win32::Foundation::HANDLE, String> {
++    use windows::Win32::System::Threading::{OpenProcess, PROCESS_SYNCHRONIZE};
++    unsafe { OpenProcess(PROCESS_SYNCHRONIZE, false, host_pid) }
++        .map_err(|error| format!("cua_windows_lifecycle_unavailable:{error}"))
++}
++
++#[cfg(target_os = "windows")]
++fn wait_for_process_handle(handle: windows::Win32::Foundation::HANDLE) -> bool {
++    use windows::Win32::Foundation::WAIT_OBJECT_0;
++    use windows::Win32::System::Threading::WaitForSingleObject;
++    (unsafe { WaitForSingleObject(handle, u32::MAX) }) == WAIT_OBJECT_0
++}
++
++#[cfg(target_os = "windows")]
++fn close_handle(handle: windows::Win32::Foundation::HANDLE) {
++    unsafe {
++        let _ = windows::Win32::Foundation::CloseHandle(handle);
++    }
++}
++
++#[cfg(all(test, target_os = "windows"))]
++mod tests {
++    use super::*;
++    use std::os::windows::io::AsRawHandle;
++
++    #[test]
++    fn retained_handle_observes_the_exact_child_exit() {
++        let mut child = std::process::Command::new("cmd.exe")
++            .args(["/c", "ping -n 2 127.0.0.1 >nul"])
++            .spawn()
++            .unwrap();
++        let handle = open_process_for_synchronize(child.id()).unwrap();
++        assert!(wait_for_process_handle(handle));
++        close_handle(handle);
++        assert!(child.wait().unwrap().success());
++    }
++
++    #[test]
++    fn kill_on_close_job_terminates_an_assigned_descendant() {
++        let job = create_kill_on_close_job().unwrap();
++        let mut child = std::process::Command::new("cmd.exe")
++            .args(["/c", "ping -n 30 127.0.0.1 >nul"])
++            .spawn()
++            .unwrap();
++        let process = windows::Win32::Foundation::HANDLE(child.as_raw_handle());
++        assign_process_to_job(job, process).unwrap();
++        close_handle(job);
++        for _ in 0..50 {
++            if child.try_wait().unwrap().is_some() {
++                return;
++            }
++            std::thread::sleep(std::time::Duration::from_millis(100));
++        }
++        let _ = child.kill();
++        panic!("KILL_ON_JOB_CLOSE did not terminate the assigned descendant");
++    }
++}

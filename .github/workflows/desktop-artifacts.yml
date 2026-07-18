@@ -102,6 +102,130 @@ jobs:
           if-no-files-found: error
           overwrite: true
 
+  cua-driver-source-build-macos:
+    name: Cua Driver locked source build (macOS universal)
+    runs-on: macos-26
+    timeout-minutes: 120
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.15.0
+
+      - name: Select locked Xcode
+        run: sudo xcode-select --switch /Applications/Xcode_26.5.app/Contents/Developer
+
+      - name: Install locked Rust toolchain and targets
+        run: |
+          rustup toolchain install 1.97.1 --profile minimal --component rustfmt
+          rustup target add aarch64-apple-darwin x86_64-apple-darwin --toolchain 1.97.1
+
+      - name: Build and attest candidate A
+        run: |
+          set -euo pipefail
+          root="${RUNNER_TEMP}/ling-cua-driver-source-build"
+          node apps/desktop/scripts/build-cua-driver-provider.mjs \
+            --platform darwin \
+            --work-dir "${root}/a" \
+            --output-dir "${root}/a/output"
+          node apps/desktop/scripts/verify-cua-driver-source-build.mjs \
+            --resource-root apps/desktop/resources/providers/cua-driver/0.8.3-ling.1 \
+            --attestation "${root}/a/output/source-build-attestation.json" \
+            --output-root "${root}/a/output"
+
+      - name: Build and attest candidate B
+        run: |
+          set -euo pipefail
+          root="${RUNNER_TEMP}/ling-cua-driver-source-build"
+          node apps/desktop/scripts/build-cua-driver-provider.mjs \
+            --platform darwin \
+            --work-dir "${root}/b" \
+            --output-dir "${root}/b/output"
+          node apps/desktop/scripts/verify-cua-driver-source-build.mjs \
+            --resource-root apps/desktop/resources/providers/cua-driver/0.8.3-ling.1 \
+            --attestation "${root}/b/output/source-build-attestation.json" \
+            --output-root "${root}/b/output"
+
+      - name: Compare repeated universal pre-sign outputs
+        run: |
+          set -euo pipefail
+          root="${RUNNER_TEMP}/ling-cua-driver-source-build"
+          node apps/desktop/scripts/verify-cua-driver-source-build.mjs \
+            --resource-root apps/desktop/resources/providers/cua-driver/0.8.3-ling.1 \
+            --compare-a "${root}/a/output" \
+            --compare-b "${root}/b/output"
+
+      - name: Upload macOS source-build evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: cua-driver-source-build-macos-universal
+          if-no-files-found: error
+          retention-days: 14
+          path: |
+            ${{ runner.temp }}/ling-cua-driver-source-build/a/output/**
+            ${{ runner.temp }}/ling-cua-driver-source-build/b/output/**
+
+  cua-driver-source-build-windows:
+    name: Cua Driver locked source build (Windows x64)
+    runs-on: windows-2025
+    timeout-minutes: 120
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.15.0
+
+      - name: Install locked Rust toolchain and target
+        shell: pwsh
+        run: |
+          rustup toolchain install 1.97.1 --profile minimal --component rustfmt
+          rustup target add x86_64-pc-windows-msvc --toolchain 1.97.1
+
+      - name: Build and attest candidate A
+        shell: pwsh
+        run: |
+          $root = Join-Path $env:RUNNER_TEMP "ling-cua-driver-source-build"
+          node apps/desktop/scripts/build-cua-driver-provider.mjs --platform win32-x64 --work-dir (Join-Path $root "a") --output-dir (Join-Path $root "a/output")
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node apps/desktop/scripts/verify-cua-driver-source-build.mjs --resource-root apps/desktop/resources/providers/cua-driver/0.8.3-ling.1 --attestation (Join-Path $root "a/output/source-build-attestation.json") --output-root (Join-Path $root "a/output")
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Build and attest candidate B
+        shell: pwsh
+        run: |
+          $root = Join-Path $env:RUNNER_TEMP "ling-cua-driver-source-build"
+          node apps/desktop/scripts/build-cua-driver-provider.mjs --platform win32-x64 --work-dir (Join-Path $root "b") --output-dir (Join-Path $root "b/output")
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node apps/desktop/scripts/verify-cua-driver-source-build.mjs --resource-root apps/desktop/resources/providers/cua-driver/0.8.3-ling.1 --attestation (Join-Path $root "b/output/source-build-attestation.json") --output-root (Join-Path $root "b/output")
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Compare repeated x64 pre-sign outputs
+        shell: pwsh
+        run: |
+          $root = Join-Path $env:RUNNER_TEMP "ling-cua-driver-source-build"
+          node apps/desktop/scripts/verify-cua-driver-source-build.mjs --resource-root apps/desktop/resources/providers/cua-driver/0.8.3-ling.1 --compare-a (Join-Path $root "a/output") --compare-b (Join-Path $root "b/output")
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Upload Windows source-build evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: cua-driver-source-build-windows-x64
+          if-no-files-found: error
+          retention-days: 14
+          path: |
+            ${{ runner.temp }}/ling-cua-driver-source-build/a/output/**
+            ${{ runner.temp }}/ling-cua-driver-source-build/b/output/**
+
   macos-unsigned:
     name: macOS unsigned arm64 + x64
     runs-on: macos-15

@@ -1,0 +1,435 @@
+diff --git a/libs/cua-driver/rust/crates/cua-driver-core/src/lib.rs b/libs/cua-driver/rust/crates/cua-driver-core/src/lib.rs
+index 21ffab2..7a78c4a 100644
+--- a/libs/cua-driver/rust/crates/cua-driver-core/src/lib.rs
++++ b/libs/cua-driver/rust/crates/cua-driver-core/src/lib.rs
+@@ -39,6 +39,7 @@ pub mod element_token;
+ pub mod ffmpeg_install;
+ pub mod health_report;
+ pub mod image_utils;
++pub mod ling_managed;
+ pub mod page;
+ pub mod pip_hook;
+ pub mod policy;
+diff --git a/libs/cua-driver/rust/crates/cua-driver-core/src/ling_managed.rs b/libs/cua-driver/rust/crates/cua-driver-core/src/ling_managed.rs
+new file mode 100644
+index 0000000..39f252d
+--- /dev/null
++++ b/libs/cua-driver/rust/crates/cua-driver-core/src/ling_managed.rs
+@@ -0,0 +1,146 @@
++//! Ling-owned managed-embedding environment and state-root contract.
++//!
++//! The functions in this module are intentionally pure path policy. Platform
++//! adapters still own native readiness and process lifetime. Standalone Cua
++//! Driver callers never enter this branch and retain their existing paths.
++
++use std::path::{Path, PathBuf};
++
++pub const LING_MANAGED_ENV: &str = "CUA_DRIVER_LING_MANAGED";
++pub const STATE_HOME_ENV: &str = "CUA_DRIVER_STATE_HOME";
++pub const TELEMETRY_ENABLED_ENV: &str = "CUA_DRIVER_RS_TELEMETRY_ENABLED";
++pub const UPDATE_CHECK_ENV: &str = "CUA_DRIVER_RS_UPDATE_CHECK";
++pub const TELEMETRY_HOME_ENV: &str = "CUA_DRIVER_TELEMETRY_HOME";
++
++#[derive(Debug, Clone, PartialEq, Eq)]
++pub struct ManagedEnvironment {
++    pub state_home: PathBuf,
++    pub telemetry_home: PathBuf,
++}
++
++#[derive(Debug, Clone, PartialEq, Eq)]
++pub enum ManagedEnvironmentError {
++    Missing(&'static str),
++    InvalidBoolean {
++        name: &'static str,
++        expected: &'static str,
++    },
++    InvalidStateHome,
++}
++
++impl std::fmt::Display for ManagedEnvironmentError {
++    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
++        match self {
++            Self::Missing(name) => write!(formatter, "{name} is required in Ling-managed mode"),
++            Self::InvalidBoolean { name, expected } => {
++                write!(formatter, "{name} must be exactly {expected}")
++            }
++            Self::InvalidStateHome => formatter.write_str("managed state home must be absolute"),
++        }
++    }
++}
++
++impl std::error::Error for ManagedEnvironmentError {}
++
++/// Whether Ling's managed channel is active. This is separate from the
++/// upstream `CUA_DRIVER_EMBEDDED` bit so embedding examples remain compatible.
++pub fn is_managed() -> bool {
++    std::env::var_os(LING_MANAGED_ENV).as_deref() == Some(std::ffi::OsStr::new("1"))
++}
++
++/// Parse and validate the complete managed environment. `Ok(None)` is the
++/// normal result for standalone/external mode.
++pub fn managed_environment() -> Result<Option<ManagedEnvironment>, ManagedEnvironmentError> {
++    if !is_managed() {
++        return Ok(None);
++    }
++    if !crate::embedded_mode() {
++        return Err(ManagedEnvironmentError::InvalidBoolean {
++            name: "CUA_DRIVER_EMBEDDED",
++            expected: "1",
++        });
++    }
++    let state_home = required_path(STATE_HOME_ENV)?;
++    exact_bool(TELEMETRY_ENABLED_ENV, false)?;
++    exact_bool(UPDATE_CHECK_ENV, false)?;
++    let telemetry_home = match std::env::var_os(TELEMETRY_HOME_ENV) {
++        Some(value) => PathBuf::from(value),
++        None => state_home.join("telemetry"),
++    };
++    Ok(Some(ManagedEnvironment {
++        state_home,
++        telemetry_home,
++    }))
++}
++
++/// Return Ling's isolated state root when managed mode is active.
++pub fn state_home() -> Option<PathBuf> {
++    is_managed()
++        .then(|| std::env::var_os(STATE_HOME_ENV).map(PathBuf::from))
++        .flatten()
++}
++
++/// Resolve a relative state path under `CUA_DRIVER_STATE_HOME`.
++/// Traversal and absolute paths are rejected so a malformed host environment
++/// cannot redirect writes to the user's normal Cua Driver state.
++pub fn state_path(relative: impl AsRef<Path>) -> Option<PathBuf> {
++    let relative = relative.as_ref();
++    if relative.is_absolute()
++        || relative
++            .components()
++            .any(|component| component == std::path::Component::ParentDir)
++    {
++        return None;
++    }
++    Some(state_home()?.join(relative))
++}
++
++fn required_path(name: &'static str) -> Result<PathBuf, ManagedEnvironmentError> {
++    let value = std::env::var_os(name).ok_or(ManagedEnvironmentError::Missing(name))?;
++    let path = PathBuf::from(value);
++    if !path.is_absolute() {
++        return Err(ManagedEnvironmentError::InvalidStateHome);
++    }
++    Ok(path)
++}
++
++fn exact_bool(name: &'static str, expected: bool) -> Result<(), ManagedEnvironmentError> {
++    let value = std::env::var(name).map_err(|_| ManagedEnvironmentError::Missing(name))?;
++    let expected_value = if expected { "true" } else { "false" };
++    if value != expected_value {
++        return Err(ManagedEnvironmentError::InvalidBoolean {
++            name,
++            expected: expected_value,
++        });
++    }
++    Ok(())
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    #[test]
++    fn state_path_rejects_absolute_and_parent_paths() {
++        std::env::set_var(LING_MANAGED_ENV, "1");
++        std::env::set_var(crate::EMBEDDED_ENV, "1");
++        std::env::set_var(STATE_HOME_ENV, "/tmp/ling-managed-state");
++        std::env::set_var(TELEMETRY_ENABLED_ENV, "false");
++        std::env::set_var(UPDATE_CHECK_ENV, "false");
++        assert_eq!(
++            state_path("config.json"),
++            Some(PathBuf::from("/tmp/ling-managed-state/config.json"))
++        );
++        assert_eq!(state_path("../config.json"), None);
++        assert_eq!(state_path("/tmp/other.json"), None);
++        for name in [
++            LING_MANAGED_ENV,
++            crate::EMBEDDED_ENV,
++            STATE_HOME_ENV,
++            TELEMETRY_ENABLED_ENV,
++            UPDATE_CHECK_ENV,
++        ] {
++            std::env::remove_var(name);
++        }
++    }
++}
+diff --git a/libs/cua-driver/rust/crates/cua-driver/src/cli.rs b/libs/cua-driver/rust/crates/cua-driver/src/cli.rs
+index 9724177..4186b47 100644
+--- a/libs/cua-driver/rust/crates/cua-driver/src/cli.rs
++++ b/libs/cua-driver/rust/crates/cua-driver/src/cli.rs
+@@ -2844,10 +2844,13 @@ fn diagnose_tcc_db_section() -> String {
+ 
+ fn diagnose_config_paths_section() -> String {
+     let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
++    let managed_root = cua_driver_core::ling_managed::state_home()
++        .map(|path| path.display().to_string())
++        .unwrap_or_else(|| format!("{home}/.cua-driver"));
+     let paths: &[(&str, String)] = &[
+-        ("user data dir",   format!("{home}/.cua-driver")),
++        ("user data dir",   managed_root.clone()),
+         ("config cache",    format!("{home}/Library/Caches/cua-driver")),
+-        ("telemetry id",    format!("{home}/.cua-driver/.telemetry_id")),
++        ("telemetry id",    format!("{managed_root}/telemetry/.telemetry_id")),
+         ("updater plist",   format!("{home}/Library/LaunchAgents/com.trycua.cua_driver_updater.plist")),
+         ("daemon plist",    format!("{home}/Library/LaunchAgents/com.trycua.cua_driver_daemon.plist")),
+     ];
+@@ -2861,6 +2864,9 @@ fn diagnose_config_paths_section() -> String {
+ 
+ /// Path to the persistent JSON config file (`~/.cua-driver/config.json`).
+ fn config_file_path() -> std::path::PathBuf {
++    if let Some(path) = cua_driver_core::ling_managed::state_path("config.json") {
++        return path;
++    }
+     let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
+     std::path::PathBuf::from(format!("{home}/.cua-driver/config.json"))
+ }
+diff --git a/libs/cua-driver/rust/crates/cua-driver/src/main.rs b/libs/cua-driver/rust/crates/cua-driver/src/main.rs
+index de4333b..408d503 100644
+--- a/libs/cua-driver/rust/crates/cua-driver/src/main.rs
++++ b/libs/cua-driver/rust/crates/cua-driver/src/main.rs
+@@ -61,6 +61,13 @@ fn init_logging() {
+     telemetry::register_stdio_observer();
+ }
+ 
++fn validate_ling_managed_environment() {
++    if let Err(error) = cua_driver_core::ling_managed::managed_environment() {
++        eprintln!("cua-driver: invalid Ling-managed environment: {error}");
++        std::process::exit(78);
++    }
++}
++
+ /// Execute finite commands in a child so the parent can observe every exit,
+ /// including validation failures and legacy `process::exit` paths. Delivery is
+ /// delegated to a detached, no-output worker after the child exits, so network
+@@ -214,14 +221,18 @@ fn maybe_init_pip() {
+ #[cfg(target_os = "macos")]
+ fn build_macos_registry() -> cua_driver_core::tool::ToolRegistry {
+     let mut r = platform_macos::register_tools();
+-    check_update_tool::register_into(&mut r);
++    if !cua_driver_core::ling_managed::is_managed() {
++        check_update_tool::register_into(&mut r);
++    }
+     r
+ }
+ 
+ #[cfg(target_os = "macos")]
+ fn build_macos_registry_with_compat(compat: bool) -> cua_driver_core::tool::ToolRegistry {
+     let mut r = platform_macos::register_tools_with_compat(compat);
+-    check_update_tool::register_into(&mut r);
++    if !cua_driver_core::ling_managed::is_managed() {
++        check_update_tool::register_into(&mut r);
++    }
+     r
+ }
+ 
+@@ -230,6 +241,7 @@ fn build_macos_registry_with_compat(compat: bool) -> cua_driver_core::tool::Tool
+ #[cfg(target_os = "macos")]
+ fn main() {
+     init_logging();
++    validate_ling_managed_environment();
+     if telemetry::run_cli_completion_worker_if_requested() {
+         return;
+     }
+@@ -672,6 +684,7 @@ fn main() {
+ #[cfg(not(target_os = "macos"))]
+ fn main() -> anyhow::Result<()> {
+     init_logging();
++    validate_ling_managed_environment();
+     if telemetry::run_cli_completion_worker_if_requested() {
+         return Ok(());
+     }
+@@ -929,7 +942,13 @@ fn build_registry(cursor_cfg: cursor_overlay::CursorConfig) -> cua_driver_core::
+         cua_driver_core::video::set_video_backend_factory(
+             Box::new(cua_driver_core::video_ffmpeg::FfmpegVideoBackendFactory),
+         );
+-        { let mut r = platform_windows::register_tools_with_cursor(cursor_cfg, compat); check_update_tool::register_into(&mut r); r }
++        {
++            let mut r = platform_windows::register_tools_with_cursor(cursor_cfg, compat);
++            if !cua_driver_core::ling_managed::is_managed() {
++                check_update_tool::register_into(&mut r);
++            }
++            r
++        }
+     }
+     #[cfg(target_os = "linux")]
+     {
+@@ -982,7 +1001,13 @@ fn build_registry(cursor_cfg: cursor_overlay::CursorConfig) -> cua_driver_core::
+         if let Err(error) = platform_linux::atspi::ensure_listener_active() {
+             tracing::warn!("could not activate the persistent AT-SPI listener: {error}");
+         }
+-        { let mut r = platform_linux::register_tools_with_cursor(cursor_cfg, compat); check_update_tool::register_into(&mut r); r }
++        {
++            let mut r = platform_linux::register_tools_with_cursor(cursor_cfg, compat);
++            if !cua_driver_core::ling_managed::is_managed() {
++                check_update_tool::register_into(&mut r);
++            }
++            r
++        }
+     }
+     #[cfg(not(any(target_os = "windows", target_os = "linux")))]
+     {
+@@ -1021,7 +1046,9 @@ fn build_registry_no_cursor() -> cua_driver_core::tool::ToolRegistry {
+                 cursor_overlay::CursorConfig { enabled: false, ..Default::default() },
+                 compat,
+             );
+-            check_update_tool::register_into(&mut r);
++            if !cua_driver_core::ling_managed::is_managed() {
++                check_update_tool::register_into(&mut r);
++            }
+             r
+         }
+     }
+@@ -1068,7 +1095,9 @@ fn build_registry_no_cursor() -> cua_driver_core::tool::ToolRegistry {
+                 cursor_overlay::CursorConfig { enabled: false, ..Default::default() },
+                 compat,
+             );
+-            check_update_tool::register_into(&mut r);
++            if !cua_driver_core::ling_managed::is_managed() {
++                check_update_tool::register_into(&mut r);
++            }
+             r
+         }
+     }
+diff --git a/libs/cua-driver/rust/crates/cua-driver/src/serve.rs b/libs/cua-driver/rust/crates/cua-driver/src/serve.rs
+index fa8f7b9..6b88f4c 100644
+--- a/libs/cua-driver/rust/crates/cua-driver/src/serve.rs
++++ b/libs/cua-driver/rust/crates/cua-driver/src/serve.rs
+@@ -211,6 +211,10 @@ fn register_recording_session_end_hook(
+ 
+ /// Returns the platform default socket/pipe path.
+ pub fn default_socket_path() -> String {
++    if let Some(path) = cua_driver_core::ling_managed::state_path("run/cua-driver.sock") {
++        #[cfg(not(target_os = "windows"))]
++        return path.display().to_string();
++    }
+     #[cfg(target_os = "macos")]
+     {
+         let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
+@@ -223,6 +227,9 @@ pub fn default_socket_path() -> String {
+     }
+     #[cfg(target_os = "windows")]
+     {
++        if cua_driver_core::ling_managed::is_managed() {
++            return r"\\.\pipe\ling-cua-driver-managed".to_owned();
++        }
+         r"\\.\pipe\cua-driver".to_owned()
+     }
+     #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
+@@ -246,6 +253,9 @@ pub fn default_uia_pipe_path() -> String {
+ 
+ /// Returns the platform default PID file path.
+ pub fn default_pid_file_path() -> String {
++    if let Some(path) = cua_driver_core::ling_managed::state_path("run/cua-driver.pid") {
++        return path.display().to_string();
++    }
+     #[cfg(target_os = "macos")]
+     {
+         let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
+diff --git a/libs/cua-driver/rust/crates/cua-driver/src/telemetry.rs b/libs/cua-driver/rust/crates/cua-driver/src/telemetry.rs
+index 7eb0605..aaf987e 100644
+--- a/libs/cua-driver/rust/crates/cua-driver/src/telemetry.rs
++++ b/libs/cua-driver/rust/crates/cua-driver/src/telemetry.rs
+@@ -125,6 +125,9 @@ pub fn is_enabled() -> bool {
+ }
+ 
+ fn effective_enabled() -> (bool, &'static str) {
++    if cua_driver_core::ling_managed::is_managed() {
++        return (false, "ling_managed");
++    }
+     if let Some(value) = parse_env_bool(ENV_TELEMETRY_ENABLED) {
+         return (value, "environment");
+     }
+@@ -153,6 +156,9 @@ pub fn status() -> TelemetryStatus {
+ }
+ 
+ pub fn set_enabled(enabled: bool) -> Result<(), String> {
++    if cua_driver_core::ling_managed::is_managed() {
++        return Err("telemetry is disabled and immutable in Ling-managed mode".to_owned());
++    }
+     let path = config_path().ok_or_else(|| "home directory is unavailable".to_owned())?;
+     let mut config = read_config();
+     let object = config
+@@ -1486,6 +1492,9 @@ fn post_to_posthog_with_timeout(payload: &Value, timeout: Duration) -> Result<u1
+ }
+ 
+ fn telemetry_home_dir() -> Option<PathBuf> {
++    if let Some(path) = cua_driver_core::ling_managed::state_path("telemetry") {
++        return Some(path);
++    }
+     if let Some(path) = std::env::var_os(ENV_TELEMETRY_HOME) {
+         return Some(PathBuf::from(path));
+     }
+diff --git a/libs/cua-driver/rust/crates/cua-driver/src/version_check.rs b/libs/cua-driver/rust/crates/cua-driver/src/version_check.rs
+index b64f36a..c7713dc 100644
+--- a/libs/cua-driver/rust/crates/cua-driver/src/version_check.rs
++++ b/libs/cua-driver/rust/crates/cua-driver/src/version_check.rs
+@@ -367,6 +367,9 @@ fn format_banner(latest: &str, current: &str) -> String {
+ /// 2. Persisted config `update_check_enabled` (false → off)
+ /// 3. Built `CARGO_PKG_VERSION` is a pre-release (`-dev`, `-rc.1`, …) → off
+ fn is_enabled() -> bool {
++    if cua_driver_core::ling_managed::is_managed() {
++        return false;
++    }
+     if let Some(false) = parse_env_bool(ENV_UPDATE_CHECK) {
+         return false;
+     }
+@@ -383,6 +386,11 @@ fn is_enabled() -> bool {
+ /// the `cua-driver config set` subcommand writes to. Returns `None` when
+ /// the file is missing, unreadable, or doesn't have the key.
+ fn read_config_flag() -> Option<bool> {
++    if let Some(path) = cua_driver_core::ling_managed::state_path("config.json") {
++        let raw = std::fs::read_to_string(path).ok()?;
++        let json: serde_json::Value = serde_json::from_str(&raw).ok()?;
++        return json.get("update_check_enabled").and_then(|v| v.as_bool());
++    }
+     let home = std::env::var_os("HOME")
+         .or_else(|| std::env::var_os("USERPROFILE"))?;
+     let path = PathBuf::from(home).join(".cua-driver").join("config.json");
+@@ -472,6 +480,9 @@ fn write_cache(cache: &VersionCache) -> std::io::Result<()> {
+ }
+ 
+ fn cache_path() -> Option<PathBuf> {
++    if let Some(path) = cua_driver_core::ling_managed::state_path(CACHE_FILE_NAME) {
++        return Some(path);
++    }
+     let home = std::env::var_os("HOME")
+         .or_else(|| std::env::var_os("USERPROFILE"))?;
+     Some(PathBuf::from(home).join(HOME_SUBDIRECTORY).join(CACHE_FILE_NAME))
+diff --git a/libs/cua-driver/rust/crates/pip-preview/src/lib.rs b/libs/cua-driver/rust/crates/pip-preview/src/lib.rs
+index 9ea83e2..142f3c1 100644
+--- a/libs/cua-driver/rust/crates/pip-preview/src/lib.rs
++++ b/libs/cua-driver/rust/crates/pip-preview/src/lib.rs
+@@ -21,6 +21,10 @@ use std::sync::OnceLock;
+ /// back to `%USERPROFILE%` (Windows, where `HOME` is usually unset). Returns
+ /// `None` when neither is set (sandboxed CI).
+ pub fn default_config_path() -> Option<std::path::PathBuf> {
++    if std::env::var_os("CUA_DRIVER_LING_MANAGED").as_deref() == Some(std::ffi::OsStr::new("1")) {
++        return std::env::var_os("CUA_DRIVER_STATE_HOME")
++            .map(|home| std::path::PathBuf::from(home).join("config.json"));
++    }
+     std::env::var_os("HOME")
+         .or_else(|| std::env::var_os("USERPROFILE"))
+         .map(|h| std::path::PathBuf::from(h).join(".cua-driver").join("config.json"))
+diff --git a/libs/cua-driver/rust/crates/platform-macos/src/tools/mod.rs b/libs/cua-driver/rust/crates/platform-macos/src/tools/mod.rs
+index c1b21a0..b2e7bd0 100644
+--- a/libs/cua-driver/rust/crates/platform-macos/src/tools/mod.rs
++++ b/libs/cua-driver/rust/crates/platform-macos/src/tools/mod.rs
+@@ -209,6 +209,9 @@ impl Default for DriverConfig {
+ 
+ /// Path to the persistent JSON config file shared by the CLI and MCP session.
+ pub fn config_file_path() -> std::path::PathBuf {
++    if let Some(path) = cua_driver_core::ling_managed::state_path("config.json") {
++        return path;
++    }
+     let home = std::env::var("HOME").unwrap_or_default();
+     std::path::PathBuf::from(format!("{home}/.cua-driver/config.json"))
+ }

@@ -1,0 +1,147 @@
+diff --git a/libs/cua-driver/rust/crates/platform-windows/src/input/keyboard.rs b/libs/cua-driver/rust/crates/platform-windows/src/input/keyboard.rs
+index 75e00bc..d9bd669 100644
+--- a/libs/cua-driver/rust/crates/platform-windows/src/input/keyboard.rs
++++ b/libs/cua-driver/rust/crates/platform-windows/src/input/keyboard.rs
+@@ -431,7 +431,7 @@ pub fn send_key_synthesized(hwnd: u64, key: &str, modifiers: &[&str]) -> Result<
+     if target.0.is_null() {
+         bail!("invalid target hwnd");
+     }
+-    if let Some(msg) = crate::input::post_message_blocked_by_uipi(hwnd) {
++    if let Some(msg) = crate::input::managed_send_input_guard(hwnd) {
+         // Same UIPI defense as the PostMessage path. SendInput from UIAccess
+         // _is_ allowed cross-integrity, but if our daemon is somehow at a
+         // lower integrity than target, SendInput would land in the wrong
+@@ -535,7 +535,7 @@ pub fn send_text_synthesized(hwnd: u64, text: &str) -> Result<()> {
+     if target.0.is_null() {
+         bail!("invalid target hwnd");
+     }
+-    if let Some(msg) = crate::input::post_message_blocked_by_uipi(hwnd) {
++    if let Some(msg) = crate::input::managed_send_input_guard(hwnd) {
+         bail!(msg);
+     }
+     // Build the key-event sequence. Printable codepoints go through as Unicode
+diff --git a/libs/cua-driver/rust/crates/platform-windows/src/input/mod.rs b/libs/cua-driver/rust/crates/platform-windows/src/input/mod.rs
+index 0501db4..c5359f0 100644
+--- a/libs/cua-driver/rust/crates/platform-windows/src/input/mod.rs
++++ b/libs/cua-driver/rust/crates/platform-windows/src/input/mod.rs
+@@ -138,7 +138,12 @@ pub fn post_message_blocked_by_uipi(hwnd: u64) -> Option<String> {
+     let _ = unsafe { CloseHandle(target_handle) };
+     let target = target?;
+     if target > own {
+-        Some(format!(
++    if cua_driver_core::ling_managed::is_managed() {
++        return Some(crate::ling_managed_capability::StructuredCapabilityError::uiaccess_required(
++            crate::ling_managed_capability::CapabilityRequirement::ElevatedPixelInput,
++        ).to_json());
++    }
++    Some(format!(
+             "UIPI: target hwnd 0x{hwnd:x} (pid {pid}) is at {} integrity; \
+              cua-driver is at {} integrity. PostMessage to a higher-integrity \
+              window is silently dropped by the target's message pump — the \
+@@ -155,3 +160,17 @@ pub fn post_message_blocked_by_uipi(hwnd: u64) -> Option<String> {
+         None
+     }
+ }
++
++/// Classify SendInput-only targets before attempting foreground mutation.
++/// Ling-managed standard mode returns a stable JSON error. Standalone mode
++/// keeps the upstream behavior and error text.
++pub fn managed_send_input_guard(hwnd: u64) -> Option<String> {
++    if !cua_driver_core::ling_managed::is_managed() { return None; }
++    if let Some(error) = post_message_blocked_by_uipi(hwnd) { return Some(error); }
++    if keyboard::is_xaml_host_hwnd(hwnd) {
++        return Some(crate::ling_managed_capability::StructuredCapabilityError::uiaccess_required(
++            crate::ling_managed_capability::CapabilityRequirement::UwpSendInput,
++        ).to_json());
++    }
++    None
++}
+diff --git a/libs/cua-driver/rust/crates/platform-windows/src/input/mouse.rs b/libs/cua-driver/rust/crates/platform-windows/src/input/mouse.rs
+index d370855..7c409cc 100644
+--- a/libs/cua-driver/rust/crates/platform-windows/src/input/mouse.rs
++++ b/libs/cua-driver/rust/crates/platform-windows/src/input/mouse.rs
+@@ -455,7 +455,7 @@ fn send_click_synthesized_mods_impl(
+     if target.0.is_null() {
+         bail!("invalid target hwnd");
+     }
+-    if let Some(msg) = crate::input::post_message_blocked_by_uipi(target.0 as u64) {
++    if let Some(msg) = crate::input::managed_send_input_guard(target.0 as u64) {
+         // Same UIPI defense as PostMessage path — SendInput from non-UIAccess
+         // would fail just as silently as PostMessage when target is at higher
+         // integrity. Surface the diagnostic early.
+@@ -655,7 +655,7 @@ pub fn send_drag_synthesized(
+     if target.0.is_null() {
+         bail!("invalid target hwnd");
+     }
+-    if let Some(msg) = crate::input::post_message_blocked_by_uipi(target.0 as u64) {
++    if let Some(msg) = crate::input::managed_send_input_guard(target.0 as u64) {
+         bail!(msg);
+     }
+ 
+diff --git a/libs/cua-driver/rust/crates/platform-windows/src/lib.rs b/libs/cua-driver/rust/crates/platform-windows/src/lib.rs
+index ab9534a..56a4ed2 100644
+--- a/libs/cua-driver/rust/crates/platform-windows/src/lib.rs
++++ b/libs/cua-driver/rust/crates/platform-windows/src/lib.rs
+@@ -24,6 +24,7 @@ pub mod diagnostics;
+ pub mod health_report;
+ pub mod managed_readiness;
+ pub mod managed_lifetime;
++pub mod ling_managed_capability;
+ pub mod recording_hooks;
+ pub mod pip;
+ pub mod terminal;
+diff --git a/libs/cua-driver/rust/crates/platform-windows/src/ling_managed_capability.rs b/libs/cua-driver/rust/crates/platform-windows/src/ling_managed_capability.rs
+new file mode 100644
+index 0000000..8f4aa61
+--- /dev/null
++++ b/libs/cua-driver/rust/crates/platform-windows/src/ling_managed_capability.rs
+@@ -0,0 +1,49 @@
++//! Stable capability failures for Ling's standard-integrity distribution.
++
++use serde::Serialize;
++
++#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
++#[serde(rename_all = "snake_case")]
++pub enum CapabilityRequirement {
++    ElevatedPixelInput,
++    UwpSendInput,
++}
++
++#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
++pub struct StructuredCapabilityError {
++    pub code: &'static str,
++    pub requirement: CapabilityRequirement,
++    pub required_integrity_coverage: &'static str,
++    pub configured_integrity_coverage: &'static str,
++}
++
++impl StructuredCapabilityError {
++    pub fn uiaccess_required(requirement: CapabilityRequirement) -> Self {
++        Self {
++            code: "cua_windows_uiaccess_required",
++            requirement,
++            required_integrity_coverage: "uiaccess",
++            configured_integrity_coverage: "standard",
++        }
++    }
++
++    pub fn to_json(&self) -> String {
++        serde_json::to_string(self)
++            .unwrap_or_else(|_| "{\"code\":\"cua_windows_uiaccess_required\"}".into())
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    #[test]
++    fn emits_stable_structured_code() {
++        let value =
++            StructuredCapabilityError::uiaccess_required(CapabilityRequirement::UwpSendInput);
++        let json: serde_json::Value = serde_json::from_str(&value.to_json()).unwrap();
++        assert_eq!(json["code"], "cua_windows_uiaccess_required");
++        assert_eq!(json["requirement"], "uwp_send_input");
++        assert_eq!(json["configured_integrity_coverage"], "standard");
++    }
++}

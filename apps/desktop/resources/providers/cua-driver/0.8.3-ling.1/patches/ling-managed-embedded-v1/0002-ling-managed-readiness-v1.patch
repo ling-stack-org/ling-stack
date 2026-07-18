@@ -1,0 +1,1125 @@
+diff --git a/libs/cua-driver/rust/crates/cua-driver-core/src/lib.rs b/libs/cua-driver/rust/crates/cua-driver-core/src/lib.rs
+index 7a78c4a..928f15b 100644
+--- a/libs/cua-driver/rust/crates/cua-driver-core/src/lib.rs
++++ b/libs/cua-driver/rust/crates/cua-driver-core/src/lib.rs
+@@ -40,6 +40,7 @@ pub mod ffmpeg_install;
+ pub mod health_report;
+ pub mod image_utils;
+ pub mod ling_managed;
++pub mod ling_managed_readiness;
+ pub mod page;
+ pub mod pip_hook;
+ pub mod policy;
+diff --git a/libs/cua-driver/rust/crates/cua-driver-core/src/ling_managed_readiness.rs b/libs/cua-driver/rust/crates/cua-driver-core/src/ling_managed_readiness.rs
+new file mode 100644
+index 0000000..90fbeb3
+--- /dev/null
++++ b/libs/cua-driver/rust/crates/cua-driver-core/src/ling_managed_readiness.rs
+@@ -0,0 +1,328 @@
++//! Generation-fenced, content-free readiness control for Ling's embedded child.
++//!
++//! The wire structs intentionally mirror the public Desktop contract.  The
++//! `deny_unknown_fields` request boundary prevents a future caller from
++//! smuggling arbitrary MCP metadata into this private control namespace.
++
++use serde::{Deserialize, Serialize};
++use serde_json::Value;
++use std::sync::atomic::{AtomicU64, Ordering};
++use std::sync::{Arc, Mutex, OnceLock};
++
++pub const METHOD: &str = "ling/managed_readiness";
++pub const NOTIFICATION: &str = "ling/managed_readiness_changed";
++pub const SCHEMA_VERSION: u8 = 1;
++
++#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
++#[serde(rename_all = "snake_case")]
++pub enum ProcessIntegrityLevel {
++    Medium,
++    High,
++    System,
++    Unknown,
++}
++
++#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
++#[serde(rename_all = "snake_case")]
++pub enum InputDesktopState {
++    DefaultUnlocked,
++    Locked,
++    NonDefault,
++    Unavailable,
++}
++
++#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
++#[serde(rename_all = "snake_case")]
++pub enum RuntimeAvailability {
++    Available,
++    Unavailable,
++}
++
++#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
++#[serde(rename_all = "snake_case")]
++pub enum WgcApiSupport {
++    Supported,
++    Unsupported,
++    Unavailable,
++}
++
++#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
++#[serde(rename_all = "camelCase", deny_unknown_fields)]
++pub struct ManagedReadinessRequestV1 {
++    pub schema_version: u8,
++    pub child_instance_nonce: String,
++    pub lease_generation: u64,
++}
++
++impl ManagedReadinessRequestV1 {
++    pub fn validate(&self) -> Result<(), &'static str> {
++        if self.schema_version != SCHEMA_VERSION {
++            return Err("unsupported readiness schema");
++        }
++        if self.child_instance_nonce.is_empty() {
++            return Err("readiness nonce is empty");
++        }
++        if self.lease_generation == 0 {
++            return Err("readiness generation is zero");
++        }
++        Ok(())
++    }
++}
++
++#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
++#[serde(rename_all = "camelCase", deny_unknown_fields)]
++pub struct ManagedReadinessV1 {
++    pub schema_version: u8,
++    pub child_instance_nonce: String,
++    pub lease_generation: u64,
++    pub readiness_sequence: u64,
++    pub host_process_id: u32,
++    pub host_session_id: u32,
++    pub host_integrity_level: ProcessIntegrityLevel,
++    pub provider_process_id: u32,
++    pub provider_session_id: u32,
++    pub provider_integrity_level: ProcessIntegrityLevel,
++    pub input_desktop: InputDesktopState,
++    pub job_object_assigned: bool,
++    pub kill_on_job_close: bool,
++    pub uia_runtime: RuntimeAvailability,
++    pub d3d11: RuntimeAvailability,
++    pub wgc_api: WgcApiSupport,
++    pub content_observed: bool,
++}
++
++impl ManagedReadinessV1 {
++    pub fn validate(&self) -> Result<(), &'static str> {
++        if self.schema_version != SCHEMA_VERSION {
++            return Err("unsupported readiness schema");
++        }
++        if self.child_instance_nonce.is_empty() {
++            return Err("readiness nonce is empty");
++        }
++        if self.lease_generation == 0 || self.readiness_sequence == 0 {
++            return Err("readiness generation or sequence is zero");
++        }
++        if self.host_process_id == 0 || self.provider_process_id == 0 {
++            return Err("readiness process id is zero");
++        }
++        if self.content_observed {
++            return Err("readiness content flag must remain false");
++        }
++        Ok(())
++    }
++
++    pub fn is_current_for(&self, request: &ManagedReadinessRequestV1) -> bool {
++        self.validate().is_ok()
++            && request.validate().is_ok()
++            && self.child_instance_nonce == request.child_instance_nonce
++            && self.lease_generation == request.lease_generation
++    }
++}
++
++#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
++#[serde(rename_all = "snake_case")]
++pub enum ReadinessChangeReason {
++    Lock,
++    Unlock,
++    Disconnect,
++    Logoff,
++    FastUserSwitch,
++    SessionMismatch,
++    InputDesktopChanged,
++    Heartbeat,
++}
++
++#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
++#[serde(rename_all = "camelCase", deny_unknown_fields)]
++pub struct ManagedReadinessChangedV1 {
++    #[serde(flatten)]
++    pub snapshot: ManagedReadinessV1,
++    pub reason: ReadinessChangeReason,
++}
++
++pub trait Provider: Send + Sync + 'static {
++    fn snapshot(&self, request: &ManagedReadinessRequestV1) -> Result<ManagedReadinessV1, String>;
++}
++
++static PROVIDER: OnceLock<Arc<dyn Provider>> = OnceLock::new();
++static ACTIVE_REQUEST: OnceLock<Mutex<Option<ManagedReadinessRequestV1>>> = OnceLock::new();
++static LAST_SNAPSHOT: OnceLock<Mutex<Option<ManagedReadinessV1>>> = OnceLock::new();
++static NEXT_SEQUENCE: AtomicU64 = AtomicU64::new(1);
++
++pub fn set_provider(provider: Arc<dyn Provider>) -> bool {
++    PROVIDER.set(provider).is_ok()
++}
++
++pub fn snapshot(params: Option<&Value>) -> Result<Value, String> {
++    let request = parse_request(params)?;
++    let value = snapshot_for_request(&request)?;
++    *active_request()
++        .lock()
++        .map_err(|_| "cua_windows_platform_unavailable".to_owned())? = Some(request);
++    *last_snapshot()
++        .lock()
++        .map_err(|_| "cua_windows_platform_unavailable".to_owned())? = Some(value.clone());
++    serde_json::to_value(value).map_err(|_| "cua_windows_platform_unavailable".to_owned())
++}
++
++/// Produce one private notification for the active request.  The caller owns
++/// transport framing; no notification is emitted before a valid readiness
++/// request establishes the nonce/generation fence.
++pub fn heartbeat_notification() -> Result<Option<Value>, String> {
++    let request = active_request()
++        .lock()
++        .map_err(|_| "cua_windows_platform_unavailable".to_owned())?
++        .clone();
++    let Some(request) = request else {
++        return Ok(None);
++    };
++    let current = snapshot_for_request(&request)?;
++    let previous = last_snapshot()
++        .lock()
++        .map_err(|_| "cua_windows_platform_unavailable".to_owned())?
++        .clone();
++    let reason = previous
++        .as_ref()
++        .map(|old| change_reason(old, &current))
++        .unwrap_or(ReadinessChangeReason::Heartbeat);
++    *last_snapshot()
++        .lock()
++        .map_err(|_| "cua_windows_platform_unavailable".to_owned())? = Some(current.clone());
++    let changed = ManagedReadinessChangedV1 {
++        snapshot: current,
++        reason,
++    };
++    serde_json::to_value(changed)
++        .map(Some)
++        .map_err(|_| "cua_windows_platform_unavailable".to_owned())
++}
++
++fn parse_request(params: Option<&Value>) -> Result<ManagedReadinessRequestV1, String> {
++    let value = params.ok_or_else(|| "cua_windows_readiness_request_invalid".to_owned())?;
++    let request: ManagedReadinessRequestV1 = serde_json::from_value(value.clone())
++        .map_err(|_| "cua_windows_readiness_request_invalid".to_owned())?;
++    request
++        .validate()
++        .map_err(|_| "cua_windows_readiness_request_invalid".to_owned())?;
++    Ok(request)
++}
++
++fn snapshot_for_request(request: &ManagedReadinessRequestV1) -> Result<ManagedReadinessV1, String> {
++    let provider = PROVIDER
++        .get()
++        .ok_or_else(|| "cua_windows_platform_unavailable".to_owned())?;
++    let mut value = provider.snapshot(request)?;
++    if value.child_instance_nonce != request.child_instance_nonce
++        || value.lease_generation != request.lease_generation
++    {
++        return Err("cua_windows_readiness_identity_mismatch".to_owned());
++    }
++    value.readiness_sequence = NEXT_SEQUENCE.fetch_add(1, Ordering::Relaxed);
++    value
++        .validate()
++        .map_err(|_| "cua_windows_platform_unavailable".to_owned())?;
++    Ok(value)
++}
++
++fn change_reason(old: &ManagedReadinessV1, new: &ManagedReadinessV1) -> ReadinessChangeReason {
++    if old.host_session_id != new.host_session_id
++        || old.provider_session_id != new.provider_session_id
++    {
++        return ReadinessChangeReason::SessionMismatch;
++    }
++    if old.input_desktop != new.input_desktop {
++        return match (old.input_desktop, new.input_desktop) {
++            (InputDesktopState::DefaultUnlocked, InputDesktopState::Locked) => {
++                ReadinessChangeReason::Lock
++            }
++            (InputDesktopState::Locked, InputDesktopState::DefaultUnlocked) => {
++                ReadinessChangeReason::Unlock
++            }
++            _ => ReadinessChangeReason::InputDesktopChanged,
++        };
++    }
++    ReadinessChangeReason::Heartbeat
++}
++
++fn active_request() -> &'static Mutex<Option<ManagedReadinessRequestV1>> {
++    ACTIVE_REQUEST.get_or_init(|| Mutex::new(None))
++}
++
++fn last_snapshot() -> &'static Mutex<Option<ManagedReadinessV1>> {
++    LAST_SNAPSHOT.get_or_init(|| Mutex::new(None))
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    fn request() -> ManagedReadinessRequestV1 {
++        ManagedReadinessRequestV1 {
++            schema_version: SCHEMA_VERSION,
++            child_instance_nonce: "new".into(),
++            lease_generation: 2,
++        }
++    }
++
++    fn value() -> ManagedReadinessV1 {
++        ManagedReadinessV1 {
++            schema_version: SCHEMA_VERSION,
++            child_instance_nonce: "new".into(),
++            lease_generation: 2,
++            readiness_sequence: 1,
++            host_process_id: 20,
++            host_session_id: 1,
++            host_integrity_level: ProcessIntegrityLevel::Medium,
++            provider_process_id: 10,
++            provider_session_id: 1,
++            provider_integrity_level: ProcessIntegrityLevel::Medium,
++            input_desktop: InputDesktopState::DefaultUnlocked,
++            job_object_assigned: true,
++            kill_on_job_close: true,
++            uia_runtime: RuntimeAvailability::Available,
++            d3d11: RuntimeAvailability::Available,
++            wgc_api: WgcApiSupport::Supported,
++            content_observed: false,
++        }
++    }
++
++    #[test]
++    fn stale_nonce_and_generation_are_not_current() {
++        let current = value();
++        assert!(current.is_current_for(&request()));
++        let mut stale = request();
++        stale.child_instance_nonce = "old".into();
++        assert!(!current.is_current_for(&stale));
++        stale.child_instance_nonce = "new".into();
++        stale.lease_generation = 3;
++        assert!(!current.is_current_for(&stale));
++    }
++
++    #[test]
++    fn wire_names_are_camel_case_and_content_is_false() {
++        let json = serde_json::to_value(value()).unwrap();
++        assert!(json.get("readinessSequence").is_some());
++        assert!(json.get("providerProcessId").is_some());
++        assert_eq!(json.get("contentObserved"), Some(&Value::Bool(false)));
++        assert!(json.get("readiness_sequence").is_none());
++    }
++
++    #[test]
++    fn session_zero_remains_structured_evidence_for_the_controller() {
++        let mut value = value();
++        value.host_session_id = 0;
++        value.provider_session_id = 0;
++        assert!(value.validate().is_ok());
++    }
++
++    #[test]
++    fn request_rejects_unknown_fields() {
++        let json = serde_json::json!({
++            "schemaVersion": 1,
++            "childInstanceNonce": "n",
++            "leaseGeneration": 1,
++            "unexpected": true
++        });
++        assert!(serde_json::from_value::<ManagedReadinessRequestV1>(json).is_err());
++    }
++}
+diff --git a/libs/cua-driver/rust/crates/cua-driver-core/src/server.rs b/libs/cua-driver/rust/crates/cua-driver-core/src/server.rs
+index b16736f..bdb0ff8 100644
+--- a/libs/cua-driver/rust/crates/cua-driver-core/src/server.rs
++++ b/libs/cua-driver/rust/crates/cua-driver-core/src/server.rs
+@@ -1,8 +1,12 @@
+ //! Async MCP stdio server loop.
+ 
++use std::collections::VecDeque;
+ use std::sync::{Arc, OnceLock};
+ use std::time::Instant;
+-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
++use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader, BufWriter};
++use tokio::sync::mpsc;
++use tokio::task::JoinSet;
++use tokio::time::{self, Duration, MissedTickBehavior};
+ use tracing::{debug, error, warn};
+ 
+ use crate::policy::{configured_policy, PolicyDecision};
+@@ -264,40 +268,82 @@ pub fn observe_proxy_tool_completed(outcome: ToolCompletionObservation) {
+ /// responses to stdout. Exits when stdin reaches EOF or a fatal I/O
+ /// error occurs.
+ pub async fn run(registry: Arc<ToolRegistry>) -> anyhow::Result<()> {
++    run_with_io(tokio::io::stdin(), tokio::io::stdout(), registry).await
++}
++
++async fn run_with_io<R, W>(input: R, output: W, registry: Arc<ToolRegistry>) -> anyhow::Result<()>
++where
++    R: AsyncRead + Unpin,
++    W: AsyncWrite + Unpin + Send + 'static,
++{
+     configured_policy().map_err(anyhow::Error::msg)?;
+-    let stdin = tokio::io::stdin();
+-    let stdout = tokio::io::stdout();
+-    let mut reader = BufReader::new(stdin);
+-    let mut writer = tokio::io::BufWriter::new(stdout);
+-    let mut line = String::new();
++    let mut reader = BufReader::new(input).lines();
++    let (outbound_tx, outbound_rx) = mpsc::channel(32);
++    let mut writer_task = tokio::spawn(write_json_lines(output, outbound_rx));
++    let mut request_tasks: JoinSet<RequestCompletion> = JoinSet::new();
++    let mut pending_requests = VecDeque::new();
++    let mut heartbeat = time::interval(Duration::from_secs(1));
++    heartbeat.set_missed_tick_behavior(MissedTickBehavior::Skip);
++    heartbeat.tick().await;
+     let mut session_observed = false;
++    let mut readiness_established = false;
+ 
+-    loop {
+-        line.clear();
+-        let n = reader.read_line(&mut line).await?;
+-        if n == 0 {
+-            // EOF
+-            break;
+-        }
+-        let trimmed = line.trim();
+-        if trimmed.is_empty() {
+-            continue;
+-        }
+-        debug!(raw = trimmed, "→ request");
+-
+-        let response = match serde_json::from_str::<Request>(trimmed) {
+-            Err(e) => {
+-                error!("JSON parse error: {e}");
+-                Response::parse_error()
++    let mut writer_finished = false;
++    let loop_result: anyhow::Result<()> = async {
++        loop {
++            tokio::select! {
++            writer_result = &mut writer_task => {
++                writer_finished = true;
++                break match writer_result {
++                    Ok(Ok(())) => Err(anyhow::anyhow!("stdout writer stopped unexpectedly")),
++                    Ok(Err(error)) => Err(error),
++                    Err(error) => Err(error.into()),
++                };
+             }
+-            Ok(req) if req.is_notification() => {
+-                // Notifications are silently dropped.
+-                continue;
++            completed = request_tasks.join_next(), if !request_tasks.is_empty() => {
++                let Some(completed) = completed else { continue; };
++                let completed = completed.map_err(anyhow::Error::from)?;
++                if let Some(metadata) = completed.initialize_metadata {
++                    notify_session_started(metadata);
++                }
++                if let Some(timer) = completed.tool_timer {
++                    let outcome = timer.finish(&completed.response);
++                    if let Some(context) = completed.session_context {
++                        context.complete(&outcome);
++                    }
++                    notify_tool_completed(outcome);
++                }
++                let establishes_readiness = completed.readiness_request
++                    && matches!(&completed.response.body, ResponseBody::Result { .. });
++                send_json_line(&outbound_tx, &completed.response).await?;
++                readiness_established |= establishes_readiness;
+             }
+-            Ok(req) => {
++            line = reader.next_line() => {
++                let Some(line) = line? else { break Ok(()); };
++                let trimmed = line.trim();
++                if trimmed.is_empty() { continue; }
++                debug!(raw = trimmed, "→ request");
++                let req = match serde_json::from_str::<Request>(trimmed) {
++                    Err(e) => {
++                        error!("JSON parse error: {e}");
++                        send_json_line(&outbound_tx, &Response::parse_error()).await?;
++                        continue;
++                    }
++                    Ok(req) if req.is_notification() => continue,
++                    Ok(req) => req,
++                };
++                let id = req.id.clone().unwrap_or(serde_json::Value::Null);
++                if pending_requests.len() >= 32 {
++                    let response = Response::error(id, -32603, "too many pending requests");
++                    send_json_line(&outbound_tx, &response).await?;
++                    continue;
++                }
+                 let initialize_metadata = (!session_observed)
+                     .then(|| req.initialize_metadata())
+                     .flatten();
++                if initialize_metadata.is_some() {
++                    session_observed = true;
++                }
+                 let session_context = session_tool_context(
+                     &req,
+                     &registry,
+@@ -308,35 +354,106 @@ pub async fn run(registry: Arc<ToolRegistry>) -> anyhow::Result<()> {
+                     |name| name == "type_text_chars" || registry.get_def(name).is_some(),
+                     StdioExecutionPath::InProcess,
+                 );
+-                let id = req.id.clone().unwrap_or(serde_json::Value::Null);
+-                let response = handle_request(req, id, &registry).await;
+-                if let Some(metadata) = initialize_metadata {
+-                    // A parsed initialize request always receives the static
+-                    // initialize result from handle_request. Mark it once only
+-                    // after that successful dispatch.
+-                    notify_session_started(metadata);
+-                    session_observed = true;
++                let readiness_request = req.method == crate::ling_managed_readiness::METHOD;
++                pending_requests.push_back(PendingRequest {
++                    req,
++                    id,
++                    initialize_metadata,
++                    session_context,
++                    tool_timer,
++                    readiness_request,
++                });
++            }
++            _ = heartbeat.tick(), if readiness_established => {
++                if let Some(params) = crate::ling_managed_readiness::heartbeat_notification()
++                    .map_err(anyhow::Error::msg)?
++                {
++                    let notification = serde_json::json!({
++                        "jsonrpc": "2.0",
++                        "method": crate::ling_managed_readiness::NOTIFICATION,
++                        "params": params,
++                    });
++                    send_json_line(&outbound_tx, &notification).await?;
+                 }
+-                if let Some(timer) = tool_timer {
+-                    let outcome = timer.finish(&response);
+-                    if let Some(context) = session_context {
+-                        context.complete(&outcome);
++            }
++            }
++
++            if request_tasks.is_empty() {
++                let Some(pending) = pending_requests.pop_front() else {
++                    continue;
++                };
++                let request_registry = registry.clone();
++                request_tasks.spawn(async move {
++                    RequestCompletion {
++                        response: handle_request(pending.req, pending.id, &request_registry).await,
++                        initialize_metadata: pending.initialize_metadata,
++                        session_context: pending.session_context,
++                        tool_timer: pending.tool_timer,
++                        readiness_request: pending.readiness_request,
+                     }
+-                    notify_tool_completed(outcome);
+-                }
+-                response
++                });
+             }
+-        };
++        }
++    }
++    .await;
+ 
+-        let serialized = serde_json::to_string(&response)
+-            .unwrap_or_else(|e| format!(r#"{{"jsonrpc":"2.0","id":null,"error":{{"code":-32603,"message":"serialize error: {e}"}}}}"#));
+-        debug!(raw = %serialized, "← response");
++    request_tasks.abort_all();
++    while request_tasks.join_next().await.is_some() {}
++    drop(outbound_tx);
+ 
++    if loop_result.is_err() {
++        if !writer_finished {
++            writer_task.abort();
++            let _ = writer_task.await;
++        }
++        return loop_result;
++    }
++
++    writer_task.await.map_err(anyhow::Error::from)??;
++    Ok(())
++}
++
++struct RequestCompletion {
++    response: Response,
++    initialize_metadata: Option<InitializeMetadata>,
++    session_context: Option<crate::session::SessionToolContext>,
++    tool_timer: Option<ToolObservationTimer>,
++    readiness_request: bool,
++}
++
++struct PendingRequest {
++    req: Request,
++    id: serde_json::Value,
++    initialize_metadata: Option<InitializeMetadata>,
++    session_context: Option<crate::session::SessionToolContext>,
++    tool_timer: Option<ToolObservationTimer>,
++    readiness_request: bool,
++}
++
++async fn send_json_line(
++    sender: &mpsc::Sender<String>,
++    value: &impl serde::Serialize,
++) -> anyhow::Result<()> {
++    let serialized = serde_json::to_string(value).unwrap_or_else(|e| {
++        format!(r#"{{"jsonrpc":"2.0","id":null,"error":{{"code":-32603,"message":"serialize error: {e}"}}}}"#)
++    });
++    debug!(raw = %serialized, "← response");
++    sender
++        .send(serialized)
++        .await
++        .map_err(|_| anyhow::anyhow!("stdout writer is unavailable"))
++}
++
++async fn write_json_lines<W>(output: W, mut receiver: mpsc::Receiver<String>) -> anyhow::Result<()>
++where
++    W: AsyncWrite + Unpin,
++{
++    let mut writer = BufWriter::new(output);
++    while let Some(serialized) = receiver.recv().await {
+         writer.write_all(serialized.as_bytes()).await?;
+         writer.write_all(b"\n").await?;
+         writer.flush().await?;
+     }
+-
+     Ok(())
+ }
+ 
+@@ -568,6 +685,11 @@ pub async fn handle_request(req: Request, id: serde_json::Value, registry: &Arc<
+     match req.method.as_str() {
+         "initialize" => Response::ok(id, initialize_result()),
+ 
++        crate::ling_managed_readiness::METHOD => match crate::ling_managed_readiness::snapshot(req.params.as_ref()) {
++            Ok(value) => Response::ok(id, value),
++            Err(code) => Response::error(id, -32603, code),
++        },
++
+         "tools/list" => Response::ok(id, registry.tools_list()),
+ 
+         "tools/call" => match req.tool_call() {
+@@ -772,3 +894,186 @@ mod observation_tests {
+         assert_eq!(ToolErrorClass::TransportError.as_str(), "transport_error");
+     }
+ }
++
++#[cfg(test)]
++mod stdio_lifetime_tests {
++    use super::*;
++    use crate::ling_managed_readiness::{
++        InputDesktopState, ManagedReadinessRequestV1, ManagedReadinessV1,
++        ProcessIntegrityLevel, Provider, RuntimeAvailability, WgcApiSupport,
++    };
++    use crate::protocol::ToolResult;
++    use crate::tool::{Tool, ToolDef};
++
++    struct FixedReadiness;
++
++    impl Provider for FixedReadiness {
++        fn snapshot(
++            &self,
++            request: &ManagedReadinessRequestV1,
++        ) -> Result<ManagedReadinessV1, String> {
++            Ok(ManagedReadinessV1 {
++                schema_version: crate::ling_managed_readiness::SCHEMA_VERSION,
++                child_instance_nonce: request.child_instance_nonce.clone(),
++                lease_generation: request.lease_generation,
++                readiness_sequence: 1,
++                host_process_id: 20,
++                host_session_id: 1,
++                host_integrity_level: ProcessIntegrityLevel::Medium,
++                provider_process_id: 10,
++                provider_session_id: 1,
++                provider_integrity_level: ProcessIntegrityLevel::Medium,
++                input_desktop: InputDesktopState::DefaultUnlocked,
++                job_object_assigned: true,
++                kill_on_job_close: true,
++                uia_runtime: RuntimeAvailability::Available,
++                d3d11: RuntimeAvailability::Available,
++                wgc_api: WgcApiSupport::Supported,
++                content_observed: false,
++            })
++        }
++    }
++
++    struct SlowTool {
++        def: ToolDef,
++        started: Arc<tokio::sync::Notify>,
++    }
++
++    #[async_trait::async_trait]
++    impl Tool for SlowTool {
++        fn def(&self) -> &ToolDef {
++            &self.def
++        }
++
++        async fn invoke(&self, _args: serde_json::Value) -> ToolResult {
++            self.started.notify_one();
++            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
++            ToolResult::text("finished")
++        }
++    }
++
++    #[tokio::test]
++    async fn actual_stdio_loop_returns_when_input_reaches_eof() {
++        let result = tokio::time::timeout(
++            std::time::Duration::from_secs(1),
++            run_with_io(tokio::io::empty(), tokio::io::sink(), Arc::new(ToolRegistry::new())),
++        )
++        .await;
++        assert!(result.is_ok(), "stdio loop did not return after EOF");
++        assert!(result.unwrap().is_ok());
++    }
++
++    #[tokio::test]
++    async fn long_tool_call_does_not_block_managed_readiness_heartbeat() {
++        assert!(crate::ling_managed_readiness::set_provider(Arc::new(
++            FixedReadiness
++        )));
++
++        let started = Arc::new(tokio::sync::Notify::new());
++        let mut registry = ToolRegistry::new();
++        registry.register(Box::new(SlowTool {
++            def: ToolDef {
++                name: "slow_test".into(),
++                description: "waits until the heartbeat is emitted".into(),
++                input_schema: serde_json::json!({"type": "object"}),
++                read_only: true,
++                destructive: false,
++                idempotent: true,
++                open_world: false,
++            },
++            started: started.clone(),
++        }));
++
++        let (mut input_writer, server_input) = tokio::io::duplex(4_096);
++        let (server_output, output_reader) = tokio::io::duplex(16_384);
++        let server = tokio::spawn(run_with_io(
++            server_input,
++            server_output,
++            Arc::new(registry),
++        ));
++        let mut output_lines = BufReader::new(output_reader).lines();
++
++        let readiness_request = format!(
++            "{}\n",
++            serde_json::json!({
++                "jsonrpc": "2.0",
++                "id": 1,
++                "method": "ling/managed_readiness",
++                "params": {
++                    "schemaVersion": 1,
++                    "childInstanceNonce": "child-1",
++                    "leaseGeneration": 7
++                }
++            })
++        );
++        input_writer
++            .write_all(readiness_request.as_bytes())
++            .await
++            .unwrap();
++        let readiness_response = tokio::time::timeout(
++            std::time::Duration::from_secs(1),
++            output_lines.next_line(),
++        )
++        .await
++        .expect("readiness response timed out")
++        .unwrap()
++        .expect("readiness response was missing");
++        let readiness_response: serde_json::Value =
++            serde_json::from_str(&readiness_response).unwrap();
++        assert_eq!(readiness_response.get("id"), Some(&serde_json::json!(1)));
++
++        let first_heartbeat = tokio::time::timeout(
++            std::time::Duration::from_millis(1_500),
++            output_lines.next_line(),
++        )
++        .await
++        .expect("first readiness heartbeat timed out")
++        .unwrap()
++        .expect("first readiness heartbeat was missing");
++        let first_heartbeat: serde_json::Value = serde_json::from_str(&first_heartbeat).unwrap();
++        assert_eq!(
++            first_heartbeat.get("method").and_then(serde_json::Value::as_str),
++            Some(crate::ling_managed_readiness::NOTIFICATION)
++        );
++
++        let started_wait = started.notified();
++        let slow_request = format!(
++            "{}\n",
++            serde_json::json!({
++                "jsonrpc": "2.0",
++                "id": 2,
++                "method": "tools/call",
++                "params": {"name": "slow_test", "arguments": {}}
++            })
++        );
++        input_writer.write_all(slow_request.as_bytes()).await.unwrap();
++        tokio::time::timeout(std::time::Duration::from_secs(1), started_wait)
++            .await
++            .expect("slow tool did not start");
++
++        let heartbeat_during_call = tokio::time::timeout(
++            std::time::Duration::from_millis(1_500),
++            output_lines.next_line(),
++        )
++        .await
++        .expect("heartbeat was blocked by the long tool call")
++        .unwrap()
++        .expect("heartbeat stream ended during the long tool call");
++        let heartbeat_during_call: serde_json::Value =
++            serde_json::from_str(&heartbeat_during_call).unwrap();
++        assert_eq!(
++            heartbeat_during_call
++                .get("method")
++                .and_then(serde_json::Value::as_str),
++            Some(crate::ling_managed_readiness::NOTIFICATION)
++        );
++        assert!(heartbeat_during_call.get("id").is_none());
++
++        drop(input_writer);
++        let server_result = tokio::time::timeout(std::time::Duration::from_secs(1), server)
++            .await
++            .expect("stdio loop did not cancel the long tool after EOF")
++            .unwrap();
++        assert!(server_result.is_ok());
++    }
++}
+diff --git a/libs/cua-driver/rust/crates/cua-driver/src/main.rs b/libs/cua-driver/rust/crates/cua-driver/src/main.rs
+index 408d503..6aabae5 100644
+--- a/libs/cua-driver/rust/crates/cua-driver/src/main.rs
++++ b/libs/cua-driver/rust/crates/cua-driver/src/main.rs
+@@ -68,6 +68,16 @@ fn validate_ling_managed_environment() {
+     }
+ }
+ 
++fn register_managed_readiness_provider() {
++    #[cfg(target_os = "windows")]
++    if cua_driver_core::ling_managed::is_managed() {
++        if !platform_windows::managed_readiness::register() {
++            eprintln!("cua-driver: managed readiness provider registration failed");
++            std::process::exit(78);
++        }
++    }
++}
++
+ /// Execute finite commands in a child so the parent can observe every exit,
+ /// including validation failures and legacy `process::exit` paths. Delivery is
+ /// delegated to a detached, no-output worker after the child exits, so network
+@@ -242,6 +252,7 @@ fn build_macos_registry_with_compat(compat: bool) -> cua_driver_core::tool::Tool
+ fn main() {
+     init_logging();
+     validate_ling_managed_environment();
++    register_managed_readiness_provider();
+     if telemetry::run_cli_completion_worker_if_requested() {
+         return;
+     }
+@@ -685,6 +696,7 @@ fn main() {
+ fn main() -> anyhow::Result<()> {
+     init_logging();
+     validate_ling_managed_environment();
++    register_managed_readiness_provider();
+     if telemetry::run_cli_completion_worker_if_requested() {
+         return Ok(());
+     }
+diff --git a/libs/cua-driver/rust/crates/platform-windows/src/health_report.rs b/libs/cua-driver/rust/crates/platform-windows/src/health_report.rs
+index 72628e2..86e0462 100644
+--- a/libs/cua-driver/rust/crates/platform-windows/src/health_report.rs
++++ b/libs/cua-driver/rust/crates/platform-windows/src/health_report.rs
+@@ -149,7 +149,7 @@ async fn check_screen_capture_capability() -> CheckEntry {
+ /// Try to create a hardware D3D11 device + BGRA-capable feature level
+ /// 11.0 — exactly what the WGC capture path needs.
+ #[cfg(target_os = "windows")]
+-fn probe_d3d11_device() -> Result<(), String> {
++pub(crate) fn probe_d3d11_device() -> Result<(), String> {
+     use windows::Win32::Graphics::{
+         Direct3D::{D3D_DRIVER_TYPE_HARDWARE, D3D_FEATURE_LEVEL_11_0},
+         Direct3D11::{
+@@ -179,8 +179,26 @@ fn probe_d3d11_device() -> Result<(), String> {
+     Ok(())
+ }
+ 
++/// Return the availability state of the Windows Graphics Capture API without
++/// opening a target window or returning any pixels/content.
++pub(crate) fn wgc_api_support() -> cua_driver_core::ling_managed_readiness::WgcApiSupport {
++    #[cfg(target_os = "windows")]
++    {
++        use windows::Graphics::Capture::GraphicsCaptureSession;
++        return match GraphicsCaptureSession::IsSupported() {
++            Ok(true) => cua_driver_core::ling_managed_readiness::WgcApiSupport::Supported,
++            Ok(false) => cua_driver_core::ling_managed_readiness::WgcApiSupport::Unsupported,
++            Err(_) => cua_driver_core::ling_managed_readiness::WgcApiSupport::Unavailable,
++        };
++    }
++    #[cfg(not(target_os = "windows"))]
++    {
++        cua_driver_core::ling_managed_readiness::WgcApiSupport::Unavailable
++    }
++}
++
+ #[cfg(not(target_os = "windows"))]
+-fn probe_d3d11_device() -> Result<(), String> {
++pub(crate) fn probe_d3d11_device() -> Result<(), String> {
+     Err("not a Windows host".to_owned())
+ }
+ 
+diff --git a/libs/cua-driver/rust/crates/platform-windows/src/lib.rs b/libs/cua-driver/rust/crates/platform-windows/src/lib.rs
+index 3addf38..df36a69 100644
+--- a/libs/cua-driver/rust/crates/platform-windows/src/lib.rs
++++ b/libs/cua-driver/rust/crates/platform-windows/src/lib.rs
+@@ -22,6 +22,7 @@ pub mod tools;
+ pub mod overlay;
+ pub mod diagnostics;
+ pub mod health_report;
++pub mod managed_readiness;
+ pub mod recording_hooks;
+ pub mod pip;
+ pub mod terminal;
+diff --git a/libs/cua-driver/rust/crates/platform-windows/src/managed_readiness.rs b/libs/cua-driver/rust/crates/platform-windows/src/managed_readiness.rs
+new file mode 100644
+index 0000000..7107777
+--- /dev/null
++++ b/libs/cua-driver/rust/crates/platform-windows/src/managed_readiness.rs
+@@ -0,0 +1,230 @@
++//! Live readiness provider for the bundled standard Windows child.
++//!
++//! Every field is derived from the current process/session and current input
++//! desktop. No screenshot, window title, typed text, or native error detail is
++//! returned. The core module adds the monotonic sequence and emits the private
++//! heartbeat notification after the first authenticated request.
++
++use cua_driver_core::ling_managed_readiness::{
++    InputDesktopState, ManagedReadinessRequestV1, ManagedReadinessV1, ProcessIntegrityLevel,
++    Provider, RuntimeAvailability,
++};
++use std::sync::{Arc, OnceLock};
++
++#[derive(Debug, Clone, Copy, Default)]
++struct JobObjectState {
++    assigned: bool,
++    kill_on_close: bool,
++}
++
++static JOB_OBJECT_STATE: OnceLock<JobObjectState> = OnceLock::new();
++
++pub fn set_job_object_state(assigned: bool, kill_on_close: bool) {
++    let _ = JOB_OBJECT_STATE.set(JobObjectState {
++        assigned,
++        kill_on_close,
++    });
++}
++
++pub fn register() -> bool {
++    cua_driver_core::ling_managed_readiness::set_provider(Arc::new(WindowsReadiness))
++}
++
++struct WindowsReadiness;
++
++impl Provider for WindowsReadiness {
++    fn snapshot(&self, request: &ManagedReadinessRequestV1) -> Result<ManagedReadinessV1, String> {
++        let nonce = std::env::var("CUA_DRIVER_CHILD_INSTANCE_NONCE")
++            .map_err(|_| "cua_windows_platform_unavailable".to_owned())?;
++        let generation = std::env::var("CUA_DRIVER_LEASE_GENERATION")
++            .ok()
++            .and_then(|value| value.parse::<u64>().ok())
++            .filter(|value| *value > 0)
++            .ok_or_else(|| "cua_windows_platform_unavailable".to_owned())?;
++        if request.child_instance_nonce != nonce || request.lease_generation != generation {
++            return Err("cua_windows_readiness_identity_mismatch".to_owned());
++        }
++
++        let provider_process_id = std::process::id();
++        let provider_session_id = current_session(provider_process_id).unwrap_or(0);
++        let host_process_id = std::env::var("CUA_DRIVER_HOST_PID")
++            .ok()
++            .and_then(|value| value.parse::<u32>().ok())
++            .filter(|value| *value > 0)
++            .ok_or_else(|| "cua_windows_platform_unavailable".to_owned())?;
++        let host_session_id = current_session(host_process_id).unwrap_or(0);
++        let provider_integrity_level = process_integrity(provider_process_id);
++        let host_integrity_level = process_integrity(host_process_id);
++        let desktop = crate::diagnostics::desktop_state();
++        let input_desktop = classify_input_desktop(&desktop);
++        let uia_runtime = if crate::diagnostics::ui_automation_available().is_ok() {
++            RuntimeAvailability::Available
++        } else {
++            RuntimeAvailability::Unavailable
++        };
++        let d3d11 = if crate::health_report::probe_d3d11_device().is_ok() {
++            RuntimeAvailability::Available
++        } else {
++            RuntimeAvailability::Unavailable
++        };
++        let (job_object_assigned, kill_on_job_close) = JOB_OBJECT_STATE
++            .get()
++            .copied()
++            .map(|state| (state.assigned, state.kill_on_close))
++            .unwrap_or_default();
++
++        Ok(ManagedReadinessV1 {
++            schema_version: 1,
++            child_instance_nonce: nonce,
++            lease_generation: generation,
++            readiness_sequence: 0,
++            host_process_id,
++            host_session_id,
++            host_integrity_level,
++            provider_process_id,
++            provider_session_id,
++            provider_integrity_level,
++            input_desktop,
++            job_object_assigned,
++            kill_on_job_close,
++            uia_runtime,
++            d3d11,
++            wgc_api: crate::health_report::wgc_api_support(),
++            content_observed: false,
++        })
++    }
++}
++
++fn classify_input_desktop(state: &crate::diagnostics::DesktopState) -> InputDesktopState {
++    let Some(name) = state.input_desktop_name.as_deref() else {
++        return InputDesktopState::Unavailable;
++    };
++    if !name.eq_ignore_ascii_case("default") {
++        return InputDesktopState::NonDefault;
++    }
++    if state.has_foreground_window() {
++        InputDesktopState::DefaultUnlocked
++    } else {
++        InputDesktopState::Locked
++    }
++}
++
++#[cfg(target_os = "windows")]
++fn current_session(pid: u32) -> Option<u32> {
++    use windows::Win32::System::RemoteDesktop::ProcessIdToSessionId;
++    let mut session = 0;
++    unsafe {
++        ProcessIdToSessionId(pid, &mut session).ok()?;
++    }
++    Some(session)
++}
++
++#[cfg(not(target_os = "windows"))]
++fn current_session(_pid: u32) -> Option<u32> {
++    None
++}
++
++#[cfg(target_os = "windows")]
++fn process_integrity(pid: u32) -> ProcessIntegrityLevel {
++    use windows::Win32::Foundation::{CloseHandle, HANDLE};
++    use windows::Win32::Security::{
++        GetSidSubAuthority, GetSidSubAuthorityCount, GetTokenInformation, TokenIntegrityLevel,
++        TOKEN_MANDATORY_LABEL, TOKEN_QUERY,
++    };
++    use windows::Win32::System::Threading::{
++        GetCurrentProcess, OpenProcess, OpenProcessToken, PROCESS_QUERY_LIMITED_INFORMATION,
++    };
++
++    let process = unsafe {
++        if pid == std::process::id() {
++            GetCurrentProcess()
++        } else {
++            match OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) {
++                Ok(handle) => handle,
++                Err(_) => return ProcessIntegrityLevel::Unknown,
++            }
++        }
++    };
++    let mut token = HANDLE::default();
++    if unsafe { OpenProcessToken(process, TOKEN_QUERY, &mut token) }.is_err() {
++        if pid != std::process::id() {
++            unsafe {
++                let _ = CloseHandle(process);
++            }
++        }
++        return ProcessIntegrityLevel::Unknown;
++    }
++    let mut needed = 0;
++    unsafe {
++        let _ = GetTokenInformation(token, TokenIntegrityLevel, None, 0, &mut needed);
++    }
++    if needed == 0 {
++        unsafe {
++            let _ = CloseHandle(token);
++            if pid != std::process::id() {
++                let _ = CloseHandle(process);
++            }
++        }
++        return ProcessIntegrityLevel::Unknown;
++    }
++    let mut buffer = vec![0u8; needed as usize];
++    let ok = unsafe {
++        GetTokenInformation(
++            token,
++            TokenIntegrityLevel,
++            Some(buffer.as_mut_ptr() as _),
++            needed,
++            &mut needed,
++        )
++        .is_ok()
++    };
++    let level = if !ok {
++        ProcessIntegrityLevel::Unknown
++    } else {
++        let label = unsafe { &*(buffer.as_ptr() as *const TOKEN_MANDATORY_LABEL) };
++        let count = unsafe { *GetSidSubAuthorityCount(label.Label.Sid) };
++        if count == 0 {
++            ProcessIntegrityLevel::Unknown
++        } else {
++            let rid = unsafe { *GetSidSubAuthority(label.Label.Sid, (count - 1) as u32) };
++            match rid {
++                0x2000 | 0x2100 => ProcessIntegrityLevel::Medium,
++                0x3000 => ProcessIntegrityLevel::High,
++                0x4000 => ProcessIntegrityLevel::System,
++                _ => ProcessIntegrityLevel::Unknown,
++            }
++        }
++    };
++    unsafe {
++        let _ = CloseHandle(token);
++        if pid != std::process::id() {
++            let _ = CloseHandle(process);
++        }
++    }
++    level
++}
++
++#[cfg(not(target_os = "windows"))]
++fn process_integrity(_pid: u32) -> ProcessIntegrityLevel {
++    ProcessIntegrityLevel::Unknown
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    #[test]
++    fn classifies_desktop_without_returning_desktop_content() {
++        let state = crate::diagnostics::DesktopState {
++            session_id: Some(1),
++            has_process_window_station: true,
++            process_window_station_error: None,
++            thread_desktop_name: Some("Default".into()),
++            thread_desktop_error: None,
++            input_desktop_name: Some("Default".into()),
++            input_desktop_error: None,
++            foreground_hwnd: None,
++        };
++        assert_eq!(classify_input_desktop(&state), InputDesktopState::Locked);
++    }
++}
