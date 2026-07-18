@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer } from "electron";
 import type {
   ComputerUseHostLayout,
+  ComputerUsePipDeckOwner,
   ComputerUsePreviewLocale,
   ComputerUsePreviewPreferences,
   ComputerUsePreviewSummary,
@@ -52,6 +53,9 @@ const capabilities: LingDesktopCapabilities = {
   computerUse: {
     reportLocale: (locale: ComputerUsePreviewLocale) => {
       ipcRenderer.send(DESKTOP_IPC_CHANNELS.computerUseReportLocale, locale);
+    },
+    reportSelectedDeckOwner: (owner?: ComputerUsePipDeckOwner) => {
+      ipcRenderer.send(DESKTOP_IPC_CHANNELS.computerUseReportSelectedDeckOwner, owner);
     },
     reportSelectedConversation: (conversationId?: string) => {
       ipcRenderer.send(DESKTOP_IPC_CHANNELS.computerUseReportSelectedConversation, conversationId);

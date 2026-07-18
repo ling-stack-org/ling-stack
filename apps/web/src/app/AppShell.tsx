@@ -1306,7 +1306,10 @@ export function AppShell(): JSX.Element {
     if (!opened || !isCurrentIntent()) {
       return false;
     }
-    window.lingDesktop?.computerUse.reportSelectedConversation(conversationId);
+    window.lingDesktop?.computerUse.reportSelectedDeckOwner({
+      surfaceKind: "normal_conversation",
+      ownerId: conversationId,
+    });
     return true;
   }
 
@@ -2095,6 +2098,13 @@ export function AppShell(): JSX.Element {
     selectedAiTeammateId: selectedAiTeammate?.id,
     teammateDirectThreadId: desktopTeammateConversationId,
   });
+  const desktopComputerUseSurfaceKind = desktopSelectedConversationId
+    ? activeView === "teammates"
+      ? "teammate_direct"
+      : selectedChannelId
+        ? "channel"
+        : "normal_conversation"
+    : undefined;
 
   return (
     <main className={shellClassName}>
@@ -2179,6 +2189,7 @@ export function AppShell(): JSX.Element {
         <CurrentSessionHeaderCapabilityProvider>
           <DesktopComputerUseBridge
             selectedConversationId={desktopSelectedConversationId}
+            surfaceKind={desktopComputerUseSurfaceKind}
             hostRef={workspaceSurfaceRef}
           />
           <LazyPageErrorBoundary

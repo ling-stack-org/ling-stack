@@ -12,6 +12,10 @@ import { DESKTOP_IPC_CHANNELS } from "../shared/ipc-channels.js";
 
 const capabilities: LingComputerUsePreviewCapabilities = {
   getSnapshot: () => ipcRenderer.invoke(DESKTOP_IPC_CHANNELS.computerUsePreviewSnapshotGet),
+  activatePage: (pageId: string) =>
+    ipcRenderer.invoke(DESKTOP_IPC_CHANNELS.computerUsePreviewActivatePage, pageId),
+  closePage: (pageId: string) =>
+    ipcRenderer.invoke(DESKTOP_IPC_CHANNELS.computerUsePreviewClosePage, pageId),
   retryCapture: () => ipcRenderer.invoke(DESKTOP_IPC_CHANNELS.computerUsePreviewRetry),
   resetPosition: () => ipcRenderer.invoke(DESKTOP_IPC_CHANNELS.computerUsePreviewResetPosition),
   close: () => ipcRenderer.invoke(DESKTOP_IPC_CHANNELS.computerUsePreviewClose),

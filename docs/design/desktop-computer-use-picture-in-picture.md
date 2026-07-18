@@ -26,6 +26,12 @@ interactive provider/real-source/DPI/dual-screen VM acceptance,
 Authenticode/SmartScreen/signed NSIS, hosted signed CI execution, clean-machine install/update/uninstall,
 and real VoiceOver/Narrator/NVDA acceptance remain open release gates.
 
+The multi-page logical deck described below is now implemented and locally verified as V2.
+It reuses one native PiP window and one live capture stream while switching among at most
+five exact-scope logical pages. Inactive thumbnails remain renderer-memory-only. This local
+completion does not promote unsigned development evidence into signed cross-platform release
+acceptance.
+
 Related documents:
 
 - [Desktop Shell](desktop-shell.md)
@@ -175,6 +181,59 @@ The preview:
 - exposes `Open task`, `Hide preview`, and a separate `Stop Computer Use` action;
 - never treats the window close button as permission to stop the Computer Use session.
 
+### Proposed V2: one PiP window, multiple logical pages
+
+V1 remains a single-page preview. The next product slice adds a logical page deck inside
+the same native PiP `BrowserWindow`; it does not create several native windows and it does
+not keep several capture streams alive at once. This is the behavior represented by the
+stacked-window reference image.
+
+```text
+eligible structured projections
+  -> page deck (maximum 5 resident pages, scoped to one owner surface)
+       -> active page: one live capture stream + full-size preview
+       -> inactive pages: memory-only last-frame thumbnails, no live capture
+  -> click exposed page/card
+       -> serialized source switch
+       -> first-frame gate
+       -> new active page
+```
+
+Page means an authorized Computer Use preview source backed by a structured session and
+descriptor. It does not mean an arbitrary browser tab, an untrusted URL, or a second
+Desktop product state store. A page switch changes presentation only; the underlying
+Computer Use sessions continue according to daemon authority.
+
+Interaction rules:
+
+| Action | Result | Runtime effect |
+| --- | --- | --- |
+| Click an exposed inactive card or page tab | Activate that page after the first-frame gate | No Stop, pause, or approval change |
+| Escape while a page control or menu is focused | Close the menu or return focus; do not switch pages | No deck mutation |
+| Close page | Remove the page from the resident deck and release its preview resources | Session continues |
+| Hide/close PiP window | Hide or destroy the whole deck | Active and inactive sessions continue |
+| Stop Computer Use | Stop only the active page's session through the existing audited path | Other pages remain untouched |
+| Open a sixth page | Evict the least-recently-used inactive resident page; never evict the active page | Evicted session continues and can be reopened from the page list |
+| Select `View all` | Open a metadata-only list of every eligible page in the current owner scope | No capture or runtime change until a page is selected |
+
+The deck is scoped by `workspaceId + surfaceKind + ownerId`. Route changes hide the old
+deck and bind a new scope; channel, normal conversation, and teammate-direct pages never
+share a deck. This prevents a page from a private teammate surface appearing in a channel
+or another user's conversation. A page's title, runtime status, and target label come from
+the structured projection; the preview never infers page identity from transcript text.
+
+The active page moves to the front of the visual deck after a successful switch. The
+expanded view may use the fan/overlap treatment from the reference image. The narrow
+right-dock form uses a compact tab strip or page chips instead of overlapping full pages.
+Inactive thumbnails are downsampled, held in renderer memory only, and discarded on page
+close, scope change, renderer crash, or process exit. They are never persisted, sent to the
+daemon, or included in telemetry.
+
+Closing a page dismisses only its local resident entry. Normal projection refresh cannot
+immediately add it again. `View all` continues to list the active session as available; an
+explicit reopen clears the memory-only dismissal and applies the inactive-LRU rule if the
+resident deck is full.
+
 ## Visibility Semantics
 
 Three actions must remain distinct:
@@ -298,7 +357,8 @@ or artifact records.
 
 ## Conversation Selection
 
-The first version supports one visible picture-in-picture preview.
+The first version supports one visible picture-in-picture preview. The proposed V2 deck
+extends this to several logical pages inside the same preview window.
 
 - Inside Ling, the currently selected conversation determines which active session may
   present.
@@ -309,9 +369,12 @@ The first version supports one visible picture-in-picture preview.
   the previous preview and recreates it for the new session. Same-window cross-fade is a
   later visual optimization, not a lifecycle requirement.
 - Historical and completed Computer Use operations never reopen picture-in-picture.
+- V2 pages are eligible only while their structured session remains active or in its
+  authoritative terminal linger. A terminal page is removed after its existing linger
+  treatment and cannot be silently resurrected by a stale deck entry.
 
-Multiple simultaneous preview windows and a stacked preview history are out of scope for
-the first version.
+Multiple simultaneous native preview windows remain out of scope. V2 deliberately keeps
+one active capture stream and uses last-frame thumbnails for inactive pages.
 
 ## Responsibility Boundary
 
@@ -442,16 +505,19 @@ First-version targets on a supported laptop:
 - memory growth after ten open/close cycles: under 20 MB;
 - hidden preview receives renderer track-release acknowledgement within 500 ms, or
   force-destroys the renderer/window to guarantee capture stops;
+- V2 page-switch input shows selected/switching feedback within 100 ms and reaches a new
+  decoded frame within 500 ms p95 on the current supported-host performance lane;
+- V2 never reports more than one live preview track, and four inactive downsampled
+  thumbnails stay within a combined 20 MB working-set budget;
 - position update during resize or dock changes: one update per animation frame at most;
 - no main-conversation scroll or typing jank while the preview is active.
 
-The 2026-07-16/17 current-host real Electron measurements meet the local budgets. Final
-pre-commit verification on the current worktree passes Desktop Node **291/291**, PiP renderer
-**20/20**, Web E2E **35/35**, contracts **5/5**, API client **48/48**, full daemon **629/629**,
-macOS release-focused **28/28**, Windows acceptance/provider/release focused **57/57**, and all
-**11/11** strict Draft 2020-12 release-evidence schemas. The Desktop production build, Web
-production build/typecheck/lint/i18n checks, workspace typecheck/lint, and actionlint also pass;
-schema-only changes under `docs/release/evidence/**` trigger the Desktop artifact workflow.
+The 2026-07-18 current-host Electron measurements meet the local budgets. Final V2 verification
+on the current worktree passes Desktop Node **337/338** with one environment-only unsigned-
+candidate skip, PiP renderer **25/25**, focused shared-Web Desktop bridge E2E **19/19**, Desktop
+and Web typechecks, Web lint/i18n, fake and real smoke, `git diff --check`, and all **16** macOS
+arm64 Computer Use screenshot baselines. The implementation plan retains the broader V1 release-
+harness counts and evidence boundaries.
 
 This is current local engineering evidence against the final pre-commit diff. The fixed artifact
 fingerprints labeled `baseline @ e20777f5` remain historical references rather than current
@@ -461,12 +527,12 @@ signature, or real candidate-daemon provenance gates.
 
 | Measure | Verified result |
 | --- | --- |
-| First decoded frame | **168.09 ms p50**, **177.84 ms p95** |
-| Hide and renderer media release | **2.16 ms p50**, **3.65 ms p95** |
-| 30-second active capture versus hidden idle | **0.21% CPU delta**, **11,763,712 B** working-set overhead |
-| Repeated activation churn | **6.04% CPU**, **17,661,952 B** working-set delta |
-| Fake ownership/crash lane | **415.27 ms p95** |
-| Capture lifecycle invariants | **12 activations = 12 source enumerations**, **1 renderer document**, **0 `applyConstraints()` calls**, **0 process/window/renderer/listener/IPC/timer/subscription/source residue** |
+| First decoded frame | **153.73 ms p50**, **164.31 ms p95** |
+| Hide and renderer media release | **1.39 ms p50**, **6.76 ms p95** |
+| V2 fake-source page switch | **11.32 ms p95**, `maxActiveAdapterSources = 1` |
+| 30-second active capture versus hidden idle | **0.23% incremental CPU**, **9,863,168 B** working-set overhead |
+| Repeated activation churn | **4.9% CPU**, **18,857,984 B** working-set growth |
+| Capture lifecycle invariants | **10/10 active samples = 1 live track**, every hidden sample = **0**, **12 activations = 12 source enumerations**, **1 renderer document**, **0 `applyConstraints()` calls**, **0 final process/window/renderer/track/listener/IPC/timer/subscription/source residue** |
 
 The final full daemon suite passes **629/629** on the current worktree, so the earlier isolated
 `channel auto_route` scheduling fluctuation is not an open local pre-commit verification gap.
@@ -503,7 +569,10 @@ Native adapters may improve these targets later without changing the shared cont
 ## Non-Goals
 
 - No browser-only floating window that pretends it can stay above other applications.
-- No multi-preview stack in the first version.
+- No multiple simultaneous native preview windows.
+- No multiple simultaneous live capture streams. V2 switches one stream between logical
+  pages and freezes inactive pages as memory-only thumbnails.
+- No arbitrary browser-tab controller or cross-surface page sharing.
 - No direct mouse or keyboard control inside the preview.
 - No frame recording or replay.
 - No private macOS or Windows composition API dependency.
@@ -525,6 +594,10 @@ the dominant implementation; platform-specific code is restricted to capture, pe
 window integration, and optional rendering optimization.
 
 ## Open Decisions
+
+No V2 page-deck decision remains open: one native PiP window, one live capture stream,
+five resident pages, exact owner-surface scope, inactive-LRU eviction, and memory-only
+inactive thumbnails are fixed for implementation.
 
 - Exact Windows source/build lock and Ling distribution-revision advancement, including
   public risk acceptance for a prerelease source pin.
