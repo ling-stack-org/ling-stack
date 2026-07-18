@@ -393,6 +393,11 @@ import {
   type TeammateMcpBinding,
   type UpdateMcpServerInput,
 } from "../mcp-types.js";
+import type {
+  CommitCuaDriverActivationInput,
+  CommitCuaDriverActivationResult,
+  CuaDriverActivationState,
+} from "../cua-driver-activation-types.js";
 import {
   type CreateManagedPluginEventInput,
   type CreateManagedPluginRuntimeSnapshotInput,
@@ -483,6 +488,7 @@ import { SqliteAutomationStore } from "./sqlite/automation-store.js";
 import { SqliteProviderStore } from "./sqlite/provider-store.js";
 import { SqliteMcpStore } from "./sqlite/mcp-store.js";
 import { SqliteManagedPluginStore } from "./sqlite/managed-plugin-store.js";
+import { SqliteCuaDriverActivationStore } from "./sqlite/cua-driver-activation-store.js";
 import { SqliteMediaStore } from "./sqlite/media-store.js";
 import { SqliteMediaWorkflowStore } from "./sqlite/media-workflow-store.js";
 import { SqliteApprovalPolicyStore } from "./sqlite/approval-policy-store.js";
@@ -559,6 +565,7 @@ export class SqliteRunStore implements RunStore {
   private readonly providers: SqliteProviderStore;
   private readonly mcps: SqliteMcpStore;
   private readonly managedPlugins: SqliteManagedPluginStore;
+  private readonly cuaDriverActivation: SqliteCuaDriverActivationStore;
   private readonly mediaJobs: SqliteMediaStore;
   private readonly mediaWorkflows: SqliteMediaWorkflowStore;
   private readonly approvalPolicies: SqliteApprovalPolicyStore;
@@ -635,6 +642,11 @@ export class SqliteRunStore implements RunStore {
       { getAiTeammate: (id) => this.getAiTeammate(id) },
     );
     this.managedPlugins = new SqliteManagedPluginStore({ database: this.database });
+    this.cuaDriverActivation = new SqliteCuaDriverActivationStore({
+      database: this.database,
+      managedPlugins: this.managedPlugins,
+      mcps: this.mcps,
+    });
     this.mediaJobs = new SqliteMediaStore({ database: this.database });
     this.mediaWorkflows = new SqliteMediaWorkflowStore({ database: this.database });
     this.approvalPolicies = new SqliteApprovalPolicyStore({ database: this.database });
@@ -2796,6 +2808,18 @@ export class SqliteRunStore implements RunStore {
 
   updateMcpServerStatus(id: string, status: McpServerStatus, now: string): McpServer | undefined {
     return this.mcps.updateMcpServerStatus(id, status, now);
+  }
+
+  ensureCuaDriverActivationState(pluginId: string, now: string): CuaDriverActivationState {
+    return this.cuaDriverActivation.ensureCuaDriverActivationState(pluginId, now);
+  }
+
+  getCuaDriverActivationState(pluginId: string): CuaDriverActivationState | undefined {
+    return this.cuaDriverActivation.getCuaDriverActivationState(pluginId);
+  }
+
+  commitCuaDriverActivation(input: CommitCuaDriverActivationInput): CommitCuaDriverActivationResult {
+    return this.cuaDriverActivation.commitCuaDriverActivation(input);
   }
 
   upsertMcpStatusSnapshot(snapshot: McpRuntimeStatusSnapshot, now: string): McpRuntimeStatusSnapshot {
