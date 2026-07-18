@@ -43,6 +43,30 @@
       "sha256": "e4e85a7129234704253b5915f05c003f2508439be11c04a07956ccce73438d10"
     },
     {
+      "filename": "deck-stacked-light.png",
+      "theme": "light",
+      "width": 720,
+      "height": 450,
+      "reducedMotion": false,
+      "sha256": "acac7014a27b3cc36dcfcddff221e11dc4d0901cc9857dab2457c86e1a2419da"
+    },
+    {
+      "filename": "deck-tabs-light.png",
+      "theme": "light",
+      "width": 420,
+      "height": 263,
+      "reducedMotion": false,
+      "sha256": "3c0f4e344b304d794471400d1527d91d5631f531b8704568b9f699f7f12efebc"
+    },
+    {
+      "filename": "deck-view-all-light.png",
+      "theme": "light",
+      "width": 420,
+      "height": 263,
+      "reducedMotion": false,
+      "sha256": "c6642e905e11ddc9e79d52f1f78694c4b8a6d4bf1f9aed7781604cba384f6b32"
+    },
+    {
       "filename": "minimum-dark.png",
       "theme": "dark",
       "width": 320,
@@ -81,6 +105,30 @@
       "height": 263,
       "reducedMotion": true,
       "sha256": "b302478b2a07119408fc89aad45aaec59cb07d78d9cdcbf9d462e3081398ae39"
+    },
+    {
+      "filename": "deck-stacked-dark.png",
+      "theme": "dark",
+      "width": 720,
+      "height": 450,
+      "reducedMotion": false,
+      "sha256": "b1ce17fc79ddb7cac88e45a447b79462c0d12f31edc7de4262e70bb315db388b"
+    },
+    {
+      "filename": "deck-tabs-dark.png",
+      "theme": "dark",
+      "width": 420,
+      "height": 263,
+      "reducedMotion": false,
+      "sha256": "38365cdc928b43ee1ac3dad02157d5344165b836d841fc10914499952debde7f"
+    },
+    {
+      "filename": "deck-view-all-dark.png",
+      "theme": "dark",
+      "width": 420,
+      "height": 263,
+      "reducedMotion": false,
+      "sha256": "205ed1c720d0ef675b10fdfbfcdab2a2aa17f9f0952ef016a7856d36ccc20b3b"
     }
   ]
 }

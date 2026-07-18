@@ -329,6 +329,7 @@ async function openMainWindowOnce(attempt: DesktopStartupOpenAttempt): Promise<b
       realCaptureSmokeProjectionClient = projectionClient;
     }
     computerUse = new ComputerUsePreviewCoordinator({
+      workspaceId: defaultWorkspaceCwd,
       projectionClient,
       platformAdapter: fakeComputerUseMode
         ? new FakeComputerUsePreviewPlatformAdapter()

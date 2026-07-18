@@ -357,6 +357,11 @@ import type {
   UpdateMcpServerInput,
 } from "./mcp-types.js";
 import type {
+  CommitCuaDriverActivationInput,
+  CommitCuaDriverActivationResult,
+  CuaDriverActivationState,
+} from "./cua-driver-activation-types.js";
+import type {
   CreateMemoryObjectInput,
   ApplyMemoryReviewActionInput,
   CreateMemoryReviewDecisionInput,
@@ -1817,6 +1822,9 @@ export interface RunStore {
   listMcpServers(options?: ListMcpServersOptions): McpServer[];
   updateMcpServer(id: string, input: UpdateMcpServerInput, now: string): McpServer | undefined;
   updateMcpServerStatus(id: string, status: McpServerStatus, now: string): McpServer | undefined;
+  ensureCuaDriverActivationState(pluginId: string, now: string): CuaDriverActivationState;
+  getCuaDriverActivationState(pluginId: string): CuaDriverActivationState | undefined;
+  commitCuaDriverActivation(input: CommitCuaDriverActivationInput): CommitCuaDriverActivationResult;
   upsertMcpStatusSnapshot(snapshot: McpRuntimeStatusSnapshot, now: string): McpRuntimeStatusSnapshot;
   getMcpStatusSnapshot(serverId: string, now?: string): McpRuntimeStatusSnapshot | undefined;
   deleteMcpStatusSnapshot(serverId: string): boolean;
@@ -2293,6 +2301,12 @@ export type McpStoreFacet = RunStoreFacet<
   | "listMcpTools"
   | "replaceTeammateMcpBindings"
   | "listTeammateMcpBindings"
+>;
+
+export type CuaDriverActivationStoreFacet = RunStoreFacet<
+  | "ensureCuaDriverActivationState"
+  | "getCuaDriverActivationState"
+  | "commitCuaDriverActivation"
 >;
 
 export type AutomationStoreFacet = RunStoreFacet<

@@ -212,6 +212,8 @@ const MEDIA_PRODUCTION_STUDIO_MIGRATION_VERSION = 103;
 const MEDIA_PRODUCTION_STUDIO_MIGRATION_NAME = "create_media_production_studio";
 const MEDIA_EXTERNAL_WORKFLOWS_MIGRATION_VERSION = 104;
 const MEDIA_EXTERNAL_WORKFLOWS_MIGRATION_NAME = "create_media_external_workflows";
+const CUA_DRIVER_ACTIVATION_MIGRATION_VERSION = 105;
+const CUA_DRIVER_ACTIVATION_MIGRATION_NAME = "create_cua_driver_activation_state";
 const AI_EVOLUTION_SKILL_LIFECYCLE_MIGRATION_NAME = "repair_ai_evolution_skill_lifecycle";
 
 export function configureSqliteRunStoreDatabase(database: DatabaseSync): void {
@@ -4965,6 +4967,41 @@ export function applySqliteRunStoreMigrations(context: SqliteRunStoreMigrationCo
       `);
       if (!hasMediaExternalWorkflowsMigration) {
         context.recordMigration(MEDIA_EXTERNAL_WORKFLOWS_MIGRATION_VERSION, MEDIA_EXTERNAL_WORKFLOWS_MIGRATION_NAME);
+      }
+    }
+
+    const hasCuaDriverActivationMigration = context.hasMigration(CUA_DRIVER_ACTIVATION_MIGRATION_VERSION);
+    if (!hasCuaDriverActivationMigration || !context.hasTable("cua_driver_activation_state")) {
+      database.exec(`
+        CREATE TABLE IF NOT EXISTS cua_driver_activation_state (
+          plugin_id TEXT PRIMARY KEY,
+          requested_enabled INTEGER NOT NULL CHECK (requested_enabled IN (0, 1)),
+          requested_revision INTEGER NOT NULL CHECK (requested_revision >= 0),
+          activation_epoch INTEGER NOT NULL CHECK (activation_epoch >= 0),
+          updated_at TEXT NOT NULL,
+          FOREIGN KEY(plugin_id) REFERENCES managed_plugins(id) ON DELETE CASCADE
+        );
+      `);
+
+      // Preserve legacy user intent when upgrading an existing installation.
+      // External mode remains authoritative over its current effective flag; the
+      // bundled gate is still off unless explicitly enabled by daemon config.
+      database.exec(`
+        INSERT INTO cua_driver_activation_state (
+          plugin_id,
+          requested_enabled,
+          requested_revision,
+          activation_epoch,
+          updated_at
+        )
+        SELECT id, enabled, 0, 0, updated_at
+        FROM managed_plugins
+        WHERE id = 'trusted-local:cua-driver'
+        ON CONFLICT(plugin_id) DO NOTHING;
+      `);
+
+      if (!hasCuaDriverActivationMigration) {
+        context.recordMigration(CUA_DRIVER_ACTIVATION_MIGRATION_VERSION, CUA_DRIVER_ACTIVATION_MIGRATION_NAME);
       }
     }
 

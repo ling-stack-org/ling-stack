@@ -141,6 +141,7 @@ async function writeMismatchDiagnostics({ actualPng, baselinePng, comparison, fi
 
 async function captureScreenshot({ width, height, scenario = "live", theme }) {
   const reducedMotion = scenario === "reduced-motion";
+  const usesRendererHarness = scenario === "stop-failed" || scenario.startsWith("deck-");
   const window = new BrowserWindow({
     width,
     height,
@@ -161,7 +162,7 @@ async function captureScreenshot({ width, height, scenario = "live", theme }) {
         useSharedTexture: false,
       },
       sandbox: true,
-      ...(scenario === "stop-failed" ? { preload: rendererHarnessPreloadPath } : {}),
+      ...(usesRendererHarness ? { preload: rendererHarnessPreloadPath } : {}),
     },
   });
   let debuggerAttached = false;
@@ -206,6 +207,9 @@ async function captureScreenshot({ width, height, scenario = "live", theme }) {
           poll();
         });
       `);
+    }
+    if (scenario.startsWith("deck-")) {
+      await configureDeckScreenshot(window, scenario);
     }
     const mediaMatches = await window.webContents.executeJavaScript(`({
       dark: window.matchMedia('(prefers-color-scheme: dark)').matches,
@@ -276,6 +280,103 @@ async function captureScreenshot({ width, height, scenario = "live", theme }) {
     }
     window.destroy();
   }
+}
+
+const deckScreenshotPages = Object.freeze([
+  Object.freeze({ pageId: "deck-page-api", targetLabel: "API Console", runtimeStatus: "running" }),
+  Object.freeze({ pageId: "deck-page-docs", targetLabel: "Docs Portal", runtimeStatus: "running" }),
+  Object.freeze({ pageId: "deck-page-billing", targetLabel: "Billing", runtimeStatus: "waiting_for_approval" }),
+  Object.freeze({ pageId: "deck-page-analytics", targetLabel: "Analytics", runtimeStatus: "running" }),
+  Object.freeze({ pageId: "deck-page-workspace", targetLabel: "Workspace", runtimeStatus: "paused" }),
+  Object.freeze({ pageId: "deck-page-pdf", targetLabel: "Product brief.pdf", runtimeStatus: "succeeded" }),
+]);
+
+async function configureDeckScreenshot(window, scenario) {
+  const residentCount = scenario === "deck-tabs" ? 3 : scenario === "deck-view-all" ? 5 : 4;
+  const availableCount = scenario === "deck-view-all" ? 6 : residentCount;
+  const residentPages = deckScreenshotPages.slice(0, residentCount);
+  const availablePages = deckScreenshotPages.slice(0, availableCount);
+  const sequence = [];
+  let sourceGeneration = 10;
+
+  const snapshotFor = (activePageId, requestedPageId) => {
+    const activePage = residentPages.find((page) => page.pageId === activePageId);
+    const orderedPages = [
+      activePage,
+      ...residentPages.filter((page) => page.pageId !== activePageId),
+    ].filter(Boolean);
+    return {
+      sessionId: activePage.pageId,
+      conversationId: `conversation-${activePage.pageId}`,
+      targetLabel: activePage.targetLabel,
+      runtimeStatus: activePage.runtimeStatus,
+      sourceStatus: "live",
+      sourceKind: "fake",
+      sourceRevision: 1,
+      sourceGeneration: sourceGeneration++,
+      visibilityIntent: "auto",
+      frameReady: true,
+      aspectRatio: 1.6,
+      canStop: true,
+      canOpenSettings: false,
+      deck: {
+        activePageId,
+        ...(requestedPageId ? { requestedPageId } : {}),
+        availablePageCount: availablePages.length,
+        pages: orderedPages.map((page) => ({
+          ...page,
+          presentationState: page.pageId === activePageId
+            ? "active"
+            : page.pageId === requestedPageId
+              ? "activating"
+              : "inactive",
+        })),
+        availablePages: availablePages.map((page) => ({
+          ...page,
+          resident: residentPages.some((resident) => resident.pageId === page.pageId),
+        })),
+      },
+    };
+  };
+
+  let activePageId = residentPages.at(-1).pageId;
+  sequence.push(snapshotFor(activePageId));
+  for (let index = residentPages.length - 2; index >= 0; index -= 1) {
+    const requestedPageId = residentPages[index].pageId;
+    sequence.push(snapshotFor(activePageId, requestedPageId));
+    activePageId = requestedPageId;
+    sequence.push(snapshotFor(activePageId));
+  }
+
+  await window.webContents.executeJavaScript(`(() => {
+    const sequence = ${JSON.stringify(sequence)};
+    for (const next of sequence) {
+      window.lingPreviewTestHarness.pushSnapshot(next);
+    }
+  })()`);
+  if (scenario === "deck-view-all") {
+    await window.webContents.executeJavaScript(`document.querySelector('.page-deck-view-all')?.click()`);
+  }
+  await window.webContents.executeJavaScript(`new Promise((resolve, reject) => {
+    const expectedThumbnails = ${Math.max(0, residentCount - 1)};
+    const startedAt = performance.now();
+    const poll = () => {
+      const shell = document.querySelector('.preview-shell');
+      const viewAllReady = ${JSON.stringify(scenario !== "deck-view-all")} || Boolean(document.querySelector('.page-deck-view-all-panel'));
+      if (
+        shell?.getAttribute('data-page-deck') === 'visible'
+        && Number(shell.getAttribute('data-page-thumbnail-count')) === expectedThumbnails
+        && viewAllReady
+      ) {
+        resolve(true);
+      } else if (performance.now() - startedAt > 2_000) {
+        reject(new Error('deck_screenshot_state_timeout'));
+      } else {
+        setTimeout(poll, 10);
+      }
+    };
+    poll();
+  })`);
 }
 
 function compareImages(expected, actual) {
