@@ -102,6 +102,7 @@ export class CuaDriverMcpProxy {
   private removeHostListener: (() => void) | undefined;
   private closed = false;
   private callGateOpen = false;
+  private closingEpoch = 0;
 
   constructor(private readonly options: CuaDriverMcpProxyOptions) {
     this.telemetry = options.telemetry ?? createCuaDriverTelemetry();
@@ -190,6 +191,7 @@ export class CuaDriverMcpProxy {
     if (this.closePromise) {
       return this.closePromise;
     }
+    this.closingEpoch += 1;
     const pending = this.closeInternal(reason);
     this.closePromise = pending;
     void pending.catch(() => {
@@ -262,6 +264,8 @@ export class CuaDriverMcpProxy {
     const isInitialize = "method" in message && message.method === "initialize";
     const requestSessionId = readSessionId(request);
     if (isInitialize) {
+      const initializeEpoch = this.closingEpoch;
+      this.assertOpenEpoch(initializeEpoch);
       if (requestSessionId || this.sessionId || this.sessionInitialized) {
         this.writeJson(response, 409, { error: "mcp_second_initialize_forbidden" });
         return;
@@ -271,6 +275,7 @@ export class CuaDriverMcpProxy {
         return;
       }
       const responseValue = await this.options.host.exchange(message);
+      this.assertOpenEpoch(initializeEpoch);
       if (!responseValue) {
         throw new CuaDriverMcpProxyError("mcp_initialize_response_missing");
       }
@@ -280,6 +285,9 @@ export class CuaDriverMcpProxy {
         await this.options.host.stop("readiness_failed").catch(() => undefined);
         throw error;
       }
+      // Final async-boundary fence before the session and authorization
+      // response become visible to the daemon.
+      this.assertOpenEpoch(initializeEpoch);
       this.callGateOpen = true;
       this.sessionId = randomBytes(24).toString("base64url");
       this.sessionInitialized = true;
@@ -421,6 +429,12 @@ export class CuaDriverMcpProxy {
     }
   }
 
+  private assertOpenEpoch(epoch: number): void {
+    if (this.closed || epoch !== this.closingEpoch) {
+      throw new CuaDriverMcpProxyError("proxy_closed");
+    }
+  }
+
   private writeJson(
     response: ServerResponse,
     status: number,
@@ -478,6 +492,9 @@ export class CuaDriverMcpProxy {
         await serverClosed;
       }
     }
+    // Drain callbacks can complete an older initialize continuation. Revoke
+    // once more before close becomes externally observable.
+    this.invalidateSession(reason);
     this.endpointValue = undefined;
     const hostStopResult = await hostStop;
     if (!hostStopResult.ok) {

@@ -56,6 +56,8 @@ import {
   GenerationFencedCuaDriverReadiness,
   WindowsActiveChildReadinessController,
   type CuaDriverReadinessController,
+  type CuaDriverWindowsSessionRecoveryHint,
+  type CuaDriverWindowsSessionRecoveryObserver,
 } from "./readiness-controller.js";
 
 export type CuaDriverCoordinatorLifecycle = "disabled" | "validating" | "included" | "starting" | "active" | "stopping" | "failed";
@@ -90,6 +92,7 @@ export interface CuaDriverCoordinatorOptions {
   readonly stateRootProtector?: CuaDriverStateRootPlatformProtector;
   readonly processLifecycle?: CuaDriverProviderProcessLifecycle;
   readonly readinessController?: CuaDriverReadinessController;
+  readonly windowsSessionRecoveryObserver?: CuaDriverWindowsSessionRecoveryObserver;
   readonly leaseClient?: CuaDriverLeaseClient;
   readonly fetch?: typeof globalThis.fetch;
   readonly telemetry?: CuaDriverTelemetrySink;
@@ -122,6 +125,7 @@ export class CuaDriverDesktopCoordinator {
   private generation = 0;
   private enablePromise: Promise<CuaDriverCoordinatorSnapshot> | undefined;
   private disablePromise: Promise<void> | undefined;
+  private disableBarrierPromise: Promise<void> | undefined;
   private stateRoot: CuaDriverStateRoot | undefined;
   private resourcePaths: CuaDriverResourcePaths | undefined;
   private artifacts: VerifiedCuaDriverArtifacts | undefined;
@@ -131,9 +135,16 @@ export class CuaDriverDesktopCoordinator {
   private stopped = false;
   private cleanupDebt = false;
   private requestedEnabled = false;
+  private requestedRevision = 0;
   private recoveryPromise: Promise<void> | undefined;
+  private sessionTransitionPromise: Promise<void> | undefined;
   private pendingRecoveryAction: CuaDriverPendingRecoveryAction | undefined;
   private recoveryAttempt = 0;
+  private windowsSessionSuspended = false;
+  private windowsSessionResumeHintPending = false;
+  private windowsSessionSuspensionReason = "windows_interactive_session_required";
+  private pendingWindowsSessionSuspension: { readonly reason: string; readonly generation: number } | undefined;
+  private stopWindowsSessionRecoveryObserver: (() => void) | undefined;
 
   constructor(private readonly options: CuaDriverCoordinatorOptions) {
     if (options.bridgeContext.workspaceCwd !== options.workspaceCwd) {
@@ -146,6 +157,17 @@ export class CuaDriverDesktopCoordinator {
       ? new WindowsActiveChildReadinessController()
       : new FailClosedCuaDriverReadinessController();
     this.readinessController = new GenerationFencedCuaDriverReadiness(options.readinessController ?? defaultReadiness);
+    if (options.platform === "win32" && options.windowsSessionRecoveryObserver) {
+      try {
+        this.stopWindowsSessionRecoveryObserver = options.windowsSessionRecoveryObserver.subscribe((hint) => {
+          this.handleWindowsSessionRecoveryHint(hint);
+        });
+      } catch (error) {
+        this.telemetry.emit("error", "cua_driver.coordinator.session_observer_failed", {
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
   }
 
   get snapshot(): CuaDriverCoordinatorSnapshot {
@@ -165,22 +187,48 @@ export class CuaDriverDesktopCoordinator {
     if (this.stopped) {
       return Promise.reject(new Error("cua_driver_coordinator_stopped"));
     }
+    if (!this.requestedEnabled) {
+      this.requestedRevision += 1;
+      this.requestedEnabled = true;
+    }
+    const requestedRevision = this.requestedRevision;
+    return this.enableForRevision(requestedRevision);
+  }
+
+  private enableForRevision(requestedRevision: number): Promise<CuaDriverCoordinatorSnapshot> {
+    if (this.stopped) {
+      return Promise.reject(new Error("cua_driver_coordinator_stopped"));
+    }
+    if (!this.isCurrentEnableIntent(requestedRevision)) {
+      return Promise.reject(new Error("cua_driver_enable_superseded"));
+    }
     if (this.cleanupDebt) {
       return Promise.reject(new Error("cua_driver_cleanup_incomplete"));
     }
-    this.requestedEnabled = true;
+    if (this.disableBarrierPromise) {
+      const pendingBarrier = this.disableBarrierPromise;
+      return pendingBarrier.then(() => {
+        if (this.disableBarrierPromise === pendingBarrier) {
+          this.disableBarrierPromise = undefined;
+        }
+        return this.enableForRevision(requestedRevision);
+      });
+    }
     if (this.disablePromise) {
       const pendingDisable = this.disablePromise;
       return pendingDisable.then(() => {
         if (this.disablePromise === pendingDisable) {
           this.disablePromise = undefined;
         }
-        return this.enable();
+        return this.enableForRevision(requestedRevision);
       });
+    }
+    if (this.sessionTransitionPromise) {
+      return this.waitForSessionTransition(this.sessionTransitionPromise, requestedRevision);
     }
     if (this.recoveryPromise) {
       const pendingRecovery = this.recoveryPromise;
-      return this.waitForRecoveryEnable(pendingRecovery);
+      return this.waitForRecoveryEnable(pendingRecovery, requestedRevision);
     }
     if (this.snapshotValue.lifecycle === "active" || this.snapshotValue.lifecycle === "included") {
       return Promise.resolve(this.snapshotValue);
@@ -207,9 +255,33 @@ export class CuaDriverDesktopCoordinator {
   }
 
   disable(reason = "disabled"): Promise<void> {
+    this.requestedRevision += 1;
     this.requestedEnabled = false;
     this.recoveryAttempt = 0;
-    return this.beginDisable(reason);
+    this.windowsSessionSuspended = false;
+    this.windowsSessionResumeHintPending = false;
+    this.windowsSessionSuspensionReason = "windows_interactive_session_required";
+    this.pendingWindowsSessionSuspension = undefined;
+    if (this.disableBarrierPromise) {
+      return this.disableBarrierPromise;
+    }
+    const pending = this.waitForDisableCompletion(this.beginDisable(reason));
+    this.disableBarrierPromise = pending;
+    void pending.finally(() => {
+      if (this.disableBarrierPromise === pending) {
+        this.disableBarrierPromise = undefined;
+      }
+    }).catch(() => undefined);
+    return pending;
+  }
+
+  private async waitForDisableCompletion(pendingDisable: Promise<void>): Promise<void> {
+    await pendingDisable;
+    while (this.sessionTransitionPromise) {
+      const transition = this.sessionTransitionPromise;
+      await transition;
+      await Promise.resolve();
+    }
   }
 
   private beginDisable(reason: string): Promise<void> {
@@ -221,20 +293,37 @@ export class CuaDriverDesktopCoordinator {
     void pending.finally(() => {
       if (this.disablePromise === pending) {
         this.disablePromise = undefined;
+        this.resumeWindowsSessionIfHinted();
       }
     }).catch(() => undefined);
     return pending;
   }
 
   async restart(reason = "restart"): Promise<CuaDriverCoordinatorSnapshot> {
-    await this.disable(reason);
+    const disabling = this.disable(reason);
+    const disableRevision = this.requestedRevision;
+    await disabling;
+    if (this.requestedRevision !== disableRevision || this.requestedEnabled) {
+      throw new Error("cua_driver_enable_superseded");
+    }
     return this.enable();
   }
 
   async shutdown(): Promise<void> {
     this.stopped = true;
     this.requestedEnabled = false;
-    await this.disable("desktop_quit");
+    try {
+      await this.disable("desktop_quit");
+    } finally {
+      try {
+        this.stopWindowsSessionRecoveryObserver?.();
+      } catch (error) {
+        this.telemetry.emit("warn", "cua_driver.coordinator.session_observer_stop_failed", {
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+      this.stopWindowsSessionRecoveryObserver = undefined;
+    }
   }
 
   private async enableInternal(): Promise<CuaDriverCoordinatorSnapshot> {
@@ -392,7 +481,11 @@ export class CuaDriverDesktopCoordinator {
             ...(readiness.reason ? { reason: readiness.reason } : {}),
           });
           if (!readiness.ready) {
-            this.scheduleRecovery(readiness.reason ?? "readiness_revoked", generation);
+            if (readiness.providerState === "interactive_session_required") {
+              this.scheduleWindowsSessionSuspension(readiness.reason ?? "windows_interactive_session_required", generation);
+            } else {
+              this.scheduleRecovery(readiness.reason ?? "readiness_revoked", generation);
+            }
           }
         },
         onInitialized: async () => {
@@ -409,6 +502,9 @@ export class CuaDriverDesktopCoordinator {
               endpoint: publicCuaDriverMcpProxyEndpoint(proxy.endpoint),
               ...(readiness.reason ? { reason: readiness.reason } : {}),
             });
+            if (readiness.providerState === "interactive_session_required") {
+              this.scheduleWindowsSessionSuspension(readiness.reason ?? "windows_interactive_session_required", generation);
+            }
             throw new Error(readiness.reason ?? "cua_driver_readiness_failed");
           }
           this.resetRecoveryBudget(generation);
@@ -557,7 +653,12 @@ export class CuaDriverDesktopCoordinator {
   }
 
   private scheduleRecovery(reason: string, generation: number): void {
-    if (!this.requestedEnabled || this.stopped || this.host?.generation !== generation) {
+    if (
+      !this.requestedEnabled
+      || this.stopped
+      || this.windowsSessionSuspended
+      || this.host?.generation !== generation
+    ) {
       return;
     }
     this.proxy?.closeCallGate(reason);
@@ -572,11 +673,17 @@ export class CuaDriverDesktopCoordinator {
     const pending = (async () => {
       try {
         await this.beginDisable(reason);
-        while (this.requestedEnabled && !this.stopped && !this.cleanupDebt && this.recoveryAttempt < 3) {
+        while (
+          this.requestedEnabled
+          && !this.stopped
+          && !this.cleanupDebt
+          && !this.windowsSessionSuspended
+          && this.recoveryAttempt < 3
+        ) {
           this.recoveryAttempt += 1;
           const attempt = this.recoveryAttempt;
           await waitForRecovery(100 * 2 ** (attempt - 1));
-          if (!this.requestedEnabled || this.stopped || this.cleanupDebt) {
+          if (!this.requestedEnabled || this.stopped || this.cleanupDebt || this.windowsSessionSuspended) {
             return;
           }
           try {
@@ -611,8 +718,177 @@ export class CuaDriverDesktopCoordinator {
       if (this.recoveryPromise === pending) {
         this.recoveryPromise = undefined;
         this.drainPendingRecoveryAction();
+        this.resumeWindowsSessionIfHinted();
       }
     }).catch(() => undefined);
+  }
+
+  private scheduleWindowsSessionSuspension(reason: string, generation: number): void {
+    if (
+      this.options.platform !== "win32"
+      || !this.requestedEnabled
+      || this.stopped
+      || this.host?.generation !== generation
+    ) {
+      return;
+    }
+    const alreadySuspended = this.windowsSessionSuspended;
+    this.windowsSessionSuspended = true;
+    this.windowsSessionSuspensionReason = reason;
+    if (!alreadySuspended) {
+      this.windowsSessionResumeHintPending = false;
+    }
+    this.proxy?.closeCallGate(reason);
+    this.publishSnapshot({
+      lifecycle: "active",
+      providerState: "interactive_session_required",
+      generation,
+      ...(this.endpoint ? { endpoint: this.endpoint } : {}),
+      reason,
+    });
+    if (this.sessionTransitionPromise) {
+      this.queueWindowsSessionSuspension(reason, generation);
+      return;
+    }
+    this.startWindowsSessionSuspensionCleanup(reason, generation);
+  }
+
+  private startWindowsSessionSuspensionCleanup(reason: string, generation: number): void {
+    const pending = Promise.resolve().then(async () => {
+      try {
+        await this.beginDisable(reason);
+        if (this.requestedEnabled && !this.stopped && !this.cleanupDebt && this.windowsSessionSuspended) {
+          this.publishSnapshot({
+            lifecycle: "included",
+            providerState: "interactive_session_required",
+            generation,
+            reason,
+          });
+        }
+      } catch (error) {
+        this.telemetry.emit("error", "cua_driver.coordinator.session_suspend_failed", {
+          generation,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    });
+    this.trackSessionTransition(pending);
+  }
+
+  private queueWindowsSessionSuspension(reason: string, generation: number): void {
+    if (!this.pendingWindowsSessionSuspension || generation >= this.pendingWindowsSessionSuspension.generation) {
+      this.pendingWindowsSessionSuspension = { reason, generation };
+    }
+  }
+
+  private drainPendingWindowsSessionSuspension(): void {
+    const pending = this.pendingWindowsSessionSuspension;
+    this.pendingWindowsSessionSuspension = undefined;
+    if (
+      !pending
+      || !this.windowsSessionSuspended
+      || !this.requestedEnabled
+      || this.stopped
+      || this.host?.generation !== pending.generation
+    ) {
+      return;
+    }
+    this.startWindowsSessionSuspensionCleanup(pending.reason, pending.generation);
+  }
+
+  private handleWindowsSessionRecoveryHint(hint: CuaDriverWindowsSessionRecoveryHint): void {
+    if (
+      this.options.platform !== "win32"
+      || (hint.kind !== "unlock" && hint.kind !== "session_active")
+      || !this.windowsSessionSuspended
+      || !this.requestedEnabled
+      || this.stopped
+    ) {
+      return;
+    }
+    this.windowsSessionResumeHintPending = true;
+    this.resumeWindowsSessionIfHinted();
+  }
+
+  private resumeWindowsSessionIfHinted(): void {
+    if (
+      !this.windowsSessionResumeHintPending
+      || !this.windowsSessionSuspended
+      || !this.requestedEnabled
+      || this.stopped
+      || this.cleanupDebt
+      || this.sessionTransitionPromise
+      || this.disablePromise
+      || this.recoveryPromise
+    ) {
+      return;
+    }
+    this.windowsSessionResumeHintPending = false;
+    this.windowsSessionSuspended = false;
+    const requestedRevision = this.requestedRevision;
+    const pending = Promise.resolve().then(async () => {
+      if (!this.isCurrentEnableIntent(requestedRevision)) {
+        return;
+      }
+      try {
+        const snapshot = await this.beginEnable();
+        if (snapshot.lifecycle === "failed") {
+          this.restoreWindowsSessionHintWaitAfterTransientFailure(requestedRevision);
+        }
+      } catch (error) {
+        this.telemetry.emit("error", "cua_driver.coordinator.session_resume_failed", {
+          error: error instanceof Error ? error.message : String(error),
+        });
+        this.restoreWindowsSessionHintWaitAfterTransientFailure(requestedRevision);
+      }
+    });
+    this.trackSessionTransition(pending);
+  }
+
+  private restoreWindowsSessionHintWaitAfterTransientFailure(requestedRevision: number): void {
+    if (
+      !this.isCurrentEnableIntent(requestedRevision)
+      || this.stopped
+      || this.cleanupDebt
+      || this.snapshotValue.providerState !== "desktop_unavailable"
+    ) {
+      return;
+    }
+    this.windowsSessionSuspended = true;
+    this.publishSnapshot({
+      lifecycle: "included",
+      providerState: "interactive_session_required",
+      generation: this.generation,
+      reason: this.windowsSessionSuspensionReason,
+    });
+  }
+
+  private trackSessionTransition(pending: Promise<void>): void {
+    this.sessionTransitionPromise = pending;
+    void pending.finally(() => {
+      if (this.sessionTransitionPromise === pending) {
+        this.sessionTransitionPromise = undefined;
+        this.drainPendingWindowsSessionSuspension();
+        this.resumeWindowsSessionIfHinted();
+      }
+    }).catch(() => undefined);
+  }
+
+  private async waitForSessionTransition(
+    pending: Promise<void>,
+    requestedRevision: number,
+  ): Promise<CuaDriverCoordinatorSnapshot> {
+    await pending;
+    if (this.sessionTransitionPromise && this.sessionTransitionPromise !== pending) {
+      return this.waitForSessionTransition(this.sessionTransitionPromise, requestedRevision);
+    }
+    if (this.stopped || !this.isCurrentEnableIntent(requestedRevision)) {
+      throw new Error("cua_driver_enable_superseded");
+    }
+    if (this.snapshotValue.lifecycle === "active" || this.snapshotValue.lifecycle === "included") {
+      return this.snapshotValue;
+    }
+    throw new Error(this.snapshotValue.reason ?? "cua_driver_session_transition_failed");
   }
 
   private scheduleTerminalFailure(
@@ -647,6 +923,7 @@ export class CuaDriverDesktopCoordinator {
       if (this.recoveryPromise === pending) {
         this.recoveryPromise = undefined;
         this.drainPendingRecoveryAction();
+        this.resumeWindowsSessionIfHinted();
       }
     }).catch(() => undefined);
   }
@@ -654,6 +931,8 @@ export class CuaDriverDesktopCoordinator {
   private resetRecoveryBudget(generation: number): void {
     if (this.requestedEnabled && !this.stopped && this.host?.generation === generation) {
       this.recoveryAttempt = 0;
+      this.windowsSessionSuspended = false;
+      this.windowsSessionResumeHintPending = false;
     }
   }
 
@@ -671,7 +950,13 @@ export class CuaDriverDesktopCoordinator {
   private drainPendingRecoveryAction(): void {
     const action = this.pendingRecoveryAction;
     this.pendingRecoveryAction = undefined;
-    if (!action || !this.requestedEnabled || this.stopped || this.host?.generation !== action.generation) {
+    if (
+      !action
+      || !this.requestedEnabled
+      || this.stopped
+      || this.windowsSessionSuspended
+      || this.host?.generation !== action.generation
+    ) {
       return;
     }
     if (action.mode === "terminal") {
@@ -681,18 +966,25 @@ export class CuaDriverDesktopCoordinator {
     }
   }
 
-  private async waitForRecoveryEnable(pending: Promise<void>): Promise<CuaDriverCoordinatorSnapshot> {
+  private async waitForRecoveryEnable(
+    pending: Promise<void>,
+    requestedRevision: number,
+  ): Promise<CuaDriverCoordinatorSnapshot> {
     await pending;
     if (this.recoveryPromise && this.recoveryPromise !== pending) {
-      return this.waitForRecoveryEnable(this.recoveryPromise);
+      return this.waitForRecoveryEnable(this.recoveryPromise, requestedRevision);
     }
-    if (this.stopped || !this.requestedEnabled) {
+    if (this.stopped || !this.isCurrentEnableIntent(requestedRevision)) {
       throw new Error("cua_driver_enable_superseded");
     }
     if (this.snapshotValue.lifecycle === "active" || this.snapshotValue.lifecycle === "included") {
       return this.snapshotValue;
     }
     throw new Error(this.snapshotValue.reason ?? "cua_driver_recovery_failed");
+  }
+
+  private isCurrentEnableIntent(requestedRevision: number): boolean {
+    return this.requestedEnabled && this.requestedRevision === requestedRevision;
   }
 
   private publishSnapshot(input: Omit<CuaDriverCoordinatorSnapshot, "generation"> & { readonly generation?: number }): CuaDriverCoordinatorSnapshot {

@@ -186,6 +186,128 @@ test("pre-spawn platform unavailability is preserved without exposing error deta
   });
 });
 
+test("stop aborts an unsettled pre-spawn check and fences late completion", async (t) => {
+  const entered = deferred();
+  const releasePreSpawn = deferred();
+  const children = [];
+  const spawnInputs = [];
+  let preSpawnSignal;
+  const host = new CuaDriverProviderHost({
+    executablePath: "/private/ling/cua-driver",
+    stateRoot,
+    generation: 1,
+    platform: "darwin",
+    shutdownTimeoutMs: 25,
+    async preSpawn(signal) {
+      preSpawnSignal = signal;
+      entered.resolve();
+      await releasePreSpawn.promise;
+    },
+    lifecycle: {
+      lifetimeBoundary: "test-fixture",
+      spawn(input) {
+        spawnInputs.push(input);
+        const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], {
+          stdio: ["pipe", "pipe", "pipe"],
+          env: input.environment,
+        });
+        children.push(child);
+        return child;
+      },
+      async terminate(child) {
+        if (child.exitCode === null && child.signalCode === null) {
+          child.kill("SIGKILL");
+        }
+      },
+    },
+  });
+  t.after(async () => {
+    releasePreSpawn.resolve();
+    await host.stop("test_cleanup").catch(() => undefined);
+    for (const child of children) {
+      if (child.exitCode === null && child.signalCode === null) {
+        child.kill("SIGKILL");
+      }
+    }
+  });
+
+  const startResult = host.start().then(
+    () => undefined,
+    (error) => error,
+  );
+  await entered.promise;
+  const stopStartedAt = Date.now();
+  try {
+    await Promise.race([
+      host.stop("pre_spawn_shutdown"),
+      new Promise((_, reject) => setTimeout(() => reject(new Error("pre_spawn_stop_unbounded")), 250)),
+    ]);
+  } finally {
+    releasePreSpawn.resolve();
+  }
+
+  assert.ok(Date.now() - stopStartedAt < 200, "stop must honor the 25ms shutdown boundary");
+  assert.equal(preSpawnSignal?.aborted, true);
+  assert.match(String(await startResult), /child_terminal/);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(spawnInputs.length, 0);
+  assert.equal(host.state, "stopped");
+});
+
+test("a matching real exit resolves cleanup before terminal-event deduplication", async (t) => {
+  const children = [];
+  let residueChecks = 0;
+  let terminal;
+  const host = new CuaDriverProviderHost({
+    executablePath: "/private/ling/cua-driver",
+    stateRoot,
+    generation: 1,
+    platform: "darwin",
+    shutdownTimeoutMs: 25,
+    lifecycle: {
+      lifetimeBoundary: "test-fixture",
+      spawn(input) {
+        const child = spawn(process.execPath, [
+          "-e",
+          "process.stdout.end(); process.stdin.resume(); setInterval(() => {}, 1000)",
+        ], {
+          stdio: ["pipe", "pipe", "pipe"],
+          env: input.environment,
+        });
+        children.push(child);
+        return child;
+      },
+      async terminate(child) {
+        if (child.exitCode === null && child.signalCode === null) {
+          child.kill("SIGKILL");
+        }
+      },
+      async assertNoResidue() {
+        residueChecks += 1;
+      },
+    },
+    onTerminal(value) {
+      terminal = value;
+    },
+  });
+  t.after(async () => {
+    await host.stop("test_cleanup").catch(() => undefined);
+    for (const child of children) {
+      if (child.exitCode === null && child.signalCode === null) {
+        child.kill("SIGKILL");
+      }
+    }
+  });
+
+  await host.start();
+  await waitFor(() => terminal?.reason === "stdout_eof");
+  await host.stop("terminal_cleanup");
+
+  assert.equal(terminal.unexpected, true);
+  assert.equal(residueChecks, 1);
+  assert.equal(host.state, "failed");
+});
+
 test("stop deadline fails closed when retained-handle termination cannot end the child", async () => {
   const children = [];
   const host = new CuaDriverProviderHost({
@@ -340,6 +462,14 @@ async function waitFor(predicate, timeoutMs = 2_000) {
     }
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
+}
+
+function deferred() {
+  let resolve;
+  const promise = new Promise((resolvePromise) => {
+    resolve = resolvePromise;
+  });
+  return { promise, resolve };
 }
 
 const providerFixtureScript = String.raw`

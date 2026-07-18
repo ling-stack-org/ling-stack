@@ -135,6 +135,48 @@ test("close during bind rejects the pending start and leaves no listening proxy"
   assert.equal(fixture.stopCount, 1);
 });
 
+test("close fences an in-flight initialize before any session response is exposed", async () => {
+  const fixture = createHostFixture();
+  const context = createContext();
+  const initializationEntered = deferred();
+  const releaseInitialization = deferred();
+  const proxy = new CuaDriverMcpProxy({
+    host: fixture.host,
+    context,
+    requestTimeoutMs: 100,
+    async onInitialized() {
+      initializationEntered.resolve();
+      await releaseInitialization.promise;
+    },
+  });
+  const endpoint = await proxy.start();
+  const initializing = fetch(endpoint.url, {
+    method: "POST",
+    headers: headers(context, endpoint.authorizationToken),
+    body: JSON.stringify(initialize(1)),
+  });
+
+  await initializationEntered.promise;
+  const closing = proxy.close("initialize_race_shutdown");
+  releaseInitialization.resolve();
+  const initializeResult = await initializing.then(
+    (response) => ({ response }),
+    (error) => ({ error }),
+  );
+  await closing;
+
+  if (initializeResult.response) {
+    assert.notEqual(initializeResult.response.status, 200);
+    assert.equal(initializeResult.response.headers.get("mcp-session-id"), null);
+  } else {
+    assert.ok(initializeResult.error instanceof Error);
+  }
+  assert.equal(proxy.activeSessionId, undefined);
+  assert.equal(proxy.callGateOpen, false);
+  assert.equal(proxy.endpoint, undefined);
+  assert.equal(fixture.stopCount, 1);
+});
+
 test("close bounds a slow authenticated POST and stops the provider", async () => {
   const fixture = createHostFixture();
   const context = createContext();
@@ -289,4 +331,12 @@ async function waitFor(predicate) {
     await new Promise((resolve) => setTimeout(resolve, 2));
   }
   throw new Error("condition_not_reached");
+}
+
+function deferred() {
+  let resolve;
+  const promise = new Promise((resolvePromise) => {
+    resolve = resolvePromise;
+  });
+  return { promise, resolve };
 }

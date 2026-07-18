@@ -32,6 +32,18 @@ export interface CuaDriverReadinessController {
   invalidate(generation: number, reason: string): void;
 }
 
+/**
+ * Electron/native session events are recovery hints only. A fresh active child
+ * must still pass `ling/managed_readiness` before the call gate can reopen.
+ */
+export interface CuaDriverWindowsSessionRecoveryHint {
+  readonly kind: "unlock" | "session_active";
+}
+
+export interface CuaDriverWindowsSessionRecoveryObserver {
+  subscribe(listener: (hint: CuaDriverWindowsSessionRecoveryHint) => void): () => void;
+}
+
 /** Native TCC/WTS/Job Object adapters implement this narrow boundary in PR6/PR7. */
 export class FailClosedCuaDriverReadinessController implements CuaDriverReadinessController {
   async check(context: CuaDriverReadinessContext): Promise<CuaDriverReadinessResult> {

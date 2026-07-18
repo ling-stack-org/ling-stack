@@ -119,7 +119,7 @@ export interface CuaDriverProviderHostOptions {
   readonly shutdownTimeoutMs?: number;
   readonly maxMessageBytes?: number;
   readonly maxStderrBytes?: number;
-  readonly preSpawn?: () => Promise<void>;
+  readonly preSpawn?: (signal: AbortSignal) => Promise<void>;
   readonly telemetry?: CuaDriverTelemetrySink;
   readonly onTerminal?: (input: {
     readonly generation: number;
@@ -151,6 +151,8 @@ export class CuaDriverProviderHost {
   private stateValue: CuaDriverProviderHostState = "idle";
   private child: ChildProcess | undefined;
   private startPromise: Promise<void> | undefined;
+  private startAbortController: AbortController | undefined;
+  private startEpoch = 0;
   private stopPromise: Promise<void> | undefined;
   private terminal = false;
   private initializeSeen = false;
@@ -212,11 +214,18 @@ export class CuaDriverProviderHost {
     if (this.startPromise) {
       return this.startPromise;
     }
-    const pending = this.startInternal();
+    const startEpoch = this.startEpoch + 1;
+    this.startEpoch = startEpoch;
+    const abortController = new AbortController();
+    this.startAbortController = abortController;
+    const pending = this.startInternal(startEpoch, abortController.signal);
     this.startPromise = pending;
     void pending.finally(() => {
       if (this.startPromise === pending) {
         this.startPromise = undefined;
+      }
+      if (this.startAbortController === abortController) {
+        this.startAbortController = undefined;
       }
     }).catch(() => undefined);
     return pending;
@@ -294,11 +303,16 @@ export class CuaDriverProviderHost {
     return pending;
   }
 
-  private async startInternal(): Promise<void> {
+  private async startInternal(startEpoch: number, signal: AbortSignal): Promise<void> {
     this.stateValue = "starting";
     try {
-      await this.options.preSpawn?.();
+      if (this.options.preSpawn) {
+        await waitForAbort(this.options.preSpawn(signal), signal);
+      }
     } catch (error) {
+      if (!this.isStartCurrent(startEpoch, signal)) {
+        throw new CuaDriverProviderHostError("child_terminal");
+      }
       this.stateValue = "failed";
       this.terminal = true;
       this.telemetry.emit("error", "cua_driver.host.pre_spawn_validation_failed", {
@@ -313,6 +327,7 @@ export class CuaDriverProviderHost {
       );
       throw new CuaDriverProviderHostError("pre_spawn_validation_failed");
     }
+    this.assertStartCurrent(startEpoch, signal);
     const environment = createManagedProviderEnvironment({
       baseEnvironment: this.options.baseEnvironment ?? process.env,
       stateRoot: this.options.stateRoot,
@@ -510,16 +525,19 @@ export class CuaDriverProviderHost {
   }
 
   private handleTerminal(child: ChildProcess, reason: string, unexpected: boolean, processExited: boolean): void {
-    if (this.child !== child || this.terminal) {
+    if (this.child !== child) {
+      return;
+    }
+    if (processExited) {
+      this.resolveExit?.();
+      this.resolveExit = undefined;
+    }
+    if (this.terminal) {
       return;
     }
     this.terminal = true;
     this.stateValue = unexpected ? "failed" : "stopped";
     this.rejectPending(new CuaDriverProviderHostError("child_terminal"));
-    if (processExited) {
-      this.resolveExit?.();
-      this.resolveExit = undefined;
-    }
     this.notifyTerminal(reason, unexpected, child.pid);
     if (!this.stopPromise) {
       const pending = this.stopInternal(reason, unexpected);
@@ -545,8 +563,12 @@ export class CuaDriverProviderHost {
   }
 
   private async stopInternal(reason: string, failed = false): Promise<void> {
+    const shutdownTimeoutMs = boundedPositive(this.options.shutdownTimeoutMs, 2_000, 30_000);
+    this.stateValue = "stopping";
+    this.startEpoch += 1;
+    this.startAbortController?.abort();
     if (!this.child && this.startPromise) {
-      await this.startPromise.catch(() => undefined);
+      await waitForPromise(this.startPromise.catch(() => undefined), shutdownTimeoutMs);
     }
     const child = this.child;
     const pid = child?.pid;
@@ -556,7 +578,6 @@ export class CuaDriverProviderHost {
       this.rejectPending(new CuaDriverProviderHostError("child_terminal"));
       return;
     }
-    this.stateValue = "stopping";
     this.rejectPending(new CuaDriverProviderHostError("child_terminal"));
     try {
       if (child.stdin && !child.stdin.destroyed && child.stdin.writable) {
@@ -565,7 +586,6 @@ export class CuaDriverProviderHost {
     } catch {
       // Retained-handle termination below is still required.
     }
-    const shutdownTimeoutMs = boundedPositive(this.options.shutdownTimeoutMs, 2_000, 30_000);
     const exited = child.exitCode !== null || child.signalCode !== null || await waitForPromise(this.exitPromise, shutdownTimeoutMs);
     if (!exited) {
       await this.lifecycle.terminate(child);
@@ -620,6 +640,19 @@ export class CuaDriverProviderHost {
       });
     } catch {
       // Lifecycle cleanup remains authoritative.
+    }
+  }
+
+  private isStartCurrent(startEpoch: number, signal: AbortSignal): boolean {
+    return !signal.aborted
+      && startEpoch === this.startEpoch
+      && !this.terminal
+      && this.stateValue === "starting";
+  }
+
+  private assertStartCurrent(startEpoch: number, signal: AbortSignal): void {
+    if (!this.isStartCurrent(startEpoch, signal)) {
+      throw new CuaDriverProviderHostError("child_terminal");
     }
   }
 }
@@ -807,6 +840,30 @@ async function waitForPromise(promise: Promise<void>, timeoutMs: number): Promis
       clearTimeout(timeout);
     }
   }
+}
+
+async function waitForAbort(promise: Promise<void>, signal: AbortSignal): Promise<void> {
+  if (signal.aborted) {
+    void promise.catch(() => undefined);
+    throw new CuaDriverProviderHostError("child_terminal");
+  }
+  await new Promise<void>((resolveWait, rejectWait) => {
+    let settled = false;
+    const finish = (callback: () => void): void => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      signal.removeEventListener("abort", onAbort);
+      callback();
+    };
+    const onAbort = (): void => finish(() => rejectWait(new CuaDriverProviderHostError("child_terminal")));
+    signal.addEventListener("abort", onAbort, { once: true });
+    void promise.then(
+      () => finish(resolveWait),
+      (error: unknown) => finish(() => rejectWait(error)),
+    );
+  });
 }
 
 const defaultProviderLifecycle: CuaDriverProviderProcessLifecycle = {
