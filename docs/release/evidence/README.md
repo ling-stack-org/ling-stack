@@ -18,6 +18,27 @@ atomically with all producers, the strict expected-filename set, validators, neg
 fixtures and a test-sign CI lane. This design update intentionally does not partially edit
 the live JSON schemas.
 
+## Slice -1 signing-feasibility evidence
+
+`apps/desktop/tests/cua-driver-signing-feasibility.test.mjs` and the modules under
+`apps/desktop/scripts/cua-driver-signing/` are a certificate-free Electron Builder
+26.15.3 hook-order spike. They exercise `afterPack`, the opt-in macOS/Windows platform
+sign callbacks, `afterSign`, and `artifactBuildCompleted` on both platforms. The disposable
+fixture signer uses an explicit `testOnly` envelope; it is not Authenticode, Developer ID,
+or a production certificate, and it cannot be selected for `production_signed`. Fixture
+ZIP/DMG/NSIS containers are reopened and every member is rehashed before the normal provider
+tuple verifier runs. The trace records pre-sign, post-sign, seal, catalog, outer-role and
+final-artifact digests. Negative cases fail closed for double signing, post-seal mutation,
+mixed tier/channel, reused internal bytes, unexpected provider executables and missing
+extractors. This proves hook sequencing and byte invariants only; it does not prove real
+certificate trust, notarization, SmartScreen, NSIS Authenticode, or production release
+readiness. Those remain external test-signed/production gates in Slice 6A and Slice 8.
+`apps/desktop/tests/run-cua-driver-signing-builder-fixture.mjs` additionally runs the real
+`electron-builder@26.15.3 --dir` path on macOS and Windows CI; macOS uses the explicit
+ad-hoc `identity: "-"` fixture setting and `hardenedRuntime: false` only in the opt-in
+fixture config. Ubuntu runs the portable Node fixture lane and reports the platform-builder
+lane as skipped rather than claiming cross-platform evidence.
+
 - `macos-signed-acceptance.schema.json` is the v2 output contract of
   `apps/desktop/tests/finalize-macos-signed-acceptance.mjs`. The finalizer reads every
   referenced file, recomputes SHA-256, live-reverifies the candidate, validates the full

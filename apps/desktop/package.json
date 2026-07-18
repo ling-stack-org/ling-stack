@@ -22,6 +22,8 @@
     "smoke:computer-use:windows-provider": "corepack pnpm build && node tests/run-windows-provider-smoke.mjs",
     "verify:release-schemas": "node tests/validate-release-evidence-schemas.mjs",
     "verify:windows-provider": "node tests/verify-windows-cua-driver-provider.mjs",
+    "test:signing-feasibility": "node --test tests/cua-driver-signing-feasibility.test.mjs",
+    "package:signing-feasibility": "corepack pnpm build && node tests/run-cua-driver-signing-builder-fixture.mjs",
     "screenshots:update:computer-use": "corepack pnpm build && electron tests/screenshot-app --update",
     "screenshots:verify:computer-use": "corepack pnpm build && electron tests/screenshot-app",
     "package:mac": "corepack pnpm build && electron-builder --mac dmg zip --arm64 --x64",
@@ -48,6 +50,9 @@
   "build": {
     "appId": "com.lingstack.desktop",
     "productName": "Ling Stack",
+    "afterPack": "./scripts/cua-driver-signing/after-pack.mjs",
+    "afterSign": "./scripts/cua-driver-signing/after-sign.mjs",
+    "artifactBuildCompleted": "./scripts/cua-driver-signing/artifact-build-completed.mjs",
     "directories": {
       "output": "release"
     },
