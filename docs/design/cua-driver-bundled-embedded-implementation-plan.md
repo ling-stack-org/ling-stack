@@ -9,17 +9,26 @@ This plan implements the approved macOS and Windows bundled-provider direction d
 - [Bundled Embedded Cua Driver](cua-driver-bundled-embedded.md)
 - [Bundled Embedded Cua Driver Detailed Design](cua-driver-bundled-embedded-detailed-design.md)
 
-The first Windows target is the current per-user/asInvoker `standard` integrity tier.
+The first Windows target is the initial bundled per-user/asInvoker `standard` integrity tier.
 Windows real-machine acceptance is executed and signed off by the Windows team. Ling's
 implementation scope includes the code, package, static and automated Windows-native
 validation, evidence schemas, matrix finalizer, runner and handoff bundle; it does not
-include self-attesting Windows PASS evidence.
+include self-attesting Windows internal or release verdict evidence.
+
+Windows production signing credentials are not an implementation prerequisite. The
+required implementation candidate is `test_signed_internal + internal`, uses real
+Authenticode throughout the installed Ling tuple, and may close only
+`INTERNAL_TEST_PASS` with `releaseReady=false`. A separately rebuilt
+`production_signed + production` candidate is required later for public release.
 
 ## Delivery Outcome
 
 After the required slices land:
 
 - packaged macOS and Windows Desktop contain the locked `0.8.3 (Ling build 1)` provider;
+- `Ling Stack Setup.exe` installs Windows `cua-driver.exe` only as a versioned private Ling
+  resource, with no second product registration, PATH entry, Start-menu item, service,
+  uninstaller or updater;
 - normal users do not download or separately update Cua Driver;
 - Desktop owns the provider process group, isolated state, MCP proxy and daemon lease;
 - packaged mode never falls back to a random executable on `PATH`;
@@ -27,7 +36,8 @@ After the required slices land:
 - Windows projects content-free interactive-session readiness and a ready
   `standard` integrity tier with explicit capability limitations;
 - standalone/dev mode retains the existing explicit external-provider path;
-- Windows colleagues receive a deterministic signed-candidate acceptance package.
+- Windows colleagues receive a deterministic test-signed installed-candidate acceptance
+  package and, later, a separately generated production-candidate package.
 
 This plan does not claim full Windows elevated/UWP pixel-input parity. That requires the
 conditional UIAccess slice described at the end.
@@ -70,7 +80,7 @@ User Enable
 daemon persists requestedEnabled + revision
    |
    v
-Desktop validates lock + platform post-sign seal/catalog
+Desktop validates lock + tier-appropriate final seal/catalog/signature policy
    |
    +-- invalid ------------------------------> corrupt / incompatible, tools hidden
    |
@@ -123,6 +133,27 @@ Files that should carry short inline versions of this diagram during implementat
 - Windows normal activation is content-free. Real WGC/UIA/input probes use a test-owned
   target only in Windows acceptance.
 - The Windows standard user package contains no `cua-driver-uia.exe`.
+- `bundled_embedded`, `standard`/`uiaccess`, and Windows signing tier are independent
+  dimensions. The only allowed signing pairs are `unsigned_dev + development`,
+  `test_signed_internal + internal`, and `production_signed + production`.
+- Candidate-declared tier is evidence only. The runtime verifier derives the installed
+  subset from the Ling main PE, private provider and signed-tier catalog; it cannot promote
+  a candidate or attest to installer/uninstaller bytes. The promotion verifier separately
+  derives the lowest effective tier from the full governed installer/installed-main-PE/
+  uninstaller/provider/catalog tuple. Internal/production tuples fail on mixed/double
+  signatures, test-root-in-production, an unsigned governed member or an unexpected
+  executable in the private provider payload. Development is valid only when every expected
+  governed PE derives as `unsigned_dev`, the catalog is absent and the compile-time dev gate
+  is active.
+- Electron/Chromium vendor DLLs outside the private provider payload retain the existing
+  Electron Builder signing policy and appear in a separate normalized path/hash/
+  observed-signer inventory. This slice does not silently enable `signDlls`; any new
+  Ling-owned executable must be explicitly added to the governed tuple.
+- Ling Setup never carries or installs an internal test root or private key. The external
+  harness provisions trust only into disposable CI or isolated managed QA machines.
+  `ephemeral-ci` trust is removed after each job or VM revert; `managed-internal` trust may
+  persist only in a dedicated QA image/VM under external PKI lifecycle, never in a general
+  developer image, product or production chain.
 - Windows readiness comes from the active MCP child and must match its retained PID,
   memory-only nonce, generation, session, Medium integrity and Job Object boundary.
   One-shot diagnostics are build/preflight evidence only.
@@ -148,6 +179,8 @@ Changes:
 
 - add instrumented macOS and Windows package fixtures using disposable CI signing
   identities;
+- freeze the Windows signing ladder, allowed tier/channel pairs and verdict ceilings before
+  hook code is accepted;
 - exercise `afterPack`, the platform signing hook, `afterSign`, and
   `artifactBuildCompleted`;
 - in `afterPack`, sign the staged macOS provider and derive its seal from final Mach-O
@@ -161,12 +194,19 @@ Changes:
   seal, platform identity/catalog membership and provider bytes extracted from final
   DMG/ZIP/NSIS artifacts;
 - retain the ordered hook trace and every digest transition as CI evidence.
+- prove Setup contains no root certificate/PFX, trust is provisioned only by the harness,
+  ephemeral trust is removed/reverted, managed-internal trust remains isolated under its
+  external lifecycle, and production policy rejects every test fingerprint;
+- prove production signing starts from the same approved clean pre-sign payload rather
+  than overwriting, appending to, or promoting test-signed bytes.
 
 Exit criteria:
 
 - the provider digest at seal generation, `afterSign`, unpacked verification and final
   artifact verification is identical;
 - outer macOS app/DMG/ZIP and Windows app/uninstaller/NSIS remain correctly test-signed;
+- installer, app, uninstaller, provider and catalog have one derived test tier; mixed,
+  unsigned, double-signed, mutated or mismatched-channel fixtures fail closed;
 - hosted macOS/Windows jobs fail if Electron Builder changes hook order or mutates the
   provider after sealing.
 
@@ -185,6 +225,9 @@ Changes:
   `corrupt` and `desktop_unavailable`;
 - add `platform`, `integrityCoverage`, `limitations[]`, provider revision,
   seal digest and optional Windows catalog digest fields;
+- add `signingTier`, `distributionChannel`, `promotionStatus` and verdict-cap contracts:
+  `INTERNAL_TEST_PASS` always has `releaseReady=false`, while only `RELEASE_PASS` may set
+  it true;
 - add a packaged-provider feature gate defaulting off until each platform package passes;
 - version the Desktop lease and provider-lock schemas.
 
@@ -219,6 +262,8 @@ Changes:
 - lock Rust/Cargo, Xcode/macOS SDK and MSVC/Windows SDK inputs;
 - build macOS universal `cua-driver` and Windows x64 `cua-driver.exe` for shipped
   packages;
+- emit the Windows clean pre-sign payload digest separately from every tier-specific final
+  artifact digest so test and production signatures never share a candidate identity;
 - build `cua-driver-uia.exe` only as a non-shipping CI audit output so upstream drift is
   visible; do not copy, sign or seal it into Desktop resources;
 - compare upstream reference assets without copying them into the package;
@@ -276,9 +321,11 @@ apps/desktop/main/cua-driver/
 Changes:
 
 - validate the lock and platform seal before process start;
-- on Windows, validate the installed app signer and the signed provider catalog/membership
-  before parsing loose lock/seal resources; candidate-manifest JSON is not a runtime
-  integrity anchor;
+- on Windows, enforce the compile-time distribution channel and derive actual artifact
+  tier before process start. Development may accept explicit `NotSigned` without a
+  catalog; internal accepts only its policy-pinned test signer/catalog; production accepts
+  only its production signer/catalog. Candidate-manifest JSON is not a runtime integrity
+  anchor;
 - resolve only the versioned resource path outside `app.asar`;
 - create the isolated platform state root;
 - own one lazy provider stdio session per lease generation;
@@ -398,12 +445,13 @@ external clean-host matrix execution.
 
 ### Slice 5 — Windows Standard Adapter
 
-Goal: bundle Windows without changing the current per-user/asInvoker installer contract.
+Goal: bundle Windows without changing the existing Ling per-user/asInvoker installer contract.
 
 Changes:
 
-- validate the final signed `cua-driver.exe`, signed resource catalog and exact package
-  membership; assert that the standard package contains no `cua-driver-uia.exe`;
+- validate the final tier-appropriate `cua-driver.exe`, seal/catalog contract and exact
+  package membership; internal/production signed tiers require the catalog, development
+  explicitly omits it, and the standard package always contains no `cua-driver-uia.exe`;
 - directly spawn `cua-driver.exe mcp --embedded --host-bundle-id com.lingstack.desktop`
   in the Desktop interactive session with matching locked environment values;
 - keep one-shot diagnostics as preflight evidence only; after initialize call
@@ -440,9 +488,13 @@ Exit criteria on cross-platform CI:
   pipes/PATH, exercises hard-kill plus grandchild cleanup, and runs test-owned Win32 and
   installable/removable MSIX/UWP targets. Windows colleagues are not the first native-code
   testers.
+- the test certificate is externally provisioned and absent from Setup. Ephemeral CI trust
+  is removed/reverted after the run; managed-internal trust is accepted only in its
+  dedicated isolated QA pool; the production policy rejects both.
 
-Real signed build/DPI/display/accessibility/SmartScreen acceptance remains owned by the
-Windows team in Slice 8; the automated Windows-native gates above are owned by us.
+Real test-signed build/DPI/display/accessibility functional acceptance and the later
+production-only Publisher/SmartScreen/WDAC acceptance remain owned by the Windows team in
+Slice 8; the automated Windows-native gates above are owned by us.
 
 Estimated engineering time: 4–6 days.
 
@@ -455,6 +507,9 @@ Changes:
 
 - stage only the enabled platform resources through Electron packaging outside
   `app.asar`;
+- make `Ling Stack Setup.exe` the only Windows installer: it extracts the helper under the
+  versioned Ling `resources/providers/.../payload/` tree and creates no Cua Driver product
+  registration, PATH entry, Start-menu entry, service, uninstaller or updater;
 - update package assertions to reject missing, extra, symlinked, reparse-point or
   wrong-architecture provider files and to reject `cua-driver-uia.exe` in standard mode;
 - keep candidate manifests as release provenance, not runtime integrity anchors;
@@ -467,14 +522,16 @@ Changes:
 Exit criteria:
 
 - clean packaged machines need no provider download;
+- installed smoke proves the actual Electron child path is the final private Setup payload,
+  not a runner-temp or external provider;
 - a conflicting external version does not affect packaged mode;
 - upgrade and rollback restore the exact locked tuple;
 - no runtime symlink/junction or independent provider updater is used.
 
-### Slice 6A — Electron Builder Platform-Signing Closure
+### Slice 6A — Electron Builder Signing-Ladder Closure
 
-Goal: implement the signing order proven by Slice -1 without allowing post-seal
-mutation.
+Goal: implement the signing order and three-tier Windows ladder proven by Slice -1 without
+allowing post-seal mutation or test-to-production promotion.
 
 Dependencies: Slice -1, Slice 1, the active platform adapter and Slice 6 staging.
 
@@ -484,15 +541,20 @@ Changes:
   package platform;
 - on macOS, sign the nested provider before generating its seal, then allow Electron
   Builder to sign the outer app;
-- on Windows, sign `payload/cua-driver.exe`, generate the seal from the final PE, generate
-  and sign the outer `provider-integrity.cat`, then prevent the generic signer from
-  touching the sealed provider;
+- on Windows, enforce one allowed tier/channel pair. `unsigned_dev` writes an explicit
+  `NotSigned` final seal and omits the catalog; signed tiers sign
+  `payload/cua-driver.exe`, generate the seal from the final PE, generate/sign the outer
+  `provider-integrity.cat`, then prevent the generic signer from touching the sealed
+  provider;
 - make the custom signing hook fail on an unexpected executable under the provider
   payload instead of silently signing or ignoring it;
 - reverify the provider tuple after outer-app signing and after each DMG/ZIP/NSIS artifact
   completes;
 - use identical hook code with disposable CI certificates and release-policy credentials;
   only credential selection may differ;
+- bind candidate evidence to `preSignPayloadSha256` plus tier-specific final hashes;
+  production rebuilds from approved clean pre-sign bytes and rejects reused, overwritten
+  or appended test-signed artifacts;
 - verify the Windows catalog at runtime through the absolute in-box Windows PowerShell
   path with `-NoProfile -NonInteractive`, fixed UTF-8 locale-independent JSON and strict
   stdout/stderr byte limits. Missing/blocked PowerShell, WDAC/AppLocker denial, absent
@@ -504,10 +566,12 @@ Changes:
 
 Windows signing contract:
 
-- main provider PE, catalog, Ling app, uninstaller and NSIS use release-policy-pinned
-  identities; catalog signer matches the installed Ling app signer policy;
-- seal fields include final main-PE SHA, manifest digest, Publisher subject, certificate
-  SHA and timestamp status;
+- main provider PE, catalog, Ling app, uninstaller and NSIS use one channel-policy-pinned
+  effective tier; catalog signer matches the installed Ling app signer policy;
+- candidate evidence binds pre-sign and tier-specific final artifact hashes; seal fields
+  include final main-PE SHA, manifest digest, derived tier/channel, actual Authenticode
+  subject, certificate SHA and timestamp policy/status without creating a seal/catalog
+  self-reference;
 - the catalog sits outside and covers only `payload/cua-driver.exe` plus
   `payload/provider-seal.json`; the covered seal anchors the root provider-lock digest;
 - the unsigned upstream zip remains reference evidence only.
@@ -517,10 +581,12 @@ Exit criteria:
 - no shipped provider byte changes after its seal is generated;
 - final artifacts contain the exact verified tuple from the unpacked app;
 - test-certificate signing/catalog/package tests pass on automated Windows CI;
+- a final test-signed Setup installed on the Windows QA target is a genuine bundled
+  candidate and can close implementation with `INTERNAL_TEST_PASS` / `releaseReady=false`;
 - platform packaging gates remain independently switchable.
 
 Estimated engineering time: Slice 6 plus Slice 6A remains 4–7 days, with release-signing
-service availability as an external dependency.
+service availability required only for later `production_signed` promotion.
 
 ### Slice 7 — Plugin Manager And Product States
 
@@ -553,7 +619,23 @@ Goal: finish our responsibility and hand a runnable acceptance package to Window
 Changes:
 
 - extend provider verifier from upstream-asset-only to source-build lock, final main-PE
-  seal and signed-catalog validation;
+  seal and tier-aware signed-catalog validation;
+- atomically migrate candidate manifest v4, release policy v3, review/build attestation v2
+  and release verification v2 together with JS, PowerShell, fixtures and the test-sign CI
+  lane; do not land a schema-only partial migration;
+- add `windows-internal-verification.schema.json` v1 and
+  `verify-windows-internal-attestations.mjs`; fix kind/tier/channel/eligibility/verdict/
+  release-ready/blocker to the internal constants, make the production verifier reject
+  that kind, and update the strict expected schema filename set in the same change;
+- make candidate v4 record tier/channel, production eligibility, test-authority kind,
+  clean pre-sign digest, packaged provider path/seal/catalog, audit-only UIAccess hash,
+  tier-specific final artifact hashes and observed actual Authenticode signer/timestamp
+  fields under `tierGovernedArtifacts`, plus a separate normalized
+  `vendorNativeInventory` path/hash/observed-signer inventory. Keep TryCua source/archive
+  fields as provenance, not signer identity;
+- require `productionEligible=false` for unsigned/dev and test/internal candidates; only
+  production/production may set it true, and true means review-eligible rather than
+  release-ready;
 - version the release policy with explicit `requiredAcceptanceCells`; keep
   `supportedWindowsBuilds` as an allowlist, not proof that every build ran;
 - produce one exclusive-create immutable report per exact Windows build/architecture/
@@ -573,8 +655,10 @@ Changes:
   and tool versions;
 - update static schema tests plus automated Windows Rust/build/package/catalog/install/
   Win32/MSIX gates;
-- keep cell and matrix outputs `MANUAL_REVIEW_REQUIRED`; only the external detached
-  reviewer/build-attestor verifier may emit release-ready.
+- keep cell and matrix outputs non-self-promoting. The profile-aware external verifier may
+  emit `INTERNAL_TEST_PASS` with `releaseReady=false` for the exact internal tuple; only
+  the exact production tuple with every production gate may emit `RELEASE_PASS` and
+  `releaseReady=true`.
 
 Full mode accepts one operator-supplied input:
 
@@ -598,7 +682,8 @@ Responsibility split:
 | Embedded stdio, fake global pipes, old PATH provider | Automated Windows CI | Reverify final candidate |
 | Retained-handle hard kill, Job Object descendants, strict residue | Automated Windows CI | Reverify final candidate |
 | Package allowlist, silent install/uninstall, Win32 and installable/removable MSIX | Automated Windows CI or managed pool | Reverify release lifecycle |
-| Real Windows build cells, DPI/display, Narrator/NVDA, SmartScreen, final signatures | Do not self-attest PASS | Execute, review and sign evidence |
+| Real Windows build cells, DPI/display, Narrator/NVDA, installed lifecycle | Do not self-attest PASS | Execute, review and sign internal/production evidence |
+| Production Publisher, RFC 3161, SmartScreen and claimed WDAC policy | Produce fail-closed verifier/handoff only | Execute only for production candidate and sign evidence |
 
 Required Windows evidence:
 
@@ -610,7 +695,8 @@ Required Windows evidence:
 - one/two displays and at least two DPI profiles;
 - every explicit `requiredAcceptanceCells` entry, with at least one single-display and one
   dual-display mixed-DPI cell per supported build;
-- Narrator, NVDA and SmartScreen;
+- Narrator and NVDA; production profile additionally requires candidate/environment-bound
+  SmartScreen and any claimed exact WDAC policy evidence;
 - install, update, rollback and uninstall;
 - provider stdout EOF, hard Desktop crash, daemon restart and graceful-timeout recovery
   with zero process/pipe/state residue;
@@ -625,14 +711,18 @@ Exit criteria for our team:
   install/uninstall, and test-owned Win32 plus installable/removable MSIX/UWP targets;
 - the cell handoff command, matrix finalizer and schemas are versioned and reproducible;
 - no report can promote itself from local evidence to release PASS;
+- test-signed success is capped at `INTERNAL_TEST_PASS` and the production workflow rejects
+  any test root, mismatched channel or reused test-signed bytes;
 - Windows owner is named in the release policy or handoff manifest.
 
 Exit criteria for Windows support claim:
 
 - Windows colleagues return a policy-complete reviewed acceptance bundle. This occurs
-  after implementation and is not a blocker for merging code behind the feature gate;
-- Windows colleagues own real build/DPI/display, Narrator/NVDA, SmartScreen,
-  installation-lifecycle and final signed evidence. They are not the first testers of
+  after the implementation/handoff code is available and is not a blocker for merging that
+  code behind the feature gate;
+- Windows colleagues first own real build/DPI/display, Narrator/NVDA and
+  installation-lifecycle `INTERNAL_TEST_PASS`, then separately own production
+  Publisher/SmartScreen/WDAC and final release evidence. They are not the first testers of
   native code or packaging.
 
 Estimated engineering time: 4–7 days for implementation/handoff; Windows execution time
@@ -673,7 +763,8 @@ Windows-team acceptance.
 Slice -1 closes signing/catalog feasibility. After Slice 0 freezes contracts, Slice 1
 source build and Slice 2 supervisor interface can run in parallel; Slice 7 UI and Slice 8
 schema work may scaffold, but their final E2E/runner closure waits for runtime semantics
-and signed packages.
+and test-signed packages. Production credentials and production trust evidence are not on
+this implementation critical path.
 
 The required standard-capability path is approximately 6–10 engineering weeks for one
 engineer, or 4–6 weeks for two engineers splitting shared/macOS and Windows/release lanes.
@@ -798,6 +889,17 @@ LOCK / PACKAGE
   + PowerShell missing/blocked/malformed verdict ..... hosted Windows negative fixtures
   + UIAccess audit output excluded from package ...... build/package negative test
 
+WINDOWS SIGNING LADDER
+  + unsigned_dev/development, no catalog ............. dev-gate positive + cross-channel negatives
+  + test_signed_internal/internal governed tuple ..... real Authenticode + installed Setup integration
+  + production_signed/production governed tuple ...... production-policy positive + test-root negatives
+  + productionEligible false/false/true .............. candidate/policy/schema discriminated fixtures
+  + ephemeral cleanup / managed QA isolation ......... trust-store + package-content lifecycle tests
+  + clean pre-sign -> distinct tier final hashes ..... append/overwrite/reuse tamper negatives
+  + tierGovernedArtifacts exact allowlist ............ installer/app/uninstaller/provider/catalog checks
+  + vendorNativeInventory stable and separate ........ package inventory + signDlls policy regression
+  + installed private spawn path ..................... NSIS installed smoke; runner-temp path negative
+
 RUNTIME
   + valid enable -> ready + capability metadata ...... daemon + Desktop integration
   + permission/session/capability not ready .......... platform fixture + host evidence
@@ -825,6 +927,10 @@ SECURITY / RELEASE
   + self-attested evidence promotion ................. schema/finalizer negative tests
   + missing/duplicate/cross-cell matrix evidence ...... Windows matrix finalizer tests
   + handoff path/hash/reparse escape .................. schema + PowerShell negative tests
+  + internal verification kind/constants ............. v1 schema + verifier exact-output fixtures
+  + production verifier rejects internal kind ........ cross-profile promotion negative test
+  + every production required cell reruns ............ no internal report/attachment reuse fixture
+  + SmartScreen/WDAC environment binding ............. production evidence positive + tamper negatives
 ```
 
 ## Merge Strategy
@@ -869,6 +975,8 @@ Windows acceptance remains external machine evidence.
 
 ## Definition Of Done
 
+### Bundled implementation complete
+
 The required implementation is done when:
 
 - cross-platform design, lock, seal and state contracts are implemented;
@@ -881,36 +989,52 @@ The required implementation is done when:
 - Windows active-child identity, Job Object ownership and lock/revoke/fresh-generation
   recovery pass automated Windows gates before colleague handoff;
 - Plugin Manager and migration show one canonical provider;
-- package/signing pipelines produce deterministic provider seals and the Windows signed
-  catalog, with no UIAccess helper in the standard package;
+- package/signing pipelines produce deterministic tier-aware provider seals and Windows
+  signed catalogs, with no UIAccess helper in the standard package;
+- `Ling Stack Setup.exe` installs and launches the exact private helper path without any
+  second product/install/update surface;
+- a real `test_signed_internal + internal` candidate passes the Windows automated/native,
+  installed-package and declared standard functional matrix and the independent Windows
+  acceptance boundary emits `INTERNAL_TEST_PASS` with `releaseReady=false`;
 - Windows immutable cell runner, matrix finalizer, schemas and one-input handoff bundle are
   ready for the Windows team;
 - no unresolved standard-tier architecture decision remains.
 
-Release readiness is a later, platform-specific verdict. Missing Windows owner evidence
-does not make the implementation incomplete, but it prevents declaring Windows support
-ready for release.
+The implementation may be merged behind the Windows feature gate before colleague VM
+sign-off, but it is not marked bundled-implementation-complete until that test-signed
+acceptance returns. The production Publisher/certificate, SmartScreen, WDAC and public
+detached attestations are not part of this verdict.
+
+### Public release ready
+
+Windows public release requires a separately rebuilt `production_signed + production`
+candidate. It must pass the legal Publisher/certificate/EKU/RFC 3161 policy, complete
+release VM matrix, candidate-bound SmartScreen, any claimed exact WDAC policy and detached
+review/build verification. Only `RELEASE_PASS` may set `releaseReady=true`; functional gate
+`PASS` or `INTERNAL_TEST_PASS` never does.
 
 ## Release Inputs And Optional Follow-Up
 
 There is no unresolved decision for the required standard-capability implementation.
 
-External release inputs still need concrete values: macOS Team ID/toolchain, Windows
-Publisher/certificate/toolchain, supported Windows build allowlist and Windows acceptance
-owner identities. Missing values block signed candidates and release evidence.
+External public-release inputs still need concrete values: macOS Team ID/toolchain,
+Windows legal Publisher/production certificate service/toolchain, supported Windows build
+allowlist and Windows production acceptance owner identities. Missing Windows production
+values block only `production_signed` candidates and `RELEASE_PASS`; they do not block the
+test-signed implementation path.
 
 The only optional architecture decision is whether to implement Conditional Slice 9.
-Deferring it preserves the current per-user Windows installer and blocks only full
+Deferring it preserves the existing Ling per-user Windows installer and blocks only full
 elevated/UWP pixel-input parity.
 
 ## Implementation Tasks
 
 - [ ] **T1 (P1, human: ~2–3 days / Codex: ~4–8 h)** — Prove Electron Builder hook order,
-  test-identity provider/seal/catalog signing and final-artifact byte stability on macOS
-  and Windows.
-- [ ] **T2 (P1, human: ~1–2 days / Codex: ~3–5 h)** — Freeze schema V2, signed-catalog,
-  active-child readiness, Job Object, instance-epoch lease, activation fence and
-  capability-limitation contracts.
+  test-identity provider/seal/catalog/app/installer signing, test-trust lifecycle/isolation,
+  tier mismatch rejection and final-artifact byte stability on macOS and Windows.
+- [ ] **T2 (P1, human: ~1–2 days / Codex: ~3–5 h)** — Freeze schema V2, signing ladder,
+  verdict ceiling, signed-catalog, active-child readiness, Job Object, instance-epoch lease,
+  activation fence and capability-limitation contracts.
 - [ ] **T3 (P1, human: ~3–5 days / Codex: ~1–2 days)** — Build the locked Rust patch
   series and deterministic macOS/main-Windows outputs; retain UIAccess as audit-only.
 - [ ] **T4 (P1, human: ~4–6 days / Codex: ~1–2 days)** — Implement Desktop artifact
@@ -923,14 +1047,15 @@ elevated/UWP pixel-input parity.
 - [ ] **T7 (P1, human: ~4–6 days / Codex: ~1–2 days)** — Implement the Windows standard
   adapter, content-free active-child readiness, Job Object lifecycle, structured
   limitations and global-pipe regression.
-- [ ] **T8 (P1, human: ~4–7 days / Codex: ~1–2 days)** — Add package staging, signing
-  hooks, the Windows signed catalog, PowerShell verifier classification, migration and
-  rollback tuple.
+- [ ] **T8 (P1, human: ~4–7 days / Codex: ~1–2 days)** — Add private-helper Setup staging,
+  three-tier signing hooks, the Windows signed catalog, PowerShell tier classification,
+  migration and tier-aware rollback tuple.
 - [ ] **T9 (P2, human: ~2–4 days / Codex: ~4–8 h)** — Update the one-row Plugin Manager
   states, copy, i18n and E2E coverage.
-- [ ] **T10 (P1, human: ~4–7 days / Codex: ~1–2 days)** — Migrate Windows evidence to
-  immutable cells, add the matrix finalizer and produce the deterministic one-input
-  handoff bundle for Windows-team execution.
+- [ ] **T10 (P1, human: ~4–7 days / Codex: ~1–2 days)** — Atomically migrate Windows
+  candidate/policy/attestation/verifier contracts, add immutable cells and the matrix
+  finalizer, and produce deterministic internal and production one-input handoff bundles
+  for Windows-team execution.
 
 ## GSTACK REVIEW REPORT
 
@@ -938,11 +1063,11 @@ elevated/UWP pixel-input parity.
 | --- | --- | --- | ---: | --- | --- |
 | CEO Review | `/plan-ceo-review` | Scope and strategy | 0 | Not run | Not required for this architecture-only expansion |
 | Codex Review | `/codex review` | Independent second opinion | 0 | Not run | Two independent engineering subreviews were used instead |
-| Eng Review | `/plan-eng-review` | Architecture, tests and performance | 1 | CLEAR | 18 high-confidence P1/P2 gaps folded into the design and plan |
+| Eng Review | `/plan-eng-review` | Architecture, tests and performance | 2 | CLEAR | 9 signing-ladder/evidence gaps found and folded in; 0 critical gaps remain |
 | Design Review | `/plan-design-review` | UI/UX gaps | 0 | Not run | No new visual system; state semantics are specified |
 | DX Review | `/plan-devex-review` | Developer experience | 0 | Not run | Handoff and verification commands are in scope of implementation |
 
-**VERDICT:** ENG CLEARED — ready to implement behind independent macOS and Windows
-platform gates.
+**VERDICT:** ENG CLEARED — signing ladder, internal/production evidence split and test
+matrix are ready to implement behind independent macOS and Windows platform gates.
 
 NO UNRESOLVED DECISIONS

@@ -35,11 +35,15 @@ The staged delivery plan is
 | --- | --- |
 | Plugin shell | Ling metadata under `packages/daemon/src/features/plugins/bundled/cua-driver`; it is not the native provider |
 | Provider distribution | The Ling-carried platform binaries built from upstream `cua-driver-rs-v0.8.3` plus the locked managed-embedding patch series |
-| Embedded host | The Electron main process inside signed Ling Desktop |
+| Embedded host | The Electron main process inside the tier-appropriate Ling Desktop package |
 | Provider host | Desktop module that owns the platform process group and stdio MCP connection |
 | macOS provider | Universal Mach-O `cua-driver` launched directly in upstream embedded mode |
 | Windows main provider | x64 `cua-driver.exe` launched directly in upstream embedded mode in the Desktop session |
 | Windows UIAccess helper | Future x64 `cua-driver-uia.exe` secure-path artifact; audit-only in V1 and unusable unless signing, installer, ShellExecute, PID, routing and live UIAccess gates pass |
+| Private helper payload | The versioned provider resource carried and installed only by Ling Setup; it is not a second Windows product, service, PATH command, Start-menu app or independently updated component |
+| Signing tier | Windows artifact trust class: `unsigned_dev`, `test_signed_internal` or `production_signed` |
+| Distribution channel | The only allowed signing-tier pairing: `development`, `internal` or `production` respectively |
+| Internal acceptance | `INTERNAL_TEST_PASS`: real test-signed installed-package functional acceptance with `releaseReady=false`; it is not a public-release verdict |
 | MCP proxy | Desktop loopback Streamable HTTP surface that proxies to the child stdio session |
 | Desktop lease | Short-lived daemon memory record advertising one authenticated proxy generation |
 | Bundled mode | `bundled_embedded`; the packaged provider is authoritative |
@@ -104,8 +108,8 @@ apps/desktop/
   main/
     cua-driver/
       artifact-lock.ts          # read and validate the packaged lock
-      provider-seal.ts          # validate platform-specific final post-sign identities
-      windows-integrity.ts      # signed catalog + system-tool verification
+      provider-seal.ts          # validate platform-specific final identities and signing tier
+      windows-integrity.ts      # tier-aware catalog/signature + system-tool verification
       resource-path.ts          # resolve only the packaged absolute path
       state-root.ts             # create the version-isolated provider state root
       provider-host.ts          # shared process-group lifecycle and stdio MCP session
@@ -121,7 +125,7 @@ apps/desktop/
   resources/
     providers/cua-driver/0.8.3-ling.1/
       darwin/{cua-driver,provider-seal.json}
-      win32-x64/provider-integrity.cat
+      win32-x64/provider-integrity.cat  # signed tiers only
       win32-x64/payload/{cua-driver.exe,provider-seal.json}
       provider-lock.json
       LICENSE.md
@@ -148,7 +152,11 @@ component.
 
 The reviewed provider input is represented by one committed cross-platform lock. Shared
 source provenance and distribution policy live at the top level; platform artifacts use
-discriminated records. The existing macOS record becomes:
+discriminated records. This lock is signer-agnostic: it freezes upstream provenance,
+Ling's patch/build inputs and pre-sign bytes, while the candidate and channel policy freeze
+the actual signer and final signed bytes. A TryCua tag/archive/binary hash is upstream
+provenance, never the identity of the Authenticode signer applied to Ling's source build.
+The existing macOS record becomes:
 
 ```ts
 interface BundledCuaDriverUpstreamV1 {
@@ -281,12 +289,27 @@ interface WindowsBundledCuaDriverLockV1 {
     readonly mainRelativePath: "payload/cua-driver.exe";
     readonly providerSealRelativePath: "payload/provider-seal.json";
     readonly mainManifestCanonicalSha256: string;
-    readonly integrityCatalogRelativePath: "provider-integrity.cat";
-    readonly packagedFiles: readonly [
-      "provider-integrity.cat",
-      "payload/cua-driver.exe",
-      "payload/provider-seal.json",
-    ];
+    readonly integrityCatalogRelativePathBySigningTier: {
+      readonly unsigned_dev: null;
+      readonly test_signed_internal: "provider-integrity.cat";
+      readonly production_signed: "provider-integrity.cat";
+    };
+    readonly packagedFilesBySigningTier: {
+      readonly unsigned_dev: readonly [
+        "payload/cua-driver.exe",
+        "payload/provider-seal.json",
+      ];
+      readonly test_signed_internal: readonly [
+        "provider-integrity.cat",
+        "payload/cua-driver.exe",
+        "payload/provider-seal.json",
+      ];
+      readonly production_signed: readonly [
+        "provider-integrity.cat",
+        "payload/cua-driver.exe",
+        "payload/provider-seal.json",
+      ];
+    };
     readonly uiaAuditArtifact: {
       readonly packaged: false;
       readonly relativeBuildOutput: "cua-driver-uia.exe";
@@ -373,9 +396,11 @@ Any MCP SDK upgrade that changes the request version or supported-version set re
 provider-lock change and compatibility rerun.
 
 The lock file records source provenance. Runtime integrity uses platform-specific final
-post-sign provider seals plus the macOS outer code-resource seal or Windows signed
-resource catalog, never only a pre-sign source-build hash or candidate manifest. Apple
-and Windows signing fields are intentionally not shared.
+provider seals plus the macOS outer code-resource seal or the Windows tier-appropriate
+policy. Windows signed tiers require the signed resource catalog; `unsigned_dev` has no
+trusted-catalog claim and is admitted only by a compile-time development gate. No tier
+trusts only a pre-sign source-build hash or candidate-manifest assertion. Apple and
+Windows signing fields are intentionally not shared.
 
 ## Build-Time Acquisition
 
@@ -404,31 +429,38 @@ not wait for macOS output:
 7. Generate or refresh third-party Rust dependency notices/SBOM; do not assume the root
    MIT text alone covers every statically linked dependency notice obligation.
 8. Stage each provider into the platform Desktop resource tree. Sign macOS with the Ling
-   release Developer ID, exact required entitlements and hardened runtime. Sign only the
-   Windows standard-tier `cua-driver.exe` with the release-policy-pinned Authenticode
-   identity and timestamp policy.
-9. Re-read every signed shipped binary and generate the platform `provider-seal.json`
-   from final bytes, manifests and final code-signing identity.
-10. On Windows, generate and sign `provider-integrity.cat` outside the covered
-    `win32-x64/payload` directory. The catalog covers exactly
+   release Developer ID, exact required entitlements and hardened runtime. On Windows,
+   select exactly one allowed `signingTier` / `distributionChannel` pair before any final
+   bytes are produced. `unsigned_dev + development` remains unsigned;
+   `test_signed_internal + internal` and `production_signed + production` sign the main
+   PE using the channel-policy-pinned Authenticode identity and timestamp policy.
+9. Re-read the final shipped provider bytes and generate `provider-seal.json` from those
+   bytes, manifests, derived signing tier and actual code-signing identity. The unsigned
+   variant records `NotSigned` explicitly; it never fabricates empty signer fields or a
+   `Valid` status.
+10. For Windows signed tiers, generate and sign `provider-integrity.cat` outside the
+    covered `win32-x64/payload` directory. The catalog covers exactly
     `payload/cua-driver.exe` and `payload/provider-seal.json`; the covered seal contains
-    the exact provider-lock digest. This avoids catalog self-reference. License/notices
-    remain package-asserted release material, not executable trust anchors.
-    Candidate-manifest JSON is release evidence and is not a runtime integrity anchor.
-11. Sign the outer Electron application and installer artifacts after provider binaries,
-    seals and the Windows catalog are final.
-12. Record outer artifact hashes, macOS notary/Gatekeeper evidence, Windows app/NSIS and
-    catalog Authenticode evidence, build inputs, audit-only UIAccess hash and provider-seal
-    digests in release evidence.
+    the exact provider-lock digest. `unsigned_dev` omits the catalog and remains gated to
+    development. License/notices remain package-asserted release material, not executable
+    trust anchors. Candidate-manifest JSON is evidence and is not a runtime integrity anchor.
+11. Produce the outer Electron application, uninstaller and installer with the same
+    effective tier. Production signing starts from the approved clean pre-sign payload,
+    never by overwriting, appending to, or promoting a test-signed PE.
+12. Record the clean pre-sign payload digest, every tier-specific final artifact hash,
+    macOS notary/Gatekeeper evidence, Windows app/NSIS/catalog Authenticode evidence,
+    build inputs, audit-only UIAccess hash and provider-seal digests in release evidence.
 
 Source, reference artifact, and toolchain downloads are controlled build inputs. None is
 fetched by the installed product.
 
 ### Platform signing choices
 
-Every packaged provider is a Ling source build and must be signed by the Ling release
-pipeline. Ling is not re-signing an upstream release binary; it is signing its own locked
-source build while retaining upstream provenance and notices.
+Every packaged provider is a Ling source build. The bundled signing authority is frozen as
+`ling_approved_repackage`: Ling is not re-signing an upstream release binary or claiming
+that a Ling certificate is the TryCua signer. It signs its own locked source build while
+retaining TryCua repository/tag/archive hashes strictly as provenance and retaining all
+required notices. The legal production Publisher identity remains a release-owner input.
 
 On macOS, TCC access is still attributed to the responsible Ling host, not merely to the
 helper's Team ID.
@@ -440,18 +472,54 @@ signature can still omit or add entitlements.
 The release policy must supply the expected Ling Team ID. A locally ad-hoc signed helper
 can be used only for development and cannot satisfy packaged TCC or public release gates.
 
-On Windows V1, `cua-driver.exe` and `provider-integrity.cat` require valid Authenticode
-signatures from the release-policy-pinned Publisher and certificate SHA-256. The catalog
-must match the signer of the installed Ling executable and cover every file in the
-dedicated payload directory. The audit-only UIAccess output is not signed or packaged for users. A future
-UIAccess helper additionally requires its own Authenticode identity, `uiAccess=true`
-manifest, ShellExecute launch and Windows secure path. Signing any shipped file after its
-seal or catalog is generated is forbidden.
+Windows signing is a three-tier discriminated contract:
 
-## Post-Sign Provider Seal
+The tier-governed tuple is exactly the Ling NSIS installer, installed Ling main PE,
+trusted uninstaller, private `cua-driver.exe`, and `provider-integrity.cat` for signed
+tiers. The private provider payload allowlist permits no other executable. Electron/Chromium
+vendor DLLs and native resources outside that payload remain under the existing Electron
+Builder package/signing policy; this design does not silently enable `signDlls` or require
+vendor-signed DLLs to share Ling's certificate. Candidate v4 retains a normalized
+path/hash/observed-signer inventory for those vendor native files, but they do not determine
+`signingTier`. Any new Ling-owned executable or helper must be explicitly added to the
+tier-governed policy and candidate schema before packaging.
 
-The package contains a generated manifest for each platform's final signed binaries. The
-macOS shape remains:
+- `unsigned_dev + development` is local/pre-sign engineering only. It has no trusted
+  catalog, no promotion verdict and no path through an internal or production feature gate.
+- `test_signed_internal + internal` uses genuine Authenticode on the main provider,
+  catalog, Ling app, uninstaller and NSIS. The expected test authority is pinned by an
+  internal policy and is provisioned outside Ling into a disposable CI VM or dedicated,
+  isolated QA machine. Ling never distributes/imports the root or PFX. `ephemeral-ci`
+  trust is removed by the external harness after the job or the VM is
+  reverted; `managed-internal` trust may persist only in a dedicated isolated QA image/VM
+  under external PKI lifecycle and must never enter a general developer image, product or
+  production chain. This tier can reach `INTERNAL_TEST_PASS` only and always keeps
+  `releaseReady=false`.
+- `production_signed + production` requires the release-policy-pinned legal Publisher,
+  certificate, Code Signing EKU and RFC 3161 timestamp policy for every member of the
+  tier-governed tuple.
+  Only this tier can enter public-release promotion.
+
+The effective tier is derived from the actual signature chain of every tier-governed
+artifact, not from a candidate field. Installer, app, uninstaller, provider and catalog
+must agree. In an internal or production tuple, any unsigned governed member, mixed tier,
+double signature, unexpected executable in the private provider payload, or test root in
+production fails closed. A development tuple is valid only when every expected governed PE
+derives as `unsigned_dev`, the catalog is absent and the compile-time development gate is
+active. Authenticode `Status=Valid` means only that the signature is valid in the current
+trust context. It does not establish public Publisher identity, SmartScreen reputation, or
+WDAC/App Control allowability.
+
+The catalog must cover every file in the dedicated payload directory. The audit-only
+UIAccess output is not signed or packaged for users. A future UIAccess helper additionally
+requires its own tier-consistent Authenticode identity, `uiAccess=true` manifest,
+ShellExecute launch and Windows secure path. Signing any shipped file after its seal or
+catalog is generated is forbidden.
+
+## Final Provider Identity Seal
+
+The package contains a generated manifest for each platform's final provider bytes. The
+macOS shape remains post-sign:
 
 ```ts
 interface BundledProviderSealV1 {
@@ -480,11 +548,20 @@ interface BundledProviderSealV1 {
 }
 ```
 
-The Windows shape is separate rather than overloading Apple fields:
+The Windows shape is a discriminated V2 contract rather than overloading Apple fields or
+pretending that an unsigned dev payload is signed:
 
 ```ts
-interface WindowsBundledProviderSealV1 {
-  readonly schemaVersion: 1;
+type WindowsSigningTier =
+  | "unsigned_dev"
+  | "test_signed_internal"
+  | "production_signed";
+
+type WindowsDistributionChannel = "development" | "internal" | "production";
+type WindowsTestAuthorityKind = "ephemeral-ci" | "managed-internal";
+
+interface WindowsBundledProviderSealCommonV2 {
+  readonly schemaVersion: 2;
   readonly componentId: "cua-driver-win32-x64";
   readonly lockSha256: string;
   readonly distributionRevision: "ling.1";
@@ -493,21 +570,64 @@ interface WindowsBundledProviderSealV1 {
   readonly healthSchemaVersion: "1";
   readonly toolsListCanonicalSha256: string;
   readonly stateSchemaVersion: 1;
-  readonly main: WindowsSignedPeIdentity;
-  readonly integrityCatalogRelativePath: "provider-integrity.cat";
   readonly limitations: readonly ["elevated_pixel_input", "uwp_send_input"];
 }
 
-interface WindowsBundledIntegrityCatalogEvidenceV1 {
+type WindowsBundledProviderSealV2 =
+  | (WindowsBundledProviderSealCommonV2 & {
+      readonly signingTier: "unsigned_dev";
+      readonly distributionChannel: "development";
+      readonly productionEligible: false;
+      readonly main: WindowsUnsignedPeIdentity;
+      readonly integrityCatalogRelativePath: null;
+    })
+  | (WindowsBundledProviderSealCommonV2 & {
+      readonly signingTier: "test_signed_internal";
+      readonly distributionChannel: "internal";
+      readonly productionEligible: false;
+      readonly testAuthorityKind: WindowsTestAuthorityKind;
+      readonly main: WindowsInternalSignedPeIdentity;
+      readonly integrityCatalogRelativePath: "provider-integrity.cat";
+    })
+  | (WindowsBundledProviderSealCommonV2 & {
+      readonly signingTier: "production_signed";
+      readonly distributionChannel: "production";
+      readonly productionEligible: true;
+      readonly main: WindowsProductionSignedPeIdentity;
+      readonly integrityCatalogRelativePath: "provider-integrity.cat";
+    });
+
+interface WindowsBundledIntegrityCatalogEvidenceCommonV2 {
   readonly catalogRelativePath: "provider-integrity.cat";
   readonly authenticodeStatus: "Valid";
   readonly signerSubject: string;
   readonly certificateSha256: string;
-  readonly timestampStatus: "Valid";
   readonly members: readonly {
     readonly relativePath: string;
     readonly sha256: string;
   }[];
+}
+
+type WindowsBundledIntegrityCatalogEvidenceV2 =
+  | (WindowsBundledIntegrityCatalogEvidenceCommonV2 & {
+      readonly signingTier: "test_signed_internal";
+      readonly distributionChannel: "internal";
+      readonly timestampPolicy: "internal-policy";
+      readonly timestampStatus: "NotRequired" | "Valid";
+    })
+  | (WindowsBundledIntegrityCatalogEvidenceCommonV2 & {
+      readonly signingTier: "production_signed";
+      readonly distributionChannel: "production";
+      readonly timestampPolicy: "rfc3161-required";
+      readonly timestampStatus: "Valid";
+    });
+
+interface WindowsUnsignedPeIdentity {
+  readonly relativePath: string;
+  readonly sha256: string;
+  readonly architecture: "x86_64";
+  readonly peManifestCanonicalSha256: string;
+  readonly authenticodeStatus: "NotSigned";
 }
 
 interface WindowsSignedPeIdentity {
@@ -518,26 +638,77 @@ interface WindowsSignedPeIdentity {
   readonly authenticodeStatus: "Valid";
   readonly signerSubject: string;
   readonly certificateSha256: string;
+  readonly timestampPolicy: "internal-policy" | "rfc3161-required";
+  readonly timestampStatus: "NotRequired" | "Valid";
+}
+
+interface WindowsInternalSignedPeIdentity extends WindowsSignedPeIdentity {
+  readonly timestampPolicy: "internal-policy";
+}
+
+interface WindowsProductionSignedPeIdentity extends WindowsSignedPeIdentity {
+  readonly timestampPolicy: "rfc3161-required";
   readonly timestampStatus: "Valid";
 }
 ```
 
+Bundled Slice 8 atomically versions the current candidate/policy/attestation contracts.
+The target candidate manifest v4 records `signingTier`, `distributionChannel`,
+`productionEligible`, `testAuthorityKind` when applicable, the clean
+`preSignPayloadSha256`, tier-specific final hashes, and observed Authenticode subjects,
+certificate SHA-256 values and timestamp policy for app, installer, uninstaller, provider
+and catalog under `tierGovernedArtifacts`, plus the separate normalized
+`vendorNativeInventory` path/hash/observed-signer inventory.
+`providerRelease` continues to mean TryCua source/archive provenance; actual
+PE fields use `providerAuthenticodeSignerSubject` and
+`providerAuthenticodeCertificateSha256` so an internal Ling test certificate cannot be
+misrepresented as an upstream signer.
+
+Candidate v4 is also a discriminated union: `unsigned_dev + development` and
+`test_signed_internal + internal` require `productionEligible=false`; only
+`production_signed + production` may set it true. `productionEligible=true` permits entry
+to production review only and does not imply `RELEASE_PASS` or `releaseReady=true`.
+
+The policy v3 fixes the required tier/channel and expected actual signer identities. The
+attestation and verification v2 contracts sign those values explicitly. The production
+release-verification contract stays production-only. Internal output is frozen as
+`windows-internal-verification.schema.json` v1 with
+`kind="ling.windows.internal-verification"`; only
+`verify-windows-internal-attestations.mjs` may emit it after profile-aware detached
+verification with `verifier.name="ling.windows.internal-attestation-verifier"`. The
+contract fixes `signingTier="test_signed_internal"`,
+`distributionChannel="internal"`, `productionEligible=false`,
+`promotionStatus="INTERNAL_TEST_PASS"`, `releaseReady=false`, and blocker
+`production_signing_required`. The production verifier/schema must reject that kind.
+These schema, expected-filename allowlist, producer, verifier, PowerShell, fixture and CI
+changes must land atomically; this design-only change does not edit the current live v3/v2
+schemas.
+
+Per-case and functional gates keep `PASS | FAIL | BLOCKED | SKIP`; `fullAcceptanceStatus`
+describes only the selected profile's functional matrix. `promotionStatus` is separately
+`BLOCKED | MANUAL_REVIEW_REQUIRED | INTERNAL_TEST_PASS | RELEASE_PASS`. Reviewer
+attestation v2 uses the exact internal or release verdict instead of generic `PASS`, and
+build/review signatures cover tier/channel explicitly. A functional `PASS` can never be
+interpreted as release promotion.
+
 Generation order is strict on both platforms:
 
-1. finish every shipped nested provider signature;
+1. finish every tier-required nested provider signature, or explicitly retain
+   `NotSigned` for the development-only unsigned tier;
 2. compute the platform identity: macOS SHA/CDHashes/Team ID/designated requirement/
    entitlements, or Windows main-PE SHA/manifest/Publisher/certificate/timestamp;
 3. write `provider-seal.json` and forbid any later provider mutation;
-4. on Windows, generate and sign `provider-integrity.cat` outside and over the exact
-   two-file payload directory;
-5. sign the outer app and installer.
+4. on Windows signed tiers, generate and sign `provider-integrity.cat` outside and over
+   the exact two-file payload directory; omit it for `unsigned_dev`;
+5. produce outer app, uninstaller and installer at the same effective tier.
 
 `electron-builder@26.15.3` must prove this order in instrumented macOS and Windows package
 spikes before the release pipeline relies on it. The implementation contract is:
 
 1. `afterPack` signs the staged macOS provider and writes its seal from final Mach-O
-   identity; on Windows it signs the staged PE, derives `provider-seal.json`, generates
-   the catalog over the dedicated payload and signs the catalog;
+   identity; on Windows it enforces the selected tier, signs the staged PE when required,
+   derives `provider-seal.json`, and for signed tiers generates and signs the catalog over
+   the dedicated payload;
 2. the platform signing hook skips that canonical sealed provider path only after its
    expected digest matches, while delegating outer app/uninstaller/installer executables
    to normal signing;
@@ -549,14 +720,20 @@ spikes before the release pipeline relies on it. The implementation contract is:
    unpacked tuple.
 
 Hosted macOS and Windows CI use disposable test identities to exercise the identical hook
-code. Release lanes change credentials only. An Electron Builder upgrade must rerun the
-hook-order spikes and cannot inherit the prior result by version assumption.
+code. Dedicated internal QA may use a managed internal test authority on isolated machines;
+neither trust root is distributed by Ling or retained on general-purpose images. Release
+lanes use a separately rebuilt clean pre-sign payload and production policy/credentials.
+An Electron Builder upgrade must rerun the hook-order spikes and cannot inherit the prior
+result by version assumption.
 
-Outer app, ZIP, DMG and NSIS hashes remain in release evidence because placing them inside
-the provider seal would create a signing cycle. At Windows activation, Ling validates the
-installed app signature, the catalog signature/signer, catalog membership, then the seal's
-lock digest and actual main-PE identity. A candidate manifest or pre-sign SHA match cannot
-make installed loose resources trusted. The V1 threat model detects accidental or
+Outer app, ZIP, DMG and NSIS hashes remain in evidence because placing them inside the
+provider seal would create a signing cycle. At Windows activation, Ling first enforces the
+compile-time channel gate. Signed tiers validate the installed app signature, actual tier,
+catalog signature/signer, catalog membership, then the seal's lock digest and actual
+main-PE identity; the internal gate accepts only its policy-pinned test authority and the
+production gate accepts only the production policy. `unsigned_dev` validates final bytes
+without a catalog and cannot exist in an internal or production build. A candidate manifest
+or pre-sign SHA match cannot make installed loose resources trusted. The V1 threat model detects accidental or
 unauthorized resource replacement; it does not claim protection after the same user has
 fully replaced both the Desktop runtime and its verification code.
 For macOS, the designated requirement is stored as normalized UTF-8 text with normalized line
@@ -578,7 +755,7 @@ providers/
         cua-driver
         provider-seal.json
       win32-x64/
-        provider-integrity.cat
+        provider-integrity.cat  # signed tiers only; absent for unsigned_dev
         payload/
           cua-driver.exe
           provider-seal.json
@@ -594,18 +771,22 @@ Packaged path resolution rules:
    `process.resourcesPath`; do not trust a path read from the lock itself.
 2. Reject symlinks, reparse points, junctions and any canonical path outside the expected
    provider root.
-3. On Windows, verify the installed Ling executable and signed provider catalog with the
-   absolute in-box Windows PowerShell path, `-NoProfile -NonInteractive`, fixed UTF-8
-   locale-independent JSON and bounded stdout/stderr. Require matching release-policy
-   signer identity and run `Test-FileCatalog` against only the dedicated two-file payload
-   directory. Missing PowerShell, process-launch denial, WDAC/AppLocker blocking,
-   unavailable catalog cmdlets, oversized output or inability to obtain a verdict maps to
-   `cua_windows_integrity_verifier_unavailable` / `platform_unavailable`; it does not
-   claim the artifact is corrupt. A successfully executed verifier that reports an
-   invalid signature, signer, member or hash maps to `corrupt`. Never classify by parsing
+3. On Windows, enforce the compile-time distribution channel before reading candidate
+   evidence. `unsigned_dev` is accepted only by the development build gate and requires an
+   absent catalog plus explicit `NotSigned` identity. Signed tiers verify the installed
+   Ling executable and provider catalog with the absolute in-box Windows PowerShell path,
+   `-NoProfile -NonInteractive`, fixed UTF-8 locale-independent JSON and bounded
+   stdout/stderr. Require the matching internal or production policy signer identity and
+   run `Test-FileCatalog` against only the dedicated two-file payload directory. Missing
+   PowerShell, process-launch denial, WDAC/AppLocker blocking, unavailable catalog cmdlets,
+   oversized output or inability to obtain a verdict maps to
+   `cua_windows_integrity_verifier_unavailable` / `platform_unavailable`; it does not claim
+   the artifact is corrupt. A successfully executed verifier that reports an invalid
+   signature, tier, signer, member or hash maps to `corrupt`. Never classify by parsing
    localized stderr text.
-4. Read the catalog-covered seal, hash the actual root provider lock, require
-   `seal.lockSha256` to match it, then validate both records.
+4. Read the final seal, hash the actual root provider lock, require `seal.lockSha256` to
+   match it, then validate both records. Signed tiers additionally require the seal to be a
+   catalog member; the development-only unsigned tier has no catalog trust claim.
 5. Require the main provider to be an executable regular file with exact platform
    identity before starting the proxy lease.
 6. Never consult `PATH`, Homebrew, user install junctions, `~/.local/bin`,
@@ -613,7 +794,8 @@ Packaged path resolution rules:
    `bundled_embedded` mode.
 
 Source/dev builds may accept an explicit fixture or developer path, but must label the
-mode `external_local` unless the build produced a validated local provider asset.
+mode `external_local` unless the build produced a validated local provider asset under the
+explicit `unsigned_dev + development` gate.
 
 ## Ling-Carried Managed Embedded Patch Series
 
@@ -1244,7 +1426,7 @@ Desktop verifies:
 - D3D11 feature level 11 device creation and Windows Graphics Capture API support;
 - UI Automation runtime initialization without enumerating user content;
 - provider PID, executable path, PE seal and architecture match the package;
-- `integrityCoverage="standard"` for the current per-user/asInvoker candidate.
+- `integrityCoverage="standard"` for the initial bundled per-user/asInvoker candidate.
 
 The active Rust child owns the authoritative Windows session monitor. WTS session-change
 signals provide immediate hints, and a locked at-most-one-second heartbeat rechecks the
@@ -1369,25 +1551,46 @@ Two capability tiers are explicit:
 
 | Tier | Installer/runtime contract | Declared capability |
 | --- | --- | --- |
-| `standard` | Existing per-user, LocalAppData, `asInvoker`; bundled signed main PE plus signed resource catalog in embedded stdio mode | Normal Medium-IL Win32/UWP element actions, WGC capture, ordinary input |
-| `uiaccess` | Future release-policy-approved secure-path helper artifact, valid main/helper Authenticode, ShellExecute and live UIAccess proof | Adds elevated/UWP pixel and SendInput coverage |
+| `standard` | Existing per-user, LocalAppData, `asInvoker`; bundled main PE in embedded stdio mode, with integrity material selected by the independent signing tier | Normal Medium-IL Win32/UWP element actions, WGC capture, ordinary input |
+| `uiaccess` | Future release-policy-approved secure-path helper artifact, valid main/helper Authenticode, ShellExecute and live UIAccess proof; this OS requirement does not imply `production_signed` | Adds elevated/UWP pixel and SendInput coverage |
 
 The standard tier is part of this implementation plan. The UIAccess tier is a separate
 release slice and cannot be simulated by setting `EnableSecureUIAPaths=0`, launching an
 unsigned helper or treating file presence as readiness.
 
-Windows acceptance covers, for each release-policy build and DPI profile:
+Signing tier is a second, independent dimension:
 
-- installed signed Ling app, NSIS, main provider seal and signed resource catalog;
+| Signing tier | Channel | Runtime/package use | Verdict ceiling |
+| --- | --- | --- | --- |
+| `unsigned_dev` | `development` | Explicit development gate; no trusted catalog | No promotion |
+| `test_signed_internal` | `internal` | Real in-Setup private helper, installed candidate and isolated CI/QA trust | `INTERNAL_TEST_PASS`, always `releaseReady=false` |
+| `production_signed` | `production` | Production policy and legal Publisher | `RELEASE_PASS` only after every production gate |
+
+Thus `standard + test_signed_internal` is the required Windows implementation target.
+It is fully bundled while remaining non-promotable. `standard + production_signed` is the
+public-release candidate. `uiaccess` cannot be inferred from either signing tier.
+
+Windows functional acceptance covers, for each applicable policy build and DPI profile:
+
+- installed tier-consistently signed Ling app, NSIS, main provider seal and signed resource
+  catalog;
 - exact provider PID/path/session plus default input desktop and unlocked-session proof;
 - normal Win32 and UWP UIA, ordinary input and real WGC frames against a test-owned
   synthetic target, plus window/source revision and Desktop restart;
 - one and two displays with at least 100% and 150%/200% DPI coverage;
-- Narrator and NVDA operation, SmartScreen, install, update, rollback and uninstall;
+- Narrator and NVDA operation, install, update, rollback and uninstall;
 - child crash, Desktop crash, daemon restart and zero process/pipe/state
   residue;
 - explicit `standard` limitation tests, or elevated/UWP pixel-input tests when the
   candidate claims `uiaccess`.
+
+Production acceptance additionally binds SmartScreen observations to the exact candidate,
+time, VM, Mark-of-the-Web, network and policy state. If WDAC/App Control compatibility is
+claimed, evidence binds the exact policy id, version, hash and enforcement mode. Neither
+surface is derived from Authenticode `Status=Valid`, and neither blocks
+`INTERNAL_TEST_PASS`. SmartScreen may record the bounded observation
+`observed_no_warning`; it must not claim that an artifact is SmartScreen-certified or
+permanently trusted.
 
 Ling's implementation owner must produce the candidate, schemas, runner, verifier,
 release-policy template and deterministic handoff manifest. Windows colleagues own the
@@ -1572,7 +1775,7 @@ Upgrade sequence:
 1. Stop the old Desktop provider process group before replacing the application.
 2. Install the signed Ling update containing the new reviewed provider and lock.
 3. Start Desktop with the same platform product identity: macOS bundle id/Team ID or
-   Windows Publisher/certificate policy.
+   Windows tier/channel signing policy.
 4. Validate the new artifact and publish a new lease generation.
 5. Recheck MCP protocol, health schema and tool catalog plus macOS live capture or
    Windows no-content managed readiness as applicable.
@@ -1631,7 +1834,11 @@ not create teammate bindings or add tools to an existing run snapshot retroactiv
 | --- | --- |
 | Malicious `cua-driver` earlier on `PATH` | Packaged mode resolves only the validated in-app absolute path |
 | Tampered macOS nested executable | Source/reference digest, post-sign seal, nested signing and signed outer package |
-| Tampered Windows loose provider resource | Authenticode-signed catalog, exact catalog membership, main-PE seal and fail-closed runtime verification |
+| Tampered Windows loose provider resource | Signed tiers use an Authenticode-signed catalog, exact membership and main-PE seal; unsigned dev uses final-byte checks behind a non-promotable compile-time gate |
+| Test root leaks into user or production trust | Root/PFX never enters Setup; external harness removes/reverts ephemeral trust, while managed trust stays only in an external-PKI-controlled dedicated QA image/VM |
+| Candidate self-asserts a stronger signing tier | Independent verifier derives the lowest tier from every tier-governed artifact chain and channel policy |
+| Test-signed bytes are promoted or appended with a production signature | Production rebuilds from the approved clean pre-sign payload; mixed/double signatures and pre-sign/final digest mismatch fail closed |
+| Authenticode Valid is treated as SmartScreen or WDAC trust | Separate environment-bound evidence; SmartScreen binds candidate/time/VM/MOTW/network/policy and WDAC binds exact policy identity/mode |
 | Local browser calls the proxy | Loopback bind, no CORS, origin rejection, per-instance secret, no renderer disclosure |
 | Stale Desktop endpoint reused | Memory-only lease, expiry, daemon-issued instance epoch/bridge connection id, then monotonic per-instance generation |
 | Reused daemon spawns its own provider | Runtime resolution uses the Desktop lease; daemon spawn is forbidden in bundled mode |
@@ -1726,13 +1933,23 @@ stderr, or signature internals. Those details belong in redacted release/support
 - DMG and ZIP contents bind to the same provider identity;
 - notarization, staple, Gatekeeper, and mounted-DMG smoke pass;
 - packaged tests prove a conflicting PATH version is ignored;
-- Windows standard packages contain only the expected main PE, exact main manifest and
-  final Authenticode seal inside the two-file payload, plus an outer valid signed catalog
-  covering that payload; the covered seal anchors the lock. Extra
+- Windows signed-tier standard packages contain only the expected main PE, exact main manifest
+  and final tier-aware seal inside the two-file payload, plus an outer valid signed catalog
+  covering that payload; the covered seal anchors the lock. `unsigned_dev` explicitly
+  omits the catalog and cannot pass an internal/production gate. Extra
   `cua-driver-uia.exe`, downloader or external install junction fails package;
-- the installed Ling executable, provider catalog and release policy signer identities
-  agree; candidate-manifest data alone cannot satisfy runtime integrity;
+- the installed Ling executable, uninstaller, NSIS, provider and catalog agree with the
+  derived tier/channel and channel policy; candidate-manifest data alone cannot satisfy
+  runtime integrity;
 - the initial Windows package projects `standard` coverage and both limitations.
+- test-signing tests provision trust outside Setup and prove it absent from the package;
+  ephemeral trust is removed/reverted, managed trust is confined to its dedicated
+  external-PKI-controlled QA image/VM, and fixtures reject tier/channel mismatch, test
+  roots in production, mixed/double signatures, PE/seal/catalog mutation and post-seal
+  resigning;
+- an installed Setup smoke proves Electron spawns the exact private
+  `resources/providers/.../payload/cua-driver.exe` path; a runner-temp PE is not accepted as
+  bundled evidence.
 
 ### Runtime and bridge
 
@@ -1846,10 +2063,12 @@ each cell report binds both that common digest and its unique `cellManifestSha25
 `finalize-windows-signed-acceptance.mjs` rereads and hashes the index, every cell manifest,
 report and attachment, requires every policy/index cell exactly once, rejects
 missing/extra/duplicate/cross-cell evidence, and requires the same candidate commit,
-app/installer hashes, provider seal, catalog, policy, handoff-index digest and harness
-closure. Cell and matrix outputs remain
-`MANUAL_REVIEW_REQUIRED`; only the detached reviewer/build-attestor verifier may produce
-`releaseReady=true`.
+signing tier/channel, app/installer hashes, provider seal, catalog, policy, handoff-index
+digest and harness closure. Cell and matrix producers cannot self-promote. The
+profile-aware independent verifier may emit `INTERNAL_TEST_PASS` for an exact
+`test_signed_internal + internal` tuple, always with `releaseReady=false`, or
+`RELEASE_PASS` for an exact `production_signed + production` tuple after all production
+gates. Every other combination remains `BLOCKED` or `MANUAL_REVIEW_REQUIRED`.
 
 Full mode accepts one operator-supplied input:
 
@@ -1867,7 +2086,7 @@ the expected handoff-index, candidate and policy digests; the finalizer independ
 rehashes every unique cell manifest.
 
 - static tests validate the Windows lock, main-PE manifest, audit-only UIAccess manifest,
-  seal/catalog schema, package layout,
+  tier-discriminated seal/catalog and candidate/policy schema, package layout,
   exact runner files and release-policy/candidate-manifest bindings on non-Windows hosts;
 - Ling-owned automated Windows CI builds the Rust target, exercises injectable native
   session/integrity/API fixtures, test-certificate PE/catalog signing, Electron Builder
@@ -1876,8 +2095,12 @@ rehashes every unique cell manifest.
   test-owned Win32 plus installable/removable MSIX/UWP targets before handoff. If public
   hosted runners cannot install the test-signed target, a managed automated Windows pool
   closes the gate; it is not deferred to manual acceptance;
-- Windows colleagues run the signed installed candidate on every policy-pinned Windows 11
-  x64 build and DPI/display cell; Ling maintainers do not self-attest those cells;
+- Windows colleagues run the test-signed installed candidate on every internal-policy
+  Windows 11 x64 build and DPI/display cell to close functional implementation acceptance;
+  Ling maintainers do not self-attest those cells. The production candidate reruns every
+  `requiredAcceptanceCells` entry. Test definitions and runner code may be reused, but no
+  internal cell report, attachment, candidate-bound evidence or verdict may enter the
+  production matrix;
 - Session 0, locked desktop, wrong active-child PID/nonce/path/session/integrity, missing
   Job Object boundary and failed managed-readiness capabilities fail closed without
   observing user content;
@@ -1889,15 +2112,19 @@ rehashes every unique cell manifest.
   driver/UIA pipes and a conflicting PATH provider receive zero bundled connections;
 - a future uiaccess-tier candidate additionally proves signed secure-path ShellExecute,
   exact worker PID/pipe, elevated/UWP pixel input and zero helper residue;
-- SmartScreen, Narrator, NVDA, install/update/rollback/uninstall and crash cleanup evidence
-  bind to the exact signed app, NSIS, main-provider seal/catalog, candidate commit and
-  release policy;
+- Narrator, NVDA, install/update/rollback/uninstall and crash cleanup evidence bind to the
+  exact signed app, NSIS, main-provider seal/catalog, tier/channel, candidate commit and
+  policy, so none is reusable across internal and production candidates. Production-only
+  SmartScreen/WDAC evidence additionally binds its exact observed environment;
 - the report remains `MANUAL_REVIEW_REQUIRED` until independent reviewer and build-attestor
-  detached signatures pass the existing promotion verifier.
+  detached signatures pass the profile-aware verifier. Internal verification stops at
+  `INTERNAL_TEST_PASS`; only production verification may reach `RELEASE_PASS`.
 
-Windows colleagues own final real-build/DPI/display, Narrator/NVDA, SmartScreen,
-installation-lifecycle and signed evidence. They are not the first testers of Windows
-native code, catalog verification, packaging hooks or process cleanup.
+Windows colleagues own the internal real-build/DPI/display, Narrator/NVDA and
+installation-lifecycle evidence, then rerun the complete required-cell matrix for the
+production candidate with production-only SmartScreen/WDAC evidence. They are not the
+first testers of Windows native code, catalog verification, packaging hooks or process
+cleanup.
 
 ### Upgrade and rollback
 
@@ -1922,7 +2149,9 @@ native code, catalog verification, packaging hooks or process cleanup.
 
 ## Release Gates
 
-Implementation is complete only after:
+### Bundled implementation complete
+
+The cross-platform implementation is complete only after:
 
 - the complete provider lock contains reviewed non-placeholder values;
 - the source patch series, post-sign provider seal/catalog, package, state, and runtime
@@ -1931,14 +2160,29 @@ Implementation is complete only after:
 - the Desktop-owned process and lease architecture passes with a reused daemon;
 - both platform adapters, setup states, package assertions and acceptance handoff artifacts
   are implemented and statically verified;
+- the Windows signing ladder derives tier/channel from actual artifacts, rejects every
+  invalid combination, and the final Setup payload contains and runs the private helper;
+- a real `test_signed_internal + internal` Windows candidate passes automated native,
+  package, MCP, lifecycle and install/update/uninstall gates and the Windows acceptance
+  owner returns `INTERNAL_TEST_PASS`; that verdict remains `releaseReady=false` and carries
+  production blockers;
 - Windows handoff documentation names the acceptance owner and produces no self-attested
-  Windows PASS.
+  Windows verdict.
+
+The production Windows Publisher, production certificate service, SmartScreen reputation,
+WDAC policy evidence and production detached attestations do not block this implementation
+verdict.
+
+### Public release ready
 
 A platform may be declared release-ready only after its external machine evidence closes:
 
 - macOS: all claimed major/architecture cells plus signed clean-host TCC evidence;
-- Windows: all release-policy build/DPI/display/accessibility/lifecycle cells signed off by
-  the Windows acceptance owner.
+- Windows: a newly produced `production_signed + production` candidate passes the legal
+  Publisher/certificate/EKU/RFC 3161 policy, all release-policy build/DPI/display/
+  accessibility/lifecycle cells, candidate-bound SmartScreen and any claimed WDAC gates,
+  plus independent reviewer/build-attestor verification. Only `RELEASE_PASS` sets
+  `releaseReady=true`.
 
 Public release additionally requires one of:
 
@@ -1961,10 +2205,11 @@ No product or architecture choice remains open for the standard-capability inter
 - Windows: bundled x64 main provider in standard Medium-IL mode; real-machine acceptance
   is owned by the Windows team.
 
-Release inputs still require concrete values before packaging a candidate: the macOS Team
-ID/toolchain, Windows Publisher/certificate/toolchain, and exact supported Windows build
-allowlist. Deferring any of them prevents reproducible signed release evidence; it does
-not reopen the standard architecture.
+Release inputs still require concrete values before packaging a public candidate: the
+macOS Team ID/toolchain, Windows legal Publisher/production certificate service/toolchain,
+and exact supported Windows build allowlist. Deferring the Windows production values
+prevents `production_signed` evidence and `RELEASE_PASS`, but it does not prevent a
+test-signed bundled implementation or reopen the standard architecture.
 
 One future capability decision remains: whether public Windows support must include
 UIAccess-only elevated/UWP pixel input. If yes, a separate secure-path/per-machine helper

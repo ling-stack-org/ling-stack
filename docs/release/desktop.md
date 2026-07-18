@@ -7,17 +7,28 @@
 Windows provider、签名、安装范围和回滚决策见
 [Desktop Windows 发布决策记录](./desktop-windows-release-decisions.md)。
 
+Windows bundled target 使用两条独立判定轴：`bundled_embedded` 表示 helper 是否由
+`Ling Stack Setup.exe` 安装到 Ling 私有资源目录并由 Electron main 托管；
+`signingTier` 表示候选最多能得到什么结论。
+
+| `signingTier` | `distributionChannel` | 允许的结论 |
+| --- | --- | --- |
+| `unsigned_dev` | `development` | 工程验证，不得晋级 |
+| `test_signed_internal` | `internal` | `INTERNAL_TEST_PASS`，固定 `releaseReady=false` |
+| `production_signed` | `production` | 完整生产门禁后才可 `RELEASE_PASS` / `releaseReady=true` |
+
 ## 支持矩阵
 
 | 平台 | 目标 | 当前证据边界 |
 | --- | --- | --- |
 | macOS | arm64、x86_64 | 当前 unsigned baseline 仍是 external provider；目标改为从锁定 tag/Cargo.lock 加 `ling-managed-embedded-v1` patch series 构建 `0.8.3 (Ling build 1)` 并由 Desktop embedded 托管，post-sign seal、Developer ID、单一 Ling TCC、macOS 13/14/15/26、clean machine、升级回滚尚未闭合 |
-| Windows | x86_64 | 当前实现仍是 external baseline；目标改为从锁定 tag/Cargo.lock/patch series 构建 bundled `0.8.3 (Ling build 1)`，由 Desktop 在 interactive session 托管并声明 standard integrity tier；main-PE post-sign seal、signed resource catalog、Publisher/SmartScreen、Windows-team VM/DPI/双屏/Narrator/NVDA、安装生命周期尚未闭合 |
+| Windows | x86_64 | 当前实现仍是 external baseline；目标改为从锁定 tag/Cargo.lock/patch series 构建 bundled `0.8.3 (Ling build 1)`，由 Desktop 在 interactive session 托管并声明 standard integrity tier；test-signed Setup/internal VM 功能验收与 production Publisher/SmartScreen/WDAC/release matrix 均尚未闭合 |
 | Linux | 不支持 | provider gate 必须 fail closed |
 
 当前已验证 artifact 只发布 Cua Driver plugin shell metadata。批准后的 macOS 和 Windows
 target 将打包锁定的 Ling source build 和 version-isolated provider state contract，但
 仍不打包权限或验收状态；在各自 embedded release gate 完成前不能写成已交付能力。
+上述签名等级是目标设计，不改变这个当前事实。
 Windows 上游参考基线为：
 
 ```text
@@ -26,8 +37,8 @@ SHA-256      6acdc84b98629fcd0be2368cc16565c18d5f21d9dedd4e10fdb6f58547fce9d0
 ```
 
 该上游 release 当前为 `prerelease=true`，审阅的两个 Windows provider executable 均无
-PE certificate table。它只能进入内部/beta 验收，公开发布风险和签名责任必须按 Windows
-发布决策记录显式关闭。
+PE certificate table。它只能进入 `internal` channel 验收，公开发布风险和签名责任必须按
+Windows 发布决策记录显式关闭。
 
 ## 每次提交的本地基线
 
@@ -267,6 +278,8 @@ verifier，finalizer 对三类报告执行相同依赖闭包检查。这个本�
 
 ## Windows provider 和 artifact
 
+### 当前 external/unsigned baseline
+
 先在临时目录验证 provider，不执行上游 installer、不改全局 PATH：
 
 ```powershell
@@ -298,26 +311,41 @@ unsigned hosted workflow 会在安装/卸载后运行诊断性 `Preflight` 并�
 NVDA 或签名时状态保持 `BLOCKED`，但不会让 unsigned job 因预期阻塞失败；真实残留或
 内部矛盾证据仍返回失败。`Preflight.summary.status=PASS` 也绝不等于 Full release PASS。
 
+### Bundled target profiles
+
+目标 Windows Setup 只安装 Ling。`cua-driver.exe` 作为版本化私有 helper 位于安装后的
+`resources/providers/.../payload/`；不注册第二个应用、不加入 PATH、不创建开始菜单项或
+服务，也没有独立卸载器/更新器。验收必须检查最终 Setup payload、安装后绝对路径和
+Electron 实际 spawn path；runner 临时目录里的 provider 不算 bundled。
+
+- `unsigned_dev + development`：允许验证 source build、final-byte seal、资源布局和显式
+  dev 启动；无可信 catalog，也没有 promotion verdict。
+- `test_signed_internal + internal`：由外部 harness 在隔离 VM 预置信任根，用真实
+  Authenticode 签 installer/app/uninstaller/provider/catalog，运行完整标准能力、MCP、Job
+  Object、安装/升级/卸载功能验收；最多输出 `INTERNAL_TEST_PASS`，并保持
+  `releaseReady=false`。
+- `production_signed + production`：从同一批准的干净 pre-sign payload 重新生成并使用
+  正式 Publisher/证书/RFC 3161 policy；禁止覆盖、追加或直接晋级 test-signed PE。只有
+  这条 profile 可以进入 public promotion。
+
+测试根/PFX 绝不能进入 Ling Setup，也不能由 Ling 导入用户 trust store。harness 对
+`ephemeral-ci` 每个 job 删除测试根或回滚 VM；`managed-internal` 只允许由外部 PKI 管理在
+专用隔离 QA image/VM 中，不能进入通用镜像或生产链。candidate 自报 tier/channel 不可信，
+verifier 必须从 governed installer/installed-main-PE/uninstaller/provider/catalog tuple 的
+实际签名链派生最低等级。internal/production tuple 中的混签、双签、test root 进入
+production、未签 governed member 或 provider 私有 payload 内意外 executable 都 fail
+closed；development tuple 必须让所有预期 governed PE 派生为 `unsigned_dev`、无 catalog
+且启用 compile-time dev gate。Electron/Chromium vendor DLL 继续走现有 Electron Builder
+policy，并进入独立 normalized hash/signer inventory；本设计不静默启用 `signDlls`。
+Authenticode `Status=Valid` 不等于 SmartScreen reputation 或 WDAC/App Control 放行。
+
+### 当前 Full evidence contract（迁移前）
+
 以下 `Full` runner/policy/candidate-manifest 细节描述当前已实现的 external-provider
 baseline。Bundled implementation plan 的 Slice 8 必须把 upstream signer、archive hash 和
 `-ProviderBinary` 输入迁移为 Ling source-build lock、main-PE post-sign seal、signed
 resource catalog 和 packaged provider path；迁移前这段不能作为 bundled target
 contract。
-
-Bundled target 不再让操作员手工拼接这些参数。Slice 8 产出每个 immutable cell 的
-`windows-cell-handoff.json`，Windows 同事只运行：
-
-```powershell
-& apps/desktop/tests/run-windows-acceptance.ps1 `
-  -HandoffManifest <windows-cell-handoff.json>
-```
-
-每次运行 exclusive-create 一个 cell report。共同 `handoff-index.json` 固定
-candidate/policy/artifact anchors 与 required cells；每个报告同时绑定共同 index digest
-和独立 cell-manifest digest。`finalize-windows-signed-acceptance.mjs` 必须验证 release
-policy 的全部 `requiredAcceptanceCells`、相同 candidate/seal/catalog/policy/harness
-closure，拒绝 missing/extra/duplicate/cross-cell evidence，并固定输出
-`MANUAL_REVIEW_REQUIRED`，直到外部 reviewer/build-attestor 验签。
 
 Windows `Full` 当前必须通过 `run-windows-acceptance.ps1 -Mode Full`，并额外提供：
 
@@ -415,6 +443,25 @@ runner 只经过 Node 静态契约验证，PowerShell parser/runtime 和真实 W
 首个 installer 固定为当前用户安装。企业级 all-users/per-machine 包若需要，应作为
 独立 artifact 和验收通道，不能在当前候选中临时切换安装范围。
 
+### Bundled target handoff
+
+Bundled target 不再让操作员手工拼接当前 baseline 参数。Slice 8 产出 internal 与
+production profile 各自的 common `handoff-index.json` 和每个 immutable cell 的
+`windows-cell-handoff.json`；两种 profile 的 candidate/hash/evidence 不能复用。Windows
+同事只运行：
+
+```powershell
+& apps/desktop/tests/run-windows-acceptance.ps1 `
+  -HandoffManifest <windows-cell-handoff.json>
+```
+
+每次运行 exclusive-create 一个 cell report。每个报告同时绑定共同
+`handoffIndexSha256` 和独立 `cellManifestSha256`。profile-aware finalizer 必须验证 policy
+的全部 `requiredAcceptanceCells`、相同 candidate/tier/channel/seal/catalog/policy/harness
+closure，并拒绝 missing/extra/duplicate/cross-cell evidence。producer/finalizer 不能
+self-promote；独立 verifier 对 test-signed profile 最多输出 `INTERNAL_TEST_PASS`，对
+production profile 完整验签和生产门禁后才可输出 `RELEASE_PASS`。
+
 ## Clean-machine 顺序
 
 ### macOS bundled embedded target
@@ -436,9 +483,11 @@ runner 只经过 Node 静态契约验证，PowerShell parser/runtime 和真实 W
 9. 升级/回滚整个 Ling artifact，验证 provider 与隔离状态目录随版本切换且 TCC 恢复行为明确。
 10. 卸载 Ling，记录 provider/proxy orphan process、cache 和 user-data 保留策略。
 
-### Windows bundled standard-tier provider
+### Windows bundled standard-tier internal candidate
 
-1. 校验 Ling artifact checksum、x64 架构、app/NSIS identity 和签名。
+1. 校验 Ling artifact checksum、x64 架构、app/NSIS identity、
+   `test_signed_internal + internal` policy 和所有实际签名；确认测试信任由外部 harness
+   预置且未包含在 Setup。
 2. 安装 Ling；不得单独安装 Cua Driver，确认 packaged `0.8.3 (Ling build 1)` 的
    main-provider post-sign seal 与 signed resource catalog 有效，standard 包内不存在
    `cua-driver-uia.exe`。Candidate manifest 只做 release provenance。
@@ -454,24 +503,41 @@ runner 只经过 Node 静态契约验证，PowerShell parser/runtime 和真实 W
 5. 验证 ready -> lock/disconnect -> lease/tools revoke ->
    `interactive_session_required` -> unlock -> fresh child/generation -> ready；旧 child、
    lease、readiness 和 late notification 必须全部失效，PiP 不因 provider recovery 自动重开。
-5. 确认 per-user/asInvoker candidate 投影 `standard` integrity coverage；elevated/UWP
+6. 确认 per-user/asInvoker candidate 投影 `standard` integrity coverage；elevated/UWP
    pixel/SendInput 返回 `cua_windows_uiaccess_required`，不得启动 LocalAppData helper
    冒充 UIAccess。
-6. 运行 real source、Desktop/daemon restart、DPI/双屏、Narrator/NVDA、SmartScreen、
+7. 运行 real source、Desktop/daemon restart、DPI/双屏、Narrator/NVDA、
    Ling/provider tuple upgrade/rollback、uninstall 和零 process/pipe/state residue。
-7. Windows 同事生成并签字 Full evidence；本地/非 Windows CI 只能验证 schema、runner、
-   package 和 fail-closed fixtures，不能生成 Windows PASS。
+8. Windows 同事生成并签字 internal evidence；profile-aware verifier 最多输出
+   `INTERNAL_TEST_PASS` / `releaseReady=false`。本地/非 Windows CI 不能自签该结论。
+9. 对 `ephemeral-ci` 删除测试信任或回滚 VM；对 `managed-internal` 记录专用 QA image/VM
+   和外部 PKI lifecycle。两者都必须证明 Setup/安装目录不含根证书或 PFX。
 
-## 关闭条件
+### Windows production candidate
 
-下列任一项缺失时，发布状态只能是 `release-blocked`：
+1. 从已批准的干净 pre-sign payload 重新构建 `production_signed + production` tuple；不得
+   复用 test-signed final bytes、candidate manifest 或 SmartScreen/WDAC evidence。
+2. 验证 app、uninstaller、NSIS、provider 和 catalog 的正式 Publisher、certificate
+   SHA-256、Code Signing EKU、RFC 3161 timestamp 和 tier/channel 一致性。
+3. 重跑所有与最终字节、安装路径、支持 build/DPI/display、Narrator/NVDA、生命周期绑定的
+   release cells。
+4. SmartScreen 证据绑定 exact candidate、时间、VM、MOTW、网络和策略。若声称 WDAC/App
+   Control 兼容，证据绑定 exact policy id/version/hash/enforcement mode。
+5. 独立 reviewer/build-attestor verifier 通过后才可输出 `RELEASE_PASS` 和
+   `releaseReady=true`。
+
+## Production release 关闭条件
+
+下列任一项缺失时，公开发布状态只能是 `release-blocked`。这些条件不阻止 Windows
+test-signed bundled implementation 获得 `INTERNAL_TEST_PASS`：
 
 - Windows x64 interactive VM real-source evidence；
 - macOS signed TCC/capture-indicator evidence；
 - macOS 13/14/15/26 每个声明架构 cell 的 signed installed-app provider/SkyLight evidence；
 - Developer ID/notarization/Gatekeeper 和严格 macOS 签名验证；
 - locked source patch/toolchain、post-sign provider seal、exact entitlements 和 state-isolation evidence；
-- Authenticode/SmartScreen/signed NSIS；
+- production Authenticode/RFC 3161/SmartScreen/signed NSIS，以及任何声明的 exact WDAC
+  policy evidence；
 - clean-machine install/update/uninstall evidence；
 - signed/packaged real MediaStream performance report that meets the release budgets；
 - CI workflow 的 hosted run 和 artifact 留存；
@@ -483,6 +549,6 @@ runner 只经过 Node 静态契约验证，PowerShell parser/runtime 和真实 W
 当前这些外部门禁仍全部开放：Apple Developer ID/notarization/Gatekeeper、locked
 source-patch/toolchain 与 post-sign provider seal、clean-host TCC
 denied/prompt/granted/revoked、macOS 13/14/15/26 声明 cell 与系统 capture indicator、
-Windows x64 interactive VM/provider/DPI/双屏、Authenticode/SmartScreen/signed NSIS、
+Windows x64 interactive VM/provider/DPI/双屏、production Authenticode/SmartScreen/signed NSIS、
 hosted signed CI execution、clean-machine install/update/uninstall、
 VoiceOver/Narrator/NVDA、外部 detached signatures，以及真实 candidate daemon provenance。

@@ -5,6 +5,12 @@
 Approved cross-platform design direction for the internal Desktop alpha. Implementation
 has not landed yet.
 
+The Windows production Publisher and signing service are release inputs, not prerequisites
+for implementing the bundled provider. Internal implementation closes with a real
+Authenticode-signed `test_signed_internal` candidate and a non-promotable
+`INTERNAL_TEST_PASS`; public release still requires a separately produced
+`production_signed` candidate.
+
 Decision date: 2026-07-17.
 
 The first internal pin is upstream `cua-driver-rs-v0.8.3`. That release is a prerelease,
@@ -45,6 +51,12 @@ future UIAccess slice defines its installer, launch, routing, and shutdown contr
 This replaces the packaged Desktop default of finding a separately installed
 `CuaDriver.app`, `cua-driver.exe`, or `cua-driver` on `PATH`. Users should not have to
 download, install, or upgrade a second provider before standard Computer Use works.
+
+On Windows, `Ling Stack Setup.exe` remains the only installer. It carries the versioned
+`cua-driver.exe` as a private Ling application resource and extracts it beneath Ling's
+installed `resources/providers/.../payload/` tree. Cua Driver is not registered as a
+second product, added to `PATH`, exposed through a Start-menu entry, installed as a
+Windows service, or given an independent uninstaller or updater.
 
 The existing external installation flow remains available for:
 
@@ -88,6 +100,11 @@ update and compatibility rerun.
 The provider must be spawned directly by the Electron main process. It must not be
 launched through `open`, `NSWorkspace`, a separately installed `CuaDriver.app`, or the
 reusable Ling daemon.
+
+Windows signs and installs that private helper as part of the Ling artifact tuple. The
+presence of a PE in a CI temporary directory is not bundled delivery: the final Setup
+payload, installed private path, runtime-resolved absolute path, and cleanup on Ling
+uninstall must all bind to the same candidate.
 
 ```mermaid
 flowchart LR
@@ -136,7 +153,7 @@ would reintroduce the compatibility and supply-chain problem this design closes.
 The initial Windows per-user package remains `asInvoker` and therefore supports the
 ordinary interactive Medium-IL desktop lane. Elevated windows and UWP pixel/SendInput
 automation require a valid UIAccess helper launched through ShellExecute from a secure
-location. Current LocalAppData installation does not satisfy that contract, so V1 exposes
+location. The initial bundled LocalAppData target does not satisfy that contract, so V1 exposes
 an explicit `standard` integrity-coverage state instead of claiming full UIAccess parity.
 
 ## User Experience
@@ -207,15 +224,57 @@ The initial internal alpha provider is fixed to:
 | License | MIT, Copyright Cua AI, Inc. |
 | Release channel | Internal alpha prerelease |
 
+### Windows signing and promotion tiers
+
+`bundled_embedded` answers where the provider is installed and who owns its lifecycle.
+`signingTier` answers which trust and promotion rules apply. They are orthogonal: a
+test-signed helper inside `Ling Stack Setup.exe` is a genuinely bundled implementation,
+even though it is not a public-release artifact.
+
+| `signingTier` | `distributionChannel` | Use | Bundled status | Highest verdict |
+| --- | --- | --- | --- | --- |
+| `unsigned_dev` | `development` | Local/pre-sign engineering only | May be physically in a dev package, but is not a trusted acceptance candidate | No promotion verdict |
+| `test_signed_internal` | `internal` | Automated Windows CI and isolated internal Windows QA | Fully bundled and installed by Ling | `INTERNAL_TEST_PASS`; `releaseReady=false` |
+| `production_signed` | `production` | Public-release evaluation | Fully bundled and installed by Ling | May enter `MANUAL_REVIEW_REQUIRED`; only complete production gates may yield `RELEASE_PASS` and `releaseReady=true` |
+
+The `standard` / future `uiaccess` capability tiers are separate from this signing table.
+No capability tier can raise a candidate's signing or promotion tier.
+
+The candidate records `signingTier` and `distributionChannel`, but they are not trusted
+self-assertions. An independent verifier derives the effective tier from the exact
+tier-governed tuple—installer, installed Ling main PE, trusted uninstaller, private
+`cua-driver.exe`, and signed-tier catalog—and the channel policy. Internal/production
+tuples fail closed on mixed/double signatures, a test root in production, an unsigned
+governed member, or an unexpected executable in the private provider payload. A
+development tuple is valid only when every expected governed PE is derived as
+`unsigned_dev`, the catalog is absent, and the compile-time dev gate is active. Electron
+vendor DLLs outside the private provider payload retain the existing package/signing policy
+and a separate normalized hash/signer inventory; this design does not silently enable
+`signDlls` or treat them as Ling tier members.
+The candidate also records the clean pre-sign payload digest and tier-specific final
+artifact digests. Production signing starts again from the approved clean pre-sign
+payload; it must never overwrite, append to, or promote a test-signed PE.
+
+`test_signed_internal` uses real Authenticode signatures, not a fake `signed=true` flag.
+Its trust anchor is provisioned outside Ling only into disposable CI machines or dedicated,
+isolated internal QA machines. `ephemeral-ci` trust is removed after each job or the VM is
+reverted; `managed-internal` trust may persist only in a dedicated isolated QA image/VM
+under an external PKI lifecycle and never enters a general developer image, product or
+production chain. Ling Setup never carries a test root or PFX, never installs a certificate,
+and never expands the user's trust store. This tier proves package, integrity, lifecycle,
+MCP and functional behavior only. It does not establish public Publisher identity,
+SmartScreen reputation, WDAC/App Control allowability, or release readiness.
+
 The upstream binary assets are reference evidence, not the packaged executables. Upstream
 `0.8.3` reads user-global Cua configuration, so Ling builds both platforms from the exact
 tag and `Cargo.lock` with the reviewed `ling-managed-embedded-v1` patch series. The release
 pipeline must lock that patch series and each platform toolchain, then verify
-platform-specific post-sign seals. macOS evidence uses Mach-O slices, entitlements,
+platform-specific final identity seals. macOS evidence uses Mach-O slices, entitlements,
 Developer ID and notary;
-Windows standard-tier evidence uses the final main PE hash/manifest/Authenticode identity
-and a Ling-signed resource catalog outside the covered payload. The catalog covers the
-main PE plus `provider-seal.json`; that covered seal anchors the provider-lock digest.
+Windows signed standard-tier evidence uses the final main PE hash/manifest/derived
+Authenticode identity and a policy-pinned Ling-signed resource catalog outside the covered
+payload. The catalog covers the main PE plus `provider-seal.json`; that covered seal
+anchors the provider-lock digest. `unsigned_dev` explicitly omits the catalog.
 Installed path and the signed app/NSIS tuple remain release evidence. The UIAccess PE
 remains audit-only until its conditional secure-helper release slice lands.
 
@@ -291,7 +350,7 @@ The Electron main process must:
   desktop or readiness-heartbeat expiry as an immediate lease/call-gate revocation;
   unlock is only a recovery hint and must create a fresh child/generation before tools
   return;
-- report `standard` integrity coverage for the current per-user/asInvoker package;
+- report `standard` integrity coverage for the initial bundled per-user/asInvoker target;
 - report structured limitations for UIAccess-only actions instead of projecting a failed
   provider state;
 - treat `cua-driver-uia.exe` as unavailable unless a future helper artifact's final seal,
@@ -411,7 +470,7 @@ Desktop plus its reviewed provider.
 
 ## Non-Goals
 
-- No claim that the current per-user Windows package can drive elevated/UWP targets that
+- No claim that the initial bundled per-user Windows target can drive elevated/UWP targets that
   require UIAccess pixel or SendInput injection.
 - No Windows ARM64 provider in the first bundled release.
 - No Ling-managed runtime download or execution of the public Cua installer.
@@ -433,9 +492,10 @@ Desktop plus its reviewed provider.
   interactive session and PID/path identity.
 - The macOS post-sign seal matches helper bytes, both architecture CDHashes, Ling Team ID,
   designated requirement, hardened runtime and exact entitlements. The Windows standard
-  seal matches the final main PE hash, manifest, Publisher, certificate digest and
-  timestamp. A signed catalog binds the main PE and seal without self-reference, and the
-  covered seal binds the provider lock.
+  seal matches the final main PE hash, manifest, derived signing tier, channel-pinned
+  Authenticode subject/certificate digest and tier-appropriate timestamp policy. Signed
+  tiers use a signed catalog that binds the main PE and seal without self-reference, and
+  the covered seal binds the provider lock.
 - Bundled config read/write and restart touch only the versioned Ling state root; existing
   external macOS home and Windows profile Cua state remain byte-identical.
 - macOS prompts and Settings rows identify Ling Stack only.
@@ -456,31 +516,48 @@ Desktop plus its reviewed provider.
   SkyLight SPI dependency is disclosed and no support is inferred from `minos` alone.
 - The external installation flow remains usable for standalone/dev mode and is never
   shown as the normal packaged Desktop path.
-- Windows x64 standard packages contain the locked source-built `cua-driver.exe`, signed
-  resource catalog, license/notices, and no runtime downloader, public installer, or
-  UIAccess helper. CI retains the UIAccess build only as audit evidence.
+- `Ling Stack Setup.exe` is the only Windows installer and the installed Electron process
+  spawns the exact private versioned provider path; no second product, PATH entry, service,
+  independent updater/uninstaller or runner-temp provider satisfies this criterion.
+- Windows x64 standard packages contain the locked source-built `cua-driver.exe`,
+  license/notices, and no runtime downloader, public installer, or UIAccess helper. Signed
+  internal/production tiers also contain the signed resource catalog; the explicit
+  `unsigned_dev + development` package omits it. CI retains the UIAccess build only as
+  audit evidence.
 - Windows activation rejects Session 0, a non-interactive/locked input desktop, wrong
-  active-child PID/nonce/session/integrity, invalid PE/signature/seal/catalog, missing
-  Job Object lifetime isolation, or failed no-content UIA-runtime/WGC-D3D capability
-  probes.
+  active-child PID/nonce/session/integrity, invalid PE/seal or applicable
+  signature/catalog, missing Job Object lifetime isolation, or failed no-content
+  UIA-runtime/WGC-D3D capability probes.
 - A ready Windows generation becomes unavailable immediately on lock, disconnect,
   fast-user-switch or input-desktop change. Unlock never reuses the old child, readiness
   result or lease; only a fresh initialized generation can restore tools.
 - Graceful-stop timeout terminates the retained child handle; closing the provider-owned
   Job Object removes every descendant. Main-child, grandchild, Desktop-crash and repeated
   restart tests prove zero process/pipe residue without a PID-only kill.
-- The current per-user candidate reports `standard` integrity coverage and returns a
+- The initial bundled per-user candidate reports `standard` integrity coverage and returns a
   structured `cua_windows_uiaccess_required` capability error for elevated/UWP
   pixel/SendInput cases instead of silently claiming success or parsing error copy.
 - Ling-owned automated Windows CI must cover native readiness fixtures before handoff,
   test-certificate PE/catalog signing, Electron Builder hook order, embedded stdio/global
   pipe conflicts, Job Object cleanup, PowerShell verifier failures, package allowlists,
   silent install/uninstall and test-owned Win32/MSIX targets.
+- A `test_signed_internal` Setup candidate installed from its final artifact, exercised by
+  the Windows acceptance owner, and passing the automated/native, package, MCP, Job Object,
+  install/update/uninstall and declared standard-capability matrix may close bundled
+  implementation with `INTERNAL_TEST_PASS`. That verdict always keeps
+  `releaseReady=false` and production-trust blockers visible.
 - The Windows handoff bundle gives the acceptance owner one manifest-driven command per
   required build/display/DPI cell plus an immutable matrix finalizer for signed
-  installed-app/NSIS, SmartScreen, WGC, Narrator/NVDA, lifecycle, upgrade/rollback and
-  residue validation. Ling implementation ownership ends at producing and automating
-  that bundle; Windows colleagues own real-machine PASS evidence.
+  installed-app/NSIS, WGC, Narrator/NVDA, lifecycle, upgrade/rollback and residue
+  validation; the production profile additionally carries SmartScreen and claimed WDAC
+  evidence. Ling implementation ownership ends at producing and automating that bundle;
+  Windows colleagues own profile-specific real-machine verdict evidence.
+- Only a separately generated `production_signed + production` candidate may enter public
+  promotion. It must prove the production Publisher and certificate policy, RFC 3161
+  timestamp requirements, candidate/time/VM-bound SmartScreen observations, any claimed
+  WDAC policy id/version/hash/enforcement mode, external attestations, and the full release
+  matrix before `RELEASE_PASS` / `releaseReady=true` is possible. Authenticode
+  `Status=Valid` alone proves none of those production-trust surfaces.
 
 ## Unresolved Decisions
 
@@ -490,6 +567,11 @@ to Ling releases, and external resolution is an explicit fallback.
 
 Public distribution remains a release decision: require a stable upstream provider or a
 recorded prerelease exception backed by the signed clean-host acceptance matrix.
+
+The production Windows Publisher legal name, certificate service, SmartScreen evidence
+and any WDAC policy are also release inputs. Deferring them blocks only
+`production_signed` promotion; it does not block implementation, packaging, or
+`test_signed_internal` functional acceptance.
 
 One Windows capability decision remains deliberately separate: whether a future release
 must support UIAccess-only elevated/UWP pixel input. If yes, the release owner must approve
