@@ -1,0 +1,596 @@
+import { randomBytes } from "node:crypto";
+import type {
+  BundledCuaDriverPlatform,
+  CuaDriverArchitecture,
+  CuaDriverFeatureFlags,
+  CuaDriverProviderState,
+  DesktopCuaDriverLeaseV1,
+} from "@ling-stack/contracts";
+import { desktopBundledCuaDriverGateEnabled, resolveDesktopCuaDriverFeatureFlags } from "./feature-gates.js";
+import {
+  readCuaDriverProviderLock,
+  type CuaDriverProviderLockValidationOptions,
+} from "./artifact-lock.js";
+import {
+  verifyCuaDriverProviderArtifacts,
+  type CuaDriverPlatformIdentityVerifier,
+  type VerifiedCuaDriverArtifacts,
+} from "./provider-seal.js";
+import {
+  resolveCuaDriverResourcePaths,
+  type CuaDriverResourcePaths,
+} from "./resource-path.js";
+import {
+  createCuaDriverStateRoot,
+  type CuaDriverStateRoot,
+  type CuaDriverStateRootPlatformProtector,
+} from "./state-root.js";
+import {
+  CuaDriverProviderHostError,
+  CuaDriverProviderHost,
+  type CuaDriverProviderHostOptions,
+  type CuaDriverProviderProcessLifecycle,
+} from "./provider-host.js";
+import {
+  CuaDriverMcpProxy,
+  type CuaDriverMcpProxyPublicEndpoint,
+  type CuaDriverProxyContext,
+  publicCuaDriverMcpProxyEndpoint,
+} from "./mcp-proxy.js";
+import {
+  CuaDriverLeasePublisherError,
+  CuaDriverLeasePublisher,
+  HttpCuaDriverLeaseClient,
+  type CuaDriverLeaseClient,
+} from "./lease-publisher.js";
+import { createCuaDriverTelemetry, type CuaDriverTelemetrySink } from "./telemetry.js";
+import {
+  FailClosedCuaDriverReadinessController,
+  GenerationFencedCuaDriverReadiness,
+  WindowsActiveChildReadinessController,
+  type CuaDriverReadinessController,
+} from "./readiness-controller.js";
+
+export type CuaDriverCoordinatorLifecycle = "disabled" | "validating" | "included" | "starting" | "active" | "stopping" | "failed";
+
+export interface CuaDriverCoordinatorSnapshot {
+  readonly lifecycle: CuaDriverCoordinatorLifecycle;
+  readonly providerState: CuaDriverProviderState;
+  readonly generation: number;
+  readonly endpoint?: CuaDriverMcpProxyPublicEndpoint;
+  readonly pid?: number;
+  readonly reason?: string;
+  readonly artifacts?: {
+    readonly lockDigest: string;
+    readonly providerSealDigest: string;
+    readonly providerCatalogDigest?: string;
+  };
+}
+
+export interface CuaDriverCoordinatorOptions {
+  readonly platform: BundledCuaDriverPlatform;
+  readonly architecture: CuaDriverArchitecture;
+  readonly resourcesPath: string;
+  readonly userDataPath: string;
+  readonly workspaceCwd: string;
+  readonly daemonBaseUrl: string;
+  readonly bridgeContext: Omit<CuaDriverProxyContext, "generation">;
+  readonly desktopInstanceId?: string;
+  readonly featureFlags?: CuaDriverFeatureFlags;
+  readonly packaged?: boolean;
+  readonly requireReleaseEvidence?: boolean;
+  readonly platformIdentityVerifier?: CuaDriverPlatformIdentityVerifier;
+  readonly stateRootProtector?: CuaDriverStateRootPlatformProtector;
+  readonly processLifecycle?: CuaDriverProviderProcessLifecycle;
+  readonly readinessController?: CuaDriverReadinessController;
+  readonly leaseClient?: CuaDriverLeaseClient;
+  readonly fetch?: typeof globalThis.fetch;
+  readonly telemetry?: CuaDriverTelemetrySink;
+  readonly onStateChanged?: (snapshot: CuaDriverCoordinatorSnapshot) => void;
+}
+
+/**
+ * Platform-neutral Desktop owner. Native TCC/WTS/Job Object checks are injected
+ * by PR6/PR7; this module owns ordering and fencing only.
+ */
+export class CuaDriverDesktopCoordinator {
+  private readonly telemetry: CuaDriverTelemetrySink;
+  private readonly desktopInstanceId: string;
+  private readonly featureFlags: CuaDriverFeatureFlags;
+  private readonly readinessController: CuaDriverReadinessController;
+  private snapshotValue: CuaDriverCoordinatorSnapshot = {
+    lifecycle: "disabled",
+    providerState: "included",
+    generation: 0,
+  };
+  private generation = 0;
+  private enablePromise: Promise<CuaDriverCoordinatorSnapshot> | undefined;
+  private disablePromise: Promise<void> | undefined;
+  private stateRoot: CuaDriverStateRoot | undefined;
+  private resourcePaths: CuaDriverResourcePaths | undefined;
+  private artifacts: VerifiedCuaDriverArtifacts | undefined;
+  private host: CuaDriverProviderHost | undefined;
+  private proxy: CuaDriverMcpProxy | undefined;
+  private leasePublisher: CuaDriverLeasePublisher | undefined;
+  private stopped = false;
+  private cleanupDebt = false;
+  private requestedEnabled = false;
+  private recoveryPromise: Promise<void> | undefined;
+  private recoveryAttempt = 0;
+
+  constructor(private readonly options: CuaDriverCoordinatorOptions) {
+    if (options.bridgeContext.workspaceCwd !== options.workspaceCwd) {
+      throw new Error("cua_driver_bridge_workspace_mismatch");
+    }
+    this.telemetry = options.telemetry ?? createCuaDriverTelemetry();
+    this.desktopInstanceId = options.desktopInstanceId ?? `desktop-${randomBytes(16).toString("hex")}`;
+    this.featureFlags = options.featureFlags ?? resolveDesktopCuaDriverFeatureFlags();
+    const defaultReadiness = options.platform === "win32"
+      ? new WindowsActiveChildReadinessController()
+      : new FailClosedCuaDriverReadinessController();
+    this.readinessController = new GenerationFencedCuaDriverReadiness(options.readinessController ?? defaultReadiness);
+  }
+
+  get snapshot(): CuaDriverCoordinatorSnapshot {
+    return this.snapshotValue;
+  }
+
+  get endpoint(): CuaDriverMcpProxyPublicEndpoint | undefined {
+    return publicCuaDriverMcpProxyEndpoint(this.proxy?.endpoint);
+  }
+
+  get providerHost(): CuaDriverProviderHost | undefined {
+    return this.host;
+  }
+
+  /** Validate, bind and publish one generation. Child spawn remains lazy until initialize. */
+  enable(): Promise<CuaDriverCoordinatorSnapshot> {
+    if (this.stopped) {
+      return Promise.reject(new Error("cua_driver_coordinator_stopped"));
+    }
+    if (this.cleanupDebt) {
+      return Promise.reject(new Error("cua_driver_cleanup_incomplete"));
+    }
+    this.requestedEnabled = true;
+    this.recoveryAttempt = 0;
+    if (this.disablePromise) {
+      const pendingDisable = this.disablePromise;
+      return pendingDisable.then(() => {
+        if (this.disablePromise === pendingDisable) {
+          this.disablePromise = undefined;
+        }
+        return this.enable();
+      });
+    }
+    if (this.snapshotValue.lifecycle === "active" || this.snapshotValue.lifecycle === "included") {
+      return Promise.resolve(this.snapshotValue);
+    }
+    if (this.enablePromise) {
+      return this.enablePromise;
+    }
+    const pending = this.enableInternal();
+    this.enablePromise = pending;
+    void pending.finally(() => {
+      if (this.enablePromise === pending) {
+        this.enablePromise = undefined;
+      }
+    }).catch(() => undefined);
+    return pending;
+  }
+
+  disable(reason = "disabled"): Promise<void> {
+    this.requestedEnabled = false;
+    this.recoveryAttempt = 0;
+    return this.beginDisable(reason);
+  }
+
+  private beginDisable(reason: string): Promise<void> {
+    if (this.disablePromise) {
+      return this.disablePromise;
+    }
+    const pending = this.disableInternal(reason);
+    this.disablePromise = pending;
+    void pending.finally(() => {
+      if (this.disablePromise === pending) {
+        this.disablePromise = undefined;
+      }
+    }).catch(() => undefined);
+    return pending;
+  }
+
+  async restart(reason = "restart"): Promise<CuaDriverCoordinatorSnapshot> {
+    await this.disable(reason);
+    return this.enable();
+  }
+
+  async shutdown(): Promise<void> {
+    this.stopped = true;
+    this.requestedEnabled = false;
+    await this.disable("desktop_quit");
+  }
+
+  private async enableInternal(): Promise<CuaDriverCoordinatorSnapshot> {
+    if (!desktopBundledCuaDriverGateEnabled(this.featureFlags, this.options.platform)) {
+      // Feature gate off is an intentional compatibility state. It never probes
+      // PATH and never falls through to external_local.
+      return this.publishSnapshot({ lifecycle: "included", providerState: "included", generation: this.generation });
+    }
+    if (
+      this.options.platform === "win32"
+      && this.options.processLifecycle?.lifetimeBoundary !== "windows-job-object"
+      && this.options.processLifecycle?.lifetimeBoundary !== "test-fixture"
+    ) {
+      return this.publishSnapshot({
+        lifecycle: "failed",
+        providerState: "platform_unavailable",
+        generation: this.generation,
+        reason: "windows_provider_job_object_lifecycle_required",
+      });
+    }
+    this.publishSnapshot({ lifecycle: "validating", providerState: "included", generation: this.generation });
+    this.generation = this.generation + 1;
+    const generation = this.generation;
+    try {
+      const paths = resolveCuaDriverResourcePaths({
+        resourcesPath: this.options.resourcesPath,
+        platform: this.options.platform,
+        architecture: this.options.architecture,
+      });
+      const lockOptions: CuaDriverProviderLockValidationOptions = {
+        platform: this.options.platform,
+        architecture: this.options.architecture,
+        requireReleaseEvidence: this.options.requireReleaseEvidence ?? this.options.packaged ?? false,
+      };
+      const lock = await readCuaDriverProviderLock(paths.lockPath, lockOptions);
+      const artifacts = await verifyCuaDriverProviderArtifacts({
+        platform: this.options.platform,
+        architecture: this.options.architecture,
+        paths,
+        lock,
+        platformIdentityVerifier: this.options.platformIdentityVerifier,
+        requirePlatformIdentityVerification: this.options.packaged === true,
+      });
+      const stateRoot = await createCuaDriverStateRoot({
+        userDataPath: this.options.userDataPath,
+        platform: this.options.platform,
+        platformProtector: this.options.stateRootProtector,
+      });
+      this.resourcePaths = paths;
+      this.artifacts = artifacts;
+      this.stateRoot = stateRoot;
+      const proxyContext: CuaDriverProxyContext = {
+        ...this.options.bridgeContext,
+        generation,
+      };
+      const telemetry = this.telemetry;
+      const hostOptions: CuaDriverProviderHostOptions = {
+        executablePath: paths.executablePath,
+        stateRoot,
+        generation,
+        platform: this.options.platform,
+        lifecycle: this.options.processLifecycle,
+        telemetry,
+        preSpawn: async () => {
+          const liveLock = await readCuaDriverProviderLock(paths.lockPath, lockOptions);
+          const liveArtifacts = await verifyCuaDriverProviderArtifacts({
+            platform: this.options.platform,
+            architecture: this.options.architecture,
+            paths,
+            lock: liveLock,
+            platformIdentityVerifier: this.options.platformIdentityVerifier,
+            requirePlatformIdentityVerification: this.options.packaged === true,
+          });
+          if (
+            liveArtifacts.lockDigest !== artifacts.lockDigest
+            || liveArtifacts.executableDigest !== artifacts.executableDigest
+            || liveArtifacts.sealDigest !== artifacts.sealDigest
+            || liveArtifacts.catalogDigest !== artifacts.catalogDigest
+          ) {
+            throw new Error("cua_driver_artifact_changed_before_spawn");
+          }
+        },
+        onTerminal: ({ reason, unexpected }) => {
+          if (this.host?.generation !== generation) {
+            return;
+          }
+          telemetry.emit(unexpected ? "error" : "info", "cua_driver.coordinator.host_terminal", { generation, reason });
+          if (unexpected) {
+            this.scheduleRecovery(`provider_${reason}`, generation);
+          }
+        },
+      };
+      const host = new CuaDriverProviderHost(hostOptions);
+      this.host = host;
+      const readinessContext = () => ({
+        generation,
+        childInstanceNonce: host.childInstanceNonce,
+        platform: this.options.platform,
+        hostProcessId: process.pid,
+        providerProcessId: host.pid,
+        requestControl: (method: `ling/${string}`, params: import("./provider-host.js").JsonRpcParams) => host.requestControl(method, params),
+      });
+      const proxy = new CuaDriverMcpProxy({
+        host,
+        context: proxyContext,
+        telemetry,
+        onSessionClosed: (reason) => {
+          if (this.host?.generation === generation) {
+            this.scheduleRecovery(reason, generation);
+          }
+        },
+        onManagedReadinessChanged: (message) => {
+          const readiness = this.readinessController.acceptChanged?.(readinessContext(), message);
+          if (!readiness || this.host?.generation !== generation) {
+            return;
+          }
+          if (!readiness.ready) {
+            proxy.closeCallGate(readiness.reason ?? "readiness_revoked");
+          }
+          this.publishSnapshot({
+            lifecycle: "active",
+            providerState: readiness.providerState,
+            generation,
+            endpoint: publicCuaDriverMcpProxyEndpoint(endpoint),
+            ...(this.artifacts ? {
+              artifacts: {
+                lockDigest: this.artifacts.lockDigest,
+                providerSealDigest: this.artifacts.sealDigest,
+                ...(this.artifacts.catalogDigest ? { providerCatalogDigest: this.artifacts.catalogDigest } : {}),
+              },
+            } : {}),
+            ...(readiness.reason ? { reason: readiness.reason } : {}),
+          });
+          if (!readiness.ready) {
+            this.scheduleRecovery(readiness.reason ?? "readiness_revoked", generation);
+          }
+        },
+        onInitialized: async () => {
+          const readiness = await this.readinessController.check(readinessContext());
+          if (this.host?.generation !== generation) {
+            throw new Error("cua_driver_readiness_generation_stale");
+          }
+          if (!readiness.ready) {
+            proxy.closeCallGate(readiness.reason ?? "readiness_failed");
+            this.publishSnapshot({
+              lifecycle: "active",
+              providerState: readiness.providerState,
+              generation,
+              endpoint: publicCuaDriverMcpProxyEndpoint(proxy.endpoint),
+              ...(readiness.reason ? { reason: readiness.reason } : {}),
+            });
+            throw new Error(readiness.reason ?? "cua_driver_readiness_failed");
+          }
+          this.publishSnapshot({
+            lifecycle: "active",
+            providerState: "ready",
+            generation,
+            endpoint: publicCuaDriverMcpProxyEndpoint(proxy.endpoint),
+            ...(this.artifacts ? {
+              artifacts: {
+                lockDigest: this.artifacts.lockDigest,
+                providerSealDigest: this.artifacts.sealDigest,
+                ...(this.artifacts.catalogDigest ? { providerCatalogDigest: this.artifacts.catalogDigest } : {}),
+              },
+            } : {}),
+          });
+        },
+      });
+      this.proxy = proxy;
+      const endpoint = await proxy.start();
+      const leaseTemplate: Omit<DesktopCuaDriverLeaseV1, "expiresAt"> = {
+        schemaVersion: 1,
+        providerId: "cua-driver",
+        desktopInstanceId: this.desktopInstanceId,
+        desktopInstanceEpoch: this.options.bridgeContext.desktopInstanceEpoch,
+        bridgeConnectionId: this.options.bridgeContext.bridgeConnectionId,
+        generation,
+        daemonAuthorityEpoch: this.options.bridgeContext.daemonAuthorityEpoch,
+        workspaceCwd: this.options.workspaceCwd,
+        endpoint: endpoint.url,
+        providerVersion: "0.8.3",
+        distributionRevision: "ling.1",
+        integrationMode: "embedded-stdio",
+        lockDigest: artifacts.lockDigest,
+        providerSealDigest: artifacts.sealDigest,
+        ...(artifacts.catalogDigest ? { providerCatalogDigest: artifacts.catalogDigest } : {}),
+        platform: this.options.platform,
+        architecture: this.options.architecture,
+        ...(this.options.platform === "win32" ? { integrityCoverage: "standard" as const } : {}),
+      };
+      const leaseClient = this.options.leaseClient ?? new HttpCuaDriverLeaseClient({
+        daemonBaseUrl: this.options.daemonBaseUrl,
+        bridgeToken: this.options.bridgeContext.bridgeToken,
+        fetch: this.options.fetch,
+      });
+      const publisher = new CuaDriverLeasePublisher({
+        client: leaseClient,
+        lease: leaseTemplate,
+        telemetry,
+        onLeaseLost: (error) => {
+          if (this.leasePublisher === publisher) {
+            this.scheduleRecovery("lease_lost", generation);
+          }
+          telemetry.emit("error", "cua_driver.coordinator.lease_lost", { generation, error: String(error) });
+        },
+      });
+      this.leasePublisher = publisher;
+      await publisher.publish();
+      return this.publishSnapshot({
+        lifecycle: "active",
+        providerState: "desktop_unavailable",
+        generation,
+        endpoint: publicCuaDriverMcpProxyEndpoint(endpoint),
+        artifacts: {
+          lockDigest: artifacts.lockDigest,
+          providerSealDigest: artifacts.sealDigest,
+          ...(artifacts.catalogDigest ? { providerCatalogDigest: artifacts.catalogDigest } : {}),
+        },
+      });
+    } catch (error) {
+      await this.cleanupPartiallyStarted(`enable_failed:${error instanceof Error ? error.message : String(error)}`);
+      const reason = error instanceof Error ? error.message : "cua_driver_enable_failed";
+      this.publishSnapshot({ lifecycle: "failed", providerState: classifyProviderFailure(error), generation, reason });
+      throw error;
+    }
+  }
+
+  private async disableInternal(reason: string): Promise<void> {
+    if (this.enablePromise) {
+      await this.enablePromise.catch(() => undefined);
+    }
+    const publisher = this.leasePublisher;
+    const proxy = this.proxy;
+    const host = this.host;
+    this.readinessController.invalidate(this.generation, reason);
+    proxy?.closeCallGate(reason);
+    if (publisher || proxy || host) {
+      this.publishSnapshot({ lifecycle: "stopping", providerState: "desktop_unavailable", generation: this.generation, reason });
+    }
+    let leaseError: unknown;
+    let cleanupError: unknown;
+    try {
+      await publisher?.revoke();
+    } catch (error) {
+      leaseError = error;
+    }
+    try {
+      await proxy?.close(reason);
+    } catch (error) {
+      cleanupError = cleanupError ?? error;
+    }
+    if (host) {
+      try {
+        await host.stop(reason);
+      } catch (error) {
+        cleanupError = cleanupError ?? error;
+      }
+    }
+    if (cleanupError) {
+      this.cleanupDebt = true;
+      this.publishSnapshot({
+        lifecycle: "failed",
+        providerState: "platform_unavailable",
+        generation: this.generation,
+        reason: `cleanup_incomplete:${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}`,
+      });
+      throw cleanupError;
+    }
+    this.cleanupDebt = false;
+    this.leasePublisher = undefined;
+    this.proxy = undefined;
+    this.host = undefined;
+    this.publishSnapshot({ lifecycle: "disabled", providerState: "included", generation: this.generation, reason });
+    if (leaseError) {
+      this.telemetry.emit("warn", "cua_driver.coordinator.lease_revoke_failed", {
+        generation: this.generation,
+        error: leaseError instanceof Error ? leaseError.message : String(leaseError),
+      });
+    }
+  }
+
+  private async cleanupPartiallyStarted(reason: string): Promise<void> {
+    const results = await Promise.allSettled([
+      this.leasePublisher?.revoke(),
+      this.proxy?.close(reason),
+      this.host?.stop(reason),
+    ]);
+    if (results.some((result) => result.status === "rejected")) {
+      this.cleanupDebt = true;
+      return;
+    }
+    this.cleanupDebt = false;
+    this.leasePublisher = undefined;
+    this.proxy = undefined;
+    this.host = undefined;
+  }
+
+  private scheduleRecovery(reason: string, generation: number): void {
+    if (!this.requestedEnabled || this.stopped || this.host?.generation !== generation || this.recoveryPromise) {
+      return;
+    }
+    this.proxy?.closeCallGate(reason);
+    if (this.recoveryAttempt >= 3) {
+      this.publishSnapshot({
+        lifecycle: "failed",
+        providerState: "desktop_unavailable",
+        generation,
+        reason: "recovery_attempts_exhausted",
+      });
+      return;
+    }
+    const pending = (async () => {
+      try {
+        await this.beginDisable(reason);
+        while (this.requestedEnabled && !this.stopped && !this.cleanupDebt && this.recoveryAttempt < 3) {
+          this.recoveryAttempt += 1;
+          const attempt = this.recoveryAttempt;
+          await waitForRecovery(100 * 2 ** (attempt - 1));
+          if (!this.requestedEnabled || this.stopped || this.cleanupDebt) {
+            return;
+          }
+          try {
+            await this.enableInternal();
+            return;
+          } catch (error) {
+            this.telemetry.emit("error", "cua_driver.coordinator.recovery_failed", {
+              generation,
+              attempt,
+              error: error instanceof Error ? error.message : String(error),
+            });
+          }
+        }
+        if (this.requestedEnabled && !this.stopped && this.recoveryAttempt >= 3) {
+          this.publishSnapshot({
+            lifecycle: "failed",
+            providerState: "desktop_unavailable",
+            generation: this.generation,
+            reason: "recovery_attempts_exhausted",
+          });
+        }
+      } catch (error) {
+        this.telemetry.emit("error", "cua_driver.coordinator.recovery_failed", {
+          generation,
+          attempt: this.recoveryAttempt,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    })();
+    this.recoveryPromise = pending;
+    void pending.finally(() => {
+      if (this.recoveryPromise === pending) {
+        this.recoveryPromise = undefined;
+      }
+    }).catch(() => undefined);
+  }
+
+  private publishSnapshot(input: Omit<CuaDriverCoordinatorSnapshot, "generation"> & { readonly generation?: number }): CuaDriverCoordinatorSnapshot {
+    const snapshot: CuaDriverCoordinatorSnapshot = {
+      ...input,
+      generation: input.generation ?? this.generation,
+    };
+    this.snapshotValue = snapshot;
+    try {
+      this.options.onStateChanged?.(snapshot);
+    } catch {
+      // State projection is observational.
+    }
+    return snapshot;
+  }
+}
+
+async function waitForRecovery(milliseconds: number): Promise<void> {
+  await new Promise<void>((resolveWait) => {
+    const timeout = setTimeout(resolveWait, milliseconds);
+    timeout.unref?.();
+  });
+}
+
+function classifyProviderFailure(error: unknown): CuaDriverProviderState {
+  if (error instanceof CuaDriverLeasePublisherError) {
+    return "desktop_unavailable";
+  }
+  if (error instanceof CuaDriverProviderHostError || (error instanceof Error && error.message.includes("state_root"))) {
+    return "platform_unavailable";
+  }
+  return "corrupt";
+}
