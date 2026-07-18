@@ -106,6 +106,185 @@ test("keeps Close window separate from Stop and orders the More menu safely", as
   expect(calls.map((call) => call.name)).not.toContain("requestStop");
 });
 
+test("renders scoped page tabs and View all while keeping Close page separate from Stop", async () => {
+  await pushDeckSnapshot({
+    activePageId: "renderer-harness-session",
+    availablePageCount: 4,
+    pages: [
+      deckPage("renderer-harness-session", "Example Browser", "active"),
+      deckPage("page-b", "Editor", "inactive"),
+      deckPage("page-c", "Terminal", "inactive"),
+    ],
+    availablePages: [
+      availablePage("renderer-harness-session", "Example Browser", true),
+      availablePage("page-b", "Editor", true),
+      availablePage("page-c", "Terminal", true),
+      availablePage("page-d", "Documentation", false),
+    ],
+  });
+
+  const tabs = page.getByRole("tab");
+  await expect(tabs).toHaveCount(3);
+  await expect(page.locator('[data-page-activate="renderer-harness-session"][role="tab"]'))
+    .toHaveAttribute("aria-selected", "true");
+
+  await page.evaluate(() => window.lingPreviewTestHarness.clearCalls());
+  await page.locator('[data-page-activate="page-b"][role="tab"]').click();
+  await page.locator(".page-deck-close-active").click();
+  await page.locator(".page-deck-view-all").click();
+  await expect(page.getByRole("dialog", { name: "Available Computer Use pages" })).toBeVisible();
+  await page.locator('.page-deck-view-all-item[data-page-activate="page-d"]').click();
+
+  const calls = await page.evaluate(() => window.lingPreviewTestHarness.getCalls());
+  expect(calls.filter((call) => call.name === "activatePage").map((call) => call.args[0]))
+    .toEqual(["page-b", "page-d"]);
+  expect(calls.filter((call) => call.name === "closePage").map((call) => call.args[0]))
+    .toEqual(["renderer-harness-session"]);
+  expect(calls.map((call) => call.name)).not.toContain("requestStop");
+});
+
+test("focuses the first View all item and closes the popover on outside pointer input", async () => {
+  const pages = [
+    deckPage("renderer-harness-session", "Example Browser", "active"),
+    deckPage("page-b", "Editor", "inactive"),
+  ];
+  await pushDeckSnapshot({
+    activePageId: "renderer-harness-session",
+    availablePageCount: 2,
+    pages,
+    availablePages: pages.map((entry) => availablePage(entry.pageId, entry.targetLabel, true)),
+  });
+
+  const viewAll = page.locator(".page-deck-view-all");
+  await viewAll.click();
+  const panel = page.getByRole("dialog", { name: "Available Computer Use pages" });
+  await expect(panel).toBeVisible();
+  await expect(panel.locator("[data-page-activate]").first()).toBeFocused();
+
+  await page.evaluate(() => {
+    document.body.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
+  });
+  await expect(panel).toBeHidden();
+  await expect(viewAll).toBeFocused();
+});
+
+test("supports page Arrow navigation, Delete close, and focus retention after MRU reorder", async () => {
+  const pages = [
+    deckPage("renderer-harness-session", "Example Browser", "active"),
+    deckPage("page-b", "Editor", "inactive"),
+    deckPage("page-c", "Terminal", "inactive"),
+  ];
+  await pushDeckSnapshot({
+    activePageId: "renderer-harness-session",
+    availablePageCount: 3,
+    pages,
+    availablePages: pages.map((entry) => availablePage(entry.pageId, entry.targetLabel, true)),
+  });
+  const activeTab = page.locator('[data-page-activate="renderer-harness-session"][role="tab"]');
+  const pageBTab = page.locator('[data-page-activate="page-b"][role="tab"]');
+  await activeTab.focus();
+  await page.keyboard.press("ArrowRight");
+  await expect(pageBTab).toBeFocused();
+
+  await page.evaluate(() => window.lingPreviewTestHarness.clearCalls());
+  await page.keyboard.press("Enter");
+  await expect.poll(async () => page.evaluate(() => window.lingPreviewTestHarness.getCalls()
+    .filter((call) => call.name === "activatePage")
+    .map((call) => call.args[0])))
+    .toContain("page-b");
+  await expect(pageBTab).toBeFocused();
+  await pushDeckSnapshot({
+    activePageId: "page-b",
+    availablePageCount: 3,
+    pages: [
+      deckPage("page-b", "Editor", "active"),
+      deckPage("renderer-harness-session", "Example Browser", "inactive"),
+      deckPage("page-c", "Terminal", "inactive"),
+    ],
+    availablePages: [
+      availablePage("page-b", "Editor", true),
+      availablePage("renderer-harness-session", "Example Browser", true),
+      availablePage("page-c", "Terminal", true),
+    ],
+  }, { sessionId: "page-b", targetLabel: "Editor", sourceGeneration: 2 });
+  await expect(page.locator('[data-page-activate="page-b"][role="tab"]')).toBeFocused();
+
+  await page.keyboard.press("Delete");
+  await expect.poll(async () => page.evaluate(() => window.lingPreviewTestHarness.getCalls()
+    .filter((call) => call.name === "closePage")
+    .map((call) => call.args[0])))
+    .toContain("page-b");
+});
+
+test("keeps inactive thumbnails memory-only and within the four-page budget", async () => {
+  const activePageId = "renderer-harness-session";
+  await pushDeckSnapshot({
+    activePageId,
+    requestedPageId: "page-b",
+    availablePageCount: 2,
+    pages: [
+      deckPage(activePageId, "Example Browser", "active"),
+      deckPage("page-b", "Editor", "activating"),
+    ],
+    availablePages: [
+      availablePage(activePageId, "Example Browser", true),
+      availablePage("page-b", "Editor", true),
+    ],
+  });
+  await expect(page.locator('.page-deck-tab[tabindex="0"]')).toHaveCount(1);
+  await expect(page.locator('[data-page-activate="page-b"][role="tab"]')).toHaveAttribute("tabindex", "0");
+  await expect(page.locator(`[data-page-activate="${activePageId}"][role="tab"]`))
+    .toHaveAttribute("tabindex", "-1");
+  await pushDeckSnapshot({
+    activePageId: "page-b",
+    availablePageCount: 2,
+    pages: [
+      deckPage("page-b", "Editor", "active"),
+      deckPage(activePageId, "Example Browser", "inactive"),
+    ],
+    availablePages: [
+      availablePage("page-b", "Editor", true),
+      availablePage(activePageId, "Example Browser", true),
+    ],
+  }, { sessionId: "page-b", targetLabel: "Editor", sourceGeneration: 2 });
+
+  const shell = page.locator(".preview-shell");
+  await expect(shell).toHaveAttribute("data-page-thumbnail-count", "1");
+  const bytes = Number(await shell.getAttribute("data-page-thumbnail-bytes"));
+  expect(bytes).toBeGreaterThan(0);
+  expect(bytes).toBeLessThanOrEqual(20 * 1024 * 1024);
+  await page.setViewportSize({ width: 700, height: 440 });
+  await expect(page.locator(".page-deck-card-thumbnail")).toHaveCount(1);
+
+  await pushDeckSnapshot({
+    activePageId: "page-b",
+    availablePageCount: 1,
+    pages: [deckPage("page-b", "Editor", "active")],
+    availablePages: [availablePage("page-b", "Editor", true)],
+  }, { sessionId: "page-b", targetLabel: "Editor", sourceGeneration: 2 });
+  await expect(page.locator(".preview-shell")).toHaveAttribute("data-page-thumbnail-count", "0");
+});
+
+test("removes stacked-card motion when reduced motion is requested", async () => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await page.setViewportSize({ width: 700, height: 440 });
+  await pushDeckSnapshot({
+    activePageId: "renderer-harness-session",
+    availablePageCount: 2,
+    pages: [
+      deckPage("renderer-harness-session", "Example Browser", "active"),
+      deckPage("page-b", "Editor", "inactive"),
+    ],
+    availablePages: [
+      availablePage("renderer-harness-session", "Example Browser", true),
+      availablePage("page-b", "Editor", true),
+    ],
+  });
+  await expect(page.locator(".page-deck-card")).toBeVisible();
+  expect(await page.locator(".page-deck-card").evaluate((element) => getComputedStyle(element).transitionDuration))
+    .toBe("0s");
+});
+
 test("localizes a same-session snapshot while preserving the open menu and focused action", async () => {
   const moreButton = page.getByRole("button", { name: "More preview actions" });
   await moreButton.click();
@@ -504,6 +683,33 @@ test("same-revision display-media source replacement reacquires and releases onl
     streamTrackStates: [["ended"], ["ended"]],
   });
 });
+
+async function pushDeckSnapshot(deck, overrides = {}) {
+  await page.evaluate(({ deckValue, snapshotOverrides }) => {
+    window.lingPreviewTestHarness.pushSnapshot({
+      ...snapshotOverrides,
+      deck: deckValue,
+    });
+  }, { deckValue: deck, snapshotOverrides: overrides });
+}
+
+function deckPage(pageId, targetLabel, presentationState) {
+  return {
+    pageId,
+    targetLabel,
+    runtimeStatus: "running",
+    presentationState,
+  };
+}
+
+function availablePage(pageId, targetLabel, resident) {
+  return {
+    pageId,
+    targetLabel,
+    runtimeStatus: "running",
+    resident,
+  };
+}
 
 async function invokeStop() {
   await page.getByRole("button", { name: "More preview actions" }).click();

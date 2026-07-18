@@ -30,6 +30,14 @@ test("Desktop IPC scopes privileged actions and strictly validates preview media
       calls.push(["resetPosition"]);
       return { accepted: true };
     },
+    activatePage: async (pageId) => {
+      calls.push(["activatePage", pageId]);
+      return { accepted: true };
+    },
+    dismissPage: async (pageId) => {
+      calls.push(["dismissPage", pageId]);
+      return { accepted: true };
+    },
     reportFrameReady: (sessionId, revision, sourceGeneration) => {
       calls.push(["reportFrameReady", sessionId, revision, sourceGeneration]);
     },
@@ -50,6 +58,9 @@ test("Desktop IPC scopes privileged actions and strictly validates preview media
     },
     reportLocale: (locale) => {
       calls.push(["reportLocale", locale]);
+    },
+    reportSelectedDeckOwner: (owner) => {
+      calls.push(["reportSelectedDeckOwner", owner]);
     },
     reportHostLayout: (layout) => {
       hostLayouts.push(layout);
@@ -111,6 +122,22 @@ test("Desktop IPC scopes privileged actions and strictly validates preview media
     { accepted: false, reason: "unauthorized_preview_sender" },
   );
   assert.deepEqual(
+    await ipc.invoke(DESKTOP_IPC_CHANNELS.computerUsePreviewActivatePage, previewEvent, " page-b "),
+    { accepted: true },
+  );
+  assert.deepEqual(
+    await ipc.invoke(DESKTOP_IPC_CHANNELS.computerUsePreviewClosePage, previewEvent, "page-b"),
+    { accepted: true },
+  );
+  assert.deepEqual(
+    await ipc.invoke(DESKTOP_IPC_CHANNELS.computerUsePreviewActivatePage, foreignEvent, "page-b"),
+    { accepted: false, reason: "unauthorized_or_invalid_page" },
+  );
+  assert.deepEqual(
+    await ipc.invoke(DESKTOP_IPC_CHANNELS.computerUsePreviewClosePage, previewEvent, " "),
+    { accepted: false, reason: "unauthorized_or_invalid_page" },
+  );
+  assert.deepEqual(
     await ipc.invoke(DESKTOP_IPC_CHANNELS.computerUseAutoShowGet, mainEvent),
     { previewAutoShow: false },
   );
@@ -128,6 +155,18 @@ test("Desktop IPC scopes privileged actions and strictly validates preview media
   ipc.emit(DESKTOP_IPC_CHANNELS.computerUseReportLocale, mainEvent, "");
   ipc.emit(DESKTOP_IPC_CHANNELS.computerUseReportLocale, previewEvent, "en-US");
   ipc.emit(DESKTOP_IPC_CHANNELS.computerUseReportLocale, foreignEvent, "zh-CN");
+  ipc.emit(DESKTOP_IPC_CHANNELS.computerUseReportSelectedDeckOwner, mainEvent, {
+    surfaceKind: "channel",
+    ownerId: " channel-owner ",
+  });
+  ipc.emit(DESKTOP_IPC_CHANNELS.computerUseReportSelectedDeckOwner, mainEvent, {
+    surfaceKind: "unknown",
+    ownerId: "invalid-owner",
+  });
+  ipc.emit(DESKTOP_IPC_CHANNELS.computerUseReportSelectedDeckOwner, foreignEvent, {
+    surfaceKind: "teammate_direct",
+    ownerId: "foreign-owner",
+  });
   ipc.emit(DESKTOP_IPC_CHANNELS.computerUsePreviewFrameReady, previewEvent, "session-preview", 7, 101);
   ipc.emit(DESKTOP_IPC_CHANNELS.computerUsePreviewFrameActivity, previewEvent, "session-preview", 7, 102);
   ipc.emit(DESKTOP_IPC_CHANNELS.computerUsePreviewSourceEnded, previewEvent, "session-preview", 7, 103, "track_ended");
@@ -315,9 +354,12 @@ test("Desktop IPC scopes privileged actions and strictly validates preview media
     ["hideCurrent"],
     ["closeCurrent"],
     ["resetPosition"],
+    ["activatePage", "page-b"],
+    ["dismissPage", "page-b"],
     ["setAutoShow", true],
     ["reportLocale", "en-US"],
     ["reportLocale", "zh-CN"],
+    ["reportSelectedDeckOwner", { surfaceKind: "channel", ownerId: "channel-owner" }],
     ["reportFrameReady", "session-preview", 7, 101],
     ["reportFrameActivity", "session-preview", 7, 102],
     ["reportSourceEnded", "session-preview", 7, 103, "track_ended"],
@@ -543,6 +585,97 @@ test("Desktop IPC replays the renderer's latest real selection after Open task s
     ["conversation-owner", "conversation-user-selected"],
     "the user's latest route selection must become authoritative after ACK",
   );
+
+  unregister();
+});
+
+test("Desktop IPC replays the renderer's latest structured deck owner after Open task settles", async () => {
+  const ipc = new FakeIpcMain();
+  const navigationIntents = new DesktopNavigationIntentStore();
+  const selectedOwners = [];
+  const unregister = registerDesktopIpc({
+    ipcMainImpl: ipc,
+    daemon: {
+      status: { state: "connected", baseUrl: "http://127.0.0.1:1", ownedByDesktop: true },
+      onStatusChanged: () => () => {},
+    },
+    computerUse: {
+      ownsPreviewWebContents: () => false,
+      reportSelectedDeckOwner: (owner) => selectedOwners.push(owner),
+    },
+    getMainWindow: () => ({ webContents: { id: 11 } }),
+    navigationIntents,
+  });
+  const mainEvent = { sender: { id: 11 } };
+  const intent = navigationIntents.requestOpenConversation("conversation-owner");
+
+  ipc.emit(DESKTOP_IPC_CHANNELS.computerUseReportSelectedDeckOwner, mainEvent, {
+    surfaceKind: "normal_conversation",
+    ownerId: "conversation-owner",
+  });
+  ipc.emit(DESKTOP_IPC_CHANNELS.computerUseReportSelectedDeckOwner, mainEvent, {
+    surfaceKind: "teammate_direct",
+    ownerId: "conversation-user-selected",
+  });
+  assert.deepEqual(selectedOwners, [{
+    surfaceKind: "normal_conversation",
+    ownerId: "conversation-owner",
+  }]);
+
+  assert.deepEqual(
+    await ipc.invoke(DESKTOP_IPC_CHANNELS.navigationIntentAck, mainEvent, intent.requestId),
+    { accepted: true },
+  );
+  assert.deepEqual(selectedOwners, [
+    { surfaceKind: "normal_conversation", ownerId: "conversation-owner" },
+    { surfaceKind: "teammate_direct", ownerId: "conversation-user-selected" },
+  ]);
+
+  unregister();
+});
+
+test("Desktop IPC discards a structured owner buffered for a replaced Open task", async () => {
+  const ipc = new FakeIpcMain();
+  const navigationIntents = new DesktopNavigationIntentStore();
+  const selectedOwners = [];
+  const unregister = registerDesktopIpc({
+    ipcMainImpl: ipc,
+    daemon: {
+      status: { state: "connected", baseUrl: "http://127.0.0.1:1", ownedByDesktop: true },
+      onStatusChanged: () => () => {},
+    },
+    computerUse: {
+      ownsPreviewWebContents: () => false,
+      reportSelectedDeckOwner: (owner) => selectedOwners.push(owner),
+    },
+    getMainWindow: () => ({ webContents: { id: 11 } }),
+    navigationIntents,
+  });
+  const mainEvent = { sender: { id: 11 } };
+  navigationIntents.requestOpenConversation("conversation-first");
+
+  ipc.emit(DESKTOP_IPC_CHANNELS.computerUseReportSelectedDeckOwner, mainEvent, {
+    surfaceKind: "normal_conversation",
+    ownerId: "conversation-first",
+  });
+  ipc.emit(DESKTOP_IPC_CHANNELS.computerUseReportSelectedDeckOwner, mainEvent, {
+    surfaceKind: "teammate_direct",
+    ownerId: "stale-buffered-owner",
+  });
+
+  const replacement = navigationIntents.requestOpenConversation("conversation-replacement");
+  ipc.emit(DESKTOP_IPC_CHANNELS.computerUseReportSelectedDeckOwner, mainEvent, {
+    surfaceKind: "channel",
+    ownerId: "conversation-replacement",
+  });
+  assert.deepEqual(
+    await ipc.invoke(DESKTOP_IPC_CHANNELS.navigationIntentAck, mainEvent, replacement.requestId),
+    { accepted: true },
+  );
+  assert.deepEqual(selectedOwners, [
+    { surfaceKind: "normal_conversation", ownerId: "conversation-first" },
+    { surfaceKind: "channel", ownerId: "conversation-replacement" },
+  ]);
 
   unregister();
 });

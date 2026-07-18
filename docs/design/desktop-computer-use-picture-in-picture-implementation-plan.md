@@ -8,9 +8,10 @@ baseline. The packaged macOS and Windows targets have since been superseded by
 release closure are new work. The staged replacement lives in
 [Bundled Embedded Cua Driver Implementation Plan](cua-driver-bundled-embedded-implementation-plan.md).
 
-Local implementation baseline verified on 2026-07-16/17. The design and detailed design are complete. Original Slices 0-6
-are complete locally, and Slice 7 has closed its local G4, unsigned-artifact, performance,
-and packaged-provenance work. The remaining work is external release evidence: Developer ID
+Local implementation baseline verified through 2026-07-18. The design and detailed design are complete. Original Slices 0-6
+are complete locally, Slice 7 has closed its local G4, unsigned-artifact, performance,
+and packaged-provenance work, and V2.1-V2.5 now implement and verify the multi-page logical
+deck on the current macOS host. The remaining work is external release evidence: Developer ID
 signing/notarization/Gatekeeper, clean-host TCC and operating-system capture-indicator states,
 Windows x64 interactive provider/DPI/dual-display execution, Authenticode/SmartScreen/signed
 NSIS, real VoiceOver/Narrator/NVDA acceptance, hosted signed CI, clean-machine
@@ -43,6 +44,13 @@ gate compiles all eleven evidence schemas, and schema-only changes under
 remains `BLOCKED`; the unsigned hosted workflow uploads a diagnostic Preflight without mistaking
 it for release closure.
 
+The V2 multi-page logical deck is implemented in the existing native PiP window: at most five
+resident logical pages, one live capture stream, inactive renderer-memory thumbnails, exact
+workspace/surface/owner scope, release-before-prepare switching, latest-request-wins, rollback,
+close-without-Stop, and active-page failover. Local Node, renderer, Web bridge, screenshot,
+fake-source Electron, and current-host real MediaStream lanes pass. Signed candidates, native
+screen-reader acceptance, clean-host TCC, and Windows VM evidence remain separate release gates.
+
 The granted-case restart fixture starts the production daemon registry once, seeds one active
 projection, and runs two Desktop launches against that same daemon/workspace/token. This proves
 transport-level projection replay and Stop acknowledgement; it does not close the separate
@@ -60,13 +68,30 @@ Status legend: `[x]` verified complete, `[~]` implemented but not release-comple
 | Contracts, daemon projection, SSE/API, Stop acknowledgement | [x] | structured projection is driven only by trusted authorized MCP definitions and run approval events; the current authoritative sequence is `starting -> waiting_for_approval -> starting -> running -> terminal`, `paused` is reserved, the lifecycle `rawName` whitelist is removed, and revision, atomic snapshot/subscribe replay, SSE epoch, bridge handshake, scoped native route token, bounded terminal/event retention, descriptor lease/revocation, and Stop acknowledgement pass. A negative Stop acknowledgement restores the active projection and returns HTTP 504 |
 | Coordinator, selectors, fake lifecycle | [x] | IPC ownership, truthful auto/shown/hidden intent, eager terminal suppression cleanup, first-frame, Hide/Show/Close/Stop, exact Desktop-local source generations and exact-window mismatch fail-closed handling, serialized reconnect/revision replacement, post-timeout session/revision blocking, one-second frame-gap watchdog, fail-safe/quiescent disposal, exact renderer media-release acknowledgement with forced teardown, summary-only `starting`/`waiting_for_approval` handling without an empty PiP window, placement, Reset, display recovery, bounded renderer-crash recreation, preference-failure safety, queued linger ownership, fake-source zero-residue profiling, and unsigned packaged renderer-crash recovery pass locally |
 | Renderer, shared UI, and layout | [x] | runtime overlays, direct Open/Hide/More controls, PiP-only Close window, structured Stop pending/failure/retry, safe menu grouping, hover/focus reporting, keyboard/a11y, themes, reduced motion, typed obstacle priority across channel/normal/teammate-direct surfaces, drag/resize, 180 ms drag-end four-corner snap with preferred-corner persistence, source `setAspectRatio` handling including portrait inputs, display persistence, dedicated `en-US`/`zh-CN` locale catalog and hot-switch transport, Electron DOM/media coverage, the final pre-commit PiP renderer **20/20**, and the ten-case macOS arm64 screenshot matrix pass locally; Windows DPI/dual-display visual acceptance is external |
+| V2 multi-page logical deck | [x] | exact owner-surface scope, five resident pages, inactive-LRU eviction, one-stream switch queue, memory-only thumbnails, rollback, close-without-Stop, active close/terminal failover, stacked/tabs/`View all` UI, structured bridge, keyboard/reduced-motion/forced-colors behavior, current-host performance, and zero-residue contracts are implemented and locally verified; real VoiceOver/Narrator/NVDA remain external |
 | macOS current-host real capture and provenance | [x] | the dedicated non-persistent partition passes dev plus fresh unsigned arm64/x64 `.app` and mounted-DMG fake, real-window, primary-display, and provenance smokes. Exact document/navigation-bound grants, provisional idle loading before `prepare()`, the 16 ms decoded-ready poll, live-track release, crash recovery, and Cua native-window handoff in both packaged `.app` architectures pass. Signed TCC/capture-indicator/restart evidence remains external |
 | Windows provider/plugin/package boundary | [x] | exact reviewed `trycua/cua-driver-rs` `v0.8.3` asset/SHA is allowlisted; unreviewed newer versions fail closed. Ling plugin, command, descriptor, provider verifier, branded unsigned PE32+ x64 application, and explicit per-user/asInvoker NSIS cross-package gates pass locally. The upstream provider is currently an unsigned prerelease, and interactive Windows x64 provider/source lifecycle, DPI, and dual-display evidence remains external |
 | Local production closure | [x] | G4 recovery/security, packaged provenance, bounded privacy-safe telemetry, fake and real performance harnesses, unsigned macOS arm64/x64 DMG+ZIP integrity, unsigned Windows x64 packaging, SHA-256 generation, and zero-residue checks pass |
 | Release acceptance harness | [~] | macOS signed candidate/TCC/finalizer plus Windows Preflight/Full builder, PowerShell runner, bundle-tree/CDHash, notary job/artifact, candidate-commit/harness, pre-execution Authenticode, immutable-manifest, and manual-evidence gates are implemented locally. macOS scripts are Git-blob/worktree/SHA-bound; Windows Full has caller-fixed commit/root/policy-SHA anchors, a fail-closed `releaseReady=false` builder, and an independent verifier for policy-pinned reviewer plus candidate-build detached signatures; the eleven-schema Draft 2020-12 compiler and schema-only CI trigger are complete. External signed attestations, PowerShell parser/runtime, and real deterministic/signed-candidate daemon provenance evidence remain pending |
 | External release closure | [!] | Apple Developer ID signing/notarization/Gatekeeper and denied/prompt/granted/revoked clean-host TCC/capture-indicator evidence, Windows interactive VM/provider/DPI/dual-display execution, Authenticode/SmartScreen/signed NSIS, VoiceOver/Narrator/NVDA, hosted signed CI execution, clean-machine install/update/uninstall, external detached signatures, and real candidate-daemon provenance remain unavailable or undecided |
 
-### Latest confirmed local verification (2026-07-17, current worktree)
+### Latest confirmed local verification (2026-07-18, current worktree)
+
+The V2 final matrix passes Desktop Node **337/338** with one environment-only unsigned-candidate
+skip, PiP renderer **25/25**, and focused shared-Web Desktop bridge E2E **19/19**. Desktop and Web
+typechecks, Web lint/i18n checks, the real and fake Computer Use smokes, `git diff --check`, and all
+**16** macOS arm64 Computer Use screenshot baselines pass. Structured Desktop IPC coverage includes
+replaying the latest deck owner after an Open-task intent settles and discarding a buffered owner
+when a newer Open-task intent replaces it.
+
+The repeatable fake-source Electron lifecycle records page-switch decoded-frame **11.32 ms p95**,
+`maxActiveAdapterSources = 1`, and zero process/window/renderer/listener/IPC/timer/subscription/source
+residue. With the display kept awake, the current-host real MediaStream lane passes ten cycles with
+one live track per active sample and zero after every Hide. It records first-frame **153.73 ms p50 /
+164.31 ms p95**, Hide-to-release **1.39 ms p50 / 6.76 ms p95**, **0.23%** incremental active CPU,
+**9,863,168 B** active working-set overhead, **18,857,984 B** churn working-set growth, and zero final
+track/process/window/listener/IPC/timer/subscription/source residue. This is unpackaged development
+Electron evidence on the current granted host, not signed/notarized release evidence.
 
 The final pre-commit matrix passes Desktop Node **291/291**, PiP renderer **20/20**, Web E2E
 **35/35**, contracts **5/5**, API client **48/48**, full daemon **629/629**, macOS
@@ -469,6 +494,10 @@ selected provider installation and x64 smoke gate. The target release must provi
 - no private macOS or Windows APIs;
 - exhaustive selector, lifecycle, timer, and fake-adapter E2E coverage.
 
+This verdict describes the verified V1 release boundary. V2 adds several logical pages but
+still permits only one active preview stream, so it extends selection and presentation
+without changing daemon runtime authority or platform capture ownership.
+
 ## Foundation Prerequisites
 
 The minimal Desktop foundation is now satisfied and retained as a regression boundary:
@@ -566,6 +595,94 @@ release completion still requires real platform and distribution evidence.
 
 The real-source capability check and selected adapter path are recorded in
 [Desktop Computer Use PiP Source Spike](./desktop-computer-use-picture-in-picture-source-spike.md).
+
+## Proposed V2 Slice: Multi-Page Logical Deck
+
+### Scope verdict
+
+Build a page deck, not a second capture system. Reuse the existing structured projections,
+descriptor resolver, exact-grant boundary, renderer, BrowserWindow, release ACK, operation
+queue, visibility intent, terminal handling, and Stop authority.
+
+```text
+existing projection registry
+  -> pure deck reconciliation (scope + eligibility + five-page cap)
+  -> one existing coordinator operation queue
+       -> freeze active frame to a bounded renderer-memory thumbnail
+       -> release exact current track and grant
+       -> prepare requested descriptor
+       -> exact first-frame gate
+       -> commit active page or roll back
+  -> one existing PiP BrowserWindow and renderer
+```
+
+Do not introduce page-owned coordinators, page-owned renderer processes, background capture
+loops, daemon-side deck persistence, or arbitrary browser-tab control. Those approaches
+duplicate lifecycle authority and make the one-stream privacy invariant unprovable.
+
+### What already exists and is reused
+
+| Existing boundary | V2 use |
+| --- | --- |
+| `ComputerUsePreviewProjection[]` | Derive one eligible page per active session without a new daemon page table; expose metadata-only `View all` entries for nonresident pages. |
+| `selectComputerUsePresentation()` | Retain as the V1 compatibility selector; add a pure multi-result deck selector beside it. |
+| Coordinator operation queue | Serialize release, prepare, first-frame commit, rollback, close, and terminal failover. |
+| Exact renderer media-release ACK | Prove the old page stopped capturing before the new page prepares. |
+| `sourceGeneration` and descriptor revision | Reject stale page-switch callbacks and same-revision descriptor replacement. |
+| One isolated renderer | Render the live page plus memory-only inactive thumbnails and accessible page controls. |
+| Existing Show/Hide/Close/Stop semantics | Apply window actions to the deck and Stop only to the active page's session. |
+
+### Implementation slices
+
+| Slice | Modules | Depends on | Required result |
+| --- | --- | --- | --- |
+| V2.1 Deck model | `apps/desktop/main/computer-use` pure state/selectors | V1 projections | Scope-safe page reconciliation, stable `pageId`, five-page cap, inactive-LRU eviction, terminal/removal pruning. |
+| V2.2 Serialized switching | existing coordinator/source-session/recovery boundary | V2.1 | Release-old-before-prepare-new, latest-request-wins generation, first-frame commit, failed-switch rollback, zero dual-track state. |
+| V2.3 Renderer deck | PiP renderer view model/styles/messages | V2.1, V2.2 | Clickable exposed cards, compact narrow tabs, in-memory downsampled thumbnails, reduced motion, keyboard and screen-reader semantics. |
+| V2.4 Shared capability | PiP preload plus shared Web current-session owner adapter | V2.1 | Opaque activate/close-page commands inside PiP, structured owner-scope reporting and page-count/status projection in Web, safe browser no-op, no descriptor/native ids in Web. |
+| V2.5 Acceptance | Desktop Node, renderer Electron, Web E2E, performance and packaged smokes | V2.1-V2.4 | Race, rollback, privacy scope, accessibility, one-stream, memory, release, and zero-residue evidence. |
+
+Sequential implementation is required through V2.1 -> V2.2 because both define the core
+state and source lifecycle. After V2.2 lands, V2.3 renderer work and V2.4 shared-capability
+work may proceed in parallel worktrees; they touch separate renderer and shared-Web/preload
+modules. V2.5 starts after both merge.
+
+### V2 acceptance gates
+
+1. Opening one through five eligible sessions creates one resident page per session; a
+   descriptor revision updates the same page.
+2. Clicking any exposed inactive page acknowledges input within 100 ms, releases the old
+   stream before preparing the new one, and commits only after the exact new first frame.
+3. Rapid A -> B -> C input may activate only C. B callbacks, release ACKs, timers, and
+   source failures cannot alter C.
+4. A failed B activation restores A through the serialized queue or leaves its last frame
+   frozen with explicit Retry/Open task; it never runs A and B tracks concurrently.
+5. Opening a sixth page evicts only the inactive least-recently-used resident page, emits no
+   Stop, and leaves the evicted active session reopenable from the page list.
+6. `View all` lists every eligible page in the exact owner scope using metadata only; opening
+   a dismissed/nonresident page clears dismissal and applies the same resident-cap rule.
+7. Closing a page never stops its session. Closing the active page activates the next MRU
+   eligible page or hides the PiP when none remain.
+8. Scope changes remove old channel/conversation/teammate-direct cards and thumbnails before
+   the new owner scope renders. No private-page title or image crosses the boundary.
+9. Renderer crash, Desktop restart, terminal failover, permission failure, zero-frame
+   timeout, and shutdown leave zero tracks, grants, thumbnails, listeners, timers, and stale
+   switch callbacks.
+10. The active page is keyboard selectable; page controls expose selected state, order,
+   target, status, and close-without-Stop meaning to VoiceOver/Narrator/NVDA.
+11. Current-host performance records page-switch decoded-frame p95 <= 500 ms, four inactive
+    thumbnails <= 20 MB combined working-set overhead, and exactly one live track at every
+    sample point.
+
+### V2 NOT in scope
+
+- multiple native PiP windows;
+- multiple simultaneous live capture streams;
+- persisted frames, thumbnails, deck order, or historical preview carousel;
+- cross-workspace or cross-surface page decks;
+- browser tab/URL enumeration that bypasses structured Computer Use sessions;
+- direct target-app input through the preview;
+- V2 implementation or release claims in this design-only branch.
 
 ## Original Slice 0–7 Traceability
 
@@ -1140,7 +1257,8 @@ small shared patch, then both platform lanes rebase before resuming acceptance.
 - Zero-copy or performance-oriented ScreenCaptureKit, Metal, Windows Graphics Capture, or
   Direct3D rendering optimization in the first cross-platform release. The selected
   provider's public HWND/PID handoff and Windows VM evidence remain in scope.
-- Multiple simultaneous previews.
+- Multiple simultaneous native PiP windows or live capture streams. The proposed V2 logical
+  deck is in scope only under the one-window/one-stream contract.
 - Remote/cloud video relay.
 - Linux packaging.
 - Recording or replay.
@@ -1148,6 +1266,29 @@ small shared patch, then both platform lanes rebase before resuming acceptance.
 - Copying Codex native assets, private APIs, or bundled implementation.
 
 ## Implementation Tasks
+
+### Proposed V2 deck tasks
+
+- [x] **V2-T1 (P1, human: ~1 day / Codex: ~1 h)** — deck-model — Add pure scope,
+  eligibility, stable page identity, five-page resident cap, inactive-LRU eviction, MRU
+  ordering, metadata-only `View all`, dismissal, and terminal/removal reconciliation with
+  exhaustive selector/reducer tests.
+- [x] **V2-T2 (P1, human: ~2 days / Codex: ~2 h)** — source-switching — Extend the existing
+  coordinator queue with release-before-prepare switching, latest-request generation,
+  exact first-frame commit, rollback, active-close failover, and one-live-track assertions.
+- [x] **V2-T3 (P1, human: ~2 days / Codex: ~2 h)** — renderer-deck — Add expanded stacked
+  cards, narrow tabs, metadata-only `View all`, bounded renderer-memory thumbnails,
+  close-without-Stop controls, reduced motion, focus retention, and screen-reader semantics.
+- [x] **V2-T4 (P2, human: ~1 day / Codex: ~1 h)** — shared-capability — Add opaque page
+  activate/close commands and page-count/status projection through the narrow preload/Web
+  bridge without exposing descriptor, native-source, or arbitrary page metadata.
+- [x] **V2-T5 (P1, human: ~2 days / Codex: ~2 h)** — local-acceptance — Add rapid-switch,
+  rollback, sixth-page eviction, scope privacy, active close/terminal failover, renderer
+  crash, zero-residue, DOM/ARIA accessibility, dev fake/real smoke, p95 switch, memory-budget,
+  and exactly-one-live-track evidence. Signed packaged candidates and native
+  VoiceOver/Narrator/NVDA acceptance remain in the external release gates below.
+
+### Existing V1 and release tasks
 
 - [x] **T0 (P1, human: ~2 days / Codex: ~2 h)** — desktop-shell — Scaffold the minimal Electron shell, shared Web loading, capability provider, and fake PiP renderer entry.
 - [x] **T1 (P1, human: ~1 day / Codex: ~45 min)** — contracts — Add the structured Computer Use preview projection and status contracts, bind lifecycle to trusted authorized MCP definitions plus run approval events, remove lifecycle `rawName` allowlisting, and reserve `paused` until an authoritative event exists.
@@ -1201,6 +1342,20 @@ C1 and C2 may run in parallel because A3 and B1 have frozen the local contracts 
 surface. Release hardening cannot close until both platform evidence sets, Windows visual
 acceptance, and signing identities exist.
 
+V2 follows its own post-V1 lane and does not block C1/C2 release evidence:
+
+```text
+V2.1 deck model -> V2.2 serialized switching
+                    |-> V2.3 renderer deck
+                    `-> V2.4 shared capability
+                         \__________________/
+                                  -> V2.5 acceptance
+```
+
+Do not implement V2 changes inside the active Cua Driver bundling branch. Land the design
+after its parent dependency, then implement the V2 slices from the resulting `main` so
+provider-distribution work and page-deck lifecycle remain independently reviewable.
+
 ### Release acceptance and merge boundaries
 
 The detailed build sections above retain their historical Foundation/Slice 0-8 labels.
@@ -1243,6 +1398,16 @@ The feature is complete only when:
 - media tracks and windows clean up under repeat and crash tests;
 - all specified unit, integration, E2E, accessibility, and performance checks pass.
 
+### V2 deck completion definition
+
+The logical page-deck extension is complete only when all V2.1-V2.5 slices pass and the
+acceptance harness proves one native PiP window, one live capture stream, five resident
+pages, inactive-LRU eviction without Stop, exact scope isolation, rapid-switch stale-event
+rejection, failed-switch rollback, active close/terminal failover, memory-only thumbnail
+cleanup, keyboard/screen-reader behavior, the 500 ms p95 switch target, the 20 MB thumbnail
+budget, and zero lifecycle residue. Until then the shipped product truth remains V1 single-page
+PiP even if partial deck chrome exists behind a feature flag.
+
 ## External Dependencies And Release Gates
 
 | Dependency | Why it is external | What closes it |
@@ -1259,6 +1424,10 @@ The feature is complete only when:
 | Release CI secrets and clean machines | local engineering smokes do not prove repeatable distribution | CI artifact matrix, notarization/signing jobs, integrity metadata, and clean install/update E2E |
 
 ## Unresolved Decisions
+
+The V2 deck has no unresolved product or architecture decisions. The locked contract is one
+native window, one live stream, five resident pages, exact owner-surface scope, inactive-LRU
+eviction, and memory-only inactive thumbnails.
 
 1. **Windows provider lock advancement:** keep the exact reviewed
    `cua-driver-rs-v0.8.3` source/build lock and decide when a separately reviewed provider-upgrade PR

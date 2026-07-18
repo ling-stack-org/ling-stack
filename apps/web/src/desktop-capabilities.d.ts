@@ -12,6 +12,10 @@ interface Window {
     };
     readonly computerUse: {
       reportLocale(locale: "en-US" | "zh-CN"): void;
+      reportSelectedDeckOwner(owner?: {
+        readonly surfaceKind: "channel" | "normal_conversation" | "teammate_direct";
+        readonly ownerId: string;
+      }): void;
       reportSelectedConversation(conversationId?: string): void;
       reportHostLayout(layout: {
         readonly windowBounds: { readonly x: number; readonly y: number; readonly width: number; readonly height: number };
@@ -44,6 +48,8 @@ interface Window {
         readonly targetLabel: string;
         readonly previewAvailable: boolean;
         readonly visible: boolean;
+        readonly activePageId?: string;
+        readonly pageCount: number;
       } | undefined) => void): () => void;
     };
   };

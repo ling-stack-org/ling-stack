@@ -1,13 +1,11 @@
 import type { ComputerUsePreviewProjection } from "@ling-stack/contracts";
-import { isTerminalComputerUseStatus } from "@ling-stack/contracts";
-import { compareLatestComputerUseProjection } from "./selectors.js";
+import type { ComputerUsePipSurfaceKind } from "../../shared/desktop-capabilities.js";
+import { selectComputerUsePipDeckProjections } from "./deck-selectors.js";
+
+export { selectComputerUsePipDeckProjections } from "./deck-selectors.js";
+export type { ComputerUsePipSurfaceKind } from "../../shared/desktop-capabilities.js";
 
 export const COMPUTER_USE_PIP_MAX_RESIDENT_PAGES = 5;
-
-export type ComputerUsePipSurfaceKind =
-  | "channel"
-  | "normal_conversation"
-  | "teammate_direct";
 
 export interface ComputerUsePipDeckScope {
   readonly workspaceId: string;
@@ -74,17 +72,6 @@ export function computerUsePipDeckScopesEqual(
   return left.workspaceId === right.workspaceId
     && left.surfaceKind === right.surfaceKind
     && left.ownerId === right.ownerId;
-}
-
-export function selectComputerUsePipDeckProjections(input: {
-  readonly scope: ComputerUsePipDeckScope;
-  readonly projections: readonly ComputerUsePreviewProjection[];
-}): readonly ComputerUsePreviewProjection[] {
-  return input.projections
-    .filter((projection) => projection.conversationId === input.scope.ownerId)
-    .filter((projection) => !isTerminalComputerUseStatus(projection.status))
-    .filter((projection) => projection.preview !== undefined)
-    .sort(compareLatestComputerUseProjection);
 }
 
 export function reconcileComputerUsePipDeck(
@@ -156,27 +143,39 @@ export function requestComputerUsePipDeckPage(
     return undefined;
   }
 
-  const currentPages = state.pages.filter((page) => page.pageId !== pageId);
   const requestedPage = state.pages.find((page) => page.pageId === pageId) ?? {
     pageId,
     sessionId: pageId,
     presentationState: "inactive" as const,
     lastActivatedAtMs: 0,
   };
+  const pages = [...state.pages];
   let evictedPageId: string | undefined;
 
-  if (currentPages.length >= COMPUTER_USE_PIP_MAX_RESIDENT_PAGES) {
-    const evictionIndex = findInactiveLruIndex(currentPages, state.activePageId);
+  if (!state.pages.some((page) => page.pageId === pageId)) {
+    if (pages.length >= COMPUTER_USE_PIP_MAX_RESIDENT_PAGES) {
+      const evictionIndex = findInactiveLruIndex(pages, state.activePageId);
+      if (evictionIndex < 0) {
+        return undefined;
+      }
+      evictedPageId = pages[evictionIndex]?.pageId;
+      pages.splice(evictionIndex, 1);
+    }
+    pages.push(requestedPage);
+  }
+
+  if (pages.length > COMPUTER_USE_PIP_MAX_RESIDENT_PAGES) {
+    const evictionIndex = findInactiveLruIndex(pages, state.activePageId);
     if (evictionIndex < 0) {
       return undefined;
     }
-    evictedPageId = currentPages[evictionIndex]?.pageId;
-    currentPages.splice(evictionIndex, 1);
+    evictedPageId = pages[evictionIndex]?.pageId;
+    pages.splice(evictionIndex, 1);
   }
 
   const generation = state.switchGeneration + 1;
-  const pages = normalizePagePresentation(
-    [requestedPage, ...currentPages],
+  const normalizedPages = normalizePagePresentation(
+    pages,
     state.activePageId,
     pageId === state.activePageId ? undefined : pageId,
     nowMs,
@@ -185,7 +184,7 @@ export function requestComputerUsePipDeckPage(
   const baseState = withoutActiveRequest(state);
   const nextState: ComputerUsePipDeckState = {
     ...baseState,
-    pages,
+    pages: normalizedPages,
     dismissedPageIds,
     ...(state.activePageId ? { activePageId: state.activePageId } : {}),
     ...(pageId === state.activePageId ? {} : { requestedPageId: pageId }),

@@ -56,9 +56,11 @@ interface PendingVisibilityRequest extends PendingStopRequest {
 
 export function DesktopComputerUseBridge({
   selectedConversationId,
+  surfaceKind,
   hostRef,
 }: {
   readonly selectedConversationId?: string;
+  readonly surfaceKind?: "channel" | "normal_conversation" | "teammate_direct";
   readonly hostRef: RefObject<HTMLElement>;
 }) {
   const { locale } = useI18n();
@@ -109,11 +111,13 @@ export function DesktopComputerUseBridge({
   }, [capabilities, locale]);
 
   useEffect(() => {
-    capabilities?.reportSelectedConversation(selectedConversationId);
-  }, [capabilities, selectedConversationId]);
+    capabilities?.reportSelectedDeckOwner(selectedConversationId && surfaceKind
+      ? { surfaceKind, ownerId: selectedConversationId }
+      : undefined);
+  }, [capabilities, selectedConversationId, surfaceKind]);
 
   useEffect(() => {
-    return () => capabilities?.reportSelectedConversation(undefined);
+    return () => capabilities?.reportSelectedDeckOwner(undefined);
   }, [capabilities]);
 
   useEffect(() => {

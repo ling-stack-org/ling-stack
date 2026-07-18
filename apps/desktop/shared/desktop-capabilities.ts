@@ -69,6 +69,21 @@ export interface ComputerUseHostLayout {
   readonly reportedAt: string;
 }
 
+export const COMPUTER_USE_PIP_SURFACE_KINDS = [
+  "channel",
+  "normal_conversation",
+  "teammate_direct",
+] as const;
+
+export type ComputerUsePipSurfaceKind = typeof COMPUTER_USE_PIP_SURFACE_KINDS[number];
+
+export interface ComputerUsePipDeckOwner {
+  readonly surfaceKind: ComputerUsePipSurfaceKind;
+  readonly ownerId: string;
+}
+
+export type ComputerUsePipPagePresentationState = "inactive" | "activating" | "active";
+
 export interface ComputerUsePreviewSummary {
   readonly sessionId: string;
   readonly conversationId: string;
@@ -76,6 +91,8 @@ export interface ComputerUsePreviewSummary {
   readonly targetLabel: string;
   readonly previewAvailable: boolean;
   readonly visible: boolean;
+  readonly activePageId?: string;
+  readonly pageCount: number;
 }
 
 export interface DesktopCommandResult {
@@ -148,6 +165,8 @@ export interface LingDesktopCapabilities {
   };
   readonly computerUse: {
     reportLocale(locale: ComputerUsePreviewLocale): void;
+    reportSelectedDeckOwner(owner?: ComputerUsePipDeckOwner): void;
+    /** @deprecated Use reportSelectedDeckOwner so Desktop receives the exact surface boundary. */
     reportSelectedConversation(conversationId?: string): void;
     reportHostLayout(layout: ComputerUseHostLayout): void;
     show(sessionId: string): Promise<DesktopCommandResult>;
@@ -176,10 +195,29 @@ export interface ComputerUsePipRendererSnapshot {
   readonly statusDetail?: string;
   readonly canStop: boolean;
   readonly canOpenSettings: boolean;
+  readonly deck?: {
+    readonly activePageId: string;
+    readonly requestedPageId?: string;
+    readonly availablePageCount: number;
+    readonly pages: readonly {
+      readonly pageId: string;
+      readonly targetLabel: string;
+      readonly runtimeStatus: ComputerUseRuntimeStatus;
+      readonly presentationState: ComputerUsePipPagePresentationState;
+    }[];
+    readonly availablePages: readonly {
+      readonly pageId: string;
+      readonly targetLabel: string;
+      readonly runtimeStatus: ComputerUseRuntimeStatus;
+      readonly resident: boolean;
+    }[];
+  };
 }
 
 export interface LingComputerUsePreviewCapabilities {
   getSnapshot(): Promise<ComputerUsePipRendererSnapshot | undefined>;
+  activatePage(pageId: string): Promise<DesktopCommandResult>;
+  closePage(pageId: string): Promise<DesktopCommandResult>;
   retryCapture(): Promise<DesktopCommandResult>;
   resetPosition(): Promise<DesktopCommandResult>;
   close(): Promise<DesktopCommandResult>;

@@ -119,7 +119,7 @@ test("rapid page requests commit only the latest switch generation", () => {
   });
   assert.equal(committed.activePageId, "c");
   assert.equal(committed.requestedPageId, undefined);
-  assert.deepEqual(committed.pages.map((page) => page.pageId), ["c", "b", "a"]);
+  assert.deepEqual(committed.pages.map((page) => page.pageId), ["c", "a", "b"]);
 });
 
 test("switch cancellation preserves the active page and rejects stale cancellation", () => {
@@ -142,6 +142,26 @@ test("switch cancellation preserves the active page and rejects stale cancellati
   assert.equal(cancelled.activePageId, "a");
   assert.equal(cancelled.requestedPageId, undefined);
   assert.equal(cancelled.pages.find((page) => page.pageId === "a")?.presentationState, "active");
+  assert.deepEqual(cancelled.pages.map((page) => page.pageId), ["a", "b"]);
+});
+
+test("requesting a resident page does not update MRU before first-frame commit", () => {
+  const state = reconcileComputerUsePipDeck({
+    scope: SCOPE,
+    projections: [projection("a", 3), projection("b", 2), projection("c", 1)],
+    nowMs: 100,
+  });
+  const request = requestComputerUsePipDeckPage(state, "c", 110);
+  assert.ok(request);
+
+  assert.deepEqual(request.state.pages.map((page) => page.pageId), ["a", "b", "c"]);
+  assert.equal(request.state.requestedPageId, "c");
+
+  const cancelled = cancelComputerUsePipDeckPageSwitch(request.state, {
+    generation: request.generation,
+    nowMs: 120,
+  });
+  assert.deepEqual(cancelled.pages.map((page) => page.pageId), ["a", "b", "c"]);
 });
 
 test("opening a sixth resident page evicts only the inactive LRU page", () => {
