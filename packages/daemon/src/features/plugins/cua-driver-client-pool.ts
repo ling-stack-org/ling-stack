@@ -22,8 +22,10 @@ interface PoolEntry<TClient extends CuaDriverPooledClient> {
   readonly connecting: Promise<TClient>;
   client?: TClient;
   activeOperations: number;
+  readonly drainWaiters: Set<() => void>;
   closing: boolean;
   closePromise?: Promise<void>;
+  clientClosePromise?: Promise<void>;
 }
 
 /**
@@ -55,6 +57,7 @@ export class CuaDriverClientPool<TClient extends CuaDriverPooledClient = CuaDriv
         lease,
         controller,
         activeOperations: 0,
+        drainWaiters: new Set(),
         closing: false,
         connecting,
       };
@@ -62,10 +65,9 @@ export class CuaDriverClientPool<TClient extends CuaDriverPooledClient = CuaDriv
       this.entries.set(key, entry);
       void connecting.then(
         (client) => {
-          if (entry?.key === key && !entry.closing) {
-            entry.client = client;
-          } else {
-            void client.close();
+          entry!.client = client;
+          if (entry!.closing || this.entries.get(key) !== entry) {
+            void this.closeClientOnce(entry!, client);
           }
         },
         () => {
@@ -90,6 +92,10 @@ export class CuaDriverClientPool<TClient extends CuaDriverPooledClient = CuaDriv
         if (released) return;
         released = true;
         entry!.activeOperations = Math.max(0, entry!.activeOperations - 1);
+        if (entry!.activeOperations === 0) {
+          for (const resolve of entry!.drainWaiters) resolve();
+          entry!.drainWaiters.clear();
+        }
       },
     };
   }
@@ -118,21 +124,52 @@ export class CuaDriverClientPool<TClient extends CuaDriverPooledClient = CuaDriv
   private async closeEntry(entry: PoolEntry<TClient>): Promise<void> {
     if (entry.closePromise) return entry.closePromise;
     entry.closing = true;
-    entry.controller.abort();
     this.entries.delete(entry.key);
     entry.closePromise = (async () => {
-      const client = entry.client ?? await Promise.race([
-        entry.connecting.catch(() => undefined),
-        new Promise<undefined>((resolve) => setTimeout(() => resolve(undefined), this.closeTimeoutMs)),
-      ]);
+      await this.waitForActiveOperations(entry);
+      entry.controller.abort();
+      const client = entry.client ?? await settleWithin(entry.connecting, this.closeTimeoutMs);
       if (!client) return;
-      // Existing operations are cancelled by the shared AbortSignal. Do not
-      // wait forever on a broken provider; close exactly once after a bound.
-      await Promise.race([
-        Promise.resolve(client.close()),
-        new Promise<void>((resolve) => setTimeout(resolve, this.closeTimeoutMs)),
-      ]);
+      // The connect completion handler also reaches this helper when a client
+      // materializes after the bounded wait. Memoization keeps close exactly-once.
+      await settleWithin(this.closeClientOnce(entry, client), this.closeTimeoutMs);
     })();
     return entry.closePromise;
   }
+
+  private async waitForActiveOperations(entry: PoolEntry<TClient>): Promise<void> {
+    if (entry.activeOperations === 0) return;
+    let resolveDrain!: () => void;
+    const drained = new Promise<void>((resolve) => {
+      resolveDrain = resolve;
+      entry.drainWaiters.add(resolve);
+    });
+    await settleWithin(drained, this.closeTimeoutMs);
+    entry.drainWaiters.delete(resolveDrain);
+  }
+
+  private closeClientOnce(entry: PoolEntry<TClient>, client: TClient): Promise<void> {
+    if (!entry.clientClosePromise) {
+      entry.clientClosePromise = Promise.resolve()
+        .then(() => client.close())
+        .then(() => undefined, () => undefined);
+    }
+    return entry.clientClosePromise;
+  }
+}
+
+function settleWithin<T>(promise: Promise<T>, timeoutMs: number): Promise<T | undefined> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => resolve(undefined), timeoutMs);
+    void promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      () => {
+        clearTimeout(timer);
+        resolve(undefined);
+      },
+    );
+  });
 }
