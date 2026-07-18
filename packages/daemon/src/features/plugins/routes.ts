@@ -44,6 +44,7 @@ import {
   configuredCuaDriverCommand,
   connectCuaDriver,
 } from "./cua-driver.js";
+import { bundledEmbeddedCuaDriverGateEnabled } from "./cua-driver-feature-gates.js";
 import { activateCuaDriver, pluginHealthFromMcpSnapshot } from "./cua-driver-activation.js";
 import { toPublicMcpServer } from "../mcp/secrets.js";
 import {
@@ -90,6 +91,7 @@ export async function handlePluginsCollection(
           extensionRegistry,
           store,
           now: new Date().toISOString(),
+          cuaDriverFeatureFlags: config.cuaDriver,
         }),
       });
       return;
@@ -107,6 +109,7 @@ export async function handlePluginsCollection(
           store,
           pluginId: created.pluginId,
           includeEvents: true,
+          cuaDriverFeatureFlags: config.cuaDriver,
         }),
       });
       return;
@@ -198,6 +201,7 @@ export async function handlePluginItem(
             pluginId: validationPackage.validation.compiledDescriptor.id,
             now: new Date().toISOString(),
             includeEvents: true,
+            cuaDriverFeatureFlags: config.cuaDriver,
           })
         : undefined;
       writeJson(response, 200, {
@@ -216,7 +220,7 @@ export async function handlePluginItem(
 
     if (request.method === "GET" && !route.action) {
       writeJson(response, 200, {
-        plugin: getRequiredPluginView({ cwd, extensionRegistry, store, pluginId: route.pluginId, includeEvents: true }),
+        plugin: getRequiredPluginView({ cwd, extensionRegistry, store, pluginId: route.pluginId, includeEvents: true, cuaDriverFeatureFlags: config.cuaDriver }),
       });
       return;
     }
@@ -239,7 +243,7 @@ export async function handlePluginItem(
       }, now);
       writeJson(response, 200, {
         cwd,
-        plugin: getRequiredPluginView({ cwd, extensionRegistry, store, pluginId: route.pluginId, includeEvents: true }),
+        plugin: getRequiredPluginView({ cwd, extensionRegistry, store, pluginId: route.pluginId, includeEvents: true, cuaDriverFeatureFlags: config.cuaDriver }),
         preview,
       });
       return;
@@ -249,6 +253,7 @@ export async function handlePluginItem(
       if (route.pluginId !== CUA_DRIVER_PLUGIN_ID) {
         throw new HttpError(400, "plugin_connect_not_supported", `Plugin does not support connect: ${route.pluginId}`);
       }
+      assertBundledCuaDriverRuntimeAvailable(config);
       const body = await readJsonBody(request, config.maxBodyBytes);
       const input = parseManagedPluginConnectRequest(body);
       const now = new Date().toISOString();
@@ -267,7 +272,7 @@ export async function handlePluginItem(
         throw new HttpError(400, "plugin_connect_failed", "Cua Driver could not be connected.");
       }
       writeJson(response, 200, {
-        plugin: getRequiredPluginView({ cwd, extensionRegistry, store, pluginId: route.pluginId, includeEvents: true }),
+        plugin: getRequiredPluginView({ cwd, extensionRegistry, store, pluginId: route.pluginId, includeEvents: true, cuaDriverFeatureFlags: config.cuaDriver }),
         linkedMcpServer: publicMcpServer(store, linkedServer.id, secretResolver, now),
       });
       return;
@@ -275,6 +280,7 @@ export async function handlePluginItem(
 
     if (request.method === "POST" && route.action === "enable") {
       if (route.pluginId === CUA_DRIVER_PLUGIN_ID) {
+        assertBundledCuaDriverRuntimeAvailable(config);
         const configuredCommand = configuredCuaDriverCommand(store);
         await handlePluginApplyPreset({
           response,
@@ -287,6 +293,7 @@ export async function handlePluginItem(
           operation: "enable",
           mcpBroker,
           secretResolver,
+          cuaDriverFeatureFlags: config.cuaDriver,
         });
         return;
       }
@@ -322,7 +329,7 @@ export async function handlePluginItem(
         message: "Plugin enabled.",
       }, now);
       writeJson(response, 200, {
-        plugin: getRequiredPluginView({ cwd, extensionRegistry, store, pluginId: route.pluginId, includeEvents: true }),
+        plugin: getRequiredPluginView({ cwd, extensionRegistry, store, pluginId: route.pluginId, includeEvents: true, cuaDriverFeatureFlags: config.cuaDriver }),
       });
       return;
     }
@@ -346,12 +353,15 @@ export async function handlePluginItem(
         message: input.reason ? `Plugin disabled: ${input.reason}` : "Plugin disabled.",
       }, now);
       writeJson(response, 200, {
-        plugin: getRequiredPluginView({ cwd, extensionRegistry, store, pluginId: route.pluginId, includeEvents: true }),
+        plugin: getRequiredPluginView({ cwd, extensionRegistry, store, pluginId: route.pluginId, includeEvents: true, cuaDriverFeatureFlags: config.cuaDriver }),
       });
       return;
     }
 
     if (request.method === "POST" && route.action === "check") {
+      if (route.pluginId === CUA_DRIVER_PLUGIN_ID) {
+        assertBundledCuaDriverRuntimeAvailable(config);
+      }
       await handlePluginCheck({
         response,
         cwd,
@@ -361,6 +371,7 @@ export async function handlePluginItem(
         pluginId: route.pluginId,
         mcpBroker,
         secretResolver,
+        cuaDriverFeatureFlags: config.cuaDriver,
       });
       return;
     }
@@ -377,7 +388,7 @@ export async function handlePluginItem(
         now,
       });
       writeJson(response, 200, {
-        plugin: getRequiredPluginView({ cwd, extensionRegistry, store, pluginId: result.descriptor.id, includeEvents: true }),
+        plugin: getRequiredPluginView({ cwd, extensionRegistry, store, pluginId: result.descriptor.id, includeEvents: true, cuaDriverFeatureFlags: config.cuaDriver }),
         package: publicPluginPackage(result.packageRecord),
       });
       return;
@@ -394,7 +405,7 @@ export async function handlePluginItem(
         now,
       });
       writeJson(response, 200, {
-        plugin: getRequiredPluginView({ cwd, extensionRegistry, store, pluginId: route.pluginId, includeEvents: true }),
+        plugin: getRequiredPluginView({ cwd, extensionRegistry, store, pluginId: route.pluginId, includeEvents: true, cuaDriverFeatureFlags: config.cuaDriver }),
         ...(packageRecord ? { package: publicPluginPackage(packageRecord) } : {}),
       });
       return;
@@ -412,13 +423,16 @@ export async function handlePluginItem(
         now,
       });
       writeJson(response, 200, {
-        plugin: getRequiredPluginView({ cwd, extensionRegistry, store, pluginId: result.descriptor.id, includeEvents: true }),
+        plugin: getRequiredPluginView({ cwd, extensionRegistry, store, pluginId: result.descriptor.id, includeEvents: true, cuaDriverFeatureFlags: config.cuaDriver }),
         package: publicPluginPackage(result.packageRecord),
       });
       return;
     }
 
     if (request.method === "POST" && route.action === "apply-preset") {
+      if (route.pluginId === CUA_DRIVER_PLUGIN_ID) {
+        assertBundledCuaDriverRuntimeAvailable(config);
+      }
       const body = await readJsonBody(request, config.maxBodyBytes);
       const input = parseManagedPluginApplyPresetRequest(body);
       await handlePluginApplyPreset({
@@ -432,6 +446,7 @@ export async function handlePluginItem(
         operation: "apply",
         mcpBroker,
         secretResolver,
+        cuaDriverFeatureFlags: config.cuaDriver,
       });
       return;
     }
@@ -445,6 +460,16 @@ export async function handlePluginItem(
   }
 }
 
+export function assertBundledCuaDriverRuntimeAvailable(config: ResolvedDaemonConfig): void {
+  if (bundledEmbeddedCuaDriverGateEnabled(config, process.platform)) {
+    throw new HttpError(
+      409,
+      "cua_desktop_lease_unavailable",
+      "Bundled Cua Driver runtime is not available until Desktop publishes a validated lease.",
+    );
+  }
+}
+
 async function handlePluginCheck(input: {
   readonly response: ServerResponse;
   readonly cwd: string;
@@ -454,6 +479,10 @@ async function handlePluginCheck(input: {
   readonly pluginId: string;
   readonly mcpBroker: McpBroker;
   readonly secretResolver: SecretResolver;
+  readonly cuaDriverFeatureFlags?: {
+    readonly bundledEmbedded: { readonly darwin: boolean; readonly win32: boolean };
+    readonly packagedProvider: { readonly darwin: boolean; readonly win32: boolean };
+  };
 }): Promise<void> {
   const now = new Date().toISOString();
   const record = ensureManagedPluginRecord({
@@ -483,6 +512,7 @@ async function handlePluginCheck(input: {
     store: input.store,
     pluginId: record.id,
     includeEvents: true,
+    cuaDriverFeatureFlags: input.cuaDriverFeatureFlags,
   });
   const status = storedHealth.status === "failed" ? 400 : 200;
   writeJson(input.response, status, status === 200
@@ -508,6 +538,10 @@ async function handlePluginApplyPreset(input: {
   readonly operation: "apply" | "enable";
   readonly mcpBroker: McpBroker;
   readonly secretResolver: SecretResolver;
+  readonly cuaDriverFeatureFlags?: {
+    readonly bundledEmbedded: { readonly darwin: boolean; readonly win32: boolean };
+    readonly packagedProvider: { readonly darwin: boolean; readonly win32: boolean };
+  };
 }): Promise<void> {
   if (input.pluginId !== CUA_DRIVER_PLUGIN_ID) {
     throw new HttpError(400, "plugin_preset_not_applicable", `Plugin does not support apply-preset: ${input.pluginId}`);
@@ -532,6 +566,7 @@ async function handlePluginApplyPreset(input: {
       store: input.store,
       pluginId: input.pluginId,
       includeEvents: true,
+      cuaDriverFeatureFlags: input.cuaDriverFeatureFlags,
     }),
     ...(result.linkedMcpServerId ? { linkedMcpServer: publicMcpServer(input.store, result.linkedMcpServerId, input.secretResolver, now) } : {}),
     ...(result.statusSnapshot ? { statusSnapshot: result.statusSnapshot } : {}),
@@ -678,6 +713,10 @@ function getRequiredPluginView(input: {
   readonly store: ReturnType<RunStoreRegistry["getStore"]>;
   readonly pluginId: string;
   readonly includeEvents: boolean;
+  readonly cuaDriverFeatureFlags?: {
+    readonly bundledEmbedded: { readonly darwin: boolean; readonly win32: boolean };
+    readonly packagedProvider: { readonly darwin: boolean; readonly win32: boolean };
+  };
 }) {
   const plugin = getManagedPluginView({
     cwd: input.cwd,
@@ -686,6 +725,7 @@ function getRequiredPluginView(input: {
     pluginId: input.pluginId,
     now: new Date().toISOString(),
     includeEvents: input.includeEvents,
+    cuaDriverFeatureFlags: input.cuaDriverFeatureFlags,
   });
   if (!plugin) {
     throw new HttpError(404, "plugin_not_found", `Plugin not found: ${input.pluginId}`);

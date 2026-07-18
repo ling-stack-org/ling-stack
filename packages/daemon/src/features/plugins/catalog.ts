@@ -41,6 +41,10 @@ export function listManagedPluginViews(input: {
   readonly now: string;
   readonly includeEvents?: boolean;
   readonly includeHidden?: boolean;
+  readonly cuaDriverFeatureFlags?: {
+    readonly bundledEmbedded: { readonly darwin: boolean; readonly win32: boolean };
+    readonly packagedProvider: { readonly darwin: boolean; readonly win32: boolean };
+  };
 }): readonly ManagedPluginView[] {
   const descriptors = buildDescriptorMap(input.extensionRegistry, input.store);
   const records = new Map(input.store.listManagedPlugins({ limit: 500 }).map((record) => [record.id, record]));
@@ -55,6 +59,7 @@ export function listManagedPluginViews(input: {
       store: input.store,
       cwd: input.cwd,
       now: input.now,
+      cuaDriverFeatureFlags: input.cuaDriverFeatureFlags,
     }));
   return views
     .filter((view) => input.includeHidden || view.id !== BUNDLED_CUA_DRIVER_PLUGIN_ID)
@@ -68,6 +73,10 @@ export function getManagedPluginView(input: {
   readonly store: ManagedPluginCatalogStore;
   readonly now: string;
   readonly includeEvents?: boolean;
+  readonly cuaDriverFeatureFlags?: {
+    readonly bundledEmbedded: { readonly darwin: boolean; readonly win32: boolean };
+    readonly packagedProvider: { readonly darwin: boolean; readonly win32: boolean };
+  };
 }): ManagedPluginView | undefined {
   return listManagedPluginViews({ ...input, includeHidden: true }).find((plugin) => plugin.id === input.pluginId);
 }
@@ -178,6 +187,10 @@ function createManagedPluginView(input: {
   readonly events?: readonly ManagedPluginEvent[];
   readonly store: ManagedPluginCatalogStore;
   readonly now: string;
+  readonly cuaDriverFeatureFlags?: {
+    readonly bundledEmbedded: { readonly darwin: boolean; readonly win32: boolean };
+    readonly packagedProvider: { readonly darwin: boolean; readonly win32: boolean };
+  };
 }): ManagedPluginView {
   const blocked = getDescriptorBlocker(input.descriptor);
   const cuaDriverServer = input.descriptor.id === CUA_DRIVER_PLUGIN_ID
@@ -188,6 +201,15 @@ function createManagedPluginView(input: {
         store: input.store,
         now: input.now,
         platform: process.platform,
+        ...(isBundledProjectionEnabled(input.cuaDriverFeatureFlags, process.platform)
+          ? {
+              projection: {
+                schemaVersion: 2 as const,
+                distribution: "bundled_embedded" as const,
+                providerState: "included" as const,
+              },
+            }
+          : {}),
       })
     : undefined;
   const recordEnabled = input.descriptor.id === CUA_DRIVER_PLUGIN_ID
@@ -290,6 +312,20 @@ function createManagedPluginView(input: {
       canRuntimePreview: input.descriptor.sourceKind === "bundled",
     },
   };
+}
+
+function isBundledProjectionEnabled(
+  flags: {
+    readonly bundledEmbedded: { readonly darwin: boolean; readonly win32: boolean };
+    readonly packagedProvider: { readonly darwin: boolean; readonly win32: boolean };
+  } | undefined,
+  platform: NodeJS.Platform,
+): boolean {
+  return platform === "darwin"
+    ? flags?.bundledEmbedded.darwin === true && flags.packagedProvider.darwin === true
+    : platform === "win32"
+      ? flags?.bundledEmbedded.win32 === true && flags.packagedProvider.win32 === true
+      : false;
 }
 
 function getDescriptorBlocker(descriptor: ManagedPluginDescriptor): string | undefined {

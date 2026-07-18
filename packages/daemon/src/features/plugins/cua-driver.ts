@@ -1,11 +1,16 @@
 import { isAbsolute } from "node:path";
 import type {
+  CuaDriverDistribution,
+  CuaDriverIntegrityCoverage,
+  CuaDriverLimitation,
+  CuaDriverProviderState,
   ManagedPluginDescriptor,
   ManagedPluginSetupView,
   ManagedPluginStoreFacet,
   McpServer,
   McpStoreFacet,
 } from "@ling-stack/core";
+import { legacySetupStateForCuaDriverProviderState } from "@ling-stack/contracts";
 import { HttpError } from "../../errors.js";
 import {
   createCuaDriverMcpServerInput,
@@ -24,8 +29,102 @@ export function buildCuaDriverSetupView(input: {
   readonly store: CuaDriverStore;
   readonly now: string;
   readonly platform?: NodeJS.Platform;
+  readonly projection?: {
+    readonly schemaVersion: 2;
+    readonly distribution: CuaDriverDistribution;
+    readonly providerState?: CuaDriverProviderState;
+    readonly requestedEnabled?: boolean;
+    readonly effectiveEnabled?: boolean;
+    readonly integrityCoverage?: CuaDriverIntegrityCoverage;
+    readonly limitations?: readonly CuaDriverLimitation[];
+    readonly providerVersion?: string;
+    readonly providerDistributionRevision?: string;
+    readonly providerRevision?: string;
+    readonly providerDisplayVersion?: string;
+    readonly expectedProviderVersion?: string;
+    readonly providerSealDigest?: string;
+    readonly providerCatalogDigest?: string;
+    readonly sealDigest?: string;
+    readonly catalogDigest?: string;
+    readonly integrity?: "verified" | "failed" | "unknown";
+    readonly bridge?: "available" | "missing" | "incompatible";
+    readonly externalOverride?: {
+      readonly command: string;
+      readonly explicit: true;
+    };
+  };
 }): ManagedPluginSetupView {
   const platform = input.platform ?? process.platform;
+  if (input.projection?.distribution === "bundled_embedded") {
+    const providerState = !isCuaDriverPlatformSupported(platform)
+      ? "unsupported"
+      : input.projection.providerState ?? "included";
+    return {
+      kind: "local_binary",
+      schemaVersion: 2,
+      distribution: "bundled_embedded",
+      platform: platform === "darwin" || platform === "win32" ? platform : "unsupported",
+      state: legacySetupStateForCuaDriverProviderState(providerState),
+      providerState,
+      checkedAt: input.now,
+      requestedEnabled: input.projection.requestedEnabled ?? false,
+      effectiveEnabled: input.projection.effectiveEnabled ?? providerState === "ready",
+      integrityCoverage: input.projection.integrityCoverage,
+      limitations: input.projection.limitations ?? [],
+      providerVersion: input.projection.providerVersion,
+      providerDistributionRevision: input.projection.providerDistributionRevision,
+      providerRevision: input.projection.providerRevision,
+      providerDisplayVersion: input.projection.providerDisplayVersion,
+      expectedProviderVersion: input.projection.expectedProviderVersion,
+      providerSealDigest: input.projection.providerSealDigest,
+      providerCatalogDigest: input.projection.providerCatalogDigest,
+      sealDigest: input.projection.sealDigest,
+      catalogDigest: input.projection.catalogDigest,
+      integrity: input.projection.integrity,
+      bridge: input.projection.bridge,
+    };
+  }
+
+  const legacy = buildExternalCuaDriverSetupView({
+    store: input.store,
+    now: input.now,
+    platform,
+  });
+  if (!input.projection) {
+    return legacy;
+  }
+  const providerState = externalProviderStateFromLegacy(legacy.state);
+  return {
+    ...legacy,
+    schemaVersion: 2,
+    distribution: "external_local",
+    platform: platform === "darwin" || platform === "win32" ? platform : "unsupported",
+    providerState,
+    requestedEnabled: input.projection.requestedEnabled ?? legacy.state === "ready",
+    effectiveEnabled: input.projection.effectiveEnabled ?? legacy.state === "ready",
+    integrityCoverage: input.projection.integrityCoverage,
+    limitations: input.projection.limitations ?? [],
+    providerVersion: input.projection.providerVersion,
+    providerDistributionRevision: input.projection.providerDistributionRevision,
+    providerRevision: input.projection.providerRevision,
+    providerDisplayVersion: input.projection.providerDisplayVersion,
+    expectedProviderVersion: input.projection.expectedProviderVersion,
+    providerSealDigest: input.projection.providerSealDigest,
+    providerCatalogDigest: input.projection.providerCatalogDigest,
+    sealDigest: input.projection.sealDigest,
+    catalogDigest: input.projection.catalogDigest,
+    integrity: input.projection.integrity,
+    bridge: input.projection.bridge,
+    externalOverride: input.projection.externalOverride,
+  };
+}
+
+function buildExternalCuaDriverSetupView(input: {
+  readonly store: CuaDriverStore;
+  readonly now: string;
+  readonly platform: NodeJS.Platform;
+}): ManagedPluginSetupView {
+  const platform = input.platform;
   if (!isCuaDriverPlatformSupported(platform)) {
     return {
       kind: "local_binary",
@@ -71,6 +170,21 @@ export function buildCuaDriverSetupView(input: {
     checkedAt: input.now,
     detectedCommand: command.command,
   };
+}
+
+function externalProviderStateFromLegacy(state: ManagedPluginSetupView["state"]): CuaDriverProviderState {
+  switch (state) {
+    case "missing":
+      return "external_missing";
+    case "detected":
+      return "external_detected";
+    case "connected":
+      return "external_connected";
+    case "ready":
+      return "ready";
+    case "unsupported":
+      return "unsupported";
+  }
 }
 
 export function connectCuaDriver(input: {
