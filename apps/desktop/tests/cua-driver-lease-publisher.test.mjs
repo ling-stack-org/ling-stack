@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createServer } from "node:http";
 import test from "node:test";
 import {
   CuaDriverLeasePublisher,
@@ -99,6 +100,39 @@ test("HTTP lease client requires loopback and sends bridge token plus workspace-
   );
 });
 
+test("HTTP lease client rejects redirects without forwarding its bridge token or body", async (t) => {
+  let targetRequests = 0;
+  let redirectRequests = 0;
+  let redirectStatus = 307;
+  const target = createServer((_request, response) => {
+    targetRequests += 1;
+    response.writeHead(204).end();
+  });
+  const targetPort = await listen(target);
+  const redirect = createServer((_request, response) => {
+    redirectRequests += 1;
+    response.writeHead(redirectStatus, { location: `http://127.0.0.1:${targetPort}/captured` }).end();
+  });
+  const redirectPort = await listen(redirect);
+  t.after(async () => {
+    await Promise.all([closeServer(redirect), closeServer(target)]);
+  });
+  const client = new HttpCuaDriverLeaseClient({
+    daemonBaseUrl: `http://127.0.0.1:${redirectPort}`,
+    bridgeToken: "super-secret-bridge-token",
+  });
+
+  for (const status of [301, 302, 307, 308]) {
+    redirectStatus = status;
+    await assert.rejects(
+      client.publish({ ...leaseTemplate(), expiresAt: "2026-07-18T00:01:00.000Z" }),
+      /lease_daemon_unavailable/,
+    );
+  }
+  assert.equal(redirectRequests, 4);
+  assert.equal(targetRequests, 0);
+});
+
 function leaseTemplate() {
   return {
     schemaVersion: 1,
@@ -118,4 +152,16 @@ function leaseTemplate() {
     platform: "darwin",
     architecture: "arm64",
   };
+}
+
+async function listen(server) {
+  await new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", resolve);
+  });
+  return server.address().port;
+}
+
+async function closeServer(server) {
+  await new Promise((resolve) => server.close(resolve));
 }

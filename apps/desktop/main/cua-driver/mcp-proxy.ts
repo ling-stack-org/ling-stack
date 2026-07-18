@@ -1,6 +1,6 @@
 import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
-import type { AddressInfo } from "node:net";
+import type { AddressInfo, Socket } from "node:net";
 import type {
   CuaDriverProviderHost,
   JsonRpcClientMessage,
@@ -92,6 +92,7 @@ export class CuaDriverMcpProxy {
   private readonly maxBodyBytes: number;
   private readonly server: Server;
   private readonly token: string;
+  private readonly sockets = new Set<Socket>();
   private endpointValue: CuaDriverMcpProxyEndpoint | undefined;
   private startPromise: Promise<CuaDriverMcpProxyEndpoint> | undefined;
   private closePromise: Promise<void> | undefined;
@@ -108,6 +109,10 @@ export class CuaDriverMcpProxy {
     this.token = deriveCuaDriverProxyToken(options.context);
     this.server = createServer((request, response) => {
       void this.handle(request, response);
+    });
+    this.server.on("connection", (socket) => {
+      this.sockets.add(socket);
+      socket.once("close", () => this.sockets.delete(socket));
     });
     this.removeHostListener = options.host.onServerMessage((message) => this.handleHostMessage(message));
   }
@@ -148,6 +153,11 @@ export class CuaDriverMcpProxy {
         rejectEndpoint(new CuaDriverMcpProxyError("proxy_bind_failed", error.message));
       };
       const onListening = (): void => {
+        this.server.off("error", onError);
+        if (this.closed) {
+          rejectEndpoint(new CuaDriverMcpProxyError("proxy_closed"));
+          return;
+        }
         const address = this.server.address();
         if (!address || typeof address === "string") {
           rejectEndpoint(new CuaDriverMcpProxyError("proxy_bind_failed"));
@@ -160,7 +170,6 @@ export class CuaDriverMcpProxy {
           generation: this.options.context.generation,
         };
         this.endpointValue = endpoint;
-        this.server.off("error", onError);
         this.telemetry.emit("info", "cua_driver.proxy.bound", { port: address.port, generation: endpoint.generation });
         resolveEndpoint(endpoint);
       };
@@ -224,10 +233,17 @@ export class CuaDriverMcpProxy {
         this.writeJson(response, 405, { error: "proxy_method_not_allowed" }, { allow: "GET, POST, DELETE" });
       }
     } catch (error) {
-      if (!response.headersSent) {
-        const status = error instanceof CuaDriverProviderHostError && error.code === "request_timeout" ? 504 : 400;
-        this.writeJson(response, status, { error: error instanceof Error ? error.message : "proxy_request_failed" });
-      } else {
+      if (response.destroyed) {
+        return;
+      }
+      try {
+        if (!response.headersSent) {
+          const status = error instanceof CuaDriverProviderHostError && error.code === "request_timeout" ? 504 : 400;
+          this.writeJson(response, status, { error: error instanceof Error ? error.message : "proxy_request_failed" });
+        } else {
+          response.destroy();
+        }
+      } catch {
         response.destroy();
       }
     }
@@ -436,13 +452,37 @@ export class CuaDriverMcpProxy {
     this.invalidateSession(reason);
     this.removeHostListener?.();
     this.removeHostListener = undefined;
-    if (this.endpointValue) {
-      await new Promise<void>((resolveClose) => {
+    await this.startPromise?.catch(() => undefined);
+    const hostStop = this.options.host.stop(reason).then(
+      () => ({ ok: true as const }),
+      (error: unknown) => ({ ok: false as const, error }),
+    );
+    if (this.server.listening) {
+      const serverClosed = new Promise<void>((resolveClose) => {
         this.server.close(() => resolveClose());
-      }).catch(() => undefined);
+      });
+      this.server.closeIdleConnections?.();
+      const drainTimeoutMs = Math.min(
+        boundedPositive(this.options.requestTimeoutMs, 20_000, 120_000),
+        1_000,
+      );
+      const drained = await Promise.race([
+        serverClosed.then(() => true),
+        waitForTimeout(drainTimeoutMs).then(() => false),
+      ]);
+      if (!drained) {
+        for (const socket of this.sockets) {
+          socket.destroy(new CuaDriverMcpProxyError("proxy_closed"));
+        }
+        this.server.closeAllConnections?.();
+        await serverClosed;
+      }
     }
     this.endpointValue = undefined;
-    await this.options.host.stop(reason);
+    const hostStopResult = await hostStop;
+    if (!hostStopResult.ok) {
+      throw hostStopResult.error;
+    }
     this.telemetry.emit("info", "cua_driver.proxy.closed", { generation: this.options.context.generation, reason });
   }
 }
@@ -465,6 +505,7 @@ async function readRequestBody(request: IncomingMessage, maxBytes: number, timeo
   const chunks: Buffer[] = [];
   let total = 0;
   let timeout: NodeJS.Timeout | undefined;
+  let cleanup = (): void => undefined;
   try {
     const body = new Promise<Buffer>((resolveBody, rejectBody) => {
       const onData = (chunk: Buffer | string): void => {
@@ -479,12 +520,24 @@ async function readRequestBody(request: IncomingMessage, maxBytes: number, timeo
       };
       const onEnd = (): void => resolveBody(Buffer.concat(chunks));
       const onError = (error: Error): void => rejectBody(error);
+      const onAborted = (): void => rejectBody(new CuaDriverMcpProxyError("mcp_request_aborted"));
       request.on("data", onData);
       request.once("end", onEnd);
       request.once("error", onError);
+      request.once("aborted", onAborted);
+      cleanup = () => {
+        request.off("data", onData);
+        request.off("end", onEnd);
+        request.off("error", onError);
+        request.off("aborted", onAborted);
+      };
     });
     const deadline = new Promise<Buffer>((_, rejectDeadline) => {
-      timeout = setTimeout(() => rejectDeadline(new CuaDriverMcpProxyError("mcp_request_timeout")), timeoutMs);
+      timeout = setTimeout(() => {
+        const error = new CuaDriverMcpProxyError("mcp_request_timeout");
+        request.destroy(error);
+        rejectDeadline(error);
+      }, timeoutMs);
       timeout.unref?.();
     });
     return await Promise.race([body, deadline]);
@@ -492,7 +545,15 @@ async function readRequestBody(request: IncomingMessage, maxBytes: number, timeo
     if (timeout) {
       clearTimeout(timeout);
     }
+    cleanup();
   }
+}
+
+async function waitForTimeout(milliseconds: number): Promise<void> {
+  await new Promise<void>((resolveWait) => {
+    const timeout = setTimeout(resolveWait, milliseconds);
+    timeout.unref?.();
+  });
 }
 
 function boundedPositive(value: number | undefined, fallback: number, max: number): number {

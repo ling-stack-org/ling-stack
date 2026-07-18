@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { request as httpRequest } from "node:http";
 import test from "node:test";
 import {
   CuaDriverMcpProxy,
@@ -120,6 +121,50 @@ test("proxy does not expose endpoint secret through the lease identity and token
   });
 });
 
+test("close during bind rejects the pending start and leaves no listening proxy", async () => {
+  const fixture = createHostFixture();
+  const proxy = new CuaDriverMcpProxy({ host: fixture.host, context: createContext() });
+
+  const starting = proxy.start();
+  const closing = proxy.close("close_before_listening");
+
+  await assert.rejects(starting, (error) => error?.code === "proxy_closed");
+  await closing;
+  assert.equal(proxy.endpoint, undefined);
+  assert.equal(proxy.server.listening, false);
+  assert.equal(fixture.stopCount, 1);
+});
+
+test("close bounds a slow authenticated POST and stops the provider", async () => {
+  const fixture = createHostFixture();
+  const context = createContext();
+  const proxy = new CuaDriverMcpProxy({ host: fixture.host, context, requestTimeoutMs: 50 });
+  const endpoint = await proxy.start();
+  const request = httpRequest(endpoint.url, {
+    method: "POST",
+    headers: {
+      ...headers(context, endpoint.authorizationToken),
+      "content-length": "64",
+    },
+  });
+  const requestClosed = new Promise((resolve) => request.once("close", resolve));
+  request.on("error", () => undefined);
+  request.write("{");
+  await waitFor(() => proxy.sockets.size === 1);
+
+  await Promise.race([
+    proxy.close("slow_post_shutdown"),
+    new Promise((_, reject) => setTimeout(() => reject(new Error("proxy_close_unbounded")), 500)),
+  ]);
+  await requestClosed;
+  await waitFor(() => proxy.sockets.size === 0);
+
+  assert.equal(request.destroyed, true);
+  assert.equal(proxy.server.listening, false);
+  assert.equal(proxy.sockets.size, 0);
+  assert.equal(fixture.stopCount, 1);
+});
+
 test("proxy accepts one SSE stream and forwards server notifications without rewriting JSON-RPC", async () => {
   const fixture = createHostFixture();
   const context = createContext();
@@ -234,4 +279,14 @@ function createHostFixture() {
       return initialized;
     },
   };
+}
+
+async function waitFor(predicate) {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    if (predicate()) {
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 2));
+  }
+  throw new Error("condition_not_reached");
 }

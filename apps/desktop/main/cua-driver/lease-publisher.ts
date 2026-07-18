@@ -77,6 +77,7 @@ export class HttpCuaDriverLeaseClient implements CuaDriverLeaseClient {
           [CUA_DRIVER_BRIDGE_TOKEN_HEADER]: this.options.bridgeToken,
         },
         body: JSON.stringify(body),
+        redirect: "error",
         signal: combinedSignal,
       });
     } catch {

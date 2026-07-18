@@ -40,6 +40,12 @@ export interface CreateCuaDriverStateRootInput {
   readonly platformProtector?: CuaDriverStateRootPlatformProtector;
 }
 
+export interface ReverifyCuaDriverStateRootInput {
+  readonly stateRoot: CuaDriverStateRoot;
+  readonly platform: BundledCuaDriverPlatform;
+  readonly platformProtector?: CuaDriverStateRootPlatformProtector;
+}
+
 /**
  * Create the version-isolated driver state without changing HOME/USERPROFILE.
  * Every existing path component is lstat-checked before it is followed.
@@ -100,6 +106,57 @@ export async function createCuaDriverStateRoot(
       CUA_DRIVER_TELEMETRY_HOME: telemetryPath,
     }),
   };
+}
+
+/** Re-check the exact state tree immediately before a lazy provider spawn. */
+export async function reverifyCuaDriverStateRoot(
+  input: ReverifyCuaDriverStateRootInput,
+): Promise<void> {
+  const { stateRoot } = input;
+  if (!isAbsolute(stateRoot.userDataPath)) {
+    throw new CuaDriverStateRootError("user_data_path_must_be_absolute", stateRoot.userDataPath);
+  }
+  const userDataPath = resolve(stateRoot.userDataPath);
+  const expectedRootPath = resolveCuaDriverStateRootPath(userDataPath);
+  const expectedTelemetryPath = join(expectedRootPath, "telemetry");
+  const expectedVersionCheckPath = join(expectedRootPath, "version-check");
+  if (
+    resolve(stateRoot.rootPath) !== expectedRootPath
+    || resolve(stateRoot.telemetryPath) !== expectedTelemetryPath
+    || resolve(stateRoot.versionCheckPath) !== expectedVersionCheckPath
+    || stateRoot.environment.CUA_DRIVER_STATE_HOME !== expectedRootPath
+    || stateRoot.environment.CUA_DRIVER_TELEMETRY_HOME !== expectedTelemetryPath
+  ) {
+    throw new CuaDriverStateRootError("state_root_contract_changed", stateRoot.rootPath);
+  }
+  const stateAncestors = [
+    userDataPath,
+    join(userDataPath, "providers"),
+    join(userDataPath, "providers", "cua-driver"),
+    join(userDataPath, "providers", "cua-driver", "state"),
+    join(userDataPath, "providers", "cua-driver", "state", `v${CUA_DRIVER_STATE_SCHEMA_VERSION}`),
+    expectedRootPath,
+    expectedTelemetryPath,
+    expectedVersionCheckPath,
+  ];
+  for (const path of stateAncestors) {
+    await assertDirectoryNotLink(path, "state_path");
+  }
+  const userDataReal = await safeRealpath(userDataPath, "user_data_root");
+  const rootReal = await safeRealpath(expectedRootPath, "state_root");
+  const telemetryReal = await safeRealpath(expectedTelemetryPath, "state_telemetry");
+  const versionCheckReal = await safeRealpath(expectedVersionCheckPath, "state_version_check");
+  assertInsideCanonical(rootReal, userDataReal, "state_root");
+  assertInsideCanonical(telemetryReal, rootReal, "state_telemetry");
+  assertInsideCanonical(versionCheckReal, rootReal, "state_version_check");
+  if (input.platform === "win32") {
+    if (!input.platformProtector) {
+      throw new CuaDriverStateRootError("windows_state_root_protector_required", expectedRootPath);
+    }
+    await input.platformProtector.protect({ userDataPath, stateRootPath: expectedRootPath, createdPaths: [] });
+  } else {
+    await Promise.all([expectedRootPath, expectedTelemetryPath, expectedVersionCheckPath].map((path) => chmod(path, 0o700)));
+  }
 }
 
 export function resolveCuaDriverStateRootPath(userDataPath: string): string {

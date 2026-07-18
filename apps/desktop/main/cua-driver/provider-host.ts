@@ -82,6 +82,17 @@ export class CuaDriverProviderHostError extends Error {
   }
 }
 
+export type CuaDriverProviderPreSpawnFailureKind = "artifact_invalid" | "platform_unavailable";
+
+export class CuaDriverProviderPreSpawnError extends Error {
+  readonly code = "cua_driver_pre_spawn_failed" as const;
+
+  constructor(readonly failureKind: CuaDriverProviderPreSpawnFailureKind) {
+    super(`pre_spawn_${failureKind}`);
+    this.name = "CuaDriverProviderPreSpawnError";
+  }
+}
+
 export interface CuaDriverProviderProcessLifecycle {
   /** Windows adapter must retain a Job Object handle with KILL_ON_JOB_CLOSE. */
   readonly lifetimeBoundary: "darwin-direct-child" | "windows-job-object" | "test-fixture";
@@ -114,6 +125,7 @@ export interface CuaDriverProviderHostOptions {
     readonly generation: number;
     readonly reason: string;
     readonly unexpected: boolean;
+    readonly preSpawnFailureKind?: CuaDriverProviderPreSpawnFailureKind;
   }) => void;
 }
 
@@ -293,6 +305,12 @@ export class CuaDriverProviderHost {
         generation: this.generation,
         error: error instanceof Error ? error.message : String(error),
       });
+      this.notifyTerminal(
+        "pre_spawn_validation_failed",
+        true,
+        undefined,
+        error instanceof CuaDriverProviderPreSpawnError ? error.failureKind : "platform_unavailable",
+      );
       throw new CuaDriverProviderHostError("pre_spawn_validation_failed");
     }
     const environment = createManagedProviderEnvironment({
@@ -314,12 +332,32 @@ export class CuaDriverProviderHost {
       this.stateValue = "failed";
       this.terminal = true;
       this.telemetry.emit("error", "cua_driver.host.spawn_failed", { generation: this.generation, error: String(error) });
+      this.notifyTerminal("spawn_failed", true);
       throw new CuaDriverProviderHostError("spawn_failed");
     }
     if (!child.stdin || !child.stdout || !child.stderr) {
-      await this.lifecycle.terminate(child).catch(() => undefined);
-      this.stateValue = "failed";
-      this.terminal = true;
+      this.child = child;
+      this.exitPromise = new Promise<void>((resolveExit) => {
+        this.resolveExit = resolveExit;
+        child.once("exit", () => {
+          if (this.child === child) {
+            this.resolveExit?.();
+            this.resolveExit = undefined;
+          }
+        });
+      });
+      let cleanupError: unknown;
+      try {
+        await this.stopInternal("provider_stdio_unavailable", true);
+      } catch (error) {
+        cleanupError = error;
+        this.stateValue = "failed";
+        this.terminal = true;
+      }
+      this.notifyTerminal("provider_stdio_unavailable", true, child.pid);
+      if (cleanupError) {
+        throw new CuaDriverProviderHostError("spawn_failed", "provider_stdio_cleanup_failed");
+      }
       throw new CuaDriverProviderHostError("spawn_failed", "provider_stdio_unavailable");
     }
     this.child = child;
@@ -482,16 +520,7 @@ export class CuaDriverProviderHost {
       this.resolveExit?.();
       this.resolveExit = undefined;
     }
-    this.telemetry.emit(unexpected ? "error" : "info", "cua_driver.host.terminal", {
-      generation: this.generation,
-      pid: child.pid ?? null,
-      reason,
-    });
-    try {
-      this.options.onTerminal?.({ generation: this.generation, reason, unexpected });
-    } catch {
-      // Lifecycle cleanup remains authoritative.
-    }
+    this.notifyTerminal(reason, unexpected, child.pid);
     if (!this.stopPromise) {
       const pending = this.stopInternal(reason, unexpected);
       this.stopPromise = pending;
@@ -569,6 +598,29 @@ export class CuaDriverProviderHost {
     }
     this.pending.clear();
     this.serverRequestIds.clear();
+  }
+
+  private notifyTerminal(
+    reason: string,
+    unexpected: boolean,
+    pid?: number,
+    preSpawnFailureKind?: CuaDriverProviderPreSpawnFailureKind,
+  ): void {
+    this.telemetry.emit(unexpected ? "error" : "info", "cua_driver.host.terminal", {
+      generation: this.generation,
+      pid: pid ?? null,
+      reason,
+    });
+    try {
+      this.options.onTerminal?.({
+        generation: this.generation,
+        reason,
+        unexpected,
+        ...(preSpawnFailureKind ? { preSpawnFailureKind } : {}),
+      });
+    } catch {
+      // Lifecycle cleanup remains authoritative.
+    }
   }
 }
 

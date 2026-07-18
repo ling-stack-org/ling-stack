@@ -97,8 +97,15 @@ export class GenerationFencedCuaDriverReadiness implements CuaDriverReadinessCon
   async check(context: CuaDriverReadinessContext): Promise<CuaDriverReadinessResult> {
     this.bind(context);
     const result = await this.delegate.check(context);
-    if (!this.matchesResult(result)) {
+    if (!this.isCurrentContext(context)) {
+      return this.notReady(context, "readiness_check_superseded");
+    }
+    if (this.invalidated) {
+      return this.notReady(context, "readiness_context_invalidated");
+    }
+    if (result.generation !== context.generation || result.childInstanceNonce !== context.childInstanceNonce) {
       this.invalidated = true;
+      this.delegate.invalidate(context.generation, "readiness_context_mismatch");
       return this.notReady(context, "readiness_context_mismatch");
     }
     if (result.readinessSequence !== undefined && positive(result.readinessSequence)) {
@@ -140,13 +147,12 @@ export class GenerationFencedCuaDriverReadiness implements CuaDriverReadinessCon
   }
 
   private matchesContext(context: CuaDriverReadinessContext): boolean {
-    return this.current?.generation === context.generation && this.current.childInstanceNonce === context.childInstanceNonce && !this.invalidated;
+    return this.isCurrentContext(context) && !this.invalidated;
   }
 
-  private matchesResult(result: CuaDriverReadinessResult): boolean {
-    return this.current?.generation === result.generation
-      && this.current.childInstanceNonce === result.childInstanceNonce
-      && !this.invalidated;
+  private isCurrentContext(context: Pick<CuaDriverReadinessContext, "generation" | "childInstanceNonce">): boolean {
+    return this.current?.generation === context.generation
+      && this.current.childInstanceNonce === context.childInstanceNonce;
   }
 
   private notReady(context: CuaDriverReadinessContext, reason: string): CuaDriverReadinessResult {
@@ -164,13 +170,15 @@ function mapWindowsReadinessResult(
   context: CuaDriverReadinessContext,
   message: WindowsManagedReadinessV1 | WindowsManagedReadinessChangedV1,
 ): CuaDriverReadinessResult {
-  const ready = message.inputDesktop === "default_unlocked"
+  const interactiveSessionUnavailable = message.inputDesktop !== "default_unlocked"
+    || message.hostSessionId === 0
+    || message.providerSessionId === 0
+    || message.providerSessionId !== message.hostSessionId;
+  const ready = !interactiveSessionUnavailable
     && context.hostProcessId !== undefined
     && message.hostProcessId === context.hostProcessId
     && context.providerProcessId !== undefined
     && message.providerProcessId === context.providerProcessId
-    && message.hostSessionId > 0
-    && message.providerSessionId === message.hostSessionId
     && message.hostIntegrityLevel === "medium"
     && message.providerIntegrityLevel === "medium"
     && message.jobObjectAssigned
@@ -183,8 +191,14 @@ function mapWindowsReadinessResult(
     childInstanceNonce: context.childInstanceNonce,
     readinessSequence: message.readinessSequence,
     ready,
-    providerState: ready ? "ready" : message.inputDesktop !== "default_unlocked" ? "interactive_session_required" : "platform_unavailable",
-    reason: ready ? undefined : ("reason" in message ? message.reason : "windows_managed_readiness_not_ready"),
+    providerState: ready ? "ready" : interactiveSessionUnavailable ? "interactive_session_required" : "platform_unavailable",
+    reason: ready
+      ? undefined
+      : ("reason" in message
+          ? message.reason
+          : interactiveSessionUnavailable
+            ? "windows_interactive_session_required"
+            : "windows_managed_readiness_not_ready"),
     integrityCoverage: "standard",
     limitations: ["elevated_pixel_input", "uwp_send_input"],
   };
@@ -209,8 +223,8 @@ function isWindowsReadinessChanged(value: unknown): value is WindowsManagedReadi
     || !positive(value.readinessSequence)
     || !positive(value.hostProcessId)
     || !positive(value.providerProcessId)
-    || !positive(value.hostSessionId)
-    || !positive(value.providerSessionId)
+    || !nonNegative(value.hostSessionId)
+    || !nonNegative(value.providerSessionId)
     || !isProcessIntegrity(value.hostIntegrityLevel)
     || !isProcessIntegrity(value.providerIntegrityLevel)
     || !isInputDesktop(value.inputDesktop)
@@ -250,8 +264,8 @@ function isWindowsManagedReadiness(value: unknown): value is WindowsManagedReadi
     || !positive(value.readinessSequence)
     || !positive(value.hostProcessId)
     || !positive(value.providerProcessId)
-    || !positive(value.hostSessionId)
-    || !positive(value.providerSessionId)
+    || !nonNegative(value.hostSessionId)
+    || !nonNegative(value.providerSessionId)
     || !isProcessIntegrity(value.hostIntegrityLevel)
     || !isProcessIntegrity(value.providerIntegrityLevel)
     || !isInputDesktop(value.inputDesktop)
@@ -277,6 +291,10 @@ function isWindowsManagedReadiness(value: unknown): value is WindowsManagedReadi
 
 function positive(value: unknown): value is number {
   return typeof value === "number" && Number.isSafeInteger(value) && value > 0;
+}
+
+function nonNegative(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
 }
 
 function isProcessIntegrity(value: unknown): value is "medium" | "high" | "system" | "unknown" {

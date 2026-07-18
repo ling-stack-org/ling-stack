@@ -3,6 +3,7 @@ import { spawn } from "node:child_process";
 import test from "node:test";
 import {
   CuaDriverProviderHost,
+  CuaDriverProviderPreSpawnError,
   createManagedProviderEnvironment,
 } from "../dist/main/cua-driver/provider-host.js";
 
@@ -144,15 +145,45 @@ test("Windows provider host refuses a lifecycle without retained Job Object owne
 
 test("lazy start revalidates the sealed artifact immediately before spawn", async (t) => {
   let checks = 0;
+  let terminal;
   const fixture = createHostFixture(t, {
     async preSpawn() {
       checks += 1;
-      throw new Error("artifact_changed");
+      throw new CuaDriverProviderPreSpawnError("artifact_invalid");
+    },
+    onTerminal(value) {
+      terminal = value;
     },
   });
   await assert.rejects(fixture.host.exchange(initializeMessage(1)), /pre_spawn_validation_failed/);
   assert.equal(checks, 1);
   assert.equal(fixture.spawnInputs.length, 0);
+  assert.deepEqual(terminal, {
+    generation: 3,
+    reason: "pre_spawn_validation_failed",
+    unexpected: true,
+    preSpawnFailureKind: "artifact_invalid",
+  });
+});
+
+test("pre-spawn platform unavailability is preserved without exposing error details", async (t) => {
+  let terminal;
+  const fixture = createHostFixture(t, {
+    async preSpawn() {
+      throw new CuaDriverProviderPreSpawnError("platform_unavailable");
+    },
+    onTerminal(value) {
+      terminal = value;
+    },
+  });
+  await assert.rejects(fixture.host.exchange(initializeMessage(1)), /pre_spawn_validation_failed/);
+  assert.equal(fixture.spawnInputs.length, 0);
+  assert.deepEqual(terminal, {
+    generation: 3,
+    reason: "pre_spawn_validation_failed",
+    unexpected: true,
+    preSpawnFailureKind: "platform_unavailable",
+  });
 });
 
 test("stop deadline fails closed when retained-handle termination cannot end the child", async () => {
@@ -191,6 +222,50 @@ test("stop deadline fails closed when retained-handle termination cannot end the
     : new Promise((resolve) => child.once("exit", resolve))));
   await host.stop("late_exit_cleanup");
   assert.equal(host.state, "failed");
+});
+
+test("missing stdio retains a nonterminating child until residue cleanup succeeds", async () => {
+  let child;
+  let residueChecks = 0;
+  const host = new CuaDriverProviderHost({
+    executablePath: "/windows/Ling Stack/resources/cua-driver.exe",
+    stateRoot,
+    generation: 1,
+    platform: "win32",
+    shutdownTimeoutMs: 25,
+    lifecycle: {
+      lifetimeBoundary: "test-fixture",
+      spawn(input) {
+        child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], {
+          stdio: "ignore",
+          env: input.environment,
+        });
+        return child;
+      },
+      async terminate() {
+        // Simulate a retained Job Object handle that failed to terminate.
+      },
+      async assertNoResidue() {
+        residueChecks += 1;
+      },
+    },
+  });
+
+  try {
+    await assert.rejects(host.start(), /provider_stdio_cleanup_failed/);
+    assert.equal(child.exitCode, null);
+    assert.equal(child.signalCode, null);
+    assert.equal(residueChecks, 0);
+    await assert.rejects(host.stop("retry_before_exit"), /provider_child_did_not_exit/);
+  } finally {
+    child?.kill("SIGKILL");
+  }
+  if (child && child.exitCode === null && child.signalCode === null) {
+    await new Promise((resolve) => child.once("exit", resolve));
+  }
+  await host.stop("late_partial_cleanup");
+  assert.equal(residueChecks, 1);
+  assert.equal(host.state, "stopped");
 });
 
 function createHostFixture(t, overrides = {}) {

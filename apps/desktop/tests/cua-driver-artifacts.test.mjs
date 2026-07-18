@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { chmod, lstat, mkdir, mkdtemp, readFile, symlink, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, mkdtemp, readFile, rename, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -18,6 +18,7 @@ import {
 } from "../dist/main/cua-driver/resource-path.js";
 import {
   createCuaDriverStateRoot,
+  reverifyCuaDriverStateRoot,
   resolveCuaDriverStateRootPath,
 } from "../dist/main/cua-driver/state-root.js";
 
@@ -164,6 +165,45 @@ test("Windows state root requires the native ACL/reparse protector", async (t) =
     },
   });
   assert.equal(protectedRoot, state.rootPath);
+});
+
+test("lazy-spawn state reverify rejects a root swapped to a symlink", async (t) => {
+  const temp = await mkdtemp(join(tmpdir(), "ling-cua-state-swap-"));
+  t.after(async () => {
+    const { rm } = await import("node:fs/promises");
+    await rm(temp, { recursive: true, force: true });
+  });
+  const userData = join(temp, "user-data");
+  const outside = join(temp, "outside");
+  await mkdir(userData);
+  await mkdir(outside);
+  const state = await createCuaDriverStateRoot({ userDataPath: userData, platform: "darwin" });
+  await rename(state.rootPath, `${state.rootPath}.original`);
+  await symlink(outside, state.rootPath);
+
+  await assert.rejects(
+    reverifyCuaDriverStateRoot({ stateRoot: state, platform: "darwin" }),
+    /state_path_symlink_forbidden/,
+  );
+});
+
+test("Windows lazy-spawn reverify reruns the ACL and reparse protector", async (t) => {
+  const temp = await mkdtemp(join(tmpdir(), "ling-cua-state-win-reverify-"));
+  t.after(async () => {
+    const { rm } = await import("node:fs/promises");
+    await rm(temp, { recursive: true, force: true });
+  });
+  const userData = join(temp, "user-data");
+  await mkdir(userData);
+  let protectorCalls = 0;
+  const platformProtector = {
+    async protect() {
+      protectorCalls += 1;
+    },
+  };
+  const state = await createCuaDriverStateRoot({ userDataPath: userData, platform: "win32", platformProtector });
+  await reverifyCuaDriverStateRoot({ stateRoot: state, platform: "win32", platformProtector });
+  assert.equal(protectorCalls, 2);
 });
 
 async function createDarwinArtifactFixture(t) {

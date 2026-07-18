@@ -38,6 +38,17 @@ export interface CuaDriverPlatformIdentityVerifier {
   verify(input: CuaDriverPlatformIdentityVerificationInput): Promise<void>;
 }
 
+export type CuaDriverPlatformIdentityFailureKind = "invalid" | "unavailable";
+
+export class CuaDriverPlatformIdentityVerificationError extends Error {
+  readonly code = "cua_driver_platform_identity_verification_failed" as const;
+
+  constructor(readonly failureKind: CuaDriverPlatformIdentityFailureKind) {
+    super(`platform_identity_${failureKind}`);
+    this.name = "CuaDriverPlatformIdentityVerificationError";
+  }
+}
+
 export interface VerifiedCuaDriverArtifacts extends CuaDriverPlatformIdentityVerificationInput {
   readonly executablePath: string;
   readonly signingTier?: WindowsBundledProviderSealV2["signingTier"];
