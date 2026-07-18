@@ -37,8 +37,8 @@ SHA-256      6acdc84b98629fcd0be2368cc16565c18d5f21d9dedd4e10fdb6f58547fce9d0
 ```
 
 该上游 release 当前为 `prerelease=true`，审阅的两个 Windows provider executable 均无
-PE certificate table。它只能进入内部/beta 验收，公开发布风险和签名责任必须按 Windows
-发布决策记录显式关闭。
+PE certificate table。它只能进入 `internal` channel 验收，公开发布风险和签名责任必须按
+Windows 发布决策记录显式关闭。
 
 ## 每次提交的本地基线
 

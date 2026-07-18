@@ -519,13 +519,15 @@ Desktop plus its reviewed provider.
 - `Ling Stack Setup.exe` is the only Windows installer and the installed Electron process
   spawns the exact private versioned provider path; no second product, PATH entry, service,
   independent updater/uninstaller or runner-temp provider satisfies this criterion.
-- Windows x64 standard packages contain the locked source-built `cua-driver.exe`, signed
-  resource catalog, license/notices, and no runtime downloader, public installer, or
-  UIAccess helper. CI retains the UIAccess build only as audit evidence.
+- Windows x64 standard packages contain the locked source-built `cua-driver.exe`,
+  license/notices, and no runtime downloader, public installer, or UIAccess helper. Signed
+  internal/production tiers also contain the signed resource catalog; the explicit
+  `unsigned_dev + development` package omits it. CI retains the UIAccess build only as
+  audit evidence.
 - Windows activation rejects Session 0, a non-interactive/locked input desktop, wrong
-  active-child PID/nonce/session/integrity, invalid PE/signature/seal/catalog, missing
-  Job Object lifetime isolation, or failed no-content UIA-runtime/WGC-D3D capability
-  probes.
+  active-child PID/nonce/session/integrity, invalid PE/seal or applicable
+  signature/catalog, missing Job Object lifetime isolation, or failed no-content
+  UIA-runtime/WGC-D3D capability probes.
 - A ready Windows generation becomes unavailable immediately on lock, disconnect,
   fast-user-switch or input-desktop change. Unlock never reuses the old child, readiness
   result or lease; only a fresh initialized generation can restore tools.

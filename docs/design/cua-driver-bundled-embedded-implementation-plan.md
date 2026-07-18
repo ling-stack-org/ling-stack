@@ -136,12 +136,15 @@ Files that should carry short inline versions of this diagram during implementat
 - `bundled_embedded`, `standard`/`uiaccess`, and Windows signing tier are independent
   dimensions. The only allowed signing pairs are `unsigned_dev + development`,
   `test_signed_internal + internal`, and `production_signed + production`.
-- Candidate-declared tier is evidence only. Runtime and promotion verifiers derive the
-  lowest effective tier from the governed installer/installed-main-PE/uninstaller/provider/
-  catalog tuple. Internal/production tuples fail on mixed/double signatures,
-  test-root-in-production, an unsigned governed member or an unexpected executable in the
-  private provider payload. Development is valid only when every expected governed PE
-  derives as `unsigned_dev`, the catalog is absent and the compile-time dev gate is active.
+- Candidate-declared tier is evidence only. The runtime verifier derives the installed
+  subset from the Ling main PE, private provider and signed-tier catalog; it cannot promote
+  a candidate or attest to installer/uninstaller bytes. The promotion verifier separately
+  derives the lowest effective tier from the full governed installer/installed-main-PE/
+  uninstaller/provider/catalog tuple. Internal/production tuples fail on mixed/double
+  signatures, test-root-in-production, an unsigned governed member or an unexpected
+  executable in the private provider payload. Development is valid only when every expected
+  governed PE derives as `unsigned_dev`, the catalog is absent and the compile-time dev gate
+  is active.
 - Electron/Chromium vendor DLLs outside the private provider payload retain the existing
   Electron Builder signing policy and appear in a separate normalized path/hash/
   observed-signer inventory. This slice does not silently enable `signDlls`; any new

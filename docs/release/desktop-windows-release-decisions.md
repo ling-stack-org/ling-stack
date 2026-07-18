@@ -100,8 +100,8 @@ tier/channel 交叉组合都 fail closed；development tuple 则必须让所有�
 `prerelease=true`。当前审阅的 `cua-driver.exe` 和 `cua-driver-uia.exe` 都没有 PE
 certificate table，不能声称已通过 Authenticode 或 SmartScreen 信任。
 
-因此 `0.8.3` 只允许进入内部或 beta 验收。Ling 不重签参考资产；bundled target 的签名
-authority 固定为 `ling_approved_repackage`：Ling 从固定 MIT 源码构建
+因此 `0.8.3` 只允许进入 `internal` channel 验收。Ling 不重签参考资产；bundled
+target 的签名 authority 固定为 `ling_approved_repackage`：Ling 从固定 MIT 源码构建
 `0.8.3 (Ling build 1)` 并签名自己的最终 PE，同时把 TryCua tag/archive/hash 仅作为上游
 来源证明，不能把 Ling 测试或生产证书写成 TryCua signer。公开生产发布仍默认
 阻塞，直到稳定上游版本通过同一 source-build/signing/acceptance 矩阵，或负责人对
@@ -172,7 +172,7 @@ candidate manifest、hash 和 SmartScreen/WDAC evidence；不得复用内部候�
 
 ## 待负责人确认
 
-1. **公开发行是否接受当前 prerelease source pin。** 推荐不接受，只用于内部/beta；
+1. **公开发行是否接受当前 prerelease source pin。** 推荐不接受，只用于 `internal` channel；
    packaged PE 是否签名是独立硬门禁，不能豁免。
 2. **Ling 生产 Publisher 法律名称和签名服务。** 需要在 Azure Trusted Signing 与组织
    控制的云 HSM/EV 方案中选择，并配置 CI 身份与审计责任人。该项只阻塞
@@ -204,6 +204,7 @@ signatures。
 
 生产负责人签字前，代码、schema、runner 和 handoff 可以完成并合并。Windows 同事可用
 test-signed Setup 完成真实机器功能验收并给出
-`implemented-internal-test-pass`；此时仍是 `releaseReady=false`。生产输入或证据未闭合时，
-状态为 `implemented-awaiting-production-release-inputs`，不得标记 Windows support
+`promotionStatus="INTERNAL_TEST_PASS"`；此时仍是 `releaseReady=false`。生产输入或证据未闭合时，
+实现生命周期只能记录为“等待 production release inputs”，不得伪装成新的
+`promotionStatus`，也不得标记 Windows support
 release-ready。只有 production candidate 的外部验证输出 `RELEASE_PASS` 才能发布。

@@ -586,7 +586,7 @@ type WindowsBundledProviderSealV2 =
       readonly distributionChannel: "internal";
       readonly productionEligible: false;
       readonly testAuthorityKind: WindowsTestAuthorityKind;
-      readonly main: WindowsSignedPeIdentity;
+      readonly main: WindowsInternalSignedPeIdentity;
       readonly integrityCatalogRelativePath: "provider-integrity.cat";
     })
   | (WindowsBundledProviderSealCommonV2 & {
@@ -640,6 +640,10 @@ interface WindowsSignedPeIdentity {
   readonly certificateSha256: string;
   readonly timestampPolicy: "internal-policy" | "rfc3161-required";
   readonly timestampStatus: "NotRequired" | "Valid";
+}
+
+interface WindowsInternalSignedPeIdentity extends WindowsSignedPeIdentity {
+  readonly timestampPolicy: "internal-policy";
 }
 
 interface WindowsProductionSignedPeIdentity extends WindowsSignedPeIdentity {
@@ -1929,7 +1933,7 @@ stderr, or signature internals. Those details belong in redacted release/support
 - DMG and ZIP contents bind to the same provider identity;
 - notarization, staple, Gatekeeper, and mounted-DMG smoke pass;
 - packaged tests prove a conflicting PATH version is ignored;
-- Windows signed standard packages contain only the expected main PE, exact main manifest
+- Windows signed-tier standard packages contain only the expected main PE, exact main manifest
   and final tier-aware seal inside the two-file payload, plus an outer valid signed catalog
   covering that payload; the covered seal anchors the lock. `unsigned_dev` explicitly
   omits the catalog and cannot pass an internal/production gate. Extra
