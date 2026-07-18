@@ -60,6 +60,7 @@ export * from "./workflow-graph-types.js";
 export * from "./builtin-skill-packs.js";
 export * from "./builtin-extensions.js";
 export * from "./plugin-manager-types.js";
+export * from "./cua-driver-activation-types.js";
 export * from "./automation-types.js";
 export * from "./automation-drafts.js";
 export * from "./automation-templates.js";

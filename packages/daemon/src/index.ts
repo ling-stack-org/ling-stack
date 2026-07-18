@@ -75,6 +75,23 @@ export {
   cuaDriverFeatureFlagsFromConfig,
   resolveCuaDriverDistribution,
 } from "./features/plugins/cua-driver-feature-gates.js";
+export {
+  CuaDriverLeaseRegistry,
+  cuaDriverLeasePoolKey,
+  type CuaDriverLeasePublishResult,
+  type CuaDriverLeaseRegistryOptions,
+} from "./features/plugins/cua-driver-lease.js";
+export {
+  CuaDriverClientPool,
+  type CuaDriverPoolHandle,
+  type CuaDriverPooledClient,
+  type CuaDriverPooledClientFactory,
+} from "./features/plugins/cua-driver-client-pool.js";
+export {
+  captureCuaDriverActivationFence,
+  commitCurrentCuaDriverActivation,
+  isCurrentCuaDriverActivationFence,
+} from "./features/plugins/cua-driver-activation-fence.js";
 
 export interface DaemonServer {
   readonly server: Server;
