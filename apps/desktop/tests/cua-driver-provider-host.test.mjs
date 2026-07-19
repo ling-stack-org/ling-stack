@@ -79,6 +79,42 @@ test("one generation creates one child and permits exactly one initialize", asyn
   assert.equal(fixture.residueChecks, 1);
 });
 
+test("Desktop permission readiness uses one fixed private check_permissions request", async (t) => {
+  const fixture = createHostFixture(t);
+  await assert.rejects(fixture.host.requestCheckPermissions(), /not_initialized/);
+  await fixture.host.exchange(initializeMessage(1));
+
+  const response = await fixture.host.requestCheckPermissions({
+    name: "forged_tool",
+    arguments: { prompt: true },
+  });
+  assert.match(String(response.id), /^ling-control:/);
+  assert.deepEqual(response.result, {
+    name: "check_permissions",
+    arguments: { prompt: false },
+  });
+
+  await assert.rejects(
+    fixture.host.requestControl("tools/call", {
+      name: "forged_tool",
+      arguments: { prompt: true },
+    }),
+    /reserved_namespace/,
+  );
+
+  const daemonRequest = await fixture.host.exchange({
+    jsonrpc: "2.0",
+    id: "daemon-call",
+    method: "tools/call",
+    params: { name: "fixture", arguments: { value: 7 } },
+  });
+  assert.equal(daemonRequest.id, "daemon-call");
+  assert.deepEqual(daemonRequest.result, {
+    name: "fixture",
+    arguments: { value: 7 },
+  });
+});
+
 test("requests before initialize and duplicate ids fail closed", async (t) => {
   const fixture = createHostFixture(t);
   await assert.rejects(

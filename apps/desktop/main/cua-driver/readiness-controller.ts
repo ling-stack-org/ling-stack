@@ -12,6 +12,8 @@ export interface CuaDriverReadinessContext {
   readonly hostProcessId?: number;
   readonly providerProcessId?: number;
   readonly requestControl?: (method: `ling/${string}`, params: JsonRpcParams) => Promise<JsonRpcResponse>;
+  /** Desktop-only fixed `tools/call -> check_permissions` boundary. */
+  readonly requestCheckPermissions?: () => Promise<JsonRpcResponse>;
 }
 
 export interface CuaDriverReadinessResult {
@@ -46,13 +48,15 @@ export interface CuaDriverWindowsSessionRecoveryObserver {
 
 /** Native TCC/WTS/Job Object adapters implement this narrow boundary in PR6/PR7. */
 export class FailClosedCuaDriverReadinessController implements CuaDriverReadinessController {
+  constructor(private readonly reason = "platform_readiness_adapter_not_installed") {}
+
   async check(context: CuaDriverReadinessContext): Promise<CuaDriverReadinessResult> {
     return {
       generation: context.generation,
       childInstanceNonce: context.childInstanceNonce,
       ready: false,
       providerState: "platform_unavailable",
-      reason: "platform_readiness_adapter_not_installed",
+      reason: this.reason,
     };
   }
 

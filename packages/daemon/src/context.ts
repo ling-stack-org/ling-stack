@@ -23,6 +23,7 @@ import type {
   ComputerUseProjectionRegistry,
   ComputerUseProjectionRegistryOptions,
 } from "./features/computer-use/registry.js";
+import type { CuaDriverDesktopBridgeAuthority } from "./features/computer-use/desktop-bridge-authority.js";
 import type { ActiveDirectReplyRegistry } from "./features/teammates/direct-reply-active-registry.js";
 import type { ActiveRunRegistry } from "./runtime/active-runs.js";
 import type { RunStoreFactory } from "./runtime/store-registry.js";
@@ -128,6 +129,7 @@ export interface DaemonContext {
   readonly startupState: StartupStateRegistry;
   readonly startupOptionalWarmups: StartupOptionalWarmupCoordinator;
   readonly computerUsePreviews: ComputerUseProjectionRegistry;
+  readonly cuaDriverDesktopBridgeAuthority: CuaDriverDesktopBridgeAuthority;
   readonly computerUseStop?: DaemonDependencies["computerUseStop"];
   readonly desktopBridgeToken?: string;
   readonly computerUseRouteToken?: string;

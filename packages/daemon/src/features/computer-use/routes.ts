@@ -1,13 +1,15 @@
-import { randomUUID, timingSafeEqual } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { resolve } from "node:path";
 import type {
   ComputerUsePreviewProjection,
+  CuaDriverDesktopBridgeHandshakeResponseV1,
   StopComputerUseRequest,
   StopComputerUseResponse,
 } from "@ling-stack/contracts";
 import {
   COMPUTER_USE_ROUTE_TOKEN_HEADER,
+  CUA_DRIVER_LEASE_V1_CAPABILITY,
   isTerminalComputerUseStatus,
 } from "@ling-stack/contracts";
 import type { DaemonContext } from "../../context.js";
@@ -18,6 +20,10 @@ import { writeJson, writeSse, writeSseHead } from "../../shared/response.js";
 import { listBundledPackageDescriptors } from "../plugins/source-index.js";
 import { resolveManagedCuaDriverProvider } from "./provider-eligibility.js";
 import { validateProviderTargetOwnership } from "./windows-target-validation.js";
+import {
+  configuredTokenMatches,
+  desktopBridgeTokenStatus,
+} from "./desktop-bridge-auth.js";
 
 const STOP_ACK_TIMEOUT_MS = 10_000;
 const PRIVATE_SOURCE_OWNERSHIP_TIMEOUT_MS = 1_500;
@@ -50,7 +56,7 @@ export async function handleComputerUseRoute(
         });
         return true;
       }
-      const tokenStatus = desktopBridgeTokenStatus(request, context);
+      const tokenStatus = desktopBridgeTokenStatus(request, context.desktopBridgeToken);
       if (tokenStatus === "unavailable") {
         writePrivateJson(response, 503, {
           error: "desktop_bridge_unavailable",
@@ -65,16 +71,19 @@ export async function handleComputerUseRoute(
         });
         return true;
       }
-      writePrivateJson(response, 200, {
+      const authority = context.cuaDriverDesktopBridgeAuthority.issueAuthenticatedHandshake();
+      const handshake: CuaDriverDesktopBridgeHandshakeResponseV1 = {
         protocolVersion: 1,
-        capabilities: ["preview-source"],
+        capabilities: ["preview-source", CUA_DRIVER_LEASE_V1_CAPABILITY],
         bridgeTokenAccepted: true,
         routeTokenAccepted: configuredTokenMatches(
           context.computerUseRouteToken,
           request.headers["x-ling-desktop-bridge-token"],
         ),
         defaultWorkspaceCwd: context.config.defaultWorkspaceCwd,
-      });
+        ...authority,
+      };
+      writePrivateJson(response, 200, handshake);
       return true;
     }
 
@@ -220,7 +229,7 @@ async function handlePrivatePreviewSource(
   sessionId: string,
 ): Promise<void> {
   response.removeHeader("Access-Control-Allow-Origin");
-  const tokenStatus = desktopBridgeTokenStatus(request, context);
+  const tokenStatus = desktopBridgeTokenStatus(request, context.desktopBridgeToken);
   if (tokenStatus === "unavailable") {
     writePrivateJson(response, 503, { error: "desktop_bridge_unavailable", message: "The daemon was not started with a Desktop bridge token." });
     return;
@@ -658,25 +667,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function safeTokenEquals(left: string, right: string): boolean {
-  const leftBuffer = Buffer.from(left);
-  const rightBuffer = Buffer.from(right);
-  return leftBuffer.byteLength === rightBuffer.byteLength && timingSafeEqual(leftBuffer, rightBuffer);
-}
-
-function desktopBridgeTokenStatus(
-  request: IncomingMessage,
-  context: DaemonContext,
-): "accepted" | "unavailable" | "forbidden" {
-  const configuredToken = context.desktopBridgeToken;
-  if (!configuredToken) {
-    return "unavailable";
-  }
-  return configuredTokenMatches(configuredToken, request.headers["x-ling-desktop-bridge-token"])
-    ? "accepted"
-    : "forbidden";
-}
-
 function computerUseRouteAuthorization(
   request: IncomingMessage,
   context: DaemonContext,
@@ -698,16 +688,6 @@ function computerUseRouteAuthorization(
   )
     ? "accepted"
     : "forbidden";
-}
-
-function configuredTokenMatches(
-  configuredToken: string | undefined,
-  providedToken: string | readonly string[] | undefined,
-): boolean {
-  return typeof configuredToken === "string" &&
-    configuredToken.length > 0 &&
-    typeof providedToken === "string" &&
-    safeTokenEquals(providedToken, configuredToken);
 }
 
 function writePrivateJson(response: ServerResponse, statusCode: number, body: unknown): void {

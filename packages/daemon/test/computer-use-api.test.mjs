@@ -247,13 +247,15 @@ test("Computer Use HTTP projection and Stop wait for runtime acknowledgement", a
       headers: { "X-Ling-Desktop-Bridge-Token": "desktop-bridge-test-token-0123456789" },
     });
     assert.equal(handshake.status, 200);
-    assert.deepEqual(await handshake.json(), {
-      protocolVersion: 1,
-      capabilities: ["preview-source"],
-      bridgeTokenAccepted: true,
-      routeTokenAccepted: false,
-      defaultWorkspaceCwd: cwd,
-    });
+    const handshakeBody = await handshake.json();
+    assert.equal(handshakeBody.protocolVersion, 1);
+    assert.deepEqual(handshakeBody.capabilities, ["preview-source", "cua-driver-lease-v1"]);
+    assert.equal(handshakeBody.bridgeTokenAccepted, true);
+    assert.equal(handshakeBody.routeTokenAccepted, false);
+    assert.equal(handshakeBody.defaultWorkspaceCwd, cwd);
+    assert.equal(typeof handshakeBody.daemonAuthorityEpoch, "string");
+    assert.equal(typeof handshakeBody.bridgeConnectionId, "string");
+    assert.equal(handshakeBody.desktopInstanceEpoch, 1);
     assert.equal(handshake.headers.get("access-control-allow-origin"), null);
     assert.equal(handshake.headers.get("cache-control"), "no-store");
 
@@ -757,13 +759,15 @@ test("Computer Use desktop bridge handshake proves workspace and scoped route au
       headers: { "X-Ling-Desktop-Bridge-Token": sharedToken },
     });
     assert.equal(response.status, 200);
-    assert.deepEqual(await response.json(), {
-      protocolVersion: 1,
-      capabilities: ["preview-source"],
-      bridgeTokenAccepted: true,
-      routeTokenAccepted: true,
-      defaultWorkspaceCwd: cwd,
-    });
+    const body = await response.json();
+    assert.equal(body.protocolVersion, 1);
+    assert.deepEqual(body.capabilities, ["preview-source", "cua-driver-lease-v1"]);
+    assert.equal(body.bridgeTokenAccepted, true);
+    assert.equal(body.routeTokenAccepted, true);
+    assert.equal(body.defaultWorkspaceCwd, cwd);
+    assert.equal(typeof body.daemonAuthorityEpoch, "string");
+    assert.equal(typeof body.bridgeConnectionId, "string");
+    assert.equal(body.desktopInstanceEpoch, 1);
   } finally {
     await daemon.stop();
     await rm(cwd, { recursive: true, force: true });

@@ -2,7 +2,10 @@ import type {
   DesktopCuaDriverLeaseRevokeV1,
   DesktopCuaDriverLeaseV1,
 } from "@ling-stack/contracts";
-import { isDesktopCuaDriverLeaseV1 } from "@ling-stack/contracts";
+import {
+  CUA_DRIVER_LEASE_MAX_TTL_MS,
+  isDesktopCuaDriverLeaseV1,
+} from "@ling-stack/contracts";
 import type { CuaDriverTelemetrySink } from "./telemetry.js";
 import { createCuaDriverTelemetry } from "./telemetry.js";
 
@@ -114,7 +117,7 @@ export class CuaDriverLeasePublisher {
   private operationEpoch = 0;
 
   constructor(private readonly options: CuaDriverLeasePublisherOptions) {
-    this.ttlMs = boundedPositive(options.ttlMs, 15_000, 120_000);
+    this.ttlMs = boundedPositive(options.ttlMs, 15_000, CUA_DRIVER_LEASE_MAX_TTL_MS);
     this.renewIntervalMs = boundedPositive(options.renewIntervalMs, Math.max(1_000, Math.floor(this.ttlMs / 3)), this.ttlMs - 1);
     if (this.renewIntervalMs >= this.ttlMs) {
       throw new CuaDriverLeasePublisherError("lease_renew_interval_invalid");

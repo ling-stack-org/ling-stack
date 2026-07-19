@@ -174,6 +174,7 @@ import {
   handlePluginSourcesCollection,
   handlePluginsCollection,
 } from "../features/plugins/routes.js";
+import { handleCuaDriverLeaseRoute } from "../features/plugins/cua-driver-lease-routes.js";
 import { handleWorkItemRoute, handleWorkItemsCollection } from "../features/work-items/routes.js";
 import { handleWorkspaceDirectorySelect, handleWorkspaceTerminalCommand, handleWorkspaceTerminalProfile } from "../features/workspace-directory/routes.js";
 import {
@@ -434,6 +435,9 @@ export async function routeRequest(
   const launchMediaJob = (cwd: string, mediaJobId: string): void => {
     dispatchMediaJobExecution({ cwd, storeRegistry, secretResolver, mediaJobId, hooks: mediaJobHooks });
   };
+  if (await handleCuaDriverLeaseRoute(request, response, context)) {
+    return;
+  }
   if (request.method === "GET" && url.pathname === "/health") {
     writeJson(response, 200, {
       ok: true,

@@ -287,6 +287,25 @@ export class CuaDriverProviderHost {
 
   /** Desktop-only control path; daemon messages cannot use this namespace. */
   async requestControl(method: `ling/${string}`, params: JsonRpcParams): Promise<JsonRpcResponse> {
+    if (!method.startsWith("ling/")) {
+      throw new CuaDriverProviderHostError("reserved_namespace");
+    }
+    return this.requestDesktop(method, params);
+  }
+
+  /**
+   * Desktop-only macOS readiness path. It intentionally exposes neither a tool
+   * name nor arguments so ordinary daemon requests cannot be smuggled through
+   * the private control channel.
+   */
+  async requestCheckPermissions(): Promise<JsonRpcResponse> {
+    return this.requestDesktop("tools/call", {
+      name: "check_permissions",
+      arguments: { prompt: false },
+    });
+  }
+
+  private async requestDesktop(method: string, params: JsonRpcParams): Promise<JsonRpcResponse> {
     this.assertReady();
     const id = `ling-control:${randomBytes(16).toString("hex")}`;
     return this.sendRequest({ jsonrpc: "2.0", id, method, params });

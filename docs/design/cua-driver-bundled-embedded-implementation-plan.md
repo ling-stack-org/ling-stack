@@ -2,7 +2,21 @@
 
 ## Status
 
-Planned, not implemented.
+Implementation in progress.
+
+Current merged baseline:
+
+- Slice -1 signing feasibility, Slice 0 contracts/gates and Slice 1 source build are
+  complete;
+- the shared Slice 2 supervisor core and the durable Slice 3 activation/lease primitives
+  are complete;
+- the current foundation slice closes daemon authority/instance/connection lease ingress
+  and freezes the Darwin/Win32 platform-binding boundary;
+- production Desktop composition, native adapters, activation wiring, package staging,
+  product states and evidence/handoff closure remain.
+
+Both macOS and Windows packaged-provider gates remain off. This status records staged
+progress only and does not claim `bundled_embedded` runtime completion.
 
 This plan implements the approved macOS and Windows bundled-provider direction defined in:
 

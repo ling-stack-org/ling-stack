@@ -3,6 +3,8 @@ import type {
   BundledCuaDriverPlatform,
   CuaDriverArchitecture,
   CuaDriverFeatureFlags,
+  CuaDriverIntegrityCoverage,
+  CuaDriverLimitation,
   CuaDriverProviderState,
   DesktopCuaDriverLeaseV1,
 } from "@ling-stack/contracts";
@@ -59,6 +61,13 @@ import {
   type CuaDriverWindowsSessionRecoveryHint,
   type CuaDriverWindowsSessionRecoveryObserver,
 } from "./readiness-controller.js";
+import {
+  assertCuaDriverPlatformBinding,
+  CuaDriverPlatformBindingError,
+  normalizeCuaDriverPlatformBindingMetadata,
+  type CuaDriverPlatformBinding,
+  type CuaDriverPlatformBindingMetadata,
+} from "./platform-binding.js";
 
 export type CuaDriverCoordinatorLifecycle = "disabled" | "validating" | "included" | "starting" | "active" | "stopping" | "failed";
 
@@ -69,6 +78,8 @@ export interface CuaDriverCoordinatorSnapshot {
   readonly endpoint?: CuaDriverMcpProxyPublicEndpoint;
   readonly pid?: number;
   readonly reason?: string;
+  readonly integrityCoverage?: CuaDriverIntegrityCoverage;
+  readonly limitations?: readonly CuaDriverLimitation[];
   readonly artifacts?: {
     readonly lockDigest: string;
     readonly providerSealDigest: string;
@@ -88,6 +99,9 @@ export interface CuaDriverCoordinatorOptions {
   readonly featureFlags?: CuaDriverFeatureFlags;
   readonly packaged?: boolean;
   readonly requireReleaseEvidence?: boolean;
+  /** Preferred production composition boundary for one coherent OS adapter. */
+  readonly platformBinding?: CuaDriverPlatformBinding;
+  /** Fixture-only fine-grained injection; cannot be mixed with platformBinding. */
   readonly platformIdentityVerifier?: CuaDriverPlatformIdentityVerifier;
   readonly stateRootProtector?: CuaDriverStateRootPlatformProtector;
   readonly processLifecycle?: CuaDriverProviderProcessLifecycle;
@@ -108,6 +122,8 @@ type CuaDriverPendingRecoveryAction =
       readonly providerState: Extract<CuaDriverProviderState, "corrupt" | "platform_unavailable">;
     };
 
+const WINDOWS_SESSION_OBSERVER_UNAVAILABLE_REASON = "windows_session_observer_unavailable";
+
 /**
  * Platform-neutral Desktop owner. Native TCC/WTS/Job Object checks are injected
  * by PR6/PR7; this module owns ordering and fencing only.
@@ -116,6 +132,11 @@ export class CuaDriverDesktopCoordinator {
   private readonly telemetry: CuaDriverTelemetrySink;
   private readonly desktopInstanceId: string;
   private readonly featureFlags: CuaDriverFeatureFlags;
+  private readonly platformUnavailableReason: string | undefined;
+  private readonly platformMetadata: CuaDriverPlatformBindingMetadata | undefined;
+  private readonly platformIdentityVerifier: CuaDriverPlatformIdentityVerifier | undefined;
+  private readonly stateRootProtector: CuaDriverStateRootPlatformProtector | undefined;
+  private readonly processLifecycle: CuaDriverProviderProcessLifecycle | undefined;
   private readonly readinessController: CuaDriverReadinessController;
   private snapshotValue: CuaDriverCoordinatorSnapshot = {
     lifecycle: "disabled",
@@ -153,21 +174,73 @@ export class CuaDriverDesktopCoordinator {
     this.telemetry = options.telemetry ?? createCuaDriverTelemetry();
     this.desktopInstanceId = options.desktopInstanceId ?? `desktop-${randomBytes(16).toString("hex")}`;
     this.featureFlags = options.featureFlags ?? resolveDesktopCuaDriverFeatureFlags();
+    const hasFineGrainedPlatformOverride = options.platformIdentityVerifier !== undefined
+      || options.stateRootProtector !== undefined
+      || options.processLifecycle !== undefined
+      || options.readinessController !== undefined
+      || options.windowsSessionRecoveryObserver !== undefined;
+    if (options.platformBinding && hasFineGrainedPlatformOverride) {
+      throw new CuaDriverPlatformBindingError("mixed_dependency_overrides", options.platform);
+    }
+    if (options.platformBinding && options.platformBinding.platform !== options.platform) {
+      throw new CuaDriverPlatformBindingError("platform_mismatch", options.platform);
+    }
+    if (options.platformBinding) {
+      assertCuaDriverPlatformBinding(options.platformBinding, options.platform);
+    }
+    let platformUnavailableReason = options.platformBinding?.availability.status === "unavailable"
+      ? options.platformBinding.availability.reason
+      : undefined;
+    this.platformMetadata = options.platformBinding
+      ? normalizeCuaDriverPlatformBindingMetadata(options.platformBinding.metadata, options.platform)
+      : undefined;
+    if (this.platformMetadata) {
+      this.snapshotValue = {
+        ...this.snapshotValue,
+        ...(this.platformMetadata.integrityCoverage
+          ? { integrityCoverage: this.platformMetadata.integrityCoverage }
+          : {}),
+        limitations: this.platformMetadata.limitations,
+      };
+    }
+    this.platformIdentityVerifier = options.platformBinding?.platformIdentityVerifier ?? options.platformIdentityVerifier;
+    this.stateRootProtector = options.platformBinding?.stateRootProtector ?? options.stateRootProtector;
+    this.processLifecycle = options.platformBinding?.processLifecycle ?? options.processLifecycle;
     const defaultReadiness = options.platform === "win32"
       ? new WindowsActiveChildReadinessController()
       : new FailClosedCuaDriverReadinessController();
-    this.readinessController = new GenerationFencedCuaDriverReadiness(options.readinessController ?? defaultReadiness);
-    if (options.platform === "win32" && options.windowsSessionRecoveryObserver) {
+    this.readinessController = new GenerationFencedCuaDriverReadiness(
+      options.platformBinding?.readinessController ?? options.readinessController ?? defaultReadiness,
+    );
+    const windowsSessionRecoveryObserver = options.platformBinding?.windowsSessionRecoveryObserver
+      ?? options.windowsSessionRecoveryObserver;
+    if (options.platform === "win32"
+      && windowsSessionRecoveryObserver
+      && options.platformBinding?.availability.status !== "unavailable") {
+      let activeHandler: ((hint: CuaDriverWindowsSessionRecoveryHint) => void) | undefined;
       try {
-        this.stopWindowsSessionRecoveryObserver = options.windowsSessionRecoveryObserver.subscribe((hint) => {
-          this.handleWindowsSessionRecoveryHint(hint);
+        const stopObserver = windowsSessionRecoveryObserver.subscribe((hint) => {
+          activeHandler?.(hint);
         });
+        if (typeof stopObserver !== "function") {
+          throw new Error("windows_session_observer_unsubscribe_invalid");
+        }
+        activeHandler = (hint) => {
+          this.handleWindowsSessionRecoveryHint(hint);
+        };
+        this.stopWindowsSessionRecoveryObserver = () => {
+          activeHandler = undefined;
+          stopObserver();
+        };
       } catch (error) {
+        activeHandler = undefined;
+        platformUnavailableReason = WINDOWS_SESSION_OBSERVER_UNAVAILABLE_REASON;
         this.telemetry.emit("error", "cua_driver.coordinator.session_observer_failed", {
           error: error instanceof Error ? error.message : String(error),
         });
       }
     }
+    this.platformUnavailableReason = platformUnavailableReason;
   }
 
   get snapshot(): CuaDriverCoordinatorSnapshot {
@@ -332,10 +405,18 @@ export class CuaDriverDesktopCoordinator {
       // PATH and never falls through to external_local.
       return this.publishSnapshot({ lifecycle: "included", providerState: "included", generation: this.generation });
     }
+    if (this.platformUnavailableReason) {
+      return this.publishSnapshot({
+        lifecycle: "failed",
+        providerState: "platform_unavailable",
+        generation: this.generation,
+        reason: this.platformUnavailableReason,
+      });
+    }
     if (
       this.options.platform === "win32"
-      && this.options.processLifecycle?.lifetimeBoundary !== "windows-job-object"
-      && this.options.processLifecycle?.lifetimeBoundary !== "test-fixture"
+      && this.processLifecycle?.lifetimeBoundary !== "windows-job-object"
+      && this.processLifecycle?.lifetimeBoundary !== "test-fixture"
     ) {
       return this.publishSnapshot({
         lifecycle: "failed",
@@ -364,13 +445,13 @@ export class CuaDriverDesktopCoordinator {
         architecture: this.options.architecture,
         paths,
         lock,
-        platformIdentityVerifier: this.options.platformIdentityVerifier,
+        platformIdentityVerifier: this.platformIdentityVerifier,
         requirePlatformIdentityVerification: this.options.packaged === true,
       });
       const stateRoot = await createCuaDriverStateRoot({
         userDataPath: this.options.userDataPath,
         platform: this.options.platform,
-        platformProtector: this.options.stateRootProtector,
+        platformProtector: this.stateRootProtector,
       });
       this.resourcePaths = paths;
       this.artifacts = artifacts;
@@ -385,7 +466,7 @@ export class CuaDriverDesktopCoordinator {
         stateRoot,
         generation,
         platform: this.options.platform,
-        lifecycle: this.options.processLifecycle,
+        lifecycle: this.processLifecycle,
         telemetry,
         preSpawn: async () => {
           try {
@@ -395,7 +476,7 @@ export class CuaDriverDesktopCoordinator {
               architecture: this.options.architecture,
               paths,
               lock: liveLock,
-              platformIdentityVerifier: this.options.platformIdentityVerifier,
+              platformIdentityVerifier: this.platformIdentityVerifier,
               requirePlatformIdentityVerification: this.options.packaged === true,
             });
             if (
@@ -410,7 +491,7 @@ export class CuaDriverDesktopCoordinator {
             await reverifyCuaDriverStateRoot({
               stateRoot,
               platform: this.options.platform,
-              platformProtector: this.options.stateRootProtector,
+              platformProtector: this.stateRootProtector,
             });
           } catch (error) {
             if (error instanceof CuaDriverProviderPreSpawnError) {
@@ -446,6 +527,7 @@ export class CuaDriverDesktopCoordinator {
         hostProcessId: process.pid,
         providerProcessId: host.pid,
         requestControl: (method: `ling/${string}`, params: import("./provider-host.js").JsonRpcParams) => host.requestControl(method, params),
+        requestCheckPermissions: () => host.requestCheckPermissions(),
       });
       const proxy = new CuaDriverMcpProxy({
         host,
@@ -543,7 +625,11 @@ export class CuaDriverDesktopCoordinator {
         ...(artifacts.catalogDigest ? { providerCatalogDigest: artifacts.catalogDigest } : {}),
         platform: this.options.platform,
         architecture: this.options.architecture,
-        ...(this.options.platform === "win32" ? { integrityCoverage: "standard" as const } : {}),
+        ...(this.platformMetadata?.integrityCoverage
+          ? { integrityCoverage: this.platformMetadata.integrityCoverage }
+          : this.options.platform === "win32"
+            ? { integrityCoverage: "standard" as const }
+            : {}),
       };
       const leaseClient = this.options.leaseClient ?? new HttpCuaDriverLeaseClient({
         daemonBaseUrl: this.options.daemonBaseUrl,
@@ -990,6 +1076,12 @@ export class CuaDriverDesktopCoordinator {
   private publishSnapshot(input: Omit<CuaDriverCoordinatorSnapshot, "generation"> & { readonly generation?: number }): CuaDriverCoordinatorSnapshot {
     const snapshot: CuaDriverCoordinatorSnapshot = {
       ...input,
+      ...(this.platformMetadata?.integrityCoverage
+        ? { integrityCoverage: this.platformMetadata.integrityCoverage }
+        : {}),
+      ...(this.platformMetadata
+        ? { limitations: this.platformMetadata.limitations }
+        : {}),
       generation: input.generation ?? this.generation,
     };
     this.snapshotValue = snapshot;
@@ -1013,7 +1105,9 @@ function classifyProviderFailure(error: unknown): CuaDriverProviderState {
   if (error instanceof CuaDriverLeasePublisherError) {
     return "desktop_unavailable";
   }
-  if (error instanceof CuaDriverProviderHostError || (error instanceof Error && error.message.includes("state_root"))) {
+  if (error instanceof CuaDriverPlatformBindingError
+    || error instanceof CuaDriverProviderHostError
+    || (error instanceof Error && error.message.includes("state_root"))) {
     return "platform_unavailable";
   }
   return "corrupt";
