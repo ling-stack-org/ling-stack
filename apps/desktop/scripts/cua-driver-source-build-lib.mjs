@@ -261,16 +261,63 @@ function verifySourceBuildInputs(value) {
   assertSha(value.upstreamBuild.cargoLockSha256, "source-build Cargo.lock digest");
   assert(value.upstreamBuild.licensePath === "LICENSE.md", "source-build license path changed");
   assertExactKeys(value.referenceArtifacts, ["darwin", "win32X64"], "source-build reference artifacts");
-  assertExactKeys(value.referenceArtifacts.darwin, ["filename", "sha256", "sizeBytes", "usage"], "darwin reference artifact");
-  assertExactKeys(value.referenceArtifacts.win32X64, ["filename", "mainSha256", "sha256", "sizeBytes", "uiaSha256", "usage"], "Windows reference artifact");
+  assertExactKeys(value.referenceArtifacts.darwin, [
+    "authority",
+    "binarySha256",
+    "binarySizeBytes",
+    "entitlements",
+    "filename",
+    "identifier",
+    "member",
+    "minimumOSVersion",
+    "runtimeVersion",
+    "sdkVersion",
+    "sha256",
+    "sizeBytes",
+    "teamId",
+    "usage",
+  ], "darwin reference artifact");
+  assertExactKeys(value.referenceArtifacts.win32X64, [
+    "filename",
+    "mainManifestSha256",
+    "mainMember",
+    "mainSha256",
+    "mainSizeBytes",
+    "sha256",
+    "sizeBytes",
+    "uiaManifestSha256",
+    "uiaMember",
+    "uiaSha256",
+    "uiaSizeBytes",
+    "usage",
+  ], "Windows reference artifact");
   assert(value.referenceArtifacts.darwin.filename === "cua-driver-rs-0.8.3-darwin-universal-binary.tar.gz", "darwin reference filename changed");
   assert(value.referenceArtifacts.darwin.sizeBytes === 15320898, "darwin reference size changed");
   assert(value.referenceArtifacts.darwin.sha256 === "a2a29f3ccbd45989819df639d60fa68ac6f28b844f74d7d2b0a1495e4359c6a1", "darwin reference digest changed");
+  assert(value.referenceArtifacts.darwin.member === "cua-driver", "darwin reference member changed");
+  assert(value.referenceArtifacts.darwin.binarySizeBytes === 42324640, "darwin reference binary size changed");
+  assert(value.referenceArtifacts.darwin.binarySha256 === "c1c015ccceda4880b9e171dc438700a8276af0eeecfdf0bb4b3fb23298ae7305", "darwin reference binary digest changed");
+  assert(value.referenceArtifacts.darwin.minimumOSVersion === "13.0", "darwin reference minimum OS changed");
+  assert(value.referenceArtifacts.darwin.sdkVersion === "26.5", "darwin reference SDK changed");
+  assert(value.referenceArtifacts.darwin.identifier === "cua-driver", "darwin reference identifier changed");
+  assert(value.referenceArtifacts.darwin.teamId === "YCK386LBJ7", "darwin reference Team ID changed");
+  assert(value.referenceArtifacts.darwin.authority === "Developer ID Application: Cua AI, Inc. (YCK386LBJ7)", "darwin reference authority changed");
+  assert(value.referenceArtifacts.darwin.runtimeVersion === "26.5.0", "darwin reference runtime changed");
+  assertDeepEqual(value.referenceArtifacts.darwin.entitlements, {
+    "com.apple.security.automation.apple-events": true,
+    "com.apple.security.device.screen-capture": true,
+  }, "darwin reference entitlements");
   assert(value.referenceArtifacts.win32X64.filename === "cua-driver-rs-0.8.3-windows-x86_64.zip", "Windows reference filename changed");
   assert(value.referenceArtifacts.win32X64.sizeBytes === 10585087, "Windows reference size changed");
   assert(value.referenceArtifacts.win32X64.sha256 === "6acdc84b98629fcd0be2368cc16565c18d5f21d9dedd4e10fdb6f58547fce9d0", "Windows reference archive digest changed");
+  assert(value.referenceArtifacts.win32X64.mainMember === "cua-driver-rs-0.8.3-windows-x86_64/cua-driver.exe", "Windows main reference member changed");
+  assert(value.referenceArtifacts.win32X64.mainSizeBytes === 19417088, "Windows main reference size changed");
   assert(value.referenceArtifacts.win32X64.mainSha256 === "3cc33572defac29e23bc07e211c20245da9f6ebe8e6481f865b31534b1de8cee", "Windows main reference digest changed");
+  assert(value.referenceArtifacts.win32X64.mainManifestSha256 === "c9292d0a7640c5a9b7eaa2df68410900a0ebf475b0acee6087a95afb2733de9e", "Windows main reference manifest changed");
+  assert(value.referenceArtifacts.win32X64.uiaMember === "cua-driver-rs-0.8.3-windows-x86_64/cua-driver-uia.exe", "Windows UIAccess reference member changed");
+  assert(value.referenceArtifacts.win32X64.uiaSizeBytes === 8238592, "Windows UIAccess reference size changed");
   assert(value.referenceArtifacts.win32X64.uiaSha256 === "1b35a27d41008507d66f819248751b9e79a15c9e6e03390c56749c6fe5daca1c", "Windows UIAccess reference digest changed");
+  assert(value.referenceArtifacts.win32X64.uiaManifestSha256 === "ade4fdc1fa2c2227deef697e3867f0ca1e20a478fcc1564103562f1683161ed7", "Windows UIAccess reference manifest changed");
   assertExactKeys(value.patchSet, ["id", "implementationStatus", "manifest", "sha256"], "source-build patch set");
   assert(value.patchSet.id === "ling-managed-embedded-v1", "source-build patch id changed");
   assert(value.patchSet.implementationStatus === "runtime_integrated", "source-build patch status changed");
@@ -302,11 +349,13 @@ function verifySourceBuildInputs(value) {
     "contentObserved",
     "defaultIntegrityCoverage",
     "hostProcessIdEnvironmentVariable",
+    "healthProbeSkip",
     "killOnJobCloseRequired",
     "leaseGenerationEnvironmentVariable",
     "limitations",
     "managedReadinessChangedNotification",
     "managedReadinessMethod",
+    "managedDeniedTools",
     "managedUpdaterToolsAllowed",
     "readinessHeartbeatMs",
     "requiredHostIntegrityLevel",
@@ -319,7 +368,19 @@ function verifySourceBuildInputs(value) {
   ], "source-build runtime");
   assert(value.runtime.contentObserved === false, "managed readiness must remain content-free");
   assert(value.runtime.killOnJobCloseRequired === true, "managed Windows lifetime must require KILL_ON_JOB_CLOSE");
+  assertDeepEqual(value.runtime.managedDeniedTools, ["check_for_update"], "managed denied updater tools");
+  assertDeepEqual(value.runtime.healthProbeSkip, [
+    "ax_capability",
+    "bundle_identity",
+    "screen_capture_capability",
+    "tcc_accessibility",
+    "tcc_screen_recording",
+  ], "source-build health probe skip list");
   assertExactKeys(value.compatibility, ["clientInitializeProtocolVersion", "healthSchemaVersion", "mcpClientSdk", "serverInitializeProtocolVersion", "toolsListSha256"], "source-build compatibility");
+  assert(value.compatibility.mcpClientSdk === "@modelcontextprotocol/sdk@1.29.0", "MCP client SDK pin changed");
+  assert(value.compatibility.clientInitializeProtocolVersion === "2025-11-25", "MCP client initialize protocol changed");
+  assert(value.compatibility.serverInitializeProtocolVersion === "2025-06-18", "MCP server initialize protocol changed");
+  assert(value.compatibility.healthSchemaVersion === "1", "health schema version changed");
   assert(value.compatibility.toolsListSha256 === null, "tools digest must remain unset before native evidence");
   assertExactKeys(value.packagingGate, ["eligible", "reasons"], "source-build packaging gate");
   assert(value.packagingGate.eligible === false, "source-build packaging gate must remain closed");

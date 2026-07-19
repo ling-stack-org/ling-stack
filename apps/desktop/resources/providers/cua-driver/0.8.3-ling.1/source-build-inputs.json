@@ -15,14 +15,33 @@
       "filename": "cua-driver-rs-0.8.3-darwin-universal-binary.tar.gz",
       "sizeBytes": 15320898,
       "sha256": "a2a29f3ccbd45989819df639d60fa68ac6f28b844f74d7d2b0a1495e4359c6a1",
+      "member": "cua-driver",
+      "binarySizeBytes": 42324640,
+      "binarySha256": "c1c015ccceda4880b9e171dc438700a8276af0eeecfdf0bb4b3fb23298ae7305",
+      "minimumOSVersion": "13.0",
+      "sdkVersion": "26.5",
+      "identifier": "cua-driver",
+      "teamId": "YCK386LBJ7",
+      "authority": "Developer ID Application: Cua AI, Inc. (YCK386LBJ7)",
+      "runtimeVersion": "26.5.0",
+      "entitlements": {
+        "com.apple.security.automation.apple-events": true,
+        "com.apple.security.device.screen-capture": true
+      },
       "usage": "reference_only_never_packaged"
     },
     "win32X64": {
       "filename": "cua-driver-rs-0.8.3-windows-x86_64.zip",
       "sizeBytes": 10585087,
       "sha256": "6acdc84b98629fcd0be2368cc16565c18d5f21d9dedd4e10fdb6f58547fce9d0",
+      "mainMember": "cua-driver-rs-0.8.3-windows-x86_64/cua-driver.exe",
+      "mainSizeBytes": 19417088,
       "mainSha256": "3cc33572defac29e23bc07e211c20245da9f6ebe8e6481f865b31534b1de8cee",
+      "mainManifestSha256": "c9292d0a7640c5a9b7eaa2df68410900a0ebf475b0acee6087a95afb2733de9e",
+      "uiaMember": "cua-driver-rs-0.8.3-windows-x86_64/cua-driver-uia.exe",
+      "uiaSizeBytes": 8238592,
       "uiaSha256": "1b35a27d41008507d66f819248751b9e79a15c9e6e03390c56749c6fe5daca1c",
+      "uiaManifestSha256": "ade4fdc1fa2c2227deef697e3867f0ca1e20a478fcc1564103562f1683161ed7",
       "usage": "reference_only_never_packaged"
     }
   },
@@ -80,8 +99,18 @@
     "telemetryEnabled": false,
     "startupUpdateCheckEnabled": false,
     "managedUpdaterToolsAllowed": false,
+    "managedDeniedTools": [
+      "check_for_update"
+    ],
     "managedReadinessMethod": "ling/managed_readiness",
     "managedReadinessChangedNotification": "ling/managed_readiness_changed",
+    "healthProbeSkip": [
+      "ax_capability",
+      "bundle_identity",
+      "screen_capture_capability",
+      "tcc_accessibility",
+      "tcc_screen_recording"
+    ],
     "readinessHeartbeatMs": 1000,
     "defaultIntegrityCoverage": "standard",
     "requiredHostIntegrityLevel": "medium",

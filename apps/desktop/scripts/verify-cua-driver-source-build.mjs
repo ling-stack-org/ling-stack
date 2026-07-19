@@ -2,15 +2,34 @@
 
 import { readFile } from "node:fs/promises";
 import { dirname, isAbsolute, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   PROVIDER_RESOURCE_ROOT,
   artifactDigestMap,
-  loadProviderLock,
+  runText,
   sha256File,
   verifySourceBuildArtifactInventory,
   verifyProviderInputs,
 } from "./cua-driver-source-build-lib.mjs";
+import {
+  inspectUniversalMachO,
+  inspectWindowsPe,
+  verifyVersionOutput,
+} from "./cua-driver-binary-identity.mjs";
+import { verifyReferenceArtifactEvidence } from "./cua-driver-reference-artifacts.mjs";
 
+const SHA256_PATTERN = /^[0-9a-f]{64}$/u;
+
+if (process.argv[1] && resolve(process.argv[1]) === resolve(fileURLToPath(import.meta.url))) {
+  try {
+    await main();
+  } catch (error) {
+    process.stderr.write(`error: ${error instanceof Error ? error.message : String(error)}\n`);
+    process.exitCode = 1;
+  }
+}
+
+async function main() {
 const args = parseArgs(process.argv.slice(2));
 const resourceRoot = resolve(args["resource-root"] || PROVIDER_RESOURCE_ROOT);
 const verified = await verifyProviderInputs(resourceRoot);
@@ -41,9 +60,21 @@ if (args["attestation"]) {
     fail("new-file rustfmt check was not recorded as passed");
   }
   if (attestation.checks?.cargoTests?.status !== "passed") fail("cargo test status was not recorded as passed");
-  if (attestation.checks?.runtimeProbe?.stdinEof !== "passed") fail("runtime stdin EOF probe was not recorded as passed");
-  if (attestation.checks?.runtimeProbe?.initializeProtocolVersion !== "2025-06-18") fail("MCP initialize protocol mismatch");
-  if (attestation.checks?.runtimeProbe?.healthSchemaVersion !== "1") fail("health schema mismatch");
+  const runtimeProbe = verifyRuntimeProbe(
+    attestation.platform,
+    attestation.checks?.runtimeProbe,
+    verified.lock,
+  );
+  try {
+    const referenceKey = attestation.platform === "darwin" ? "darwin" : "win32X64";
+    verifyReferenceArtifactEvidence({
+      platform: attestation.platform,
+      reference: verified.lock.referenceArtifacts[referenceKey],
+      evidence: attestation.checks?.referenceArtifact,
+    });
+  } catch (error) {
+    fail(error instanceof Error ? error.message : String(error));
+  }
   const outputRoot = resolve(args["output-root"] || dirname(resolve(args.attestation)));
   const actual = await artifactDigestMap(outputRoot);
   if (Object.keys(actual).some((path) => path.startsWith(".git/") || path === ".git")) fail("source-build output must not contain a git repository");
@@ -66,13 +97,30 @@ if (args["attestation"]) {
   } catch (error) {
     fail(error instanceof Error ? error.message : String(error));
   }
-  if (promotion.promotionEligible !== false || promotion.platform !== attestation.platform) fail("promotion input gate mismatch");
-  if (promotion.providerSealInputs?.lockSha256 !== attestation.providerLockSha256) fail("promotion provider-seal lock binding mismatch");
-  if (promotion.providerSealInputs?.toolsListCanonicalSha256 !== attestation.checks.runtimeProbe.toolsListCanonicalSha256) fail("promotion tools-list digest mismatch");
+  const observedBinaryIdentity = await inspectBuiltBinaryIdentity({
+    outputRoot,
+    platform: attestation.platform,
+    lock: verified.lock,
+  });
+  if (JSON.stringify(attestation.checks?.binaryIdentity) !== JSON.stringify(observedBinaryIdentity)) fail("attestation binary identity mismatch");
+  if (JSON.stringify(promotion.sourceBuild?.binaryIdentity) !== JSON.stringify(observedBinaryIdentity)) fail("promotion binary identity mismatch");
+  const mainBinaryPath = resolve(outputRoot, attestation.platform === "darwin"
+    ? "darwin/cua-driver"
+    : "win32-x64/payload/cua-driver.exe");
+  const observedVersion = verifyVersionOutput(await runText(mainBinaryPath, ["--version"]), verified.lock.upstream.version);
+  verifyPromotionBindings({
+    attestation,
+    lock: verified.lock,
+    observedBinaryIdentity,
+    observedVersion,
+    promotion,
+    runtimeProbe,
+  });
   if (promotion.supplyChain?.sbomSha256 !== attestation.supplyChain.sbomSha256 || promotion.supplyChain?.noticesSha256 !== attestation.supplyChain.noticesSha256) fail("promotion supply-chain digest mismatch");
   if (attestation.promotionInputsSha256 !== await sha256File(promotionPath)) fail("promotion input digest mismatch");
   for (const binary of attestation.binaries) {
     const observed = actual[binary.relativePath];
+    if (!SHA256_PATTERN.test(binary.sha256BeforeSigning)) fail(`binary digest is not a SHA-256: ${binary.relativePath}`);
     if (!observed || observed !== binary.sha256BeforeSigning) fail(`binary digest mismatch: ${binary.relativePath}`);
     if (binary.role === "uia-audit" && binary.packaged !== false) fail("UIAccess audit binary cannot be packaged");
   }
@@ -97,6 +145,7 @@ process.stdout.write(`${JSON.stringify({
   patchSetSha256: verified.seriesSha256,
   packagingEligible: verified.lock.packagingGate.eligible,
 }, null, 2)}\n`);
+}
 
 function parseArgs(values) {
   const result = {};
@@ -140,6 +189,183 @@ function verifyObservedToolchain(platform, evidence, lock) {
   assertAbsoluteEvidencePaths(evidence, ["installationPath", "clPath", "linkPath", "rcPath"]);
 }
 
+export function verifyRuntimeProbe(platform, evidence, lock) {
+  const expectedKeys = [
+    "clientInitializeProtocolVersion",
+    "healthCoreChecks",
+    "healthProbeSkip",
+    "healthSchemaVersion",
+    "managedDeniedTools",
+    "managedState",
+    "platform",
+    "serverInfo",
+    "serverInitializeProtocolVersion",
+    "stdinEof",
+    "toolsListCanonicalSha256",
+    ...(platform === "win32-x64" ? ["managedReadiness"] : []),
+  ];
+  assertExactKeys(evidence, expectedKeys, "runtime probe");
+  if (evidence.platform !== platform) fail("runtime probe platform mismatch");
+  if (evidence.clientInitializeProtocolVersion !== lock.compatibility.clientInitializeProtocolVersion) fail("MCP client initialize protocol mismatch");
+  if (evidence.serverInitializeProtocolVersion !== lock.compatibility.serverInitializeProtocolVersion) fail("MCP server initialize protocol mismatch");
+  assertExactKeys(evidence.serverInfo, ["name", "version"], "runtime probe server identity");
+  if (evidence.serverInfo.name !== "cua-driver" || evidence.serverInfo.version !== lock.upstream.version) fail("runtime probe server identity mismatch");
+  if (!SHA256_PATTERN.test(evidence.toolsListCanonicalSha256)) fail("runtime tools-list digest is not a SHA-256");
+  if (evidence.healthSchemaVersion !== lock.compatibility.healthSchemaVersion) fail("health schema mismatch");
+  if (JSON.stringify(evidence.healthProbeSkip) !== JSON.stringify(lock.runtime.healthProbeSkip)) fail("health skip list mismatch");
+  if (JSON.stringify(evidence.managedDeniedTools) !== JSON.stringify(lock.runtime.managedDeniedTools)) fail("managed denied tools mismatch");
+  if (JSON.stringify(evidence.healthCoreChecks) !== JSON.stringify({
+    binaryVersion: "pass",
+    platformSupported: "pass",
+    sessionActive: "pass",
+  })) fail("health core-check evidence mismatch");
+  if (evidence.stdinEof !== "passed") fail("runtime stdin EOF probe was not recorded as passed");
+  verifyManagedStateEvidence(platform, evidence.managedState);
+  if (platform === "win32-x64") verifyManagedReadinessEvidence(evidence.managedReadiness);
+  return evidence;
+}
+
+function verifyManagedReadinessEvidence(evidence) {
+  const expected = {
+    schemaVersion: 1,
+    readinessSequence: 1,
+    activeChildPidBound: true,
+    childInstanceNonceBound: true,
+    leaseGenerationBound: true,
+    sameInteractiveSession: true,
+    hostIntegrityLevel: "medium",
+    providerIntegrityLevel: "medium",
+    inputDesktop: "default_unlocked",
+    jobObjectAssigned: true,
+    killOnJobClose: true,
+    uiaRuntime: "available",
+    d3d11: "available",
+    wgcApi: "supported",
+    contentObserved: false,
+  };
+  if (JSON.stringify(evidence) !== JSON.stringify(expected)) fail("managed-readiness evidence mismatch");
+}
+
+export function stableRuntimeProbe(evidence, platform) {
+  const stable = {
+    platform: evidence.platform,
+    clientInitializeProtocolVersion: evidence.clientInitializeProtocolVersion,
+    serverInitializeProtocolVersion: evidence.serverInitializeProtocolVersion,
+    serverInfo: evidence.serverInfo,
+    toolsListCanonicalSha256: evidence.toolsListCanonicalSha256,
+    healthSchemaVersion: evidence.healthSchemaVersion,
+    healthProbeSkip: evidence.healthProbeSkip,
+    healthCoreChecks: evidence.healthCoreChecks,
+    managedDeniedTools: evidence.managedDeniedTools,
+    stdinEof: evidence.stdinEof,
+    managedState: evidence.managedState,
+  };
+  if (platform === "win32-x64") {
+    const { readinessSequence: _readinessSequence, ...stableReadiness } = evidence.managedReadiness;
+    stable.managedReadiness = stableReadiness;
+  }
+  return stable;
+}
+
+export function verifyPromotionBindings({
+  attestation,
+  lock,
+  observedBinaryIdentity,
+  observedVersion,
+  promotion,
+  runtimeProbe,
+}) {
+  if (promotion.promotionEligible !== false || promotion.platform !== attestation.platform) fail("promotion input gate mismatch");
+  if (promotion.providerLockSha256 !== attestation.providerLockSha256) fail("promotion provider lock digest mismatch");
+  if (promotion.sourceBuildInputsSha256 !== attestation.sourceBuildInputsSha256) fail("promotion source inputs digest mismatch");
+  if (JSON.stringify(attestation.checks?.binaryIdentity) !== JSON.stringify(observedBinaryIdentity)) fail("attestation binary identity mismatch");
+  if (JSON.stringify(promotion.sourceBuild?.binaryIdentity) !== JSON.stringify(observedBinaryIdentity)) fail("promotion binary identity mismatch");
+  if (attestation.checks?.versionOutput !== observedVersion || promotion.sourceBuild?.versionOutput !== observedVersion) fail("built provider version evidence mismatch");
+  if (promotion.sourceBuild?.clientInitializeProtocolVersion !== lock.compatibility.clientInitializeProtocolVersion) fail("promotion MCP client protocol mismatch");
+  if (promotion.sourceBuild?.serverInitializeProtocolVersion !== lock.compatibility.serverInitializeProtocolVersion) fail("promotion MCP server protocol mismatch");
+  if (promotion.sourceBuild?.toolsListCanonicalSha256 !== runtimeProbe.toolsListCanonicalSha256) fail("promotion source-build tools digest mismatch");
+  if (promotion.sourceBuild?.healthSchemaVersion !== runtimeProbe.healthSchemaVersion) fail("promotion source-build health schema mismatch");
+  if (JSON.stringify(promotion.sourceBuild?.healthProbeSkip) !== JSON.stringify(runtimeProbe.healthProbeSkip)) fail("promotion source-build health skip mismatch");
+  if (JSON.stringify(promotion.sourceBuild?.healthCoreChecks) !== JSON.stringify(runtimeProbe.healthCoreChecks)) fail("promotion source-build health checks mismatch");
+  if (JSON.stringify(promotion.sourceBuild?.managedDeniedTools) !== JSON.stringify(runtimeProbe.managedDeniedTools)) fail("promotion source-build denied tools mismatch");
+  const binaryDigestMap = Object.fromEntries(
+    attestation.binaries.map((binary) => [binary.role, binary.sha256BeforeSigning]),
+  );
+  if (JSON.stringify(promotion.sourceBuild?.binariesSha256BeforeSigning) !== JSON.stringify(binaryDigestMap)) {
+    fail("promotion pre-sign binary digest map mismatch");
+  }
+  verifyProviderSealInputs(attestation.platform, promotion.providerSealInputs, attestation, runtimeProbe, lock);
+  if (JSON.stringify(promotion.runtimeProbe) !== JSON.stringify(stableRuntimeProbe(runtimeProbe, attestation.platform))) {
+    fail("promotion runtime probe evidence mismatch");
+  }
+  return true;
+}
+
+export function verifyProviderSealInputs(platform, evidence, attestation, runtimeProbe, lock) {
+  const expectedKeys = [
+    "binaries",
+    "componentId",
+    "distributionRevision",
+    "healthSchemaVersion",
+    "lockSha256",
+    "providerVersion",
+    "serverInitializeProtocolVersion",
+    "stateSchemaVersion",
+    "toolsListCanonicalSha256",
+    ...(platform === "win32-x64" ? [
+      "distributionChannel",
+      "integrityCatalogRelativePath",
+      "limitations",
+      "productionEligible",
+      "signingTier",
+    ] : []),
+  ];
+  assertExactKeys(evidence, expectedKeys, "promotion provider-seal inputs");
+  if (
+    evidence.componentId !== (platform === "darwin" ? "cua-driver-darwin" : "cua-driver-win32-x64")
+    || evidence.lockSha256 !== attestation.providerLockSha256
+    || evidence.distributionRevision !== lock.distributionRevision
+    || evidence.providerVersion !== lock.upstream.version
+    || evidence.serverInitializeProtocolVersion !== runtimeProbe.serverInitializeProtocolVersion
+    || evidence.healthSchemaVersion !== runtimeProbe.healthSchemaVersion
+    || evidence.toolsListCanonicalSha256 !== runtimeProbe.toolsListCanonicalSha256
+    || evidence.stateSchemaVersion !== lock.runtime.stateSchemaVersion
+    || JSON.stringify(evidence.binaries) !== JSON.stringify(attestation.binaries)
+  ) {
+    fail("promotion provider-seal inputs are not bound to the attestation");
+  }
+  if (platform === "win32-x64" && (
+    JSON.stringify(evidence.limitations) !== JSON.stringify(lock.runtime.limitations)
+    || evidence.signingTier !== "unsigned_dev"
+    || evidence.distributionChannel !== "development"
+    || evidence.productionEligible !== false
+    || evidence.integrityCatalogRelativePath !== null
+  )) {
+    fail("Windows promotion provider-seal tier inputs mismatch");
+  }
+}
+
+function verifyManagedStateEvidence(platform, evidence) {
+  const expectedAccessControl = platform === "darwin"
+    ? { root: "0700", directories: "0700", files: "0600" }
+    : {
+        root: "current_user_only_protected_dacl",
+        directories: "current_user_only_protected_dacl",
+        files: "current_user_only_protected_dacl",
+      };
+  const expected = {
+    preexistingLinkRejected: true,
+    rootLinkRejectedBeforeInitialize: true,
+    externalHomeUnchanged: true,
+    restartPersistence: true,
+    accessControl: expectedAccessControl,
+    sameUserConcurrentReplacementBoundary: "out_of_scope_v1",
+  };
+  if (JSON.stringify(evidence) !== JSON.stringify(expected)) {
+    fail("managed-state acceptance evidence mismatch");
+  }
+}
+
 function assertAbsoluteEvidencePaths(evidence, keys) {
   for (const key of keys) {
     if (typeof evidence[key] !== "string" || !isAbsolute(evidence[key])) {
@@ -148,7 +374,38 @@ function assertAbsoluteEvidencePaths(evidence, keys) {
   }
 }
 
+function assertExactKeys(value, keys, label) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) fail(`${label} must be an object`);
+  const actual = Object.keys(value).sort();
+  const expected = [...keys].sort();
+  if (JSON.stringify(actual) !== JSON.stringify(expected)) fail(`${label} keys changed`);
+}
+
+async function inspectBuiltBinaryIdentity({ outputRoot, platform, lock }) {
+  if (platform === "darwin") {
+    const identity = inspectUniversalMachO(await readFile(resolve(outputRoot, "darwin/cua-driver")), "verified darwin provider");
+    if (!identity.slices.every((slice) => slice.minimumOSVersion === lock.toolchain.darwin.deploymentTarget)) {
+      fail("verified darwin provider minimum OS mismatch");
+    }
+    if (!identity.slices.every((slice) => slice.sdkVersion === lock.toolchain.darwin.macOSSDKVersion)) {
+      fail("verified darwin provider SDK mismatch");
+    }
+    return { binaries: [{ role: "main", ...identity }] };
+  }
+  const values = [];
+  for (const [role, relativePath, uiAccess] of [
+    ["main", "win32-x64/payload/cua-driver.exe", false],
+    ["uia-audit", "audit/win32-x64/cua-driver-uia.exe", true],
+  ]) {
+    const identity = inspectWindowsPe(await readFile(resolve(outputRoot, relativePath)), `verified Windows ${role} provider`);
+    if (identity.embeddedCertificateTablePresent || identity.manifest.executionLevel !== "asInvoker" || identity.manifest.uiAccess !== uiAccess) {
+      fail(`verified Windows ${role} identity mismatch`);
+    }
+    values.push({ role, ...identity });
+  }
+  return { binaries: values };
+}
+
 function fail(message) {
-  process.stderr.write(`error: ${message}\n`);
-  process.exit(1);
+  throw new Error(message);
 }

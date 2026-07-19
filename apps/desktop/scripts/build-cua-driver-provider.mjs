@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { cp, lstat, mkdir, writeFile } from "node:fs/promises";
+import { cp, lstat, mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join, parse, resolve, sep } from "node:path";
 import {
   PROVIDER_RESOURCE_ROOT,
@@ -14,6 +14,12 @@ import {
   verifyProviderInputs,
 } from "./cua-driver-source-build-lib.mjs";
 import { generateSupplyChainMetadata } from "./cua-driver-source-build-supply-chain.mjs";
+import {
+  inspectUniversalMachO,
+  inspectWindowsPe,
+  verifyVersionOutput,
+} from "./cua-driver-binary-identity.mjs";
+import { acquireReferenceArtifact } from "./cua-driver-reference-artifacts.mjs";
 import {
   mergeEnvironment,
   verifyToolchain,
@@ -63,6 +69,11 @@ if (args["verify-only"]) {
 }
 
 const toolchain = await verifyToolchain(platform, lock);
+const { referenceRoot: _referenceRoot, ...referenceArtifact } = await acquireReferenceArtifact({
+  platform,
+  lock,
+  workRoot,
+});
 await acquireSource(sourceRoot, verifiedInputs);
 await applyPatchSeries(sourceRoot, verifiedInputs);
 
@@ -195,23 +206,52 @@ const mainBinaryPath = join(
   outputRoot,
   platform === "darwin" ? "darwin/cua-driver" : "win32-x64/payload/cua-driver.exe",
 );
+const versionOutput = verifyVersionOutput(
+  await runText(mainBinaryPath, ["--version"], { env: buildEnvValue.env }),
+  lock.upstream.version,
+);
+const builtBinaryIdentity = await inspectBuiltBinaryIdentity({
+  binaries,
+  lock,
+  outputRoot,
+  platform,
+});
 const probe = await probeCuaDriverProvider({
   binaryPath: mainBinaryPath,
   platform,
   stateHome: join(workRoot, "probe-state"),
+  healthSkip: lock.runtime.healthProbeSkip,
+  deniedTools: lock.runtime.managedDeniedTools,
 });
 const lockSha256 = await sha256File(join(outputRoot, "provider-lock.json"));
 const sourceBuildInputsSha256 = await sha256File(join(outputRoot, "source-build-inputs.json"));
 const stableRuntimeProbe = {
-  initializeProtocolVersion: probe.initializeProtocolVersion,
+  platform: probe.platform,
+  clientInitializeProtocolVersion: probe.clientInitializeProtocolVersion,
+  serverInitializeProtocolVersion: probe.serverInitializeProtocolVersion,
+  serverInfo: probe.serverInfo,
   toolsListCanonicalSha256: probe.toolsListCanonicalSha256,
   healthSchemaVersion: probe.healthSchemaVersion,
+  healthProbeSkip: probe.healthProbeSkip,
+  healthCoreChecks: probe.healthCoreChecks,
+  managedDeniedTools: probe.managedDeniedTools,
   stdinEof: probe.stdinEof,
+  managedState: probe.managedState,
   ...(platform === "win32-x64" ? {
     managedReadiness: {
       schemaVersion: probe.managedReadiness.schemaVersion,
+      activeChildPidBound: probe.managedReadiness.activeChildPidBound,
+      childInstanceNonceBound: probe.managedReadiness.childInstanceNonceBound,
+      leaseGenerationBound: probe.managedReadiness.leaseGenerationBound,
+      sameInteractiveSession: probe.managedReadiness.sameInteractiveSession,
+      hostIntegrityLevel: probe.managedReadiness.hostIntegrityLevel,
+      providerIntegrityLevel: probe.managedReadiness.providerIntegrityLevel,
+      inputDesktop: probe.managedReadiness.inputDesktop,
       jobObjectAssigned: probe.managedReadiness.jobObjectAssigned,
       killOnJobClose: probe.managedReadiness.killOnJobClose,
+      uiaRuntime: probe.managedReadiness.uiaRuntime,
+      d3d11: probe.managedReadiness.d3d11,
+      wgcApi: probe.managedReadiness.wgcApi,
       contentObserved: probe.managedReadiness.contentObserved,
     },
   } : {}),
@@ -236,15 +276,22 @@ const promotionInputs = {
     binariesSha256BeforeSigning: Object.fromEntries(
       binaryEvidence.map((binary) => [binary.role, binary.sha256BeforeSigning]),
     ),
+    binaryIdentity: builtBinaryIdentity,
+    versionOutput,
+    clientInitializeProtocolVersion: probe.clientInitializeProtocolVersion,
+    serverInitializeProtocolVersion: probe.serverInitializeProtocolVersion,
     toolsListCanonicalSha256: probe.toolsListCanonicalSha256,
     healthSchemaVersion: probe.healthSchemaVersion,
+    healthProbeSkip: probe.healthProbeSkip,
+    healthCoreChecks: probe.healthCoreChecks,
+    managedDeniedTools: probe.managedDeniedTools,
   },
   providerSealInputs: {
     componentId: platform === "darwin" ? "cua-driver-darwin" : "cua-driver-win32-x64",
     lockSha256,
     distributionRevision: lock.distributionRevision,
     providerVersion: lock.upstream.version,
-    serverInitializeProtocolVersion: probe.initializeProtocolVersion,
+    serverInitializeProtocolVersion: probe.serverInitializeProtocolVersion,
     healthSchemaVersion: probe.healthSchemaVersion,
     toolsListCanonicalSha256: probe.toolsListCanonicalSha256,
     stateSchemaVersion: lock.runtime.stateSchemaVersion,
@@ -264,7 +311,7 @@ const promotionInputs = {
   runtimeProbe: stableRuntimeProbe,
   missingFinalIdentity: platform === "darwin"
     ? ["cdhashes", "codeIdentifier", "teamId", "designatedRequirement", "entitlementsCanonicalSha256"]
-    : ["peManifestCanonicalSha256", "authenticodeStatus", "providerSealSha256"],
+    : ["authenticodeStatus", "providerSealSha256"],
 };
 await writeFile(join(outputRoot, "source-build-promotion-inputs.json"), `${JSON.stringify(promotionInputs, null, 2)}\n`);
 const artifactDigests = await artifactDigestMap(outputRoot);
@@ -297,6 +344,9 @@ const attestation = {
     },
     cargoTests: { status: "passed", packages: testPackages },
     cargoMetadataSha256: sha256Text(JSON.stringify(cargoMetadata)),
+    referenceArtifact,
+    binaryIdentity: builtBinaryIdentity,
+    versionOutput,
     runtimeProbe: probe,
   },
   binaries: binaryEvidence,
@@ -311,6 +361,38 @@ const attestation = {
 };
 await writeFile(join(outputRoot, "source-build-attestation.json"), `${JSON.stringify(attestation, null, 2)}\n`);
 process.stdout.write(`${JSON.stringify(attestation, null, 2)}\n`);
+
+async function inspectBuiltBinaryIdentity({ binaries: binariesValue, lock: lockValue, outputRoot: outputRootValue, platform: platformValue }) {
+  if (platformValue === "darwin") {
+    const identity = inspectUniversalMachO(
+      await readFile(join(outputRootValue, "darwin", "cua-driver")),
+      "built darwin provider",
+    );
+    if (!identity.slices.every((slice) => slice.minimumOSVersion === lockValue.toolchain.darwin.deploymentTarget)) {
+      throw new Error("built darwin provider minimum OS does not match the lock");
+    }
+    if (!identity.slices.every((slice) => slice.sdkVersion === lockValue.toolchain.darwin.macOSSDKVersion)) {
+      throw new Error("built darwin provider SDK does not match the lock");
+    }
+    return { binaries: [{ role: "main", ...identity }] };
+  }
+  const identities = [];
+  for (const binary of binariesValue) {
+    const identity = inspectWindowsPe(
+      await readFile(join(outputRootValue, ...binary.relativePath.split("/"))),
+      `built Windows ${binary.role} provider`,
+    );
+    const expectedUiAccess = binary.role === "uia-audit";
+    if (identity.embeddedCertificateTablePresent) {
+      throw new Error(`built Windows ${binary.role} provider unexpectedly contains a certificate table`);
+    }
+    if (identity.manifest.executionLevel !== "asInvoker" || identity.manifest.uiAccess !== expectedUiAccess) {
+      throw new Error(`built Windows ${binary.role} provider manifest does not match the lock`);
+    }
+    identities.push({ role: binary.role, ...identity });
+  }
+  return { binaries: identities };
+}
 
 function buildEnv(
   sourceRootValue,
