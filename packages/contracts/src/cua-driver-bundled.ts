@@ -729,6 +729,43 @@ export interface WindowsManagedReadinessChangedV1 extends WindowsManagedReadines
 export type WindowsProcessIntegrityLevel = "medium" | "high" | "system" | "unknown";
 export type WindowsInputDesktopState = "default_unlocked" | "locked" | "non_default" | "unavailable";
 
+export interface CuaDriverProxyTokenContextV1 {
+  readonly daemonAuthorityEpoch: string;
+  readonly bridgeConnectionId: string;
+  readonly desktopInstanceEpoch: number;
+  readonly generation: number;
+  readonly workspaceCwd: string;
+}
+
+/**
+ * Shared byte material for Desktop/daemon HMAC parity without importing a
+ * Node-only crypto implementation into the browser-safe contracts package.
+ */
+export function cuaDriverProxyTokenMaterialV1(input: CuaDriverProxyTokenContextV1): string {
+  if (!hasText(input.daemonAuthorityEpoch)
+    || !hasText(input.bridgeConnectionId)
+    || !isPositiveSafeInteger(input.desktopInstanceEpoch)
+    || !isPositiveSafeInteger(input.generation)
+    || !hasText(input.workspaceCwd)) {
+    throw new Error("cua_driver_proxy_context_invalid");
+  }
+  return [
+    "ling-cua-driver-proxy-v1",
+    input.daemonAuthorityEpoch,
+    input.bridgeConnectionId,
+    String(input.desktopInstanceEpoch),
+    String(input.generation),
+    input.workspaceCwd,
+  ].join("\u001f");
+}
+
+export function cuaDriverWorkspaceBindingMaterialV1(workspaceCwd: string): string {
+  if (!hasText(workspaceCwd)) {
+    throw new Error("cua_driver_proxy_workspace_missing");
+  }
+  return workspaceCwd;
+}
+
 function isUnknownRecord(value: unknown): value is Readonly<Record<string, unknown>> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }

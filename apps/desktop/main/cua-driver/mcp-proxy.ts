@@ -1,6 +1,10 @@
 import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo, Socket } from "node:net";
+import {
+  cuaDriverProxyTokenMaterialV1,
+  cuaDriverWorkspaceBindingMaterialV1,
+} from "@ling-stack/contracts";
 import type {
   CuaDriverProviderHost,
   JsonRpcClientMessage,
@@ -62,25 +66,26 @@ export class CuaDriverMcpProxyError extends Error {
 
 /** Derive a per-instance secret without persisting the endpoint or token. */
 export function deriveCuaDriverProxyToken(input: CuaDriverProxyContext): string {
-  if (!input.bridgeToken || !input.daemonAuthorityEpoch || !input.bridgeConnectionId || !input.workspaceCwd) {
+  if (!input.bridgeToken) {
     throw new CuaDriverMcpProxyError("proxy_context_invalid");
   }
-  const material = [
-    "ling-cua-driver-proxy-v1",
-    input.daemonAuthorityEpoch,
-    input.bridgeConnectionId,
-    String(input.desktopInstanceEpoch),
-    String(input.generation),
-    input.workspaceCwd,
-  ].join("\u001f");
-  return createHmac("sha256", input.bridgeToken).update(material, "utf8").digest("base64url");
+  try {
+    return createHmac("sha256", input.bridgeToken)
+      .update(cuaDriverProxyTokenMaterialV1(input), "utf8")
+      .digest("base64url");
+  } catch {
+    throw new CuaDriverMcpProxyError("proxy_context_invalid");
+  }
 }
 
 export function deriveCuaDriverWorkspaceBinding(workspaceCwd: string): string {
-  if (!workspaceCwd) {
+  try {
+    return createHash("sha256")
+      .update(cuaDriverWorkspaceBindingMaterialV1(workspaceCwd), "utf8")
+      .digest("base64url");
+  } catch {
     throw new CuaDriverMcpProxyError("proxy_workspace_missing");
   }
-  return createHash("sha256").update(workspaceCwd, "utf8").digest("base64url");
 }
 
 /**

@@ -14,6 +14,10 @@ export interface CuaDriverDesktopBridgeAuthorityOptions {
   readonly daemonAuthorityEpoch?: string;
   readonly createConnectionId?: () => string;
   readonly now?: () => string;
+  readonly onLeaseReplaced?: (
+    previous: DesktopCuaDriverLease,
+    next?: DesktopCuaDriverLease,
+  ) => void;
 }
 
 type LeaseHandshakeIdentity = Pick<
@@ -45,6 +49,7 @@ export class CuaDriverDesktopBridgeAuthority {
       daemonAuthorityEpoch: this.daemonAuthorityEpoch,
       workspaceCwd: this.workspaceCwd,
       now: options.now,
+      onReplaced: options.onLeaseReplaced,
     });
   }
 

@@ -93,6 +93,23 @@ export {
   commitCurrentCuaDriverActivation,
   isCurrentCuaDriverActivationFence,
 } from "./features/plugins/cua-driver-activation-fence.js";
+export {
+  DefaultCuaDriverLeaseMcpClientFactory,
+  createCuaDriverLeaseProxyHeaders,
+  deriveCuaDriverLeaseProxyToken,
+  type CuaDriverLeaseClientCheckResult,
+  type CuaDriverLeaseClientHealthResult,
+  type CuaDriverLeaseClientListToolsResult,
+  type CuaDriverLeaseMcpClient,
+  type CuaDriverLeaseMcpClientFactoryOptions,
+} from "./features/plugins/cua-driver-lease-client.js";
+export {
+  BundledCuaDriverActivationError,
+  BundledCuaDriverActivationService,
+  type BundledCuaDriverActivationOperation,
+  type BundledCuaDriverActivationResult,
+  type BundledCuaDriverResetResult,
+} from "./features/plugins/cua-driver-bundled-activation.js";
 
 export interface DaemonServer {
   readonly server: Server;

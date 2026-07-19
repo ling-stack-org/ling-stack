@@ -6,6 +6,8 @@ import {
   CUA_DRIVER_SETUP_SCHEMA_VERSION,
   CUA_DRIVER_LEASE_MAX_TTL_MS,
   CUA_DRIVER_LEASE_V1_CAPABILITY,
+  cuaDriverProxyTokenMaterialV1,
+  cuaDriverWorkspaceBindingMaterialV1,
   DEFAULT_CUA_DRIVER_FEATURE_FLAGS,
   DESKTOP_CUA_DRIVER_LEASE_SCHEMA_VERSION,
   isBundledEmbeddedCuaDriverEnabled,
@@ -17,6 +19,34 @@ import {
   legacySetupStateForCuaDriverProviderState,
   windowsVerdictCeilingForSigningTier,
 } from "../dist/index.js";
+
+test("Cua Driver proxy cryptographic material keeps one cross-process tuple order", () => {
+  assert.equal(cuaDriverProxyTokenMaterialV1({
+    daemonAuthorityEpoch: "authority-golden",
+    bridgeConnectionId: "bridge-golden",
+    desktopInstanceEpoch: 7,
+    generation: 11,
+    workspaceCwd: "/Users/test/Ling Workspace",
+  }), [
+    "ling-cua-driver-proxy-v1",
+    "authority-golden",
+    "bridge-golden",
+    "7",
+    "11",
+    "/Users/test/Ling Workspace",
+  ].join("\u001f"));
+  assert.equal(
+    cuaDriverWorkspaceBindingMaterialV1("/Users/test/Ling Workspace"),
+    "/Users/test/Ling Workspace",
+  );
+  assert.throws(() => cuaDriverProxyTokenMaterialV1({
+    daemonAuthorityEpoch: "authority-golden",
+    bridgeConnectionId: "bridge-golden",
+    desktopInstanceEpoch: 0,
+    generation: 11,
+    workspaceCwd: "/Users/test/Ling Workspace",
+  }), /cua_driver_proxy_context_invalid/);
+});
 
 test("Cua Driver schema versions and packaged feature gates are frozen", () => {
   assert.equal(CUA_DRIVER_SETUP_SCHEMA_VERSION, 2);

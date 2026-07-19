@@ -1,0 +1,668 @@
+import type {
+  ManagedPluginDescriptor,
+  ManagedPluginHealthSnapshot,
+  McpRuntimeStatusSnapshot,
+  McpServer,
+  McpTool,
+  ReplaceMcpServerToolInput,
+  RunStore,
+} from "@ling-stack/core";
+import { createMcpAuthStatus, createMcpStatusSnapshot } from "../mcp/status.js";
+import { createPluginHealthSnapshot, ensureManagedPluginRecord } from "./catalog.js";
+import {
+  captureCuaDriverActivationFence,
+  commitCurrentCuaDriverActivation,
+  isCurrentCuaDriverActivationFence,
+} from "./cua-driver-activation-fence.js";
+import type { CuaDriverClientPool } from "./cua-driver-client-pool.js";
+import type { CuaDriverLeaseMcpClient } from "./cua-driver-lease-client.js";
+import type { CuaDriverLeaseRegistry } from "./cua-driver-lease.js";
+import {
+  applyCuaDriverToolApprovalOverrides,
+  createBundledCuaDriverLogicalMcpServerInput,
+  CUA_DRIVER_MCP_SERVER_ID,
+  CUA_DRIVER_PLUGIN_ID,
+} from "./presets.js";
+
+export type BundledCuaDriverActivationOperation = "check" | "enable";
+
+export interface BundledCuaDriverActivationResult {
+  readonly statusCode: 200 | 400 | 409;
+  readonly committed: boolean;
+  readonly error?: string;
+  readonly message?: string;
+  readonly linkedMcpServerId: string;
+  readonly statusSnapshot?: McpRuntimeStatusSnapshot;
+  readonly tools: readonly McpTool[];
+  readonly health: ManagedPluginHealthSnapshot;
+}
+
+export interface BundledCuaDriverResetResult {
+  readonly committed: boolean;
+  readonly requestedEnabled: boolean;
+  readonly requestedRevision: number;
+  readonly activationEpoch: number;
+}
+
+export class BundledCuaDriverActivationError extends Error {
+  constructor(readonly activationCode: "plugin_identity_invalid") {
+    super(`cua_driver_bundled_activation_${activationCode}`);
+    this.name = "BundledCuaDriverActivationError";
+  }
+}
+
+/**
+ * Generation- and intent-fenced activation for Desktop-owned Cua Driver.
+ *
+ * The logical MCP record contributes ids/timeouts only. Its persisted transport
+ * is never read: all protocol operations use the current in-memory Desktop lease.
+ */
+export class BundledCuaDriverActivationService {
+  constructor(private readonly options: {
+    readonly leaseRegistry: CuaDriverLeaseRegistry;
+    readonly clientPool: CuaDriverClientPool<CuaDriverLeaseMcpClient>;
+  }) {}
+
+  /**
+   * Daemon startup/reconnect fence. Retain user intent, advance the epoch once,
+   * and remove every effective flag, tool and ready status before routes serve.
+   */
+  resetForDaemonStart(input: {
+    readonly store: RunStore;
+    readonly descriptor: ManagedPluginDescriptor;
+    readonly now: string;
+  }): BundledCuaDriverResetResult {
+    const { server, state } = ensureActivationPrerequisites(input);
+    const nextEpoch = state.activationEpoch + 1;
+    const statusSnapshot = unavailableStatus(
+      server,
+      input.now,
+      state.requestedEnabled
+        ? "Bundled Cua Driver is waiting for a current Desktop lease."
+        : "Bundled Cua Driver is included but disabled.",
+      state.requestedEnabled ? "cua_desktop_lease_unavailable" : undefined,
+      state.requestedEnabled ? "failed" : "disabled",
+    );
+    const healthSnapshot = activationHealth({
+      pluginId: input.descriptor.id,
+      now: input.now,
+      status: state.requestedEnabled ? "failed" : "disabled",
+      message: statusSnapshot.message,
+      providerState: state.requestedEnabled ? "desktop_unavailable" : "included",
+      errorCode: statusSnapshot.errorCode,
+    });
+    const result = input.store.commitCuaDriverActivation({
+      pluginId: input.descriptor.id,
+      mcpServerId: server.id,
+      now: input.now,
+      expected: {
+        requestedRevision: state.requestedRevision,
+        activationEpoch: state.activationEpoch,
+      },
+      requestedEnabled: state.requestedEnabled,
+      requestedRevision: state.requestedRevision,
+      activationEpoch: nextEpoch,
+      effectiveEnabled: false,
+      pluginEnabled: false,
+      contributionEnabled: false,
+      mcpServerEnabled: false,
+      tools: [],
+      statusSnapshot,
+      healthSnapshot,
+      disabledReason: state.requestedEnabled
+        ? "Bundled Cua Driver is waiting for Desktop."
+        : "Cua Driver is disabled.",
+    });
+    return {
+      committed: result.committed,
+      requestedEnabled: result.state?.requestedEnabled ?? state.requestedEnabled,
+      requestedRevision: result.state?.requestedRevision ?? state.requestedRevision,
+      activationEpoch: result.state?.activationEpoch ?? state.activationEpoch,
+    };
+  }
+
+  enable(input: {
+    readonly store: RunStore;
+    readonly descriptor: ManagedPluginDescriptor;
+    readonly now: string;
+    readonly signal?: AbortSignal;
+  }): Promise<BundledCuaDriverActivationResult> {
+    return this.activate({ ...input, operation: "enable" });
+  }
+
+  check(input: {
+    readonly store: RunStore;
+    readonly descriptor: ManagedPluginDescriptor;
+    readonly now: string;
+    readonly signal?: AbortSignal;
+  }): Promise<BundledCuaDriverActivationResult> {
+    return this.activate({ ...input, operation: "check" });
+  }
+
+  /**
+   * Lease-publish/reconnect hook for the future route composition. It is safe
+   * to call for every accepted new generation and is inert without retained
+   * enable intent.
+   */
+  reconcileRequestedIntent(input: {
+    readonly store: RunStore;
+    readonly descriptor: ManagedPluginDescriptor;
+    readonly now: string;
+    readonly signal?: AbortSignal;
+  }): Promise<BundledCuaDriverActivationResult | undefined> {
+    const { state } = ensureActivationPrerequisites(input);
+    return state.requestedEnabled
+      ? this.activate({ ...input, operation: "check" })
+      : Promise.resolve(undefined);
+  }
+
+  async disable(input: {
+    readonly store: RunStore;
+    readonly descriptor: ManagedPluginDescriptor;
+    readonly now: string;
+    readonly reason?: string;
+  }): Promise<BundledCuaDriverActivationResult> {
+    const { server, state } = ensureActivationPrerequisites(input);
+    const currentLease = this.options.leaseRegistry.getCurrent();
+    const requestedRevision = state.requestedEnabled
+      ? state.requestedRevision + 1
+      : state.requestedRevision;
+    const message = input.reason?.trim() || "Cua Driver is disabled.";
+    const statusSnapshot = unavailableStatus(
+      server,
+      input.now,
+      message,
+      undefined,
+      "disabled",
+    );
+    const healthSnapshot = activationHealth({
+      pluginId: input.descriptor.id,
+      now: input.now,
+      status: "disabled",
+      message,
+      providerState: "included",
+    });
+    const committed = input.store.commitCuaDriverActivation({
+      pluginId: input.descriptor.id,
+      mcpServerId: server.id,
+      now: input.now,
+      expected: {
+        requestedRevision: state.requestedRevision,
+        activationEpoch: state.activationEpoch,
+      },
+      requestedEnabled: false,
+      requestedRevision,
+      activationEpoch: state.activationEpoch + 1,
+      effectiveEnabled: false,
+      pluginEnabled: false,
+      contributionEnabled: false,
+      mcpServerEnabled: false,
+      tools: [],
+      statusSnapshot,
+      healthSnapshot,
+      disabledReason: message,
+      event: {
+        type: "disabled",
+        actor: "local-user",
+        message,
+      },
+    });
+    if (committed.committed) {
+      // Disable is authoritative even if the lease disappeared or rotated.
+      // Closing every pooled generation prevents a late active operation from
+      // retaining a client after the durable requestedRevision fence advanced.
+      await this.options.clientPool.closeAll();
+    } else if (currentLease) {
+      await this.options.clientPool.closeLease(currentLease);
+    }
+    const health = committed.committed
+      ? input.store.getManagedPluginHealthSnapshot(input.descriptor.id) ?? healthSnapshot
+      : healthSnapshot;
+    return {
+      statusCode: committed.committed ? 200 : 409,
+      committed: committed.committed,
+      ...(!committed.committed
+        ? { error: "cua_driver_activation_stale", message: "A newer Cua Driver intent won the disable race." }
+        : {}),
+      linkedMcpServerId: server.id,
+      statusSnapshot,
+      tools: [],
+      health,
+    };
+  }
+
+  private async activate(input: {
+    readonly store: RunStore;
+    readonly descriptor: ManagedPluginDescriptor;
+    readonly now: string;
+    readonly operation: BundledCuaDriverActivationOperation;
+    readonly signal?: AbortSignal;
+  }): Promise<BundledCuaDriverActivationResult> {
+    const { server, state } = ensureActivationPrerequisites(input);
+    if (input.operation === "check" && !state.requestedEnabled) {
+      const reset = this.beginAttempt(input, server, state, false);
+      return this.disabledCheckResult(input, server, reset.committed);
+    }
+    const prepared = this.beginAttempt(
+      input,
+      server,
+      state,
+      input.operation === "enable" ? true : state.requestedEnabled,
+    );
+    if (!prepared.committed || !prepared.state) {
+      return staleResult(input, server, "A newer Cua Driver intent won before activation started.");
+    }
+
+    const lease = this.options.leaseRegistry.getCurrent();
+    if (!lease) {
+      const health = input.store.getManagedPluginHealthSnapshot(input.descriptor.id)
+        ?? activationHealth({
+          pluginId: input.descriptor.id,
+          now: input.now,
+          status: "failed",
+          message: "Bundled Cua Driver is waiting for a current Desktop lease.",
+          providerState: "desktop_unavailable",
+          errorCode: "cua_desktop_lease_unavailable",
+        });
+      return {
+        statusCode: 409,
+        committed: true,
+        error: "cua_desktop_lease_unavailable",
+        message: health.message,
+        linkedMcpServerId: server.id,
+        statusSnapshot: input.store.getMcpStatusSnapshot(server.id),
+        tools: [],
+        health,
+      };
+    }
+
+    const token = captureCuaDriverActivationFence(lease, prepared.state);
+    const activationServer: McpServer = { ...server, enabled: true };
+    let handle: Awaited<ReturnType<CuaDriverClientPool<CuaDriverLeaseMcpClient>["acquire"]>> | undefined;
+    let discardLeaseClient = false;
+    try {
+      handle = await this.options.clientPool.acquire(lease);
+      const checked = await handle.client.check(activationServer, input.now, input.signal);
+      if (checked.statusSnapshot.status !== "ready") {
+        discardLeaseClient = true;
+        return this.finishAttempt({
+          input,
+          server,
+          token,
+          statusSnapshot: checked.statusSnapshot,
+          tools: [],
+          error: checked.statusSnapshot.errorCode ?? "cua_driver_check_failed",
+          message: checked.statusSnapshot.message ?? "Bundled Cua Driver check failed.",
+        });
+      }
+      if (!this.isCurrentAttempt(input, token)) {
+        discardLeaseClient = true;
+        return staleResult(input, server, "A newer lease or user intent won after the bundled MCP check.");
+      }
+      const health = await handle.client.checkHealth(activationServer, input.now, input.signal);
+      if (health.statusSnapshot.status !== "ready") {
+        discardLeaseClient = true;
+        return this.finishAttempt({
+          input,
+          server,
+          token,
+          statusSnapshot: health.statusSnapshot,
+          tools: [],
+          error: health.statusSnapshot.errorCode ?? "cua_driver_health_report_failed",
+          message: health.statusSnapshot.message ?? "Bundled Cua Driver health_report failed.",
+        });
+      }
+      if (!this.isCurrentAttempt(input, token)) {
+        discardLeaseClient = true;
+        return staleResult(input, server, "A newer lease or user intent won during health_report.");
+      }
+      const listed = await handle.client.listTools(activationServer, input.now, input.signal);
+      if (listed.statusSnapshot.status !== "ready") {
+        discardLeaseClient = true;
+        return this.finishAttempt({
+          input,
+          server,
+          token,
+          statusSnapshot: listed.statusSnapshot,
+          tools: [],
+          error: listed.statusSnapshot.errorCode ?? "cua_driver_tool_sync_failed",
+          message: listed.statusSnapshot.message ?? "Bundled Cua Driver tool sync failed.",
+        });
+      }
+      const tools = applyCuaDriverToolApprovalOverrides(listed.tools);
+      const result = this.finishAttempt({
+        input,
+        server,
+        token,
+        statusSnapshot: listed.statusSnapshot,
+        tools,
+      });
+      discardLeaseClient = !result.committed;
+      return result;
+    } catch (error) {
+      discardLeaseClient = true;
+      if (!this.isCurrentAttempt(input, token)) {
+        return staleResult(input, server, "A newer lease or user intent won during bundled activation.");
+      }
+      const message = error instanceof Error ? error.message : String(error);
+      return this.finishAttempt({
+        input,
+        server,
+        token,
+        statusSnapshot: unavailableStatus(
+          server,
+          input.now,
+          message,
+          "cua_desktop_lease_client_failed",
+          "failed",
+        ),
+        tools: [],
+        error: "cua_desktop_lease_client_failed",
+        message,
+      });
+    } finally {
+      handle?.release();
+      if (discardLeaseClient) {
+        await this.options.clientPool.closeLease(lease);
+      }
+    }
+  }
+
+  private isCurrentAttempt(
+    input: {
+      readonly store: RunStore;
+      readonly now: string;
+    },
+    token: ReturnType<typeof captureCuaDriverActivationFence>,
+  ): boolean {
+    return isCurrentCuaDriverActivationFence({
+      token,
+      leaseRegistry: this.options.leaseRegistry,
+      state: input.store.getCuaDriverActivationState(CUA_DRIVER_PLUGIN_ID),
+    });
+  }
+
+  private beginAttempt(
+    input: {
+      readonly store: RunStore;
+      readonly descriptor: ManagedPluginDescriptor;
+      readonly now: string;
+      readonly operation: BundledCuaDriverActivationOperation;
+    },
+    server: McpServer,
+    state: ReturnType<RunStore["ensureCuaDriverActivationState"]>,
+    requestedEnabled: boolean,
+  ): ReturnType<RunStore["commitCuaDriverActivation"]> {
+    const requestedRevision = requestedEnabled === state.requestedEnabled
+      ? state.requestedRevision
+      : state.requestedRevision + 1;
+    const message = requestedEnabled
+      ? "Bundled Cua Driver activation is waiting for the current Desktop lease."
+      : "Bundled Cua Driver is included but disabled.";
+    const statusSnapshot = unavailableStatus(
+      server,
+      input.now,
+      message,
+      requestedEnabled ? "cua_desktop_lease_unavailable" : undefined,
+      requestedEnabled ? "failed" : "disabled",
+    );
+    return input.store.commitCuaDriverActivation({
+      pluginId: input.descriptor.id,
+      mcpServerId: server.id,
+      now: input.now,
+      expected: {
+        requestedRevision: state.requestedRevision,
+        activationEpoch: state.activationEpoch,
+      },
+      requestedEnabled,
+      requestedRevision,
+      activationEpoch: state.activationEpoch + 1,
+      effectiveEnabled: false,
+      pluginEnabled: false,
+      contributionEnabled: false,
+      mcpServerEnabled: false,
+      tools: [],
+      statusSnapshot,
+      healthSnapshot: activationHealth({
+        pluginId: input.descriptor.id,
+        now: input.now,
+        status: requestedEnabled ? "failed" : "disabled",
+        message,
+        providerState: requestedEnabled ? "desktop_unavailable" : "included",
+        errorCode: statusSnapshot.errorCode,
+      }),
+      disabledReason: requestedEnabled
+        ? "Bundled Cua Driver is waiting for Desktop."
+        : "Cua Driver is disabled.",
+      ...(requestedEnabled !== state.requestedEnabled
+        ? {
+            event: {
+              type: requestedEnabled ? "enabled" as const : "disabled" as const,
+              actor: "local-user" as const,
+              message: requestedEnabled ? "Cua Driver enable requested." : "Cua Driver disabled.",
+            },
+          }
+        : {}),
+    });
+  }
+
+  private finishAttempt(input: {
+    readonly input: {
+      readonly store: RunStore;
+      readonly descriptor: ManagedPluginDescriptor;
+      readonly now: string;
+      readonly operation: BundledCuaDriverActivationOperation;
+    };
+    readonly server: McpServer;
+    readonly token: ReturnType<typeof captureCuaDriverActivationFence>;
+    readonly statusSnapshot: McpRuntimeStatusSnapshot;
+    readonly tools: readonly ReplaceMcpServerToolInput[];
+    readonly error?: string;
+    readonly message?: string;
+  }): BundledCuaDriverActivationResult {
+    const ready = !input.error && input.statusSnapshot.status === "ready";
+    const message = input.message ?? input.statusSnapshot.message ?? (
+      ready ? "Bundled Cua Driver is ready." : "Bundled Cua Driver activation failed."
+    );
+    const healthSnapshot = activationHealth({
+      pluginId: input.input.descriptor.id,
+      now: input.input.now,
+      status: ready ? "ready" : "failed",
+      message,
+      providerState: ready
+        ? "ready"
+        : input.error === "cua_driver_health_report_incompatible"
+          ? "incompatible"
+          : "desktop_unavailable",
+      errorCode: input.error,
+      details: {
+        desktopInstanceId: input.token.desktopInstanceId,
+        desktopInstanceEpoch: input.token.desktopInstanceEpoch,
+        generation: input.token.leaseGeneration,
+      },
+    });
+    const committed = commitCurrentCuaDriverActivation({
+      store: input.input.store,
+      leaseRegistry: this.options.leaseRegistry,
+      token: input.token,
+      projection: {
+        pluginId: input.input.descriptor.id,
+        mcpServerId: input.server.id,
+        now: input.input.now,
+        requestedEnabled: true,
+        requestedRevision: input.token.requestedRevision,
+        activationEpoch: input.token.activationEpoch,
+        effectiveEnabled: ready,
+        pluginEnabled: ready,
+        contributionEnabled: ready,
+        mcpServerEnabled: ready,
+        tools: ready ? input.tools : [],
+        statusSnapshot: input.statusSnapshot,
+        healthSnapshot,
+        disabledReason: ready ? null : message,
+        event: {
+          type: input.input.operation === "check" ? "checked" : "enabled",
+          actor: "local-user",
+          message,
+          data: {
+            status: healthSnapshot.status,
+            toolCount: ready ? input.tools.length : 0,
+            generation: input.token.leaseGeneration,
+            ...(input.error ? { errorCode: input.error } : {}),
+          },
+        },
+      },
+    });
+    if (!committed.committed) {
+      return staleResult(input.input, input.server, "A newer lease or user intent won during activation.");
+    }
+    return {
+      statusCode: ready ? 200 : 400,
+      committed: true,
+      ...(input.error ? { error: input.error } : {}),
+      ...(!ready || input.message ? { message } : {}),
+      linkedMcpServerId: input.server.id,
+      statusSnapshot: input.statusSnapshot,
+      tools: ready ? input.input.store.listMcpTools({ serverId: input.server.id }) : [],
+      health: input.input.store.getManagedPluginHealthSnapshot(input.input.descriptor.id) ?? healthSnapshot,
+    };
+  }
+
+  private disabledCheckResult(
+    input: {
+      readonly store: RunStore;
+      readonly descriptor: ManagedPluginDescriptor;
+      readonly now: string;
+    },
+    server: McpServer,
+    committed: boolean,
+  ): BundledCuaDriverActivationResult {
+    if (!committed) {
+      return staleResult(input, server, "A newer Cua Driver intent won the disabled check.");
+    }
+    const health = input.store.getManagedPluginHealthSnapshot(input.descriptor.id)
+      ?? activationHealth({
+        pluginId: input.descriptor.id,
+        now: input.now,
+        status: "disabled",
+        message: "Bundled Cua Driver is included but disabled.",
+        providerState: "included",
+      });
+    return {
+      statusCode: 200,
+      committed: true,
+      linkedMcpServerId: server.id,
+      statusSnapshot: input.store.getMcpStatusSnapshot(server.id),
+      tools: [],
+      health,
+    };
+  }
+}
+
+function ensureActivationPrerequisites(input: {
+  readonly store: RunStore;
+  readonly descriptor: ManagedPluginDescriptor;
+  readonly now: string;
+}): {
+  readonly server: McpServer;
+  readonly state: ReturnType<RunStore["ensureCuaDriverActivationState"]>;
+} {
+  if (input.descriptor.id !== CUA_DRIVER_PLUGIN_ID) {
+    throw new BundledCuaDriverActivationError("plugin_identity_invalid");
+  }
+  if (!input.store.getManagedPlugin(input.descriptor.id)) {
+    ensureManagedPluginRecord({
+      store: input.store,
+      descriptor: input.descriptor,
+      enabled: false,
+      now: input.now,
+    });
+  }
+  const server = input.store.getMcpServer(CUA_DRIVER_MCP_SERVER_ID)
+    ?? input.store.createMcpServer(
+      createBundledCuaDriverLogicalMcpServerInput(),
+      input.now,
+    );
+  const contribution = input.store.listManagedPluginContributions(input.descriptor.id)
+    .find((candidate) => candidate.contributionKind === "mcp-server"
+      && candidate.linkedResourceId === server.id);
+  if (!contribution) {
+    input.store.replaceManagedPluginContributions(input.descriptor.id, [{
+      contributionKind: "mcp-server",
+      contributionId: CUA_DRIVER_MCP_SERVER_ID,
+      linkedResourceId: server.id,
+      enabled: false,
+    }], input.now);
+  }
+  return {
+    server,
+    state: input.store.ensureCuaDriverActivationState(input.descriptor.id, input.now),
+  };
+}
+
+function unavailableStatus(
+  server: McpServer,
+  now: string,
+  message: string,
+  errorCode: string | undefined,
+  status: "disabled" | "failed",
+): McpRuntimeStatusSnapshot {
+  return createMcpStatusSnapshot({
+    server,
+    now,
+    status,
+    authStatus: createMcpAuthStatus([]),
+    message,
+    errorCode,
+    toolCount: 0,
+  });
+}
+
+function activationHealth(input: {
+  readonly pluginId: string;
+  readonly now: string;
+  readonly status: "disabled" | "failed" | "ready";
+  readonly message?: string;
+  readonly providerState: "desktop_unavailable" | "included" | "incompatible" | "ready";
+  readonly errorCode?: string;
+  readonly details?: Readonly<Record<string, unknown>>;
+}): ManagedPluginHealthSnapshot {
+  return createPluginHealthSnapshot({
+    pluginId: input.pluginId,
+    now: input.now,
+    status: input.status,
+    message: input.message,
+    details: {
+      providerState: input.providerState,
+      ...(input.errorCode ? { errorCode: input.errorCode } : {}),
+      ...input.details,
+    },
+  });
+}
+
+function staleResult(
+  input: {
+    readonly store: RunStore;
+    readonly descriptor: ManagedPluginDescriptor;
+    readonly now: string;
+  },
+  server: McpServer,
+  message: string,
+): BundledCuaDriverActivationResult {
+  return {
+    statusCode: 409,
+    committed: false,
+    error: "cua_driver_activation_stale",
+    message,
+    linkedMcpServerId: server.id,
+    tools: [],
+    health: activationHealth({
+      pluginId: input.descriptor.id,
+      now: input.now,
+      status: "failed",
+      message,
+      providerState: "desktop_unavailable",
+      errorCode: "cua_driver_activation_stale",
+    }),
+  };
+}
