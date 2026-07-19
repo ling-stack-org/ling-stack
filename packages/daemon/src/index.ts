@@ -47,6 +47,7 @@ import { StartupOptionalWarmupCoordinator } from "./startup/optional-warmups.js"
 import { StartupStateRegistry } from "./startup/state.js";
 import { warmDefaultWorkspaceStartup } from "./startup/warmup.js";
 import { ComputerUseProjectionRegistry } from "./features/computer-use/registry.js";
+import { CuaDriverDesktopBridgeAuthority } from "./features/computer-use/desktop-bridge-authority.js";
 
 export { defaultDaemonConfig } from "./config.js";
 export type { DaemonConfig, ResolvedDaemonConfig } from "./config.js";
@@ -120,6 +121,9 @@ export function createDaemonServer(
   const controlPlaneEvents = new ControlPlaneEventHub();
   const startupState = new StartupStateRegistry();
   const computerUsePreviews = new ComputerUseProjectionRegistry(dependencies.computerUseProjectionOptions);
+  const cuaDriverDesktopBridgeAuthority = new CuaDriverDesktopBridgeAuthority({
+    workspaceCwd: resolvedConfig.defaultWorkspaceCwd,
+  });
   const providerStartupRefresh = new ProviderStartupRefreshService({ secretResolver, controlPlaneEvents, startupState });
   let automationSchedulers: AutomationSchedulerRegistry;
   let startupOptionalWarmups: StartupOptionalWarmupCoordinator;
@@ -195,6 +199,7 @@ export function createDaemonServer(
     startupState,
     startupOptionalWarmups,
     computerUsePreviews,
+    cuaDriverDesktopBridgeAuthority,
     computerUseStop: dependencies.computerUseStop,
     desktopBridgeToken: dependencies.desktopBridgeToken ?? process.env.LING_DESKTOP_BRIDGE_TOKEN,
     computerUseRouteToken:
@@ -273,6 +278,7 @@ export function createDaemonServer(
         automationSchedulers.stopAll();
         controlPlaneEvents.closeAll();
         computerUsePreviews.closeAll();
+        cuaDriverDesktopBridgeAuthority.clear();
         rpcWebSocketServer.close();
         server.close((error) => {
           if (error) {

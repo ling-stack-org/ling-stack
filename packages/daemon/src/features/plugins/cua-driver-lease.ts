@@ -1,5 +1,6 @@
 import {
   isDesktopCuaDriverLeaseV1,
+  isDesktopCuaDriverLeaseRevokeV1,
   type DesktopCuaDriverLease,
   type DesktopCuaDriverLeaseRevokeV1,
 } from "@ling-stack/contracts";
@@ -110,7 +111,7 @@ export class CuaDriverLeaseRegistry {
 
   revoke(candidate: unknown): boolean {
     const current = this.getCurrent();
-    if (!current || !isDesktopCuaDriverLeaseRevoke(candidate)) {
+    if (!current || !isDesktopCuaDriverLeaseRevokeV1(candidate)) {
       return false;
     }
     if (!sameRevokeIdentity(current, candidate)) {
@@ -179,19 +180,4 @@ function sameRevokeIdentity(left: DesktopCuaDriverLease, right: DesktopCuaDriver
     && left.generation === right.generation
     && left.daemonAuthorityEpoch === right.daemonAuthorityEpoch
     && left.workspaceCwd === right.workspaceCwd;
-}
-
-function isDesktopCuaDriverLeaseRevoke(value: unknown): value is DesktopCuaDriverLeaseRevokeV1 {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return false;
-  }
-  const row = value as Record<string, unknown>;
-  return row.schemaVersion === 1
-    && row.providerId === "cua-driver"
-    && typeof row.desktopInstanceId === "string"
-    && Number.isSafeInteger(row.desktopInstanceEpoch)
-    && typeof row.bridgeConnectionId === "string"
-    && Number.isSafeInteger(row.generation)
-    && typeof row.daemonAuthorityEpoch === "string"
-    && typeof row.workspaceCwd === "string";
 }

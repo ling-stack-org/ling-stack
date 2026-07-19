@@ -12,6 +12,7 @@ export const CUA_DRIVER_PROVIDER_LOCK_SCHEMA_VERSION = 2 as const;
 export const DESKTOP_CUA_DRIVER_LEASE_SCHEMA_VERSION = 1 as const;
 export const CUA_DRIVER_PROVIDER_VERSION = "0.8.3" as const;
 export const CUA_DRIVER_DISTRIBUTION_REVISION = "ling.1" as const;
+export const CUA_DRIVER_LEASE_V1_CAPABILITY = "cua-driver-lease-v1" as const;
 
 export const CUA_DRIVER_PROVIDER_STATES = [
   "included",
@@ -556,6 +557,45 @@ export interface DesktopCuaDriverLeaseV1 {
   readonly integrityCoverage?: CuaDriverIntegrityCoverage;
 }
 
+/**
+ * Authority issued by one authenticated Desktop bridge handshake.
+ *
+ * `protocolVersion` remains at 1: clients opt into these additional fields by
+ * requiring {@link CUA_DRIVER_LEASE_V1_CAPABILITY}. A later authenticated
+ * handshake supersedes this tuple without changing the outer bridge protocol.
+ */
+export interface CuaDriverLeaseHandshakeAuthorityV1 {
+  readonly daemonAuthorityEpoch: string;
+  readonly bridgeConnectionId: string;
+  readonly desktopInstanceEpoch: number;
+}
+
+export interface CuaDriverDesktopBridgeHandshakeResponseV1
+  extends CuaDriverLeaseHandshakeAuthorityV1 {
+  readonly protocolVersion: 1;
+  readonly capabilities: readonly string[];
+  readonly bridgeTokenAccepted: true;
+  readonly routeTokenAccepted: boolean;
+  readonly defaultWorkspaceCwd: string;
+}
+
+export function isCuaDriverDesktopBridgeHandshakeResponseV1(
+  value: unknown,
+): value is CuaDriverDesktopBridgeHandshakeResponseV1 {
+  return isUnknownRecord(value)
+    && value.protocolVersion === 1
+    && Array.isArray(value.capabilities)
+    && value.capabilities.every((capability) => typeof capability === "string")
+    && value.capabilities.includes("preview-source")
+    && value.capabilities.includes(CUA_DRIVER_LEASE_V1_CAPABILITY)
+    && value.bridgeTokenAccepted === true
+    && typeof value.routeTokenAccepted === "boolean"
+    && hasText(value.defaultWorkspaceCwd)
+    && hasText(value.daemonAuthorityEpoch)
+    && hasText(value.bridgeConnectionId)
+    && isPositiveSafeInteger(value.desktopInstanceEpoch);
+}
+
 /** Compatibility alias used by the detailed design and later daemon slices. */
 export type DesktopCuaDriverLease = DesktopCuaDriverLeaseV1;
 
@@ -599,6 +639,22 @@ export interface DesktopCuaDriverLeaseRevokeV1 {
   readonly generation: number;
   readonly daemonAuthorityEpoch: string;
   readonly workspaceCwd: string;
+}
+
+export function isDesktopCuaDriverLeaseRevokeV1(
+  value: unknown,
+): value is DesktopCuaDriverLeaseRevokeV1 {
+  if (!isUnknownRecord(value)) {
+    return false;
+  }
+  return value.schemaVersion === 1
+    && value.providerId === "cua-driver"
+    && hasText(value.desktopInstanceId)
+    && isPositiveSafeInteger(value.desktopInstanceEpoch)
+    && hasText(value.bridgeConnectionId)
+    && isPositiveSafeInteger(value.generation)
+    && hasText(value.daemonAuthorityEpoch)
+    && hasText(value.workspaceCwd);
 }
 
 export interface CuaDriverActivationFenceV1 {
