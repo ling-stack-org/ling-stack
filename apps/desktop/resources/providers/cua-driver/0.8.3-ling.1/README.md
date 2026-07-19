@@ -17,7 +17,7 @@ not a packaged Ling resource.
 
 The locked upstream commit is not globally clean under Rust 1.97.1 `cargo fmt`
 (unrelated untouched files produce a large baseline diff). The build therefore
-runs locked `rustfmt --check` over the six newly introduced Rust modules listed
+runs locked `rustfmt --check` over the seven newly introduced Rust files listed
 in `series.json`, and separately compiles/tests every selected Cargo package.
 Modified upstream files remain bounded by exact patch/touched-path digests rather
 than being rewritten solely to erase unrelated baseline formatting drift.
