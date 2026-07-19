@@ -20,6 +20,7 @@ const LOCKED_NEW_RUST_FILES = [
   "libs/cua-driver/rust/crates/cua-driver-core/src/ling_managed.rs",
   "libs/cua-driver/rust/crates/cua-driver-core/src/ling_managed_readiness.rs",
   "libs/cua-driver/rust/crates/cua-driver/src/ling_managed_lifetime.rs",
+  "libs/cua-driver/rust/crates/cua-driver/tests/ling_managed_native.rs",
   "libs/cua-driver/rust/crates/platform-windows/src/ling_managed_capability.rs",
   "libs/cua-driver/rust/crates/platform-windows/src/managed_lifetime.rs",
   "libs/cua-driver/rust/crates/platform-windows/src/managed_readiness.rs",

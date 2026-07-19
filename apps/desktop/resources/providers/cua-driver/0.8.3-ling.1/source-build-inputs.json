@@ -48,7 +48,7 @@
   "patchSet": {
     "id": "ling-managed-embedded-v1",
     "manifest": "patches/ling-managed-embedded-v1/series.json",
-    "sha256": "ce587a8bd13b0b10147c3ce36a72bb621e5e5274952e2a8d895874adec94ef65",
+    "sha256": "e7dd92936c318a66c1f1d77572276d9d7f63ca9b45ea7a3b532e1d70c4881db4",
     "implementationStatus": "runtime_integrated"
   },
   "toolchain": {
