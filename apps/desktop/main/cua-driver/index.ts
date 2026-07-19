@@ -10,3 +10,4 @@ export * from "./readiness-controller.js";
 export * from "./resource-path.js";
 export * from "./state-root.js";
 export * from "./telemetry.js";
+export { createWin32CuaDriverPlatformBinding } from "./adapters/win32.js";

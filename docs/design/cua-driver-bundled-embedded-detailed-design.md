@@ -4,8 +4,10 @@
 
 Detailed design for the approved internal macOS and Windows Desktop alpha direction.
 The shared contracts, feature gates, signing feasibility, activation fences, Desktop
-supervisor and source-build pipeline are implemented. Production Desktop composition and
-the native macOS/Windows adapters are not connected yet, so both packaged-provider gates
+supervisor and source-build pipeline are implemented. The Win32 standard adapter now
+implements the policy-pinned identity, state-root ACL/reparse, direct-child lifecycle,
+active-child readiness and Electron recovery-hint boundaries, but production Desktop
+composition and real Windows acceptance are not complete. Both packaged-provider gates
 remain off and packaged runtime still uses the external provider path.
 
 The paired product and architecture decision is
