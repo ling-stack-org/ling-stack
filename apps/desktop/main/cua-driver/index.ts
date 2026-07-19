@@ -3,6 +3,7 @@ export * from "./coordinator.js";
 export * from "./feature-gates.js";
 export * from "./lease-publisher.js";
 export * from "./mcp-proxy.js";
+export * from "./platform-binding.js";
 export * from "./provider-host.js";
 export * from "./provider-seal.js";
 export * from "./readiness-controller.js";
