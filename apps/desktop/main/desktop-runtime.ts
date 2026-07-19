@@ -8,6 +8,7 @@ import type {
 import type { DesktopDaemonStatus } from "../shared/desktop-capabilities.js";
 import {
   CuaDriverDesktopCoordinator,
+  type CuaDriverCoordinatorSnapshot,
   type CuaDriverCoordinatorOptions,
 } from "./cua-driver/coordinator.js";
 import {
@@ -36,6 +37,12 @@ export class DesktopRuntimeError extends Error {
 }
 
 export interface DesktopRuntimeCuaDriverCoordinator {
+  /**
+   * Validate the packaged provider, start its loopback proxy and publish the
+   * generation-scoped availability lease. The provider child itself remains
+   * lazy and is spawned only when the daemon opens an MCP session.
+   */
+  enable(): Promise<CuaDriverCoordinatorSnapshot>;
   shutdown(): Promise<void>;
 }
 
@@ -91,6 +98,7 @@ export class DesktopRuntime {
   private coordinatorAuthority: DesktopDaemonCuaDriverAuthorityTuple | undefined;
   private ensureStartedPromise: Promise<DesktopDaemonStatus> | undefined;
   private restartPromise: Promise<DesktopDaemonStatus> | undefined;
+  private stopDaemonStatusObserver: (() => void) | undefined;
   private shutdownRequested = false;
   private shutdownPromise: Promise<void> | undefined;
 
@@ -105,6 +113,11 @@ export class DesktopRuntime {
       ?? ((coordinatorOptions) => new CuaDriverDesktopCoordinator(coordinatorOptions));
     this.desktopInstanceId = options.desktopInstanceId
       ?? `desktop-${randomBytes(16).toString("hex")}`;
+    if (desktopBundledCuaDriverGateEnabled(this.featureFlags, this.platform)) {
+      this.stopDaemonStatusObserver = options.daemon.onStatusChanged((status) => {
+        this.handleDaemonStatusChanged(status);
+      });
+    }
   }
 
   get status(): DesktopDaemonStatus {
@@ -196,6 +209,7 @@ export class DesktopRuntime {
       return this.shutdownPromise;
     }
     this.shutdownRequested = true;
+    this.stopObservingDaemonStatus();
     const pending = this.enqueue(async () => {
       let firstError: unknown;
       const attempt = async (operation: () => void | Promise<void>): Promise<void> => {
@@ -228,20 +242,30 @@ export class DesktopRuntime {
       await this.shutdownCoordinator("authority_unavailable");
       throw new DesktopRuntimeError("authority_missing");
     }
-    if (sameAuthorityTuple(authority, this.coordinatorAuthority) && this.coordinatorValue) {
+    const platform = bundledPlatform(this.platform);
+    const architecture = cuaDriverArchitecture(this.architecture);
+    if (!platform || !architecture) {
+      await this.shutdownCoordinator("architecture_unsupported");
+      throw new DesktopRuntimeError("architecture_unsupported");
+    }
+    if (authority.workspaceCwd !== this.workspaceCwd) {
+      await this.shutdownCoordinator("authority_workspace_mismatch");
+      throw new DesktopRuntimeError("authority_missing");
+    }
+    const existingCoordinator = this.coordinatorValue;
+    if (existingCoordinator && sameAuthorityTuple(authority, this.coordinatorAuthority)) {
+      // This is deliberately an idempotent revalidation, not a no-op. A
+      // transient resource or lease-publication failure may recover while the
+      // authenticated daemon tuple remains unchanged.
+      await this.enableCoordinator(existingCoordinator, authority, platform);
       return;
     }
     await this.shutdownCoordinator("authority_rotated");
     this.assertCanStart();
 
-    const platform = bundledPlatform(this.platform);
-    const architecture = cuaDriverArchitecture(this.architecture);
-    if (!platform || !architecture) {
-      throw new DesktopRuntimeError("architecture_unsupported");
-    }
-    if (authority.workspaceCwd !== this.workspaceCwd) {
-      throw new DesktopRuntimeError("authority_missing");
-    }
+    // Production Darwin Team ID and Win32 signing/system-root policy belong to
+    // the follow-up platform-owner slice. Until main injects that trusted
+    // binding, this fallback intentionally remains fail-closed.
     const platformBinding = this.options.platformBinding
       ?? this.options.platformBindingFactory?.(platform)
       ?? selectCuaDriverPlatformBinding(platform);
@@ -271,6 +295,65 @@ export class DesktopRuntime {
       platform,
       gateEnabled: true,
     });
+    await this.enableCoordinator(coordinator, authority, platform);
+  }
+
+  private async enableCoordinator(
+    coordinator: DesktopRuntimeCuaDriverCoordinator,
+    authority: DesktopDaemonCuaDriverAuthorityTuple,
+    platform: BundledCuaDriverPlatform,
+  ): Promise<void> {
+    let snapshot: CuaDriverCoordinatorSnapshot | undefined;
+    let enableFailed = false;
+    let enableError: unknown;
+    try {
+      snapshot = await coordinator.enable();
+    } catch (error) {
+      enableFailed = true;
+      enableError = error;
+    }
+
+    this.assertCanStart();
+    if (!this.isCurrentCoordinatorAuthority(coordinator, authority)) {
+      try {
+        await this.shutdownCoordinatorInstance(coordinator, "authority_lost_during_enable");
+      } catch (error) {
+        this.options.onDiagnostic?.("desktop_runtime.cua_driver_authority_cleanup_failed", {
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+      throw new DesktopRuntimeError("authority_missing");
+    }
+
+    if (enableFailed) {
+      // Resource, identity or lease publication failures are intentionally
+      // fail-closed provider states. Keep the coordinator retained so its
+      // state and cleanup ownership remain intact, and so a later idempotent
+      // enable or authority restart can recover without making a healthy
+      // Desktop daemon look like startup failed.
+      this.options.onDiagnostic?.("desktop_runtime.cua_driver_availability_failed", {
+        platform,
+        error: enableError instanceof Error ? enableError.message : String(enableError),
+      });
+      return;
+    }
+    if (snapshot?.lifecycle === "failed") {
+      this.options.onDiagnostic?.("desktop_runtime.cua_driver_availability_failed", {
+        platform,
+        providerState: snapshot.providerState,
+        reason: snapshot.reason ?? snapshot.providerState,
+      });
+    }
+  }
+
+  private isCurrentCoordinatorAuthority(
+    coordinator: DesktopRuntimeCuaDriverCoordinator,
+    authority: DesktopDaemonCuaDriverAuthorityTuple,
+  ): boolean {
+    return this.options.daemon.status.state === "connected"
+      && this.coordinatorValue === coordinator
+      && sameAuthorityTuple(authority, this.coordinatorAuthority)
+      && sameAuthorityTuple(authority, this.options.daemon.cuaDriverAuthorityTuple);
   }
 
   private async shutdownCoordinator(reason: string): Promise<void> {
@@ -278,11 +361,60 @@ export class DesktopRuntime {
     if (!coordinator) {
       return;
     }
+    await this.shutdownCoordinatorInstance(coordinator, reason);
+  }
+
+  private async shutdownCoordinatorInstance(
+    coordinator: DesktopRuntimeCuaDriverCoordinator,
+    reason: string,
+  ): Promise<void> {
+    if (this.coordinatorValue !== coordinator) {
+      return;
+    }
     this.options.onDiagnostic?.("desktop_runtime.cua_driver_shutdown", { reason });
     await coordinator.shutdown();
     if (this.coordinatorValue === coordinator) {
       this.coordinatorValue = undefined;
       this.coordinatorAuthority = undefined;
+    }
+  }
+
+  private handleDaemonStatusChanged(status: DesktopDaemonStatus): void {
+    if (status.state === "connected" || this.shutdownRequested) {
+      return;
+    }
+    const coordinator = this.coordinatorValue;
+    if (!coordinator) {
+      // Initial checking/starting events must never enqueue cleanup for a
+      // coordinator that may be composed later by the same startup attempt.
+      return;
+    }
+    const reason = `daemon_status_${status.state}`;
+    void this.enqueue(async () => {
+      if (this.shutdownRequested || this.coordinatorValue !== coordinator) {
+        return;
+      }
+      await this.shutdownCoordinatorInstance(coordinator, reason);
+    }).catch((error) => {
+      this.options.onDiagnostic?.("desktop_runtime.cua_driver_status_cleanup_failed", {
+        reason,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    });
+  }
+
+  private stopObservingDaemonStatus(): void {
+    const stopObserver = this.stopDaemonStatusObserver;
+    this.stopDaemonStatusObserver = undefined;
+    if (!stopObserver) {
+      return;
+    }
+    try {
+      stopObserver();
+    } catch (error) {
+      this.options.onDiagnostic?.("desktop_runtime.cua_driver_status_observer_stop_failed", {
+        error: error instanceof Error ? error.message : String(error),
+      });
     }
   }
 
