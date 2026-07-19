@@ -5,11 +5,12 @@
 Approved cross-platform design direction for the internal Desktop alpha. Implementation
 is in progress. Cross-platform contracts and feature gates, signing feasibility,
 activation fencing, the shared Desktop supervisor and the deterministic source-build
-pipeline have landed. The gate-off Darwin native adapter now covers Mach-O/code-sign
-identity, direct-child lifecycle, host-owned TCC readiness and retrying permission-change
-monitoring, but it is not connected to packaged runtime. Production Desktop
-composition/activation, the Win32 native adapter, package staging/signing closure,
-product-state E2E and acceptance handoff remain.
+pipeline have landed. Process-wide Desktop runtime composition now owns cached typed
+handshake authority, tuple rotation and ordered shutdown behind closed gates. The gate-off
+Darwin native adapter covers Mach-O/code-sign identity, direct-child lifecycle, host-owned
+TCC readiness and retrying permission-change monitoring, but activation does not connect
+the composition and adapter yet. The Win32 native adapter, package staging/signing
+closure, product-state E2E and acceptance handoff remain.
 
 Both packaged-provider gates remain off. Packaged Desktop therefore still uses the
 external provider path until its platform-specific runtime and signed package satisfy the
