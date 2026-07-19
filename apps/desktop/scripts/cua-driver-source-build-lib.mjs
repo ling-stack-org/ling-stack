@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
 const execFile = promisify(execFileCallback);
+const LING_REPOSITORY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 
 export const PROVIDER_VERSION_DIR = "0.8.3-ling.1";
 export const PROVIDER_RESOURCE_ROOT = resolve(
@@ -67,6 +68,130 @@ export async function loadPatchSeries(resourceRoot, lock) {
     patchRoot: dirname(manifestPath),
     value: JSON.parse(await readFile(manifestPath, "utf8")),
   };
+}
+
+export function parsePatchTouchedPaths(patchText) {
+  assert(typeof patchText === "string", "patch text must be a string");
+  const observedPaths = new Set();
+  let section;
+
+  const finishSection = () => {
+    if (!section) return;
+    const hasOldMarker = section.oldPath !== undefined;
+    const hasNewMarker = section.newPath !== undefined;
+    assert(hasOldMarker === hasNewMarker, "patch file markers must include both old and new paths");
+    const hasRenameFrom = section.renameFrom !== undefined;
+    const hasRenameTo = section.renameTo !== undefined;
+    assert(hasRenameFrom === hasRenameTo, "patch rename metadata must include both old and new paths");
+    const paths = hasOldMarker
+      ? [section.oldPath, section.newPath]
+      : hasRenameFrom
+        ? [section.renameFrom, section.renameTo]
+        : [section.headerOldPath, section.headerNewPath];
+    for (const path of paths) {
+      if (path !== null) observedPaths.add(path);
+    }
+  };
+
+  for (const line of patchText.split(/\r?\n/u)) {
+    if (line.startsWith("diff --git ")) {
+      finishSection();
+      const match = /^diff --git a\/(.+) b\/(.+)$/u.exec(line);
+      assert(match, `patch diff header must use canonical unquoted paths: ${line}`);
+      section = {
+        headerOldPath: validateRepositoryPatchPath(match[1]),
+        headerNewPath: validateRepositoryPatchPath(match[2]),
+        oldPath: undefined,
+        newPath: undefined,
+        renameFrom: undefined,
+        renameTo: undefined,
+      };
+      continue;
+    }
+    if (line.startsWith("--- ")) {
+      assert(section, `patch file marker requires a canonical diff header: ${line}`);
+      assert(section.oldPath === undefined, `patch diff section has a duplicate old path marker: ${line}`);
+      assert(section.newPath === undefined, `patch old path marker follows its new path marker: ${line}`);
+      section.oldPath = parsePatchFileMarker(line.slice(4), "a/");
+      continue;
+    }
+    if (line.startsWith("+++ ")) {
+      assert(section, `patch file marker requires a canonical diff header: ${line}`);
+      assert(section.oldPath !== undefined, `patch new path marker is missing its old path marker: ${line}`);
+      assert(section.newPath === undefined, `patch diff section has a duplicate new path marker: ${line}`);
+      section.newPath = parsePatchFileMarker(line.slice(4), "b/");
+      continue;
+    }
+    if (!section) continue;
+    if (section.renameFrom === undefined && line.startsWith("rename from ")) {
+      section.renameFrom = validateRepositoryPatchPath(line.slice("rename from ".length));
+      continue;
+    }
+    if (section.renameTo === undefined && line.startsWith("rename to ")) {
+      section.renameTo = validateRepositoryPatchPath(line.slice("rename to ".length));
+    }
+  }
+  finishSection();
+  assert(observedPaths.size > 0, "patch does not declare any touched paths");
+  return [...observedPaths].sort();
+}
+
+export function verifyPatchTouchedPathAllowlist(patchTexts, touchedPaths) {
+  assert(Array.isArray(patchTexts) && patchTexts.length > 0, "patch texts must be a non-empty array");
+  const observedPaths = [...new Set(patchTexts.flatMap(parsePatchTouchedPaths))].sort();
+  assertDeepEqual(observedPaths, touchedPaths, "patch touched-path allowlist");
+  return observedPaths;
+}
+
+export function parseGitNameStatusTouchedPaths(value) {
+  assert(typeof value === "string", "git name-status output must be a string");
+  const fields = value.split("\0");
+  if (fields.at(-1) === "") fields.pop();
+  const observedPaths = new Set();
+  for (let index = 0; index < fields.length;) {
+    const status = fields[index++];
+    assert(/^(?:[RC]\d{1,3}|[ADMTUXB])$/u.test(status), `unexpected staged diff status: ${status}`);
+    const pathCount = status.startsWith("R") || status.startsWith("C") ? 2 : 1;
+    assert(index + pathCount <= fields.length, `staged diff status is missing paths: ${status}`);
+    for (let pathIndex = 0; pathIndex < pathCount; pathIndex += 1) {
+      observedPaths.add(validateRepositoryPatchPath(fields[index++]));
+    }
+  }
+  return [...observedPaths].sort();
+}
+
+export function parseGitNumstatTouchedPaths(value) {
+  assert(typeof value === "string", "git numstat output must be a string");
+  const fields = value.split("\0");
+  if (fields.at(-1) === "") fields.pop();
+  const observedPaths = new Set();
+  for (let index = 0; index < fields.length;) {
+    const row = fields[index++];
+    const match = /^(?:-|\d+)\t(?:-|\d+)\t(.*)$/su.exec(row);
+    assert(match, `unexpected git numstat row: ${row}`);
+    if (match[1]) {
+      observedPaths.add(validateRepositoryPatchPath(match[1]));
+      continue;
+    }
+    assert(index + 2 <= fields.length, "git numstat rename or copy row is missing paths");
+    observedPaths.add(validateRepositoryPatchPath(fields[index++]));
+    observedPaths.add(validateRepositoryPatchPath(fields[index++]));
+  }
+  return [...observedPaths].sort();
+}
+
+function parsePatchFileMarker(value, prefix) {
+  if (value === "/dev/null") return null;
+  assert(value.startsWith(prefix), `patch file marker must start with ${prefix} or be /dev/null: ${value}`);
+  return validateRepositoryPatchPath(value.slice(prefix.length));
+}
+
+function validateRepositoryPatchPath(path) {
+  assert(typeof path === "string" && path.length > 0, "patch path is missing");
+  assert(!path.startsWith("/"), `patch path must be relative: ${path}`);
+  assert(!path.includes("\\"), `patch path must use POSIX separators: ${path}`);
+  assert(!path.includes(".."), `patch path contains traversal: ${path}`);
+  return path;
 }
 
 export async function verifyProviderInputs(resourceRoot = PROVIDER_RESOURCE_ROOT) {
@@ -171,7 +296,7 @@ export async function verifyProviderInputs(resourceRoot = PROVIDER_RESOURCE_ROOT
   }
 
   const digestRows = [];
-  const observedPaths = new Set();
+  const patchTexts = [];
   for (const patch of series.patches) {
     assert(typeof patch.id === "string" && patch.id.length > 0, "patch id is missing");
     assertSha(patch.sha256, `patch ${patch.id} digest`);
@@ -181,17 +306,19 @@ export async function verifyProviderInputs(resourceRoot = PROVIDER_RESOURCE_ROOT
     assert(observedSha === patch.sha256, `patch digest mismatch: ${patch.file}`);
     digestRows.push(`${patch.id}:${observedSha}`);
     const patchText = await readFile(patchPath, "utf8");
-    for (const line of patchText.split(/\r?\n/u)) {
-      if (!line.startsWith("+++ b/")) continue;
-      const path = line.slice(6);
-      assert(!path.includes(".."), `patch path contains traversal: ${path}`);
-      observedPaths.add(path);
-    }
+    assertDeepEqual(
+      parsePatchTouchedPaths(patchText),
+      parseGitNumstatTouchedPaths(
+        await runText("git", ["apply", "--numstat", "-z", patchPath], { cwd: LING_REPOSITORY_ROOT }),
+      ),
+      `patch parser Git oracle: ${patch.file}`,
+    );
+    patchTexts.push(patchText);
   }
   const seriesSha256 = sha256Text(`${digestRows.join("\n")}\n`);
   assert(seriesSha256 === series.seriesSha256, "patch series digest mismatch");
   assert(seriesSha256 === lock.patchSet.sha256, "provider lock patch digest mismatch");
-  assertDeepEqual([...observedPaths].sort(), series.touchedPaths, "patch touched-path allowlist");
+  verifyPatchTouchedPathAllowlist(patchTexts, series.touchedPaths);
 
   return {
     lockPath,
@@ -436,14 +563,13 @@ export async function applyPatchSeries(sourceRoot, verifiedInputs) {
     await run("git", ["apply", "--check", "--whitespace=error-all", patchPath], { cwd: sourceRoot });
     await run("git", ["apply", "--index", "--whitespace=error-all", patchPath], { cwd: sourceRoot });
   }
-  const touched = (
-    await runText("git", ["diff", "--cached", "--name-only", "--diff-filter=ACMRTUXB", "HEAD"], {
-      cwd: sourceRoot,
-    })
-  )
-    .split(/\r?\n/u)
-    .filter(Boolean)
-    .sort();
+  const touched = parseGitNameStatusTouchedPaths(
+    await runText(
+      "git",
+      ["diff", "--cached", "--name-status", "-z", "--find-renames", "--diff-filter=ACDMRTUXB", "HEAD"],
+      { cwd: sourceRoot },
+    ),
+  );
   assertDeepEqual(touched, series.touchedPaths, "applied patch touched paths");
 }
 

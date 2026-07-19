@@ -9,6 +9,9 @@ import { promisify } from "node:util";
 import test from "node:test";
 
 import {
+  parseGitNumstatTouchedPaths,
+  parseGitNameStatusTouchedPaths,
+  verifyPatchTouchedPathAllowlist,
   PROVIDER_RESOURCE_ROOT,
   verifySourceBuildArtifactInventory,
   verifyProviderInputs,
@@ -258,6 +261,87 @@ test("patch tampering and touched-path allowlist tampering fail closed", async (
   } finally {
     await rm(tamperedManifest, { recursive: true, force: true });
   }
+
+  const addDeleteRenamePatch = [
+    "diff --git a/src/deleted.rs b/src/deleted.rs",
+    "deleted file mode 100644",
+    "--- a/src/deleted.rs",
+    "+++ /dev/null",
+    "@@ -1 +0,0 @@",
+    "-deleted",
+    "diff --git a/src/added.rs b/src/added.rs",
+    "new file mode 100644",
+    "--- /dev/null",
+    "+++ b/src/added.rs",
+    "@@ -0,0 +1 @@",
+    "+added",
+    "diff --git a/src/old-name.rs b/src/new-name.rs",
+    "similarity index 100%",
+    "rename from src/old-name.rs",
+    "rename to src/new-name.rs",
+    "",
+  ].join("\n");
+  const exactPaths = [
+    "src/added.rs",
+    "src/deleted.rs",
+    "src/new-name.rs",
+    "src/old-name.rs",
+  ];
+  assert.throws(
+    () => verifyPatchTouchedPathAllowlist(
+      [addDeleteRenamePatch],
+      exactPaths.filter((path) => path !== "src/deleted.rs"),
+    ),
+    /patch touched-path allowlist mismatch/,
+  );
+  assert.deepEqual(verifyPatchTouchedPathAllowlist([addDeleteRenamePatch], exactPaths), exactPaths);
+  assert.deepEqual(
+    parseGitNameStatusTouchedPaths(
+      "A\0src/added.rs\0D\0src/deleted.rs\0R100\0src/old-name.rs\0src/new-name.rs\0",
+    ),
+    exactPaths,
+  );
+  assert.deepEqual(
+    parseGitNumstatTouchedPaths(
+      [
+        "1\t0\tsrc/added.rs",
+        "0\t1\tsrc/deleted.rs",
+        "0\t0\t",
+        "src/old-name.rs",
+        "src/new-name.rs",
+        "",
+      ].join("\0"),
+    ),
+    exactPaths,
+  );
+
+  const traditionalDeletion = [
+    "--- a/src/hidden-delete.rs",
+    "+++ /dev/null",
+    "@@ -1 +0,0 @@",
+    "-hidden",
+    "",
+  ].join("\n");
+  assert.throws(
+    () => verifyPatchTouchedPathAllowlist([traditionalDeletion], ["src/hidden-delete.rs"]),
+    /requires a canonical diff header/,
+  );
+  const canonicalAdditionWithAppendedTraditionalDeletion = [
+    "diff --git a/src/visible-add.rs b/src/visible-add.rs",
+    "new file mode 100644",
+    "--- /dev/null",
+    "+++ b/src/visible-add.rs",
+    "@@ -0,0 +1 @@",
+    "+visible",
+    traditionalDeletion,
+  ].join("\n");
+  assert.throws(
+    () => verifyPatchTouchedPathAllowlist(
+      [canonicalAdditionWithAppendedTraditionalDeletion],
+      ["src/hidden-delete.rs", "src/visible-add.rs"],
+    ),
+    /duplicate old path marker/,
+  );
 });
 
 test("reference archive inventory rejects traversal, duplicates, extras and links", () => {
