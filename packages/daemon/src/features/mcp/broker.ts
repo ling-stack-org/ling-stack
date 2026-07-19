@@ -303,7 +303,7 @@ function inferRawMcpToolSideEffectLevel(annotations: Record<string, unknown> | u
   return "external";
 }
 
-function mcpSdkToolToStoreInput(server: McpServer, tool: SdkMcpTool): ReplaceMcpServerToolInput {
+export function mcpSdkToolToStoreInput(server: McpServer, tool: SdkMcpTool): ReplaceMcpServerToolInput {
   const sideEffectLevel = inferMcpToolSideEffectLevel(tool);
   return {
     rawName: tool.name,
@@ -331,7 +331,7 @@ function inferMcpToolSideEffectLevel(tool: SdkMcpTool): ReplaceMcpServerToolInpu
   return "external";
 }
 
-function mcpSdkCallToolResultToRunnerResult(result: Awaited<ReturnType<McpClient["callTool"]>>): PiRunnerMcpToolCallResult {
+export function mcpSdkCallToolResultToRunnerResult(result: Awaited<ReturnType<McpClient["callTool"]>>): PiRunnerMcpToolCallResult {
   if ("toolResult" in result) {
     return {
       content: [{ type: "text", text: formatUnknownForToolText(result.toolResult) }],

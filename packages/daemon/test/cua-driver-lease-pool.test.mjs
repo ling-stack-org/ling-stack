@@ -4,6 +4,7 @@ import {
   captureCuaDriverActivationFence,
   commitCurrentCuaDriverActivation,
 } from "../dist/features/plugins/cua-driver-activation-fence.js";
+import { CuaDriverDesktopBridgeAuthority } from "../dist/features/computer-use/desktop-bridge-authority.js";
 import { CuaDriverClientPool } from "../dist/features/plugins/cua-driver-client-pool.js";
 import {
   CuaDriverLeaseRegistry,
@@ -99,6 +100,26 @@ test("lease registry fences old generations and old Desktop instances", () => {
   }), true);
   now = "2026-07-20T00:00:00.000Z";
   assert.equal(registry.getCurrent(), undefined);
+});
+
+test("Desktop bridge authority forwards lease replacement and clear notifications", () => {
+  const replaced = [];
+  const authority = new CuaDriverDesktopBridgeAuthority({
+    workspaceCwd: "/tmp/ling-workspace",
+    daemonAuthorityEpoch: "authority-a",
+    createConnectionId: () => "bridge-a",
+    now: () => "2026-07-18T00:00:00.000Z",
+    onLeaseReplaced: (previous, next) => replaced.push([previous.generation, next?.generation]),
+  });
+  const handshake = authority.issueAuthenticatedHandshake();
+  const first = lease({ ...handshake });
+  const second = lease({ ...handshake, generation: 2 });
+
+  assert.equal(authority.publish(first).accepted, true);
+  assert.equal(authority.publish(second).accepted, true);
+  authority.clear();
+
+  assert.deepEqual(replaced, [[1, 2], [2, undefined]]);
 });
 
 test("lease registry rejects malformed authority, workspace, expiry, and renewal inputs", () => {
@@ -373,10 +394,11 @@ test("pool close stays bounded when connect ignores abort and closes a late clie
 });
 
 test("activation finalizer rechecks the current lease and durable fence before committing", () => {
+  let liveNow = "2026-07-18T00:00:00.000Z";
   const registry = new CuaDriverLeaseRegistry({
     daemonAuthorityEpoch: "authority-a",
     workspaceCwd: "/tmp/ling-workspace",
-    now: () => "2026-07-18T00:00:00.000Z",
+    now: () => liveNow,
   });
   const firstLease = lease();
   assert.equal(registry.publish(firstLease).accepted, true);
@@ -421,5 +443,20 @@ test("activation finalizer rechecks the current lease and durable fence before c
   state = { ...state, requestedRevision: 4 };
   assert.equal(registry.publish(lease({ generation: 2 })).accepted, true);
   assert.equal(commitCurrentCuaDriverActivation({ store, leaseRegistry: registry, token, projection }).committed, false);
+  assert.equal(committedInputs.length, 1);
+
+  const currentLease = lease({ generation: 2 });
+  const currentToken = captureCuaDriverActivationFence(currentLease, state);
+  liveNow = currentLease.expiresAt;
+  assert.equal(
+    commitCurrentCuaDriverActivation({
+      store,
+      leaseRegistry: registry,
+      token: currentToken,
+      projection: { ...projection, now: "2026-07-18T00:00:00.000Z" },
+    }).committed,
+    false,
+    "a stale projection timestamp must not keep an expired lease current",
+  );
   assert.equal(committedInputs.length, 1);
 });

@@ -30,9 +30,11 @@ export function isCurrentCuaDriverActivationFence(input: {
   readonly token: CuaDriverActivationFenceV1;
   readonly leaseRegistry: CuaDriverLeaseRegistry;
   readonly state: CuaDriverActivationState | undefined;
-  readonly now?: string;
 }): boolean {
-  const lease = input.leaseRegistry.getCurrent(input.now);
+  // Lease validity is a live authority decision. A request timestamp is only
+  // suitable for persisted snapshots; reusing it here could revive a lease
+  // after a long initialize/readiness sequence crossed its expiry deadline.
+  const lease = input.leaseRegistry.getCurrent();
   const state = input.state;
   return Boolean(lease && state
     && state.requestedRevision === input.token.requestedRevision
@@ -63,7 +65,6 @@ export function commitCurrentCuaDriverActivation(input: {
     token: input.token,
     leaseRegistry: input.leaseRegistry,
     state,
-    now: input.projection.now,
   })) {
     return { committed: false, ...(state ? { state } : {}) };
   }

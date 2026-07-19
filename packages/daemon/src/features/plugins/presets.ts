@@ -9,6 +9,13 @@ import type {
 
 export const CUA_DRIVER_PLUGIN_ID = "trusted-local:cua-driver";
 export const CUA_DRIVER_MCP_SERVER_ID = "mcp_cua_driver";
+/**
+ * Persisted placeholder for the logical MCP contribution in bundled mode.
+ * Runtime code must resolve the current in-memory Desktop lease and must never
+ * connect to this URL.
+ */
+export const CUA_DRIVER_BUNDLED_LOGICAL_ENDPOINT =
+  "http://127.0.0.1/.ling/cua-driver-bundled-lease";
 export const CUA_DRIVER_DOCUMENTATION_URL = "https://cua.ai/docs/cua-driver";
 export const CUA_DRIVER_INSTALL_COMMAND = "/bin/bash -c \"$(curl -fsSL https://cua.ai/driver/install.sh)\"";
 
@@ -173,6 +180,24 @@ export function createCuaDriverMcpServerInput(command: string, enabled: boolean)
       secretEnvRefs: {},
     },
     enabled,
+    required: false,
+    startupTimeoutSec: 30,
+    toolTimeoutSec: 60,
+    status: { kind: "unknown" },
+  };
+}
+
+export function createBundledCuaDriverLogicalMcpServerInput(): CreateMcpServerInput {
+  return {
+    id: CUA_DRIVER_MCP_SERVER_ID,
+    displayName: "Cua Driver",
+    transport: {
+      type: "streamable-http",
+      url: CUA_DRIVER_BUNDLED_LOGICAL_ENDPOINT,
+      headers: {},
+      secretHeaderRefs: {},
+    },
+    enabled: false,
     required: false,
     startupTimeoutSec: 30,
     toolTimeoutSec: 60,
