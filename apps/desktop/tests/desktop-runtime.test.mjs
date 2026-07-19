@@ -45,6 +45,27 @@ test("DesktopRuntime composes once for one cached tuple and keeps a stable Deskt
   assert.doesNotMatch(diagnosticJson, /bridge-token|authority-a|connection-a|desktopInstanceEpoch/);
 });
 
+test("DesktopRuntime sequential ensure reuses the coordinator for the same authority tuple", async () => {
+  const daemon = fakeDaemon(authority("connection-a", 1));
+  const coordinators = [];
+  const runtime = createRuntime(daemon, {
+    coordinatorFactory: () => {
+      const coordinator = fakeCoordinator();
+      coordinators.push(coordinator);
+      return coordinator;
+    },
+  });
+
+  await runtime.ensureStarted();
+  const firstCoordinator = runtime.cuaDriverCoordinator;
+  await runtime.ensureStarted();
+
+  assert.equal(daemon.ensureStartedCalls, 2, "each window-open check may ask the cached daemon lifecycle");
+  assert.equal(coordinators.length, 1, "the same authority tuple must not construct another provider owner");
+  assert.equal(runtime.cuaDriverCoordinator, firstCoordinator);
+  assert.equal(coordinators[0].shutdownCalls, 0);
+});
+
 test("DesktopRuntime restart shuts down the old coordinator before rotating and composing", async () => {
   const events = [];
   const daemon = fakeDaemon(authority("connection-a", 1), {
@@ -114,6 +135,71 @@ test("open bundled gate fails closed when daemon authority is missing", async ()
   );
 });
 
+test("open bundled gate rejects authority issued for a different workspace", async () => {
+  const daemon = fakeDaemon(Object.freeze({
+    ...authority("connection-wrong-workspace", 1),
+    workspaceCwd: "/tmp/ling-desktop-runtime-other-workspace",
+  }));
+  let factoryCalls = 0;
+  const runtime = createRuntime(daemon, {
+    coordinatorFactory: () => {
+      factoryCalls += 1;
+      return fakeCoordinator();
+    },
+  });
+
+  await assert.rejects(
+    runtime.ensureStarted(),
+    (error) => error?.code === "authority_missing",
+  );
+
+  assert.equal(factoryCalls, 0);
+  assert.equal(runtime.cuaDriverCoordinator, undefined);
+});
+
+test("unsupported platforms remain gate-closed and unsupported bundled architectures fail closed", async () => {
+  const unsupportedPlatformDaemon = fakeDaemon(authority("connection-linux", 1));
+  let unsupportedPlatformFactoryCalls = 0;
+  const unsupportedPlatformRuntime = createRuntime(unsupportedPlatformDaemon, {
+    platform: "linux",
+    architecture: "x64",
+    platformBinding: undefined,
+    coordinatorFactory: () => {
+      unsupportedPlatformFactoryCalls += 1;
+      return fakeCoordinator();
+    },
+  });
+
+  const unsupportedPlatformStatus = await unsupportedPlatformRuntime.ensureStarted();
+  assert.equal(unsupportedPlatformStatus.state, "connected");
+  assert.equal(unsupportedPlatformFactoryCalls, 0);
+
+  for (const input of [
+    { platform: "darwin", architecture: "ia32", featureFlags: bundledDarwinFeatureFlags() },
+    { platform: "win32", architecture: "ia32", featureFlags: bundledWin32FeatureFlags() },
+  ]) {
+    const daemon = fakeDaemon(authority(`connection-${input.platform}`, 1));
+    let factoryCalls = 0;
+    const runtime = createRuntime(daemon, {
+      ...input,
+      platformBinding: undefined,
+      platformBindingFactory: () => {
+        throw new Error("unsupported architecture must fail before binding selection");
+      },
+      coordinatorFactory: () => {
+        factoryCalls += 1;
+        return fakeCoordinator();
+      },
+    });
+
+    await assert.rejects(
+      runtime.ensureStarted(),
+      (error) => error?.code === "architecture_unsupported",
+    );
+    assert.equal(factoryCalls, 0);
+  }
+});
+
 test("Win32 composition maps x64 to the shared x86_64 contract and uses the injected binding factory", async () => {
   const daemon = fakeDaemon(authority("connection-win32", 3));
   const binding = { platform: "win32", fixture: true };
@@ -162,6 +248,34 @@ test("shutdown continues to the owned daemon after coordinator cleanup fails", a
   await assert.rejects(runtime.ensureStarted(), (error) => error?.code === "shutdown_requested");
 
   assert.deepEqual(events, ["coordinator.shutdown", "daemon.stop"]);
+  assert.equal(daemon.stopCalls, 1);
+});
+
+test("concurrent and repeated shutdown calls share one coordinator and daemon cleanup", async () => {
+  const shutdownStarted = deferred();
+  const releaseShutdown = deferred();
+  let coordinatorShutdownCalls = 0;
+  const daemon = fakeDaemon(authority("connection-a", 1));
+  const runtime = createRuntime(daemon, {
+    coordinatorFactory: () => ({
+      async shutdown() {
+        coordinatorShutdownCalls += 1;
+        shutdownStarted.resolve();
+        await releaseShutdown.promise;
+      },
+    }),
+  });
+  await runtime.ensureStarted();
+
+  const firstShutdown = runtime.shutdown();
+  await shutdownStarted.promise;
+  const secondShutdown = runtime.shutdown();
+
+  assert.equal(secondShutdown, firstShutdown);
+  releaseShutdown.resolve();
+  await Promise.all([firstShutdown, secondShutdown]);
+  assert.equal(runtime.shutdown(), firstShutdown, "completed shutdown remains idempotent");
+  assert.equal(coordinatorShutdownCalls, 1);
   assert.equal(daemon.stopCalls, 1);
 });
 
@@ -224,6 +338,53 @@ test("shutdown fences an in-flight startup and still stops the daemon", async ()
   assert.deepEqual(events, ["daemon.start.begin", "daemon.start.end", "daemon.stop"]);
 });
 
+test("shutdown fences an in-flight restart before it can compose replacement authority", async () => {
+  const restartStarted = deferred();
+  const releaseRestart = deferred();
+  const events = [];
+  let factoryCalls = 0;
+  const daemon = fakeDaemon(authority("connection-a", 1), {
+    restart: async () => {
+      events.push("daemon.restart.begin");
+      restartStarted.resolve();
+      await releaseRestart.promise;
+      daemon.cuaDriverAuthorityTuple = authority("connection-b", 2);
+      events.push("daemon.restart.end");
+      return daemon.status;
+    },
+    onStop: () => events.push("daemon.stop"),
+  });
+  const runtime = createRuntime(daemon, {
+    coordinatorFactory: () => {
+      factoryCalls += 1;
+      return fakeCoordinator(() => events.push("coordinator.shutdown"));
+    },
+  });
+  await runtime.ensureStarted();
+
+  const restarting = runtime.restart();
+  await restartStarted.promise;
+  const rejectedRestart = assert.rejects(
+    restarting,
+    (error) => error?.code === "shutdown_requested",
+  );
+  const shuttingDown = runtime.shutdown();
+  releaseRestart.resolve();
+
+  await rejectedRestart;
+  await shuttingDown;
+  assert.deepEqual(events, [
+    "coordinator.shutdown",
+    "daemon.restart.begin",
+    "daemon.restart.end",
+    "daemon.stop",
+  ]);
+  assert.equal(factoryCalls, 1, "shutdown must prevent replacement coordinator construction");
+  assert.equal(daemon.restartCalls, 1);
+  assert.equal(daemon.stopCalls, 1);
+  assert.equal(runtime.cuaDriverCoordinator, undefined);
+});
+
 function createRuntime(daemon, overrides = {}) {
   return new DesktopRuntime({
     daemon,
@@ -253,6 +414,9 @@ function fakeDaemon(initialAuthority, options = {}) {
     },
     async restart() {
       this.restartCalls += 1;
+      if (options.restart) {
+        return options.restart();
+      }
       options.onRestart?.();
       return this.status;
     },

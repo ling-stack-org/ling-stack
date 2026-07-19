@@ -478,7 +478,10 @@ export class DesktopDaemonLifecycle {
         ) {
           return "incompatible";
         }
-        if (authorityGeneration === this.cuaDriverAuthorityGeneration) {
+        if (
+          this.bundledCuaDriverGateEnabled
+          && authorityGeneration === this.cuaDriverAuthorityGeneration
+        ) {
           this.cuaDriverAuthorityTupleValue = Object.freeze({
             daemonAuthorityEpoch: compatibility.daemonAuthorityEpoch,
             bridgeConnectionId: compatibility.bridgeConnectionId,

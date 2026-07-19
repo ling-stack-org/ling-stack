@@ -500,6 +500,71 @@ test("Desktop IPC scopes privileged actions and strictly validates preview media
   unregister();
 });
 
+test("Desktop IPC reads and forwards runtime status only while registered", async () => {
+  const ipc = new FakeIpcMain();
+  const sent = [];
+  let activeStatusListener;
+  let unsubscribeCalls = 0;
+  const initialStatus = {
+    state: "connected",
+    baseUrl: "http://127.0.0.1:17891",
+    ownedByDesktop: true,
+  };
+  const mainWindow = {
+    isDestroyed: () => false,
+    webContents: {
+      id: 11,
+      isDestroyed: () => false,
+      send: (channel, ...args) => sent.push([channel, ...args]),
+    },
+  };
+  const emitRuntimeStatus = (status) => activeStatusListener?.(status);
+  const unregister = registerDesktopIpc({
+    ipcMainImpl: ipc,
+    runtime: {
+      status: initialStatus,
+      restart: async () => initialStatus,
+      onStatusChanged(listener) {
+        activeStatusListener = listener;
+        return () => {
+          unsubscribeCalls += 1;
+          activeStatusListener = undefined;
+        };
+      },
+    },
+    computerUse: {
+      ownsPreviewWebContents: () => false,
+    },
+    getMainWindow: () => mainWindow,
+  });
+  const mainEvent = { sender: { id: 11 } };
+  const foreignEvent = { sender: { id: 33 } };
+
+  assert.deepEqual(await ipc.invoke(DESKTOP_IPC_CHANNELS.daemonStatus, mainEvent), initialStatus);
+  assert.deepEqual(await ipc.invoke(DESKTOP_IPC_CHANNELS.daemonStatus, foreignEvent), {
+    state: "disconnected",
+    baseUrl: "",
+    ownedByDesktop: false,
+  });
+
+  const restartedStatus = {
+    state: "connected",
+    baseUrl: "http://127.0.0.1:17891",
+    ownedByDesktop: false,
+    message: "external daemon reused",
+  };
+  emitRuntimeStatus(restartedStatus);
+  assert.deepEqual(sent, [[DESKTOP_IPC_CHANNELS.daemonStatus, restartedStatus]]);
+
+  unregister();
+  emitRuntimeStatus({ state: "disconnected", baseUrl: "", ownedByDesktop: false });
+  assert.equal(unsubscribeCalls, 1);
+  assert.equal(activeStatusListener, undefined);
+  assert.equal(ipc.handlers.has(DESKTOP_IPC_CHANNELS.daemonStatus), false);
+  assert.equal(ipc.listeners.has(DESKTOP_IPC_CHANNELS.daemonStatus), false);
+  assert.deepEqual(sent, [[DESKTOP_IPC_CHANNELS.daemonStatus, restartedStatus]]);
+});
+
 test("Desktop IPC authorizes, retains, and settles Open task navigation intents", async () => {
   const ipc = new FakeIpcMain();
   const navigationIntents = new DesktopNavigationIntentStore();
