@@ -1445,27 +1445,47 @@ index 0000000..a11296f
 +    }
 +}
 diff --git a/libs/cua-driver/rust/crates/cua-driver/src/cli.rs b/libs/cua-driver/rust/crates/cua-driver/src/cli.rs
-index 9724177..0db70c0 100644
+index 9724177..902cd6b 100644
 --- a/libs/cua-driver/rust/crates/cua-driver/src/cli.rs
 +++ b/libs/cua-driver/rust/crates/cua-driver/src/cli.rs
-@@ -2844,10 +2844,13 @@ fn diagnose_tcc_db_section() -> String {
+@@ -2843,11 +2843,16 @@ fn diagnose_tcc_db_section() -> String {
+ }
  
  fn diagnose_config_paths_section() -> String {
-     let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
-+    let managed_root = cua_driver_core::ling_managed::state_home()
-+        .map(|path| path.display().to_string())
-+        .unwrap_or_else(|| format!("{home}/.cua-driver"));
+-    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
++    let home = std::env::var_os("HOME")
++        .map(std::path::PathBuf::from)
++        .unwrap_or_else(|| std::path::PathBuf::from("/tmp"));
++    let (user_data_dir, telemetry_id) =
++        diagnose_state_paths(&home, cua_driver_core::ling_managed::state_home().as_deref());
++    let home = home.display();
      let paths: &[(&str, String)] = &[
 -        ("user data dir",   format!("{home}/.cua-driver")),
-+        ("user data dir",   managed_root.clone()),
++        ("user data dir",   user_data_dir.display().to_string()),
          ("config cache",    format!("{home}/Library/Caches/cua-driver")),
 -        ("telemetry id",    format!("{home}/.cua-driver/.telemetry_id")),
-+        ("telemetry id",    format!("{managed_root}/telemetry/.telemetry_id")),
++        ("telemetry id",    telemetry_id.display().to_string()),
          ("updater plist",   format!("{home}/Library/LaunchAgents/com.trycua.cua_driver_updater.plist")),
          ("daemon plist",    format!("{home}/Library/LaunchAgents/com.trycua.cua_driver_daemon.plist")),
      ];
-@@ -2861,12 +2864,22 @@ fn diagnose_config_paths_section() -> String {
+@@ -2859,14 +2864,38 @@ fn diagnose_config_paths_section() -> String {
+     lines.join("\n")
+ }
  
++fn diagnose_state_paths(
++    home: &std::path::Path,
++    managed_state_home: Option<&std::path::Path>,
++) -> (std::path::PathBuf, std::path::PathBuf) {
++    match managed_state_home {
++        Some(root) => (root.to_path_buf(), root.join("telemetry/.telemetry_id")),
++        None => {
++            let user_data_dir = home.join(".cua-driver");
++            let telemetry_id = user_data_dir.join(".telemetry_id");
++            (user_data_dir, telemetry_id)
++        }
++    }
++}
++
  /// Path to the persistent JSON config file (`~/.cua-driver/config.json`).
  fn config_file_path() -> std::path::PathBuf {
 +    if let Some(path) = cua_driver_core::ling_managed::state_path("config.json") {
@@ -1487,7 +1507,7 @@ index 9724177..0db70c0 100644
      let path = config_file_path();
      std::fs::read_to_string(&path)
          .ok()
-@@ -2875,7 +2888,14 @@ fn read_config_file() -> serde_json::Value {
+@@ -2875,7 +2904,14 @@ fn read_config_file() -> serde_json::Value {
  }
  
  /// Write a single key/value into the persisted config file.
@@ -1503,7 +1523,7 @@ index 9724177..0db70c0 100644
      let path = config_file_path();
      if let Some(parent) = path.parent() {
          let _ = std::fs::create_dir_all(parent);
-@@ -2887,6 +2907,7 @@ fn write_config_file(key: &str, value: &serde_json::Value) {
+@@ -2887,6 +2923,7 @@ fn write_config_file(key: &str, value: &serde_json::Value) {
      if let Ok(json) = serde_json::to_string_pretty(&cfg) {
          let _ = std::fs::write(&path, json);
      }
@@ -1511,7 +1531,7 @@ index 9724177..0db70c0 100644
  }
  
  /// `cua-driver config [show|get|set|reset] [key] [value]`
-@@ -3062,7 +3083,12 @@ pub fn run_config_cmd(
+@@ -3062,7 +3099,12 @@ pub fn run_config_cmd(
                  process::exit(1);
              }
              // Persist the value to disk so future CLI invocations can read it.
@@ -1525,6 +1545,32 @@ index 9724177..0db70c0 100644
              // Print updated config.
              let config = rt.block_on(async {
                  registry.invoke("get_config", serde_json::json!({})).await
+@@ -3220,6 +3262,25 @@ mod tests {
+         values.iter().map(|value| (*value).to_owned()).collect()
+     }
+ 
++    #[test]
++    fn diagnose_paths_keep_standalone_telemetry_identity_in_user_data_root() {
++        let home = std::path::Path::new("/fixture/home");
++        let (user_data, telemetry_id) = diagnose_state_paths(home, None);
++
++        assert_eq!(user_data, home.join(".cua-driver"));
++        assert_eq!(telemetry_id, home.join(".cua-driver/.telemetry_id"));
++    }
++
++    #[test]
++    fn diagnose_paths_isolate_managed_telemetry_under_capability_root() {
++        let home = std::path::Path::new("/fixture/home");
++        let managed = std::path::Path::new("/fixture/capability");
++        let (user_data, telemetry_id) = diagnose_state_paths(home, Some(managed));
++
++        assert_eq!(user_data, managed);
++        assert_eq!(telemetry_id, managed.join("telemetry/.telemetry_id"));
++    }
++
+     #[test]
+     fn finite_call_tool_extraction_supports_subcommand_and_legacy_forms() {
+         assert_eq!(
 diff --git a/libs/cua-driver/rust/crates/cua-driver/src/main.rs b/libs/cua-driver/rust/crates/cua-driver/src/main.rs
 index de4333b..408d503 100644
 --- a/libs/cua-driver/rust/crates/cua-driver/src/main.rs

@@ -401,10 +401,10 @@ index 6aabae5..25c9745 100644
      }
 diff --git a/libs/cua-driver/rust/crates/cua-driver/tests/ling_managed_native.rs b/libs/cua-driver/rust/crates/cua-driver/tests/ling_managed_native.rs
 new file mode 100644
-index 0000000..430abc5
+index 0000000..76eca68
 --- /dev/null
 +++ b/libs/cua-driver/rust/crates/cua-driver/tests/ling_managed_native.rs
-@@ -0,0 +1,402 @@
+@@ -0,0 +1,466 @@
 +#![cfg(debug_assertions)]
 +
 +use serde_json::{json, Value};
@@ -414,10 +414,12 @@ index 0000000..430abc5
 +use std::path::{Path, PathBuf};
 +use std::process::{Child, ChildStdin, Command, Stdio};
 +use std::sync::mpsc::{self, Receiver};
++use std::sync::Mutex;
 +use std::time::{Duration, Instant};
 +use wait_timeout::ChildExt;
 +
 +const PROVIDER: &str = env!("CARGO_BIN_EXE_cua-driver");
++static DIAGNOSE_LOCK: Mutex<()> = Mutex::new(());
 +
 +struct ManagedFixture {
 +    _temporary: tempfile::TempDir,
@@ -631,6 +633,52 @@ index 0000000..430abc5
 +}
 +
 +#[test]
++fn diagnose_reports_standalone_telemetry_identity_in_upstream_home() {
++    let _guard = DIAGNOSE_LOCK.lock().expect("diagnose test lock");
++    let fixture = ManagedFixture::new();
++    let output = Command::new(PROVIDER)
++        .arg("diagnose")
++        .env("HOME", &fixture.home)
++        .env("USERPROFILE", &fixture.home)
++        .env("CUA_DRIVER_STATE_HOME", &fixture.root)
++        .env_remove("CUA_DRIVER_LING_MANAGED")
++        .env_remove("CUA_DRIVER_EMBEDDED")
++        .env("CUA_DRIVER_RS_TELEMETRY_ENABLED", "false")
++        .env("CUA_DRIVER_RS_UPDATE_CHECK", "false")
++        .output()
++        .expect("standalone diagnose command");
++    assert!(output.status.success());
++    let stdout = String::from_utf8(output.stdout).expect("diagnose UTF-8");
++    let expected = fixture.home.join(".cua-driver/.telemetry_id");
++    let managed_only_shape = fixture.home.join(".cua-driver/telemetry/.telemetry_id");
++
++    assert_telemetry_diagnose_path(&stdout, &expected);
++    assert!(!stdout.contains(&managed_only_shape.display().to_string()));
++}
++
++#[test]
++fn diagnose_reports_managed_telemetry_identity_under_capability_root() {
++    let _guard = DIAGNOSE_LOCK.lock().expect("diagnose test lock");
++    let fixture = ManagedFixture::new();
++    let output = configured_managed_command(&fixture, std::process::id())
++        .arg("diagnose")
++        .output()
++        .expect("managed diagnose command");
++    assert!(output.status.success());
++    let stdout = String::from_utf8(output.stdout).expect("diagnose UTF-8");
++    let expected = fixture.root.join("telemetry/.telemetry_id");
++
++    assert_telemetry_diagnose_path(&stdout, &expected);
++    assert!(!stdout.contains(
++        &fixture
++            .home
++            .join(".cua-driver/.telemetry_id")
++            .display()
++            .to_string()
++    ));
++}
++
++#[test]
 +fn provider_exits_when_the_exact_host_process_dies() {
 +    let fixture = ManagedFixture::new();
 +    let mut host = spawn_long_lived_host();
@@ -732,14 +780,19 @@ index 0000000..430abc5
 +}
 +
 +fn managed_command(fixture: &ManagedFixture, host_pid: u32) -> Command {
++    let mut command = configured_managed_command(fixture, host_pid);
++    command.args([
++        "mcp",
++        "--embedded",
++        "--host-bundle-id",
++        "com.lingstack.desktop",
++    ]);
++    command
++}
++
++fn configured_managed_command(fixture: &ManagedFixture, host_pid: u32) -> Command {
 +    let mut command = Command::new(PROVIDER);
 +    command
-+        .args([
-+            "mcp",
-+            "--embedded",
-+            "--host-bundle-id",
-+            "com.lingstack.desktop",
-+        ])
 +        .env("HOME", &fixture.home)
 +        .env("USERPROFILE", &fixture.home)
 +        .env("CUA_DRIVER_LING_MANAGED", "1")
@@ -753,6 +806,17 @@ index 0000000..430abc5
 +        .env("CUA_DRIVER_RS_TELEMETRY_ENABLED", "false")
 +        .env("CUA_DRIVER_RS_UPDATE_CHECK", "false");
 +    command
++}
++
++fn assert_telemetry_diagnose_path(output: &str, expected: &Path) {
++    let line = output
++        .lines()
++        .find(|line| line.trim_start().starts_with("telemetry id"))
++        .expect("diagnose telemetry identity line");
++    assert!(
++        line.ends_with(&expected.display().to_string()),
++        "unexpected telemetry identity line: {line}"
++    );
 +}
 +
 +fn wait_for_exit(child: &mut Child, timeout: Duration) -> std::process::ExitStatus {
