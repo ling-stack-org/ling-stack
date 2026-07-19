@@ -22,7 +22,7 @@ Windows bundled target 使用两条独立判定轴：`bundled_embedded` 表示 h
 | 平台 | 目标 | 当前证据边界 |
 | --- | --- | --- |
 | macOS | arm64、x86_64 | 当前 unsigned baseline 仍是 external provider；目标改为从锁定 tag/Cargo.lock 加 `ling-managed-embedded-v1` patch series 构建 `0.8.3 (Ling build 1)` 并由 Desktop embedded 托管，post-sign seal、Developer ID、单一 Ling TCC、macOS 13/14/15/26、clean machine、升级回滚尚未闭合 |
-| Windows | x86_64 | 当前实现仍是 external baseline；目标改为从锁定 tag/Cargo.lock/patch series 构建 bundled `0.8.3 (Ling build 1)`，由 Desktop 在 interactive session 托管并声明 standard integrity tier；test-signed Setup/internal VM 功能验收与 production Publisher/SmartScreen/WDAC/release matrix 均尚未闭合 |
+| Windows | x86_64 | Win32 standard adapter 已实现但仍在关闭的 packaged gate 后，当前 runtime 仍是 external baseline；目标从锁定 tag/Cargo.lock/patch series 构建 bundled `0.8.3 (Ling build 1)`，由 Desktop 在 interactive session 托管并声明 standard integrity tier；真实 Authenticode/catalog/ACL/WTS、test-signed Setup/internal VM 功能验收与 production Publisher/SmartScreen/WDAC/release matrix 均尚未闭合 |
 | Linux | 不支持 | provider gate 必须 fail closed |
 
 当前已验证 artifact 只发布 Cua Driver plugin shell metadata。批准后的 macOS 和 Windows

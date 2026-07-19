@@ -7,9 +7,11 @@ The shared contracts, feature gates, signing feasibility, activation fences, Des
 supervisor, source-build pipeline and process-wide Desktop runtime composition are
 implemented. The gate-off Darwin adapter implements Mach-O/code-sign identity,
 direct-child lifecycle, host-owned TCC readiness and retrying permission-change
-monitoring, but activation does not connect the composition and adapter yet. The Win32
-adapter is still pending, both packaged-provider gates remain off, and packaged runtime
-still uses the external provider path.
+monitoring. The Win32 standard adapter implements policy-pinned identity, state-root
+ACL/reparse protection, direct-child lifecycle, active-child readiness and Electron
+recovery hints. Activation does not connect the composition and adapters yet, real
+Windows acceptance is not complete, both packaged-provider gates remain off, and
+packaged runtime still uses the external provider path.
 
 The paired product and architecture decision is
 [Bundled Embedded Cua Driver](cua-driver-bundled-embedded.md).
@@ -781,7 +783,9 @@ Packaged path resolution rules:
    absent catalog plus explicit `NotSigned` identity. Signed tiers verify the installed
    Ling executable and provider catalog with the absolute in-box Windows PowerShell path,
    `-NoProfile -NonInteractive`, fixed UTF-8 locale-independent JSON and bounded
-   stdout/stderr. Require the matching internal or production policy signer identity and
+   stdout/stderr. The Windows system root is a required trusted platform fact; verifier
+   code never falls back to caller-controlled `SystemRoot` or `WINDIR` environment values.
+   Require the matching internal or production policy signer identity and
    run `Test-FileCatalog` against only the dedicated two-file payload directory. Missing
    PowerShell, process-launch denial, WDAC/AppLocker blocking, unavailable catalog cmdlets,
    oversized output or inability to obtain a verdict maps to
@@ -1436,9 +1440,11 @@ Desktop verifies:
 The active Rust child owns the authoritative Windows session monitor. WTS session-change
 signals provide immediate hints, and a locked at-most-one-second heartbeat rechecks the
 child session and `OpenInputDesktop` so missed notifications or secure-desktop switches
-cannot leave stale readiness. Electron lock/unlock events are recovery hints, not the
-source of truth. Every notification carries the child nonce, lease generation and a
-monotonic readiness sequence. A lock, disconnect, logoff, fast-user-switch, session
+cannot leave stale readiness. Electron's Windows-supported `unlock-screen` event is a
+recovery hint, not the source of truth; the macOS-only `user-did-become-active` event is
+never treated as Windows session evidence. Every notification carries the child nonce,
+lease generation and a monotonic readiness sequence. A lock, disconnect, logoff,
+fast-user-switch, session
 mismatch, non-default/unavailable input desktop or expired heartbeat triggers:
 
 ```text

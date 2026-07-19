@@ -17,8 +17,9 @@ Current merged baseline:
 - the gate-off Darwin native adapter now supplies injected Mach-O/code-sign identity,
   direct-child lifecycle, host-owned TCC readiness and a retrying permission-change
   monitor, without enabling packaged runtime;
-- activation wiring, the Win32 native adapter, package staging, product states and
-  evidence/handoff closure remain.
+- the Win32 standard adapter now supplies policy-pinned identity, state-root ACL/reparse
+  protection, direct-child lifecycle, active-child readiness and Electron recovery hints;
+- activation wiring, package staging, product states and evidence/handoff closure remain.
 
 Both macOS and Windows packaged-provider gates remain off. This status records staged
 progress only and does not claim `bundled_embedded` runtime completion.
@@ -1066,6 +1067,8 @@ elevated/UWP pixel-input parity.
 - [ ] **T7 (P1, human: ~4–6 days / Codex: ~1–2 days)** — Implement the Windows standard
   adapter, content-free active-child readiness, Job Object lifecycle, structured
   limitations and global-pipe regression.
+  - Adapter code and non-Windows automated contract coverage are complete behind the gate;
+    real Windows Authenticode/catalog/ACL/WTS/global-pipe and VM acceptance remain open.
 - [ ] **T8 (P1, human: ~4–7 days / Codex: ~1–2 days)** — Add private-helper Setup staging,
   three-tier signing hooks, the Windows signed catalog, PowerShell tier classification,
   migration and tier-aware rollback tuple.
