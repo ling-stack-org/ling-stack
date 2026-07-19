@@ -3,7 +3,14 @@
 ## Status
 
 Approved cross-platform design direction for the internal Desktop alpha. Implementation
-has not landed yet.
+is in progress. Cross-platform contracts and feature gates, signing feasibility,
+activation fencing, the shared Desktop supervisor and the deterministic source-build
+pipeline have landed. Production Desktop composition, native platform adapters,
+package staging/signing closure, product-state E2E and acceptance handoff remain.
+
+Both packaged-provider gates remain off. Packaged Desktop therefore still uses the
+external provider path until its platform-specific runtime and signed package satisfy the
+completion gates in the implementation plan.
 
 The Windows production Publisher and signing service are release inputs, not prerequisites
 for implementing the bundled provider. Internal implementation closes with a real

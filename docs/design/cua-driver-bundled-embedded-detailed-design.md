@@ -3,8 +3,10 @@
 ## Status
 
 Detailed design for the approved internal macOS and Windows Desktop alpha direction.
-This document defines the target contracts; the current code still uses the external
-provider path on both platforms.
+The shared contracts, feature gates, signing feasibility, activation fences, Desktop
+supervisor and source-build pipeline are implemented. Production Desktop composition and
+the native macOS/Windows adapters are not connected yet, so both packaged-provider gates
+remain off and packaged runtime still uses the external provider path.
 
 The paired product and architecture decision is
 [Bundled Embedded Cua Driver](cua-driver-bundled-embedded.md).
