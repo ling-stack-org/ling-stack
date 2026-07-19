@@ -14,7 +14,7 @@ import {
 } from "../shared/desktop-capabilities.js";
 import { DESKTOP_IPC_CHANNELS } from "../shared/ipc-channels.js";
 import type { ComputerUsePreviewCoordinator } from "./computer-use/coordinator.js";
-import type { DesktopDaemonLifecycle } from "./daemon-lifecycle.js";
+import type { DesktopRuntime } from "./desktop-runtime.js";
 import { DesktopNavigationIntentStore } from "./navigation-intent.js";
 import { sendToLiveDesktopWindow } from "./safe-window-send.js";
 
@@ -25,7 +25,7 @@ const MAX_HOST_LAYOUT_AGE_MS = 5 * 60 * 1_000;
 const MAX_HOST_LAYOUT_FUTURE_SKEW_MS = 60 * 1_000;
 
 export function registerDesktopIpc(input: {
-  readonly daemon: DesktopDaemonLifecycle;
+  readonly runtime: Pick<DesktopRuntime, "status" | "restart" | "onStatusChanged">;
   readonly computerUse: ComputerUsePreviewCoordinator;
   readonly getMainWindow: () => BrowserWindow | undefined;
   readonly navigationIntents?: DesktopNavigationIntentStore;
@@ -48,10 +48,10 @@ export function registerDesktopIpc(input: {
     input.computerUse.ownsPreviewWebContents(event.sender.id);
 
   desktopIpcMain.handle(DESKTOP_IPC_CHANNELS.daemonStatus, async (event) =>
-    isMainWindowSender(event) ? input.daemon.status : { state: "disconnected", baseUrl: "", ownedByDesktop: false });
+    isMainWindowSender(event) ? input.runtime.status : { state: "disconnected", baseUrl: "", ownedByDesktop: false });
   desktopIpcMain.handle(DESKTOP_IPC_CHANNELS.daemonRestart, async (event) =>
     isMainWindowSender(event)
-      ? input.daemon.restart()
+      ? input.runtime.restart()
       : { state: "disconnected", baseUrl: "", ownedByDesktop: false, message: "unauthorized_sender" });
   desktopIpcMain.handle(DESKTOP_IPC_CHANNELS.navigationIntentGet, async (event) =>
     isMainWindowSender(event) ? navigationIntents.getPendingIntent() : undefined);
@@ -321,7 +321,7 @@ export function registerDesktopIpc(input: {
     }
   });
 
-  const unsubscribeStatus = input.daemon.onStatusChanged((status) => {
+  const unsubscribeStatus = input.runtime.onStatusChanged((status) => {
     sendToLiveDesktopWindow(input.getMainWindow(), DESKTOP_IPC_CHANNELS.daemonStatus, status);
   });
   const unsubscribeNavigationIntents = navigationIntents.onIntentChanged((intent) => {

@@ -101,13 +101,169 @@ test("Desktop reuses a healthy daemon only after the authenticated preview hands
   });
 
   const status = await lifecycle.ensureStarted();
+  const reopenedStatus = await lifecycle.ensureStarted();
 
   assert.equal(status.state, "connected");
   assert.equal(status.ownedByDesktop, false);
+  assert.deepEqual(reopenedStatus, status);
+  assert.equal(lifecycle.cuaDriverAuthorityTuple, undefined);
   assert.deepEqual(requests.map((request) => request.pathname), [
     "/health",
     "/computer-use/desktop-bridge/handshake",
   ]);
+});
+
+test("bundled gate accepts the typed handshake guard and freezes its authority tuple", async () => {
+  const defaultWorkspaceCwd = "/tmp/ling-desktop-typed-handshake-workspace";
+  let handshakeCount = 0;
+  const lifecycle = new DesktopDaemonLifecycle({
+    baseUrl: "http://127.0.0.1:18010",
+    daemonEntryPath: existingEntryPath,
+    defaultWorkspaceCwd,
+    desktopBridgeToken: "bridge-token",
+    platform: "darwin",
+    cuaDriverFeatureFlags: bundledDarwinFeatureFlags(),
+    fetch: async (input) => {
+      const pathname = new URL(String(input)).pathname;
+      if (pathname === "/health") {
+        return daemonHealth(defaultWorkspaceCwd);
+      }
+      handshakeCount += 1;
+      return Response.json(typedHandshake(defaultWorkspaceCwd, {
+        daemonAuthorityEpoch: "authority-a",
+        bridgeConnectionId: "connection-a",
+        desktopInstanceEpoch: 7,
+      }));
+    },
+  });
+
+  await lifecycle.ensureStarted();
+  const authority = lifecycle.cuaDriverAuthorityTuple;
+
+  assert.deepEqual(authority, {
+    daemonAuthorityEpoch: "authority-a",
+    bridgeConnectionId: "connection-a",
+    desktopInstanceEpoch: 7,
+    workspaceCwd: canonicalWorkspace(defaultWorkspaceCwd),
+  });
+  assert.equal(Object.isFrozen(authority), true);
+  await lifecycle.ensureStarted();
+  assert.equal(handshakeCount, 1, "window reopen must not fence its own daemon lease with another handshake");
+});
+
+test("bundled gate rejects a legacy preview-only handshake without issuing authority", async () => {
+  const defaultWorkspaceCwd = "/tmp/ling-desktop-legacy-gate-on-workspace";
+  const lifecycle = new DesktopDaemonLifecycle({
+    baseUrl: "http://127.0.0.1:18011",
+    daemonEntryPath: existingEntryPath,
+    defaultWorkspaceCwd,
+    desktopBridgeToken: "bridge-token",
+    platform: "darwin",
+    cuaDriverFeatureFlags: bundledDarwinFeatureFlags(),
+    fetch: async (input) => {
+      const pathname = new URL(String(input)).pathname;
+      return pathname === "/health"
+        ? daemonHealth(defaultWorkspaceCwd)
+        : Response.json({
+            protocolVersion: 1,
+            capabilities: ["preview-source"],
+            bridgeTokenAccepted: true,
+            routeTokenAccepted: true,
+            defaultWorkspaceCwd: canonicalWorkspace(defaultWorkspaceCwd),
+          });
+    },
+  });
+
+  await assert.rejects(lifecycle.ensureStarted(), /daemon_desktop_bridge_incompatible/);
+  assert.equal(lifecycle.cuaDriverAuthorityTuple, undefined);
+});
+
+test("explicit restart rotates a reused daemon authority tuple and stop clears it", async () => {
+  const defaultWorkspaceCwd = "/tmp/ling-desktop-restart-authority-workspace";
+  let handshakeCount = 0;
+  const lifecycle = new DesktopDaemonLifecycle({
+    baseUrl: "http://127.0.0.1:18012",
+    daemonEntryPath: existingEntryPath,
+    defaultWorkspaceCwd,
+    desktopBridgeToken: "bridge-token",
+    platform: "darwin",
+    cuaDriverFeatureFlags: bundledDarwinFeatureFlags(),
+    fetch: async (input) => {
+      const pathname = new URL(String(input)).pathname;
+      if (pathname === "/health") {
+        return daemonHealth(defaultWorkspaceCwd);
+      }
+      handshakeCount += 1;
+      return Response.json(typedHandshake(defaultWorkspaceCwd, {
+        daemonAuthorityEpoch: "authority-a",
+        bridgeConnectionId: `connection-${handshakeCount}`,
+        desktopInstanceEpoch: handshakeCount,
+      }));
+    },
+  });
+
+  await lifecycle.ensureStarted();
+  const first = lifecycle.cuaDriverAuthorityTuple;
+  await lifecycle.restart();
+  const second = lifecycle.cuaDriverAuthorityTuple;
+
+  assert.equal(handshakeCount, 2);
+  assert.notDeepEqual(second, first);
+  assert.equal(second?.desktopInstanceEpoch, 2);
+  await lifecycle.stopOwnedDaemon();
+  assert.equal(lifecycle.cuaDriverAuthorityTuple, undefined);
+});
+
+test("owned daemon exit clears authority and reconnect issues a fresh tuple", async () => {
+  const defaultWorkspaceCwd = "/tmp/ling-desktop-owned-reconnect-workspace";
+  const children = [createFakeChild({ exitOnTerm: false }), createFakeChild()];
+  let daemonAvailable = false;
+  let spawnCount = 0;
+  let handshakeCount = 0;
+  const lifecycle = new DesktopDaemonLifecycle({
+    baseUrl: "http://127.0.0.1:18014",
+    daemonEntryPath: existingEntryPath,
+    defaultWorkspaceCwd,
+    desktopBridgeToken: "bridge-token",
+    platform: "darwin",
+    cuaDriverFeatureFlags: bundledDarwinFeatureFlags(),
+    fetch: async (input) => {
+      const pathname = new URL(String(input)).pathname;
+      if (pathname === "/health") {
+        if (!daemonAvailable) {
+          throw new TypeError("daemon unavailable");
+        }
+        return daemonHealth(defaultWorkspaceCwd);
+      }
+      handshakeCount += 1;
+      return Response.json(typedHandshake(defaultWorkspaceCwd, {
+        daemonAuthorityEpoch: `authority-${spawnCount}`,
+        bridgeConnectionId: `connection-${handshakeCount}`,
+        desktopInstanceEpoch: 1,
+      }));
+    },
+    probePort: async () => "free",
+    spawnDaemon: () => {
+      const child = children[spawnCount++];
+      daemonAvailable = true;
+      return child;
+    },
+  });
+
+  await lifecycle.ensureStarted();
+  const first = lifecycle.cuaDriverAuthorityTuple;
+  daemonAvailable = false;
+  children[0].exitCode = 17;
+  children[0].emit("exit", 17, null);
+  assert.equal(lifecycle.cuaDriverAuthorityTuple, undefined);
+
+  await lifecycle.ensureStarted();
+  const second = lifecycle.cuaDriverAuthorityTuple;
+
+  assert.equal(spawnCount, 2);
+  assert.equal(handshakeCount, 2);
+  assert.notDeepEqual(second, first);
+  await lifecycle.stopOwnedDaemon();
 });
 
 test("Desktop refuses to reuse the same bridge token for a different workspace", async () => {
@@ -149,17 +305,20 @@ test("Desktop requires the handshake to authorize its secret for scoped Computer
     daemonEntryPath: existingEntryPath,
     defaultWorkspaceCwd,
     desktopBridgeToken: "shared-bridge-token",
+    platform: "darwin",
+    cuaDriverFeatureFlags: bundledDarwinFeatureFlags(),
     fetch: async (input) => {
       const pathname = new URL(String(input)).pathname;
       if (pathname === "/health") {
         return daemonHealth(defaultWorkspaceCwd);
       }
       return Response.json({
-        protocolVersion: 1,
-        capabilities: ["preview-source"],
-        bridgeTokenAccepted: true,
+        ...typedHandshake(defaultWorkspaceCwd, {
+          daemonAuthorityEpoch: "authority-route-rejected",
+          bridgeConnectionId: "connection-route-rejected",
+          desktopInstanceEpoch: 1,
+        }),
         routeTokenAccepted: false,
-        defaultWorkspaceCwd: canonicalWorkspace(defaultWorkspaceCwd),
       });
     },
     spawnDaemon: () => {
@@ -183,16 +342,19 @@ test("Desktop requires health and handshake to report the same canonical workspa
     daemonEntryPath: existingEntryPath,
     defaultWorkspaceCwd,
     desktopBridgeToken: "shared-bridge-token",
+    platform: "darwin",
+    cuaDriverFeatureFlags: bundledDarwinFeatureFlags(),
     fetch: async (input) => {
       const pathname = new URL(String(input)).pathname;
       if (pathname === "/health") {
         return daemonHealth(defaultWorkspaceCwd);
       }
       return Response.json({
-        protocolVersion: 1,
-        capabilities: ["preview-source"],
-        bridgeTokenAccepted: true,
-        routeTokenAccepted: true,
+        ...typedHandshake(defaultWorkspaceCwd, {
+          daemonAuthorityEpoch: "authority-workspace-mismatch",
+          bridgeConnectionId: "connection-workspace-mismatch",
+          desktopInstanceEpoch: 1,
+        }),
         defaultWorkspaceCwd: canonicalWorkspace("/tmp/ling-desktop-other-handshake-workspace"),
       });
     },
@@ -293,6 +455,42 @@ test("stopping during an in-flight port probe cancels startup before spawning", 
   assert.equal(spawnCount, 0, "shutdown must invalidate startup before it can spawn an owned daemon");
   assert.equal(lifecycle.status.state, "disconnected");
   assert.equal(lifecycle.status.ownedByDesktop, false);
+});
+
+test("stopping during an in-flight typed handshake cannot restore a stale authority tuple", async () => {
+  const handshakeStarted = deferred();
+  const allowHandshake = deferred();
+  const defaultWorkspaceCwd = "/tmp/ling-desktop-cancelled-handshake-workspace";
+  const lifecycle = new DesktopDaemonLifecycle({
+    baseUrl: "http://127.0.0.1:18013",
+    daemonEntryPath: existingEntryPath,
+    defaultWorkspaceCwd,
+    desktopBridgeToken: "bridge-token",
+    platform: "darwin",
+    cuaDriverFeatureFlags: bundledDarwinFeatureFlags(),
+    fetch: async (input) => {
+      const pathname = new URL(String(input)).pathname;
+      if (pathname === "/health") {
+        return daemonHealth(defaultWorkspaceCwd);
+      }
+      handshakeStarted.resolve();
+      await allowHandshake.promise;
+      return Response.json(typedHandshake(defaultWorkspaceCwd, {
+        daemonAuthorityEpoch: "authority-stale",
+        bridgeConnectionId: "connection-stale",
+        desktopInstanceEpoch: 1,
+      }));
+    },
+  });
+
+  const starting = lifecycle.ensureStarted();
+  await handshakeStarted.promise;
+  const stopping = lifecycle.stopOwnedDaemon();
+  allowHandshake.resolve();
+
+  await assert.rejects(starting, /daemon_start_cancelled/);
+  await stopping;
+  assert.equal(lifecycle.cuaDriverAuthorityTuple, undefined);
 });
 
 test("an older stop cannot overwrite a newer owned daemon connection", async () => {
@@ -753,4 +951,22 @@ function deferred() {
     resolve = settle;
   });
   return { promise, resolve };
+}
+
+function bundledDarwinFeatureFlags() {
+  return {
+    bundledEmbedded: { darwin: true, win32: false },
+    packagedProvider: { darwin: true, win32: false },
+  };
+}
+
+function typedHandshake(defaultWorkspaceCwd, authority) {
+  return {
+    protocolVersion: 1,
+    capabilities: ["preview-source", "cua-driver-lease-v1"],
+    bridgeTokenAccepted: true,
+    routeTokenAccepted: true,
+    defaultWorkspaceCwd: canonicalWorkspace(defaultWorkspaceCwd),
+    ...authority,
+  };
 }

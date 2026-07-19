@@ -73,8 +73,12 @@ test("Desktop IPC scopes privileged actions and strictly validates preview media
   };
   const unregister = registerDesktopIpc({
     ipcMainImpl: ipc,
-    daemon: {
+    runtime: {
       status: { state: "connected", baseUrl: "http://127.0.0.1:1", ownedByDesktop: true },
+      restart: async () => {
+        calls.push(["runtimeRestart"]);
+        return { state: "connected", baseUrl: "http://127.0.0.1:1", ownedByDesktop: true };
+      },
       onStatusChanged: () => () => {},
     },
     computerUse,
@@ -84,6 +88,15 @@ test("Desktop IPC scopes privileged actions and strictly validates preview media
   const mainEvent = { sender: { id: 11 } };
   const previewEvent = { sender: { id: 22 } };
   const foreignEvent = { sender: { id: 33 } };
+
+  assert.deepEqual(
+    await ipc.invoke(DESKTOP_IPC_CHANNELS.daemonRestart, mainEvent),
+    { state: "connected", baseUrl: "http://127.0.0.1:1", ownedByDesktop: true },
+  );
+  assert.deepEqual(
+    await ipc.invoke(DESKTOP_IPC_CHANNELS.daemonRestart, foreignEvent),
+    { state: "disconnected", baseUrl: "", ownedByDesktop: false, message: "unauthorized_sender" },
+  );
 
   assert.deepEqual(
     await ipc.invoke(DESKTOP_IPC_CHANNELS.computerUseStop, mainEvent, "session-main"),
@@ -349,6 +362,7 @@ test("Desktop IPC scopes privileged actions and strictly validates preview media
     reportedAt,
   });
   assert.deepEqual(calls, [
+    ["runtimeRestart"],
     ["stop", "session-main"],
     ["stopCurrent"],
     ["hideCurrent"],
@@ -492,7 +506,7 @@ test("Desktop IPC authorizes, retains, and settles Open task navigation intents"
   const selectedConversations = [];
   const unregister = registerDesktopIpc({
     ipcMainImpl: ipc,
-    daemon: {
+    runtime: {
       status: { state: "connected", baseUrl: "http://127.0.0.1:1", ownedByDesktop: true },
       onStatusChanged: () => () => {},
     },
@@ -544,7 +558,7 @@ test("Desktop IPC replays the renderer's latest real selection after Open task s
   const selectedConversations = [];
   const unregister = registerDesktopIpc({
     ipcMainImpl: ipc,
-    daemon: {
+    runtime: {
       status: { state: "connected", baseUrl: "http://127.0.0.1:1", ownedByDesktop: true },
       onStatusChanged: () => () => {},
     },
@@ -595,7 +609,7 @@ test("Desktop IPC replays the renderer's latest structured deck owner after Open
   const selectedOwners = [];
   const unregister = registerDesktopIpc({
     ipcMainImpl: ipc,
-    daemon: {
+    runtime: {
       status: { state: "connected", baseUrl: "http://127.0.0.1:1", ownedByDesktop: true },
       onStatusChanged: () => () => {},
     },
@@ -640,7 +654,7 @@ test("Desktop IPC discards a structured owner buffered for a replaced Open task"
   const selectedOwners = [];
   const unregister = registerDesktopIpc({
     ipcMainImpl: ipc,
-    daemon: {
+    runtime: {
       status: { state: "connected", baseUrl: "http://127.0.0.1:1", ownedByDesktop: true },
       onStatusChanged: () => () => {},
     },

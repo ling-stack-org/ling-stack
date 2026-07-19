@@ -12,8 +12,10 @@ Current merged baseline:
   are complete;
 - the current foundation slice closes daemon authority/instance/connection lease ingress
   and freezes the Darwin/Win32 platform-binding boundary;
-- production Desktop composition, native adapters, activation wiring, package staging,
-  product states and evidence/handoff closure remain.
+- process-wide Desktop runtime composition has landed behind closed packaged-provider
+  gates, including cached typed handshake authority, tuple rotation and ordered shutdown;
+- native adapters, activation wiring, package staging, product states and evidence/handoff
+  closure remain.
 
 Both macOS and Windows packaged-provider gates remain off. This status records staged
 progress only and does not claim `bundled_embedded` runtime completion.
