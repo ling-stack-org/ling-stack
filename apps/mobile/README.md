@@ -48,6 +48,44 @@ corepack pnpm --filter @ling-stack/mobile verify:native-evidence < device-eviden
 Hosted simulators can prove compilation and autolinking, but cannot close the hardware
 gate. S1 remains release-incomplete until the physical-device evidence is recorded.
 
+### Recorded Slice 1 device evidence
+
+| Platform | Status | Device and build | Evidence |
+| --- | --- | --- | --- |
+| iOS | PASS — Slice 1 Secure Enclave physical-device gate closed; signed Release/TestFlight artifact gate pending | iPhone 13 Pro Max, iOS 26.5.2 (23F84), physical device, Debug Expo development client, app 0.0.1 (1) | Secure Enclave/non-exportability, shared fixtures, pin mutation, key lifecycle, and native-to-Node verification passed. |
+| Android | PENDING | No physical Android device connected | S1 remains release-incomplete until the Android Keystore hardware gate is recorded. |
+
+The iOS result was captured at `2026-07-19T15:05:36Z` from source revision
+`037533a816af4ed6252079d17038096c1e53a430` with Xcode 26.6 (17F113),
+Expo 57.0.7, and Node 24.15.0. The recorded, non-sensitive result summary is:
+
+```json
+{
+  "backend": "ios_secure_enclave",
+  "securityLevel": "secure_enclave",
+  "hardwareBacked": true,
+  "privateKeyExportable": false,
+  "canonicalFixtureMatched": true,
+  "allSigningFixturesVerified": true,
+  "fixedGatewaySignatureVerified": true,
+  "fixedDeviceSignatureVerified": true,
+  "pairingHmacVerified": true,
+  "gatewayFingerprintVerified": true,
+  "changedGatewayFingerprintRejected": true,
+  "signatureVerified": true,
+  "mutatedMessageRejected": true,
+  "reloadPublicKeyStable": true,
+  "deleteInvalidatedKey": true,
+  "regenerationRotatedPublicKey": true,
+  "nodeCrossVerify": "PASS native-sign -> Node-verify"
+}
+```
+
+The raw per-run public JWK, message, and signature are deliberately not retained or
+committed. Reproduce them with the real-device fixture and immediately pass them to the
+Node verifier above. This gate proves fixture-level Gateway identity pinning; the real
+Tailscale Serve HTTPS/WSS path remains a later integration gate.
+
 `react-types-mobile` is an npm alias for React 19 types. It intentionally keeps React 19
 out of pnpm's hidden global `@types/react` hoist so the existing Web/UI 2.0 React 18
 packages continue to typecheck; Mobile itself resolves the aliased 19.x declarations in

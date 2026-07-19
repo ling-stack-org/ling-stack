@@ -1,7 +1,8 @@
 # Mobile Remote Access Implementation Plan
 
-Status: Slice 1 repository implementation complete; physical-device and Tailscale gates
-pending; final merge blocked on UI 2.0 integration review
+Status: Slice 1 repository implementation complete; iOS physical-device secure-key gate
+passed; Android and Tailscale gates pending; final merge blocked on UI 2.0 integration
+review
 Date: 2026-07-19
 Base: current `origin/main` architecture at design start
 
@@ -267,6 +268,11 @@ until a physical iPhone proves Secure Enclave generation/signing/private-key exp
 a physical Android device proves Android Keystore signing with `privateKey.encoded == null`
 and records its security level, and both devices reject a changed Gateway identity. Hosted
 simulators may prove compile/autolink and fail-closed behavior but are not hardware evidence.
+
+The iOS half of this gate is recorded in the
+[Mobile real-device evidence](../../apps/mobile/README.md#recorded-slice-1-device-evidence).
+Android physical-device and real Tailscale Serve transport evidence remain pending, so S1
+is not yet release-closed.
 
 Checkpoint: this slice is safe to implement while UI 2.0 is active. Any change to an
 existing shared conversation type requires joint review; remote-only DTOs do not.
