@@ -14,8 +14,11 @@ Current merged baseline:
   and freezes the Darwin/Win32 platform-binding boundary;
 - process-wide Desktop runtime composition has landed behind closed packaged-provider
   gates, including cached typed handshake authority, tuple rotation and ordered shutdown;
-- native adapters, activation wiring, package staging, product states and evidence/handoff
-  closure remain.
+- the gate-off Darwin native adapter now supplies injected Mach-O/code-sign identity,
+  direct-child lifecycle, host-owned TCC readiness and a retrying permission-change
+  monitor, without enabling packaged runtime;
+- activation wiring, the Win32 native adapter, package staging, product states and
+  evidence/handoff closure remain.
 
 Both macOS and Windows packaged-provider gates remain off. This status records staged
 progress only and does not claim `bundled_embedded` runtime completion.
