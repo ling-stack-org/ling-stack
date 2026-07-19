@@ -1,0 +1,70 @@
+{
+  "schemaVersion": 1,
+  "id": "ling-managed-embedded-v1",
+  "implementationStatus": "runtime_integrated",
+  "upstreamCommit": "0612c26b2c7b8556f6de7f6b4f3927ecac914e4f",
+  "seriesDigestAlgorithm": "sha256(id:patchSha256 followed by LF, in manifest order)",
+  "seriesSha256": "87b6b71942bc93d33ba293ffcc67e245aefd43a416bbf9e5516e2dbc1de43936",
+  "patches": [
+    {
+      "id": "ling-embedded-state-home-v1",
+      "file": "0001-ling-embedded-state-home-v1.patch",
+      "sha256": "4118ad773e5dd544da2e91ce3ac2959494a23630388546ebb230bdb2c00d9851"
+    },
+    {
+      "id": "ling-managed-readiness-v1",
+      "file": "0002-ling-managed-readiness-v1.patch",
+      "sha256": "38087c8c36f44bd1f9680fb052e6a50c44d0519f0977652dea21f3ee0bc30e34"
+    },
+    {
+      "id": "ling-managed-lifetime-v1",
+      "file": "0003-ling-managed-lifetime-v1.patch",
+      "sha256": "dc85b2089da4a943521dbb1a8f866274a02ee839714c3d491e0f841efa3094a5"
+    },
+    {
+      "id": "ling-windows-capability-errors-v1",
+      "file": "0004-ling-windows-capability-errors-v1.patch",
+      "sha256": "2184241e1612f411f6d4db7a9edcf451fe8d85298c0130de2c71cc4cabc945e8"
+    }
+  ],
+  "rustfmtPaths": [
+    "libs/cua-driver/rust/crates/cua-driver-core/src/ling_managed.rs",
+    "libs/cua-driver/rust/crates/cua-driver-core/src/ling_managed_readiness.rs",
+    "libs/cua-driver/rust/crates/cua-driver/src/ling_managed_lifetime.rs",
+    "libs/cua-driver/rust/crates/cua-driver/tests/ling_managed_native.rs",
+    "libs/cua-driver/rust/crates/platform-windows/src/ling_managed_capability.rs",
+    "libs/cua-driver/rust/crates/platform-windows/src/managed_lifetime.rs",
+    "libs/cua-driver/rust/crates/platform-windows/src/managed_readiness.rs"
+  ],
+  "touchedPaths": [
+    "libs/cua-driver/rust/crates/cua-driver-core/Cargo.toml",
+    "libs/cua-driver/rust/crates/cua-driver-core/src/lib.rs",
+    "libs/cua-driver/rust/crates/cua-driver-core/src/ling_managed.rs",
+    "libs/cua-driver/rust/crates/cua-driver-core/src/ling_managed_readiness.rs",
+    "libs/cua-driver/rust/crates/cua-driver-core/src/protocol.rs",
+    "libs/cua-driver/rust/crates/cua-driver-core/src/server.rs",
+    "libs/cua-driver/rust/crates/cua-driver/src/cli.rs",
+    "libs/cua-driver/rust/crates/cua-driver/src/ling_managed_lifetime.rs",
+    "libs/cua-driver/rust/crates/cua-driver/src/main.rs",
+    "libs/cua-driver/rust/crates/cua-driver/src/serve.rs",
+    "libs/cua-driver/rust/crates/cua-driver/src/telemetry.rs",
+    "libs/cua-driver/rust/crates/cua-driver/src/version_check.rs",
+    "libs/cua-driver/rust/crates/cua-driver/tests/ling_managed_native.rs",
+    "libs/cua-driver/rust/crates/pip-preview/src/lib.rs",
+    "libs/cua-driver/rust/crates/platform-macos/src/tools/mod.rs",
+    "libs/cua-driver/rust/crates/platform-macos/src/tools/set_config.rs",
+    "libs/cua-driver/rust/crates/platform-windows/Cargo.toml",
+    "libs/cua-driver/rust/crates/platform-windows/src/health_report.rs",
+    "libs/cua-driver/rust/crates/platform-windows/src/input/delivery.rs",
+    "libs/cua-driver/rust/crates/platform-windows/src/input/inject.rs",
+    "libs/cua-driver/rust/crates/platform-windows/src/input/keyboard.rs",
+    "libs/cua-driver/rust/crates/platform-windows/src/input/mod.rs",
+    "libs/cua-driver/rust/crates/platform-windows/src/input/mouse.rs",
+    "libs/cua-driver/rust/crates/platform-windows/src/lib.rs",
+    "libs/cua-driver/rust/crates/platform-windows/src/ling_managed_capability.rs",
+    "libs/cua-driver/rust/crates/platform-windows/src/managed_lifetime.rs",
+    "libs/cua-driver/rust/crates/platform-windows/src/managed_readiness.rs",
+    "libs/cua-driver/rust/crates/platform-windows/src/tools/impl_.rs"
+  ],
+  "remainingRuntimeWork": []
+}

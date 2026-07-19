@@ -94,7 +94,10 @@ export class CuaDriverProviderPreSpawnError extends Error {
 }
 
 export interface CuaDriverProviderProcessLifecycle {
-  /** Windows adapter must retain a Job Object handle with KILL_ON_JOB_CLOSE. */
+  /**
+   * Windows retains the ChildProcess handle; the patched Rust child owns the
+   * private KILL_ON_JOB_CLOSE Job Object that contains all descendants.
+   */
   readonly lifetimeBoundary: "darwin-direct-child" | "windows-job-object" | "test-fixture";
   spawn(input: {
     readonly executablePath: string;

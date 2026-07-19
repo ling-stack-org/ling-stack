@@ -134,7 +134,7 @@ test("stdout EOF is terminal and retained-handle cleanup leaves no residue", asy
   assert.equal(fixture.host.state, "failed");
 });
 
-test("Windows provider host refuses a lifecycle without retained Job Object ownership", () => {
+test("Windows provider host refuses a lifecycle without the Rust Job Object boundary", () => {
   assert.throws(() => new CuaDriverProviderHost({
     executablePath: "/windows/Ling Stack/resources/cua-driver.exe",
     stateRoot,
@@ -365,7 +365,7 @@ test("missing stdio retains a nonterminating child until residue cleanup succeed
         return child;
       },
       async terminate() {
-        // Simulate a retained Job Object handle that failed to terminate.
+        // Simulate a retained child handle whose Rust-owned Job did not terminate.
       },
       async assertNoResidue() {
         residueChecks += 1;

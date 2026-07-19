@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 2,
+  "componentId": "cua-driver",
+  "distributionRevision": "ling.1",
+  "upstream": {
+    "repository": "https://github.com/trycua/cua",
+    "tag": "cua-driver-rs-v0.8.3",
+    "commit": "0612c26b2c7b8556f6de7f6b4f3927ecac914e4f",
+    "tree": "831819eaf2b79c4d81c2b68773cd5920772e91e9",
+    "version": "0.8.3",
+    "releaseStage": "prerelease",
+    "license": "MIT",
+    "licenseSha256": "c0779290c1d4783169aa3dbfb55feb505e563ef8a004bbf55298ceffcfbda8d9"
+  },
+  "enabledPlatforms": [],
+  "platforms": {}
+}
