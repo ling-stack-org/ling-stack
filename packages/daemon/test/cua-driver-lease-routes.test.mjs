@@ -18,7 +18,10 @@ test("issuing a new handshake synchronously clears the previous registry lease",
     now: () => "2026-07-19T00:00:00.000Z",
   });
   const first = authority.issueAuthenticatedHandshake();
-  const firstLease = lease({ ...first, defaultWorkspaceCwd: authority.workspaceCwd });
+  const firstLease = lease(
+    { ...first, defaultWorkspaceCwd: authority.workspaceCwd },
+    { expiresAt: "2026-07-19T00:01:00.000Z" },
+  );
   assert.equal(authority.publish(firstLease).accepted, true);
   assert.equal(authority.leaseRegistry.getCurrent(), firstLease);
 
@@ -81,10 +84,35 @@ test("lease PUT and DELETE bind publish, renew, and revoke to the latest handsha
       expiresAt: firstLease.expiresAt,
     });
 
-    const renewedLease = { ...firstLease, expiresAt: "2099-01-02T00:00:00.000Z" };
+    const renewedLease = {
+      ...firstLease,
+      expiresAt: new Date(Date.parse(firstLease.expiresAt) + 30_000).toISOString(),
+    };
     const renewed = await putLease(daemon, renewedLease);
     assert.equal(renewed.status, 200);
     assert.equal((await renewed.json()).accepted, true);
+
+    const staleGeneration = await putLease(daemon, {
+      ...renewedLease,
+      endpoint: "http://127.0.0.1:43124/mcp",
+    });
+    assert.equal(staleGeneration.status, 409);
+    assert.deepEqual(await staleGeneration.json(), {
+      accepted: false,
+      error: "cua_driver_lease_rejected",
+      reason: "stale_generation",
+    });
+
+    const expired = await putLease(daemon, {
+      ...renewedLease,
+      expiresAt: new Date(Date.now() - 1_000).toISOString(),
+    });
+    assert.equal(expired.status, 409);
+    assert.deepEqual(await expired.json(), {
+      accepted: false,
+      error: "cua_driver_lease_rejected",
+      reason: "expired",
+    });
 
     const second = await handshake(daemon);
     const stalePublish = await putLease(daemon, { ...firstLease, generation: 2 });
@@ -197,6 +225,20 @@ test("lease routes require local Desktop bridge authentication and a completed h
     assert.equal(missingWorkspace.status, 400);
     assert.equal((await missingWorkspace.json()).error, "invalid_cua_driver_lease_request");
 
+    const duplicateWorkspaceUrl = new URL(url);
+    duplicateWorkspaceUrl.searchParams.append("cwd", cwd);
+    duplicateWorkspaceUrl.searchParams.append("cwd", cwd);
+    const duplicateWorkspace = await fetch(duplicateWorkspaceUrl, {
+      method: "PUT",
+      headers: {
+        "Content-Type": "application/json",
+        [BRIDGE_TOKEN_HEADER]: DESKTOP_TOKEN,
+      },
+      body: JSON.stringify(lease(current)),
+    });
+    assert.equal(duplicateWorkspace.status, 400);
+    assert.equal((await duplicateWorkspace.json()).error, "invalid_cua_driver_lease_request");
+
     const currentUrl = new URL(url);
     currentUrl.searchParams.set("cwd", cwd);
     const invalid = await fetch(currentUrl, {
@@ -271,7 +313,7 @@ function lease(handshakeAuthority, overrides = {}) {
     providerVersion: "0.8.3",
     distributionRevision: "ling.1",
     integrationMode: "embedded-stdio",
-    expiresAt: "2099-01-01T00:00:00.000Z",
+    expiresAt: new Date(Date.now() + 60_000).toISOString(),
     lockDigest: "a".repeat(64),
     providerSealDigest: "b".repeat(64),
     providerCatalogDigest: "c".repeat(64),

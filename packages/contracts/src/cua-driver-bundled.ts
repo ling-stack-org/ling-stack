@@ -557,6 +557,9 @@ export interface DesktopCuaDriverLeaseV1 {
   readonly integrityCoverage?: CuaDriverIntegrityCoverage;
 }
 
+/** Maximum authority window accepted by both the Desktop publisher and daemon. */
+export const CUA_DRIVER_LEASE_MAX_TTL_MS = 120_000 as const;
+
 /**
  * Authority issued by one authenticated Desktop bridge handshake.
  *
@@ -739,7 +742,11 @@ function isPositiveSafeInteger(value: unknown): value is number {
 }
 
 function isDateTime(value: unknown): value is string {
-  return typeof value === "string" && Number.isFinite(Date.parse(value));
+  if (typeof value !== "string") {
+    return false;
+  }
+  const epochMs = Date.parse(value);
+  return Number.isFinite(epochMs) && new Date(epochMs).toISOString() === value;
 }
 
 function isSha256(value: unknown): value is string {

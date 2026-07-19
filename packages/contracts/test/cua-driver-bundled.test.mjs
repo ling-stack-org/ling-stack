@@ -4,6 +4,7 @@ import {
   CUA_DRIVER_PROVIDER_LOCK_SCHEMA_VERSION,
   CUA_DRIVER_PROVIDER_STATES,
   CUA_DRIVER_SETUP_SCHEMA_VERSION,
+  CUA_DRIVER_LEASE_MAX_TTL_MS,
   CUA_DRIVER_LEASE_V1_CAPABILITY,
   DEFAULT_CUA_DRIVER_FEATURE_FLAGS,
   DESKTOP_CUA_DRIVER_LEASE_SCHEMA_VERSION,
@@ -21,6 +22,7 @@ test("Cua Driver schema versions and packaged feature gates are frozen", () => {
   assert.equal(CUA_DRIVER_SETUP_SCHEMA_VERSION, 2);
   assert.equal(CUA_DRIVER_PROVIDER_LOCK_SCHEMA_VERSION, 2);
   assert.equal(DESKTOP_CUA_DRIVER_LEASE_SCHEMA_VERSION, 1);
+  assert.equal(CUA_DRIVER_LEASE_MAX_TTL_MS, 120_000);
   assert.deepEqual(DEFAULT_CUA_DRIVER_FEATURE_FLAGS, {
     bundledEmbedded: { darwin: false, win32: false },
     packagedProvider: { darwin: false, win32: false },
@@ -113,6 +115,18 @@ test("Desktop Cua Driver lease guard requires versioned loopback and digest iden
   assert.equal(isDesktopCuaDriverLeaseV1(lease), true);
   assert.equal(isDesktopCuaDriverLeaseV1({ ...lease, schemaVersion: 2 }), false);
   assert.equal(isDesktopCuaDriverLeaseV1({ ...lease, endpoint: "http://example.com/mcp" }), false);
+  assert.equal(isDesktopCuaDriverLeaseV1({
+    ...lease,
+    expiresAt: "Fri, 17 Jul 2026 23:59:59 GMT",
+  }), false);
+  assert.equal(isDesktopCuaDriverLeaseV1({
+    ...lease,
+    expiresAt: "2026-07-18T00:01:00Z",
+  }), false);
+  assert.equal(isDesktopCuaDriverLeaseV1({
+    ...lease,
+    expiresAt: "2026-07-18T01:01:00.000+01:00",
+  }), false);
   assert.equal(isDesktopCuaDriverLeaseV1({ ...lease, providerCatalogDigest: "not-a-digest" }), false);
   assert.equal(isDesktopCuaDriverLeaseV1({ ...lease, platform: "win32", architecture: "arm64" }), false);
 });

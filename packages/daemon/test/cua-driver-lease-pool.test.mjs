@@ -5,7 +5,11 @@ import {
   commitCurrentCuaDriverActivation,
 } from "../dist/features/plugins/cua-driver-activation-fence.js";
 import { CuaDriverClientPool } from "../dist/features/plugins/cua-driver-client-pool.js";
-import { CuaDriverLeaseRegistry, cuaDriverLeasePoolKey } from "../dist/features/plugins/cua-driver-lease.js";
+import {
+  CuaDriverLeaseRegistry,
+  cuaDriverLeasePoolKey,
+} from "../dist/features/plugins/cua-driver-lease.js";
+import { CUA_DRIVER_LEASE_MAX_TTL_MS } from "@ling-stack/contracts";
 
 const digest = "a".repeat(64);
 
@@ -23,7 +27,7 @@ function lease(overrides = {}) {
     providerVersion: "0.8.3",
     distributionRevision: "ling.1",
     integrationMode: "embedded-stdio",
-    expiresAt: "2026-07-19T00:00:00.000Z",
+    expiresAt: "2026-07-18T00:01:00.000Z",
     lockDigest: digest,
     providerSealDigest: "b".repeat(64),
     providerCatalogDigest: "c".repeat(64),
@@ -31,6 +35,30 @@ function lease(overrides = {}) {
     architecture: "arm64",
     integrityCoverage: "standard",
     ...overrides,
+  };
+}
+
+function fakeDeadlineScheduler() {
+  const deadlines = [];
+  return {
+    deadlines,
+    schedule(callback, delayMs) {
+      const deadline = {
+        callback,
+        delayMs,
+        canceled: false,
+        fired: false,
+        cancel() {
+          deadline.canceled = true;
+        },
+        fire() {
+          deadline.fired = true;
+          callback();
+        },
+      };
+      deadlines.push(deadline);
+      return deadline;
+    },
   };
 }
 
@@ -85,15 +113,153 @@ test("lease registry rejects malformed authority, workspace, expiry, and renewal
   assert.equal(registry.publish(null).reason, "invalid");
   assert.equal(registry.publish(lease({ daemonAuthorityEpoch: "authority-b" })).reason, "authority_mismatch");
   assert.equal(registry.publish(lease({ workspaceCwd: "/tmp/other" })).reason, "workspace_mismatch");
+  assert.equal(registry.publish(lease({ expiresAt: "Fri, 17 Jul 2026 23:59:59 GMT" })).reason, "invalid");
   assert.equal(registry.publish(lease({ expiresAt: now })).reason, "expired");
+  assert.equal(registry.publish(lease({
+    expiresAt: new Date(Date.parse(now) + CUA_DRIVER_LEASE_MAX_TTL_MS + 1).toISOString(),
+  })).reason, "ttl_exceeded");
   assert.equal(registry.publish(lease()).accepted, true);
   assert.equal(registry.renew(lease({ generation: 2 })).reason, "stale_generation");
-  assert.equal(registry.renew(lease({ expiresAt: "2026-07-20T00:00:00.000Z" })).accepted, true);
+  assert.equal(registry.renew(lease({
+    expiresAt: new Date(Date.parse(now) + CUA_DRIVER_LEASE_MAX_TTL_MS + 1).toISOString(),
+  })).reason, "ttl_exceeded");
+  assert.equal(registry.renew(lease({ expiresAt: "2026-07-18T00:01:30.000Z" })).accepted, true);
   assert.equal(replaced.length, 0);
-  assert.equal(registry.isCurrent(lease({ expiresAt: "2026-07-21T00:00:00.000Z" })), true);
+  assert.equal(registry.isCurrent(lease({ expiresAt: "2026-07-18T00:01:45.000Z" })), true);
   registry.clear();
   assert.deepEqual(replaced, [[1, undefined]]);
   assert.equal(registry.renew(lease()).reason, "expired");
+});
+
+test("lease registry actively expires the current lease using epoch time", () => {
+  let now = "2026-07-17T20:00:00.000-04:00";
+  const replaced = [];
+  const scheduler = fakeDeadlineScheduler();
+  const current = lease({ expiresAt: "2026-07-18T00:00:30.000Z" });
+  const registry = new CuaDriverLeaseRegistry({
+    daemonAuthorityEpoch: "authority-a",
+    workspaceCwd: "/tmp/ling-workspace",
+    now: () => now,
+    scheduleDeadline: scheduler.schedule,
+    onReplaced: (oldLease, nextLease) => {
+      replaced.push([oldLease, nextLease]);
+      throw new Error("observer failed");
+    },
+  });
+
+  assert.equal(registry.publish(current).accepted, true);
+  assert.equal(scheduler.deadlines.length, 1);
+  assert.equal(scheduler.deadlines[0].delayMs, 30_000);
+
+  now = "2026-07-17T20:00:30.000-04:00";
+  assert.doesNotThrow(() => scheduler.deadlines[0].fire());
+  assert.deepEqual(replaced, [[current, undefined]]);
+  assert.equal(registry.getCurrent(), undefined);
+  assert.equal(scheduler.deadlines.filter((deadline) => !deadline.canceled && !deadline.fired).length, 0);
+});
+
+test("renew replaces the deadline timer and stale timer callbacks cannot expire the lease", () => {
+  let now = "2026-07-18T00:00:00.000Z";
+  const replaced = [];
+  const scheduler = fakeDeadlineScheduler();
+  const initial = lease({ expiresAt: "2026-07-18T00:00:30.000Z" });
+  const renewed = lease({ expiresAt: "2026-07-18T00:01:00.000Z" });
+  const registry = new CuaDriverLeaseRegistry({
+    daemonAuthorityEpoch: "authority-a",
+    workspaceCwd: "/tmp/ling-workspace",
+    now: () => now,
+    scheduleDeadline: scheduler.schedule,
+    onReplaced: (oldLease, nextLease) => replaced.push([oldLease, nextLease]),
+  });
+
+  assert.equal(registry.publish(initial).accepted, true);
+  assert.equal(registry.renew(renewed).accepted, true);
+  assert.equal(scheduler.deadlines.length, 2);
+  assert.equal(scheduler.deadlines[0].canceled, true);
+  assert.equal(scheduler.deadlines[1].delayMs, 60_000);
+
+  now = "2026-07-18T00:00:30.000Z";
+  scheduler.deadlines[0].fire();
+  assert.equal(registry.getCurrent(), renewed);
+  assert.deepEqual(replaced, []);
+
+  registry.clear();
+  assert.equal(scheduler.deadlines[1].canceled, true);
+  assert.deepEqual(replaced, [[renewed, undefined]]);
+});
+
+test("replacing a lease cancels its old deadline before notifying observers", () => {
+  const scheduler = fakeDeadlineScheduler();
+  const replacementObservations = [];
+  const registry = new CuaDriverLeaseRegistry({
+    daemonAuthorityEpoch: "authority-a",
+    workspaceCwd: "/tmp/ling-workspace",
+    now: () => "2026-07-18T00:00:00.000Z",
+    scheduleDeadline: scheduler.schedule,
+    onReplaced: (oldLease, nextLease) => replacementObservations.push({
+      oldLease,
+      nextLease,
+      oldDeadlineCanceled: scheduler.deadlines[0].canceled,
+    }),
+  });
+  const initial = lease();
+  const replacement = lease({ generation: 2 });
+
+  assert.equal(registry.publish(initial).accepted, true);
+  assert.equal(registry.publish(replacement).accepted, true);
+  assert.equal(scheduler.deadlines.length, 2);
+  assert.equal(scheduler.deadlines[0].canceled, true);
+  assert.deepEqual(replacementObservations, [{
+    oldLease: initial,
+    nextLease: replacement,
+    oldDeadlineCanceled: true,
+  }]);
+
+  registry.clear();
+  assert.equal(scheduler.deadlines[1].canceled, true);
+});
+
+test("deadline scheduler failure clears the current lease and notifies its observer once", () => {
+  const scheduler = fakeDeadlineScheduler();
+  let scheduleCalls = 0;
+  const replaced = [];
+  const registry = new CuaDriverLeaseRegistry({
+    daemonAuthorityEpoch: "authority-a",
+    workspaceCwd: "/tmp/ling-workspace",
+    now: () => "2026-07-18T00:00:00.000Z",
+    scheduleDeadline: (callback, delayMs) => {
+      scheduleCalls += 1;
+      if (scheduleCalls === 2) {
+        throw new Error("timer unavailable");
+      }
+      return scheduler.schedule(callback, delayMs);
+    },
+    onReplaced: (oldLease, nextLease) => replaced.push([oldLease, nextLease]),
+  });
+  const initial = lease();
+
+  assert.equal(registry.publish(initial).accepted, true);
+  assert.deepEqual(registry.publish(lease({ generation: 2 })), {
+    accepted: false,
+    reason: "deadline_unavailable",
+  });
+  assert.equal(scheduler.deadlines[0].canceled, true);
+  assert.equal(registry.getCurrent(), undefined);
+  assert.deepEqual(replaced, [[initial, undefined]]);
+
+  const unavailable = new CuaDriverLeaseRegistry({
+    daemonAuthorityEpoch: "authority-a",
+    workspaceCwd: "/tmp/ling-workspace",
+    now: () => "2026-07-18T00:00:00.000Z",
+    scheduleDeadline: () => { throw new Error("timer unavailable"); },
+    onReplaced: (oldLease, nextLease) => replaced.push([oldLease, nextLease]),
+  });
+  assert.deepEqual(unavailable.publish(initial), {
+    accepted: false,
+    reason: "deadline_unavailable",
+  });
+  assert.equal(unavailable.getCurrent(), undefined);
+  assert.deepEqual(replaced, [[initial, undefined]]);
 });
 
 test("pool shares one client per lease key and closes stale generations", async () => {
