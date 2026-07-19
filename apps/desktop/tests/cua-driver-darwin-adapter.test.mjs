@@ -15,7 +15,7 @@ import {
 const TEAM_ID = "LINGTEAM01";
 const IDENTIFIER = "com.lingstack.desktop.cua-driver";
 const REQUIREMENT = `identifier "${IDENTIFIER}" and anchor apple generic`;
-const EXECUTABLE_PATH = "/Applications/Ling Stack.app/Contents/Resources/providers/cua-driver/0.8.3-ling.1/darwin-universal/cua-driver";
+const EXECUTABLE_PATH = "/Applications/Ling Stack.app/Contents/Resources/providers/cua-driver/0.8.3-ling.1/darwin/cua-driver";
 const ENTITLEMENTS = Object.freeze({
   "com.apple.security.automation.apple-events": true,
   "com.apple.security.device.screen-capture": true,
@@ -453,6 +453,63 @@ test("Darwin permission monitor emits changes and becomes inert after stop or di
   controller.dispose();
   await assert.rejects(controller.snapshot(), /darwin_permission_disposed/);
   await assert.rejects(controller.probeLiveScreenCapture(), /darwin_permission_disposed/);
+});
+
+test("Darwin permission monitor retries a failed recovery callback before advancing its baseline", async () => {
+  let current = { accessibility: false, screenRecording: false };
+  let callbackAttempts = 0;
+  const changes = [];
+  const scheduled = [];
+  const controller = new DarwinCuaDriverPermissionController({
+    port: {
+      async read() {
+        return current;
+      },
+      async probeLiveScreenCapture() {
+        return true;
+      },
+      async requestAccessibility() {},
+      async requestScreenRecording() {},
+    },
+    scheduler: {
+      schedule(task) {
+        const entry = { task, cancelled: false };
+        scheduled.push(entry);
+        return { cancel: () => { entry.cancelled = true; } };
+      },
+    },
+    onChanged(next, previous) {
+      callbackAttempts += 1;
+      changes.push({ next, previous });
+      if (callbackAttempts === 1) {
+        throw new Error("fixture recovery failed");
+      }
+    },
+  });
+
+  await controller.startMonitoring();
+  current = { accessibility: true, screenRecording: false };
+  await scheduled[0].task();
+  assert.equal(callbackAttempts, 1);
+  assert.equal(scheduled.length, 2);
+
+  await scheduled[1].task();
+  assert.equal(callbackAttempts, 2);
+  assert.deepEqual(changes, [
+    {
+      next: { accessibility: true, screenRecording: false },
+      previous: { accessibility: false, screenRecording: false },
+    },
+    {
+      next: { accessibility: true, screenRecording: false },
+      previous: { accessibility: false, screenRecording: false },
+    },
+  ]);
+  assert.equal(scheduled.length, 3);
+
+  await scheduled[2].task();
+  assert.equal(callbackAttempts, 2);
+  controller.dispose();
 });
 
 test("Darwin adapter factory exposes one available binding and disposes idempotently", async () => {

@@ -188,14 +188,22 @@ export class DarwinCuaDriverPermissionController {
       return;
     }
     const previous = this.baseline ?? current;
-    this.baseline = current;
     if (!samePermissionSnapshot(current, previous)) {
       try {
         await this.options.onChanged?.(current, previous);
       } catch {
-        // Runtime recovery ownership is external; monitoring must remain live.
+        // Preserve the last successfully handled snapshot so the next poll
+        // retries generation fencing/recovery instead of losing the change.
+        if (this.isMonitorCurrent(epoch)) {
+          this.scheduleNext(epoch);
+        }
+        return;
       }
     }
+    if (!this.isMonitorCurrent(epoch)) {
+      return;
+    }
+    this.baseline = current;
     if (this.isMonitorCurrent(epoch)) {
       this.scheduleNext(epoch);
     }
