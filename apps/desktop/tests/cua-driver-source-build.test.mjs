@@ -24,6 +24,7 @@ import {
   FROZEN_DENIED_TOOLS,
   FROZEN_HEALTH_SKIP,
   probeCuaDriverProvider,
+  sha256Text,
   validateManagedWindowsAcl,
   verifyLinkUnchanged,
   verifyManagedStatePermissions,
@@ -43,6 +44,8 @@ import {
 } from "../scripts/cua-driver-reference-artifacts.mjs";
 import {
   stableRuntimeProbe,
+  verifyAttestationShape,
+  verifyOutputMetadataBindings,
   verifyPromotionBindings,
   verifyProviderSealInputs,
   verifyRuntimeProbe,
@@ -445,13 +448,73 @@ test("source-build attestation rejects malformed schema before trusting any dige
     const result = await runNode([VERIFY_SCRIPT, "--attestation", attestation, "--output-root", root]);
     assert.notEqual(result.code, 0);
     assert.match(result.stderr, /attestation schema mismatch/);
+    const shaped = {
+      schemaVersion: 2,
+      kind: "ling.cua-driver.source-build-attestation",
+      providerLockSha256: "1".repeat(64),
+      sourceBuildInputsSha256: "2".repeat(64),
+      upstreamCommit: "3".repeat(40),
+      upstreamTree: "4".repeat(40),
+      patchSetSha256: "5".repeat(64),
+      platform: "darwin",
+      sourceDateEpoch: 1,
+      toolchain: {},
+      checks: {
+        toolchain: {},
+        rustfmt: { status: "passed", scope: "new-rust-files", paths: [] },
+        cargoTests: { status: "passed", packages: [] },
+        cargoMetadataSha256: "6".repeat(64),
+        referenceArtifact: {},
+        binaryIdentity: {},
+        versionOutput: "cua-driver 0.8.3",
+        runtimeProbe: {},
+      },
+      binaries: [],
+      supplyChain: { sbomSha256: "7".repeat(64), noticesSha256: "8".repeat(64) },
+      promotionInputsSha256: "9".repeat(64),
+      manifestSha256: "a".repeat(64),
+      packagingEligible: false,
+      signingState: "pre-sign-only",
+    };
+    assert.equal(verifyAttestationShape(shaped), true);
+    assert.throws(() => verifyAttestationShape({ ...shaped, unexpected: true }), /attestation keys changed/);
+    const missingCheck = structuredClone(shaped);
+    delete missingCheck.checks.runtimeProbe;
+    assert.throws(() => verifyAttestationShape(missingCheck), /attestation checks keys changed/);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
 });
 
+test("output metadata digests and platform are bound to the attestation", () => {
+  const attestation = {
+    platform: "darwin",
+    providerLockSha256: "1".repeat(64),
+    sourceBuildInputsSha256: "2".repeat(64),
+  };
+  const actual = {
+    "provider-lock.json": attestation.providerLockSha256,
+    "source-build-inputs.json": attestation.sourceBuildInputsSha256,
+  };
+  const manifest = { platform: "darwin" };
+  assert.equal(verifyOutputMetadataBindings({ actual, attestation, manifest }), true);
+  assert.throws(
+    () => verifyOutputMetadataBindings({ actual, attestation, manifest: { platform: "win32-x64" } }),
+    /manifest platform mismatch/,
+  );
+  assert.throws(
+    () => verifyOutputMetadataBindings({ actual: { ...actual, "provider-lock.json": "3".repeat(64) }, attestation, manifest }),
+    /output provider lock digest mismatch/,
+  );
+  assert.throws(
+    () => verifyOutputMetadataBindings({ actual: { ...actual, "source-build-inputs.json": "4".repeat(64) }, attestation, manifest }),
+    /output source-build inputs digest mismatch/,
+  );
+});
+
 test("runtime and promotion evidence bindings fail closed field by field", async () => {
-  const { lock } = await verifyProviderInputs();
+  const verified = await verifyProviderInputs();
+  const { lock } = verified;
   const digest = "1".repeat(64);
   const managedState = {
     preexistingLinkRejected: true,
@@ -536,13 +599,25 @@ test("runtime and promotion evidence bindings fail closed field by field", async
     sourceBuildInputsSha256: "4".repeat(64),
     binaries,
     checks: { binaryIdentity, versionOutput: "cua-driver 0.8.3" },
+    supplyChain: { sbomSha256: "8".repeat(64), noticesSha256: "9".repeat(64) },
   };
   const promotion = {
+    schemaVersion: 1,
+    kind: "ling.cua-driver.source-build-promotion-inputs",
     promotionEligible: false,
     platform: "darwin",
     providerLockSha256: attestation.providerLockSha256,
     sourceBuildInputsSha256: attestation.sourceBuildInputsSha256,
     sourceBuild: {
+      cargoLockSha256: verified.sourceInputs.upstreamBuild.cargoLockSha256,
+      rustcVersion: verified.sourceInputs.toolchain.rustcVersion,
+      cargoVersion: verified.sourceInputs.toolchain.cargoVersion,
+      patchSet: {
+        id: verified.series.id,
+        sha256: verified.seriesSha256,
+        patches: verified.series.patches,
+        touchedPaths: verified.series.touchedPaths,
+      },
       binaryIdentity,
       versionOutput: "cua-driver 0.8.3",
       clientInitializeProtocolVersion: "2025-11-25",
@@ -565,7 +640,9 @@ test("runtime and promotion evidence bindings fail closed field by field", async
       stateSchemaVersion: lock.runtime.stateSchemaVersion,
       binaries,
     },
+    supplyChain: structuredClone(attestation.supplyChain),
     runtimeProbe: stableRuntimeProbe(darwinRuntime, "darwin"),
+    missingFinalIdentity: ["cdhashes", "codeIdentifier", "teamId", "designatedRequirement", "entitlementsCanonicalSha256"],
   };
   const verify = (value) => verifyPromotionBindings({
     attestation,
@@ -574,6 +651,7 @@ test("runtime and promotion evidence bindings fail closed field by field", async
     observedVersion: "cua-driver 0.8.3",
     promotion: value,
     runtimeProbe: darwinRuntime,
+    verified,
   });
   assert.equal(verify(promotion), true);
   for (const [mutate, pattern] of [
@@ -582,6 +660,14 @@ test("runtime and promotion evidence bindings fail closed field by field", async
     [(value) => { value.sourceBuild.toolsListCanonicalSha256 = "6".repeat(64); }, /source-build tools digest mismatch/],
     [(value) => { value.providerSealInputs.toolsListCanonicalSha256 = "7".repeat(64); }, /not bound to the attestation/],
     [(value) => { value.providerSealInputs.binaries[0].packaged = false; }, /not bound to the attestation/],
+    [(value) => { value.schemaVersion = 999; }, /promotion input schema mismatch/],
+    [(value) => { value.kind = "attacker.kind"; }, /promotion input schema mismatch/],
+    [(value) => { value.sourceBuild.cargoLockSha256 = "0".repeat(64); }, /promotion toolchain bindings mismatch/],
+    [(value) => { value.sourceBuild.rustcVersion = "ATTACKER"; }, /promotion toolchain bindings mismatch/],
+    [(value) => { value.sourceBuild.cargoVersion = "ATTACKER"; }, /promotion toolchain bindings mismatch/],
+    [(value) => { value.sourceBuild.patchSet.id = "attacker"; }, /promotion patch-set bindings mismatch/],
+    [(value) => { value.missingFinalIdentity = []; }, /promotion missing-final-identity bindings mismatch/],
+    [(value) => { value.unexpected = true; }, /promotion inputs keys changed/],
   ]) {
     const value = structuredClone(promotion);
     mutate(value);
@@ -656,6 +742,34 @@ test("runtime probe starts with MCP initialize and waits for stdin EOF closure",
     );
     assert.equal(requests[0].params.protocolVersion, "2025-11-25");
     assert.deepEqual(requests.at(-1).params.arguments.skip, FROZEN_HEALTH_SKIP);
+  } finally {
+    await rm(stateHome, { recursive: true, force: true });
+  }
+});
+
+test("runtime probe decodes split multibyte MCP stdout deterministically", async () => {
+  const stateHome = await mkdtemp(join(tmpdir(), "ling-cua-probe-utf8-"));
+  const tools = {
+    tools: [{
+      name: "describe_window",
+      description: "Café window",
+      inputSchema: { type: "object", properties: {} },
+      annotations: { readOnlyHint: true },
+    }],
+  };
+  try {
+    const result = await probeCuaDriverProvider({
+      binaryPath: "fake-provider",
+      platform: "darwin",
+      stateHome,
+      timeoutMs: 1_000,
+      spawnProcess: createFakeProviderSpawner([], { tools, splitUtf8ResponseId: 2 }),
+      performStateAcceptance: false,
+    });
+    assert.equal(
+      result.toolsListCanonicalSha256,
+      sha256Text(canonicalJson(canonicalizeToolsList(tools))),
+    );
   } finally {
     await rm(stateHome, { recursive: true, force: true });
   }
@@ -1041,9 +1155,18 @@ function createFakeProviderSpawner(requests, options = {}) {
       const value = typeof options.mutateResponse === "function"
         ? options.mutateResponse(structuredClone(response))
         : response;
-      child.stdout.write(`${JSON.stringify(value)}\n`);
+      const encoded = Buffer.from(`${JSON.stringify(value)}\n`, "utf8");
+      const multibyteSplit = options.splitUtf8ResponseId === value.id
+        ? encoded.findIndex((byte, index) => byte >= 0xc2 && byte <= 0xf4 && index + 1 < encoded.length) + 1
+        : 0;
+      if (multibyteSplit > 0) {
+        child.stdout.write(encoded.subarray(0, multibyteSplit));
+        child.stdout.write(encoded.subarray(multibyteSplit));
+      } else {
+        child.stdout.write(encoded);
+      }
       if (options.duplicateResponseId === value.id) {
-        child.stdout.write(`${JSON.stringify(value)}\n`);
+        child.stdout.write(encoded);
       }
     };
     child.stdin = new Writable({

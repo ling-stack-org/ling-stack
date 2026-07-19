@@ -11,6 +11,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { join } from "node:path";
+import { StringDecoder } from "node:string_decoder";
 import { promisify } from "node:util";
 
 const execFile = promisify(execFileCallback);
@@ -217,6 +218,8 @@ async function runProviderSession({
   const responses = new Map();
   let stdoutBuffer = "";
   let stdoutBytes = 0;
+  const stdoutDecoder = new StringDecoder("utf8");
+  let stdoutDecoderFlushed = false;
   let stdinClosed = false;
   let settled = false;
   let timer;
@@ -247,6 +250,10 @@ async function runProviderSession({
     });
     child.on("close", (code, signal) => {
       if (settled) return;
+      if (!stdoutDecoderFlushed) {
+        stdoutBuffer += stdoutDecoder.end();
+        stdoutDecoderFlushed = true;
+      }
       if (code !== 0 || signal !== null) {
         fail(new Error(`provider probe exited with code ${code} signal=${signal ?? "none"}`));
         return;
@@ -325,12 +332,13 @@ async function runProviderSession({
       }
     });
     child.stdout.on("data", (chunk) => {
-      stdoutBytes += chunk.length;
+      const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      stdoutBytes += bytes.length;
       if (stdoutBytes > MAX_MCP_STDOUT_BYTES) {
         fail(new Error(`provider MCP stdout exceeded ${MAX_MCP_STDOUT_BYTES} bytes`));
         return;
       }
-      stdoutBuffer += chunk.toString("utf8");
+      stdoutBuffer += stdoutDecoder.write(bytes);
       let newline;
       while ((newline = stdoutBuffer.indexOf("\n")) >= 0) {
         const line = stdoutBuffer.slice(0, newline).trim();

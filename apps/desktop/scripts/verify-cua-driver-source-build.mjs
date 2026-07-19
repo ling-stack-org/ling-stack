@@ -35,10 +35,10 @@ const resourceRoot = resolve(args["resource-root"] || PROVIDER_RESOURCE_ROOT);
 const verified = await verifyProviderInputs(resourceRoot);
 if (args["attestation"]) {
   const attestation = JSON.parse(await readFile(resolve(args.attestation), "utf8"));
-  if (attestation.schemaVersion !== 2 || attestation.kind !== "ling.cua-driver.source-build-attestation") {
-    fail("source-build attestation schema mismatch");
-  }
+  verifyAttestationShape(attestation);
   if (!/^(darwin|win32-x64)$/u.test(attestation.platform ?? "")) fail("attestation platform mismatch");
+  if (attestation.sourceDateEpoch !== verified.lock.upstream.sourceDateEpoch) fail("attestation source date epoch mismatch");
+  if (!SHA256_PATTERN.test(attestation.checks.cargoMetadataSha256)) fail("cargo metadata digest is not a SHA-256");
   if (attestation.providerLockSha256 !== await sha256File(verified.lockPath)) fail("attestation provider lock digest mismatch");
   if (attestation.sourceBuildInputsSha256 !== await sha256File(verified.sourceInputsPath)) fail("attestation source inputs digest mismatch");
   if (attestation.patchSetSha256 !== verified.seriesSha256) fail("attestation patch digest mismatch");
@@ -83,6 +83,7 @@ if (args["attestation"]) {
   const manifestPath = resolve(outputRoot, "source-build-manifest.json");
   const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
   if (manifest.schemaVersion !== 1 || manifest.kind !== "ling.cua-driver.source-build-manifest") fail("source-build manifest schema mismatch");
+  verifyOutputMetadataBindings({ actual, attestation, manifest });
   if (JSON.stringify(manifest.files) !== JSON.stringify(actual)) fail("source-build manifest digest map mismatch");
   if (attestation.manifestSha256 !== await sha256File(manifestPath)) fail("source-build manifest digest mismatch");
   const promotionPath = resolve(outputRoot, "source-build-promotion-inputs.json");
@@ -115,8 +116,8 @@ if (args["attestation"]) {
     observedVersion,
     promotion,
     runtimeProbe,
+    verified,
   });
-  if (promotion.supplyChain?.sbomSha256 !== attestation.supplyChain.sbomSha256 || promotion.supplyChain?.noticesSha256 !== attestation.supplyChain.noticesSha256) fail("promotion supply-chain digest mismatch");
   if (attestation.promotionInputsSha256 !== await sha256File(promotionPath)) fail("promotion input digest mismatch");
   for (const binary of attestation.binaries) {
     const observed = actual[binary.relativePath];
@@ -187,6 +188,45 @@ function verifyObservedToolchain(platform, evidence, lock) {
     fail("observed Windows toolchain does not match the lock");
   }
   assertAbsoluteEvidencePaths(evidence, ["installationPath", "clPath", "linkPath", "rcPath"]);
+}
+
+export function verifyAttestationShape(attestation) {
+  if (attestation?.schemaVersion !== 2 || attestation?.kind !== "ling.cua-driver.source-build-attestation") {
+    fail("source-build attestation schema mismatch");
+  }
+  assertExactKeys(attestation, [
+    "binaries",
+    "checks",
+    "kind",
+    "manifestSha256",
+    "packagingEligible",
+    "patchSetSha256",
+    "platform",
+    "promotionInputsSha256",
+    "providerLockSha256",
+    "schemaVersion",
+    "signingState",
+    "sourceBuildInputsSha256",
+    "sourceDateEpoch",
+    "supplyChain",
+    "toolchain",
+    "upstreamCommit",
+    "upstreamTree",
+  ], "source-build attestation");
+  assertExactKeys(attestation.checks, [
+    "binaryIdentity",
+    "cargoMetadataSha256",
+    "cargoTests",
+    "referenceArtifact",
+    "rustfmt",
+    "runtimeProbe",
+    "toolchain",
+    "versionOutput",
+  ], "source-build attestation checks");
+  assertExactKeys(attestation.supplyChain, ["noticesSha256", "sbomSha256"], "source-build attestation supply chain");
+  assertExactKeys(attestation.checks.cargoTests, ["packages", "status"], "source-build cargo tests");
+  assertExactKeys(attestation.checks.rustfmt, ["paths", "scope", "status"], "source-build rustfmt");
+  return true;
 }
 
 export function verifyRuntimeProbe(platform, evidence, lock) {
@@ -267,6 +307,13 @@ export function stableRuntimeProbe(evidence, platform) {
   return stable;
 }
 
+export function verifyOutputMetadataBindings({ actual, attestation, manifest }) {
+  if (manifest.platform !== attestation.platform) fail("source-build manifest platform mismatch");
+  if (actual["provider-lock.json"] !== attestation.providerLockSha256) fail("output provider lock digest mismatch");
+  if (actual["source-build-inputs.json"] !== attestation.sourceBuildInputsSha256) fail("output source-build inputs digest mismatch");
+  return true;
+}
+
 export function verifyPromotionBindings({
   attestation,
   lock,
@@ -274,10 +321,59 @@ export function verifyPromotionBindings({
   observedVersion,
   promotion,
   runtimeProbe,
+  verified,
 }) {
+  assertExactKeys(promotion, [
+    "kind",
+    "missingFinalIdentity",
+    "platform",
+    "promotionEligible",
+    "providerLockSha256",
+    "providerSealInputs",
+    "runtimeProbe",
+    "schemaVersion",
+    "sourceBuild",
+    "sourceBuildInputsSha256",
+    "supplyChain",
+  ], "promotion inputs");
+  if (promotion.schemaVersion !== 1 || promotion.kind !== "ling.cua-driver.source-build-promotion-inputs") {
+    fail("promotion input schema mismatch");
+  }
+  if (!verified?.sourceInputs || !verified?.series) fail("verified source-build inputs are required");
   if (promotion.promotionEligible !== false || promotion.platform !== attestation.platform) fail("promotion input gate mismatch");
   if (promotion.providerLockSha256 !== attestation.providerLockSha256) fail("promotion provider lock digest mismatch");
   if (promotion.sourceBuildInputsSha256 !== attestation.sourceBuildInputsSha256) fail("promotion source inputs digest mismatch");
+  assertExactKeys(promotion.sourceBuild, [
+    "binaryIdentity",
+    "binariesSha256BeforeSigning",
+    "cargoLockSha256",
+    "cargoVersion",
+    "clientInitializeProtocolVersion",
+    "healthCoreChecks",
+    "healthProbeSkip",
+    "healthSchemaVersion",
+    "managedDeniedTools",
+    "patchSet",
+    "rustcVersion",
+    "serverInitializeProtocolVersion",
+    "toolsListCanonicalSha256",
+    "versionOutput",
+  ], "promotion source-build");
+  if (
+    promotion.sourceBuild.cargoLockSha256 !== verified.sourceInputs.upstreamBuild.cargoLockSha256
+    || promotion.sourceBuild.rustcVersion !== verified.sourceInputs.toolchain.rustcVersion
+    || promotion.sourceBuild.cargoVersion !== verified.sourceInputs.toolchain.cargoVersion
+  ) {
+    fail("promotion toolchain bindings mismatch");
+  }
+  if (JSON.stringify(promotion.sourceBuild.patchSet) !== JSON.stringify({
+    id: verified.series.id,
+    sha256: verified.seriesSha256,
+    patches: verified.series.patches,
+    touchedPaths: verified.series.touchedPaths,
+  })) {
+    fail("promotion patch-set bindings mismatch");
+  }
   if (JSON.stringify(attestation.checks?.binaryIdentity) !== JSON.stringify(observedBinaryIdentity)) fail("attestation binary identity mismatch");
   if (JSON.stringify(promotion.sourceBuild?.binaryIdentity) !== JSON.stringify(observedBinaryIdentity)) fail("promotion binary identity mismatch");
   if (attestation.checks?.versionOutput !== observedVersion || promotion.sourceBuild?.versionOutput !== observedVersion) fail("built provider version evidence mismatch");
@@ -297,6 +393,19 @@ export function verifyPromotionBindings({
   verifyProviderSealInputs(attestation.platform, promotion.providerSealInputs, attestation, runtimeProbe, lock);
   if (JSON.stringify(promotion.runtimeProbe) !== JSON.stringify(stableRuntimeProbe(runtimeProbe, attestation.platform))) {
     fail("promotion runtime probe evidence mismatch");
+  }
+  assertExactKeys(promotion.supplyChain, ["noticesSha256", "sbomSha256"], "promotion supply chain");
+  if (
+    promotion.supplyChain.sbomSha256 !== attestation.supplyChain.sbomSha256
+    || promotion.supplyChain.noticesSha256 !== attestation.supplyChain.noticesSha256
+  ) {
+    fail("promotion supply-chain bindings mismatch");
+  }
+  const expectedMissingFinalIdentity = attestation.platform === "darwin"
+    ? ["cdhashes", "codeIdentifier", "teamId", "designatedRequirement", "entitlementsCanonicalSha256"]
+    : ["authenticodeStatus", "providerSealSha256"];
+  if (JSON.stringify(promotion.missingFinalIdentity) !== JSON.stringify(expectedMissingFinalIdentity)) {
+    fail("promotion missing-final-identity bindings mismatch");
   }
   return true;
 }
