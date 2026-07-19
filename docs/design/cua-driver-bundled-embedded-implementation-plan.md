@@ -12,9 +12,14 @@ Current merged baseline:
   are complete;
 - the current foundation slice closes daemon authority/instance/connection lease ingress
   and freezes the Darwin/Win32 platform-binding boundary;
-- the Win32 standard adapter is implemented behind the closed gate; production Desktop
-  composition, native macOS completion, activation wiring, package staging, product states
-  and evidence/handoff closure remain.
+- process-wide Desktop runtime composition has landed behind closed packaged-provider
+  gates, including cached typed handshake authority, tuple rotation and ordered shutdown;
+- the gate-off Darwin native adapter now supplies injected Mach-O/code-sign identity,
+  direct-child lifecycle, host-owned TCC readiness and a retrying permission-change
+  monitor, without enabling packaged runtime;
+- the Win32 standard adapter now supplies policy-pinned identity, state-root ACL/reparse
+  protection, direct-child lifecycle, active-child readiness and Electron recovery hints;
+- activation wiring, package staging, product states and evidence/handoff closure remain.
 
 Both macOS and Windows packaged-provider gates remain off. This status records staged
 progress only and does not claim `bundled_embedded` runtime completion.

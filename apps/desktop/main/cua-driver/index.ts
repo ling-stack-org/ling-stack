@@ -1,4 +1,5 @@
 export * from "./artifact-lock.js";
+export * from "./adapters/darwin.js";
 export * from "./coordinator.js";
 export * from "./feature-gates.js";
 export * from "./lease-publisher.js";

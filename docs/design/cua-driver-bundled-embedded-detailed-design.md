@@ -4,11 +4,14 @@
 
 Detailed design for the approved internal macOS and Windows Desktop alpha direction.
 The shared contracts, feature gates, signing feasibility, activation fences, Desktop
-supervisor and source-build pipeline are implemented. The Win32 standard adapter now
-implements the policy-pinned identity, state-root ACL/reparse, direct-child lifecycle,
-active-child readiness and Electron recovery-hint boundaries, but production Desktop
-composition and real Windows acceptance are not complete. Both packaged-provider gates
-remain off and packaged runtime still uses the external provider path.
+supervisor, source-build pipeline and process-wide Desktop runtime composition are
+implemented. The gate-off Darwin adapter implements Mach-O/code-sign identity,
+direct-child lifecycle, host-owned TCC readiness and retrying permission-change
+monitoring. The Win32 standard adapter implements policy-pinned identity, state-root
+ACL/reparse protection, direct-child lifecycle, active-child readiness and Electron
+recovery hints. Activation does not connect the composition and adapters yet, real
+Windows acceptance is not complete, both packaged-provider gates remain off, and
+packaged runtime still uses the external provider path.
 
 The paired product and architecture decision is
 [Bundled Embedded Cua Driver](cua-driver-bundled-embedded.md).

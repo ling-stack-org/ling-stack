@@ -20,6 +20,7 @@ import { createInterface } from "node:readline";
 import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import { ComputerUsePreviewCoordinator } from "./computer-use/coordinator.js";
+import { resolveDesktopCuaDriverFeatureFlags } from "./cua-driver/feature-gates.js";
 import { DaemonComputerUsePreviewDescriptorResolver } from "./computer-use/daemon-descriptor-resolver.js";
 import { DaemonComputerUseProjectionClient } from "./computer-use/daemon-projection-client.js";
 import {
@@ -38,6 +39,7 @@ import { COMPUTER_USE_PREVIEW_SESSION_PARTITION } from "./computer-use/session-p
 import { parseElectronWindowSourceId } from "./computer-use/source-mapping.js";
 import { FileComputerUsePreviewTelemetry } from "./computer-use/telemetry.js";
 import { DesktopDaemonLifecycle } from "./daemon-lifecycle.js";
+import { DesktopRuntime } from "./desktop-runtime.js";
 import {
   ensureDesktopDaemonWithStartupRecovery,
   type DesktopDaemonStartupRecoveryPrompt,
@@ -60,6 +62,7 @@ import { createMainWindow } from "./window-factory.js";
 import type { DesktopDisplayWorkArea, DesktopRect } from "../shared/desktop-capabilities.js";
 
 const daemonBaseUrl = process.env.LING_STACK_DAEMON_URL ?? "http://127.0.0.1:17891";
+const cuaDriverFeatureFlags = resolveDesktopCuaDriverFeatureFlags();
 const execFileAsync = promisify(execFile);
 const smokeHeadless = process.argv.includes("--ling-desktop-smoke-headless");
 const performanceHoldMs = (() => {
@@ -124,7 +127,7 @@ let realCaptureSmokeDescriptorRegistry: InMemoryComputerUsePreviewDescriptorRegi
 let realCaptureSmokeProjectionClient: FakeComputerUseProjectionClient | undefined;
 let smokeProjectionSource: "daemon" | "fake" = "fake";
 let unregisterIpc: (() => void) | undefined;
-let daemon: DesktopDaemonLifecycle | undefined;
+let desktopRuntime: DesktopRuntime | undefined;
 let computerUse: ComputerUsePreviewCoordinator | undefined;
 const desktopNavigationIntents = new DesktopNavigationIntentStore();
 const startupLogPath = resolve(app.getPath("userData"), "desktop-startup.log");
@@ -255,6 +258,7 @@ async function openMainWindowOnce(attempt: DesktopStartupOpenAttempt): Promise<b
     return false;
   }
   logStartup("resources.resolved", {
+    resourcesRoot: resources.resourcesRoot,
     webIndexPath: resources.webIndexPath,
     daemonEntryPath: resources.daemonEntryPath,
     previewIndexPath: resources.previewIndexPath,
@@ -272,16 +276,27 @@ async function openMainWindowOnce(attempt: DesktopStartupOpenAttempt): Promise<b
   if (!attempt.isCurrent()) {
     return false;
   }
-  daemon ??= new DesktopDaemonLifecycle({
-    baseUrl: daemonBaseUrl,
-    daemonEntryPath: resources.daemonEntryPath,
-    defaultWorkspaceCwd,
-    desktopBridgeToken: bridgeToken,
-    ...(smokeHeadless && app.runningUnderARM64Translation ? { startupTimeoutMs: 60_000 } : {}),
+  desktopRuntime ??= new DesktopRuntime({
+    daemon: new DesktopDaemonLifecycle({
+      baseUrl: daemonBaseUrl,
+      daemonEntryPath: resources.daemonEntryPath,
+      defaultWorkspaceCwd,
+      desktopBridgeToken: bridgeToken,
+      cuaDriverFeatureFlags,
+      ...(smokeHeadless && app.runningUnderARM64Translation ? { startupTimeoutMs: 60_000 } : {}),
+      onDiagnostic: logStartup,
+    }),
+    daemonBaseUrl,
+    bridgeToken,
+    workspaceCwd: defaultWorkspaceCwd,
+    resourcesRoot: resources.resourcesRoot,
+    userDataPath: app.getPath("userData"),
+    featureFlags: cuaDriverFeatureFlags,
+    packaged: app.isPackaged,
     onDiagnostic: logStartup,
   });
   const daemonStartup = await ensureDesktopDaemonWithStartupRecovery({
-    daemon,
+    daemon: desktopRuntime,
     allowInteractiveRecovery: !smokeHeadless,
     prompt: promptForIncompatibleDaemon,
   });
@@ -293,7 +308,7 @@ async function openMainWindowOnce(attempt: DesktopStartupOpenAttempt): Promise<b
     attempt.requestExit(0);
     return false;
   }
-  logStartup("daemon.connected", { ownedByDesktop: daemon.status.ownedByDesktop });
+  logStartup("daemon.connected", { ownedByDesktop: desktopRuntime.status.ownedByDesktop });
   if (!computerUse) {
     const descriptorRegistry = new InMemoryComputerUsePreviewDescriptorRegistry();
     if (fakeComputerUseMode) {
@@ -386,7 +401,7 @@ async function openMainWindowOnce(attempt: DesktopStartupOpenAttempt): Promise<b
     });
   }
   unregisterIpc ??= registerDesktopIpc({
-    daemon,
+    runtime: desktopRuntime,
     computerUse,
     getMainWindow: () => mainWindow ?? loadingMainWindow,
     navigationIntents: desktopNavigationIntents,
@@ -1553,9 +1568,9 @@ async function shutdown(): Promise<void> {
   await attemptCleanup(() => windowsProviderSmokeCommandReader?.close());
   await attemptCleanup(() => mainSession?.closeAllConnections());
 
-  const activeDaemon = daemon;
-  daemon = undefined;
-  await attemptCleanup(() => activeDaemon?.stopOwnedDaemon());
+  const activeDesktopRuntime = desktopRuntime;
+  desktopRuntime = undefined;
+  await attemptCleanup(() => activeDesktopRuntime?.shutdown());
   await attemptCleanup(() => activeMainWindowOpen);
 
   if (cleanupFailed) {
