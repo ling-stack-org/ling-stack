@@ -36,6 +36,7 @@ test("DesktopRuntime composes once for one cached tuple and keeps a stable Deskt
     workspaceCwd,
   });
   assert.equal(Object.isFrozen(coordinatorOptions[0].bridgeContext), true);
+  assert.equal(coordinators[0].enableCalls, 1, "startup publishes one lazy availability lease");
   assert.equal(coordinators[0].shutdownCalls, 0);
   assert.deepEqual(diagnostics, [{
     event: "desktop_runtime.cua_driver_composed",
@@ -63,7 +64,189 @@ test("DesktopRuntime sequential ensure reuses the coordinator for the same autho
   assert.equal(daemon.ensureStartedCalls, 2, "each window-open check may ask the cached daemon lifecycle");
   assert.equal(coordinators.length, 1, "the same authority tuple must not construct another provider owner");
   assert.equal(runtime.cuaDriverCoordinator, firstCoordinator);
+  assert.equal(coordinators[0].enableCalls, 2, "the cached tuple revalidates through idempotent enable without a second owner");
   assert.equal(coordinators[0].shutdownCalls, 0);
+});
+
+test("a transient availability failure is non-fatal and the same tuple retries idempotent enable", async () => {
+  const daemon = fakeDaemon(authority("connection-provider-invalid", 1));
+  const diagnostics = [];
+  const enableError = new Error("provider_lock_digest_mismatch");
+  let enableAttempts = 0;
+  const coordinator = fakeCoordinator(undefined, {
+    enable: async () => {
+      enableAttempts += 1;
+      if (enableAttempts === 1) {
+        throw enableError;
+      }
+      return availabilitySnapshot();
+    },
+  });
+  const runtime = createRuntime(daemon, {
+    coordinatorFactory: () => coordinator,
+    onDiagnostic: (event, details) => diagnostics.push({ event, details }),
+  });
+
+  const firstStatus = await runtime.ensureStarted();
+  const secondStatus = await runtime.ensureStarted();
+
+  assert.equal(firstStatus.state, "connected", "provider availability must not masquerade as daemon startup failure");
+  assert.equal(secondStatus.state, "connected");
+  assert.equal(runtime.cuaDriverCoordinator, coordinator, "the same fail-closed owner is retained and retried");
+  assert.equal(coordinator.enableCalls, 2);
+  assert.equal(coordinator.shutdownCalls, 0);
+  assert.deepEqual(diagnostics, [
+    {
+      event: "desktop_runtime.cua_driver_composed",
+      details: { platform: "darwin", gateEnabled: true },
+    },
+    {
+      event: "desktop_runtime.cua_driver_availability_failed",
+      details: { platform: "darwin", error: enableError.message },
+    },
+  ]);
+});
+
+test("resolved fail-closed availability snapshots are diagnosed without failing daemon startup", async () => {
+  const daemon = fakeDaemon(authority("connection-platform-unavailable", 1));
+  const diagnostics = [];
+  const coordinator = fakeCoordinator(undefined, {
+    enable: async () => ({
+      lifecycle: "failed",
+      providerState: "platform_unavailable",
+      generation: 0,
+      reason: "platform_binding_unavailable",
+    }),
+  });
+  const runtime = createRuntime(daemon, {
+    coordinatorFactory: () => coordinator,
+    onDiagnostic: (event, details) => diagnostics.push({ event, details }),
+  });
+
+  const status = await runtime.ensureStarted();
+
+  assert.equal(status.state, "connected");
+  assert.equal(runtime.cuaDriverCoordinator, coordinator);
+  assert.deepEqual(diagnostics.at(-1), {
+    event: "desktop_runtime.cua_driver_availability_failed",
+    details: {
+      platform: "darwin",
+      providerState: "platform_unavailable",
+      reason: "platform_binding_unavailable",
+    },
+  });
+});
+
+test("daemon status loss during availability enable revokes the captured coordinator before authority_missing", async () => {
+  const enableStarted = deferred();
+  const releaseEnable = deferred();
+  const daemon = fakeDaemon(authority("connection-status-loss", 1));
+  const coordinator = fakeCoordinator(undefined, {
+    enable: async () => {
+      enableStarted.resolve();
+      await releaseEnable.promise;
+      return availabilitySnapshot();
+    },
+  });
+  const runtime = createRuntime(daemon, {
+    coordinatorFactory: () => coordinator,
+  });
+
+  const starting = runtime.ensureStarted();
+  await enableStarted.promise;
+  daemon.cuaDriverAuthorityTuple = undefined;
+  daemon.emitStatus({
+    state: "disconnected",
+    baseUrl: "http://127.0.0.1:17891",
+    ownedByDesktop: false,
+    reason: "child_exited",
+  });
+  releaseEnable.resolve();
+
+  await assert.rejects(starting, (error) => error?.code === "authority_missing");
+  await runtime.shutdown();
+  assert.equal(coordinator.shutdownCalls, 1, "post-enable authority validation owns the single revoke");
+  assert.equal(runtime.cuaDriverCoordinator, undefined);
+});
+
+test("authority rotation during availability enable revokes G and a later ensure composes the new tuple", async () => {
+  const enableStarted = deferred();
+  const releaseEnable = deferred();
+  const daemon = fakeDaemon(authority("connection-a", 1));
+  const created = [];
+  const runtime = createRuntime(daemon, {
+    coordinatorFactory: (options) => {
+      const coordinator = fakeCoordinator(undefined, created.length === 0
+        ? {
+            enable: async () => {
+              enableStarted.resolve();
+              await releaseEnable.promise;
+              return availabilitySnapshot();
+            },
+          }
+        : {});
+      created.push({ coordinator, options });
+      return coordinator;
+    },
+  });
+
+  const starting = runtime.ensureStarted();
+  await enableStarted.promise;
+  daemon.cuaDriverAuthorityTuple = authority("connection-b", 2);
+  releaseEnable.resolve();
+
+  await assert.rejects(starting, (error) => error?.code === "authority_missing");
+  assert.equal(created[0].coordinator.shutdownCalls, 1);
+
+  const recovered = await runtime.ensureStarted();
+  assert.equal(recovered.state, "connected");
+  assert.equal(created.length, 2);
+  assert.equal(created[1].options.bridgeContext.bridgeConnectionId, "connection-b");
+  assert.equal(created[1].coordinator.enableCalls, 1);
+  assert.equal(runtime.cuaDriverCoordinator, created[1].coordinator);
+});
+
+test("initial daemon checking events cannot enqueue cleanup for a coordinator composed later", async () => {
+  let daemon;
+  daemon = fakeDaemon(authority("connection-initial-check", 1), {
+    ensureStarted: async () => {
+      daemon.emitStatus({ state: "checking", baseUrl: "http://127.0.0.1:17891", ownedByDesktop: false });
+      daemon.emitStatus({ state: "connected", baseUrl: "http://127.0.0.1:17891", ownedByDesktop: true });
+      return daemon.status;
+    },
+  });
+  const coordinator = fakeCoordinator();
+  const runtime = createRuntime(daemon, {
+    coordinatorFactory: () => coordinator,
+  });
+
+  await runtime.ensureStarted();
+  await Promise.resolve();
+
+  assert.equal(coordinator.enableCalls, 1);
+  assert.equal(coordinator.shutdownCalls, 0);
+  assert.equal(runtime.cuaDriverCoordinator, coordinator);
+});
+
+test("daemon status loss after availability closes the coordinator captured by that event", async () => {
+  const daemon = fakeDaemon(authority("connection-active-loss", 1));
+  const coordinator = fakeCoordinator();
+  const runtime = createRuntime(daemon, {
+    coordinatorFactory: () => coordinator,
+  });
+  await runtime.ensureStarted();
+
+  daemon.cuaDriverAuthorityTuple = undefined;
+  daemon.emitStatus({
+    state: "disconnected",
+    baseUrl: "http://127.0.0.1:17891",
+    ownedByDesktop: false,
+    reason: "child_exited",
+  });
+
+  await assert.rejects(runtime.ensureStarted(), (error) => error?.code === "authority_missing");
+  assert.equal(coordinator.shutdownCalls, 1);
+  assert.equal(runtime.cuaDriverCoordinator, undefined);
 });
 
 test("DesktopRuntime restart shuts down the old coordinator before rotating and composing", async () => {
@@ -77,7 +260,15 @@ test("DesktopRuntime restart shuts down the old coordinator before rotating and 
   const created = [];
   const runtime = createRuntime(daemon, {
     coordinatorFactory: (options) => {
-      const coordinator = fakeCoordinator(() => events.push(`coordinator.shutdown:${options.bridgeContext.bridgeConnectionId}`));
+      const coordinator = fakeCoordinator(
+        () => events.push(`coordinator.shutdown:${options.bridgeContext.bridgeConnectionId}`),
+        {
+          enable: async () => {
+            events.push(`coordinator.enable:${options.bridgeContext.bridgeConnectionId}`);
+            return availabilitySnapshot();
+          },
+        },
+      );
       created.push({ coordinator, options });
       events.push(`coordinator.create:${options.bridgeContext.bridgeConnectionId}`);
       return coordinator;
@@ -90,13 +281,17 @@ test("DesktopRuntime restart shuts down the old coordinator before rotating and 
   assert.deepEqual(secondRestart, firstRestart);
   assert.deepEqual(events, [
     "coordinator.create:connection-a",
+    "coordinator.enable:connection-a",
     "coordinator.shutdown:connection-a",
     "daemon.restart",
     "coordinator.create:connection-b",
+    "coordinator.enable:connection-b",
   ]);
   assert.equal(created.length, 2);
   assert.equal(daemon.restartCalls, 1);
+  assert.equal(created[0].coordinator.enableCalls, 1);
   assert.equal(created[0].coordinator.shutdownCalls, 1);
+  assert.equal(created[1].coordinator.enableCalls, 1);
   assert.equal(created[1].options.desktopInstanceId, created[0].options.desktopInstanceId);
 });
 
@@ -122,6 +317,7 @@ test("closed gate never composes a provider even when the daemon returned a type
   assert.equal(status.state, "connected");
   assert.equal(factoryCalls, 0);
   assert.equal(bindingFactoryCalls, 0);
+  assert.equal(daemon.statusListenerCount, 0, "closed gates do not add provider lifecycle observers");
   assert.equal(runtime.cuaDriverCoordinator, undefined);
 });
 
@@ -226,6 +422,7 @@ test("Win32 composition maps x64 to the shared x86_64 contract and uses the inje
   assert.equal(coordinatorOptions.platform, "win32");
   assert.equal(coordinatorOptions.architecture, "x86_64");
   assert.equal(coordinatorOptions.platformBinding, binding);
+  assert.equal(runtime.cuaDriverCoordinator.enableCalls, 1);
 });
 
 test("shutdown continues to the owned daemon after coordinator cleanup fails", async () => {
@@ -236,6 +433,9 @@ test("shutdown continues to the owned daemon after coordinator cleanup fails", a
   });
   const runtime = createRuntime(daemon, {
     coordinatorFactory: () => ({
+      async enable() {
+        return availabilitySnapshot();
+      },
       async shutdown() {
         events.push("coordinator.shutdown");
         throw cleanupError;
@@ -258,6 +458,9 @@ test("concurrent and repeated shutdown calls share one coordinator and daemon cl
   const daemon = fakeDaemon(authority("connection-a", 1));
   const runtime = createRuntime(daemon, {
     coordinatorFactory: () => ({
+      async enable() {
+        return availabilitySnapshot();
+      },
       async shutdown() {
         coordinatorShutdownCalls += 1;
         shutdownStarted.resolve();
@@ -268,7 +471,9 @@ test("concurrent and repeated shutdown calls share one coordinator and daemon cl
   await runtime.ensureStarted();
 
   const firstShutdown = runtime.shutdown();
+  assert.equal(daemon.statusListenerCount, 0, "shutdown synchronously removes the internal status observer");
   await shutdownStarted.promise;
+  daemon.emitStatus({ state: "disconnected", baseUrl: "http://127.0.0.1:17891", ownedByDesktop: false });
   const secondShutdown = runtime.shutdown();
 
   assert.equal(secondShutdown, firstShutdown);
@@ -291,6 +496,9 @@ test("restart still rotates daemon authority when old coordinator cleanup fails"
     coordinatorFactory: () => {
       factoryCalls += 1;
       return {
+        async enable() {
+          return availabilitySnapshot();
+        },
         async shutdown() {
           throw cleanupError;
         },
@@ -336,6 +544,43 @@ test("shutdown fences an in-flight startup and still stops the daemon", async ()
   await stopping;
   assert.equal(factoryCalls, 0);
   assert.deepEqual(events, ["daemon.start.begin", "daemon.start.end", "daemon.stop"]);
+});
+
+test("shutdown racing availability publication revokes the composed coordinator before daemon stop", async () => {
+  const enableStarted = deferred();
+  const releaseEnable = deferred();
+  const events = [];
+  const daemon = fakeDaemon(authority("connection-enable-race", 1), {
+    onStop: () => events.push("daemon.stop"),
+  });
+  const coordinator = fakeCoordinator(() => events.push("coordinator.shutdown"), {
+    enable: async () => {
+      events.push("coordinator.enable.begin");
+      enableStarted.resolve();
+      await releaseEnable.promise;
+      events.push("coordinator.enable.end");
+      return availabilitySnapshot();
+    },
+  });
+  const runtime = createRuntime(daemon, {
+    coordinatorFactory: () => coordinator,
+  });
+
+  const starting = runtime.ensureStarted();
+  await enableStarted.promise;
+  const stopping = runtime.shutdown();
+  releaseEnable.resolve();
+
+  await assert.rejects(starting, (error) => error?.code === "shutdown_requested");
+  await stopping;
+  assert.equal(coordinator.enableCalls, 1);
+  assert.equal(coordinator.shutdownCalls, 1);
+  assert.deepEqual(events, [
+    "coordinator.enable.begin",
+    "coordinator.enable.end",
+    "coordinator.shutdown",
+    "daemon.stop",
+  ]);
 });
 
 test("shutdown fences an in-flight restart before it can compose replacement authority", async () => {
@@ -402,12 +647,22 @@ function createRuntime(daemon, overrides = {}) {
 }
 
 function fakeDaemon(initialAuthority, options = {}) {
+  const statusListeners = new Set();
   return {
     status: { state: "connected", baseUrl: "http://127.0.0.1:17891", ownedByDesktop: true },
     cuaDriverAuthorityTuple: initialAuthority,
     ensureStartedCalls: 0,
     restartCalls: 0,
     stopCalls: 0,
+    get statusListenerCount() {
+      return statusListeners.size;
+    },
+    emitStatus(status) {
+      this.status = status;
+      for (const listener of statusListeners) {
+        listener(status);
+      }
+    },
     async ensureStarted() {
       this.ensureStartedCalls += 1;
       return options.ensureStarted ? options.ensureStarted() : this.status;
@@ -424,19 +679,33 @@ function fakeDaemon(initialAuthority, options = {}) {
       this.stopCalls += 1;
       options.onStop?.();
     },
-    onStatusChanged() {
-      return () => {};
+    onStatusChanged(listener) {
+      statusListeners.add(listener);
+      return () => statusListeners.delete(listener);
     },
   };
 }
 
-function fakeCoordinator(onShutdown) {
+function fakeCoordinator(onShutdown, options = {}) {
   return {
+    enableCalls: 0,
     shutdownCalls: 0,
+    async enable() {
+      this.enableCalls += 1;
+      return options.enable ? options.enable() : availabilitySnapshot();
+    },
     async shutdown() {
       this.shutdownCalls += 1;
       onShutdown?.();
     },
+  };
+}
+
+function availabilitySnapshot() {
+  return {
+    lifecycle: "active",
+    providerState: "desktop_unavailable",
+    generation: 1,
   };
 }
 

@@ -9,9 +9,11 @@ implemented. The gate-off Darwin adapter implements Mach-O/code-sign identity,
 direct-child lifecycle, host-owned TCC readiness and retrying permission-change
 monitoring. The Win32 standard adapter implements policy-pinned identity, state-root
 ACL/reparse protection, direct-child lifecycle, active-child readiness and Electron
-recovery hints. Activation does not connect the composition and adapters yet, real
-Windows acceptance is not complete, both packaged-provider gates remain off, and
-packaged runtime still uses the external provider path.
+recovery hints. The Desktop runtime now publishes lazy coordinator availability and
+fences daemon status/authority loss, but daemon activation routes and pooled normal tool
+calls are not connected yet. Real Windows acceptance is not complete, both
+packaged-provider gates remain off, and packaged runtime still uses the external provider
+path.
 
 The paired product and architecture decision is
 [Bundled Embedded Cua Driver](cua-driver-bundled-embedded.md).
