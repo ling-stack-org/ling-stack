@@ -64,6 +64,26 @@ test("malformed binding availability fails closed before coordinator constructio
   );
 });
 
+test("coordinator rejects a binding for a different platform before subscribing", () => {
+  let subscribeCount = 0;
+  assert.throws(
+    () => createCoordinator({
+      platform: "darwin",
+      architecture: "arm64",
+      platformBinding: createAvailableWin32Binding({
+        subscribe() {
+          subscribeCount += 1;
+          return () => {};
+        },
+      }),
+    }),
+    (error) => error instanceof CuaDriverPlatformBindingError
+      && error.bindingCode === "platform_mismatch"
+      && error.platform === "darwin",
+  );
+  assert.equal(subscribeCount, 0);
+});
+
 test("binding dependencies cannot mix platform lifecycle or Windows-only members", () => {
   for (const platformBinding of [
     {
@@ -108,6 +128,133 @@ test("placeholder bindings map to platform_unavailable before payload paths are 
     assert.equal(snapshot.integrityCoverage, binding.metadata.integrityCoverage);
     await coordinator.shutdown();
   }
+});
+
+test("an available Win32 binding fails closed when the session observer throws during subscribe", async () => {
+  const telemetryEvents = [];
+  const coordinator = createCoordinator({
+    platform: "win32",
+    architecture: "x86_64",
+    platformBinding: createAvailableWin32Binding({
+      subscribe() {
+        throw new Error("fixture_subscribe_failed");
+      },
+    }),
+    telemetry: {
+      emit(level, event, fields) {
+        telemetryEvents.push({ level, event, fields });
+      },
+    },
+  });
+
+  const snapshot = await coordinator.enable();
+  assert.equal(snapshot.lifecycle, "failed");
+  assert.equal(snapshot.providerState, "platform_unavailable");
+  assert.equal(snapshot.reason, "windows_session_observer_unavailable");
+  assert.equal(snapshot.generation, 0);
+  assert.equal(coordinator.providerHost, undefined);
+  assert.equal(coordinator.stopWindowsSessionRecoveryObserver, undefined);
+  assert.deepEqual(telemetryEvents, [{
+    level: "error",
+    event: "cua_driver.coordinator.session_observer_failed",
+    fields: { error: "fixture_subscribe_failed" },
+  }]);
+
+  const retriedSnapshot = await coordinator.enable();
+  assert.equal(retriedSnapshot.lifecycle, "failed");
+  assert.equal(retriedSnapshot.providerState, "platform_unavailable");
+  assert.equal(retriedSnapshot.reason, "windows_session_observer_unavailable");
+  assert.equal(retriedSnapshot.generation, 0);
+
+  await coordinator.shutdown();
+});
+
+test("an available Win32 binding rejects a non-function observer disposer and keeps its listener inert", async () => {
+  let capturedListener;
+  const coordinator = createCoordinator({
+    platform: "win32",
+    architecture: "x86_64",
+    platformBinding: createAvailableWin32Binding({
+      subscribe(listener) {
+        capturedListener = listener;
+        return undefined;
+      },
+    }),
+  });
+
+  let forwardedHintCount = 0;
+  coordinator.handleWindowsSessionRecoveryHint = () => {
+    forwardedHintCount += 1;
+  };
+  capturedListener({ kind: "session_active" });
+  await Promise.resolve();
+
+  const snapshot = await coordinator.enable();
+  assert.equal(snapshot.lifecycle, "failed");
+  assert.equal(snapshot.providerState, "platform_unavailable");
+  assert.equal(snapshot.reason, "windows_session_observer_unavailable");
+  assert.equal(snapshot.generation, 0);
+  assert.equal(coordinator.providerHost, undefined);
+  assert.equal(coordinator.stopWindowsSessionRecoveryObserver, undefined);
+  assert.equal(forwardedHintCount, 0);
+  assert.equal(coordinator.windowsSessionResumeHintPending, false);
+  assert.equal(coordinator.sessionTransitionPromise, undefined);
+
+  await coordinator.shutdown();
+});
+
+test("an available Win32 binding activates a valid observer and unsubscribes it exactly once", async () => {
+  let capturedListener;
+  let unsubscribeCount = 0;
+  const coordinator = createCoordinator({
+    platform: "win32",
+    architecture: "x86_64",
+    platformBinding: createAvailableWin32Binding({
+      subscribe(listener) {
+        capturedListener = listener;
+        return () => {
+          unsubscribeCount += 1;
+        };
+      },
+    }),
+  });
+
+  let forwardedHintCount = 0;
+  coordinator.handleWindowsSessionRecoveryHint = () => {
+    forwardedHintCount += 1;
+  };
+  assert.equal(typeof coordinator.stopWindowsSessionRecoveryObserver, "function");
+  capturedListener({ kind: "session_active" });
+  assert.equal(forwardedHintCount, 1);
+  await coordinator.shutdown();
+  assert.equal(unsubscribeCount, 1);
+
+  capturedListener({ kind: "session_active" });
+  await Promise.resolve();
+  assert.equal(forwardedHintCount, 1);
+  assert.equal(coordinator.windowsSessionResumeHintPending, false);
+  assert.equal(coordinator.sessionTransitionPromise, undefined);
+});
+
+test("an available Darwin binding constructs without a Windows observer or Windows metadata", async () => {
+  const platformBinding = {
+    ...FAIL_CLOSED_DARWIN_CUA_DRIVER_PLATFORM_BINDING,
+    availability: { status: "available" },
+  };
+  const coordinator = createCoordinator({
+    platform: "darwin",
+    architecture: "arm64",
+    platformBinding,
+  });
+
+  assert.equal(platformBinding.windowsSessionRecoveryObserver, undefined);
+  assert.equal(coordinator.stopWindowsSessionRecoveryObserver, undefined);
+  assert.equal(coordinator.snapshot.lifecycle, "disabled");
+  assert.equal(coordinator.snapshot.providerState, "included");
+  assert.equal(coordinator.snapshot.integrityCoverage, undefined);
+  assert.deepEqual(coordinator.snapshot.limitations, []);
+
+  await coordinator.shutdown();
 });
 
 test("a coherent platform binding cannot be mixed with fine-grained dependency overrides", () => {
@@ -191,4 +338,12 @@ function createCoordinator(overrides) {
     },
     ...overrides,
   });
+}
+
+function createAvailableWin32Binding(windowsSessionRecoveryObserver) {
+  return {
+    ...FAIL_CLOSED_WIN32_CUA_DRIVER_PLATFORM_BINDING,
+    availability: { status: "available" },
+    windowsSessionRecoveryObserver,
+  };
 }

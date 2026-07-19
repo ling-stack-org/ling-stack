@@ -122,6 +122,8 @@ type CuaDriverPendingRecoveryAction =
       readonly providerState: Extract<CuaDriverProviderState, "corrupt" | "platform_unavailable">;
     };
 
+const WINDOWS_SESSION_OBSERVER_UNAVAILABLE_REASON = "windows_session_observer_unavailable";
+
 /**
  * Platform-neutral Desktop owner. Native TCC/WTS/Job Object checks are injected
  * by PR6/PR7; this module owns ordering and fencing only.
@@ -186,7 +188,7 @@ export class CuaDriverDesktopCoordinator {
     if (options.platformBinding) {
       assertCuaDriverPlatformBinding(options.platformBinding, options.platform);
     }
-    this.platformUnavailableReason = options.platformBinding?.availability.status === "unavailable"
+    let platformUnavailableReason = options.platformBinding?.availability.status === "unavailable"
       ? options.platformBinding.availability.reason
       : undefined;
     this.platformMetadata = options.platformBinding
@@ -215,16 +217,30 @@ export class CuaDriverDesktopCoordinator {
     if (options.platform === "win32"
       && windowsSessionRecoveryObserver
       && options.platformBinding?.availability.status !== "unavailable") {
+      let activeHandler: ((hint: CuaDriverWindowsSessionRecoveryHint) => void) | undefined;
       try {
-        this.stopWindowsSessionRecoveryObserver = windowsSessionRecoveryObserver.subscribe((hint) => {
-          this.handleWindowsSessionRecoveryHint(hint);
+        const stopObserver = windowsSessionRecoveryObserver.subscribe((hint) => {
+          activeHandler?.(hint);
         });
+        if (typeof stopObserver !== "function") {
+          throw new Error("windows_session_observer_unsubscribe_invalid");
+        }
+        activeHandler = (hint) => {
+          this.handleWindowsSessionRecoveryHint(hint);
+        };
+        this.stopWindowsSessionRecoveryObserver = () => {
+          activeHandler = undefined;
+          stopObserver();
+        };
       } catch (error) {
+        activeHandler = undefined;
+        platformUnavailableReason = WINDOWS_SESSION_OBSERVER_UNAVAILABLE_REASON;
         this.telemetry.emit("error", "cua_driver.coordinator.session_observer_failed", {
           error: error instanceof Error ? error.message : String(error),
         });
       }
     }
+    this.platformUnavailableReason = platformUnavailableReason;
   }
 
   get snapshot(): CuaDriverCoordinatorSnapshot {
