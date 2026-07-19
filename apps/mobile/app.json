@@ -1,0 +1,16 @@
+{
+  "expo": {
+    "name": "Ling Mobile",
+    "slug": "ling-mobile",
+    "version": "0.0.1",
+    "platforms": ["ios", "android"],
+    "orientation": "portrait",
+    "ios": {
+      "bundleIdentifier": "com.lingstack.mobile",
+      "supportsTablet": true
+    },
+    "android": {
+      "package": "com.lingstack.mobile"
+    }
+  }
+}

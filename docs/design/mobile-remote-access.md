@@ -258,7 +258,8 @@ The two workstreams can proceed in parallel under these ownership rules:
 | --- | --- | --- |
 | UI 2.0 | `apps/web`, `packages/conversation-ui-react`, Web CSS/tokens | Semantic changes in contracts/core |
 | Mobile remote access | `apps/mobile`, `packages/remote-*`, daemon remote-access | Semantic changes in contracts/core |
-| Shared contract | `packages/contracts` | Both owners approve |
+| Existing shared contract | Existing conversation DTOs and cross-surface semantics in `packages/contracts` | Both owners approve |
+| Remote-only contract extension | `packages/contracts/src/remote-access.ts` plus its root export | Mobile owner may implement; UI 2.0 owner reviews the overlap at final sync |
 | Headless conversation model | `packages/conversation-ui-core` | Both owners approve |
 | Lockfile | One owner regenerates after final sync | Never manually merge competing lockfile edits |
 

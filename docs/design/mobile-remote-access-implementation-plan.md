@@ -1,6 +1,7 @@
 # Mobile Remote Access Implementation Plan
 
-Status: ready for staged implementation; final merge blocked on UI 2.0 integration review
+Status: Slice 1 repository implementation complete; physical-device and Tailscale gates
+pending; final merge blocked on UI 2.0 integration review
 Date: 2026-07-19
 Base: current `origin/main` architecture at design start
 
@@ -57,6 +58,10 @@ shared-boundary review is complete.
 
 ```text
 apps/mobile/
+  modules/ling-secure-device-key/
+    ios/
+    android/
+    src/
   app/ or src/navigation/
   src/features/pairing/
   src/features/connection/
@@ -71,10 +76,25 @@ packages/contracts/src/
   remote-access.ts
 
 packages/remote-protocol/
-  src/envelopes.ts
   src/canonical.ts
-  src/validators.ts
+  src/envelopes.ts
   src/errors.ts
+  src/es256.ts
+  src/hmac.ts
+  src/sequence.ts
+  src/sha256.ts
+  src/validators.ts                 # stable public re-export surface
+  src/validation/
+    command-payloads.ts
+    event-payloads.ts
+    frames.ts
+    handshake.ts
+    json-input.ts
+    json-members.ts
+    policy.ts
+    primitives.ts
+    projections.ts
+    time.ts
   src/index.ts
   test/
 
@@ -112,6 +132,10 @@ packages/cli/src/remote/
   revoke.ts
   disable.ts
 ```
+
+During Slice 1, `apps/mobile` contains only the Expo development-build key harness and the
+app-local `ling-secure-device-key` module. Navigation, production screens, and conversation
+state remain Slice 6 work; the spike does not import Web UI code.
 
 The exact split may be adjusted to match nearby repository conventions, but these
 responsibilities must stay separate:
@@ -194,6 +218,8 @@ Scope:
   result, and error DTOs to `packages/contracts/src/remote-access.ts`;
 - add `packages/remote-protocol` with strict runtime validators and canonical signing
   bytes;
+- lock the V1 encoding profile to RFC 8785 JCS, SHA-256/HMAC-SHA-256, unpadded base64url,
+  NUL-separated domain bytes, and fixed 64-byte IEEE-P1363 ES256 wire signatures;
 - fix V0 to protocol version 1 and ES256; no downgrade/algorithm negotiation;
 - build a minimal iOS/Android native-key spike that generates, signs, and verifies a
   P-256 key without exporting the release private key;
@@ -212,11 +238,15 @@ Security gate:
 Tests:
 
 - canonical bytes match shared fixtures across Node/iOS/Android;
+- all five pairing/auth signing domains and the pairing HMAC match in the Mobile/Hermes
+  fixture, with Node-generated Gateway/device signatures verified by native crypto;
 - validators reject extra fields, unknown types, wrong version, invalid time, and
   oversized values;
 - frame fixtures keep stream id/event id/server sequence and client sequence/expiry in one
   direction-specific location; duplicate envelope/payload fields are rejected;
 - every signed field mutation fails verification;
+- deterministic property/fuzz cases cover canonical object ordering and strict frame
+  boundary mutations;
 - private-key export is unavailable in the real-device release adapter.
 
 Validation:
@@ -225,8 +255,18 @@ Validation:
 corepack pnpm --filter @ling-stack/contracts test
 corepack pnpm --filter @ling-stack/remote-protocol test
 corepack pnpm --filter @ling-stack/remote-protocol typecheck
+corepack pnpm --filter @ling-stack/mobile typecheck
+corepack pnpm --filter @ling-stack/mobile test
+corepack pnpm --filter @ling-stack/mobile run doctor
 git diff --check
 ```
+
+The current development machine may close the TypeScript, Node interoperability, Expo
+configuration, autolinking, and standalone Swift Security checks. S1 is not release-closed
+until a physical iPhone proves Secure Enclave generation/signing/private-key export failure,
+a physical Android device proves Android Keystore signing with `privateKey.encoded == null`
+and records its security level, and both devices reject a changed Gateway identity. Hosted
+simulators may prove compile/autolink and fail-closed behavior but are not hardware evidence.
 
 Checkpoint: this slice is safe to implement while UI 2.0 is active. Any change to an
 existing shared conversation type requires joint review; remote-only DTOs do not.

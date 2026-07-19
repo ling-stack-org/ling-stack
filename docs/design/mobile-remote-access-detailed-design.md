@@ -125,6 +125,49 @@ P-256/ES256 is selected for V0 because iOS Secure Enclave, Android Keystore, and
 standard crypto implementation can support the same verification contract. V0 does not
 negotiate alternative signing algorithms; algorithm agility would create a downgrade path.
 
+### V1 Cryptographic Encoding Profile
+
+The three runtimes use one byte-level profile; platform defaults are not wire contracts:
+
+- canonical JSON is RFC 8785 JCS over the I-JSON subset; invalid Unicode, non-finite
+  numbers, sparse arrays, `undefined`, and non-plain objects fail closed;
+- a public P-256 JWK contains exactly `crv`, `kty`, `x`, and `y`; `crv` is `P-256`, `kty`
+  is `EC`, and `x`/`y` are 32-byte unpadded base64url coordinates;
+- binary values use unpadded canonical base64url; SHA-256 digests, nonces, secrets, and
+  fingerprints are 32 bytes;
+- signing input is `UTF8(domain) || 0x00 || UTF8(JCS(named-object))`; the NUL separator
+  and named canonical object make concatenation unambiguous;
+- ES256 wire signatures are the JWS/IEEE-P1363 fixed 64-byte `r || s` representation.
+  Apple Security and Android `SHA256withECDSA` return X9.62 DER, so the Mobile adapter
+  performs strict DER/P1363 conversion without exposing private-key material;
+- V1 does not require low-S normalization. Challenges are single-use and command identity
+  is independent from signature bytes; both mathematically valid S forms verify;
+- HMAC proof uses HMAC-SHA-256 over the same pairing transcript bytes;
+- Gateway/device fingerprints are
+  `base64url(SHA-256(JCS({ crv, kty, x, y })))` without a signing-domain prefix;
+- QR and device-proof validators recompute that fingerprint from the supplied JWK and
+  compare decoded bytes before displaying or reserving an identity; a separately declared
+  but mismatched fingerprint is never accepted;
+- timestamps use exactly UTC RFC3339 milliseconds (`YYYY-MM-DDTHH:mm:ss.SSSZ`), clock skew
+  is at most 30 seconds, an auth challenge lives at most 30 seconds, and a command frame
+  lives at most 60 seconds.
+
+The V1 signing domains and named fields are fixed:
+
+| Domain | Canonical object fields |
+| --- | --- |
+| `ling-remote-pair-challenge-v1` | `gatewayOrigin`, `gatewayId`, `pairingId`, `serverNonce`, `issuedAt`, `expiresAt`, `protocolVersion` |
+| `ling-remote-pair-proof-v1` | `gatewayOrigin`, `gatewayId`, `pairingId`, `serverNonce`, `clientNonce`, `deviceId`, `displayName`, `platform`, `devicePublicKeyJwk`, `devicePublicKeyFingerprint`, `protocolVersion` |
+| `ling-remote-pair-accepted-v1` | `gatewayOrigin`, `gatewayId`, `pairingId`, `deviceId`, `deviceEpoch`, `protocolVersion`, `pairedAt` |
+| `ling-remote-auth-challenge-v1` | `gatewayOrigin`, `gatewayId`, `challengeId`, `candidateSessionId`, `serverNonce`, `deviceEpoch`, `issuedAt`, `expiresAt`, `supportedProtocolVersions` |
+| `ling-remote-auth-v1` | `gatewayOrigin`, `gatewayId`, `challengeId`, `candidateSessionId`, `serverNonce`, `clientNonce`, `deviceId`, `deviceEpoch`, `protocolVersion`, `resumeHash` |
+| `ling-remote-command-v1` | `gatewayId`, `deviceEpoch`, `commandKind`, `workspaceId`, `channelId`, `body`, `remotePolicyVersion` |
+
+`resumeHash` is unpadded base64url SHA-256 over JCS of the resume cursors sorted first by
+ASCII `streamId` and then by ASCII `snapshotId`; duplicate stream ids fail. The stable
+fixture corpus is `packages/remote-protocol/fixtures/v1/` and is consumed unchanged by
+Node and the iOS/Android development build.
+
 ### Device Identity
 
 The mobile app creates a non-exportable P-256 signing key when the native platform permits:
@@ -134,9 +177,18 @@ The mobile app creates a non-exportable P-256 signing key when the native platfo
 - device private key never enters JavaScript as raw bytes in a release build;
 - public key is registered only during locally confirmed pairing.
 
-The secure-key implementation is a release blocker. A mock or software key may be used in
-unit tests and local simulator development, but production must not fall back to a long-
-lived bearer token when native signing or key storage is unavailable.
+Release policy is platform-specific but never falls back to a JavaScript key. iOS requires
+the Secure Enclave and reports unsupported when it is unavailable. Android requires a
+non-exportable `AndroidKeyStore` key (`privateKey.encoded == null`); StrongBox or TEE is
+used when reported by `KeyInfo`, while a reported `software` security level remains usable
+for V0 with reduced-assurance diagnostics because the OS keystore still keeps the key out
+of JavaScript. The pairing record and local audit retain the Android security level.
+
+The secure-key implementation is a release blocker. A mock or JavaScript-exportable
+software key may be used in unit tests and local simulator development, but production
+must not fall back to that key or to a long-lived bearer token when native signing or OS
+key storage is unavailable. AndroidKeyStore reporting `software` is still native OS key
+storage and is handled by the explicit reduced-assurance rule above.
 
 ### Device Record
 
@@ -302,6 +354,7 @@ interface RemoteAuthChallengeV1 {
   readonly issuedAt: string;
   readonly expiresAt: string; // <= 30 seconds
   readonly supportedProtocolVersions: readonly [1];
+  readonly gatewaySignature: string; // ling-remote-auth-challenge-v1
 }
 ```
 
@@ -390,6 +443,8 @@ interface RemoteStreamAckV1 {
 Protocol rules:
 
 - strict runtime schema validation; unknown top-level fields are rejected;
+- a duplicate-name scanner runs before `JSON.parse`, including nested payload objects, so
+  escaped or literal duplicate member names cannot be overwritten into a different frame;
 - UTF-8 JSON for V0, no `eval`, polymorphic class hydration, or arbitrary patch format;
 - max frame size 256 KiB and max text message body 32 KiB;
 - WebSocket compression disabled for authenticated content;
@@ -399,7 +454,17 @@ Protocol rules:
   name one stream and one cumulative sequence;
 - duplicate/out-of-order client frames close the session after a bounded error response;
 - every command frame has a short expiry and a maximum accepted clock-skew window;
+- every lifecycle command payload has one `commandId`; `stream.ack` is transport control,
+  has no command id, and never produces `command.accepted/completed/failed`. This prevents
+  an acknowledgement-completion feedback loop. `messageId` identifies a transport frame,
+  and a server `requestId` may reference that frame without replacing the stable command
+  id. Only `channel.send_text` persists the command id across sessions in V0;
+- `command.completed` and `command.failed` repeat `commandId` plus `commandType`, and the
+  result discriminator must match that type;
 - server events are ordered per remote stream and acknowledged cumulatively;
+- `session.ready` and command lifecycle events use the authenticated session's control
+  stream, so they follow the same `streamId`/`serverSeq` event envelope rather than a
+  second unsequenced server-frame shape;
 - heartbeats contain no business data.
 
 ## Remote Capability Allowlist
@@ -499,14 +564,13 @@ interface RemoteAccessPolicyV1 {
   readonly channelAccess:
     | { readonly mode: "selected"; readonly channelIds: readonly string[] }
     | { readonly mode: "all_in_workspace" };
-  readonly capabilities: readonly [
-    "channel.read",
-    "channel.send_text",
-    "channel_run_summary.read",
-    "channel_approval_summary.read"
-  ];
+  readonly capabilities: readonly RemoteCapabilityV1[];
 }
 ```
+
+`channel.read` is mandatory while Remote Access is enabled. The other three V0
+capabilities are independently removable by the local owner, so the wire policy can express
+a least-privilege subset but can never introduce a capability outside the V0 allowlist.
 
 The local binding also stores a canonical identity, not only the display path:
 

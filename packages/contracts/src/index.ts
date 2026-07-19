@@ -41,3 +41,4 @@ export type * from "./startup.js";
 export type * from "./profile.js";
 export * from "./computer-use.js";
 export * from "./computer-use-validation.js";
+export * from "./remote-access.js";

@@ -1,0 +1,9 @@
+{
+  "platforms": ["apple", "android"],
+  "apple": {
+    "modules": ["LingSecureDeviceKeyModule"]
+  },
+  "android": {
+    "modules": ["expo.modules.lingsecuredevicekey.LingSecureDeviceKeyModule"]
+  }
+}

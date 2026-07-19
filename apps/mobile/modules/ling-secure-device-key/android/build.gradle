@@ -1,0 +1,13 @@
+apply plugin: 'com.android.library'
+apply plugin: 'expo-module-gradle-plugin'
+
+group = 'com.lingstack.mobile'
+version = '0.0.1'
+
+android {
+  namespace 'expo.modules.lingsecuredevicekey'
+  defaultConfig {
+    versionCode 1
+    versionName '0.0.1'
+  }
+}
