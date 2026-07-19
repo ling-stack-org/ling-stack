@@ -4,9 +4,12 @@
 
 Detailed design for the approved internal macOS and Windows Desktop alpha direction.
 The shared contracts, feature gates, signing feasibility, activation fences, Desktop
-supervisor and source-build pipeline are implemented. Production Desktop composition and
-the native macOS/Windows adapters are not connected yet, so both packaged-provider gates
-remain off and packaged runtime still uses the external provider path.
+supervisor and source-build pipeline are implemented. The gate-off Darwin adapter now
+implements Mach-O/code-sign identity, direct-child lifecycle, host-owned TCC readiness
+and retrying permission-change monitoring, but production Desktop composition and
+activation do not consume it yet. The Win32 adapter is still pending, both
+packaged-provider gates remain off, and packaged runtime still uses the external provider
+path.
 
 The paired product and architecture decision is
 [Bundled Embedded Cua Driver](cua-driver-bundled-embedded.md).
