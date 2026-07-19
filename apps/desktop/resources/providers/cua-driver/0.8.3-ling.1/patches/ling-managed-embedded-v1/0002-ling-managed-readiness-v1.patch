@@ -12,10 +12,10 @@ index 7a78c4a..928f15b 100644
  pub mod policy;
 diff --git a/libs/cua-driver/rust/crates/cua-driver-core/src/ling_managed_readiness.rs b/libs/cua-driver/rust/crates/cua-driver-core/src/ling_managed_readiness.rs
 new file mode 100644
-index 0000000..90fbeb3
+index 0000000..646e806
 --- /dev/null
 +++ b/libs/cua-driver/rust/crates/cua-driver-core/src/ling_managed_readiness.rs
-@@ -0,0 +1,328 @@
+@@ -0,0 +1,398 @@
 +//! Generation-fenced, content-free readiness control for Ling's embedded child.
 +//!
 +//! The wire structs intentionally mirror the public Desktop contract.  The
@@ -215,6 +215,47 @@ index 0000000..90fbeb3
 +        .map_err(|_| "cua_windows_platform_unavailable".to_owned())
 +}
 +
++/// Recheck the active Windows child/session fence immediately before every
++/// managed tool dispatch. The one-second heartbeat is the controller's
++/// revocation signal, but it is not itself a call gate: a lock, fast-user
++/// switch, or secure-desktop transition can happen between heartbeats.
++pub fn pre_dispatch_guard() -> Result<(), String> {
++    if !crate::ling_managed::is_managed() {
++        return Ok(());
++    }
++
++    #[cfg(target_os = "windows")]
++    {
++        let request = active_request()
++            .lock()
++            .map_err(|_| "cua_windows_platform_unavailable".to_owned())?
++            .clone()
++            .ok_or_else(|| "cua_windows_platform_unavailable".to_owned())?;
++        let current = snapshot_for_request(&request)?;
++        validate_dispatch_snapshot(&current)?;
++        *last_snapshot()
++            .lock()
++            .map_err(|_| "cua_windows_platform_unavailable".to_owned())? = Some(current);
++    }
++
++    Ok(())
++}
++
++#[cfg(any(test, target_os = "windows"))]
++fn validate_dispatch_snapshot(snapshot: &ManagedReadinessV1) -> Result<(), String> {
++    snapshot
++        .validate()
++        .map_err(|_| "cua_windows_platform_unavailable".to_owned())?;
++    if snapshot.host_session_id == 0
++        || snapshot.provider_session_id == 0
++        || snapshot.host_session_id != snapshot.provider_session_id
++        || snapshot.input_desktop != InputDesktopState::DefaultUnlocked
++    {
++        return Err("cua_windows_interactive_session_required".to_owned());
++    }
++    Ok(())
++}
++
 +fn parse_request(params: Option<&Value>) -> Result<ManagedReadinessRequestV1, String> {
 +    let value = params.ok_or_else(|| "cua_windows_readiness_request_invalid".to_owned())?;
 +    let request: ManagedReadinessRequestV1 = serde_json::from_value(value.clone())
@@ -343,9 +384,38 @@ index 0000000..90fbeb3
 +        });
 +        assert!(serde_json::from_value::<ManagedReadinessRequestV1>(json).is_err());
 +    }
++
++    #[test]
++    fn pre_dispatch_rejects_locked_non_default_and_mismatched_sessions() {
++        let mut current = value();
++        assert!(validate_dispatch_snapshot(&current).is_ok());
++
++        current.input_desktop = InputDesktopState::Locked;
++        assert_eq!(
++            validate_dispatch_snapshot(&current).unwrap_err(),
++            "cua_windows_interactive_session_required"
++        );
++        current.input_desktop = InputDesktopState::NonDefault;
++        assert_eq!(
++            validate_dispatch_snapshot(&current).unwrap_err(),
++            "cua_windows_interactive_session_required"
++        );
++        current.input_desktop = InputDesktopState::DefaultUnlocked;
++        current.provider_session_id = 2;
++        assert_eq!(
++            validate_dispatch_snapshot(&current).unwrap_err(),
++            "cua_windows_interactive_session_required"
++        );
++        current.host_session_id = 0;
++        current.provider_session_id = 0;
++        assert_eq!(
++            validate_dispatch_snapshot(&current).unwrap_err(),
++            "cua_windows_interactive_session_required"
++        );
++    }
 +}
 diff --git a/libs/cua-driver/rust/crates/cua-driver-core/src/server.rs b/libs/cua-driver/rust/crates/cua-driver-core/src/server.rs
-index b16736f..bdb0ff8 100644
+index b16736f..c5407e3 100644
 --- a/libs/cua-driver/rust/crates/cua-driver-core/src/server.rs
 +++ b/libs/cua-driver/rust/crates/cua-driver-core/src/server.rs
 @@ -1,8 +1,12 @@
@@ -362,7 +432,7 @@ index b16736f..bdb0ff8 100644
  use tracing::{debug, error, warn};
  
  use crate::policy::{configured_policy, PolicyDecision};
-@@ -264,40 +268,82 @@ pub fn observe_proxy_tool_completed(outcome: ToolCompletionObservation) {
+@@ -264,40 +268,91 @@ pub fn observe_proxy_tool_completed(outcome: ToolCompletionObservation) {
  /// responses to stdout. Exits when stdin reaches EOF or a fatal I/O
  /// error occurs.
  pub async fn run(registry: Arc<ToolRegistry>) -> anyhow::Result<()> {
@@ -457,6 +527,15 @@ index b16736f..bdb0ff8 100644
 +                    Ok(req) => req,
 +                };
 +                let id = req.id.clone().unwrap_or(serde_json::Value::Null);
++                if req.method == crate::ling_managed_readiness::METHOD && !session_observed {
++                    let response = Response::error(
++                        id,
++                        -32600,
++                        "managed readiness requires a completed initialize request",
++                    );
++                    send_json_line(&outbound_tx, &response).await?;
++                    continue;
++                }
 +                if pending_requests.len() >= 32 {
 +                    let response = Response::error(id, -32603, "too many pending requests");
 +                    send_json_line(&outbound_tx, &response).await?;
@@ -471,7 +550,7 @@ index b16736f..bdb0ff8 100644
                  let session_context = session_tool_context(
                      &req,
                      &registry,
-@@ -308,35 +354,106 @@ pub async fn run(registry: Arc<ToolRegistry>) -> anyhow::Result<()> {
+@@ -308,35 +363,106 @@ pub async fn run(registry: Arc<ToolRegistry>) -> anyhow::Result<()> {
                      |name| name == "type_text_chars" || registry.get_def(name).is_some(),
                      StdioExecutionPath::InProcess,
                  );
@@ -598,7 +677,25 @@ index b16736f..bdb0ff8 100644
      Ok(())
  }
  
-@@ -568,6 +685,11 @@ pub async fn handle_request(req: Request, id: serde_json::Value, registry: &Arc<
+@@ -565,9 +691,29 @@ fn size_bucket(size: usize) -> OutputSizeBucket {
+ /// daemon's HTTP transport (`cua-driver`'s `mcp_http`) so both speak the
+ /// exact same MCP semantics.
+ pub async fn handle_request(req: Request, id: serde_json::Value, registry: &Arc<ToolRegistry>) -> Response {
++    handle_request_with_dispatch_guard(
++        req,
++        id,
++        registry,
++        crate::ling_managed_readiness::pre_dispatch_guard,
++    )
++    .await
++}
++
++async fn handle_request_with_dispatch_guard(
++    req: Request,
++    id: serde_json::Value,
++    registry: &Arc<ToolRegistry>,
++    dispatch_guard: fn() -> Result<(), String>,
++) -> Response {
      match req.method.as_str() {
          "initialize" => Response::ok(id, initialize_result()),
  
@@ -610,7 +707,102 @@ index b16736f..bdb0ff8 100644
          "tools/list" => Response::ok(id, registry.tools_list()),
  
          "tools/call" => match req.tool_call() {
-@@ -772,3 +894,186 @@ mod observation_tests {
+@@ -600,6 +746,16 @@ pub async fn handle_request(req: Request, id: serde_json::Value, registry: &Arc<
+                         );
+                     }
+                 }
++                if let Err(code) = dispatch_guard() {
++                    let result = crate::protocol::ToolResult::error(code.clone())
++                        .with_structured(serde_json::json!({ "code": code }));
++                    return match serde_json::to_value(result) {
++                        Ok(value) => Response::ok(id, value),
++                        Err(error) => {
++                            Response::error(id, -32603, format!("Serialize error: {error}"))
++                        }
++                    };
++                }
+                 let result = registry.invoke(&call.name, call.args).await;
+                 match serde_json::to_value(result) {
+                     Ok(v) => Response::ok(id, v),
+@@ -618,11 +774,77 @@ pub async fn handle_request(req: Request, id: serde_json::Value, registry: &Arc<
+ #[cfg(test)]
+ mod observation_tests {
+     use super::*;
++    use std::sync::atomic::{AtomicBool, Ordering};
+ 
+     fn timer(known: bool, valid: bool, path: StdioExecutionPath) -> ToolObservationTimer {
+         ToolObservationTimer::start("click".to_owned(), known, valid, path)
+     }
+ 
++    struct DispatchProbeTool {
++        def: crate::tool::ToolDef,
++        invoked: Arc<AtomicBool>,
++    }
++
++    #[async_trait::async_trait]
++    impl crate::tool::Tool for DispatchProbeTool {
++        fn def(&self) -> &crate::tool::ToolDef {
++            &self.def
++        }
++
++        async fn invoke(&self, _args: serde_json::Value) -> crate::protocol::ToolResult {
++            self.invoked.store(true, Ordering::SeqCst);
++            crate::protocol::ToolResult::text("should not run")
++        }
++    }
++
++    fn reject_interactive_session() -> Result<(), String> {
++        Err("cua_windows_interactive_session_required".to_owned())
++    }
++
++    #[tokio::test]
++    async fn pre_dispatch_failure_is_structured_and_never_invokes_the_tool() {
++        let invoked = Arc::new(AtomicBool::new(false));
++        let mut registry = ToolRegistry::new();
++        registry.register(Box::new(DispatchProbeTool {
++            def: crate::tool::ToolDef {
++                name: "dispatch_probe".into(),
++                description: "dispatch guard test".into(),
++                input_schema: serde_json::json!({"type": "object"}),
++                read_only: false,
++                destructive: false,
++                idempotent: false,
++                open_world: false,
++            },
++            invoked: invoked.clone(),
++        }));
++        let registry = Arc::new(registry);
++        let request: Request = serde_json::from_value(serde_json::json!({
++            "jsonrpc": "2.0",
++            "id": 7,
++            "method": "tools/call",
++            "params": {"name": "dispatch_probe", "arguments": {}}
++        }))
++        .unwrap();
++
++        let response = handle_request_with_dispatch_guard(
++            request,
++            serde_json::json!(7),
++            &registry,
++            reject_interactive_session,
++        )
++        .await;
++
++        assert!(!invoked.load(Ordering::SeqCst));
++        let ResponseBody::Result { result } = response.body else {
++            panic!("dispatch guard failure must use an MCP tool result");
++        };
++        assert_eq!(result["isError"], true);
++        assert_eq!(
++            result["structuredContent"]["code"],
++            "cua_windows_interactive_session_required"
++        );
++    }
++
+     #[test]
+     fn successful_mixed_output_is_shape_only() {
+         let response = Response::ok(
+@@ -772,3 +994,253 @@ mod observation_tests {
          assert_eq!(ToolErrorClass::TransportError.as_str(), "transport_error");
      }
  }
@@ -684,6 +876,42 @@ index b16736f..bdb0ff8 100644
 +    }
 +
 +    #[tokio::test]
++    async fn stdout_half_close_stops_the_server() {
++        let (mut input_writer, server_input) = tokio::io::duplex(4_096);
++        let (server_output, output_reader) = tokio::io::duplex(4_096);
++        drop(output_reader);
++        let server = tokio::spawn(run_with_io(
++            server_input,
++            server_output,
++            Arc::new(ToolRegistry::new()),
++        ));
++        input_writer
++            .write_all(
++                format!(
++                    "{}\n",
++                    serde_json::json!({
++                        "jsonrpc": "2.0",
++                        "id": 1,
++                        "method": "initialize",
++                        "params": {
++                            "protocolVersion": "2025-11-25",
++                            "capabilities": {},
++                            "clientInfo": {"name": "ling-native-test", "version": "1"}
++                        }
++                    })
++                )
++                .as_bytes(),
++            )
++            .await
++            .unwrap();
++        let result = tokio::time::timeout(std::time::Duration::from_secs(1), server)
++            .await
++            .expect("server ignored the half-closed stdout")
++            .unwrap();
++        assert!(result.is_err());
++    }
++
++    #[tokio::test]
 +    async fn long_tool_call_does_not_block_managed_readiness_heartbeat() {
 +        assert!(crate::ling_managed_readiness::set_provider(Arc::new(
 +            FixedReadiness
@@ -712,6 +940,37 @@ index b16736f..bdb0ff8 100644
 +            Arc::new(registry),
 +        ));
 +        let mut output_lines = BufReader::new(output_reader).lines();
++
++        let initialize = format!(
++            "{}\n",
++            serde_json::json!({
++                "jsonrpc": "2.0",
++                "id": 0,
++                "method": "initialize",
++                "params": {
++                    "protocolVersion": "2025-11-25",
++                    "capabilities": {},
++                    "clientInfo": {"name": "ling-native-test", "version": "1"}
++                }
++            })
++        );
++        input_writer.write_all(initialize.as_bytes()).await.unwrap();
++        let initialize_response = tokio::time::timeout(
++            std::time::Duration::from_secs(1),
++            output_lines.next_line(),
++        )
++        .await
++        .expect("initialize response timed out")
++        .unwrap()
++        .expect("initialize response was missing");
++        let initialize_response: serde_json::Value =
++            serde_json::from_str(&initialize_response).unwrap();
++        assert_eq!(
++            initialize_response
++                .pointer("/result/protocolVersion")
++                .and_then(serde_json::Value::as_str),
++            Some("2025-06-18")
++        );
 +
 +        let readiness_request = format!(
 +            "{}\n",
@@ -889,10 +1148,10 @@ index 3addf38..df36a69 100644
  pub mod terminal;
 diff --git a/libs/cua-driver/rust/crates/platform-windows/src/managed_readiness.rs b/libs/cua-driver/rust/crates/platform-windows/src/managed_readiness.rs
 new file mode 100644
-index 0000000..7107777
+index 0000000..3b56d04
 --- /dev/null
 +++ b/libs/cua-driver/rust/crates/platform-windows/src/managed_readiness.rs
-@@ -0,0 +1,230 @@
+@@ -0,0 +1,277 @@
 +//! Live readiness provider for the bundled standard Windows child.
 +//!
 +//! Every field is derived from the current process/session and current input
@@ -951,7 +1210,8 @@ index 0000000..7107777
 +        let provider_integrity_level = process_integrity(provider_process_id);
 +        let host_integrity_level = process_integrity(host_process_id);
 +        let desktop = crate::diagnostics::desktop_state();
-+        let input_desktop = classify_input_desktop(&desktop);
++        let input_desktop =
++            classify_input_desktop(&desktop, session_is_active(provider_session_id));
 +        let uia_runtime = if crate::diagnostics::ui_automation_available().is_ok() {
 +            RuntimeAvailability::Available
 +        } else {
@@ -990,18 +1250,57 @@ index 0000000..7107777
 +    }
 +}
 +
-+fn classify_input_desktop(state: &crate::diagnostics::DesktopState) -> InputDesktopState {
++fn classify_input_desktop(
++    state: &crate::diagnostics::DesktopState,
++    session_active: Option<bool>,
++) -> InputDesktopState {
 +    let Some(name) = state.input_desktop_name.as_deref() else {
 +        return InputDesktopState::Unavailable;
 +    };
 +    if !name.eq_ignore_ascii_case("default") {
 +        return InputDesktopState::NonDefault;
 +    }
-+    if state.has_foreground_window() {
-+        InputDesktopState::DefaultUnlocked
-+    } else {
-+        InputDesktopState::Locked
++    match session_active {
++        Some(true) => InputDesktopState::DefaultUnlocked,
++        Some(false) => InputDesktopState::Locked,
++        None if state.has_foreground_window() => InputDesktopState::DefaultUnlocked,
++        None => InputDesktopState::Unavailable,
 +    }
++}
++
++#[cfg(target_os = "windows")]
++fn session_is_active(session_id: u32) -> Option<bool> {
++    use windows::Win32::System::RemoteDesktop::{
++        WTSActive, WTSConnectState, WTSFreeMemory, WTSQuerySessionInformationW,
++        WTS_CONNECTSTATE_CLASS, WTS_CURRENT_SERVER_HANDLE,
++    };
++
++    let mut buffer = windows::core::PWSTR::null();
++    let mut bytes = 0u32;
++    unsafe {
++        WTSQuerySessionInformationW(
++            WTS_CURRENT_SERVER_HANDLE,
++            session_id,
++            WTSConnectState,
++            &mut buffer,
++            &mut bytes,
++        )
++        .ok()?;
++    }
++    let result = if bytes as usize >= std::mem::size_of::<WTS_CONNECTSTATE_CLASS>() {
++        Some(unsafe { *(buffer.0 as *const WTS_CONNECTSTATE_CLASS) } == WTSActive)
++    } else {
++        None
++    };
++    unsafe {
++        WTSFreeMemory(buffer.0.cast());
++    }
++    result
++}
++
++#[cfg(not(target_os = "windows"))]
++fn session_is_active(_session_id: u32) -> Option<bool> {
++    None
 +}
 +
 +#[cfg(target_os = "windows")]
@@ -1120,6 +1419,13 @@ index 0000000..7107777
 +            input_desktop_error: None,
 +            foreground_hwnd: None,
 +        };
-+        assert_eq!(classify_input_desktop(&state), InputDesktopState::Locked);
++        assert_eq!(
++            classify_input_desktop(&state, Some(false)),
++            InputDesktopState::Locked
++        );
++        assert_eq!(
++            classify_input_desktop(&state, Some(true)),
++            InputDesktopState::DefaultUnlocked
++        );
 +    }
 +}

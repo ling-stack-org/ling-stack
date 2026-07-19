@@ -1,15 +1,20 @@
 diff --git a/libs/cua-driver/rust/crates/cua-driver/src/ling_managed_lifetime.rs b/libs/cua-driver/rust/crates/cua-driver/src/ling_managed_lifetime.rs
 new file mode 100644
-index 0000000..afa797b
+index 0000000..22a33b4
 --- /dev/null
 +++ b/libs/cua-driver/rust/crates/cua-driver/src/ling_managed_lifetime.rs
-@@ -0,0 +1,207 @@
+@@ -0,0 +1,292 @@
 +//! Ling-managed process-lifetime identity and exact host-death watcher.
 +
 +pub const LING_MANAGED_ENV: &str = "CUA_DRIVER_LING_MANAGED";
 +pub const HOST_PID_ENV: &str = "CUA_DRIVER_HOST_PID";
 +pub const CHILD_INSTANCE_NONCE_ENV: &str = "CUA_DRIVER_CHILD_INSTANCE_NONCE";
 +pub const LEASE_GENERATION_ENV: &str = "CUA_DRIVER_LEASE_GENERATION";
++#[cfg(all(target_os = "windows", debug_assertions))]
++const ACCEPTANCE_GRANDCHILD_PID_FILE_ENV: &str =
++    "CUA_DRIVER_LING_NATIVE_ACCEPTANCE_GRANDCHILD_PID_FILE";
++#[cfg(all(target_os = "windows", debug_assertions))]
++const ACCEPTANCE_GRANDCHILD_HELPER_ARG: &str = "--ling-managed-grandchild-helper";
 +
 +#[derive(Debug, Clone, PartialEq, Eq)]
 +pub struct ManagedLifetimeIdentity {
@@ -101,14 +106,77 @@ index 0000000..afa797b
 +    start_exact_host_watcher(identity.host_pid)
 +}
 +
++/// Debug-only native acceptance hook. The normal provider (already assigned
++/// to its private Job) creates a helper which then creates the long-lived
++/// grandchild. The Windows acceptance test closes provider stdin and proves
++/// the provider-owned outer Job removes both descendants.
++pub fn start_acceptance_grandchild_if_requested() -> Result<(), ManagedLifetimeError> {
++    #[cfg(all(target_os = "windows", debug_assertions))]
++    {
++        if std::env::var_os(ACCEPTANCE_GRANDCHILD_PID_FILE_ENV).is_none()
++            || std::env::args_os().any(|arg| arg == ACCEPTANCE_GRANDCHILD_HELPER_ARG)
++        {
++            return Ok(());
++        }
++        let executable = std::env::current_exe()
++            .map_err(|_| ManagedLifetimeError::ExactHostWatcherUnavailable)?;
++        let helper = std::process::Command::new(executable)
++            .arg(ACCEPTANCE_GRANDCHILD_HELPER_ARG)
++            .stdin(std::process::Stdio::null())
++            .stdout(std::process::Stdio::null())
++            .stderr(std::process::Stdio::null())
++            .spawn()
++            .map_err(|_| ManagedLifetimeError::ExactHostWatcherUnavailable)?;
++        let grandchild_path =
++            std::path::PathBuf::from(std::env::var_os(ACCEPTANCE_GRANDCHILD_PID_FILE_ENV).ok_or(
++                ManagedLifetimeError::Missing(ACCEPTANCE_GRANDCHILD_PID_FILE_ENV),
++            )?);
++        cua_driver_core::ling_managed::write_state_path_atomic(
++            grandchild_path.with_extension("helper.pid"),
++            helper.id().to_string().as_bytes(),
++        )
++        .map_err(|_| ManagedLifetimeError::ExactHostWatcherUnavailable)?;
++    }
++    Ok(())
++}
++
++/// Return true after running the debug-only helper to completion.
++pub fn run_acceptance_grandchild_helper_if_requested() -> Result<bool, ManagedLifetimeError> {
++    #[cfg(all(target_os = "windows", debug_assertions))]
++    {
++        if !std::env::args_os().any(|arg| arg == ACCEPTANCE_GRANDCHILD_HELPER_ARG) {
++            return Ok(false);
++        }
++        let pid_path = std::env::var_os(ACCEPTANCE_GRANDCHILD_PID_FILE_ENV).ok_or(
++            ManagedLifetimeError::Missing(ACCEPTANCE_GRANDCHILD_PID_FILE_ENV),
++        )?;
++        let mut grandchild = std::process::Command::new("cmd.exe")
++            .args(["/d", "/s", "/c", "ping -n 300 127.0.0.1 >nul"])
++            .stdin(std::process::Stdio::null())
++            .stdout(std::process::Stdio::null())
++            .stderr(std::process::Stdio::null())
++            .spawn()
++            .map_err(|_| ManagedLifetimeError::ExactHostWatcherUnavailable)?;
++        cua_driver_core::ling_managed::write_state_path_atomic(
++            std::path::PathBuf::from(pid_path),
++            grandchild.id().to_string().as_bytes(),
++        )
++        .map_err(|_| ManagedLifetimeError::ExactHostWatcherUnavailable)?;
++        let _ = grandchild.wait();
++        return Ok(true);
++    }
++    #[cfg(not(all(target_os = "windows", debug_assertions)))]
++    Ok(false)
++}
++
 +#[cfg(target_os = "macos")]
 +fn start_exact_host_watcher(host_pid: u32) -> Result<(), ManagedLifetimeError> {
 +    let queue = register_darwin_process_exit(host_pid)?;
 +    std::thread::Builder::new()
 +        .name("ling-cua-host-watch".to_owned())
 +        .spawn(move || {
-+            let _ = wait_darwin_process_exit(queue);
-+            std::process::exit(0);
++            let observed = wait_darwin_process_exit(queue);
++            std::process::exit(if observed { 0 } else { 78 });
 +        })
 +        .map(|_| ())
 +        .map_err(|_| {
@@ -146,13 +214,24 @@ index 0000000..afa797b
 +
 +#[cfg(target_os = "macos")]
 +fn wait_darwin_process_exit(queue: libc::c_int) -> bool {
-+    let mut event: libc::kevent = unsafe { std::mem::zeroed() };
-+    let observed =
-+        unsafe { libc::kevent(queue, std::ptr::null(), 0, &mut event, 1, std::ptr::null()) };
-+    unsafe {
-+        libc::close(queue);
++    loop {
++        let mut event: libc::kevent = unsafe { std::mem::zeroed() };
++        let observed =
++            unsafe { libc::kevent(queue, std::ptr::null(), 0, &mut event, 1, std::ptr::null()) };
++        if observed == 1 {
++            unsafe {
++                libc::close(queue);
++            }
++            return event.filter == libc::EVFILT_PROC && event.fflags & libc::NOTE_EXIT != 0;
++        }
++        let error = std::io::Error::last_os_error();
++        if error.kind() != std::io::ErrorKind::Interrupted {
++            unsafe {
++                libc::close(queue);
++            }
++            return false;
++        }
 +    }
-+    observed == 1 && event.filter == libc::EVFILT_PROC && event.fflags & libc::NOTE_EXIT != 0
 +}
 +
 +#[cfg(target_os = "linux")]
@@ -165,16 +244,22 @@ index 0000000..afa797b
 +    std::thread::Builder::new()
 +        .name("ling-cua-host-watch".to_owned())
 +        .spawn(move || {
-+            let mut poll = libc::pollfd {
-+                fd: descriptor,
-+                events: libc::POLLIN,
-+                revents: 0,
++            let observed = loop {
++                let mut poll = libc::pollfd {
++                    fd: descriptor,
++                    events: libc::POLLIN,
++                    revents: 0,
++                };
++                let result = unsafe { libc::poll(&mut poll, 1, -1) };
++                if result == 1 {
++                    break poll.revents & libc::POLLIN != 0;
++                }
++                if std::io::Error::last_os_error().kind() != std::io::ErrorKind::Interrupted {
++                    break false;
++                }
 +            };
-+            unsafe {
-+                let _ = libc::poll(&mut poll, 1, -1);
-+                libc::close(descriptor);
-+            }
-+            std::process::exit(0);
++            unsafe { libc::close(descriptor) };
++            std::process::exit(if observed { 0 } else { 78 });
 +        })
 +        .map(|_| ())
 +        .map_err(|_| {
@@ -212,7 +297,7 @@ index 0000000..afa797b
 +    }
 +}
 diff --git a/libs/cua-driver/rust/crates/cua-driver/src/main.rs b/libs/cua-driver/rust/crates/cua-driver/src/main.rs
-index 6aabae5..7af7e59 100644
+index 6aabae5..25c9745 100644
 --- a/libs/cua-driver/rust/crates/cua-driver/src/main.rs
 +++ b/libs/cua-driver/rust/crates/cua-driver/src/main.rs
 @@ -29,6 +29,7 @@ mod bundle;
@@ -223,10 +308,38 @@ index 6aabae5..7af7e59 100644
  mod proxy;
  mod responsibility;
  mod serve;
-@@ -66,11 +67,19 @@ fn validate_ling_managed_environment() {
+@@ -61,16 +62,46 @@ fn init_logging() {
+     telemetry::register_stdio_observer();
+ }
+ 
++struct LingManagedPipState;
++
++impl pip_preview::ManagedStateAccess for LingManagedPipState {
++    fn read_config(&self) -> Result<Option<Vec<u8>>, String> {
++        cua_driver_core::ling_managed::read_state("config.json")
++    }
++
++    fn update_config_key(
++        &self,
++        key: &str,
++        value: serde_json::Value,
++    ) -> Result<(), String> {
++        cua_driver_core::ling_managed::update_json_key_atomic("config.json", key, value)
++    }
++}
++
+ fn validate_ling_managed_environment() {
+-    if let Err(error) = cua_driver_core::ling_managed::managed_environment() {
++    if let Err(error) = cua_driver_core::ling_managed::validate_state_root() {
          eprintln!("cua-driver: invalid Ling-managed environment: {error}");
          std::process::exit(78);
      }
++    if cua_driver_core::ling_managed::is_managed()
++        && !pip_preview::set_managed_state_access(Box::new(LingManagedPipState))
++    {
++        eprintln!("cua-driver: managed PiP state access registration failed");
++        std::process::exit(78);
++    }
 +    if let Err(error) = ling_managed_lifetime::start_host_watcher() {
 +        eprintln!("cua-driver: invalid Ling-managed lifetime: {error}");
 +        std::process::exit(78);
@@ -243,6 +356,457 @@ index 6aabae5..7af7e59 100644
          if !platform_windows::managed_readiness::register() {
              eprintln!("cua-driver: managed readiness provider registration failed");
              std::process::exit(78);
+@@ -78,6 +109,22 @@ fn register_managed_readiness_provider() {
+     }
+ }
+ 
++fn run_native_acceptance_lifetime_hook() -> bool {
++    match ling_managed_lifetime::run_acceptance_grandchild_helper_if_requested() {
++        Ok(true) => return true,
++        Ok(false) => {}
++        Err(error) => {
++            eprintln!("cua-driver: native acceptance helper failed: {error}");
++            std::process::exit(78);
++        }
++    }
++    if let Err(error) = ling_managed_lifetime::start_acceptance_grandchild_if_requested() {
++        eprintln!("cua-driver: native acceptance grandchild failed: {error}");
++        std::process::exit(78);
++    }
++    false
++}
++
+ /// Execute finite commands in a child so the parent can observe every exit,
+ /// including validation failures and legacy `process::exit` paths. Delivery is
+ /// delegated to a detached, no-output worker after the child exits, so network
+@@ -253,6 +300,9 @@ fn main() {
+     init_logging();
+     validate_ling_managed_environment();
+     register_managed_readiness_provider();
++    if run_native_acceptance_lifetime_hook() {
++        return;
++    }
+     if telemetry::run_cli_completion_worker_if_requested() {
+         return;
+     }
+@@ -697,6 +747,9 @@ fn main() -> anyhow::Result<()> {
+     init_logging();
+     validate_ling_managed_environment();
+     register_managed_readiness_provider();
++    if run_native_acceptance_lifetime_hook() {
++        return Ok(());
++    }
+     if telemetry::run_cli_completion_worker_if_requested() {
+         return Ok(());
+     }
+diff --git a/libs/cua-driver/rust/crates/cua-driver/tests/ling_managed_native.rs b/libs/cua-driver/rust/crates/cua-driver/tests/ling_managed_native.rs
+new file mode 100644
+index 0000000..430abc5
+--- /dev/null
++++ b/libs/cua-driver/rust/crates/cua-driver/tests/ling_managed_native.rs
+@@ -0,0 +1,402 @@
++#![cfg(debug_assertions)]
++
++use serde_json::{json, Value};
++use std::collections::BTreeMap;
++use std::fs;
++use std::io::{BufRead, BufReader, Write};
++use std::path::{Path, PathBuf};
++use std::process::{Child, ChildStdin, Command, Stdio};
++use std::sync::mpsc::{self, Receiver};
++use std::time::{Duration, Instant};
++use wait_timeout::ChildExt;
++
++const PROVIDER: &str = env!("CARGO_BIN_EXE_cua-driver");
++
++struct ManagedFixture {
++    _temporary: tempfile::TempDir,
++    root: PathBuf,
++    home: PathBuf,
++}
++
++impl ManagedFixture {
++    fn new() -> Self {
++        let temporary = tempfile::tempdir().expect("temporary fixture");
++        let canonical = fs::canonicalize(temporary.path()).expect("canonical fixture root");
++        let root = canonical.join("state");
++        let home = canonical.join("external-home");
++        fs::create_dir(&home).expect("external home");
++        cua_driver_core::ling_managed::prepare_acceptance_state_root(&root)
++            .expect("private managed root");
++        Self {
++            _temporary: temporary,
++            root,
++            home,
++        }
++    }
++
++    fn seed_external_sentinels(&self) -> BTreeMap<PathBuf, Vec<u8>> {
++        let standalone = self.home.join(".cua-driver");
++        let rust_state = self.home.join(".cua-driver-rs");
++        fs::create_dir_all(&standalone).unwrap();
++        fs::create_dir_all(&rust_state).unwrap();
++        fs::write(
++            standalone.join("config.json"),
++            b"external-config-sentinel\0\xff",
++        )
++        .unwrap();
++        fs::write(
++            rust_state.join("version_check.json"),
++            b"external-version-sentinel\r\n",
++        )
++        .unwrap();
++        snapshot_tree(&self.home)
++    }
++}
++
++struct McpProcess {
++    child: Child,
++    stdin: Option<ChildStdin>,
++    responses: Receiver<Value>,
++}
++
++impl McpProcess {
++    fn spawn(fixture: &ManagedFixture, host_pid: u32, extra: &[(&str, PathBuf)]) -> Self {
++        let mut command = managed_command(fixture, host_pid);
++        for (name, value) in extra {
++            command.env(name, value);
++        }
++        command
++            .stdin(Stdio::piped())
++            .stdout(Stdio::piped())
++            .stderr(Stdio::piped());
++        let mut child = command.spawn().expect("spawn managed provider");
++        let stdin = child.stdin.take().expect("provider stdin");
++        let stdout = child.stdout.take().expect("provider stdout");
++        let stderr = child.stderr.take().expect("provider stderr");
++        let (sender, responses) = mpsc::channel();
++        std::thread::spawn(move || {
++            for line in BufReader::new(stdout).lines().map_while(Result::ok) {
++                if let Ok(value) = serde_json::from_str::<Value>(&line) {
++                    let _ = sender.send(value);
++                }
++            }
++        });
++        std::thread::spawn(move || {
++            for line in BufReader::new(stderr).lines().map_while(Result::ok) {
++                eprintln!("managed provider: {line}");
++            }
++        });
++        Self {
++            child,
++            stdin: Some(stdin),
++            responses,
++        }
++    }
++
++    fn request(&mut self, id: u64, method: &str, params: Value) -> Value {
++        let request = json!({
++            "jsonrpc": "2.0",
++            "id": id,
++            "method": method,
++            "params": params,
++        });
++        let stdin = self.stdin.as_mut().expect("provider stdin open");
++        writeln!(stdin, "{request}").expect("write MCP request");
++        stdin.flush().expect("flush MCP request");
++        let deadline = Instant::now() + Duration::from_secs(15);
++        loop {
++            let remaining = deadline.saturating_duration_since(Instant::now());
++            let value = self
++                .responses
++                .recv_timeout(remaining)
++                .expect("provider response timed out");
++            if value.get("id").and_then(Value::as_u64) == Some(id) {
++                return value;
++            }
++        }
++    }
++
++    fn initialize(&mut self) -> Value {
++        self.request(
++            1,
++            "initialize",
++            json!({
++                "protocolVersion": "2025-11-25",
++                "capabilities": {},
++                "clientInfo": {"name": "ling-native-acceptance", "version": "1"}
++            }),
++        )
++    }
++
++    fn close_stdin_and_wait(&mut self) -> std::process::ExitStatus {
++        drop(self.stdin.take());
++        wait_for_exit(&mut self.child, Duration::from_secs(10))
++    }
++}
++
++impl Drop for McpProcess {
++    fn drop(&mut self) {
++        let _ = self.child.kill();
++        let _ = self.child.wait();
++    }
++}
++
++#[test]
++fn managed_state_survives_restart_without_touching_external_home() {
++    let fixture = ManagedFixture::new();
++    let external_before = fixture.seed_external_sentinels();
++
++    let mut first = McpProcess::spawn(&fixture, std::process::id(), &[]);
++    let initialize = first.initialize();
++    assert_eq!(
++        initialize.pointer("/result/protocolVersion"),
++        Some(&json!("2025-06-18"))
++    );
++    let updated = first.request(
++        2,
++        "tools/call",
++        json!({
++            "name": "set_config",
++            "arguments": {
++                "capture_scope": "desktop",
++                "max_image_dimension": 900,
++                "experimental_pip": false
++            }
++        }),
++    );
++    assert_ne!(updated.pointer("/result/isError"), Some(&Value::Bool(true)));
++    assert!(first.close_stdin_and_wait().success());
++
++    assert_eq!(snapshot_tree(&fixture.home), external_before);
++    let config: Value = serde_json::from_slice(
++        &fs::read(fixture.root.join("config.json")).expect("managed config"),
++    )
++    .unwrap();
++    assert_eq!(config["capture_scope"], "desktop");
++    assert_eq!(config["max_image_dimension"], 900);
++
++    let mut second = McpProcess::spawn(&fixture, std::process::id(), &[]);
++    second.initialize();
++    let config = second.request(
++        2,
++        "tools/call",
++        json!({"name": "get_config", "arguments": {}}),
++    );
++    assert_eq!(
++        config.pointer("/result/structuredContent/capture_scope"),
++        Some(&json!("desktop"))
++    );
++    assert_eq!(
++        config.pointer("/result/structuredContent/max_image_dimension"),
++        Some(&json!(900))
++    );
++    let health = second.request(
++        3,
++        "tools/call",
++        json!({"name": "health_report", "arguments": {}}),
++    );
++    assert!(health.pointer("/result/structuredContent").is_some());
++    assert!(second.close_stdin_and_wait().success());
++    assert_eq!(snapshot_tree(&fixture.home), external_before);
++}
++
++#[test]
++fn standalone_ignores_managed_state_variable_and_keeps_upstream_home_semantics() {
++    let fixture = ManagedFixture::new();
++    let state_before = snapshot_tree(&fixture.root);
++    let status = Command::new(PROVIDER)
++        .args(["config", "set", "capture_scope", "desktop"])
++        .env("HOME", &fixture.home)
++        .env("USERPROFILE", &fixture.home)
++        .env("CUA_DRIVER_STATE_HOME", &fixture.root)
++        .env_remove("CUA_DRIVER_LING_MANAGED")
++        .env_remove("CUA_DRIVER_EMBEDDED")
++        .status()
++        .expect("standalone config command");
++    assert!(status.success());
++    let external_config: Value = serde_json::from_slice(
++        &fs::read(fixture.home.join(".cua-driver/config.json"))
++            .expect("standalone external config"),
++    )
++    .unwrap();
++    assert_eq!(external_config["capture_scope"], "desktop");
++    assert_eq!(snapshot_tree(&fixture.root), state_before);
++}
++
++#[test]
++fn provider_exits_when_the_exact_host_process_dies() {
++    let fixture = ManagedFixture::new();
++    let mut host = spawn_long_lived_host();
++    let mut provider = McpProcess::spawn(&fixture, host.id(), &[]);
++    provider.initialize();
++    host.kill().expect("kill exact host");
++    let _ = host.wait();
++    let status = wait_for_exit(&mut provider.child, Duration::from_secs(10));
++    assert!(status.success(), "provider host-death exit was {status:?}");
++}
++
++#[test]
++fn provider_exits_when_stdout_is_half_closed() {
++    let fixture = ManagedFixture::new();
++    let mut command = managed_command(&fixture, std::process::id());
++    command
++        .stdin(Stdio::piped())
++        .stdout(Stdio::piped())
++        .stderr(Stdio::null());
++    let mut child = command.spawn().expect("spawn half-close provider");
++    let mut stdin = child.stdin.take().unwrap();
++    drop(child.stdout.take());
++    writeln!(
++        stdin,
++        "{}",
++        json!({
++            "jsonrpc":"2.0",
++            "id":1,
++            "method":"initialize",
++            "params": {
++                "protocolVersion":"2025-11-25",
++                "capabilities":{},
++                "clientInfo":{"name":"half-close","version":"1"}
++            }
++        })
++    )
++    .unwrap();
++    stdin.flush().unwrap();
++    let status = wait_for_exit(&mut child, Duration::from_secs(10));
++    assert!(status.success(), "half-close exit was {status:?}");
++}
++
++#[cfg(target_os = "windows")]
++#[test]
++fn provider_job_kills_a_provider_created_grandchild() {
++    use windows::Win32::Foundation::{CloseHandle, WAIT_OBJECT_0};
++    use windows::Win32::System::Threading::{
++        OpenProcess, WaitForSingleObject, PROCESS_SYNCHRONIZE,
++    };
++
++    let fixture = ManagedFixture::new();
++    let pid_file = fixture.root.join("run/native-grandchild.pid");
++    let helper_pid_file = pid_file.with_extension("helper.pid");
++    let mut provider = McpProcess::spawn(
++        &fixture,
++        std::process::id(),
++        &[(
++            "CUA_DRIVER_LING_NATIVE_ACCEPTANCE_GRANDCHILD_PID_FILE",
++            pid_file.clone(),
++        )],
++    );
++    provider.initialize();
++    let deadline = Instant::now() + Duration::from_secs(15);
++    let read_pid = |path: &Path| {
++        fs::read_to_string(path)
++            .ok()
++            .and_then(|value| value.trim().parse::<u32>().ok())
++    };
++    let (helper_pid, grandchild_pid) = loop {
++        if let (Some(helper), Some(grandchild)) = (read_pid(&helper_pid_file), read_pid(&pid_file))
++        {
++            break (helper, grandchild);
++        }
++        assert!(
++            Instant::now() < deadline,
++            "helper/grandchild PIDs were not both published"
++        );
++        std::thread::sleep(Duration::from_millis(50));
++    };
++    let helper_handle = unsafe { OpenProcess(PROCESS_SYNCHRONIZE, false, helper_pid) }
++        .expect("open provider-created helper");
++    let grandchild_handle = unsafe { OpenProcess(PROCESS_SYNCHRONIZE, false, grandchild_pid) }
++        .expect("open provider-created grandchild");
++    assert!(provider.close_stdin_and_wait().success());
++    let helper_wait = unsafe { WaitForSingleObject(helper_handle, 10_000) };
++    let grandchild_wait = unsafe { WaitForSingleObject(grandchild_handle, 10_000) };
++    unsafe {
++        let _ = CloseHandle(helper_handle);
++        let _ = CloseHandle(grandchild_handle);
++    }
++    assert_eq!(
++        helper_wait, WAIT_OBJECT_0,
++        "provider Job left its helper alive"
++    );
++    assert_eq!(
++        grandchild_wait, WAIT_OBJECT_0,
++        "provider Job left its grandchild alive"
++    );
++}
++
++fn managed_command(fixture: &ManagedFixture, host_pid: u32) -> Command {
++    let mut command = Command::new(PROVIDER);
++    command
++        .args([
++            "mcp",
++            "--embedded",
++            "--host-bundle-id",
++            "com.lingstack.desktop",
++        ])
++        .env("HOME", &fixture.home)
++        .env("USERPROFILE", &fixture.home)
++        .env("CUA_DRIVER_LING_MANAGED", "1")
++        .env("CUA_DRIVER_EMBEDDED", "1")
++        .env("CUA_DRIVER_HOST_BUNDLE_ID", "com.lingstack.desktop")
++        .env("CUA_DRIVER_HOST_PID", host_pid.to_string())
++        .env("CUA_DRIVER_CHILD_INSTANCE_NONCE", "native-acceptance-child")
++        .env("CUA_DRIVER_LEASE_GENERATION", "1")
++        .env("CUA_DRIVER_STATE_HOME", &fixture.root)
++        .env("CUA_DRIVER_TELEMETRY_HOME", fixture.root.join("telemetry"))
++        .env("CUA_DRIVER_RS_TELEMETRY_ENABLED", "false")
++        .env("CUA_DRIVER_RS_UPDATE_CHECK", "false");
++    command
++}
++
++fn wait_for_exit(child: &mut Child, timeout: Duration) -> std::process::ExitStatus {
++    match child.wait_timeout(timeout).expect("wait for provider") {
++        Some(status) => status,
++        None => {
++            let _ = child.kill();
++            let status = child.wait().expect("reap timed-out provider");
++            panic!("provider did not exit within {timeout:?}; killed with {status:?}");
++        }
++    }
++}
++
++fn snapshot_tree(root: &Path) -> BTreeMap<PathBuf, Vec<u8>> {
++    fn visit(base: &Path, current: &Path, result: &mut BTreeMap<PathBuf, Vec<u8>>) {
++        let mut entries: Vec<_> = fs::read_dir(current)
++            .unwrap()
++            .map(|entry| entry.unwrap())
++            .collect();
++        entries.sort_by_key(|entry| entry.file_name());
++        for entry in entries {
++            let path = entry.path();
++            let relative = path.strip_prefix(base).unwrap().to_path_buf();
++            let metadata = fs::symlink_metadata(&path).unwrap();
++            if metadata.is_dir() {
++                result.insert(relative.clone(), b"<directory>".to_vec());
++                visit(base, &path, result);
++            } else if metadata.is_file() {
++                result.insert(relative, fs::read(path).unwrap());
++            } else {
++                result.insert(relative, b"<non-regular>".to_vec());
++            }
++        }
++    }
++    let mut result = BTreeMap::new();
++    visit(root, root, &mut result);
++    result
++}
++
++#[cfg(target_os = "windows")]
++fn spawn_long_lived_host() -> Child {
++    Command::new("cmd.exe")
++        .args(["/d", "/s", "/c", "ping -n 300 127.0.0.1 >nul"])
++        .spawn()
++        .expect("Windows host fixture")
++}
++
++#[cfg(not(target_os = "windows"))]
++fn spawn_long_lived_host() -> Child {
++    Command::new("/bin/sh")
++        .args(["-c", "sleep 300"])
++        .spawn()
++        .expect("Unix host fixture")
++}
 diff --git a/libs/cua-driver/rust/crates/platform-windows/Cargo.toml b/libs/cua-driver/rust/crates/platform-windows/Cargo.toml
 index bd64e08..c293697 100644
 --- a/libs/cua-driver/rust/crates/platform-windows/Cargo.toml
@@ -269,17 +833,17 @@ index df36a69..ab9534a 100644
  pub mod terminal;
 diff --git a/libs/cua-driver/rust/crates/platform-windows/src/managed_lifetime.rs b/libs/cua-driver/rust/crates/platform-windows/src/managed_lifetime.rs
 new file mode 100644
-index 0000000..7a8ff53
+index 0000000..0d4889f
 --- /dev/null
 +++ b/libs/cua-driver/rust/crates/platform-windows/src/managed_lifetime.rs
-@@ -0,0 +1,159 @@
+@@ -0,0 +1,155 @@
 +//! Windows retained-process and Job Object ownership for Ling-managed mode.
 +
 +#[cfg(target_os = "windows")]
 +use std::sync::OnceLock;
 +
 +#[cfg(target_os = "windows")]
-+static JOB_HANDLE: OnceLock<usize> = OnceLock::new();
++static JOB_HANDLE: OnceLock<Result<usize, String>> = OnceLock::new();
 +
 +/// Attach the current provider process to a private, non-inheritable Job
 +/// Object. The default job policy forbids breakaway; KILL_ON_JOB_CLOSE removes
@@ -288,20 +852,16 @@ index 0000000..7a8ff53
 +pub fn ensure_kill_on_close_job() -> Result<(), String> {
 +    use windows::Win32::System::Threading::GetCurrentProcess;
 +
-+    if JOB_HANDLE.get().is_some() {
-+        return Ok(());
-+    }
-+    let job = create_kill_on_close_job()?;
-+    if let Err(error) = assign_process_to_job(job, unsafe { GetCurrentProcess() }) {
-+        close_handle(job);
-+        return Err(error);
-+    }
-+    JOB_HANDLE.set(job.0 as usize).map_err(|_| {
-+        close_handle(job);
-+        "cua_windows_lifecycle_unavailable:job race".to_owned()
-+    })?;
-+    crate::managed_readiness::set_job_object_state(true, true);
-+    Ok(())
++    let result = JOB_HANDLE.get_or_init(|| {
++        let job = create_kill_on_close_job()?;
++        if let Err(error) = assign_process_to_job(job, unsafe { GetCurrentProcess() }) {
++            close_handle(job);
++            return Err(error);
++        }
++        crate::managed_readiness::set_job_object_state(true, true);
++        Ok(job.0 as usize)
++    });
++    result.as_ref().map(|_| ()).map_err(Clone::clone)
 +}
 +
 +#[cfg(not(target_os = "windows"))]
@@ -319,9 +879,9 @@ index 0000000..7a8ff53
 +        .name("ling-cua-host-watch".to_owned())
 +        .spawn(move || {
 +            let handle = windows::Win32::Foundation::HANDLE(raw as *mut _);
-+            let _ = wait_for_process_handle(handle);
++            let observed = wait_for_process_handle(handle);
 +            close_handle(handle);
-+            std::process::exit(0);
++            std::process::exit(if observed { 0 } else { 78 });
 +        })
 +        .map(|_| ())
 +        .map_err(|error| {
