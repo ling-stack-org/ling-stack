@@ -12,7 +12,10 @@ Current merged baseline:
   are complete;
 - the current foundation slice closes daemon authority/instance/connection lease ingress
   and freezes the Darwin/Win32 platform-binding boundary;
-- production Desktop composition, native adapters, activation wiring, package staging,
+- the gate-off Darwin native adapter now supplies injected Mach-O/code-sign identity,
+  direct-child lifecycle, host-owned TCC readiness and a disposable permission-change
+  monitor, without enabling packaged runtime;
+- production Desktop composition/activation, the Win32 native adapter, package staging,
   product states and evidence/handoff closure remain.
 
 Both macOS and Windows packaged-provider gates remain off. This status records staged
