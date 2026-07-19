@@ -147,6 +147,30 @@ test("missing, blocked, rejected, overflowing or malformed PowerShell evidence i
   }
 });
 
+test("Win32 identity never derives its trusted system root from the process environment", async () => {
+  const fixture = identityFixture("unsigned_dev");
+  let commandCount = 0;
+  const verifier = createWin32CuaDriverIdentityVerifier({
+    policy: fixture.policy,
+    baseEnvironment: {
+      SystemRoot: "C:\\attacker",
+      WINDIR: "C:\\attacker",
+    },
+    commandRunner: {
+      async run() {
+        commandCount += 1;
+        return commandResult(fixture.evidence);
+      },
+    },
+  });
+
+  await assert.rejects(
+    verifier.verify(fixture.input),
+    (error) => error?.failureKind === "unavailable",
+  );
+  assert.equal(commandCount, 0);
+});
+
 test("Win32 verifier rejects malformed compile-time policies and unsigned signer claims", async () => {
   const production = identityFixture("production_signed");
   assert.throws(
@@ -330,6 +354,21 @@ test("Win32 state root catches ACL-time reparse swaps and runner failures", asyn
   });
 });
 
+test("Win32 state root never derives trusted tools from the process environment", async () => {
+  const fixture = stateRootFixture();
+  const { systemRoot: _systemRoot, ...options } = fixture.options;
+  options.baseEnvironment = {
+    SystemRoot: "C:\\attacker",
+    WINDIR: "C:\\attacker",
+  };
+
+  await assert.rejects(
+    createWin32CuaDriverStateRootProtector(options).protect(fixture.input),
+    (error) => error?.message === "windows_state_root_verifier_unavailable",
+  );
+  assert.equal(fixture.invocations.length, 0);
+});
+
 test("Win32 lifecycle uses direct spawn and only the retained child handle", async () => {
   const child = fakeChild({ autoCloseOnKill: false });
   let captured;
@@ -354,6 +393,14 @@ test("Win32 lifecycle uses direct spawn and only the retained child handle", asy
 
   await lifecycle.terminate(child);
   assert.deepEqual(child.killSignals, ["SIGTERM"]);
+
+  const exitedBeforeNodeDelivery = fakeChild({ autoCloseOnKill: false, killResult: false });
+  await lifecycle.terminate(exitedBeforeNodeDelivery);
+  assert.deepEqual(exitedBeforeNodeDelivery.killSignals, ["SIGTERM"]);
+
+  const closingHandle = fakeChild({ autoCloseOnKill: false, killThrows: true });
+  await lifecycle.terminate(closingHandle);
+  assert.deepEqual(closingHandle.killSignals, ["SIGTERM"]);
   assert.throws(
     () => lifecycle.spawn({
       executablePath: PROVIDER_PATH,
@@ -374,7 +421,7 @@ test("Win32 lifecycle uses direct spawn and only the retained child handle", asy
   );
 });
 
-test("powerMonitor recovery hints map correctly and dispose exactly once", () => {
+test("Windows powerMonitor maps only its supported unlock recovery hint", () => {
   const monitor = fakePowerMonitor();
   const observer = createWin32CuaDriverSessionRecoveryObserver(monitor);
   const hints = [];
@@ -382,23 +429,23 @@ test("powerMonitor recovery hints map correctly and dispose exactly once", () =>
 
   monitor.emit("unlock-screen");
   monitor.emit("user-did-become-active");
-  assert.deepEqual(hints, [{ kind: "unlock" }, { kind: "session_active" }]);
+  assert.deepEqual(hints, [{ kind: "unlock" }]);
   dispose();
   dispose();
-  assert.equal(monitor.offCount, 2);
+  assert.equal(monitor.offCount, 1);
   monitor.emit("unlock-screen");
-  assert.equal(hints.length, 2);
+  assert.equal(hints.length, 1);
 });
 
 test("powerMonitor partial subscription failure removes the installed listener", () => {
-  const monitor = fakePowerMonitor({ failOn: "user-did-become-active" });
+  const monitor = fakePowerMonitor({ failOn: "unlock-screen" });
   const observer = createWin32CuaDriverSessionRecoveryObserver(monitor);
   assert.throws(
     () => observer.subscribe(() => {}),
     (error) => error instanceof Win32CuaDriverSessionObserverError
       && error.observerCode === "subscribe_failed",
   );
-  assert.equal(monitor.offCount, 2);
+  assert.equal(monitor.offCount, 1);
   assert.equal(monitor.listenerCount("unlock-screen"), 0);
 });
 
@@ -591,7 +638,7 @@ function commandResult(output, overrides = {}) {
   };
 }
 
-function fakeChild({ autoCloseOnKill = true } = {}) {
+function fakeChild({ autoCloseOnKill = true, killResult = true, killThrows = false } = {}) {
   const child = new EventEmitter();
   child.stdin = new PassThrough();
   child.stdout = new PassThrough();
@@ -602,13 +649,16 @@ function fakeChild({ autoCloseOnKill = true } = {}) {
   child.killSignals = [];
   child.kill = (signal) => {
     child.killSignals.push(signal);
+    if (killThrows) {
+      throw new Error("handle already closing");
+    }
     if (autoCloseOnKill) {
       queueMicrotask(() => {
         child.signalCode = signal;
         child.emit("close", null, signal);
       });
     }
-    return true;
+    return killResult;
   };
   return child;
 }

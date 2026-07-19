@@ -16,14 +16,18 @@ import {
   createWin32CuaDriverStateRootProtector,
   type Win32StateRootFileSystem,
 } from "./win32-state-root.js";
-import type { Win32CommandRunner } from "./win32-command.js";
+import {
+  resolveWin32SystemExecutables,
+  type Win32CommandRunner,
+} from "./win32-command.js";
 
 export interface CreateWin32CuaDriverPlatformBindingOptions {
   /** Compile-time channel policy; installed seals cannot select their own trust tier. */
   readonly signingPolicy: Win32CuaDriverSigningPolicy;
+  /** Trusted Windows system-directory fact supplied by the platform layer. */
+  readonly systemRoot: string;
   /** Inject Electron main's powerMonitor. Its events are recovery hints only. */
   readonly powerMonitor: Win32PowerMonitorPort;
-  readonly systemRoot?: string;
   readonly baseEnvironment?: NodeJS.ProcessEnv;
   readonly commandRunner?: Win32CommandRunner;
   readonly stateRootFileSystem?: Win32StateRootFileSystem;
@@ -37,8 +41,9 @@ export interface CreateWin32CuaDriverPlatformBindingOptions {
 export function createWin32CuaDriverPlatformBinding(
   options: CreateWin32CuaDriverPlatformBindingOptions,
 ): Win32CuaDriverPlatformBinding {
+  const trustedSystemRoot = resolveWin32SystemExecutables(options.systemRoot).systemRoot;
   const sharedCommandOptions = {
-    ...(options.systemRoot !== undefined ? { systemRoot: options.systemRoot } : {}),
+    systemRoot: trustedSystemRoot,
     ...(options.baseEnvironment !== undefined ? { baseEnvironment: options.baseEnvironment } : {}),
     ...(options.commandRunner !== undefined ? { commandRunner: options.commandRunner } : {}),
     ...(options.commandTimeoutMs !== undefined ? { timeoutMs: options.commandTimeoutMs } : {}),

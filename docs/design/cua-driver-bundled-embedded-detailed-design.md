@@ -783,7 +783,9 @@ Packaged path resolution rules:
    absent catalog plus explicit `NotSigned` identity. Signed tiers verify the installed
    Ling executable and provider catalog with the absolute in-box Windows PowerShell path,
    `-NoProfile -NonInteractive`, fixed UTF-8 locale-independent JSON and bounded
-   stdout/stderr. Require the matching internal or production policy signer identity and
+   stdout/stderr. The Windows system root is a required trusted platform fact; verifier
+   code never falls back to caller-controlled `SystemRoot` or `WINDIR` environment values.
+   Require the matching internal or production policy signer identity and
    run `Test-FileCatalog` against only the dedicated two-file payload directory. Missing
    PowerShell, process-launch denial, WDAC/AppLocker blocking, unavailable catalog cmdlets,
    oversized output or inability to obtain a verdict maps to
@@ -1438,9 +1440,11 @@ Desktop verifies:
 The active Rust child owns the authoritative Windows session monitor. WTS session-change
 signals provide immediate hints, and a locked at-most-one-second heartbeat rechecks the
 child session and `OpenInputDesktop` so missed notifications or secure-desktop switches
-cannot leave stale readiness. Electron lock/unlock events are recovery hints, not the
-source of truth. Every notification carries the child nonce, lease generation and a
-monotonic readiness sequence. A lock, disconnect, logoff, fast-user-switch, session
+cannot leave stale readiness. Electron's Windows-supported `unlock-screen` event is a
+recovery hint, not the source of truth; the macOS-only `user-did-become-active` event is
+never treated as Windows session evidence. Every notification carries the child nonce,
+lease generation and a monotonic readiness sequence. A lock, disconnect, logoff,
+fast-user-switch, session
 mismatch, non-default/unavailable input desktop or expired heartbeat triggers:
 
 ```text

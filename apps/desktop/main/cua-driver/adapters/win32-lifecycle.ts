@@ -64,8 +64,13 @@ export function createWin32CuaDriverProcessLifecycle(options: {
       if (child.exitCode !== null || child.signalCode !== null) {
         return;
       }
-      if (!child.kill("SIGTERM")) {
-        throw new Win32CuaDriverLifecycleError("terminate_failed");
+      try {
+        // The provider host owns the exit deadline and retained-handle residue
+        // check. A false return or a synchronous throw must not race a close
+        // event that has already happened but has not reached Node yet.
+        child.kill("SIGTERM");
+      } catch {
+        // Let provider-host.ts observe the retained child until its deadline.
       }
     },
   });

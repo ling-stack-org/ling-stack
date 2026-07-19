@@ -21,7 +21,8 @@ export interface Win32StateRootFileSystem {
 }
 
 export interface Win32CuaDriverStateRootProtectorOptions {
-  readonly systemRoot?: string;
+  /** Trusted Windows system-directory fact supplied by the platform layer. */
+  readonly systemRoot: string;
   readonly baseEnvironment?: NodeJS.ProcessEnv;
   readonly commandRunner?: Win32CommandRunner;
   readonly fileSystem?: Win32StateRootFileSystem;
@@ -67,7 +68,7 @@ export class Win32CuaDriverStateRootProtector implements CuaDriverStateRootPlatf
   private readonly fileSystem: Win32StateRootFileSystem;
   private readonly baseEnvironment: NodeJS.ProcessEnv;
 
-  constructor(options: Win32CuaDriverStateRootProtectorOptions = {}) {
+  constructor(options: Win32CuaDriverStateRootProtectorOptions) {
     this.options = Object.freeze({ ...options });
     this.runner = options.commandRunner ?? createBoundedWin32CommandRunner();
     this.fileSystem = options.fileSystem ?? { lstat, realpath };
@@ -94,12 +95,7 @@ export class Win32CuaDriverStateRootProtector implements CuaDriverStateRootPlatf
 
   private resolveExecutables(): ReturnType<typeof resolveWin32SystemExecutables> {
     try {
-      return resolveWin32SystemExecutables(
-        this.options.systemRoot
-        ?? this.baseEnvironment.SystemRoot
-        ?? this.baseEnvironment.WINDIR
-        ?? "",
-      );
+      return resolveWin32SystemExecutables(this.options.systemRoot);
     } catch {
       throw stateRootError("windows_state_root_verifier_unavailable");
     }
@@ -235,7 +231,7 @@ export class Win32CuaDriverStateRootProtector implements CuaDriverStateRootPlatf
 }
 
 export function createWin32CuaDriverStateRootProtector(
-  options: Win32CuaDriverStateRootProtectorOptions = {},
+  options: Win32CuaDriverStateRootProtectorOptions,
 ): CuaDriverStateRootPlatformProtector {
   return new Win32CuaDriverStateRootProtector(options);
 }

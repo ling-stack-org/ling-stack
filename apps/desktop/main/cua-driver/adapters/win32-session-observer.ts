@@ -3,9 +3,7 @@ import type {
   CuaDriverWindowsSessionRecoveryObserver,
 } from "../readiness-controller.js";
 
-export type Win32PowerMonitorRecoveryEvent =
-  | "unlock-screen"
-  | "user-did-become-active";
+export type Win32PowerMonitorRecoveryEvent = "unlock-screen";
 
 export interface Win32PowerMonitorPort {
   on(event: Win32PowerMonitorRecoveryEvent, listener: () => void): unknown;
@@ -50,7 +48,6 @@ export function createWin32CuaDriverSessionRecoveryObserver(
         }
       };
       const onUnlock = (): void => emit({ kind: "unlock" });
-      const onSessionActive = (): void => emit({ kind: "session_active" });
       const installed: Array<readonly [Win32PowerMonitorRecoveryEvent, () => void]> = [];
       const install = (event: Win32PowerMonitorRecoveryEvent, eventListener: () => void): void => {
         // Record before calling the foreign port so a listener that registers
@@ -60,7 +57,6 @@ export function createWin32CuaDriverSessionRecoveryObserver(
       };
       try {
         install("unlock-screen", onUnlock);
-        install("user-did-become-active", onSessionActive);
       } catch {
         active = false;
         for (const [event, eventListener] of installed.reverse()) {

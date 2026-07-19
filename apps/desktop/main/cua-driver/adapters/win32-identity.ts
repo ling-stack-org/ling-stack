@@ -48,7 +48,11 @@ export type Win32CuaDriverSigningPolicy =
 
 export interface Win32CuaDriverIdentityVerifierOptions {
   readonly policy: Win32CuaDriverSigningPolicy;
-  readonly systemRoot?: string;
+  /**
+   * Trusted Windows system-directory fact supplied by the platform layer.
+   * Environment variables are intentionally never accepted as a fallback.
+   */
+  readonly systemRoot: string;
   readonly baseEnvironment?: NodeJS.ProcessEnv;
   readonly commandRunner?: Win32CommandRunner;
   readonly timeoutMs?: number;
@@ -117,11 +121,7 @@ export class Win32CuaDriverIdentityVerifier implements CuaDriverPlatformIdentity
 
     let executables: ReturnType<typeof resolveWin32SystemExecutables>;
     try {
-      const systemRoot = this.options.systemRoot
-        ?? this.baseEnvironment.SystemRoot
-        ?? this.baseEnvironment.WINDIR
-        ?? "";
-      executables = resolveWin32SystemExecutables(systemRoot);
+      executables = resolveWin32SystemExecutables(this.options.systemRoot);
     } catch {
       throw unavailableIdentity();
     }
