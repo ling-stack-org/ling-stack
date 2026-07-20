@@ -7,6 +7,10 @@ import type {
   ReplaceMcpServerToolInput,
   RunStore,
 } from "@ling-stack/core";
+import type {
+  CuaDriverProviderState,
+  DesktopCuaDriverAvailabilityV1,
+} from "@ling-stack/contracts";
 import { createMcpAuthStatus, createMcpStatusSnapshot } from "../mcp/status.js";
 import { createPluginHealthSnapshot, ensureManagedPluginRecord } from "./catalog.js";
 import {
@@ -17,6 +21,7 @@ import {
 import type { CuaDriverClientPool } from "./cua-driver-client-pool.js";
 import type { CuaDriverLeaseMcpClient } from "./cua-driver-lease-client.js";
 import type { CuaDriverLeaseRegistry } from "./cua-driver-lease.js";
+import { isRecord } from "../../shared/validation.js";
 import {
   applyBundledCuaDriverToolPolicy,
   BundledCuaDriverToolPolicyError,
@@ -62,6 +67,7 @@ export class BundledCuaDriverActivationService {
   constructor(private readonly options: {
     readonly leaseRegistry: CuaDriverLeaseRegistry;
     readonly clientPool: CuaDriverClientPool<CuaDriverLeaseMcpClient>;
+    readonly getDesktopAvailability?: () => DesktopCuaDriverAvailabilityV1 | undefined;
   }) {}
 
   /**
@@ -85,6 +91,16 @@ export class BundledCuaDriverActivationService {
     readonly store: RunStore;
     readonly descriptor: ManagedPluginDescriptor;
     readonly now: string;
+    readonly availability?: DesktopCuaDriverAvailabilityV1;
+  }): BundledCuaDriverResetResult {
+    return this.invalidateProjection(input);
+  }
+
+  projectDesktopAvailability(input: {
+    readonly store: RunStore;
+    readonly descriptor: ManagedPluginDescriptor;
+    readonly now: string;
+    readonly availability: DesktopCuaDriverAvailabilityV1;
   }): BundledCuaDriverResetResult {
     return this.invalidateProjection(input);
   }
@@ -231,10 +247,13 @@ export class BundledCuaDriverActivationService {
           providerState: "desktop_unavailable",
           errorCode: "cua_desktop_lease_unavailable",
         });
+      const errorCode = isRecord(health.details) && typeof health.details.errorCode === "string"
+        ? health.details.errorCode
+        : "cua_desktop_lease_unavailable";
       return {
         statusCode: 409,
         committed: true,
-        error: "cua_desktop_lease_unavailable",
+        error: errorCode,
         message: health.message,
         linkedMcpServerId: server.id,
         statusSnapshot: input.store.getMcpStatusSnapshot(server.id),
@@ -374,14 +393,16 @@ export class BundledCuaDriverActivationService {
     const requestedRevision = requestedEnabled === state.requestedEnabled
       ? state.requestedRevision
       : state.requestedRevision + 1;
-    const message = requestedEnabled
-      ? "Bundled Cua Driver activation is waiting for the current Desktop lease."
-      : "Bundled Cua Driver is included but disabled.";
+    const projection = desktopAvailabilityProjection(
+      requestedEnabled,
+      requestedEnabled ? this.options.getDesktopAvailability?.() : undefined,
+    );
+    const message = projection.message;
     const statusSnapshot = unavailableStatus(
       server,
       input.now,
       message,
-      requestedEnabled ? "cua_desktop_lease_unavailable" : undefined,
+      projection.errorCode,
       requestedEnabled ? "failed" : "disabled",
     );
     return input.store.commitCuaDriverActivation({
@@ -406,8 +427,9 @@ export class BundledCuaDriverActivationService {
         now: input.now,
         status: requestedEnabled ? "failed" : "disabled",
         message,
-        providerState: requestedEnabled ? "desktop_unavailable" : "included",
+        providerState: projection.providerState,
         errorCode: statusSnapshot.errorCode,
+        ...(projection.details ? { details: projection.details } : {}),
       }),
       disabledReason: requestedEnabled
         ? "Bundled Cua Driver is waiting for Desktop."
@@ -541,17 +563,20 @@ export class BundledCuaDriverActivationService {
     readonly store: RunStore;
     readonly descriptor: ManagedPluginDescriptor;
     readonly now: string;
+    readonly availability?: DesktopCuaDriverAvailabilityV1;
   }): BundledCuaDriverResetResult {
     let observed = ensureActivationPrerequisites(input);
     for (let attempt = 0; attempt < 3; attempt += 1) {
       const { server, state } = observed;
+      const projection = desktopAvailabilityProjection(
+        state.requestedEnabled,
+        input.availability,
+      );
       const statusSnapshot = unavailableStatus(
         server,
         input.now,
-        state.requestedEnabled
-          ? "Bundled Cua Driver is waiting for a current Desktop lease."
-          : "Bundled Cua Driver is included but disabled.",
-        state.requestedEnabled ? "cua_desktop_lease_unavailable" : undefined,
+        projection.message,
+        projection.errorCode,
         state.requestedEnabled ? "failed" : "disabled",
       );
       const result = input.store.commitCuaDriverActivation({
@@ -576,11 +601,12 @@ export class BundledCuaDriverActivationService {
           now: input.now,
           status: state.requestedEnabled ? "failed" : "disabled",
           message: statusSnapshot.message,
-          providerState: state.requestedEnabled ? "desktop_unavailable" : "included",
+          providerState: projection.providerState,
           errorCode: statusSnapshot.errorCode,
+          ...(projection.details ? { details: projection.details } : {}),
         }),
         disabledReason: state.requestedEnabled
-          ? "Bundled Cua Driver is waiting for Desktop."
+          ? projection.message
           : "Cua Driver is disabled.",
       });
       if (result.committed) {
@@ -672,7 +698,7 @@ function activationHealth(input: {
   readonly now: string;
   readonly status: "disabled" | "failed" | "ready";
   readonly message?: string;
-  readonly providerState: "desktop_unavailable" | "included" | "incompatible" | "ready";
+  readonly providerState: CuaDriverProviderState;
   readonly errorCode?: string;
   readonly details?: Readonly<Record<string, unknown>>;
 }): ManagedPluginHealthSnapshot {
@@ -687,6 +713,93 @@ function activationHealth(input: {
       ...input.details,
     },
   });
+}
+
+function desktopAvailabilityProjection(
+  requestedEnabled: boolean,
+  availability: DesktopCuaDriverAvailabilityV1 | undefined,
+): {
+  readonly providerState: CuaDriverProviderState;
+  readonly message: string;
+  readonly errorCode?: string;
+  readonly details?: Readonly<Record<string, unknown>>;
+} {
+  if (!requestedEnabled) {
+    return {
+      providerState: "included",
+      message: "Bundled Cua Driver is included but disabled.",
+    };
+  }
+  const providerState = availability?.providerState ?? "desktop_unavailable";
+  const base = availability ? {
+    desktopGeneration: availability.generation,
+    desktopSequence: availability.sequence,
+    platform: availability.platform,
+    ...(availability.integrityCoverage
+      ? { integrityCoverage: availability.integrityCoverage }
+      : {}),
+    ...(availability.limitations
+      ? { limitations: availability.limitations }
+      : {}),
+    ...(availability.reason ? { reason: availability.reason } : {}),
+  } : undefined;
+  switch (providerState) {
+    case "included":
+      return {
+        providerState,
+        message: "Bundled Cua Driver is included and waiting for Desktop readiness.",
+        errorCode: "cua_desktop_provider_included",
+        ...(base ? { details: base } : {}),
+      };
+    case "permission_required":
+      return {
+        providerState,
+        message: "Ling needs macOS Accessibility and Screen Recording permission.",
+        errorCode: "cua_embedded_permission_required",
+        ...(base ? { details: base } : {}),
+      };
+    case "interactive_session_required":
+      return {
+        providerState,
+        message: "Cua Driver needs an unlocked interactive Windows session.",
+        errorCode: "cua_windows_interactive_session_required",
+        ...(base ? { details: base } : {}),
+      };
+    case "platform_unavailable":
+      return {
+        providerState,
+        message: "The current platform cannot start the bundled Cua Driver safely.",
+        errorCode: "cua_embedded_platform_unavailable",
+        ...(base ? { details: base } : {}),
+      };
+    case "incompatible":
+      return {
+        providerState,
+        message: "The bundled Cua Driver is incompatible with this Ling build.",
+        errorCode: "cua_embedded_protocol_mismatch",
+        ...(base ? { details: base } : {}),
+      };
+    case "corrupt":
+      return {
+        providerState,
+        message: "The bundled Cua Driver failed package integrity verification.",
+        errorCode: "cua_embedded_artifact_invalid",
+        ...(base ? { details: base } : {}),
+      };
+    case "desktop_unavailable":
+      return {
+        providerState,
+        message: "Bundled Cua Driver is waiting for a current Desktop lease.",
+        errorCode: "cua_desktop_lease_unavailable",
+        ...(base ? { details: base } : {}),
+      };
+    default:
+      return assertNever(providerState);
+  }
+}
+
+function assertNever(value: never): never {
+  throw new Error(`unsupported_cua_driver_desktop_availability:${String(value)}`);
 }
 
 function staleResult(

@@ -1,5 +1,8 @@
 import type { ManagedPluginDescriptor } from "@ling-stack/core";
-import type { DesktopCuaDriverLease } from "@ling-stack/contracts";
+import type {
+  DesktopCuaDriverAvailabilityV1,
+  DesktopCuaDriverLease,
+} from "@ling-stack/contracts";
 import type { RunStoreRegistry } from "../../runtime/store-registry.js";
 import type { BundledCuaDriverActivationService } from "./cua-driver-bundled-activation.js";
 import type { CuaDriverClientPool } from "./cua-driver-client-pool.js";
@@ -22,6 +25,7 @@ export class CuaDriverDaemonActivationCoordinator {
   private static readonly RETIREMENT_RETRY_DELAYS_MS = [25, 100, 500, 1_000] as const;
 
   private projectedLeaseKey: string | undefined;
+  private projectedAvailabilityKey: string | undefined;
   private projectionInitialized = false;
   private rejectingLease = false;
   private shutdownRequested = false;
@@ -36,6 +40,7 @@ export class CuaDriverDaemonActivationCoordinator {
     readonly storeRegistry: RunStoreRegistry;
     readonly descriptor: ManagedPluginDescriptor;
     readonly leaseRegistry: CuaDriverLeaseRegistry;
+    readonly getDesktopAvailability?: () => DesktopCuaDriverAvailabilityV1 | undefined;
     readonly activationService: BundledCuaDriverActivationService;
     readonly clientPool: CuaDriverClientPool<CuaDriverLeaseMcpClient>;
     readonly now?: () => string;
@@ -64,6 +69,14 @@ export class CuaDriverDaemonActivationCoordinator {
     return this.handleLeaseChanged(lease);
   }
 
+  handleAvailabilityPublished(availability: DesktopCuaDriverAvailabilityV1): boolean {
+    const current = this.options.getDesktopAvailability?.();
+    if (!current || availabilityKey(current) !== availabilityKey(availability)) {
+      return false;
+    }
+    return this.handleLeaseChanged(undefined);
+  }
+
   /** Callback target for replacement, expiry, revoke and authority clear. */
   handleLeaseChanged(next?: DesktopCuaDriverLease): boolean {
     if (this.options.enabled === false) {
@@ -79,7 +92,13 @@ export class CuaDriverDaemonActivationCoordinator {
       return false;
     }
     const nextKey = next ? cuaDriverLeasePoolKey(next) : undefined;
-    if (this.projectionInitialized && this.projectedLeaseKey === nextKey) {
+    const availability = next ? undefined : this.options.getDesktopAvailability?.();
+    const nextAvailabilityKey = availability ? availabilityKey(availability) : undefined;
+    if (
+      this.projectionInitialized
+      && this.projectedLeaseKey === nextKey
+      && this.projectedAvailabilityKey === nextAvailabilityKey
+    ) {
       return true;
     }
     let invalidated: ReturnType<BundledCuaDriverActivationService["invalidateForLeaseChange"]>;
@@ -88,6 +107,7 @@ export class CuaDriverDaemonActivationCoordinator {
         store: this.options.storeRegistry.getStore(this.options.workspaceCwd),
         descriptor: this.options.descriptor,
         now: this.now(),
+        ...(availability ? { availability } : {}),
       });
     } catch {
       const recovered = this.rejectCurrentLeaseAndRetryProjection();
@@ -108,6 +128,7 @@ export class CuaDriverDaemonActivationCoordinator {
     // projection instead of being mistaken for a harmless renewal.
     this.projectionInitialized = true;
     this.projectedLeaseKey = nextKey;
+    this.projectedAvailabilityKey = nextAvailabilityKey;
     if (!next) {
       this.cancelRetirementProjectionRetry();
     }
@@ -163,6 +184,7 @@ export class CuaDriverDaemonActivationCoordinator {
     // below fail.
     this.projectionInitialized = false;
     this.projectedLeaseKey = undefined;
+    this.projectedAvailabilityKey = undefined;
     this.rejectingLease = true;
     try {
       this.options.leaseRegistry.clear();
@@ -171,16 +193,19 @@ export class CuaDriverDaemonActivationCoordinator {
     }
     this.track(this.options.clientPool.closeAll());
     try {
+      const availability = this.options.getDesktopAvailability?.();
       const recovered = this.options.activationService.invalidateForLeaseChange({
         store: this.options.storeRegistry.getStore(this.options.workspaceCwd),
         descriptor: this.options.descriptor,
         now: this.now(),
+        ...(availability ? { availability } : {}),
       });
       if (!recovered.committed) {
         return false;
       }
       this.projectionInitialized = true;
       this.projectedLeaseKey = undefined;
+      this.projectedAvailabilityKey = availability ? availabilityKey(availability) : undefined;
       return true;
     } catch {
       return false;
@@ -236,4 +261,16 @@ export class CuaDriverDaemonActivationCoordinator {
   private now(): string {
     return this.options.now ? this.options.now() : new Date().toISOString();
   }
+}
+
+function availabilityKey(availability: DesktopCuaDriverAvailabilityV1): string {
+  return [
+    availability.desktopInstanceId,
+    availability.desktopInstanceEpoch,
+    availability.bridgeConnectionId,
+    availability.daemonAuthorityEpoch,
+    availability.generation,
+    availability.sequence,
+    availability.providerState,
+  ].join("\u0000");
 }

@@ -633,6 +633,113 @@ export function isDesktopCuaDriverLeaseV1(value: unknown): value is DesktopCuaDr
     );
 }
 
+export const CUA_DRIVER_DESKTOP_AVAILABILITY_STATES = [
+  "included",
+  "permission_required",
+  "interactive_session_required",
+  "platform_unavailable",
+  "incompatible",
+  "corrupt",
+  "desktop_unavailable",
+] as const;
+
+export type CuaDriverDesktopAvailabilityState =
+  (typeof CUA_DRIVER_DESKTOP_AVAILABILITY_STATES)[number];
+
+const CUA_DRIVER_DESKTOP_AVAILABILITY_KEYS = new Set([
+  "schemaVersion",
+  "providerId",
+  "desktopInstanceId",
+  "desktopInstanceEpoch",
+  "bridgeConnectionId",
+  "daemonAuthorityEpoch",
+  "workspaceCwd",
+  "generation",
+  "sequence",
+  "platform",
+  "providerState",
+  "reason",
+  "integrityCoverage",
+  "limitations",
+]);
+
+/**
+ * Authenticated Desktop projection for an unavailable provider generation.
+ *
+ * This record can only remove effective capability. It deliberately cannot
+ * report `ready`; executable authority still requires a current lease and the
+ * daemon's activation compare-and-swap.
+ */
+export interface DesktopCuaDriverAvailabilityV1 {
+  readonly schemaVersion: 1;
+  readonly providerId: "cua-driver";
+  readonly desktopInstanceId: string;
+  readonly desktopInstanceEpoch: number;
+  readonly bridgeConnectionId: string;
+  readonly daemonAuthorityEpoch: string;
+  readonly workspaceCwd: string;
+  readonly generation: number;
+  readonly sequence: number;
+  readonly platform: Exclude<BundledCuaDriverPlatform, "unsupported">;
+  readonly providerState: CuaDriverDesktopAvailabilityState;
+  readonly reason?: string;
+  readonly integrityCoverage?: CuaDriverIntegrityCoverage;
+  readonly limitations?: readonly CuaDriverLimitation[];
+}
+
+export function isDesktopCuaDriverAvailabilityV1(
+  value: unknown,
+): value is DesktopCuaDriverAvailabilityV1 {
+  if (!isUnknownRecord(value)) {
+    return false;
+  }
+  const keysValid = Object.keys(value).every(
+    (key) => CUA_DRIVER_DESKTOP_AVAILABILITY_KEYS.has(key),
+  );
+  const platformValid = value.platform === "darwin" || value.platform === "win32";
+  const stateValid = typeof value.providerState === "string"
+    && CUA_DRIVER_DESKTOP_AVAILABILITY_STATES.includes(
+      value.providerState as CuaDriverDesktopAvailabilityState,
+    );
+  const reasonValid = value.reason === undefined || (
+    typeof value.reason === "string"
+    && /^[a-z0-9_.:-]{1,256}$/u.test(value.reason)
+  );
+  const limitations = Array.isArray(value.limitations) ? value.limitations : undefined;
+  const limitationsValid = value.limitations === undefined || (
+    limitations !== undefined
+    && limitations.every(
+      (limitation) => limitation === "elevated_pixel_input" || limitation === "uwp_send_input",
+    )
+    && new Set(limitations).size === limitations.length
+  );
+  const metadataValid = value.platform === "darwin"
+    ? value.integrityCoverage === undefined
+      && (limitations === undefined || limitations.length === 0)
+    : value.platform === "win32"
+      && value.integrityCoverage === "standard"
+      && limitations !== undefined
+      && limitations.length === 2
+      && limitations.includes("elevated_pixel_input")
+      && limitations.includes("uwp_send_input");
+  return value.schemaVersion === 1
+    && keysValid
+    && value.providerId === "cua-driver"
+    && hasText(value.desktopInstanceId)
+    && isPositiveSafeInteger(value.desktopInstanceEpoch)
+    && hasText(value.bridgeConnectionId)
+    && hasText(value.daemonAuthorityEpoch)
+    && hasText(value.workspaceCwd)
+    && Number.isSafeInteger(value.generation)
+    && (value.generation as number) >= 0
+    && isPositiveSafeInteger(value.sequence)
+    && platformValid
+    && stateValid
+    && reasonValid
+    && limitationsValid
+    && metadataValid;
+}
+
 export interface DesktopCuaDriverLeaseRevokeV1 {
   readonly schemaVersion: 1;
   readonly providerId: "cua-driver";
