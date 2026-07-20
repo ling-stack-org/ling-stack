@@ -220,9 +220,9 @@ const AI_EVOLUTION_SKILL_LIFECYCLE_MIGRATION_NAME = "repair_ai_evolution_skill_l
 
 export function configureSqliteRunStoreDatabase(database: DatabaseSync): void {
   database.exec(`
+    PRAGMA busy_timeout = 5000;
     PRAGMA journal_mode = WAL;
     PRAGMA foreign_keys = ON;
-    PRAGMA busy_timeout = 5000;
   `);
 }
 
