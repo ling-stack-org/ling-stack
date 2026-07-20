@@ -65,6 +65,13 @@ Packaged Desktop builds copy the bundled Cua Driver plugin shell into
 manifest, MCP configuration metadata, and README. It deliberately does not include the
 user-installed `cua-driver` binary, native app bundles, credentials, or permission state.
 
+The closed-gate runtime foundation now includes a fixed-path strict trust-policy loader,
+one process-wide Darwin/Win32 platform owner and an authenticated non-ready availability
+projection. The availability path may hide tools and report permission/session/platform
+repair state; it cannot report ready or replace lease/activation authority. Current
+packages still omit both `providers/cua-driver/runtime-trust-policy.json` and the final
+native payload, so this foundation does not enable bundled mode by itself.
+
 That paragraph describes the current implementation. The approved next macOS and Windows
 Desktop direction is to package the locked `0.8.3 (Ling build 1)` source build, including
 its managed-embedding patch series and platform post-sign seal/catalog contract, then run

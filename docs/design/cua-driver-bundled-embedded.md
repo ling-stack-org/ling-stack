@@ -6,10 +6,14 @@ Approved cross-platform design direction for the internal Desktop alpha. Impleme
 is in progress. Cross-platform contracts and feature gates, signing feasibility,
 activation fencing, the shared Desktop supervisor and the deterministic source-build
 pipeline have landed. Process-wide Desktop runtime composition now owns cached typed
-handshake authority, tuple rotation and ordered shutdown behind closed gates. The gate-off
-Darwin native adapter covers Mach-O/code-sign identity, direct-child lifecycle, host-owned
-TCC readiness and retrying permission-change monitoring, but Desktop platform-owner
-activation does not connect the process-wide composition and adapter yet. The landed
+handshake authority, tuple rotation and ordered shutdown behind closed gates. The
+process-wide platform owner now loads a strict build-carried trust policy from one fixed
+resources path, selects exactly one Darwin/Win32 adapter, reuses it across authority
+rotation and disposes its observers after the coordinator stops. Transient monitor startup
+failure remains unavailable and can recover by replacing the fail-closed coordinator on the
+same authority. The gate-off Darwin native
+adapter covers Mach-O/code-sign identity, direct-child lifecycle, host-owned TCC readiness
+and retrying permission-change monitoring. The landed
 Slice 3 daemon-composition sub-slice adds the shared lease-generation broker, fail-closed
 startup reset before route binding, first-publish/replacement reconciliation, inert renewal,
 and revoke/expiry fencing. Canonical plugin enable/check/disable routes use the atomic
@@ -26,11 +30,11 @@ approval levels from Ling's reviewed `0.8.3` policy instead of trusting provider
 Explicit revoke reports a durable projection failure as retryable HTTP 503; expiry and new
 handshake retirement keep one bounded-backoff projection retry active while the missing
 lease hides stale capabilities. The new composition is inert while its
-gate is off, leaving the external path unchanged. This does not complete Slice 3 product
-states: Desktop already runs platform readiness before lease publication, but its exact
-`permission_required`, `interactive_session_required` and `platform_unavailable` result is
-not yet projected into daemon activation, so the current no-lease path remains
-`desktop_unavailable`. The gate-off Win32 standard adapter covers policy-pinned
+gate is off, leaving the external path unchanged. Desktop now publishes a separate
+authenticated, generation/sequence-fenced non-ready availability report. It can remove
+authority and durably project `permission_required`, `interactive_session_required` or
+`platform_unavailable`, but it cannot claim `ready`; ready still requires a live lease and
+the daemon activation CAS. The gate-off Win32 standard adapter covers policy-pinned
 identity, state-root protection, direct-child lifecycle and readiness recovery. Opt-in
 pre-sign package staging and the Darwin/Win32 native no-replace atomic publisher core are
 implemented but are not connected to default packaging. Production staging authority is
@@ -85,7 +89,7 @@ retryable quarantine remains quota-counted. Cleanup can reapply identity-bound p
 security when staging failed before hardening; if hardening still fails, only the exact
 current-user-owned, no-reparse, empty root may be removed through native
 `remove-unsecured-empty`. Cleanup refuses a replaced or non-empty unsafe residue. Final
-signing, `Ling Stack Setup.exe` inclusion, production platform-owner wiring, product-state
+signing, generated runtime trust-policy packaging, `Ling Stack Setup.exe` inclusion, product-state
 E2E, Windows hosted-runner validation and real-machine acceptance remain. Both macOS and
 Windows artifact jobs now run the full daemon and Pi runner suites rather than a drifting
 Computer Use file allowlist, but hosted evidence still must complete. In particular,

@@ -26,6 +26,17 @@ Current implementation baseline:
 - the Desktop runtime now invokes idempotent coordinator availability enable, retries
   transient failures for the same authority tuple, and revokes the captured coordinator
   when daemon status or authority is lost during or after publication;
+- the production composition boundary now has a strict fixed-path runtime trust-policy
+  loader and one process-wide Darwin/Win32 platform owner. The owner is reused across
+  authority rotation, Darwin permission changes rotate only the provider generation, and
+  ordered shutdown disposes platform observers after coordinator cleanup. A transient
+  monitor-start failure stays fail-closed and a later same-authority recovery replaces the
+  unavailable coordinator binding;
+- a separate authenticated Desktop availability report is implemented for non-ready state.
+  Desktop instance/connection authority plus generation/sequence fencing prevents stale
+  reports; non-ready reports can retire a lease and atomically project
+  `permission_required`, `interactive_session_required` or `platform_unavailable`, while
+  `ready` remains impossible without a live lease and activation CAS;
 - the gate-off Darwin native adapter now supplies injected Mach-O/code-sign identity,
   direct-child lifecycle, host-owned TCC readiness and a retrying permission-change
   monitor, without enabling packaged runtime;
@@ -51,8 +62,8 @@ Current implementation baseline:
   while its outer verifier and standalone source-build probes use owned Unix process-group
   or Windows Job Object trees; retained failures have bounded, identity-bound native deep-
   delete/rollback cleanup rather than automatic path-recursive deletion;
-- production platform-owner binding, final signing, `Ling Stack Setup.exe` inclusion,
-  final product states and evidence/handoff closure remain. The Win32 code and
+- generated trust-policy/package capabilities, final signing, `Ling Stack Setup.exe`
+  inclusion, final product states and evidence/handoff closure remain. The Win32 code and
   cross-platform tests have landed, but
   successful Windows hosted native-helper compilation, `Global` parent-mutex/private-DACL/
   `WAIT_ABANDONED`, owned-process runtime execution and real-machine validation remain
@@ -454,12 +465,13 @@ Current status: daemon-composition sub-slice implemented.
   lease;
 - gate-off `external_local` broker, routes and persisted command behavior remain unchanged.
 
-Remaining in Slice 3: Desktop proxy initialization already performs Darwin/Win32 platform
-readiness before lease publication, but the authenticated Desktop status boundary does not
-yet carry the exact failed readiness state into daemon activation. The current daemon
-therefore projects no-lease as `desktop_unavailable`; the production platform-owner/Product
-States work must add truthful `permission_required`, `interactive_session_required` and
-`platform_unavailable` projection before Slice 3 is complete.
+The Slice 3 exact non-ready projection is implemented. Desktop publishes a distinct
+authenticated availability record that cannot report `ready`; a current/newer non-ready
+generation retires executable lease authority, while generation/sequence fencing rejects
+late reports. Daemon activation then atomically persists `permission_required`,
+`interactive_session_required` or `platform_unavailable` with tools and every effective
+flag disabled. Final renderer copy/E2E remains in Product States rather than this transport
+slice.
 
 Focused validation covers startup reset failure, first publish, inert renewal,
 replacement/revoke/expiry races, bounded call cancellation, shutdown cleanup, canonical
@@ -1212,17 +1224,26 @@ elevated/UWP pixel-input parity.
 - [ ] **T4 (P1, human: ~4–6 days / Codex: ~1–2 days)** — Implement Desktop artifact
   verification, host/proxy lifecycle, active-child nonce/readiness, WTS invalidation,
   host-death/stdio-EOF cleanup and lease publication.
+  - Process-wide platform-owner composition, strict runtime trust-policy loading,
+    authority reuse/disposal and authenticated non-ready availability publication have
+    landed behind the closed gates; final generated policy/payload packaging remains.
 - [x] **T5 (P1, human: ~3–5 days / Codex: ~1 day)** — Implement daemon pooling and
   `commitCuaDriverActivation()` with two-connection CAS and crash-injection coverage.
   - Activation/store foundations and pool/broker/startup/lease/route/runner/Catalog
-    composition have landed with focused race coverage.
+    composition have landed with focused race coverage. Exact Desktop non-ready reports
+    now retire lease authority and persist recoverable state without exposing tools.
 - [ ] **T6 (P1, human: ~3–5 days / Codex: ~1 day)** — Implement and package the macOS
   adapter/TCC/signing path.
+  - The adapter is now selected by the process-wide owner and permission changes rotate
+    only the provider generation; generated Team-ID policy, payload/signing and clean-host
+    acceptance remain.
 - [ ] **T7 (P1, human: ~4–6 days / Codex: ~1–2 days)** — Implement the Windows standard
   adapter, content-free active-child readiness, Job Object lifecycle, structured
   limitations and global-pipe regression.
   - Adapter code and non-Windows automated contract coverage are complete behind the gate;
-    real Windows Authenticode/catalog/ACL/WTS/global-pipe and VM acceptance remain open.
+    the process-wide owner now injects policy, trusted SystemRoot and Electron powerMonitor.
+    Real packaged policy/payload, Windows Authenticode/catalog/ACL/WTS/global-pipe and VM
+    acceptance remain open.
 - [ ] **T8 (P1, human: ~4–7 days / Codex: ~1–2 days)** — Add private-helper Setup staging,
   three-tier signing hooks, the Windows signed catalog, PowerShell tier classification,
   migration and tier-aware rollback tuple.

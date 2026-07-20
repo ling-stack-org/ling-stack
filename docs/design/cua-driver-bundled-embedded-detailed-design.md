@@ -9,8 +9,15 @@ implemented. The gate-off Darwin adapter implements Mach-O/code-sign identity,
 direct-child lifecycle, host-owned TCC readiness and retrying permission-change
 monitoring. The Win32 standard adapter implements policy-pinned identity, state-root
 ACL/reparse protection, direct-child lifecycle, active-child readiness and Electron
-recovery hints. The Desktop runtime now publishes lazy coordinator availability and
-fences daemon status/authority loss. The daemon activation transport/fence foundation and
+recovery hints. A process-wide platform owner now loads the exact host policy from a fixed,
+bounded, non-symlink resources path, owns the Darwin monitor/Win32 binding across authority
+rotation and disposes after coordinator shutdown. A transient Darwin monitor-start failure
+uses an unavailable binding; a later successful start on the same authority replaces that
+fail-closed coordinator instead of requiring a Ling restart. The Desktop runtime now publishes lazy
+coordinator availability and fences daemon status/authority loss. A separate authenticated
+non-ready availability report uses Desktop instance/connection authority plus generation
+and sequence fencing. It can retire a lease and project exact repair state but cannot report
+`ready`. The daemon activation transport/fence foundation and
 its composition have landed:
 startup reset runs before route binding; first lease publication and replacement reconcile
 retained intent; renewal reuses the same authenticated generation client; revoke and expiry
@@ -28,8 +35,8 @@ trust root and real verifier. Complete output-parent staging/cleanup mutation se
 a cross-process native parent lease; temp-root parent/root identities bind security and
 publication, and retained failures have bounded identity-bound cleanup, including the
 strict empty-unsecured-root fallback, rather than path-only recursive deletion. Final
-signing, `Ling Stack Setup.exe` inclusion, production platform-
-owner wiring, Windows hosted-runner validation and real-machine acceptance are not
+signing, generated runtime trust-policy packaging, `Ling Stack Setup.exe` inclusion,
+Windows hosted-runner validation and real-machine acceptance are not
 complete. Both Darwin and Win32 packaged-provider production gates remain off, so
 packaged runtime still uses the external provider path. This does not complete
 `bundled_embedded`; an active `external_local` installation such as
@@ -957,6 +964,7 @@ The provider must be outside `app.asar` and addressed by an absolute path derive
 ```text
 providers/
   cua-driver/
+    runtime-trust-policy.json  # build-carried host policy; not provider-declared
     0.8.3-ling.1/
       provider-lock.json
       LICENSE.md
@@ -974,6 +982,14 @@ providers/
 The packaging spike may move the executable to a standard nested-helper directory if
 required by strict Apple signing tools, but the logical resource id and versioned layout
 must remain deterministic.
+
+`runtime-trust-policy.json` has strict schema V1 and lives outside the provider's versioned
+artifact tree so `provider-lock.json`, the seal and candidate/release manifests cannot
+select their own trust anchor. Darwin policy contains only the expected Ling Team ID.
+Windows policy contains the build-bound signing tier/channel and exact provider/catalog
+signer identities. The Windows system root remains a separately injected host platform
+fact. Gate-off startup never reads this file; a gate-on missing, symlinked, oversized,
+cross-platform, mixed-tier or extra-field policy fails closed without starting a provider.
 
 Packaged path resolution rules:
 
@@ -1474,17 +1490,20 @@ Current Slice 3 daemon-composition sub-slice status:
   hides stale ready contribution/resource state even while durable projection recovery is
   retrying.
 
-This is not the complete Slice 3 product-state path. Desktop proxy initialization already
-executes Darwin/Win32 platform readiness before it publishes a lease, but the exact failed
-readiness state is not yet carried over the authenticated Desktop boundary. Until the
-production platform owner adds that projection, the daemon can represent a missing lease as
-`desktop_unavailable` but cannot truthfully derive `permission_required`,
-`interactive_session_required` or `platform_unavailable` from Desktop readiness.
+The Slice 3 non-ready product-state path now uses an authenticated Desktop availability
+record separate from the executable lease. The record is bound to Desktop instance id/
+epoch, bridge connection, daemon authority, workspace, platform, generation and a monotonic
+same-authority sequence. It permits only `included`, `permission_required`,
+`interactive_session_required`, `platform_unavailable`, `incompatible`, `corrupt` and
+`desktop_unavailable`. It never permits `ready`. A current or newer non-ready report clears
+the live lease before the daemon atomically hides tools/effective flags and persists the
+exact repair state; stale generation/sequence reports are rejected. `ready` continues to
+require a current lease plus the full activation CAS.
 
 Focused branch coverage includes startup reset failure, first publication, inert renewal,
 replacement/revoke/expiry races, bounded generation abort, shutdown cleanup, canonical route
 workspace/identity fencing, broker no-fallback behavior, updater/unknown-tool rejection,
-retirement projection recovery and private-preview late-result invalidation. macOS and
+retirement/availability projection recovery and private-preview late-result invalidation. macOS and
 Windows artifact workflows run the complete daemon and Pi runner test packages. This
 coverage is implementation evidence only; it does not prove final Desktop platform-owner
 packaging, signing, Windows hosted execution or real-machine acceptance.
