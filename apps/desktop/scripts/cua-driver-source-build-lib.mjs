@@ -5,6 +5,8 @@ import { dirname, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
+import { runOwnedProcess } from "./cua-driver-owned-process.mjs";
+
 const execFile = promisify(execFileCallback);
 const LING_REPOSITORY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 
@@ -217,8 +219,8 @@ export async function verifyProviderInputs(resourceRoot = PROVIDER_RESOURCE_ROOT
 
   assert(Array.isArray(lock.enabledPlatforms), "enabledPlatforms must be an array");
   assert(
-    lock.enabledPlatforms.length === 0 && lock.packagingGate?.eligible === false,
-    "the scaffold must remain fail-closed until native artifact evidence lands",
+    lock.packagingGate?.eligible === false,
+    "source-build evidence must remain non-promoting",
   );
   assert(lock.platformBuildOutputs.darwin, "source-build inputs must include the darwin platform output");
   assert(lock.platformBuildOutputs.win32X64, "source-build inputs must include the win32-x64 platform output");
@@ -460,7 +462,7 @@ function verifySourceBuildInputs(value) {
   assertDeepEqual(value.toolchain.darwin.targets, ["aarch64-apple-darwin", "x86_64-apple-darwin"], "darwin Rust targets");
   assert(value.toolchain.win32X64.runner === "windows-2025", "Windows runner changed");
   assert(value.toolchain.win32X64.visualStudioVersion === "17.14.37502.11", "Visual Studio pin changed");
-  assert(value.toolchain.win32X64.msvcToolsetVersion === "14.51.36247", "MSVC toolset pin changed");
+  assert(value.toolchain.win32X64.msvcToolsetVersion === "14.44.35211", "MSVC toolset pin changed");
   assert(value.toolchain.win32X64.windowsSdkVersion === "10.0.26100.0", "Windows SDK pin changed");
   assert(value.toolchain.win32X64.target === "x86_64-pc-windows-msvc", "Windows Rust target changed");
   assertDeepEqual(value.sourceBuildPlatforms, ["darwin", "win32-x64"], "source-build platforms");
@@ -655,11 +657,19 @@ export function verifySourceBuildArtifactInventory({
 }
 
 export async function run(command, args, options = {}) {
+  const {
+    ownedProcessTree = false,
+    ...processOptions
+  } = options;
+  if (typeof ownedProcessTree !== "boolean") {
+    throw new TypeError("ownedProcessTree must be a boolean");
+  }
   try {
-    return await execFile(command, args, {
+    const runner = ownedProcessTree ? runOwnedProcess : execFile;
+    return await runner(command, args, {
       maxBuffer: 16 * 1024 * 1024,
       windowsHide: true,
-      ...options,
+      ...processOptions,
     });
   } catch (error) {
     const detail = [error.message, error.stdout, error.stderr].filter(Boolean).join("\n");

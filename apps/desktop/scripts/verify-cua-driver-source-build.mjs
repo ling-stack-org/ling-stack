@@ -1,24 +1,31 @@
 #!/usr/bin/env node
 
-import { readFile } from "node:fs/promises";
 import { dirname, isAbsolute, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   PROVIDER_RESOURCE_ROOT,
   artifactDigestMap,
-  runText,
   sha256File,
   verifySourceBuildArtifactInventory,
   verifyProviderInputs,
 } from "./cua-driver-source-build-lib.mjs";
+import { runOwnedProcess } from "./cua-driver-owned-process.mjs";
 import {
   inspectUniversalMachO,
   inspectWindowsPe,
   verifyVersionOutput,
 } from "./cua-driver-binary-identity.mjs";
 import { verifyReferenceArtifactEvidence } from "./cua-driver-reference-artifacts.mjs";
+import {
+  readBoundedFileSnapshot,
+  readBoundedJsonSnapshot,
+} from "./cua-driver-package-staging-files.mjs";
 
 const SHA256_PATTERN = /^[0-9a-f]{64}$/u;
+const SOURCE_BUILD_JSON_MAX_BYTES = 8 * 1024 * 1024;
+const SOURCE_BUILD_BINARY_MAX_BYTES = 128 * 1024 * 1024;
+const SOURCE_BUILD_VERSION_TIMEOUT_MS = 15_000;
+const SOURCE_BUILD_VERSION_MAX_BYTES = 64 * 1024;
 
 if (process.argv[1] && resolve(process.argv[1]) === resolve(fileURLToPath(import.meta.url))) {
   try {
@@ -31,12 +38,25 @@ if (process.argv[1] && resolve(process.argv[1]) === resolve(fileURLToPath(import
 
 async function main() {
 const args = parseArgs(process.argv.slice(2));
+const stagingExpectation = parseStagingExpectation(args);
+if (stagingExpectation && !args.attestation) {
+  fail("staging expectation requires --attestation");
+}
 const resourceRoot = resolve(args["resource-root"] || PROVIDER_RESOURCE_ROOT);
 const verified = await verifyProviderInputs(resourceRoot);
 if (args["attestation"]) {
-  const attestation = JSON.parse(await readFile(resolve(args.attestation), "utf8"));
+  const attestationSnapshot = await readBoundedJsonSnapshot(
+    resolve(args.attestation),
+    SOURCE_BUILD_JSON_MAX_BYTES,
+    "source_build_attestation",
+  );
+  const attestation = attestationSnapshot.value;
   verifyAttestationShape(attestation);
   if (!/^(darwin|win32-x64)$/u.test(attestation.platform ?? "")) fail("attestation platform mismatch");
+  if (stagingExpectation?.platform !== undefined
+    && attestation.platform !== stagingExpectation.platform) {
+    fail("attestation platform does not match the staging expectation");
+  }
   if (attestation.sourceDateEpoch !== verified.lock.upstream.sourceDateEpoch) fail("attestation source date epoch mismatch");
   if (!SHA256_PATTERN.test(attestation.checks.cargoMetadataSha256)) fail("cargo metadata digest is not a SHA-256");
   if (attestation.providerLockSha256 !== await sha256File(verified.lockPath)) fail("attestation provider lock digest mismatch");
@@ -81,13 +101,23 @@ if (args["attestation"]) {
   if (Object.keys(actual).some((path) => path.includes("cua-driver-rs-0.8.3-"))) fail("upstream reference archive must never enter output");
   if (Object.keys(actual).some((path) => path.endsWith("provider-seal.json"))) fail("pre-sign source build must not fabricate a provider seal");
   const manifestPath = resolve(outputRoot, "source-build-manifest.json");
-  const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
+  const manifestSnapshot = await readBoundedJsonSnapshot(
+    manifestPath,
+    SOURCE_BUILD_JSON_MAX_BYTES,
+    "source_build_manifest",
+  );
+  const manifest = manifestSnapshot.value;
   if (manifest.schemaVersion !== 1 || manifest.kind !== "ling.cua-driver.source-build-manifest") fail("source-build manifest schema mismatch");
   verifyOutputMetadataBindings({ actual, attestation, manifest });
   if (JSON.stringify(manifest.files) !== JSON.stringify(actual)) fail("source-build manifest digest map mismatch");
-  if (attestation.manifestSha256 !== await sha256File(manifestPath)) fail("source-build manifest digest mismatch");
+  if (attestation.manifestSha256 !== manifestSnapshot.sha256) fail("source-build manifest digest mismatch");
   const promotionPath = resolve(outputRoot, "source-build-promotion-inputs.json");
-  const promotion = JSON.parse(await readFile(promotionPath, "utf8"));
+  const promotionSnapshot = await readBoundedJsonSnapshot(
+    promotionPath,
+    SOURCE_BUILD_JSON_MAX_BYTES,
+    "source_build_promotion_inputs",
+  );
+  const promotion = promotionSnapshot.value;
   try {
     verifySourceBuildArtifactInventory({
       artifactPaths: Object.keys(actual),
@@ -98,17 +128,34 @@ if (args["attestation"]) {
   } catch (error) {
     fail(error instanceof Error ? error.message : String(error));
   }
-  const observedBinaryIdentity = await inspectBuiltBinaryIdentity({
+  const mainRelativePath = attestation.platform === "darwin"
+    ? "darwin/cua-driver"
+    : "win32-x64/payload/cua-driver.exe";
+  const binarySnapshots = await readBuiltBinarySnapshots({
+    actual,
+    platform: attestation.platform,
     outputRoot,
+  });
+  if (stagingExpectation) {
+    bindExpectedProviderSnapshot({
+      expectedProviderSha256: stagingExpectation.providerSha256,
+      relativePath: mainRelativePath,
+      snapshot: binarySnapshots[mainRelativePath],
+    });
+  }
+  const observedBinaryIdentity = inspectBuiltBinaryIdentity({
+    binarySnapshots,
     platform: attestation.platform,
     lock: verified.lock,
   });
   if (JSON.stringify(attestation.checks?.binaryIdentity) !== JSON.stringify(observedBinaryIdentity)) fail("attestation binary identity mismatch");
   if (JSON.stringify(promotion.sourceBuild?.binaryIdentity) !== JSON.stringify(observedBinaryIdentity)) fail("promotion binary identity mismatch");
-  const mainBinaryPath = resolve(outputRoot, attestation.platform === "darwin"
-    ? "darwin/cua-driver"
-    : "win32-x64/payload/cua-driver.exe");
-  const observedVersion = verifyVersionOutput(await runText(mainBinaryPath, ["--version"]), verified.lock.upstream.version);
+  const observedVersion = await resolveObservedProviderVersion({
+    attestationVersionOutput: attestation.checks?.versionOutput,
+    executablePath: resolve(outputRoot, mainRelativePath),
+    expectedVersion: verified.lock.upstream.version,
+    stagingExpected: stagingExpectation !== undefined,
+  });
   verifyPromotionBindings({
     attestation,
     lock: verified.lock,
@@ -118,7 +165,7 @@ if (args["attestation"]) {
     runtimeProbe,
     verified,
   });
-  if (attestation.promotionInputsSha256 !== await sha256File(promotionPath)) fail("promotion input digest mismatch");
+  if (attestation.promotionInputsSha256 !== promotionSnapshot.sha256) fail("promotion input digest mismatch");
   for (const binary of attestation.binaries) {
     const observed = actual[binary.relativePath];
     if (!SHA256_PATTERN.test(binary.sha256BeforeSigning)) fail(`binary digest is not a SHA-256: ${binary.relativePath}`);
@@ -127,7 +174,12 @@ if (args["attestation"]) {
   }
   if (actual["cua-driver.spdx.json"] !== attestation.supplyChain.sbomSha256) fail("SBOM digest mismatch");
   if (actual["THIRD_PARTY_NOTICES.md"] !== attestation.supplyChain.noticesSha256) fail("notices digest mismatch");
-  process.stdout.write(`${JSON.stringify({ ok: true, attestation: args.attestation }, null, 2)}\n`);
+  process.stdout.write(`${JSON.stringify({
+    ok: true,
+    attestation: resolve(args.attestation),
+    platform: attestation.platform,
+    files: actual,
+  }, null, 2)}\n`);
   process.exit(0);
 }
 if (args["compare-a"] || args["compare-b"]) {
@@ -160,6 +212,24 @@ function parseArgs(values) {
     index += 1;
   }
   return result;
+}
+
+function parseStagingExpectation(args) {
+  const platform = args["expected-platform"];
+  const providerSha256 = args["expected-provider-sha256"];
+  if (platform === undefined && providerSha256 === undefined) {
+    return undefined;
+  }
+  if (platform === undefined || providerSha256 === undefined) {
+    fail("staging expected platform and provider digest must be supplied together");
+  }
+  if (platform !== "darwin" && platform !== "win32-x64") {
+    fail("staging expected platform is invalid");
+  }
+  if (!SHA256_PATTERN.test(providerSha256) || /^0{64}$/u.test(providerSha256)) {
+    fail("staging expected provider digest is not a SHA-256");
+  }
+  return Object.freeze({ platform, providerSha256 });
 }
 
 function verifyObservedToolchain(platform, evidence, lock) {
@@ -490,9 +560,75 @@ function assertExactKeys(value, keys, label) {
   if (JSON.stringify(actual) !== JSON.stringify(expected)) fail(`${label} keys changed`);
 }
 
-async function inspectBuiltBinaryIdentity({ outputRoot, platform, lock }) {
+async function readBuiltBinarySnapshots({ actual, outputRoot, platform }) {
+  const relativePaths = platform === "darwin"
+    ? ["darwin/cua-driver"]
+    : [
+        "win32-x64/payload/cua-driver.exe",
+        "audit/win32-x64/cua-driver-uia.exe",
+      ];
+  const values = {};
+  for (const relativePath of relativePaths) {
+    const snapshot = await readBoundedFileSnapshot(
+      resolve(outputRoot, relativePath),
+      SOURCE_BUILD_BINARY_MAX_BYTES,
+      "source_build_binary",
+    );
+    if (snapshot.sha256 !== actual[relativePath]) {
+      fail(`source-build binary changed during verification: ${relativePath}`);
+    }
+    values[relativePath] = snapshot;
+  }
+  return Object.freeze(values);
+}
+
+/** Bind staging verification to the exact bounded snapshot trusted by the parent stage. */
+export function bindExpectedProviderSnapshot({
+  expectedProviderSha256,
+  relativePath,
+  snapshot,
+}) {
+  if (!snapshot || snapshot.sha256 !== expectedProviderSha256) {
+    fail(`source-build provider changed after staging snapshot: ${relativePath}`);
+  }
+  return snapshot;
+}
+
+async function runVersionFromOutput(executable) {
+  const { stdout } = await runOwnedProcess(executable, ["--version"], {
+    encoding: "utf8",
+    maxBuffer: SOURCE_BUILD_VERSION_MAX_BYTES,
+    timeout: SOURCE_BUILD_VERSION_TIMEOUT_MS,
+  });
+  return stdout.trim();
+}
+
+async function resolveObservedProviderVersion({
+  attestationVersionOutput,
+  executablePath,
+  expectedVersion,
+  stagingExpected,
+}, runVersion = runVersionFromOutput) {
+  const versionOutput = stagingExpected
+    ? attestationVersionOutput
+    : await runVersion(executablePath);
+  return verifyVersionOutput(versionOutput, expectedVersion);
+}
+
+/** Test-only closure proving package staging never executes candidate bytes. */
+export function createObservedProviderVersionResolverForTest(runVersion) {
+  if (typeof runVersion !== "function") {
+    throw new TypeError("version runner test seam must be callable");
+  }
+  return async (input) => resolveObservedProviderVersion(input, runVersion);
+}
+
+function inspectBuiltBinaryIdentity({ binarySnapshots, platform, lock }) {
   if (platform === "darwin") {
-    const identity = inspectUniversalMachO(await readFile(resolve(outputRoot, "darwin/cua-driver")), "verified darwin provider");
+    const identity = inspectUniversalMachO(
+      binarySnapshots["darwin/cua-driver"].bytes,
+      "verified darwin provider",
+    );
     if (!identity.slices.every((slice) => slice.minimumOSVersion === lock.toolchain.darwin.deploymentTarget)) {
       fail("verified darwin provider minimum OS mismatch");
     }
@@ -506,7 +642,10 @@ async function inspectBuiltBinaryIdentity({ outputRoot, platform, lock }) {
     ["main", "win32-x64/payload/cua-driver.exe", false],
     ["uia-audit", "audit/win32-x64/cua-driver-uia.exe", true],
   ]) {
-    const identity = inspectWindowsPe(await readFile(resolve(outputRoot, relativePath)), `verified Windows ${role} provider`);
+    const identity = inspectWindowsPe(
+      binarySnapshots[relativePath].bytes,
+      `verified Windows ${role} provider`,
+    );
     if (identity.embeddedCertificateTablePresent || identity.manifest.executionLevel !== "asInvoker" || identity.manifest.uiAccess !== uiAccess) {
       fail(`verified Windows ${role} identity mismatch`);
     }

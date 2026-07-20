@@ -9,12 +9,73 @@ pipeline have landed. Process-wide Desktop runtime composition now owns cached t
 handshake authority, tuple rotation and ordered shutdown behind closed gates. The gate-off
 Darwin native adapter covers Mach-O/code-sign identity, direct-child lifecycle, host-owned
 TCC readiness and retrying permission-change monitoring, but activation does not connect
-the composition and adapter yet. The Win32 native adapter, package staging/signing
-closure, product-state E2E and acceptance handoff remain.
+the composition and adapter yet. The gate-off Win32 standard adapter covers policy-pinned
+identity, state-root protection, direct-child lifecycle and readiness recovery. Opt-in
+pre-sign package staging and the Darwin/Win32 native no-replace atomic publisher core are
+implemented but are not connected to default packaging. Production staging authority is
+fixed to the committed lock/resource root and real source-build verifier; trust overrides
+exist only inside the test factory. The native helper preflights before payload creation,
+then production staging and explicit cleanup each hold one cross-process parent lease while
+Node runs their ordered output-parent workflow. The holder is also the synchronous native
+RPC actor: the process that owns the platform lock performs every native inspect, security,
+verification, publish and removal operation, and production exposes no standalone native
+mutator that could survive past lease ownership. This strong lifetime guarantee covers
+native mutation only; JavaScript `mkdir`, copy and write steps remain in Node, and their
+crash residue is recovered by the next lease's unconditional bounded scan/quota. macOS
+opens the exact no-link parent directory and applies `flock` directly to that open directory
+vnode without creating a `.ling` lock file or a control entry that needs quota exclusion;
+Windows derives a
+`Global\\LingCuaStage-*` mutex from the parent `FILE_ID`, applies an exact protected
+current-user/SYSTEM/Administrators DACL. A Windows waiter already blocked when an owner dies
+records `WAIT_ABANDONED`; later acquisition may legitimately omit it because the mutex is
+not a persistent crash journal. Clean idle EOF or explicit release drains work and unlocks
+normally. Caller death during an RPC leaves the holder locked through that bounded operation
+before EOF closes the session; holder death stops the in-process native mutation and the OS
+then releases the lock. RPC invalidation kills the holder and waits for actual process exit
+before discarding its capability. Payload/quarantine residue remains for unconditional
+bounded inspection by the next lease.
 
-Both packaged-provider gates remain off. Packaged Desktop therefore still uses the
-external provider path until its platform-specific runtime and signed package satisfy the
-completion gates in the implementation plan.
+Before and after the no-replace publish commit, the helper reopens the canonical parent
+path without links and requires it to still identify the held vnode/`FILE_ID`. A replacement
+before commit fails without mutation; a replacement detected after rename is ambiguous and
+is never reported as committed. The new path is untouched, while any completed rename stays
+under the displaced held parent for diagnosis.
+
+After `mkdir`, staging reads the exact native parent/root identities, binds
+`secure-private` to both expected identities, and applies/reverifies macOS current-EUID mode
+`0700` or the Windows protected current-user/SYSTEM/Administrators DACL. Package staging
+binds the child snapshot digest but
+does not execute the candidate; version evidence must match the attestation, promotion input
+and committed lock. The outer verifier and standalone source-build version probe run inside
+an owned process tree: Unix uses validated process-group fencing and Windows uses the native
+`KILL_ON_JOB_CLOSE` Job Object path. Darwin invokes the compiled publisher through its held
+vnode after a fail-closed preflight probe; standalone calls recheck it afterward and held
+RPC sessions recheck it when the lease closes. The payload-free helper build root is
+retained for OS temp reclamation rather than deleted by path. Failed pre-commit trees are
+retained with bounded count/entries/bytes. After identity capture, their receipts authorize
+the identity-bound explicit cleanup API/CLI; an early lease loss may retain only the path.
+If a hard exit prevents a receipt or an incomplete receipt lacks identity, the lease-bound
+read-only listing API/CLI returns exact native identities and bounded inventory for
+subsequent explicit cleanup; it does not harden or delete during discovery. Final removal
+is native, handle-relative and
+performs a complete bounded deep-tree
+preflight before deletion; safe rollback restores a failed quarantine, while an ambiguous
+retryable quarantine remains quota-counted. Cleanup can reapply identity-bound private
+security when staging failed before hardening; if hardening still fails, only the exact
+current-user-owned, no-reparse, empty root may be removed through native
+`remove-unsecured-empty`. Cleanup refuses a replaced or non-empty unsafe residue. Final
+signing, `Ling Stack Setup.exe` inclusion, production platform-owner wiring, product-state
+E2E, Windows hosted-runner validation and real-machine acceptance remain. In particular,
+this slice has no successful Windows hosted native-helper compile, `Global` parent-mutex/
+private-DACL/`WAIT_ABANDONED`, or owned-process runtime execution evidence.
+
+Both Darwin and Win32 packaged-provider production gates remain off. Packaged Desktop
+therefore still uses the external provider path until its platform-specific runtime and
+signed package satisfy the completion gates in the implementation plan.
+
+This is not `bundled_embedded` completion: an external installation such as
+`/Applications/CuaDriver.app` must not be removed while the active `external_local` path
+still resolves through it.
 
 The Windows production Publisher and signing service are release inputs, not prerequisites
 for implementing the bundled provider. Internal implementation closes with a real

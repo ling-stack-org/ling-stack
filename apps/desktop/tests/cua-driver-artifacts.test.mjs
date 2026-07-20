@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import {
+  CuaDriverArtifactLockError,
   readCuaDriverProviderLock,
   validateCuaDriverProviderLock,
 } from "../dist/main/cua-driver/artifact-lock.js";
@@ -114,6 +115,35 @@ test("provider lock rejects a platform record that is not explicitly enabled", (
       requireReleaseEvidence: false,
     }),
     /provider_lock_platform_not_enabled/,
+  );
+});
+
+test("runtime provider-lock wrapper preserves shared error codes and clone isolation", () => {
+  const original = createDarwinLock();
+  const validated = validateCuaDriverProviderLock(original, {
+    platform: "darwin",
+    architecture: "arm64",
+    requireReleaseEvidence: false,
+  });
+  assert.notEqual(validated, original);
+  assert.notEqual(validated.platforms.darwin, original.platforms.darwin);
+  validated.platforms.darwin.runtime.args[0] = "mutated-clone";
+  assert.equal(original.platforms.darwin.runtime.args[0], "mcp");
+
+  const invalid = structuredClone(original);
+  invalid.platforms.darwin.sourceBuild.cargoLockSha256 = "invalid";
+  assert.throws(
+    () => validateCuaDriverProviderLock(invalid, {
+      platform: "darwin",
+      architecture: "arm64",
+      requireReleaseEvidence: false,
+    }),
+    (error) => {
+      assert.ok(error instanceof CuaDriverArtifactLockError);
+      assert.equal(error.code, "cua_driver_artifact_lock_invalid");
+      assert.equal(error.message, "provider_lock_darwin_source_build_invalid");
+      return true;
+    },
   );
 });
 

@@ -46,6 +46,8 @@ import {
   verifyReferenceArtifactEvidence,
 } from "../scripts/cua-driver-reference-artifacts.mjs";
 import {
+  bindExpectedProviderSnapshot,
+  createObservedProviderVersionResolverForTest,
   stableRuntimeProbe,
   verifyAttestationShape,
   verifyOutputMetadataBindings,
@@ -122,7 +124,7 @@ test("source-build workflow actions use immutable full commit SHAs", async () =>
     workflow.indexOf("  macos-unsigned:"),
   );
   const uses = [...sourceJobs.matchAll(/^\s+uses:\s+([^\s]+)$/gmu)].map((match) => match[1]);
-  assert.deepEqual(uses.length, 6);
+  assert.deepEqual(uses.length, 7);
   for (const action of uses) assert.match(action, /^[^@]+@[0-9a-f]{40}$/u);
 });
 
@@ -133,6 +135,30 @@ test("verify-only validates the pinned source, patch series and closed packaging
   assert.equal(value.ok, true);
   assert.equal(value.packagingEligible, false);
   assert.match(value.patchSet, /^[0-9a-f]{64}$/u);
+});
+
+test("source-build verification stays non-promoting when package authority enables a platform", async () => {
+  const promoted = await copyResources();
+  try {
+    const lock = await readJson(join(promoted, "provider-lock.json"));
+    lock.enabledPlatforms = ["darwin"];
+    lock.platforms = { darwin: {} };
+    await writeJson(join(promoted, "provider-lock.json"), lock);
+
+    const verified = await verifyProviderInputs(promoted);
+    assert.deepEqual(verified.providerLock.enabledPlatforms, ["darwin"]);
+    assert.equal(verified.lock.packagingGate.eligible, false);
+
+    const inputs = await readJson(join(promoted, "source-build-inputs.json"));
+    inputs.packagingGate.eligible = true;
+    await writeJson(join(promoted, "source-build-inputs.json"), inputs);
+    await assert.rejects(
+      verifyProviderInputs(promoted),
+      /source-build packaging gate must remain closed/u,
+    );
+  } finally {
+    await rm(promoted, { recursive: true, force: true });
+  }
 });
 
 test("source builder refuses overlapping or pre-existing output paths without deleting them", async () => {
@@ -505,6 +531,7 @@ test("reference and built binary identity pins fail closed", async () => {
   assert.deepEqual(inspectUniversalMachO(macho).architectures, ["arm64", "x86_64"]);
   const wrongArchitecture = Buffer.from(macho);
   wrongArchitecture.writeUInt32BE(0x01000012, 8);
+  wrongArchitecture.writeUInt32LE(0x01000012, 48 + 4);
   assert.throws(() => inspectUniversalMachO(wrongArchitecture), /must contain exactly arm64 and x86_64/);
 });
 
@@ -523,6 +550,66 @@ test("repeated-build digest verifier catches a changed artifact", async () => {
   assert.notEqual(unequal.code, 0);
   assert.match(unequal.stderr, /repeated-build digest mismatch/);
   await rm(root, { recursive: true, force: true });
+});
+
+test("staging expectation binds verification to the exact child snapshot", () => {
+  const snapshot = Object.freeze({
+    bytes: Buffer.from("bounded-provider-snapshot"),
+    sha256: "a".repeat(64),
+  });
+  assert.strictEqual(
+    bindExpectedProviderSnapshot({
+      expectedProviderSha256: snapshot.sha256,
+      relativePath: "darwin/cua-driver",
+      snapshot,
+    }),
+    snapshot,
+  );
+  assert.throws(
+    () => bindExpectedProviderSnapshot({
+      expectedProviderSha256: "b".repeat(64),
+      relativePath: "darwin/cua-driver",
+      snapshot,
+    }),
+    /provider changed after staging snapshot/u,
+  );
+});
+
+test("staging version evidence never executes the provider candidate", async () => {
+  const calls = [];
+  const resolveVersion = createObservedProviderVersionResolverForTest(
+    async (executablePath) => {
+      calls.push(executablePath);
+      return "cua-driver 0.8.3";
+    },
+  );
+
+  assert.equal(await resolveVersion({
+    attestationVersionOutput: "cua-driver 0.8.3",
+    executablePath: "/tmp/staged-candidate-must-not-run",
+    expectedVersion: "0.8.3",
+    stagingExpected: true,
+  }), "cua-driver 0.8.3");
+  assert.deepEqual(calls, []);
+
+  assert.equal(await resolveVersion({
+    attestationVersionOutput: "ignored in standalone mode",
+    executablePath: "/tmp/standalone-candidate",
+    expectedVersion: "0.8.3",
+    stagingExpected: false,
+  }), "cua-driver 0.8.3");
+  assert.deepEqual(calls, ["/tmp/standalone-candidate"]);
+
+  await assert.rejects(
+    resolveVersion({
+      attestationVersionOutput: "cua-driver 0.8.4",
+      executablePath: "/tmp/staged-candidate-must-not-run",
+      expectedVersion: "0.8.3",
+      stagingExpected: true,
+    }),
+    /version output mismatch/u,
+  );
+  assert.deepEqual(calls, ["/tmp/standalone-candidate"]);
 });
 
 test("source-build attestation rejects malformed schema before trusting any digest", async () => {
@@ -566,6 +653,47 @@ test("source-build attestation rejects malformed schema before trusting any dige
     const missingCheck = structuredClone(shaped);
     delete missingCheck.checks.runtimeProbe;
     assert.throws(() => verifyAttestationShape(missingCheck), /attestation checks keys changed/);
+
+    await writeJson(attestation, shaped);
+    const wrongPlatform = await runNode([
+      VERIFY_SCRIPT,
+      "--expected-platform",
+      "win32-x64",
+      "--expected-provider-sha256",
+      "a".repeat(64),
+      "--attestation",
+      attestation,
+      "--output-root",
+      root,
+    ]);
+    assert.notEqual(wrongPlatform.code, 0);
+    assert.match(wrongPlatform.stderr, /does not match the staging expectation/u);
+
+    const missingDigest = await runNode([
+      VERIFY_SCRIPT,
+      "--expected-platform",
+      "darwin",
+      "--attestation",
+      attestation,
+      "--output-root",
+      root,
+    ]);
+    assert.notEqual(missingDigest.code, 0);
+    assert.match(missingDigest.stderr, /must be supplied together/u);
+
+    const invalidDigest = await runNode([
+      VERIFY_SCRIPT,
+      "--expected-platform",
+      "darwin",
+      "--expected-provider-sha256",
+      "invalid",
+      "--attestation",
+      attestation,
+      "--output-root",
+      root,
+    ]);
+    assert.notEqual(invalidDigest.code, 0);
+    assert.match(invalidDigest.stderr, /digest is not a SHA-256/u);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -750,6 +878,7 @@ test("runtime and promotion evidence bindings fail closed field by field", async
     [(value) => { value.sourceBuild.cargoLockSha256 = "0".repeat(64); }, /promotion toolchain bindings mismatch/],
     [(value) => { value.sourceBuild.rustcVersion = "ATTACKER"; }, /promotion toolchain bindings mismatch/],
     [(value) => { value.sourceBuild.cargoVersion = "ATTACKER"; }, /promotion toolchain bindings mismatch/],
+    [(value) => { value.sourceBuild.versionOutput = "cua-driver 0.8.4"; }, /built provider version evidence mismatch/],
     [(value) => { value.sourceBuild.patchSet.id = "attacker"; }, /promotion patch-set bindings mismatch/],
     [(value) => { value.missingFinalIdentity = []; }, /promotion missing-final-identity bindings mismatch/],
     [(value) => { value.unexpected = true; }, /promotion inputs keys changed/],
@@ -1130,7 +1259,7 @@ test("source-build inventory rejects extra or relabeled Windows executables", ()
 });
 
 test("Windows developer-shell environment replaces case-insensitive PATH aliases", () => {
-  const parsed = parseWindowsEnvironment("Path=C:\\VS\\bin;C:\\Windows\r\nVCToolsVersion=14.51.36247\r\n");
+  const parsed = parseWindowsEnvironment("Path=C:\\VS\\bin;C:\\Windows\r\nVCToolsVersion=14.44.35211\r\n");
   assert.equal(parsed.Path, "C:\\VS\\bin;C:\\Windows");
   const merged = mergeEnvironment({ PATH: "stale", HOME: "home" }, parsed, true);
   assert.equal(merged.Path, parsed.Path);
@@ -1214,6 +1343,8 @@ function makeUniversalMachO({ minimumOSVersion, sdkVersion }) {
     buffer.writeUInt32BE(offset, entry + 8);
     buffer.writeUInt32BE(sliceSize, entry + 12);
     buffer.writeUInt32LE(0xfeedfacf, offset);
+    buffer.writeUInt32LE(cpuType, offset + 4);
+    buffer.writeUInt32LE(0x2, offset + 12);
     buffer.writeUInt32LE(1, offset + 16);
     buffer.writeUInt32LE(24, offset + 20);
     buffer.writeUInt32LE(0x32, offset + 32);

@@ -1,5 +1,6 @@
 {
   "compilerOptions": {
+    "allowJs": true,
     "declaration": true,
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
@@ -9,5 +10,5 @@
     "target": "ES2022",
     "types": ["node", "electron"]
   },
-  "include": ["main/**/*.ts", "shared/**/*.ts"]
+  "include": ["main/**/*.ts", "shared/**/*.ts", "shared/**/*.mjs"]
 }
