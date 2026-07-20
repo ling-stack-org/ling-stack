@@ -16,9 +16,16 @@ import {
   resolveDesktopCuaDriverFeatureFlags,
 } from "./cua-driver/feature-gates.js";
 import {
+  CuaDriverAvailabilityPublisher,
+  HttpCuaDriverAvailabilityClient,
+  type CuaDriverAvailabilityClient,
+} from "./cua-driver/availability-publisher.js";
+import {
+  normalizeCuaDriverPlatformBindingMetadata,
   selectCuaDriverPlatformBinding,
   type CuaDriverPlatformBinding,
 } from "./cua-driver/platform-binding.js";
+import type { CuaDriverDesktopPlatformOwner } from "./cua-driver/platform-owner.js";
 import type {
   DesktopDaemonCuaDriverAuthorityTuple,
   DesktopDaemonLifecycle,
@@ -27,6 +34,8 @@ import type {
 export type DesktopRuntimeErrorCode =
   | "architecture_unsupported"
   | "authority_missing"
+  | "platform_owner_conflict"
+  | "platform_owner_mismatch"
   | "shutdown_requested";
 
 export class DesktopRuntimeError extends Error {
@@ -43,6 +52,7 @@ export interface DesktopRuntimeCuaDriverCoordinator {
    * lazy and is spawned only when the daemon opens an MCP session.
    */
   enable(): Promise<CuaDriverCoordinatorSnapshot>;
+  restart?(reason?: string): Promise<CuaDriverCoordinatorSnapshot>;
   shutdown(): Promise<void>;
 }
 
@@ -73,9 +83,11 @@ export interface DesktopRuntimeOptions {
   readonly packaged?: boolean;
   readonly requireReleaseEvidence?: boolean;
   readonly desktopInstanceId?: string;
+  readonly platformOwner?: CuaDriverDesktopPlatformOwner;
   readonly platformBinding?: CuaDriverPlatformBinding;
   readonly platformBindingFactory?: (platform: BundledCuaDriverPlatform) => CuaDriverPlatformBinding;
   readonly coordinatorFactory?: DesktopRuntimeCuaDriverCoordinatorFactory;
+  readonly availabilityClient?: CuaDriverAvailabilityClient;
   readonly onDiagnostic?: (event: string, details?: Readonly<Record<string, unknown>>) => void;
 }
 
@@ -96,6 +108,7 @@ export class DesktopRuntime {
   private operationTail: Promise<void> = Promise.resolve();
   private coordinatorValue: DesktopRuntimeCuaDriverCoordinator | undefined;
   private coordinatorAuthority: DesktopDaemonCuaDriverAuthorityTuple | undefined;
+  private coordinatorPlatformOwnerReady: boolean | undefined;
   private ensureStartedPromise: Promise<DesktopDaemonStatus> | undefined;
   private restartPromise: Promise<DesktopDaemonStatus> | undefined;
   private stopDaemonStatusObserver: (() => void) | undefined;
@@ -109,6 +122,9 @@ export class DesktopRuntime {
     this.resourcesRoot = resolve(options.resourcesRoot);
     this.userDataPath = resolve(options.userDataPath);
     this.featureFlags = options.featureFlags ?? resolveDesktopCuaDriverFeatureFlags();
+    if (options.platformOwner && (options.platformBinding || options.platformBindingFactory)) {
+      throw new DesktopRuntimeError("platform_owner_conflict");
+    }
     this.coordinatorFactory = options.coordinatorFactory
       ?? ((coordinatorOptions) => new CuaDriverDesktopCoordinator(coordinatorOptions));
     this.desktopInstanceId = options.desktopInstanceId
@@ -200,6 +216,31 @@ export class DesktopRuntime {
     return pending;
   }
 
+  /** Rotate only the provider generation after a host permission/session change. */
+  refreshCuaDriverPlatform(reason: string): Promise<void> {
+    if (this.shutdownRequested) {
+      return Promise.reject(new DesktopRuntimeError("shutdown_requested"));
+    }
+    return this.enqueue(async () => {
+      this.assertCanStart();
+      if (!desktopBundledCuaDriverGateEnabled(this.featureFlags, this.platform)) {
+        return;
+      }
+      const coordinator = this.coordinatorValue;
+      if (!coordinator) {
+        await this.reconcileCoordinator();
+        return;
+      }
+      if (coordinator.restart) {
+        await coordinator.restart(reason);
+        return;
+      }
+      await this.shutdownCoordinator(reason);
+      this.assertCanStart();
+      await this.reconcileCoordinator();
+    });
+  }
+
   /**
    * Cleanup is serialized and best-effort-complete: provider/coordinator first,
    * then the Desktop-owned daemon even when the earlier cleanup rejects.
@@ -220,6 +261,7 @@ export class DesktopRuntime {
         }
       };
       await attempt(() => this.shutdownCoordinator("desktop_quit"));
+      await attempt(() => this.options.platformOwner?.dispose());
       await attempt(() => this.options.daemon.stopOwnedDaemon());
       if (firstError !== undefined) {
         throw firstError;
@@ -253,22 +295,82 @@ export class DesktopRuntime {
       throw new DesktopRuntimeError("authority_missing");
     }
     const existingCoordinator = this.coordinatorValue;
-    if (existingCoordinator && sameAuthorityTuple(authority, this.coordinatorAuthority)) {
+    const sameAuthority = existingCoordinator
+      && sameAuthorityTuple(authority, this.coordinatorAuthority);
+    if (existingCoordinator && !sameAuthority) {
+      await this.shutdownCoordinator("authority_rotated");
+      this.assertCanStart();
+    }
+    const platformOwner = this.options.platformOwner;
+    if (platformOwner && platformOwner.platform !== platform) {
+      throw new DesktopRuntimeError("platform_owner_mismatch");
+    }
+    let platformOwnerReady = true;
+    try {
+      await platformOwner?.start();
+    } catch (error) {
+      platformOwnerReady = false;
+      this.options.onDiagnostic?.("desktop_runtime.cua_driver_platform_observer_unavailable", {
+        platform,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+    this.assertCanStart();
+    const platformOwnerState = platformOwner ? platformOwnerReady : undefined;
+    if (
+      existingCoordinator
+      && sameAuthority
+      && this.coordinatorPlatformOwnerReady === platformOwnerState
+    ) {
       // This is deliberately an idempotent revalidation, not a no-op. A
       // transient resource or lease-publication failure may recover while the
       // authenticated daemon tuple remains unchanged.
       await this.enableCoordinator(existingCoordinator, authority, platform);
       return;
     }
-    await this.shutdownCoordinator("authority_rotated");
-    this.assertCanStart();
+    if (existingCoordinator && sameAuthority) {
+      await this.shutdownCoordinator("platform_observer_recovered");
+      this.assertCanStart();
+    }
 
-    // Production Darwin Team ID and Win32 signing/system-root policy belong to
-    // the follow-up platform-owner slice. Until main injects that trusted
-    // binding, this fallback intentionally remains fail-closed.
-    const platformBinding = this.options.platformBinding
-      ?? this.options.platformBindingFactory?.(platform)
-      ?? selectCuaDriverPlatformBinding(platform);
+    // A production main process injects one policy-bound platform owner. Tests
+    // and unfinished package slices that omit it retain the fail-closed binding.
+    const platformBinding = platformOwnerReady
+      ? platformOwner?.binding
+        ?? this.options.platformBinding
+        ?? this.options.platformBindingFactory?.(platform)
+        ?? selectCuaDriverPlatformBinding(platform)
+      : selectCuaDriverPlatformBinding(platform);
+    const platformMetadata = normalizeCuaDriverPlatformBindingMetadata(
+      platformBinding.metadata,
+      platform,
+    );
+    const availabilityPublisher = new CuaDriverAvailabilityPublisher({
+      client: this.options.availabilityClient ?? new HttpCuaDriverAvailabilityClient({
+        daemonBaseUrl: this.options.daemonBaseUrl,
+        bridgeToken: this.options.bridgeToken,
+      }),
+      authority: Object.freeze({
+        desktopInstanceId: this.desktopInstanceId,
+        desktopInstanceEpoch: authority.desktopInstanceEpoch,
+        bridgeConnectionId: authority.bridgeConnectionId,
+        daemonAuthorityEpoch: authority.daemonAuthorityEpoch,
+        workspaceCwd: authority.workspaceCwd,
+        platform,
+        ...(platformMetadata.integrityCoverage
+          ? { integrityCoverage: platformMetadata.integrityCoverage }
+          : {}),
+        limitations: platformMetadata.limitations,
+      }),
+      onError: (error, report) => {
+        this.options.onDiagnostic?.("desktop_runtime.cua_driver_availability_projection_failed", {
+          platform,
+          generation: report.generation,
+          providerState: report.providerState,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      },
+    });
     const coordinator = this.coordinatorFactory({
       platform,
       architecture,
@@ -288,9 +390,11 @@ export class DesktopRuntime {
       packaged: this.options.packaged,
       requireReleaseEvidence: this.options.requireReleaseEvidence,
       platformBinding,
+      availabilityPublisher,
     });
     this.coordinatorValue = coordinator;
     this.coordinatorAuthority = authority;
+    this.coordinatorPlatformOwnerReady = platformOwnerState;
     this.options.onDiagnostic?.("desktop_runtime.cua_driver_composed", {
       platform,
       gateEnabled: true,
@@ -376,6 +480,7 @@ export class DesktopRuntime {
     if (this.coordinatorValue === coordinator) {
       this.coordinatorValue = undefined;
       this.coordinatorAuthority = undefined;
+      this.coordinatorPlatformOwnerReady = undefined;
     }
   }
 

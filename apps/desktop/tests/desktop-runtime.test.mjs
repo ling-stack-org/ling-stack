@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { DesktopRuntime } from "../dist/main/desktop-runtime.js";
+import { DesktopRuntime, DesktopRuntimeError } from "../dist/main/desktop-runtime.js";
 
 const workspaceCwd = "/tmp/ling-desktop-runtime-workspace";
 
@@ -66,6 +66,260 @@ test("DesktopRuntime sequential ensure reuses the coordinator for the same autho
   assert.equal(runtime.cuaDriverCoordinator, firstCoordinator);
   assert.equal(coordinators[0].enableCalls, 2, "the cached tuple revalidates through idempotent enable without a second owner");
   assert.equal(coordinators[0].shutdownCalls, 0);
+});
+
+test("DesktopRuntime rejects ambiguous or cross-platform owner composition", async () => {
+  const daemon = fakeDaemon(authority("connection-owner-guard", 1));
+  const owner = {
+    platform: "darwin",
+    binding: fakePlatformBinding(),
+    async start() {},
+    async dispose() {},
+  };
+  assert.throws(
+    () => createRuntime(daemon, { platformOwner: owner }),
+    (error) => error instanceof DesktopRuntimeError && error.code === "platform_owner_conflict",
+  );
+
+  let ownerStartCalls = 0;
+  const mismatch = createRuntime(daemon, {
+    platformBinding: undefined,
+    platformOwner: {
+      ...owner,
+      platform: "win32",
+      binding: { ...owner.binding, platform: "win32" },
+      async start() { ownerStartCalls += 1; },
+    },
+  });
+  await assert.rejects(
+    mismatch.ensureStarted(),
+    (error) => error instanceof DesktopRuntimeError && error.code === "platform_owner_mismatch",
+  );
+  assert.equal(ownerStartCalls, 0, "a mismatched owner must be rejected before observer startup");
+  await mismatch.shutdown();
+});
+
+test("DesktopRuntime reuses one platform owner across authority rotation and disposes after coordinator", async () => {
+  const daemon = fakeDaemon(authority("connection-owner-a", 1));
+  const events = [];
+  const binding = fakePlatformBinding();
+  const owner = {
+    platform: "darwin",
+    binding,
+    startCalls: 0,
+    disposeCalls: 0,
+    async start() {
+      this.startCalls += 1;
+      events.push("owner.start");
+    },
+    async dispose() {
+      this.disposeCalls += 1;
+      events.push("owner.dispose");
+    },
+  };
+  const coordinators = [];
+  const runtime = createRuntime(daemon, {
+    platformBinding: undefined,
+    platformOwner: owner,
+    coordinatorFactory: (options) => {
+      assert.equal(options.platformBinding, binding);
+      const coordinator = fakeCoordinator(() => events.push("coordinator.shutdown"));
+      coordinators.push(coordinator);
+      return coordinator;
+    },
+  });
+
+  await runtime.ensureStarted();
+  daemon.cuaDriverAuthorityTuple = authority("connection-owner-b", 2);
+  await runtime.ensureStarted();
+  await runtime.shutdown();
+
+  assert.equal(coordinators.length, 2);
+  assert.equal(owner.startCalls, 2, "authority rotation may revalidate but never recreates the owner");
+  assert.equal(owner.disposeCalls, 1);
+  assert.deepEqual(events, [
+    "owner.start",
+    "coordinator.shutdown",
+    "owner.start",
+    "coordinator.shutdown",
+    "owner.dispose",
+  ]);
+});
+
+test("platform refresh rotates only the current provider generation", async () => {
+  const daemon = fakeDaemon(authority("connection-refresh", 1));
+  const coordinator = fakeCoordinator();
+  const runtime = createRuntime(daemon, {
+    coordinatorFactory: () => coordinator,
+  });
+  await runtime.ensureStarted();
+
+  await runtime.refreshCuaDriverPlatform("darwin_permission_changed");
+
+  assert.equal(coordinator.restartCalls, 1);
+  assert.deepEqual(coordinator.restartReasons, ["darwin_permission_changed"]);
+  assert.equal(daemon.restartCalls, 0, "permission changes must not restart the daemon handshake");
+});
+
+test("platform refresh is inert behind a closed gate and composes when no coordinator exists", async () => {
+  const closedDaemon = fakeDaemon(authority("connection-refresh-closed", 1));
+  const closedRuntime = createRuntime(closedDaemon, { featureFlags: closedFeatureFlags() });
+  await closedRuntime.refreshCuaDriverPlatform("closed_gate");
+  assert.equal(closedDaemon.ensureStartedCalls, 0);
+  assert.equal(closedRuntime.cuaDriverCoordinator, undefined);
+  await closedRuntime.shutdown();
+
+  const daemon = fakeDaemon(authority("connection-refresh-compose", 1));
+  const coordinator = fakeCoordinator();
+  const runtime = createRuntime(daemon, { coordinatorFactory: () => coordinator });
+  await runtime.refreshCuaDriverPlatform("initial_observation");
+  assert.equal(coordinator.enableCalls, 1);
+  assert.equal(runtime.cuaDriverCoordinator, coordinator);
+  assert.equal(daemon.restartCalls, 0);
+  await runtime.shutdown();
+});
+
+test("platform refresh replaces a coordinator that has no restart operation", async () => {
+  const daemon = fakeDaemon(authority("connection-refresh-replace", 1));
+  const coordinators = [];
+  const runtime = createRuntime(daemon, {
+    coordinatorFactory: () => {
+      const coordinator = {
+        enableCalls: 0,
+        shutdownCalls: 0,
+        async enable() {
+          this.enableCalls += 1;
+          return availabilitySnapshot();
+        },
+        async shutdown() { this.shutdownCalls += 1; },
+      };
+      coordinators.push(coordinator);
+      return coordinator;
+    },
+  });
+  await runtime.ensureStarted();
+  await runtime.refreshCuaDriverPlatform("adapter_without_restart");
+  assert.equal(coordinators.length, 2);
+  assert.equal(coordinators[0].shutdownCalls, 1);
+  assert.equal(coordinators[1].enableCalls, 1);
+  await runtime.shutdown();
+});
+
+test("runtime binds availability reports to the authenticated Desktop authority tuple", async () => {
+  const daemon = fakeDaemon(authority("connection-availability", 4));
+  const reports = [];
+  const runtime = createRuntime(daemon, {
+    availabilityClient: {
+      async publish(report) {
+        reports.push(report);
+      },
+    },
+    coordinatorFactory: (options) => ({
+      async enable() {
+        await options.availabilityPublisher.publish({
+          lifecycle: "failed",
+          providerState: "permission_required",
+          generation: 3,
+          reason: "darwin_accessibility_permission_required",
+        });
+        return availabilitySnapshot();
+      },
+      async shutdown() {
+        await options.availabilityPublisher.close();
+      },
+    }),
+  });
+
+  await runtime.ensureStarted();
+
+  assert.deepEqual(reports, [{
+    schemaVersion: 1,
+    providerId: "cua-driver",
+    desktopInstanceId: runtime.desktopInstanceId,
+    desktopInstanceEpoch: 4,
+    bridgeConnectionId: "connection-availability",
+    daemonAuthorityEpoch: "authority-a",
+    workspaceCwd,
+    generation: 3,
+    sequence: 1,
+    platform: "darwin",
+    providerState: "permission_required",
+    reason: "darwin_accessibility_permission_required",
+    limitations: [],
+  }]);
+  await runtime.shutdown();
+});
+
+test("platform observer startup failure keeps the daemon usable and provider fail-closed", async () => {
+  const daemon = fakeDaemon(authority("connection-observer-failure", 1));
+  const diagnostics = [];
+  const coordinator = fakeCoordinator();
+  const ownerBinding = fakePlatformBinding();
+  let composedBinding;
+  const runtime = createRuntime(daemon, {
+    platformBinding: undefined,
+    platformOwner: {
+      platform: "darwin",
+      binding: ownerBinding,
+      async start() {
+        throw new Error("permission monitor unavailable");
+      },
+      async dispose() {},
+    },
+    coordinatorFactory: (options) => {
+      composedBinding = options.platformBinding;
+      return coordinator;
+    },
+    onDiagnostic: (event, details) => diagnostics.push({ event, details }),
+  });
+
+  const status = await runtime.ensureStarted();
+
+  assert.equal(status.state, "connected");
+  assert.equal(coordinator.enableCalls, 1);
+  assert.equal(composedBinding.availability.status, "unavailable");
+  assert.notEqual(composedBinding, ownerBinding);
+  assert.deepEqual(diagnostics[0], {
+    event: "desktop_runtime.cua_driver_platform_observer_unavailable",
+    details: { platform: "darwin", error: "permission monitor unavailable" },
+  });
+  await runtime.shutdown();
+});
+
+test("a recovered platform observer replaces the fail-closed coordinator on the same authority", async () => {
+  const daemon = fakeDaemon(authority("connection-observer-recovery", 1));
+  const ownerBinding = fakePlatformBinding();
+  const bindings = [];
+  const coordinators = [];
+  let startCalls = 0;
+  const runtime = createRuntime(daemon, {
+    platformBinding: undefined,
+    platformOwner: {
+      platform: "darwin",
+      binding: ownerBinding,
+      async start() {
+        startCalls += 1;
+        if (startCalls === 1) throw new Error("transient observer failure");
+      },
+      async dispose() {},
+    },
+    coordinatorFactory: (options) => {
+      bindings.push(options.platformBinding);
+      const coordinator = fakeCoordinator();
+      coordinators.push(coordinator);
+      return coordinator;
+    },
+  });
+
+  await runtime.ensureStarted();
+  assert.equal(bindings[0].availability.status, "unavailable");
+  await runtime.ensureStarted();
+
+  assert.equal(startCalls, 2);
+  assert.equal(coordinators.length, 2);
+  assert.equal(coordinators[0].shutdownCalls, 1);
+  assert.equal(bindings[1], ownerBinding);
+  await runtime.shutdown();
 });
 
 test("a transient availability failure is non-fatal and the same tuple retries idempotent enable", async () => {
@@ -398,7 +652,14 @@ test("unsupported platforms remain gate-closed and unsupported bundled architect
 
 test("Win32 composition maps x64 to the shared x86_64 contract and uses the injected binding factory", async () => {
   const daemon = fakeDaemon(authority("connection-win32", 3));
-  const binding = { platform: "win32", fixture: true };
+  const binding = {
+    platform: "win32",
+    fixture: true,
+    metadata: {
+      integrityCoverage: "standard",
+      limitations: ["elevated_pixel_input", "uwp_send_input"],
+    },
+  };
   const bindingPlatforms = [];
   let coordinatorOptions;
   const runtime = createRuntime(daemon, {
@@ -689,10 +950,17 @@ function fakeDaemon(initialAuthority, options = {}) {
 function fakeCoordinator(onShutdown, options = {}) {
   return {
     enableCalls: 0,
+    restartCalls: 0,
+    restartReasons: [],
     shutdownCalls: 0,
     async enable() {
       this.enableCalls += 1;
       return options.enable ? options.enable() : availabilitySnapshot();
+    },
+    async restart(reason) {
+      this.restartCalls += 1;
+      this.restartReasons.push(reason);
+      return availabilitySnapshot();
     },
     async shutdown() {
       this.shutdownCalls += 1;

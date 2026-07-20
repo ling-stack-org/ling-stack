@@ -3,6 +3,7 @@ import {
   BrowserWindow,
   desktopCapturer,
   dialog,
+  powerMonitor,
   screen,
   systemPreferences,
   webContents,
@@ -20,7 +21,11 @@ import { createInterface } from "node:readline";
 import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import { ComputerUsePreviewCoordinator } from "./computer-use/coordinator.js";
-import { resolveDesktopCuaDriverFeatureFlags } from "./cua-driver/feature-gates.js";
+import {
+  desktopBundledCuaDriverGateEnabled,
+  resolveDesktopCuaDriverFeatureFlags,
+} from "./cua-driver/feature-gates.js";
+import { createPackagedCuaDriverDesktopPlatformOwner } from "./cua-driver/platform-owner-composition.js";
 import { DaemonComputerUsePreviewDescriptorResolver } from "./computer-use/daemon-descriptor-resolver.js";
 import { DaemonComputerUseProjectionClient } from "./computer-use/daemon-projection-client.js";
 import {
@@ -276,25 +281,69 @@ async function openMainWindowOnce(attempt: DesktopStartupOpenAttempt): Promise<b
   if (!attempt.isCurrent()) {
     return false;
   }
-  desktopRuntime ??= new DesktopRuntime({
-    daemon: new DesktopDaemonLifecycle({
-      baseUrl: daemonBaseUrl,
-      daemonEntryPath: resources.daemonEntryPath,
-      defaultWorkspaceCwd,
-      desktopBridgeToken: bridgeToken,
+  if (!desktopRuntime) {
+    const gateEnabled = desktopBundledCuaDriverGateEnabled(
       cuaDriverFeatureFlags,
-      ...(smokeHeadless && app.runningUnderARM64Translation ? { startupTimeoutMs: 60_000 } : {}),
-      onDiagnostic: logStartup,
-    }),
-    daemonBaseUrl,
-    bridgeToken,
-    workspaceCwd: defaultWorkspaceCwd,
-    resourcesRoot: resources.resourcesRoot,
-    userDataPath: app.getPath("userData"),
-    featureFlags: cuaDriverFeatureFlags,
-    packaged: app.isPackaged,
-    onDiagnostic: logStartup,
-  });
+      process.platform,
+    );
+    let platformOwner: Awaited<ReturnType<typeof createPackagedCuaDriverDesktopPlatformOwner>> | undefined;
+    if (gateEnabled) {
+      try {
+        platformOwner = await createPackagedCuaDriverDesktopPlatformOwner({
+          platform: process.platform,
+          resourcesPath: resources.resourcesRoot,
+          ...(process.platform === "win32"
+            ? {
+                // Capture the main process' Windows platform fact explicitly;
+                // lower layers never fall back to provider/caller environment.
+                ...(process.env.SystemRoot ? { win32SystemRoot: process.env.SystemRoot } : {}),
+                win32PowerMonitor: powerMonitor,
+                baseEnvironment: process.env,
+              }
+            : {}),
+          onDarwinPermissionChanged: async () => {
+            await desktopRuntime?.refreshCuaDriverPlatform("darwin_permission_changed");
+          },
+        });
+      } catch (error) {
+        // A bad or missing trust policy disables only the bundled provider.
+        // The normal Ling window stays up while the provider remains fail-closed.
+        logStartup("cua_driver.platform_owner_unavailable", {
+          platform: process.platform,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+    if (!attempt.isCurrent()) {
+      await platformOwner?.dispose();
+      return false;
+    }
+    try {
+      desktopRuntime = new DesktopRuntime({
+        daemon: new DesktopDaemonLifecycle({
+          baseUrl: daemonBaseUrl,
+          daemonEntryPath: resources.daemonEntryPath,
+          defaultWorkspaceCwd,
+          desktopBridgeToken: bridgeToken,
+          cuaDriverFeatureFlags,
+          ...(smokeHeadless && app.runningUnderARM64Translation ? { startupTimeoutMs: 60_000 } : {}),
+          onDiagnostic: logStartup,
+        }),
+        daemonBaseUrl,
+        bridgeToken,
+        workspaceCwd: defaultWorkspaceCwd,
+        resourcesRoot: resources.resourcesRoot,
+        userDataPath: app.getPath("userData"),
+        featureFlags: cuaDriverFeatureFlags,
+        packaged: app.isPackaged,
+        ...(platformOwner ? { platformOwner } : {}),
+        onDiagnostic: logStartup,
+      });
+    } catch (error) {
+      await platformOwner?.dispose();
+      throw error;
+    }
+  }
   const daemonStartup = await ensureDesktopDaemonWithStartupRecovery({
     daemon: desktopRuntime,
     allowInteractiveRecovery: !smokeHeadless,
