@@ -384,6 +384,7 @@ import {
   type CreateMcpServerInput,
   type ListMcpServersOptions,
   type ListMcpToolsOptions,
+  type McpAuthorityRevision,
   type McpRuntimeStatusSnapshot,
   type McpServer,
   type McpServerStatus,
@@ -2796,6 +2797,10 @@ export class SqliteRunStore implements RunStore {
 
   getMcpServer(id: string): McpServer | undefined {
     return this.mcps.getMcpServer(id);
+  }
+
+  getMcpAuthorityRevision(serverId: string): McpAuthorityRevision | undefined {
+    return this.mcps.getMcpAuthorityRevision(serverId);
   }
 
   listMcpServers(options: ListMcpServersOptions = {}): McpServer[] {

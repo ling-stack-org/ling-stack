@@ -8,6 +8,7 @@ import {
   type CreateMcpServerInput,
   type ListMcpServersOptions,
   type ListMcpToolsOptions,
+  type McpAuthorityRevision,
   type McpRuntimeStatusSnapshot,
   type McpServer,
   type McpServerStatus,
@@ -111,6 +112,22 @@ export class SqliteMcpStore {
   getMcpServer(id: string): McpServer | undefined {
     const row = this.context.database.prepare(mcpServerSelectSql("WHERE id = ?")).get(id);
     return row ? mapMcpServer(row) : undefined;
+  }
+
+  getMcpAuthorityRevision(serverId: string): McpAuthorityRevision | undefined {
+    const row = this.context.database
+      .prepare(`
+        SELECT server_revision, tools_revision
+        FROM mcp_authority_revisions
+        WHERE server_id = ?
+      `)
+      .get(serverId);
+    return row
+      ? {
+          serverRevision: readNumber(row, "server_revision"),
+          toolsRevision: readNumber(row, "tools_revision"),
+        }
+      : undefined;
   }
 
   listMcpServers(options: ListMcpServersOptions = {}): McpServer[] {

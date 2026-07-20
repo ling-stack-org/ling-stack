@@ -318,6 +318,8 @@ test("runs snapshot only explicitly authorized teammate MCP tools", async () => 
     assert.equal(broker.calls[0].toolName, "list_pull_requests");
     assert.deepEqual(broker.calls[0].input, { repository: "openclaw/ling-stack" });
     assert.equal(broker.calls[0].resolvedSecret.value, "Bearer run-secret-token");
+    assert.equal(broker.calls[0].workspaceCwd, cwd);
+    assert.equal(broker.calls[0].signal, runner.signal);
     const events = await getJson(`${daemon.url}/runs/${encodeURIComponent(runId)}/events?cwd=${encodeURIComponent(cwd)}`);
     assert.equal(JSON.stringify(events).includes("run-secret-token"), false);
     assert.match(JSON.stringify(events), /\[REDACTED\]/);
@@ -402,7 +404,15 @@ class FakeMcpBroker {
 
   async callTool(server, options, toolName, input) {
     const resolvedSecret = options.secretResolver.resolve("env:MCP_RUN_AUTHORIZATION", "custom_header");
-    this.calls.push({ server, resolvedSecret, toolName, input });
+    options.assertResultCurrent?.();
+    this.calls.push({
+      server,
+      resolvedSecret,
+      toolName,
+      input,
+      workspaceCwd: options.workspaceCwd,
+      signal: options.signal,
+    });
     return {
       content: [{ type: "text", text: `called ${toolName}` }],
       details: { ok: true, note: `broker observed ${resolvedSecret.value}` },
@@ -414,6 +424,7 @@ class SnapshotRunner {
   constructor() {
     this.runs = [];
     this.mcpResults = [];
+    this.signal = new AbortController().signal;
   }
 
   async runTask(options) {
@@ -436,6 +447,7 @@ class SnapshotRunner {
         task: options.task,
         cwd: options.cwd,
         defaultApproval: firstMcpTool.defaultApproval,
+        signal: this.signal,
       });
       this.mcpResults.push(firstMcpResult);
     }

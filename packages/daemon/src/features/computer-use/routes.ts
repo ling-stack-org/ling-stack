@@ -21,6 +21,10 @@ import { listBundledPackageDescriptors } from "../plugins/source-index.js";
 import { resolveManagedCuaDriverProvider } from "./provider-eligibility.js";
 import { validateProviderTargetOwnership } from "./windows-target-validation.js";
 import {
+  assertMcpResultAuthorityCurrent,
+  captureMcpServerResultAuthority,
+} from "../mcp/result-authority.js";
+import {
   configuredTokenMatches,
   desktopBridgeTokenStatus,
 } from "./desktop-bridge-auth.js";
@@ -258,12 +262,17 @@ async function handlePrivatePreviewSource(
     const nativeWindowId = resolvedDescriptor.target.nativeWindowId;
     const store = context.storeRegistry.getStore(cwd);
     const now = new Date().toISOString();
-    const server = resolveManagedCuaDriverProvider({
+    const provider = resolveManagedCuaDriverProvider({
       store,
       descriptors: listBundledPackageDescriptors(),
       now,
       platform: resolvedDescriptor.platform === "windows" ? "win32" : "darwin",
-    })?.server;
+      cuaDriverRuntimeAuthority: context.mcpBroker.cuaDriverRuntimeAuthority,
+    });
+    const capturedProvider = provider
+      ? captureMcpServerResultAuthority(store, provider.server.id)
+      : undefined;
+    const server = capturedProvider?.server;
     const ownershipAbort = createPrivateSourceOwnershipAbort(
       request,
       response,
@@ -283,7 +292,31 @@ async function handlePrivatePreviewSource(
           processId,
           nativeWindowId,
           now,
+          workspaceCwd: cwd,
           signal: ownershipAbort.signal,
+          assertResultCurrent: () => {
+            try {
+              const currentServer = assertMcpResultAuthorityCurrent(
+                store,
+                capturedProvider.authority,
+              );
+              const current = resolveManagedCuaDriverProvider({
+                store,
+                descriptors: listBundledPackageDescriptors(),
+                now: new Date().toISOString(),
+                platform: resolvedDescriptor.platform === "windows" ? "win32" : "darwin",
+                cuaDriverRuntimeAuthority: context.mcpBroker.cuaDriverRuntimeAuthority,
+              });
+              if (
+                current?.server.id !== server.id
+                || current.server.updatedAt !== currentServer.updatedAt
+              ) {
+                throw new Error("provider_changed");
+              }
+            } catch {
+              throw new Error("computer_use_provider_authority_stale");
+            }
+          },
         }),
       );
     } catch (error) {

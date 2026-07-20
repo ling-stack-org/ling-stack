@@ -10,11 +10,20 @@ direct-child lifecycle, host-owned TCC readiness and retrying permission-change
 monitoring. The Win32 standard adapter implements policy-pinned identity, state-root
 ACL/reparse protection, direct-child lifecycle, active-child readiness and Electron
 recovery hints. The Desktop runtime now publishes lazy coordinator availability and
-fences daemon status/authority loss. The daemon activation transport/fence foundation is
-implemented, but routes, startup composition and pooled normal tool calls are not connected
-yet. Opt-in pre-sign package staging and the Darwin/Win32 native no-replace atomic publisher
-core are implemented without final signing or native final-identity authority and are not
-connected to default packaging. Production staging authority is pinned to the committed
+fences daemon status/authority loss. The daemon activation transport/fence foundation and
+its composition have landed:
+startup reset runs before route binding; first lease publication and replacement reconcile
+retained intent; renewal reuses the same authenticated generation client; revoke and expiry
+clear effective state and close the pool; the canonical plugin routes use the activation
+transaction; the shared generation broker and generic MCP route fence prevent raw or
+non-atomic bypass; runner cancellation and post-result checks discard late calls; and the
+Catalog projects requested versus effective enablement only while exact host-platform
+authority and a current Desktop lease remain live. The new composition is inert while
+the gate is off, so external behavior and persisted external commands remain unchanged.
+Opt-in pre-sign package staging and the
+Darwin/Win32 native no-replace atomic publisher core are implemented without final signing
+or native final-identity authority and are not connected to default packaging. Production
+staging authority is pinned to the committed
 trust root and real verifier. Complete output-parent staging/cleanup mutation sections use
 a cross-process native parent lease; temp-root parent/root identities bind security and
 publication, and retained failures have bounded identity-bound cleanup, including the
@@ -1420,10 +1429,69 @@ A reused daemon must advertise support for the lease protocol during the existin
 bridge compatibility probe. If it does not, Desktop treats it as bridge-incompatible
 rather than opening the product with a partially working provider path.
 
+Current Slice 3 daemon-composition sub-slice status:
+
+- one process-wide composition owner instantiates the activation service, generation pool
+  and shared broker while leaving the gate-off external broker path unchanged;
+- startup reset commits before the daemon listens, and a reset failure prevents route
+  binding;
+- first publication and a replacement synchronously hide prior effective state, close stale
+  pool entries and reconcile retained intent in the background; renewal changes only the
+  lease deadline and reuses the generation HMAC/session/client;
+- if the durable invalidation write throws or loses its CAS, the coordinator clears the
+  accepted lease, closes the pool, returns HTTP 503 for a publication, retries the durable
+  fence after authority removal and poisons renewal deduplication until a later fence
+  succeeds;
+- explicit revoke is idempotent and returns retryable HTTP 503 until its durable fence
+  commits; expiry and authenticated-handshake retirement have no waiting requester, so a
+  single unref'ed bounded-backoff retry remains active until persistence recovers or daemon
+  shutdown begins;
+- revoke, expiry, a new authenticated handshake and shutdown remove current authority before
+  draining or aborting the generation client;
+- canonical `trusted-local:cua-driver` enable/check/disable routes are workspace-bound to the
+  Desktop authority and every mutating/action route on the historical
+  `bundled:cua-driver` compatibility record is rejected, so it cannot become a second
+  runtime surface;
+- generic MCP check/tool-sync routes reject bundled Cua mutation outside the activation
+  transaction, while normal broker calls use the generation pool and never reach the raw
+  Streamable HTTP tool-list fallback;
+- runner cancellation reaches the pooled call, and lease generation, persisted monotonic
+  server/tool authority revisions plus bundled requested revision/activation epoch are
+  checked again before a completed result is exposed; revisions are independent of
+  wall-clock timestamps, so same-millisecond disable/re-enable ABA is also rejected;
+- activation admits only the reviewed pinned `0.8.3` tool surface, removes
+  `check_for_update` and `install_ffmpeg`, rejects unknown future tools as an embedded
+  protocol mismatch, and locally forces read/ask/deny policy without trusting provider
+  annotations;
+- Computer Use run snapshots and private preview ownership select the canonical embedded
+  provider from the activation row plus exact logical placeholder, require the atomic ready
+  projection, current host platform and a live lease, and use the generation broker; the
+  live-lease condition also hides a stale ready projection during storage recovery. The legacy package resolver remains the
+  gate-off fallback and is never selected by the embedded discriminator;
+- Catalog setup/actions derive `requestedEnabled` independently from effective plugin,
+  contribution and logical-MCP flags, and require exact host-platform authority plus a
+  current Desktop lease before projecting any effective flag. Lease retirement therefore
+  hides stale ready contribution/resource state even while durable projection recovery is
+  retrying.
+
+This is not the complete Slice 3 product-state path. Desktop proxy initialization already
+executes Darwin/Win32 platform readiness before it publishes a lease, but the exact failed
+readiness state is not yet carried over the authenticated Desktop boundary. Until the
+production platform owner adds that projection, the daemon can represent a missing lease as
+`desktop_unavailable` but cannot truthfully derive `permission_required`,
+`interactive_session_required` or `platform_unavailable` from Desktop readiness.
+
+Focused branch coverage includes startup reset failure, first publication, inert renewal,
+replacement/revoke/expiry races, bounded generation abort, shutdown cleanup, canonical route
+workspace/identity fencing, broker no-fallback behavior, updater/unknown-tool rejection,
+retirement projection recovery and private-preview late-result invalidation. macOS and
+Windows artifact workflows run the complete daemon and Pi runner test packages. This
+coverage is implementation evidence only; it does not prove final Desktop platform-owner
+packaging, signing, Windows hosted execution or real-machine acceptance.
+
 ### Lease-generation MCP client pool
 
-The current broker creates, initializes, and closes an MCP client for every check, list,
-and tool call. Bundled embedded mode must replace that behavior with a pool entry keyed by
+Bundled embedded mode uses a pool entry keyed by
 logical server id, Desktop instance id, Desktop instance epoch, bridge connection id,
 daemon authority epoch, lease generation, endpoint, lock digest, provider-seal digest and
 optional Windows catalog digest.

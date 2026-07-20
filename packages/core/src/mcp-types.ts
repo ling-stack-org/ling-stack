@@ -90,6 +90,12 @@ export interface McpServer {
   readonly updatedAt: string;
 }
 
+/** Durable monotonic authority fence for one MCP server and its tool catalog. */
+export interface McpAuthorityRevision {
+  readonly serverRevision: number;
+  readonly toolsRevision: number;
+}
+
 export interface PublicMcpServer extends McpServer {
   readonly status: McpServerStatus;
   readonly statusSnapshot?: McpRuntimeStatusSnapshot;

@@ -38,6 +38,17 @@ test("sqlite persists MCP server refs, status snapshots, discovered tools, and t
     assert.equal(server.transport.type, "streamable-http");
     assert.deepEqual(server.transport.secretHeaderRefs, { Authorization: "env:GITHUB_TOKEN" });
     assert.deepEqual(server.enabledTools, ["list_pull_requests", "get_ci_status"]);
+    assert.deepEqual(store.getMcpAuthorityRevision(server.id), {
+      serverRevision: 1,
+      toolsRevision: 0,
+    });
+    assert.ok(store.database.prepare(
+      "SELECT version FROM schema_migrations WHERE version = 106 AND name = 'add_mcp_authority_revisions'",
+    ).get());
+
+    store.updateMcpServer(server.id, { enabled: false }, now);
+    store.updateMcpServer(server.id, { enabled: true }, now);
+    assert.equal(store.getMcpAuthorityRevision(server.id)?.serverRevision, 3);
 
     assert.throws(
       () => store.setMcpServerSecret(server.id, "Authorization", "Bearer secret-token", now),
@@ -98,6 +109,13 @@ test("sqlite persists MCP server refs, status snapshots, discovered tools, and t
       ["list_pull_requests", "allow"],
       ["merge_pull_request", "ask"],
     ]);
+    const firstToolsRevision = store.getMcpAuthorityRevision(server.id)?.toolsRevision;
+    assert.ok(firstToolsRevision > 0);
+
+    store.replaceMcpServerTools(server.id, [], now);
+    store.replaceMcpServerTools(server.id, tools, now);
+    const replacedToolsRevision = store.getMcpAuthorityRevision(server.id)?.toolsRevision;
+    assert.ok(replacedToolsRevision > firstToolsRevision);
 
     const bindings = store.replaceTeammateMcpBindings(
       engineerId,
@@ -121,6 +139,10 @@ test("sqlite persists MCP server refs, status snapshots, discovered tools, and t
     const reopened = createSqliteRunStore(cwd);
     try {
       assert.equal(reopened.getMcpServer(server.id)?.displayName, "GitHub");
+      assert.deepEqual(reopened.getMcpAuthorityRevision(server.id), {
+        serverRevision: 3,
+        toolsRevision: replacedToolsRevision,
+      });
       assert.deepEqual(reopened.getMcpServer(server.id)?.transport.secretHeaderRefs, { Authorization: "env:GITHUB_TOKEN" });
       assert.equal(reopened.getMcpStatusSnapshot(server.id)?.status, "ready");
       assert.deepEqual(reopened.listMcpTools({ serverId: server.id }).map((tool) => tool.rawName), [
@@ -142,6 +164,53 @@ test("sqlite persists MCP server refs, status snapshots, discovered tools, and t
     if (store.database?.isOpen) {
       store.close();
     }
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("MCP authority revisions survive same-timestamp server delete and recreate ABA", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-mcp-authority-aba-"));
+  const store = createSqliteRunStore(cwd);
+  const now = "2026-07-21T00:00:00.000Z";
+  const input = {
+    id: "mcp_recreated",
+    displayName: "Recreated MCP",
+    transport: {
+      type: "stdio",
+      command: "/fixture/mcp",
+      args: [],
+      env: {},
+      secretEnvRefs: {},
+    },
+    enabled: true,
+  };
+  const tool = {
+    rawName: "read_fixture",
+    displayName: "Read fixture",
+    inputSchema: { type: "object" },
+    callableNamespace: "mcp_recreated",
+    callableName: "read_fixture",
+    sideEffectLevel: "read",
+    defaultApproval: "allow",
+    enabled: true,
+  };
+  try {
+    store.createMcpServer(input, now);
+    store.replaceMcpServerTools(input.id, [tool], now);
+    const before = store.getMcpAuthorityRevision(input.id);
+    assert.ok(before);
+
+    assert.equal(store.deleteMcpServer(input.id), true);
+    store.createMcpServer(input, now);
+    store.replaceMcpServerTools(input.id, [tool], now);
+    const after = store.getMcpAuthorityRevision(input.id);
+    assert.ok(after);
+    assert.ok(after.serverRevision > before.serverRevision);
+    assert.ok(after.toolsRevision > before.toolsRevision);
+    assert.equal(store.getMcpServer(input.id)?.updatedAt, now);
+    assert.equal(store.listMcpTools({ serverId: input.id })[0]?.updatedAt, now);
+  } finally {
+    store.close();
     await rm(cwd, { recursive: true, force: true });
   }
 });

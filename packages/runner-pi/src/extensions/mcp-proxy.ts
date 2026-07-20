@@ -30,6 +30,7 @@ export function createLingStackMcpProxyExtension(options: PiRunnerRunOptions): E
             if (!decision.approved) {
               throw new Error(decision.reason ?? `MCP tool ${tool.rawName} was denied by Ling Stack approval policy.`);
             }
+            signal?.throwIfAborted();
           } else if (tool.defaultApproval !== "allow") {
             throw new Error(`MCP tool ${tool.rawName} requires approval but no approval handler is configured.`);
           }
@@ -43,7 +44,9 @@ export function createLingStackMcpProxyExtension(options: PiRunnerRunOptions): E
             task: options.task,
             cwd: options.cwd,
             defaultApproval: tool.defaultApproval,
+            signal,
           });
+          signal?.throwIfAborted();
           if (result.isError) {
             throw new Error(formatMcpToolError(result));
           }

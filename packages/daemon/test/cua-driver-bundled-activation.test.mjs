@@ -93,6 +93,44 @@ test("lease proxy token and headers retain Desktop golden parity", () => {
   );
 });
 
+test("lease renewal reuses the generation client because expiry is not proxy identity", async () => {
+  const initial = lease({ expiresAt: "2026-07-18T00:00:30.000Z" });
+  const renewed = lease({ expiresAt: "2026-07-18T00:01:30.000Z" });
+  assert.equal(
+    deriveCuaDriverLeaseProxyToken(initial, bridgeToken),
+    deriveCuaDriverLeaseProxyToken(renewed, bridgeToken),
+    "renewing authority must not rotate the generation-scoped proxy credential",
+  );
+  assert.deepEqual(
+    createCuaDriverLeaseProxyHeaders(initial, bridgeToken),
+    createCuaDriverLeaseProxyHeaders(renewed, bridgeToken),
+    "Desktop validates generation context, while the daemon registry owns lease expiry",
+  );
+
+  let connects = 0;
+  const client = { close() {} };
+  const pool = new CuaDriverClientPool({
+    factory: {
+      async connect() {
+        connects += 1;
+        return client;
+      },
+    },
+  });
+  try {
+    const first = await pool.acquire(initial);
+    first.release();
+    const afterRenewal = await pool.acquire(renewed);
+    afterRenewal.release();
+
+    assert.equal(afterRenewal.client, first.client);
+    assert.equal(connects, 1);
+    assert.equal(pool.size, 1);
+  } finally {
+    await pool.closeAll();
+  }
+});
+
 test("lease proxy boundaries reject missing secrets and invalid authority tuples", () => {
   assert.throws(
     () => new DefaultCuaDriverLeaseMcpClientFactory({ bridgeToken: "   " }),
@@ -192,6 +230,50 @@ test("lease MCP client initializes once and supports pooled check/list/call/clos
   await assert.rejects(client.check(server, now), /cua_driver_lease_client_closed/);
 });
 
+test("lease MCP initialization rejects missing or mismatched server identity before health", async (t) => {
+  const cases = [
+    ["missing serverInfo", undefined, "cua_embedded_protocol_mismatch"],
+    ["wrong server name", { name: "other-driver", version: "0.8.3" }, "cua_embedded_protocol_mismatch"],
+    ["wrong server version", { name: "cua-driver", version: "0.8.2" }, "cua_bundled_version_mismatch"],
+  ];
+
+  for (const [name, serverInfo, expectedError] of cases) {
+    await t.test(name, async () => {
+      let closeCalls = 0;
+      let healthCalls = 0;
+      const factory = new DefaultCuaDriverLeaseMcpClientFactory({
+        bridgeToken,
+        createClient: () => ({
+          async connect() {},
+          async ping() {},
+          getServerVersion: () => serverInfo,
+          async listTools() { return { tools: [] }; },
+          async callTool(request) {
+            if (request.name === "health_report") {
+              healthCalls += 1;
+              return {
+                content: [],
+                structuredContent: healthReport(),
+                isError: false,
+              };
+            }
+            return { content: [] };
+          },
+          async close() { closeCalls += 1; },
+        }),
+        createTransport: () => ({ fixture: true }),
+      });
+
+      await assert.rejects(
+        factory.connect(lease(), new AbortController().signal),
+        new RegExp(expectedError),
+      );
+      assert.equal(healthCalls, 0, "a valid health_report must not override initialize identity");
+      assert.equal(closeCalls, 1);
+    });
+  }
+});
+
 test("lease MCP factory closes its SDK client when initialization fails", async () => {
   let closeCalls = 0;
   const factory = new DefaultCuaDriverLeaseMcpClientFactory({
@@ -222,7 +304,7 @@ test("pooled lease client closes once when initialization completes after bounde
     createClient: () => ({
       async connect() { await connectGate.promise; },
       async ping() {},
-      getServerVersion: () => undefined,
+      getServerVersion: () => ({ name: "cua-driver", version: "0.8.3" }),
       async listTools() { return { tools: [] }; },
       async callTool() { return { content: [] }; },
       async close() { closeCalls += 1; },
@@ -248,7 +330,7 @@ test("lease MCP check maps ping failures to the canonical check error", async ()
     createClient: () => ({
       async connect() {},
       async ping() { throw new Error("proxy ping failed"); },
-      getServerVersion: () => undefined,
+      getServerVersion: () => ({ name: "cua-driver", version: "0.8.3" }),
       async listTools() { return { tools: [] }; },
       async callTool() { return { content: [] }; },
       async close() {},
@@ -559,6 +641,101 @@ test("bundled activation uses only the lease client and startup reset retains in
       fixture.store.getManagedPluginHealthSnapshot(pluginId)?.details?.providerState,
       "desktop_unavailable",
     );
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("bundled activation filters updater tools and overrides every provider-supplied approval hint", async () => {
+  const fixture = await activationFixture({
+    tools: [
+      toolInput(),
+      toolInput({ rawName: "check_for_update", callableName: "check_for_update" }),
+      toolInput({ rawName: "install_ffmpeg", callableName: "install_ffmpeg" }),
+      toolInput({ rawName: "click", callableName: "click" }),
+      toolInput({ rawName: "replay_trajectory", callableName: "replay_trajectory" }),
+    ],
+  });
+  try {
+    assert.equal(fixture.registry.publish(lease()).accepted, true);
+
+    const result = await fixture.service.enable({ store: fixture.store, descriptor, now });
+
+    assert.equal(result.statusCode, 200);
+    assert.deepEqual(
+      result.tools.map((tool) => [tool.rawName, tool.sideEffectLevel, tool.defaultApproval]),
+      [
+        ["click", "external", "ask"],
+        ["list_windows", "read", "allow"],
+        ["replay_trajectory", "external", "deny"],
+      ],
+    );
+    assert.deepEqual(
+      fixture.store.listMcpTools({ serverId }).map((tool) => tool.rawName),
+      ["click", "list_windows", "replay_trajectory"],
+    );
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("bundled activation rejects an unreviewed future tool before catalog publication", async () => {
+  const fixture = await activationFixture({
+    tools: [toolInput({ rawName: "future_mutating_tool", callableName: "future_mutating_tool" })],
+  });
+  try {
+    assert.equal(fixture.registry.publish(lease()).accepted, true);
+
+    const result = await fixture.service.enable({ store: fixture.store, descriptor, now });
+
+    assert.equal(result.statusCode, 400);
+    assert.equal(result.error, "cua_embedded_protocol_mismatch");
+    assert.match(result.message, /future_mutating_tool/);
+    assert.deepEqual(fixture.store.listMcpTools({ serverId }), []);
+    assert.equal(fixture.store.getManagedPlugin(pluginId).enabled, false);
+    assert.equal(fixture.store.getMcpServer(serverId).enabled, false);
+    assert.equal(
+      fixture.store.getManagedPluginHealthSnapshot(pluginId)?.details?.providerState,
+      "incompatible",
+    );
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("duplicate enables share one generation client without the stale attempt closing the winner", async () => {
+  const checkGate = deferred();
+  const fixture = await activationFixture({ checkGate });
+  try {
+    assert.equal(fixture.registry.publish(lease()).accepted, true);
+    const first = fixture.service.enable({ store: fixture.store, descriptor, now });
+    await waitFor(() => fixture.checkCalls === 1);
+
+    const second = fixture.service.enable({
+      store: fixture.store,
+      descriptor,
+      now: "2026-07-18T00:00:01.000Z",
+    });
+    await waitFor(() => fixture.checkCalls === 2);
+    checkGate.resolve();
+
+    const results = await Promise.all([first, second]);
+    assert.deepEqual(results.map((result) => result.statusCode), [409, 200]);
+    assert.equal(results[0].error, "cua_driver_activation_stale");
+    assert.equal(results[1].health.status, "ready");
+    assert.equal(fixture.connects.length, 1);
+    assert.equal(fixture.pool.size, 1);
+    assert.equal(fixture.closes, 0);
+    assert.deepEqual(fixture.store.getCuaDriverActivationState(pluginId), {
+      pluginId,
+      requestedEnabled: true,
+      requestedRevision: 1,
+      activationEpoch: 2,
+      updatedAt: "2026-07-18T00:00:01.000Z",
+    });
+    assert.equal(fixture.store.getManagedPlugin(pluginId).enabled, true);
+    assert.equal(fixture.store.getMcpServer(serverId).enabled, true);
+    assert.deepEqual(fixture.store.listMcpTools({ serverId }).map((tool) => tool.rawName), ["list_windows"]);
   } finally {
     await fixture.close();
   }
@@ -903,7 +1080,7 @@ test("lease expiry during listTools fences publication and closes the expired cl
   }
 });
 
-test("final activation CAS loss returns stale and discards the otherwise-ready client", async () => {
+test("final activation CAS loss returns stale without retiring the shared lease client", async () => {
   const fixture = await activationFixture();
   try {
     assert.equal(fixture.registry.publish(lease()).accepted, true);
@@ -917,8 +1094,8 @@ test("final activation CAS loss returns stale and discards the otherwise-ready c
     assert.equal(result.committed, false);
     assert.equal(result.error, "cua_driver_activation_stale");
     assert.deepEqual(fixture.phaseCalls, ["check", "health", "listTools"]);
-    assert.equal(fixture.pool.size, 0);
-    assert.equal(fixture.closes, 1);
+    assert.equal(fixture.pool.size, 1);
+    assert.equal(fixture.closes, 0);
     assert.equal(fixture.store.getManagedPlugin(pluginId).enabled, false);
     assert.equal(fixture.store.listMcpTools({ serverId }).length, 0);
   } finally {
@@ -926,15 +1103,26 @@ test("final activation CAS loss returns stale and discards the otherwise-ready c
   }
 });
 
-test("stale disable closes its captured lease client without overwriting the winner", async () => {
+test("stale disable does not close the client owned by a newer enable winner", async () => {
   const fixture = await activationFixture();
   try {
     assert.equal(fixture.registry.publish(lease()).accepted, true);
     assert.equal((await fixture.service.enable({ store: fixture.store, descriptor, now })).statusCode, 200);
-    const staleStore = interceptActivationCommits(fixture.store, ({ state }) => ({
-      committed: false,
-      state,
-    }));
+    const staleState = fixture.store.getCuaDriverActivationState(pluginId);
+    assert.equal((await fixture.service.enable({
+      store: fixture.store,
+      descriptor,
+      now: "2026-07-18T00:00:05.000Z",
+    })).statusCode, 200);
+    const staleStore = new Proxy(fixture.store, {
+      get(target, property) {
+        if (property === "ensureCuaDriverActivationState") {
+          return () => staleState;
+        }
+        const value = Reflect.get(target, property, target);
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    });
 
     const result = await fixture.service.disable({
       store: staleStore,
@@ -945,8 +1133,16 @@ test("stale disable closes its captured lease client without overwriting the win
     assert.equal(result.statusCode, 409);
     assert.equal(result.committed, false);
     assert.equal(result.error, "cua_driver_activation_stale");
-    assert.equal(fixture.pool.size, 0);
-    assert.equal(fixture.closes, 1);
+    assert.equal(fixture.connects.length, 1);
+    assert.equal(fixture.pool.size, 1);
+    assert.equal(fixture.closes, 0);
+    assert.deepEqual(fixture.store.getCuaDriverActivationState(pluginId), {
+      pluginId,
+      requestedEnabled: true,
+      requestedRevision: 1,
+      activationEpoch: 2,
+      updatedAt: "2026-07-18T00:00:05.000Z",
+    });
     assert.equal(fixture.store.getManagedPlugin(pluginId).enabled, true);
   } finally {
     await fixture.close();
@@ -1104,9 +1300,10 @@ async function activationFixture(options = {}) {
                 tools: [],
               };
             }
+            const tools = options.tools ?? [toolInput()];
             return {
-              statusSnapshot: readyStatus(server.id, checkedAt, 1),
-              tools: [toolInput()],
+              statusSnapshot: readyStatus(server.id, checkedAt, tools.length),
+              tools,
             };
           },
           async callTool() {
@@ -1230,7 +1427,7 @@ function healthReport(overrides = {}) {
   };
 }
 
-function toolInput() {
+function toolInput(overrides = {}) {
   return {
     rawName: "list_windows",
     displayName: "List windows",
@@ -1241,6 +1438,7 @@ function toolInput() {
     sideEffectLevel: "read",
     defaultApproval: "allow",
     enabled: true,
+    ...overrides,
   };
 }
 

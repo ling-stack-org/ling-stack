@@ -10,7 +10,11 @@ import type {
   ManagedPluginStoreFacet,
   McpStoreFacet,
   RunStorePathsFacet,
+  CuaDriverActivationStoreFacet,
+  CuaDriverProviderState,
 } from "@ling-stack/core";
+import { isCuaDriverProviderState } from "@ling-stack/contracts";
+import type { McpBroker } from "../../context.js";
 import {
   CUA_DRIVER_PLUGIN_ID,
   CUA_DRIVER_MCP_SERVER_ID,
@@ -22,6 +26,7 @@ import { BUNDLED_CUA_DRIVER_PLUGIN_ID } from "./bundled-index.js";
 import { buildCuaDriverSetupView } from "./cua-driver.js";
 import { listBundledPackageDescriptors } from "./source-index.js";
 import { buildManagedPluginRuntimePreview, toManagedPluginPackageView } from "./runtime-injection.js";
+import { isBundledEmbeddedCuaDriverRuntime } from "./cua-driver-runtime-mode.js";
 
 const sourceOrder = new Map([
   ["built-in", 0],
@@ -32,6 +37,7 @@ const sourceOrder = new Map([
 type ManagedPluginCatalogStore =
   ManagedPluginStoreFacet &
   McpStoreFacet &
+  CuaDriverActivationStoreFacet &
   RunStorePathsFacet;
 
 export function listManagedPluginViews(input: {
@@ -41,6 +47,7 @@ export function listManagedPluginViews(input: {
   readonly now: string;
   readonly includeEvents?: boolean;
   readonly includeHidden?: boolean;
+  readonly cuaDriverRuntimeAuthority: McpBroker["cuaDriverRuntimeAuthority"];
   readonly cuaDriverFeatureFlags?: {
     readonly bundledEmbedded: { readonly darwin: boolean; readonly win32: boolean };
     readonly packagedProvider: { readonly darwin: boolean; readonly win32: boolean };
@@ -59,6 +66,7 @@ export function listManagedPluginViews(input: {
       store: input.store,
       cwd: input.cwd,
       now: input.now,
+      cuaDriverRuntimeAuthority: input.cuaDriverRuntimeAuthority,
       cuaDriverFeatureFlags: input.cuaDriverFeatureFlags,
     }));
   return views
@@ -73,6 +81,7 @@ export function getManagedPluginView(input: {
   readonly store: ManagedPluginCatalogStore;
   readonly now: string;
   readonly includeEvents?: boolean;
+  readonly cuaDriverRuntimeAuthority: McpBroker["cuaDriverRuntimeAuthority"];
   readonly cuaDriverFeatureFlags?: {
     readonly bundledEmbedded: { readonly darwin: boolean; readonly win32: boolean };
     readonly packagedProvider: { readonly darwin: boolean; readonly win32: boolean };
@@ -187,6 +196,7 @@ function createManagedPluginView(input: {
   readonly events?: readonly ManagedPluginEvent[];
   readonly store: ManagedPluginCatalogStore;
   readonly now: string;
+  readonly cuaDriverRuntimeAuthority: McpBroker["cuaDriverRuntimeAuthority"];
   readonly cuaDriverFeatureFlags?: {
     readonly bundledEmbedded: { readonly darwin: boolean; readonly win32: boolean };
     readonly packagedProvider: { readonly darwin: boolean; readonly win32: boolean };
@@ -196,24 +206,59 @@ function createManagedPluginView(input: {
   const cuaDriverServer = input.descriptor.id === CUA_DRIVER_PLUGIN_ID
     ? input.store.getMcpServer(CUA_DRIVER_MCP_SERVER_ID)
     : undefined;
+  const bundledProjection = input.descriptor.id === CUA_DRIVER_PLUGIN_ID
+    && isBundledProjectionEnabled(input.cuaDriverFeatureFlags, process.platform);
+  const activationState = bundledProjection
+    ? input.store.getCuaDriverActivationState(CUA_DRIVER_PLUGIN_ID)
+    : undefined;
+  const requestedEnabled = activationState?.requestedEnabled ?? false;
+  const linkedCuaContribution = bundledProjection
+    ? input.contributionRecords.find((record) =>
+        record.contributionKind === "mcp-server"
+        && record.linkedResourceId === CUA_DRIVER_MCP_SERVER_ID)
+    : undefined;
+  const liveBundledRuntime = bundledProjection
+    && input.cuaDriverRuntimeAuthority?.platform === process.platform
+    && isBundledEmbeddedCuaDriverRuntime(
+      input.store,
+      input.cuaDriverRuntimeAuthority,
+      input.cwd,
+    );
+  const effectiveEnabled = bundledProjection
+    && liveBundledRuntime
+    && input.record?.enabled === true
+    && cuaDriverServer?.enabled === true
+    && linkedCuaContribution?.enabled === true;
+  const bundledProviderState = bundledProjection
+    ? resolveBundledProviderState({
+        requestedEnabled,
+        effectiveEnabled,
+        liveBundledRuntime,
+        health: input.health,
+      })
+    : undefined;
   const setup = input.descriptor.id === CUA_DRIVER_PLUGIN_ID
     ? buildCuaDriverSetupView({
         store: input.store,
         now: input.now,
         platform: process.platform,
-        ...(isBundledProjectionEnabled(input.cuaDriverFeatureFlags, process.platform)
+        ...(bundledProjection
           ? {
               projection: {
                 schemaVersion: 2 as const,
                 distribution: "bundled_embedded" as const,
-                providerState: "included" as const,
+                providerState: bundledProviderState,
+                requestedEnabled,
+                effectiveEnabled,
               },
             }
           : {}),
       })
     : undefined;
   const recordEnabled = input.descriptor.id === CUA_DRIVER_PLUGIN_ID
-    ? setup?.state === "ready"
+    ? bundledProjection
+      ? effectiveEnabled
+      : setup?.state === "ready"
       ? true
       : input.record?.enabled === false
         ? false
@@ -240,7 +285,9 @@ function createManagedPluginView(input: {
       ...contribution,
       linkedResourceId,
       linkedResourcePresent,
-      enabled: record?.enabled ?? (input.descriptor.id === CUA_DRIVER_PLUGIN_ID ? setup?.state === "ready" : status === "enabled"),
+      enabled: bundledProjection && contribution.kind === "mcp-server"
+        ? effectiveEnabled
+        : record?.enabled ?? (input.descriptor.id === CUA_DRIVER_PLUGIN_ID ? setup?.state === "ready" : status === "enabled"),
     };
   });
   const linkedResources = input.contributionRecords
@@ -251,7 +298,9 @@ function createManagedPluginView(input: {
         kind: record.contributionKind,
         id: record.linkedResourceId ?? "",
         present: linked.present,
-        enabled: linked.enabled,
+        enabled: bundledProjection && record.linkedResourceId === CUA_DRIVER_MCP_SERVER_ID
+          ? effectiveEnabled
+          : linked.enabled,
         displayName: linked.displayName,
       };
     });
@@ -260,7 +309,7 @@ function createManagedPluginView(input: {
       kind: "mcp-server",
       id: cuaDriverServer.id,
       present: true,
-      enabled: cuaDriverServer.enabled,
+      enabled: bundledProjection ? effectiveEnabled : cuaDriverServer.enabled,
       displayName: cuaDriverServer.displayName,
     });
   }
@@ -302,16 +351,57 @@ function createManagedPluginView(input: {
     events: input.events,
     disabledReason: input.record?.disabledReason,
     actions: {
-      canEnable: !blocked && status !== "enabled" && (input.descriptor.id !== CUA_DRIVER_PLUGIN_ID || setup?.state === "connected"),
-      canDisable: status === "enabled",
+      canEnable: bundledProjection
+        ? !blocked && !requestedEnabled
+        : !blocked && status !== "enabled" && (input.descriptor.id !== CUA_DRIVER_PLUGIN_ID || setup?.state === "connected"),
+      canDisable: bundledProjection ? requestedEnabled : status === "enabled",
       canCheck: input.descriptor.id === CUA_DRIVER_PLUGIN_ID || linkedResources.length > 0 || input.descriptor.sourceKind === "built-in" || input.descriptor.sourceKind === "bundled",
-      canApplyPreset: !blocked && input.descriptor.id === CUA_DRIVER_PLUGIN_ID,
+      canApplyPreset: !bundledProjection && !blocked && input.descriptor.id === CUA_DRIVER_PLUGIN_ID,
       canInstall: !blocked && input.descriptor.sourceKind === "bundled" && packageView?.status !== "installed",
       canUninstall: !blocked && input.descriptor.sourceKind === "bundled" && packageView?.status === "installed",
       canRefreshPackage: !blocked && input.descriptor.sourceKind === "bundled" && packageView?.status === "installed",
       canRuntimePreview: input.descriptor.sourceKind === "bundled",
     },
   };
+}
+
+function resolveBundledProviderState(input: {
+  readonly requestedEnabled: boolean;
+  readonly effectiveEnabled: boolean;
+  readonly liveBundledRuntime: boolean;
+  readonly health?: ManagedPluginHealthSnapshot;
+}): CuaDriverProviderState {
+  if (!input.requestedEnabled) {
+    return "included";
+  }
+  if (!input.liveBundledRuntime) {
+    return "desktop_unavailable";
+  }
+  const details = input.health?.details;
+  const observed = details
+    && typeof details === "object"
+    && !Array.isArray(details)
+    && "providerState" in details
+    && isCuaDriverProviderState(details.providerState)
+      ? details.providerState
+      : undefined;
+  if (input.effectiveEnabled) {
+    return observed === "ready" ? "ready" : "desktop_unavailable";
+  }
+  switch (observed) {
+    case "desktop_unavailable":
+    case "permission_required":
+    case "interactive_session_required":
+    case "platform_unavailable":
+    case "incompatible":
+    case "corrupt":
+      return observed;
+    default:
+      // Stale external or disabled-only health must never leak into the
+      // bundled distribution. Startup reset normally replaces it, but the
+      // catalog remains fail-closed if persistence is inconsistent.
+      return "desktop_unavailable";
+  }
 }
 
 function isBundledProjectionEnabled(

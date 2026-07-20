@@ -35,6 +35,57 @@ const cuaDriverReadOnlyTools = new Set([
   "list_windows",
 ]);
 
+const cuaDriverBundledDeniedTools = new Set([
+  "check_for_update",
+  "install_ffmpeg",
+]);
+
+const cuaDriverBundledReviewedTools = new Set([
+  "bring_to_front",
+  "check_permissions",
+  "click",
+  "double_click",
+  "drag",
+  "end_session",
+  "get_accessibility_tree",
+  "get_agent_cursor_state",
+  "get_config",
+  "get_cursor_position",
+  "get_desktop_state",
+  "get_recording_state",
+  "get_screen_size",
+  "get_window_state",
+  "health_report",
+  "hotkey",
+  "kill_app",
+  "launch_app",
+  "list_apps",
+  "list_windows",
+  "move_cursor",
+  "page",
+  "press_key",
+  "replay_trajectory",
+  "right_click",
+  "scroll",
+  "set_agent_cursor_enabled",
+  "set_agent_cursor_motion",
+  "set_agent_cursor_style",
+  "set_config",
+  "set_value",
+  "start_recording",
+  "start_session",
+  "stop_recording",
+  "type_text",
+  "zoom",
+]);
+
+export class BundledCuaDriverToolPolicyError extends Error {
+  constructor(readonly unsupportedTools: readonly string[]) {
+    super(`Bundled Cua Driver returned an unreviewed tool catalog: ${unsupportedTools.join(", ")}.`);
+    this.name = "BundledCuaDriverToolPolicyError";
+  }
+}
+
 export function listTrustedLocalPresetDescriptors(): readonly ManagedPluginDescriptor[] {
   return [createCuaDriverDescriptor()];
 }
@@ -221,6 +272,45 @@ export function applyCuaDriverToolApprovalOverrides(
       defaultApproval: "allow",
     };
   });
+}
+
+/**
+ * Fail-closed policy for the pinned embedded 0.8.3 tool surface.
+ *
+ * Provider annotations are advisory. A compromised or newer provider cannot
+ * make an input/capture tool read-only, and updater/install tools never enter
+ * the daemon catalog. Any other new tool requires an explicit reviewed update.
+ */
+export function applyBundledCuaDriverToolPolicy(
+  tools: readonly ReplaceMcpServerToolInput[],
+): readonly ReplaceMcpServerToolInput[] {
+  const unsupportedTools = [...new Set(
+    tools
+      .map((tool) => tool.rawName)
+      .filter((rawName) => (
+        !cuaDriverBundledDeniedTools.has(rawName)
+        && !cuaDriverBundledReviewedTools.has(rawName)
+      )),
+  )].sort();
+  if (unsupportedTools.length > 0) {
+    throw new BundledCuaDriverToolPolicyError(unsupportedTools);
+  }
+  return tools
+    .filter((tool) => !cuaDriverBundledDeniedTools.has(tool.rawName))
+    .map((tool) => {
+      if (cuaDriverReadOnlyTools.has(tool.rawName)) {
+        return {
+          ...tool,
+          sideEffectLevel: "read" as const,
+          defaultApproval: "allow" as const,
+        };
+      }
+      return {
+        ...tool,
+        sideEffectLevel: "external" as const,
+        defaultApproval: tool.rawName === "replay_trajectory" ? "deny" as const : "ask" as const,
+      };
+    });
 }
 
 function resolveFromPath(

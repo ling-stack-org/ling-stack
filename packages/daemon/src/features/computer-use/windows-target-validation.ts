@@ -16,7 +16,9 @@ export async function validateProviderTargetOwnership(input: {
   readonly processId: number;
   readonly nativeWindowId: string;
   readonly now: string;
+  readonly workspaceCwd?: string;
   readonly signal?: AbortSignal;
+  readonly assertResultCurrent?: () => void;
 }): Promise<boolean> {
   if (
     !input.server.enabled ||
@@ -31,13 +33,18 @@ export async function validateProviderTargetOwnership(input: {
       input.server,
       {
         secretResolver: input.secretResolver,
+        workspaceCwd: input.workspaceCwd,
         now: () => input.now,
         signal: input.signal,
+        assertResultCurrent: input.assertResultCurrent,
       },
       "list_windows",
       { pid: input.processId },
     );
     input.signal?.throwIfAborted();
+    // Default/generation brokers fence immediately after transport return;
+    // repeat at this consumer boundary so a custom broker cannot bypass it.
+    input.assertResultCurrent?.();
     return result.isError !== true && providerResultOwnsTarget(
       result,
       input.platform,
@@ -59,7 +66,9 @@ export async function validateWindowsProviderTargetOwnership(input: {
   readonly processId: number;
   readonly nativeWindowId: string;
   readonly now: string;
+  readonly workspaceCwd?: string;
   readonly signal?: AbortSignal;
+  readonly assertResultCurrent?: () => void;
 }): Promise<boolean> {
   return validateProviderTargetOwnership({ ...input, platform: "windows" });
 }

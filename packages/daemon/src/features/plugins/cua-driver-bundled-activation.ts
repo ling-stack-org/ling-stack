@@ -18,7 +18,8 @@ import type { CuaDriverClientPool } from "./cua-driver-client-pool.js";
 import type { CuaDriverLeaseMcpClient } from "./cua-driver-lease-client.js";
 import type { CuaDriverLeaseRegistry } from "./cua-driver-lease.js";
 import {
-  applyCuaDriverToolApprovalOverrides,
+  applyBundledCuaDriverToolPolicy,
+  BundledCuaDriverToolPolicyError,
   createBundledCuaDriverLogicalMcpServerInput,
   CUA_DRIVER_MCP_SERVER_ID,
   CUA_DRIVER_PLUGIN_ID,
@@ -72,53 +73,20 @@ export class BundledCuaDriverActivationService {
     readonly descriptor: ManagedPluginDescriptor;
     readonly now: string;
   }): BundledCuaDriverResetResult {
-    const { server, state } = ensureActivationPrerequisites(input);
-    const nextEpoch = state.activationEpoch + 1;
-    const statusSnapshot = unavailableStatus(
-      server,
-      input.now,
-      state.requestedEnabled
-        ? "Bundled Cua Driver is waiting for a current Desktop lease."
-        : "Bundled Cua Driver is included but disabled.",
-      state.requestedEnabled ? "cua_desktop_lease_unavailable" : undefined,
-      state.requestedEnabled ? "failed" : "disabled",
-    );
-    const healthSnapshot = activationHealth({
-      pluginId: input.descriptor.id,
-      now: input.now,
-      status: state.requestedEnabled ? "failed" : "disabled",
-      message: statusSnapshot.message,
-      providerState: state.requestedEnabled ? "desktop_unavailable" : "included",
-      errorCode: statusSnapshot.errorCode,
-    });
-    const result = input.store.commitCuaDriverActivation({
-      pluginId: input.descriptor.id,
-      mcpServerId: server.id,
-      now: input.now,
-      expected: {
-        requestedRevision: state.requestedRevision,
-        activationEpoch: state.activationEpoch,
-      },
-      requestedEnabled: state.requestedEnabled,
-      requestedRevision: state.requestedRevision,
-      activationEpoch: nextEpoch,
-      effectiveEnabled: false,
-      pluginEnabled: false,
-      contributionEnabled: false,
-      mcpServerEnabled: false,
-      tools: [],
-      statusSnapshot,
-      healthSnapshot,
-      disabledReason: state.requestedEnabled
-        ? "Bundled Cua Driver is waiting for Desktop."
-        : "Cua Driver is disabled.",
-    });
-    return {
-      committed: result.committed,
-      requestedEnabled: result.state?.requestedEnabled ?? state.requestedEnabled,
-      requestedRevision: result.state?.requestedRevision ?? state.requestedRevision,
-      activationEpoch: result.state?.activationEpoch ?? state.activationEpoch,
-    };
+    return this.invalidateProjection(input);
+  }
+
+  /**
+   * Synchronous durable fence for replacement, expiry, revoke and authority
+   * rotation. Execution is already rejected by the in-memory lease registry;
+   * this projection also hides cached tools and all effective enabled flags.
+   */
+  invalidateForLeaseChange(input: {
+    readonly store: RunStore;
+    readonly descriptor: ManagedPluginDescriptor;
+    readonly now: string;
+  }): BundledCuaDriverResetResult {
+    return this.invalidateProjection(input);
   }
 
   enable(input: {
@@ -163,7 +131,6 @@ export class BundledCuaDriverActivationService {
     readonly reason?: string;
   }): Promise<BundledCuaDriverActivationResult> {
     const { server, state } = ensureActivationPrerequisites(input);
-    const currentLease = this.options.leaseRegistry.getCurrent();
     const requestedRevision = state.requestedEnabled
       ? state.requestedRevision + 1
       : state.requestedRevision;
@@ -212,9 +179,9 @@ export class BundledCuaDriverActivationService {
       // Closing every pooled generation prevents a late active operation from
       // retaining a client after the durable requestedRevision fence advanced.
       await this.options.clientPool.closeAll();
-    } else if (currentLease) {
-      await this.options.clientPool.closeLease(currentLease);
     }
+    // A CAS loser does not own the shared generation client; the newer intent
+    // that won the fence is responsible for its lifecycle.
     const health = committed.committed
       ? input.store.getManagedPluginHealthSnapshot(input.descriptor.id) ?? healthSnapshot
       : healthSnapshot;
@@ -279,13 +246,17 @@ export class BundledCuaDriverActivationService {
     const token = captureCuaDriverActivationFence(lease, prepared.state);
     const activationServer: McpServer = { ...server, enabled: true };
     let handle: Awaited<ReturnType<CuaDriverClientPool<CuaDriverLeaseMcpClient>["acquire"]>> | undefined;
-    let discardLeaseClient = false;
+    // Only a protocol failure durably committed by this attempt owns retiring
+    // the shared client. Stale attempts must release their handle and leave the
+    // winning same-generation attempt's client intact.
+    let closeLeaseClient = false;
     try {
       handle = await this.options.clientPool.acquire(lease);
-      const checked = await handle.client.check(activationServer, input.now, input.signal);
+      const operationSignal = combineAbortSignals(input.signal, handle.signal);
+      const checked = await handle.client.check(activationServer, input.now, operationSignal);
+      operationSignal.throwIfAborted();
       if (checked.statusSnapshot.status !== "ready") {
-        discardLeaseClient = true;
-        return this.finishAttempt({
+        const result = this.finishAttempt({
           input,
           server,
           token,
@@ -294,15 +265,16 @@ export class BundledCuaDriverActivationService {
           error: checked.statusSnapshot.errorCode ?? "cua_driver_check_failed",
           message: checked.statusSnapshot.message ?? "Bundled Cua Driver check failed.",
         });
+        closeLeaseClient = result.committed;
+        return result;
       }
       if (!this.isCurrentAttempt(input, token)) {
-        discardLeaseClient = true;
         return staleResult(input, server, "A newer lease or user intent won after the bundled MCP check.");
       }
-      const health = await handle.client.checkHealth(activationServer, input.now, input.signal);
+      const health = await handle.client.checkHealth(activationServer, input.now, operationSignal);
+      operationSignal.throwIfAborted();
       if (health.statusSnapshot.status !== "ready") {
-        discardLeaseClient = true;
-        return this.finishAttempt({
+        const result = this.finishAttempt({
           input,
           server,
           token,
@@ -311,15 +283,16 @@ export class BundledCuaDriverActivationService {
           error: health.statusSnapshot.errorCode ?? "cua_driver_health_report_failed",
           message: health.statusSnapshot.message ?? "Bundled Cua Driver health_report failed.",
         });
+        closeLeaseClient = result.committed;
+        return result;
       }
       if (!this.isCurrentAttempt(input, token)) {
-        discardLeaseClient = true;
         return staleResult(input, server, "A newer lease or user intent won during health_report.");
       }
-      const listed = await handle.client.listTools(activationServer, input.now, input.signal);
+      const listed = await handle.client.listTools(activationServer, input.now, operationSignal);
+      operationSignal.throwIfAborted();
       if (listed.statusSnapshot.status !== "ready") {
-        discardLeaseClient = true;
-        return this.finishAttempt({
+        const result = this.finishAttempt({
           input,
           server,
           token,
@@ -328,24 +301,27 @@ export class BundledCuaDriverActivationService {
           error: listed.statusSnapshot.errorCode ?? "cua_driver_tool_sync_failed",
           message: listed.statusSnapshot.message ?? "Bundled Cua Driver tool sync failed.",
         });
+        closeLeaseClient = result.committed;
+        return result;
       }
-      const tools = applyCuaDriverToolApprovalOverrides(listed.tools);
-      const result = this.finishAttempt({
+      const tools = applyBundledCuaDriverToolPolicy(listed.tools);
+      return this.finishAttempt({
         input,
         server,
         token,
         statusSnapshot: listed.statusSnapshot,
         tools,
       });
-      discardLeaseClient = !result.committed;
-      return result;
     } catch (error) {
-      discardLeaseClient = true;
       if (!this.isCurrentAttempt(input, token)) {
         return staleResult(input, server, "A newer lease or user intent won during bundled activation.");
       }
+      const incompatibleCatalog = error instanceof BundledCuaDriverToolPolicyError;
       const message = error instanceof Error ? error.message : String(error);
-      return this.finishAttempt({
+      const errorCode = incompatibleCatalog
+        ? "cua_embedded_protocol_mismatch"
+        : "cua_desktop_lease_client_failed";
+      const result = this.finishAttempt({
         input,
         server,
         token,
@@ -353,16 +329,18 @@ export class BundledCuaDriverActivationService {
           server,
           input.now,
           message,
-          "cua_desktop_lease_client_failed",
+          errorCode,
           "failed",
         ),
         tools: [],
-        error: "cua_desktop_lease_client_failed",
+        error: errorCode,
         message,
       });
+      closeLeaseClient = result.committed;
+      return result;
     } finally {
       handle?.release();
-      if (discardLeaseClient) {
+      if (closeLeaseClient) {
         await this.options.clientPool.closeLease(lease);
       }
     }
@@ -472,6 +450,7 @@ export class BundledCuaDriverActivationService {
       providerState: ready
         ? "ready"
         : input.error === "cua_driver_health_report_incompatible"
+          || input.error === "cua_embedded_protocol_mismatch"
           ? "incompatible"
           : "desktop_unavailable",
       errorCode: input.error,
@@ -555,6 +534,76 @@ export class BundledCuaDriverActivationService {
       statusSnapshot: input.store.getMcpStatusSnapshot(server.id),
       tools: [],
       health,
+    };
+  }
+
+  private invalidateProjection(input: {
+    readonly store: RunStore;
+    readonly descriptor: ManagedPluginDescriptor;
+    readonly now: string;
+  }): BundledCuaDriverResetResult {
+    let observed = ensureActivationPrerequisites(input);
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const { server, state } = observed;
+      const statusSnapshot = unavailableStatus(
+        server,
+        input.now,
+        state.requestedEnabled
+          ? "Bundled Cua Driver is waiting for a current Desktop lease."
+          : "Bundled Cua Driver is included but disabled.",
+        state.requestedEnabled ? "cua_desktop_lease_unavailable" : undefined,
+        state.requestedEnabled ? "failed" : "disabled",
+      );
+      const result = input.store.commitCuaDriverActivation({
+        pluginId: input.descriptor.id,
+        mcpServerId: server.id,
+        now: input.now,
+        expected: {
+          requestedRevision: state.requestedRevision,
+          activationEpoch: state.activationEpoch,
+        },
+        requestedEnabled: state.requestedEnabled,
+        requestedRevision: state.requestedRevision,
+        activationEpoch: state.activationEpoch + 1,
+        effectiveEnabled: false,
+        pluginEnabled: false,
+        contributionEnabled: false,
+        mcpServerEnabled: false,
+        tools: [],
+        statusSnapshot,
+        healthSnapshot: activationHealth({
+          pluginId: input.descriptor.id,
+          now: input.now,
+          status: state.requestedEnabled ? "failed" : "disabled",
+          message: statusSnapshot.message,
+          providerState: state.requestedEnabled ? "desktop_unavailable" : "included",
+          errorCode: statusSnapshot.errorCode,
+        }),
+        disabledReason: state.requestedEnabled
+          ? "Bundled Cua Driver is waiting for Desktop."
+          : "Cua Driver is disabled.",
+      });
+      if (result.committed) {
+        return {
+          committed: true,
+          requestedEnabled: result.state?.requestedEnabled ?? state.requestedEnabled,
+          requestedRevision: result.state?.requestedRevision ?? state.requestedRevision,
+          activationEpoch: result.state?.activationEpoch ?? state.activationEpoch + 1,
+        };
+      }
+      observed = {
+        server,
+        state: result.state ?? input.store.ensureCuaDriverActivationState(
+          input.descriptor.id,
+          input.now,
+        ),
+      };
+    }
+    return {
+      committed: false,
+      requestedEnabled: observed.state.requestedEnabled,
+      requestedRevision: observed.state.requestedRevision,
+      activationEpoch: observed.state.activationEpoch,
     };
   }
 }
@@ -665,4 +714,13 @@ function staleResult(
       errorCode: "cua_driver_activation_stale",
     }),
   };
+}
+
+function combineAbortSignals(
+  callerSignal: AbortSignal | undefined,
+  generationSignal: AbortSignal,
+): AbortSignal {
+  return callerSignal
+    ? AbortSignal.any([callerSignal, generationSignal])
+    : generationSignal;
 }

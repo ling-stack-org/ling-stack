@@ -146,7 +146,7 @@ function createHydratedToolCallDefinition(
       required: ["toolId", "input"],
     } as ToolDefinition["parameters"],
     executionMode: "sequential",
-    execute: async (toolCallId, params) => {
+    execute: async (toolCallId, params, signal) => {
       const toolId = readRequiredString(params, "toolId");
       const input = isRecord(params) && Object.hasOwn(params, "input") ? params.input : undefined;
       const tool = hydratedToolsById.get(toolId);
@@ -172,6 +172,7 @@ function createHydratedToolCallDefinition(
         if (!decision.approved) {
           throw new Error(decision.reason ?? `Hydrated MCP tool ${tool.name} was denied by Ling Stack approval policy.`);
         }
+        signal?.throwIfAborted();
       } else if (tool.executionApproval !== "allow") {
         throw new Error(`Hydrated MCP tool ${tool.name} requires approval but no approval handler is configured.`);
       }
@@ -187,7 +188,9 @@ function createHydratedToolCallDefinition(
         task: options.task,
         cwd: options.cwd,
         defaultApproval: tool.executionApproval,
+        signal,
       });
+      signal?.throwIfAborted();
       if (result.isError) {
         throw new Error(formatHydratedMcpToolError(result.content));
       }

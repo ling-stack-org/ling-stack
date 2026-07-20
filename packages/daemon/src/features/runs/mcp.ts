@@ -17,6 +17,10 @@ import type {
 import type { McpBroker } from "../../context.js";
 import { mcpServerSecretRefs, mcpServerSecretStatuses } from "../mcp/secrets.js";
 import { deriveMcpServerStatus } from "../mcp/status.js";
+import {
+  assertMcpResultAuthorityCurrent,
+  captureMcpResultAuthority,
+} from "../mcp/result-authority.js";
 import { removeUndefined } from "../../shared/validation.js";
 import type { RunRequest } from "./schemas.js";
 
@@ -131,24 +135,29 @@ export function createMcpToolCallHandler(
 ): NonNullable<PiRunnerRunOptions["onMcpToolCall"]> {
   const byRegisteredName = new Map(tools.map((tool) => [tool.registeredName, tool]));
   return async (request) => {
+    request.signal?.throwIfAborted();
     const tool = byRegisteredName.get(request.registeredName);
     if (!tool) {
       throw new Error(`MCP tool is not authorized for this run: ${request.registeredName}`);
     }
-    const server = store.getMcpServer(tool.serverId);
-    if (!server?.enabled) {
-      throw new Error(`MCP server is disabled or missing: ${tool.serverId}`);
-    }
-    const cachedTool = store.listMcpTools({ serverId: server.id, enabled: true, limit: 500 }).find((item) => item.rawName === tool.rawName);
-    if (!cachedTool || !isMcpToolEnabledForServer(server, cachedTool)) {
-      throw new Error(`MCP tool is disabled or missing: ${tool.rawName}`);
-    }
+    const { server, authority } = captureMcpResultAuthority(store, tool.serverId, tool.rawName);
     try {
       options.onStart?.({ request, definition: tool });
     } catch {
       // Projection observers are best-effort and must not alter the authoritative MCP call.
     }
-    const result = await mcpBroker.callTool(server, { secretResolver }, tool.rawName, request.input);
+    const result = await mcpBroker.callTool(server, {
+      secretResolver,
+      workspaceCwd: store.paths.cwd,
+      signal: request.signal,
+      assertResultCurrent: () => {
+        assertMcpResultAuthorityCurrent(store, authority);
+      },
+    }, tool.rawName, request.input);
+    request.signal?.throwIfAborted();
+    // The production brokers check at the transport boundary. Recheck here as
+    // the consumer boundary so an injected/custom broker cannot omit the fence.
+    assertMcpResultAuthorityCurrent(store, authority);
     const redactedResult = redactSecrets(
       result,
       collectMcpSecretValuesForServer(server, secretResolver),

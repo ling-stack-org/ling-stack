@@ -363,6 +363,7 @@ test("pool drains active operations before aborting and closes the client exactl
     },
   });
   const handle = await pool.acquire(lease());
+  assert.equal(handle.signal.aborted, false);
   const closing = pool.closeAll();
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(aborted, false);
@@ -370,6 +371,7 @@ test("pool drains active operations before aborting and closes the client exactl
   handle.release();
   await closing;
   assert.equal(aborted, true);
+  assert.equal(handle.signal.aborted, true);
   assert.equal(closes, 1);
 });
 

@@ -12,6 +12,8 @@ import { writeJson } from "../../shared/response.js";
 import { parseMcpServerCreateRequest, parseMcpServerUpdateRequest } from "./schemas.js";
 import { isPluginReservedMcpServerId } from "./reserved-ids.js";
 import { toPublicMcpServer } from "./secrets.js";
+import { bundledEmbeddedCuaDriverGateEnabled } from "../plugins/cua-driver-feature-gates.js";
+import { CUA_DRIVER_MCP_SERVER_ID } from "../plugins/presets.js";
 
 export async function handleMcpServersCollection(
   request: IncomingMessage,
@@ -144,8 +146,13 @@ export async function handleMcpServerItem(
     }
 
     if (request.method === "POST" && route.action === "check") {
+      assertGenericCuaDriverMutationAllowed(config, server.id);
       const now = new Date().toISOString();
-      const result = await mcpBroker.checkServer(server, { secretResolver, now: () => now });
+      const result = await mcpBroker.checkServer(server, {
+        secretResolver,
+        workspaceCwd: cwd,
+        now: () => now,
+      });
       const statusSnapshot = store.upsertMcpStatusSnapshot(result.statusSnapshot, now);
       const publicServer = toPublicMcpServer({ store, server, secretResolver, now });
       appendControlPlaneEvent(store, controlPlaneEvents, {
@@ -176,8 +183,13 @@ export async function handleMcpServerItem(
     }
 
     if (request.method === "POST" && route.action === "sync-tools") {
+      assertGenericCuaDriverMutationAllowed(config, server.id);
       const now = new Date().toISOString();
-      const result = await mcpBroker.listTools(server, { secretResolver, now: () => now });
+      const result = await mcpBroker.listTools(server, {
+        secretResolver,
+        workspaceCwd: cwd,
+        now: () => now,
+      });
       const statusSnapshot = store.upsertMcpStatusSnapshot(result.statusSnapshot, now);
       if (statusSnapshot.status === "ready") {
         const cached = store.replaceMcpServerTools(server.id, result.tools, now);
@@ -261,6 +273,22 @@ export async function handleMcpServerItem(
       error: error instanceof HttpError ? error.code : "bad_request",
       message: error instanceof Error ? error.message : String(error),
     });
+  }
+}
+
+function assertGenericCuaDriverMutationAllowed(
+  config: ResolvedDaemonConfig,
+  serverId: string,
+): void {
+  if (
+    serverId === CUA_DRIVER_MCP_SERVER_ID
+    && bundledEmbeddedCuaDriverGateEnabled(config, process.platform)
+  ) {
+    throw new HttpError(
+      409,
+      "cua_driver_activation_route_required",
+      "Bundled Cua Driver status and tools are managed atomically through the plugin activation route.",
+    );
   }
 }
 

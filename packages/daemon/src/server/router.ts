@@ -352,6 +352,7 @@ export async function routeRequest(
     providerStartupRefresh,
     startupState,
     computerUsePreviews,
+    cuaDriverActivationService,
   } = context;
   setCorsHeaders(response);
 
@@ -640,7 +641,7 @@ export async function routeRequest(
   }
 
   if (url.pathname === "/plugins") {
-    await handlePluginsCollection(request, response, config, storeRegistry, extensionRegistry);
+    await handlePluginsCollection(request, response, config, storeRegistry, extensionRegistry, mcpBroker);
     return;
   }
 
@@ -665,6 +666,7 @@ export async function routeRequest(
       extensionRegistry,
       mcpBroker,
       secretResolver,
+      cuaDriverActivationService,
       managedPluginRoute,
     );
     return;
