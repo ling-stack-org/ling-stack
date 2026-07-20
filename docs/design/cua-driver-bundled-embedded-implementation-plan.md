@@ -10,8 +10,17 @@ Current implementation baseline:
   complete;
 - the shared Slice 2 supervisor core and the durable Slice 3 activation/lease primitives
   are complete;
-- the current foundation slice closes daemon authority/instance/connection lease ingress
-  and freezes the Darwin/Win32 platform-binding boundary;
+- on the current implementation branch, not yet merged, the Slice 3 daemon-composition
+  sub-slice wires the shared generation broker, startup reset, first-publish/replacement reconciliation, inert
+  renewal, revoke/expiry invalidation, canonical plugin routes, generic MCP mutation fence,
+  runner cancellation/result postcheck, reviewed pinned-tool filtering, retirement
+  projection retry and Catalog requested/effective projection. A live lease plus exact
+  host-platform authority is required before stale persisted capability can enter a run,
+  private preview or Catalog effective state. The
+  new composition is inert while the gate is off and leaves the external broker plus
+  persisted external-provider behavior unchanged;
+- the landed foundation closes daemon authority/instance/connection lease ingress and
+  freezes the Darwin/Win32 platform-binding boundary;
 - process-wide Desktop runtime composition has landed behind closed packaged-provider
   gates, including cached typed handshake authority, tuple rotation and ordered shutdown;
 - the Desktop runtime now invokes idempotent coordinator availability enable, retries
@@ -42,10 +51,10 @@ Current implementation baseline:
   while its outer verifier and standalone source-build probes use owned Unix process-group
   or Windows Job Object trees; retained failures have bounded, identity-bound native deep-
   delete/rollback cleanup rather than automatic path-recursive deletion;
-- daemon activation routes/pool composition, production platform-owner binding, final
-  signing, `Ling Stack Setup.exe` inclusion, product states and evidence/handoff closure
-  remain. The Win32 code and cross-platform tests have landed, but successful Windows
-  hosted native-helper compilation, `Global` parent-mutex/private-DACL/
+- merge of the current daemon activation composition branch, production platform-owner
+  binding, final signing, `Ling Stack Setup.exe` inclusion, final product states and
+  evidence/handoff closure remain. The Win32 code and cross-platform tests have landed, but
+  successful Windows hosted native-helper compilation, `Global` parent-mutex/private-DACL/
   `WAIT_ABANDONED`, owned-process runtime execution and real-machine validation remain
   open.
 
@@ -420,6 +429,43 @@ Estimated engineering time: 4–6 days.
 ### Slice 3 — Daemon Pool And Activation Transaction
 
 Goal: keep daemon policy authoritative without exposing tools before readiness.
+
+Current branch status: daemon-composition sub-slice implemented, not yet merged.
+
+- the process-wide composition owner creates one shared generation broker and client pool;
+- startup reset completes before route binding and fails daemon start closed;
+- first publish and replacement hide old effective state then reconcile retained intent;
+  renewal changes only the deadline and reuses the same generation HMAC/session/client;
+- a durable projection exception or CAS miss clears the accepted lease, closes the pool,
+  returns HTTP 503 for publication, retries the post-clear fence and prevents a
+  same-generation renewal from bypassing that fence;
+- revoke, expiry, handshake replacement and shutdown fence authority before bounded pool
+  drain/abort/close;
+- canonical plugin enable/check/disable use the activation service, while hidden compatibility
+  action routes and generic MCP status/tool-sync routes cannot bypass the atomic transaction;
+- normal runner tool calls forward cancellation and recheck generation, persisted
+  monotonic server/tool authority revisions and bundled requested revision/activation
+  epoch after the result, including same-millisecond disable/re-enable ABA;
+- Computer Use run/private-preview eligibility recognizes the canonical activation row plus
+  exact logical placeholder without requiring a legacy package-cache record, while gate-off
+  package resolution retains its existing behavior;
+- Catalog setup and actions separately project requested and effective enablement, and
+  fail closed to waiting-for-Desktop without exact host-platform authority plus a live
+  lease;
+- gate-off `external_local` broker, routes and persisted command behavior remain unchanged.
+
+Remaining in Slice 3: Desktop proxy initialization already performs Darwin/Win32 platform
+readiness before lease publication, but the authenticated Desktop status boundary does not
+yet carry the exact failed readiness state into daemon activation. The current daemon
+therefore projects no-lease as `desktop_unavailable`; the production platform-owner/Product
+States work must add truthful `permission_required`, `interactive_session_required` and
+`platform_unavailable` projection before Slice 3 is complete.
+
+Focused validation on the branch covers startup reset failure, first publish, inert renewal,
+replacement/revoke/expiry races, bounded call cancellation, shutdown cleanup, canonical
+workspace/identity routing, generic MCP fencing, raw-fallback exclusion and late-result
+rejection. It does not close Desktop platform-owner, final signing/Setup, Windows hosted or
+Windows real-machine gates.
 
 Changes:
 
@@ -1095,6 +1141,10 @@ Package slices additionally run macOS and Windows packaging workflows, platform
 seal/catalog verifiers, bundled-resource assertions, smoke tests and actionlint. Real signed macOS and
 Windows acceptance remains external machine evidence.
 
+The macOS and Windows Desktop artifact jobs run the complete core, daemon and Pi runner
+package tests in addition to Computer Use contract tests. They do not maintain duplicated
+feature-file allowlists.
+
 ## Definition Of Done
 
 ### Bundled implementation complete
@@ -1164,6 +1214,9 @@ elevated/UWP pixel-input parity.
   host-death/stdio-EOF cleanup and lease publication.
 - [ ] **T5 (P1, human: ~3–5 days / Codex: ~1 day)** — Implement daemon pooling and
   `commitCuaDriverActivation()` with two-connection CAS and crash-injection coverage.
+  - Activation/store foundations have landed. Pool/broker/startup/lease/route/runner/Catalog
+    composition is implemented on the current branch with focused race coverage, but is not
+    checked complete until that branch merges.
 - [ ] **T6 (P1, human: ~3–5 days / Codex: ~1 day)** — Implement and package the macOS
   adapter/TCC/signing path.
 - [ ] **T7 (P1, human: ~4–6 days / Codex: ~1–2 days)** — Implement the Windows standard
@@ -1197,6 +1250,8 @@ elevated/UWP pixel-input parity.
     require hosted plus real-machine validation.
 - [ ] **T9 (P2, human: ~2–4 days / Codex: ~4–8 h)** — Update the one-row Plugin Manager
   states, copy, i18n and E2E coverage.
+  - The daemon Catalog requested/effective projection and bundled action semantics are
+    implemented on the current branch; renderer copy, i18n and final product E2E remain.
 - [ ] **T10 (P1, human: ~4–7 days / Codex: ~1–2 days)** — Atomically migrate Windows
   candidate/policy/attestation/verifier contracts, add immutable cells and the matrix
   finalizer, and produce deterministic internal and production one-input handoff bundles

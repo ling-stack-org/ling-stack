@@ -8,8 +8,30 @@ activation fencing, the shared Desktop supervisor and the deterministic source-b
 pipeline have landed. Process-wide Desktop runtime composition now owns cached typed
 handshake authority, tuple rotation and ordered shutdown behind closed gates. The gate-off
 Darwin native adapter covers Mach-O/code-sign identity, direct-child lifecycle, host-owned
-TCC readiness and retrying permission-change monitoring, but activation does not connect
-the composition and adapter yet. The gate-off Win32 standard adapter covers policy-pinned
+TCC readiness and retrying permission-change monitoring, but Desktop platform-owner
+activation does not connect the process-wide composition and adapter yet. On the current
+implementation branch, not yet merged, the Slice 3 daemon-composition sub-slice adds the
+shared lease-generation broker, fail-closed
+startup reset before route binding, first-publish/replacement reconciliation, inert renewal,
+and revoke/expiry fencing. Canonical plugin enable/check/disable routes use the atomic
+requested/effective activation service; generic MCP mutation routes cannot bypass that
+transaction; runner cancellation and server/tool plus activation-revision post-result checks
+fence late results. Generic MCP server/tool authority uses persisted monotonic revisions
+rather than wall-clock timestamps, and bundled activation adds its requested revision plus
+activation epoch, so same-millisecond disable/re-enable ABA is also rejected. Canonical Computer Use run/private-preview
+eligibility follows the lease runtime without a package-cache record; and the Catalog
+projects requested versus effective state only while exact host-platform authority and a
+current Desktop lease remain live. The bundled activation filters
+`check_for_update` and `install_ffmpeg`, rejects every unreviewed future tool, and derives
+approval levels from Ling's reviewed `0.8.3` policy instead of trusting provider hints.
+Explicit revoke reports a durable projection failure as retryable HTTP 503; expiry and new
+handshake retirement keep one bounded-backoff projection retry active while the missing
+lease hides stale capabilities. The new composition is inert while its
+gate is off, leaving the external path unchanged. This does not complete Slice 3 product
+states: Desktop already runs platform readiness before lease publication, but its exact
+`permission_required`, `interactive_session_required` and `platform_unavailable` result is
+not yet projected into daemon activation, so the current no-lease path remains
+`desktop_unavailable`. The gate-off Win32 standard adapter covers policy-pinned
 identity, state-root protection, direct-child lifecycle and readiness recovery. Opt-in
 pre-sign package staging and the Darwin/Win32 native no-replace atomic publisher core are
 implemented but are not connected to default packaging. Production staging authority is
@@ -65,7 +87,9 @@ security when staging failed before hardening; if hardening still fails, only th
 current-user-owned, no-reparse, empty root may be removed through native
 `remove-unsecured-empty`. Cleanup refuses a replaced or non-empty unsafe residue. Final
 signing, `Ling Stack Setup.exe` inclusion, production platform-owner wiring, product-state
-E2E, Windows hosted-runner validation and real-machine acceptance remain. In particular,
+E2E, Windows hosted-runner validation and real-machine acceptance remain. Both macOS and
+Windows artifact jobs now run the full daemon and Pi runner suites rather than a drifting
+Computer Use file allowlist, but hosted evidence still must complete. In particular,
 this slice has no successful Windows hosted native-helper compile, `Global` parent-mutex/
 private-DACL/`WAIT_ABANDONED`, or owned-process runtime execution evidence.
 
