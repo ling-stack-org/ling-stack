@@ -10,10 +10,21 @@ direct-child lifecycle, host-owned TCC readiness and retrying permission-change
 monitoring. The Win32 standard adapter implements policy-pinned identity, state-root
 ACL/reparse protection, direct-child lifecycle, active-child readiness and Electron
 recovery hints. The Desktop runtime now publishes lazy coordinator availability and
-fences daemon status/authority loss, but daemon activation routes and pooled normal tool
-calls are not connected yet. Real Windows acceptance is not complete, both
-packaged-provider gates remain off, and packaged runtime still uses the external provider
-path.
+fences daemon status/authority loss. The daemon activation transport/fence foundation is
+implemented, but routes, startup composition and pooled normal tool calls are not connected
+yet. Opt-in pre-sign package staging and the Darwin/Win32 native no-replace atomic publisher
+core are implemented without final signing or native final-identity authority and are not
+connected to default packaging. Production staging authority is pinned to the committed
+trust root and real verifier. Complete output-parent staging/cleanup mutation sections use
+a cross-process native parent lease; temp-root parent/root identities bind security and
+publication, and retained failures have bounded identity-bound cleanup, including the
+strict empty-unsecured-root fallback, rather than path-only recursive deletion. Final
+signing, `Ling Stack Setup.exe` inclusion, production platform-
+owner wiring, Windows hosted-runner validation and real-machine acceptance are not
+complete. Both Darwin and Win32 packaged-provider production gates remain off, so
+packaged runtime still uses the external provider path. This does not complete
+`bundled_embedded`; an active `external_local` installation such as
+`/Applications/CuaDriver.app` must not be removed yet.
 
 The paired product and architecture decision is
 [Bundled Embedded Cua Driver](cua-driver-bundled-embedded.md).
@@ -747,6 +758,187 @@ unauthorized resource replacement; it does not claim protection after the same u
 fully replaced both the Desktop runtime and its verification code.
 For macOS, the designated requirement is stored as normalized UTF-8 text with normalized line
 endings and its digest; CDHashes are collected separately for both universal slices.
+
+## Pre-Sign Package-Staging Security Boundary
+
+The implemented staging slice is an opt-in pre-sign boundary, not a final package or
+release verdict. Its production entry points have no caller-selectable trust surface:
+`stageCuaDriverProvider()` and `verifyCuaDriverSourceInput()` reject own
+`trustedResourceRoot` and `sourceBuildVerifier` fields, including a paired override, before
+use. They always bind to the independent committed lock digest, checked-in resource root
+and real source-build verifier. Fixture trust is captured only by
+`createCuaDriverPackageStagerForTest()` and is unreachable from production CLI arguments or
+environment variables.
+
+The parent first opens bounded package snapshots and passes the selected provider digest
+and platform to the child source-build verifier. The child opens its own bounded snapshot,
+compares it with that independent digest and does not execute the provider candidate in
+package-staging mode. Version evidence must agree across the attestation, promotion input
+and committed lock already bound to those exact bytes. A later receipt still binds every
+staged allowlist member. The outer source verifier uses the owned process-tree runner.
+Standalone source-build verification retains an owned version probe: on Unix the child
+leads a detached process group, while on Windows the fixed native helper launches the owned
+command inside a `KILL_ON_JOB_CLOSE` Job Object. Timeout, abort and output overflow fence
+descendants on both paths.
+
+Before creating a temp payload directory, staging builds and identity-preflights the fixed
+native helper. Darwin executes the held helper vnode through its `/.vol/<dev>/<ino>`
+identity; a harmless preflight probe makes unsupported volume-identity execution fail
+before payload creation. Standalone calls recheck the compiled helper identity after
+invocation, while a held RPC helper is rechecked when its lease session closes. The
+build-only helper root contains no provider/package bytes and is retained
+for OS temp reclamation; this slice performs no path-based deletion of it. Slice 6A's
+signed/prebuilt helper removes the temporary compiler root entirely.
+
+After helper preflight, every production stage enters one cross-process lease for the
+canonical output parent. Source snapshot verification and payload-free helper build may run
+before acquisition. While the holder is healthy, Node keeps the lease across its ordered
+destination check, residue scan, temp-tree construction, copy/write/verification,
+publication and retained-residue observation sequence. Explicit cleanup likewise keeps the
+lease across identity checks, quarantine, remeasurement, native removal, safe rollback and
+the final retryable receipt. Node still executes JavaScript `mkdir`, copy and write steps;
+those steps are not native RPCs and are not claimed to share the holder process lifetime.
+The fail-closed invariant is narrower: no production native mutation may execute without
+the current lease capability, and a Node crash may leave residue that every next lease scans
+and charges to the same bounded quota before creating another payload.
+
+The native helper command is `hold-parent-lock <parentRoot> <timeoutMs>`. It flushes one
+identity-bound `locked` receipt and becomes the synchronous RPC actor for that parent. The
+same process and, on Windows, the same mutex-owning thread performs every allowed inspect,
+private-security, verification, publish and removal operation before it can release the
+lock. It never spawns a mutation child or moves mutation work to a worker thread. The
+production native CLI exposes no standalone mutating command; native mutators are reachable
+only as allowlisted calls on this held session. Read-only probe/inspection surfaces and the
+separately owned-process launcher do not grant mutation authority. Requests use the bounded
+session protocol below; `parentRoot` is fixed by process startup and never appears in a
+request:
+
+```text
+LCRPC1\tcall\t<ID>\t<opcode>\t<argc>\t<lowercase-hex args...>\n
+LCRPC1\trelease\t<ID>\n + EOF
+```
+
+Request ids are strictly monotonic, opcodes and arities are allowlisted, decoded arguments
+must be strict UTF-8, and a line is rejected after 16 KiB while it is being read rather than
+after an unbounded `getline()`. Each receipt binds `requestId`, `operation` and
+`operationOwnerPid`; JavaScript requires the owner pid to equal the lease helper pid. A
+module-private weak capability binds each public lease object to its native session, and
+every mutating API rejects a missing, foreign, released or lost capability with
+`staging_parent_lock_capability_required`. Calls are FIFO. Release first drains the queued
+or in-flight call, then sends the final release frame and EOF. Timeout, malformed protocol,
+receipt-context mismatch or another session invalidation kills the entire holder and waits
+for its actual process exit before deleting the weak capability; a rejected or stale
+capability cannot be reused. Each native operation has a fixed 30-second whole-holder
+watchdog.
+
+- macOS opens the exact no-link parent directory and applies exclusive `flock` directly to
+  that already-open directory vnode. The held vnode is both the lock identity and the
+  parent handle used by session operations. Staging creates or depends on no `.ling` lock
+  file, so there is no lock-control entry to exclude from the residue or parent-entry quota.
+- Windows derives `Global\\LingCuaStage-*` only from the opened parent's `FILE_ID`, not
+  from path spelling. The named mutex has an exact protected DACL limited to the current
+  user, SYSTEM and Administrators. `WAIT_ABANDONED` means a contender that already held an
+  open handle and was waiting observed its predecessor die. It is not an acquisition
+  failure, does not authorize deleting residue and is not guaranteed for a later contender
+  after the last mutex handle closed.
+- Publish reopens the canonical `parentRoot` component-by-component without following
+  links immediately before its no-replace rename and again after observing the held-parent
+  source/destination state. The named path must still resolve to the held vnode/`FILE_ID`.
+  A pre-commit mismatch is `not_committed`; a post-commit mismatch is `ambiguous` and is
+  never promoted to `committed`. The replacement path is untouched. If the rename already
+  completed, its identity remains only in the displaced held parent for diagnosis.
+- Clean idle EOF or explicit release drains queued/in-flight work and releases the lease
+  normally. If the caller dies during an RPC, the holder retains the lock until that bounded
+  operation completes, then observes EOF and exits. If the holder dies during an RPC, the
+  in-process native mutation dies with it and the OS releases the lock afterward. Node can
+  also die between native calls while performing `mkdir`, copy or write work; that work is
+  not made atomic by the holder. A payload or quarantine already created remains in place
+  and every next lease holder performs the same bounded residue inspection, independent of
+  `recoveredAbandonedLock`.
+
+Immediately after `mkdir`, staging reads the native parent and randomized sibling-root
+identities before applying security, verifies that the parent identity equals the held
+lease, and supplies both values as mandatory `secure-private` expectations. The exact root
+is then secured through the native no-reparse operation and reverified before publication:
+
+- macOS requires the current effective UID and exact mode `0700`;
+- Windows requires a protected DACL owned by the current user and limited to the current
+  user, SYSTEM and Administrators according to the native profile;
+- parent and directory native identities are carried into private-security verification
+  and the atomic no-replace rename.
+
+A native `committed` receipt advances the staging state inside the guarded callback rather
+than after its lease post-check. Therefore helper loss observed by either the nested publish
+guard or the outer operation guard after commit produces an ambiguous `published=true`
+failure whose `path` is the canonical final root; it has no temporary cleanup authority and
+the final root is never automatically deleted. A failure before commit never triggers
+path-only recursive deletion. In particular, a failure after identity capture but before
+`secure-private` completes retains that exact root for the explicit cleanup path described
+below. With a healthy lease, ordinary failure observation records `residuePath`, the
+original native `residueIdentity`, entry count and byte count. Lease loss after identity
+capture may return only the path and identity; lease loss after `mkdir` but before capture
+may return only the path. The next lease can recover missing identity or inventory through
+the read-only listing flow before cleanup.
+Before another attempt, an `opendir` streaming scan fails early on excessive parent
+entries, unsafe entry types, more than four matching residues, more than the fixed aggregate
+entry budget, or more than the fixed aggregate byte budget derived from the four bounded
+package members. Both `.tmp-*` trees and retryable `.cleanup-*` quarantine/rollback trees
+are recognized by the same scan and consume the same quota. Test configuration may tighten
+these limits but cannot raise them. macOS creates no lock-control child in the parent, so
+the scan has no special lock-file exclusion.
+
+Cleanup is an explicit operator action through `cleanupCuaDriverStagingResidue()` or:
+
+```bash
+node apps/desktop/scripts/cua-driver-package-staging.mjs \
+  --list-residue \
+  --output-root <originalOutputRoot>
+```
+
+Because a hard Node exit cannot return `error.cleanup`, and lease-loss windows can return
+one without identity or inventory,
+`listCuaDriverStagingResidues()` and this CLI mode acquire the same parent lease and return
+the exact native identity, private/unsecured state and bounded inventory for at most four
+matching roots. If a legacy directory already exceeds the count quota, the result is marked
+`truncated`; the operator cleans one listed identity and repeats. Discovery is read-only
+with respect to payload roots and never converts an unsafe path into cleanup authority.
+
+```bash
+node apps/desktop/scripts/cua-driver-package-staging.mjs \
+  --cleanup-residue <residuePath> \
+  --output-root <originalOutputRoot> \
+  --expected-residue-identity <residueIdentity>
+```
+
+Cleanup requires the exact output-derived sibling name and matching native
+parent/directory identity. It first verifies the platform-private security profile. If
+staging failed before hardening completed, cleanup retries `secure-private` with the same
+expected identities. If both verification and hardening fail, the only fallback is native
+`remove-unsecured-empty`: it reopens the exact parent/root handle-relatively and deletes the
+root only when it is still current-user-owned, no-reparse and completely empty. A replaced,
+foreign-owned, reparse or non-empty root is retained and rejected. A private root then
+performs a native no-replace rename into a unique quarantine name, reopens the same
+identity and repeats the bounded inventory.
+Final removal is not JavaScript path-recursive deletion: the native helper reopens the
+parent and root handle-relatively, completes a deep no-reparse preflight of the entire tree,
+requires the expected root/parent identities plus exact entry and total-byte counts, and
+only then deletes members and returns matching removed-count evidence. If quarantine commit
+or final removal fails, the wrapper re-observes the identity and rolls the same tree back to
+its original residue name when safe. Ambiguous rollback retains an identity-bound retryable
+quarantine receipt, and that quarantine remains visible to the quota scan. A replaced root,
+unsafe member, quota violation or identity mismatch is retained and rejected. This is a
+same-user race-hardening boundary, not permission to delete arbitrary matching paths.
+
+The build-time scaffold trusts the current build account and checked-in verifier/compiler
+inputs. It does not claim to withstand hostile code already executing as that account and
+able to rewrite the verifier itself. Final signed helper/bootstrap identity is closed by
+Slice 6A rather than promoted from this pre-sign receipt.
+
+The Darwin behavior and cross-platform contract tests run on macOS. The Win32 native path,
+parent-`FILE_ID` `Global` mutex, private DACL, `WAIT_ABANDONED` recovery and no-replace
+logic are implemented, but this slice has not produced successful Windows hosted-runner
+native-helper compilation, parent-lease or owned-process/Job Object runtime evidence;
+Windows hosted and real-machine validation therefore remain open.
 
 ## Packaged Resource Layout
 

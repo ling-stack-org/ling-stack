@@ -120,6 +120,9 @@ jobs:
       - name: Select locked Xcode
         run: sudo xcode-select --switch /Applications/Xcode_26.5.app/Contents/Developer
 
+      - name: Test atomic Cua Driver package publisher
+        run: node --test apps/desktop/tests/cua-driver-package-publisher.test.mjs
+
       - name: Install locked Rust toolchain and targets
         run: |
           rustup toolchain install 1.97.1 --profile minimal --component rustfmt
@@ -184,6 +187,18 @@ jobs:
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: 22.15.0
+
+      - name: Enter locked MSVC developer environment
+        uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756
+        with:
+          arch: x64
+          sdk: 10.0.26100.0
+          toolset: 14.44
+          vsversion: 17.0
+
+      - name: Test atomic Cua Driver package publisher
+        shell: pwsh
+        run: node --test apps/desktop/tests/cua-driver-package-publisher.test.mjs
 
       - name: Install locked Rust toolchain and target
         shell: pwsh
@@ -512,6 +527,14 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 22.15.0
+
+      - name: Enter locked MSVC developer environment
+        uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756
+        with:
+          arch: x64
+          sdk: 10.0.26100.0
+          toolset: 14.44
+          vsversion: 17.0
 
       - name: Enable pnpm
         run: corepack enable

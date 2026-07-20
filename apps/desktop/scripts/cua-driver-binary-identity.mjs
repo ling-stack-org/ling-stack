@@ -8,6 +8,7 @@ const RT_MANIFEST = 24;
 const MACHO_FAT_MAGIC = 0xcafebabe;
 const MACHO_FAT_MAGIC_64 = 0xcafebabf;
 const MACHO_MAGIC_64 = 0xfeedfacf;
+const MACHO_FILETYPE_EXECUTE = 0x2;
 const LC_BUILD_VERSION = 0x32;
 
 export function sha256Bytes(value) {
@@ -84,8 +85,9 @@ export function inspectUniversalMachO(buffer, label = "macOS provider binary") {
   const sliceCount = buffer.readUInt32BE(4);
   assert(sliceCount > 0 && sliceCount <= 8, `${label} has an invalid Mach-O slice count`);
   const entrySize = is64BitFat ? 32 : 20;
-  assert(8 + sliceCount * entrySize <= buffer.length, `${label} has a truncated universal header`);
-  const slices = [];
+  const headerSize = 8 + sliceCount * entrySize;
+  assert(headerSize <= buffer.length, `${label} has a truncated universal header`);
+  const entries = [];
   for (let index = 0; index < sliceCount; index += 1) {
     const entryOffset = 8 + index * entrySize;
     const cpuType = buffer.readUInt32BE(entryOffset);
@@ -100,9 +102,27 @@ export function inspectUniversalMachO(buffer, label = "macOS provider binary") {
     const sliceSize = is64BitFat
       ? toSafeNumber(buffer.readBigUInt64BE(entryOffset + 16), `${label} slice size`)
       : buffer.readUInt32BE(entryOffset + 12);
+    assert(sliceSize > 0, `${label} has an empty ${architecture} slice`);
+    assert(sliceOffset >= headerSize, `${label} ${architecture} slice overlaps the universal header`);
     assert(sliceOffset + sliceSize <= buffer.length, `${label} has an out-of-range ${architecture} slice`);
-    slices.push(inspectMachOSlice(buffer.subarray(sliceOffset, sliceOffset + sliceSize), architecture, label));
+    entries.push({ architecture, cpuType, sliceOffset, sliceSize });
   }
+  const byOffset = [...entries].sort((left, right) => left.sliceOffset - right.sliceOffset);
+  for (let index = 1; index < byOffset.length; index += 1) {
+    const previous = byOffset[index - 1];
+    const current = byOffset[index];
+    assert(
+      previous.sliceOffset + previous.sliceSize <= current.sliceOffset,
+      `${label} contains overlapping Mach-O slices`,
+    );
+  }
+  const slices = entries.map(({ architecture, cpuType, sliceOffset, sliceSize }) =>
+    inspectMachOSlice(
+      buffer.subarray(sliceOffset, sliceOffset + sliceSize),
+      architecture,
+      cpuType,
+      label,
+    ));
   slices.sort((left, right) => compareText(left.architecture, right.architecture));
   const architectures = slices.map((slice) => slice.architecture);
   assert(JSON.stringify(architectures) === JSON.stringify(["arm64", "x86_64"]), `${label} must contain exactly arm64 and x86_64 slices`);
@@ -119,8 +139,10 @@ export function verifyVersionOutput(output, expectedVersion = "0.8.3") {
   return normalized;
 }
 
-function inspectMachOSlice(buffer, architecture, label) {
+function inspectMachOSlice(buffer, architecture, expectedCpuType, label) {
   assert(buffer.length >= 32 && buffer.readUInt32LE(0) === MACHO_MAGIC_64, `${label} ${architecture} slice is not little-endian Mach-O 64-bit`);
+  assert(buffer.readUInt32LE(4) === expectedCpuType, `${label} ${architecture} inner CPU type does not match its universal entry`);
+  assert(buffer.readUInt32LE(12) === MACHO_FILETYPE_EXECUTE, `${label} ${architecture} slice is not MH_EXECUTE`);
   const commandCount = buffer.readUInt32LE(16);
   const commandBytes = buffer.readUInt32LE(20);
   assert(32 + commandBytes <= buffer.length, `${label} ${architecture} load commands are truncated`);
@@ -132,6 +154,7 @@ function inspectMachOSlice(buffer, architecture, label) {
     const size = buffer.readUInt32LE(cursor + 4);
     assert(size >= 8 && cursor + size <= 32 + commandBytes, `${label} ${architecture} has an invalid load command size`);
     if (command === LC_BUILD_VERSION) {
+      assert(!buildVersion, `${label} ${architecture} contains duplicate LC_BUILD_VERSION commands`);
       assert(size >= 24, `${label} ${architecture} has an invalid LC_BUILD_VERSION`);
       buildVersion = {
         platform: buffer.readUInt32LE(cursor + 8),

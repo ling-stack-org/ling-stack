@@ -24,6 +24,8 @@
     "verify:windows-provider": "node tests/verify-windows-cua-driver-provider.mjs",
     "test:cua-driver-source-build": "node --test tests/cua-driver-source-build.test.mjs",
     "verify:cua-driver-source-build": "node scripts/verify-cua-driver-source-build.mjs",
+    "stage:cua-driver-provider": "node scripts/cua-driver-package-staging.mjs",
+    "test:cua-driver-package-staging": "node --test tests/cua-driver-package-staging.test.mjs",
     "test:signing-feasibility": "node --test tests/cua-driver-signing-feasibility.test.mjs",
     "package:signing-feasibility": "corepack pnpm build && node tests/run-cua-driver-signing-builder-fixture.mjs",
     "screenshots:update:computer-use": "corepack pnpm build && electron tests/screenshot-app --update",

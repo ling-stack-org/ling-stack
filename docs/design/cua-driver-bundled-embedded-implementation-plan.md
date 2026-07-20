@@ -4,7 +4,7 @@
 
 Implementation in progress.
 
-Current merged baseline:
+Current implementation baseline:
 
 - Slice -1 signing feasibility, Slice 0 contracts/gates and Slice 1 source build are
   complete;
@@ -22,11 +22,37 @@ Current merged baseline:
   monitor, without enabling packaged runtime;
 - the Win32 standard adapter now supplies policy-pinned identity, state-root ACL/reparse
   protection, direct-child lifecycle, active-child readiness and Electron recovery hints;
-- daemon activation routes/pool composition, production platform-owner binding, package
-  staging, product states and evidence/handoff closure remain.
+- opt-in pre-sign package staging and the Darwin/Win32 native no-replace atomic publisher
+  core are implemented without enabling default packaging. Production trust is fixed to
+  the committed lock/resource root and real verifier. Each staging/cleanup session holds a
+  native parent lease while Node runs its ordered workflow. The same holder performs all
+  native inspect/security/verification/publish/removal RPCs, and production exposes no
+  standalone native mutator. macOS flocks the already-open exact parent-directory vnode;
+  it creates no `.ling` lock file or control entry that needs quota exclusion. Windows uses
+  a parent-`FILE_ID`-derived `Global` mutex with the exact private DACL; `WAIT_ABANDONED` is
+  observable recovery evidence only for an already-waiting contender, not durable state.
+  RPC invalidation kills the holder and waits for actual exit. JavaScript
+  `mkdir`/copy/write remain in Node rather than sharing the
+  holder lifetime, so a crash may preserve payload residue and every next lease scans it
+  under the normal bounded quota. Temp-root parent/root identities are captured after
+  creation and bound into `secure-private`; cleanup can retry hardening, with native
+  removal of an exact-owner, no-reparse empty root as the sole fallback. Secured roots
+  receive/reverify macOS mode
+  `0700` or the protected Windows DACL; package staging never executes the provider,
+  while its outer verifier and standalone source-build probes use owned Unix process-group
+  or Windows Job Object trees; retained failures have bounded, identity-bound native deep-
+  delete/rollback cleanup rather than automatic path-recursive deletion;
+- daemon activation routes/pool composition, production platform-owner binding, final
+  signing, `Ling Stack Setup.exe` inclusion, product states and evidence/handoff closure
+  remain. The Win32 code and cross-platform tests have landed, but successful Windows
+  hosted native-helper compilation, `Global` parent-mutex/private-DACL/
+  `WAIT_ABANDONED`, owned-process runtime execution and real-machine validation remain
+  open.
 
-Both macOS and Windows packaged-provider gates remain off. This status records staged
-progress only and does not claim `bundled_embedded` runtime completion.
+Both Darwin and Win32 packaged-provider production gates remain off. This status records
+staged progress only and does not claim `bundled_embedded` runtime completion. The current
+`external_local` path, including `/Applications/CuaDriver.app` when configured, must remain
+available until the bundled path is wired and accepted.
 
 This plan implements the approved macOS and Windows bundled-provider direction defined in:
 
@@ -552,6 +578,78 @@ Exit criteria:
 - upgrade and rollback restore the exact locked tuple;
 - no runtime symlink/junction or independent provider updater is used.
 
+Current package-staging sub-slice status:
+
+- implemented: opt-in pre-sign allowlist staging outside `app.asar`, bounded source
+  snapshots, independent committed lock anchor, real source-build verifier, parent-to-child
+  expected provider digest fence, and receipt binding for all staged members. Package
+  staging never executes the candidate; version evidence must match attestation, promotion
+  and the committed lock. The outer verifier and standalone source-build version probe use
+  owned detached/nested PGID fencing on Unix and native `KILL_ON_JOB_CLOSE` Job Object
+  ownership on Windows;
+- implemented: production `stageCuaDriverProvider()` and
+  `verifyCuaDriverSourceInput()` reject caller-provided trust roots/verifiers. Fixture trust
+  is closure-bound to `createCuaDriverPackageStagerForTest()` only;
+- implemented: the fixed native helper builds/preflights before temp payload creation,
+  feature-probes execution through a held Darwin vnode. Standalone calls recheck identity
+  afterward, and held RPC sessions recheck it when the lease closes on both platforms; its
+  build-only, payload-free temp root is retained for OS reclamation
+  rather than deleted through a path, and disappears once Slice 6A supplies the signed/
+  prebuilt helper;
+- implemented: production staging and explicit cleanup serialize their ordered workflows
+  under one cross-process native lease while the holder is healthy. The holder is also a
+  bounded synchronous native RPC actor and performs every native inspect, security,
+  verification, publish and removal operation in the same process that owns the lock;
+  production exposes no standalone native mutator and mutating APIs fail closed without
+  the module-private lease capability. macOS opens the exact no-link parent directory and
+  applies `flock` directly to that vnode without creating a lock file or quota exclusion;
+  Windows derives a `Global` named mutex from the parent `FILE_ID` and requires the exact
+  current-user/SYSTEM/Administrators protected DACL. A contender already waiting when the
+  owner dies may report `WAIT_ABANDONED`; a later acquisition is allowed to report false
+  because this flag is not durable recovery state. Clean idle EOF or explicit release
+  drains work and unlocks normally; caller death during an RPC leaves the holder locked
+  until that bounded operation completes, and holder death stops the in-process native
+  mutation with the lock-owning process. Timeout/protocol invalidation kills the holder and
+  waits for actual exit before discarding its capability. JavaScript `mkdir`, copy and write
+  work remains in Node and is not covered by the same-process lifetime guarantee; payload
+  residue is always inspected and quota-counted by the next lease regardless of the
+  abandonment flag;
+- implemented: publication reopens the canonical parent path without links immediately
+  before commit and after observing the rename result, and requires it to match the held
+  vnode/`FILE_ID`. Replacement before commit is `not_committed`; replacement after a
+  completed rename is `ambiguous`, never `committed`, and leaves the replacement parent
+  untouched while the published identity remains under the displaced held parent;
+- implemented: immediately after temp `mkdir`, staging captures the native parent/root
+  identities, requires the parent to match the lease, then binds both expectations into
+  `secure-private`. It applies and reverifies macOS current-EUID mode `0700` or the Windows
+  protected current-user/SYSTEM/Administrators DACL, and publishes with parent/source
+  identity-bound native no-replace semantics. Native commit confirmation is recorded inside
+  the guarded callback, so inner or outer post-check lease loss reports an ambiguous final-root
+  `published=true` failure without temporary cleanup authority;
+- implemented: with a healthy lease, ordinary retained pre-commit failures are observed and
+  expose path, native identity and bounded inventory metadata. Lease loss after identity
+  capture may return only path plus identity; loss after `mkdir` but before capture may
+  return only path. Streaming scans enforce fixed parent-entry, residue-count,
+  aggregate-entry and total-byte limits. Hard-exit and incomplete-receipt recovery use the
+  lease-bound, read-only `listCuaDriverStagingResidues()`/
+  `--list-residue --output-root` path to recover exact identities and bounded inventory
+  before cleanup. `cleanupCuaDriverStagingResidue()` and the matching
+  `--cleanup-residue --output-root --expected-residue-identity` CLI quarantine the exact
+  identity and reverify private security/inventory. Cleanup retries identity-bound hardening
+  for failures before `secure-private`; if that still fails, only the exact
+  current-user-owned, no-reparse, empty root can use native `remove-unsecured-empty`.
+  Native handle-relative final removal completes a full bounded deep-tree preflight before
+  deleting any member. Safe rollback
+  restores a failed quarantine; ambiguous retryable quarantine receipts remain in the
+  residue scan and consume the same quota; mismatches remain;
+- not implemented by this sub-slice: default Electron Builder wiring, final seal/catalog/
+  signing authority, Setup inclusion, migration/rollback activation and production runtime
+  binding;
+- not validated: the Win32 implementation has no successful Windows hosted native-helper
+  compile, `Global` parent-mutex/private-DACL/`WAIT_ABANDONED`, or owned-process/Job Object
+  runtime result in this slice, and Windows real-machine acceptance remains assigned to the
+  handoff owner.
+
 ### Slice 6A — Electron Builder Signing-Ladder Closure
 
 Goal: implement the signing order and three-tier Windows ladder proven by Slice -1 without
@@ -1076,6 +1174,27 @@ elevated/UWP pixel-input parity.
 - [ ] **T8 (P1, human: ~4–7 days / Codex: ~1–2 days)** — Add private-helper Setup staging,
   three-tier signing hooks, the Windows signed catalog, PowerShell tier classification,
   migration and tier-aware rollback tuple.
+  - The opt-in pre-sign-only staging scaffold is implemented with an independent
+    checked-in lock anchor, the existing source-build verifier and a native no-replace
+    atomic publisher core for Darwin and Win32. Production APIs cannot inject trust;
+    each staging/cleanup workflow holds one cross-process parent lease, and the same holder
+    performs all native inspect/security/verification/publish/removal RPCs. The production
+    helper exposes no standalone native mutator. macOS directly flocks the exact opened
+    parent-directory vnode without a lock file; Windows retains the parent-`FILE_ID` mutex.
+    JavaScript filesystem construction remains in Node, with crash residue handled by the
+    next lease's unconditional bounded scan/quota. Platform-private identity-bound
+    temp-root security, bounded residue quotas and cleanup API/CLI are implemented.
+    Cleanup retries pre-security hardening and permits only exact current-user-owned,
+    no-reparse empty-root removal when hardening cannot succeed. Cleanup otherwise uses
+    native handle-relative complete-preflight deep deletion with rollback/retryable
+    quarantine accounting. Package staging does not
+    execute the provider candidate; the outer verifier and standalone source-build version
+    probe use the owned PGID/Job Object runner. It remains outside the default
+    package configuration and does not implement final signing, seals, catalogs,
+    `Ling Stack Setup.exe` inclusion, production runtime wiring or platform-native
+    final-identity verification. The Win32 publisher compile/parent-lease/DACL path and
+    owned-process runtime still have no successful Windows hosted-runner evidence and
+    require hosted plus real-machine validation.
 - [ ] **T9 (P2, human: ~2–4 days / Codex: ~4–8 h)** — Update the one-row Plugin Manager
   states, copy, i18n and E2E coverage.
 - [ ] **T10 (P1, human: ~4–7 days / Codex: ~1–2 days)** — Atomically migrate Windows
