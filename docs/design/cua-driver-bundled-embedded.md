@@ -9,9 +9,8 @@ pipeline have landed. Process-wide Desktop runtime composition now owns cached t
 handshake authority, tuple rotation and ordered shutdown behind closed gates. The gate-off
 Darwin native adapter covers Mach-O/code-sign identity, direct-child lifecycle, host-owned
 TCC readiness and retrying permission-change monitoring, but Desktop platform-owner
-activation does not connect the process-wide composition and adapter yet. On the current
-implementation branch, not yet merged, the Slice 3 daemon-composition sub-slice adds the
-shared lease-generation broker, fail-closed
+activation does not connect the process-wide composition and adapter yet. The landed
+Slice 3 daemon-composition sub-slice adds the shared lease-generation broker, fail-closed
 startup reset before route binding, first-publish/replacement reconciliation, inert renewal,
 and revoke/expiry fencing. Canonical plugin enable/check/disable routes use the atomic
 requested/effective activation service; generic MCP mutation routes cannot bypass that

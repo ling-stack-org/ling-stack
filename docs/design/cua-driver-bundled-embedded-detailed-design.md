@@ -10,8 +10,8 @@ direct-child lifecycle, host-owned TCC readiness and retrying permission-change
 monitoring. The Win32 standard adapter implements policy-pinned identity, state-root
 ACL/reparse protection, direct-child lifecycle, active-child readiness and Electron
 recovery hints. The Desktop runtime now publishes lazy coordinator availability and
-fences daemon status/authority loss. The daemon activation transport/fence foundation has
-landed. On the current implementation branch, not yet merged, its composition is connected:
+fences daemon status/authority loss. The daemon activation transport/fence foundation and
+its composition have landed:
 startup reset runs before route binding; first lease publication and replacement reconcile
 retained intent; renewal reuses the same authenticated generation client; revoke and expiry
 clear effective state and close the pool; the canonical plugin routes use the activation
@@ -1429,7 +1429,7 @@ A reused daemon must advertise support for the lease protocol during the existin
 bridge compatibility probe. If it does not, Desktop treats it as bridge-incompatible
 rather than opening the product with a partially working provider path.
 
-Current Slice 3 daemon-composition sub-slice status, not yet merged:
+Current Slice 3 daemon-composition sub-slice status:
 
 - one process-wide composition owner instantiates the activation service, generation pool
   and shared broker while leaving the gate-off external broker path unchanged;
@@ -1486,13 +1486,12 @@ replacement/revoke/expiry races, bounded generation abort, shutdown cleanup, can
 workspace/identity fencing, broker no-fallback behavior, updater/unknown-tool rejection,
 retirement projection recovery and private-preview late-result invalidation. macOS and
 Windows artifact workflows run the complete daemon and Pi runner test packages. This
-coverage is branch evidence only; it does not prove final Desktop platform-owner packaging,
-signing, Windows hosted execution or real-machine acceptance.
+coverage is implementation evidence only; it does not prove final Desktop platform-owner
+packaging, signing, Windows hosted execution or real-machine acceptance.
 
 ### Lease-generation MCP client pool
 
-The current broker creates, initializes, and closes an MCP client for every check, list,
-and tool call. Bundled embedded mode must replace that behavior with a pool entry keyed by
+Bundled embedded mode uses a pool entry keyed by
 logical server id, Desktop instance id, Desktop instance epoch, bridge connection id,
 daemon authority epoch, lease generation, endpoint, lock digest, provider-seal digest and
 optional Windows catalog digest.

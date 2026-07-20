@@ -10,8 +10,8 @@ Current implementation baseline:
   complete;
 - the shared Slice 2 supervisor core and the durable Slice 3 activation/lease primitives
   are complete;
-- on the current implementation branch, not yet merged, the Slice 3 daemon-composition
-  sub-slice wires the shared generation broker, startup reset, first-publish/replacement reconciliation, inert
+- the landed Slice 3 daemon-composition sub-slice wires the shared generation broker,
+  startup reset, first-publish/replacement reconciliation, inert
   renewal, revoke/expiry invalidation, canonical plugin routes, generic MCP mutation fence,
   runner cancellation/result postcheck, reviewed pinned-tool filtering, retirement
   projection retry and Catalog requested/effective projection. A live lease plus exact
@@ -51,9 +51,9 @@ Current implementation baseline:
   while its outer verifier and standalone source-build probes use owned Unix process-group
   or Windows Job Object trees; retained failures have bounded, identity-bound native deep-
   delete/rollback cleanup rather than automatic path-recursive deletion;
-- merge of the current daemon activation composition branch, production platform-owner
-  binding, final signing, `Ling Stack Setup.exe` inclusion, final product states and
-  evidence/handoff closure remain. The Win32 code and cross-platform tests have landed, but
+- production platform-owner binding, final signing, `Ling Stack Setup.exe` inclusion,
+  final product states and evidence/handoff closure remain. The Win32 code and
+  cross-platform tests have landed, but
   successful Windows hosted native-helper compilation, `Global` parent-mutex/private-DACL/
   `WAIT_ABANDONED`, owned-process runtime execution and real-machine validation remain
   open.
@@ -430,7 +430,7 @@ Estimated engineering time: 4–6 days.
 
 Goal: keep daemon policy authoritative without exposing tools before readiness.
 
-Current branch status: daemon-composition sub-slice implemented, not yet merged.
+Current status: daemon-composition sub-slice implemented.
 
 - the process-wide composition owner creates one shared generation broker and client pool;
 - startup reset completes before route binding and fails daemon start closed;
@@ -461,7 +461,7 @@ therefore projects no-lease as `desktop_unavailable`; the production platform-ow
 States work must add truthful `permission_required`, `interactive_session_required` and
 `platform_unavailable` projection before Slice 3 is complete.
 
-Focused validation on the branch covers startup reset failure, first publish, inert renewal,
+Focused validation covers startup reset failure, first publish, inert renewal,
 replacement/revoke/expiry races, bounded call cancellation, shutdown cleanup, canonical
 workspace/identity routing, generic MCP fencing, raw-fallback exclusion and late-result
 rejection. It does not close Desktop platform-owner, final signing/Setup, Windows hosted or
@@ -1212,11 +1212,10 @@ elevated/UWP pixel-input parity.
 - [ ] **T4 (P1, human: ~4–6 days / Codex: ~1–2 days)** — Implement Desktop artifact
   verification, host/proxy lifecycle, active-child nonce/readiness, WTS invalidation,
   host-death/stdio-EOF cleanup and lease publication.
-- [ ] **T5 (P1, human: ~3–5 days / Codex: ~1 day)** — Implement daemon pooling and
+- [x] **T5 (P1, human: ~3–5 days / Codex: ~1 day)** — Implement daemon pooling and
   `commitCuaDriverActivation()` with two-connection CAS and crash-injection coverage.
-  - Activation/store foundations have landed. Pool/broker/startup/lease/route/runner/Catalog
-    composition is implemented on the current branch with focused race coverage, but is not
-    checked complete until that branch merges.
+  - Activation/store foundations and pool/broker/startup/lease/route/runner/Catalog
+    composition have landed with focused race coverage.
 - [ ] **T6 (P1, human: ~3–5 days / Codex: ~1 day)** — Implement and package the macOS
   adapter/TCC/signing path.
 - [ ] **T7 (P1, human: ~4–6 days / Codex: ~1–2 days)** — Implement the Windows standard
@@ -1250,8 +1249,8 @@ elevated/UWP pixel-input parity.
     require hosted plus real-machine validation.
 - [ ] **T9 (P2, human: ~2–4 days / Codex: ~4–8 h)** — Update the one-row Plugin Manager
   states, copy, i18n and E2E coverage.
-  - The daemon Catalog requested/effective projection and bundled action semantics are
-    implemented on the current branch; renderer copy, i18n and final product E2E remain.
+  - The daemon Catalog requested/effective projection and bundled action semantics have
+    landed; renderer copy, i18n and final product E2E remain.
 - [ ] **T10 (P1, human: ~4–7 days / Codex: ~1–2 days)** — Atomically migrate Windows
   candidate/policy/attestation/verifier contracts, add immutable cells and the matrix
   finalizer, and produce deterministic internal and production one-input handoff bundles
