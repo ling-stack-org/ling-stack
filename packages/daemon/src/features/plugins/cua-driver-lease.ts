@@ -16,7 +16,7 @@ export type CuaDriverLeaseRejectReason =
   | "stale_instance"
   | "stale_generation";
 
-interface CuaDriverLeaseDeadlineTimer {
+export interface CuaDriverLeaseDeadlineTimer {
   cancel(): void;
 }
 

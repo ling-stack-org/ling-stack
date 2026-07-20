@@ -90,6 +90,17 @@ export async function handleCuaDriverLeaseRoute(
         });
         return true;
       }
+      if (!result.lease) {
+        throw new Error("Accepted Cua Driver lease did not return the installed lease");
+      }
+      if (!context.cuaDriverActivationCoordinator.handleLeasePublished(result.lease)) {
+        writePrivateJson(response, 503, {
+          accepted: false,
+          error: "cua_driver_activation_projection_unavailable",
+          message: "The lease was fenced because the daemon could not clear stale Cua Driver activation state.",
+        });
+        return true;
+      }
       writePrivateJson(response, 200, {
         accepted: true,
         desktopInstanceEpoch: lease.desktopInstanceEpoch,
@@ -117,10 +128,25 @@ export async function handleCuaDriverLeaseRoute(
       writeStaleHandshake(response);
       return true;
     }
-    if (!context.cuaDriverDesktopBridgeAuthority.revoke(revoke)) {
+    const currentLease = context.cuaDriverDesktopBridgeAuthority.leaseRegistry.getCurrent();
+    const revoked = context.cuaDriverDesktopBridgeAuthority.revoke(revoke);
+    if (!revoked && currentLease) {
       writePrivateJson(response, 409, {
         revoked: false,
         error: "cua_driver_lease_not_current",
+      });
+      return true;
+    }
+    // Revoke is idempotent for the current authenticated Desktop authority.
+    // The registry callback fences execution immediately, but its observer
+    // result is intentionally non-throwing. Re-run the durable projection here
+    // so the HTTP response truthfully reports persistence and a failed caller
+    // can retry after storage recovers even though the lease is already gone.
+    if (!context.cuaDriverActivationCoordinator.handleLeaseChanged(undefined)) {
+      writePrivateJson(response, 503, {
+        revoked: true,
+        error: "cua_driver_activation_projection_unavailable",
+        message: "The lease was revoked, but the daemon could not clear stale Cua Driver activation state.",
       });
       return true;
     }

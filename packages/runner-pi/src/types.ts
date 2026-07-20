@@ -315,6 +315,8 @@ export interface PiRunnerMcpToolCallRequest {
   readonly task: PiRunnerTask;
   readonly cwd: string;
   readonly defaultApproval: ToolDefaultApproval;
+  /** Cancelled when the runner turn or tool execution is interrupted. */
+  readonly signal?: AbortSignal;
 }
 
 export interface PiRunnerMcpToolCallResult {

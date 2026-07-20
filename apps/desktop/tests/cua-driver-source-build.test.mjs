@@ -128,6 +128,22 @@ test("source-build workflow actions use immutable full commit SHAs", async () =>
   for (const action of uses) assert.match(action, /^[^@]+@[0-9a-f]{40}$/u);
 });
 
+test("macOS and Windows artifact jobs run complete core, daemon and Pi runner suites", async () => {
+  const workflow = await readFile(DESKTOP_ARTIFACTS_WORKFLOW, "utf8");
+  const macosJob = workflow.slice(
+    workflow.indexOf("  macos-unsigned:"),
+    workflow.indexOf("  windows-unsigned:"),
+  );
+  const windowsJob = workflow.slice(workflow.indexOf("  windows-unsigned:"));
+
+  for (const [name, job] of [["macOS", macosJob], ["Windows", windowsJob]]) {
+    assert.match(job, /- name: Run Computer Use contract tests\s+run: node --test packages\/contracts\/test\/computer-use\.test\.mjs packages\/api-client\/test\/computer-use\.test\.mjs/u, name);
+    assert.match(job, /- name: Run complete core suite\s+run: corepack pnpm --filter @ling-stack\/core test/u, name);
+    assert.match(job, /- name: Run complete daemon suite\s+run: corepack pnpm --filter @ling-stack\/daemon test/u, name);
+    assert.match(job, /- name: Run complete Pi runner suite\s+run: corepack pnpm --filter @ling-stack\/runner-pi test/u, name);
+  }
+});
+
 test("verify-only validates the pinned source, patch series and closed packaging gate", async () => {
   const result = await runNode([BUILD_SCRIPT, "--platform", "darwin", "--output-dir", join(await mkdtemp(join(tmpdir(), "ling-cua-verify-out-")), "out"), "--verify-only"]);
   assert.equal(result.code, 0, result.stderr);

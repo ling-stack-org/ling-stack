@@ -66,6 +66,8 @@ import { listExecutableSkillDefinitions } from "../skills/registry.js";
 import { resolveAiTeammateReference } from "../teammates/identity.js";
 import { listBundledPackageDescriptors } from "../plugins/source-index.js";
 import { createManagedPluginRuntimeSnapshot } from "../plugins/runtime-injection.js";
+import { isBundledEmbeddedCuaDriverRuntime } from "../plugins/cua-driver-runtime-mode.js";
+import { createCuaDriverDescriptor } from "../plugins/presets.js";
 import {
   createRunApprovalHandler,
   mergeApprovalProfiles,
@@ -503,13 +505,24 @@ export async function executeRunRequest(
         runId,
       },
     });
-    const managedPluginDescriptors = listBundledPackageDescriptors();
+    const managedPluginDescriptors = [
+      ...listBundledPackageDescriptors(),
+      ...(mcpBroker.cuaDriverRuntimeAuthority
+        && isBundledEmbeddedCuaDriverRuntime(
+          store,
+          mcpBroker.cuaDriverRuntimeAuthority,
+          workspaceCwd,
+        )
+        ? [createCuaDriverDescriptor()]
+        : []),
+    ];
     const managedPluginRuntime = createManagedPluginRuntimeSnapshot({
       cwd: runRequest.cwd,
       runId,
       store,
       descriptors: managedPluginDescriptors,
       now: createdAt,
+      cuaDriverRuntimeAuthority: mcpBroker.cuaDriverRuntimeAuthority,
     });
     const eligibleComputerUseProviderServerIds = resolveEligibleCuaDriverProjectionServerIds({
       store,
@@ -519,6 +532,7 @@ export async function executeRunRequest(
       cwd: runRequest.cwd,
       now: createdAt,
       authorizedServerIds: mcpTools.map((tool) => tool.serverId),
+      cuaDriverRuntimeAuthority: mcpBroker.cuaDriverRuntimeAuthority,
     });
     appendWorkUnitTransitionControlPlaneEvent(store, options.controlPlaneEvents, workspaceCwd, workUnit.id, "queued", "claimed", runId, createdAt);
     run = store.createRun({

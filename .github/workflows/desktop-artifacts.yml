@@ -279,21 +279,17 @@ jobs:
       - name: Run Desktop Node tests
         run: node --test apps/desktop/tests/*.test.mjs
 
-      - name: Run Computer Use contracts and provider integration tests
-        run: >-
-          node --test
-          packages/contracts/test/computer-use.test.mjs
-          packages/api-client/test/computer-use.test.mjs
-          packages/daemon/test/computer-use-api.test.mjs
-          packages/daemon/test/computer-use-provider-eligibility.test.mjs
-          packages/daemon/test/computer-use-producer.test.mjs
-          packages/daemon/test/computer-use-registry-retention.test.mjs
-          packages/daemon/test/computer-use-run-integration.test.mjs
-          packages/daemon/test/cua-driver-preset.test.mjs
-          packages/daemon/test/cua-driver.test.mjs
-          packages/daemon/test/provider-health.test.mjs
-          packages/daemon/test/plugin-manager-api.test.mjs
-          packages/daemon/test/windows-target-validation.test.mjs
+      - name: Run Computer Use contract tests
+        run: node --test packages/contracts/test/computer-use.test.mjs packages/api-client/test/computer-use.test.mjs
+
+      - name: Run complete core suite
+        run: corepack pnpm --filter @ling-stack/core test
+
+      - name: Run complete daemon suite
+        run: corepack pnpm --filter @ling-stack/daemon test
+
+      - name: Run complete Pi runner suite
+        run: corepack pnpm --filter @ling-stack/runner-pi test
 
       - name: Validate release evidence schemas
         run: corepack pnpm --filter @ling-stack/desktop verify:release-schemas
@@ -560,21 +556,17 @@ jobs:
       - name: Run Desktop Node tests
         run: node --test apps/desktop/tests/*.test.mjs
 
-      - name: Run Computer Use contracts and provider integration tests
-        run: >-
-          node --test
-          packages/contracts/test/computer-use.test.mjs
-          packages/api-client/test/computer-use.test.mjs
-          packages/daemon/test/computer-use-api.test.mjs
-          packages/daemon/test/computer-use-provider-eligibility.test.mjs
-          packages/daemon/test/computer-use-producer.test.mjs
-          packages/daemon/test/computer-use-registry-retention.test.mjs
-          packages/daemon/test/computer-use-run-integration.test.mjs
-          packages/daemon/test/cua-driver-preset.test.mjs
-          packages/daemon/test/cua-driver.test.mjs
-          packages/daemon/test/provider-health.test.mjs
-          packages/daemon/test/plugin-manager-api.test.mjs
-          packages/daemon/test/windows-target-validation.test.mjs
+      - name: Run Computer Use contract tests
+        run: node --test packages/contracts/test/computer-use.test.mjs packages/api-client/test/computer-use.test.mjs
+
+      - name: Run complete core suite
+        run: corepack pnpm --filter @ling-stack/core test
+
+      - name: Run complete daemon suite
+        run: corepack pnpm --filter @ling-stack/daemon test
+
+      - name: Run complete Pi runner suite
+        run: corepack pnpm --filter @ling-stack/runner-pi test
 
       - name: Run PiP renderer tests
         run: corepack pnpm --filter @ling-stack/desktop exec playwright test --config tests/playwright.renderer.config.mjs

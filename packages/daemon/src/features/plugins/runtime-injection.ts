@@ -11,33 +11,53 @@ import {
   type ManagedPluginStoreFacet,
   type McpStoreFacet,
   type RunStorePathsFacet,
+  type CuaDriverActivationStoreFacet,
 } from "@ling-stack/core";
 import { buildManagedPluginPolicyOverlays } from "./policy-overlay.js";
+import { isBundledEmbeddedCuaDriverRuntime } from "./cua-driver-runtime-mode.js";
+import { CUA_DRIVER_PLUGIN_ID } from "./presets.js";
 
 type ManagedPluginRuntimeStore =
   ManagedPluginStoreFacet &
   McpStoreFacet &
-  RunStorePathsFacet;
+  RunStorePathsFacet &
+  CuaDriverActivationStoreFacet;
 
 export function buildManagedPluginRuntimePreview(input: {
   readonly cwd: string;
   readonly store: ManagedPluginRuntimeStore;
   readonly descriptor: ManagedPluginDescriptor;
   readonly now: string;
+  readonly cuaDriverRuntimeAuthority?: {
+    readonly enabled: boolean;
+    readonly workspaceCwd: string;
+    readonly platform: NodeJS.Platform;
+    readonly hasCurrentLease: () => boolean;
+  };
 }): ManagedPluginRuntimePreview {
   const record = input.store.getManagedPlugin(input.descriptor.id);
   const packageRecord = input.store.getManagedPluginPackage(input.descriptor.id);
+  const bundledEmbedded = input.descriptor.id === CUA_DRIVER_PLUGIN_ID
+    && input.cuaDriverRuntimeAuthority !== undefined
+    && isBundledEmbeddedCuaDriverRuntime(
+      input.store,
+      input.cuaDriverRuntimeAuthority,
+      input.store.paths.cwd,
+    );
   const blockers: string[] = [];
   if (!record?.enabled) {
     blockers.push("Plugin is disabled.");
   }
-  if (!packageRecord || packageRecord.status !== "installed") {
+  if (!bundledEmbedded && (!packageRecord || packageRecord.status !== "installed")) {
     blockers.push("Plugin package is not installed.");
-  } else if (!cacheRefExists(input.store.paths, packageRecord.cacheRef)) {
+  } else if (!bundledEmbedded && packageRecord && !cacheRefExists(input.store.paths, packageRecord.cacheRef)) {
     blockers.push("Installed plugin package cache is missing.");
   }
   const health = input.store.getManagedPluginHealthSnapshot(input.descriptor.id, input.now);
-  if (input.descriptor.id === "bundled:cua-driver" && health?.status !== "ready") {
+  if (
+    (input.descriptor.id === "bundled:cua-driver" || bundledEmbedded)
+    && health?.status !== "ready"
+  ) {
     blockers.push(
       health?.message ?? "Cua Driver runtime health has not been verified.",
     );
@@ -59,7 +79,11 @@ export function buildManagedPluginRuntimePreview(input: {
       ? "blocked"
       : "injectable";
   const policyOverlays = status === "injectable"
-    ? buildManagedPluginPolicyOverlays({ store: input.store, descriptor: input.descriptor })
+    ? buildManagedPluginPolicyOverlays({
+        store: input.store,
+        descriptor: input.descriptor,
+        bundledEmbedded,
+      })
     : [];
   return {
     pluginId: input.descriptor.id,
@@ -80,6 +104,12 @@ export function createManagedPluginRuntimeSnapshot(input: {
   readonly store: ManagedPluginRuntimeStore;
   readonly descriptors: readonly ManagedPluginDescriptor[];
   readonly now: string;
+  readonly cuaDriverRuntimeAuthority?: {
+    readonly enabled: boolean;
+    readonly workspaceCwd: string;
+    readonly platform: NodeJS.Platform;
+    readonly hasCurrentLease: () => boolean;
+  };
 }): ManagedPluginRuntimeSnapshot {
   const capabilities = input.descriptors
     .map((descriptor) => buildManagedPluginRuntimePreview({
@@ -87,6 +117,7 @@ export function createManagedPluginRuntimeSnapshot(input: {
       store: input.store,
       descriptor,
       now: input.now,
+      cuaDriverRuntimeAuthority: input.cuaDriverRuntimeAuthority,
     }))
     .filter((preview) => preview.status === "injectable");
   const policyOverlays = capabilities.flatMap((preview) =>

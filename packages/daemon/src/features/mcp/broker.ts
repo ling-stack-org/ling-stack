@@ -141,6 +141,8 @@ export function createDefaultMcpBroker(): McpBroker {
         );
         return mcpSdkCallToolResultToRunnerResult(result);
       });
+      options.signal?.throwIfAborted();
+      options.assertResultCurrent?.();
       return result;
     },
   };

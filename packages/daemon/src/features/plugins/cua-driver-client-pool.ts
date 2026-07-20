@@ -12,6 +12,8 @@ export interface CuaDriverPooledClientFactory<TClient extends CuaDriverPooledCli
 export interface CuaDriverPoolHandle<TClient extends CuaDriverPooledClient> {
   readonly key: string;
   readonly client: TClient;
+  /** Aborted when this exact Desktop lease generation is retired. */
+  readonly signal: AbortSignal;
   readonly release: () => void;
 }
 
@@ -88,6 +90,7 @@ export class CuaDriverClientPool<TClient extends CuaDriverPooledClient = CuaDriv
     return {
       key,
       client,
+      signal: entry.controller.signal,
       release: () => {
         if (released) return;
         released = true;

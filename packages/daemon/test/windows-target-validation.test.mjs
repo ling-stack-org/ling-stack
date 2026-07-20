@@ -77,6 +77,37 @@ test("provider target ownership rejects a successful result that races with canc
   );
 });
 
+test("provider target ownership discards a result after its provider authority changes", async () => {
+  let postchecks = 0;
+  const owned = await validateProviderTargetOwnership({
+    platform: "macos",
+    server: {
+      id: "mcp_cua_driver",
+      displayName: "Cua Driver",
+      enabled: true,
+      required: false,
+      enabledTools: ["list_windows"],
+      transport: { type: "stdio", command: "cua-driver", args: [] },
+    },
+    mcpBroker: {
+      async callTool() {
+        return providerResult([{ pid: 4321, window_id: 7788 }]);
+      },
+    },
+    secretResolver: { resolve: () => ({ configured: true, value: "unused" }) },
+    processId: 4321,
+    nativeWindowId: "7788",
+    now: "2026-07-17T00:00:00.000Z",
+    assertResultCurrent: () => {
+      postchecks += 1;
+      throw new Error("computer_use_provider_authority_stale");
+    },
+  });
+
+  assert.equal(owned, false);
+  assert.equal(postchecks, 1);
+});
+
 function providerResult(windows) {
   return {
     content: [],

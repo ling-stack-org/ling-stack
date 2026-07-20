@@ -347,6 +347,7 @@ import type {
   CreateMcpServerInput,
   ListMcpServersOptions,
   ListMcpToolsOptions,
+  McpAuthorityRevision,
   McpServer,
   McpRuntimeStatusSnapshot,
   McpServerStatus,
@@ -1819,6 +1820,7 @@ export interface RunStore {
   failWorkItem(id: string, input: WorkItemFailRequest, now: string): WorkItem | undefined;
   createMcpServer(input: CreateMcpServerInput, now: string): McpServer;
   getMcpServer(id: string): McpServer | undefined;
+  getMcpAuthorityRevision(serverId: string): McpAuthorityRevision | undefined;
   listMcpServers(options?: ListMcpServersOptions): McpServer[];
   updateMcpServer(id: string, input: UpdateMcpServerInput, now: string): McpServer | undefined;
   updateMcpServerStatus(id: string, status: McpServerStatus, now: string): McpServer | undefined;
@@ -2284,6 +2286,7 @@ export type WorkItemStoreFacet = RunStoreFacet<
 export type McpStoreFacet = RunStoreFacet<
   | "createMcpServer"
   | "getMcpServer"
+  | "getMcpAuthorityRevision"
   | "listMcpServers"
   | "updateMcpServer"
   | "updateMcpServerStatus"

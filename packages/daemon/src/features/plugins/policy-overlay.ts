@@ -23,8 +23,9 @@ const cuaDenyTools = new Set(["replay_trajectory"]);
 export function buildManagedPluginPolicyOverlays(input: {
   readonly store: McpStoreFacet;
   readonly descriptor: ManagedPluginDescriptor;
+  readonly bundledEmbedded?: boolean;
 }): readonly ManagedPluginPolicyOverlayView[] {
-  if (input.descriptor.id !== "bundled:cua-driver") {
+  if (input.descriptor.id !== "bundled:cua-driver" && !input.bundledEmbedded) {
     return input.descriptor.defaultApprovals?.map((approval) => ({
       id: `${input.descriptor.id}:${approval.contributionId}`,
       pluginId: input.descriptor.id,

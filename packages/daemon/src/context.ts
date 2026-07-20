@@ -32,12 +32,23 @@ import type { RunnerRegistry } from "./runtime/runners.js";
 import type { RuntimeSupervisor } from "./runtime/supervisor.js";
 import type { StartupOptionalWarmupCoordinator } from "./startup/optional-warmups.js";
 import type { StartupStateRegistry } from "./startup/state.js";
+import type { BundledCuaDriverActivationService } from "./features/plugins/cua-driver-bundled-activation.js";
+import type { CuaDriverPooledClientFactory } from "./features/plugins/cua-driver-client-pool.js";
+import type { CuaDriverLeaseMcpClient } from "./features/plugins/cua-driver-lease-client.js";
+import type { CuaDriverDaemonActivationCoordinator } from "./features/plugins/cua-driver-daemon-composition.js";
 
 export interface RunnerAdapter {
   runTask(options: PiRunnerRunOptions): Promise<PiRunnerResult>;
 }
 
 export interface McpBroker {
+  /** Immutable daemon authority for deciding whether persisted Cua state is bundled. */
+  readonly cuaDriverRuntimeAuthority?: {
+    readonly enabled: boolean;
+    readonly workspaceCwd: string;
+    readonly platform: NodeJS.Platform;
+    readonly hasCurrentLease: () => boolean;
+  };
   checkServer(
     server: McpServer,
     options: McpBrokerOptions,
@@ -59,8 +70,12 @@ export interface McpBroker {
 
 export interface McpBrokerOptions {
   readonly secretResolver: SecretResolver;
+  /** Workspace authority for generation-scoped bundled providers. */
+  readonly workspaceCwd?: string;
   readonly now?: () => string;
   readonly signal?: AbortSignal;
+  /** Synchronous authorization fence run after transport completion. */
+  readonly assertResultCurrent?: () => void;
 }
 
 export interface ExternalSecretStore extends SecretResolver {
@@ -81,6 +96,12 @@ export interface DaemonDependencies {
   readonly channelWebFetch?: typeof globalThis.fetch;
   readonly channelWebResolveHostAddresses?: (hostname: string) => Promise<readonly string[]>;
   readonly mcpBroker?: McpBroker;
+  readonly cuaDriverLeaseClientFactory?: CuaDriverPooledClientFactory<CuaDriverLeaseMcpClient>;
+  /** Deterministic lease deadline adapter for integration tests. */
+  readonly cuaDriverLeaseScheduleDeadline?: (
+    callback: () => void,
+    delayMs: number,
+  ) => { cancel(): void };
   readonly imageVisionSummarizer?: LingImageVisionSummarizer;
   readonly computerUseStop?: (input: {
     readonly cwd: string;
@@ -130,6 +151,8 @@ export interface DaemonContext {
   readonly startupOptionalWarmups: StartupOptionalWarmupCoordinator;
   readonly computerUsePreviews: ComputerUseProjectionRegistry;
   readonly cuaDriverDesktopBridgeAuthority: CuaDriverDesktopBridgeAuthority;
+  readonly cuaDriverActivationService: BundledCuaDriverActivationService;
+  readonly cuaDriverActivationCoordinator: CuaDriverDaemonActivationCoordinator;
   readonly computerUseStop?: DaemonDependencies["computerUseStop"];
   readonly desktopBridgeToken?: string;
   readonly computerUseRouteToken?: string;

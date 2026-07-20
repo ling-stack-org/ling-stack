@@ -159,8 +159,12 @@ test("lease PUT and DELETE bind publish, renew, and revoke to the latest handsha
       generation: 1,
     });
     const repeatedRevoke = await deleteLease(daemon, revokeFor(currentLease));
-    assert.equal(repeatedRevoke.status, 409);
-    assert.equal((await repeatedRevoke.json()).error, "cua_driver_lease_not_current");
+    assert.equal(repeatedRevoke.status, 200);
+    assert.deepEqual(await repeatedRevoke.json(), {
+      revoked: true,
+      desktopInstanceEpoch: second.desktopInstanceEpoch,
+      generation: 1,
+    });
   } finally {
     await daemon.stop();
     await rm(cwd, { recursive: true, force: true });

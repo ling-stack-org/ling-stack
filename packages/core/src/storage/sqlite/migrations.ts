@@ -214,6 +214,8 @@ const MEDIA_EXTERNAL_WORKFLOWS_MIGRATION_VERSION = 104;
 const MEDIA_EXTERNAL_WORKFLOWS_MIGRATION_NAME = "create_media_external_workflows";
 const CUA_DRIVER_ACTIVATION_MIGRATION_VERSION = 105;
 const CUA_DRIVER_ACTIVATION_MIGRATION_NAME = "create_cua_driver_activation_state";
+const MCP_AUTHORITY_REVISIONS_MIGRATION_VERSION = 106;
+const MCP_AUTHORITY_REVISIONS_MIGRATION_NAME = "add_mcp_authority_revisions";
 const AI_EVOLUTION_SKILL_LIFECYCLE_MIGRATION_NAME = "repair_ai_evolution_skill_lifecycle";
 
 export function configureSqliteRunStoreDatabase(database: DatabaseSync): void {
@@ -5004,5 +5006,88 @@ export function applySqliteRunStoreMigrations(context: SqliteRunStoreMigrationCo
         context.recordMigration(CUA_DRIVER_ACTIVATION_MIGRATION_VERSION, CUA_DRIVER_ACTIVATION_MIGRATION_NAME);
       }
     }
+
+    const hasMcpAuthorityRevisionsMigration = context.hasMigration(MCP_AUTHORITY_REVISIONS_MIGRATION_VERSION);
+    if (!hasMcpAuthorityRevisionsMigration || !context.hasTable("mcp_authority_revisions")) {
+      database.exec(`
+        CREATE TABLE IF NOT EXISTS mcp_authority_revisions (
+          server_id TEXT PRIMARY KEY,
+          server_revision INTEGER NOT NULL DEFAULT 0 CHECK (server_revision >= 0),
+          tools_revision INTEGER NOT NULL DEFAULT 0 CHECK (tools_revision >= 0)
+        );
+      `);
+      if (!hasMcpAuthorityRevisionsMigration) {
+        context.recordMigration(MCP_AUTHORITY_REVISIONS_MIGRATION_VERSION, MCP_AUTHORITY_REVISIONS_MIGRATION_NAME);
+      }
+    }
+
+    database.exec(`
+      INSERT INTO mcp_authority_revisions (server_id, server_revision, tools_revision)
+      SELECT id, 0, 0 FROM mcp_servers
+      WHERE true
+      ON CONFLICT(server_id) DO NOTHING;
+
+      CREATE TRIGGER IF NOT EXISTS trg_mcp_authority_server_insert
+      AFTER INSERT ON mcp_servers
+      BEGIN
+        INSERT INTO mcp_authority_revisions (server_id, server_revision, tools_revision)
+        VALUES (NEW.id, 1, 0)
+        ON CONFLICT(server_id) DO UPDATE SET
+          server_revision = server_revision + 1;
+      END;
+
+      CREATE TRIGGER IF NOT EXISTS trg_mcp_authority_server_update
+      AFTER UPDATE OF transport_json, enabled, required, startup_timeout_sec,
+        tool_timeout_sec, enabled_tools_json, disabled_tools_json ON mcp_servers
+      WHEN OLD.transport_json IS NOT NEW.transport_json
+        OR OLD.enabled IS NOT NEW.enabled
+        OR OLD.required IS NOT NEW.required
+        OR OLD.startup_timeout_sec IS NOT NEW.startup_timeout_sec
+        OR OLD.tool_timeout_sec IS NOT NEW.tool_timeout_sec
+        OR OLD.enabled_tools_json IS NOT NEW.enabled_tools_json
+        OR OLD.disabled_tools_json IS NOT NEW.disabled_tools_json
+      BEGIN
+        UPDATE mcp_authority_revisions
+        SET server_revision = server_revision + 1
+        WHERE server_id = NEW.id;
+      END;
+
+      CREATE TRIGGER IF NOT EXISTS trg_mcp_authority_server_delete
+      AFTER DELETE ON mcp_servers
+      BEGIN
+        INSERT INTO mcp_authority_revisions (server_id, server_revision, tools_revision)
+        VALUES (OLD.id, 1, 1)
+        ON CONFLICT(server_id) DO UPDATE SET
+          server_revision = server_revision + 1,
+          tools_revision = tools_revision + 1;
+      END;
+
+      CREATE TRIGGER IF NOT EXISTS trg_mcp_authority_tool_insert
+      AFTER INSERT ON mcp_tools
+      BEGIN
+        INSERT INTO mcp_authority_revisions (server_id, server_revision, tools_revision)
+        VALUES (NEW.server_id, 0, 1)
+        ON CONFLICT(server_id) DO UPDATE SET
+          tools_revision = tools_revision + 1;
+      END;
+
+      CREATE TRIGGER IF NOT EXISTS trg_mcp_authority_tool_update
+      AFTER UPDATE ON mcp_tools
+      BEGIN
+        INSERT INTO mcp_authority_revisions (server_id, server_revision, tools_revision)
+        VALUES (NEW.server_id, 0, 1)
+        ON CONFLICT(server_id) DO UPDATE SET
+          tools_revision = tools_revision + 1;
+      END;
+
+      CREATE TRIGGER IF NOT EXISTS trg_mcp_authority_tool_delete
+      AFTER DELETE ON mcp_tools
+      BEGIN
+        INSERT INTO mcp_authority_revisions (server_id, server_revision, tools_revision)
+        VALUES (OLD.server_id, 0, 1)
+        ON CONFLICT(server_id) DO UPDATE SET
+          tools_revision = tools_revision + 1;
+      END;
+    `);
 
 }

@@ -150,6 +150,10 @@ class DefaultCuaDriverLeaseMcpClient implements CuaDriverLeaseMcpClient {
       if (this.closed) {
         throw new Error("cua_driver_lease_client_closed");
       }
+      validateInitializeServerInfo(
+        this.options.client.getServerVersion(),
+        this.options.lease,
+      );
       this.initialized = true;
     });
     this.initializePromise = pending;
@@ -372,6 +376,18 @@ function failedStatus(
     latencyMs,
     message: error instanceof Error ? error.message : String(error),
   });
+}
+
+function validateInitializeServerInfo(
+  serverInfo: ReturnType<McpClientPort["getServerVersion"]>,
+  lease: DesktopCuaDriverLease,
+): void {
+  if (!serverInfo || serverInfo.name !== lease.providerId) {
+    throw new Error("cua_embedded_protocol_mismatch");
+  }
+  if (serverInfo.version !== lease.providerVersion) {
+    throw new Error("cua_bundled_version_mismatch");
+  }
 }
 
 type CuaDriverLeaseHealthFailureKind = "failed" | "incompatible";

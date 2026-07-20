@@ -7,6 +7,7 @@ import type {
 import {
   CuaDriverLeaseRegistry,
   type CuaDriverLeasePublishResult,
+  type CuaDriverLeaseRegistryOptions,
 } from "../plugins/cua-driver-lease.js";
 
 export interface CuaDriverDesktopBridgeAuthorityOptions {
@@ -14,6 +15,7 @@ export interface CuaDriverDesktopBridgeAuthorityOptions {
   readonly daemonAuthorityEpoch?: string;
   readonly createConnectionId?: () => string;
   readonly now?: () => string;
+  readonly scheduleDeadline?: CuaDriverLeaseRegistryOptions["scheduleDeadline"];
   readonly onLeaseReplaced?: (
     previous: DesktopCuaDriverLease,
     next?: DesktopCuaDriverLease,
@@ -49,6 +51,7 @@ export class CuaDriverDesktopBridgeAuthority {
       daemonAuthorityEpoch: this.daemonAuthorityEpoch,
       workspaceCwd: this.workspaceCwd,
       now: options.now,
+      scheduleDeadline: options.scheduleDeadline,
       onReplaced: options.onLeaseReplaced,
     });
   }
