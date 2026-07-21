@@ -45,6 +45,13 @@ pinned to the committed trust root and real verifier. The review-only promotion 
 now independently reverifies native candidates A/B, rereads bounded immutable snapshots,
 requires identical stable artifact maps and emits separate macOS/Windows proposal artifacts
 with `MANUAL_REVIEW_REQUIRED`; it never mutates the committed lock or source inputs.
+The Plugin Manager renderer now maps the V2 bundled provider state through a dedicated pure
+view model. The canonical `trusted-local:cua-driver` row remains the only visible row, the
+historical package shell stays hidden, requested intent and effective readiness remain
+separate, and bundled repair states cannot open the external install drawer. macOS and
+Windows state copy, Windows standard-tier limitations, English/Chinese copy and renderer
+E2E coverage are implemented; packaged clean-host product smoke remains a later release
+gate.
 Complete output-parent
 staging/cleanup mutation sections use a cross-process native parent lease; temp-root
 parent/root identities bind security and

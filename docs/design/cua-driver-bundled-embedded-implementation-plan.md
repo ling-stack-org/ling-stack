@@ -96,6 +96,12 @@ Current implementation baseline:
   successful Windows hosted native-helper compilation, `Global` parent-mutex/private-DACL/
   `WAIT_ABANDONED`, owned-process runtime execution and real-machine validation remain
   open.
+- Slice 7/T9 is complete at the renderer/contract boundary. One canonical Cua Driver row
+  now consumes V2 provider states, keeps requested and effective enablement distinct, hides
+  external installation guidance for bundled distributions, projects Windows standard
+  coverage/limitations, and includes English/Chinese pure view-model plus Renderer E2E
+  coverage. Packaged clean-host product smoke remains coupled to payload/signing/Setup
+  closure in later slices.
 
 Both Darwin and Win32 packaged-provider production gates remain off. This status records
 staged progress only and does not claim `bundled_embedded` runtime completion. The current
@@ -1318,10 +1324,12 @@ elevated/UWP pixel-input parity.
     Win32 publisher compile/parent-lease/DACL path and
     owned-process runtime still have no successful Windows hosted-runner evidence and
     require hosted plus real-machine validation.
-- [ ] **T9 (P2, human: ~2–4 days / Codex: ~4–8 h)** — Update the one-row Plugin Manager
+- [x] **T9 (P2, human: ~2–4 days / Codex: ~4–8 h)** — Update the one-row Plugin Manager
   states, copy, i18n and E2E coverage.
-  - The daemon Catalog requested/effective projection and bundled action semantics have
-    landed; renderer copy, i18n and final product E2E remain.
+  - The daemon Catalog requested/effective projection and bundled action semantics now feed
+    a dedicated renderer view model. State copy, bundled-only repair guidance, Windows
+    standard limitations, bilingual strings, pure mapper tests and Renderer E2E have
+    landed. Real packaged smoke remains part of T8/T10 rather than this renderer slice.
 - [ ] **T10 (P1, human: ~4–7 days / Codex: ~1–2 days)** — Atomically migrate Windows
   candidate/policy/attestation/verifier contracts, add immutable cells and the matrix
   finalizer, and produce deterministic internal and production one-input handoff bundles

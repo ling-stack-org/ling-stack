@@ -203,6 +203,81 @@ test("bundled Cua Driver catalog hides every stale provider state without a curr
   }
 });
 
+test("bundled Cua Driver catalog projects bounded provider metadata and platform-valid limitations", {
+  skip: !supportedPlatform,
+}, async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "ling-cua-catalog-metadata-"));
+  const store = createSqliteRunStore(cwd);
+  try {
+    seedCatalogState(store, {
+      requestedEnabled: true,
+      effectiveEnabled: true,
+      providerState: "ready",
+      healthDetails: {
+        providerVersion: "0.8.3",
+        providerDistributionRevision: "ling.1",
+        providerSealDigest: "a".repeat(64),
+        providerCatalogDigest: "b".repeat(64),
+        integrityCoverage: "standard",
+        limitations: ["elevated_pixel_input", "uwp_send_input"],
+      },
+    });
+    const plugin = listManagedPluginViews({
+      cwd,
+      extensionRegistry: {},
+      store,
+      now,
+      cuaDriverRuntimeAuthority: runtimeAuthority(cwd),
+      cuaDriverFeatureFlags: featureFlags,
+    }).find((view) => view.id === pluginId);
+
+    assert.ok(plugin);
+    assert.equal(plugin.setup?.providerVersion, "0.8.3");
+    assert.equal(plugin.setup?.providerDistributionRevision, "ling.1");
+    assert.equal(plugin.setup?.providerSealDigest, "a".repeat(64));
+    assert.equal(plugin.setup?.providerCatalogDigest, "b".repeat(64));
+    assert.equal(plugin.setup?.integrityCoverage, process.platform === "win32" ? "standard" : undefined);
+    assert.deepEqual(
+      plugin.setup?.limitations,
+      process.platform === "win32" ? ["elevated_pixel_input", "uwp_send_input"] : [],
+    );
+
+    store.upsertManagedPluginHealthSnapshot({
+      pluginId,
+      checkedAt: "2026-07-20T00:01:00.000Z",
+      expiresAt: "2026-07-20T01:01:00.000Z",
+      status: "ready",
+      details: {
+        providerState: "ready",
+        providerVersion: "x".repeat(129),
+        providerDistributionRevision: "y".repeat(129),
+        providerSealDigest: "A".repeat(64),
+        providerCatalogDigest: "not-a-digest",
+        integrityCoverage: "standard",
+        limitations: ["elevated_pixel_input"],
+      },
+    }, "2026-07-20T00:01:00.000Z");
+    const rejected = listManagedPluginViews({
+      cwd,
+      extensionRegistry: {},
+      store,
+      now: "2026-07-20T00:01:00.000Z",
+      cuaDriverRuntimeAuthority: runtimeAuthority(cwd),
+      cuaDriverFeatureFlags: featureFlags,
+    }).find((view) => view.id === pluginId);
+    assert.ok(rejected);
+    assert.equal(rejected.setup?.providerVersion, undefined);
+    assert.equal(rejected.setup?.providerDistributionRevision, undefined);
+    assert.equal(rejected.setup?.providerSealDigest, undefined);
+    assert.equal(rejected.setup?.providerCatalogDigest, undefined);
+    assert.equal(rejected.setup?.integrityCoverage, undefined);
+    assert.deepEqual(rejected.setup?.limitations, []);
+  } finally {
+    store.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("canonical bundled runtime applies the Cua deny overlay without changing external mode", async () => {
   const cwd = await mkdtemp(join(tmpdir(), "ling-cua-catalog-policy-"));
   const store = createSqliteRunStore(cwd);
@@ -272,7 +347,7 @@ function seedCatalogState(store, seed) {
       checkedAt: now,
       expiresAt: "2026-07-20T01:00:00.000Z",
       status: seed.providerState === "ready" ? "ready" : "failed",
-      details: { providerState: seed.providerState },
+      details: { providerState: seed.providerState, ...seed.healthDetails },
     }, now);
   }
 }

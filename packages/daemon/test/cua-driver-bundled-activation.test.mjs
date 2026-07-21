@@ -633,6 +633,15 @@ test("bundled activation uses only the lease client and startup reset retains in
     });
     assert.equal(fixture.store.getManagedPlugin(pluginId).enabled, true);
     assert.equal(fixture.store.getMcpServer(serverId).enabled, true);
+    const readyDetails = fixture.store.getManagedPluginHealthSnapshot(pluginId).details;
+    assert.equal(readyDetails.providerState, "ready");
+    assert.equal(readyDetails.platform, "darwin");
+    assert.equal(readyDetails.providerVersion, "0.8.3");
+    assert.equal(readyDetails.providerDistributionRevision, "ling.1");
+    assert.equal(readyDetails.providerSealDigest, "b".repeat(64));
+    assert.equal(readyDetails.providerCatalogDigest, "c".repeat(64));
+    assert.equal(readyDetails.integrityCoverage, undefined);
+    assert.equal(readyDetails.limitations, undefined);
     assert.deepEqual(fixture.store.listMcpTools({ serverId }).map((tool) => tool.rawName), ["list_windows"]);
     assert.equal(
       fixture.store.getMcpServer(serverId).transport.command,

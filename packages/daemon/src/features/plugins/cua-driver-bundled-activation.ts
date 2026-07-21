@@ -461,6 +461,7 @@ export class BundledCuaDriverActivationService {
     readonly message?: string;
   }): BundledCuaDriverActivationResult {
     const ready = !input.error && input.statusSnapshot.status === "ready";
+    const currentLease = this.options.leaseRegistry.getCurrent();
     const message = input.message ?? input.statusSnapshot.message ?? (
       ready ? "Bundled Cua Driver is ready." : "Bundled Cua Driver activation failed."
     );
@@ -480,6 +481,23 @@ export class BundledCuaDriverActivationService {
         desktopInstanceId: input.token.desktopInstanceId,
         desktopInstanceEpoch: input.token.desktopInstanceEpoch,
         generation: input.token.leaseGeneration,
+        ...(currentLease
+          ? {
+              platform: currentLease.platform,
+              providerVersion: currentLease.providerVersion,
+              providerDistributionRevision: currentLease.distributionRevision,
+              providerSealDigest: currentLease.providerSealDigest,
+              ...(currentLease.providerCatalogDigest
+                ? { providerCatalogDigest: currentLease.providerCatalogDigest }
+                : {}),
+              ...(currentLease.integrityCoverage
+                ? { integrityCoverage: currentLease.integrityCoverage }
+                : {}),
+              ...(currentLease.platform === "win32" && currentLease.integrityCoverage === "standard"
+                ? { limitations: ["elevated_pixel_input", "uwp_send_input"] as const }
+                : {}),
+            }
+          : {}),
       },
     });
     const committed = commitCurrentCuaDriverActivation({

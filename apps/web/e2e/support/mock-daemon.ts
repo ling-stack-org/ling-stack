@@ -660,6 +660,16 @@ export interface MockManagedPlugin {
     kind: "local_binary";
     state: "detected" | "missing" | "unsupported" | "connected" | "ready";
     checkedAt: string;
+    schemaVersion?: 2;
+    distribution?: "bundled_embedded" | "external_local";
+    platform?: "darwin" | "win32" | "unsupported";
+    providerState?: "included" | "desktop_unavailable" | "permission_required" | "interactive_session_required" | "platform_unavailable" | "ready" | "incompatible" | "corrupt" | "external_missing" | "external_detected" | "external_connected" | "unsupported";
+    requestedEnabled?: boolean;
+    effectiveEnabled?: boolean;
+    integrityCoverage?: "standard" | "uiaccess";
+    limitations?: Array<"elevated_pixel_input" | "uwp_send_input">;
+    providerVersion?: string;
+    integrity?: "verified" | "failed" | "unknown";
     detectedCommand?: string;
     guide?: {
       documentationUrl: string;
@@ -3964,6 +3974,49 @@ export function createMockCuaPlugin(overrides: Partial<MockManagedPlugin> = {}):
     },
     ...overrides,
   };
+}
+
+export function createMockBundledEmbeddedCuaPlugin(input: {
+  readonly providerState: NonNullable<MockManagedPlugin["setup"]>["providerState"];
+  readonly platform: "darwin" | "win32";
+  readonly requestedEnabled: boolean;
+  readonly effectiveEnabled: boolean;
+  readonly integrityCoverage?: "standard" | "uiaccess";
+  readonly limitations?: Array<"elevated_pixel_input" | "uwp_send_input">;
+}): MockManagedPlugin {
+  return createMockCuaPlugin({
+    status: input.effectiveEnabled ? "enabled" : "disabled",
+    description: "Desktop-owned embedded provider.",
+    trustSummary: "Included with Ling and owned by the current Desktop process.",
+    setup: {
+      kind: "local_binary",
+      schemaVersion: 2,
+      distribution: "bundled_embedded",
+      platform: input.platform,
+      providerState: input.providerState,
+      requestedEnabled: input.requestedEnabled,
+      effectiveEnabled: input.effectiveEnabled,
+      state: input.effectiveEnabled ? "ready" : "connected",
+      checkedAt: "2026-07-21T00:00:00.000Z",
+      providerVersion: "0.8.3",
+      integrity: "verified",
+      integrityCoverage: input.integrityCoverage,
+      limitations: input.limitations ?? [],
+    },
+    health: input.effectiveEnabled
+      ? createMockPluginHealth("trusted-local:cua-driver", "ready", "Bundled Cua Driver is ready.")
+      : undefined,
+    actions: {
+      canEnable: input.providerState === "included",
+      canDisable: input.requestedEnabled,
+      canCheck: true,
+      canApplyPreset: false,
+      canInstall: false,
+      canUninstall: false,
+      canRefreshPackage: false,
+      canRuntimePreview: false,
+    },
+  });
 }
 
 export function createMockBundledCuaPlugin(overrides: Partial<MockManagedPlugin> = {}): MockManagedPlugin {
