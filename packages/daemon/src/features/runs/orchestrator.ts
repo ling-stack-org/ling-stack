@@ -66,7 +66,7 @@ import { listExecutableSkillDefinitions } from "../skills/registry.js";
 import { resolveAiTeammateReference } from "../teammates/identity.js";
 import { listBundledPackageDescriptors } from "../plugins/source-index.js";
 import { createManagedPluginRuntimeSnapshot } from "../plugins/runtime-injection.js";
-import { isBundledEmbeddedCuaDriverRuntime } from "../plugins/cua-driver-runtime-mode.js";
+import { isBundledEmbeddedCuaDriverSelected } from "../plugins/cua-driver-runtime-mode.js";
 import { createCuaDriverDescriptor } from "../plugins/presets.js";
 import {
   createRunApprovalHandler,
@@ -508,8 +508,7 @@ export async function executeRunRequest(
     const managedPluginDescriptors = [
       ...listBundledPackageDescriptors(),
       ...(mcpBroker.cuaDriverRuntimeAuthority
-        && isBundledEmbeddedCuaDriverRuntime(
-          store,
+        && isBundledEmbeddedCuaDriverSelected(
           mcpBroker.cuaDriverRuntimeAuthority,
           workspaceCwd,
         )

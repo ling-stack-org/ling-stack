@@ -238,6 +238,8 @@ export interface CreateManagedPluginRuntimeSnapshotInput {
   readonly id?: string;
   readonly runId?: string;
   readonly cwd: string;
+  /** Selected plugin identities, including selected plugins that are currently blocked. */
+  readonly pluginIds?: readonly string[];
   readonly capabilities: readonly ManagedPluginRuntimePreview[];
   readonly policyOverlays: readonly ManagedPluginPolicyOverlayView[];
   readonly createdAt?: string;

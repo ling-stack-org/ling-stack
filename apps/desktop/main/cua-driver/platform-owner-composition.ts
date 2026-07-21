@@ -6,11 +6,11 @@ import {
   CuaDriverDesktopPlatformOwnerError,
   type CuaDriverDesktopPlatformOwner,
 } from "./platform-owner.js";
-import { loadCuaDriverRuntimeTrustPolicy } from "./runtime-trust-policy.js";
+import type { CuaDriverRuntimeTrustPolicyV1 } from "./runtime-trust-policy.js";
 
 export interface CreatePackagedCuaDriverDesktopPlatformOwnerOptions {
   readonly platform: string;
-  readonly resourcesPath: string;
+  readonly policy: CuaDriverRuntimeTrustPolicyV1;
   readonly win32SystemRoot?: string;
   readonly win32PowerMonitor?: Win32PowerMonitorPort;
   readonly baseEnvironment?: NodeJS.ProcessEnv;
@@ -28,10 +28,10 @@ export async function createPackagedCuaDriverDesktopPlatformOwner(
   options: CreatePackagedCuaDriverDesktopPlatformOwnerOptions,
 ): Promise<CuaDriverDesktopPlatformOwner> {
   const platform = supportedPlatform(options.platform);
-  const policy = await loadCuaDriverRuntimeTrustPolicy({
-    resourcesPath: options.resourcesPath,
-    platform,
-  });
+  const policy = options.policy;
+  if (policy.platform !== platform) {
+    throw new CuaDriverDesktopPlatformOwnerError("platform_mismatch", platform);
+  }
   if (platform === "darwin") {
     return createCuaDriverDesktopPlatformOwner({
       platform,

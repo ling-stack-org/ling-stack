@@ -14,7 +14,11 @@ import {
   type CuaDriverActivationStoreFacet,
 } from "@ling-stack/core";
 import { buildManagedPluginPolicyOverlays } from "./policy-overlay.js";
-import { isBundledEmbeddedCuaDriverRuntime } from "./cua-driver-runtime-mode.js";
+import {
+  isBundledEmbeddedCuaDriverRuntime,
+  isBundledEmbeddedCuaDriverSelected,
+} from "./cua-driver-runtime-mode.js";
+import { BUNDLED_CUA_DRIVER_PLUGIN_ID } from "./bundled-index.js";
 import { CUA_DRIVER_PLUGIN_ID } from "./presets.js";
 
 type ManagedPluginRuntimeStore =
@@ -123,9 +127,29 @@ export function createManagedPluginRuntimeSnapshot(input: {
   const policyOverlays = capabilities.flatMap((preview) =>
     preview.policyOverlays.map((overlay) => ({ ...overlay }))
   );
+  const selectedPluginIds = new Set(capabilities.map((preview) => preview.pluginId));
+  if (
+    input.cuaDriverRuntimeAuthority
+    && isBundledEmbeddedCuaDriverSelected(
+      input.cuaDriverRuntimeAuthority,
+      input.store.paths.cwd,
+    )
+    && input.descriptors.some((descriptor) => descriptor.id === BUNDLED_CUA_DRIVER_PLUGIN_ID)
+  ) {
+    // Preserve package selection in the run snapshot even when the current
+    // Desktop lease blocks injection. Do not mark every disabled descriptor
+    // as selected merely because it exists in the bundled source index.
+    selectedPluginIds.add(BUNDLED_CUA_DRIVER_PLUGIN_ID);
+  }
+  const pluginIds = [...new Set(
+    input.descriptors
+      .map((descriptor) => descriptor.id)
+      .filter((pluginId) => selectedPluginIds.has(pluginId)),
+  )];
   const snapshot = input.store.createManagedPluginRuntimeSnapshot({
     runId: input.runId,
     cwd: input.cwd,
+    pluginIds,
     capabilities,
     policyOverlays,
     createdAt: input.now,

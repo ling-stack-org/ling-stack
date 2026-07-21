@@ -24,14 +24,24 @@ export function isBundledEmbeddedCuaDriverRuntime(
 ): boolean {
   const workspaceCwd = resolve(authority.workspaceCwd);
   if (
-    !authority.enabled
+    !isBundledEmbeddedCuaDriverSelected(authority, requestCwd)
     || !authority.hasCurrentLease()
-    || resolve(requestCwd) !== workspaceCwd
     || resolve(store.paths.cwd) !== workspaceCwd
   ) {
     return false;
   }
   return hasPersistedBundledCuaDriverProjection(store);
+}
+
+/** Distribution selection is authoritative even while the Desktop lease is unavailable. */
+export function isBundledEmbeddedCuaDriverSelected(
+  authority: {
+    readonly enabled: boolean;
+    readonly workspaceCwd: string;
+  },
+  requestCwd: string,
+): boolean {
+  return authority.enabled && resolve(requestCwd) === resolve(authority.workspaceCwd);
 }
 
 export function hasPersistedBundledCuaDriverProjection(

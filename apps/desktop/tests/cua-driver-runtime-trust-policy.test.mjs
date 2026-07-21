@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { mkdtemp, mkdir, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -165,6 +166,7 @@ test("runtime policy rejects malformed envelopes and Darwin Team IDs", () => {
 
 test("loader reads only the fixed resource path and fails closed on missing or oversized policy", async () => {
   const root = await mkdtemp(join(tmpdir(), "ling-cua-runtime-policy-"));
+  const authority = authorityForPolicy(internalWindowsPolicy());
   try {
     const policyPath = join(root, ...CUA_DRIVER_RUNTIME_TRUST_POLICY_RESOURCE_SEGMENTS);
     await mkdir(join(policyPath, ".."), { recursive: true });
@@ -173,19 +175,20 @@ test("loader reads only the fixed resource path and fails closed on missing or o
     const policy = await loadCuaDriverRuntimeTrustPolicy({
       resourcesPath: root,
       platform: "win32",
+      authority,
     });
     assert.equal(policy.platform, "win32");
 
     await assert.rejects(
-      loadCuaDriverRuntimeTrustPolicy({ resourcesPath: root, platform: "darwin" }),
+      loadCuaDriverRuntimeTrustPolicy({ resourcesPath: root, platform: "darwin", authority }),
       (error) => error instanceof CuaDriverRuntimeTrustPolicyError && error.policyCode === "platform_mismatch",
     );
     await assert.rejects(
-      loadCuaDriverRuntimeTrustPolicy({ resourcesPath: join(root, "missing"), platform: "win32" }),
+      loadCuaDriverRuntimeTrustPolicy({ resourcesPath: join(root, "missing"), platform: "win32", authority }),
       (error) => error instanceof CuaDriverRuntimeTrustPolicyError && error.policyCode === "unavailable",
     );
     await assert.rejects(
-      loadCuaDriverRuntimeTrustPolicy({ resourcesPath: root, platform: "win32", maxBytes: 8 }),
+      loadCuaDriverRuntimeTrustPolicy({ resourcesPath: root, platform: "win32", authority, maxBytes: 8 }),
       (error) => error instanceof CuaDriverRuntimeTrustPolicyError && error.policyCode === "oversized",
     );
   } finally {
@@ -195,6 +198,7 @@ test("loader reads only the fixed resource path and fails closed on missing or o
 
 test("loader rejects a symlinked policy even when the target has a valid schema", async () => {
   const root = await mkdtemp(join(tmpdir(), "ling-cua-runtime-policy-link-"));
+  const authority = authorityForPolicy(internalWindowsPolicy());
   try {
     const policyPath = join(root, ...CUA_DRIVER_RUNTIME_TRUST_POLICY_RESOURCE_SEGMENTS);
     const targetPath = join(root, "outside-policy.json");
@@ -203,7 +207,7 @@ test("loader rejects a symlinked policy even when the target has a valid schema"
     await symlink(targetPath, policyPath);
 
     await assert.rejects(
-      loadCuaDriverRuntimeTrustPolicy({ resourcesPath: root, platform: "win32" }),
+      loadCuaDriverRuntimeTrustPolicy({ resourcesPath: root, platform: "win32", authority }),
       (error) => error instanceof CuaDriverRuntimeTrustPolicyError && error.policyCode === "path_invalid",
     );
   } finally {
@@ -212,8 +216,9 @@ test("loader rejects a symlinked policy even when the target has a valid schema"
 });
 
 test("loader rejects relative roots, non-files, malformed JSON, and invalid size bounds", async () => {
+  const authority = authorityForPolicy(internalWindowsPolicy());
   await assert.rejects(
-    loadCuaDriverRuntimeTrustPolicy({ resourcesPath: "relative/resources", platform: "win32" }),
+    loadCuaDriverRuntimeTrustPolicy({ resourcesPath: "relative/resources", platform: "win32", authority }),
     (error) => error instanceof CuaDriverRuntimeTrustPolicyError && error.policyCode === "path_invalid",
   );
 
@@ -222,19 +227,24 @@ test("loader rejects relative roots, non-files, malformed JSON, and invalid size
     const policyPath = join(root, ...CUA_DRIVER_RUNTIME_TRUST_POLICY_RESOURCE_SEGMENTS);
     await mkdir(policyPath, { recursive: true });
     await assert.rejects(
-      loadCuaDriverRuntimeTrustPolicy({ resourcesPath: root, platform: "win32" }),
+      loadCuaDriverRuntimeTrustPolicy({ resourcesPath: root, platform: "win32", authority }),
       (error) => error instanceof CuaDriverRuntimeTrustPolicyError && error.policyCode === "path_invalid",
     );
 
     await rm(policyPath, { recursive: true, force: true });
-    await writeFile(policyPath, "{not-json", "utf8");
+    const malformedBytes = "{not-json";
+    await writeFile(policyPath, malformedBytes, "utf8");
     await assert.rejects(
-      loadCuaDriverRuntimeTrustPolicy({ resourcesPath: root, platform: "win32" }),
+      loadCuaDriverRuntimeTrustPolicy({
+        resourcesPath: root,
+        platform: "win32",
+        authority: authorityForBytes(malformedBytes),
+      }),
       (error) => error instanceof CuaDriverRuntimeTrustPolicyError && error.policyCode === "json_invalid",
     );
     for (const maxBytes of [0, -1, 1.5, 1024 * 1024 + 1]) {
       await assert.rejects(
-        loadCuaDriverRuntimeTrustPolicy({ resourcesPath: root, platform: "win32", maxBytes }),
+        loadCuaDriverRuntimeTrustPolicy({ resourcesPath: root, platform: "win32", authority, maxBytes }),
         schemaFailure,
       );
     }
@@ -245,6 +255,7 @@ test("loader rejects relative roots, non-files, malformed JSON, and invalid size
 
 test("loader rejects an intermediate directory symlink that escapes resources", async () => {
   const root = await mkdtemp(join(tmpdir(), "ling-cua-runtime-policy-escape-"));
+  const authority = authorityForPolicy(internalWindowsPolicy());
   try {
     const resourcesPath = join(root, "resources");
     const outsideProviders = join(root, "outside-providers");
@@ -255,8 +266,44 @@ test("loader rejects an intermediate directory symlink that escapes resources", 
     await symlink(outsideProviders, join(resourcesPath, "providers"));
 
     await assert.rejects(
-      loadCuaDriverRuntimeTrustPolicy({ resourcesPath, platform: "win32" }),
+      loadCuaDriverRuntimeTrustPolicy({ resourcesPath, platform: "win32", authority }),
       (error) => error instanceof CuaDriverRuntimeTrustPolicyError && error.policyCode === "path_escape",
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("loader binds policy bytes and Windows signing pair to signed authority", async () => {
+  const root = await mkdtemp(join(tmpdir(), "ling-cua-runtime-policy-authority-"));
+  const policy = internalWindowsPolicy();
+  const bytes = `${JSON.stringify(policy)}\n`;
+  try {
+    const policyPath = join(root, ...CUA_DRIVER_RUNTIME_TRUST_POLICY_RESOURCE_SEGMENTS);
+    await mkdir(join(policyPath, ".."), { recursive: true });
+    await writeFile(policyPath, bytes, "utf8");
+
+    await assert.rejects(
+      loadCuaDriverRuntimeTrustPolicy({
+        resourcesPath: root,
+        platform: "win32",
+        authority: { ...authorityForBytes(bytes), runtimeTrustPolicySha256: "d".repeat(64) },
+      }),
+      (error) => error instanceof CuaDriverRuntimeTrustPolicyError
+        && error.policyCode === "digest_mismatch",
+    );
+    await assert.rejects(
+      loadCuaDriverRuntimeTrustPolicy({
+        resourcesPath: root,
+        platform: "win32",
+        authority: {
+          ...authorityForBytes(bytes),
+          signingTier: "production_signed",
+          distributionChannel: "production",
+        },
+      }),
+      (error) => error instanceof CuaDriverRuntimeTrustPolicyError
+        && error.policyCode === "schema_invalid",
     );
   } finally {
     await rm(root, { recursive: true, force: true });
@@ -282,6 +329,24 @@ function internalWindowsPolicy() {
       },
       catalogTimestampStatus: "NotRequired",
     },
+  };
+}
+
+function authorityForPolicy(policy) {
+  return authorityForBytes(`${JSON.stringify(policy)}\n`);
+}
+
+function authorityForBytes(bytes) {
+  return {
+    schemaVersion: 1,
+    componentId: "cua-driver",
+    distributionRevision: "0.8.3-ling.1",
+    providerExpected: true,
+    platform: "win32",
+    signingTier: "test_signed_internal",
+    distributionChannel: "internal",
+    capabilitiesSha256: "b".repeat(64),
+    runtimeTrustPolicySha256: createHash("sha256").update(bytes).digest("hex"),
   };
 }
 

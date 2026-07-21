@@ -221,6 +221,22 @@ test("sqlite persists managed plugin package records and runtime snapshots", asy
     assert.equal(store.getManagedPluginRuntimeSnapshot("plugin_runtime_snapshot_test")?.runId, "run_plugin_runtime_test");
     assert.equal(store.getManagedPluginRuntimeSnapshotForRun("run_plugin_runtime_test")?.capabilities[0]?.pluginId, "bundled:cua-driver");
 
+    const selectedButBlocked = store.createManagedPluginRuntimeSnapshot({
+      id: "plugin_runtime_snapshot_selected_blocked",
+      runId: "run_plugin_runtime_selected_blocked",
+      cwd,
+      pluginIds: ["trusted-local:cua-driver"],
+      capabilities: [],
+      policyOverlays: [],
+      createdAt: "2026-06-06T00:14:00.000Z",
+    });
+    assert.deepEqual(selectedButBlocked.pluginIds, ["trusted-local:cua-driver"]);
+    assert.deepEqual(selectedButBlocked.capabilities, []);
+    assert.deepEqual(
+      store.getManagedPluginRuntimeSnapshotForRun("run_plugin_runtime_selected_blocked"),
+      selectedButBlocked,
+    );
+
     store.close();
     const reopened = createSqliteRunStore(cwd);
     try {

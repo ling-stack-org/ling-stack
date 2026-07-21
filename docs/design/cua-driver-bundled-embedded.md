@@ -37,9 +37,22 @@ authority and durably project `permission_required`, `interactive_session_requir
 the daemon activation CAS. The gate-off Win32 standard adapter covers policy-pinned
 identity, state-root protection, direct-child lifecycle and readiness recovery. Opt-in
 pre-sign package staging and the Darwin/Win32 native no-replace atomic publisher core are
-implemented but are not connected to default packaging. Production staging authority is
-fixed to the committed lock/resource root and real source-build verifier; trust overrides
-exist only inside the test factory. The native helper preflights before payload creation,
+implemented. The normal macOS/Windows package commands now pass through a governed wrapper:
+provider-disabled builds preserve the existing Electron Builder configuration, while an
+explicit package authority stages only verified source-build output, generates the fixed
+runtime trust policy and one-platform capability document, and wires the signing/seal/
+final-verification hooks. Signing context is isolated per packager output and architecture.
+The authority is the `lingCuaDriverPackageAuthority` field in packaged `package.json` inside
+signed `app.asar`; Electron ASAR integrity binds that intent to the host executable. The
+governed config enables `asar`, `enableEmbeddedAsarIntegrityValidation` and
+`onlyLoadAppFromAsar` for external-only packages too, so an omitted provider is itself a
+signed package decision rather than a loose-file default. Once signed intent says the
+provider is present, missing, malformed or digest-mismatched loose capability/policy files
+disable runtime but remain bundled-authoritative; packaged Desktop must not silently select
+`PATH`, Homebrew or `/Applications/CuaDriver.app`.
+Production staging authority is fixed to the committed lock/resource root and real
+source-build verifier; trust overrides exist only inside the test factory. The native helper
+preflights before payload creation,
 then production staging and explicit cleanup each hold one cross-process parent lease while
 Node runs their ordered output-parent workflow. The holder is also the synchronous native
 RPC actor: the process that owns the platform lock performs every native inspect, security,
@@ -88,9 +101,15 @@ preflight before deletion; safe rollback restores a failed quarantine, while an 
 retryable quarantine remains quota-counted. Cleanup can reapply identity-bound private
 security when staging failed before hardening; if hardening still fails, only the exact
 current-user-owned, no-reparse, empty root may be removed through native
-`remove-unsecured-empty`. Cleanup refuses a replaced or non-empty unsafe residue. Final
-signing, generated runtime trust-policy packaging, `Ling Stack Setup.exe` inclusion, product-state
-E2E, Windows hosted-runner validation and real-machine acceptance remain. Both macOS and
+`remove-unsecured-empty`. Cleanup refuses a replaced or non-empty unsafe residue. The real
+final-target fixture invokes macOS `--mac dmg zip` and verifies exactly `outer-dmg` plus
+`outer-zip`; its Windows form invokes `--win nsis` and verifies exactly `outer-nsis`.
+`.blockmap` sidecars are excluded from verified roles. The macOS run proves generated
+authority files, the provider and post-seal byte stability inside the final artifacts. The
+committed lock still enables no platform
+and carries no native binary, so promoted native payloads, release signing, a real
+provider-bearing `Ling Stack Setup.exe`, product-state E2E, Windows hosted-runner validation
+and real-machine acceptance remain. Both macOS and
 Windows artifact jobs now run the full daemon and Pi runner suites rather than a drifting
 Computer Use file allowlist, but hosted evidence still must complete. In particular,
 this slice has no successful Windows hosted native-helper compile, `Global` parent-mutex/

@@ -28,16 +28,31 @@ Catalog projects requested versus effective enablement only while exact host-pla
 authority and a current Desktop lease remain live. The new composition is inert while
 the gate is off, so external behavior and persisted external commands remain unchanged.
 Opt-in pre-sign package staging and the
-Darwin/Win32 native no-replace atomic publisher core are implemented without final signing
-or native final-identity authority and are not connected to default packaging. Production
-staging authority is pinned to the committed
-trust root and real verifier. Complete output-parent staging/cleanup mutation sections use
-a cross-process native parent lease; temp-root parent/root identities bind security and
+Darwin/Win32 native no-replace atomic publisher core are implemented without release signing
+or promoted native final-identity authority. The normal package commands now use one
+governed wrapper: provider-disabled builds remain unchanged, while explicit package
+authority invokes production staging, generates the fixed trust-policy/capability documents,
+adds the verified private resource root, and runs provider sign/seal plus post-sign/final
+artifact verification. Per-output/architecture bindings prevent Electron Builder multi-arch
+state reuse. Package intent is read from packaged `package.json` inside signed `app.asar`,
+whose bytes are bound to the host executable by Electron's ASAR-integrity fuse. The governed
+config enables `asar`, `enableEmbeddedAsarIntegrityValidation` and `onlyLoadAppFromAsar`
+for external-only packages as well as provider-bearing packages. Provider-bearing intent is
+therefore still bundled-authoritative when a loose capability or runtime-policy file is
+missing, malformed or fails its signed digest; runtime stays unavailable and never falls
+back to `PATH`, Homebrew or `/Applications/CuaDriver.app`. Production staging authority is
+pinned to the committed trust root and real verifier. Complete output-parent
+staging/cleanup mutation sections use a cross-process native parent lease; temp-root
+parent/root identities bind security and
 publication, and retained failures have bounded identity-bound cleanup, including the
-strict empty-unsecured-root fallback, rather than path-only recursive deletion. Final
-signing, generated runtime trust-policy packaging, `Ling Stack Setup.exe` inclusion,
-Windows hosted-runner validation and real-machine acceptance are not
-complete. Both Darwin and Win32 packaged-provider production gates remain off, so
+strict empty-unsecured-root fallback, rather than path-only recursive deletion. The final
+artifact fixture uses macOS `--mac dmg zip` with verified roles `outer-dmg` and `outer-zip`,
+and Windows `--win nsis` with verified role `outer-nsis`; `.blockmap` sidecars never count as
+verified artifacts. The macOS run proves the packaged provider, generated runtime
+policy/capability and post-seal digest stability. The committed lock still enables no
+platform and contains no native binary, so promoted native payloads, release signing, a real provider-bearing
+`Ling Stack Setup.exe`, Windows hosted-runner validation and real-machine acceptance are
+not complete. Both Darwin and Win32 packaged-provider production gates remain off, so
 packaged runtime still uses the external provider path. This does not complete
 `bundled_embedded`; an active `external_local` installation such as
 `/Applications/CuaDriver.app` must not be removed yet.

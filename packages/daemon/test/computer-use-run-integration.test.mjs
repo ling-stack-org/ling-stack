@@ -195,7 +195,10 @@ test("bundled current lease enters the run snapshot and Computer Use projection 
 
     const run = capture.store.listRuns({ limit: 20 }).find((candidate) => candidate.taskId === taskId);
     assert.ok(run);
-    assert.deepEqual(run.requestSnapshot.managedPluginRuntime.pluginIds, ["trusted-local:cua-driver"]);
+    assert.deepEqual(run.requestSnapshot.managedPluginRuntime.pluginIds, [
+      "bundled:cua-driver",
+      "trusted-local:cua-driver",
+    ]);
     const capability = run.requestSnapshot.managedPluginRuntime.capabilities.find(
       (candidate) => candidate.pluginId === "trusted-local:cua-driver",
     );
@@ -216,6 +219,53 @@ test("bundled current lease enters the run snapshot and Computer Use projection 
       (candidate) => candidate.status === "succeeded",
     );
     assert.equal(projection.target.displayName, "Research Browser");
+  } finally {
+    await daemon.stop().catch(() => undefined);
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("bundled package selection stays in the run snapshot while its Desktop lease is unavailable", {
+  skip: !SUPPORTED_DESKTOP_PLATFORM,
+}, async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-computer-use-bundled-no-lease-run-"));
+  const runner = new CompletingWithoutComputerUseRunner();
+  const { capture, storeFactory } = createCapturedStoreFactory();
+  const daemon = createDaemonServer(
+    bundledConfig(cwd),
+    {
+      runner,
+      desktopBridgeToken: DESKTOP_BRIDGE_TOKEN,
+      computerUseRouteToken: COMPUTER_USE_ROUTE_TOKEN,
+      storeFactory,
+    },
+  );
+  await daemon.start();
+  try {
+    const address = daemon.server.address();
+    assert.ok(address && typeof address === "object");
+    const baseUrl = `http://127.0.0.1:${address.port}`;
+    assert.ok(capture.store);
+
+    const taskId = "task_computer_use_bundled_no_lease_run";
+    const response = await fetch(`${baseUrl}/runs`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(runBody(cwd, taskId)),
+    });
+    if (!response.ok) {
+      assert.fail(`${response.status} ${response.statusText}: ${await response.text()}`);
+    }
+    await response.text();
+    assert.equal(runner.callCompleted, true);
+
+    const run = capture.store.listRuns({ limit: 20 }).find((candidate) => candidate.taskId === taskId);
+    assert.ok(run);
+    assert.deepEqual(
+      run.requestSnapshot.managedPluginRuntime.pluginIds,
+      ["bundled:cua-driver"],
+    );
+    assert.deepEqual(run.requestSnapshot.managedPluginRuntime.capabilities, []);
   } finally {
     await daemon.stop().catch(() => undefined);
     await rm(cwd, { recursive: true, force: true });
@@ -517,6 +567,20 @@ class CompletingComputerUseRunner {
       cwd: options.cwd,
       defaultApproval: tool.defaultApproval,
     });
+    this.callCompleted = true;
+    return {
+      taskId: options.task.id,
+      events: [],
+      messages: [{ role: "assistant", content: "done" }],
+    };
+  }
+}
+
+class CompletingWithoutComputerUseRunner {
+  callCompleted = false;
+
+  async runTask(options) {
+    assert.deepEqual(options.mcpTools ?? [], []);
     this.callCompleted = true;
     return {
       taskId: options.task.id,

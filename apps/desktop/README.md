@@ -68,17 +68,41 @@ user-installed `cua-driver` binary, native app bundles, credentials, or permissi
 The closed-gate runtime foundation now includes a fixed-path strict trust-policy loader,
 one process-wide Darwin/Win32 platform owner and an authenticated non-ready availability
 projection. The availability path may hide tools and report permission/session/platform
-repair state; it cannot report ready or replace lease/activation authority. Current
-packages still omit both `providers/cua-driver/runtime-trust-policy.json` and the final
-native payload, so this foundation does not enable bundled mode by itself.
+repair state; it cannot report ready or replace lease/activation authority.
 
-That paragraph describes the current implementation. The approved next macOS and Windows
-Desktop direction is to package the locked `0.8.3 (Ling build 1)` source build, including
-its managed-embedding patch series and platform post-sign seal/catalog contract, then run
-the main provider as a Desktop-owned embedded child, as defined by the Bundled Embedded
-Cua Driver documents above. Windows starts with the existing per-user/asInvoker standard
-integrity tier; UIAccess-only elevated/UWP pixel input remains a separate secure-helper
-release decision. Until those slices land, packaged artifacts remain plugin-shell-only.
+The production package scripts now run through one governed wrapper. Ordinary builds keep
+their previous external-only Electron Builder configuration. A build can add the provider
+only when both `LING_CUA_DRIVER_PACKAGE_PROVIDER=1` and an absolute
+`LING_CUA_DRIVER_SOURCE_BUILD_ROOT` are present. That path invokes the production stager,
+copies only its verified platform output into a private temporary resource root, generates
+`runtime-trust-policy.json` plus `packaged-provider-capabilities.json`, and passes only that
+root and the verified pre-sign digest to Electron Builder. `afterPack` signs/seals the
+provider, platform signing preserves the sealed tuple, and `afterSign`/final-artifact hooks
+reverify it. Signing state is bound per packager output and architecture, so concurrent
+macOS arm64/x64 work cannot reuse the wrong state directory. The package intent lives in
+the packaged `package.json` inside signed `app.asar`; Electron's embedded ASAR-integrity
+validation binds those bytes to the host executable. Both provider-bearing and external-only
+packages set `asar: true`, `enableEmbeddedAsarIntegrityValidation: true` and
+`onlyLoadAppFromAsar: true`. A provider-bearing intent remains bundled-authoritative when
+its loose capability or runtime-policy replica is missing, malformed or digest-mismatched:
+runtime start stays closed and never falls back to `PATH`, Homebrew or
+`/Applications/CuaDriver.app`.
+
+The Builder fixture uses the real final target shapes: macOS runs `--mac dmg zip` and must
+verify exactly `outer-dmg` plus `outer-zip`; Windows runs `--win nsis` and must verify exactly
+`outer-nsis`. Generated `.blockmap` sidecars are not verified artifacts and do not count
+toward those roles. The macOS fixture proves the final artifacts retain all three private
+resources and the sealed provider digest. Real release signing and Windows hosted/real-machine
+acceptance remain open.
+
+This plumbing does not promote a payload. The committed `provider-lock.json` still has no
+enabled platform and the repository carries no native provider executable, so normal
+packages still omit both authority documents and the final payload and remain
+`external_local`. The approved next step is to attach repeated native-build evidence,
+promote the platform lock, and then produce the real macOS and Windows package candidates.
+Windows starts with the existing per-user/asInvoker standard integrity tier; UIAccess-only
+elevated/UWP pixel input remains a separate secure-helper release decision. Until a
+platform candidate passes its completion gates, do not remove the external provider.
 
 The pre-sign package-staging path is deliberately opt-in while that lock remains closed:
 
