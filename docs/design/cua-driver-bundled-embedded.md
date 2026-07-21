@@ -50,6 +50,21 @@ signed package decision rather than a loose-file default. Once signed intent say
 provider is present, missing, malformed or digest-mismatched loose capability/policy files
 disable runtime but remain bundled-authoritative; packaged Desktop must not silently select
 `PATH`, Homebrew or `/Applications/CuaDriver.app`.
+The source-build promotion boundary is now implemented as a review-only proposal generator.
+It independently reruns the committed verifier for native candidates A and B, rereads the
+attestation, manifest, promotion inputs and every stable artifact through bounded snapshots,
+requires identical stable digest maps, and emits only a proposed `provider-lock.json` plus
+`source-build-promotion-receipt.json`. It never edits checked-in resources, copies native
+binaries, changes the non-promoting `source-build-inputs.json`, or claims a signing verdict.
+Before either verifier runs it captures the native identity of the canonical output parent.
+Publication later requires that same identity under the shared parent lease, writes into a
+private identity-checked sibling, and uses the native no-replace atomic publisher; a
+symlink, junction, reparse or directory replacement during candidate execution fails closed.
+The receipt remains `MANUAL_REVIEW_REQUIRED` because candidate payloads do not themselves
+prove independent runner/build-invocation provenance. Each native build job uploads its A/B
+evidence first; a dependent same-platform job downloads that immutable artifact, reruns the
+fixed verifier and uploads a separate proposal artifact. This closes the CI serialization
+boundary without treating the proposal job as independent build provenance.
 Production staging authority is fixed to the committed lock/resource root and real
 source-build verifier; trust overrides exist only inside the test factory. The native helper
 preflights before payload creation,

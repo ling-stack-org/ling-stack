@@ -177,7 +177,10 @@ if (args["attestation"]) {
   process.stdout.write(`${JSON.stringify({
     ok: true,
     attestation: resolve(args.attestation),
+    attestationSha256: attestationSnapshot.sha256,
+    manifestSha256: manifestSnapshot.sha256,
     platform: attestation.platform,
+    promotionInputsSha256: promotionSnapshot.sha256,
     files: actual,
   }, null, 2)}\n`);
   process.exit(0);

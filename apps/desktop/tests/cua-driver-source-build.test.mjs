@@ -124,8 +124,69 @@ test("source-build workflow actions use immutable full commit SHAs", async () =>
     workflow.indexOf("  macos-unsigned:"),
   );
   const uses = [...sourceJobs.matchAll(/^\s+uses:\s+([^\s]+)$/gmu)].map((match) => match[1]);
-  assert.deepEqual(uses.length, 7);
+  assert.deepEqual(uses.length, 15);
   for (const action of uses) assert.match(action, /^[^@]+@[0-9a-f]{40}$/u);
+  const macosBuildJob = sourceJobs.slice(
+    sourceJobs.indexOf("  cua-driver-source-build-macos:"),
+    sourceJobs.indexOf("  cua-driver-source-build-windows:"),
+  );
+  const windowsBuildJob = sourceJobs.slice(
+    sourceJobs.indexOf("  cua-driver-source-build-windows:"),
+    sourceJobs.indexOf("  cua-driver-source-build-promotion-macos:"),
+  );
+  const macosPromotionJob = sourceJobs.slice(
+    sourceJobs.indexOf("  cua-driver-source-build-promotion-macos:"),
+    sourceJobs.indexOf("  cua-driver-source-build-promotion-windows:"),
+  );
+  const windowsPromotionJob = sourceJobs.slice(
+    sourceJobs.indexOf("  cua-driver-source-build-promotion-windows:"),
+  );
+  assert.doesNotMatch(macosBuildJob, /promote-cua-driver-source-build\.mjs/u);
+  assert.doesNotMatch(windowsBuildJob, /promote-cua-driver-source-build\.mjs/u);
+  assert.match(
+    macosPromotionJob,
+    /needs: cua-driver-source-build-macos[\s\S]+actions\/download-artifact@[0-9a-f]{40}[\s\S]+name: cua-driver-source-build-macos-universal/u,
+  );
+  assert.match(
+    windowsPromotionJob,
+    /needs: cua-driver-source-build-windows[\s\S]+actions\/download-artifact@[0-9a-f]{40}[\s\S]+name: cua-driver-source-build-windows-x64/u,
+  );
+  assert.match(
+    macosPromotionJob,
+    /promote-cua-driver-source-build\.mjs[\s\S]+--platform darwin[\s\S]+--candidate-a[\s\S]+--candidate-b[\s\S]+--output-dir/u,
+  );
+  assert.match(
+    windowsPromotionJob,
+    /promote-cua-driver-source-build\.mjs --platform win32-x64 --candidate-a[\s\S]+--candidate-b[\s\S]+--output-dir/u,
+  );
+  assert.match(sourceJobs, /name: cua-driver-source-build-promotion-macos-universal/u);
+  assert.match(sourceJobs, /name: cua-driver-source-build-promotion-windows-x64/u);
+  assert.match(sourceJobs, /name: cua-driver-source-build-macos-universal/u);
+  assert.match(sourceJobs, /name: cua-driver-source-build-windows-x64/u);
+  for (const artifactName of [
+    "cua-driver-source-build-promotion-macos-universal",
+    "cua-driver-source-build-promotion-windows-x64",
+  ]) {
+    const start = sourceJobs.indexOf(`          name: ${artifactName}`);
+    const end = sourceJobs.indexOf("\n\n", start);
+    const upload = sourceJobs.slice(start, end);
+    assert.match(
+      upload,
+      /path: \$\{\{ runner\.temp \}\}\/ling-cua-driver-source-build-download\/promotion\/\*\*/u,
+    );
+    assert.doesNotMatch(upload, /path:\s*\|/u);
+  }
+  for (const [job, artifactName] of [
+    [macosPromotionJob, "cua-driver-source-build-macos-universal"],
+    [windowsPromotionJob, "cua-driver-source-build-windows-x64"],
+  ]) {
+    assert.match(job, new RegExp(
+      `name: ${artifactName}[\\s\\S]+path: \\$\\{\\{ runner\\.temp \\}\\}/ling-cua-driver-source-build-download`,
+      "u",
+    ));
+    assert.match(job, /candidate-a[^\n]+a\/output/u);
+    assert.match(job, /candidate-b[^\n]+b\/output/u);
+  }
 });
 
 test("macOS and Windows artifact jobs run complete core, daemon and Pi runner suites", async () => {

@@ -41,7 +41,11 @@ for external-only packages as well as provider-bearing packages. Provider-bearin
 therefore still bundled-authoritative when a loose capability or runtime-policy file is
 missing, malformed or fails its signed digest; runtime stays unavailable and never falls
 back to `PATH`, Homebrew or `/Applications/CuaDriver.app`. Production staging authority is
-pinned to the committed trust root and real verifier. Complete output-parent
+pinned to the committed trust root and real verifier. The review-only promotion generator
+now independently reverifies native candidates A/B, rereads bounded immutable snapshots,
+requires identical stable artifact maps and emits separate macOS/Windows proposal artifacts
+with `MANUAL_REVIEW_REQUIRED`; it never mutates the committed lock or source inputs.
+Complete output-parent
 staging/cleanup mutation sections use a cross-process native parent lease; temp-root
 parent/root identities bind security and
 publication, and retained failures have bounded identity-bound cleanup, including the
@@ -811,6 +815,43 @@ Standalone source-build verification retains an owned version probe: on Unix the
 leads a detached process group, while on Windows the fixed native helper launches the owned
 command inside a `KILL_ON_JOB_CLOSE` Job Object. Timeout, abort and output overflow fence
 descendants on both paths.
+
+Source-build promotion is a separate review-only boundary. Its production API fixes the
+real verifier and exposes no verifier override; fixture injection exists only through a
+test-only factory. `--platform`, `--candidate-a`, `--candidate-b`, `--output-dir` and an
+optional relocated copy of the same anchored `--resource-root` are the only CLI inputs.
+Candidate roots, the resource root and the fresh output root must be canonically disjoint.
+Before candidate execution, the generator captures the canonical output parent and its
+native identity. After verification it must reacquire the same parent identity, create and
+secure an identity-checked private sibling under that lease, and publish only through the
+native no-replace atomic primitive. Replacing an output ancestor with a symlink, junction,
+reparse point or different directory during either verifier therefore cannot redirect the
+proposal into resources or another root.
+Each candidate is verified in its own owned child invocation, then every allowed file is
+reread through a bounded no-follow snapshot. The committed provider-lock and non-promoting
+source-build-input bytes have independent digest anchors. A/B must bind the same current
+inputs, platform, patch/toolchain/runtime/tools evidence and identical stable artifact map;
+missing/extra files, a packaged UIAccess audit helper, mixed locks, changed toolchains or
+fabricated final identity fail closed.
+
+CI makes the artifact boundary explicit. The macOS/Windows native build job uploads the
+complete A/B output without producing a proposal. A dependent job on the same operating
+system downloads that artifact into a fresh root and invokes the production promotion CLI.
+The proposal therefore proves the uploaded bytes survive serialization, download and a
+separate verifier invocation; it still does not prove that A and B came from independent
+runners, so build-invocation provenance remains a manual review blocker.
+
+The generator preserves an already promoted other-platform record byte-for-byte, refuses
+to overwrite the target platform and atomically publishes a fresh proposal directory containing only
+`provider-lock.json` and `source-build-promotion-receipt.json`. The receipt status is
+`MANUAL_REVIEW_REQUIRED`; it records both attestation digests and the proposed lock digest,
+but is not an internal or release verdict. After review, committing a proposal requires the
+independent committed-lock anchor to change in the same patch. Native A/B builds must then
+run again against that new committed lock before package staging. The original
+`source-build-inputs.json` remains closed with null output digests and cannot self-promote.
+Staging tests cover the two-round boundary: an old-lock build fails the trusted-lock anchor,
+rewriting only its lock still leaves a stale attestation that the fixed verifier rejects,
+and only a fresh second build whose attestation binds the promoted lock is accepted.
 
 Before creating a temp payload directory, staging builds and identity-preflights the fixed
 native helper. Darwin executes the held helper vnode through its `/.vol/<dev>/<ino>`

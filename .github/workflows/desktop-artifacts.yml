@@ -77,6 +77,9 @@ jobs:
       - name: Run certificate-free hook-order and artifact fixtures
         run: node apps/desktop/tests/cua-driver-signing-feasibility.test.mjs
 
+      - name: Run source-build promotion contract fixtures
+        run: node --test apps/desktop/tests/cua-driver-source-build-promotion.test.mjs
+
       - name: Enable pnpm
         if: runner.os != 'Linux'
         run: corepack enable
@@ -170,8 +173,8 @@ jobs:
           if-no-files-found: error
           retention-days: 14
           path: |
-            ${{ runner.temp }}/ling-cua-driver-source-build/a/output/**
-            ${{ runner.temp }}/ling-cua-driver-source-build/b/output/**
+            ${{ runner.temp }}/ling-cua-driver-source-build/a/output
+            ${{ runner.temp }}/ling-cua-driver-source-build/b/output
 
   cua-driver-source-build-windows:
     name: Cua Driver locked source build (Windows x64)
@@ -238,8 +241,85 @@ jobs:
           if-no-files-found: error
           retention-days: 14
           path: |
-            ${{ runner.temp }}/ling-cua-driver-source-build/a/output/**
-            ${{ runner.temp }}/ling-cua-driver-source-build/b/output/**
+            ${{ runner.temp }}/ling-cua-driver-source-build/a/output
+            ${{ runner.temp }}/ling-cua-driver-source-build/b/output
+
+  cua-driver-source-build-promotion-macos:
+    name: Cua Driver source-build promotion proposal (macOS universal)
+    needs: cua-driver-source-build-macos
+    runs-on: macos-26
+    timeout-minutes: 30
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          fetch-depth: 1
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22.15.0
+
+      - name: Download macOS source-build evidence
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: cua-driver-source-build-macos-universal
+          path: ${{ runner.temp }}/ling-cua-driver-source-build-download
+
+      - name: Generate review-only macOS source-build promotion proposal
+        run: |
+          set -euo pipefail
+          root="${RUNNER_TEMP}/ling-cua-driver-source-build-download"
+          node apps/desktop/scripts/promote-cua-driver-source-build.mjs \
+            --platform darwin \
+            --candidate-a "${root}/a/output" \
+            --candidate-b "${root}/b/output" \
+            --output-dir "${root}/promotion"
+
+      - name: Upload review-only macOS promotion proposal
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: cua-driver-source-build-promotion-macos-universal
+          if-no-files-found: error
+          retention-days: 14
+          path: ${{ runner.temp }}/ling-cua-driver-source-build-download/promotion/**
+
+  cua-driver-source-build-promotion-windows:
+    name: Cua Driver source-build promotion proposal (Windows x64)
+    needs: cua-driver-source-build-windows
+    runs-on: windows-2025
+    timeout-minutes: 30
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          fetch-depth: 1
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22.15.0
+
+      - name: Download Windows source-build evidence
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: cua-driver-source-build-windows-x64
+          path: ${{ runner.temp }}/ling-cua-driver-source-build-download
+
+      - name: Generate review-only Windows source-build promotion proposal
+        shell: pwsh
+        run: |
+          $root = Join-Path $env:RUNNER_TEMP "ling-cua-driver-source-build-download"
+          node apps/desktop/scripts/promote-cua-driver-source-build.mjs --platform win32-x64 --candidate-a (Join-Path $root "a/output") --candidate-b (Join-Path $root "b/output") --output-dir (Join-Path $root "promotion")
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Upload review-only Windows promotion proposal
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: cua-driver-source-build-promotion-windows-x64
+          if-no-files-found: error
+          retention-days: 14
+          path: ${{ runner.temp }}/ling-cua-driver-source-build-download/promotion/**
 
   macos-unsigned:
     name: macOS unsigned arm64 + x64

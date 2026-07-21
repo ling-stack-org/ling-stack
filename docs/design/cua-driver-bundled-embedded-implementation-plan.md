@@ -73,6 +73,18 @@ Current implementation baseline:
   while its outer verifier and standalone source-build probes use owned Unix process-group
   or Windows Job Object trees; retained failures have bounded, identity-bound native deep-
   delete/rollback cleanup rather than automatic path-recursive deletion;
+- the review-only source-build promotion mechanism is implemented. Native macOS and
+  Windows jobs upload candidates A/B first; dependent same-platform jobs download and
+  independently reverify those artifacts, require identical bounded stable artifact maps,
+  and upload a proposed platform lock plus receipt.
+  Production cannot inject a verifier, checked-in lock/source-input bytes have independent
+  anchors, an existing other-platform record is preserved, and UIAccess, mixed-lock,
+  extra-file, toolchain, final-identity and self-opening-gate attempts fail closed. The
+  output parent identity is captured before either verifier runs; proposal publication
+  reuses the native parent lease, private-directory security and no-replace atomic publisher,
+  so parent symlink/junction/reparse replacement fails closed. The proposal remains
+  `MANUAL_REVIEW_REQUIRED`, does not mutate resources, and requires a
+  second native A/B build after the reviewed lock/anchor commit;
 - the final artifact fixture uses macOS `--mac dmg zip` with verified roles `outer-dmg` plus
   `outer-zip`, and Windows `--win nsis` with verified role `outer-nsis`; `.blockmap` sidecars
   never count as verified artifacts. The macOS run proves generated trust-policy/package
@@ -725,7 +737,10 @@ Current package-staging sub-slice status:
   requires `outer-dmg` plus `outer-zip` or `outer-nsis` respectively, excludes `.blockmap`
   sidecars from verified roles, and the macOS run proves the generated documents/provider
   plus post-seal digest stability in final artifacts;
-- not implemented by this sub-slice: promotion of either platform in the committed lock,
+- implemented outside this staging sub-slice: deterministic review-only promotion proposal
+  generation after a native artifact upload/download round trip, plus separate proposal
+  artifact upload;
+- not implemented by this sub-slice: committing promotion evidence for either platform,
   real native payload inclusion, release signer authority, a provider-bearing Windows Setup,
   migration/rollback activation and accepted production runtime binding;
 - not validated: the Win32 implementation has no successful Windows hosted native-helper
@@ -1246,6 +1261,11 @@ elevated/UWP pixel-input parity.
   activation fence and capability-limitation contracts.
 - [ ] **T3 (P1, human: ~3–5 days / Codex: ~1–2 days)** — Build the locked Rust patch
   series and deterministic macOS/main-Windows outputs; retain UIAccess as audit-only.
+  - Review-only dual-candidate promotion automation and dependent same-platform proposal
+    jobs with artifact upload/download round trips have landed. The committed lock remains
+    closed until hosted A/B evidence succeeds,
+    independent invocation provenance is reviewed, and the lock plus digest anchor are
+    committed together; a second native build must then bind the new lock.
 - [ ] **T4 (P1, human: ~4–6 days / Codex: ~1–2 days)** — Implement Desktop artifact
   verification, host/proxy lifecycle, active-child nonce/readiness, WTS invalidation,
   host-death/stdio-EOF cleanup and lease publication.
