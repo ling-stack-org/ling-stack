@@ -10,13 +10,12 @@ contract uses `signingTier = unsigned_dev | test_signed_internal | production_si
 Only `RELEASE_PASS` may set `releaseReady: true`; `INTERNAL_TEST_PASS` is a genuine installed
 test-signed bundled acceptance verdict but always keeps `releaseReady: false`.
 
-These fields are not implemented by the current schema set. Because the schemas use strict
-exact-key validation and their versions are hard-coded in JS, PowerShell, fixtures and the
-workflow, Bundled Slice 8 must migrate candidate manifest v4, release policy v3,
-review/build attestation v2, release verification v2 and the new internal verification v1
-atomically with all producers, the strict expected-filename set, validators, negative
-fixtures and a test-sign CI lane. This design update intentionally does not partially edit
-the live JSON schemas.
+The live schema set implements this contract atomically: candidate manifest v4, release
+policy v3, review/build attestation v2, release verification v2, internal verification v1,
+handoff index/cell/report schemas and the signed-acceptance matrix. The strict filename set,
+JS validators, PowerShell runner, producer, finalizer, detached verifiers, negative fixtures
+and cross-platform CI contract lane migrate together; older tuples are rejected rather than
+upgraded in place.
 
 ## Slice -1 signing-feasibility evidence
 
@@ -68,28 +67,22 @@ reports the platform-builder lane as skipped rather than claiming cross-platform
 - `windows-release-policy.schema.json` records the approved policy version, approver,
   approval time, exact Ling/provider signer subjects, signer certificate SHA-256 values,
   the explicit supported Windows build allowlist, reviewer/build-attestor identities, and
-  their canonical SPKI SHA-256 fingerprints. Bundled Slice 8 versions this schema to add
-  explicit `requiredAcceptanceCells`; allowlist membership for one host is not matrix
+  their canonical SPKI SHA-256 fingerprints. Version 3 adds explicit
+  `requiredAcceptanceCells`; allowlist membership for one host is not matrix
   coverage. Signer identities and keys are read from this
   content-addressed policy, not accepted as command-line assertions. Reviewer and
   candidate-build roles must be disjoint by identity, key ID, and SPKI fingerprint.
-  The bundled v3 target additionally pins required `signingTier` and
+  Version 3 additionally pins required `signingTier` and
   `distributionChannel`, distinguishes internal test signer identities from the production
   legal Publisher, and rejects every cross-tier/channel combination. TryCua release source
   provenance is not an Authenticode signer identity.
-- `windows-candidate-manifest.schema.json` currently freezes the external/reference
-  baseline: commit, approved policy hash, reviewed upstream archive tuple, both reference
-  PE hashes, Ling app/installer hashes, and daemon payload strategy/tree fingerprint.
-  Bundled Slice 8 must supersede those runtime fields with the source/build lock, packaged
-  main-PE seal, signed provider catalog/path and an audit-only UIAccess hash. Until that
-  schema migration lands, this contract must not be read as the bundled target.
-  Bundled candidate manifest v4 records source/build lock digest, private packaged-provider
+- `windows-candidate-manifest.schema.json` v4 records source/build provenance, private packaged-provider
   path, `signingTier`, `distributionChannel`, production eligibility, applicable
   `testAuthorityKind`, clean `preSignPayloadSha256`, tier-specific final app/installer/
   uninstaller/provider/catalog hashes, provider seal/catalog hashes, audit-only UIAccess
   output, and observed actual Authenticode subjects/certificate SHA-256/timestamp policy.
   `tierGovernedArtifacts` is exactly installer, installed Ling main PE, trusted uninstaller,
-  private provider and signed-tier catalog; the private payload allows no extra executable.
+  private provider and signed-tier catalog; the private payload allows no extra member.
   Electron/Chromium vendor native files use a separate normalized
   `vendorNativeInventory` path/hash/observed-signer inventory and the existing Electron
   Builder policy rather than silently enabling
@@ -98,9 +91,9 @@ reports the platform-builder lane as skipped rather than claiming cross-platform
   test/internal branches require `productionEligible: false`. Only production/production
   may set it true, and that value allows review rather than proving `RELEASE_PASS` or
   `releaseReady: true`.
-- `windows-full-manual-evidence.schema.json` is the current external-baseline shared
-  content contract for six Full evidence kinds: supported Windows build,
-  dual-display/DPI visuals, Narrator, NVDA,
+  The producer copies and rehashes every inventory member into the handoff candidate app tree.
+- `windows-full-manual-evidence.schema.json` v3 is the shared content contract for six Full
+  evidence kinds: supported Windows build, single/dual-display DPI visuals, Narrator, NVDA,
   SmartScreen, and install/update/uninstall. Each document binds the candidate-manifest
   hash and exact host/session/build, derives PASS/FAIL from its case content, requires a
   reviewer-routing claim after the operator completes the case, and references at least one
@@ -108,27 +101,25 @@ reports the platform-builder lane as skipped rather than claiming cross-platform
   and cannot promote a release. Attachments must remain relative to their evidence document.
   One evidence document or attachment reference cannot be reused to close another evidence
   kind.
-  Bundled Slice 8 versions display evidence so one immutable report represents one exact
-  single- or dual-display/DPI cell instead of forcing every report to be dual-display.
-- Bundled Slice 8 adds per-cell handoff/report schemas plus a Windows signed-acceptance
+- Per-cell handoff/report schemas plus a Windows signed-acceptance
   matrix schema. Each producer uses exclusive-create, binds report-relative attachments,
   binds a common `handoffIndexSha256` and unique `cellManifestSha256`, and is aggregated
   by `finalize-windows-signed-acceptance.mjs`, which requires every policy cell exactly
   once and cannot self-promote. A profile-aware independent verifier may emit
   `INTERNAL_TEST_PASS` for the exact test/internal tuple or continue to production review
   for the exact production tuple.
-- `windows-review-attestation.schema.json` is the detached reviewer signature over the
-  canonical Full report evidence digest. Its bundled v2 target signs an exact
+- `windows-review-attestation.schema.json` v2 is the detached reviewer signature over the
+  canonical finalized-matrix evidence digest. It signs an exact
   `INTERNAL_TEST_PASS` or `RELEASE_PASS` verdict plus tier/channel; generic `PASS` is not a
   promotion verdict.
-- `windows-candidate-build-attestation.schema.json` is the detached build-attestor signature
+- `windows-candidate-build-attestation.schema.json` v2 is the detached build-attestor signature
   over the candidate manifest, commit, policy hash, and daemon payload tree fingerprint.
-  Its bundled v2 target also carries and signs tier/channel explicitly.
-- `windows-release-verification.schema.json` remains the production-only contract allowed
-  to carry `releaseReady: true`; its v2 target also proves
+  It also carries and signs tier/channel explicitly.
+- `windows-release-verification.schema.json` v2 remains the production-only contract allowed
+  to carry `releaseReady: true`; it also proves
   `production_signed + production`, every production trust gate, both detached signatures
   and distinct selected public keys before emitting `RELEASE_PASS`.
-- Bundled Slice 8 adds `windows-internal-verification.schema.json` v1 with
+- `windows-internal-verification.schema.json` v1 has
   `kind: "ling.windows.internal-verification"`. Only
   `verify-windows-internal-attestations.mjs` with verifier name
   `ling.windows.internal-attestation-verifier` may emit it, fixed to
@@ -136,6 +127,16 @@ reports the platform-builder lane as skipped rather than claiming cross-platform
   `promotionStatus: "INTERNAL_TEST_PASS"`, `releaseReady: false` and blocker
   `production_signing_required`. The production verifier/schema rejects that kind and is
   not relaxed to accept a test certificate.
+
+`produce-windows-acceptance-handoff.mjs` is the live producer. Its candidate-only phase
+derives v4 from a clean Git commit, approved policy, signed artifact bytes, pre-sign bytes,
+provider seal/catalog, audit-only UIAccess output and observed signer inventory. Its handoff
+phase recomputes that candidate, rejects drift, clones the exact clean repository, copies
+policy/artifacts/manual evidence plus attachments, and atomically publishes a new root with
+one immutable manifest per policy cell. Publication atomically claims a previously absent
+root without replacement and moves `handoff-index.json` last as the ready boundary. Full
+mode accepts only one of those manifests and
+checks its pinned minimum Node/PowerShell/Git versions before candidate execution.
 
 macOS evidence paths are report-relative. Retain each report, its logs/evidence, and the
 candidate's relative artifact tree together. The Windows CLI reads and validates the JSON
@@ -149,13 +150,24 @@ generations, lock/revoke/unlock/reprobe ordering and zero main-child/grandchild 
 One-shot diagnostics may support preflight evidence but can never substitute for the
 active-child readiness record.
 
+The packaged provider smoke separately proves one real daemon-to-child tool exchange. After
+the canonical bundled activation succeeds, Desktop submits the test-owned PID/HWND to the
+bridge-token-protected provider-target verification route. The daemon calls `list_windows`
+through the current lease-generation client, fences the result against the current provider
+and lease authority, and returns the exact target plus instance/epoch/generation and
+lock/seal/catalog digests. Desktop binds those fields to its ready child PID, nonce digest and
+private executable path in one structured proof. The runner compares that proof with the
+activation response, observes the old child PID gone, and requires a new Desktop instance and
+child PID/nonce after restart. A new Desktop process may start numeric generation at `1`; the
+authority key is the complete Desktop instance/epoch/generation tuple.
+
 Internal test trust is provisioned outside Ling only into disposable CI machines or
 dedicated isolated QA machines. `ephemeral-ci` trust is removed after every job or VM
 revert; `managed-internal` trust may persist only in a dedicated isolated QA image/VM under
 external PKI lifecycle and cannot enter a general image or production chain. Ling Setup
 must not carry/import a test root or PFX. Internal/production verification rejects
-mixed/double signatures, an unsigned governed member, a tier/channel mismatch or an
-unexpected executable in the private provider payload; production also rejects every test
+mixed/double signatures, an unsigned governed member, a tier/channel mismatch or any
+unexpected member in the exact distribution/platform/two-file payload tree; production also rejects every test
 root or reuse of test-signed final bytes. Development requires all expected governed PEs
 to derive as `unsigned_dev`, no catalog and an active compile-time dev gate.
 Production signing starts again from the approved clean pre-sign payload. Authenticode

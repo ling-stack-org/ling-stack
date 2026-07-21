@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://ling-stack.dev/schemas/windows-candidate-manifest-v3.json",
+  "$id": "https://ling-stack.dev/schemas/windows-candidate-manifest-v4.json",
   "title": "Ling Desktop Windows Candidate Manifest",
   "type": "object",
   "additionalProperties": false,
@@ -9,15 +9,140 @@
     "kind",
     "commit",
     "releasePolicySha256",
+    "signingTier",
+    "distributionChannel",
+    "productionEligible",
+    "testAuthorityKind",
+    "preSignPayloadSha256",
     "providerRelease",
     "daemonPayload",
-    "artifacts"
+    "packagedProvider",
+    "tierGovernedArtifacts",
+    "vendorNativeInventory"
   ],
   "properties": {
-    "schemaVersion": { "const": 3 },
+    "schemaVersion": { "const": 4 },
     "kind": { "const": "ling.windows.candidate-manifest" },
+    "commit": { "$ref": "#/$defs/commit" },
+    "releasePolicySha256": { "$ref": "#/$defs/sha256" },
+    "signingTier": {
+      "enum": ["unsigned_dev", "test_signed_internal", "production_signed"]
+    },
+    "distributionChannel": {
+      "enum": ["development", "internal", "production"]
+    },
+    "productionEligible": { "type": "boolean" },
+    "testAuthorityKind": {
+      "type": ["string", "null"],
+      "enum": ["ephemeral-ci", "managed-internal", null]
+    },
+    "preSignPayloadSha256": { "$ref": "#/$defs/sha256" },
+    "providerRelease": { "$ref": "#/$defs/providerRelease" },
+    "daemonPayload": { "$ref": "#/$defs/daemonPayload" },
+    "packagedProvider": { "$ref": "#/$defs/packagedProvider" },
+    "tierGovernedArtifacts": { "$ref": "#/$defs/tierGovernedArtifacts" },
+    "vendorNativeInventory": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/vendorNativeArtifact" }
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "signingTier": { "const": "unsigned_dev" } } },
+      "then": {
+        "properties": {
+          "distributionChannel": { "const": "development" },
+          "productionEligible": { "const": false },
+          "testAuthorityKind": { "const": null },
+          "packagedProvider": {
+            "type": "object",
+            "properties": {
+              "providerAuthenticodeSignerSubject": { "const": null },
+              "providerAuthenticodeCertificateSha256": { "const": null },
+              "providerCatalogRelativePath": { "const": null },
+              "providerCatalogSha256": { "const": null }
+            }
+          },
+          "tierGovernedArtifacts": {
+            "type": "object",
+            "properties": {
+              "lingApp": { "$ref": "#/$defs/unsignedGovernedArtifact" },
+              "lingInstaller": { "$ref": "#/$defs/unsignedGovernedArtifact" },
+              "lingUninstaller": { "$ref": "#/$defs/unsignedGovernedArtifact" },
+              "provider": { "$ref": "#/$defs/unsignedGovernedArtifact" },
+              "providerCatalog": { "const": null }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "signingTier": { "const": "test_signed_internal" } } },
+      "then": {
+        "properties": {
+          "distributionChannel": { "const": "internal" },
+          "productionEligible": { "const": false },
+          "testAuthorityKind": { "enum": ["ephemeral-ci", "managed-internal"] },
+          "packagedProvider": {
+            "type": "object",
+            "properties": {
+              "providerAuthenticodeSignerSubject": { "type": "string", "minLength": 1 },
+              "providerAuthenticodeCertificateSha256": { "$ref": "#/$defs/sha256" },
+              "providerCatalogRelativePath": {
+                "const": "resources/providers/cua-driver/0.8.3-ling.1/win32-x64/provider-integrity.cat"
+              },
+              "providerCatalogSha256": { "$ref": "#/$defs/sha256" }
+            }
+          },
+          "tierGovernedArtifacts": {
+            "type": "object",
+            "properties": {
+              "lingApp": { "$ref": "#/$defs/signedGovernedArtifact" },
+              "lingInstaller": { "$ref": "#/$defs/signedGovernedArtifact" },
+              "lingUninstaller": { "$ref": "#/$defs/signedGovernedArtifact" },
+              "provider": { "$ref": "#/$defs/signedGovernedArtifact" },
+              "providerCatalog": { "$ref": "#/$defs/signedGovernedArtifact" }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "signingTier": { "const": "production_signed" } } },
+      "then": {
+        "properties": {
+          "distributionChannel": { "const": "production" },
+          "productionEligible": { "const": true },
+          "testAuthorityKind": { "const": null },
+          "packagedProvider": {
+            "type": "object",
+            "properties": {
+              "providerAuthenticodeSignerSubject": { "type": "string", "minLength": 1 },
+              "providerAuthenticodeCertificateSha256": { "$ref": "#/$defs/sha256" },
+              "providerCatalogRelativePath": {
+                "const": "resources/providers/cua-driver/0.8.3-ling.1/win32-x64/provider-integrity.cat"
+              },
+              "providerCatalogSha256": { "$ref": "#/$defs/sha256" }
+            }
+          },
+          "tierGovernedArtifacts": {
+            "type": "object",
+            "properties": {
+              "lingApp": { "$ref": "#/$defs/signedGovernedArtifact" },
+              "lingInstaller": { "$ref": "#/$defs/signedGovernedArtifact" },
+              "lingUninstaller": { "$ref": "#/$defs/signedGovernedArtifact" },
+              "provider": { "$ref": "#/$defs/signedGovernedArtifact" },
+              "providerCatalog": { "$ref": "#/$defs/signedGovernedArtifact" }
+            }
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
     "commit": { "type": "string", "pattern": "^[0-9a-f]{40}([0-9a-f]{24})?$" },
-    "releasePolicySha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
     "providerRelease": {
       "type": "object",
       "additionalProperties": false,
@@ -55,33 +180,132 @@
       "additionalProperties": false,
       "required": ["sourceCommit", "strategy", "treeSha256"],
       "properties": {
-        "sourceCommit": { "type": "string", "pattern": "^[0-9a-f]{40}([0-9a-f]{24})?$" },
+        "sourceCommit": { "$ref": "#/$defs/commit" },
         "strategy": {
-          "enum": [
-            "deterministic-rebuild",
-            "signed-candidate-embedded-daemon"
-          ]
+          "enum": ["deterministic-rebuild", "signed-candidate-embedded-daemon"]
         },
-        "treeSha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+        "treeSha256": { "$ref": "#/$defs/sha256" }
       }
     },
-    "artifacts": {
+    "packagedProvider": {
       "type": "object",
       "additionalProperties": false,
       "required": [
-        "lingAppSha256",
-        "lingInstallerSha256",
-        "providerSha256",
-        "providerHelperSha256"
+        "providerRelativePath",
+        "providerSealRelativePath",
+        "providerSealSha256",
+        "providerCatalogRelativePath",
+        "providerCatalogSha256",
+        "auditOnlyUiAccessSha256",
+        "providerAuthenticodeSignerSubject",
+        "providerAuthenticodeCertificateSha256"
       ],
       "properties": {
-        "lingAppSha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
-        "lingInstallerSha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
-        "providerSha256": {
-          "const": "3cc33572defac29e23bc07e211c20245da9f6ebe8e6481f865b31534b1de8cee"
+        "providerRelativePath": {
+          "const": "resources/providers/cua-driver/0.8.3-ling.1/win32-x64/payload/cua-driver.exe"
         },
-        "providerHelperSha256": {
-          "const": "1b35a27d41008507d66f819248751b9e79a15c9e6e03390c56749c6fe5daca1c"
+        "providerSealRelativePath": {
+          "const": "resources/providers/cua-driver/0.8.3-ling.1/win32-x64/payload/provider-seal.json"
+        },
+        "providerSealSha256": { "$ref": "#/$defs/sha256" },
+        "providerCatalogRelativePath": {
+          "type": ["string", "null"],
+          "enum": [
+            "resources/providers/cua-driver/0.8.3-ling.1/win32-x64/provider-integrity.cat",
+            null
+          ]
+        },
+        "providerCatalogSha256": {
+          "anyOf": [{ "$ref": "#/$defs/sha256" }, { "type": "null" }]
+        },
+        "auditOnlyUiAccessSha256": { "$ref": "#/$defs/sha256" },
+        "providerAuthenticodeSignerSubject": {
+          "type": ["string", "null"],
+          "minLength": 1
+        },
+        "providerAuthenticodeCertificateSha256": {
+          "anyOf": [{ "$ref": "#/$defs/sha256" }, { "type": "null" }]
+        }
+      }
+    },
+    "signedGovernedArtifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "relativePath",
+        "sha256",
+        "authenticodeStatus",
+        "signerSubject",
+        "certificateSha256",
+        "timestampPolicy",
+        "timestampStatus"
+      ],
+      "properties": {
+        "relativePath": { "type": "string", "minLength": 1, "pattern": "^(?![A-Za-z]:|[/\\\\]|.*(?:^|[/\\\\])\\.\\.(?:[/\\\\]|$)).+$" },
+        "sha256": { "$ref": "#/$defs/sha256" },
+        "authenticodeStatus": { "const": "Valid" },
+        "signerSubject": { "type": "string", "minLength": 1 },
+        "certificateSha256": { "$ref": "#/$defs/sha256" },
+        "timestampPolicy": { "enum": ["internal-policy", "rfc3161-required"] },
+        "timestampStatus": { "enum": ["NotRequired", "Valid"] }
+      }
+    },
+    "unsignedGovernedArtifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["relativePath", "sha256", "authenticodeStatus"],
+      "properties": {
+        "relativePath": { "type": "string", "minLength": 1, "pattern": "^(?![A-Za-z]:|[/\\\\]|.*(?:^|[/\\\\])\\.\\.(?:[/\\\\]|$)).+$" },
+        "sha256": { "$ref": "#/$defs/sha256" },
+        "authenticodeStatus": { "const": "NotSigned" }
+      }
+    },
+    "tierGovernedArtifacts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["lingApp", "lingInstaller", "lingUninstaller", "provider", "providerCatalog"],
+      "properties": {
+        "lingApp": {
+          "allOf": [
+            { "$ref": "#/$defs/governedArtifact" },
+            { "type": "object", "properties": { "relativePath": { "const": "Ling Stack.exe" } } }
+          ]
+        },
+        "lingInstaller": {
+          "allOf": [
+            { "$ref": "#/$defs/governedArtifact" },
+            { "type": "object", "properties": { "relativePath": { "const": "Ling Stack Setup.exe" } } }
+          ]
+        },
+        "lingUninstaller": {
+          "allOf": [
+            { "$ref": "#/$defs/governedArtifact" },
+            { "type": "object", "properties": { "relativePath": { "const": "Uninstall Ling Stack.exe" } } }
+          ]
+        },
+        "provider": { "$ref": "#/$defs/governedArtifact" },
+        "providerCatalog": {
+          "anyOf": [{ "$ref": "#/$defs/signedGovernedArtifact" }, { "type": "null" }]
+        }
+      }
+    },
+    "governedArtifact": {
+      "anyOf": [
+        { "$ref": "#/$defs/signedGovernedArtifact" },
+        { "$ref": "#/$defs/unsignedGovernedArtifact" }
+      ]
+    },
+    "vendorNativeArtifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["relativePath", "sha256", "authenticodeStatus", "signerSubject", "certificateSha256"],
+      "properties": {
+        "relativePath": { "type": "string", "minLength": 1, "pattern": "^(?![A-Za-z]:|[/\\\\]|.*(?:^|[/\\\\])\\.\\.(?:[/\\\\]|$)).+$" },
+        "sha256": { "$ref": "#/$defs/sha256" },
+        "authenticodeStatus": { "enum": ["Valid", "NotSigned"] },
+        "signerSubject": { "type": ["string", "null"] },
+        "certificateSha256": {
+          "anyOf": [{ "$ref": "#/$defs/sha256" }, { "type": "null" }]
         }
       }
     }

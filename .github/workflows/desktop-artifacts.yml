@@ -80,6 +80,33 @@ jobs:
       - name: Run source-build promotion contract fixtures
         run: node --test apps/desktop/tests/cua-driver-source-build-promotion.test.mjs
 
+      - name: Run Windows release evidence and handoff contract fixtures
+        run: >-
+          node --test
+          apps/desktop/tests/windows-acceptance-report.test.mjs
+          apps/desktop/tests/windows-release-evidence-contracts.test.mjs
+          apps/desktop/tests/windows-handoff-contracts.test.mjs
+          apps/desktop/tests/finalize-windows-signed-acceptance.test.mjs
+          apps/desktop/tests/produce-windows-acceptance-handoff.test.mjs
+          apps/desktop/tests/windows-release-hardening.test.mjs
+          apps/desktop/tests/windows-cua-driver-provider.test.mjs
+
+      - name: Parse the Windows acceptance runner with PowerShell 7
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $tokens = $null
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile(
+            (Resolve-Path "apps/desktop/tests/run-windows-acceptance.ps1").Path,
+            [ref]$tokens,
+            [ref]$errors
+          ) | Out-Null
+          if ($errors.Count -ne 0) {
+            $errors | ForEach-Object { Write-Error $_.Message }
+            throw "Windows acceptance runner has PowerShell parser errors"
+          }
+
       - name: Enable pnpm
         if: runner.os != 'Linux'
         run: corepack enable

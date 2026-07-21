@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
 import {
   WINDOWS_CUA_DRIVER_RELEASE,
+  WINDOWS_INSTALLED_PROVIDER_IDENTITY_SCRIPT,
   inspectWindowsX64Pe,
   isPathWithin,
   matchesPinnedProviderVersionOutput,
@@ -16,6 +17,7 @@ import {
   verifyPinnedWindowsProviderArchive,
   verifyWindowsProviderBinary,
 } from "./verify-windows-cua-driver-provider.mjs";
+import { createInstalledProviderFixture } from "./windows-installed-provider-fixture.mjs";
 
 test("external provider tooling resolves to fixed system paths instead of PATH", () => {
   assert.equal(
@@ -122,6 +124,173 @@ test("temp output boundary accepts descendants but not the root or siblings", ()
   assert.equal(isPathWithin(join(root, "provider"), root), true);
   assert.equal(isPathWithin(root, root), false);
   assert.equal(isPathWithin(join(dirnameForTest(root), "other"), root), false);
+});
+
+test("installed bundled provider rejects every payload entry outside the exact two-file inventory", async () => {
+  const cases = [
+    ["cua-driver-uia.exe", async (payload) => writeFile(join(payload, "cua-driver-uia.exe"), "unexpected\n")],
+    ["extra executable", async (payload) => writeFile(join(payload, "unexpected.exe"), "unexpected\n")],
+    ["extra DLL", async (payload) => writeFile(join(payload, "unexpected.dll"), "unexpected\n")],
+    ["extra data file", async (payload) => writeFile(join(payload, "unexpected.txt"), "unexpected\n")],
+    ["nested payload directory", async (payload) => {
+      await mkdir(join(payload, "nested"));
+      await writeFile(join(payload, "nested", "unexpected.exe"), "unexpected\n");
+    }],
+  ];
+  for (const [label, addUnexpectedEntry] of cases) {
+    const fixture = await createInstalledProviderFixture();
+    try {
+      const payload = dirnameForTest(fixture.providerPath);
+      await addUnexpectedEntry(payload);
+      await assert.rejects(
+        fixture.verify(),
+        /must contain exactly two ordinary files/u,
+        label,
+      );
+    } finally {
+      await fixture.cleanup();
+    }
+  }
+});
+
+test("installed bundled provider rejects siblings outside the exact distribution tree", async (t) => {
+  const cases = [
+    ["distribution sibling", (fixture) =>
+      writeFile(join(fixture.distributionRoot, "unexpected.exe"), "unexpected\n")],
+    ["platform sibling", (fixture) =>
+      writeFile(join(fixture.distributionRoot, "win32-x64", "unexpected.dat"), "unexpected\n")],
+  ];
+  for (const [label, addUnexpectedEntry] of cases) {
+    await t.test(label, async () => {
+      const fixture = await createInstalledProviderFixture();
+      try {
+        await addUnexpectedEntry(fixture);
+        await assert.rejects(
+          fixture.verify(),
+          /must contain exactly/u,
+        );
+      } finally {
+        await fixture.cleanup();
+      }
+    });
+  }
+});
+
+test("installed bundled provider rejects a payload symlink before probing", {
+  skip: process.platform === "win32",
+}, async () => {
+  const fixture = await createInstalledProviderFixture();
+  try {
+    const payload = dirnameForTest(fixture.providerPath);
+    await symlink("provider-seal.json", join(payload, "provider-alias.json"));
+    await assert.rejects(
+      fixture.verify(),
+      /must contain exactly two ordinary files/u,
+    );
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test("installed bundled provider binds the final PE, source lock, seal tuple, and real catalog membership", async () => {
+  const fixture = await createInstalledProviderFixture();
+  try {
+    const report = await fixture.verify();
+    assert.equal(report.schemaVersion, 2);
+    assert.equal(report.provider.sha256, fixture.providerSha256);
+    assert.equal(report.providerLock.sha256, fixture.providerLockSha256);
+    assert.equal(report.providerLock.sourceTarget, "x86_64-pc-windows-msvc");
+    assert.equal(
+      report.providerLock.sourceBuild.binariesSha256BeforeSigning.main,
+      fixture.lock.platforms.win32X64.sourceBuild.binariesSha256BeforeSigning.main,
+    );
+    assert.equal(report.providerSeal.lockSha256, fixture.providerLockSha256);
+    assert.equal(report.providerSeal.signingTier, "test_signed_internal");
+    assert.equal(report.providerSeal.distributionChannel, "internal");
+    assert.equal(report.providerSeal.main.architecture, "x86_64");
+    assert.deepEqual(report.providerCatalog.membership.members, [
+      {
+        relativePath: "payload/cua-driver.exe",
+        sha256: fixture.providerSha256,
+      },
+      {
+        relativePath: "payload/provider-seal.json",
+        sha256: fixture.providerSealSha256,
+      },
+    ]);
+    assert.equal(report.authenticode.trustRequired, true);
+    assert.deepEqual(report.packageLayout, {
+      distributionRootEntryNames: ["provider-lock.json", "win32-x64"],
+      platformRootEntryNames: ["payload", "provider-integrity.cat"],
+      payloadFileNames: ["cua-driver.exe", "provider-seal.json"],
+      unexpectedPaths: [],
+    });
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test("installed bundled provider accepts the exact production seal and timestamp tuple", async () => {
+  const fixture = await createInstalledProviderFixture();
+  try {
+    fixture.seal.signingTier = "production_signed";
+    fixture.seal.distributionChannel = "production";
+    fixture.seal.productionEligible = true;
+    delete fixture.seal.testAuthorityKind;
+    fixture.seal.main.timestampPolicy = "rfc3161-required";
+    fixture.seal.main.timestampStatus = "Valid";
+    fixture.identity.authenticode.files[0].timestampStatus = "Valid";
+    fixture.identity.authenticode.files[1].timestampStatus = "Valid";
+    await fixture.writeSeal();
+
+    const report = await fixture.verify();
+    assert.equal(report.providerSeal.signingTier, "production_signed");
+    assert.equal(report.providerSeal.distributionChannel, "production");
+    assert.equal(report.providerSeal.productionEligible, true);
+    assert.equal(report.providerSeal.main.timestampStatus, "Valid");
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test("installed bundled provider rejects source-lock, seal, and catalog identity drift", async (t) => {
+  const cases = [
+    ["main digest", ({ seal }) => { seal.main.sha256 = "f".repeat(64); }, /provider\/source-lock tuple/u, true],
+    ["lock digest", ({ seal }) => { seal.lockSha256 = "e".repeat(64); }, /provider\/source-lock tuple/u, true],
+    ["architecture", ({ seal }) => { seal.main.architecture = "arm64"; }, /provider\/source-lock tuple/u, true],
+    ["tier channel", ({ seal }) => { seal.distributionChannel = "production"; }, /signing tier\/channel tuple/u, true],
+    ["provider signer", ({ identity }) => { identity.authenticode.files[0].signerSubject = "CN=Other"; }, /Authenticode identity/u, false],
+    ["catalog validation", ({ identity }) => { identity.catalogMembership.validationStatus = "ValidationFailed"; }, /identity evidence/u, false],
+    ["catalog missing seal", ({ identity }) => { identity.catalogMembership.members.pop(); }, /cover exactly/u, false],
+    ["catalog extra member", ({ identity }) => { identity.catalogMembership.members.push({ relativePath: "payload/extra.dll", sha256: "d".repeat(64) }); }, /cover exactly/u, false],
+  ];
+  for (const [name, mutate, pattern, rewriteSeal] of cases) {
+    await t.test(name, async () => {
+      const fixture = await createInstalledProviderFixture();
+      try {
+        mutate(fixture);
+        if (rewriteSeal) await fixture.writeSeal();
+        await assert.rejects(fixture.verify(), pattern);
+      } finally {
+        await fixture.cleanup();
+      }
+    });
+  }
+});
+
+test("installed verifier calls the same Windows catalog membership API as production identity", () => {
+  assert.match(
+    WINDOWS_INSTALLED_PROVIDER_IDENTITY_SCRIPT,
+    /Microsoft\.PowerShell\.Security\\Test-FileCatalog\s+-CatalogFilePath\s+\$env:LING_CUA_PROVIDER_CATALOG\s+-Path\s+\$env:LING_CUA_PROVIDER_PAYLOAD\s+-Detailed/u,
+  );
+  assert.match(
+    WINDOWS_INSTALLED_PROVIDER_IDENTITY_SCRIPT,
+    /Microsoft\.PowerShell\.Security\\Get-AuthenticodeSignature\s+-LiteralPath/u,
+  );
+  assert.match(
+    WINDOWS_INSTALLED_PROVIDER_IDENTITY_SCRIPT,
+    /Microsoft\.PowerShell\.Management\\Get-ChildItem\s+-LiteralPath\s+\$payloadRoot\s+-File\s+-Force\s+-Recurse/u,
+  );
 });
 
 function fakePe({ machine = 0x8664, certificateTablePresent = false } = {}) {

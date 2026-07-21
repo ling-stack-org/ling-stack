@@ -197,6 +197,10 @@ export class CuaDriverProviderHost {
     return this.child?.pid;
   }
 
+  get executablePath(): string {
+    return this.options.executablePath;
+  }
+
   get initialized(): boolean {
     return this.stateValue === "ready";
   }

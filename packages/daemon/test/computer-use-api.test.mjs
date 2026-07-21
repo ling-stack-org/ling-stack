@@ -1061,6 +1061,46 @@ test("bundled embedded private source revalidates ownership through the canonica
       () => capture.store.getMcpServer("mcp_cua_driver")?.enabled === true,
     );
 
+    const targetProofUrl =
+      `${baseUrl}/computer-use/provider-target/verify?cwd=${encodeURIComponent(cwd)}`;
+    const unauthorizedTargetProof = await fetch(targetProofUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        platform: process.platform === "darwin" ? "macos" : "windows",
+        processId: 4321,
+        nativeWindowId: "7788",
+      }),
+    });
+    assert.equal(unauthorizedTargetProof.status, 403);
+    const targetProof = await fetch(targetProofUrl, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Ling-Desktop-Bridge-Token": desktopBridgeToken,
+      },
+      body: JSON.stringify({
+        platform: process.platform === "darwin" ? "macos" : "windows",
+        processId: 4321,
+        nativeWindowId: "7788",
+      }),
+    });
+    const targetProofText = await targetProof.text();
+    assert.equal(targetProof.status, 200, targetProofText);
+    const targetProofBody = JSON.parse(targetProofText);
+    assert.equal(targetProofBody.verified, true);
+    assert.deepEqual(targetProofBody.target, {
+      platform: process.platform === "darwin" ? "macos" : "windows",
+      processId: 4321,
+      nativeWindowId: "7788",
+    });
+    assert.equal(targetProofBody.runtime.desktopInstanceId, lease.desktopInstanceId);
+    assert.equal(targetProofBody.runtime.desktopInstanceEpoch, lease.desktopInstanceEpoch);
+    assert.equal(targetProofBody.runtime.generation, lease.generation);
+    assert.equal(targetProofBody.runtime.lockDigest, lease.lockDigest);
+    assert.equal(targetProofBody.runtime.providerSealDigest, lease.providerSealDigest);
+    assert.equal(providerCalls, 1);
+
     daemon.computerUsePreviews.upsert(cwd, projection());
     daemon.computerUsePreviews.registerPrivateDescriptor(cwd, {
       ...privateDescriptor(),
@@ -1071,13 +1111,21 @@ test("bundled embedded private source revalidates ownership through the canonica
       { headers: { "X-Ling-Desktop-Bridge-Token": desktopBridgeToken } },
     );
     assert.equal(source.status, 200, await source.text());
-    assert.equal(providerCalls, 1);
+    assert.equal(providerCalls, 2);
 
     blockProviderCall = true;
-    const staleSourcePromise = fetch(
-      `${baseUrl}/computer-use/sessions/session-1/source?cwd=${encodeURIComponent(cwd)}`,
-      { headers: { "X-Ling-Desktop-Bridge-Token": desktopBridgeToken } },
-    );
+    const staleTargetProofPromise = fetch(targetProofUrl, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Ling-Desktop-Bridge-Token": desktopBridgeToken,
+      },
+      body: JSON.stringify({
+        platform: process.platform === "darwin" ? "macos" : "windows",
+        processId: 4321,
+        nativeWindowId: "7788",
+      }),
+    });
     await providerCallStarted.promise;
     const replacement = {
       ...lease,
@@ -1097,13 +1145,13 @@ test("bundled embedded private source revalidates ownership through the canonica
     );
     assert.equal(replaced.status, 200);
     releaseProviderCall.resolve();
-    const staleSource = await staleSourcePromise;
-    assert.equal(staleSource.status, 404);
+    const staleTargetProof = await staleTargetProofPromise;
+    assert.equal(staleTargetProof.status, 409);
     assert.equal(
-      (await staleSource.json()).error,
-      "computer_use_descriptor_target_owner_mismatch",
+      (await staleTargetProof.json()).error,
+      "computer_use_provider_target_owner_mismatch",
     );
-    assert.equal(providerCalls, 2);
+    assert.equal(providerCalls, 3);
   } finally {
     releaseProviderCall.resolve();
     await daemon.stop();

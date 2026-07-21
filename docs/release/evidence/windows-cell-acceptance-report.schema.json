@@ -1,0 +1,96 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ling-stack.dev/schemas/windows-cell-acceptance-report-v1.json",
+  "title": "Ling immutable Windows acceptance cell report",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "kind",
+    "mode",
+    "generatedAt",
+    "requirements",
+    "handoff",
+    "cell",
+    "bindings",
+    "host",
+    "installation",
+    "probes",
+    "acceptance",
+    "gates",
+    "summary"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "kind": { "const": "ling.windows.acceptance" },
+    "mode": { "const": "Full" },
+    "generatedAt": { "type": "string", "format": "date-time" },
+    "requirements": { "type": "object" },
+    "handoff": { "$ref": "#/$defs/handoff" },
+    "cell": { "$ref": "#/$defs/acceptanceCell" },
+    "bindings": { "type": "object" },
+    "host": { "type": "object" },
+    "installation": { "type": "object" },
+    "probes": { "type": "object" },
+    "acceptance": { "type": "object" },
+    "gates": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/gate" }
+    },
+    "summary": { "$ref": "#/$defs/summary" }
+  },
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "handoff": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["runId", "handoffIndexSha256", "cellManifestSha256"],
+      "properties": {
+        "runId": { "type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$" },
+        "handoffIndexSha256": { "$ref": "#/$defs/sha256" },
+        "cellManifestSha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "acceptanceCell": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "windowsBuild", "architecture", "displayTopology", "displayScalePercents", "requiredEvidenceKinds"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$" },
+        "windowsBuild": { "type": "string", "minLength": 1 },
+        "architecture": { "const": "x64" },
+        "displayTopology": { "enum": ["single", "dual"] },
+        "displayScalePercents": { "type": "array", "minItems": 1, "maxItems": 2, "uniqueItems": true, "items": { "enum": [100, 150, 200] } },
+        "requiredEvidenceKinds": { "const": ["accessibility", "display", "install-lifecycle", "provider-runtime"] }
+      }
+    },
+    "gate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "status", "reason"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "status": { "enum": ["PASS", "FAIL", "BLOCKED", "SKIP"] },
+        "reason": { "type": "string", "minLength": 1 }
+      }
+    },
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "fullAcceptanceStatus", "releaseStatus", "evidenceSha256", "reviewerAttestation", "candidateBuildProvenance", "releaseBlockers", "releaseReady", "counts"],
+      "properties": {
+        "status": { "const": "PASS" },
+        "fullAcceptanceStatus": { "const": "PASS" },
+        "releaseStatus": { "const": "MANUAL_REVIEW_REQUIRED" },
+        "evidenceSha256": { "$ref": "#/$defs/sha256" },
+        "reviewerAttestation": { "const": "not_verified" },
+        "candidateBuildProvenance": { "const": "not_verified" },
+        "releaseBlockers": { "const": ["external_reviewer_attestation_unverified", "candidate_build_provenance_unverified"] },
+        "releaseReady": { "const": false },
+        "counts": { "type": "object" }
+      }
+    }
+  }
+}

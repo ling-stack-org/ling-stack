@@ -14,10 +14,15 @@ const EXPECTED_SCHEMA_FILES = Object.freeze([
   "macos-tcc-revocation.schema.json",
   "windows-candidate-build-attestation.schema.json",
   "windows-candidate-manifest.schema.json",
+  "windows-cell-acceptance-report.schema.json",
+  "windows-cell-handoff.schema.json",
   "windows-full-manual-evidence.schema.json",
+  "windows-handoff-index.schema.json",
+  "windows-internal-verification.schema.json",
   "windows-release-policy.schema.json",
   "windows-release-verification.schema.json",
   "windows-review-attestation.schema.json",
+  "windows-signed-acceptance-matrix.schema.json",
 ]);
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 const schemaDirectory = resolve(repositoryRoot, "docs/release/evidence");

@@ -102,6 +102,22 @@ Current implementation baseline:
   coverage/limitations, and includes English/Chinese pure view-model plus Renderer E2E
   coverage. Packaged clean-host product smoke remains coupled to payload/signing/Setup
   closure in later slices.
+- Slice 8/T10 is implemented at the local contract/handoff boundary. Candidate manifest v4,
+  release policy v3, review/build attestation v2, internal/release verifiers, immutable cell
+  reports, matrix finalizer and the two-phase candidate/handoff producer move as one atomic
+  migration. The Full runner now accepts only one handoff manifest, pins tool minimums,
+  verifies the installed private provider/seal/catalog plus vendor-native inventory before
+  smoke, and rechecks the candidate uninstaller hash on cleanup before it can execute. The
+  packaged smoke now performs a bridge-token-protected daemon `list_windows` call through
+  the current bundled generation, binds the exact PID/HWND and lease digests to Desktop's
+  child PID/nonce/path proof, observes the old child exit, and repeats with a new Desktop
+  instance and child after restart. The installed verifier rejects extra members at the
+  distribution root, platform root and two-file payload, and its real return value feeds a
+  report-gate integration test with lock/seal/catalog/version/signature drift cases. Source
+  and evidence references fail on parent-symlink escape, and the producer copies and rehashes
+  every inventory member. The pipeline cannot self-promote.
+  Cross-platform Node/schema tests are green locally; PowerShell parser/runtime and real
+  test-signed Windows candidate evidence remain hosted/Windows-owner exit gates.
 
 Both Darwin and Win32 packaged-provider production gates remain off. This status records
 staged progress only and does not claim `bundled_embedded` runtime completion. The current
@@ -772,7 +788,7 @@ Changes:
   `payload/cua-driver.exe`, generate the seal from the final PE, generate/sign the outer
   `provider-integrity.cat`, then prevent the generic signer from touching the sealed
   provider;
-- make the custom signing hook fail on an unexpected executable under the provider
+- make the custom signing hook fail on any unexpected member under the provider
   payload instead of silently signing or ignoring it;
 - reverify the provider tuple after outer-app signing and after each DMG/ZIP/NSIS artifact
   completes;
@@ -1334,6 +1350,15 @@ elevated/UWP pixel-input parity.
   candidate/policy/attestation/verifier contracts, add immutable cells and the matrix
   finalizer, and produce deterministic internal and production one-input handoff bundles
   for Windows-team execution.
+  - Candidate generation and handoff publication are separate exclusive-create phases so
+    manual evidence can bind the exact v4 digest. The handoff phase recomputes the candidate,
+    rejects artifact drift, clones the exact clean commit and emits one manifest per policy
+    cell. Final publication uses an atomic no-replace directory claim and moves the index
+    last as the ready boundary; a competing or crashed path is never overwritten. Internal
+    verification remains capped at `INTERNAL_TEST_PASS` and
+    `releaseReady=false`; production verification rejects the internal tuple. Hosted
+    PowerShell/runtime execution and Windows-team VM acceptance remain external evidence,
+    so T10 intentionally stays unchecked.
 
 ## GSTACK REVIEW REPORT
 

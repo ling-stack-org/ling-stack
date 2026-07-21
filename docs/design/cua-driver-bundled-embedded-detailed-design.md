@@ -538,7 +538,7 @@ Windows signing is a three-tier discriminated contract:
 
 The tier-governed tuple is exactly the Ling NSIS installer, installed Ling main PE,
 trusted uninstaller, private `cua-driver.exe`, and `provider-integrity.cat` for signed
-tiers. The private provider payload allowlist permits no other executable. Electron/Chromium
+tiers. The private provider payload allowlist permits no other member. Electron/Chromium
 vendor DLLs and native resources outside that payload remain under the existing Electron
 Builder package/signing policy; this design does not silently enable `signDlls` or require
 vendor-signed DLLs to share Ling's certificate. Candidate v4 retains a normalized
@@ -565,7 +565,7 @@ tier-governed policy and candidate schema before packaging.
 The effective tier is derived from the actual signature chain of every tier-governed
 artifact, not from a candidate field. Installer, app, uninstaller, provider and catalog
 must agree. In an internal or production tuple, any unsigned governed member, mixed tier,
-double signature, unexpected executable in the private provider payload, or test root in
+double signature, unexpected member in the private provider payload, or test root in
 production fails closed. A development tuple is valid only when every expected governed PE
 derives as `unsigned_dev`, the catalog is absent and the compile-time development gate is
 active. Authenticode `Status=Valid` means only that the signature is valid in the current
@@ -774,7 +774,7 @@ spikes before the release pipeline relies on it. The implementation contract is:
 2. the platform signing hook skips that canonical sealed provider path only after its
    expected digest matches, while delegating outer app/uninstaller/installer executables
    to normal signing;
-3. any second provider signing attempt, unexpected executable in the payload or
+3. any second provider signing attempt, unexpected member in the payload or
    post-seal provider mutation fails the package;
 4. `afterSign` rehashes and reverifies the unpacked provider tuple;
 5. `artifactBuildCompleted` extracts/reopens each final DMG/ZIP/NSIS artifact and proves
@@ -2439,6 +2439,45 @@ without symlink or reparse escape. The manifest improves operator usability but 
 trust root: the protected release workflow or a policy-pinned detached signature supplies
 the expected handoff-index, candidate and policy digests; the finalizer independently
 rehashes every unique cell manifest.
+
+The live producer is `produce-windows-acceptance-handoff.mjs`. Its first exclusive-create
+phase derives candidate v4 from the clean repository commit, policy, pre-sign provider,
+final governed artifacts, seal/catalog, audit-only UIAccess output and normalized observed
+signer inventory. After manual evidence binds that candidate digest, its second phase
+recomputes the candidate, rejects artifact drift, clones the exact clean commit, copies each
+evidence document, attachment and vendor-native inventory member, rehashes every copied byte,
+and publishes a new handoff root through an atomic no-replace directory claim. It moves the
+repository/candidate/evidence/cell/report trees first and the common index last, so the index
+is the ready boundary; a concurrent empty-root claim or crash residue is never replaced.
+Candidate-source and evidence-map references
+cannot escape their owner through a parent symlink. It fixes
+minimum tools to Node 22.0.0, PowerShell 7.4.0 and Git 2.45.0; the Full runner enforces these
+requirements before candidate execution. The installed verifier parses the sealed
+`provider-lock.json`/`provider-seal.json` tuple and uses trusted Windows
+`Test-FileCatalog` plus Authenticode to validate the exact current payload set. The Full
+smoke may call the exact installed provider directly only for target discovery. Before
+launching packaged Desktop it removes the legacy provider-command override, then invokes the
+daemon bundled activation route. Acceptance requires a ready generation lease, provider
+health, non-empty tool catalog, standard integrity coverage, source/seal/catalog digests, and
+a Desktop-observed ready child whose absolute executable path equals the installed private
+resource path. After activation, Desktop calls the bridge-token-protected
+`POST /computer-use/provider-target/verify`; the daemon invokes `list_windows` through the
+current generation client and returns only an exact PID/HWND match plus the current lease
+tuple. Desktop emits one structured proof binding that result to its instance id/epoch,
+generation, child PID, child-nonce digest, executable path and lock/seal/catalog digests.
+The runner compares every shared field with activation, repeats the proof after Desktop
+restart, requires a new Desktop instance and child PID/nonce, and observes the old child PID
+gone before launching the replacement. Numeric generation may restart at `1` in the new
+Desktop instance; authority rotation is the full instance-id/epoch/generation tuple, not a
+cross-process numeric counter. The injected descriptor remains capture-target input only and
+cannot satisfy bundled resolver, daemon tool exchange, platform-owner, child or readiness
+evidence. Candidate, handoff root, cell reports, matrix and
+verification outputs cannot be overwritten.
+
+The standard cell contract fixes `requiredEvidenceKinds` to `accessibility`, `display`,
+`install-lifecycle` and `provider-runtime`. Full acceptance re-observes every installed vendor
+native hash and Authenticode result. Even failure cleanup may execute the uninstaller only after
+both its policy signer and candidate-bound SHA-256 are rechecked.
 
 - static tests validate the Windows lock, main-PE manifest, audit-only UIAccess manifest,
   tier-discriminated seal/catalog and candidate/policy schema, package layout,
