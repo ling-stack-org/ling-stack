@@ -53,6 +53,9 @@ constexpr int kExitAmbiguous = 21;
 constexpr int kExitInvalidInput = 22;
 constexpr std::uint64_t kMaxRemovalEntries = 64;
 constexpr std::uint64_t kMaxRemovalBytes = 558891008;
+constexpr std::uint64_t kMaxArtifactRemovalEntries = 100000;
+constexpr std::uint64_t kMaxArtifactRemovalBytes =
+    4ULL * 1024ULL * 1024ULL * 1024ULL;
 constexpr std::uint64_t kMaxParentLockTimeoutMs = 300000;
 constexpr std::size_t kMaxParentLockProtocolLineBytes = 16 * 1024;
 #if defined(LING_CUA_DRIVER_PACKAGE_STAGING_TESTS) && \
@@ -1242,18 +1245,25 @@ PublishResult RemoveUnsecuredEmptyOnDarwin(
   return Removed(parent_identity, source_identity, 0, 0);
 }
 
+enum class RemovalEntryKindDarwin {
+  kDirectory,
+  kRegularFile,
+  kSymbolicLink,
+};
+
 struct RemovalEntryDarwin {
   std::vector<std::string> components;
   FileIdentity identity;
-  mode_t mode;
   off_t size;
-  bool directory;
+  RemovalEntryKindDarwin kind;
 };
 
 bool CollectRemovalPlanDarwin(
     int directory_fd, dev_t root_device, std::vector<std::string>* components,
     std::vector<RemovalEntryDarwin>* plan, std::uint64_t* entry_count,
-    std::uint64_t* total_bytes, const char** reason, int* error_code) {
+    std::uint64_t* total_bytes, std::uint64_t maximum_entries,
+    std::uint64_t maximum_bytes, bool allow_symbolic_links,
+    const char** reason, int* error_code) {
   const int duplicate_fd = fcntl(directory_fd, F_DUPFD_CLOEXEC, 0);
   if (duplicate_fd < 0) {
     *reason = "tree_enumeration_failed";
@@ -1299,7 +1309,8 @@ bool CollectRemovalPlanDarwin(
       success = false;
       break;
     }
-    if (S_ISLNK(metadata.st_mode)) {
+    const bool symbolic_link = S_ISLNK(metadata.st_mode);
+    if (symbolic_link && !allow_symbolic_links) {
       *reason = "tree_reparse_forbidden";
       *error_code = ELOOP;
       success = false;
@@ -1312,7 +1323,7 @@ bool CollectRemovalPlanDarwin(
       break;
     }
     *entry_count += 1;
-    if (*entry_count > kMaxRemovalEntries) {
+    if (*entry_count > maximum_entries) {
       *reason = "tree_entry_limit_exceeded";
       *error_code = E2BIG;
       success = false;
@@ -1320,7 +1331,10 @@ bool CollectRemovalPlanDarwin(
     }
 
     components->push_back(name);
-    if (S_ISDIR(metadata.st_mode)) {
+    if (symbolic_link) {
+      plan->push_back({*components, IdentityFromStat(metadata), 0,
+                       RemovalEntryKindDarwin::kSymbolicLink});
+    } else if (S_ISDIR(metadata.st_mode)) {
       ScopedFileDescriptor child(openat(
           directory_fd, name.c_str(),
           O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW));
@@ -1335,24 +1349,26 @@ bool CollectRemovalPlanDarwin(
         success = false;
       } else if (!CollectRemovalPlanDarwin(
                      child.get(), root_device, components, plan, entry_count,
-                     total_bytes, reason, error_code)) {
+                     total_bytes, maximum_entries, maximum_bytes,
+                     allow_symbolic_links, reason, error_code)) {
         success = false;
       } else {
-        plan->push_back({*components, IdentityFromStat(opened), opened.st_mode,
-                         0, true});
+        plan->push_back({*components, IdentityFromStat(opened), 0,
+                         RemovalEntryKindDarwin::kDirectory});
       }
     } else if (S_ISREG(metadata.st_mode) && metadata.st_nlink == 1 &&
                metadata.st_size >= 0) {
       const std::uint64_t size = static_cast<std::uint64_t>(metadata.st_size);
-      if (size > kMaxRemovalBytes ||
-          *total_bytes > kMaxRemovalBytes - size) {
+      if (size > maximum_bytes ||
+          *total_bytes > maximum_bytes - size) {
         *reason = "tree_byte_limit_exceeded";
         *error_code = EFBIG;
         success = false;
       } else {
         *total_bytes += size;
         plan->push_back({*components, IdentityFromStat(metadata),
-                         metadata.st_mode, metadata.st_size, false});
+                         metadata.st_size,
+                         RemovalEntryKindDarwin::kRegularFile});
       }
     } else {
       *reason = S_ISREG(metadata.st_mode) && metadata.st_nlink != 1
@@ -1403,22 +1419,28 @@ bool DeleteRemovalEntryDarwin(int root_fd, const RemovalEntryDarwin& entry,
     return false;
   }
   const std::string& name = entry.components.back();
+  const bool directory = entry.kind == RemovalEntryKindDarwin::kDirectory;
+  const bool regular_file =
+      entry.kind == RemovalEntryKindDarwin::kRegularFile;
+  const bool symbolic_link =
+      entry.kind == RemovalEntryKindDarwin::kSymbolicLink;
   struct stat observed {};
   const bool stat_failed = fstatat(
       parent.get(), name.c_str(), &observed, AT_SYMLINK_NOFOLLOW) != 0;
   const int stat_error = stat_failed ? errno : 0;
   if (stat_failed ||
       !SameIdentity(IdentityFromStat(observed), entry.identity) ||
-      (entry.directory ? !S_ISDIR(observed.st_mode)
-                       : !S_ISREG(observed.st_mode)) ||
-      (!entry.directory &&
+      (directory ? !S_ISDIR(observed.st_mode)
+                 : regular_file ? !S_ISREG(observed.st_mode)
+                                : !symbolic_link || !S_ISLNK(observed.st_mode)) ||
+      (regular_file &&
        (observed.st_nlink != 1 || observed.st_size != entry.size))) {
     *reason = "tree_changed_during_delete";
     *error_code = stat_error;
     return false;
   }
   if (unlinkat(parent.get(), name.c_str(),
-               entry.directory ? AT_REMOVEDIR : 0) != 0) {
+               directory ? AT_REMOVEDIR : 0) != 0) {
     *reason = "delete_failed";
     *error_code = errno;
     return false;
@@ -1431,10 +1453,11 @@ PublishResult RemoveTreeOnDarwin(
     const std::string& expected_parent_identity,
     const std::string& expected_source_identity,
     std::uint64_t expected_entries, std::uint64_t expected_bytes,
-    int held_parent_fd = -1) {
+    std::uint64_t maximum_entries, std::uint64_t maximum_bytes,
+    bool allow_symbolic_links, int held_parent_fd = -1) {
   if (parent_root.empty() || parent_root.front() != '/' ||
-      !IsValidLeafName(source_name) || expected_entries > kMaxRemovalEntries ||
-      expected_bytes > kMaxRemovalBytes) {
+      !IsValidLeafName(source_name) || expected_entries > maximum_entries ||
+      expected_bytes > maximum_bytes) {
     return InvalidInput();
   }
   int parent_error = 0;
@@ -1493,7 +1516,8 @@ PublishResult RemoveTreeOnDarwin(
   int error_code = 0;
   if (!CollectRemovalPlanDarwin(
           source.get(), source_metadata.st_dev, &components, &plan, &entries,
-          &bytes, &reason, &error_code)) {
+          &bytes, maximum_entries, maximum_bytes, allow_symbolic_links,
+          &reason, &error_code)) {
     return NotCommitted(reason, static_cast<std::uint64_t>(error_code));
   }
   if (entries != expected_entries || bytes != expected_bytes) {
@@ -1770,18 +1794,29 @@ PublishResult DispatchParentLockOperationOnDarwin(
         parent_root, arguments[0], arguments[1], arguments[2], arguments[3],
         held_parent_fd);
   }
-  if (operation == "remove-tree" && arguments.size() == 5) {
+  if ((operation == "remove-tree" && arguments.size() == 5) ||
+      (operation == "remove-artifact-tree" &&
+       (arguments.size() == 5 || arguments.size() == 6))) {
+    const bool artifact_removal = operation == "remove-artifact-tree";
+    const std::uint64_t maximum_entries = artifact_removal
+        ? kMaxArtifactRemovalEntries : kMaxRemovalEntries;
+    const std::uint64_t maximum_bytes = artifact_removal
+        ? kMaxArtifactRemovalBytes : kMaxRemovalBytes;
     std::uint64_t expected_entries = 0;
     std::uint64_t expected_bytes = 0;
     if (!ParseBoundedUnsignedDarwin(
-            arguments[3].c_str(), kMaxRemovalEntries, &expected_entries) ||
+            arguments[3].c_str(), maximum_entries, &expected_entries) ||
         !ParseBoundedUnsignedDarwin(
-            arguments[4].c_str(), kMaxRemovalBytes, &expected_bytes)) {
+            arguments[4].c_str(), maximum_bytes, &expected_bytes) ||
+        (arguments.size() == 6 &&
+         arguments[5] != "darwin-artifact-symlinks")) {
       return InvalidInput();
     }
     return RemoveTreeOnDarwin(
         parent_root, arguments[0], arguments[1], arguments[2],
-        expected_entries, expected_bytes, held_parent_fd);
+        expected_entries, expected_bytes, maximum_entries, maximum_bytes,
+        arguments.size() == 6,
+        held_parent_fd);
   }
   if (operation == "remove-unsecured-empty" && arguments.size() == 3) {
     return RemoveUnsecuredEmptyOnDarwin(
@@ -2998,7 +3033,8 @@ bool CollectRemovalPlanWindows(
     HANDLE directory, ULONGLONG root_volume,
     std::vector<std::wstring>* components,
     std::vector<RemovalEntryWindows>* plan, std::uint64_t* entry_count,
-    std::uint64_t* total_bytes, const char** reason, DWORD* error_code) {
+    std::uint64_t* total_bytes, std::uint64_t maximum_entries,
+    std::uint64_t maximum_bytes, const char** reason, DWORD* error_code) {
   std::vector<std::byte> buffer(64 * 1024);
   FILE_INFO_BY_HANDLE_CLASS info_class = FileIdBothDirectoryRestartInfo;
   while (true) {
@@ -3031,7 +3067,7 @@ bool CollectRemovalPlanWindows(
           return false;
         }
         *entry_count += 1;
-        if (*entry_count > kMaxRemovalEntries) {
+        if (*entry_count > maximum_entries) {
           *reason = "tree_entry_limit_exceeded";
           *error_code = ERROR_BUFFER_OVERFLOW;
           return false;
@@ -3071,7 +3107,8 @@ bool CollectRemovalPlanWindows(
         if (directory_entry) {
           if (!CollectRemovalPlanWindows(
                   child.get(), root_volume, components, plan, entry_count,
-                  total_bytes, reason, error_code)) {
+                  total_bytes, maximum_entries, maximum_bytes, reason,
+                  error_code)) {
             components->pop_back();
             return false;
           }
@@ -3091,8 +3128,8 @@ bool CollectRemovalPlanWindows(
           }
           const std::uint64_t size =
               static_cast<std::uint64_t>(standard.EndOfFile.QuadPart);
-          if (size > kMaxRemovalBytes ||
-              *total_bytes > kMaxRemovalBytes - size) {
+          if (size > maximum_bytes ||
+              *total_bytes > maximum_bytes - size) {
             *reason = "tree_byte_limit_exceeded";
             *error_code = ERROR_FILE_TOO_LARGE;
             components->pop_back();
@@ -3397,10 +3434,11 @@ PublishResult RemoveTreeOnWindows(
     const std::string& expected_parent_identity,
     const std::string& expected_source_identity,
     std::uint64_t expected_entries, std::uint64_t expected_bytes,
+    std::uint64_t maximum_entries, std::uint64_t maximum_bytes,
     HANDLE held_parent = INVALID_HANDLE_VALUE) {
   if (parent_root.empty() || !IsValidLeafName(source_name) ||
-      expected_entries > kMaxRemovalEntries ||
-      expected_bytes > kMaxRemovalBytes) {
+      expected_entries > maximum_entries ||
+      expected_bytes > maximum_bytes) {
     return InvalidInput();
   }
   DWORD parent_error = ERROR_SUCCESS;
@@ -3480,7 +3518,8 @@ PublishResult RemoveTreeOnWindows(
   DWORD error_code = ERROR_SUCCESS;
   if (!CollectRemovalPlanWindows(
           source.get(), source_identity_value.volume_serial_number,
-          &components, &plan, &entries, &bytes, &reason, &error_code)) {
+          &components, &plan, &entries, &bytes, maximum_entries,
+          maximum_bytes, &reason, &error_code)) {
     return NotCommitted(reason, static_cast<std::uint64_t>(error_code));
   }
   if (entries != expected_entries || bytes != expected_bytes) {
@@ -4089,22 +4128,28 @@ PublishResult DispatchParentLockOperationOnWindows(
         parent_root, source_name, destination_name, arguments[2], arguments[3],
         held_parent);
   }
-  if (operation == "remove-tree" && arguments.size() == 5) {
+  if ((operation == "remove-tree" || operation == "remove-artifact-tree") &&
+      arguments.size() == 5) {
     std::wstring source_name;
     std::uint64_t expected_entries = 0;
     std::uint64_t expected_bytes = 0;
+    const bool artifact_removal = operation == "remove-artifact-tree";
+    const std::uint64_t maximum_entries = artifact_removal
+        ? kMaxArtifactRemovalEntries : kMaxRemovalEntries;
+    const std::uint64_t maximum_bytes = artifact_removal
+        ? kMaxArtifactRemovalBytes : kMaxRemovalBytes;
     if (!ProtocolUtf8ToWide(arguments[0], &source_name) ||
         !ProtocolValueIsAscii(arguments[1]) ||
         !ProtocolValueIsAscii(arguments[2]) ||
         !ParseCanonicalUnsigned(
-            arguments[3], kMaxRemovalEntries, &expected_entries) ||
+            arguments[3], maximum_entries, &expected_entries) ||
         !ParseCanonicalUnsigned(
-            arguments[4], kMaxRemovalBytes, &expected_bytes)) {
+            arguments[4], maximum_bytes, &expected_bytes)) {
       return InvalidInput();
     }
     return RemoveTreeOnWindows(
         parent_root, source_name, arguments[1], arguments[2], expected_entries,
-        expected_bytes, held_parent);
+        expected_bytes, maximum_entries, maximum_bytes, held_parent);
   }
   if (operation == "remove-unsecured-empty" && arguments.size() == 3) {
     std::wstring source_name;

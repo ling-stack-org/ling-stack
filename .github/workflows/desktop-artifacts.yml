@@ -54,7 +54,7 @@ env:
 
 jobs:
   cua-driver-signing-feasibility:
-    name: Cua Driver signing hook fixture (${{ matrix.os }})
+    name: Cua Driver signing and final artifact fixture (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
     strategy:
@@ -89,7 +89,7 @@ jobs:
         if: runner.os != 'Linux'
         run: corepack pnpm --filter @ling-stack/desktop build
 
-      - name: Run real Electron Builder 26.15.3 dir hook fixture
+      - name: Run real Electron Builder 26.15.3 file artifact fixture
         if: runner.os != 'Linux'
         run: node apps/desktop/tests/run-cua-driver-signing-builder-fixture.mjs
 

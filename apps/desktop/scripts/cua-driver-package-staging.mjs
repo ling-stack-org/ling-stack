@@ -159,6 +159,26 @@ export async function cleanupCuaDriverStagingResidue(input) {
   );
 }
 
+/** Remove one successfully published ephemeral package stage by exact identity. */
+export async function cleanupCuaDriverPublishedStage(input) {
+  const outputRoot = requireAbsoluteRoot(input?.outputRoot, "output_root_invalid");
+  const expectedResidueIdentity = requireResidueIdentity(input?.expectedStageIdentity);
+  const publishRoot = await canonicalizeProspectivePath(outputRoot);
+  await preflightAtomicPublishDirectoryNoReplace();
+  return withAtomicPublishParentLease(
+    { parentRoot: dirname(publishRoot) },
+    (lease) => cleanupCuaDriverStagingResidueUnderLease({
+      expectedResidueIdentity,
+      hooks: NOOP_STAGING_HOOKS,
+      lease,
+      outputRoot,
+      publishRoot,
+      residueLimits: PRODUCTION_RESIDUE_LIMITS,
+      residuePath: publishRoot,
+    }),
+  );
+}
+
 /** Discover identity-bound retained residues after an ungraceful build exit. */
 export async function listCuaDriverStagingResidues(input) {
   const outputRoot = requireAbsoluteRoot(input?.outputRoot, "output_root_invalid");
@@ -816,6 +836,8 @@ async function stageCuaDriverProviderUnderLease({
     assertStageMatchesSource(publishedStage, source, publishRoot);
     return Object.freeze({
       ...publishedStage,
+      stageIdentity: nativePublishIdentities.sourceIdentity,
+      stageParentIdentity: nativePublishIdentities.parentIdentity,
       electronBuilderExtraResource: Object.freeze({
         from: publishedStage.providerRoot,
         to: CUA_DRIVER_PACKAGE_DESTINATION,

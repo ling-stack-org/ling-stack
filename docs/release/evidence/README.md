@@ -33,11 +33,15 @@ mixed tier/channel, reused internal bytes, unexpected provider executables and m
 extractors. This proves hook sequencing and byte invariants only; it does not prove real
 certificate trust, notarization, SmartScreen, NSIS Authenticode, or production release
 readiness. Those remain external test-signed/production gates in Slice 6A and Slice 8.
-`apps/desktop/tests/run-cua-driver-signing-builder-fixture.mjs` additionally runs the real
-`electron-builder@26.15.3 --dir` path on macOS and Windows CI; macOS uses the explicit
-ad-hoc `identity: "-"` fixture setting and `hardenedRuntime: false` only in the opt-in
-fixture config. Ubuntu runs the portable Node fixture lane and reports the platform-builder
-lane as skipped rather than claiming cross-platform evidence.
+`apps/desktop/tests/run-cua-driver-signing-builder-fixture.mjs` additionally runs real
+`electron-builder@26.15.3` file targets: macOS invokes `--mac dmg zip` and requires exactly
+`outer-dmg` plus `outer-zip`; Windows invokes `--win nsis` and requires exactly
+`outer-nsis`. Generated `.blockmap` sidecars never count as verified artifacts. Every
+accepted final event must reproduce the `afterPack` provider, seal, catalog, capability and
+runtime-policy digests. The macOS fixture keeps the explicit ad-hoc `identity: "-"` input
+while exercising the signed-tier hardened-runtime package shape; its disposable bundle
+envelope is not real codesign evidence. Ubuntu runs the portable Node fixture lane and
+reports the platform-builder lane as skipped rather than claiming cross-platform evidence.
 
 - `macos-signed-acceptance.schema.json` is the v2 output contract of
   `apps/desktop/tests/finalize-macos-signed-acceptance.mjs`. The finalizer reads every

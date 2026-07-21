@@ -75,7 +75,7 @@ export async function createProviderSeal(input = {}) {
       x86_64: sha256Bytes(`${executableSha256}:x86_64`).slice(0, 40),
     },
     codeIdentifier: "ling-cua-driver-fixture",
-    teamId: signerIdentity?.signerSubject ?? "NotSigned",
+    teamId: signerIdentity?.teamId ?? signerIdentity?.signerSubject ?? "NotSigned",
     designatedRequirement: "fixture-only; replaced by platform identity in release build",
     designatedRequirementSha256: sha256Bytes(
       "fixture-only; replaced by platform identity in release build",

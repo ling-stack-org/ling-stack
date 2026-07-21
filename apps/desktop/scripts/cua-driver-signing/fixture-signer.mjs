@@ -1,4 +1,5 @@
-import { readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
 
 import {
   SigningContractError,
@@ -26,6 +27,7 @@ export function createDisposableFixtureSigner(input = {}) {
   const certificateSha256 = String(
     input.certificateSha256 ?? sha256Bytes(`fixture-certificate:${signerSubject}`),
   );
+  const teamId = input.teamId === undefined ? undefined : String(input.teamId);
   const signedPaths = new Set();
 
   return Object.freeze({
@@ -49,6 +51,7 @@ export function createDisposableFixtureSigner(input = {}) {
         role,
         signerSubject,
         certificateSha256,
+        teamId,
         signedPayloadSha256: beforeSha256,
       });
       const envelope = Buffer.from(canonicalJson(identity), "utf8");
@@ -83,6 +86,7 @@ export function createDisposableFixtureSigner(input = {}) {
         role,
         signerSubject,
         certificateSha256,
+        teamId,
         signedPayloadSha256: sha256Bytes(unsignedBytes),
       });
       await writeFile(
@@ -95,6 +99,39 @@ export function createDisposableFixtureSigner(input = {}) {
         ...identity,
         beforeSha256: sha256Bytes(unsignedBytes),
         afterSha256: await sha256File(filePath),
+      });
+    },
+    async signBundle({ filePath, platform, role, profile }) {
+      assertFixtureProfile(profile);
+      if (platform !== "darwin" || role !== "outer-app-bundle" || signedPaths.has(filePath)) {
+        throw new SigningContractError(
+          "fixture_bundle_sign_invalid",
+          `Fixture bundle signer received an invalid or duplicate target: ${filePath}`,
+        );
+      }
+      const signaturePath = join(
+        filePath,
+        "Contents",
+        "_CodeSignature",
+        "LingFixtureSignature.json",
+      );
+      await mkdir(dirname(signaturePath), { recursive: true });
+      const beforeSha256 = sha256Bytes(`fixture-bundle-before:${filePath}`);
+      const identity = fixtureIdentity({
+        platform,
+        profile,
+        role,
+        signerSubject,
+        certificateSha256,
+        teamId,
+        signedPayloadSha256: beforeSha256,
+      });
+      await writeFile(signaturePath, `${canonicalJson(identity)}\n`, { flag: "wx" });
+      signedPaths.add(filePath);
+      return Object.freeze({
+        ...identity,
+        beforeSha256,
+        afterSha256: await sha256File(signaturePath),
       });
     },
   });
@@ -159,6 +196,7 @@ function fixtureIdentity({
   role,
   signerSubject,
   certificateSha256,
+  teamId,
   signedPayloadSha256,
 }) {
   return Object.freeze({
@@ -171,6 +209,7 @@ function fixtureIdentity({
     role,
     signerSubject,
     certificateSha256,
+    ...(platform === "darwin" && teamId ? { teamId } : {}),
     signedPayloadSha256,
     authenticodeStatus: platform === "win32" ? "FixtureOnly" : undefined,
     codeSigningStatus: platform === "darwin" ? "FixtureOnly" : undefined,

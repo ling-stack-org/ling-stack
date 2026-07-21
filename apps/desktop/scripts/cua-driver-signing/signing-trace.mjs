@@ -5,6 +5,7 @@ import { SigningContractError, canonicalJson, sha256Bytes } from "./signing-cont
 
 const TRACE_FILE = "provider-signing-trace.json";
 const STATE_FILE = "provider-signing-state.json";
+const traceAppendQueues = new Map();
 
 export function resolveSigningStateDirectory(input = {}) {
   if (typeof input.stateDirectory === "string" && input.stateDirectory.trim()) {
@@ -44,8 +45,21 @@ export async function loadSigningTrace(stateDirectory) {
   }
 }
 
-export async function appendSigningTrace(stateDirectory, event) {
+export function appendSigningTrace(stateDirectory, event) {
   const directory = resolve(stateDirectory);
+  const previous = traceAppendQueues.get(directory) ?? Promise.resolve();
+  const current = previous
+    .catch(() => undefined)
+    .then(() => appendSigningTraceSerially(directory, event));
+  traceAppendQueues.set(directory, current);
+  return current.finally(() => {
+    if (traceAppendQueues.get(directory) === current) {
+      traceAppendQueues.delete(directory);
+    }
+  });
+}
+
+async function appendSigningTraceSerially(directory, event) {
   const existing = await loadSigningTrace(directory);
   const events = existing?.events ?? [];
   const normalized = Object.freeze({

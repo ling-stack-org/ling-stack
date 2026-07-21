@@ -22,6 +22,10 @@ import {
   resolveSigningProfile,
   sha256File,
 } from "../scripts/cua-driver-signing/signing-contract.mjs";
+import {
+  appendSigningTrace,
+  loadSigningTrace,
+} from "../scripts/cua-driver-signing/signing-trace.mjs";
 
 const INTERNAL_PROFILE = Object.freeze({
   signingTier: "test_signed_internal",
@@ -131,10 +135,144 @@ test("configured macOS callback delegates the outer app without changing the sea
       },
     );
     assert.equal(result.signed, true);
-    assert.equal(result.identity.role, "outer-app");
+    assert.equal(result.identity.role, "outer-app-bundle");
     assert.equal(await sha256File(fixture.providerPath), providerSha256);
   } finally {
     await rm(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test("shared Electron Builder packager keeps concurrent macOS architecture state isolated", async () => {
+  const x64 = await createFixture("darwin", INTERNAL_PROFILE);
+  const arm64 = await createFixture("darwin", INTERNAL_PROFILE);
+  try {
+    await writeFile(arm64.providerPath, Buffer.from("MZ-or-MACHO-fixture:darwin:arm64"));
+    const signer = createDisposableFixtureSigner();
+    const packager = {
+      appInfo: { productFilename: "Ling Stack" },
+      __lingSigningSigner: signer,
+      __lingSigningOuterSigner: signer,
+    };
+    const contexts = [
+      {
+        appOutDir: x64.appOutDir,
+        arch: "x64",
+        electronPlatformName: "darwin",
+        packager,
+      },
+      {
+        appOutDir: arm64.appOutDir,
+        arch: "arm64",
+        electronPlatformName: "darwin",
+        packager,
+      },
+    ];
+    await Promise.all(
+      contexts.map((context, index) =>
+        runAfterPack(context, {
+          profile: INTERNAL_PROFILE,
+          signer,
+          stateDirectory: index === 0 ? x64.stateDirectory : arm64.stateDirectory,
+          requireProvider: true,
+        }),
+      ),
+    );
+    assert.equal(packager.__lingSigningContexts.size, 2);
+
+    const callback = (
+      await import("../scripts/cua-driver-signing/electron-builder-mac-sign.mjs?multi-arch=1")
+    ).default;
+    for (const fixture of [x64, arm64]) {
+      const appPath = join(fixture.appOutDir, "Ling Stack.app");
+      await mkdir(join(appPath, "Contents", "MacOS"), { recursive: true });
+      await writeFile(
+        join(appPath, "Contents", "MacOS", "Ling Stack"),
+        Buffer.from(`outer:${fixture.appOutDir}`),
+      );
+      const signed = await callback({ app: appPath }, packager);
+      assert.equal(signed.signed, true);
+    }
+
+    await Promise.all(contexts.map((context) => runAfterSign(context)));
+    const x64Artifact = join(x64.root, "Ling-x64.zip");
+    const arm64Artifact = join(arm64.root, "Ling-arm64.zip");
+    await Promise.all([
+      writeFile(x64Artifact, Buffer.from("x64-artifact")),
+      writeFile(arm64Artifact, Buffer.from("arm64-artifact")),
+    ]);
+    const [x64Result, arm64Result] = await Promise.all([
+      runArtifactBuildCompleted(
+        {
+          arch: "x64",
+          electronPlatformName: "darwin",
+          file: x64Artifact,
+          packager,
+        },
+        { artifactRoot: x64.appOutDir },
+      ),
+      runArtifactBuildCompleted(
+        {
+          arch: "arm64",
+          electronPlatformName: "darwin",
+          file: arm64Artifact,
+          packager,
+        },
+        { artifactRoot: arm64.appOutDir },
+      ),
+    ]);
+    assert.equal(x64Result.stateDirectory, x64.stateDirectory);
+    assert.equal(arm64Result.stateDirectory, arm64.stateDirectory);
+
+    await assert.rejects(
+      callback({ app: join(x64.root, "unbound", "Ling Stack.app") }, packager),
+      /signing_context_ambiguous/u,
+    );
+    for (const fixture of [x64, arm64]) {
+      const trace = await readSigningFixtureTrace(fixture.stateDirectory);
+      assert.equal(
+        trace.events.filter(
+          (event) => event.hook === "platformSign" && event.event === "outer-path-signed",
+        ).length,
+        1,
+      );
+      assert.equal(
+        trace.events.filter(
+          (event) => event.hook === "artifactBuildCompleted" && event.event === "verified",
+        ).length,
+        1,
+      );
+    }
+  } finally {
+    await Promise.all(
+      [x64.root, arm64.root].map((root) => rm(root, { recursive: true, force: true })),
+    );
+  }
+});
+
+test("concurrent artifact callbacks cannot lose or duplicate signing trace events", async () => {
+  const stateDirectory = await mkdtemp(join(tmpdir(), "ling-cua-signing-trace-race-"));
+  try {
+    const eventCount = 64;
+    await Promise.all(
+      Array.from({ length: eventCount }, (_, index) =>
+        appendSigningTrace(stateDirectory, {
+          hook: "artifactBuildCompleted",
+          event: `verified-${String(index)}`,
+        }),
+      ),
+    );
+    const trace = await loadSigningTrace(stateDirectory);
+    assert.equal(trace.events.length, eventCount);
+    assert.deepEqual(
+      trace.events.map((event) => event.sequence),
+      Array.from({ length: eventCount }, (_, index) => index + 1),
+    );
+    assert.deepEqual(
+      new Set(trace.events.map((event) => event.event)),
+      new Set(Array.from({ length: eventCount }, (_, index) => `verified-${String(index)}`)),
+    );
+  } finally {
+    await rm(stateDirectory, { recursive: true, force: true });
   }
 });
 
@@ -245,12 +383,14 @@ for (const platform of ["darwin", "win32"]) {
         {
           profile: INTERNAL_PROFILE,
           stateDirectory: fixture.stateDirectory,
-          extractArtifact: (path) =>
-            extractFixtureArtifact({
+          extractArtifact: async (path) => ({
+            artifactRoot: await extractFixtureArtifact({
               artifactPath: path,
               destinationRoot: fixture.artifactRoot,
               expectedKind: "zip",
             }),
+            cleanup: async () => {},
+          }),
         },
       );
       assert.equal(artifact.verification.providerSha256, packed.state.sealedProviderSha256);
@@ -505,12 +645,14 @@ for (const [platform, kind] of [
         {
           profile: INTERNAL_PROFILE,
           stateDirectory: fixture.stateDirectory,
-          extractArtifact: (path) =>
-            extractFixtureArtifact({
+          extractArtifact: async (path) => ({
+            artifactRoot: await extractFixtureArtifact({
               artifactPath: path,
               destinationRoot: extractedRoot,
               expectedKind: kind,
             }),
+            cleanup: async () => {},
+          }),
         },
       );
       assert.equal(result.verification.providerSha256, await sha256File(fixture.providerPath));

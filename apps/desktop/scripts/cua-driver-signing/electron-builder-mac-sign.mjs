@@ -1,5 +1,3 @@
-import { join, basename } from "node:path";
-
 import { runProviderAwareSign } from "./hooks.mjs";
 
 /**
@@ -10,21 +8,16 @@ import { runProviderAwareSign } from "./hooks.mjs";
  */
 export default async function electronBuilderMacSign(configuration, packager) {
   const appPath = configuration.app;
-  const productFilename = packager?.appInfo?.productFilename;
-  const executable = productFilename
-    ? join(appPath, "Contents", "MacOS", productFilename)
-    : join(appPath, "Contents", "MacOS", basename(appPath, ".app"));
   return runProviderAwareSign(
     {
-      path: executable,
-      appOutDir: packager?.__lingSigningAppOutDir,
+      path: appPath,
+      packager,
       electronPlatformName: "darwin",
     },
     {
-      profile: packager?.__lingSigningProfile,
       signer: packager?.__lingSigningSigner,
       outerSigner: packager?.__lingSigningOuterSigner,
-      stateDirectory: packager?.__lingSigningStateDirectory,
+      outerRole: "outer-app-bundle",
     },
   );
 }

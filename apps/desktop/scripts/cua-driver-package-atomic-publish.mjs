@@ -37,6 +37,10 @@ const NATIVE_PARENT_LEASE_RPC_MAX_BYTES = 16 * 1024;
 const PRIVATE_BUILD_PREFIX = "ling-cua-package-publish-";
 const NATIVE_REMOVAL_MAX_ENTRIES = 64;
 const NATIVE_REMOVAL_MAX_BYTES = 558_891_008;
+const NATIVE_ARTIFACT_REMOVAL_MAX_ENTRIES = 100_000;
+const NATIVE_ARTIFACT_REMOVAL_MAX_BYTES = 4 * 1024 * 1024 * 1024;
+const ARTIFACT_REMOVAL_POLICY = "artifact";
+const DARWIN_ARTIFACT_SYMLINK_REMOVAL_POLICY = "darwin-artifact-symlinks";
 const SUCCESS_OUTCOMES = new Set([
   "committed",
   "inspected",
@@ -61,6 +65,7 @@ const NATIVE_RECEIPT_BASE_FIELDS = new Set([
 const NATIVE_PARENT_LEASE_OPERATIONS = new Set([
   "inspect",
   "publish",
+  "remove-artifact-tree",
   "remove-tree",
   "remove-unsecured-empty",
   "secure-private",
@@ -325,26 +330,35 @@ export async function removeAtomicPublishDirectoryTree(input, parentLease) {
     input?.expectedSourceIdentity,
     "expectedSourceIdentity",
   );
+  const entryPolicy = requireRemovalEntryPolicy(input?.entryPolicy);
+  const artifactRemoval = entryPolicy !== undefined;
   const expectedEntries = requireBoundedRemovalValue(
     input?.expectedEntries,
     "expectedEntries",
-    NATIVE_REMOVAL_MAX_ENTRIES,
+    artifactRemoval
+      ? NATIVE_ARTIFACT_REMOVAL_MAX_ENTRIES
+      : NATIVE_REMOVAL_MAX_ENTRIES,
   );
   const expectedTotalBytes = requireBoundedRemovalValue(
     input?.expectedTotalBytes,
     "expectedTotalBytes",
-    NATIVE_REMOVAL_MAX_BYTES,
+    artifactRemoval
+      ? NATIVE_ARTIFACT_REMOVAL_MAX_BYTES
+      : NATIVE_REMOVAL_MAX_BYTES,
   );
   const capability = requireNativeParentLeaseCapability(parentLease, parentRoot);
   const receipt = await invokeNativeParentLeaseOperation(
     capability,
-    "remove-tree",
+    artifactRemoval ? "remove-artifact-tree" : "remove-tree",
     [
       sourceName,
       expectedParentIdentity,
       expectedSourceIdentity,
       String(expectedEntries),
       String(expectedTotalBytes),
+      ...(entryPolicy === DARWIN_ARTIFACT_SYMLINK_REMOVAL_POLICY
+        ? [entryPolicy]
+        : []),
     ],
   );
   if (receipt.outcome !== "removed") {
@@ -367,6 +381,19 @@ export async function removeAtomicPublishDirectoryTree(input, parentLease) {
     removedEntries: receipt.removedEntries,
     removedBytes: receipt.removedBytes,
   });
+}
+
+function requireRemovalEntryPolicy(value) {
+  if (value === undefined) return undefined;
+  if (value === ARTIFACT_REMOVAL_POLICY) return value;
+  if (value !== DARWIN_ARTIFACT_SYMLINK_REMOVAL_POLICY
+      || process.platform !== "darwin") {
+    throw new CuaDriverAtomicPublishError(
+      "staging_remove_entry_policy_invalid",
+      "entryPolicy must select bounded artifact cleanup for the current platform",
+    );
+  }
+  return value;
 }
 
 /**
@@ -1171,6 +1198,7 @@ function assertNativeParentLeaseOperationReceipt(receipt, operation, args) {
   const expectedOutcome = {
     inspect: "inspected",
     publish: "committed",
+    "remove-artifact-tree": "removed",
     "remove-tree": "removed",
     "remove-unsecured-empty": "removed",
     "secure-private": "secured",
@@ -1224,7 +1252,7 @@ function assertNativeParentLeaseOperationReceipt(receipt, operation, args) {
     }
     return;
   }
-  if (operation === "remove-tree") {
+  if (operation === "remove-tree" || operation === "remove-artifact-tree") {
     if (receipt.reason !== "removed"
       || receipt.parentIdentity !== args[1]
       || receipt.sourceIdentity !== args[2]
