@@ -4,7 +4,12 @@ import {
   type SpawnOptions,
 } from "node:child_process";
 import { win32 } from "node:path";
-import type { CuaDriverProviderProcessLifecycle } from "../provider-host.js";
+import type {
+  CuaDriverPreparedProviderSpawn,
+  CuaDriverProviderProcessLifecycle,
+} from "../provider-host.js";
+import { WIN32_KERNEL_SYSTEM_ROOT } from "./win32-command.js";
+import { createWin32ExecutableSpawnLeaseAcquirer } from "./win32-executable-lease.js";
 
 export type Win32DirectSpawn = (
   executablePath: string,
@@ -28,20 +33,53 @@ export class Win32CuaDriverLifecycleError extends Error {
  */
 export function createWin32CuaDriverProcessLifecycle(options: {
   readonly spawn?: Win32DirectSpawn;
+  readonly systemRoot?: string;
+  readonly baseEnvironment?: NodeJS.ProcessEnv;
+  readonly acquireSpawnLease?: (input: {
+    readonly executablePath: string;
+    readonly executableDigest: string;
+    readonly signal: AbortSignal;
+  }) => Promise<CuaDriverPreparedProviderSpawn>;
 } = {}): CuaDriverProviderProcessLifecycle & Readonly<{
   readonly lifetimeBoundary: "windows-job-object";
 }> {
   const spawn = options.spawn ?? nodeSpawn as Win32DirectSpawn;
+  const acquireSpawnLease = options.acquireSpawnLease
+    ?? createWin32ExecutableSpawnLeaseAcquirer({
+      systemRoot: options.systemRoot ?? WIN32_KERNEL_SYSTEM_ROOT,
+      ...(options.baseEnvironment ? { baseEnvironment: options.baseEnvironment } : {}),
+    });
+  const preparedSpawns = new WeakSet<CuaDriverPreparedProviderSpawn>();
   return Object.freeze({
     lifetimeBoundary: "windows-job-object" as const,
+    async prepareSpawn(input: {
+      readonly executablePath: string;
+      readonly executableDigest: string;
+      readonly signal: AbortSignal;
+    }) {
+      const prepared = await acquireSpawnLease(input);
+      if (prepared.executablePath !== input.executablePath
+        || prepared.executableDigest !== input.executableDigest) {
+        await prepared.abort().catch(() => undefined);
+        throw new Win32CuaDriverLifecycleError("spawn_invalid");
+      }
+      preparedSpawns.add(prepared);
+      return prepared;
+    },
     spawn(input: Parameters<CuaDriverProviderProcessLifecycle["spawn"]>[0]) {
       if (!win32.isAbsolute(input.executablePath)
         || win32.basename(input.executablePath).toLowerCase() !== "cua-driver.exe"
+        || !input.executableDigest
+        || !input.preparedSpawn
+        || !preparedSpawns.has(input.preparedSpawn)
+        || input.preparedSpawn.executablePath !== input.executablePath
+        || input.preparedSpawn.executableDigest !== input.executableDigest
         || !win32.isAbsolute(input.cwd)
         || input.args.length === 0
         || Object.keys(input.environment).some((key) => key.toUpperCase() === "PATH")) {
         throw new Win32CuaDriverLifecycleError("spawn_invalid");
       }
+      preparedSpawns.delete(input.preparedSpawn);
       let child: ChildProcess;
       try {
         child = spawn(input.executablePath, [...input.args], {

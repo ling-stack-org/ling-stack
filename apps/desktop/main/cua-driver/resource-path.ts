@@ -201,6 +201,9 @@ async function assertRegularNonSymlinkPath(path: string, label: string): Promise
   if (!stat.isFile()) {
     throw new CuaDriverResourcePathError(`${label}_not_regular`, path);
   }
+  if (stat.nlink !== 1) {
+    throw new CuaDriverResourcePathError(`${label}_hardlink_forbidden`, path);
+  }
 }
 
 async function assertCanonicalInside(candidate: string, root: string, label: string): Promise<void> {

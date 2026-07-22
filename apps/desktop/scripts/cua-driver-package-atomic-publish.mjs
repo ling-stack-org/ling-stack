@@ -522,6 +522,50 @@ export async function runOwnedWindowsProcess(command, args, options = {}) {
   }
 }
 
+/** Spawn an interactive Windows root under the same native Job Object owner. */
+export async function spawnOwnedWindowsProcess(command, args, options = {}) {
+  if (process.platform !== "win32") {
+    throw new CuaDriverAtomicPublishError(
+      "staging_owned_process_unsupported",
+      `owned process execution is unsupported on ${process.platform}`,
+    );
+  }
+  if (typeof command !== "string" || !isAbsolute(command) || command.includes("\0")) {
+    throw new CuaDriverAtomicPublishError(
+      "staging_owned_process_command_invalid",
+      "owned process command must be an absolute path",
+    );
+  }
+  if (!Array.isArray(args)
+    || args.some((value) => typeof value !== "string" || value.includes("\0"))) {
+    throw new CuaDriverAtomicPublishError(
+      "staging_owned_process_arguments_invalid",
+      "owned process arguments must be an array of strings",
+    );
+  }
+  if (!options || typeof options !== "object" || Array.isArray(options)) {
+    throw new CuaDriverAtomicPublishError(
+      "staging_owned_process_options_invalid",
+      "owned process options must be an object",
+    );
+  }
+  const allowedOptions = new Set(["cwd", "env", "signal", "stdio", "windowsHide"]);
+  const unexpected = Object.keys(options).find((key) => !allowedOptions.has(key));
+  if (unexpected !== undefined) {
+    throw new CuaDriverAtomicPublishError(
+      "staging_owned_process_options_invalid",
+      `unsupported owned process option: ${unexpected}`,
+    );
+  }
+  const nativePublisher = await getNativePublisher();
+  await assertNativePublisherIdentity(nativePublisher);
+  return spawn(
+    nativePublisher.path,
+    ["run-owned", command, ...args],
+    { ...options, windowsHide: true },
+  );
+}
+
 async function acquireAtomicPublishParentLease({
   assertPublisherIdentity = assertNativePublisherIdentity,
   nativePublisher,

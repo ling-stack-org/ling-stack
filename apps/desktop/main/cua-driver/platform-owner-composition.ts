@@ -1,5 +1,6 @@
 import type { BundledCuaDriverPlatform } from "@ling-stack/contracts";
 import type { DarwinHostPermissionSnapshot } from "./adapters/darwin-permissions.js";
+import { WIN32_KERNEL_SYSTEM_ROOT } from "./adapters/win32-command.js";
 import type { Win32PowerMonitorPort } from "./adapters/win32-session-observer.js";
 import {
   createCuaDriverDesktopPlatformOwner,
@@ -44,7 +45,7 @@ export async function createPackagedCuaDriverDesktopPlatformOwner(
   return createCuaDriverDesktopPlatformOwner({
     platform,
     policy,
-    ...(options.win32SystemRoot ? { systemRoot: options.win32SystemRoot } : {}),
+    systemRoot: options.win32SystemRoot ?? WIN32_KERNEL_SYSTEM_ROOT,
     ...(options.win32PowerMonitor ? { powerMonitor: options.win32PowerMonitor } : {}),
     ...(options.baseEnvironment ? { baseEnvironment: options.baseEnvironment } : {}),
   });

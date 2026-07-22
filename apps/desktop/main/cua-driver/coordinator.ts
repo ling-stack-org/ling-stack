@@ -470,14 +470,17 @@ export class CuaDriverDesktopCoordinator {
       const telemetry = this.telemetry;
       const hostOptions: CuaDriverProviderHostOptions = {
         executablePath: paths.executablePath,
+        executableDigest: artifacts.executableDigest,
         stateRoot,
         generation,
         platform: this.options.platform,
         lifecycle: this.processLifecycle,
         telemetry,
-        preSpawn: async () => {
+        preSpawn: async (signal) => {
           try {
+            signal.throwIfAborted();
             const liveLock = await readCuaDriverProviderLock(paths.lockPath, lockOptions);
+            signal.throwIfAborted();
             const liveArtifacts = await verifyCuaDriverProviderArtifacts({
               platform: this.options.platform,
               architecture: this.options.architecture,
@@ -486,6 +489,7 @@ export class CuaDriverDesktopCoordinator {
               platformIdentityVerifier: this.platformIdentityVerifier,
               requirePlatformIdentityVerification: this.options.packaged === true,
             });
+            signal.throwIfAborted();
             if (
               liveArtifacts.lockDigest !== artifacts.lockDigest
               || liveArtifacts.executableDigest !== artifacts.executableDigest
@@ -499,7 +503,9 @@ export class CuaDriverDesktopCoordinator {
               stateRoot,
               platform: this.options.platform,
               platformProtector: this.stateRootProtector,
+              signal,
             });
+            signal.throwIfAborted();
           } catch (error) {
             if (error instanceof CuaDriverProviderPreSpawnError) {
               throw error;

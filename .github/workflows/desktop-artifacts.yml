@@ -6,7 +6,7 @@ on:
       execution_mode:
         description: Runner pool used by this manual dispatch
         required: true
-        default: github-hosted
+        default: self-hosted-native
         type: choice
         options:
           - github-hosted
@@ -76,7 +76,7 @@ env:
 
 jobs:
   cua-driver-self-hosted-native:
-    if: inputs.execution_mode == 'self-hosted-native'
+    if: github.event_name == 'workflow_dispatch' && inputs.execution_mode == 'self-hosted-native'
     uses: ./.github/workflows/cua-driver-self-hosted-native.yml
     with:
       platform: ${{ inputs.native_platform }}
@@ -85,7 +85,7 @@ jobs:
       contents: read
 
   cua-driver-signing-feasibility:
-    if: inputs.execution_mode != 'self-hosted-native'
+    if: github.event_name == 'workflow_dispatch' && inputs.execution_mode == 'github-hosted'
     name: Cua Driver signing and final artifact fixture (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
@@ -140,7 +140,7 @@ jobs:
           }
 
   cua-driver-source-build-macos:
-    if: inputs.execution_mode != 'self-hosted-native'
+    if: github.event_name == 'workflow_dispatch' && inputs.execution_mode == 'github-hosted'
     name: Cua Driver locked source build (macOS universal)
     runs-on: macos-26
     timeout-minutes: 180
@@ -237,7 +237,7 @@ jobs:
             ${{ runner.temp }}/ling-cua-driver-source-build/b/output
 
   cua-driver-source-build-windows:
-    if: inputs.execution_mode != 'self-hosted-native'
+    if: github.event_name == 'workflow_dispatch' && inputs.execution_mode == 'github-hosted'
     name: Cua Driver locked source build (Windows x64)
     runs-on: windows-2025
     timeout-minutes: 180
@@ -335,7 +335,7 @@ jobs:
             ${{ runner.temp }}/ling-cua-driver-source-build/b/output
 
   cua-driver-source-build-promotion-macos:
-    if: inputs.execution_mode != 'self-hosted-native'
+    if: github.event_name == 'workflow_dispatch' && inputs.execution_mode == 'github-hosted'
     name: Cua Driver source-build promotion proposal (macOS universal)
     needs: cua-driver-source-build-macos
     runs-on: macos-26
@@ -376,7 +376,7 @@ jobs:
           path: ${{ runner.temp }}/ling-cua-driver-source-build-download/promotion/**
 
   cua-driver-source-build-promotion-windows:
-    if: inputs.execution_mode != 'self-hosted-native'
+    if: github.event_name == 'workflow_dispatch' && inputs.execution_mode == 'github-hosted'
     name: Cua Driver source-build promotion proposal (Windows x64)
     needs: cua-driver-source-build-windows
     runs-on: windows-2025
@@ -414,7 +414,7 @@ jobs:
           path: ${{ runner.temp }}/ling-cua-driver-source-build-download/promotion/**
 
   macos-unsigned:
-    if: inputs.execution_mode != 'self-hosted-native'
+    if: github.event_name == 'workflow_dispatch' && inputs.execution_mode == 'github-hosted'
     name: macOS unsigned arm64 + x64
     runs-on: macos-15
     timeout-minutes: 60
@@ -683,7 +683,7 @@ jobs:
             apps/desktop/test-results/computer-use-performance-macos.json
 
   windows-unsigned:
-    if: inputs.execution_mode != 'self-hosted-native'
+    if: github.event_name == 'workflow_dispatch' && inputs.execution_mode == 'github-hosted'
     name: Windows unsigned x64
     runs-on: windows-2022
     timeout-minutes: 60

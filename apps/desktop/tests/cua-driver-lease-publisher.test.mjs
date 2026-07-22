@@ -100,6 +100,42 @@ test("HTTP lease client requires loopback and sends bridge token plus workspace-
   );
 });
 
+test("HTTP lease client consumes bounded success and error response bodies", async () => {
+  const responses = [
+    new Response(JSON.stringify({ ok: true }), { status: 200 }),
+    new Response(JSON.stringify({ error: "rejected" }), { status: 503 }),
+  ];
+  const client = new HttpCuaDriverLeaseClient({
+    daemonBaseUrl: "http://127.0.0.1:17891",
+    bridgeToken: "bridge-token",
+    fetch: async () => responses.shift(),
+  });
+  const success = responses[0];
+  await client.publish({ ...leaseTemplate(), expiresAt: "2026-07-18T00:01:00.000Z" });
+  assert.equal(success.bodyUsed, true);
+
+  const rejected = responses[0];
+  await assert.rejects(
+    client.publish({ ...leaseTemplate(), expiresAt: "2026-07-18T00:01:00.000Z" }),
+    /lease_http_503/,
+  );
+  assert.equal(rejected.bodyUsed, true);
+});
+
+test("HTTP lease client rejects an oversized daemon response without buffering it", async () => {
+  const response = new Response(new Uint8Array(64 * 1024 + 1), { status: 200 });
+  const client = new HttpCuaDriverLeaseClient({
+    daemonBaseUrl: "http://127.0.0.1:17891",
+    bridgeToken: "bridge-token",
+    fetch: async () => response,
+  });
+  await assert.rejects(
+    client.publish({ ...leaseTemplate(), expiresAt: "2026-07-18T00:01:00.000Z" }),
+    /lease_response_body_invalid/,
+  );
+  assert.equal(response.bodyUsed, true);
+});
+
 test("HTTP lease client rejects redirects without forwarding its bridge token or body", async (t) => {
   let targetRequests = 0;
   let redirectRequests = 0;

@@ -26,6 +26,8 @@ import type {
 } from "./cua-driver-client-pool.js";
 
 const DEFAULT_INITIALIZE_TIMEOUT_MS = 30_000;
+const MAX_LIST_TOOLS_PAGES = 128;
+const MAX_LIST_TOOLS_COUNT = 4_096;
 const BUNDLED_HEALTH_REPORT_ARGUMENTS = Object.freeze({
   skip: Object.freeze(["bundle_identity"] as const),
 });
@@ -210,16 +212,38 @@ class DefaultCuaDriverLeaseMcpClient implements CuaDriverLeaseMcpClient {
     this.assertUsable();
     const startedAt = Date.now();
     const timeout = operationTimeout(server.toolTimeoutSec ?? server.startupTimeoutSec);
+    const deadlineAt = startedAt + timeout;
+    const deadlineSignal = AbortSignal.timeout(timeout);
+    const operationSignal = signal
+      ? AbortSignal.any([signal, deadlineSignal])
+      : deadlineSignal;
     try {
       const tools: ReplaceMcpServerToolInput[] = [];
+      const seenCursors = new Set<string>();
       let cursor: string | undefined;
+      let pages = 0;
       do {
+        operationSignal.throwIfAborted();
+        pages += 1;
+        if (pages > MAX_LIST_TOOLS_PAGES) {
+          throw new Error("cua_driver_tool_page_limit_exceeded");
+        }
+        const remainingTimeout = Math.max(1, deadlineAt - Date.now());
         const page = await this.options.client.listTools(
           cursor ? { cursor } : undefined,
-          { timeout, signal },
+          { timeout: remainingTimeout, signal: operationSignal },
         );
+        if (tools.length + page.tools.length > MAX_LIST_TOOLS_COUNT) {
+          throw new Error("cua_driver_tool_count_limit_exceeded");
+        }
         tools.push(...page.tools.map((tool) => mcpSdkToolToStoreInput(server, tool)));
         cursor = page.nextCursor;
+        if (cursor) {
+          if (seenCursors.has(cursor)) {
+            throw new Error("cua_driver_tool_cursor_repeated");
+          }
+          seenCursors.add(cursor);
+        }
       } while (cursor);
       return {
         statusSnapshot: createMcpStatusSnapshot({

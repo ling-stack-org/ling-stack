@@ -31,6 +31,7 @@ export interface CuaDriverStateRootPlatformProtector {
     readonly userDataPath: string;
     readonly stateRootPath: string;
     readonly createdPaths: readonly string[];
+    readonly signal?: AbortSignal;
   }): Promise<void>;
 }
 
@@ -44,6 +45,7 @@ export interface ReverifyCuaDriverStateRootInput {
   readonly stateRoot: CuaDriverStateRoot;
   readonly platform: BundledCuaDriverPlatform;
   readonly platformProtector?: CuaDriverStateRootPlatformProtector;
+  readonly signal?: AbortSignal;
 }
 
 /**
@@ -112,6 +114,7 @@ export async function createCuaDriverStateRoot(
 export async function reverifyCuaDriverStateRoot(
   input: ReverifyCuaDriverStateRootInput,
 ): Promise<void> {
+  input.signal?.throwIfAborted();
   const { stateRoot } = input;
   if (!isAbsolute(stateRoot.userDataPath)) {
     throw new CuaDriverStateRootError("user_data_path_must_be_absolute", stateRoot.userDataPath);
@@ -140,11 +143,16 @@ export async function reverifyCuaDriverStateRoot(
     expectedVersionCheckPath,
   ];
   for (const path of stateAncestors) {
+    input.signal?.throwIfAborted();
     await assertDirectoryNotLink(path, "state_path");
   }
+  input.signal?.throwIfAborted();
   const userDataReal = await safeRealpath(userDataPath, "user_data_root");
+  input.signal?.throwIfAborted();
   const rootReal = await safeRealpath(expectedRootPath, "state_root");
+  input.signal?.throwIfAborted();
   const telemetryReal = await safeRealpath(expectedTelemetryPath, "state_telemetry");
+  input.signal?.throwIfAborted();
   const versionCheckReal = await safeRealpath(expectedVersionCheckPath, "state_version_check");
   assertInsideCanonical(rootReal, userDataReal, "state_root");
   assertInsideCanonical(telemetryReal, rootReal, "state_telemetry");
@@ -153,9 +161,20 @@ export async function reverifyCuaDriverStateRoot(
     if (!input.platformProtector) {
       throw new CuaDriverStateRootError("windows_state_root_protector_required", expectedRootPath);
     }
-    await input.platformProtector.protect({ userDataPath, stateRootPath: expectedRootPath, createdPaths: [] });
+    input.signal?.throwIfAborted();
+    await input.platformProtector.protect({
+      userDataPath,
+      stateRootPath: expectedRootPath,
+      createdPaths: [],
+      ...(input.signal ? { signal: input.signal } : {}),
+    });
+    input.signal?.throwIfAborted();
   } else {
-    await Promise.all([expectedRootPath, expectedTelemetryPath, expectedVersionCheckPath].map((path) => chmod(path, 0o700)));
+    for (const path of [expectedRootPath, expectedTelemetryPath, expectedVersionCheckPath]) {
+      input.signal?.throwIfAborted();
+      await chmod(path, 0o700);
+    }
+    input.signal?.throwIfAborted();
   }
 }
 

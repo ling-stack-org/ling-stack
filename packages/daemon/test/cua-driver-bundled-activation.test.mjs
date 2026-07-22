@@ -411,6 +411,124 @@ test("lease MCP listTools follows every SDK cursor without raw transport fallbac
   await client.close();
 });
 
+test("lease MCP listTools rejects cursor cycles and returns no partial tools", async () => {
+  const requests = [];
+  const factory = new DefaultCuaDriverLeaseMcpClientFactory({
+    bridgeToken,
+    createClient: () => ({
+      async connect() {},
+      async ping() {},
+      getServerVersion: () => ({ name: "cua-driver", version: "0.8.3" }),
+      async listTools(params) {
+        requests.push(params);
+        return {
+          tools: [{ name: `tool_${requests.length}`, inputSchema: { type: "object" } }],
+          nextCursor: params?.cursor === "page-2" ? "page-1" : "page-2",
+        };
+      },
+      async callTool() { return { content: [] }; },
+      async close() {},
+    }),
+    createTransport: () => ({ fixture: true }),
+  });
+  const client = await factory.connect(lease(), new AbortController().signal);
+
+  const result = await client.listTools(activationServer(), now);
+
+  assert.equal(result.statusSnapshot.status, "failed");
+  assert.equal(result.statusSnapshot.errorCode, "cua_driver_tool_sync_failed");
+  assert.match(result.statusSnapshot.message, /cua_driver_tool_cursor_repeated/);
+  assert.deepEqual(result.tools, []);
+  assert.deepEqual(requests, [undefined, { cursor: "page-2" }, { cursor: "page-1" }]);
+  await client.close();
+});
+
+test("lease MCP listTools rejects page and tool-count overflow", async (t) => {
+  const cases = [
+    {
+      name: "page limit",
+      page() {
+        return { tools: [], nextCursor: `page-${this.calls}` };
+      },
+      expected: /cua_driver_tool_page_limit_exceeded/,
+    },
+    {
+      name: "tool count limit",
+      page() {
+        return {
+          tools: Array.from({ length: 4_097 }, (_, index) => ({
+            name: `tool_${index}`,
+            inputSchema: { type: "object" },
+          })),
+        };
+      },
+      expected: /cua_driver_tool_count_limit_exceeded/,
+    },
+  ];
+  for (const fixture of cases) {
+    await t.test(fixture.name, async () => {
+      fixture.calls = 0;
+      const factory = new DefaultCuaDriverLeaseMcpClientFactory({
+        bridgeToken,
+        createClient: () => ({
+          async connect() {},
+          async ping() {},
+          getServerVersion: () => ({ name: "cua-driver", version: "0.8.3" }),
+          async listTools() {
+            fixture.calls += 1;
+            return fixture.page();
+          },
+          async callTool() { return { content: [] }; },
+          async close() {},
+        }),
+        createTransport: () => ({ fixture: true }),
+      });
+      const client = await factory.connect(lease(), new AbortController().signal);
+      const result = await client.listTools(activationServer(), now);
+      assert.equal(result.statusSnapshot.status, "failed");
+      assert.match(result.statusSnapshot.message, fixture.expected);
+      assert.deepEqual(result.tools, []);
+      await client.close();
+    });
+  }
+});
+
+test("lease MCP listTools enforces one total deadline across every page", async () => {
+  const observedTimeouts = [];
+  const factory = new DefaultCuaDriverLeaseMcpClientFactory({
+    bridgeToken,
+    createClient: () => ({
+      async connect() {},
+      async ping() {},
+      getServerVersion: () => ({ name: "cua-driver", version: "0.8.3" }),
+      async listTools(_params, options) {
+        observedTimeouts.push(options.timeout);
+        if (observedTimeouts.length === 1) {
+          await new Promise((resolve) => setTimeout(resolve, 700));
+          return { tools: [], nextCursor: "page-2" };
+        }
+        await new Promise((resolve, reject) => {
+          options.signal.addEventListener("abort", () => reject(options.signal.reason), { once: true });
+        });
+      },
+      async callTool() { return { content: [] }; },
+      async close() {},
+    }),
+    createTransport: () => ({ fixture: true }),
+  });
+  const client = await factory.connect(lease(), new AbortController().signal);
+  const server = { ...activationServer(), toolTimeoutSec: 1 };
+
+  const result = await client.listTools(server, now);
+
+  assert.equal(result.statusSnapshot.status, "failed");
+  assert.equal(result.statusSnapshot.errorCode, "cua_driver_tool_sync_failed");
+  assert.equal(observedTimeouts.length, 2);
+  assert.ok(observedTimeouts[0] <= 1_000 && observedTimeouts[0] > 0);
+  assert.ok(observedTimeouts[1] < 500 && observedTimeouts[1] > 0);
+  await client.close();
+});
+
 test("lease MCP health gate accepts only the structured schema-v1 core report", async (t) => {
   const cases = [
     [

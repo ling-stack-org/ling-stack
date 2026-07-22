@@ -695,7 +695,7 @@ function bundledLease(authority, cwd) {
     ...(process.platform === "win32" ? { providerCatalogDigest: "c".repeat(64) } : {}),
     platform: process.platform,
     architecture: process.arch === "x64" ? "x86_64" : "arm64",
-    integrityCoverage: "standard",
+    ...(process.platform === "win32" ? { integrityCoverage: "standard" } : {}),
   };
 }
 

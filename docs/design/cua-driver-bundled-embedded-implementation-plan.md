@@ -1360,7 +1360,9 @@ elevated/UWP pixel-input parity.
   adapter, content-free active-child readiness, Job Object lifecycle, structured
   limitations and global-pipe regression.
   - Adapter code and non-Windows automated contract coverage are complete behind the gate;
-    the process-wide owner now injects policy, trusted SystemRoot and Electron powerMonitor.
+    the process-wide owner now injects policy and Electron powerMonitor, while in-box tools
+    are rooted at kernel `GLOBALROOT\SystemRoot`. A held-handle SHA-256/single-link lease
+    binds the verified PE to direct `CreateProcess` without changing the provider PID.
     Real packaged policy/payload, Windows Authenticode/catalog/ACL/WTS/global-pipe and VM
     acceptance remain open.
 - [ ] **T8 (P1, human: ~4–7 days / Codex: ~1–2 days)** — Add private-helper Setup staging,

@@ -172,9 +172,12 @@ test("packaged platform-owner composition accepts only a preverified platform po
     const win32 = await createPackagedCuaDriverDesktopPlatformOwner({
       platform: "win32",
       policy: validateCuaDriverRuntimeTrustPolicy(internalWindowsPolicy(), "win32"),
-      win32SystemRoot: "C:\\Windows",
       win32PowerMonitor: powerMonitor,
-      baseEnvironment: { PATH: "C:\\fixture" },
+      baseEnvironment: {
+        PATH: "C:\\fixture",
+        SystemRoot: "C:\\attacker",
+        WINDIR: "C:\\attacker",
+      },
     });
     assert.equal(win32.platform, "win32");
     assert.equal(win32.binding.platform, "win32");

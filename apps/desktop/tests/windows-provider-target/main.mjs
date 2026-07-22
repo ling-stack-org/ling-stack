@@ -54,4 +54,4 @@ const html = `<!doctype html><html><head><meta charset="utf-8">` +
   `border:1px solid #ffffff55;border-radius:18px;background:#08111fcc}</style></head>` +
   `<body><div>Ling Windows provider smoke target ${label}</div></body></html>`;
 await targetWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`);
-console.log(READY_MARKER);
+console.log(`${READY_MARKER} pid=${process.pid}`);

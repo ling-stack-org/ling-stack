@@ -314,12 +314,18 @@ test("self-hosted native workflow is manual, identity-bound, and uses only dedic
 
   const caller = await readFile(DESKTOP_ARTIFACTS_WORKFLOW, "utf8");
   assert.match(caller, /execution_mode:[\s\S]+self-hosted-native/u);
+  assert.match(caller, /execution_mode:[\s\S]+default: self-hosted-native/u);
   assert.match(caller, /uses: \.\/\.github\/workflows\/cua-driver-self-hosted-native\.yml/u);
   assert.match(caller, /expected_commit: \$\{\{ inputs\.expected_commit \}\}/u);
   assert.equal(
-    [...caller.matchAll(/if: inputs\.execution_mode != 'self-hosted-native'/gu)].length,
+    [...caller.matchAll(/if: github\.event_name == 'workflow_dispatch' && inputs\.execution_mode == 'github-hosted'/gu)].length,
     7,
   );
+  assert.equal(
+    [...caller.matchAll(/if: github\.event_name == 'workflow_dispatch' && inputs\.execution_mode == 'self-hosted-native'/gu)].length,
+    1,
+  );
+  assert.doesNotMatch(caller, /if: inputs\.execution_mode != 'self-hosted-native'/u);
 });
 
 test("reproducible final linker flags never poison executable host build scripts", async () => {

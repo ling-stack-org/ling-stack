@@ -3,6 +3,14 @@ import {
   type ChildProcess,
   type SpawnOptions,
 } from "node:child_process";
+import { createHash } from "node:crypto";
+import {
+  closeSync,
+  constants,
+  fstatSync,
+  openSync,
+  readSync,
+} from "node:fs";
 import type { CuaDriverProviderProcessLifecycle } from "../provider-host.js";
 
 export type DarwinDirectSpawn = (
@@ -20,6 +28,16 @@ export class DarwinCuaDriverLifecycleError extends Error {
   }
 }
 
+interface DarwinPinnedExecutable {
+  readonly identityPath: string;
+  release(): void;
+}
+
+type PinDarwinExecutable = (
+  executablePath: string,
+  expectedDigest?: string,
+) => DarwinPinnedExecutable;
+
 /**
  * Direct Electron-child ownership keeps the provider in Ling's macOS TCC
  * responsibility chain. No shell, LaunchServices, `open`, detached process,
@@ -27,24 +45,36 @@ export class DarwinCuaDriverLifecycleError extends Error {
  */
 export function createDarwinCuaDriverProcessLifecycle(options: {
   readonly spawn?: DarwinDirectSpawn;
+  readonly pinExecutable?: PinDarwinExecutable;
 } = {}): CuaDriverProviderProcessLifecycle & Readonly<{
   readonly lifetimeBoundary: "darwin-direct-child";
 }> {
   const spawn = options.spawn ?? nodeSpawn as DarwinDirectSpawn;
+  const pinExecutable = options.pinExecutable ?? pinDarwinExecutable;
   return Object.freeze({
     lifetimeBoundary: "darwin-direct-child" as const,
     spawn(input: Parameters<CuaDriverProviderProcessLifecycle["spawn"]>[0]) {
       if (!input.executablePath.startsWith("/") || input.args.length === 0) {
         throw new DarwinCuaDriverLifecycleError("spawn_invalid");
       }
-      return spawn(input.executablePath, [...input.args], {
-        cwd: input.cwd,
-        env: input.environment,
-        stdio: ["pipe", "pipe", "pipe"],
-        shell: false,
-        detached: false,
-        windowsHide: true,
-      });
+      let pinned: DarwinPinnedExecutable;
+      try {
+        pinned = pinExecutable(input.executablePath, input.executableDigest);
+      } catch {
+        throw new DarwinCuaDriverLifecycleError("spawn_invalid");
+      }
+      try {
+        return spawn(pinned.identityPath, [...input.args], {
+          cwd: input.cwd,
+          env: input.environment,
+          stdio: ["pipe", "pipe", "pipe"],
+          shell: false,
+          detached: false,
+          windowsHide: true,
+        });
+      } finally {
+        pinned.release();
+      }
     },
     async terminate(child: ChildProcess) {
       if (child.exitCode !== null || child.signalCode !== null) {
@@ -55,4 +85,52 @@ export function createDarwinCuaDriverProcessLifecycle(options: {
       }
     },
   });
+}
+
+/** Pin the exact APFS vnode and execute through its stable `/.vol` identity path. */
+function pinDarwinExecutable(
+  executablePath: string,
+  expectedDigest?: string,
+): DarwinPinnedExecutable {
+  const noFollow = constants.O_NOFOLLOW ?? 0;
+  const descriptor = openSync(executablePath, constants.O_RDONLY | noFollow);
+  let released = false;
+  const release = (): void => {
+    if (!released) {
+      released = true;
+      closeSync(descriptor);
+    }
+  };
+  try {
+    const metadata = fstatSync(descriptor, { bigint: true });
+    if (!metadata.isFile() || metadata.nlink !== 1n) {
+      throw new DarwinCuaDriverLifecycleError("spawn_invalid");
+    }
+    if (expectedDigest !== undefined) {
+      if (!/^[a-f0-9]{64}$/u.test(expectedDigest)) {
+        throw new DarwinCuaDriverLifecycleError("spawn_invalid");
+      }
+      const hash = createHash("sha256");
+      const buffer = Buffer.allocUnsafe(1024 * 1024);
+      let position = 0;
+      while (true) {
+        const bytesRead = readSync(descriptor, buffer, 0, buffer.byteLength, position);
+        if (bytesRead === 0) {
+          break;
+        }
+        hash.update(buffer.subarray(0, bytesRead));
+        position += bytesRead;
+      }
+      if (hash.digest("hex") !== expectedDigest) {
+        throw new DarwinCuaDriverLifecycleError("spawn_invalid");
+      }
+    }
+    return {
+      identityPath: `/.vol/${metadata.dev}/${metadata.ino}`,
+      release,
+    };
+  } catch (error) {
+    release();
+    throw error;
+  }
 }

@@ -1122,23 +1122,25 @@ must remain deterministic.
 artifact tree so `provider-lock.json`, the seal and candidate/release manifests cannot
 select their own trust anchor. Darwin policy contains only the expected Ling Team ID.
 Windows policy contains the build-bound signing tier/channel and exact provider/catalog
-signer identities. The Windows system root remains a separately injected host platform
-fact. Gate-off startup never reads this file; a gate-on missing, symlinked, oversized,
+signer identities. Packaged Windows composition resolves in-box tools through the
+kernel-owned `\\?\GLOBALROOT\SystemRoot` alias; neither the caller nor the process
+environment injects that trust root. Gate-off startup never reads this file; a gate-on missing, symlinked, oversized,
 cross-platform, mixed-tier or extra-field policy fails closed without starting a provider.
 
 Packaged path resolution rules:
 
 1. Build the absolute platform path from the compile-time distribution id and
    `process.resourcesPath`; do not trust a path read from the lock itself.
-2. Reject symlinks, reparse points, junctions and any canonical path outside the expected
-   provider root.
+2. Reject symlinks, reparse points, junctions, any regular trust-tuple file whose link
+   count is not exactly one, and any canonical path outside the expected provider root.
 3. On Windows, enforce the compile-time distribution channel before reading candidate
    evidence. `unsigned_dev` is accepted only by the development build gate and requires an
    absent catalog plus explicit `NotSigned` identity. Signed tiers verify the installed
    Ling executable and provider catalog with the absolute in-box Windows PowerShell path,
    `-NoProfile -NonInteractive`, fixed UTF-8 locale-independent JSON and bounded
-   stdout/stderr. The Windows system root is a required trusted platform fact; verifier
-   code never falls back to caller-controlled `SystemRoot` or `WINDIR` environment values.
+   stdout/stderr. The executable path is rooted at the kernel-owned SystemRoot alias;
+   verifier code never falls back to caller-controlled `SystemRoot` or `WINDIR`
+   environment values.
    Require the matching internal or production policy signer identity and
    run `Test-FileCatalog` against only the dedicated two-file payload directory. Missing
    PowerShell, process-launch denial, WDAC/AppLocker blocking, unavailable catalog cmdlets,
@@ -1151,7 +1153,10 @@ Packaged path resolution rules:
    match it, then validate both records. Signed tiers additionally require the seal to be a
    catalog member; the development-only unsigned tier has no catalog trust claim.
 5. Require the main provider to be an executable regular file with exact platform
-   identity before starting the proxy lease.
+   identity before starting the proxy lease. On Darwin, hold the verified fd, re-hash it,
+   and spawn through `/.vol/<dev>/<ino>`. On Windows, a trusted in-box PowerShell lease
+   opens the verified PE with read-only sharing, re-hashes that held handle, requires one
+   NTFS hardlink, and retains it until direct `CreateProcess` has mapped the child.
 6. Never consult `PATH`, Homebrew, user install junctions, `~/.local/bin`,
    `/Applications/CuaDriver.app`, or `%LOCALAPPDATA%\Programs\Cua` in
    `bundled_embedded` mode.
@@ -1416,7 +1421,9 @@ stdout/protocol closure, host-process death or main-process termination closes t
 Object and removes every provider descendant within the locked managed-exit deadline.
 Child-created workers must not inherit host/provider stdio or Job Object handles.
 Path/reparse validation remains in TypeScript through `lstat` plus canonical `realpath`;
-ACL evidence may use the absolute trusted `%SystemRoot%\System32\icacls.exe`.
+ACL evidence uses the kernel-rooted in-box `System32\icacls.exe`. The pre-spawn PE lease
+is separate from the provider-owned Job Object: it binds verified bytes to `CreateProcess`,
+while the Rust Job Object continues to own the long-lived provider tree.
 
 ## Embedded Provider Host
 
@@ -1486,6 +1493,8 @@ Proxy rules:
   traffic remains transparent;
 - cap request, response, image, and stderr sizes using the same or stricter limits as the
   daemon MCP broker;
+- serialize SSE writes, stop after `write()` reports backpressure, and bound the queued
+  notification bytes. Queue overflow revokes the session and stops the generation;
 - close the stdio child when the accepted session is released for disable or Desktop quit;
 - on unexpected HTTP/MCP session loss, terminate the old child, invalidate the lease,
   increment generation, bind a fresh proxy session, and republish before accepting a new
@@ -1660,6 +1669,8 @@ Each entry owns:
 `checkServer`, `listTools`, health calls, and normal tool calls acquire the same entry and
 may run concurrently through the SDK after initialization. The bundled path must not use
 the raw HTTP list fallback because that would create an uninitialized side channel.
+`listTools` additionally has one total deadline, a seen-cursor set, and fixed page/tool
+ceilings; a repeated cursor or any limit breach discards the entire partial catalog.
 
 The pool closes an entry on lease replacement or expiry, plugin disable, distribution-mode
 switch, Desktop quit, protocol failure, or daemon shutdown. A stale generation can never

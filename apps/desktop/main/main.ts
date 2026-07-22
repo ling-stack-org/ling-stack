@@ -326,9 +326,6 @@ async function openMainWindowOnce(attempt: DesktopStartupOpenAttempt): Promise<b
           policy: cuaDriverPackagedStartupAuthority.policy,
           ...(process.platform === "win32"
             ? {
-                // Capture the main process' Windows platform fact explicitly;
-                // lower layers never fall back to provider/caller environment.
-                ...(process.env.SystemRoot ? { win32SystemRoot: process.env.SystemRoot } : {}),
                 win32PowerMonitor: powerMonitor,
                 baseEnvironment: process.env,
               }

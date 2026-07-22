@@ -8,6 +8,7 @@ import {
 } from "@ling-stack/contracts";
 import type { CuaDriverTelemetrySink } from "./telemetry.js";
 import { createCuaDriverTelemetry } from "./telemetry.js";
+import { consumeBoundedResponseBody } from "./http-response.js";
 
 export const CUA_DRIVER_LEASE_ROUTE = "/desktop/capabilities/cua-driver/lease" as const;
 export const CUA_DRIVER_BRIDGE_TOKEN_HEADER = "X-Ling-Desktop-Bridge-Token" as const;
@@ -85,6 +86,11 @@ export class HttpCuaDriverLeaseClient implements CuaDriverLeaseClient {
       });
     } catch {
       throw new CuaDriverLeasePublisherError("lease_daemon_unavailable");
+    }
+    try {
+      await consumeBoundedResponseBody(response);
+    } catch {
+      throw new CuaDriverLeasePublisherError("lease_response_body_invalid");
     }
     if (!response.ok) {
       throw new CuaDriverLeasePublisherError(`lease_http_${response.status}`);

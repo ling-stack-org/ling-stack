@@ -10,6 +10,11 @@ The entrypoint is the existing `Desktop artifacts` workflow. Dispatch it with:
 - `native_platform=macos`, `windows`, or `both`;
 - `expected_commit=<the exact 40-character commit selected as the workflow ref>`.
 
+`self-hosted-native` is the manual form default. Pull-request and push events leave all
+native artifact jobs skipped, so an exhausted GitHub-hosted billing account cannot create
+an immediate failed hosted matrix. `github-hosted` remains an explicit manual fallback
+after hosted billing is restored.
+
 The caller skips every GitHub-hosted job in this mode and invokes
 `cua-driver-self-hosted-native.yml` from the same immutable commit. Pull requests and
 pushes cannot select self-hosted mode. The called workflow also rejects any event other

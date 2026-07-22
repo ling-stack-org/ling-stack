@@ -19,6 +19,7 @@ import { createCuaDriverTelemetry } from "./telemetry.js";
 
 export const CUA_DRIVER_PROXY_PATH = "/mcp" as const;
 export const DEFAULT_CUA_DRIVER_PROXY_MAX_BODY_BYTES = 8 * 1024 * 1024;
+export const DEFAULT_CUA_DRIVER_PROXY_MAX_SSE_QUEUE_BYTES = 1024 * 1024;
 
 export interface CuaDriverProxyContext {
   readonly bridgeToken: string;
@@ -34,6 +35,7 @@ export interface CuaDriverMcpProxyOptions {
   readonly context: CuaDriverProxyContext;
   readonly port?: number;
   readonly maxBodyBytes?: number;
+  readonly maxSseQueueBytes?: number;
   readonly requestTimeoutMs?: number;
   readonly telemetry?: CuaDriverTelemetrySink;
   readonly onSessionClosed?: (reason: string) => void;
@@ -95,6 +97,7 @@ export function deriveCuaDriverWorkspaceBinding(workspaceCwd: string): string {
 export class CuaDriverMcpProxy {
   private readonly telemetry: CuaDriverTelemetrySink;
   private readonly maxBodyBytes: number;
+  private readonly maxSseQueueBytes: number;
   private readonly server: Server;
   private readonly token: string;
   private readonly sockets = new Set<Socket>();
@@ -104,6 +107,10 @@ export class CuaDriverMcpProxy {
   private sessionId: string | undefined;
   private sessionInitialized = false;
   private sseResponse: ServerResponse | undefined;
+  private readonly sseQueue: Array<Readonly<{ frame: string; bytes: number }>> = [];
+  private sseQueueBytes = 0;
+  private sseBackpressured = false;
+  private sseDrainListener: (() => void) | undefined;
   private removeHostListener: (() => void) | undefined;
   private closed = false;
   private callGateOpen = false;
@@ -112,6 +119,11 @@ export class CuaDriverMcpProxy {
   constructor(private readonly options: CuaDriverMcpProxyOptions) {
     this.telemetry = options.telemetry ?? createCuaDriverTelemetry();
     this.maxBodyBytes = boundedPositive(options.maxBodyBytes, DEFAULT_CUA_DRIVER_PROXY_MAX_BODY_BYTES, 64 * 1024 * 1024);
+    this.maxSseQueueBytes = boundedPositive(
+      options.maxSseQueueBytes,
+      DEFAULT_CUA_DRIVER_PROXY_MAX_SSE_QUEUE_BYTES,
+      16 * 1024 * 1024,
+    );
     this.token = deriveCuaDriverProxyToken(options.context);
     this.server = createServer((request, response) => {
       void this.handle(request, response);
@@ -339,9 +351,10 @@ export class CuaDriverMcpProxy {
       connection: "keep-alive",
       "mcp-session-id": this.sessionId,
     });
-    response.write(": ling-cua-driver\n\n");
+    this.enqueueSseFrame(": ling-cua-driver\n\n");
     response.once("close", () => {
       if (this.sseResponse === response) {
+        this.clearSseQueue();
         this.sseResponse = undefined;
         if (!this.closed) {
           this.invalidateSession("mcp_stream_closed");
@@ -409,10 +422,71 @@ export class CuaDriverMcpProxy {
       return;
     }
     if (Buffer.byteLength(serialized, "utf8") > this.maxBodyBytes) {
-      this.invalidateSession("mcp_server_message_oversized");
+      this.revokeSseSession("mcp_server_message_oversized");
       return;
     }
-    this.sseResponse.write(`event: message\ndata: ${serialized}\n\n`);
+    this.enqueueSseFrame(`event: message\ndata: ${serialized}\n\n`);
+  }
+
+  private enqueueSseFrame(frame: string): void {
+    if (!this.sseResponse || this.sseResponse.destroyed) {
+      return;
+    }
+    const bytes = Buffer.byteLength(frame, "utf8");
+    if (bytes > this.maxSseQueueBytes || this.sseQueueBytes > this.maxSseQueueBytes - bytes) {
+      this.revokeSseSession("mcp_server_backpressure_exceeded");
+      return;
+    }
+    this.sseQueue.push({ frame, bytes });
+    this.sseQueueBytes += bytes;
+    this.flushSseQueue();
+  }
+
+  private flushSseQueue(): void {
+    const response = this.sseResponse;
+    if (!response || response.destroyed || this.sseBackpressured) {
+      return;
+    }
+    while (this.sseQueue.length > 0) {
+      const next = this.sseQueue.shift()!;
+      this.sseQueueBytes -= next.bytes;
+      let accepted: boolean;
+      try {
+        accepted = response.write(next.frame);
+      } catch {
+        this.revokeSseSession("mcp_stream_write_failed");
+        return;
+      }
+      if (!accepted) {
+        this.sseBackpressured = true;
+        const onDrain = (): void => {
+          if (this.sseResponse !== response || this.sseDrainListener !== onDrain) {
+            return;
+          }
+          this.sseDrainListener = undefined;
+          this.sseBackpressured = false;
+          this.flushSseQueue();
+        };
+        this.sseDrainListener = onDrain;
+        response.once("drain", onDrain);
+        return;
+      }
+    }
+  }
+
+  private clearSseQueue(): void {
+    if (this.sseResponse && this.sseDrainListener) {
+      this.sseResponse.off("drain", this.sseDrainListener);
+    }
+    this.sseDrainListener = undefined;
+    this.sseBackpressured = false;
+    this.sseQueue.length = 0;
+    this.sseQueueBytes = 0;
+  }
+
+  private revokeSseSession(reason: string): void {
+    this.invalidateSession(reason);
+    void this.options.host.stop(reason).catch(() => undefined);
   }
 
   private invalidateSession(reason: string): void {
@@ -420,6 +494,7 @@ export class CuaDriverMcpProxy {
     this.sessionId = undefined;
     this.sessionInitialized = false;
     this.closeCallGate(reason);
+    this.clearSseQueue();
     if (this.sseResponse && !this.sseResponse.destroyed) {
       this.sseResponse.end();
     }

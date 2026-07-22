@@ -221,6 +221,9 @@ test("Darwin lifecycle directly spawns and terminates the retained child without
   const spawnCalls = [];
   const child = createChildFixture();
   const lifecycle = createDarwinCuaDriverProcessLifecycle({
+    pinExecutable(executablePath) {
+      return { identityPath: executablePath, release() {} };
+    },
     spawn(executablePath, args, options) {
       spawnCalls.push({ executablePath, args, options });
       return child;

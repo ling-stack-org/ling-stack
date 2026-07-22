@@ -160,6 +160,21 @@ test("Desktop Cua Driver lease guard requires versioned loopback and digest iden
   }), false);
   assert.equal(isDesktopCuaDriverLeaseV1({ ...lease, providerCatalogDigest: "not-a-digest" }), false);
   assert.equal(isDesktopCuaDriverLeaseV1({ ...lease, platform: "win32", architecture: "arm64" }), false);
+  assert.equal(isDesktopCuaDriverLeaseV1({ ...lease, integrityCoverage: undefined }), false);
+  assert.equal(isDesktopCuaDriverLeaseV1({ ...lease, integrityCoverage: "uiaccess" }), false);
+  assert.equal(isDesktopCuaDriverLeaseV1({
+    ...lease,
+    platform: "darwin",
+    architecture: "arm64",
+    providerCatalogDigest: undefined,
+    integrityCoverage: undefined,
+  }), true);
+  assert.equal(isDesktopCuaDriverLeaseV1({
+    ...lease,
+    platform: "darwin",
+    architecture: "arm64",
+    integrityCoverage: "standard",
+  }), false);
 });
 
 test("Desktop availability is non-authoritative and platform metadata is exact", () => {

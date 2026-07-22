@@ -609,6 +609,9 @@ export function isDesktopCuaDriverLeaseV1(value: unknown): value is DesktopCuaDr
   const platformArchitectureValid = value.platform === "darwin"
     ? value.architecture === "arm64" || value.architecture === "x86_64"
     : value.platform === "win32" && value.architecture === "x86_64";
+  const platformIntegrityValid = value.platform === "darwin"
+    ? value.integrityCoverage === undefined
+    : value.platform === "win32" && value.integrityCoverage === "standard";
   return value.schemaVersion === 1
     && value.providerId === "cua-driver"
     && hasText(value.desktopInstanceId)
@@ -626,11 +629,7 @@ export function isDesktopCuaDriverLeaseV1(value: unknown): value is DesktopCuaDr
     && isSha256(value.providerSealDigest)
     && (value.providerCatalogDigest === undefined || isSha256(value.providerCatalogDigest))
     && platformArchitectureValid
-    && (
-      value.integrityCoverage === undefined
-      || value.integrityCoverage === "standard"
-      || value.integrityCoverage === "uiaccess"
-    );
+    && platformIntegrityValid;
 }
 
 export const CUA_DRIVER_DESKTOP_AVAILABILITY_STATES = [

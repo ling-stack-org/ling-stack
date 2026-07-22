@@ -64,6 +64,8 @@ export function createWin32CuaDriverPlatformBinding(
         : {}),
     }),
     processLifecycle: createWin32CuaDriverProcessLifecycle({
+      systemRoot: trustedSystemRoot,
+      ...(options.baseEnvironment !== undefined ? { baseEnvironment: options.baseEnvironment } : {}),
       ...(options.spawn !== undefined ? { spawn: options.spawn } : {}),
     }),
     readinessController: new WindowsActiveChildReadinessController(),

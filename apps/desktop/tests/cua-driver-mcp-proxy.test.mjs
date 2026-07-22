@@ -241,6 +241,43 @@ test("proxy accepts one SSE stream and forwards server notifications without rew
   await proxy.close("test_complete");
 });
 
+test("proxy bounds an unread SSE stream and revokes the provider on backpressure", async () => {
+  const fixture = createHostFixture();
+  const context = createContext();
+  const proxy = new CuaDriverMcpProxy({
+    host: fixture.host,
+    context,
+    maxBodyBytes: 64 * 1024,
+    maxSseQueueBytes: 32 * 1024,
+  });
+  const endpoint = await proxy.start();
+  const baseHeaders = headers(context, endpoint.authorizationToken);
+  const initialized = await fetch(endpoint.url, {
+    method: "POST",
+    headers: baseHeaders,
+    body: JSON.stringify(initialize(1)),
+  });
+  const sessionId = initialized.headers.get("mcp-session-id");
+  const streamResponse = await fetch(endpoint.url, {
+    headers: { ...baseHeaders, "mcp-session-id": sessionId, accept: "text/event-stream" },
+  });
+  assert.equal(streamResponse.status, 200);
+
+  const payload = "x".repeat(8 * 1024);
+  for (let index = 0; index < 1_000 && fixture.stopCount === 0; index += 1) {
+    fixture.emit({
+      jsonrpc: "2.0",
+      method: "notifications/progress",
+      params: { index, payload },
+    });
+  }
+
+  await waitFor(() => fixture.stopCount === 1);
+  assert.equal(proxy.activeSessionId, undefined);
+  await streamResponse.body?.cancel().catch(() => undefined);
+  await proxy.close("test_complete");
+});
+
 function createContext() {
   return {
     bridgeToken: "bridge-secret-fixture",

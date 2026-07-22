@@ -35,6 +35,7 @@ import {
   removeAtomicPublishUnsecuredEmptyDirectory as removeAtomicPublishUnsecuredEmptyDirectoryWithLease,
   runDarwinIdentityBoundExecutableForTest,
   runOwnedWindowsProcess,
+  spawnOwnedWindowsProcess,
   securePrivateStagingDirectory as securePrivateStagingDirectoryWithLease,
   verifyPrivateStagingDirectorySecurity,
   withAtomicPublishParentLease,
@@ -1685,6 +1686,31 @@ test("Windows run-owned preserves argv and kills descendants when its helper tim
   ));
   const descendantPid = Number(String(timeoutError.stdout).trim());
   assert.ok(Number.isSafeInteger(descendantPid) && descendantPid > 0);
+  assert.equal(processExists(descendantPid), false);
+});
+
+test("Windows interactive owned spawn forwards stdin and drains descendants before close", {
+  skip: process.platform !== "win32",
+}, async () => {
+  const source = [
+    "const { spawn } = require('node:child_process');",
+    "const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'],",
+    "  { stdio: 'ignore', windowsHide: true });",
+    "console.log(child.pid);",
+    "process.stdin.once('data', () => process.exit(0));",
+  ].join("\n");
+  const owned = await spawnOwnedWindowsProcess(
+    process.execPath,
+    ["-e", source],
+    { stdio: ["pipe", "pipe", "pipe"] },
+  );
+  const [chunk] = await once(owned.stdout, "data");
+  const descendantPid = Number(String(chunk).trim());
+  assert.ok(Number.isSafeInteger(descendantPid) && descendantPid > 0);
+  owned.stdin.end("release\n");
+  const [exitCode, exitSignal] = await once(owned, "close");
+  assert.equal(exitCode, 0);
+  assert.equal(exitSignal, null);
   assert.equal(processExists(descendantPid), false);
 });
 
