@@ -203,6 +203,11 @@ test("self-hosted native workflow is manual, identity-bound, and uses only dedic
   assert.match(workflow, /persist-credentials: false/u);
   assert.match(workflow, /retention-days: 1/u);
   assert.match(workflow, /GITHUB_TRIGGERING_ACTOR/u);
+  assert.doesNotMatch(workflow, /\$\{\{\s*runner\.temp\s*\}\}/u);
+  assert.match(workflow, /LING_CUA_BUILD_ROOT=\$RUNNER_TEMP\//u);
+  assert.match(workflow, /LING_CUA_PROMOTION_ROOT=\$RUNNER_TEMP\//u);
+  assert.match(workflow, /LING_CUA_BUILD_ROOT=\$env:RUNNER_TEMP\\/u);
+  assert.match(workflow, /LING_CUA_PROMOTION_ROOT=\$env:RUNNER_TEMP\\/u);
   assert.match(workflow, /verify-cua-driver-self-hosted-runner\.mjs --platform darwin/u);
   assert.match(workflow, /verify-cua-driver-self-hosted-runner\.mjs --platform win32-x64/u);
   assert.match(workflow, /actions\/upload-artifact@[0-9a-f]{40}/u);
