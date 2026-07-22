@@ -1037,7 +1037,7 @@ test("bundled embedded private source revalidates ownership through the canonica
       `${baseUrl}/plugins/${encodeURIComponent("trusted-local:cua-driver")}/enable?cwd=${encodeURIComponent(cwd)}`,
       { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" },
     );
-    assert.equal(requested.status, 409);
+    assert.equal(requested.status, 202);
 
     const handshake = await fetch(`${baseUrl}/computer-use/desktop-bridge/handshake`, {
       headers: { "X-Ling-Desktop-Bridge-Token": desktopBridgeToken },

@@ -148,7 +148,7 @@ test("bundled current lease enters the run snapshot and Computer Use projection 
         body: "{}",
       },
     );
-    assert.equal(enable.status, 409);
+    assert.equal(enable.status, 202);
     assert.equal((await enable.json()).error, "cua_desktop_lease_unavailable");
 
     const handshake = await fetch(`${baseUrl}/computer-use/desktop-bridge/handshake`, {

@@ -1121,6 +1121,7 @@ export const zhCN = {
     "Preset applied and tools synced.": "预设已应用，工具已同步。",
     "Plugin check completed.": "插件检查完成。",
     "Plugin enabled.": "插件已启用。",
+    "Plugin enable requested.": "已请求启用插件。",
     "Plugin disabled.": "插件已停用。",
     "Controls macOS and Windows apps through the Cua Driver included with Ling.": "通过 Ling 内置的 Cua Driver 控制 macOS 和 Windows 应用。",
     "Desktop required": "需要 Ling Desktop",

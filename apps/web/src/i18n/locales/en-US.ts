@@ -2111,6 +2111,7 @@ export const enUS = {
     "Preset applied and tools synced.": "Preset applied and tools synced.",
     "Plugin check completed.": "Plugin check completed.",
     "Plugin enabled.": "Plugin enabled.",
+    "Plugin enable requested.": "Plugin enable requested.",
     "Plugin disabled.": "Plugin disabled.",
     "Controls macOS and Windows apps through the Cua Driver included with Ling.": "Controls macOS and Windows apps through the Cua Driver included with Ling.",
     "Desktop required": "Desktop required",

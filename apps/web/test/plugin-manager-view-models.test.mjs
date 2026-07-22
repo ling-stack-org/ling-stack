@@ -14,9 +14,6 @@ test("bundled Cua Driver maps every provider state without exposing installation
     ["ready", "Ready", "neutral", undefined],
     ["incompatible", "Update required", "danger", "Repair steps"],
     ["corrupt", "Repair required", "danger", "Repair steps"],
-    ["external_missing", "Needs attention", "danger", "Review state"],
-    ["external_detected", "Needs attention", "danger", "Review state"],
-    ["external_connected", "Needs attention", "danger", "Review state"],
     ["unsupported", "Unavailable", "warning", undefined],
   ];
 
@@ -51,6 +48,7 @@ test("bundled Windows detail projects coverage, limitations, intent, and recover
     effectiveEnabled: true,
     platform: "win32",
     providerVersion: "0.8.3",
+    providerDistributionRevision: "ling.1",
     integrity: "verified",
     integrityCoverage: "standard",
     limitations: ["elevated_pixel_input", "uwp_send_input"],
@@ -63,7 +61,7 @@ test("bundled Windows detail projects coverage, limitations, intent, and recover
 
   assert.equal(fields.Source, "Included with Ling");
   assert.equal(fields.Platform, "Windows");
-  assert.equal(fields["Provider version"], "0.8.3");
+  assert.equal(fields["Provider version"], "0.8.3 (Ling build 1)");
   assert.equal(fields.Requested, "Enabled status");
   assert.equal(fields["Effective readiness"], "Ready");
   assert.equal(fields.Integrity, "Verified");
@@ -142,6 +140,27 @@ test("malformed bundled V2 setup never falls back to external installation actio
   assert.equal(bundled.rowActions.some((action) => action.id === "enable"), false);
   assert.equal(bundled.rowActions.some((action) => action.id === "install" || action.id === "guide"), false);
 
+});
+
+test("bundled external provider states normalize to invalid and suppress enable", () => {
+  for (const providerState of ["external_missing", "external_detected", "external_connected"]) {
+    const bundled = buildBundledCuaDriverPluginView(plugin({
+      providerState,
+      requestedEnabled: false,
+      effectiveEnabled: false,
+      platform: "darwin",
+    }, {
+      canEnable: true,
+    }), t);
+
+    assert.ok(bundled);
+    assert.equal(bundled.statusLabel, "Needs attention");
+    assert.equal(
+      bundled.detailFields.find((field) => field.label === "Next step")?.value,
+      "Restart Ling Stack. The bundled provider state is invalid.",
+    );
+    assert.equal(bundled.rowActions.some((action) => action.id === "enable"), false);
+  }
 });
 
 function plugin(setupOverrides, actionOverrides) {
