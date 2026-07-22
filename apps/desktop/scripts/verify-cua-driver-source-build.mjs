@@ -51,7 +51,7 @@ if (args["attestation"]) {
     "source_build_attestation",
   );
   const attestation = attestationSnapshot.value;
-  verifyAttestationShape(attestation);
+  verifyAttestationShape(attestation, verified.lock);
   if (!/^(darwin|win32-x64)$/u.test(attestation.platform ?? "")) fail("attestation platform mismatch");
   if (stagingExpectation?.platform !== undefined
     && attestation.platform !== stagingExpectation.platform) {
@@ -264,7 +264,7 @@ function verifyObservedToolchain(platform, evidence, lock) {
   assertAbsoluteEvidencePaths(evidence, ["installationPath", "clPath", "linkPath", "rcPath"]);
 }
 
-export function verifyAttestationShape(attestation) {
+export function verifyAttestationShape(attestation, lock) {
   if (attestation?.schemaVersion !== 2 || attestation?.kind !== "ling.cua-driver.source-build-attestation") {
     fail("source-build attestation schema mismatch");
   }
@@ -303,11 +303,15 @@ export function verifyAttestationShape(attestation) {
   assertExactKeys(attestation.checks.cargoTests, ["packages", "status"], "source-build cargo tests");
   assertExactKeys(attestation.checks.rustfmt, ["paths", "scope", "status"], "source-build rustfmt");
   verifySwiftArchiveNormalization(attestation.platform, attestation.checks.swiftArchiveNormalization);
-  verifyMachOIdentityNormalization(attestation.platform, attestation.checks.machOIdentityNormalization);
+  verifyMachOIdentityNormalization(
+    attestation.platform,
+    attestation.checks.machOIdentityNormalization,
+    lock,
+  );
   return true;
 }
 
-function verifyMachOIdentityNormalization(platform, evidence) {
+function verifyMachOIdentityNormalization(platform, evidence, lock) {
   if (platform === "win32-x64") {
     assertExactKeys(evidence, ["status"], "Mach-O identity normalization");
     if (evidence.status !== "not_applicable") {
@@ -315,27 +319,33 @@ function verifyMachOIdentityNormalization(platform, evidence) {
     }
     return;
   }
+  const identityPin = lock?.toolchain?.darwin?.postLinkIdentityNormalization;
+  const relinkPin = lock?.toolchain?.darwin?.swiftArchiveNormalization?.finalRelink;
+  if (!identityPin || !relinkPin || relinkPin.strategy !== "bounded-canonical-source-identity-v1") {
+    fail("canonical Mach-O identity policy is missing from the verified source inputs");
+  }
   assertExactKeys(evidence, ["algorithm", "binaries", "status"], "Mach-O identity normalization");
   if (evidence.status !== "passed"
-    || evidence.algorithm !== "sha256-zeroed-lc-uuid-and-code-signature-v1"
+    || evidence.algorithm !== identityPin.algorithm
     || !Array.isArray(evidence.binaries)
     || JSON.stringify(evidence.binaries.map((entry) => entry?.target))
       !== JSON.stringify(["aarch64-apple-darwin", "x86_64-apple-darwin"])) {
     fail("Mach-O identity normalization evidence mismatch");
   }
   for (const binary of evidence.binaries) {
+    const targetPin = relinkPin.targets?.[binary.target];
     assertExactKeys(
       binary,
       ["adHocIdentifier", "relinkAttempts", "sha256", "sourceSha256", "target", "uuid"],
       "Mach-O identity normalization binary",
     );
-    if (binary.adHocIdentifier !== "ling-cua-driver-presign"
+    if (!targetPin
+      || binary.adHocIdentifier !== identityPin.adHocIdentifier
       || !Number.isInteger(binary.relinkAttempts)
       || binary.relinkAttempts < 1
-      || binary.relinkAttempts > 32
-      || (binary.target === "x86_64-apple-darwin" && binary.relinkAttempts !== 1)
+      || binary.relinkAttempts > targetPin.maxAttempts
       || !SHA256_PATTERN.test(binary.sha256)
-      || !SHA256_PATTERN.test(binary.sourceSha256)
+      || binary.sourceSha256 !== targetPin.expectedSourceSha256
       || !/^[0-9A-F]{8}-[0-9A-F]{4}-3[0-9A-F]{3}-[89AB][0-9A-F]{3}-[0-9A-F]{12}$/u.test(binary.uuid)) {
       fail("Mach-O identity normalization binary evidence mismatch");
     }

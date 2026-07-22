@@ -903,6 +903,7 @@ test("staging version evidence never executes the provider candidate", async () 
 test("source-build attestation rejects malformed schema before trusting any digest", async () => {
   const root = await mkdtemp(join(tmpdir(), "ling-cua-attestation-"));
   try {
+    const { lock } = await verifyProviderInputs();
     const attestation = join(root, "source-build-attestation.json");
     await writeJson(attestation, { schemaVersion: 1, packagingEligible: true });
     const result = await runNode([VERIFY_SCRIPT, "--attestation", attestation, "--output-root", root]);
@@ -931,7 +932,8 @@ test("source-build attestation rejects malformed schema before trusting any dige
             target,
             adHocIdentifier: "ling-cua-driver-presign",
             relinkAttempts: 1,
-            sourceSha256: "b".repeat(64),
+            sourceSha256: lock.toolchain.darwin.swiftArchiveNormalization
+              .finalRelink.targets[target].expectedSourceSha256,
             sha256: "c".repeat(64),
             uuid: "AAAAAAAA-BBBB-3CCC-8DDD-EEEEEEEEEEEE",
           })),
@@ -960,17 +962,43 @@ test("source-build attestation rejects malformed schema before trusting any dige
       packagingEligible: false,
       signingState: "pre-sign-only",
     };
-    assert.equal(verifyAttestationShape(shaped), true);
+    assert.equal(verifyAttestationShape(shaped, lock), true);
     const badUuid = structuredClone(shaped);
     badUuid.checks.machOIdentityNormalization.binaries[0].uuid = "not-a-uuid";
     assert.throws(
-      () => verifyAttestationShape(badUuid),
+      () => verifyAttestationShape(badUuid, lock),
       /Mach-O identity normalization binary evidence mismatch/u,
     );
-    assert.throws(() => verifyAttestationShape({ ...shaped, unexpected: true }), /attestation keys changed/);
+    for (const index of [0, 1]) {
+      const nonCanonical = structuredClone(shaped);
+      nonCanonical.checks.machOIdentityNormalization.binaries[index].sourceSha256 = "b".repeat(64);
+      assert.throws(
+        () => verifyAttestationShape(nonCanonical, lock),
+        /Mach-O identity normalization binary evidence mismatch/u,
+      );
+    }
+    const excessiveAttempts = structuredClone(shaped);
+    excessiveAttempts.checks.machOIdentityNormalization.binaries[0].relinkAttempts =
+      lock.toolchain.darwin.swiftArchiveNormalization.finalRelink
+        .targets["aarch64-apple-darwin"].maxAttempts + 1;
+    assert.throws(
+      () => verifyAttestationShape(excessiveAttempts, lock),
+      /Mach-O identity normalization binary evidence mismatch/u,
+    );
+    const excessiveX64Attempts = structuredClone(shaped);
+    excessiveX64Attempts.checks.machOIdentityNormalization.binaries[1].relinkAttempts = 2;
+    assert.throws(
+      () => verifyAttestationShape(excessiveX64Attempts, lock),
+      /Mach-O identity normalization binary evidence mismatch/u,
+    );
+    assert.throws(
+      () => verifyAttestationShape(shaped),
+      /canonical Mach-O identity policy is missing/u,
+    );
+    assert.throws(() => verifyAttestationShape({ ...shaped, unexpected: true }, lock), /attestation keys changed/);
     const missingCheck = structuredClone(shaped);
     delete missingCheck.checks.runtimeProbe;
-    assert.throws(() => verifyAttestationShape(missingCheck), /attestation checks keys changed/);
+    assert.throws(() => verifyAttestationShape(missingCheck, lock), /attestation checks keys changed/);
 
     await writeJson(attestation, shaped);
     const wrongPlatform = await runNode([
