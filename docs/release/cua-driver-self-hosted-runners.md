@@ -104,11 +104,14 @@ Ling implementation scope.
 Every build uses a run-id/run-attempt-specific tree below `RUNNER_TEMP`; it never reuses a
 previous output root. Candidate A and B are uploaded under a run-specific artifact name,
 downloaded by a separate promotion job, reverified, and reduced to a review-only proposal.
-Before the A/B upload, the source-build job runs the production Desktop package wrapper
-against verified candidate A. macOS covers both architectures and DMG+ZIP in one wrapper
-call; Windows covers the x64 app, uninstaller and NSIS signing roles. The resulting
-Electron Builder hook/final-artifact trace is uploaded separately. All self-hosted
-artifacts use one-day retention.
+The source-build job resolves package authority only from the independently anchored
+committed lock. On the initial closed-gate run it skips Desktop dependency installation,
+the production package wrapper and its trace upload, while still uploading A/B evidence for
+the proposal. After review commits the proposed lock and matching independent anchor, the
+mandatory second A/B run executes the production wrapper against fresh candidate A. macOS
+covers both architectures and DMG+ZIP in one wrapper call; Windows covers the x64 app,
+uninstaller and NSIS signing roles. The resulting Electron Builder hook/final-artifact trace
+is uploaded separately. All self-hosted artifacts use one-day retention.
 
 GitHub artifact storage must have enough capacity before dispatch. Deleting old CI
 artifacts is an explicit release-owner action. Do not silently delete release evidence or

@@ -55,6 +55,9 @@ import {
   verifyProviderSealInputs,
   verifyRuntimeProbe,
 } from "../scripts/verify-cua-driver-source-build.mjs";
+import {
+  resolveCuaDriverPackageAuthorization,
+} from "../scripts/check-cua-driver-package-authorization.mjs";
 
 const execFile = promisify(execFileCallback);
 const BUILD_SCRIPT = new URL("../scripts/build-cua-driver-provider.mjs", import.meta.url).pathname;
@@ -116,6 +119,47 @@ test("provider lock is the exact V2 contract and remains fail-closed", async () 
     "libs/cua-driver/rust/crates/platform-windows/src/managed_lifetime.rs",
     "libs/cua-driver/rust/crates/platform-windows/src/managed_readiness.rs",
   ]);
+});
+
+test("package authorization follows only the independently anchored committed lock", async () => {
+  const providerLock = JSON.parse(
+    await readFile(join(PROVIDER_RESOURCE_ROOT, "provider-lock.json"), "utf8"),
+  );
+  const digest = "a".repeat(64);
+  const closed = resolveCuaDriverPackageAuthorization({
+    actualLockSha256: digest,
+    expectedLockSha256: digest,
+    platform: "darwin",
+    providerLock,
+  });
+  assert.equal(closed.authorized, false);
+
+  const promoted = {
+    ...providerLock,
+    enabledPlatforms: ["darwin"],
+    platforms: { darwin: {} },
+  };
+  assert.equal(resolveCuaDriverPackageAuthorization({
+    actualLockSha256: digest,
+    expectedLockSha256: digest,
+    platform: "darwin",
+    providerLock: promoted,
+  }).authorized, true);
+  assert.equal(resolveCuaDriverPackageAuthorization({
+    actualLockSha256: digest,
+    expectedLockSha256: digest,
+    platform: "win32-x64",
+    providerLock: promoted,
+  }).authorized, false);
+  assert.throws(
+    () => resolveCuaDriverPackageAuthorization({
+      actualLockSha256: digest,
+      expectedLockSha256: "b".repeat(64),
+      platform: "darwin",
+      providerLock: promoted,
+    }),
+    /provider_lock_anchor_mismatch/u,
+  );
 });
 
 test("source-build workflow actions use immutable full commit SHAs", async () => {
@@ -189,12 +233,12 @@ test("source-build workflow actions use immutable full commit SHAs", async () =>
     assert.match(job, /candidate-b[^\n]+b\/output/u);
   }
   assert.match(
-    sourceJobs,
-    /Run production macOS package wrapper with both architectures[\s\S]+run-cua-driver-signing-builder-fixture\.mjs[\s\S]+a\/output/u,
+    macosBuildJob,
+    /Resolve committed macOS package authorization[\s\S]+id: package-authorization[\s\S]+--platform darwin[\s\S]+Run production macOS package wrapper with both architectures\n\s+if: steps\.package-authorization\.outputs\.authorized == 'true'[\s\S]+run-cua-driver-signing-builder-fixture\.mjs[\s\S]+a\/output/u,
   );
   assert.match(
-    sourceJobs,
-    /Run production Windows package wrapper[\s\S]+run-cua-driver-signing-builder-fixture\.mjs --source-root/u,
+    windowsBuildJob,
+    /Resolve committed Windows package authorization[\s\S]+id: package-authorization[\s\S]+--platform win32-x64[\s\S]+Run production Windows package wrapper\n\s+if: steps\.package-authorization\.outputs\.authorized == 'true'[\s\S]+run-cua-driver-signing-builder-fixture\.mjs --source-root/u,
   );
   const desktopPackage = JSON.parse(await readFile(
     new URL("../package.json", import.meta.url),
@@ -206,6 +250,14 @@ test("source-build workflow actions use immutable full commit SHAs", async () =>
 
 test("self-hosted native workflow is manual, identity-bound, and uses only dedicated runner labels", async () => {
   const workflow = await readFile(SELF_HOSTED_NATIVE_WORKFLOW, "utf8");
+  const macosBuildJob = workflow.slice(
+    workflow.indexOf("  macos-source-build:"),
+    workflow.indexOf("  macos-promotion-proposal:"),
+  );
+  const windowsBuildJob = workflow.slice(
+    workflow.indexOf("  windows-source-build:"),
+    workflow.indexOf("  windows-promotion-proposal:"),
+  );
   assert.match(workflow, /^  workflow_call:/mu);
   assert.match(workflow, /^  workflow_dispatch:/mu);
   assert.doesNotMatch(workflow, /^  (?:pull_request|push):/mu);
@@ -225,12 +277,12 @@ test("self-hosted native workflow is manual, identity-bound, and uses only dedic
   assert.match(workflow, /verify-cua-driver-self-hosted-runner\.mjs --platform darwin/u);
   assert.match(workflow, /verify-cua-driver-self-hosted-runner\.mjs --platform win32-x64/u);
   assert.match(
-    workflow,
-    /Run production macOS package wrapper with both architectures[\s\S]+run-cua-driver-signing-builder-fixture\.mjs[\s\S]+LING_CUA_BUILD_ROOT\/a\/output/u,
+    macosBuildJob,
+    /Resolve committed macOS package authorization[\s\S]+id: package-authorization[\s\S]+--platform darwin[\s\S]+Run production macOS package wrapper with both architectures\n\s+if: steps\.package-authorization\.outputs\.authorized == 'true'[\s\S]+run-cua-driver-signing-builder-fixture\.mjs[\s\S]+LING_CUA_BUILD_ROOT\/a\/output/u,
   );
   assert.match(
-    workflow,
-    /Run production Windows package wrapper[\s\S]+run-cua-driver-signing-builder-fixture\.mjs --source-root/u,
+    windowsBuildJob,
+    /Resolve committed Windows package authorization[\s\S]+id: package-authorization[\s\S]+--platform win32-x64[\s\S]+Run production Windows package wrapper\n\s+if: steps\.package-authorization\.outputs\.authorized == 'true'[\s\S]+run-cua-driver-signing-builder-fixture\.mjs --source-root/u,
   );
   assert.match(workflow, /cua-driver-self-hosted-electron-builder-macos-/u);
   assert.match(workflow, /cua-driver-self-hosted-electron-builder-windows-/u);

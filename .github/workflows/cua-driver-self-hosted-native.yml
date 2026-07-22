@@ -127,7 +127,13 @@ jobs:
             --compare-a "$LING_CUA_BUILD_ROOT/a/output" \
             --compare-b "$LING_CUA_BUILD_ROOT/b/output"
 
+      - name: Resolve committed macOS package authorization
+        id: package-authorization
+        shell: bash
+        run: node apps/desktop/scripts/check-cua-driver-package-authorization.mjs --platform darwin
+
       - name: Install Desktop packaging dependencies
+        if: steps.package-authorization.outputs.authorized == 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -135,12 +141,14 @@ jobs:
           corepack pnpm install --frozen-lockfile
 
       - name: Run production macOS package wrapper with both architectures
+        if: steps.package-authorization.outputs.authorized == 'true'
         shell: bash
         run: >-
           node apps/desktop/tests/run-cua-driver-signing-builder-fixture.mjs
           --source-root "$LING_CUA_BUILD_ROOT/a/output"
 
       - name: Upload macOS Electron Builder hook traces
+        if: steps.package-authorization.outputs.authorized == 'true'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: cua-driver-self-hosted-electron-builder-macos-${{ github.run_id }}-${{ github.run_attempt }}
@@ -300,7 +308,13 @@ jobs:
           node apps/desktop/scripts/verify-cua-driver-source-build.mjs --resource-root apps/desktop/resources/providers/cua-driver/0.8.3-ling.1 --compare-a "$env:LING_CUA_BUILD_ROOT\a\output" --compare-b "$env:LING_CUA_BUILD_ROOT\b\output"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
+      - name: Resolve committed Windows package authorization
+        id: package-authorization
+        shell: pwsh
+        run: node apps/desktop/scripts/check-cua-driver-package-authorization.mjs --platform win32-x64
+
       - name: Install Desktop packaging dependencies
+        if: steps.package-authorization.outputs.authorized == 'true'
         shell: pwsh
         run: |
           corepack enable
@@ -309,6 +323,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Run production Windows package wrapper
+        if: steps.package-authorization.outputs.authorized == 'true'
         shell: pwsh
         run: |
           $sourceRoot = Join-Path $env:LING_CUA_BUILD_ROOT "a\output"
@@ -316,6 +331,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Upload Windows Electron Builder hook trace
+        if: steps.package-authorization.outputs.authorized == 'true'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: cua-driver-self-hosted-electron-builder-windows-${{ github.run_id }}-${{ github.run_attempt }}
