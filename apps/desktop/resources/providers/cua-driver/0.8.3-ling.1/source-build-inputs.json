@@ -72,6 +72,10 @@
         "section": "__LLVM,__swift_modhash",
         "dwarfSegment": "__DWARF",
         "finalMetadata": "ling-cua-final-v1",
+        "finalRelink": {
+          "strategy": "cargo-clean-package-before-final-link-v1",
+          "cleanPackage": "cua-driver"
+        },
         "linkerFlags": ["-reproducible"],
         "archives": [
           { "archive": "libapple_cf.rlib", "machoMembers": 19, "normalizedSections": 13, "normalizedDwarfSections": 130 },

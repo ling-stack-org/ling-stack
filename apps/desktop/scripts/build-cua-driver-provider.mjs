@@ -184,6 +184,21 @@ for (const target of buildTarget) {
       await run(
         "cargo",
         [
+          `+${lock.toolchain.cargoVersion}`,
+          "clean",
+          "--release",
+          "--target",
+          target,
+          "--package",
+          lock.toolchain.darwin.swiftArchiveNormalization.finalRelink.cleanPackage,
+          "--target-dir",
+          targetDirectory,
+        ],
+        cargoEnvironment,
+      );
+      await run(
+        "cargo",
+        [
           ...cargoArgs,
           "--",
           ...finalBinaryRustcFlags(platform),

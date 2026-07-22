@@ -993,7 +993,8 @@ Exit criteria for our team:
   install/uninstall, and test-owned Win32 plus installable/removable MSIX/UWP targets;
 - the cell handoff command, matrix finalizer and schemas are versioned and reproducible;
 - macOS clean builds normalize the locked Swift bridge `__swift_modhash` and non-runtime
-  `__DWARF` contents, then relink with fixed final metadata and Apple ld reproducible mode.
+  `__DWARF` contents, remove only the primed `cua-driver` package outputs with locked Cargo,
+  then relink with fixed final metadata and Apple ld reproducible mode.
   Each thin output then derives a stable `LC_UUID` from runtime bytes with the prior UUID and
   linker signature excluded, applies the fixed ad-hoc pre-sign identifier, and verifies that
   identity before `lipo` and A/B compare; default linker deduplication remains enabled;

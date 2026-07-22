@@ -889,7 +889,10 @@ otherwise identical `apple-cf` and `screencapturekit` archive members. Because t
 change clean-build stub ordering, the builder first primes each target, verifies the exact
 two locked archive/member inventories, and zeroes both the module hash and non-runtime
 DWARF contents only in Mach-O members carrying the Swift module-hash marker. It then forces
-a final-only relink with fixed Rust metadata and Apple ld `-reproducible`. Default linker
+a final-only relink with fixed Rust metadata and Apple ld `-reproducible`. Before that relink,
+the builder runs the locked `cargo clean --package cua-driver` against only the current target;
+this removes the prime executable and its root-package fingerprint while preserving the already
+normalized dependency archives, so Cargo cannot incorrectly reuse the prime link. Default linker
 deduplication remains enabled: disabling it leaves two equivalent `_objc_msgSend` GOT slots,
 and arm64 may select different slots across repeated links even when every archive byte is
 identical. This archive normalization does not change runtime sections or Rust release

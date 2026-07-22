@@ -64,6 +64,7 @@ const BUILD_SCRIPT = new URL("../scripts/build-cua-driver-provider.mjs", import.
 const VERIFY_SCRIPT = new URL("../scripts/verify-cua-driver-source-build.mjs", import.meta.url).pathname;
 const DESKTOP_ARTIFACTS_WORKFLOW = new URL("../../../.github/workflows/desktop-artifacts.yml", import.meta.url).pathname;
 const SELF_HOSTED_NATIVE_WORKFLOW = new URL("../../../.github/workflows/cua-driver-self-hosted-native.yml", import.meta.url).pathname;
+const DARWIN_REPRODUCIBILITY_DIAGNOSTIC = new URL("../scripts/diagnose-cua-driver-darwin-reproducibility.mjs", import.meta.url).pathname;
 
 test("provider lock is the exact V2 contract and remains fail-closed", async () => {
   const lock = JSON.parse(await readFile(join(PROVIDER_RESOURCE_ROOT, "provider-lock.json"), "utf8"));
@@ -248,6 +249,21 @@ test("source-build workflow actions use immutable full commit SHAs", async () =>
   assert.match(desktopPackage.scripts["package:win"], /--win nsis --x64/u);
 });
 
+test("self-hosted macOS A/B failures emit bounded reproducibility diagnostics", async () => {
+  const [workflow, diagnostic] = await Promise.all([
+    readFile(SELF_HOSTED_NATIVE_WORKFLOW, "utf8"),
+    readFile(DARWIN_REPRODUCIBILITY_DIAGNOSTIC, "utf8"),
+  ]);
+  assert.match(
+    workflow,
+    /- name: Compare repeated universal pre-sign outputs\n\s+id: repeat-build-compare[\s\S]+- name: Diagnose macOS repeated-build mismatch\n\s+if: failure\(\) && steps\.repeat-build-compare\.outcome == 'failure'/u,
+  );
+  assert.match(workflow, /diagnose-cua-driver-darwin-reproducibility\.mjs/u);
+  assert.match(diagnostic, /MAX_BINARY_BYTES = 128 \* 1024 \* 1024/u);
+  assert.match(diagnostic, /MAX_REPORTED_DIFFERENCES = 64/u);
+  assert.match(diagnostic, /SWIFT_ARCHIVE_PATTERN/u);
+});
+
 test("self-hosted native workflow is manual, identity-bound, and uses only dedicated runner labels", async () => {
   const workflow = await readFile(SELF_HOSTED_NATIVE_WORKFLOW, "utf8");
   const macosBuildJob = workflow.slice(
@@ -319,6 +335,11 @@ test("reproducible final linker flags never poison executable host build scripts
   assert.match(source, /normalizeCuaDriverMachOIdentity/u);
   assert.match(source, /postLinkIdentityNormalization/u);
   assert.match(source, /swiftArchiveNormalization\.finalMetadata/u);
+  assert.match(source, /swiftArchiveNormalization\.finalRelink\.cleanPackage/u);
+  assert.match(
+    source,
+    /"clean",[\s\S]+"--release",[\s\S]+"--target",[\s\S]+"--package",[\s\S]+"--target-dir"/u,
+  );
   assert.match(source, /"rustc",[\s\S]+"--bin",[\s\S]+finalBinaryRustcFlags\(platform\)/u);
 });
 

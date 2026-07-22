@@ -120,6 +120,7 @@ jobs:
             --output-root "$LING_CUA_BUILD_ROOT/b/output"
 
       - name: Compare repeated universal pre-sign outputs
+        id: repeat-build-compare
         shell: bash
         run: |
           set -euo pipefail
@@ -127,6 +128,14 @@ jobs:
             --resource-root apps/desktop/resources/providers/cua-driver/0.8.3-ling.1 \
             --compare-a "$LING_CUA_BUILD_ROOT/a/output" \
             --compare-b "$LING_CUA_BUILD_ROOT/b/output"
+
+      - name: Diagnose macOS repeated-build mismatch
+        if: failure() && steps.repeat-build-compare.outcome == 'failure'
+        shell: bash
+        run: >-
+          node apps/desktop/scripts/diagnose-cua-driver-darwin-reproducibility.mjs
+          --left-work-dir "$LING_CUA_BUILD_ROOT/a"
+          --right-work-dir "$LING_CUA_BUILD_ROOT/b"
 
       - name: Resolve committed macOS package authorization
         id: package-authorization
