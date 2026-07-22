@@ -310,8 +310,10 @@ function verifySwiftArchiveNormalization(platform, evidence) {
     if (evidence.status !== "not_applicable") fail("Windows Swift archive normalization must be not applicable");
     return;
   }
-  assertExactKeys(evidence, ["section", "status", "targets"], "Swift archive normalization");
-  if (evidence.status !== "passed" || evidence.section !== "__LLVM,__swift_modhash") {
+  assertExactKeys(evidence, ["dwarfSegment", "section", "status", "targets"], "Swift archive normalization");
+  if (evidence.status !== "passed"
+    || evidence.section !== "__LLVM,__swift_modhash"
+    || evidence.dwarfSegment !== "__DWARF") {
     fail("Swift archive normalization evidence mismatch");
   }
   const expectedTargets = ["aarch64-apple-darwin", "x86_64-apple-darwin"];
@@ -320,8 +322,8 @@ function verifySwiftArchiveNormalization(platform, evidence) {
     fail("Swift archive normalization target inventory mismatch");
   }
   const expectedArchives = [
-    { archive: "libapple_cf.rlib", machoMembers: 19, normalizedSections: 13 },
-    { archive: "libscreencapturekit.rlib", machoMembers: 21, normalizedSections: 10 },
+    { archive: "libapple_cf.rlib", machoMembers: 19, normalizedSections: 13, normalizedDwarfSections: 130 },
+    { archive: "libscreencapturekit.rlib", machoMembers: 21, normalizedSections: 10, normalizedDwarfSections: 100 },
   ];
   for (const target of evidence.targets) {
     assertExactKeys(target, ["archives", "target"], "Swift archive normalization target");

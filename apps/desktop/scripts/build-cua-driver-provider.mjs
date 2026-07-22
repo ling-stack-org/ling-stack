@@ -386,6 +386,7 @@ const attestation = {
     swiftArchiveNormalization: platform === "darwin" ? {
       status: "passed",
       section: "__LLVM,__swift_modhash",
+      dwarfSegment: "__DWARF",
       targets: swiftArchiveNormalization,
     } : {
       status: "not_applicable",
@@ -478,8 +479,6 @@ function finalBinaryRustcFlags(platformValue) {
       "strip=symbols",
       "-C",
       "link-arg=-Wl,-reproducible",
-      "-C",
-      "link-arg=-Wl,-no_deduplicate",
     ];
   }
   if (platformValue === "win32-x64") {

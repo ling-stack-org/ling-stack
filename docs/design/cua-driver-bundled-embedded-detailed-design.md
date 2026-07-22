@@ -881,13 +881,16 @@ review-only proposal, independent lock anchor, second A/B build and Windows VM s
 remain mandatory.
 
 The macOS final link keeps the default Apple linker `LC_UUID`. Swift 6.3 emits a non-runtime
-16-byte `__LLVM,__swift_modhash` in otherwise identical `apple-cf` and `screencapturekit`
-archive members. Because that input changes clean-build stub ordering, the builder first
-primes each target, verifies the exact two locked archive/member inventories, zeroes only
-those module-hash sections, and forces a final-only relink with fixed Rust metadata and
-Apple ld `-reproducible -no_deduplicate`. The latter disables the linker pass whose
-ordering races on the two upstream `CoreMediaBridge` definitions; it does not disable Rust
-release optimization and does not change the arm64 slice size. Current ld then derives `LC_UUID` from the normalized output
+16-byte `__LLVM,__swift_modhash` and embeds the SwiftPM scratch root in `__DWARF` inside
+otherwise identical `apple-cf` and `screencapturekit` archive members. Because those inputs
+change clean-build stub ordering, the builder first primes each target, verifies the exact
+two locked archive/member inventories, and zeroes both the module hash and non-runtime
+DWARF contents only in Mach-O members carrying the Swift module-hash marker. It then forces
+a final-only relink with fixed Rust metadata and Apple ld `-reproducible`. Default linker
+deduplication remains enabled: disabling it leaves two equivalent `_objc_msgSend` GOT slots,
+and arm64 may select different slots across repeated links even when every archive byte is
+identical. This normalization does not change runtime sections, Rust release optimization,
+or the arm64 slice size. Current ld then derives `LC_UUID` from the normalized output
 bytes and emits a valid deterministic arm64 linker ad-hoc signature. `lipo` produces the
 expected unsigned universal pre-sign candidate; product signing is applied only after
 promotion during the packaging/signing stage. `-no_uuid` is forbidden

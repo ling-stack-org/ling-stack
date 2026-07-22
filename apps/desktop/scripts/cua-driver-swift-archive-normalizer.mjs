@@ -12,13 +12,15 @@ const SECTION_64_BYTES = 80;
 const SWIFT_MODULE_HASH_SEGMENT = "__LLVM";
 const SWIFT_MODULE_HASH_SECTION = "__swift_modhash";
 const SWIFT_MODULE_HASH_BYTES = 16;
+const SWIFT_DWARF_SEGMENT = "__DWARF";
 const SWIFT_ARCHIVE_PATTERN = /^lib(?:apple_cf|screencapturekit)-[0-9a-f]+\.rlib$/u;
 
 /**
- * Remove Swift's non-runtime module hash from the two locked macOS bridge
- * archives. Swift 6.3 emits a different 16-byte hash for otherwise identical
- * object files; leaving it in the linker inputs changes stub ordering, LC_UUID,
- * and the arm64 linker signature across clean builds.
+ * Remove non-runtime Swift build identity from the two locked macOS bridge
+ * archives. Swift 6.3 emits a different module hash and embeds the absolute
+ * SwiftPM scratch path in DWARF for otherwise identical object files. Leaving
+ * either in the linker inputs changes stub ordering, LC_UUID, and the arm64
+ * linker signature across clean builds.
  */
 export async function normalizeCuaDriverSwiftArchives(dependencyRoot) {
   const entries = (await readdir(dependencyRoot, { withFileTypes: true }))
@@ -38,19 +40,20 @@ export async function normalizeCuaDriverSwiftArchives(dependencyRoot) {
     if (!metadata.isFile() || metadata.isSymbolicLink()) {
       throw new Error(`Swift bridge archive is not a regular file: ${name}`);
     }
-    const normalized = normalizeSwiftModuleHashesInArchive(await readFile(path));
+    const normalized = normalizeSwiftArchiveForReproducibility(await readFile(path));
     await writeFile(path, normalized.bytes);
     evidence.push(Object.freeze({
       archive: name.replace(/-[0-9a-f]+\.rlib$/u, ".rlib"),
       machoMembers: normalized.machoMembers,
       normalizedSections: normalized.normalizedSections,
+      normalizedDwarfSections: normalized.normalizedDwarfSections,
     }));
   }
   return Object.freeze(evidence);
 }
 
 /** Pure archive transformer used by the build and deterministic fixtures. */
-export function normalizeSwiftModuleHashesInArchive(input) {
+export function normalizeSwiftArchiveForReproducibility(input) {
   const bytes = Buffer.from(input);
   if (bytes.subarray(0, ARCHIVE_MAGIC.length).toString("ascii") !== ARCHIVE_MAGIC) {
     throw new Error("Swift bridge archive magic mismatch");
@@ -59,6 +62,7 @@ export function normalizeSwiftModuleHashesInArchive(input) {
   let members = 0;
   let machoMembers = 0;
   let normalizedSections = 0;
+  let normalizedDwarfSections = 0;
   while (cursor < bytes.length) {
     if (cursor + ARCHIVE_HEADER_BYTES > bytes.length) {
       throw new Error("Swift bridge archive has a truncated member header");
@@ -87,7 +91,13 @@ export function normalizeSwiftModuleHashesInArchive(input) {
     if (payloadSize >= MACHO_64_HEADER_BYTES
       && bytes.readUInt32LE(payloadStart) === MACHO_64_MAGIC) {
       machoMembers += 1;
-      normalizedSections += normalizeMachOSwiftModuleHash(bytes, payloadStart, payloadSize);
+      const normalized = normalizeMachOSwiftReproducibilitySections(
+        bytes,
+        payloadStart,
+        payloadSize,
+      );
+      normalizedSections += normalized.moduleHashSections;
+      normalizedDwarfSections += normalized.dwarfSections;
     }
     cursor = memberEnd + (memberSize % 2);
   }
@@ -97,17 +107,26 @@ export function normalizeSwiftModuleHashesInArchive(input) {
   if (members < 1 || machoMembers < 1 || normalizedSections < 1) {
     throw new Error("Swift bridge archive contained no module hashes to normalize");
   }
-  return Object.freeze({ bytes, machoMembers, normalizedSections });
+  if (normalizedDwarfSections < 1) {
+    throw new Error("Swift bridge archive contained no DWARF sections to normalize");
+  }
+  return Object.freeze({
+    bytes,
+    machoMembers,
+    normalizedSections,
+    normalizedDwarfSections,
+  });
 }
 
-function normalizeMachOSwiftModuleHash(bytes, payloadStart, payloadSize) {
+function normalizeMachOSwiftReproducibilitySections(bytes, payloadStart, payloadSize) {
   const payloadEnd = payloadStart + payloadSize;
   const commandCount = bytes.readUInt32LE(payloadStart + 16);
   const commandBytes = bytes.readUInt32LE(payloadStart + 20);
   let command = payloadStart + MACHO_64_HEADER_BYTES;
   const commandEnd = command + commandBytes;
   if (commandEnd > payloadEnd) throw new Error("Mach-O load commands exceed archive member");
-  let normalized = 0;
+  const moduleHashSections = [];
+  const dwarfSections = [];
   for (let index = 0; index < commandCount; index += 1) {
     if (command + 8 > commandEnd) throw new Error("Mach-O load command is truncated");
     const type = bytes.readUInt32LE(command);
@@ -125,26 +144,66 @@ function normalizeMachOSwiftModuleHash(bytes, payloadStart, payloadSize) {
         const section = command + SEGMENT_64_BYTES + sectionIndex * SECTION_64_BYTES;
         const sectionName = readMachOName(bytes, section);
         const segmentName = readMachOName(bytes, section + 16);
-        if (sectionName !== SWIFT_MODULE_HASH_SECTION
-          || segmentName !== SWIFT_MODULE_HASH_SEGMENT) continue;
         const sectionSize = bytes.readBigUInt64LE(section + 40);
         const sectionOffset = bytes.readUInt32LE(section + 48);
-        if (sectionSize !== BigInt(SWIFT_MODULE_HASH_BYTES)) {
-          throw new Error(`Swift module hash size changed: ${sectionSize}`);
+        if (sectionName === SWIFT_MODULE_HASH_SECTION
+          && segmentName === SWIFT_MODULE_HASH_SEGMENT) {
+          if (sectionSize !== BigInt(SWIFT_MODULE_HASH_BYTES)) {
+            throw new Error(`Swift module hash size changed: ${sectionSize}`);
+          }
+          moduleHashSections.push(Object.freeze({
+            label: "Swift module hash",
+            sectionOffset,
+            sectionSize,
+          }));
+          continue;
         }
-        const hashStart = payloadStart + sectionOffset;
-        const hashEnd = hashStart + SWIFT_MODULE_HASH_BYTES;
-        if (hashStart < payloadStart || hashEnd > payloadEnd) {
-          throw new Error("Swift module hash exceeds archive member");
+        if (segmentName === SWIFT_DWARF_SEGMENT && sectionSize > 0n) {
+          dwarfSections.push(Object.freeze({
+            label: `Swift DWARF section ${sectionName}`,
+            sectionOffset,
+            sectionSize,
+          }));
         }
-        bytes.fill(0, hashStart, hashEnd);
-        normalized += 1;
       }
     }
     command += size;
   }
   if (command !== commandEnd) throw new Error("Mach-O load command byte count mismatch");
-  return normalized;
+  if (moduleHashSections.length === 0) {
+    return Object.freeze({ moduleHashSections: 0, dwarfSections: 0 });
+  }
+  for (const section of [...moduleHashSections, ...dwarfSections]) {
+    normalizeMachOSectionContents({
+      bytes,
+      payloadEnd,
+      payloadStart,
+      ...section,
+    });
+  }
+  return Object.freeze({
+    moduleHashSections: moduleHashSections.length,
+    dwarfSections: dwarfSections.length,
+  });
+}
+
+function normalizeMachOSectionContents({
+  bytes,
+  label,
+  payloadEnd,
+  payloadStart,
+  sectionOffset,
+  sectionSize,
+}) {
+  if (sectionSize > BigInt(Number.MAX_SAFE_INTEGER)) {
+    throw new Error(`${label} size is out of range`);
+  }
+  const contentStart = payloadStart + sectionOffset;
+  const contentEnd = contentStart + Number(sectionSize);
+  if (contentStart < payloadStart || contentEnd > payloadEnd) {
+    throw new Error(`${label} exceeds archive member`);
+  }
+  bytes.fill(0, contentStart, contentEnd);
 }
 
 function parseArchiveDecimal(value, label) {

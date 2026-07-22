@@ -261,7 +261,7 @@ test("reproducible final linker flags never poison executable host build scripts
   const finalFlags = source.slice(source.indexOf("function finalBinaryRustcFlags("));
   assert.doesNotMatch(finalFlags, /(?:no|random)_uuid/u);
   assert.match(finalFlags, /link-arg=-Wl,-reproducible/u);
-  assert.match(finalFlags, /link-arg=-Wl,-no_deduplicate/u);
+  assert.doesNotMatch(finalFlags, /link-arg=-Wl,-no_deduplicate/u);
   assert.match(finalFlags, /link-arg=\/Brepro/u);
   assert.match(source, /normalizeCuaDriverSwiftArchives/u);
   assert.match(source, /swiftArchiveNormalization\.finalMetadata/u);
@@ -795,11 +795,12 @@ test("source-build attestation rejects malformed schema before trusting any dige
         swiftArchiveNormalization: {
           status: "passed",
           section: "__LLVM,__swift_modhash",
+          dwarfSegment: "__DWARF",
           targets: ["aarch64-apple-darwin", "x86_64-apple-darwin"].map((target) => ({
             target,
             archives: [
-              { archive: "libapple_cf.rlib", machoMembers: 19, normalizedSections: 13 },
-              { archive: "libscreencapturekit.rlib", machoMembers: 21, normalizedSections: 10 },
+              { archive: "libapple_cf.rlib", machoMembers: 19, normalizedSections: 13, normalizedDwarfSections: 130 },
+              { archive: "libscreencapturekit.rlib", machoMembers: 21, normalizedSections: 10, normalizedDwarfSections: 100 },
             ],
           })),
         },

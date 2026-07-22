@@ -989,8 +989,9 @@ Exit criteria for our team:
   grandchild cleanup, PowerShell verifier failures, package allowlist, silent
   install/uninstall, and test-owned Win32 plus installable/removable MSIX/UWP targets;
 - the cell handoff command, matrix finalizer and schemas are versioned and reproducible;
-- macOS clean builds normalize only the locked Swift bridge `__swift_modhash` sections,
-  then relink with fixed final metadata and Apple ld reproducible/no-dedup mode before A/B compare;
+- macOS clean builds normalize the locked Swift bridge `__swift_modhash` and non-runtime
+  `__DWARF` contents, then relink with fixed final metadata and Apple ld reproducible mode
+  before A/B compare; default linker deduplication remains enabled;
 - no report can promote itself from local evidence to release PASS;
 - test-signed success is capped at `INTERNAL_TEST_PASS` and the production workflow rejects
   any test root, mismatched channel or reused test-signed bytes;

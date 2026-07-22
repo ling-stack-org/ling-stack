@@ -463,11 +463,12 @@ function verifySourceBuildInputs(value) {
   assertDeepEqual(value.toolchain.darwin.targets, ["aarch64-apple-darwin", "x86_64-apple-darwin"], "darwin Rust targets");
   assertDeepEqual(value.toolchain.darwin.swiftArchiveNormalization, {
     section: "__LLVM,__swift_modhash",
+    dwarfSegment: "__DWARF",
     finalMetadata: "ling-cua-final-v1",
-    linkerFlags: ["-reproducible", "-no_deduplicate"],
+    linkerFlags: ["-reproducible"],
     archives: [
-      { archive: "libapple_cf.rlib", machoMembers: 19, normalizedSections: 13 },
-      { archive: "libscreencapturekit.rlib", machoMembers: 21, normalizedSections: 10 },
+      { archive: "libapple_cf.rlib", machoMembers: 19, normalizedSections: 13, normalizedDwarfSections: 130 },
+      { archive: "libscreencapturekit.rlib", machoMembers: 21, normalizedSections: 10, normalizedDwarfSections: 100 },
     ],
   }, "darwin Swift archive normalization");
   assert(value.toolchain.win32X64.runner === "ling-cua-driver-windows-x64-v1", "Windows runner changed");
