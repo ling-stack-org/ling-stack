@@ -38,6 +38,10 @@ import {
   verifyVersionOutput,
 } from "../scripts/cua-driver-binary-identity.mjs";
 import {
+  normalizeCuaDriverMachOIdentity,
+  selectCanonicalCuaDriverMachOIdentity,
+} from "../scripts/cua-driver-macho-identity-normalizer.mjs";
+import {
   downloadPinnedArchive,
   parseBooleanEntitlements,
   parseTarVerboseListing,
@@ -332,15 +336,68 @@ test("reproducible final linker flags never poison executable host build scripts
   assert.doesNotMatch(finalFlags, /link-arg=-Wl,-no_deduplicate/u);
   assert.match(finalFlags, /link-arg=\/Brepro/u);
   assert.match(source, /normalizeCuaDriverSwiftArchives/u);
-  assert.match(source, /normalizeCuaDriverMachOIdentity/u);
   assert.match(source, /postLinkIdentityNormalization/u);
   assert.match(source, /swiftArchiveNormalization\.finalMetadata/u);
-  assert.match(source, /swiftArchiveNormalization\.finalRelink\.cleanPackage/u);
+  assert.match(source, /finalRelink\.cleanPackage/u);
+  assert.match(source, /selectCanonicalCuaDriverMachOIdentity/u);
+  assert.ok(
+    source.indexOf("selectCanonicalCuaDriverMachOIdentity({")
+      < source.indexOf("identityPin.codesignPath"),
+    "canonical relink selection must finish before codesign",
+  );
   assert.match(
     source,
     /"clean",[\s\S]+"--release",[\s\S]+"--target",[\s\S]+"--package",[\s\S]+"--target-dir"/u,
   );
   assert.match(source, /"rustc",[\s\S]+"--bin",[\s\S]+finalBinaryRustcFlags\(platform\)/u);
+});
+
+test("canonical Mach-O relink selector accepts only the reviewed identity and fails closed", async () => {
+  const canonical = makeThinMachO(0x41);
+  const alternate = makeThinMachO(0x42);
+  const expectedSourceSha256 = normalizeCuaDriverMachOIdentity(canonical).sourceSha256;
+
+  let attempts = 0;
+  const first = await selectCanonicalCuaDriverMachOIdentity({
+    target: "aarch64-apple-darwin",
+    expectedSourceSha256,
+    maxAttempts: 32,
+    relink: async () => {
+      attempts += 1;
+      return canonical;
+    },
+  });
+  assert.equal(first.relinkAttempts, 1);
+  assert.equal(attempts, 1);
+
+  const events = [];
+  const second = await selectCanonicalCuaDriverMachOIdentity({
+    target: "aarch64-apple-darwin",
+    expectedSourceSha256,
+    maxAttempts: 32,
+    relink: async (attempt) => {
+      events.push(`relink:${attempt}`);
+      return attempt === 1 ? alternate : canonical;
+    },
+  });
+  events.push("codesign");
+  assert.equal(second.relinkAttempts, 2);
+  assert.deepEqual(events, ["relink:1", "relink:2", "codesign"]);
+
+  attempts = 0;
+  await assert.rejects(
+    selectCanonicalCuaDriverMachOIdentity({
+      target: "aarch64-apple-darwin",
+      expectedSourceSha256,
+      maxAttempts: 3,
+      relink: async () => {
+        attempts += 1;
+        return alternate;
+      },
+    }),
+    /canonical Mach-O source identity was not reached.*after 3 attempts/u,
+  );
+  assert.equal(attempts, 3);
 });
 
 test("macOS and Windows artifact jobs run complete core, daemon and Pi runner suites", async () => {
@@ -873,6 +930,7 @@ test("source-build attestation rejects malformed schema before trusting any dige
           binaries: ["aarch64-apple-darwin", "x86_64-apple-darwin"].map((target) => ({
             target,
             adHocIdentifier: "ling-cua-driver-presign",
+            relinkAttempts: 1,
             sourceSha256: "b".repeat(64),
             sha256: "c".repeat(64),
             uuid: "AAAAAAAA-BBBB-3CCC-8DDD-EEEEEEEEEEEE",
@@ -1613,6 +1671,18 @@ function makeUniversalMachO({ minimumOSVersion, sdkVersion }) {
     buffer.writeUInt32LE(packAppleVersion(minimumOSVersion), offset + 44);
     buffer.writeUInt32LE(packAppleVersion(sdkVersion), offset + 48);
   }
+  return buffer;
+}
+
+function makeThinMachO(payloadByte) {
+  const buffer = Buffer.alloc(64, payloadByte);
+  buffer.writeUInt32LE(0xfeedfacf, 0);
+  buffer.writeUInt32LE(0x0100000c, 4);
+  buffer.writeUInt32LE(0x2, 12);
+  buffer.writeUInt32LE(1, 16);
+  buffer.writeUInt32LE(24, 20);
+  buffer.writeUInt32LE(0x1b, 32);
+  buffer.writeUInt32LE(24, 36);
   return buffer;
 }
 

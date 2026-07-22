@@ -466,8 +466,18 @@ function verifySourceBuildInputs(value) {
     dwarfSegment: "__DWARF",
     finalMetadata: "ling-cua-final-v1",
     finalRelink: {
-      strategy: "cargo-clean-package-before-final-link-v1",
+      strategy: "bounded-canonical-source-identity-v1",
       cleanPackage: "cua-driver",
+      targets: {
+        "aarch64-apple-darwin": {
+          expectedSourceSha256: "af7a2f9bfabe98704bafca0f2c7f6e2ae4e9f53fe6653d5cd8cea44fc25e103d",
+          maxAttempts: 32,
+        },
+        "x86_64-apple-darwin": {
+          expectedSourceSha256: "6f91a9b5db2aec12dd86a01c98e02ce46da2d8df92090137e916ad5e4a2ba437",
+          maxAttempts: 1,
+        },
+      },
     },
     linkerFlags: ["-reproducible"],
     archives: [

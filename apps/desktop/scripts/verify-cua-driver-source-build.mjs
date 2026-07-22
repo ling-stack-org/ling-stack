@@ -326,10 +326,14 @@ function verifyMachOIdentityNormalization(platform, evidence) {
   for (const binary of evidence.binaries) {
     assertExactKeys(
       binary,
-      ["adHocIdentifier", "sha256", "sourceSha256", "target", "uuid"],
+      ["adHocIdentifier", "relinkAttempts", "sha256", "sourceSha256", "target", "uuid"],
       "Mach-O identity normalization binary",
     );
     if (binary.adHocIdentifier !== "ling-cua-driver-presign"
+      || !Number.isInteger(binary.relinkAttempts)
+      || binary.relinkAttempts < 1
+      || binary.relinkAttempts > 32
+      || (binary.target === "x86_64-apple-darwin" && binary.relinkAttempts !== 1)
       || !SHA256_PATTERN.test(binary.sha256)
       || !SHA256_PATTERN.test(binary.sourceSha256)
       || !/^[0-9A-F]{8}-[0-9A-F]{4}-3[0-9A-F]{3}-[89AB][0-9A-F]{3}-[0-9A-F]{12}$/u.test(binary.uuid)) {

@@ -995,6 +995,10 @@ Exit criteria for our team:
 - macOS clean builds normalize the locked Swift bridge `__swift_modhash` and non-runtime
   `__DWARF` contents, remove only the primed `cua-driver` package outputs with locked Cargo,
   then relink with fixed final metadata and Apple ld reproducible mode.
+  The arm64 relink may retry at most 32 times but accepts only the reviewed canonical
+  runtime identity; x64 must match its reviewed identity on the first attempt. Every
+  mismatch is rejected before codesign, and exhaustion blocks upload, promotion and
+  packaging without weakening the A/B equality gate.
   Each thin output then derives a stable `LC_UUID` from runtime bytes with the prior UUID and
   linker signature excluded, applies the fixed ad-hoc pre-sign identifier, and verifies that
   identity before `lipo` and A/B compare; default linker deduplication remains enabled;

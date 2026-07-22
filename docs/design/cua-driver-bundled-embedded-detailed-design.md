@@ -896,11 +896,21 @@ normalized dependency archives, so Cargo cannot incorrectly reuse the prime link
 deduplication remains enabled: disabling it leaves two equivalent `_objc_msgSend` GOT slots,
 and arm64 may select different slots across repeated links even when every archive byte is
 identical. This archive normalization does not change runtime sections or Rust release
-optimization. A later self-hosted replay showed that ld can still select different
-content UUIDs and corresponding linker signatures across clean invocations. The builder
-therefore zeroes only the derived `LC_UUID` and existing linker-signature region in an
-in-memory copy, hashes the remaining thin Mach-O bytes with SHA-256, writes an RFC 4122
-variant/version-3 UUID from that digest, and applies the fixed
+optimization. A later self-hosted replay showed that Apple ld's arm64 parallel stub layout
+can still produce two runtime-byte identities across clean invocations even when load
+commands and normalized Swift archives are identical. The source-build contract therefore
+pins the reviewed canonical arm64 identity
+`af7a2f9bfabe98704bafca0f2c7f6e2ae4e9f53fe6653d5cd8cea44fc25e103d`
+and permits at most 32 clean root-package relinks; the stable x64 identity
+`6f91a9b5db2aec12dd86a01c98e02ce46da2d8df92090137e916ad5e4a2ba437`
+must match on its first relink. Each rejected candidate is discarded before any write or
+codesign operation. Exhaustion fails the source build and therefore cannot upload,
+promote, sign or package a candidate. Changing either identity or attempt bound requires a
+reviewed source-input and independent anchor change; A/B byte equality remains mandatory.
+
+After the selector accepts a thin binary, the builder zeroes only the derived `LC_UUID`
+and existing linker-signature region in an in-memory copy, hashes the remaining thin Mach-O
+bytes with SHA-256, writes an RFC 4122 variant/version-3 UUID from that digest, and applies the fixed
 `ling-cua-driver-presign` ad-hoc identity with `/usr/bin/codesign`. The builder immediately
 verifies that signature and UUID before `lipo`; actual runtime bytes remain part of the
 digest, so instruction or data drift still fails A/B comparison. This ad-hoc identity only

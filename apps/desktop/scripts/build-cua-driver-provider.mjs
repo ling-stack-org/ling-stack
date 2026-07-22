@@ -28,7 +28,7 @@ import { probeCuaDriverProvider, sha256Text } from "./probe-cua-driver-provider.
 import { normalizeCuaDriverSwiftArchives } from "./cua-driver-swift-archive-normalizer.mjs";
 import {
   inspectCuaDriverMachOIdentity,
-  normalizeCuaDriverMachOIdentity,
+  selectCanonicalCuaDriverMachOIdentity,
 } from "./cua-driver-macho-identity-normalizer.mjs";
 
 const args = parseArgs(process.argv.slice(2));
@@ -181,37 +181,44 @@ for (const target of buildTarget) {
         join(targetDirectory, target, "release", "deps"),
       );
       swiftArchiveNormalization.push(Object.freeze({ target, archives }));
-      await run(
-        "cargo",
-        [
-          `+${lock.toolchain.cargoVersion}`,
-          "clean",
-          "--release",
-          "--target",
-          target,
-          "--package",
-          lock.toolchain.darwin.swiftArchiveNormalization.finalRelink.cleanPackage,
-          "--target-dir",
-          targetDirectory,
-        ],
-        cargoEnvironment,
-      );
-      await run(
-        "cargo",
-        [
-          ...cargoArgs,
-          "--",
-          ...finalBinaryRustcFlags(platform),
-          "-C",
-          `metadata=${lock.toolchain.darwin.swiftArchiveNormalization.finalMetadata}`,
-        ],
-        cargoEnvironment,
-      );
       const binaryPath = join(targetDirectory, target, "release", binary);
+      const finalRelink = lock.toolchain.darwin.swiftArchiveNormalization.finalRelink;
+      const targetRelink = finalRelink.targets[target];
+      const normalizedIdentity = await selectCanonicalCuaDriverMachOIdentity({
+        target,
+        expectedSourceSha256: targetRelink.expectedSourceSha256,
+        maxAttempts: targetRelink.maxAttempts,
+        relink: async () => {
+          await run(
+            "cargo",
+            [
+              `+${lock.toolchain.cargoVersion}`,
+              "clean",
+              "--release",
+              "--target",
+              target,
+              "--package",
+              finalRelink.cleanPackage,
+              "--target-dir",
+              targetDirectory,
+            ],
+            cargoEnvironment,
+          );
+          await run(
+            "cargo",
+            [
+              ...cargoArgs,
+              "--",
+              ...finalBinaryRustcFlags(platform),
+              "-C",
+              `metadata=${lock.toolchain.darwin.swiftArchiveNormalization.finalMetadata}`,
+            ],
+            cargoEnvironment,
+          );
+          return readFile(binaryPath);
+        },
+      });
       const identityPin = lock.toolchain.darwin.postLinkIdentityNormalization;
-      const normalizedIdentity = normalizeCuaDriverMachOIdentity(
-        await readFile(binaryPath),
-      );
       await writeFile(binaryPath, normalizedIdentity.bytes);
       await run(
         identityPin.codesignPath,
@@ -238,6 +245,7 @@ for (const target of buildTarget) {
       machOIdentityNormalization.push(Object.freeze({
         target,
         adHocIdentifier: identityPin.adHocIdentifier,
+        relinkAttempts: normalizedIdentity.relinkAttempts,
         sourceSha256: normalizedIdentity.sourceSha256,
         uuid: normalizedIdentity.uuid,
         sha256: await sha256File(binaryPath),

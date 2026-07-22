@@ -11,6 +11,55 @@ const SECTION_COMMAND_BYTES = 80;
 const UUID_COMMAND_BYTES = 24;
 const CODE_SIGNATURE_COMMAND_BYTES = 16;
 const ZERO_FILL_SECTION_TYPES = new Set([0x1, 0xc, 0x12]);
+const MAX_CANONICAL_RELINK_ATTEMPTS = 32;
+
+/**
+ * Relink until the thin Mach-O matches the reviewed runtime identity.
+ *
+ * The callback owns exactly one clean final link. No signing callback is
+ * accepted here, so a rejected candidate cannot be signed accidentally.
+ */
+export async function selectCanonicalCuaDriverMachOIdentity({
+  target,
+  expectedSourceSha256,
+  maxAttempts,
+  relink,
+}) {
+  if (typeof target !== "string" || target.trim() !== target || !target) {
+    throw new Error("canonical Mach-O relink target must be a non-empty string");
+  }
+  if (!/^[0-9a-f]{64}$/u.test(expectedSourceSha256)) {
+    throw new Error(`canonical Mach-O source identity is invalid for ${target}`);
+  }
+  if (!Number.isInteger(maxAttempts)
+    || maxAttempts < 1
+    || maxAttempts > MAX_CANONICAL_RELINK_ATTEMPTS) {
+    throw new Error(
+      `canonical Mach-O relink attempts for ${target} must be between 1 and ${MAX_CANONICAL_RELINK_ATTEMPTS}`,
+    );
+  }
+  if (typeof relink !== "function") {
+    throw new Error(`canonical Mach-O relink callback is missing for ${target}`);
+  }
+
+  const observedSourceSha256 = [];
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    const input = await relink(attempt);
+    if (!Buffer.isBuffer(input)) {
+      throw new Error(`canonical Mach-O relink callback returned invalid bytes for ${target}`);
+    }
+    const normalized = normalizeCuaDriverMachOIdentity(input);
+    observedSourceSha256.push(normalized.sourceSha256);
+    if (normalized.sourceSha256 === expectedSourceSha256) {
+      return Object.freeze({ ...normalized, relinkAttempts: attempt });
+    }
+  }
+
+  throw new Error(
+    `canonical Mach-O source identity was not reached for ${target} after ${maxAttempts} attempts; `
+      + `expected=${expectedSourceSha256} observed=${[...new Set(observedSourceSha256)].join(",")}`,
+  );
+}
 
 /**
  * Replace linker-selected Mach-O identity with a digest of the runtime bytes.
