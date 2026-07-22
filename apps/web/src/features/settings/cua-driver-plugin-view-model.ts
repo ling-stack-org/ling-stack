@@ -26,9 +26,6 @@ const CUA_DRIVER_PROVIDER_STATES = new Set<CuaDriverProviderState>([
   "ready",
   "incompatible",
   "corrupt",
-  "external_missing",
-  "external_detected",
-  "external_connected",
   "unsupported",
 ]);
 
@@ -176,7 +173,7 @@ function bundledDetailFields(
     { label: t("Next step"), value: providerGuidance(providerState, setup.platform, t) },
   ];
 
-  const providerVersion = setup.providerDisplayVersion ?? setup.providerVersion;
+  const providerVersion = providerVersionLabel(setup);
   if (providerVersion) {
     fields.splice(3, 0, { label: t("Provider version"), value: providerVersion });
   }
@@ -210,6 +207,19 @@ function bundledDetailFields(
     fields.push({ label: t("External override"), value: setup.externalOverride.command });
   }
   return fields;
+}
+
+function providerVersionLabel(setup: ManagedPluginSetupView): string | undefined {
+  if (setup.providerDisplayVersion) {
+    return setup.providerDisplayVersion;
+  }
+  if (!setup.providerVersion) {
+    return undefined;
+  }
+  const revisionMatch = /^ling\.(\d+)$/i.exec(setup.providerDistributionRevision ?? "");
+  return revisionMatch
+    ? `${setup.providerVersion} (Ling build ${revisionMatch[1]})`
+    : setup.providerVersion;
 }
 
 function providerGuidance(

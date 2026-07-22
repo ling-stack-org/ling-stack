@@ -124,7 +124,7 @@ test("source-build workflow actions use immutable full commit SHAs", async () =>
     workflow.indexOf("  macos-unsigned:"),
   );
   const uses = [...sourceJobs.matchAll(/^\s+uses:\s+([^\s]+)$/gmu)].map((match) => match[1]);
-  assert.deepEqual(uses.length, 15);
+  assert.deepEqual(uses.length, 17);
   for (const action of uses) assert.match(action, /^[^@]+@[0-9a-f]{40}$/u);
   const macosBuildJob = sourceJobs.slice(
     sourceJobs.indexOf("  cua-driver-source-build-macos:"),
@@ -187,6 +187,20 @@ test("source-build workflow actions use immutable full commit SHAs", async () =>
     assert.match(job, /candidate-a[^\n]+a\/output/u);
     assert.match(job, /candidate-b[^\n]+b\/output/u);
   }
+  assert.match(
+    sourceJobs,
+    /Run production macOS package wrapper with both architectures[\s\S]+run-cua-driver-signing-builder-fixture\.mjs[\s\S]+a\/output/u,
+  );
+  assert.match(
+    sourceJobs,
+    /Run production Windows package wrapper[\s\S]+run-cua-driver-signing-builder-fixture\.mjs --source-root/u,
+  );
+  const desktopPackage = JSON.parse(await readFile(
+    new URL("../package.json", import.meta.url),
+    "utf8",
+  ));
+  assert.match(desktopPackage.scripts["package:mac"], /--mac dmg zip --arm64 --x64/u);
+  assert.match(desktopPackage.scripts["package:win"], /--win nsis --x64/u);
 });
 
 test("macOS and Windows artifact jobs run complete core, daemon and Pi runner suites", async () => {

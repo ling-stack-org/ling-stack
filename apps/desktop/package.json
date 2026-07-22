@@ -29,7 +29,7 @@
     "stage:cua-driver-provider": "node scripts/cua-driver-package-staging.mjs",
     "test:cua-driver-package-staging": "node --test tests/cua-driver-package-staging.test.mjs",
     "test:signing-feasibility": "node --test tests/cua-driver-signing-feasibility.test.mjs",
-    "package:signing-feasibility": "corepack pnpm build && node tests/run-cua-driver-signing-builder-fixture.mjs",
+    "package:signing-feasibility": "node tests/run-cua-driver-signing-builder-fixture.mjs",
     "screenshots:update:computer-use": "corepack pnpm build && electron tests/screenshot-app --update",
     "screenshots:verify:computer-use": "corepack pnpm build && electron tests/screenshot-app",
     "package:mac": "corepack pnpm build && node scripts/cua-driver-electron-package.mjs --platform darwin -- --mac dmg zip --arm64 --x64",

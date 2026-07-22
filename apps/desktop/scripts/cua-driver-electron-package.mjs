@@ -155,6 +155,7 @@ export async function runCuaDriverElectronPackageCli(
   const prepared = packageProvider
     ? await prepareCuaDriverElectronPackage({ platform, sourceRoot, environment }, dependencies)
     : undefined;
+  let builderError;
   try {
     const childEnvironment = {
       ...environment,
@@ -178,9 +179,23 @@ export async function runCuaDriverElectronPackageCli(
     if (exitCode !== 0) {
       throw new Error(`electron_builder_failed:${exitCode}`);
     }
-  } finally {
-    await prepared?.cleanup();
+  } catch (error) {
+    builderError = error;
   }
+  let cleanupError;
+  try {
+    await prepared?.cleanup();
+  } catch (error) {
+    cleanupError = error;
+  }
+  if (builderError && cleanupError) {
+    throw new AggregateError(
+      [builderError, cleanupError],
+      "electron_builder_and_package_cleanup_failed",
+    );
+  }
+  if (builderError) throw builderError;
+  if (cleanupError) throw cleanupError;
 }
 
 async function spawnElectronBuilder({ appRoot, args, environment }) {

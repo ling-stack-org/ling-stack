@@ -107,35 +107,10 @@ jobs:
             throw "Windows acceptance runner has PowerShell parser errors"
           }
 
-      - name: Enable pnpm
-        if: runner.os != 'Linux'
-        run: corepack enable
-
-      - name: Install Desktop dependencies
-        if: runner.os != 'Linux'
-        run: corepack pnpm install --frozen-lockfile
-
-      - name: Build Desktop fixture inputs
-        if: runner.os != 'Linux'
-        run: corepack pnpm --filter @ling-stack/desktop build
-
-      - name: Run real Electron Builder 26.15.3 file artifact fixture
-        if: runner.os != 'Linux'
-        run: node apps/desktop/tests/run-cua-driver-signing-builder-fixture.mjs
-
-      - name: Upload Electron Builder hook trace
-        if: always() && runner.os != 'Linux'
-        uses: actions/upload-artifact@v4
-        with:
-          name: cua-driver-electron-builder-signing-${{ runner.os }}
-          path: apps/desktop/test-results/cua-driver-signing-feasibility
-          if-no-files-found: error
-          overwrite: true
-
   cua-driver-source-build-macos:
     name: Cua Driver locked source build (macOS universal)
     runs-on: macos-26
-    timeout-minutes: 120
+    timeout-minutes: 180
     steps:
       - name: Check out repository
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
@@ -193,6 +168,24 @@ jobs:
             --compare-a "${root}/a/output" \
             --compare-b "${root}/b/output"
 
+      - name: Install Desktop packaging dependencies
+        run: |
+          corepack enable
+          corepack pnpm install --frozen-lockfile
+
+      - name: Run production macOS package wrapper with both architectures
+        run: >-
+          node apps/desktop/tests/run-cua-driver-signing-builder-fixture.mjs
+          --source-root "${RUNNER_TEMP}/ling-cua-driver-source-build/a/output"
+
+      - name: Upload macOS Electron Builder hook traces
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: cua-driver-electron-builder-signing-macos
+          path: apps/desktop/test-results/cua-driver-signing-feasibility
+          if-no-files-found: error
+          retention-days: 14
+
       - name: Upload macOS source-build evidence
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
@@ -206,7 +199,7 @@ jobs:
   cua-driver-source-build-windows:
     name: Cua Driver locked source build (Windows x64)
     runs-on: windows-2025
-    timeout-minutes: 120
+    timeout-minutes: 180
     steps:
       - name: Check out repository
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
@@ -260,6 +253,27 @@ jobs:
           $root = Join-Path $env:RUNNER_TEMP "ling-cua-driver-source-build"
           node apps/desktop/scripts/verify-cua-driver-source-build.mjs --resource-root apps/desktop/resources/providers/cua-driver/0.8.3-ling.1 --compare-a (Join-Path $root "a/output") --compare-b (Join-Path $root "b/output")
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Install Desktop packaging dependencies
+        shell: pwsh
+        run: |
+          corepack enable
+          corepack pnpm install --frozen-lockfile
+
+      - name: Run production Windows package wrapper
+        shell: pwsh
+        run: |
+          $sourceRoot = Join-Path $env:RUNNER_TEMP "ling-cua-driver-source-build/a/output"
+          node apps/desktop/tests/run-cua-driver-signing-builder-fixture.mjs --source-root $sourceRoot
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Upload Windows Electron Builder hook trace
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: cua-driver-electron-builder-signing-windows
+          path: apps/desktop/test-results/cua-driver-signing-feasibility
+          if-no-files-found: error
+          retention-days: 14
 
       - name: Upload Windows source-build evidence
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
