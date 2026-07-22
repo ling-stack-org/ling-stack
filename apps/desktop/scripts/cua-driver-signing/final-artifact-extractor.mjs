@@ -66,7 +66,7 @@ async function extractZip(artifactPath, dependencies) {
   const createTemporaryRoot = dependencies.mkdtemp ?? mkdtemp;
   const runCommand = dependencies.runCommand ?? runBoundedCommand;
   const root = await createTemporaryRoot(join(tmpdir(), "ling-cua-final-zip-"));
-  const cleanup = await identityBoundRecursiveCleanup(
+  const cleanup = await initializeIdentityBoundRecursiveCleanup(
     root,
     { allowDarwinArtifactSymlinks: true },
     dependencies,
@@ -144,7 +144,7 @@ async function extractNsis(artifactPath, context, dependencies) {
   const containerRoot = await createTemporaryRoot(join(tmpdir(), "ling-cua-final-nsis-"));
   const outerRoot = join(containerRoot, "outer");
   const appRoot = join(containerRoot, "app");
-  const cleanup = await identityBoundRecursiveCleanup(containerRoot, {}, dependencies);
+  const cleanup = await initializeIdentityBoundRecursiveCleanup(containerRoot, {}, dependencies);
   try {
     await runCommand(sevenZipPath, ["x", "-bd", "-bb0", "-y", `-o${outerRoot}`, artifactPath]);
     const nestedArchive = await findExactNsisAppArchive(outerRoot);
@@ -344,6 +344,150 @@ async function identityBoundRecursiveCleanup(root, options, dependencies) {
       }, lease));
       assertLeaseHeld(lease);
     });
+  });
+}
+
+async function initializeIdentityBoundRecursiveCleanup(root, options, dependencies) {
+  let receipt;
+  try {
+    receipt = await captureTemporaryRootReceipt(root, dependencies);
+  } catch (initializationError) {
+    let cleanupError;
+    try {
+      await removeFreshEmptyTemporaryRoot(root, dependencies);
+    } catch (error) {
+      cleanupError = error;
+    }
+    if (!cleanupError) throw initializationError;
+    const aggregate = new AggregateError(
+      [initializationError, cleanupError],
+      "final_artifact_cleanup_initialization_and_recovery_failed",
+    );
+    attachTemporaryRootCleanupReceipt(aggregate, { root });
+    throw aggregate;
+  }
+  try {
+    return await identityBoundRecursiveCleanup(root, options, dependencies);
+  } catch (initializationError) {
+    try {
+      await lstat(root);
+    } catch (error) {
+      if (error?.code === "ENOENT") throw initializationError;
+      throw error;
+    }
+    let cleanupError;
+    try {
+      await removeUninitializedTemporaryRoot(receipt, dependencies);
+    } catch (error) {
+      cleanupError = error;
+    }
+    if (!cleanupError) throw initializationError;
+    const aggregate = new AggregateError(
+      [initializationError, cleanupError],
+      "final_artifact_cleanup_initialization_and_recovery_failed",
+    );
+    attachTemporaryRootCleanupReceipt(aggregate, receipt);
+    throw aggregate;
+  }
+}
+
+async function captureTemporaryRootReceipt(rootValue, dependencies) {
+  const root = resolve(rootValue);
+  const parentRoot = await realpath(dirname(root));
+  const sourceName = basename(root);
+  const [parent, source] = await Promise.all([
+    lstat(parentRoot, { bigint: true }),
+    lstat(root, { bigint: true }),
+  ]);
+  if (
+    !parent.isDirectory()
+    || parent.isSymbolicLink()
+    || !source.isDirectory()
+    || source.isSymbolicLink()
+  ) {
+    throw contractError(
+      "final_artifact_cleanup_root_invalid",
+      `Fresh extraction root is not a real directory: ${root}`,
+    );
+  }
+  const readIdentities = dependencies.readAtomicPublishDirectoryIdentities
+    ?? readAtomicPublishDirectoryIdentities;
+  const identities = await readIdentities({ parentRoot, sourceName });
+  if (
+    typeof identities?.parentIdentity !== "string"
+    || typeof identities?.sourceIdentity !== "string"
+  ) {
+    throw contractError(
+      "final_artifact_cleanup_identity_invalid",
+      `Unable to bind the fresh extraction root identity: ${root}`,
+    );
+  }
+  return Object.freeze({
+    parentIdentity: identities.parentIdentity,
+    parentRoot,
+    root,
+    sourceIdentity: identities.sourceIdentity,
+    sourceName,
+  });
+}
+
+async function removeFreshEmptyTemporaryRoot(rootValue, dependencies) {
+  const root = resolve(rootValue);
+  const metadata = await lstat(root);
+  if (!metadata.isDirectory() || metadata.isSymbolicLink()) {
+    throw contractError(
+      "final_artifact_cleanup_root_invalid",
+      `Fresh extraction root is not a real directory: ${root}`,
+    );
+  }
+  await (dependencies.rmdir ?? rmdir)(root);
+}
+
+async function removeUninitializedTemporaryRoot(receipt, dependencies) {
+  const withParentLease = dependencies.withAtomicPublishParentLease
+    ?? withAtomicPublishParentLease;
+  const readIdentities = dependencies.readAtomicPublishDirectoryIdentities
+    ?? readAtomicPublishDirectoryIdentities;
+  const removeEmptyDirectory = dependencies.removeAtomicPublishUnsecuredEmptyDirectory
+    ?? removeAtomicPublishUnsecuredEmptyDirectory;
+  await withParentLease({ parentRoot: receipt.parentRoot }, async (lease) => {
+    const current = await guardLease(lease, () => readIdentities({
+      parentRoot: receipt.parentRoot,
+      sourceName: receipt.sourceName,
+    }, lease));
+    assertLeaseHeld(lease);
+    if (
+      current.parentIdentity !== receipt.parentIdentity
+      || current.sourceIdentity !== receipt.sourceIdentity
+    ) {
+      throw contractError(
+        "final_artifact_cleanup_identity_mismatch",
+        `Refusing to remove a replaced extraction root: ${receipt.root}`,
+      );
+    }
+    await guardLease(lease, () => removeEmptyDirectory({
+      expectedParentIdentity: receipt.parentIdentity,
+      expectedSourceIdentity: receipt.sourceIdentity,
+      parentRoot: receipt.parentRoot,
+      sourceName: receipt.sourceName,
+    }, lease));
+    assertLeaseHeld(lease);
+  });
+}
+
+function attachTemporaryRootCleanupReceipt(error, receipt) {
+  Object.defineProperty(error, "cleanup", {
+    configurable: true,
+    enumerable: true,
+    value: Object.freeze({
+      outcome: "residue",
+      reason: "cleanup_initialization_failed",
+      residuePath: receipt.root,
+      ...(typeof receipt.sourceIdentity === "string"
+        ? { residueIdentity: receipt.sourceIdentity }
+        : {}),
+    }),
+    writable: false,
   });
 }
 

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
-import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readFile, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join, relative, resolve } from "node:path";
 import test from "node:test";
 
 import { createDisposableFixtureSigner } from "../scripts/cua-driver-signing/fixture-signer.mjs";
@@ -20,6 +20,7 @@ import {
 } from "../scripts/cua-driver-signing/hooks.mjs";
 import {
   resolveSigningProfile,
+  sha256Bytes,
   sha256File,
 } from "../scripts/cua-driver-signing/signing-contract.mjs";
 import {
@@ -566,6 +567,209 @@ test("mixed tier/channel state is rejected and fixture signer cannot produce pro
   }
 });
 
+test("provider, catalog, and outer signers must use the profile authority kind", async (t) => {
+  await t.test("provider", async () => {
+    const fixture = await createFixture("win32", INTERNAL_PROFILE);
+    try {
+      const base = createDisposableFixtureSigner();
+      const signer = {
+        ...base,
+        async signFile(input) {
+          return { ...(await base.signFile(input)), authorityKind: "managed-internal" };
+        },
+      };
+      await assert.rejects(
+        runAfterPack(
+          { appOutDir: fixture.appOutDir, electronPlatformName: "win32" },
+          { profile: INTERNAL_PROFILE, signer, stateDirectory: fixture.stateDirectory, requireProvider: true },
+        ),
+        /mixed_signing_authority/u,
+      );
+    } finally {
+      await rm(fixture.root, { recursive: true, force: true });
+    }
+  });
+
+  await t.test("catalog", async () => {
+    const fixture = await createFixture("win32", INTERNAL_PROFILE);
+    try {
+      const base = createDisposableFixtureSigner();
+      const signer = {
+        ...base,
+        async signCatalog(input) {
+          return { ...(await base.signCatalog(input)), authorityKind: "managed-internal" };
+        },
+      };
+      await assert.rejects(
+        runAfterPack(
+          { appOutDir: fixture.appOutDir, electronPlatformName: "win32" },
+          { profile: INTERNAL_PROFILE, signer, stateDirectory: fixture.stateDirectory, requireProvider: true },
+        ),
+        /mixed_signing_authority/u,
+      );
+    } finally {
+      await rm(fixture.root, { recursive: true, force: true });
+    }
+  });
+
+  await t.test("outer", async () => {
+    const fixture = await createFixture("win32", INTERNAL_PROFILE);
+    try {
+      const signer = createDisposableFixtureSigner();
+      const context = { appOutDir: fixture.appOutDir, electronPlatformName: "win32" };
+      await runAfterPack(context, {
+        profile: INTERNAL_PROFILE,
+        signer,
+        stateDirectory: fixture.stateDirectory,
+        requireProvider: true,
+      });
+      const outerPath = join(fixture.appOutDir, "Ling Stack.exe");
+      await writeFile(outerPath, "outer");
+      const outerSigner = {
+        ...signer,
+        async signFile(input) {
+          return { ...(await signer.signFile(input)), authorityKind: "managed-internal" };
+        },
+      };
+      await assert.rejects(
+        runProviderAwareSign(
+          { ...context, path: outerPath },
+          { profile: INTERNAL_PROFILE, outerSigner, stateDirectory: fixture.stateDirectory },
+        ),
+        /mixed_signing_authority/u,
+      );
+    } finally {
+      await rm(fixture.root, { recursive: true, force: true });
+    }
+  });
+});
+
+test("afterSign rejects symlinked seal, lock, catalog, and package-authority documents", async (t) => {
+  for (const [platform, role] of [
+    ["darwin", "seal"],
+    ["darwin", "lock"],
+    ["win32", "catalog"],
+  ]) {
+    await t.test(`${platform}-${role}`, async () => {
+      const fixture = await createFixture(platform, INTERNAL_PROFILE);
+      try {
+        const context = { appOutDir: fixture.appOutDir, electronPlatformName: platform };
+        await runAfterPack(context, {
+          profile: INTERNAL_PROFILE,
+          signer: createDisposableFixtureSigner(),
+          stateDirectory: fixture.stateDirectory,
+          requireProvider: true,
+        });
+        const target = role === "seal"
+          ? fixture.sealPath
+          : role === "lock"
+            ? fixture.lockPath
+            : fixture.catalogPath;
+        await replaceWithExternalSymlink(target, join(fixture.root, `${role}-outside`));
+        await assert.rejects(
+          runAfterSign(context, {
+            profile: INTERNAL_PROFILE,
+            stateDirectory: fixture.stateDirectory,
+          }),
+          /provider_governed_file_unsafe/u,
+        );
+      } finally {
+        await rm(fixture.root, { recursive: true, force: true });
+      }
+    });
+  }
+
+  for (const documentName of [
+    "packaged-provider-capabilities.json",
+    "runtime-trust-policy.json",
+  ]) {
+    await t.test(documentName, async () => {
+      const fixture = await createFixture("darwin", INTERNAL_PROFILE);
+      try {
+        const context = { appOutDir: fixture.appOutDir, electronPlatformName: "darwin" };
+        await runAfterPack(context, {
+          profile: INTERNAL_PROFILE,
+          signer: createDisposableFixtureSigner(),
+          stateDirectory: fixture.stateDirectory,
+          requireProvider: true,
+        });
+        const authorityRoot = resolve(fixture.platformRoot, "../..");
+        const capabilitiesPath = join(authorityRoot, "packaged-provider-capabilities.json");
+        const runtimeTrustPolicyPath = join(authorityRoot, "runtime-trust-policy.json");
+        const capabilitiesBytes = Buffer.from('{"schemaVersion":1}\n');
+        const runtimeTrustPolicyBytes = Buffer.from('{"schemaVersion":1}\n');
+        await writeFile(capabilitiesPath, capabilitiesBytes);
+        await writeFile(runtimeTrustPolicyPath, runtimeTrustPolicyBytes);
+        const statePath = join(fixture.stateDirectory, "provider-signing-state.json");
+        const state = JSON.parse(await readFile(statePath, "utf8"));
+        state.packageAuthority = {
+          schemaVersion: 1,
+          componentId: "cua-driver",
+          distributionRevision: "0.8.3-ling.1",
+          providerExpected: true,
+          platform: "darwin",
+          signingTier: "test_signed_internal",
+          distributionChannel: "internal",
+          capabilitiesSha256: sha256Bytes(capabilitiesBytes),
+          runtimeTrustPolicySha256: sha256Bytes(runtimeTrustPolicyBytes),
+        };
+        state.capabilitiesRelativePath = relative(fixture.appOutDir, capabilitiesPath).replaceAll("\\", "/");
+        state.runtimeTrustPolicyRelativePath = relative(
+          fixture.appOutDir,
+          runtimeTrustPolicyPath,
+        ).replaceAll("\\", "/");
+        state.productFilename = "Ling Stack";
+        await writeFile(statePath, `${JSON.stringify(state)}\n`);
+        const target = join(authorityRoot, documentName);
+        await replaceWithExternalSymlink(target, join(fixture.root, `${documentName}.outside`));
+        await assert.rejects(
+          runAfterSign(context, {
+            profile: INTERNAL_PROFILE,
+            stateDirectory: fixture.stateDirectory,
+          }),
+          /provider_governed_file_unsafe/u,
+        );
+      } finally {
+        await rm(fixture.root, { recursive: true, force: true });
+      }
+    });
+  }
+});
+
+test("final artifact verification rejects a trust-material symlink to bytes outside the artifact", async () => {
+  const fixture = await createFixture("darwin", INTERNAL_PROFILE);
+  try {
+    const context = { appOutDir: fixture.appOutDir, electronPlatformName: "darwin" };
+    await runAfterPack(context, {
+      profile: INTERNAL_PROFILE,
+      signer: createDisposableFixtureSigner(),
+      stateDirectory: fixture.stateDirectory,
+      requireProvider: true,
+    });
+    const artifactRoot = join(fixture.root, "reopened-artifact");
+    await cp(fixture.appOutDir, artifactRoot, { recursive: true });
+    const artifactSealPath = join(
+      artifactRoot,
+      relative(fixture.appOutDir, fixture.sealPath),
+    );
+    await replaceWithExternalSymlink(
+      artifactSealPath,
+      join(fixture.root, "outside-final-seal.json"),
+    );
+    const artifactPath = join(fixture.root, "Ling Stack.zip");
+    await writeFile(artifactPath, "artifact");
+    await assert.rejects(
+      runArtifactBuildCompleted(
+        { ...context, artifactPath },
+        { profile: INTERNAL_PROFILE, stateDirectory: fixture.stateDirectory, artifactRoot },
+      ),
+      /provider_governed_file_unsafe/u,
+    );
+  } finally {
+    await rm(fixture.root, { recursive: true, force: true });
+  }
+});
+
 test("production hook rejects a reused internal signed payload even with a matching test digest", async () => {
   const fixture = await createFixture("win32", INTERNAL_PROFILE);
   try {
@@ -667,6 +871,90 @@ for (const [platform, kind] of [
   });
 }
 
+test("artifact cleanup failure never records verified evidence", async () => {
+  const fixture = await createFixture("darwin", INTERNAL_PROFILE);
+  try {
+    const context = { appOutDir: fixture.appOutDir, electronPlatformName: "darwin" };
+    await runAfterPack(context, {
+      profile: INTERNAL_PROFILE,
+      signer: createDisposableFixtureSigner(),
+      stateDirectory: fixture.stateDirectory,
+      requireProvider: true,
+    });
+    const artifactPath = join(fixture.root, "cleanup-failure.zip");
+    await writeFile(artifactPath, "artifact");
+    await assert.rejects(
+      runArtifactBuildCompleted(
+        { ...context, artifactPath },
+        {
+          profile: INTERNAL_PROFILE,
+          stateDirectory: fixture.stateDirectory,
+          extractArtifact: async () => ({
+            artifactRoot: fixture.appOutDir,
+            async cleanup() { throw new Error("native_remove_artifact_tree_failed"); },
+          }),
+        },
+      ),
+      /final_artifact_cleanup_failed/u,
+    );
+    const trace = await readSigningFixtureTrace(fixture.stateDirectory);
+    assert.equal(
+      trace.events.some(
+        (event) => event.hook === "artifactBuildCompleted" && event.event === "verified",
+      ),
+      false,
+    );
+    assert.deepEqual(trace.events.at(-1), {
+      sequence: trace.events.length,
+      hook: "artifactBuildCompleted",
+      event: "failed",
+      errorCode: "final_artifact_cleanup_failed",
+    });
+  } finally {
+    await rm(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test("artifact verification and cleanup failures preserve both errors", async () => {
+  const fixture = await createFixture("darwin", INTERNAL_PROFILE);
+  try {
+    const context = { appOutDir: fixture.appOutDir, electronPlatformName: "darwin" };
+    await runAfterPack(context, {
+      profile: INTERNAL_PROFILE,
+      signer: createDisposableFixtureSigner(),
+      stateDirectory: fixture.stateDirectory,
+      requireProvider: true,
+    });
+    await writeFile(fixture.providerPath, "mutation", { flag: "a" });
+    const artifactPath = join(fixture.root, "verification-cleanup-failure.zip");
+    await writeFile(artifactPath, "artifact");
+    const error = await captureRejection(() => runArtifactBuildCompleted(
+      { ...context, artifactPath },
+      {
+        profile: INTERNAL_PROFILE,
+        stateDirectory: fixture.stateDirectory,
+        extractArtifact: async () => ({
+          artifactRoot: fixture.appOutDir,
+          async cleanup() { throw new Error("native_remove_artifact_tree_failed"); },
+        }),
+      },
+    ));
+    assert.ok(error instanceof AggregateError);
+    assert.equal(error.message, "final_artifact_verification_and_cleanup_failed");
+    assert.match(error.errors[0].message, /provider_post_seal_mutation/u);
+    assert.equal(error.errors[1].message, "native_remove_artifact_tree_failed");
+    const trace = await readSigningFixtureTrace(fixture.stateDirectory);
+    assert.equal(
+      trace.events.some(
+        (event) => event.hook === "artifactBuildCompleted" && event.event === "verified",
+      ),
+      false,
+    );
+  } finally {
+    await rm(fixture.root, { recursive: true, force: true });
+  }
+});
+
 test("packaging without a staged provider remains a no-op for the existing external baseline", async () => {
   const root = await mkdtemp(join(tmpdir(), "ling-cua-no-provider-"));
   try {
@@ -693,7 +981,8 @@ async function createFixture(platform, profile) {
       : join(appOutDir, "Contents", "Resources", "providers", "cua-driver", revision, "darwin");
   const payloadRoot = platform === "win32" ? join(platformRoot, "payload") : platformRoot;
   await mkdir(payloadRoot, { recursive: true });
-  await writeFile(join(platformRoot, "..", "provider-lock.json"), `${platform}-fixture-lock-v1\n`);
+  const lockPath = join(platformRoot, "..", "provider-lock.json");
+  await writeFile(lockPath, `${platform}-fixture-lock-v1\n`);
   const providerPath = join(payloadRoot, platform === "win32" ? "cua-driver.exe" : "cua-driver");
   await writeFile(providerPath, Buffer.from(`MZ-or-MACHO-fixture:${platform}`));
   return {
@@ -704,8 +993,24 @@ async function createFixture(platform, profile) {
     platformRoot,
     payloadRoot,
     providerPath,
+    lockPath,
     sealPath:
       platform === "win32" ? join(payloadRoot, "provider-seal.json") : join(platformRoot, "provider-seal.json"),
+    catalogPath: platform === "win32" ? join(platformRoot, "provider-integrity.cat") : undefined,
     profile,
   };
+}
+
+async function replaceWithExternalSymlink(target, outside) {
+  await rename(target, outside);
+  await symlink(outside, target);
+}
+
+async function captureRejection(operation) {
+  try {
+    await operation();
+  } catch (error) {
+    return error;
+  }
+  assert.fail("expected operation to reject");
 }

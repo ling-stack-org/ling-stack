@@ -298,6 +298,12 @@ Changes:
   seal, platform identity/catalog membership and provider bytes extracted from final
   DMG/ZIP/NSIS artifacts;
 - retain the ordered hook trace and every digest transition as CI evidence.
+- run the real provider-bearing `package:mac` / `package:win` wrappers from verified
+  source-build output rather than invoking Electron Builder directly; macOS must exercise
+  both arm64 and x64 in the same governed wrapper invocation;
+- bind every provider, seal, lock, catalog and package-authority document to a regular,
+  single-link path beneath the reopened app root, and bind every test signer identity to
+  the selected `ephemeral-ci` or `managed-internal` authority kind;
 - prove Setup contains no root certificate/PFX, trust is provisioned only by the harness,
   ephemeral trust is removed/reverted, managed-internal trust remains isolated under its
   external lifecycle, and production policy rejects every test fingerprint;
@@ -309,10 +315,14 @@ Exit criteria:
 - the provider digest at seal generation, `afterSign`, unpacked verification and final
   artifact verification is identical;
 - outer macOS app/DMG/ZIP and Windows app/uninstaller/NSIS remain correctly test-signed;
+- the Windows Builder trace contains exactly `outer-app`, `outer-uninstaller` and
+  `outer-nsis`, while each macOS architecture contains exactly one outer app plus its
+  DMG/ZIP final-artifact roles;
 - installer, app, uninstaller, provider and catalog have one derived test tier; mixed,
   unsigned, double-signed, mutated or mismatched-channel fixtures fail closed;
 - hosted macOS/Windows jobs fail if Electron Builder changes hook order or mutates the
-  provider after sealing.
+  provider after sealing, and fail if a governed trust file becomes a symlink/reparse
+  point/hard link or a signer returns the wrong test-authority kind.
 
 Estimated engineering time: 2–3 days.
 
