@@ -33,7 +33,7 @@ import {
 export type BundledCuaDriverActivationOperation = "check" | "enable";
 
 export interface BundledCuaDriverActivationResult {
-  readonly statusCode: 200 | 400 | 409;
+  readonly statusCode: 200 | 202 | 400 | 409;
   readonly committed: boolean;
   readonly error?: string;
   readonly message?: string;
@@ -251,7 +251,10 @@ export class BundledCuaDriverActivationService {
         ? health.details.errorCode
         : "cua_desktop_lease_unavailable";
       return {
-        statusCode: 409,
+        // The requested intent is durable even though Desktop has not
+        // published a lease yet. Return an accepted response so clients can
+        // consume the waiting projection; 409 is reserved for stale races.
+        statusCode: 202,
         committed: true,
         error: errorCode,
         message: health.message,

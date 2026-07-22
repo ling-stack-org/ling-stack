@@ -48,10 +48,14 @@ with `MANUAL_REVIEW_REQUIRED`; it never mutates the committed lock or source inp
 The Plugin Manager renderer now maps the V2 bundled provider state through a dedicated pure
 view model. The canonical `trusted-local:cua-driver` row remains the only visible row, the
 historical package shell stays hidden, requested intent and effective readiness remain
-separate, and bundled repair states cannot open the external install drawer. macOS and
-Windows state copy, Windows standard-tier limitations, English/Chinese copy and renderer
-E2E coverage are implemented; packaged clean-host product smoke remains a later release
-gate.
+separate, and bundled repair states cannot open the external install drawer. A committed
+enable intent that is waiting for Desktop returns `202 Accepted`, so the renderer consumes
+the new `requestedEnabled=true`, `effectiveEnabled=false` projection instead of losing it
+behind an error transport. Bundled projections carrying any `external_*` provider state
+normalize to an invalid fail-closed state and never enter legacy auto-connect. Provider
+revision `ling.1` is shown as `0.8.3 (Ling build 1)`. macOS and Windows state copy,
+Windows standard-tier limitations, English/Chinese copy and renderer E2E coverage are
+implemented; packaged clean-host product smoke remains a later release gate.
 Complete output-parent
 staging/cleanup mutation sections use a cross-process native parent lease; temp-root
 parent/root identities bind security and
@@ -780,6 +784,14 @@ spikes before the release pipeline relies on it. The implementation contract is:
 5. `artifactBuildCompleted` extracts/reopens each final DMG/ZIP/NSIS artifact and proves
    its provider bytes, seal and platform identity/catalog are identical to the verified
    unpacked tuple.
+
+The CI spike enters through the production `package:mac` / `package:win` wrapper with one
+verified source-build output. It must not call `electron-builder` directly. The macOS spike
+packages arm64 and x64 together; the Windows trace must prove the exact outer role set of
+app, uninstaller and NSIS. At `afterSign` and final-artifact reopen, provider, seal, lock,
+catalog, capabilities and runtime-policy paths are re-`lstat`ed, canonically contained,
+single-linked regular files. Test signer identities must also report the exact selected
+`ephemeral-ci` or `managed-internal` authority kind.
 
 Hosted macOS and Windows CI use disposable test identities to exercise the identical hook
 code. Dedicated internal QA may use a managed internal test authority on isolated machines;
@@ -1650,6 +1662,13 @@ effective availability and remain false until the transaction commits. This lets
 permission flow survive a Desktop restart without making tools eligible early. Disable
 clears the requested flag and advances the revision before process shutdown.
 
+An enable request that durably commits intent but cannot activate because no current
+Desktop lease exists returns `202 Accepted` with the updated plugin, health and setup
+projection. The body may retain the canonical readiness error code for support detail, but
+the HTTP status is successful and consumable. `409 Conflict` is reserved for stale
+activation attempts, revision races and workspace/authority conflicts where this request
+did not win the durable state transition.
+
 ### Durable activation fence and Store API
 
 The workspace store adds one Cua-specific fence row:
@@ -2071,6 +2090,15 @@ Legacy mapping is deterministic:
 
 New clients use `providerState`; existing clients continue to receive a known `kind` and
 legacy `state`. `externalOverride` is a badge/detail field, not a state.
+
+The renderer additionally validates distribution/state coherence. When
+`distribution="bundled_embedded"`, `external_missing`, `external_detected` and
+`external_connected` are invalid even though they remain legal contract values for
+`external_local`. Such a projection shows `Needs attention` and `Review state`, suppresses
+Enable/install/connect actions, and is excluded from legacy detected-binary auto-connect.
+The detail version uses `providerDisplayVersion` when supplied; otherwise it combines
+`providerVersion` with a `ling.N` distribution revision as
+`<providerVersion> (Ling build N)`.
 
 The external install guide is returned only for `external_local` plus
 `external_missing`. A damaged bundled component directs the user to update or reinstall

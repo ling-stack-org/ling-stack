@@ -131,6 +131,48 @@ test("Cua Driver uses one table row, global toasts, and a separate detail drawer
   await expect(page.locator(".mcp-server-row").filter({ hasText: "Cua Driver" })).toBeVisible();
 });
 
+test("bundled Cua Driver keeps enable intent visible through waiting, ready, drawer close, and disable", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.locale", "en-US");
+  });
+  const state = createBaseState({ approvalStatus: "expired" });
+  const index = state.managedPlugins.findIndex((plugin) => plugin.id === "trusted-local:cua-driver");
+  state.managedPlugins[index] = createMockBundledEmbeddedCuaPlugin({
+    providerState: "included",
+    platform: "darwin",
+    requestedEnabled: false,
+    effectiveEnabled: false,
+  });
+  await mockDaemon(page, state);
+  await page.goto("/");
+  await openPluginManager(page);
+
+  const row = pluginRow(page, "trusted-local:cua-driver");
+  await expect(row.locator(".plugin-table-status")).toHaveText("Included");
+  await row.getByRole("button", { name: "Enable" }).click();
+
+  await expect(row.locator(".plugin-table-status")).toHaveText("Desktop required");
+  await expect(page.locator(".ling-toast").filter({ hasText: "Plugin enable requested." })).toBeVisible();
+  await expect(row.getByRole("button", { name: "Disable" })).toBeVisible();
+  await row.getByRole("button", { name: "Recovery steps" }).click();
+
+  const detail = page.getByRole("dialog", { name: "Cua Driver" });
+  await expect(detail.getByText("0.8.3 (Ling build 1)", { exact: true })).toBeVisible();
+  await detail.getByRole("button", { name: "Close" }).click();
+  await expect(row.locator(".plugin-table-status")).toHaveText("Desktop required");
+  expect(state.managedPlugins[index].setup?.requestedEnabled).toBe(true);
+
+  await row.getByRole("button", { name: "Check again" }).click();
+  await expect(row.locator(".plugin-table-status")).toHaveText("Ready");
+  expect(state.managedPlugins[index].setup?.effectiveEnabled).toBe(true);
+
+  await row.getByRole("button", { name: "Disable" }).click();
+  await expect(row.locator(".plugin-table-status")).toHaveText("Included");
+  await expect(row.getByRole("button", { name: "Enable" })).toBeVisible();
+  expect(state.managedPlugins[index].setup?.requestedEnabled).toBe(false);
+  expect(state.managedPlugins[index].setup?.distribution).toBe("bundled_embedded");
+});
+
 test("bundled Cua Driver shows macOS permission recovery without an external install path", async ({ page }) => {
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");
@@ -158,7 +200,7 @@ test("bundled Cua Driver shows macOS permission recovery without an external ins
   await row.getByRole("button", { name: "Review macOS permissions" }).click();
   const detail = page.getByRole("dialog", { name: "Cua Driver" });
   await expect(detail).toContainText("Included with Ling");
-  await expect(detail).toContainText("0.8.3");
+  await expect(detail.getByText("0.8.3 (Ling build 1)", { exact: true })).toBeVisible();
   await expect(detail).toContainText("Grant Accessibility and Screen Recording to Ling Stack in macOS System Settings, then check again.");
   await expect(detail).not.toContainText("Local driver");
   await expect(page.getByRole("dialog", { name: "Install Cua Driver" })).toHaveCount(0);
@@ -204,7 +246,7 @@ test("bundled Windows ready state localizes standard coverage and limitations", 
   expect(Math.max(...channels)).toBeLessThanOrEqual(70);
 });
 
-test("malformed bundled Cua Driver state fails closed without external installation actions", async ({ page }) => {
+test("bundled external state fails closed without auto-connect or external installation actions", async ({ page }) => {
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");
   });
@@ -218,10 +260,11 @@ test("malformed bundled Cua Driver state fails closed without external installat
   });
   malformed.setup = {
     ...malformed.setup,
-    state: "missing",
-    providerState: "not_a_real_state",
-    requestedEnabled: undefined,
-    effectiveEnabled: undefined,
+    state: "detected",
+    providerState: "external_detected",
+    requestedEnabled: false,
+    effectiveEnabled: false,
+    detectedCommand: "/opt/homebrew/bin/cua-driver",
     guide: {
       documentationUrl: "https://cua.ai/docs/cua-driver",
       installCommand: "install-cua-driver",
@@ -234,6 +277,12 @@ test("malformed bundled Cua Driver state fails closed without external installat
     canInstall: true,
   };
   state.managedPlugins[index] = malformed;
+  let connectCount = 0;
+  page.on("request", (request) => {
+    if (request.url().includes("/plugins/trusted-local%3Acua-driver/connect")) {
+      connectCount += 1;
+    }
+  });
   await mockDaemon(page, state);
   await page.goto("/");
   await openPluginManager(page);
@@ -243,6 +292,8 @@ test("malformed bundled Cua Driver state fails closed without external installat
   await expect(row.getByRole("button", { name: "Enable" })).toHaveCount(0);
   await expect(row.getByRole("button", { name: "Installation guide" })).toHaveCount(0);
   await expect(row.getByRole("button", { name: "Install" })).toHaveCount(0);
+  await page.waitForTimeout(100);
+  expect(connectCount).toBe(0);
   await row.getByRole("button", { name: "Review state" }).click();
 
   const detail = page.getByRole("dialog", { name: "Cua Driver" });
