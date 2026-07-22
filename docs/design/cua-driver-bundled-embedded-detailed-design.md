@@ -883,7 +883,7 @@ one-day retention. This changes runner ownership only: upload/download,
 review-only proposal, independent lock anchor, second A/B build and Windows VM sign-off
 remain mandatory.
 
-The macOS final link keeps the default Apple linker `LC_UUID`. Swift 6.3 emits a non-runtime
+The macOS final link keeps a valid `LC_UUID` load command. Swift 6.3 emits a non-runtime
 16-byte `__LLVM,__swift_modhash` and embeds the SwiftPM scratch root in `__DWARF` inside
 otherwise identical `apple-cf` and `screencapturekit` archive members. Because those inputs
 change clean-build stub ordering, the builder first primes each target, verifies the exact
@@ -892,11 +892,17 @@ DWARF contents only in Mach-O members carrying the Swift module-hash marker. It 
 a final-only relink with fixed Rust metadata and Apple ld `-reproducible`. Default linker
 deduplication remains enabled: disabling it leaves two equivalent `_objc_msgSend` GOT slots,
 and arm64 may select different slots across repeated links even when every archive byte is
-identical. This normalization does not change runtime sections, Rust release optimization,
-or the arm64 slice size. Current ld then derives `LC_UUID` from the normalized output
-bytes and emits a valid deterministic arm64 linker ad-hoc signature. `lipo` produces the
-expected unsigned universal pre-sign candidate; product signing is applied only after
-promotion during the packaging/signing stage. `-no_uuid` is forbidden
+identical. This archive normalization does not change runtime sections or Rust release
+optimization. A later self-hosted replay showed that ld can still select different
+content UUIDs and corresponding linker signatures across clean invocations. The builder
+therefore zeroes only the derived `LC_UUID` and existing linker-signature region in an
+in-memory copy, hashes the remaining thin Mach-O bytes with SHA-256, writes an RFC 4122
+variant/version-3 UUID from that digest, and applies the fixed
+`ling-cua-driver-presign` ad-hoc identity with `/usr/bin/codesign`. The builder immediately
+verifies that signature and UUID before `lipo`; actual runtime bytes remain part of the
+digest, so instruction or data drift still fails A/B comparison. This ad-hoc identity only
+makes the arm64 pre-sign candidate executable for probes and is replaced by product signing
+after promotion during packaging. `-no_uuid` is forbidden
 because current dyld refuses to execute a binary without `LC_UUID`; `-random_uuid` is
 forbidden because it would defeat the byte-for-byte A/B comparison. Host build scripts
 never receive final-only linker flags or archive normalization.

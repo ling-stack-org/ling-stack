@@ -158,8 +158,8 @@ jobs:
       - name: Select locked Xcode
         run: sudo xcode-select --switch /Applications/Xcode_26.5.app/Contents/Developer
 
-      - name: Test atomic Cua Driver package publisher
-        run: node --test apps/desktop/tests/cua-driver-package-publisher.test.mjs
+      - name: Test atomic Cua Driver package publisher and Mach-O identity normalizer
+        run: node --test apps/desktop/tests/cua-driver-package-publisher.test.mjs apps/desktop/tests/cua-driver-macho-identity-normalizer.test.mjs
 
       - name: Install locked Rust toolchain and targets
         run: |
@@ -260,9 +260,9 @@ jobs:
           toolset: 14.44
           vsversion: 17.0
 
-      - name: Test atomic Cua Driver package publisher
+      - name: Test atomic Cua Driver package publisher and Mach-O identity normalizer
         shell: pwsh
-        run: node --test apps/desktop/tests/cua-driver-package-publisher.test.mjs
+        run: node --test apps/desktop/tests/cua-driver-package-publisher.test.mjs apps/desktop/tests/cua-driver-macho-identity-normalizer.test.mjs
 
       - name: Install locked Rust toolchain and target
         shell: pwsh

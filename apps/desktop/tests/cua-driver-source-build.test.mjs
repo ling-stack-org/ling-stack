@@ -316,6 +316,8 @@ test("reproducible final linker flags never poison executable host build scripts
   assert.doesNotMatch(finalFlags, /link-arg=-Wl,-no_deduplicate/u);
   assert.match(finalFlags, /link-arg=\/Brepro/u);
   assert.match(source, /normalizeCuaDriverSwiftArchives/u);
+  assert.match(source, /normalizeCuaDriverMachOIdentity/u);
+  assert.match(source, /postLinkIdentityNormalization/u);
   assert.match(source, /swiftArchiveNormalization\.finalMetadata/u);
   assert.match(source, /"rustc",[\s\S]+"--bin",[\s\S]+finalBinaryRustcFlags\(platform\)/u);
 });
@@ -844,6 +846,17 @@ test("source-build attestation rejects malformed schema before trusting any dige
         rustfmt: { status: "passed", scope: "new-rust-files", paths: [] },
         cargoTests: { status: "passed", packages: [] },
         cargoMetadataSha256: "6".repeat(64),
+        machOIdentityNormalization: {
+          status: "passed",
+          algorithm: "sha256-zeroed-lc-uuid-and-code-signature-v1",
+          binaries: ["aarch64-apple-darwin", "x86_64-apple-darwin"].map((target) => ({
+            target,
+            adHocIdentifier: "ling-cua-driver-presign",
+            sourceSha256: "b".repeat(64),
+            sha256: "c".repeat(64),
+            uuid: "AAAAAAAA-BBBB-3CCC-8DDD-EEEEEEEEEEEE",
+          })),
+        },
         swiftArchiveNormalization: {
           status: "passed",
           section: "__LLVM,__swift_modhash",
@@ -869,6 +882,12 @@ test("source-build attestation rejects malformed schema before trusting any dige
       signingState: "pre-sign-only",
     };
     assert.equal(verifyAttestationShape(shaped), true);
+    const badUuid = structuredClone(shaped);
+    badUuid.checks.machOIdentityNormalization.binaries[0].uuid = "not-a-uuid";
+    assert.throws(
+      () => verifyAttestationShape(badUuid),
+      /Mach-O identity normalization binary evidence mismatch/u,
+    );
     assert.throws(() => verifyAttestationShape({ ...shaped, unexpected: true }), /attestation keys changed/);
     const missingCheck = structuredClone(shaped);
     delete missingCheck.checks.runtimeProbe;

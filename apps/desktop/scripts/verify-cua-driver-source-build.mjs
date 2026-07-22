@@ -246,10 +246,11 @@ function verifyObservedToolchain(platform, evidence, lock) {
       || evidence.xcodeBuildVersion !== pin.xcodeBuildVersion
       || evidence.macOSSDKVersion !== pin.macOSSDKVersion
       || evidence.developerDir !== pin.developerDir
+      || evidence.codesignPath !== pin.postLinkIdentityNormalization.codesignPath
     ) {
       fail("observed macOS toolchain does not match the lock");
     }
-    assertAbsoluteEvidencePaths(evidence, ["developerDir", "sdkPath", "clangPath", "lipoPath"]);
+    assertAbsoluteEvidencePaths(evidence, ["developerDir", "sdkPath", "clangPath", "codesignPath", "lipoPath"]);
     return;
   }
   const pin = lock.toolchain.win32X64;
@@ -290,6 +291,7 @@ export function verifyAttestationShape(attestation) {
     "binaryIdentity",
     "cargoMetadataSha256",
     "cargoTests",
+    "machOIdentityNormalization",
     "referenceArtifact",
     "rustfmt",
     "runtimeProbe",
@@ -301,7 +303,39 @@ export function verifyAttestationShape(attestation) {
   assertExactKeys(attestation.checks.cargoTests, ["packages", "status"], "source-build cargo tests");
   assertExactKeys(attestation.checks.rustfmt, ["paths", "scope", "status"], "source-build rustfmt");
   verifySwiftArchiveNormalization(attestation.platform, attestation.checks.swiftArchiveNormalization);
+  verifyMachOIdentityNormalization(attestation.platform, attestation.checks.machOIdentityNormalization);
   return true;
+}
+
+function verifyMachOIdentityNormalization(platform, evidence) {
+  if (platform === "win32-x64") {
+    assertExactKeys(evidence, ["status"], "Mach-O identity normalization");
+    if (evidence.status !== "not_applicable") {
+      fail("Windows Mach-O identity normalization must be not applicable");
+    }
+    return;
+  }
+  assertExactKeys(evidence, ["algorithm", "binaries", "status"], "Mach-O identity normalization");
+  if (evidence.status !== "passed"
+    || evidence.algorithm !== "sha256-zeroed-lc-uuid-and-code-signature-v1"
+    || !Array.isArray(evidence.binaries)
+    || JSON.stringify(evidence.binaries.map((entry) => entry?.target))
+      !== JSON.stringify(["aarch64-apple-darwin", "x86_64-apple-darwin"])) {
+    fail("Mach-O identity normalization evidence mismatch");
+  }
+  for (const binary of evidence.binaries) {
+    assertExactKeys(
+      binary,
+      ["adHocIdentifier", "sha256", "sourceSha256", "target", "uuid"],
+      "Mach-O identity normalization binary",
+    );
+    if (binary.adHocIdentifier !== "ling-cua-driver-presign"
+      || !SHA256_PATTERN.test(binary.sha256)
+      || !SHA256_PATTERN.test(binary.sourceSha256)
+      || !/^[0-9A-F]{8}-[0-9A-F]{4}-3[0-9A-F]{3}-[89AB][0-9A-F]{3}-[0-9A-F]{12}$/u.test(binary.uuid)) {
+      fail("Mach-O identity normalization binary evidence mismatch");
+    }
+  }
 }
 
 function verifySwiftArchiveNormalization(platform, evidence) {

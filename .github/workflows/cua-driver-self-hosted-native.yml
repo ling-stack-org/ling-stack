@@ -90,6 +90,7 @@ jobs:
         run: >-
           node --test
           apps/desktop/tests/cua-driver-package-publisher.test.mjs
+          apps/desktop/tests/cua-driver-macho-identity-normalizer.test.mjs
           apps/desktop/tests/cua-driver-swift-archive-normalizer.test.mjs
 
       - name: Build and attest candidate A
@@ -284,6 +285,7 @@ jobs:
         run: >-
           node --test
           apps/desktop/tests/cua-driver-package-publisher.test.mjs
+          apps/desktop/tests/cua-driver-macho-identity-normalizer.test.mjs
           apps/desktop/tests/cua-driver-swift-archive-normalizer.test.mjs
 
       - name: Build and attest candidate A

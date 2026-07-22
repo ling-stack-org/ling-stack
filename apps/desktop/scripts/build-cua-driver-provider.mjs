@@ -26,6 +26,10 @@ import {
 } from "./cua-driver-source-build-toolchain.mjs";
 import { probeCuaDriverProvider, sha256Text } from "./probe-cua-driver-provider.mjs";
 import { normalizeCuaDriverSwiftArchives } from "./cua-driver-swift-archive-normalizer.mjs";
+import {
+  inspectCuaDriverMachOIdentity,
+  normalizeCuaDriverMachOIdentity,
+} from "./cua-driver-macho-identity-normalizer.mjs";
 
 const args = parseArgs(process.argv.slice(2));
 const resourceRoot = resolve(args["resource-root"] || PROVIDER_RESOURCE_ROOT);
@@ -140,6 +144,7 @@ const buildTarget = platform === "darwin" ? [
   "x86_64-apple-darwin",
 ] : ["x86_64-pc-windows-msvc"];
 const swiftArchiveNormalization = [];
+const machOIdentityNormalization = [];
 for (const target of buildTarget) {
   const binaries = platform === "win32-x64"
     ? ["cua-driver", "cua-driver-uia"]
@@ -187,6 +192,41 @@ for (const target of buildTarget) {
         ],
         cargoEnvironment,
       );
+      const binaryPath = join(targetDirectory, target, "release", binary);
+      const identityPin = lock.toolchain.darwin.postLinkIdentityNormalization;
+      const normalizedIdentity = normalizeCuaDriverMachOIdentity(
+        await readFile(binaryPath),
+      );
+      await writeFile(binaryPath, normalizedIdentity.bytes);
+      await run(
+        identityPin.codesignPath,
+        [
+          "--force",
+          "--sign",
+          "-",
+          "--timestamp=none",
+          "--identifier",
+          identityPin.adHocIdentifier,
+          binaryPath,
+        ],
+        cargoEnvironment,
+      );
+      await run(
+        identityPin.codesignPath,
+        ["--verify", "--strict", binaryPath],
+        cargoEnvironment,
+      );
+      const signedIdentity = inspectCuaDriverMachOIdentity(await readFile(binaryPath));
+      if (signedIdentity.uuid !== normalizedIdentity.uuid || !signedIdentity.codeSignature) {
+        throw new Error(`post-link Mach-O identity verification failed for ${target}`);
+      }
+      machOIdentityNormalization.push(Object.freeze({
+        target,
+        adHocIdentifier: identityPin.adHocIdentifier,
+        sourceSha256: normalizedIdentity.sourceSha256,
+        uuid: normalizedIdentity.uuid,
+        sha256: await sha256File(binaryPath),
+      }));
     } else {
       await run(
         "cargo",
@@ -383,6 +423,13 @@ const attestation = {
     },
     cargoTests: { status: "passed", packages: testPackages },
     cargoMetadataSha256: sha256Text(JSON.stringify(cargoMetadata)),
+    machOIdentityNormalization: platform === "darwin" ? {
+      status: "passed",
+      algorithm: lock.toolchain.darwin.postLinkIdentityNormalization.algorithm,
+      binaries: machOIdentityNormalization,
+    } : {
+      status: "not_applicable",
+    },
     swiftArchiveNormalization: platform === "darwin" ? {
       status: "passed",
       section: "__LLVM,__swift_modhash",

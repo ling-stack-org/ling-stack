@@ -63,6 +63,11 @@
       "macOSSDKVersion": "26.5",
       "deploymentTarget": "13.0",
       "targets": ["aarch64-apple-darwin", "x86_64-apple-darwin"],
+      "postLinkIdentityNormalization": {
+        "algorithm": "sha256-zeroed-lc-uuid-and-code-signature-v1",
+        "adHocIdentifier": "ling-cua-driver-presign",
+        "codesignPath": "/usr/bin/codesign"
+      },
       "swiftArchiveNormalization": {
         "section": "__LLVM,__swift_modhash",
         "dwarfSegment": "__DWARF",

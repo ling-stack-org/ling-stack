@@ -30,6 +30,8 @@ export async function verifyToolchain(platform, lock) {
     const sdkPath = await runText("xcrun", ["--sdk", "macosx", "--show-sdk-path"], { env });
     const clangPath = await runText("xcrun", ["--sdk", "macosx", "--find", "clang"], { env });
     const lipoPath = await runText("xcrun", ["--find", "lipo"], { env });
+    const codesignPath = pin.postLinkIdentityNormalization.codesignPath;
+    assert((await stat(codesignPath)).isFile(), `codesign tool not found: ${codesignPath}`);
     return {
       env: { DEVELOPER_DIR: developerDir },
       evidence: {
@@ -39,6 +41,7 @@ export async function verifyToolchain(platform, lock) {
         developerDir,
         sdkPath,
         clangPath,
+        codesignPath,
         lipoPath,
       },
     };

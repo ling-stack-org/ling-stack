@@ -453,7 +453,7 @@ function verifySourceBuildInputs(value) {
   assert(value.patchSet.implementationStatus === "runtime_integrated", "source-build patch status changed");
   assertSha(value.patchSet.sha256, "source-build patch digest");
   assertExactKeys(value.toolchain, ["cargoVersion", "darwin", "rustToolchainFile", "rustcVersion", "win32X64"], "source-build toolchain");
-  assertExactKeys(value.toolchain.darwin, ["deploymentTarget", "developerDir", "macOSSDKVersion", "runner", "swiftArchiveNormalization", "targets", "xcodeBuildVersion", "xcodeVersion"], "darwin toolchain");
+  assertExactKeys(value.toolchain.darwin, ["deploymentTarget", "developerDir", "macOSSDKVersion", "postLinkIdentityNormalization", "runner", "swiftArchiveNormalization", "targets", "xcodeBuildVersion", "xcodeVersion"], "darwin toolchain");
   assertExactKeys(value.toolchain.win32X64, ["msvcToolsetVersion", "runner", "target", "visualStudioVersion", "windowsSdkVersion"], "Windows toolchain");
   assert(value.toolchain.rustcVersion === "1.97.1" && value.toolchain.cargoVersion === "1.97.1", "Rust toolchain version changed");
   assert(value.toolchain.darwin.runner === "ling-cua-driver-macos-arm64-v1", "darwin runner changed");
@@ -471,6 +471,11 @@ function verifySourceBuildInputs(value) {
       { archive: "libscreencapturekit.rlib", machoMembers: 21, normalizedSections: 10, normalizedDwarfSections: 100 },
     ],
   }, "darwin Swift archive normalization");
+  assertDeepEqual(value.toolchain.darwin.postLinkIdentityNormalization, {
+    algorithm: "sha256-zeroed-lc-uuid-and-code-signature-v1",
+    adHocIdentifier: "ling-cua-driver-presign",
+    codesignPath: "/usr/bin/codesign",
+  }, "darwin post-link identity normalization");
   assert(value.toolchain.win32X64.runner === "ling-cua-driver-windows-x64-v1", "Windows runner changed");
   assert(value.toolchain.win32X64.visualStudioVersion === "17.14.37502.11", "Visual Studio pin changed");
   assert(value.toolchain.win32X64.msvcToolsetVersion === "14.44.35211", "MSVC toolset pin changed");
