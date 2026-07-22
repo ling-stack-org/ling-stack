@@ -60,6 +60,7 @@ const execFile = promisify(execFileCallback);
 const BUILD_SCRIPT = new URL("../scripts/build-cua-driver-provider.mjs", import.meta.url).pathname;
 const VERIFY_SCRIPT = new URL("../scripts/verify-cua-driver-source-build.mjs", import.meta.url).pathname;
 const DESKTOP_ARTIFACTS_WORKFLOW = new URL("../../../.github/workflows/desktop-artifacts.yml", import.meta.url).pathname;
+const SELF_HOSTED_NATIVE_WORKFLOW = new URL("../../../.github/workflows/cua-driver-self-hosted-native.yml", import.meta.url).pathname;
 
 test("provider lock is the exact V2 contract and remains fail-closed", async () => {
   const lock = JSON.parse(await readFile(join(PROVIDER_RESOURCE_ROOT, "provider-lock.json"), "utf8"));
@@ -187,6 +188,55 @@ test("source-build workflow actions use immutable full commit SHAs", async () =>
     assert.match(job, /candidate-a[^\n]+a\/output/u);
     assert.match(job, /candidate-b[^\n]+b\/output/u);
   }
+});
+
+test("self-hosted native workflow is manual, identity-bound, and uses only dedicated runner labels", async () => {
+  const workflow = await readFile(SELF_HOSTED_NATIVE_WORKFLOW, "utf8");
+  assert.match(workflow, /^  workflow_call:/mu);
+  assert.match(workflow, /^  workflow_dispatch:/mu);
+  assert.doesNotMatch(workflow, /^  (?:pull_request|push):/mu);
+  assert.match(workflow, /expected_commit:[\s\S]+Full 40-character commit SHA/u);
+  assert.match(workflow, /runs-on:\n      - ling-cua-driver-macos-arm64-v1/u);
+  assert.match(workflow, /runs-on:\n      - ling-cua-driver-windows-x64-v1/u);
+  assert.doesNotMatch(workflow, /runs-on:\s+(?:macos-|windows-|ubuntu-)/u);
+  assert.doesNotMatch(workflow, /\b(?:pull_request_target|schedule)\b/u);
+  assert.match(workflow, /persist-credentials: false/u);
+  assert.match(workflow, /retention-days: 1/u);
+  assert.match(workflow, /GITHUB_TRIGGERING_ACTOR/u);
+  assert.match(workflow, /verify-cua-driver-self-hosted-runner\.mjs --platform darwin/u);
+  assert.match(workflow, /verify-cua-driver-self-hosted-runner\.mjs --platform win32-x64/u);
+  assert.match(workflow, /actions\/upload-artifact@[0-9a-f]{40}/u);
+  assert.match(workflow, /actions\/download-artifact@[0-9a-f]{40}/u);
+  for (const action of workflow.matchAll(/^\s+uses:\s+([^\s]+)$/gmu)) {
+    assert.match(action[1], /^[^@]+@[0-9a-f]{40}$/u);
+  }
+
+  const caller = await readFile(DESKTOP_ARTIFACTS_WORKFLOW, "utf8");
+  assert.match(caller, /execution_mode:[\s\S]+self-hosted-native/u);
+  assert.match(caller, /uses: \.\/\.github\/workflows\/cua-driver-self-hosted-native\.yml/u);
+  assert.match(caller, /expected_commit: \$\{\{ inputs\.expected_commit \}\}/u);
+  assert.equal(
+    [...caller.matchAll(/if: inputs\.execution_mode != 'self-hosted-native'/gu)].length,
+    7,
+  );
+});
+
+test("reproducible final linker flags never poison executable host build scripts", async () => {
+  const source = await readFile(BUILD_SCRIPT, "utf8");
+  const buildEnvironment = source.slice(
+    source.indexOf("function buildEnv("),
+    source.indexOf("function finalBinaryRustcFlags("),
+  );
+  assert.doesNotMatch(buildEnvironment, /(?:no|random)_uuid|Brepro|target-feature/u);
+  assert.match(buildEnvironment, /RUSTFLAGS: flags\.join/u);
+  const finalFlags = source.slice(source.indexOf("function finalBinaryRustcFlags("));
+  assert.doesNotMatch(finalFlags, /(?:no|random)_uuid/u);
+  assert.match(finalFlags, /link-arg=-Wl,-reproducible/u);
+  assert.match(finalFlags, /link-arg=-Wl,-no_deduplicate/u);
+  assert.match(finalFlags, /link-arg=\/Brepro/u);
+  assert.match(source, /normalizeCuaDriverSwiftArchives/u);
+  assert.match(source, /swiftArchiveNormalization\.finalMetadata/u);
+  assert.match(source, /"rustc",[\s\S]+"--bin",[\s\S]+finalBinaryRustcFlags\(platform\)/u);
 });
 
 test("macOS and Windows artifact jobs run complete core, daemon and Pi runner suites", async () => {
@@ -713,6 +763,17 @@ test("source-build attestation rejects malformed schema before trusting any dige
         rustfmt: { status: "passed", scope: "new-rust-files", paths: [] },
         cargoTests: { status: "passed", packages: [] },
         cargoMetadataSha256: "6".repeat(64),
+        swiftArchiveNormalization: {
+          status: "passed",
+          section: "__LLVM,__swift_modhash",
+          targets: ["aarch64-apple-darwin", "x86_64-apple-darwin"].map((target) => ({
+            target,
+            archives: [
+              { archive: "libapple_cf.rlib", machoMembers: 19, normalizedSections: 13 },
+              { archive: "libscreencapturekit.rlib", machoMembers: 21, normalizedSections: 10 },
+            ],
+          })),
+        },
         referenceArtifact: {},
         binaryIdentity: {},
         versionOutput: "cua-driver 0.8.3",

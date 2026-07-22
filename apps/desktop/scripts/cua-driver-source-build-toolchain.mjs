@@ -18,7 +18,7 @@ export async function verifyToolchain(platform, lock) {
   if (platform === "darwin") {
     assert(process.platform === "darwin", "darwin provider must be built on macOS");
     const pin = lock.toolchain.darwin;
-    const developerDir = `/Applications/Xcode_${pin.xcodeVersion}.app/Contents/Developer`;
+    const developerDir = pin.developerDir;
     const env = { ...process.env, DEVELOPER_DIR: developerDir };
     const xcode = await runText("xcodebuild", ["-version"], { env });
     assert(

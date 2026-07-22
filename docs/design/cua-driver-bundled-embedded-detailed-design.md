@@ -848,6 +848,32 @@ The proposal therefore proves the uploaded bytes survive serialization, download
 separate verifier invocation; it still does not prove that A and B came from independent
 runners, so build-invocation provenance remains a manual review blocker.
 
+When GitHub-hosted minutes are unavailable, the same boundary may execute on two
+repository-scoped self-hosted profiles. The caller must already exist on the default
+branch, accept only manual dispatch, and bind an owner-supplied full commit SHA before any
+checkout. Each native runner has one custom label and no generic default labels; the
+checked-in profile fixes repository, actor, runner name/root/work root, runner binary
+version, OS/architecture and native toolchain. Checkout never persists credentials.
+Run-specific temp roots and one-day artifacts prevent persistent work directories from
+becoming implicit evidence. This changes runner ownership only: upload/download,
+review-only proposal, independent lock anchor, second A/B build and Windows VM sign-off
+remain mandatory.
+
+The macOS final link keeps the default Apple linker `LC_UUID`. Swift 6.3 emits a non-runtime
+16-byte `__LLVM,__swift_modhash` in otherwise identical `apple-cf` and `screencapturekit`
+archive members. Because that input changes clean-build stub ordering, the builder first
+primes each target, verifies the exact two locked archive/member inventories, zeroes only
+those module-hash sections, and forces a final-only relink with fixed Rust metadata and
+Apple ld `-reproducible -no_deduplicate`. The latter disables the linker pass whose
+ordering races on the two upstream `CoreMediaBridge` definitions; it does not disable Rust
+release optimization and does not change the arm64 slice size. Current ld then derives `LC_UUID` from the normalized output
+bytes and emits a valid deterministic arm64 linker ad-hoc signature. `lipo` produces the
+expected unsigned universal pre-sign candidate; product signing is applied only after
+promotion during the packaging/signing stage. `-no_uuid` is forbidden
+because current dyld refuses to execute a binary without `LC_UUID`; `-random_uuid` is
+forbidden because it would defeat the byte-for-byte A/B comparison. Host build scripts
+never receive final-only linker flags or archive normalization.
+
 The generator preserves an already promoted other-platform record byte-for-byte, refuses
 to overwrite the target platform and atomically publishes a fresh proposal directory containing only
 `provider-lock.json` and `source-build-promotion-receipt.json`. The receipt status is

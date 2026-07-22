@@ -25,6 +25,7 @@ import {
   verifyToolchain,
 } from "./cua-driver-source-build-toolchain.mjs";
 import { probeCuaDriverProvider, sha256Text } from "./probe-cua-driver-provider.mjs";
+import { normalizeCuaDriverSwiftArchives } from "./cua-driver-swift-archive-normalizer.mjs";
 
 const args = parseArgs(process.argv.slice(2));
 const resourceRoot = resolve(args["resource-root"] || PROVIDER_RESOURCE_ROOT);
@@ -138,13 +139,15 @@ const buildTarget = platform === "darwin" ? [
   "aarch64-apple-darwin",
   "x86_64-apple-darwin",
 ] : ["x86_64-pc-windows-msvc"];
+const swiftArchiveNormalization = [];
 for (const target of buildTarget) {
-  const packages = platform === "win32-x64" ? ["cua-driver", "cua-driver-uia"] : ["cua-driver"];
-  await run(
-    "cargo",
-    [
+  const binaries = platform === "win32-x64"
+    ? ["cua-driver", "cua-driver-uia"]
+    : ["cua-driver"];
+  for (const binary of binaries) {
+    const cargoArgs = [
       `+${lock.toolchain.rustcVersion}`,
-      "build",
+      "rustc",
       "--locked",
       "--offline",
       "--release",
@@ -152,10 +155,46 @@ for (const target of buildTarget) {
       join(workspace, "Cargo.toml"),
       "--target",
       target,
-      ...packages.flatMap((pkg) => ["-p", pkg]),
-    ],
-    { cwd: workspace, env: { ...buildEnvValue.env, CARGO_BUILD_TARGET: target } },
-  );
+      "-p",
+      binary,
+      "--bin",
+      binary,
+    ];
+    const cargoEnvironment = {
+      cwd: workspace,
+      env: { ...buildEnvValue.env, CARGO_BUILD_TARGET: target },
+    };
+    if (platform === "darwin") {
+      // Prime target-specific Swift dependencies, normalize their non-runtime
+      // module hashes, then force a final-only relink with fixed metadata.
+      await run(
+        "cargo",
+        [...cargoArgs, "--", ...finalBinaryRustcFlags(platform), "-C", "metadata=ling-cua-prime-v1"],
+        cargoEnvironment,
+      );
+      const archives = await normalizeCuaDriverSwiftArchives(
+        join(targetDirectory, target, "release", "deps"),
+      );
+      swiftArchiveNormalization.push(Object.freeze({ target, archives }));
+      await run(
+        "cargo",
+        [
+          ...cargoArgs,
+          "--",
+          ...finalBinaryRustcFlags(platform),
+          "-C",
+          `metadata=${lock.toolchain.darwin.swiftArchiveNormalization.finalMetadata}`,
+        ],
+        cargoEnvironment,
+      );
+    } else {
+      await run(
+        "cargo",
+        [...cargoArgs, "--", ...finalBinaryRustcFlags(platform)],
+        cargoEnvironment,
+      );
+    }
+  }
 }
 
 // The source builder never deletes an output directory. Requiring a fresh path keeps a
@@ -344,6 +383,13 @@ const attestation = {
     },
     cargoTests: { status: "passed", packages: testPackages },
     cargoMetadataSha256: sha256Text(JSON.stringify(cargoMetadata)),
+    swiftArchiveNormalization: platform === "darwin" ? {
+      status: "passed",
+      section: "__LLVM,__swift_modhash",
+      targets: swiftArchiveNormalization,
+    } : {
+      status: "not_applicable",
+    },
     referenceArtifact,
     binaryIdentity: builtBinaryIdentity,
     versionOutput,
@@ -402,11 +448,10 @@ function buildEnv(
   toolchainEnvironment = {},
 ) {
   const remap = `--remap-path-prefix=${sourceRootValue}=/usr/src/cua-driver`;
-  const flags = ["-C", "debuginfo=0", "-C", "strip=symbols", remap];
-  if (platformValue === "darwin") flags.push("-C", "link-arg=-Wl,-no_uuid");
-  if (platformValue === "win32-x64") {
-    flags.push("-C", "target-feature=+crt-static", "-C", "link-arg=/Brepro");
-  }
+  // These flags also compile host build scripts, so they must leave those tools executable.
+  // Darwin's linker emits an LC_UUID derived from output bytes by default. Keep that
+  // default: suppressing the UUID breaks modern dyld, while randomization breaks replay.
+  const flags = ["-C", "debuginfo=0", remap];
   const environment = mergeEnvironment(
     process.env,
     toolchainEnvironment,
@@ -424,6 +469,30 @@ function buildEnv(
       ...(platformValue === "darwin" ? { MACOSX_DEPLOYMENT_TARGET: "13.0" } : {}),
     },
   };
+}
+
+function finalBinaryRustcFlags(platformValue) {
+  if (platformValue === "darwin") {
+    return [
+      "-C",
+      "strip=symbols",
+      "-C",
+      "link-arg=-Wl,-reproducible",
+      "-C",
+      "link-arg=-Wl,-no_deduplicate",
+    ];
+  }
+  if (platformValue === "win32-x64") {
+    return [
+      "-C",
+      "strip=symbols",
+      "-C",
+      "target-feature=+crt-static",
+      "-C",
+      "link-arg=/Brepro",
+    ];
+  }
+  throw new Error(`unsupported platform: ${platformValue}`);
 }
 
 function parseArgs(values) {

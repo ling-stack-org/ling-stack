@@ -245,7 +245,7 @@ function verifyObservedToolchain(platform, evidence, lock) {
       evidence.xcodeVersion !== pin.xcodeVersion
       || evidence.xcodeBuildVersion !== pin.xcodeBuildVersion
       || evidence.macOSSDKVersion !== pin.macOSSDKVersion
-      || evidence.developerDir !== `/Applications/Xcode_${pin.xcodeVersion}.app/Contents/Developer`
+      || evidence.developerDir !== pin.developerDir
     ) {
       fail("observed macOS toolchain does not match the lock");
     }
@@ -293,13 +293,42 @@ export function verifyAttestationShape(attestation) {
     "referenceArtifact",
     "rustfmt",
     "runtimeProbe",
+    "swiftArchiveNormalization",
     "toolchain",
     "versionOutput",
   ], "source-build attestation checks");
   assertExactKeys(attestation.supplyChain, ["noticesSha256", "sbomSha256"], "source-build attestation supply chain");
   assertExactKeys(attestation.checks.cargoTests, ["packages", "status"], "source-build cargo tests");
   assertExactKeys(attestation.checks.rustfmt, ["paths", "scope", "status"], "source-build rustfmt");
+  verifySwiftArchiveNormalization(attestation.platform, attestation.checks.swiftArchiveNormalization);
   return true;
+}
+
+function verifySwiftArchiveNormalization(platform, evidence) {
+  if (platform === "win32-x64") {
+    assertExactKeys(evidence, ["status"], "Swift archive normalization");
+    if (evidence.status !== "not_applicable") fail("Windows Swift archive normalization must be not applicable");
+    return;
+  }
+  assertExactKeys(evidence, ["section", "status", "targets"], "Swift archive normalization");
+  if (evidence.status !== "passed" || evidence.section !== "__LLVM,__swift_modhash") {
+    fail("Swift archive normalization evidence mismatch");
+  }
+  const expectedTargets = ["aarch64-apple-darwin", "x86_64-apple-darwin"];
+  if (!Array.isArray(evidence.targets)
+    || JSON.stringify(evidence.targets.map((entry) => entry?.target)) !== JSON.stringify(expectedTargets)) {
+    fail("Swift archive normalization target inventory mismatch");
+  }
+  const expectedArchives = [
+    { archive: "libapple_cf.rlib", machoMembers: 19, normalizedSections: 13 },
+    { archive: "libscreencapturekit.rlib", machoMembers: 21, normalizedSections: 10 },
+  ];
+  for (const target of evidence.targets) {
+    assertExactKeys(target, ["archives", "target"], "Swift archive normalization target");
+    if (JSON.stringify(target.archives) !== JSON.stringify(expectedArchives)) {
+      fail("Swift archive normalization member evidence mismatch");
+    }
+  }
 }
 
 export function verifyRuntimeProbe(platform, evidence, lock) {

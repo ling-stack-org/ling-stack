@@ -10,9 +10,15 @@ import {
   unlink,
   writeFile,
 } from "node:fs/promises";
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { StringDecoder } from "node:string_decoder";
 import { promisify } from "node:util";
+import {
+  readAtomicPublishDirectoryIdentities,
+  securePrivateStagingDirectory,
+  verifyPrivateStagingDirectorySecurity,
+  withAtomicPublishParentLease,
+} from "./cua-driver-package-atomic-publish.mjs";
 
 const execFile = promisify(execFileCallback);
 
@@ -79,7 +85,7 @@ export async function probeCuaDriverProvider({
   const externalHome = `${stateHome}-external-home`;
   const rootLink = `${stateHome}-root-link`;
   const rootLinkTarget = `${stateHome}-root-link-target`;
-  await mkdir(stateHome, { recursive: true });
+  await prepareManagedProbeStateHome(stateHome);
   await mkdir(join(externalHome, ".cua-driver"), { recursive: true });
   await mkdir(join(externalHome, ".cua-driver-rs"), { recursive: true });
   await writeFile(join(externalHome, ".cua-driver", "sentinel.bin"), "external-cua-driver-state");
@@ -180,6 +186,41 @@ export async function probeCuaDriverProvider({
       sameUserConcurrentReplacementBoundary: "out_of_scope_v1",
     },
   };
+}
+
+/**
+ * Apply the same private root contract required from Desktop before the real
+ * managed provider starts. The native helper supplies 0700/current-euid on
+ * Darwin and a protected current-user ACL plus reparse fencing on Windows.
+ */
+export async function prepareManagedProbeStateHome(stateHome) {
+  const parentRoot = dirname(stateHome);
+  const directoryName = basename(stateHome);
+  await mkdir(parentRoot, { recursive: true, mode: 0o700 });
+  return withAtomicPublishParentLease({ parentRoot }, async (lease) => {
+    await lease.guard(() => mkdir(stateHome, { mode: 0o700 }));
+    lease.assertHeld();
+    const identities = await readAtomicPublishDirectoryIdentities({
+      parentRoot,
+      sourceName: directoryName,
+    }, lease);
+    lease.assertHeld();
+    const secured = await securePrivateStagingDirectory({
+      directoryName,
+      expectedDirectoryIdentity: identities.sourceIdentity,
+      expectedParentIdentity: identities.parentIdentity,
+      parentRoot,
+    }, lease);
+    lease.assertHeld();
+    await verifyPrivateStagingDirectorySecurity({
+      directoryName,
+      expectedDirectoryIdentity: secured.directoryIdentity,
+      expectedParentIdentity: secured.parentIdentity,
+      parentRoot,
+    }, lease);
+    lease.assertHeld();
+    return secured;
+  });
 }
 
 async function runProviderSession({

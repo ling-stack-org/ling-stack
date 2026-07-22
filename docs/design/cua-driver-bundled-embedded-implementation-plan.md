@@ -119,6 +119,14 @@ Current implementation baseline:
   Cross-platform Node/schema tests are green locally; PowerShell parser/runtime and real
   test-signed Windows candidate evidence remain hosted/Windows-owner exit gates.
 
+- A repository-scoped self-hosted native evidence lane is defined for accounts whose
+  GitHub-hosted Actions allowance is exhausted. It is manual-dispatch only, binds the
+  repository owner plus an exact caller-supplied commit, uses one custom runner label per
+  platform with no generic self-hosted labels, and keeps the A/B upload/download promotion
+  boundary. The current Mac profile pins Xcode 26.6 build 17F113 with SDK 26.5; the Windows
+  profile pins the existing VS/MSVC/SDK tuple. This lane changes execution ownership, not
+  the promotion verdict or feature-gate boundary.
+
 Both Darwin and Win32 packaged-provider production gates remain off. This status records
 staged progress only and does not claim `bundled_embedded` runtime completion. The current
 `external_local` path, including `/Applications/CuaDriver.app` when configured, must remain
@@ -952,6 +960,8 @@ Exit criteria for our team:
   grandchild cleanup, PowerShell verifier failures, package allowlist, silent
   install/uninstall, and test-owned Win32 plus installable/removable MSIX/UWP targets;
 - the cell handoff command, matrix finalizer and schemas are versioned and reproducible;
+- macOS clean builds normalize only the locked Swift bridge `__swift_modhash` sections,
+  then relink with fixed final metadata and Apple ld reproducible/no-dedup mode before A/B compare;
 - no report can promote itself from local evidence to release PASS;
 - test-signed success is capped at `INTERNAL_TEST_PASS` and the production workflow rejects
   any test root, mismatched channel or reused test-signed bytes;

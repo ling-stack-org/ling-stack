@@ -4,6 +4,11 @@
 “真实平台发布证据”分开，避免把 fake source、unsigned 包或 provider 下载校验误报为
 跨平台完成。
 
+GitHub-hosted native minutes 不可用时，使用
+[Cua Driver Self-Hosted Native Runners](./cua-driver-self-hosted-runners.md) 中的仓库专用、
+手工 dispatch 路径。self-hosted 路径保留相同的 lock、A/B 对比、artifact round trip 和
+review-only promotion 边界，不是 release-readiness 绕过。
+
 Windows provider、签名、安装范围和回滚决策见
 [Desktop Windows 发布决策记录](./desktop-windows-release-decisions.md)。
 
