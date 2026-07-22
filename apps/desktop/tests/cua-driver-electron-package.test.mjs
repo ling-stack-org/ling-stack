@@ -322,6 +322,61 @@ test("package CLI rejects a second Builder config and cleans staging after Build
   }
 });
 
+test("package CLI preserves both Builder and staging cleanup failures", async () => {
+  const sourceRoot = await mkdtemp(join(tmpdir(), "ling-cua-cli-double-failure-source-"));
+  let stagedContainer;
+  try {
+    await assert.rejects(
+      runCuaDriverElectronPackageCli(
+        ["--platform", "win32-x64", "--", "--win", "dir", "--x64"],
+        {
+          LING_CUA_DRIVER_PACKAGE_PROVIDER: "1",
+          LING_CUA_DRIVER_SOURCE_BUILD_ROOT: sourceRoot,
+          LING_CUA_SIGNING_TIER: "unsigned_dev",
+        },
+        {
+          async stageProvider(input) {
+            const providerRoot = join(
+              input.outputRoot,
+              "providers",
+              "cua-driver",
+              "0.8.3-ling.1",
+            );
+            await mkdir(join(providerRoot, "win32-x64", "payload"), { recursive: true });
+            await writeFile(
+              join(providerRoot, "win32-x64", "payload", "cua-driver.exe"),
+              "fixture",
+            );
+            return { providerRoot, providerSha256: "e".repeat(64), stageIdentity: "1:1" };
+          },
+          async cleanupPublishedStage() {
+            throw new Error("fixture_cleanup_failed");
+          },
+          async runBuilder(input) {
+            stagedContainer = dirname(
+              dirname(dirname(input.environment.LING_CUA_PACKAGE_RESOURCES_ROOT)),
+            );
+            return 7;
+          },
+        },
+      ),
+      (error) => {
+        assert.ok(error instanceof AggregateError);
+        assert.equal(error.message, "electron_builder_and_package_cleanup_failed");
+        assert.deepEqual(error.errors.map((entry) => entry.message), [
+          "electron_builder_failed:7",
+          "fixture_cleanup_failed",
+        ]);
+        return true;
+      },
+    );
+    await access(stagedContainer);
+  } finally {
+    if (stagedContainer) await rm(stagedContainer, { recursive: true, force: true });
+    await rm(sourceRoot, { recursive: true, force: true });
+  }
+});
+
 test("package CLI rejects every Builder project/config escape before staging", async () => {
   for (const argument of [
     "--config.afterPack=null",
