@@ -224,6 +224,16 @@ test("self-hosted native workflow is manual, identity-bound, and uses only dedic
   assert.match(workflow, /LING_CUA_PROMOTION_ROOT=\$env:RUNNER_TEMP\\/u);
   assert.match(workflow, /verify-cua-driver-self-hosted-runner\.mjs --platform darwin/u);
   assert.match(workflow, /verify-cua-driver-self-hosted-runner\.mjs --platform win32-x64/u);
+  assert.match(
+    workflow,
+    /Run production macOS package wrapper with both architectures[\s\S]+run-cua-driver-signing-builder-fixture\.mjs[\s\S]+LING_CUA_BUILD_ROOT\/a\/output/u,
+  );
+  assert.match(
+    workflow,
+    /Run production Windows package wrapper[\s\S]+run-cua-driver-signing-builder-fixture\.mjs --source-root/u,
+  );
+  assert.match(workflow, /cua-driver-self-hosted-electron-builder-macos-/u);
+  assert.match(workflow, /cua-driver-self-hosted-electron-builder-windows-/u);
   assert.match(workflow, /actions\/upload-artifact@[0-9a-f]{40}/u);
   assert.match(workflow, /actions\/download-artifact@[0-9a-f]{40}/u);
   for (const action of workflow.matchAll(/^\s+uses:\s+([^\s]+)$/gmu)) {

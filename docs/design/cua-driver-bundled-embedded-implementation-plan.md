@@ -125,7 +125,10 @@ Current implementation baseline:
   platform with no generic self-hosted labels, and keeps the A/B upload/download promotion
   boundary. The current Mac profile pins Xcode 26.6 build 17F113 with SDK 26.5; the Windows
   profile pins the existing VS/MSVC/SDK tuple. This lane changes execution ownership, not
-  the promotion verdict or feature-gate boundary. macOS runs interactively in the logged-in
+  the promotion verdict or feature-gate boundary. Each native source-build job also runs
+  the production Desktop package wrapper against verified candidate A and uploads its
+  final-artifact/signing trace with one-day retention. macOS covers arm64+x64 DMG+ZIP;
+  Windows covers the x64 app, uninstaller and NSIS roles. macOS runs interactively in the logged-in
   Aqua session and rejects GitHub LaunchAgent service mode before source acquisition;
   Windows retains the reviewed service mode.
 

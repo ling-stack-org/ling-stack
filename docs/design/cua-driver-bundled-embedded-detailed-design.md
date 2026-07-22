@@ -871,7 +871,12 @@ The macOS profile additionally requires an interactive logged-in Aqua launch and
 part of the native evidence contract because the upstream macOS cursor integration tests
 need graphic-session access and otherwise wait forever in their headless overlay path.
 Run-specific temp roots and one-day artifacts prevent persistent work directories from
-becoming implicit evidence. This changes runner ownership only: upload/download,
+becoming implicit evidence. Before upload, each native source-build job also installs the
+locked Desktop dependencies and invokes the same production `package:mac` or `package:win`
+wrapper used by the hosted lane against candidate A. The macOS call covers arm64 and x64,
+DMG and ZIP in one invocation; Windows covers x64 NSIS and requires the exact outer app,
+uninstaller and NSIS roles. Its hook trace is uploaded with one-day retention. This changes
+runner ownership only: upload/download,
 review-only proposal, independent lock anchor, second A/B build and Windows VM sign-off
 remain mandatory.
 
