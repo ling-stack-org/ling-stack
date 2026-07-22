@@ -20,10 +20,10 @@ or a commit that differs from `expected_commit`.
 
 The reviewed identities live in `.github/cua-driver-self-hosted-runners.json`.
 
-| Platform | Runner name and only custom label | Runner root | Locked native tools |
-| --- | --- | --- | --- |
-| macOS ARM64 | `ling-cua-driver-macos-arm64-v1` | `/Users/tianxiao/.github-actions/ling-cua-driver-macos-arm64-v1` | actions/runner 2.336.0, Xcode 26.6 build 17F113, macOS SDK 26.5, Rust 1.97.1, arm64 + x86_64 targets |
-| Windows x64 | `ling-cua-driver-windows-x64-v1` | `C:\actions-runner` | actions/runner 2.336.0, VS 17.14.37502.11, MSVC 14.44.35211, Windows SDK 10.0.26100.0, Rust 1.97.1 |
+| Platform | Runner name and only custom label | Runner root | Launch mode | Locked native tools |
+| --- | --- | --- | --- | --- |
+| macOS ARM64 | `ling-cua-driver-macos-arm64-v1` | `/Users/tianxiao/.github-actions/ling-cua-driver-macos-arm64-v1` | interactive Aqua login session | actions/runner 2.336.0, Xcode 26.6 build 17F113, macOS SDK 26.5, Rust 1.97.1, arm64 + x86_64 targets |
+| Windows x64 | `ling-cua-driver-windows-x64-v1` | `C:\actions-runner` | Windows service | actions/runner 2.336.0, VS 17.14.37502.11, MSVC 14.44.35211, Windows SDK 10.0.26100.0, Rust 1.97.1 |
 
 Both runners use `--no-default-labels`. A generic `self-hosted`, `macOS`, `Windows`,
 `ARM64`, or `X64` job therefore cannot select them. They are repository-scoped and must
@@ -35,8 +35,11 @@ release, or sooner for a critical runner security update.
 
 ## macOS registration
 
-The current Mac runner is installed as the user LaunchAgent
-`actions.runner.tianxiaochannel-oss88-ling-stack.ling-cua-driver-macos-arm64-v1`.
+The current Mac runner is registered at the reviewed root. It must execute native evidence
+from a logged-in Aqua terminal with `./run.sh`; `svc.sh start` is forbidden for this lane.
+The GitHub LaunchAgent sets `ACTIONS_RUNNER_SVC=1` and its job descendants do not retain
+the graphic-session capability needed by the upstream cursor integration tests. The
+checked-in verifier rejects that mode before source acquisition or compilation.
 The official `actions-runner-osx-arm64-2.336.0.tar.gz` digest is:
 
 ```text
@@ -47,12 +50,17 @@ The source-build workflow uses `/Applications/Xcode.app/Contents/Developer` and 
 the exact Xcode build and SDK before acquiring or compiling provider source. Do not use a
 symlinked developer directory or silently fall back to Command Line Tools.
 
-Useful local service checks:
+Start the reviewed interactive runner immediately before dispatch:
 
 ```bash
 cd ~/.github-actions/ling-cua-driver-macos-arm64-v1
-./svc.sh status
+./svc.sh stop
+./run.sh
 ```
+
+Keep that terminal and the logged-in Aqua session alive until the build and promotion jobs
+finish. Stop the interactive runner with `Ctrl-C`; do not restart the LaunchAgent for native
+evidence.
 
 ## Windows registration handoff
 

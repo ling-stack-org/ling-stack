@@ -854,6 +854,10 @@ branch, accept only manual dispatch, and bind an owner-supplied full commit SHA 
 checkout. Each native runner has one custom label and no generic default labels; the
 checked-in profile fixes repository, actor, runner name/root/work root, runner binary
 version, OS/architecture and native toolchain. Checkout never persists credentials.
+The macOS profile additionally requires an interactive logged-in Aqua launch and rejects
+`ACTIONS_RUNNER_SVC=1`; the Windows profile requires the reviewed service launch. This is
+part of the native evidence contract because the upstream macOS cursor integration tests
+need graphic-session access and otherwise wait forever in their headless overlay path.
 Run-specific temp roots and one-day artifacts prevent persistent work directories from
 becoming implicit evidence. This changes runner ownership only: upload/download,
 review-only proposal, independent lock anchor, second A/B build and Windows VM sign-off

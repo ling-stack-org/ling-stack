@@ -33,6 +33,7 @@ export async function loadSelfHostedRunnerProfiles(path = PROFILE_PATH) {
   for (const [platform, profile] of Object.entries(value.profiles)) {
     assertExactKeys(profile, [
       "label",
+      "launchMode",
       "runnerArch",
       "runnerName",
       "runnerOS",
@@ -40,6 +41,10 @@ export async function loadSelfHostedRunnerProfiles(path = PROFILE_PATH) {
       "workRoot",
     ], `${platform} runner profile`);
     assert(profile.label === profile.runnerName, `${platform} runner label must equal its name`);
+    assert(
+      profile.launchMode === (platform === "darwin" ? "interactive-aqua" : "service"),
+      `${platform} runner launch mode changed`,
+    );
     assert(profile.runnerName === `ling-cua-driver-${platform === "darwin" ? "macos-arm64" : "windows-x64"}-v1`, `${platform} runner identity changed`);
     assert(isAbsoluteForPlatform(profile.runnerRoot, platform), `${platform} runner root must be absolute`);
     assert(isAbsoluteForPlatform(profile.workRoot, platform), `${platform} runner work root must be absolute`);
@@ -71,6 +76,11 @@ export async function verifySelfHostedRunnerEnvironment({
   assert(env.RUNNER_NAME === profile.runnerName, "runner name mismatch");
   assert(env.RUNNER_OS === profile.runnerOS, "runner OS mismatch");
   assert(env.RUNNER_ARCH === profile.runnerArch, "runner architecture mismatch");
+  if (profile.launchMode === "interactive-aqua") {
+    assert(env.ACTIONS_RUNNER_SVC !== "1", "macOS native evidence runner cannot use service mode");
+  } else {
+    assert(env.ACTIONS_RUNNER_SVC === "1", "Windows native evidence runner must use service mode");
+  }
   assert(isAbsoluteForPlatform(env.RUNNER_TEMP, platform), "RUNNER_TEMP must be absolute");
   assert(isAbsoluteForPlatform(env.GITHUB_WORKSPACE, platform), "GITHUB_WORKSPACE must be absolute");
   assert(isPathInside(env.RUNNER_TEMP, profile.workRoot, platform), "RUNNER_TEMP escapes the locked work root");
