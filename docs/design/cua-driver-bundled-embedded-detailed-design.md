@@ -770,6 +770,14 @@ spikes before the release pipeline relies on it. The implementation contract is:
    its provider bytes, seal and platform identity/catalog are identical to the verified
    unpacked tuple.
 
+The CI spike enters through the production `package:mac` / `package:win` wrapper with one
+verified source-build output. It must not call `electron-builder` directly. The macOS spike
+packages arm64 and x64 together; the Windows trace must prove the exact outer role set of
+app, uninstaller and NSIS. At `afterSign` and final-artifact reopen, provider, seal, lock,
+catalog, capabilities and runtime-policy paths are re-`lstat`ed, canonically contained,
+single-linked regular files. Test signer identities must also report the exact selected
+`ephemeral-ci` or `managed-internal` authority kind.
+
 Hosted macOS and Windows CI use disposable test identities to exercise the identical hook
 code. Dedicated internal QA may use a managed internal test authority on isolated machines;
 neither trust root is distributed by Ling or retained on general-purpose images. Release

@@ -125,11 +125,94 @@ test("secure-private and identity-bound empty cleanup failures are aggregated", 
       },
     ));
     assert.ok(error instanceof AggregateError);
-    assert.equal(error.message, "final_artifact_cleanup_initialization_and_cleanup_failed");
-    assert.deepEqual(error.errors.map((entry) => entry.message), [
+    assert.equal(error.message, "final_artifact_cleanup_initialization_and_recovery_failed");
+    assert.ok(error.errors[0] instanceof AggregateError);
+    assert.equal(error.errors[0].message, "final_artifact_cleanup_initialization_and_cleanup_failed");
+    assert.deepEqual(error.errors[0].errors.map((entry) => entry.message), [
       "secure_failed",
       "empty_cleanup_failed",
     ]);
+    assert.equal(error.errors[1].message, "empty_cleanup_failed");
+    assert.equal(error.cleanup.residuePath, extractionRoot);
+    assert.match(error.cleanup.residueIdentity, /^\d+:\d+$/u);
+    assert.equal((await lstat(extractionRoot)).isDirectory(), true);
+  } finally {
+    if (extractionRoot) await rm(extractionRoot, { recursive: true, force: true });
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+for (const failureKind of ["lease", "identity"]) {
+  test(`${failureKind} initialization failure retries identity-bound empty cleanup`, async () => {
+    const root = await mkdtemp(join(tmpdir(), `ling-cua-extractor-${failureKind}-init-`));
+    let extractionRoot;
+    let leaseCalls = 0;
+    let identityCalls = 0;
+    try {
+      const artifactPath = join(root, "Ling Stack.zip");
+      await writeFile(artifactPath, "zip");
+      const dependencies = atomicCleanupDependencies({
+        async withLease(input, operation, invokeDefault) {
+          leaseCalls += 1;
+          if (failureKind === "lease" && leaseCalls === 1) throw new Error("lease_init_failed");
+          return invokeDefault(input, operation);
+        },
+        async readIdentities(input, lease, invokeDefault) {
+          identityCalls += 1;
+          if (failureKind === "identity" && identityCalls === 1) {
+            throw new Error("identity_init_failed");
+          }
+          return invokeDefault(input, lease);
+        },
+      });
+      await assert.rejects(
+        extractCuaDriverFinalArtifact(
+          artifactPath,
+          { platform: "darwin", artifactRole: "outer-zip" },
+          {
+            ...dependencies,
+            async mkdtemp(prefix) {
+              extractionRoot = await mkdtemp(prefix);
+              return extractionRoot;
+            },
+            async runCommand() { assert.fail("extraction must not start"); },
+          },
+        ),
+        new RegExp(`${failureKind}_init_failed`, "u"),
+      );
+      await assert.rejects(lstat(extractionRoot), { code: "ENOENT" });
+    } finally {
+      if (extractionRoot) await rm(extractionRoot, { recursive: true, force: true });
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+}
+
+test("persistent cleanup initialization failure returns an identity-bound residue receipt", async () => {
+  const root = await mkdtemp(join(tmpdir(), "ling-cua-extractor-init-receipt-"));
+  let extractionRoot;
+  try {
+    const artifactPath = join(root, "Ling Stack.zip");
+    await writeFile(artifactPath, "zip");
+    const error = await captureRejection(() => extractCuaDriverFinalArtifact(
+      artifactPath,
+      { platform: "darwin", artifactRole: "outer-zip" },
+      {
+        ...atomicCleanupDependencies({
+          async withLease() { throw new Error("lease_unavailable"); },
+        }),
+        async mkdtemp(prefix) {
+          extractionRoot = await mkdtemp(prefix);
+          return extractionRoot;
+        },
+        async runCommand() { assert.fail("extraction must not start"); },
+      },
+    ));
+    assert.ok(error instanceof AggregateError);
+    assert.equal(error.message, "final_artifact_cleanup_initialization_and_recovery_failed");
+    assert.equal(error.cleanup.outcome, "residue");
+    assert.equal(error.cleanup.residuePath, extractionRoot);
+    assert.match(error.cleanup.residueIdentity, /^\d+:\d+$/u);
     assert.equal((await lstat(extractionRoot)).isDirectory(), true);
   } finally {
     if (extractionRoot) await rm(extractionRoot, { recursive: true, force: true });
@@ -448,17 +531,30 @@ function atomicCleanupDependencies(overrides = {}) {
   }
 
   return {
-    async withAtomicPublishParentLease({ parentRoot }, operation) {
-      const parent = await lstat(parentRoot, { bigint: true });
-      const lease = {
-        parentIdentity: `${String(parent.dev)}:${String(parent.ino)}`,
-        assertHeld() {},
-        guard(callback) { return callback(); },
+    async withAtomicPublishParentLease(input, operation) {
+      const invokeDefault = async ({ parentRoot }, defaultOperation) => {
+        const parent = await lstat(parentRoot, { bigint: true });
+        const lease = {
+          parentIdentity: `${String(parent.dev)}:${String(parent.ino)}`,
+          assertHeld() {},
+          guard(callback) { return callback(); },
+        };
+        return defaultOperation(lease);
       };
-      return operation(lease);
+      if (overrides.withLease) {
+        return overrides.withLease(input, operation, invokeDefault);
+      }
+      return invokeDefault(input, operation);
     },
-    async readAtomicPublishDirectoryIdentities(input) {
-      return identities(input.parentRoot, input.sourceName);
+    async readAtomicPublishDirectoryIdentities(input, lease) {
+      const invokeDefault = async (defaultInput) => identities(
+        defaultInput.parentRoot,
+        defaultInput.sourceName,
+      );
+      if (overrides.readIdentities) {
+        return overrides.readIdentities(input, lease, invokeDefault);
+      }
+      return invokeDefault(input, lease);
     },
     async securePrivateStagingDirectory(input, lease) {
       if (overrides.secure) return overrides.secure(input, lease);

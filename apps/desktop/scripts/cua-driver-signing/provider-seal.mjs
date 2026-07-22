@@ -90,6 +90,9 @@ export async function createProviderSeal(input = {}) {
     signingTier: profile.signingTier,
     distributionChannel: profile.distributionChannel,
     productionEligible: profile.productionEligible,
+    ...(profile.signingTier === "test_signed_internal"
+      ? { testAuthorityKind: profile.testAuthorityKind }
+      : {}),
     evidenceKind: signerIdentity?.testOnly ? "disposable-fixture" : "platform-signer",
     identity: buildMacIdentity({ profile, signerIdentity }),
   });
@@ -133,6 +136,7 @@ export async function verifyProviderTuple(input = {}) {
   const lockPath = resolve(input.lockPath);
   const providerRoot = resolve(input.providerRoot);
   const seal = await readProviderSeal(sealPath);
+  verifyProviderSealShape(seal, platform, profile);
   const actualProviderSha256 = await sha256File(providerPath);
   const actualLockSha256 = await sha256File(lockPath);
   if (seal.lockSha256 !== actualLockSha256) {
@@ -141,8 +145,21 @@ export async function verifyProviderTuple(input = {}) {
       `Seal lock digest ${seal.lockSha256} does not match ${actualLockSha256}`,
     );
   }
+  if (profile.signingTier === "test_signed_internal" && seal.evidenceKind === "disposable-fixture") {
+    const fixtureIdentity = readFixtureFileSignature(await readFile(providerPath));
+    if (
+      !fixtureIdentity
+      || fixtureIdentity.authorityKind !== profile.testAuthorityKind
+      || fixtureIdentity.signingTier !== profile.signingTier
+      || fixtureIdentity.distributionChannel !== profile.distributionChannel
+    ) {
+      throw new SigningContractError(
+        "provider_fixture_authority_mismatch",
+        "Provider fixture signature does not match the sealed test authority",
+      );
+    }
+  }
   if (platform === "win32") {
-    verifyWindowsSealShape(seal, profile);
     if (seal.main.sha256 !== actualProviderSha256) {
       throw new SigningContractError(
         "provider_post_seal_mutation",
@@ -170,6 +187,7 @@ export async function verifyProviderTuple(input = {}) {
       const catalog = await verifyFixtureCatalog(input.catalogPath, {
         signingTier: profile.signingTier,
         distributionChannel: profile.distributionChannel,
+        authorityKind: profile.testAuthorityKind,
       });
       const members = catalog.document.members;
       const expectedMembers = [
@@ -287,18 +305,28 @@ function buildMacIdentity({ profile, signerIdentity }) {
   };
 }
 
-function verifyWindowsSealShape(seal, profile) {
+function verifyProviderSealShape(seal, platform, profile) {
   if (
-    seal.schemaVersion !== 2 ||
-    seal.componentId !== "cua-driver-win32-x64" ||
+    seal.schemaVersion !== (platform === "win32" ? 2 : 1) ||
+    seal.componentId !== (platform === "win32" ? "cua-driver-win32-x64" : "cua-driver-darwin") ||
+    seal.platform !== platform ||
     seal.signingTier !== profile.signingTier ||
     seal.distributionChannel !== profile.distributionChannel ||
     seal.productionEligible !== profile.productionEligible
   ) {
-    throw new SigningContractError("provider_seal_profile_mismatch", "Windows seal tier/channel is not current");
+    throw new SigningContractError(
+      "provider_seal_profile_mismatch",
+      `${platform} seal tier/channel is not current`,
+    );
   }
   if (profile.signingTier === "test_signed_internal" && seal.testAuthorityKind !== profile.testAuthorityKind) {
-    throw new SigningContractError("provider_seal_authority_mismatch", "Windows test authority kind changed");
+    throw new SigningContractError("provider_seal_authority_mismatch", `${platform} test authority kind changed`);
+  }
+  if (profile.signingTier !== "test_signed_internal" && seal.testAuthorityKind !== undefined) {
+    throw new SigningContractError(
+      "provider_seal_authority_mismatch",
+      `${platform} non-test seal unexpectedly claims a test authority kind`,
+    );
   }
 }
 

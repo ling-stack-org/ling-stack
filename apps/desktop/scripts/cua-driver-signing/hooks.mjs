@@ -1,4 +1,4 @@
-import { lstat, mkdir, readFile, writeFile } from "node:fs/promises";
+import { lstat, mkdir, readFile, realpath, writeFile } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 
 import { validateCuaDriverPackageAuthority } from "../../shared/cua-driver-package-authority-contract.mjs";
@@ -182,6 +182,7 @@ export async function runAfterPack(context, callOptions = {}) {
         signerSubject: signerIdentity.signerSubject,
         certificateSha256: signerIdentity.certificateSha256,
         signatureScheme: signerIdentity.scheme,
+        authorityKind: signerIdentity.authorityKind,
         testOnly: signerIdentity.testOnly === true,
       });
     }
@@ -244,6 +245,7 @@ export async function runAfterPack(context, callOptions = {}) {
         signerSubject: catalogIdentity.signerSubject,
         certificateSha256: catalogIdentity.certificateSha256,
         signatureScheme: catalogIdentity.scheme,
+        authorityKind: catalogIdentity.authorityKind,
         testOnly: catalogIdentity.testOnly === true,
       });
     }
@@ -589,6 +591,7 @@ export async function runProviderAwareSign(context, callOptions = {}) {
       : []),
   ]);
   if (governed.has(filePath)) {
+    await assertGovernedRegularFile(appOutDir, filePath, "sealed-provider-path");
     const expectedSha256 = governed.get(filePath);
     const actualSha256 = await sha256File(filePath);
     if (actualSha256 !== expectedSha256) {
@@ -621,6 +624,30 @@ export async function runProviderAwareSign(context, callOptions = {}) {
 }
 
 async function verifyStateAtRoot({ state, appOutDir, profile, platform }) {
+  const providerPath = resolve(appOutDir, state.providerRelativePath);
+  const sealPath = resolve(appOutDir, state.sealRelativePath);
+  const catalogPath = state.catalogRelativePath
+    ? resolve(appOutDir, state.catalogRelativePath)
+    : undefined;
+  const lockPath = resolve(appOutDir, state.lockRelativePath);
+  const layout = await resolveProviderLayout({ appOutDir, platform, providerPath });
+  if (!layout) {
+    throw new SigningContractError("provider_not_staged", `Provider missing from ${appOutDir}`);
+  }
+  assertGovernedPathMatches(layout.executablePath, providerPath, "provider");
+  assertGovernedPathMatches(layout.sealPath, sealPath, "provider-seal");
+  assertGovernedPathMatches(layout.providerLockPath, lockPath, "provider-lock");
+  if (catalogPath || layout.catalogPath) {
+    assertGovernedPathMatches(layout.catalogPath, catalogPath, "provider-catalog");
+  }
+  await Promise.all([
+    assertGovernedRegularFile(appOutDir, providerPath, "provider"),
+    assertGovernedRegularFile(appOutDir, sealPath, "provider-seal"),
+    assertGovernedRegularFile(appOutDir, lockPath, "provider-lock"),
+    ...(catalogPath && profile.signingTier !== "unsigned_dev"
+      ? [assertGovernedRegularFile(appOutDir, catalogPath, "provider-catalog")]
+      : []),
+  ]);
   if (state.packageAuthority) {
     await verifyPackageAuthorityAtRoot({
       appOutDir,
@@ -631,16 +658,6 @@ async function verifyStateAtRoot({ state, appOutDir, profile, platform }) {
       capabilitiesPath: resolve(appOutDir, state.capabilitiesRelativePath),
       runtimeTrustPolicyPath: resolve(appOutDir, state.runtimeTrustPolicyRelativePath),
     });
-  }
-  const providerPath = resolve(appOutDir, state.providerRelativePath);
-  const sealPath = resolve(appOutDir, state.sealRelativePath);
-  const catalogPath = state.catalogRelativePath
-    ? resolve(appOutDir, state.catalogRelativePath)
-    : undefined;
-  const lockPath = resolve(appOutDir, state.lockRelativePath);
-  const layout = await resolveProviderLayout({ appOutDir, platform, providerPath });
-  if (!layout) {
-    throw new SigningContractError("provider_not_staged", `Provider missing from ${appOutDir}`);
   }
   const verification = await verifyProviderTuple({
     platform,
@@ -692,6 +709,10 @@ async function verifyPackageAuthorityAtRoot({
       "Package authority document paths are required",
     );
   }
+  await Promise.all([
+    assertGovernedRegularFile(appOutDir, capabilitiesPath, "package-capabilities"),
+    assertGovernedRegularFile(appOutDir, runtimeTrustPolicyPath, "runtime-trust-policy"),
+  ]);
   const [capabilitiesBytes, runtimeTrustPolicyBytes, host] = await Promise.all([
     readFile(capabilitiesPath),
     readFile(runtimeTrustPolicyPath),
@@ -788,6 +809,10 @@ function assertCatalogSignerMatchesAuthority(policy, identity) {
 }
 
 async function assertProviderInputLayout(layout) {
+  await Promise.all([
+    assertGovernedRegularFile(layout.appOutDir, layout.executablePath, "provider"),
+    assertGovernedRegularFile(layout.appOutDir, layout.providerLockPath, "provider-lock"),
+  ]);
   const files = await listProviderPayloadFiles(layout);
   const expected = new Set([resolve(layout.executablePath)]);
   for (const filePath of files) {
@@ -860,6 +885,7 @@ async function delegateOuterSigner({ filePath, platform, profile, stateDirectory
     role: identity.role,
     signingTier: identity.signingTier,
     distributionChannel: identity.distributionChannel,
+    authorityKind: identity.authorityKind,
     signerSubject: identity.signerSubject,
     certificateSha256: identity.certificateSha256,
     digestBefore: identity.beforeSha256,
@@ -880,12 +906,97 @@ function assertSignerMatchesProfile(identity, profile, role) {
       `${role} signer identity does not match ${profile.signingTier} + ${profile.distributionChannel}`,
     );
   }
+  if (
+    profile.signingTier === "test_signed_internal"
+    && identity.authorityKind !== profile.testAuthorityKind
+  ) {
+    throw new SigningContractError(
+      "mixed_signing_authority",
+      `${role} signer authority ${String(identity.authorityKind)} does not match ${String(profile.testAuthorityKind)}`,
+    );
+  }
   if (profile.signingTier === "production_signed" && identity.testOnly === true) {
     throw new SigningContractError(
       "fixture_signer_production_forbidden",
       `${role} attempted to use fixture identity in production`,
     );
   }
+}
+
+function assertGovernedPathMatches(expectedPath, actualPath, role) {
+  if (
+    typeof expectedPath !== "string"
+    || typeof actualPath !== "string"
+    || canonicalPathKey(expectedPath) !== canonicalPathKey(actualPath)
+  ) {
+    throw new SigningContractError(
+      "provider_governed_path_mismatch",
+      `${role} state path does not match the canonical provider layout`,
+    );
+  }
+}
+
+async function assertGovernedRegularFile(rootValue, pathValue, role) {
+  const root = resolve(rootValue);
+  const path = resolve(pathValue);
+  if (!isWithin(path, root)) {
+    throw new SigningContractError(
+      "provider_governed_path_escape",
+      `${role} escapes the packaged application root: ${path}`,
+    );
+  }
+  const chain = [];
+  let cursor = path;
+  while (isWithin(cursor, root)) {
+    chain.push(cursor);
+    if (cursor === root) break;
+    const parent = dirname(cursor);
+    if (parent === cursor) break;
+    cursor = parent;
+  }
+  chain.reverse();
+  for (const entryPath of chain) {
+    let metadata;
+    try {
+      metadata = await lstat(entryPath, { bigint: true });
+    } catch (error) {
+      if (error?.code === "ENOENT") {
+        throw new SigningContractError(
+          "provider_governed_file_missing",
+          `${role} is missing: ${entryPath}`,
+          { cause: error },
+        );
+      }
+      throw error;
+    }
+    const isTarget = entryPath === path;
+    if (
+      metadata.isSymbolicLink()
+      || (isTarget && (!metadata.isFile() || metadata.nlink !== 1n))
+      || (!isTarget && !metadata.isDirectory())
+    ) {
+      throw new SigningContractError(
+        "provider_governed_file_unsafe",
+        `${role} contains a symlink, reparse point, hard link, or non-regular path: ${entryPath}`,
+      );
+    }
+  }
+  const [rootRealPath, fileRealPath] = await Promise.all([realpath(root), realpath(path)]);
+  const expectedRealPath = resolve(rootRealPath, relative(root, path));
+  if (
+    canonicalPathKey(fileRealPath) !== canonicalPathKey(expectedRealPath)
+    || !isWithin(fileRealPath, rootRealPath)
+  ) {
+    throw new SigningContractError(
+      "provider_governed_file_unsafe",
+      `${role} resolves outside the packaged application root: ${path}`,
+    );
+  }
+}
+
+function canonicalPathKey(value) {
+  const normalized = resolve(value);
+  return process.platform === "win32" ? normalized.toLowerCase() : normalized;
 }
 
 function assertStateProfile(state, platform, profile) {
