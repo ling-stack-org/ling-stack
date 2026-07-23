@@ -151,32 +151,27 @@ test("platform owner rejects a policy for the other host before creating an adap
   );
 });
 
-test("packaged platform-owner composition loads the fixed Darwin and Win32 policies", async () => {
-  const root = await mkdtemp(join(tmpdir(), "ling-cua-packaged-owner-"));
-  try {
-    const policyPath = join(root, ...CUA_DRIVER_RUNTIME_TRUST_POLICY_RESOURCE_SEGMENTS);
-    await mkdir(join(policyPath, ".."), { recursive: true });
-    await writeFile(policyPath, `${JSON.stringify({
+test("packaged platform-owner composition accepts only a preverified platform policy", async () => {
+    const darwinPolicy = validateCuaDriverRuntimeTrustPolicy({
       schemaVersion: 1,
       componentId: "cua-driver",
       distributionRevision: "0.8.3-ling.1",
       platform: "darwin",
       expectedTeamId: "ABCDEFGHIJ",
-    })}\n`, "utf8");
+    }, "darwin");
 
     const darwin = await createPackagedCuaDriverDesktopPlatformOwner({
       platform: "darwin",
-      resourcesPath: root,
+      policy: darwinPolicy,
     });
     assert.equal(darwin.platform, "darwin");
     assert.equal(darwin.binding.platform, "darwin");
     await darwin.dispose();
 
-    await writeFile(policyPath, `${JSON.stringify(internalWindowsPolicy())}\n`, "utf8");
     const powerMonitor = monitor();
     const win32 = await createPackagedCuaDriverDesktopPlatformOwner({
       platform: "win32",
-      resourcesPath: root,
+      policy: validateCuaDriverRuntimeTrustPolicy(internalWindowsPolicy(), "win32"),
       win32SystemRoot: "C:\\Windows",
       win32PowerMonitor: powerMonitor,
       baseEnvironment: { PATH: "C:\\fixture" },
@@ -189,16 +184,13 @@ test("packaged platform-owner composition loads the fixed Darwin and Win32 polic
     });
     await win32.start();
     await win32.dispose();
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
 });
 
 test("packaged platform-owner composition rejects unsupported hosts before reading resources", async () => {
   await assert.rejects(
     createPackagedCuaDriverDesktopPlatformOwner({
       platform: "linux",
-      resourcesPath: "/missing/resources",
+      policy: validateCuaDriverRuntimeTrustPolicy(internalWindowsPolicy(), "win32"),
     }),
     (error) => error instanceof CuaDriverDesktopPlatformOwnerError
       && error.ownerCode === "platform_mismatch",

@@ -14,7 +14,10 @@ import {
   CUA_DRIVER_MCP_SERVER_ID,
   CUA_DRIVER_PLUGIN_ID,
 } from "../plugins/presets.js";
-import { isBundledEmbeddedCuaDriverRuntime } from "../plugins/cua-driver-runtime-mode.js";
+import {
+  isBundledEmbeddedCuaDriverRuntime,
+  isBundledEmbeddedCuaDriverSelected,
+} from "../plugins/cua-driver-runtime-mode.js";
 import {
   CUA_DRIVER_REQUIRED_HEALTH_CHECK_NAMES,
   CUA_DRIVER_SUPPORTED_VERSIONS,
@@ -97,6 +100,15 @@ export function resolveManagedCuaDriverProvider(input: {
   const bundledEmbedded = resolveBundledEmbeddedCuaDriverProvider(input);
   if (bundledEmbedded) {
     return bundledEmbedded;
+  }
+  if (
+    input.cuaDriverRuntimeAuthority
+    && isBundledEmbeddedCuaDriverSelected(
+      input.cuaDriverRuntimeAuthority,
+      input.store.paths.cwd,
+    )
+  ) {
+    return undefined;
   }
 
   const descriptor = input.descriptors.find(

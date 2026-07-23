@@ -43,8 +43,19 @@ Current implementation baseline:
 - the Win32 standard adapter now supplies policy-pinned identity, state-root ACL/reparse
   protection, direct-child lifecycle, active-child readiness and Electron recovery hints;
 - opt-in pre-sign package staging and the Darwin/Win32 native no-replace atomic publisher
-  core are implemented without enabling default packaging. Production trust is fixed to
-  the committed lock/resource root and real verifier. Each staging/cleanup session holds a
+  core are implemented. The normal package commands now use a governed wrapper that leaves
+  provider-disabled builds unchanged and, only with explicit package authority plus an
+  absolute verified source-build root, stages one platform, generates runtime policy and
+  capability documents, configures provider-aware signing/sealing/final verification, and
+  cleans the temporary resource root. Per-output/architecture bindings prevent concurrent
+  Electron Builder work from reusing another architecture's signing state. Package intent
+  is stored in packaged `package.json` inside signed `app.asar`; Electron's ASAR-integrity
+  fuse binds it to the host executable. Provider-bearing and external-only packages both
+  enable `asar`, `enableEmbeddedAsarIntegrityValidation` and `onlyLoadAppFromAsar`.
+  Provider-bearing intent remains bundled-authoritative if loose capabilities/policy are
+  absent, malformed or digest-mismatched, so runtime fails closed without consulting
+  `PATH`, Homebrew or `/Applications/CuaDriver.app`. Production trust is fixed to the
+  committed lock/resource root and real verifier. Each staging/cleanup session holds a
   native parent lease while Node runs its ordered workflow. The same holder performs all
   native inspect/security/verification/publish/removal RPCs, and production exposes no
   standalone native mutator. macOS flocks the already-open exact parent-directory vnode;
@@ -62,8 +73,13 @@ Current implementation baseline:
   while its outer verifier and standalone source-build probes use owned Unix process-group
   or Windows Job Object trees; retained failures have bounded, identity-bound native deep-
   delete/rollback cleanup rather than automatic path-recursive deletion;
-- generated trust-policy/package capabilities, final signing, `Ling Stack Setup.exe`
-  inclusion, final product states and evidence/handoff closure remain. The Win32 code and
+- the final artifact fixture uses macOS `--mac dmg zip` with verified roles `outer-dmg` plus
+  `outer-zip`, and Windows `--win nsis` with verified role `outer-nsis`; `.blockmap` sidecars
+  never count as verified artifacts. The macOS run proves generated trust-policy/package
+  capabilities, final-artifact provider membership and post-seal byte stability. The
+  committed lock still enables no platform and contains no native executable, so promoted payloads, release
+  signing, a real provider-bearing `Ling Stack Setup.exe`, final product states and
+  evidence/handoff closure remain. The Win32 code and
   cross-platform tests have landed, but
   successful Windows hosted native-helper compilation, `Global` parent-mutex/private-DACL/
   `WAIT_ABANDONED`, owned-process runtime execution and real-machine validation remain
@@ -710,9 +726,18 @@ Current package-staging sub-slice status:
   deleting any member. Safe rollback
   restores a failed quarantine; ambiguous retryable quarantine receipts remain in the
   residue scan and consume the same quota; mismatches remain;
-- not implemented by this sub-slice: default Electron Builder wiring, final seal/catalog/
-  signing authority, Setup inclusion, migration/rollback activation and production runtime
-  binding;
+- implemented: the normal package commands route through a governed wrapper. With no package
+  authority they retain the existing external-only configuration. Explicit authority plus
+  an absolute verified source-build root invokes production staging, generates one-platform
+  capability/runtime-policy files, copies one private resource root outside `app.asar`, and
+  runs provider-aware signing/seal/final verification. State is isolated per packager output
+  and architecture. The final fixture invokes macOS `--mac dmg zip` and Windows `--win nsis`,
+  requires `outer-dmg` plus `outer-zip` or `outer-nsis` respectively, excludes `.blockmap`
+  sidecars from verified roles, and the macOS run proves the generated documents/provider
+  plus post-seal digest stability in final artifacts;
+- not implemented by this sub-slice: promotion of either platform in the committed lock,
+  real native payload inclusion, release signer authority, a provider-bearing Windows Setup,
+  migration/rollback activation and accepted production runtime binding;
 - not validated: the Win32 implementation has no successful Windows hosted native-helper
   compile, `Global` parent-mutex/private-DACL/`WAIT_ABANDONED`, or owned-process/Job Object
   runtime result in this slice, and Windows real-machine acceptance remains assigned to the
@@ -1236,7 +1261,8 @@ elevated/UWP pixel-input parity.
   host-death/stdio-EOF cleanup and lease publication.
   - Process-wide platform-owner composition, strict runtime trust-policy loading,
     authority reuse/disposal and authenticated non-ready availability publication have
-    landed behind the closed gates; final generated policy/payload packaging remains.
+    landed behind the closed gates. Package-authorized builds now generate and carry the
+    policy/capability files; native payload promotion and accepted packaged runtime remain.
 - [x] **T5 (P1, human: ~3–5 days / Codex: ~1 day)** — Implement daemon pooling and
   `commitCuaDriverActivation()` with two-connection CAS and crash-injection coverage.
   - Activation/store foundations and pool/broker/startup/lease/route/runner/Catalog
@@ -1245,8 +1271,9 @@ elevated/UWP pixel-input parity.
 - [ ] **T6 (P1, human: ~3–5 days / Codex: ~1 day)** — Implement and package the macOS
   adapter/TCC/signing path.
   - The adapter is now selected by the process-wide owner and permission changes rotate
-    only the provider generation; generated Team-ID policy, payload/signing and clean-host
-    acceptance remain.
+    only the provider generation. Package-authorized builds generate the exact Team-ID
+    policy and the macOS Builder fixture closes plumbing/sign-seal stability; promoted native
+    payload, release signing and clean-host acceptance remain.
 - [ ] **T7 (P1, human: ~4–6 days / Codex: ~1–2 days)** — Implement the Windows standard
   adapter, content-free active-child readiness, Job Object lifecycle, structured
   limitations and global-pipe regression.
@@ -1272,10 +1299,13 @@ elevated/UWP pixel-input parity.
     native handle-relative complete-preflight deep deletion with rollback/retryable
     quarantine accounting. Package staging does not
     execute the provider candidate; the outer verifier and standalone source-build version
-    probe use the owned PGID/Job Object runner. It remains outside the default
-    package configuration and does not implement final signing, seals, catalogs,
-    `Ling Stack Setup.exe` inclusion, production runtime wiring or platform-native
-    final-identity verification. The Win32 publisher compile/parent-lease/DACL path and
+    probe use the owned PGID/Job Object runner. The governed package wrapper and generated
+    authority documents are now connected without changing provider-disabled builds;
+    fixture signing/seal/final verification and macOS final-app membership pass. The
+    committed lock still enables no platform, so this does not yet produce real native
+    payloads, release signing/catalog authority, a provider-bearing `Ling Stack Setup.exe`,
+    accepted production runtime wiring or platform-native final-identity evidence. The
+    Win32 publisher compile/parent-lease/DACL path and
     owned-process runtime still have no successful Windows hosted-runner evidence and
     require hosted plus real-machine validation.
 - [ ] **T9 (P2, human: ~2–4 days / Codex: ~4–8 h)** — Update the one-row Plugin Manager

@@ -76,14 +76,18 @@ test("Cua projection eligibility accepts the canonical bundled lease runtime wit
       ...cuaDriverRuntimeAuthority,
       hasCurrentLease: () => false,
     };
-    assert.deepEqual(createManagedPluginRuntimeSnapshot({
-      cwd,
+    const executionCwd = resolve(cwd, "managed-worktree");
+    const pendingSnapshot = createManagedPluginRuntimeSnapshot({
+      cwd: executionCwd,
       runId: "run_embedded_projection_pending",
       store,
       descriptors,
       now,
       cuaDriverRuntimeAuthority: noLeaseAuthority,
-    }).capabilities, []);
+    });
+    assert.equal(pendingSnapshot.cwd, executionCwd);
+    assert.deepEqual(pendingSnapshot.pluginIds, ["bundled:cua-driver"]);
+    assert.deepEqual(pendingSnapshot.capabilities, []);
     assert.equal(resolveManagedCuaDriverProvider({
       store,
       descriptors,
@@ -118,6 +122,83 @@ test("Cua projection eligibility accepts the canonical bundled lease runtime wit
       }),
       undefined,
     );
+  } finally {
+    store.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("selected bundled authority without a lease never falls back to a healthy external provider", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-computer-use-bundled-no-fallback-"));
+  const store = createSqliteRunStore(cwd);
+  const now = "2026-07-21T00:00:00.000Z";
+  try {
+    const { descriptor } = seedManagedCuaProvider(store, { now });
+    const descriptors = listBundledPackageDescriptors();
+
+    assert.equal(resolveManagedCuaDriverProvider({
+      store,
+      descriptors,
+      now,
+      platform: "darwin",
+    })?.descriptor.id, descriptor.id);
+
+    const noLeaseAuthority = {
+      enabled: true,
+      workspaceCwd: cwd,
+      platform: "darwin",
+      hasCurrentLease: () => false,
+    };
+    assert.equal(resolveManagedCuaDriverProvider({
+      store,
+      descriptors,
+      now,
+      platform: "darwin",
+      cuaDriverRuntimeAuthority: noLeaseAuthority,
+    }), undefined);
+    assert.equal(resolveManagedCuaDriverProvider({
+      store,
+      descriptors,
+      now,
+      platform: "win32",
+      cuaDriverRuntimeAuthority: noLeaseAuthority,
+    }), undefined);
+    assert.equal(resolveManagedCuaDriverProvider({
+      store,
+      descriptors,
+      now,
+      platform: "darwin",
+      cuaDriverRuntimeAuthority: { ...noLeaseAuthority, enabled: false },
+    })?.descriptor.id, descriptor.id);
+    assert.equal(resolveManagedCuaDriverProvider({
+      store,
+      descriptors,
+      now,
+      platform: "darwin",
+      cuaDriverRuntimeAuthority: {
+        ...noLeaseAuthority,
+        workspaceCwd: resolve(cwd, "other-workspace"),
+      },
+    })?.descriptor.id, descriptor.id);
+  } finally {
+    store.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("runtime snapshots do not mark disabled bundled descriptors as selected", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-computer-use-unselected-bundled-"));
+  const store = createSqliteRunStore(cwd);
+  try {
+    const snapshot = createManagedPluginRuntimeSnapshot({
+      cwd,
+      runId: "run_unselected_bundled_provider",
+      store,
+      descriptors: listBundledPackageDescriptors(),
+      now: "2026-07-21T00:00:00.000Z",
+    });
+    assert.deepEqual(snapshot.pluginIds, []);
+    assert.deepEqual(snapshot.capabilities, []);
   } finally {
     store.close();
     await rm(cwd, { recursive: true, force: true });

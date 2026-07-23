@@ -1,11 +1,16 @@
-import { lstat, readFile, realpath } from "node:fs/promises";
-import { isAbsolute, join, relative, resolve, sep } from "node:path";
+import { createHash } from "node:crypto";
+import { isAbsolute } from "node:path";
 import type { BundledCuaDriverPlatform } from "@ling-stack/contracts";
 import type {
   Win32CuaDriverSigningPolicy,
   Win32PinnedSignerIdentity,
 } from "./adapters/win32-identity.js";
 import { CUA_DRIVER_DISTRIBUTION_REVISION } from "./resource-path.js";
+import {
+  BoundedResourceFileError,
+  readBoundedContainedResourceFile,
+} from "./bounded-resource-file.js";
+import type { DesktopCuaDriverPackageAuthorityV1 } from "./packaged-authority.js";
 
 export const CUA_DRIVER_RUNTIME_TRUST_POLICY_MAX_BYTES = 64 * 1024;
 export const CUA_DRIVER_RUNTIME_TRUST_POLICY_RESOURCE_SEGMENTS = Object.freeze([
@@ -38,6 +43,7 @@ export type CuaDriverRuntimeTrustPolicyV1 =
   | Win32CuaDriverRuntimeTrustPolicyV1;
 
 export type CuaDriverRuntimeTrustPolicyErrorCode =
+  | "digest_mismatch"
   | "json_invalid"
   | "oversized"
   | "path_escape"
@@ -61,6 +67,7 @@ export class CuaDriverRuntimeTrustPolicyError extends Error {
 export interface LoadCuaDriverRuntimeTrustPolicyOptions {
   readonly resourcesPath: string;
   readonly platform: Exclude<BundledCuaDriverPlatform, "unsupported">;
+  readonly authority: Extract<DesktopCuaDriverPackageAuthorityV1, { readonly providerExpected: true }>;
   readonly maxBytes?: number;
 }
 
@@ -77,64 +84,57 @@ export async function loadCuaDriverRuntimeTrustPolicy(
   if (!isAbsolute(options.resourcesPath)) {
     throw new CuaDriverRuntimeTrustPolicyError("path_invalid", options.resourcesPath);
   }
-  const resourcesPath = resolve(options.resourcesPath);
-  const policyPath = join(resourcesPath, ...CUA_DRIVER_RUNTIME_TRUST_POLICY_RESOURCE_SEGMENTS);
   const maxBytes = boundedMaxBytes(options.maxBytes);
-
-  let metadata;
-  try {
-    metadata = await lstat(policyPath);
-  } catch {
-    throw new CuaDriverRuntimeTrustPolicyError("unavailable", policyPath);
-  }
-  if (!metadata.isFile() || metadata.isSymbolicLink()) {
-    throw new CuaDriverRuntimeTrustPolicyError("path_invalid", policyPath);
-  }
-  if (metadata.size > maxBytes) {
-    throw new CuaDriverRuntimeTrustPolicyError("oversized", policyPath);
-  }
-
-  let policyRealPath: string;
-  let resourcesRealPath: string;
-  try {
-    [policyRealPath, resourcesRealPath] = await Promise.all([
-      realpath(policyPath),
-      realpath(resourcesPath),
-    ]);
-  } catch {
-    throw new CuaDriverRuntimeTrustPolicyError("unavailable", policyPath);
-  }
-  const relativePolicyPath = relative(resourcesRealPath, policyRealPath);
   if (
-    relativePolicyPath === ""
-    || relativePolicyPath === ".."
-    || relativePolicyPath.startsWith(`..${sep}`)
-    || isAbsolute(relativePolicyPath)
+    !options.authority?.providerExpected
+    || options.authority.platform !== options.platform
   ) {
-    throw new CuaDriverRuntimeTrustPolicyError("path_escape", policyPath);
+    throw new CuaDriverRuntimeTrustPolicyError("platform_mismatch", options.resourcesPath);
   }
-
-  let bytes: Buffer;
+  let resource;
   try {
-    bytes = await readFile(policyPath);
-  } catch {
-    throw new CuaDriverRuntimeTrustPolicyError("unavailable", policyPath);
+    resource = await readBoundedContainedResourceFile({
+      resourcesPath: options.resourcesPath,
+      segments: CUA_DRIVER_RUNTIME_TRUST_POLICY_RESOURCE_SEGMENTS,
+      maxBytes,
+    });
+  } catch (error) {
+    if (error instanceof BoundedResourceFileError) {
+      throw new CuaDriverRuntimeTrustPolicyError(
+        mapResourceError(error.resourceCode),
+        error.path,
+      );
+    }
+    throw error;
   }
-  if (bytes.byteLength > maxBytes) {
-    throw new CuaDriverRuntimeTrustPolicyError("oversized", policyPath);
+  if (!resource) {
+    throw new CuaDriverRuntimeTrustPolicyError("unavailable", options.resourcesPath);
+  }
+  if (sha256(resource.bytes) !== options.authority.runtimeTrustPolicySha256) {
+    throw new CuaDriverRuntimeTrustPolicyError("digest_mismatch", resource.path);
   }
 
   let parsed: unknown;
   try {
-    parsed = JSON.parse(bytes.toString("utf8")) as unknown;
+    parsed = JSON.parse(resource.bytes.toString("utf8")) as unknown;
   } catch {
-    throw new CuaDriverRuntimeTrustPolicyError("json_invalid", policyPath);
+    throw new CuaDriverRuntimeTrustPolicyError("json_invalid", resource.path);
   }
   try {
-    return validateCuaDriverRuntimeTrustPolicy(parsed, options.platform);
+    const policy = validateCuaDriverRuntimeTrustPolicy(parsed, options.platform);
+    if (
+      policy.platform === "win32"
+      && (
+        policy.signingPolicy.signingTier !== options.authority.signingTier
+        || policy.signingPolicy.distributionChannel !== options.authority.distributionChannel
+      )
+    ) {
+      throw new CuaDriverRuntimeTrustPolicyError("schema_invalid", resource.path);
+    }
+    return policy;
   } catch (error) {
     if (error instanceof CuaDriverRuntimeTrustPolicyError) {
-      throw new CuaDriverRuntimeTrustPolicyError(error.policyCode, policyPath);
+      throw new CuaDriverRuntimeTrustPolicyError(error.policyCode, resource.path);
     }
     throw error;
   }
@@ -288,4 +288,15 @@ function assertExactKeys(value: Readonly<Record<string, unknown>>, expected: rea
 
 function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function sha256(bytes: Buffer): string {
+  return createHash("sha256").update(bytes).digest("hex");
+}
+
+function mapResourceError(code: BoundedResourceFileError["resourceCode"]): CuaDriverRuntimeTrustPolicyErrorCode {
+  if (code === "oversized" || code === "path_escape" || code === "path_invalid") {
+    return code;
+  }
+  return "unavailable";
 }

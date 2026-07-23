@@ -11,6 +11,7 @@ import {
 } from "electron";
 import {
   parseComputerUsePreviewProjection,
+  type CuaDriverFeatureFlags,
   type ComputerUsePreviewProjection,
 } from "@ling-stack/contracts";
 import { execFile } from "node:child_process";
@@ -23,9 +24,12 @@ import { promisify } from "node:util";
 import { ComputerUsePreviewCoordinator } from "./computer-use/coordinator.js";
 import {
   desktopBundledCuaDriverGateEnabled,
-  resolveDesktopCuaDriverFeatureFlags,
 } from "./cua-driver/feature-gates.js";
 import { createPackagedCuaDriverDesktopPlatformOwner } from "./cua-driver/platform-owner-composition.js";
+import {
+  resolveDesktopCuaDriverPackagedStartupAuthority,
+  type DesktopCuaDriverPackagedStartupAuthority,
+} from "./cua-driver/packaged-startup.js";
 import { DaemonComputerUsePreviewDescriptorResolver } from "./computer-use/daemon-descriptor-resolver.js";
 import { DaemonComputerUseProjectionClient } from "./computer-use/daemon-projection-client.js";
 import {
@@ -67,7 +71,8 @@ import { createMainWindow } from "./window-factory.js";
 import type { DesktopDisplayWorkArea, DesktopRect } from "../shared/desktop-capabilities.js";
 
 const daemonBaseUrl = process.env.LING_STACK_DAEMON_URL ?? "http://127.0.0.1:17891";
-const cuaDriverFeatureFlags = resolveDesktopCuaDriverFeatureFlags();
+let cuaDriverFeatureFlags: CuaDriverFeatureFlags | undefined;
+let cuaDriverPackagedStartupAuthority: DesktopCuaDriverPackagedStartupAuthority | undefined;
 const execFileAsync = promisify(execFile);
 const smokeHeadless = process.argv.includes("--ling-desktop-smoke-headless");
 const performanceHoldMs = (() => {
@@ -282,16 +287,38 @@ async function openMainWindowOnce(attempt: DesktopStartupOpenAttempt): Promise<b
     return false;
   }
   if (!desktopRuntime) {
+    if (!cuaDriverFeatureFlags) {
+      cuaDriverPackagedStartupAuthority = await resolveDesktopCuaDriverPackagedStartupAuthority({
+        packaged: app.isPackaged,
+        appPath: app.getAppPath(),
+        resourcesPath: resources.resourcesRoot,
+        platform: process.platform,
+      });
+      if (cuaDriverPackagedStartupAuthority.failure) {
+        logStartup("cua_driver.packaged_capabilities_unavailable", {
+          error: cuaDriverPackagedStartupAuthority.failure instanceof Error
+            ? cuaDriverPackagedStartupAuthority.failure.message
+            : String(cuaDriverPackagedStartupAuthority.failure),
+          bundledAuthoritative: true,
+        });
+      }
+      cuaDriverFeatureFlags = cuaDriverPackagedStartupAuthority.featureFlags;
+    }
+    const featureFlags = cuaDriverFeatureFlags;
     const gateEnabled = desktopBundledCuaDriverGateEnabled(
-      cuaDriverFeatureFlags,
+      featureFlags,
       process.platform,
     );
     let platformOwner: Awaited<ReturnType<typeof createPackagedCuaDriverDesktopPlatformOwner>> | undefined;
-    if (gateEnabled) {
+    if (
+      gateEnabled
+      && cuaDriverPackagedStartupAuthority?.runtimeEligible === true
+      && cuaDriverPackagedStartupAuthority.policy
+    ) {
       try {
         platformOwner = await createPackagedCuaDriverDesktopPlatformOwner({
           platform: process.platform,
-          resourcesPath: resources.resourcesRoot,
+          policy: cuaDriverPackagedStartupAuthority.policy,
           ...(process.platform === "win32"
             ? {
                 // Capture the main process' Windows platform fact explicitly;
@@ -325,7 +352,7 @@ async function openMainWindowOnce(attempt: DesktopStartupOpenAttempt): Promise<b
           daemonEntryPath: resources.daemonEntryPath,
           defaultWorkspaceCwd,
           desktopBridgeToken: bridgeToken,
-          cuaDriverFeatureFlags,
+          cuaDriverFeatureFlags: featureFlags,
           ...(smokeHeadless && app.runningUnderARM64Translation ? { startupTimeoutMs: 60_000 } : {}),
           onDiagnostic: logStartup,
         }),
@@ -334,7 +361,7 @@ async function openMainWindowOnce(attempt: DesktopStartupOpenAttempt): Promise<b
         workspaceCwd: defaultWorkspaceCwd,
         resourcesRoot: resources.resourcesRoot,
         userDataPath: app.getPath("userData"),
-        featureFlags: cuaDriverFeatureFlags,
+        featureFlags,
         packaged: app.isPackaged,
         ...(platformOwner ? { platformOwner } : {}),
         onDiagnostic: logStartup,
