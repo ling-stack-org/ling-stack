@@ -2188,7 +2188,8 @@ ScopedHandle OpenAbsoluteDirectoryNoReparse(const std::wstring& path,
   }
 
   ScopedHandle current = OpenMetadataHandle(
-      volume_root, FILE_LIST_DIRECTORY | FILE_READ_ATTRIBUTES | SYNCHRONIZE);
+      volume_root,
+      FILE_LIST_DIRECTORY | FILE_TRAVERSE | FILE_READ_ATTRIBUTES | SYNCHRONIZE);
   if (!current.valid()) {
     *error_code = GetLastError();
     return ScopedHandle();
@@ -2221,7 +2222,7 @@ ScopedHandle OpenAbsoluteDirectoryNoReparse(const std::wstring& path,
     DWORD open_error = ERROR_SUCCESS;
     ScopedHandle next(OpenRelativeMetadataHandle(
         current.get(), component,
-        FILE_LIST_DIRECTORY | FILE_READ_ATTRIBUTES | SYNCHRONIZE,
+        FILE_LIST_DIRECTORY | FILE_TRAVERSE | FILE_READ_ATTRIBUTES | SYNCHRONIZE,
         false, &open_error));
     if (!next.valid()) {
       *error_code = open_error;
