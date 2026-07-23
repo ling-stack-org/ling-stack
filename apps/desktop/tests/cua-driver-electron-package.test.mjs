@@ -393,6 +393,13 @@ test("package CLI rejects every Builder project/config escape before staging", a
       /cua_driver_electron_builder_(?:config_override|argument)_forbidden/u,
     );
   }
+  await assert.rejects(
+    runCuaDriverElectronPackageCli(
+      ["--platform", "darwin", "--", "--mac", "dmg", "--x64"],
+      {},
+    ),
+    /cua_driver_electron_builder_argument_forbidden/u,
+  );
 });
 
 test("package CLI requires package authority and source root together", async () => {

@@ -103,7 +103,7 @@ The staged delivery plan is
 | Provider distribution | The Ling-carried platform binaries built from upstream `cua-driver-rs-v0.8.3` plus the locked managed-embedding patch series |
 | Embedded host | The Electron main process inside the tier-appropriate Ling Desktop package |
 | Provider host | Desktop module that owns the platform process group and stdio MCP connection |
-| macOS provider | Universal Mach-O `cua-driver` launched directly in upstream embedded mode |
+| macOS provider | Thin arm64 Mach-O `cua-driver` launched directly in upstream embedded mode |
 | Windows main provider | x64 `cua-driver.exe` launched directly in upstream embedded mode in the Desktop session |
 | Windows UIAccess helper | Future x64 `cua-driver-uia.exe` secure-path artifact; audit-only in V1 and unusable unless signing, installer, ShellExecute, PID, routing and live UIAccess gates pass |
 | Private helper payload | The versioned provider resource carried and installed only by Ling Setup; it is not a second Windows product, service, PATH command, Start-menu app or independently updated component |
@@ -270,18 +270,18 @@ interface DarwinBundledCuaDriverLockV1 {
     readonly cargoVersion: string;
     readonly xcodeBuildVersion: string;
     readonly macOSSDKVersion: string;
-    readonly targets: readonly ["aarch64-apple-darwin", "x86_64-apple-darwin"];
+    readonly targets: readonly ["aarch64-apple-darwin"];
     readonly patchSet: LingManagedEmbeddedPatchSetV1;
-    readonly universalBinarySha256BeforeSigning: string;
+    readonly binarySha256BeforeSigning: string;
   };
   readonly binary: {
-    readonly architectures: readonly ["arm64", "x86_64"];
+    readonly architectures: readonly ["arm64"];
     readonly minimumMacOS: "13.0";
     readonly supportedMacOSCells: readonly [
-      { readonly major: "13"; readonly architectures: readonly ["arm64", "x86_64"] },
-      { readonly major: "14"; readonly architectures: readonly ["arm64", "x86_64"] },
-      { readonly major: "15"; readonly architectures: readonly ["arm64", "x86_64"] },
-      { readonly major: "26"; readonly architectures: readonly ["arm64", "x86_64"] },
+      { readonly major: "13"; readonly architectures: readonly ["arm64"] },
+      { readonly major: "14"; readonly architectures: readonly ["arm64"] },
+      { readonly major: "15"; readonly architectures: readonly ["arm64"] },
+      { readonly major: "26"; readonly architectures: readonly ["arm64"] },
     ];
     readonly expectedUpstreamVersion: "0.8.3";
     readonly lingBuild: 1;
@@ -482,13 +482,13 @@ not wait for macOS output:
    Windows verify zip size, binary hashes, PE32+ x64 headers, manifests and
    unsigned-reference status. Reference binaries are never copied into the Ling package.
 4. Apply the exact `ling-managed-embedded-v1` patch series, then build `cua-driver` for
-   the enabled platform targets: both `aarch64-apple-darwin` and
-   `x86_64-apple-darwin` for macOS, or `x86_64-pc-windows-msvc` for Windows. The Windows
+   the enabled platform target: `aarch64-apple-darwin` for macOS, or
+   `x86_64-pc-windows-msvc` for Windows. The Windows
    workflow also builds `cua-driver-uia` as a CI audit output. The audit output is verified
    against the reference manifest but is not staged into the V1 user package. Use the
    platform's exact locked Rust/Cargo and native SDK toolchain with Cargo locked dependency
    mode.
-5. Combine the macOS slices with `lipo`. Verify every output architecture, deployment or
+5. Copy the thin macOS arm64 executable without a `lipo` merge. Verify the output architecture, deployment or
    subsystem target, PE manifests, upstream `--version`, initialize response, health
    schema, per-platform tool digest, and embedded state-isolation contract.
 6. Copy the exact upstream MIT license from the locked tag and verify its digest.
@@ -595,10 +595,9 @@ interface BundledProviderSealV1 {
   readonly distributionRevision: "ling.1";
   readonly executableRelativePath: "cua-driver";
   readonly executableSha256: string;
-  readonly architectures: readonly ["arm64", "x86_64"];
+  readonly architectures: readonly ["arm64"];
   readonly cdhashes: {
     readonly arm64: string;
-    readonly x86_64: string;
   };
   readonly codeIdentifier: string;
   readonly teamId: string;
@@ -787,7 +786,7 @@ spikes before the release pipeline relies on it. The implementation contract is:
 
 The CI spike enters through the production `package:mac` / `package:win` wrapper with one
 verified source-build output. It must not call `electron-builder` directly. The macOS spike
-packages arm64 and x64 together; the Windows trace must prove the exact outer role set of
+packages the arm64 target only; the Windows trace must prove the exact outer role set of
 app, uninstaller and NSIS. At `afterSign` and final-artifact reopen, provider, seal, lock,
 catalog, capabilities and runtime-policy paths are re-`lstat`ed, canonically contained,
 single-linked regular files. Test signer identities must also report the exact selected
@@ -811,7 +810,7 @@ or pre-sign SHA match cannot make installed loose resources trusted. The V1 thre
 unauthorized resource replacement; it does not claim protection after the same user has
 fully replaced both the Desktop runtime and its verification code.
 For macOS, the designated requirement is stored as normalized UTF-8 text with normalized line
-endings and its digest; CDHashes are collected separately for both universal slices.
+endings and its digest; the CDHash is collected for the arm64 executable.
 
 ## Pre-Sign Package-Staging Security Boundary
 
@@ -877,7 +876,7 @@ Desktop dependency installation, the package wrapper and its trace upload, but s
 A/B evidence for the review-only proposal. After the proposed lock and independent anchor are
 reviewed and committed, the mandatory second A/B run invokes the same production
 `package:mac` or `package:win` wrapper used by the hosted lane against fresh candidate A. The
-macOS call covers arm64 and x64, DMG and ZIP in one invocation; Windows covers x64 NSIS and
+macOS call covers arm64 DMG and ZIP in one invocation; Windows covers x64 NSIS and
 requires the exact outer app, uninstaller and NSIS roles. Its hook trace is uploaded with
 one-day retention. This changes runner ownership only: upload/download,
 review-only proposal, independent lock anchor, second A/B build and Windows VM sign-off
@@ -901,18 +900,16 @@ can still produce two runtime-byte identities across clean invocations even when
 commands and normalized Swift archives are identical. The source-build contract therefore
 pins the reviewed canonical arm64 identity
 `af7a2f9bfabe98704bafca0f2c7f6e2ae4e9f53fe6653d5cd8cea44fc25e103d`
-and permits at most 32 clean root-package relinks; the stable x64 identity
-`6f91a9b5db2aec12dd86a01c98e02ce46da2d8df92090137e916ad5e4a2ba437`
-must match on its first relink. Each rejected candidate is discarded before any write or
+and permits at most 32 clean root-package relinks. Each rejected candidate is discarded before any write or
 codesign operation. Exhaustion fails the source build and therefore cannot upload,
-promote, sign or package a candidate. Changing either identity or attempt bound requires a
+promote, sign or package a candidate. Changing the identity or attempt bound requires a
 reviewed source-input and independent anchor change; A/B byte equality remains mandatory.
 
 After the selector accepts a thin binary, the builder zeroes only the derived `LC_UUID`
 and existing linker-signature region in an in-memory copy, hashes the remaining thin Mach-O
 bytes with SHA-256, writes an RFC 4122 variant/version-3 UUID from that digest, and applies the fixed
 `ling-cua-driver-presign` ad-hoc identity with `/usr/bin/codesign`. The builder immediately
-verifies that signature and UUID before `lipo`; actual runtime bytes remain part of the
+verifies that signature and UUID before copying the thin arm64 output; actual runtime bytes remain part of the
 digest, so instruction or data drift still fails A/B comparison. This ad-hoc identity only
 makes the arm64 pre-sign candidate executable for probes and is replaced by product signing
 after promotion during packaging. `-no_uuid` is forbidden
@@ -1940,10 +1937,10 @@ For the 2026-07-17 internal-alpha baseline, the required GA matrix is:
 
 | macOS major | Architectures | Required status before declaring support |
 | --- | --- | --- |
-| 13 Ventura | arm64 and supported x86_64 hardware | Signed installed-app acceptance |
-| 14 Sonoma | arm64 and supported x86_64 hardware | Signed installed-app acceptance |
-| 15 Sequoia | arm64 and supported x86_64 hardware | Signed installed-app acceptance |
-| 26 Tahoe | arm64 and supported x86_64 hardware | Signed installed-app acceptance |
+| 13 Ventura | arm64 hardware | Signed installed-app acceptance |
+| 14 Sonoma | arm64 hardware | Signed installed-app acceptance |
+| 15 Sequoia | arm64 hardware | Signed installed-app acceptance |
+| 26 Tahoe | arm64 hardware | Signed installed-app acceptance |
 
 Because this matrix claims Ventura support, the outer app must declare
 `LSMinimumSystemVersion=13.0` exactly. The bundled provider must retain
@@ -1970,8 +1967,8 @@ provider report records both full `host.macosVersion` and normalized `host.macos
 the schema constrains the major to its manifest cell, and the finalizer recomputes the
 major from `sw_vers` output before acceptance.
 
-For the initial four-major, two-architecture matrix, denied/prompt/granted/revoked means
-32 distinct TCC reports. Each revoked report is an ordered recovery record for the same
+For the initial four-major, one-architecture matrix, denied/prompt/granted/revoked means
+16 distinct TCC reports. Each revoked report is an ordered recovery record for the same
 cell and candidate: active capture -> manual revoke -> observed capability loss -> manual
 re-grant -> child restart -> health/capture/input recovery. The granted report for each
 cell also binds AX, live capture, AppKit input, Chromium/Electron background input,
@@ -2367,7 +2364,7 @@ stderr, or signature internals. Those details belong in redacted release/support
 - exact `Cargo.lock`, Rust/Cargo, Xcode/macOS SDK, MSVC/Windows SDK versions, patch digest,
   and touched-path allowlist;
 - clean patch-series application and every platform binary SHA before signing;
-- macOS arm64/x86_64 slices plus Windows PE32+ x86_64 main and audit-only UIAccess output;
+- macOS arm64 Mach-O plus Windows PE32+ x86_64 main and audit-only UIAccess output;
 - minimum macOS, Windows product policy, upstream `0.8.3`, and Ling revision `ling.1`;
 - macOS reference signer/runtime/entitlements, Windows unsigned-reference status, and
   final platform signing identities;
@@ -2377,11 +2374,11 @@ stderr, or signature internals. Those details belong in redacted release/support
 
 ### Package
 
-- macOS arm64/x64 and Windows x64 Ling artifacts contain the locked platform provider
+- macOS arm64 and Windows x64 Ling artifacts contain the locked platform provider
   outside `app.asar`;
 - no standalone `CuaDriver.app`, installer, updater script, or PATH shim is packaged;
 - nested helper and outer app pass `codesign --verify --deep --strict`;
-- final helper bytes, per-slice CDHashes, Team ID, designated requirement, hardened
+- final helper bytes, arm64 CDHash, Team ID, designated requirement, hardened
   runtime, and canonical entitlements match `provider-seal.json`;
 - the outer app code-resource seal covers both the final helper and provider seal;
 - DMG and ZIP contents bind to the same provider identity;
@@ -2473,7 +2470,7 @@ stderr, or signature internals. Those details belong in redacted release/support
 - signed installed-app acceptance passes for every declared macOS 13, 14, 15, and 26
   architecture cell;
 - evidence schemas, manifests, and the finalizer key coverage by normalized macOS major
-  plus execution architecture, reject cross-cell report reuse, and require all 32 TCC
+  plus execution architecture, reject cross-cell report reuse, and require all 16 TCC
   case reports for the initial matrix;
 - each cell covers AX, live capture, AppKit and Chromium/Electron background input,
   cursor overlay, restart, and cleanup;

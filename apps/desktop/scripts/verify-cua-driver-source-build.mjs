@@ -11,7 +11,7 @@ import {
 } from "./cua-driver-source-build-lib.mjs";
 import { runOwnedProcess } from "./cua-driver-owned-process.mjs";
 import {
-  inspectUniversalMachO,
+  inspectArm64MachO,
   inspectWindowsPe,
   verifyVersionOutput,
 } from "./cua-driver-binary-identity.mjs";
@@ -329,7 +329,7 @@ function verifyMachOIdentityNormalization(platform, evidence, lock) {
     || evidence.algorithm !== identityPin.algorithm
     || !Array.isArray(evidence.binaries)
     || JSON.stringify(evidence.binaries.map((entry) => entry?.target))
-      !== JSON.stringify(["aarch64-apple-darwin", "x86_64-apple-darwin"])) {
+      !== JSON.stringify(["aarch64-apple-darwin"])) {
     fail("Mach-O identity normalization evidence mismatch");
   }
   for (const binary of evidence.binaries) {
@@ -364,7 +364,7 @@ function verifySwiftArchiveNormalization(platform, evidence) {
     || evidence.dwarfSegment !== "__DWARF") {
     fail("Swift archive normalization evidence mismatch");
   }
-  const expectedTargets = ["aarch64-apple-darwin", "x86_64-apple-darwin"];
+  const expectedTargets = ["aarch64-apple-darwin"];
   if (!Array.isArray(evidence.targets)
     || JSON.stringify(evidence.targets.map((entry) => entry?.target)) !== JSON.stringify(expectedTargets)) {
     fail("Swift archive normalization target inventory mismatch");
@@ -707,14 +707,14 @@ export function createObservedProviderVersionResolverForTest(runVersion) {
 
 function inspectBuiltBinaryIdentity({ binarySnapshots, platform, lock }) {
   if (platform === "darwin") {
-    const identity = inspectUniversalMachO(
+    const identity = inspectArm64MachO(
       binarySnapshots["darwin/cua-driver"].bytes,
       "verified darwin provider",
     );
-    if (!identity.slices.every((slice) => slice.minimumOSVersion === lock.toolchain.darwin.deploymentTarget)) {
+    if (identity.minimumOSVersion !== lock.toolchain.darwin.deploymentTarget) {
       fail("verified darwin provider minimum OS mismatch");
     }
-    if (!identity.slices.every((slice) => slice.sdkVersion === lock.toolchain.darwin.macOSSDKVersion)) {
+    if (identity.sdkVersion !== lock.toolchain.darwin.macOSSDKVersion) {
       fail("verified darwin provider SDK mismatch");
     }
     return { binaries: [{ role: "main", ...identity }] };

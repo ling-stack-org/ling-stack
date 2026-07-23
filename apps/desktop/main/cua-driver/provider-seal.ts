@@ -193,7 +193,7 @@ function assertDarwinSeal(value: Readonly<Record<string, any>>): void {
   if (value.schemaVersion !== 1 || value.componentId !== "cua-driver-darwin" || value.executableRelativePath !== "cua-driver") {
     throw new CuaDriverProviderSealError("provider_seal_darwin_identity_mismatch");
   }
-  if (!isSha256(value.executableSha256) || !Array.isArray(value.architectures) || value.architectures.join(",") !== "arm64,x86_64") {
+  if (!isSha256(value.executableSha256) || !Array.isArray(value.architectures) || value.architectures.join(",") !== "arm64") {
     throw new CuaDriverProviderSealError("provider_seal_darwin_binary_mismatch");
   }
   if (value.hardenedRuntime !== true || !hasText(value.codeIdentifier) || !hasText(value.teamId) || !hasText(value.designatedRequirement)) {

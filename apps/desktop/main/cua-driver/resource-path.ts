@@ -53,7 +53,7 @@ export function resolveCuaDriverResourcePaths(
   if (input.platform === "win32" && input.architecture !== "x86_64") {
     throw new CuaDriverResourcePathError("windows_architecture_unsupported");
   }
-  if (input.platform === "darwin" && input.architecture !== "arm64" && input.architecture !== "x86_64") {
+  if (input.platform === "darwin" && input.architecture !== "arm64") {
     throw new CuaDriverResourcePathError("darwin_architecture_unsupported");
   }
 

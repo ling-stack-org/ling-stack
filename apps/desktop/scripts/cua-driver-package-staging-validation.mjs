@@ -1,5 +1,5 @@
 import {
-  inspectUniversalMachO,
+  inspectArm64MachO,
   inspectWindowsPe,
 } from "./cua-driver-binary-identity.mjs";
 import {
@@ -91,7 +91,7 @@ export function assertSourceBuildReceipt({
 
 export function assertPreSignDigest(platformLock, platform, providerSha256, providerPath) {
   const expected = platform === "darwin"
-    ? platformLock.sourceBuild.universalBinarySha256BeforeSigning
+    ? platformLock.sourceBuild.binarySha256BeforeSigning
     : platformLock.sourceBuild.binariesSha256BeforeSigning.main;
   if (providerSha256 !== expected) {
     fail(
@@ -110,11 +110,11 @@ export function validateProviderIdentity({
 }) {
   try {
     if (platform === "darwin") {
-      const identity = inspectUniversalMachO(providerBytes, "staged Darwin Cua Driver");
-      if (!identity.slices.every((slice) => slice.minimumOSVersion === "13.0")) {
+      const identity = inspectArm64MachO(providerBytes, "staged Darwin Cua Driver");
+      if (identity.minimumOSVersion !== "13.0") {
         fail(
           "provider_darwin_minimum_os_mismatch",
-          "Darwin provider must target macOS 13.0 for both slices",
+          "Darwin provider must be arm64 and target macOS 13.0",
           providerPath,
         );
       }

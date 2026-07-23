@@ -33,6 +33,7 @@ import {
   verifyManagedStatePermissions,
 } from "../scripts/probe-cua-driver-provider.mjs";
 import {
+  inspectArm64MachO,
   inspectUniversalMachO,
   verifyPinnedBytes,
   verifyVersionOutput,
@@ -69,6 +70,7 @@ const VERIFY_SCRIPT = new URL("../scripts/verify-cua-driver-source-build.mjs", i
 const DESKTOP_ARTIFACTS_WORKFLOW = new URL("../../../.github/workflows/desktop-artifacts.yml", import.meta.url).pathname;
 const SELF_HOSTED_NATIVE_WORKFLOW = new URL("../../../.github/workflows/cua-driver-self-hosted-native.yml", import.meta.url).pathname;
 const DARWIN_REPRODUCIBILITY_DIAGNOSTIC = new URL("../scripts/diagnose-cua-driver-darwin-reproducibility.mjs", import.meta.url).pathname;
+const SIGNING_BUILDER_FIXTURE = new URL("run-cua-driver-signing-builder-fixture.mjs", import.meta.url).pathname;
 
 test("provider lock is the exact V2 contract and remains fail-closed", async () => {
   const lock = JSON.parse(await readFile(join(PROVIDER_RESOURCE_ROOT, "provider-lock.json"), "utf8"));
@@ -168,7 +170,10 @@ test("package authorization follows only the independently anchored committed lo
 });
 
 test("source-build workflow actions use immutable full commit SHAs", async () => {
-  const workflow = await readFile(DESKTOP_ARTIFACTS_WORKFLOW, "utf8");
+  const [workflow, signingBuilderFixture] = await Promise.all([
+    readFile(DESKTOP_ARTIFACTS_WORKFLOW, "utf8"),
+    readFile(SIGNING_BUILDER_FIXTURE, "utf8"),
+  ]);
   const sourceJobs = workflow.slice(
     workflow.indexOf("  cua-driver-source-build-macos:"),
     workflow.indexOf("  macos-unsigned:"),
@@ -195,7 +200,7 @@ test("source-build workflow actions use immutable full commit SHAs", async () =>
   assert.doesNotMatch(windowsBuildJob, /promote-cua-driver-source-build\.mjs/u);
   assert.match(
     macosPromotionJob,
-    /needs: cua-driver-source-build-macos[\s\S]+actions\/download-artifact@[0-9a-f]{40}[\s\S]+name: cua-driver-source-build-macos-universal/u,
+    /needs: cua-driver-source-build-macos[\s\S]+actions\/download-artifact@[0-9a-f]{40}[\s\S]+name: cua-driver-source-build-macos-arm64/u,
   );
   assert.match(
     windowsPromotionJob,
@@ -209,12 +214,12 @@ test("source-build workflow actions use immutable full commit SHAs", async () =>
     windowsPromotionJob,
     /promote-cua-driver-source-build\.mjs --platform win32-x64 --candidate-a[\s\S]+--candidate-b[\s\S]+--output-dir/u,
   );
-  assert.match(sourceJobs, /name: cua-driver-source-build-promotion-macos-universal/u);
+  assert.match(sourceJobs, /name: cua-driver-source-build-promotion-macos-arm64/u);
   assert.match(sourceJobs, /name: cua-driver-source-build-promotion-windows-x64/u);
-  assert.match(sourceJobs, /name: cua-driver-source-build-macos-universal/u);
+  assert.match(sourceJobs, /name: cua-driver-source-build-macos-arm64/u);
   assert.match(sourceJobs, /name: cua-driver-source-build-windows-x64/u);
   for (const artifactName of [
-    "cua-driver-source-build-promotion-macos-universal",
+    "cua-driver-source-build-promotion-macos-arm64",
     "cua-driver-source-build-promotion-windows-x64",
   ]) {
     const start = sourceJobs.indexOf(`          name: ${artifactName}`);
@@ -227,7 +232,7 @@ test("source-build workflow actions use immutable full commit SHAs", async () =>
     assert.doesNotMatch(upload, /path:\s*\|/u);
   }
   for (const [job, artifactName] of [
-    [macosPromotionJob, "cua-driver-source-build-macos-universal"],
+    [macosPromotionJob, "cua-driver-source-build-macos-arm64"],
     [windowsPromotionJob, "cua-driver-source-build-windows-x64"],
   ]) {
     assert.match(job, new RegExp(
@@ -239,7 +244,7 @@ test("source-build workflow actions use immutable full commit SHAs", async () =>
   }
   assert.match(
     macosBuildJob,
-    /Resolve committed macOS package authorization[\s\S]+id: package-authorization[\s\S]+--platform darwin[\s\S]+Run production macOS package wrapper with both architectures\n\s+if: steps\.package-authorization\.outputs\.authorized == 'true'[\s\S]+run-cua-driver-signing-builder-fixture\.mjs[\s\S]+a\/output/u,
+    /Resolve committed macOS package authorization[\s\S]+id: package-authorization[\s\S]+--platform darwin[\s\S]+Run production macOS arm64 package wrapper\n\s+if: steps\.package-authorization\.outputs\.authorized == 'true'[\s\S]+run-cua-driver-signing-builder-fixture\.mjs[\s\S]+a\/output/u,
   );
   assert.match(
     windowsBuildJob,
@@ -249,8 +254,27 @@ test("source-build workflow actions use immutable full commit SHAs", async () =>
     new URL("../package.json", import.meta.url),
     "utf8",
   ));
-  assert.match(desktopPackage.scripts["package:mac"], /--mac dmg zip --arm64 --x64/u);
+  assert.match(desktopPackage.scripts["package:mac"], /--mac dmg zip --arm64/u);
+  assert.doesNotMatch(desktopPackage.scripts["package:mac"], /--x64/u);
+  assert.equal(desktopPackage.build.mac.artifactName, "Ling-Stack-${version}-macos-${arch}.${ext}");
+  assert.equal(desktopPackage.build.win.artifactName, "Ling-Stack-${version}-windows-${arch}-setup.${ext}");
   assert.match(desktopPackage.scripts["package:win"], /--win nsis --x64/u);
+  assert.equal(desktopPackage.dependencies?.["electron-updater"], undefined);
+  assert.equal(desktopPackage.devDependencies?.["electron-updater"], undefined);
+  assert.equal(desktopPackage.build.publish, undefined);
+  assert.match(signingBuilderFixture, /const expectedCopies = 1;/u);
+  assert.doesNotMatch(signingBuilderFixture, /platform === "darwin" \? 2 : 1/u);
+
+  const checksumJob = workflow.slice(workflow.indexOf("  desktop-checksums:"));
+  assert.match(checksumJob, /needs:\n\s+- macos-unsigned\n\s+- windows-unsigned/u);
+  assert.match(checksumJob, /Ling-Stack-\*-macos-arm64\.dmg/u);
+  assert.match(checksumJob, /Ling-Stack-\*-windows-x64-setup\.exe/u);
+  assert.match(checksumJob, /test "\$\{#installers\[@\]\}" -eq 2/u);
+  assert.match(checksumJob, /sha256sum --check checksums\.txt/u);
+  assert.match(checksumJob, /path: output\/checksums\.txt/u);
+  for (const action of checksumJob.matchAll(/^\s+uses:\s+([^\s]+)$/gmu)) {
+    assert.match(action[1], /^[^@]+@[0-9a-f]{40}$/u);
+  }
 });
 
 test("self-hosted macOS A/B failures emit bounded reproducibility diagnostics", async () => {
@@ -260,7 +284,7 @@ test("self-hosted macOS A/B failures emit bounded reproducibility diagnostics", 
   ]);
   assert.match(
     workflow,
-    /- name: Compare repeated universal pre-sign outputs\n\s+id: repeat-build-compare[\s\S]+- name: Diagnose macOS repeated-build mismatch\n\s+if: failure\(\) && steps\.repeat-build-compare\.outcome == 'failure'/u,
+    /- name: Compare repeated arm64 pre-sign outputs\n\s+id: repeat-build-compare[\s\S]+- name: Diagnose macOS repeated-build mismatch\n\s+if: failure\(\) && steps\.repeat-build-compare\.outcome == 'failure'/u,
   );
   assert.match(workflow, /diagnose-cua-driver-darwin-reproducibility\.mjs/u);
   assert.match(diagnostic, /MAX_BINARY_BYTES = 128 \* 1024 \* 1024/u);
@@ -298,7 +322,7 @@ test("self-hosted native workflow is manual, identity-bound, and uses only dedic
   assert.match(workflow, /verify-cua-driver-self-hosted-runner\.mjs --platform win32-x64/u);
   assert.match(
     macosBuildJob,
-    /Resolve committed macOS package authorization[\s\S]+id: package-authorization[\s\S]+--platform darwin[\s\S]+Run production macOS package wrapper with both architectures\n\s+if: steps\.package-authorization\.outputs\.authorized == 'true'[\s\S]+run-cua-driver-signing-builder-fixture\.mjs[\s\S]+LING_CUA_BUILD_ROOT\/a\/output/u,
+    /Resolve committed macOS package authorization[\s\S]+id: package-authorization[\s\S]+--platform darwin[\s\S]+Run production macOS arm64 package wrapper\n\s+if: steps\.package-authorization\.outputs\.authorized == 'true'[\s\S]+run-cua-driver-signing-builder-fixture\.mjs[\s\S]+LING_CUA_BUILD_ROOT\/a\/output/u,
   );
   assert.match(
     windowsBuildJob,
@@ -319,7 +343,7 @@ test("self-hosted native workflow is manual, identity-bound, and uses only dedic
   assert.match(caller, /expected_commit: \$\{\{ inputs\.expected_commit \}\}/u);
   assert.equal(
     [...caller.matchAll(/if: github\.event_name == 'workflow_dispatch' && inputs\.execution_mode == 'github-hosted'/gu)].length,
-    7,
+    8,
   );
   assert.equal(
     [...caller.matchAll(/if: github\.event_name == 'workflow_dispatch' && inputs\.execution_mode == 'self-hosted-native'/gu)].length,
@@ -827,6 +851,17 @@ test("reference and built binary identity pins fail closed", async () => {
   wrongArchitecture.writeUInt32BE(0x01000012, 8);
   wrongArchitecture.writeUInt32LE(0x01000012, 48 + 4);
   assert.throws(() => inspectUniversalMachO(wrongArchitecture), /must contain exactly arm64 and x86_64/);
+
+  assert.deepEqual(
+    inspectArm64MachO(makeArm64MachO({ minimumOSVersion: [13, 0, 0], sdkVersion: [26, 5, 0] })),
+    {
+      format: "Mach-O 64-bit",
+      architecture: "arm64",
+      minimumOSVersion: "13.0",
+      sdkVersion: "26.5",
+    },
+  );
+  assert.throws(() => inspectArm64MachO(macho), /Mach-O 64-bit/u);
 });
 
 test("repeated-build digest verifier catches a changed artifact", async () => {
@@ -934,7 +969,7 @@ test("source-build attestation rejects malformed schema before trusting any dige
         machOIdentityNormalization: {
           status: "passed",
           algorithm: "sha256-zeroed-lc-uuid-and-code-signature-v1",
-          binaries: ["aarch64-apple-darwin", "x86_64-apple-darwin"].map((target) => ({
+          binaries: ["aarch64-apple-darwin"].map((target) => ({
             target,
             adHocIdentifier: "ling-cua-driver-presign",
             relinkAttempts: 1,
@@ -948,7 +983,7 @@ test("source-build attestation rejects malformed schema before trusting any dige
           status: "passed",
           section: "__LLVM,__swift_modhash",
           dwarfSegment: "__DWARF",
-          targets: ["aarch64-apple-darwin", "x86_64-apple-darwin"].map((target) => ({
+          targets: ["aarch64-apple-darwin"].map((target) => ({
             target,
             archives: [
               { archive: "libapple_cf.rlib", machoMembers: 19, normalizedSections: 13, normalizedDwarfSections: 130 },
@@ -975,7 +1010,7 @@ test("source-build attestation rejects malformed schema before trusting any dige
       () => verifyAttestationShape(badUuid, lock),
       /Mach-O identity normalization binary evidence mismatch/u,
     );
-    for (const index of [0, 1]) {
+    for (const index of [0]) {
       const nonCanonical = structuredClone(shaped);
       nonCanonical.checks.machOIdentityNormalization.binaries[index].sourceSha256 = "b".repeat(64);
       assert.throws(
@@ -989,12 +1024,6 @@ test("source-build attestation rejects malformed schema before trusting any dige
         .targets["aarch64-apple-darwin"].maxAttempts + 1;
     assert.throws(
       () => verifyAttestationShape(excessiveAttempts, lock),
-      /Mach-O identity normalization binary evidence mismatch/u,
-    );
-    const excessiveX64Attempts = structuredClone(shaped);
-    excessiveX64Attempts.checks.machOIdentityNormalization.binaries[1].relinkAttempts = 2;
-    assert.throws(
-      () => verifyAttestationShape(excessiveX64Attempts, lock),
       /Mach-O identity normalization binary evidence mismatch/u,
     );
     assert.throws(
@@ -1705,6 +1734,21 @@ function makeUniversalMachO({ minimumOSVersion, sdkVersion }) {
     buffer.writeUInt32LE(packAppleVersion(minimumOSVersion), offset + 44);
     buffer.writeUInt32LE(packAppleVersion(sdkVersion), offset + 48);
   }
+  return buffer;
+}
+
+function makeArm64MachO({ minimumOSVersion, sdkVersion }) {
+  const buffer = Buffer.alloc(56);
+  buffer.writeUInt32LE(0xfeedfacf, 0);
+  buffer.writeUInt32LE(0x0100000c, 4);
+  buffer.writeUInt32LE(0x2, 12);
+  buffer.writeUInt32LE(1, 16);
+  buffer.writeUInt32LE(24, 20);
+  buffer.writeUInt32LE(0x32, 32);
+  buffer.writeUInt32LE(24, 36);
+  buffer.writeUInt32LE(1, 40);
+  buffer.writeUInt32LE(packAppleVersion(minimumOSVersion), 44);
+  buffer.writeUInt32LE(packAppleVersion(sdkVersion), 48);
   return buffer;
 }
 

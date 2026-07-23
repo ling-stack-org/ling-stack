@@ -460,7 +460,7 @@ function verifySourceBuildInputs(value) {
   assert(value.toolchain.darwin.developerDir === "/Applications/Xcode.app/Contents/Developer", "Xcode developer directory changed");
   assert(value.toolchain.darwin.xcodeVersion === "26.6" && value.toolchain.darwin.xcodeBuildVersion === "17F113", "Xcode pin changed");
   assert(value.toolchain.darwin.macOSSDKVersion === "26.5" && value.toolchain.darwin.deploymentTarget === "13.0", "macOS SDK pin changed");
-  assertDeepEqual(value.toolchain.darwin.targets, ["aarch64-apple-darwin", "x86_64-apple-darwin"], "darwin Rust targets");
+  assertDeepEqual(value.toolchain.darwin.targets, ["aarch64-apple-darwin"], "darwin Rust targets");
   assertDeepEqual(value.toolchain.darwin.swiftArchiveNormalization, {
     section: "__LLVM,__swift_modhash",
     dwarfSegment: "__DWARF",
@@ -472,10 +472,6 @@ function verifySourceBuildInputs(value) {
         "aarch64-apple-darwin": {
           expectedSourceSha256: "af7a2f9bfabe98704bafca0f2c7f6e2ae4e9f53fe6653d5cd8cea44fc25e103d",
           maxAttempts: 32,
-        },
-        "x86_64-apple-darwin": {
-          expectedSourceSha256: "6f91a9b5db2aec12dd86a01c98e02ce46da2d8df92090137e916ad5e4a2ba437",
-          maxAttempts: 1,
         },
       },
     },
@@ -497,9 +493,10 @@ function verifySourceBuildInputs(value) {
   assert(value.toolchain.win32X64.target === "x86_64-pc-windows-msvc", "Windows Rust target changed");
   assertDeepEqual(value.sourceBuildPlatforms, ["darwin", "win32-x64"], "source-build platforms");
   assertExactKeys(value.platformOutputs, ["darwin", "win32X64"], "source-build platform outputs");
-  assertExactKeys(value.platformOutputs.darwin, ["architectures", "artifactRelativePath", "status", "universalBinarySha256BeforeSigning"], "darwin platform output");
+  assertExactKeys(value.platformOutputs.darwin, ["architectures", "artifactRelativePath", "binarySha256BeforeSigning", "status"], "darwin platform output");
   assertExactKeys(value.platformOutputs.win32X64, ["architecture", "artifactRelativePath", "auditArtifactRelativePath", "mainSha256BeforeSigning", "status", "uiaAuditSha256BeforeSigning", "uiaPackaged"], "Windows platform output");
-  assert(value.platformOutputs.darwin.universalBinarySha256BeforeSigning === null, "darwin digest must remain unset before native evidence");
+  assertDeepEqual(value.platformOutputs.darwin.architectures, ["arm64"], "darwin platform architectures");
+  assert(value.platformOutputs.darwin.binarySha256BeforeSigning === null, "darwin digest must remain unset before native evidence");
   assert(value.platformOutputs.win32X64.mainSha256BeforeSigning === null, "Windows main digest must remain unset before native evidence");
   assert(value.platformOutputs.win32X64.uiaAuditSha256BeforeSigning === null, "Windows audit digest must remain unset before native evidence");
   assert(value.platformOutputs.win32X64.uiaPackaged === false, "UIAccess helper cannot enter the packaged payload");

@@ -69,10 +69,9 @@ export async function createProviderSeal(input = {}) {
     distributionRevision: DISTRIBUTION_REVISION,
     executableRelativePath: relativeExecutablePath,
     executableSha256,
-    architectures: ["arm64", "x86_64"],
+    architectures: ["arm64"],
     cdhashes: {
       arm64: sha256Bytes(`${executableSha256}:arm64`).slice(0, 40),
-      x86_64: sha256Bytes(`${executableSha256}:x86_64`).slice(0, 40),
     },
     codeIdentifier: "ling-cua-driver-fixture",
     teamId: signerIdentity?.teamId ?? signerIdentity?.signerSubject ?? "NotSigned",

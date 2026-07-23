@@ -28,8 +28,8 @@
       "properties": {
         "submissions": {
           "type": "array",
-          "minItems": 4,
-          "description": "The finalizer requires one distinct Accepted notary log for every arm64/x86_64 DMG and ZIP artifact and rejects duplicate or missing coverage.",
+          "minItems": 2,
+          "description": "The finalizer requires one distinct Accepted notary log for the arm64 DMG and ZIP artifacts and rejects duplicate or missing coverage.",
           "items": {
             "type": "object",
             "additionalProperties": false,
@@ -58,10 +58,9 @@
     "captureIndicator": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["arm64", "x86_64"],
+      "required": ["arm64"],
       "properties": {
-        "arm64": { "$ref": "#/$defs/captureIndicatorEvidence" },
-        "x86_64": { "$ref": "#/$defs/captureIndicatorEvidence" }
+        "arm64": { "$ref": "#/$defs/captureIndicatorEvidence" }
       }
     },
     "voiceOver": {
@@ -80,10 +79,9 @@
     "performance": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["arm64", "x86_64"],
+      "required": ["arm64"],
       "properties": {
-        "arm64": { "$ref": "#/$defs/evidenceReference" },
-        "x86_64": { "$ref": "#/$defs/evidenceReference" }
+        "arm64": { "$ref": "#/$defs/evidenceReference" }
       }
     },
     "review": {
@@ -262,10 +260,9 @@
     "architectureEvidence": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["arm64", "x86_64"],
+      "required": ["arm64"],
       "properties": {
-        "arm64": { "$ref": "#/$defs/evidenceReference" },
-        "x86_64": { "$ref": "#/$defs/evidenceReference" }
+        "arm64": { "$ref": "#/$defs/evidenceReference" }
       }
     },
     "captureIndicatorEvidence": {

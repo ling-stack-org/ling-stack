@@ -30,6 +30,7 @@ const DEFAULT_COMMAND_TIMEOUT_MS = 120_000;
 const DEVELOPER_ID_AUTHORITY_PREFIX = "Developer ID Application:";
 const NOTARIZED_DEVELOPER_ID_SOURCE = "Notarized Developer ID";
 const REQUIRED_ARCHITECTURES = MACOS_RELEASE_ARCHITECTURES;
+const KNOWN_ARCHITECTURES = Object.freeze(["arm64", "x86_64"]);
 const REQUIRED_BUNDLE_ID = LING_DESKTOP_BUNDLE_ID;
 
 export const MACOS_SIGNED_CANDIDATE_LIMITATIONS = Object.freeze({
@@ -37,7 +38,7 @@ export const MACOS_SIGNED_CANDIDATE_LIMITATIONS = Object.freeze({
   captureIndicatorEvidence: false,
   voiceOverEvidence: false,
   statement:
-    "This verifier establishes the arm64/x86_64 app, DMG, and ZIP signing, notarization-ticket, Gatekeeper, archive-integrity, and embedded-app binding evidence only. " +
+    "This verifier establishes the arm64 app, DMG, and ZIP signing, notarization-ticket, Gatekeeper, archive-integrity, and embedded-app binding evidence only. " +
     "It does not inspect or mutate macOS TCC state, observe the operating-system capture indicator, or exercise VoiceOver.",
 });
 
@@ -368,7 +369,7 @@ export async function verifyMacosSignedCandidate(input) {
       signedCandidateEvidence: pass,
       overallReleaseGateClosed: false,
       reason: pass
-        ? "The arm64/x86_64 app, DMG, and ZIP matrix is Developer ID signed, notarized, Gatekeeper accepted, stapled, archive-integrity checked, and content-bound. TCC, capture-indicator, VoiceOver, signed performance, and clean-host review remain separate gates."
+        ? "The arm64 app, DMG, and ZIP matrix is Developer ID signed, notarized, Gatekeeper accepted, stapled, archive-integrity checked, and content-bound. TCC, capture-indicator, VoiceOver, signed performance, and clean-host review remain separate gates."
         : "At least one artifact failed signed-candidate verification.",
     },
   };
@@ -1019,7 +1020,7 @@ function parseArchitectures(output) {
     String(output)
       .trim()
       .split(/\s+/u)
-      .filter((architecture) => REQUIRED_ARCHITECTURES.includes(architecture)),
+      .filter((architecture) => KNOWN_ARCHITECTURES.includes(architecture)),
   ).sort();
 }
 
@@ -1206,7 +1207,7 @@ function usage() {
     "  --team-id ABCDE12345 --bundle-id com.lingstack.desktop \\",
     "  [--app <path>]... [--dmg <path>]... [--zip <path>]... [--output <report.json>]",
     "",
-    "The verifier requires an already signed/notarized arm64+x86_64 app/DMG/ZIP matrix, stores report-relative artifact paths, and never signs, notarizes, or changes TCC state.",
+    "The verifier requires an already signed/notarized arm64 app/DMG/ZIP matrix, stores report-relative artifact paths, and never signs, notarizes, or changes TCC state.",
   ].join("\n");
 }
 

@@ -668,12 +668,10 @@ async function createCandidate(root, platform, options = {}) {
     ? {
         binaries: [{
           role: "main",
-          format: "Mach-O universal",
-          architectures: ["arm64", "x86_64"],
-          slices: [
-            { architecture: "arm64", minimumOSVersion: "13.0", sdkVersion: "26.5" },
-            { architecture: "x86_64", minimumOSVersion: "13.0", sdkVersion: "26.5" },
-          ],
+          format: "Mach-O 64-bit",
+          architecture: "arm64",
+          minimumOSVersion: "13.0",
+          sdkVersion: "26.5",
         }],
       }
     : {

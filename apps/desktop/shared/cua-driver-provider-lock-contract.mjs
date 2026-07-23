@@ -126,8 +126,7 @@ function validatePlatformLock(value, platform, architecture, requireReleaseEvide
     }
     const architectures = value.binary.architectures;
     if (!Array.isArray(architectures)
-      || !architectures.includes("arm64")
-      || !architectures.includes("x86_64")) {
+      || architectures.join(",") !== "arm64") {
       fail("provider_lock_darwin_architectures_missing");
     }
     if (architecture && !architectures.includes(architecture)) {
@@ -178,8 +177,8 @@ function validateDarwinEvidence(value, _requireReleaseEvidence) {
     || !hasText(source.xcodeBuildVersion)
     || !hasText(source.macOSSDKVersion)
     || !Array.isArray(source.targets)
-    || source.targets.join(",") !== "aarch64-apple-darwin,x86_64-apple-darwin"
-    || !isSha256(source.universalBinarySha256BeforeSigning)) {
+    || source.targets.join(",") !== "aarch64-apple-darwin"
+    || !isSha256(source.binarySha256BeforeSigning)) {
     fail("provider_lock_darwin_source_build_invalid");
   }
   validatePatchSet(source.patchSet);

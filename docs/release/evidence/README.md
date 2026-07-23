@@ -45,7 +45,7 @@ reports the platform-builder lane as skipped rather than claiming cross-platform
 - `macos-signed-acceptance.schema.json` is the v2 output contract of
   `apps/desktop/tests/finalize-macos-signed-acceptance.mjs`. The finalizer reads every
   referenced file, recomputes SHA-256, live-reverifies the candidate, validates the full
-  arm64/x86_64 x denied/prompt/granted/revoked matrix, and emits a content-bound review
+  arm64 denied/prompt/granted/revoked matrix, and emits a content-bound review
   bundle. It deliberately remains `MANUAL_REVIEW_REQUIRED`; final PASS requires a separate
   verifier that recomputes the evidence digest and checks a detached signature against a
   release-policy-pinned reviewer key. The schema couples those states: local manual-review

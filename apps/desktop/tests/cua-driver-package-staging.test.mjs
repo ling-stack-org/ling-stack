@@ -204,7 +204,7 @@ test("production staging APIs reject caller-controlled trust before use", async 
 test("source staging rejects digest, architecture, license and extra executable drift", async (t) => {
   const cases = [
     ["digest", async (root) => {
-      await writeFile(join(root, "darwin/cua-driver"), makeUniversalMachO({ sdkVersion: [26, 4, 0] }));
+      await writeFile(join(root, "darwin/cua-driver"), makeArm64MachO({ sdkVersion: [26, 4, 0] }));
     }, /provider_pre_sign_digest_mismatch/u],
     ["architecture", async (root) => {
       const path = join(root, "win32-x64/payload/cua-driver.exe");
@@ -256,7 +256,7 @@ test("source staging rejects a self-consistent lock that differs from committed 
   await createSourceFixture(sourceRoot, "darwin");
   const trust = await createTrustedInputs(root, sourceRoot, "darwin");
 
-  const provider = makeUniversalMachO({
+  const provider = makeArm64MachO({
     minimumOSVersion: [13, 0, 0],
     sdkVersion: [26, 4, 0],
   });
@@ -505,7 +505,7 @@ test("source-build receipt closes mutation between snapshot and staging", async 
   await createSourceFixture(sourceRoot, "darwin");
   const trust = await createTrustedInputs(root, sourceRoot, "darwin", {
     sourceBuildVerifier: async () => {
-      const provider = makeUniversalMachO({
+      const provider = makeArm64MachO({
         minimumOSVersion: [13, 0, 0],
         sdkVersion: [26, 4, 0],
       });
@@ -643,13 +643,12 @@ test("source-build verifier wrapper validates child failures and receipt protoco
   );
 });
 
-test("Darwin staging rejects malformed universal and load-command boundaries", async (t) => {
+test("Darwin staging rejects malformed arm64 Mach-O and load-command boundaries", async (t) => {
   const cases = [
-    ["inner CPU", (bytes) => bytes.writeUInt32LE(0, 48 + 4), /inner CPU type/u],
-    ["file type", (bytes) => bytes.writeUInt32LE(0, 48 + 12), /MH_EXECUTE/u],
-    ["overlap", (bytes) => bytes.writeUInt32BE(48, 28 + 8), /overlapping Mach-O slices/u],
-    ["empty slice", (bytes) => bytes.writeUInt32BE(0, 8 + 12), /empty arm64 slice/u],
-    ["header overlap", (bytes) => bytes.writeUInt32BE(28, 8 + 8), /overlaps the universal header/u],
+    ["CPU", (bytes) => bytes.writeUInt32LE(0, 4), /inner CPU type/u],
+    ["file type", (bytes) => bytes.writeUInt32LE(0, 12), /MH_EXECUTE/u],
+    ["magic", (bytes) => bytes.writeUInt32LE(0, 0), /Mach-O 64-bit/u],
+    ["truncated commands", (bytes) => bytes.writeUInt32LE(0xffff, 20), /load commands are truncated/u],
     ["duplicate build version", duplicateFirstBuildVersion, /duplicate LC_BUILD_VERSION/u],
   ];
   for (const [name, mutate, pattern] of cases) {
@@ -2207,7 +2206,7 @@ async function createSourceFixture(root, platform, options = {}) {
   const license = Buffer.from("MIT fixture license\n");
   const notices = Buffer.from("Fixture dependency notices\n");
   const provider = platform === "darwin"
-    ? makeUniversalMachO({ minimumOSVersion: [13, 0, 0], sdkVersion: [26, 5, 0] })
+    ? makeArm64MachO({ minimumOSVersion: [13, 0, 0], sdkVersion: [26, 5, 0] })
     : makeWindowsPe();
   const providerPath = join(
     root,
@@ -2282,9 +2281,9 @@ function packageLock(platform, provider, licenseSha256) {
           cargoVersion: "1.97.1",
           xcodeBuildVersion: "17F42",
           macOSSDKVersion: "26.5",
-          targets: ["aarch64-apple-darwin", "x86_64-apple-darwin"],
+          targets: ["aarch64-apple-darwin"],
           patchSet,
-          universalBinarySha256BeforeSigning: providerSha256,
+          binarySha256BeforeSigning: providerSha256,
         }
       : {
           cargoLockSha256: "9".repeat(64),
@@ -2301,9 +2300,9 @@ function packageLock(platform, provider, licenseSha256) {
         },
     binary: platform === "darwin"
       ? {
-          architectures: ["arm64", "x86_64"],
+          architectures: ["arm64"],
           minimumMacOS: "13.0",
-          supportedMacOSCells: [{ major: "13", architectures: ["arm64", "x86_64"] }],
+          supportedMacOSCells: [{ major: "13", architectures: ["arm64"] }],
           expectedUpstreamVersion: "0.8.3",
           lingBuild: 1,
           hardenedRuntime: true,
@@ -2409,67 +2408,35 @@ async function rewriteLockDigest(root, platform, digest) {
   const path = join(root, "provider-lock.json");
   const lock = JSON.parse(await readFile(path, "utf8"));
   if (platform === "darwin") {
-    lock.platforms.darwin.sourceBuild.universalBinarySha256BeforeSigning = digest;
+    lock.platforms.darwin.sourceBuild.binarySha256BeforeSigning = digest;
   } else {
     lock.platforms.win32X64.sourceBuild.binariesSha256BeforeSigning.main = digest;
   }
   await writeFile(path, `${JSON.stringify(lock, null, 2)}\n`);
 }
 
-function makeUniversalMachO({ minimumOSVersion = [13, 0, 0], sdkVersion = [26, 5, 0] } = {}) {
-  const sliceSize = 56;
-  const firstOffset = 48;
-  const secondOffset = firstOffset + sliceSize;
-  const buffer = Buffer.alloc(secondOffset + sliceSize);
-  buffer.writeUInt32BE(0xcafebabe, 0);
-  buffer.writeUInt32BE(2, 4);
-  for (const [index, cpuType, offset] of [
-    [0, 0x0100000c, firstOffset],
-    [1, 0x01000007, secondOffset],
-  ]) {
-    const entry = 8 + index * 20;
-    buffer.writeUInt32BE(cpuType, entry);
-    buffer.writeUInt32BE(offset, entry + 8);
-    buffer.writeUInt32BE(sliceSize, entry + 12);
-    buffer.writeUInt32LE(0xfeedfacf, offset);
-    buffer.writeUInt32LE(cpuType, offset + 4);
-    buffer.writeUInt32LE(0x2, offset + 12);
-    buffer.writeUInt32LE(1, offset + 16);
-    buffer.writeUInt32LE(24, offset + 20);
-    buffer.writeUInt32LE(0x32, offset + 32);
-    buffer.writeUInt32LE(24, offset + 36);
-    buffer.writeUInt32LE(1, offset + 40);
-    buffer.writeUInt32LE(packAppleVersion(minimumOSVersion), offset + 44);
-    buffer.writeUInt32LE(packAppleVersion(sdkVersion), offset + 48);
-  }
+function makeArm64MachO({ minimumOSVersion = [13, 0, 0], sdkVersion = [26, 5, 0] } = {}) {
+  const buffer = Buffer.alloc(56);
+  buffer.writeUInt32LE(0xfeedfacf, 0);
+  buffer.writeUInt32LE(0x0100000c, 4);
+  buffer.writeUInt32LE(0x2, 12);
+  buffer.writeUInt32LE(1, 16);
+  buffer.writeUInt32LE(24, 20);
+  buffer.writeUInt32LE(0x32, 32);
+  buffer.writeUInt32LE(24, 36);
+  buffer.writeUInt32LE(1, 40);
+  buffer.writeUInt32LE(packAppleVersion(minimumOSVersion), 44);
+  buffer.writeUInt32LE(packAppleVersion(sdkVersion), 48);
   return buffer;
 }
 
 function duplicateFirstBuildVersion(bytes) {
-  const originalFirstOffset = bytes.readUInt32BE(8 + 8);
-  const originalFirstSize = bytes.readUInt32BE(8 + 12);
-  const originalSecondOffset = bytes.readUInt32BE(28 + 8);
-  const originalSecondSize = bytes.readUInt32BE(28 + 12);
   const commandSize = 24;
-  const expandedSecondOffset = originalSecondOffset + commandSize;
   const expanded = Buffer.alloc(bytes.length + commandSize);
-  bytes.copy(expanded, 0, 0, originalFirstOffset + originalFirstSize);
-  bytes.copy(
-    expanded,
-    expandedSecondOffset,
-    originalSecondOffset,
-    originalSecondOffset + originalSecondSize,
-  );
-  bytes.copy(
-    expanded,
-    originalFirstOffset + originalFirstSize,
-    originalFirstOffset + 32,
-    originalFirstOffset + 32 + commandSize,
-  );
-  expanded.writeUInt32BE(originalFirstSize + commandSize, 8 + 12);
-  expanded.writeUInt32BE(expandedSecondOffset, 28 + 8);
-  expanded.writeUInt32LE(2, originalFirstOffset + 16);
-  expanded.writeUInt32LE(commandSize * 2, originalFirstOffset + 20);
+  bytes.copy(expanded);
+  bytes.copy(expanded, bytes.length, 32, 32 + commandSize);
+  expanded.writeUInt32LE(2, 16);
+  expanded.writeUInt32LE(commandSize * 2, 20);
   return expanded;
 }
 

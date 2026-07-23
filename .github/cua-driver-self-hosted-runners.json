@@ -17,7 +17,7 @@
     "win32-x64": {
       "runnerName": "ling-cua-driver-windows-x64-v1",
       "label": "ling-cua-driver-windows-x64-v1",
-      "launchMode": "service",
+      "launchMode": "interactive-windows",
       "runnerOS": "Windows",
       "runnerArch": "X64",
       "runnerRoot": "C:\\actions-runner",

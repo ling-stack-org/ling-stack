@@ -81,14 +81,14 @@ export function createPlatformRecord({ evidence, platform, sourceInputs }) {
         macOSSDKVersion: sourceInputs.toolchain.darwin.macOSSDKVersion,
         targets: [...sourceInputs.toolchain.darwin.targets],
         patchSet,
-        universalBinarySha256BeforeSigning: mainDigest,
+        binarySha256BeforeSigning: mainDigest,
       },
       binary: {
-        architectures: ["arm64", "x86_64"],
+        architectures: ["arm64"],
         minimumMacOS: sourceInputs.toolchain.darwin.deploymentTarget,
         supportedMacOSCells: DARWIN_CELLS.map((major) => ({
           major,
-          architectures: ["arm64", "x86_64"],
+          architectures: ["arm64"],
         })),
         expectedUpstreamVersion: "0.8.3",
         lingBuild: 1,
@@ -262,18 +262,13 @@ export function fail(code, message) {
 function assertDarwinBinaryIdentity(value, toolchain) {
   const binary = value?.binaries?.find((entry) => entry?.role === "main");
   if (!binary
-    || binary.format !== "Mach-O universal"
-    || canonicalJson(binary.architectures) !== canonicalJson(["arm64", "x86_64"])
-    || !Array.isArray(binary.slices)
-    || binary.slices.length !== 2) {
+    || binary.format !== "Mach-O 64-bit"
+    || binary.architecture !== "arm64") {
     fail("promotion_darwin_binary_identity_invalid", "Darwin binary identity is incomplete");
   }
-  for (const slice of binary.slices) {
-    if (!["arm64", "x86_64"].includes(slice.architecture)
-      || slice.minimumOSVersion !== toolchain.deploymentTarget
-      || slice.sdkVersion !== toolchain.macOSSDKVersion) {
-      fail("promotion_darwin_binary_identity_invalid", "Darwin slice identity does not match the locked toolchain");
-    }
+  if (binary.minimumOSVersion !== toolchain.deploymentTarget
+    || binary.sdkVersion !== toolchain.macOSSDKVersion) {
+    fail("promotion_darwin_binary_identity_invalid", "Darwin binary identity does not match the locked toolchain");
   }
 }
 

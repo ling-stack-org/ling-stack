@@ -126,7 +126,7 @@
   ],
   "$defs": {
     "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
-    "architecture": { "enum": ["arm64", "x86_64"] },
+    "architecture": { "const": "arm64" },
     "releaseHarness": {
       "type": "object",
       "additionalProperties": false,

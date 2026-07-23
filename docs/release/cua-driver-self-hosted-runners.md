@@ -27,8 +27,8 @@ The reviewed identities live in `.github/cua-driver-self-hosted-runners.json`.
 
 | Platform | Runner name and only custom label | Runner root | Launch mode | Locked native tools |
 | --- | --- | --- | --- | --- |
-| macOS ARM64 | `ling-cua-driver-macos-arm64-v1` | `/Users/tianxiao/.github-actions/ling-cua-driver-macos-arm64-v1` | interactive Aqua login session | actions/runner 2.336.0, Xcode 26.6 build 17F113, macOS SDK 26.5, Rust 1.97.1, arm64 + x86_64 targets |
-| Windows x64 | `ling-cua-driver-windows-x64-v1` | `C:\actions-runner` | Windows service | actions/runner 2.336.0, VS 17.14.37502.11, MSVC 14.44.35211, Windows SDK 10.0.26100.0, Rust 1.97.1 |
+| macOS ARM64 | `ling-cua-driver-macos-arm64-v1` | `/Users/tianxiao/.github-actions/ling-cua-driver-macos-arm64-v1` | interactive Aqua login session | actions/runner 2.336.0, Xcode 26.6 build 17F113, macOS SDK 26.5, Rust 1.97.1, arm64 target |
+| Windows x64 | `ling-cua-driver-windows-x64-v1` | `C:\actions-runner` | interactive unlocked Windows login session | actions/runner 2.336.0, VS 17.14.37502.11, MSVC 14.44.35211, Windows SDK 10.0.26100.0, Rust 1.97.1 |
 
 Both runners use `--no-default-labels`. A generic `self-hosted`, `macOS`, `Windows`,
 `ARM64`, or `X64` job therefore cannot select them. They are repository-scoped and must
@@ -69,10 +69,13 @@ evidence.
 
 ## Windows registration handoff
 
-Run these steps on the dedicated Windows x64 machine from an elevated PowerShell prompt.
-Obtain the one-hour registration token from repository **Settings → Actions → Runners →
-New self-hosted runner** immediately before configuration. Never put that token in a
-script, evidence bundle, issue, or chat.
+Run these steps on the dedicated Windows x64 machine. Install native toolchains with
+administrator approval when their installers require it, but configure and launch the
+runner from the standard, non-elevated user in the logged-in unlocked desktop session.
+The provider readiness contract requires the runner and provider to share that medium-
+integrity interactive session. Obtain the one-hour registration token from repository
+**Settings → Actions → Runners → New self-hosted runner** immediately before configuration.
+Never put that token in a script, evidence bundle, issue, or chat.
 
 1. Install the locked Visual Studio, MSVC, Windows SDK and Rust versions shown above.
 2. Download `actions-runner-win-x64-2.336.0.zip` from the official `actions/runner`
@@ -82,7 +85,9 @@ script, evidence bundle, issue, or chat.
    d59123a43003e357b0805b5d0f611d0bd2f65ab67d51bd070dd4e7a0f685c162
    ```
 
-3. Extract to `C:\actions-runner`, then configure using the one-hour token:
+3. Extract to `C:\actions-runner`, then configure using the one-hour token. Do not install
+   it as a Windows service: service mode runs in Session 0 and cannot satisfy the locked
+   same-session, medium-integrity, `default_unlocked` provider readiness proof.
 
    ```powershell
    .\config.cmd --unattended `
@@ -93,12 +98,13 @@ script, evidence bundle, issue, or chat.
      --no-default-labels `
      --work _work `
      --disableupdate
-   .\svc.cmd install
-   .\svc.cmd start
    ```
 
 4. Remove `LING_GITHUB_RUNNER_REGISTRATION_TOKEN` from the process environment and
    confirm GitHub lists exactly one online runner with only the reviewed custom label.
+5. From the logged-in, unlocked desktop session, start `C:\actions-runner\run.cmd` and keep
+   that console and session alive until the source-build and promotion jobs finish. Stop it
+   with `Ctrl-C` after the jobs complete.
 
 The Windows colleague performs this runner provisioning and later real-VM acceptance.
 The workflow, locked build, test signing, Setup construction, verifiers, and handoff remain
@@ -114,7 +120,7 @@ committed lock. On the initial closed-gate run it skips Desktop dependency insta
 the production package wrapper and its trace upload, while still uploading A/B evidence for
 the proposal. After review commits the proposed lock and matching independent anchor, the
 mandatory second A/B run executes the production wrapper against fresh candidate A. macOS
-covers both architectures and DMG+ZIP in one wrapper call; Windows covers the x64 app,
+covers the arm64 DMG+ZIP pair in one wrapper call; Windows covers the x64 app,
 uninstaller and NSIS signing roles. The resulting Electron Builder hook/final-artifact trace
 is uploaded separately. All self-hosted artifacts use one-day retention.
 

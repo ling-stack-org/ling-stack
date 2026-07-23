@@ -62,7 +62,7 @@
       "xcodeBuildVersion": "17F113",
       "macOSSDKVersion": "26.5",
       "deploymentTarget": "13.0",
-      "targets": ["aarch64-apple-darwin", "x86_64-apple-darwin"],
+      "targets": ["aarch64-apple-darwin"],
       "postLinkIdentityNormalization": {
         "algorithm": "sha256-zeroed-lc-uuid-and-code-signature-v1",
         "adHocIdentifier": "ling-cua-driver-presign",
@@ -79,10 +79,6 @@
             "aarch64-apple-darwin": {
               "expectedSourceSha256": "af7a2f9bfabe98704bafca0f2c7f6e2ae4e9f53fe6653d5cd8cea44fc25e103d",
               "maxAttempts": 32
-            },
-            "x86_64-apple-darwin": {
-              "expectedSourceSha256": "6f91a9b5db2aec12dd86a01c98e02ce46da2d8df92090137e916ad5e4a2ba437",
-              "maxAttempts": 1
             }
           }
         },
@@ -106,8 +102,8 @@
     "darwin": {
       "status": "awaiting_native_reproducibility_evidence",
       "artifactRelativePath": "darwin/cua-driver",
-      "architectures": ["arm64", "x86_64"],
-      "universalBinarySha256BeforeSigning": null
+      "architectures": ["arm64"],
+      "binarySha256BeforeSigning": null
     },
     "win32X64": {
       "status": "awaiting_native_reproducibility_evidence",

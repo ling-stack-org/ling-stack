@@ -42,9 +42,9 @@ the builder never recursively deletes or initializes over an existing path.
 
 On macOS, the locked final-link contract accepts only the reviewed thin-binary runtime
 identity. arm64 may perform up to 32 clean `cua-driver` package relinks to reach that
-identity; x64 must match on its first relink. A mismatch is discarded before UUID rewrite
-or codesign, and exhausting the bound fails the build. This is a fail-closed selector, not
-a relaxation of the mandatory independent A/B byte comparison.
+identity. A mismatch is discarded before UUID rewrite or codesign, and exhausting the
+bound fails the build. This is a fail-closed selector, not a relaxation of the mandatory
+independent A/B byte comparison.
 
 The output contains the pre-sign binary, SPDX SBOM, regenerated third-party
 notices, `source-build-manifest.json` and

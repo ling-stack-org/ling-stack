@@ -44,6 +44,10 @@ test("bundled resource resolution is fixed under resourcesPath and never consult
     () => resolveCuaDriverResourcePaths({ resourcesPath, platform: "win32", architecture: "arm64" }),
     /windows_architecture_unsupported/,
   );
+  assert.throws(
+    () => resolveCuaDriverResourcePaths({ resourcesPath, platform: "darwin", architecture: "x86_64" }),
+    /darwin_architecture_unsupported/,
+  );
 });
 
 test("provider lock and final seal bind the exact packaged bytes", async (t) => {
@@ -315,8 +319,8 @@ async function createDarwinArtifactFixture(t) {
     distributionRevision: "ling.1",
     executableRelativePath: "cua-driver",
     executableSha256: executableDigest,
-    architectures: ["arm64", "x86_64"],
-    cdhashes: { arm64: "abc", x86_64: "def" },
+    architectures: ["arm64"],
+    cdhashes: { arm64: "abc" },
     codeIdentifier: "com.lingstack.desktop.cua-driver",
     teamId: "LINGTEAM01",
     designatedRequirement: "identifier com.lingstack.desktop.cua-driver",
@@ -372,14 +376,14 @@ function createDarwinLock() {
           cargoVersion: "cargo 1.88.0",
           xcodeBuildVersion: "17A400",
           macOSSDKVersion: "26.0",
-          targets: ["aarch64-apple-darwin", "x86_64-apple-darwin"],
+          targets: ["aarch64-apple-darwin"],
           patchSet: createPatchSet(),
-          universalBinarySha256BeforeSigning: "4".repeat(64),
+          binarySha256BeforeSigning: "4".repeat(64),
         },
         binary: {
-          architectures: ["arm64", "x86_64"],
+          architectures: ["arm64"],
           minimumMacOS: "13.0",
-          supportedMacOSCells: [{ major: "13", architectures: ["arm64", "x86_64"] }],
+          supportedMacOSCells: [{ major: "13", architectures: ["arm64"] }],
           expectedUpstreamVersion: "0.8.3",
           lingBuild: 1,
           hardenedRuntime: true,

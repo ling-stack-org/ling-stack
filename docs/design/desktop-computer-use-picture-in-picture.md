@@ -5,7 +5,7 @@ acceptance remains in progress. Capture-request provenance,
 exact loaded-document and navigation binding, provisional-idle renderer startup, bounded
 zero-frame recovery, decoded-frame readiness polling, fail-safe media release, Desktop-local
 source generations, current-session controls, Cua native-window identity handoff, current-host
-real-capture performance, and the unsigned macOS arm64/x64 `.app` plus mounted-DMG packaged
+real-capture performance, and the unsigned macOS arm64 `.app` plus mounted-DMG packaged
 provenance matrix are verified. Fail-closed signed-candidate/TCC/final-evidence and Windows
 Preflight/Full acceptance harnesses are also implemented locally. The macOS harness binds each
 release script to its recorded harness-commit Git blob, current file bytes, and SHA-256; Windows Full
@@ -584,7 +584,7 @@ Native adapters may improve these targets later without changing the shared cont
 ## Final Verdict
 
 The intended product surface is Mac and Windows, but platform support is gated independently:
-the local unsigned macOS arm64/x64 application and mounted-DMG matrix is closed, but macOS
+the local unsigned macOS arm64 application and mounted-DMG matrix is closed, but macOS
 release still requires Developer ID/notarization/Gatekeeper plus the signed-app clean-host
 TCC/source/capture-indicator and VoiceOver matrix; the selected Cua Driver Windows provider
 still requires the interactive x64 HWND/source, DPI, dual-screen, Narrator/NVDA,

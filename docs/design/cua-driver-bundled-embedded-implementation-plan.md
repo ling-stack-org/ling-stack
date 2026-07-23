@@ -130,7 +130,7 @@ Current implementation baseline:
   independently anchored committed lock already authorizes that platform, and uploads its
   final-artifact/signing trace with one-day retention. The initial closed-gate run still
   uploads A/B evidence and emits the review-only proposal; the mandatory post-promotion
-  second A/B run exercises packaging. macOS covers arm64+x64 DMG+ZIP; Windows covers the x64
+  second A/B run exercises packaging. macOS covers arm64 DMG+ZIP; Windows covers the x64
   app, uninstaller and NSIS roles. macOS runs interactively in the logged-in
   Aqua session and rejects GitHub LaunchAgent service mode before source acquisition;
   Windows retains the reviewed service mode.
@@ -332,7 +332,7 @@ Changes:
 - retain the ordered hook trace and every digest transition as CI evidence.
 - run the real provider-bearing `package:mac` / `package:win` wrappers from verified
   source-build output rather than invoking Electron Builder directly; macOS must exercise
-  both arm64 and x64 in the same governed wrapper invocation;
+  the arm64 DMG and ZIP targets in the same governed wrapper invocation;
 - bind every provider, seal, lock, catalog and package-authority document to a regular,
   single-link path beneath the reopened app root, and bind every test signer identity to
   the selected `ephemeral-ci` or `managed-internal` authority kind;
@@ -406,7 +406,7 @@ Changes:
   `KILL_ON_JOB_CLOSE` lifetime ownership, WTS/input-desktop invalidation and structured
   UIAccess capability errors;
 - lock Rust/Cargo, Xcode/macOS SDK and MSVC/Windows SDK inputs;
-- build macOS universal `cua-driver` and Windows x64 `cua-driver.exe` for shipped
+- build a thin macOS arm64 `cua-driver` and Windows x64 `cua-driver.exe` for shipped
   packages;
 - emit the Windows clean pre-sign payload digest separately from every tier-specific final
   artifact digest so test and production signatures never share a candidate identity;

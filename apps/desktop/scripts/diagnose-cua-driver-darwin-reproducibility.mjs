@@ -18,7 +18,7 @@ const MAX_BINARY_BYTES = 128 * 1024 * 1024;
 const MAX_ARCHIVE_BYTES = 64 * 1024 * 1024;
 const MAX_ARCHIVE_MEMBERS = 4_096;
 const MAX_REPORTED_DIFFERENCES = 64;
-const TARGETS = ["aarch64-apple-darwin", "x86_64-apple-darwin"];
+const TARGETS = ["aarch64-apple-darwin"];
 const SWIFT_ARCHIVE_PATTERN = /^lib(?:apple_cf|screencapturekit)-[0-9a-f]+\.rlib$/u;
 
 if (process.argv[1] && resolve(process.argv[1]) === resolve(fileURLToPath(import.meta.url))) {

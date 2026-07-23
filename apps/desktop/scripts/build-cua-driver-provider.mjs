@@ -15,7 +15,7 @@ import {
 } from "./cua-driver-source-build-lib.mjs";
 import { generateSupplyChainMetadata } from "./cua-driver-source-build-supply-chain.mjs";
 import {
-  inspectUniversalMachO,
+  inspectArm64MachO,
   inspectWindowsPe,
   verifyVersionOutput,
 } from "./cua-driver-binary-identity.mjs";
@@ -139,10 +139,9 @@ const cargoVersion = await runText("cargo", [`+${lock.toolchain.cargoVersion}`, 
   env: buildEnvValue.env,
 });
 
-const buildTarget = platform === "darwin" ? [
-  "aarch64-apple-darwin",
-  "x86_64-apple-darwin",
-] : ["x86_64-pc-windows-msvc"];
+const buildTarget = platform === "darwin"
+  ? [...lock.toolchain.darwin.targets]
+  : [lock.toolchain.win32X64.target];
 const swiftArchiveNormalization = [];
 const machOIdentityNormalization = [];
 for (const target of buildTarget) {
@@ -265,12 +264,9 @@ for (const target of buildTarget) {
 await mkdir(outputRoot);
 if (platform === "darwin") {
   const arm = join(targetDirectory, "aarch64-apple-darwin", "release", "cua-driver");
-  const x64 = join(targetDirectory, "x86_64-apple-darwin", "release", "cua-driver");
   const output = join(outputRoot, "darwin", "cua-driver");
   await mkdir(join(outputRoot, "darwin"), { recursive: true });
-  await run("xcrun", ["lipo", "-create", arm, x64, "-output", output], {
-    env: buildEnvValue.env,
-  });
+  await cp(arm, output);
 } else {
   const main = join(targetDirectory, "x86_64-pc-windows-msvc", "release", "cua-driver.exe");
   const uia = join(targetDirectory, "x86_64-pc-windows-msvc", "release", "cua-driver-uia.exe");
@@ -481,14 +477,14 @@ process.stdout.write(`${JSON.stringify(attestation, null, 2)}\n`);
 
 async function inspectBuiltBinaryIdentity({ binaries: binariesValue, lock: lockValue, outputRoot: outputRootValue, platform: platformValue }) {
   if (platformValue === "darwin") {
-    const identity = inspectUniversalMachO(
+    const identity = inspectArm64MachO(
       await readFile(join(outputRootValue, "darwin", "cua-driver")),
       "built darwin provider",
     );
-    if (!identity.slices.every((slice) => slice.minimumOSVersion === lockValue.toolchain.darwin.deploymentTarget)) {
+    if (identity.minimumOSVersion !== lockValue.toolchain.darwin.deploymentTarget) {
       throw new Error("built darwin provider minimum OS does not match the lock");
     }
-    if (!identity.slices.every((slice) => slice.sdkVersion === lockValue.toolchain.darwin.macOSSDKVersion)) {
+    if (identity.sdkVersion !== lockValue.toolchain.darwin.macOSSDKVersion) {
       throw new Error("built darwin provider SDK does not match the lock");
     }
     return { binaries: [{ role: "main", ...identity }] };

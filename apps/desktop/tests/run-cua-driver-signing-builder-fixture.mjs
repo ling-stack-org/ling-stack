@@ -52,7 +52,7 @@ try {
     },
   });
 
-  const expectedCopies = platform === "darwin" ? 2 : 1;
+  const expectedCopies = 1;
   const packagedCapabilities = await findNamedFiles(
     outputRoot,
     "packaged-provider-capabilities.json",

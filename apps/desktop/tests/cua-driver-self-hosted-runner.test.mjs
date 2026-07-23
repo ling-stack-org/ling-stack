@@ -34,7 +34,7 @@ test("self-hosted runner manifest pins one dedicated identity per platform", asy
   assert.equal(profiles.profiles.darwin.label, "ling-cua-driver-macos-arm64-v1");
   assert.equal(profiles.profiles.darwin.launchMode, "interactive-aqua");
   assert.equal(profiles.profiles["win32-x64"].label, "ling-cua-driver-windows-x64-v1");
-  assert.equal(profiles.profiles["win32-x64"].launchMode, "service");
+  assert.equal(profiles.profiles["win32-x64"].launchMode, "interactive-windows");
 });
 
 test("macOS runner accepts only the fixed dispatch, actor, commit, host and work roots", async () => {
@@ -80,10 +80,9 @@ test("macOS runner accepts only the fixed dispatch, actor, commit, host and work
   }
 });
 
-test("Windows runner requires the locked service launch mode", async () => {
+test("Windows runner requires the locked interactive launch mode", async () => {
   const result = await verifySelfHostedRunnerEnvironment({
     env: {
-      ACTIONS_RUNNER_SVC: "1",
       GITHUB_ACTIONS: "true",
       GITHUB_ACTOR: "tianxiaochannel-oss88",
       GITHUB_EVENT_NAME: "workflow_dispatch",
@@ -105,6 +104,32 @@ test("Windows runner requires the locked service launch mode", async () => {
     verifyRunnerBinary: false,
   });
   assert.equal(result.ok, true);
+  await assert.rejects(
+    verifySelfHostedRunnerEnvironment({
+      env: {
+        ACTIONS_RUNNER_SVC: "1",
+        GITHUB_ACTIONS: "true",
+        GITHUB_ACTOR: "tianxiaochannel-oss88",
+        GITHUB_EVENT_NAME: "workflow_dispatch",
+        GITHUB_REPOSITORY: "tianxiaochannel-oss88/ling-stack",
+        GITHUB_SHA: SHA,
+        GITHUB_TRIGGERING_ACTOR: "tianxiaochannel-oss88",
+        GITHUB_WORKSPACE: "C:\\actions-runner\\_work\\ling-stack\\ling-stack",
+        LING_CUA_EXPECTED_COMMIT: SHA,
+        RUNNER_ARCH: "X64",
+        RUNNER_ENVIRONMENT: "self-hosted",
+        RUNNER_NAME: "ling-cua-driver-windows-x64-v1",
+        RUNNER_OS: "Windows",
+        RUNNER_TEMP: "C:\\actions-runner\\_work\\_temp",
+      },
+      hostPlatform: "win32",
+      platform: "win32-x64",
+      verifyFilesystem: false,
+      verifyNativeToolchain: false,
+      verifyRunnerBinary: false,
+    }),
+    /Windows native evidence runner cannot use service mode/u,
+  );
 });
 
 test("runner profile cannot cross the host platform", async () => {

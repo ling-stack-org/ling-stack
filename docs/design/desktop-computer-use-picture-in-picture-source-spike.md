@@ -1,5 +1,8 @@
 # Desktop Computer Use PiP Source Spike
 
+> 2026-07-23 support update: macOS delivery is arm64-only. The x64/Rosetta observations
+> below are retained as historical spike evidence and do not define a supported artifact.
+
 Status: initial installed `cua-driver` runtime verified on 2026-07-15; provider selection,
 current-host native handoff, unsigned packaged provenance, performance, and artifact
 integrity evidence updated through 2026-07-17. Later renderer and interaction work did not
