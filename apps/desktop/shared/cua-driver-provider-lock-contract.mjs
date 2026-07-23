@@ -268,22 +268,24 @@ function validateWindowsEvidence(value, _requireReleaseEvidence) {
 
 /** @param {unknown} value */
 function validatePatchSet(value) {
-  if (!isRecord(value)
-    || value.id !== "ling-managed-embedded-v1"
-    || !isSha256(value.sha256)
-    || !Array.isArray(value.patches)
-    || value.patches.length !== 4
-    || !Array.isArray(value.touchedPaths)
-    || value.touchedPaths.length === 0) {
-    fail("provider_lock_patch_set_invalid");
-  }
   const expected = [
     "ling-embedded-state-home-v1",
     "ling-managed-readiness-v1",
     "ling-managed-lifetime-v1",
     "ling-windows-capability-errors-v1",
+    "ling-windows-hosted-acceptance-v1",
   ];
-  for (let index = 0; index < expected.length; index += 1) {
+  if (!isRecord(value)
+    || value.id !== "ling-managed-embedded-v1"
+    || !isSha256(value.sha256)
+    || !Array.isArray(value.patches)
+    || value.patches.length < 4
+    || value.patches.length > expected.length
+    || !Array.isArray(value.touchedPaths)
+    || value.touchedPaths.length === 0) {
+    fail("provider_lock_patch_set_invalid");
+  }
+  for (let index = 0; index < value.patches.length; index += 1) {
     const patch = value.patches[index];
     if (!isRecord(patch)
       || patch.id !== expected[index]

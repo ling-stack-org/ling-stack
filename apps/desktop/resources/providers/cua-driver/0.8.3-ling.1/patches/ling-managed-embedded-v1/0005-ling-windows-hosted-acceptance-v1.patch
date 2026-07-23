@@ -1,0 +1,103 @@
+diff --git a/libs/cua-driver/rust/crates/cua-driver-core/src/server.rs b/libs/cua-driver/rust/crates/cua-driver-core/src/server.rs
+index c5407e3..2c5930f 100644
+--- a/libs/cua-driver/rust/crates/cua-driver-core/src/server.rs
++++ b/libs/cua-driver/rust/crates/cua-driver-core/src/server.rs
+@@ -296,6 +296,7 @@ where
+                 writer_finished = true;
+                 break match writer_result {
+                     Ok(Ok(())) => Err(anyhow::anyhow!("stdout writer stopped unexpectedly")),
++                    Ok(Err(error)) if is_closed_stdout(&error) => Ok(()),
+                     Ok(Err(error)) => Err(error),
+                     Err(error) => Err(error.into()),
+                 };
+@@ -410,11 +411,13 @@ where
+     while request_tasks.join_next().await.is_some() {}
+     drop(outbound_tx);
+ 
++    if writer_finished {
++        return loop_result;
++    }
++
+     if loop_result.is_err() {
+-        if !writer_finished {
+-            writer_task.abort();
+-            let _ = writer_task.await;
+-        }
++        writer_task.abort();
++        let _ = writer_task.await;
+         return loop_result;
+     }
+ 
+@@ -422,6 +425,12 @@ where
+     Ok(())
+ }
+ 
++fn is_closed_stdout(error: &anyhow::Error) -> bool {
++    error
++        .downcast_ref::<std::io::Error>()
++        .is_some_and(|error| error.kind() == std::io::ErrorKind::BrokenPipe)
++}
++
+ struct RequestCompletion {
+     response: Response,
+     initialize_metadata: Option<InitializeMetadata>,
+@@ -1064,7 +1073,7 @@ mod stdio_lifetime_tests {
+     }
+ 
+     #[tokio::test]
+-    async fn stdout_half_close_stops_the_server() {
++    async fn stdout_half_close_stops_the_server_cleanly() {
+         let (mut input_writer, server_input) = tokio::io::duplex(4_096);
+         let (server_output, output_reader) = tokio::io::duplex(4_096);
+         drop(output_reader);
+@@ -1096,7 +1105,7 @@ mod stdio_lifetime_tests {
+             .await
+             .expect("server ignored the half-closed stdout")
+             .unwrap();
+-        assert!(result.is_err());
++        assert!(result.is_ok());
+     }
+ 
+     #[tokio::test]
+diff --git a/libs/cua-driver/rust/crates/cua-driver/tests/ling_managed_native.rs b/libs/cua-driver/rust/crates/cua-driver/tests/ling_managed_native.rs
+index 76eca68..49b9b28 100644
+--- a/libs/cua-driver/rust/crates/cua-driver/tests/ling_managed_native.rs
++++ b/libs/cua-driver/rust/crates/cua-driver/tests/ling_managed_native.rs
+@@ -119,7 +119,7 @@ impl McpProcess {
+     }
+ 
+     fn initialize(&mut self) -> Value {
+-        self.request(
++        let initialize = self.request(
+             1,
+             "initialize",
+             json!({
+@@ -127,7 +127,27 @@ impl McpProcess {
+                 "capabilities": {},
+                 "clientInfo": {"name": "ling-native-acceptance", "version": "1"}
+             }),
+-        )
++        );
++        #[cfg(target_os = "windows")]
++        self.establish_windows_readiness();
++        initialize
++    }
++
++    #[cfg(target_os = "windows")]
++    fn establish_windows_readiness(&mut self) {
++        let readiness = self.request(
++            u64::MAX,
++            "ling/managed_readiness",
++            json!({
++                "schemaVersion": 1,
++                "childInstanceNonce": "native-acceptance-child",
++                "leaseGeneration": 1
++            }),
++        );
++        assert!(
++            readiness.get("error").is_none(),
++            "managed readiness failed: {readiness}"
++        );
+     }
+ 
+     fn close_stdin_and_wait(&mut self) -> std::process::ExitStatus {

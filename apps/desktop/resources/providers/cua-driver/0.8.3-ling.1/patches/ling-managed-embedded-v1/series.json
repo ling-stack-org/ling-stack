@@ -4,7 +4,7 @@
   "implementationStatus": "runtime_integrated",
   "upstreamCommit": "0612c26b2c7b8556f6de7f6b4f3927ecac914e4f",
   "seriesDigestAlgorithm": "sha256(id:patchSha256 followed by LF, in manifest order)",
-  "seriesSha256": "8e4a10b22fc94efe5edb113a88106e0b5e9aa19c4db6ce682d7da5ad493fea10",
+  "seriesSha256": "22ed5e5c2e8a365c143bd98c905c97d1527b868bc6a38cf7ab5430b13e1087cf",
   "patches": [
     {
       "id": "ling-embedded-state-home-v1",
@@ -25,6 +25,11 @@
       "id": "ling-windows-capability-errors-v1",
       "file": "0004-ling-windows-capability-errors-v1.patch",
       "sha256": "2184241e1612f411f6d4db7a9edcf451fe8d85298c0130de2c71cc4cabc945e8"
+    },
+    {
+      "id": "ling-windows-hosted-acceptance-v1",
+      "file": "0005-ling-windows-hosted-acceptance-v1.patch",
+      "sha256": "88df752ef740fae58c97237b6d95f66513674522fa1b87f48d91c98ab3326d1c"
     }
   ],
   "rustfmtPaths": [
