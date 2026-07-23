@@ -5,6 +5,7 @@ import { chmod, cp, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PassThrough, Writable } from "node:stream";
+import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import test from "node:test";
 
@@ -65,12 +66,44 @@ import {
 } from "../scripts/check-cua-driver-package-authorization.mjs";
 
 const execFile = promisify(execFileCallback);
+const REPOSITORY_ROOT = fileURLToPath(new URL("../../../", import.meta.url));
 const BUILD_SCRIPT = new URL("../scripts/build-cua-driver-provider.mjs", import.meta.url).pathname;
 const VERIFY_SCRIPT = new URL("../scripts/verify-cua-driver-source-build.mjs", import.meta.url).pathname;
 const DESKTOP_ARTIFACTS_WORKFLOW = new URL("../../../.github/workflows/desktop-artifacts.yml", import.meta.url).pathname;
 const SELF_HOSTED_NATIVE_WORKFLOW = new URL("../../../.github/workflows/cua-driver-self-hosted-native.yml", import.meta.url).pathname;
 const DARWIN_REPRODUCIBILITY_DIAGNOSTIC = new URL("../scripts/diagnose-cua-driver-darwin-reproducibility.mjs", import.meta.url).pathname;
 const SIGNING_BUILDER_FIXTURE = new URL("run-cua-driver-signing-builder-fixture.mjs", import.meta.url).pathname;
+
+test("source-lock text resources have checkout-stable LF bytes", async () => {
+  const resourcePrefix = "apps/desktop/resources/providers/cua-driver/";
+  const tracked = (await execFile(
+    "git",
+    ["ls-files", "-z", "--", resourcePrefix],
+    { cwd: REPOSITORY_ROOT, encoding: "utf8" },
+  )).stdout.split("\0").filter(Boolean).filter((path) => (
+    /\.(?:json|md|patch|toml)$/u.test(path)
+  ));
+  assert.ok(tracked.length > 0);
+
+  const fields = (await execFile(
+    "git",
+    ["check-attr", "-z", "text", "eol", "--", ...tracked],
+    { cwd: REPOSITORY_ROOT, encoding: "utf8" },
+  )).stdout.split("\0");
+  fields.pop();
+  const attributes = new Map();
+  for (let index = 0; index < fields.length; index += 3) {
+    const [path, attribute, value] = fields.slice(index, index + 3);
+    const current = attributes.get(path) ?? {};
+    current[attribute] = value;
+    attributes.set(path, current);
+  }
+
+  for (const path of tracked) {
+    assert.deepEqual(attributes.get(path), { text: "set", eol: "lf" }, path);
+    assert.equal((await readFile(join(REPOSITORY_ROOT, path))).includes(13), false, path);
+  }
+});
 
 test("provider lock is the exact V2 contract and remains fail-closed", async () => {
   const lock = JSON.parse(await readFile(join(PROVIDER_RESOURCE_ROOT, "provider-lock.json"), "utf8"));
