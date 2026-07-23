@@ -2,6 +2,7 @@ import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { validateCuaDriverProviderLockContract } from "../shared/cua-driver-provider-lock-contract.mjs";
+import { restoreDarwinCandidateExecutable } from "./cua-driver-source-build-darwin-executable.mjs";
 import {
   PROVIDER_RESOURCE_ROOT,
   verifyDistributionLockV2,
@@ -109,6 +110,10 @@ async function promoteCuaDriverSourceBuildInternal({
   const resources = resolveRequired(resourceRoot, "resource_root_missing");
 
   await assertPromotionRoots({ candidateARoot, candidateBRoot, outputRoot, resources });
+  if (normalizedPlatform === "darwin") {
+    await restoreDarwinCandidateExecutable(candidateARoot);
+    await restoreDarwinCandidateExecutable(candidateBRoot);
+  }
   const outputAuthority = await preparePromotionOutput(outputRoot);
 
   const verifiedInputs = await verifyProviderInputs(resources);

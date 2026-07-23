@@ -1,13 +1,17 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import {
+  chmod,
   cp,
+  link,
+  lstat,
   mkdir,
   mkdtemp,
   readdir,
   readFile,
   rename,
   rm,
+  symlink,
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -15,6 +19,7 @@ import { dirname, join, resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
+import { createDarwinCandidateExecutableRestorerForTest } from "../scripts/cua-driver-source-build-darwin-executable.mjs";
 import {
   createCuaDriverSourceBuildPromoterForTest,
   createPlatformRecord,
@@ -99,6 +104,186 @@ test("production promotion API does not accept a verifier trust override", async
     }),
     /promotion_host_platform_mismatch/u,
   );
+});
+
+test("Darwin promotion safely restores or preserves execute permission at the artifact boundary", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "ling-cua-promotion-executable-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const candidateA = await createCandidate(join(root, "a"), "darwin");
+  const candidateB = await createCandidate(join(root, "b"), "darwin");
+  const binaryA = join(candidateA.root, "darwin/cua-driver");
+  const binaryB = join(candidateB.root, "darwin/cua-driver");
+  const bytesA = await readFile(binaryA);
+  const bytesB = await readFile(binaryB);
+  await chmod(binaryA, 0o644);
+  await chmod(binaryB, 0o644);
+
+  let verifierCalls = 0;
+  const promoter = createCuaDriverSourceBuildPromoterForTest(async (input) => {
+    const metadata = await lstat(join(input.candidateRoot, "darwin/cua-driver"));
+    assert.equal(metadata.mode & 0o100, 0o100);
+    verifierCalls += 1;
+    return fixtureVerifier(input);
+  });
+  const result = await promoter({
+    platform: "darwin",
+    candidateA: candidateA.root,
+    candidateB: candidateB.root,
+    outputDir: join(root, "promotion"),
+    resourceRoot: RESOURCE_ROOT,
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(verifierCalls, 2);
+  assert.deepEqual(await readFile(binaryA), bytesA);
+  assert.deepEqual(await readFile(binaryB), bytesB);
+  assert.equal((await lstat(binaryA)).mode & 0o777, 0o744);
+  assert.equal((await lstat(binaryB)).mode & 0o777, 0o744);
+
+  await chmod(binaryA, 0o755);
+  await chmod(binaryB, 0o755);
+  const idempotent = await promoter({
+    platform: "darwin",
+    candidateA: candidateA.root,
+    candidateB: candidateB.root,
+    outputDir: join(root, "promotion-idempotent"),
+    resourceRoot: RESOURCE_ROOT,
+  });
+  assert.equal(idempotent.ok, true);
+  assert.equal(verifierCalls, 4);
+  assert.equal((await lstat(binaryA)).mode & 0o777, 0o755);
+  assert.equal((await lstat(binaryB)).mode & 0o777, 0o755);
+});
+
+test("Darwin execute permission repair rejects unsafe candidate entries", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "ling-cua-promotion-executable-unsafe-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+
+  for (const fixture of [
+    {
+      name: "root-symlink",
+      expected: /promotion_candidate_root_symlink_forbidden/u,
+      prepareCandidateRoot: async (candidateRoot, fixtureRoot) => {
+        const alias = join(fixtureRoot, "candidate-alias");
+        await symlink(candidateRoot, alias);
+        return alias;
+      },
+    },
+    {
+      name: "intermediate-symlink",
+      expected: /promotion_candidate_executable_symlink_forbidden/u,
+      replace: async (path) => {
+        const directory = dirname(path);
+        const target = `${directory}-real`;
+        await rename(directory, target);
+        await symlink(target, directory);
+      },
+    },
+    {
+      name: "symlink",
+      expected: /promotion_candidate_executable_symlink_forbidden/u,
+      replace: async (path, outside) => {
+        await rm(path);
+        await symlink(outside, path);
+      },
+    },
+    {
+      name: "hardlink",
+      expected: /promotion_candidate_executable_hardlink_forbidden/u,
+      replace: async (path, outside) => {
+        await rm(path);
+        await link(outside, path);
+      },
+    },
+    {
+      name: "directory",
+      expected: /promotion_candidate_executable_non_regular/u,
+      replace: async (path) => {
+        await rm(path);
+        await mkdir(path);
+      },
+    },
+    {
+      name: "missing",
+      expected: /promotion_candidate_executable_missing/u,
+      replace: async (path) => rm(path),
+    },
+    {
+      name: "group-world-writable",
+      expected: /promotion_candidate_executable_mode_unsafe/u,
+      replace: async (path) => chmod(path, 0o666),
+    },
+  ]) {
+    await t.test(fixture.name, async () => {
+      const fixtureRoot = join(root, fixture.name);
+      const candidateA = await createCandidate(join(fixtureRoot, "a"), "darwin");
+      const candidateB = await createCandidate(join(fixtureRoot, "b"), "darwin");
+      const outside = join(fixtureRoot, "outside-cua-driver");
+      await writeFile(outside, "fixture-darwin-main");
+      const candidateARoot = await fixture.prepareCandidateRoot?.(
+        candidateA.root,
+        fixtureRoot,
+      ) ?? candidateA.root;
+      await fixture.replace?.(join(candidateA.root, "darwin/cua-driver"), outside);
+      let verifierCalls = 0;
+      await assert.rejects(
+        createCuaDriverSourceBuildPromoterForTest(async (input) => {
+          verifierCalls += 1;
+          return fixtureVerifier(input);
+        })({
+          platform: "darwin",
+          candidateA: candidateARoot,
+          candidateB: candidateB.root,
+          outputDir: join(fixtureRoot, "promotion"),
+          resourceRoot: RESOURCE_ROOT,
+        }),
+        fixture.expected,
+      );
+      assert.equal(verifierCalls, 0);
+    });
+  }
+});
+
+test("Darwin execute permission repair rejects deterministic path replacement races", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "ling-cua-promotion-executable-race-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+
+  for (const hookName of ["afterRootLstat", "afterOpen", "afterModeRepair"]) {
+    await t.test(hookName, async () => {
+      const candidateRoot = join(root, hookName);
+      const movedRoot = `${candidateRoot}-opened`;
+      const executablePath = join(candidateRoot, "darwin/cua-driver");
+      const displacedPath = join(candidateRoot, "darwin/cua-driver-opened");
+      await mkdir(dirname(executablePath), { recursive: true });
+      await writeFile(executablePath, "original", { mode: 0o644 });
+      const restore = createDarwinCandidateExecutableRestorerForTest({
+        [hookName]: async () => {
+          if (hookName === "afterRootLstat") {
+            await rename(candidateRoot, movedRoot);
+            await mkdir(dirname(executablePath), { recursive: true });
+          } else {
+            await rename(executablePath, displacedPath);
+          }
+          await writeFile(executablePath, "replacement", { mode: 0o644 });
+        },
+      });
+
+      await assert.rejects(
+        restore(candidateRoot),
+        hookName === "afterRootLstat"
+          ? /promotion_candidate_root_changed/u
+          : /promotion_candidate_executable_changed/u,
+      );
+      const originalPath = hookName === "afterRootLstat"
+        ? join(movedRoot, "darwin/cua-driver")
+        : displacedPath;
+      assert.equal(
+        (await lstat(originalPath)).mode & 0o777,
+        hookName === "afterModeRepair" ? 0o744 : 0o644,
+      );
+      assert.equal((await lstat(executablePath)).mode & 0o777, 0o644);
+    });
+  }
 });
 
 test("promotion output failure cleanup is identity-bound and preserves the original error", async (t) => {
@@ -380,7 +565,7 @@ test("promotion fails closed for mismatched, mixed, extra, cross-platform, UIAcc
         outputDir: join(root, "cross-output"),
         resourceRoot: RESOURCE_ROOT,
       }),
-      /candidate_platform_mismatch/u,
+      /promotion_candidate_executable_missing/u,
     );
   });
 
