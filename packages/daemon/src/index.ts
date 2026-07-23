@@ -192,6 +192,7 @@ export function createDaemonServer(
   const cuaDriverActivationService = new BundledCuaDriverActivationService({
     leaseRegistry: cuaDriverDesktopBridgeAuthority.leaseRegistry,
     clientPool: cuaDriverClientPool,
+    getDesktopAvailability: () => cuaDriverDesktopBridgeAuthority.getCurrentAvailability(),
   });
   cuaDriverActivationCoordinator = new CuaDriverDaemonActivationCoordinator({
     enabled: bundledCuaDriverEnabled,
@@ -199,6 +200,7 @@ export function createDaemonServer(
     storeRegistry,
     descriptor: cuaDriverDescriptor,
     leaseRegistry: cuaDriverDesktopBridgeAuthority.leaseRegistry,
+    getDesktopAvailability: () => cuaDriverDesktopBridgeAuthority.getCurrentAvailability(),
     activationService: cuaDriverActivationService,
     clientPool: cuaDriverClientPool,
   });

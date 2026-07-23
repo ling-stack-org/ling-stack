@@ -126,6 +126,51 @@ test("lease publication rejects authority and retries after a durable projection
   assert.equal(closeAllCalls, 1);
 });
 
+test("availability projection is sequence-fenced and reprojects only the current report", () => {
+  const workspaceCwd = "/tmp/ling-cua-availability-sequence";
+  const leaseRegistry = new CuaDriverLeaseRegistry({
+    daemonAuthorityEpoch: "authority-availability",
+    workspaceCwd,
+  });
+  let currentAvailability = availability({
+    workspaceCwd,
+    daemonAuthorityEpoch: "authority-availability",
+    sequence: 1,
+  });
+  const projected = [];
+  const coordinator = new CuaDriverDaemonActivationCoordinator({
+    workspaceCwd,
+    storeRegistry: { getStore: () => ({}) },
+    descriptor: createCuaDriverDescriptor(),
+    leaseRegistry,
+    getDesktopAvailability: () => currentAvailability,
+    activationService: {
+      invalidateForLeaseChange(input) {
+        projected.push(input.availability);
+        return { committed: true };
+      },
+      async reconcileRequestedIntent() {},
+    },
+    clientPool: {
+      async closeStale() {},
+      async closeAll() {},
+    },
+  });
+
+  assert.equal(coordinator.handleAvailabilityPublished(currentAvailability), true);
+  assert.equal(coordinator.handleAvailabilityPublished(currentAvailability), true);
+  assert.equal(projected.length, 1, "same sequence is a harmless route retry");
+
+  const stale = { ...currentAvailability, sequence: 0 };
+  assert.equal(coordinator.handleAvailabilityPublished(stale), false);
+  assert.equal(projected.length, 1);
+
+  currentAvailability = { ...currentAvailability, sequence: 2, providerState: "permission_required" };
+  assert.equal(coordinator.handleAvailabilityPublished(currentAvailability), true);
+  assert.equal(projected.length, 2);
+  assert.equal(projected[1].providerState, "permission_required");
+});
+
 test("failed retirement projection cannot let a same-generation renewal bypass the fence", async () => {
   const workspaceCwd = "/tmp/ling-cua-retirement-retry";
   const leaseRegistry = new CuaDriverLeaseRegistry({
@@ -347,6 +392,129 @@ test("lease revoke returns 503 until its durable projection can be retried", {
     assert.equal((await recovered.json()).revoked, true);
     assert.equal(store.getMcpServer("mcp_cua_driver").enabled, false);
     assert.equal(store.listMcpTools({ serverId: "mcp_cua_driver" }).length, 0);
+  } finally {
+    failProjection = false;
+    if (started) await daemon.stop();
+    else store.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("availability route atomically revokes the live lease and clears SQLite effective state", {
+  skip: !supportedPlatform,
+}, async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "ling-cua-availability-sqlite-"));
+  const store = createSqliteRunStore(cwd);
+  const daemon = createDaemonServer(bundledConfig(cwd), {
+    desktopBridgeToken: desktopToken,
+    computerUseRouteToken: desktopToken,
+    storeFactory: () => store,
+    cuaDriverLeaseClientFactory: fakeLeaseFactory(),
+  });
+  let started = false;
+  try {
+    await daemon.start();
+    started = true;
+    const authority = await handshake(daemon);
+    const currentLease = lease(authority, cwd);
+
+    const requested = await pluginAction(
+      daemon,
+      cwd,
+      "trusted-local:cua-driver",
+      "enable",
+    );
+    assert.equal(requested.status, 409);
+    assert.equal((await requested.json()).error, "cua_desktop_lease_unavailable");
+    assert.equal((await putLease(daemon, currentLease)).status, 200);
+    await waitFor(() => store.getMcpServer("mcp_cua_driver")?.enabled === true);
+    assert.equal(store.getManagedPlugin("trusted-local:cua-driver").enabled, true);
+    assert.equal(store.listManagedPluginContributions("trusted-local:cua-driver")[0].enabled, true);
+    assert.equal(store.listMcpTools({ serverId: "mcp_cua_driver" }).length, 1);
+
+    const unavailable = desktopAvailability(authority, cwd, {
+      generation: currentLease.generation,
+      providerState: "corrupt",
+      reason: "provider_seal_mismatch",
+    });
+    const response = await putAvailability(daemon, unavailable);
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), {
+      accepted: true,
+      desktopInstanceEpoch: authority.desktopInstanceEpoch,
+      generation: currentLease.generation,
+      sequence: 1,
+      providerState: "corrupt",
+    });
+
+    const state = store.getCuaDriverActivationState("trusted-local:cua-driver");
+    assert.equal(state.requestedEnabled, true);
+    assert.equal(store.getManagedPlugin("trusted-local:cua-driver").enabled, false);
+    assert.equal(store.listManagedPluginContributions("trusted-local:cua-driver")[0].enabled, false);
+    assert.equal(store.getMcpServer("mcp_cua_driver").enabled, false);
+    assert.deepEqual(store.listMcpTools({ serverId: "mcp_cua_driver" }), []);
+    const health = store.getManagedPluginHealthSnapshot("trusted-local:cua-driver");
+    assert.equal(health.details.providerState, "corrupt");
+    assert.equal(health.details.errorCode, "cua_embedded_artifact_invalid");
+    assert.equal(health.details.reason, "provider_seal_mismatch");
+  } finally {
+    if (started) await daemon.stop();
+    else store.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("availability route retries the identical authenticated report after SQLite projection recovers", {
+  skip: !supportedPlatform,
+}, async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "ling-cua-availability-retry-"));
+  const store = createSqliteRunStore(cwd);
+  let failProjection = false;
+  const guardedStore = new Proxy(store, {
+    get(target, property) {
+      if (property === "commitCuaDriverActivation" && failProjection) {
+        return () => ({
+          committed: false,
+          state: target.getCuaDriverActivationState("trusted-local:cua-driver"),
+        });
+      }
+      const value = Reflect.get(target, property, target);
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  });
+  const daemon = createDaemonServer(bundledConfig(cwd), {
+    desktopBridgeToken: desktopToken,
+    computerUseRouteToken: desktopToken,
+    storeFactory: () => guardedStore,
+    cuaDriverLeaseClientFactory: fakeLeaseFactory(),
+  });
+  let started = false;
+  try {
+    await daemon.start();
+    started = true;
+    const authority = await handshake(daemon);
+    const report = desktopAvailability(authority, cwd, {
+      providerState: "permission_required",
+      reason: "darwin_accessibility_permission_required",
+    });
+    await pluginAction(daemon, cwd, "trusted-local:cua-driver", "enable");
+
+    failProjection = true;
+    const failed = await putAvailability(daemon, report);
+    assert.equal(failed.status, 503);
+    assert.equal(
+      (await failed.json()).error,
+      "cua_driver_activation_projection_unavailable",
+    );
+
+    failProjection = false;
+    const retried = await putAvailability(daemon, report);
+    assert.equal(retried.status, 200);
+    assert.equal((await retried.json()).providerState, "permission_required");
+    assert.equal(
+      store.getManagedPluginHealthSnapshot("trusted-local:cua-driver").details.errorCode,
+      "cua_embedded_permission_required",
+    );
   } finally {
     failProjection = false;
     if (started) await daemon.stop();
@@ -1106,6 +1274,49 @@ async function handshake(daemon) {
   return response.json();
 }
 
+function availability(overrides = {}) {
+  return {
+    schemaVersion: 1,
+    providerId: "cua-driver",
+    desktopInstanceId: "desktop-availability",
+    desktopInstanceEpoch: 1,
+    bridgeConnectionId: "bridge-availability",
+    daemonAuthorityEpoch: "authority-availability",
+    workspaceCwd: "/tmp/ling-cua-availability-sequence",
+    generation: 1,
+    sequence: 1,
+    platform: "darwin",
+    providerState: "platform_unavailable",
+    reason: "darwin_platform_unavailable",
+    limitations: [],
+    ...overrides,
+  };
+}
+
+function desktopAvailability(authority, cwd, overrides = {}) {
+  return {
+    schemaVersion: 1,
+    providerId: "cua-driver",
+    desktopInstanceId: "desktop-composition",
+    desktopInstanceEpoch: authority.desktopInstanceEpoch,
+    bridgeConnectionId: authority.bridgeConnectionId,
+    daemonAuthorityEpoch: authority.daemonAuthorityEpoch,
+    workspaceCwd: cwd,
+    generation: 1,
+    sequence: 1,
+    platform: process.platform,
+    providerState: "platform_unavailable",
+    reason: "platform_unavailable",
+    ...(process.platform === "win32"
+      ? {
+          integrityCoverage: "standard",
+          limitations: ["elevated_pixel_input", "uwp_send_input"],
+        }
+      : { limitations: [] }),
+    ...overrides,
+  };
+}
+
 function lease(authority, cwd, overrides = {}) {
   return {
     schemaVersion: 1,
@@ -1157,6 +1368,17 @@ function pluginRuntimePreview(daemon, cwd, pluginId) {
 function putLease(daemon, value) {
   return fetch(
     daemonUrl(daemon, `/desktop/capabilities/cua-driver/lease?cwd=${encodeURIComponent(value.workspaceCwd)}`),
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json", [bridgeHeader]: desktopToken },
+      body: JSON.stringify(value),
+    },
+  );
+}
+
+function putAvailability(daemon, value) {
+  return fetch(
+    daemonUrl(daemon, `/desktop/capabilities/cua-driver/availability?cwd=${encodeURIComponent(value.workspaceCwd)}`),
     {
       method: "PUT",
       headers: { "Content-Type": "application/json", [bridgeHeader]: desktopToken },

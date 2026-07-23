@@ -13,6 +13,7 @@ import {
   isBundledEmbeddedCuaDriverEnabled,
   isCuaDriverProviderState,
   isCuaDriverDesktopBridgeHandshakeResponseV1,
+  isDesktopCuaDriverAvailabilityV1,
   isDesktopCuaDriverLeaseRevokeV1,
   isDesktopCuaDriverLeaseV1,
   isWindowsSigningPromotionContract,
@@ -159,6 +160,66 @@ test("Desktop Cua Driver lease guard requires versioned loopback and digest iden
   }), false);
   assert.equal(isDesktopCuaDriverLeaseV1({ ...lease, providerCatalogDigest: "not-a-digest" }), false);
   assert.equal(isDesktopCuaDriverLeaseV1({ ...lease, platform: "win32", architecture: "arm64" }), false);
+});
+
+test("Desktop availability is non-authoritative and platform metadata is exact", () => {
+  const report = {
+    schemaVersion: 1,
+    providerId: "cua-driver",
+    desktopInstanceId: "desktop-instance-1",
+    desktopInstanceEpoch: 1,
+    bridgeConnectionId: "bridge-1",
+    daemonAuthorityEpoch: "daemon-authority-1",
+    workspaceCwd: "/workspace",
+    generation: 2,
+    sequence: 3,
+    platform: "win32",
+    providerState: "interactive_session_required",
+    reason: "windows_interactive_session_required",
+    integrityCoverage: "standard",
+    limitations: ["elevated_pixel_input", "uwp_send_input"],
+  };
+  assert.equal(isDesktopCuaDriverAvailabilityV1(report), true);
+  assert.equal(isDesktopCuaDriverAvailabilityV1({ ...report, providerState: "ready" }), false);
+  assert.equal(isDesktopCuaDriverAvailabilityV1({ ...report, rawProviderPayload: "secret" }), false);
+  assert.equal(isDesktopCuaDriverAvailabilityV1({ ...report, sequence: 0 }), false);
+  assert.equal(isDesktopCuaDriverAvailabilityV1({ ...report, generation: -1 }), false);
+  assert.equal(isDesktopCuaDriverAvailabilityV1({
+    ...report,
+    platform: "darwin",
+    integrityCoverage: undefined,
+    limitations: [],
+    providerState: "permission_required",
+  }), true);
+  assert.equal(isDesktopCuaDriverAvailabilityV1({
+    ...report,
+    platform: "darwin",
+  }), false, "Darwin cannot inherit Windows integrity limitations");
+
+  for (const field of [
+    "desktopInstanceId",
+    "bridgeConnectionId",
+    "daemonAuthorityEpoch",
+    "workspaceCwd",
+  ]) {
+    assert.equal(isDesktopCuaDriverAvailabilityV1({ ...report, [field]: "  " }), false);
+  }
+  for (const reason of ["", "UPPERCASE", "/private/path", "a".repeat(257)]) {
+    assert.equal(isDesktopCuaDriverAvailabilityV1({ ...report, reason }), false);
+  }
+  for (const limitations of [
+    undefined,
+    [],
+    ["elevated_pixel_input"],
+    ["elevated_pixel_input", "elevated_pixel_input"],
+    ["elevated_pixel_input", "unknown"],
+  ]) {
+    assert.equal(isDesktopCuaDriverAvailabilityV1({ ...report, limitations }), false);
+  }
+  assert.equal(isDesktopCuaDriverAvailabilityV1({ ...report, integrityCoverage: "uiaccess" }), false);
+  assert.equal(isDesktopCuaDriverAvailabilityV1({ ...report, platform: "unsupported" }), false);
+  assert.equal(isDesktopCuaDriverAvailabilityV1({ ...report, desktopInstanceEpoch: 0 }), false);
+  assert.equal(isDesktopCuaDriverAvailabilityV1({ ...report, sequence: Number.MAX_SAFE_INTEGER + 1 }), false);
 });
 
 test("Desktop bridge lease capability extends protocol V1 with an authority tuple", () => {

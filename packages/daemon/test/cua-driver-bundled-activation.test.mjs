@@ -60,6 +60,25 @@ function lease(overrides = {}) {
   };
 }
 
+function availability(overrides = {}) {
+  return {
+    schemaVersion: 1,
+    providerId: "cua-driver",
+    desktopInstanceId: "desktop-golden",
+    desktopInstanceEpoch: 7,
+    bridgeConnectionId: "bridge-golden",
+    daemonAuthorityEpoch: "authority-golden",
+    workspaceCwd: "/Users/test/Ling Workspace",
+    generation: 11,
+    sequence: 4,
+    platform: "darwin",
+    providerState: "permission_required",
+    reason: "darwin_accessibility_permission_required",
+    limitations: [],
+    ...overrides,
+  };
+}
+
 test("lease proxy token and headers retain Desktop golden parity", () => {
   const current = lease();
   assert.equal(
@@ -641,6 +660,123 @@ test("bundled activation uses only the lease client and startup reset retains in
       fixture.store.getManagedPluginHealthSnapshot(pluginId)?.details?.providerState,
       "desktop_unavailable",
     );
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("Desktop availability projects exact recoverable state without granting tools", async (t) => {
+  const cases = [
+    ["included", "cua_desktop_provider_included"],
+    ["permission_required", "cua_embedded_permission_required"],
+    ["interactive_session_required", "cua_windows_interactive_session_required"],
+    ["platform_unavailable", "cua_embedded_platform_unavailable"],
+    ["incompatible", "cua_embedded_protocol_mismatch"],
+    ["corrupt", "cua_embedded_artifact_invalid"],
+    ["desktop_unavailable", "cua_desktop_lease_unavailable"],
+  ];
+  for (const [providerState, errorCode] of cases) {
+    await t.test(providerState, async () => {
+      const fixture = await activationFixture();
+      try {
+        const enabled = await fixture.service.enable({ store: fixture.store, descriptor, now });
+        assert.equal(enabled.statusCode, 409);
+        assert.equal(enabled.error, "cua_desktop_lease_unavailable");
+
+        const projected = fixture.service.projectDesktopAvailability({
+          store: fixture.store,
+          descriptor,
+          now: "2026-07-18T00:00:02.000Z",
+          availability: availability({ providerState }),
+        });
+
+        assert.equal(projected.committed, true);
+        assert.equal(fixture.store.getManagedPlugin(pluginId).enabled, false);
+        assert.equal(fixture.store.getMcpServer(serverId).enabled, false);
+        assert.deepEqual(fixture.store.listMcpTools({ serverId }), []);
+        const health = fixture.store.getManagedPluginHealthSnapshot(pluginId);
+        assert.equal(health.details.providerState, providerState);
+        assert.equal(health.details.errorCode, errorCode);
+        assert.equal(health.details.desktopGeneration, 11);
+        assert.equal(health.details.desktopSequence, 4);
+        assert.equal(fixture.store.getMcpStatusSnapshot(serverId).errorCode, errorCode);
+      } finally {
+        await fixture.close();
+      }
+    });
+  }
+});
+
+test("Win32 Desktop availability retains only the governed integrity metadata", async () => {
+  const fixture = await activationFixture();
+  try {
+    await fixture.service.enable({ store: fixture.store, descriptor, now });
+    const projected = fixture.service.projectDesktopAvailability({
+      store: fixture.store,
+      descriptor,
+      now: "2026-07-18T00:00:02.000Z",
+      availability: availability({
+        platform: "win32",
+        providerState: "interactive_session_required",
+        reason: "windows_interactive_session_required",
+        integrityCoverage: "standard",
+        limitations: ["elevated_pixel_input", "uwp_send_input"],
+      }),
+    });
+
+    assert.equal(projected.committed, true);
+    const details = fixture.store.getManagedPluginHealthSnapshot(pluginId).details;
+    assert.equal(details.platform, "win32");
+    assert.equal(details.integrityCoverage, "standard");
+    assert.deepEqual(details.limitations, ["elevated_pixel_input", "uwp_send_input"]);
+    assert.equal(details.reason, "windows_interactive_session_required");
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("Desktop availability cannot turn a disabled user intent into an effective provider", async () => {
+  const fixture = await activationFixture();
+  try {
+    const projected = fixture.service.projectDesktopAvailability({
+      store: fixture.store,
+      descriptor,
+      now: "2026-07-18T00:00:02.000Z",
+      availability: availability({
+        providerState: "corrupt",
+        reason: "provider_seal_mismatch",
+      }),
+    });
+
+    assert.equal(projected.committed, true);
+    assert.equal(projected.requestedEnabled, false);
+    assert.equal(fixture.store.getManagedPlugin(pluginId).enabled, false);
+    assert.equal(fixture.store.getMcpServer(serverId).enabled, false);
+    assert.deepEqual(fixture.store.listMcpTools({ serverId }), []);
+    const health = fixture.store.getManagedPluginHealthSnapshot(pluginId);
+    assert.equal(health.status, "disabled");
+    assert.equal(health.details.providerState, "included");
+    assert.equal(health.details.errorCode, undefined);
+    assert.equal(health.details.reason, undefined);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("enable without a lease reuses the latest authenticated Desktop repair state", async () => {
+  const fixture = await activationFixture({
+    desktopAvailability: availability({ providerState: "permission_required" }),
+  });
+  try {
+    const result = await fixture.service.enable({ store: fixture.store, descriptor, now });
+
+    assert.equal(result.statusCode, 409);
+    assert.equal(result.error, "cua_embedded_permission_required");
+    assert.equal(result.health.details.providerState, "permission_required");
+    assert.equal(result.health.details.errorCode, "cua_embedded_permission_required");
+    assert.equal(fixture.store.getMcpStatusSnapshot(serverId).errorCode, "cua_embedded_permission_required");
+    assert.equal(fixture.store.getManagedPlugin(pluginId).enabled, false);
+    assert.deepEqual(fixture.store.listMcpTools({ serverId }), []);
   } finally {
     await fixture.close();
   }
@@ -1316,7 +1452,13 @@ async function activationFixture(options = {}) {
       },
     },
   });
-  const service = new BundledCuaDriverActivationService({ leaseRegistry: registry, clientPool: pool });
+  const service = new BundledCuaDriverActivationService({
+    leaseRegistry: registry,
+    clientPool: pool,
+    ...(options.desktopAvailability
+      ? { getDesktopAvailability: () => options.desktopAvailability }
+      : {}),
+  });
   return {
     cwd,
     store,

@@ -25,11 +25,174 @@ test("issuing a new handshake synchronously clears the previous registry lease",
   assert.equal(authority.publish(firstLease).accepted, true);
   assert.equal(authority.leaseRegistry.getCurrent(), firstLease);
 
+  const unavailable = availability(
+    { ...first, defaultWorkspaceCwd: authority.workspaceCwd },
+    { generation: firstLease.generation, sequence: 1 },
+  );
+  assert.equal(authority.publishAvailability(unavailable).accepted, true);
+  assert.equal(authority.leaseRegistry.getCurrent(), undefined);
+  assert.equal(authority.getCurrentAvailability(), unavailable);
+  assert.equal(authority.publishAvailability({ ...unavailable, sequence: 1 }).accepted, true);
+  assert.equal(authority.publishAvailability({
+    ...unavailable,
+    sequence: 1,
+    providerState: "permission_required",
+  }).reason, "stale_sequence");
+
   const second = authority.issueAuthenticatedHandshake();
   assert.equal(second.desktopInstanceEpoch, 2);
   assert.equal(second.bridgeConnectionId, "connection-2");
   assert.equal(authority.leaseRegistry.getCurrent(), undefined);
+  assert.equal(authority.getCurrentAvailability(), undefined);
   assert.equal(authority.isCurrentHandshake(firstLease), false);
+});
+
+test("availability authority rejects invalid identity, stale generations, and stale sequences", () => {
+  const authority = new CuaDriverDesktopBridgeAuthority({
+    workspaceCwd: "/tmp/ling-cua-availability-authority",
+    daemonAuthorityEpoch: "daemon-availability-authority",
+    createConnectionId: () => "availability-connection",
+  });
+  const handshakeAuthority = authority.issueAuthenticatedHandshake();
+  const current = {
+    ...handshakeAuthority,
+    defaultWorkspaceCwd: authority.workspaceCwd,
+  };
+  const currentLease = lease(current, { generation: 3 });
+  assert.equal(authority.publish(currentLease).accepted, true);
+
+  assert.deepEqual(authority.publishAvailability({
+    ...availability(current),
+    providerState: "ready",
+  }), { accepted: false, reason: "invalid" });
+  assert.equal(authority.publishAvailability(availability(current, {
+    desktopInstanceEpoch: 99,
+  })).reason, "stale_generation");
+  assert.equal(authority.publishAvailability(availability(current, {
+    generation: 2,
+  })).reason, "stale_generation");
+
+  const accepted = availability(current, {
+    generation: 3,
+    sequence: 5,
+    providerState: "permission_required",
+  });
+  assert.equal(authority.publishAvailability(accepted).accepted, true);
+  assert.equal(authority.leaseRegistry.getCurrent(), undefined);
+  assert.equal(authority.publishAvailability({
+    ...accepted,
+    generation: 2,
+    sequence: 99,
+  }).reason, "stale_generation");
+  assert.equal(authority.publishAvailability({
+    ...accepted,
+    sequence: 4,
+  }).reason, "stale_sequence");
+  assert.equal(authority.publishAvailability({
+    ...accepted,
+    providerState: "corrupt",
+  }).reason, "stale_sequence");
+  const advanced = { ...accepted, sequence: 6, providerState: "corrupt" };
+  assert.equal(authority.publishAvailability(advanced).accepted, true);
+  assert.equal(authority.getCurrentAvailability(), advanced);
+});
+
+test("availability route authenticates, fences a current lease, and rejects stale sequence", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-cua-availability-route-"));
+  const daemon = createDaemon(cwd);
+  await daemon.start();
+  try {
+    const current = await handshake(daemon);
+    const currentLease = lease(current);
+    assert.equal((await putLease(daemon, currentLease)).status, 200);
+
+    const first = availability(current, {
+      generation: currentLease.generation,
+      sequence: 1,
+      providerState: "permission_required",
+      reason: "darwin_accessibility_permission_required",
+    });
+    const accepted = await putAvailability(daemon, first);
+    assert.equal(accepted.status, 200);
+    assert.deepEqual(await accepted.json(), {
+      accepted: true,
+      desktopInstanceEpoch: current.desktopInstanceEpoch,
+      generation: currentLease.generation,
+      sequence: 1,
+      providerState: "permission_required",
+    });
+
+    const retried = await putAvailability(daemon, first);
+    assert.equal(retried.status, 200, "an identical report retries a prior failed projection");
+
+    const stale = await putAvailability(daemon, {
+      ...first,
+      providerState: "platform_unavailable",
+    });
+    assert.equal(stale.status, 409);
+    assert.equal((await stale.json()).reason, "stale_sequence");
+
+    const wrongToken = await putAvailability(daemon, { ...first, sequence: 2 }, cwd, "wrong-token");
+    assert.equal(wrongToken.status, 403);
+  } finally {
+    await daemon.stop();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("availability route validates method, workspace, body, and current handshake", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-cua-availability-validation-"));
+  const daemon = createDaemon(cwd);
+  await daemon.start();
+  try {
+    const current = await handshake(daemon);
+    const candidate = availability(current);
+    const route = new URL(daemonUrl(daemon, "/desktop/capabilities/cua-driver/availability"));
+    route.searchParams.set("cwd", cwd);
+
+    const wrongMethod = await fetch(route, {
+      method: "POST",
+      headers: { [BRIDGE_TOKEN_HEADER]: DESKTOP_TOKEN },
+    });
+    assert.equal(wrongMethod.status, 405);
+    assert.equal(wrongMethod.headers.get("allow"), "PUT");
+
+    const invalidBody = await fetch(route, {
+      method: "PUT",
+      headers: {
+        "Content-Type": "application/json",
+        [BRIDGE_TOKEN_HEADER]: DESKTOP_TOKEN,
+      },
+      body: "{",
+    });
+    assert.equal(invalidBody.status, 400);
+    assert.equal((await invalidBody.json()).error, "invalid_cua_driver_lease_request");
+
+    const missingWorkspace = await fetch(
+      daemonUrl(daemon, "/desktop/capabilities/cua-driver/availability"),
+      {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          [BRIDGE_TOKEN_HEADER]: DESKTOP_TOKEN,
+        },
+        body: JSON.stringify(candidate),
+      },
+    );
+    assert.equal(missingWorkspace.status, 400);
+
+    const wrongWorkspace = await putAvailability(daemon, candidate, `${cwd}-other`);
+    assert.equal(wrongWorkspace.status, 409);
+    assert.equal((await wrongWorkspace.json()).error, "cua_driver_lease_workspace_mismatch");
+
+    await handshake(daemon);
+    const staleHandshake = await putAvailability(daemon, candidate);
+    assert.equal(staleHandshake.status, 409);
+    assert.equal((await staleHandshake.json()).error, "cua_driver_lease_stale_handshake");
+  } finally {
+    await daemon.stop();
+    await rm(cwd, { recursive: true, force: true });
+  }
 });
 
 test("authenticated handshakes keep one daemon authority and issue monotonic unique bridge tuples", async () => {
@@ -341,6 +504,25 @@ function revokeFor(value) {
   };
 }
 
+function availability(handshakeAuthority, overrides = {}) {
+  return {
+    schemaVersion: 1,
+    providerId: "cua-driver",
+    desktopInstanceId: "desktop-instance-a",
+    desktopInstanceEpoch: handshakeAuthority.desktopInstanceEpoch,
+    bridgeConnectionId: handshakeAuthority.bridgeConnectionId,
+    daemonAuthorityEpoch: handshakeAuthority.daemonAuthorityEpoch,
+    workspaceCwd: handshakeAuthority.defaultWorkspaceCwd,
+    generation: 1,
+    sequence: 1,
+    platform: "darwin",
+    providerState: "platform_unavailable",
+    reason: "darwin_platform_unavailable",
+    limitations: [],
+    ...overrides,
+  };
+}
+
 function putLease(daemon, value, routeCwd = value.workspaceCwd) {
   const url = new URL(daemonUrl(daemon, "/desktop/capabilities/cua-driver/lease"));
   url.searchParams.set("cwd", routeCwd);
@@ -349,6 +531,24 @@ function putLease(daemon, value, routeCwd = value.workspaceCwd) {
     headers: {
       "Content-Type": "application/json",
       [BRIDGE_TOKEN_HEADER]: DESKTOP_TOKEN,
+    },
+    body: JSON.stringify(value),
+  });
+}
+
+function putAvailability(
+  daemon,
+  value,
+  routeCwd = value.workspaceCwd,
+  token = DESKTOP_TOKEN,
+) {
+  const url = new URL(daemonUrl(daemon, "/desktop/capabilities/cua-driver/availability"));
+  url.searchParams.set("cwd", routeCwd);
+  return fetch(url, {
+    method: "PUT",
+    headers: {
+      "Content-Type": "application/json",
+      [BRIDGE_TOKEN_HEADER]: token,
     },
     body: JSON.stringify(value),
   });

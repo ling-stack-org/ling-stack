@@ -68,6 +68,7 @@ import {
   type CuaDriverPlatformBinding,
   type CuaDriverPlatformBindingMetadata,
 } from "./platform-binding.js";
+import type { CuaDriverAvailabilityPublisher } from "./availability-publisher.js";
 
 export type CuaDriverCoordinatorLifecycle = "disabled" | "validating" | "included" | "starting" | "active" | "stopping" | "failed";
 
@@ -110,6 +111,7 @@ export interface CuaDriverCoordinatorOptions {
   readonly leaseClient?: CuaDriverLeaseClient;
   readonly fetch?: typeof globalThis.fetch;
   readonly telemetry?: CuaDriverTelemetrySink;
+  readonly availabilityPublisher?: Pick<CuaDriverAvailabilityPublisher, "publish" | "close">;
   readonly onStateChanged?: (snapshot: CuaDriverCoordinatorSnapshot) => void;
 }
 
@@ -138,6 +140,9 @@ export class CuaDriverDesktopCoordinator {
   private readonly stateRootProtector: CuaDriverStateRootPlatformProtector | undefined;
   private readonly processLifecycle: CuaDriverProviderProcessLifecycle | undefined;
   private readonly readinessController: CuaDriverReadinessController;
+  private readonly availabilityPublisher:
+    | Pick<CuaDriverAvailabilityPublisher, "publish" | "close">
+    | undefined;
   private snapshotValue: CuaDriverCoordinatorSnapshot = {
     lifecycle: "disabled",
     providerState: "included",
@@ -172,6 +177,7 @@ export class CuaDriverDesktopCoordinator {
       throw new Error("cua_driver_bridge_workspace_mismatch");
     }
     this.telemetry = options.telemetry ?? createCuaDriverTelemetry();
+    this.availabilityPublisher = options.availabilityPublisher;
     this.desktopInstanceId = options.desktopInstanceId ?? `desktop-${randomBytes(16).toString("hex")}`;
     this.featureFlags = options.featureFlags ?? resolveDesktopCuaDriverFeatureFlags();
     const hasFineGrainedPlatformOverride = options.platformIdentityVerifier !== undefined
@@ -396,6 +402,7 @@ export class CuaDriverDesktopCoordinator {
         });
       }
       this.stopWindowsSessionRecoveryObserver = undefined;
+      await this.availabilityPublisher?.close();
     }
   }
 
@@ -1090,6 +1097,13 @@ export class CuaDriverDesktopCoordinator {
     } catch {
       // State projection is observational.
     }
+    void this.availabilityPublisher?.publish(snapshot).catch((error) => {
+      this.telemetry.emit("warn", "cua_driver.coordinator.availability_publish_failed", {
+        generation: snapshot.generation,
+        providerState: snapshot.providerState,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    });
     return snapshot;
   }
 }

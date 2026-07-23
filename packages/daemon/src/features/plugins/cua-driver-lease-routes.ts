@@ -1,7 +1,9 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import {
+  isDesktopCuaDriverAvailabilityV1,
   isDesktopCuaDriverLeaseRevokeV1,
   isDesktopCuaDriverLeaseV1,
+  type DesktopCuaDriverAvailabilityV1,
   type DesktopCuaDriverLease,
   type DesktopCuaDriverLeaseRevokeV1,
 } from "@ling-stack/contracts";
@@ -11,8 +13,10 @@ import { readOptionalJsonBody } from "../../shared/request.js";
 import { desktopBridgeTokenStatus } from "../computer-use/desktop-bridge-auth.js";
 
 const LEASE_COLLECTION_PATH = "/desktop/capabilities/cua-driver/lease";
+const AVAILABILITY_PATH = "/desktop/capabilities/cua-driver/availability";
 
 type CuaDriverLeaseRoute =
+  | { readonly kind: "availability" }
   | { readonly kind: "collection" }
   | {
       readonly kind: "item";
@@ -68,6 +72,42 @@ export async function handleCuaDriverLeaseRoute(
         accepted: false,
         error: "cua_driver_lease_workspace_mismatch",
         message: "The lease route does not belong to this daemon workspace authority.",
+      });
+      return true;
+    }
+    if (route.kind === "availability") {
+      if (request.method !== "PUT") {
+        writeMethodNotAllowed(response, "PUT");
+        return true;
+      }
+      const availability = await readAvailability(request, context.config.maxBodyBytes);
+      if (!context.cuaDriverDesktopBridgeAuthority.isCurrentHandshake(availability)) {
+        writeStaleHandshake(response);
+        return true;
+      }
+      const result = context.cuaDriverDesktopBridgeAuthority.publishAvailability(availability);
+      if (!result.accepted || !result.availability) {
+        writePrivateJson(response, 409, {
+          accepted: false,
+          error: "cua_driver_availability_rejected",
+          reason: result.reason,
+        });
+        return true;
+      }
+      if (!context.cuaDriverActivationCoordinator.handleAvailabilityPublished(result.availability)) {
+        writePrivateJson(response, 503, {
+          accepted: false,
+          error: "cua_driver_activation_projection_unavailable",
+          message: "The Desktop state was fenced, but its durable projection is unavailable.",
+        });
+        return true;
+      }
+      writePrivateJson(response, 200, {
+        accepted: true,
+        desktopInstanceEpoch: availability.desktopInstanceEpoch,
+        generation: availability.generation,
+        sequence: availability.sequence,
+        providerState: availability.providerState,
       });
       return true;
     }
@@ -173,6 +213,17 @@ async function readLease(request: IncomingMessage, maxBodyBytes: number): Promis
   return value;
 }
 
+async function readAvailability(
+  request: IncomingMessage,
+  maxBodyBytes: number,
+): Promise<DesktopCuaDriverAvailabilityV1> {
+  const value = await readOptionalJsonBody(request, maxBodyBytes);
+  if (!isDesktopCuaDriverAvailabilityV1(value)) {
+    throw new Error("Cua Driver availability body must match DesktopCuaDriverAvailabilityV1");
+  }
+  return value;
+}
+
 async function readRevoke(
   request: IncomingMessage,
   maxBodyBytes: number,
@@ -185,6 +236,9 @@ async function readRevoke(
 }
 
 function parseCuaDriverLeaseRoute(pathname: string): CuaDriverLeaseRoute | undefined {
+  if (pathname === AVAILABILITY_PATH) {
+    return { kind: "availability" };
+  }
   if (pathname === LEASE_COLLECTION_PATH) {
     return { kind: "collection" };
   }
