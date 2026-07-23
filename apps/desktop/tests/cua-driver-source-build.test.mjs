@@ -229,7 +229,7 @@ test("source-build workflow actions use immutable full commit SHAs", async () =>
     sourceJobs.indexOf("  cua-driver-source-build-promotion-macos:"),
   );
   assert.match(windowsBuildJob, /runs-on: windows-2022/u);
-  assert.match(windowsBuildJob, /toolset: 14\.44\.35211/u);
+  assert.match(windowsBuildJob, /toolset: 14\.44\.35207/u);
   assert.match(windowsBuildJob, /vsversion: 2022/u);
   const macosPromotionJob = sourceJobs.slice(
     sourceJobs.indexOf("  cua-driver-source-build-promotion-macos:"),
@@ -438,8 +438,8 @@ test("self-hosted native workflow is manual, identity-bound, and uses only dedic
     hostedSigningJob,
     /Run source-build promotion contract fixtures\n\s+if: runner\.os != 'Windows'/u,
   );
-  assert.equal([...caller.matchAll(/toolset: 14\.44(?:\.35211)?/gu)].length, 2);
-  assert.equal([...caller.matchAll(/toolset: 14\.44\.35211/gu)].length, 1);
+  assert.equal([...caller.matchAll(/toolset: 14\.44(?:\.35207)?/gu)].length, 2);
+  assert.equal([...caller.matchAll(/toolset: 14\.44\.35207/gu)].length, 1);
   assert.equal([...caller.matchAll(/sdk: 10\.0\.26100\.0/gu)].length, 2);
   assert.equal([...caller.matchAll(/vsversion: 2022/gu)].length, 1);
   assert.equal(
@@ -1737,7 +1737,7 @@ test("source-build inventory rejects extra or relabeled Windows executables", ()
 });
 
 test("Windows developer-shell environment replaces case-insensitive PATH aliases", () => {
-  const parsed = parseWindowsEnvironment("Path=C:\\VS\\bin;C:\\Windows\r\nVCToolsVersion=14.44.35211\r\n");
+  const parsed = parseWindowsEnvironment("Path=C:\\VS\\bin;C:\\Windows\r\nVCToolsVersion=14.44.35207\r\n");
   assert.equal(parsed.Path, "C:\\VS\\bin;C:\\Windows");
   const merged = mergeEnvironment({ PATH: "stale", HOME: "home" }, parsed, true);
   assert.equal(merged.Path, parsed.Path);

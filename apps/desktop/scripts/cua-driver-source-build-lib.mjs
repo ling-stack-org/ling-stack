@@ -488,7 +488,7 @@ function verifySourceBuildInputs(value) {
   }, "darwin post-link identity normalization");
   assert(value.toolchain.win32X64.runner === "ling-cua-driver-windows-x64-v1", "Windows runner changed");
   assert(value.toolchain.win32X64.visualStudioVersion === "17.14.37411.7", "Visual Studio pin changed");
-  assert(value.toolchain.win32X64.msvcToolsetVersion === "14.44.35211", "MSVC toolset pin changed");
+  assert(value.toolchain.win32X64.msvcToolsetVersion === "14.44.35207", "MSVC toolset pin changed");
   assert(value.toolchain.win32X64.windowsSdkVersion === "10.0.26100.0", "Windows SDK pin changed");
   assert(value.toolchain.win32X64.target === "x86_64-pc-windows-msvc", "Windows Rust target changed");
   assertDeepEqual(value.sourceBuildPlatforms, ["darwin", "win32-x64"], "source-build platforms");

@@ -264,7 +264,7 @@ jobs:
         with:
           arch: x64
           sdk: 10.0.26100.0
-          toolset: 14.44.35211
+          toolset: 14.44.35207
           vsversion: 2022
 
       - name: Test atomic Cua Driver package publisher and Mach-O identity normalizer
