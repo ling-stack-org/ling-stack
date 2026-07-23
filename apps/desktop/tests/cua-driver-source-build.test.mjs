@@ -389,6 +389,17 @@ test("self-hosted native workflow is manual, identity-bound, and uses only dedic
     caller,
     /os: \$\{\{ fromJSON\(inputs\.native_platform == 'windows' && '\["windows-2022"\]' \|\| inputs\.native_platform == 'macos' && '\["macos-15"\]' \|\| '\["ubuntu-24\.04","macos-15","windows-2022"\]'\) \}\}/u,
   );
+  const hostedSigningJob = caller.slice(
+    caller.indexOf("  cua-driver-signing-feasibility:"),
+    caller.indexOf("  cua-driver-source-build-macos:"),
+  );
+  assert.match(
+    hostedSigningJob,
+    /Install fixture dependencies[\s\S]+corepack pnpm install --frozen-lockfile[\s\S]+Run certificate-free hook-order and artifact fixtures/u,
+  );
+  assert.equal([...caller.matchAll(/toolset: 14\.44/gu)].length, 2);
+  assert.equal([...caller.matchAll(/sdk: 10\.0\.26100\.0/gu)].length, 2);
+  assert.doesNotMatch(caller, /vsversion:/u);
   assert.equal(
     [...caller.matchAll(/if: github\.event_name == 'workflow_dispatch' && inputs\.execution_mode == 'self-hosted-native'/gu)].length,
     1,

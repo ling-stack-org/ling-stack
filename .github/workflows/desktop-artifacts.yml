@@ -106,6 +106,12 @@ jobs:
         with:
           node-version: 22.15.0
 
+      - name: Enable pnpm
+        run: corepack enable
+
+      - name: Install fixture dependencies
+        run: corepack pnpm install --frozen-lockfile
+
       - name: Run certificate-free hook-order and artifact fixtures
         run: node apps/desktop/tests/cua-driver-signing-feasibility.test.mjs
 
@@ -258,7 +264,6 @@ jobs:
           arch: x64
           sdk: 10.0.26100.0
           toolset: 14.44
-          vsversion: 17.0
 
       - name: Test atomic Cua Driver package publisher and Mach-O identity normalizer
         shell: pwsh
@@ -681,7 +686,6 @@ jobs:
           arch: x64
           sdk: 10.0.26100.0
           toolset: 14.44
-          vsversion: 17.0
 
       - name: Enable pnpm
         run: corepack enable
