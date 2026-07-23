@@ -374,6 +374,22 @@ test("self-hosted native workflow is manual, identity-bound, and uses only dedic
     8,
   );
   assert.equal(
+    [...caller.matchAll(/if: github\.event_name == 'workflow_dispatch' && inputs\.execution_mode == 'github-hosted' && inputs\.native_platform != 'windows'/gu)].length,
+    3,
+  );
+  assert.equal(
+    [...caller.matchAll(/if: github\.event_name == 'workflow_dispatch' && inputs\.execution_mode == 'github-hosted' && inputs\.native_platform != 'macos'/gu)].length,
+    3,
+  );
+  assert.equal(
+    [...caller.matchAll(/if: github\.event_name == 'workflow_dispatch' && inputs\.execution_mode == 'github-hosted' && inputs\.native_platform == 'both'/gu)].length,
+    1,
+  );
+  assert.match(
+    caller,
+    /os: \$\{\{ fromJSON\(inputs\.native_platform == 'windows' && '\["windows-2022"\]' \|\| inputs\.native_platform == 'macos' && '\["macos-15"\]' \|\| '\["ubuntu-24\.04","macos-15","windows-2022"\]'\) \}\}/u,
+  );
+  assert.equal(
     [...caller.matchAll(/if: github\.event_name == 'workflow_dispatch' && inputs\.execution_mode == 'self-hosted-native'/gu)].length,
     1,
   );
