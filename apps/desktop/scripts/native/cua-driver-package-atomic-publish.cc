@@ -2081,11 +2081,20 @@ ScopedHandle OpenMetadataHandle(const std::wstring& path, DWORD access) {
 using NtOpenFileFunction = NTSTATUS(NTAPI*)(PHANDLE, ACCESS_MASK,
                                             POBJECT_ATTRIBUTES,
                                             PIO_STATUS_BLOCK, ULONG, ULONG);
+using NtSetInformationFileFunction = NTSTATUS(NTAPI*)(
+    HANDLE, PIO_STATUS_BLOCK, PVOID, ULONG, FILE_INFORMATION_CLASS);
 using RtlNtStatusToDosErrorFunction = ULONG(WINAPI*)(NTSTATUS);
 
 NtOpenFileFunction ResolveNtOpenFile() {
   static const auto function = reinterpret_cast<NtOpenFileFunction>(
       GetProcAddress(GetModuleHandleW(L"ntdll.dll"), "NtOpenFile"));
+  return function;
+}
+
+NtSetInformationFileFunction ResolveNtSetInformationFile() {
+  static const auto function = reinterpret_cast<NtSetInformationFileFunction>(
+      GetProcAddress(GetModuleHandleW(L"ntdll.dll"),
+                     "NtSetInformationFile"));
   return function;
 }
 
@@ -3765,6 +3774,12 @@ int RunOwnedWindowsProcess(int argc, wchar_t* argv[]) {
 bool RenameHandleNoReplace(HANDLE source, HANDLE parent,
                            const std::wstring& destination_name,
                            DWORD* error_code) {
+  const NtSetInformationFileFunction nt_set_information_file =
+      ResolveNtSetInformationFile();
+  if (nt_set_information_file == nullptr) {
+    *error_code = ERROR_PROC_NOT_FOUND;
+    return false;
+  }
   const DWORD destination_bytes =
       static_cast<DWORD>(destination_name.size() * sizeof(wchar_t));
   const std::size_t rename_info_bytes =
@@ -3775,9 +3790,17 @@ bool RenameHandleNoReplace(HANDLE source, HANDLE parent,
   rename_info->RootDirectory = parent;
   rename_info->FileNameLength = destination_bytes;
   std::memcpy(rename_info->FileName, destination_name.data(), destination_bytes);
-  if (!SetFileInformationByHandle(source, FileRenameInfo, rename_info,
-                                  static_cast<DWORD>(rename_buffer.size()))) {
-    *error_code = GetLastError();
+  IO_STATUS_BLOCK io_status {};
+  // SetFileInformationByHandle rejects a handle-relative RootDirectory with
+  // ERROR_INVALID_PARAMETER on hosted Windows. The native information class
+  // preserves the verified parent-handle boundary required by this publisher.
+  constexpr auto kFileRenameInformation =
+      static_cast<FILE_INFORMATION_CLASS>(10);
+  const NTSTATUS status = nt_set_information_file(
+      source, &io_status, rename_info,
+      static_cast<ULONG>(rename_buffer.size()), kFileRenameInformation);
+  if (status < 0) {
+    *error_code = NtStatusToDosError(status);
     return false;
   }
   *error_code = ERROR_SUCCESS;
