@@ -20,6 +20,7 @@ import {
 import {
   mergeEnvironment,
   parseWindowsEnvironment,
+  selectVisualStudioInstallation,
 } from "../scripts/cua-driver-source-build-toolchain.mjs";
 import { generateSupplyChainMetadata } from "../scripts/cua-driver-source-build-supply-chain.mjs";
 import {
@@ -1738,6 +1739,29 @@ test("Windows developer-shell environment replaces case-insensitive PATH aliases
   assert.equal(merged.Path, parsed.Path);
   assert.equal("PATH" in merged, false);
   assert.equal(merged.HOME, "home");
+});
+
+test("Windows toolchain selects the exact locked Visual Studio beside newer installs", () => {
+  const expected = {
+    installationPath: "C:\\Program Files\\Microsoft Visual Studio\\2022\\Enterprise",
+    catalog: { productDisplayVersion: "17.14.37502.11" },
+  };
+  const newer = {
+    installationPath: "C:\\Program Files\\Microsoft Visual Studio\\18\\Enterprise",
+    catalog: { productDisplayVersion: "18.7.3" },
+  };
+  assert.equal(
+    selectVisualStudioInstallation([newer, expected], "17.14.37502.11"),
+    expected,
+  );
+  assert.throws(
+    () => selectVisualStudioInstallation([newer], "17.14.37502.11"),
+    /installation was not found/u,
+  );
+  assert.throws(
+    () => selectVisualStudioInstallation([expected, structuredClone(expected)], "17.14.37502.11"),
+    /multiple Visual Studio/u,
+  );
 });
 
 test("supply-chain metadata is deterministic and orders the locked Cargo graph", async () => {

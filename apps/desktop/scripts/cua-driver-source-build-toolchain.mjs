@@ -53,23 +53,20 @@ export async function verifyToolchain(platform, lock) {
   const programFilesX86 = process.env["ProgramFiles(x86)"];
   assert(programFilesX86, "ProgramFiles(x86) is not set");
   const vswhere = join(programFilesX86, "Microsoft Visual Studio", "Installer", "vswhere.exe");
-  const installationPath = await runText(vswhere, [
-    "-latest",
-    "-products",
-    "*",
-    "-requires",
-    "Microsoft.VisualStudio.Component.VC.Tools.x86.x64",
-    "-property",
-    "installationPath",
-  ]);
-  assert(installationPath.length > 0, "Visual Studio installation was not found");
-  const catalog = JSON.parse(
-    await runText(vswhere, ["-path", installationPath, "-format", "json", "-utf8"]),
-  )[0]?.catalog;
-  assert(
-    catalog?.productDisplayVersion === pin.visualStudioVersion,
-    `Visual Studio version mismatch: ${catalog?.productDisplayVersion ?? "missing"}`,
+  const installation = selectVisualStudioInstallation(
+    JSON.parse(await runText(vswhere, [
+      "-all",
+      "-products",
+      "*",
+      "-requires",
+      "Microsoft.VisualStudio.Component.VC.Tools.x86.x64",
+      "-format",
+      "json",
+      "-utf8",
+    ])),
+    pin.visualStudioVersion,
   );
+  const { installationPath } = installation;
   const toolsetFile = join(
     installationPath,
     "VC",
@@ -144,6 +141,24 @@ export async function verifyToolchain(platform, lock) {
       rcPath,
     },
   };
+}
+
+export function selectVisualStudioInstallation(installations, expectedVersion) {
+  assert(Array.isArray(installations), "Visual Studio installation list is invalid");
+  const matches = installations.filter((installation) => (
+    typeof installation?.installationPath === "string"
+    && installation.installationPath.length > 0
+    && installation.catalog?.productDisplayVersion === expectedVersion
+  ));
+  assert(
+    matches.length > 0,
+    `Visual Studio ${expectedVersion} installation was not found`,
+  );
+  assert(
+    matches.length === 1,
+    `multiple Visual Studio ${expectedVersion} installations were found`,
+  );
+  return matches[0];
 }
 
 export function parseWindowsEnvironment(value) {
