@@ -3957,6 +3957,10 @@ PublishResult PublishOnWindows(const std::wstring& parent_root,
   DWORD commit_error = ERROR_SUCCESS;
   const bool commit_result = RenameHandleNoReplace(
       source.get(), parent, destination_name, &commit_error);
+  // The commit syscall has completed and the captured identity is sufficient
+  // for post-state verification. Do not keep the renamed child handle alive
+  // while checking whether the named parent was concurrently displaced.
+  source.reset();
 
 #if defined(LING_CUA_DRIVER_PACKAGE_STAGING_TESTS)
   if (post_commit_ready_name != nullptr && post_commit_gate_name != nullptr) {
