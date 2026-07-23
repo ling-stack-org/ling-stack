@@ -1393,6 +1393,13 @@ test("unsecured empty cleanup removes only the exact current-user-owned empty di
   const sourceName = "unsecured-empty";
   const sourcePath = join(parentRoot, sourceName);
   await mkdir(sourcePath, { mode: 0o755 });
+  // Windows administrator tokens may assign a newly created directory to the
+  // Administrators group. Apply the production security operation first so
+  // this test's current-user-owner premise is true on every supported host.
+  await securePrivateStagingDirectory({
+    parentRoot,
+    directoryName: sourceName,
+  });
   const expected = await nativeIdentities(parentRoot, sourceName);
 
   const receipt = await removeAtomicPublishUnsecuredEmptyDirectory({
@@ -1419,6 +1426,10 @@ test("unsecured empty cleanup refuses non-empty, replaced, reparse and wrong-par
     const sourceName = "unsecured-empty";
     const sourcePath = join(parentRoot, sourceName);
     await mkdir(sourcePath, { mode: 0o755 });
+    await securePrivateStagingDirectory({
+      parentRoot,
+      directoryName: sourceName,
+    });
     await writeFile(join(sourcePath, "valuable.txt"), "valuable");
     const expected = await nativeIdentities(parentRoot, sourceName);
 

@@ -1803,7 +1803,7 @@ function nativeReceiptError(receipt) {
   }
   return new CuaDriverAtomicPublishError(
     code,
-    `native publisher classified the operation as ${receipt.outcome}: ${receipt.reason}`,
+    `native publisher classified the operation as ${receipt.outcome}: ${receipt.reason} (nativeCode=${receipt.nativeCode})`,
     {
       outcome: receipt.outcome,
       nativeReason: receipt.reason,
