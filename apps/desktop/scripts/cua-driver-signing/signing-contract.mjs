@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { createReadStream } from "node:fs";
 
 /**
  * The three Windows signing tiers are deliberately represented as a closed
@@ -113,7 +113,11 @@ export function sha256Bytes(value) {
 }
 
 export async function sha256File(filePath) {
-  return sha256Bytes(await readFile(filePath));
+  const hash = createHash("sha256");
+  for await (const chunk of createReadStream(filePath)) {
+    hash.update(chunk);
+  }
+  return hash.digest("hex");
 }
 
 export function assertSha256(value, fieldName = "sha256") {
