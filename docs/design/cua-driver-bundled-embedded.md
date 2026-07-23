@@ -65,6 +65,12 @@ prove independent runner/build-invocation provenance. Each native build job uplo
 evidence first; a dependent same-platform job downloads that immutable artifact, reruns the
 fixed verifier and uploads a separate proposal artifact. This closes the CI serialization
 boundary without treating the proposal job as independent build provenance.
+The canonical Plugin Manager row now consumes the V2 bundled setup projection directly.
+It renders included, Desktop/permission/session/platform recovery, ready, incompatible and
+corrupt states without exposing the external installation drawer. Windows standard-tier
+coverage and the elevated/UWP limitations are localized details on that same row. Gate-off
+and `external_local` responses continue through the legacy missing/detected/connected/ready
+UI unchanged.
 Production staging authority is fixed to the committed lock/resource root and real
 source-build verifier; trust overrides exist only inside the test factory. The native helper
 preflights before payload creation,
@@ -123,7 +129,7 @@ final-target fixture invokes macOS `--mac dmg zip` and verifies exactly `outer-d
 authority files, the provider and post-seal byte stability inside the final artifacts. The
 committed lock still enables no platform
 and carries no native binary, so promoted native payloads, release signing, a real
-provider-bearing `Ling Stack Setup.exe`, product-state E2E, Windows hosted-runner validation
+provider-bearing `Ling Stack Setup.exe`, packaged product-state E2E, Windows hosted-runner validation
 and real-machine acceptance remain. Both macOS and
 Windows artifact jobs now run the full daemon and Pi runner suites rather than a drifting
 Computer Use file allowlist, but hosted evidence still must complete. In particular,

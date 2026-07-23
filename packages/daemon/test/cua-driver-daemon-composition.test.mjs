@@ -321,7 +321,7 @@ test("lease route returns 503 and clears the accepted lease when projection CAS 
       "trusted-local:cua-driver",
       "enable",
     );
-    assert.equal(enableWithoutLease.status, 409);
+    assert.equal(enableWithoutLease.status, 202);
     assert.equal((await enableWithoutLease.json()).error, "cua_desktop_lease_unavailable");
 
     assert.equal((await putLease(daemon, currentLease)).status, 200);
@@ -370,7 +370,7 @@ test("lease revoke returns 503 until its durable projection can be retried", {
       "trusted-local:cua-driver",
       "enable",
     );
-    assert.equal(enable.status, 409);
+    assert.equal(enable.status, 202);
     assert.equal((await enable.json()).error, "cua_desktop_lease_unavailable");
     assert.equal((await putLease(daemon, currentLease)).status, 200);
     await waitFor(() => store.getMcpServer("mcp_cua_driver")?.enabled === true);
@@ -424,7 +424,7 @@ test("availability route atomically revokes the live lease and clears SQLite eff
       "trusted-local:cua-driver",
       "enable",
     );
-    assert.equal(requested.status, 409);
+    assert.equal(requested.status, 202);
     assert.equal((await requested.json()).error, "cua_desktop_lease_unavailable");
     assert.equal((await putLease(daemon, currentLease)).status, 200);
     await waitFor(() => store.getMcpServer("mcp_cua_driver")?.enabled === true);
@@ -635,7 +635,7 @@ test("enable retains intent, first lease reconciles once, renewal is inert, and 
   await fixture.daemon.start();
   try {
     const enable = await pluginAction(fixture.daemon, fixture.cwd, "trusted-local:cua-driver", "enable");
-    assert.equal(enable.status, 409);
+    assert.equal(enable.status, 202);
     const enableBody = await enable.json();
     assert.equal(enableBody.error, "cua_desktop_lease_unavailable");
     assert.equal(enableBody.plugin.setup.requestedEnabled, true);
@@ -709,7 +709,7 @@ test("first lease publish responds before retained-intent activation readiness c
       "trusted-local:cua-driver",
       "enable",
     );
-    assert.equal(enable.status, 409);
+    assert.equal(enable.status, 202);
 
     const authority = await handshake(fixture.daemon);
     const firstLease = lease(authority, fixture.cwd);
@@ -755,7 +755,7 @@ for (const retirement of ["expiry", "revoke"]) {
         "trusted-local:cua-driver",
         "enable",
       );
-      assert.equal(enable.status, 409);
+      assert.equal(enable.status, 202);
 
       const authority = await handshake(fixture.daemon);
       const currentLease = lease(authority, fixture.cwd);
@@ -797,7 +797,7 @@ test("daemon shutdown closes one active bundled lease client exactly once", {
       "trusted-local:cua-driver",
       "enable",
     );
-    assert.equal(enable.status, 409);
+    assert.equal(enable.status, 202);
     const authority = await handshake(fixture.daemon);
     const currentLease = lease(authority, fixture.cwd);
     assert.equal((await putLease(fixture.daemon, currentLease)).status, 200);
@@ -843,7 +843,7 @@ test("daemon restart aborts in-flight activation and keeps tools hidden until a 
     firstStarted = true;
     assert.equal(
       (await pluginAction(firstDaemon, cwd, "trusted-local:cua-driver", "enable")).status,
-      409,
+      202,
     );
     const firstAuthority = await handshake(firstDaemon);
     assert.equal((await putLease(firstDaemon, lease(firstAuthority, cwd))).status, 200);
@@ -918,7 +918,7 @@ test("missing Desktop bridge token does not block daemon startup and bundled act
       "trusted-local:cua-driver",
       "enable",
     );
-    assert.equal(enable.status, 409);
+    assert.equal(enable.status, 202);
     const enableBody = await enable.json();
     assert.equal(enableBody.error, "cua_desktop_lease_unavailable");
     assert.equal(enableBody.plugin.setup.requestedEnabled, true);
@@ -1049,7 +1049,7 @@ for (const operation of ["enable", "check"]) {
           "trusted-local:cua-driver",
           "enable",
         )).status,
-        409,
+        202,
       );
       const authority = await handshake(fixture.daemon);
       assert.equal((await putLease(fixture.daemon, lease(authority, fixture.cwd))).status, 200);

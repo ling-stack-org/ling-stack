@@ -633,6 +633,15 @@ test("bundled activation uses only the lease client and startup reset retains in
     });
     assert.equal(fixture.store.getManagedPlugin(pluginId).enabled, true);
     assert.equal(fixture.store.getMcpServer(serverId).enabled, true);
+    const readyDetails = fixture.store.getManagedPluginHealthSnapshot(pluginId).details;
+    assert.equal(readyDetails.providerState, "ready");
+    assert.equal(readyDetails.platform, "darwin");
+    assert.equal(readyDetails.providerVersion, "0.8.3");
+    assert.equal(readyDetails.providerDistributionRevision, "ling.1");
+    assert.equal(readyDetails.providerSealDigest, "b".repeat(64));
+    assert.equal(readyDetails.providerCatalogDigest, "c".repeat(64));
+    assert.equal(readyDetails.integrityCoverage, undefined);
+    assert.equal(readyDetails.limitations, undefined);
     assert.deepEqual(fixture.store.listMcpTools({ serverId }).map((tool) => tool.rawName), ["list_windows"]);
     assert.equal(
       fixture.store.getMcpServer(serverId).transport.command,
@@ -680,7 +689,7 @@ test("Desktop availability projects exact recoverable state without granting too
       const fixture = await activationFixture();
       try {
         const enabled = await fixture.service.enable({ store: fixture.store, descriptor, now });
-        assert.equal(enabled.statusCode, 409);
+        assert.equal(enabled.statusCode, 202);
         assert.equal(enabled.error, "cua_desktop_lease_unavailable");
 
         const projected = fixture.service.projectDesktopAvailability({
@@ -770,7 +779,7 @@ test("enable without a lease reuses the latest authenticated Desktop repair stat
   try {
     const result = await fixture.service.enable({ store: fixture.store, descriptor, now });
 
-    assert.equal(result.statusCode, 409);
+    assert.equal(result.statusCode, 202);
     assert.equal(result.error, "cua_embedded_permission_required");
     assert.equal(result.health.details.providerState, "permission_required");
     assert.equal(result.health.details.errorCode, "cua_embedded_permission_required");
@@ -968,7 +977,7 @@ test("enable retains intent without a lease and reconcile activates after lease 
   const fixture = await activationFixture();
   try {
     const waiting = await fixture.service.enable({ store: fixture.store, descriptor, now });
-    assert.equal(waiting.statusCode, 409);
+    assert.equal(waiting.statusCode, 202);
     assert.equal(waiting.error, "cua_desktop_lease_unavailable");
     assert.equal(fixture.store.getCuaDriverActivationState(pluginId).requestedEnabled, true);
     assert.equal(fixture.store.getManagedPlugin(pluginId).enabled, false);

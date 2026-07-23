@@ -33,7 +33,7 @@ import {
 export type BundledCuaDriverActivationOperation = "check" | "enable";
 
 export interface BundledCuaDriverActivationResult {
-  readonly statusCode: 200 | 400 | 409;
+  readonly statusCode: 200 | 202 | 400 | 409;
   readonly committed: boolean;
   readonly error?: string;
   readonly message?: string;
@@ -251,7 +251,10 @@ export class BundledCuaDriverActivationService {
         ? health.details.errorCode
         : "cua_desktop_lease_unavailable";
       return {
-        statusCode: 409,
+        // The requested intent is durable even though Desktop has not
+        // published a lease yet. Return an accepted response so clients can
+        // consume the waiting projection; 409 is reserved for stale races.
+        statusCode: 202,
         committed: true,
         error: errorCode,
         message: health.message,
@@ -461,6 +464,7 @@ export class BundledCuaDriverActivationService {
     readonly message?: string;
   }): BundledCuaDriverActivationResult {
     const ready = !input.error && input.statusSnapshot.status === "ready";
+    const currentLease = this.options.leaseRegistry.getCurrent();
     const message = input.message ?? input.statusSnapshot.message ?? (
       ready ? "Bundled Cua Driver is ready." : "Bundled Cua Driver activation failed."
     );
@@ -480,6 +484,23 @@ export class BundledCuaDriverActivationService {
         desktopInstanceId: input.token.desktopInstanceId,
         desktopInstanceEpoch: input.token.desktopInstanceEpoch,
         generation: input.token.leaseGeneration,
+        ...(currentLease
+          ? {
+              platform: currentLease.platform,
+              providerVersion: currentLease.providerVersion,
+              providerDistributionRevision: currentLease.distributionRevision,
+              providerSealDigest: currentLease.providerSealDigest,
+              ...(currentLease.providerCatalogDigest
+                ? { providerCatalogDigest: currentLease.providerCatalogDigest }
+                : {}),
+              ...(currentLease.integrityCoverage
+                ? { integrityCoverage: currentLease.integrityCoverage }
+                : {}),
+              ...(currentLease.platform === "win32" && currentLease.integrityCoverage === "standard"
+                ? { limitations: ["elevated_pixel_input", "uwp_send_input"] as const }
+                : {}),
+            }
+          : {}),
       },
     });
     const committed = commitCurrentCuaDriverActivation({

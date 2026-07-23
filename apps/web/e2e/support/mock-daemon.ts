@@ -660,6 +660,18 @@ export interface MockManagedPlugin {
     kind: "local_binary";
     state: "detected" | "missing" | "unsupported" | "connected" | "ready";
     checkedAt: string;
+    schemaVersion?: 2;
+    distribution?: "bundled_embedded" | "external_local";
+    platform?: "darwin" | "win32" | "unsupported";
+    providerState?: "included" | "desktop_unavailable" | "permission_required" | "interactive_session_required" | "platform_unavailable" | "ready" | "incompatible" | "corrupt" | "external_missing" | "external_detected" | "external_connected" | "unsupported";
+    requestedEnabled?: boolean;
+    effectiveEnabled?: boolean;
+    integrityCoverage?: "standard" | "uiaccess";
+    limitations?: Array<"elevated_pixel_input" | "uwp_send_input">;
+    providerVersion?: string;
+    providerDistributionRevision?: string;
+    providerDisplayVersion?: string;
+    integrity?: "verified" | "failed" | "unknown";
     detectedCommand?: string;
     guide?: {
       documentationUrl: string;
@@ -3964,6 +3976,50 @@ export function createMockCuaPlugin(overrides: Partial<MockManagedPlugin> = {}):
     },
     ...overrides,
   };
+}
+
+export function createMockBundledEmbeddedCuaPlugin(input: {
+  readonly providerState: NonNullable<MockManagedPlugin["setup"]>["providerState"];
+  readonly platform: "darwin" | "win32";
+  readonly requestedEnabled: boolean;
+  readonly effectiveEnabled: boolean;
+  readonly integrityCoverage?: "standard" | "uiaccess";
+  readonly limitations?: Array<"elevated_pixel_input" | "uwp_send_input">;
+}): MockManagedPlugin {
+  return createMockCuaPlugin({
+    status: input.effectiveEnabled ? "enabled" : "disabled",
+    description: "Desktop-owned embedded provider.",
+    trustSummary: "Included with Ling and owned by the current Desktop process.",
+    setup: {
+      kind: "local_binary",
+      schemaVersion: 2,
+      distribution: "bundled_embedded",
+      platform: input.platform,
+      providerState: input.providerState,
+      requestedEnabled: input.requestedEnabled,
+      effectiveEnabled: input.effectiveEnabled,
+      state: input.effectiveEnabled ? "ready" : "connected",
+      checkedAt: "2026-07-21T00:00:00.000Z",
+      providerVersion: "0.8.3",
+      providerDistributionRevision: "ling.1",
+      integrity: "verified",
+      integrityCoverage: input.integrityCoverage,
+      limitations: input.limitations ?? [],
+    },
+    health: input.effectiveEnabled
+      ? createMockPluginHealth("trusted-local:cua-driver", "ready", "Bundled Cua Driver is ready.")
+      : undefined,
+    actions: {
+      canEnable: input.providerState === "included",
+      canDisable: input.requestedEnabled,
+      canCheck: true,
+      canApplyPreset: false,
+      canInstall: false,
+      canUninstall: false,
+      canRefreshPackage: false,
+      canRuntimePreview: false,
+    },
+  });
 }
 
 export function createMockBundledCuaPlugin(overrides: Partial<MockManagedPlugin> = {}): MockManagedPlugin {
@@ -7858,6 +7914,35 @@ export async function handleDaemonRoute(
       return;
     }
     if (action === "check" && request.method() === "POST") {
+      if (plugin.id === "trusted-local:cua-driver" && plugin.setup?.distribution === "bundled_embedded") {
+        const requestedEnabled = plugin.setup.requestedEnabled === true;
+        const providerState = requestedEnabled ? "ready" as const : "included" as const;
+        const effectiveEnabled = requestedEnabled;
+        const updated = updateMockPlugin(state, plugin.id, {
+          status: effectiveEnabled ? "enabled" : "disabled",
+          setup: {
+            ...plugin.setup,
+            state: effectiveEnabled ? "ready" : "connected",
+            checkedAt: "2026-07-21T00:02:00.000Z",
+            providerState,
+            requestedEnabled,
+            effectiveEnabled,
+          },
+          health: effectiveEnabled
+            ? createMockPluginHealth(plugin.id, "ready", "Bundled Cua Driver is ready.")
+            : createMockPluginHealth(plugin.id, "disabled", "Bundled Cua Driver is included but disabled."),
+          actions: {
+            ...plugin.actions,
+            canEnable: !requestedEnabled,
+            canDisable: requestedEnabled,
+          },
+          events: appendMockPluginEvent(plugin, "checked", effectiveEnabled
+            ? "Bundled Cua Driver is ready."
+            : "Bundled Cua Driver is included but disabled.", { providerState }),
+        });
+        await route.fulfill({ json: { plugin: updated, health: updated.health } });
+        return;
+      }
       const linkedServerId = plugin.linkedResources.find((resource) => resource.kind === "mcp-server")?.id;
       const server = state.mcpServers.find((item) => item.id === linkedServerId);
       const health = server
@@ -7876,6 +7961,30 @@ export async function handleDaemonRoute(
     }
     if (action === "disable" && request.method() === "POST") {
       const reason = safePostDataJson(request).reason;
+      if (plugin.id === "trusted-local:cua-driver" && plugin.setup?.distribution === "bundled_embedded") {
+        const updated = updateMockPlugin(state, plugin.id, {
+          status: "disabled",
+          setup: {
+            ...plugin.setup,
+            state: "connected",
+            checkedAt: "2026-07-21T00:03:00.000Z",
+            providerState: "included",
+            requestedEnabled: false,
+            effectiveEnabled: false,
+          },
+          disabledReason: typeof reason === "string" ? reason : undefined,
+          contributions: plugin.contributions.map((contribution) => ({ ...contribution, enabled: false })),
+          actions: {
+            ...plugin.actions,
+            canEnable: true,
+            canDisable: false,
+          },
+          health: createMockPluginHealth(plugin.id, "disabled", "Bundled Cua Driver is included but disabled."),
+          events: appendMockPluginEvent(plugin, "disabled", "Plugin disabled.", {}),
+        });
+        await route.fulfill({ json: { plugin: updated } });
+        return;
+      }
       const linkedServerId = plugin.linkedResources.find((resource) => resource.kind === "mcp-server")?.id;
       const server = state.mcpServers.find((item) => item.id === linkedServerId);
       if (server) {
@@ -7912,6 +8021,40 @@ export async function handleDaemonRoute(
       return;
     }
     if (action === "enable" && request.method() === "POST") {
+      if (plugin.id === "trusted-local:cua-driver" && plugin.setup?.distribution === "bundled_embedded") {
+        const updated = updateMockPlugin(state, plugin.id, {
+          status: "disabled",
+          setup: {
+            ...plugin.setup,
+            state: "connected",
+            checkedAt: "2026-07-21T00:01:00.000Z",
+            providerState: "desktop_unavailable",
+            requestedEnabled: true,
+            effectiveEnabled: false,
+          },
+          disabledReason: undefined,
+          contributions: plugin.contributions.map((contribution) => ({ ...contribution, enabled: false })),
+          actions: {
+            ...plugin.actions,
+            canEnable: false,
+            canDisable: true,
+          },
+          health: {
+            pluginId: plugin.id,
+            checkedAt: "2026-07-21T00:01:00.000Z",
+            expiresAt: "2026-07-21T00:06:00.000Z",
+            status: "failed",
+            message: "Bundled Cua Driver is waiting for a current Desktop lease.",
+            details: {
+              providerState: "desktop_unavailable",
+              errorCode: "cua_desktop_lease_unavailable",
+            },
+          },
+          events: appendMockPluginEvent(plugin, "enable_requested", "Bundled Cua Driver is waiting for Desktop.", {}),
+        });
+        await route.fulfill({ status: 202, json: { plugin: updated, health: updated.health } });
+        return;
+      }
       const linkedServerId = plugin.linkedResources.find((resource) => resource.kind === "mcp-server")?.id;
       const server = state.mcpServers.find((item) => item.id === linkedServerId);
       if (server) {

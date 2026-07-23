@@ -13,6 +13,7 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 
 import {
   createCuaDriverSourceBuildPromoterForTest,
@@ -27,7 +28,8 @@ import {
 import { parsePromotionArgs } from "../scripts/promote-cua-driver-source-build.mjs";
 
 const RESOURCE_ROOT = resolve(
-  "apps/desktop/resources/providers/cua-driver/0.8.3-ling.1",
+  dirname(fileURLToPath(import.meta.url)),
+  "../resources/providers/cua-driver/0.8.3-ling.1",
 );
 const DIGEST = "d".repeat(64);
 

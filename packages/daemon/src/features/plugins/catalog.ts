@@ -24,6 +24,7 @@ import {
 } from "./presets.js";
 import { BUNDLED_CUA_DRIVER_PLUGIN_ID } from "./bundled-index.js";
 import { buildCuaDriverSetupView } from "./cua-driver.js";
+import { readBundledCuaDriverSetupMetadata } from "./cua-driver-catalog-projection.js";
 import { listBundledPackageDescriptors } from "./source-index.js";
 import { buildManagedPluginRuntimePreview, toManagedPluginPackageView } from "./runtime-injection.js";
 import { isBundledEmbeddedCuaDriverRuntime } from "./cua-driver-runtime-mode.js";
@@ -237,6 +238,9 @@ function createManagedPluginView(input: {
         health: input.health,
       })
     : undefined;
+  const bundledSetupMetadata = bundledProjection
+    ? readBundledCuaDriverSetupMetadata(input.health?.details, process.platform)
+    : {};
   const setup = input.descriptor.id === CUA_DRIVER_PLUGIN_ID
     ? buildCuaDriverSetupView({
         store: input.store,
@@ -250,6 +254,7 @@ function createManagedPluginView(input: {
                 providerState: bundledProviderState,
                 requestedEnabled,
                 effectiveEnabled,
+                ...bundledSetupMetadata,
               },
             }
           : {}),

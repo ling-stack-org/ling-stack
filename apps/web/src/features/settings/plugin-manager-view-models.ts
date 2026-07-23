@@ -1,4 +1,5 @@
 import type { ManagedPluginView } from "../../types.js";
+import { buildBundledCuaDriverPluginView } from "./cua-driver-plugin-view-model.js";
 import type { SettingsTranslator } from "./skill-library-utils.js";
 
 export type PluginActionId =
@@ -37,6 +38,14 @@ export interface PluginTableRowView {
 }
 
 export function buildPluginTableRowView(plugin: ManagedPluginView, t: SettingsTranslator): PluginTableRowView {
+  const bundledCuaDriver = buildBundledCuaDriverPluginView(plugin, t);
+  if (bundledCuaDriver) {
+    return {
+      ...bundledCuaDriver,
+      drawerActions: [],
+      hasLinkedMcp: plugin.linkedResources.some((resource) => resource.kind === "mcp-server" && resource.present),
+    };
+  }
   return {
     description: pluginTableDescription(plugin, t),
     ...pluginTableStatus(plugin, t),

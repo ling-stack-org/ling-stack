@@ -75,7 +75,9 @@ export function usePluginsDomain(input: {
       const response = await listManagedPlugins(cwd);
       setPlugins(response.plugins);
       const detectedCuaDriver = response.plugins.find((plugin) =>
-        plugin.id === "trusted-local:cua-driver" && plugin.setup?.state === "detected"
+        plugin.id === "trusted-local:cua-driver"
+        && plugin.setup?.distribution !== "bundled_embedded"
+        && plugin.setup?.state === "detected"
       );
       if (detectedCuaDriver) {
         setPluginBusyId(detectedCuaDriver.id);
@@ -254,8 +256,12 @@ export function usePluginsDomain(input: {
   }
 
   async function enablePlugin(pluginId: string): Promise<void> {
-    await mutatePlugin(pluginId, "enable", async (cwd) => (await enableManagedPlugin(cwd, pluginId)).plugin, () =>
-      input.translate("Plugin enabled."));
+    await mutatePlugin(pluginId, "enable", async (cwd) => (await enableManagedPlugin(cwd, pluginId)).plugin, (plugin) =>
+      plugin.setup?.distribution === "bundled_embedded"
+        && plugin.setup.requestedEnabled === true
+        && plugin.setup.effectiveEnabled === false
+        ? input.translate("Plugin enable requested.")
+        : input.translate("Plugin enabled."));
   }
 
   async function disablePlugin(pluginId: string): Promise<void> {
