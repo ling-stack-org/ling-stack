@@ -99,8 +99,15 @@ export interface CuaDriverProviderProcessLifecycle {
    * private KILL_ON_JOB_CLOSE Job Object that contains all descendants.
    */
   readonly lifetimeBoundary: "darwin-direct-child" | "windows-job-object" | "test-fixture";
+  prepareSpawn?(input: {
+    readonly executablePath: string;
+    readonly executableDigest: string;
+    readonly signal: AbortSignal;
+  }): Promise<CuaDriverPreparedProviderSpawn>;
   spawn(input: {
     readonly executablePath: string;
+    readonly executableDigest?: string;
+    readonly preparedSpawn?: CuaDriverPreparedProviderSpawn;
     readonly args: readonly string[];
     readonly cwd: string;
     readonly environment: NodeJS.ProcessEnv;
@@ -109,8 +116,16 @@ export interface CuaDriverProviderProcessLifecycle {
   assertNoResidue?(input: { readonly pid: number | undefined; readonly generation: number }): Promise<void>;
 }
 
+export interface CuaDriverPreparedProviderSpawn {
+  readonly executablePath: string;
+  readonly executableDigest: string;
+  release(): Promise<void>;
+  abort(): Promise<void>;
+}
+
 export interface CuaDriverProviderHostOptions {
   readonly executablePath: string;
+  readonly executableDigest?: string;
   readonly stateRoot: CuaDriverStateRoot;
   readonly generation: number;
   readonly platform?: "darwin" | "win32";
@@ -331,11 +346,24 @@ export class CuaDriverProviderHost {
 
   private async startInternal(startEpoch: number, signal: AbortSignal): Promise<void> {
     this.stateValue = "starting";
+    let preparedSpawn: CuaDriverPreparedProviderSpawn | undefined;
     try {
       if (this.options.preSpawn) {
         await waitForAbort(this.options.preSpawn(signal), signal);
       }
+      if (this.lifecycle.prepareSpawn) {
+        if (!this.options.executableDigest) {
+          throw new CuaDriverProviderPreSpawnError("artifact_invalid");
+        }
+        preparedSpawn = await this.lifecycle.prepareSpawn({
+          executablePath: this.options.executablePath,
+          executableDigest: this.options.executableDigest,
+          signal,
+        });
+        signal.throwIfAborted();
+      }
     } catch (error) {
+      await preparedSpawn?.abort().catch(() => undefined);
       if (!this.isStartCurrent(startEpoch, signal)) {
         throw new CuaDriverProviderHostError("child_terminal");
       }
@@ -365,28 +393,55 @@ export class CuaDriverProviderHost {
     try {
       child = this.lifecycle.spawn({
         executablePath: this.options.executablePath,
+        ...(this.options.executableDigest
+          ? { executableDigest: this.options.executableDigest }
+          : {}),
+        ...(preparedSpawn ? { preparedSpawn } : {}),
         args: CUA_DRIVER_MCP_ARGS,
         cwd: this.options.stateRoot.rootPath,
         environment,
       });
     } catch (error) {
+      await preparedSpawn?.abort().catch(() => undefined);
       this.stateValue = "failed";
       this.terminal = true;
       this.telemetry.emit("error", "cua_driver.host.spawn_failed", { generation: this.generation, error: String(error) });
       this.notifyTerminal("spawn_failed", true);
       throw new CuaDriverProviderHostError("spawn_failed");
     }
-    if (!child.stdin || !child.stdout || !child.stderr) {
-      this.child = child;
-      this.exitPromise = new Promise<void>((resolveExit) => {
-        this.resolveExit = resolveExit;
-        child.once("exit", () => {
-          if (this.child === child) {
-            this.resolveExit?.();
-            this.resolveExit = undefined;
-          }
-        });
+    this.child = child;
+    this.exitPromise = new Promise<void>((resolveExit) => {
+      this.resolveExit = resolveExit;
+      child.once("exit", () => {
+        if (this.child === child) {
+          this.resolveExit?.();
+          this.resolveExit = undefined;
+        }
       });
+    });
+    if (preparedSpawn) {
+      try {
+        await preparedSpawn.release();
+      } catch (error) {
+        try {
+          await this.stopInternal("provider_spawn_authority_release_failed", true);
+        } catch {
+          // The retained-child failure below remains fail-closed.
+        }
+        this.telemetry.emit("error", "cua_driver.host.spawn_authority_release_failed", {
+          generation: this.generation,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        throw new CuaDriverProviderHostError("spawn_failed", "provider_spawn_authority_release_failed");
+      }
+      this.assertStartCurrent(startEpoch, signal);
+    }
+    if (child.exitCode !== null || child.signalCode !== null) {
+      await this.stopInternal("provider_exited_during_spawn_authority_release", true);
+      this.notifyTerminal("provider_exited_during_spawn_authority_release", true, child.pid);
+      throw new CuaDriverProviderHostError("spawn_failed", "provider_exited_before_stdio_attach");
+    }
+    if (!child.stdin || !child.stdout || !child.stderr) {
       let cleanupError: unknown;
       try {
         await this.stopInternal("provider_stdio_unavailable", true);
@@ -401,10 +456,6 @@ export class CuaDriverProviderHost {
       }
       throw new CuaDriverProviderHostError("spawn_failed", "provider_stdio_unavailable");
     }
-    this.child = child;
-    this.exitPromise = new Promise<void>((resolveExit) => {
-      this.resolveExit = resolveExit;
-    });
     this.attachChild(child, child.stdout, child.stderr);
     this.stateValue = "awaiting_initialize";
     this.telemetry.emit("info", "cua_driver.host.spawned", { generation: this.generation, pid: child.pid ?? null });

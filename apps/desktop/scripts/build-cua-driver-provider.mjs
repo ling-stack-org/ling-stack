@@ -15,7 +15,7 @@ import {
 } from "./cua-driver-source-build-lib.mjs";
 import { generateSupplyChainMetadata } from "./cua-driver-source-build-supply-chain.mjs";
 import {
-  inspectUniversalMachO,
+  inspectArm64MachO,
   inspectWindowsPe,
   verifyVersionOutput,
 } from "./cua-driver-binary-identity.mjs";
@@ -25,6 +25,11 @@ import {
   verifyToolchain,
 } from "./cua-driver-source-build-toolchain.mjs";
 import { probeCuaDriverProvider, sha256Text } from "./probe-cua-driver-provider.mjs";
+import { normalizeCuaDriverSwiftArchives } from "./cua-driver-swift-archive-normalizer.mjs";
+import {
+  inspectCuaDriverMachOIdentity,
+  selectCanonicalCuaDriverMachOIdentity,
+} from "./cua-driver-macho-identity-normalizer.mjs";
 
 const args = parseArgs(process.argv.slice(2));
 const resourceRoot = resolve(args["resource-root"] || PROVIDER_RESOURCE_ROOT);
@@ -134,17 +139,19 @@ const cargoVersion = await runText("cargo", [`+${lock.toolchain.cargoVersion}`, 
   env: buildEnvValue.env,
 });
 
-const buildTarget = platform === "darwin" ? [
-  "aarch64-apple-darwin",
-  "x86_64-apple-darwin",
-] : ["x86_64-pc-windows-msvc"];
+const buildTarget = platform === "darwin"
+  ? [...lock.toolchain.darwin.targets]
+  : [lock.toolchain.win32X64.target];
+const swiftArchiveNormalization = [];
+const machOIdentityNormalization = [];
 for (const target of buildTarget) {
-  const packages = platform === "win32-x64" ? ["cua-driver", "cua-driver-uia"] : ["cua-driver"];
-  await run(
-    "cargo",
-    [
+  const binaries = platform === "win32-x64"
+    ? ["cua-driver", "cua-driver-uia"]
+    : ["cua-driver"];
+  for (const binary of binaries) {
+    const cargoArgs = [
       `+${lock.toolchain.rustcVersion}`,
-      "build",
+      "rustc",
       "--locked",
       "--offline",
       "--release",
@@ -152,10 +159,104 @@ for (const target of buildTarget) {
       join(workspace, "Cargo.toml"),
       "--target",
       target,
-      ...packages.flatMap((pkg) => ["-p", pkg]),
-    ],
-    { cwd: workspace, env: { ...buildEnvValue.env, CARGO_BUILD_TARGET: target } },
-  );
+      "-p",
+      binary,
+      "--bin",
+      binary,
+    ];
+    const cargoEnvironment = {
+      cwd: workspace,
+      env: { ...buildEnvValue.env, CARGO_BUILD_TARGET: target },
+    };
+    if (platform === "darwin") {
+      // Prime target-specific Swift dependencies, normalize their non-runtime
+      // module hashes, then force a final-only relink with fixed metadata.
+      await run(
+        "cargo",
+        [...cargoArgs, "--", ...finalBinaryRustcFlags(platform), "-C", "metadata=ling-cua-prime-v1"],
+        cargoEnvironment,
+      );
+      const archives = await normalizeCuaDriverSwiftArchives(
+        join(targetDirectory, target, "release", "deps"),
+      );
+      swiftArchiveNormalization.push(Object.freeze({ target, archives }));
+      const binaryPath = join(targetDirectory, target, "release", binary);
+      const finalRelink = lock.toolchain.darwin.swiftArchiveNormalization.finalRelink;
+      const targetRelink = finalRelink.targets[target];
+      const normalizedIdentity = await selectCanonicalCuaDriverMachOIdentity({
+        target,
+        expectedSourceSha256: targetRelink.expectedSourceSha256,
+        maxAttempts: targetRelink.maxAttempts,
+        relink: async () => {
+          await run(
+            "cargo",
+            [
+              `+${lock.toolchain.cargoVersion}`,
+              "clean",
+              "--release",
+              "--target",
+              target,
+              "--package",
+              finalRelink.cleanPackage,
+              "--target-dir",
+              targetDirectory,
+            ],
+            cargoEnvironment,
+          );
+          await run(
+            "cargo",
+            [
+              ...cargoArgs,
+              "--",
+              ...finalBinaryRustcFlags(platform),
+              "-C",
+              `metadata=${lock.toolchain.darwin.swiftArchiveNormalization.finalMetadata}`,
+            ],
+            cargoEnvironment,
+          );
+          return readFile(binaryPath);
+        },
+      });
+      const identityPin = lock.toolchain.darwin.postLinkIdentityNormalization;
+      await writeFile(binaryPath, normalizedIdentity.bytes);
+      await run(
+        identityPin.codesignPath,
+        [
+          "--force",
+          "--sign",
+          "-",
+          "--timestamp=none",
+          "--identifier",
+          identityPin.adHocIdentifier,
+          binaryPath,
+        ],
+        cargoEnvironment,
+      );
+      await run(
+        identityPin.codesignPath,
+        ["--verify", "--strict", binaryPath],
+        cargoEnvironment,
+      );
+      const signedIdentity = inspectCuaDriverMachOIdentity(await readFile(binaryPath));
+      if (signedIdentity.uuid !== normalizedIdentity.uuid || !signedIdentity.codeSignature) {
+        throw new Error(`post-link Mach-O identity verification failed for ${target}`);
+      }
+      machOIdentityNormalization.push(Object.freeze({
+        target,
+        adHocIdentifier: identityPin.adHocIdentifier,
+        relinkAttempts: normalizedIdentity.relinkAttempts,
+        sourceSha256: normalizedIdentity.sourceSha256,
+        uuid: normalizedIdentity.uuid,
+        sha256: await sha256File(binaryPath),
+      }));
+    } else {
+      await run(
+        "cargo",
+        [...cargoArgs, "--", ...finalBinaryRustcFlags(platform)],
+        cargoEnvironment,
+      );
+    }
+  }
 }
 
 // The source builder never deletes an output directory. Requiring a fresh path keeps a
@@ -163,12 +264,9 @@ for (const target of buildTarget) {
 await mkdir(outputRoot);
 if (platform === "darwin") {
   const arm = join(targetDirectory, "aarch64-apple-darwin", "release", "cua-driver");
-  const x64 = join(targetDirectory, "x86_64-apple-darwin", "release", "cua-driver");
   const output = join(outputRoot, "darwin", "cua-driver");
   await mkdir(join(outputRoot, "darwin"), { recursive: true });
-  await run("xcrun", ["lipo", "-create", arm, x64, "-output", output], {
-    env: buildEnvValue.env,
-  });
+  await cp(arm, output);
 } else {
   const main = join(targetDirectory, "x86_64-pc-windows-msvc", "release", "cua-driver.exe");
   const uia = join(targetDirectory, "x86_64-pc-windows-msvc", "release", "cua-driver-uia.exe");
@@ -344,6 +442,21 @@ const attestation = {
     },
     cargoTests: { status: "passed", packages: testPackages },
     cargoMetadataSha256: sha256Text(JSON.stringify(cargoMetadata)),
+    machOIdentityNormalization: platform === "darwin" ? {
+      status: "passed",
+      algorithm: lock.toolchain.darwin.postLinkIdentityNormalization.algorithm,
+      binaries: machOIdentityNormalization,
+    } : {
+      status: "not_applicable",
+    },
+    swiftArchiveNormalization: platform === "darwin" ? {
+      status: "passed",
+      section: "__LLVM,__swift_modhash",
+      dwarfSegment: "__DWARF",
+      targets: swiftArchiveNormalization,
+    } : {
+      status: "not_applicable",
+    },
     referenceArtifact,
     binaryIdentity: builtBinaryIdentity,
     versionOutput,
@@ -364,14 +477,14 @@ process.stdout.write(`${JSON.stringify(attestation, null, 2)}\n`);
 
 async function inspectBuiltBinaryIdentity({ binaries: binariesValue, lock: lockValue, outputRoot: outputRootValue, platform: platformValue }) {
   if (platformValue === "darwin") {
-    const identity = inspectUniversalMachO(
+    const identity = inspectArm64MachO(
       await readFile(join(outputRootValue, "darwin", "cua-driver")),
       "built darwin provider",
     );
-    if (!identity.slices.every((slice) => slice.minimumOSVersion === lockValue.toolchain.darwin.deploymentTarget)) {
+    if (identity.minimumOSVersion !== lockValue.toolchain.darwin.deploymentTarget) {
       throw new Error("built darwin provider minimum OS does not match the lock");
     }
-    if (!identity.slices.every((slice) => slice.sdkVersion === lockValue.toolchain.darwin.macOSSDKVersion)) {
+    if (identity.sdkVersion !== lockValue.toolchain.darwin.macOSSDKVersion) {
       throw new Error("built darwin provider SDK does not match the lock");
     }
     return { binaries: [{ role: "main", ...identity }] };
@@ -402,11 +515,10 @@ function buildEnv(
   toolchainEnvironment = {},
 ) {
   const remap = `--remap-path-prefix=${sourceRootValue}=/usr/src/cua-driver`;
-  const flags = ["-C", "debuginfo=0", "-C", "strip=symbols", remap];
-  if (platformValue === "darwin") flags.push("-C", "link-arg=-Wl,-no_uuid");
-  if (platformValue === "win32-x64") {
-    flags.push("-C", "target-feature=+crt-static", "-C", "link-arg=/Brepro");
-  }
+  // These flags also compile host build scripts, so they must leave those tools executable.
+  // Darwin's linker emits an LC_UUID derived from output bytes by default. Keep that
+  // default: suppressing the UUID breaks modern dyld, while randomization breaks replay.
+  const flags = ["-C", "debuginfo=0", remap];
   const environment = mergeEnvironment(
     process.env,
     toolchainEnvironment,
@@ -424,6 +536,28 @@ function buildEnv(
       ...(platformValue === "darwin" ? { MACOSX_DEPLOYMENT_TARGET: "13.0" } : {}),
     },
   };
+}
+
+function finalBinaryRustcFlags(platformValue) {
+  if (platformValue === "darwin") {
+    return [
+      "-C",
+      "strip=symbols",
+      "-C",
+      "link-arg=-Wl,-reproducible",
+    ];
+  }
+  if (platformValue === "win32-x64") {
+    return [
+      "-C",
+      "strip=symbols",
+      "-C",
+      "target-feature=+crt-static",
+      "-C",
+      "link-arg=/Brepro",
+    ];
+  }
+  throw new Error(`unsupported platform: ${platformValue}`);
 }
 
 function parseArgs(values) {

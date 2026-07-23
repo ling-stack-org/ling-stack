@@ -126,12 +126,13 @@ test("publisher serializes same-generation reports with monotonic sequence", asy
 
 test("HTTP availability client uses only the authenticated loopback route", async () => {
   const requests = [];
+  const response = new Response("{}", { status: 200 });
   const client = new HttpCuaDriverAvailabilityClient({
     daemonBaseUrl: "http://127.0.0.1:17891",
     bridgeToken: "bridge-token",
     fetch: async (url, init) => {
       requests.push({ url: String(url), init });
-      return new Response("{}", { status: 200 });
+      return response;
     },
   });
   const report = createAvailabilityReport(darwinAuthority(), {
@@ -150,6 +151,7 @@ test("HTTP availability client uses only the authenticated loopback route", asyn
   assert.equal(requests[0].init.method, "PUT");
   assert.equal(requests[0].init.headers["X-Ling-Desktop-Bridge-Token"], "bridge-token");
   assert.deepEqual(JSON.parse(requests[0].init.body), report);
+  assert.equal(response.bodyUsed, true);
 });
 
 test("HTTP availability client fails closed on remote, unauthenticated, invalid, and unavailable calls", async () => {
@@ -183,10 +185,11 @@ test("HTTP availability client fails closed on remote, unauthenticated, invalid,
       && error.code === "availability_daemon_unavailable",
   );
 
+  const rejectedResponse = new Response("{}", { status: 503 });
   const rejected = new HttpCuaDriverAvailabilityClient({
     daemonBaseUrl: "http://[::1]:17891",
     bridgeToken: "bridge-token",
-    fetch: async () => new Response("{}", { status: 503 }),
+    fetch: async () => rejectedResponse,
   });
   await assert.rejects(
     rejected.publish(createAvailabilityReport(darwinAuthority(), {
@@ -197,11 +200,30 @@ test("HTTP availability client fails closed on remote, unauthenticated, invalid,
     (error) => error instanceof CuaDriverAvailabilityPublisherError
       && error.code === "availability_http_503",
   );
+  assert.equal(rejectedResponse.bodyUsed, true);
   await assert.rejects(
     rejected.publish({ providerState: "ready" }),
     (error) => error instanceof CuaDriverAvailabilityPublisherError
       && error.code === "availability_contract_invalid",
   );
+});
+
+test("HTTP availability client rejects an oversized daemon response without buffering it", async () => {
+  const response = new Response(new Uint8Array(64 * 1024 + 1), { status: 200 });
+  const client = new HttpCuaDriverAvailabilityClient({
+    daemonBaseUrl: "http://127.0.0.1:17891",
+    bridgeToken: "bridge-token",
+    fetch: async () => response,
+  });
+  await assert.rejects(
+    client.publish(createAvailabilityReport(darwinAuthority(), {
+      lifecycle: "failed",
+      providerState: "corrupt",
+      generation: 1,
+    }, 1)),
+    /availability_response_body_invalid/,
+  );
+  assert.equal(response.bodyUsed, true);
 });
 
 test("publisher recovers after failure, isolates diagnostics, and drains before close", async () => {

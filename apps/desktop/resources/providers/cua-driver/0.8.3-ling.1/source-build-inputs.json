@@ -56,15 +56,41 @@
     "cargoVersion": "1.97.1",
     "rustToolchainFile": "toolchains/rust-toolchain.toml",
     "darwin": {
-      "runner": "macos-26",
-      "xcodeVersion": "26.5",
-      "xcodeBuildVersion": "17F42",
+      "runner": "ling-cua-driver-macos-arm64-v1",
+      "developerDir": "/Applications/Xcode.app/Contents/Developer",
+      "xcodeVersion": "26.6",
+      "xcodeBuildVersion": "17F113",
       "macOSSDKVersion": "26.5",
       "deploymentTarget": "13.0",
-      "targets": ["aarch64-apple-darwin", "x86_64-apple-darwin"]
+      "targets": ["aarch64-apple-darwin"],
+      "postLinkIdentityNormalization": {
+        "algorithm": "sha256-zeroed-lc-uuid-and-code-signature-v1",
+        "adHocIdentifier": "ling-cua-driver-presign",
+        "codesignPath": "/usr/bin/codesign"
+      },
+      "swiftArchiveNormalization": {
+        "section": "__LLVM,__swift_modhash",
+        "dwarfSegment": "__DWARF",
+        "finalMetadata": "ling-cua-final-v1",
+        "finalRelink": {
+          "strategy": "bounded-canonical-source-identity-v1",
+          "cleanPackage": "cua-driver",
+          "targets": {
+            "aarch64-apple-darwin": {
+              "expectedSourceSha256": "af7a2f9bfabe98704bafca0f2c7f6e2ae4e9f53fe6653d5cd8cea44fc25e103d",
+              "maxAttempts": 32
+            }
+          }
+        },
+        "linkerFlags": ["-reproducible"],
+        "archives": [
+          { "archive": "libapple_cf.rlib", "machoMembers": 19, "normalizedSections": 13, "normalizedDwarfSections": 130 },
+          { "archive": "libscreencapturekit.rlib", "machoMembers": 21, "normalizedSections": 10, "normalizedDwarfSections": 100 }
+        ]
+      }
     },
     "win32X64": {
-      "runner": "windows-2025",
+      "runner": "ling-cua-driver-windows-x64-v1",
       "visualStudioVersion": "17.14.37502.11",
       "msvcToolsetVersion": "14.44.35211",
       "windowsSdkVersion": "10.0.26100.0",
@@ -76,8 +102,8 @@
     "darwin": {
       "status": "awaiting_native_reproducibility_evidence",
       "artifactRelativePath": "darwin/cua-driver",
-      "architectures": ["arm64", "x86_64"],
-      "universalBinarySha256BeforeSigning": null
+      "architectures": ["arm64"],
+      "binarySha256BeforeSigning": null
     },
     "win32X64": {
       "status": "awaiting_native_reproducibility_evidence",

@@ -34,7 +34,6 @@ function lease(overrides = {}) {
     providerCatalogDigest: "c".repeat(64),
     platform: "darwin",
     architecture: "arm64",
-    integrityCoverage: "standard",
     ...overrides,
   };
 }

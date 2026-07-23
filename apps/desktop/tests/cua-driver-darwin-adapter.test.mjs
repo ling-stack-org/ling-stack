@@ -23,15 +23,14 @@ const ENTITLEMENTS = Object.freeze({
 const ENTITLEMENTS_DIGEST = sha256(canonicalJson(ENTITLEMENTS));
 const CDHASHES = Object.freeze({
   arm64: "a".repeat(40),
-  x86_64: "b".repeat(40),
 });
 
-test("Darwin identity verifier accepts only the locked universal signed tuple", async () => {
+test("Darwin identity verifier accepts only the locked arm64 signed tuple", async () => {
   const fixture = createIdentityFixture();
 
   await fixture.verifier.verify(fixture.input);
 
-  assert.equal(fixture.calls.length, 12);
+  assert.equal(fixture.calls.length, 7);
   assert.deepEqual(fixture.calls[0], {
     executable: "/usr/bin/codesign",
     args: ["--verify", "--strict", "--all-architectures", "--verbose=4", EXECUTABLE_PATH],
@@ -40,7 +39,7 @@ test("Darwin identity verifier accepts only the locked universal signed tuple", 
     executable: "/usr/bin/lipo",
     args: ["-archs", EXECUTABLE_PATH],
   });
-  for (const architecture of ["arm64", "x86_64"]) {
+  for (const architecture of ["arm64"]) {
     const entitlementsCall = fixture.calls.find((call) =>
       call.args.includes("--entitlements") && call.args.includes(architecture));
     assert.deepEqual(entitlementsCall?.args, [
@@ -48,7 +47,7 @@ test("Darwin identity verifier accepts only the locked universal signed tuple", 
     ]);
   }
   const plistCalls = fixture.calls.filter((call) => call.executable === "/usr/bin/plutil");
-  assert.equal(plistCalls.length, 2);
+  assert.equal(plistCalls.length, 1);
   assert.equal(plistCalls.every((call) => call.stdin?.includes("<?xml version=\"1.0\"")), true);
   assert.equal(fixture.calls.every((call) =>
     Object.values(DARWIN_CUA_DRIVER_SYSTEM_TOOLS).includes(call.executable)), true);
@@ -56,13 +55,13 @@ test("Darwin identity verifier accepts only the locked universal signed tuple", 
 
 test("Darwin identity verifier rejects every mismatched Mach-O or signing dimension", async (t) => {
   const cases = [
-    ["missing universal slice", { architectures: "arm64" }],
+    ["unexpected architecture", { architectures: "arm64 x86_64" }],
     ["unexpected minimum macOS", { minimumMacOS: { arm64: "12.0" } }],
-    ["unexpected Team ID", { teamIds: { x86_64: "WRONGTEAM1" } }],
+    ["unexpected Team ID", { teamIds: { arm64: "WRONGTEAM1" } }],
     ["unexpected code identifier", { identifiers: { arm64: "com.example.cua-driver" } }],
-    ["unexpected CDHash", { cdhashes: { x86_64: "c".repeat(40) } }],
+    ["unexpected CDHash", { cdhashes: { arm64: "c".repeat(40) } }],
     ["missing hardened runtime", { hardenedRuntime: { arm64: false } }],
-    ["unexpected designated requirement", { requirements: { x86_64: `${REQUIREMENT} and true` } }],
+    ["unexpected designated requirement", { requirements: { arm64: `${REQUIREMENT} and true` } }],
     ["unexpected designated requirement digest", {
       seal: { designatedRequirementSha256: "0".repeat(64) },
     }],
@@ -73,10 +72,10 @@ test("Darwin identity verifier rejects every mismatched Mach-O or signing dimens
     }],
     ["missing entitlement", {
       entitlements: {
-        x86_64: { "com.apple.security.device.screen-capture": true },
+        arm64: { "com.apple.security.device.screen-capture": true },
       },
     }],
-    ["seal slice mismatch", { seal: { architectures: ["arm64"] } }],
+    ["seal architecture mismatch", { seal: { architectures: ["arm64", "x86_64"] } }],
   ];
 
   for (const [name, options] of cases) {
@@ -221,6 +220,9 @@ test("Darwin lifecycle directly spawns and terminates the retained child without
   const spawnCalls = [];
   const child = createChildFixture();
   const lifecycle = createDarwinCuaDriverProcessLifecycle({
+    pinExecutable(executablePath) {
+      return { identityPath: executablePath, release() {} };
+    },
     spawn(executablePath, args, options) {
       spawnCalls.push({ executablePath, args, options });
       return child;
@@ -555,7 +557,7 @@ function createIdentityFixture(options = {}) {
       }
       const architecture = valueAfter(input.args, "--arch") ?? "arm64";
       if (input.executable === "/usr/bin/lipo") {
-        return { stdout: `${options.architectures ?? "arm64 x86_64"}\n`, stderr: "" };
+        return { stdout: `${options.architectures ?? "arm64"}\n`, stderr: "" };
       }
       if (input.executable === "/usr/bin/otool") {
         const minimumMacOS = options.minimumMacOS?.[architecture] ?? "13.0";
@@ -604,7 +606,7 @@ function createIdentityFixture(options = {}) {
   const seal = {
     componentId: "cua-driver-darwin",
     teamId: TEAM_ID,
-    architectures: ["arm64", "x86_64"],
+    architectures: ["arm64"],
     codeIdentifier: IDENTIFIER,
     cdhashes: CDHASHES,
     designatedRequirement: REQUIREMENT,

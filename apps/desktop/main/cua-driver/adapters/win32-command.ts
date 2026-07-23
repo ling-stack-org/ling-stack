@@ -5,6 +5,8 @@ import { win32 } from "node:path";
 export const WIN32_CUA_DRIVER_COMMAND_TIMEOUT_MS = 10_000;
 export const WIN32_CUA_DRIVER_STDOUT_MAX_BYTES = 256 * 1024;
 export const WIN32_CUA_DRIVER_STDERR_MAX_BYTES = 64 * 1024;
+/** Kernel-owned NT object-manager alias; no caller environment selects it. */
+export const WIN32_KERNEL_SYSTEM_ROOT = "\\\\?\\GLOBALROOT\\SystemRoot" as const;
 
 export interface Win32CommandInvocation {
   readonly executablePath: string;
@@ -14,6 +16,7 @@ export interface Win32CommandInvocation {
   readonly timeoutMs?: number;
   readonly maxStdoutBytes?: number;
   readonly maxStderrBytes?: number;
+  readonly abortSignal?: AbortSignal;
 }
 
 export interface Win32CommandResult {
@@ -61,6 +64,7 @@ type SpawnCommand = (
     readonly windowsHide: true;
     readonly shell: false;
     readonly stdio: ["ignore", "pipe", "pipe"];
+    readonly signal?: AbortSignal;
   },
 ) => ChildProcess;
 
@@ -70,7 +74,7 @@ type SpawnCommand = (
  */
 export function resolveWin32SystemExecutables(systemRoot: string): Win32SystemExecutables {
   if (systemRoot !== systemRoot.trim()
-    || !/^[A-Za-z]:\\/u.test(systemRoot)
+    || (!/^[A-Za-z]:\\/u.test(systemRoot) && systemRoot !== WIN32_KERNEL_SYSTEM_ROOT)
     || !win32.isAbsolute(systemRoot)) {
     throw new Error("win32_system_root_must_be_absolute");
   }
@@ -153,6 +157,7 @@ async function runBoundedCommand(
         windowsHide: true,
         shell: false,
         stdio: ["ignore", "pipe", "pipe"],
+        ...(invocation.abortSignal ? { signal: invocation.abortSignal } : {}),
       });
     } catch {
       resolveResult(emptyResult({ spawnFailed: true }));
@@ -169,7 +174,6 @@ async function runBoundedCommand(
     let spawnFailed = false;
     let settled = false;
     let timeout: NodeJS.Timeout | undefined;
-    let forceSettlement: NodeJS.Timeout | undefined;
 
     const finish = (exitCode: number | null, signal: NodeJS.Signals | null): void => {
       if (settled) {
@@ -178,9 +182,6 @@ async function runBoundedCommand(
       settled = true;
       if (timeout) {
         clearTimeout(timeout);
-      }
-      if (forceSettlement) {
-        clearTimeout(forceSettlement);
       }
       resolveResult({
         exitCode,
@@ -202,13 +203,10 @@ async function runBoundedCommand(
           // Forced bounded settlement below remains authoritative.
         }
       }
-      if (settled) {
-        return;
-      }
-      if (!forceSettlement) {
-        forceSettlement = setTimeout(() => finish(child.exitCode, child.signalCode), 1_000);
-        forceSettlement.unref?.();
-      }
+      // Never report a verifier result while the retained process or one of
+      // its inherited stdio handles remains live. The platform boundary must
+      // deliver `close`; a failed cleanup therefore stays fail-closed instead
+      // of letting startup continue with an unowned verifier.
     };
 
     const acceptChunk = (
@@ -242,7 +240,11 @@ async function runBoundedCommand(
     });
     child.once("error", () => {
       spawnFailed = true;
-      finish(child.exitCode, child.signalCode);
+      if (child.pid === undefined) {
+        finish(child.exitCode, child.signalCode);
+      } else {
+        terminate();
+      }
     });
     child.once("close", (exitCode, signal) => finish(exitCode, signal));
 

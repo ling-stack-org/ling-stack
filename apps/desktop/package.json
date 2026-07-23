@@ -23,7 +23,7 @@
     "verify:release-schemas": "node tests/validate-release-evidence-schemas.mjs",
     "verify:windows-provider": "node tests/verify-windows-cua-driver-provider.mjs",
     "produce:windows-acceptance-handoff": "node tests/produce-windows-acceptance-handoff.mjs",
-    "test:cua-driver-source-build": "node --test tests/cua-driver-source-build.test.mjs tests/cua-driver-source-build-promotion.test.mjs",
+    "test:cua-driver-source-build": "node --test tests/cua-driver-source-build.test.mjs tests/cua-driver-source-build-promotion.test.mjs tests/cua-driver-swift-archive-normalizer.test.mjs",
     "verify:cua-driver-source-build": "node scripts/verify-cua-driver-source-build.mjs",
     "promote:cua-driver-source-build": "node scripts/promote-cua-driver-source-build.mjs",
     "stage:cua-driver-provider": "node scripts/cua-driver-package-staging.mjs",
@@ -32,7 +32,7 @@
     "package:signing-feasibility": "node tests/run-cua-driver-signing-builder-fixture.mjs",
     "screenshots:update:computer-use": "corepack pnpm build && electron tests/screenshot-app --update",
     "screenshots:verify:computer-use": "corepack pnpm build && electron tests/screenshot-app",
-    "package:mac": "corepack pnpm build && node scripts/cua-driver-electron-package.mjs --platform darwin -- --mac dmg zip --arm64 --x64",
+    "package:mac": "corepack pnpm build && node scripts/cua-driver-electron-package.mjs --platform darwin -- --mac dmg zip --arm64",
     "package:win": "corepack pnpm build && node scripts/cua-driver-electron-package.mjs --platform win32-x64 -- --win nsis --x64"
   },
   "dependencies": {
@@ -84,6 +84,7 @@
     "mac": {
       "category": "public.app-category.developer-tools",
       "icon": "build/icon.icns",
+      "artifactName": "Ling-Stack-${version}-macos-${arch}.${ext}",
       "target": [
         "dmg",
         "zip"
@@ -91,6 +92,7 @@
     },
     "win": {
       "icon": "build/icon.ico",
+      "artifactName": "Ling-Stack-${version}-windows-${arch}-setup.${ext}",
       "requestedExecutionLevel": "asInvoker",
       "target": [
         "nsis"

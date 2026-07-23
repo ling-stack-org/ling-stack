@@ -2,6 +2,28 @@ name: Desktop artifacts
 
 on:
   workflow_dispatch:
+    inputs:
+      execution_mode:
+        description: Runner pool used by this manual dispatch
+        required: true
+        default: self-hosted-native
+        type: choice
+        options:
+          - github-hosted
+          - self-hosted-native
+      native_platform:
+        description: Native platform used when execution_mode is self-hosted-native
+        required: true
+        default: macos
+        type: choice
+        options:
+          - macos
+          - windows
+          - both
+      expected_commit:
+        description: Full commit SHA required by self-hosted-native mode
+        required: false
+        type: string
   pull_request:
     paths:
       - ".github/workflows/desktop-artifacts.yml"
@@ -53,7 +75,17 @@ env:
   CSC_IDENTITY_AUTO_DISCOVERY: "false"
 
 jobs:
+  cua-driver-self-hosted-native:
+    if: github.event_name == 'workflow_dispatch' && inputs.execution_mode == 'self-hosted-native'
+    uses: ./.github/workflows/cua-driver-self-hosted-native.yml
+    with:
+      platform: ${{ inputs.native_platform }}
+      expected_commit: ${{ inputs.expected_commit }}
+    permissions:
+      contents: read
+
   cua-driver-signing-feasibility:
+    if: github.event_name == 'workflow_dispatch' && inputs.execution_mode == 'github-hosted'
     name: Cua Driver signing and final artifact fixture (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
@@ -108,7 +140,8 @@ jobs:
           }
 
   cua-driver-source-build-macos:
-    name: Cua Driver locked source build (macOS universal)
+    if: github.event_name == 'workflow_dispatch' && inputs.execution_mode == 'github-hosted'
+    name: Cua Driver locked source build (macOS arm64)
     runs-on: macos-26
     timeout-minutes: 180
     steps:
@@ -125,13 +158,13 @@ jobs:
       - name: Select locked Xcode
         run: sudo xcode-select --switch /Applications/Xcode_26.5.app/Contents/Developer
 
-      - name: Test atomic Cua Driver package publisher
-        run: node --test apps/desktop/tests/cua-driver-package-publisher.test.mjs
+      - name: Test atomic Cua Driver package publisher and Mach-O identity normalizer
+        run: node --test apps/desktop/tests/cua-driver-package-publisher.test.mjs apps/desktop/tests/cua-driver-macho-identity-normalizer.test.mjs
 
       - name: Install locked Rust toolchain and targets
         run: |
           rustup toolchain install 1.97.1 --profile minimal --component rustfmt
-          rustup target add aarch64-apple-darwin x86_64-apple-darwin --toolchain 1.97.1
+          rustup target add aarch64-apple-darwin --toolchain 1.97.1
 
       - name: Build and attest candidate A
         run: |
@@ -159,7 +192,7 @@ jobs:
             --attestation "${root}/b/output/source-build-attestation.json" \
             --output-root "${root}/b/output"
 
-      - name: Compare repeated universal pre-sign outputs
+      - name: Compare repeated arm64 pre-sign outputs
         run: |
           set -euo pipefail
           root="${RUNNER_TEMP}/ling-cua-driver-source-build"
@@ -168,17 +201,24 @@ jobs:
             --compare-a "${root}/a/output" \
             --compare-b "${root}/b/output"
 
+      - name: Resolve committed macOS package authorization
+        id: package-authorization
+        run: node apps/desktop/scripts/check-cua-driver-package-authorization.mjs --platform darwin
+
       - name: Install Desktop packaging dependencies
+        if: steps.package-authorization.outputs.authorized == 'true'
         run: |
           corepack enable
           corepack pnpm install --frozen-lockfile
 
-      - name: Run production macOS package wrapper with both architectures
+      - name: Run production macOS arm64 package wrapper
+        if: steps.package-authorization.outputs.authorized == 'true'
         run: >-
           node apps/desktop/tests/run-cua-driver-signing-builder-fixture.mjs
           --source-root "${RUNNER_TEMP}/ling-cua-driver-source-build/a/output"
 
       - name: Upload macOS Electron Builder hook traces
+        if: steps.package-authorization.outputs.authorized == 'true'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: cua-driver-electron-builder-signing-macos
@@ -189,7 +229,7 @@ jobs:
       - name: Upload macOS source-build evidence
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: cua-driver-source-build-macos-universal
+          name: cua-driver-source-build-macos-arm64
           if-no-files-found: error
           retention-days: 14
           path: |
@@ -197,6 +237,7 @@ jobs:
             ${{ runner.temp }}/ling-cua-driver-source-build/b/output
 
   cua-driver-source-build-windows:
+    if: github.event_name == 'workflow_dispatch' && inputs.execution_mode == 'github-hosted'
     name: Cua Driver locked source build (Windows x64)
     runs-on: windows-2025
     timeout-minutes: 180
@@ -219,9 +260,9 @@ jobs:
           toolset: 14.44
           vsversion: 17.0
 
-      - name: Test atomic Cua Driver package publisher
+      - name: Test atomic Cua Driver package publisher and Mach-O identity normalizer
         shell: pwsh
-        run: node --test apps/desktop/tests/cua-driver-package-publisher.test.mjs
+        run: node --test apps/desktop/tests/cua-driver-package-publisher.test.mjs apps/desktop/tests/cua-driver-macho-identity-normalizer.test.mjs
 
       - name: Install locked Rust toolchain and target
         shell: pwsh
@@ -254,13 +295,20 @@ jobs:
           node apps/desktop/scripts/verify-cua-driver-source-build.mjs --resource-root apps/desktop/resources/providers/cua-driver/0.8.3-ling.1 --compare-a (Join-Path $root "a/output") --compare-b (Join-Path $root "b/output")
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
+      - name: Resolve committed Windows package authorization
+        id: package-authorization
+        shell: pwsh
+        run: node apps/desktop/scripts/check-cua-driver-package-authorization.mjs --platform win32-x64
+
       - name: Install Desktop packaging dependencies
+        if: steps.package-authorization.outputs.authorized == 'true'
         shell: pwsh
         run: |
           corepack enable
           corepack pnpm install --frozen-lockfile
 
       - name: Run production Windows package wrapper
+        if: steps.package-authorization.outputs.authorized == 'true'
         shell: pwsh
         run: |
           $sourceRoot = Join-Path $env:RUNNER_TEMP "ling-cua-driver-source-build/a/output"
@@ -268,6 +316,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Upload Windows Electron Builder hook trace
+        if: steps.package-authorization.outputs.authorized == 'true'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: cua-driver-electron-builder-signing-windows
@@ -286,7 +335,8 @@ jobs:
             ${{ runner.temp }}/ling-cua-driver-source-build/b/output
 
   cua-driver-source-build-promotion-macos:
-    name: Cua Driver source-build promotion proposal (macOS universal)
+    if: github.event_name == 'workflow_dispatch' && inputs.execution_mode == 'github-hosted'
+    name: Cua Driver source-build promotion proposal (macOS arm64)
     needs: cua-driver-source-build-macos
     runs-on: macos-26
     timeout-minutes: 30
@@ -304,7 +354,7 @@ jobs:
       - name: Download macOS source-build evidence
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
-          name: cua-driver-source-build-macos-universal
+          name: cua-driver-source-build-macos-arm64
           path: ${{ runner.temp }}/ling-cua-driver-source-build-download
 
       - name: Generate review-only macOS source-build promotion proposal
@@ -320,12 +370,13 @@ jobs:
       - name: Upload review-only macOS promotion proposal
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: cua-driver-source-build-promotion-macos-universal
+          name: cua-driver-source-build-promotion-macos-arm64
           if-no-files-found: error
           retention-days: 14
           path: ${{ runner.temp }}/ling-cua-driver-source-build-download/promotion/**
 
   cua-driver-source-build-promotion-windows:
+    if: github.event_name == 'workflow_dispatch' && inputs.execution_mode == 'github-hosted'
     name: Cua Driver source-build promotion proposal (Windows x64)
     needs: cua-driver-source-build-windows
     runs-on: windows-2025
@@ -363,7 +414,8 @@ jobs:
           path: ${{ runner.temp }}/ling-cua-driver-source-build-download/promotion/**
 
   macos-unsigned:
-    name: macOS unsigned arm64 + x64
+    if: github.event_name == 'workflow_dispatch' && inputs.execution_mode == 'github-hosted'
+    name: macOS unsigned arm64
     runs-on: macos-15
     timeout-minutes: 60
     steps:
@@ -453,22 +505,15 @@ jobs:
           set -euo pipefail
 
           arm_app="apps/desktop/release/mac-arm64/Ling Stack.app"
-          x64_app="apps/desktop/release/mac/Ling Stack.app"
           test -d "$arm_app"
-          test -d "$x64_app"
 
           test "$(plutil -extract CFBundleIdentifier raw -o - "$arm_app/Contents/Info.plist")" = "com.lingstack.desktop"
-          test "$(plutil -extract CFBundleIdentifier raw -o - "$x64_app/Contents/Info.plist")" = "com.lingstack.desktop"
           test "$(plutil -extract CFBundleIconFile raw -o - "$arm_app/Contents/Info.plist")" = "icon.icns"
-          test "$(plutil -extract CFBundleIconFile raw -o - "$x64_app/Contents/Info.plist")" = "icon.icns"
           cmp apps/desktop/build/icon.icns "$arm_app/Contents/Resources/icon.icns"
-          cmp apps/desktop/build/icon.icns "$x64_app/Contents/Resources/icon.icns"
           test "$(lipo -archs "$arm_app/Contents/MacOS/Ling Stack")" = "arm64"
-          test "$(lipo -archs "$x64_app/Contents/MacOS/Ling Stack")" = "x86_64"
 
           arm_signature="$(codesign -dv --verbose=4 "$arm_app" 2>&1 || true)"
-          x64_signature="$(codesign -dv --verbose=4 "$x64_app" 2>&1 || true)"
-          signature_report="${arm_signature}"$'\n'"${x64_signature}"
+          signature_report="${arm_signature}"
           if grep -q "Authority=Developer ID Application" <<<"$signature_report"; then
             echo "Unsigned macOS job unexpectedly produced a Developer ID artifact" >&2
             exit 1
@@ -480,7 +525,6 @@ jobs:
           printf '%s\n' "$signature_report" > apps/desktop/release/UNSIGNED-CODESIGN-STATUS.txt
 
           test -f "$arm_app/Contents/Resources/bundled/cua-driver/.ling-plugin/plugin.json"
-          test -f "$x64_app/Contents/Resources/bundled/cua-driver/.ling-plugin/plugin.json"
 
           preview_root="apps/desktop/dist/renderer/computer-use-preview"
           test "$(find "$preview_root" -type f | wc -l | tr -d ' ')" -eq 13
@@ -516,26 +560,25 @@ jobs:
             rm -f "$listing"
           }
           verify_packaged_preview "$arm_app"
-          verify_packaged_preview "$x64_app"
 
           dmg_count=0
-          for artifact in apps/desktop/release/*.dmg; do
+          for artifact in apps/desktop/release/Ling-Stack-*-macos-arm64.dmg; do
             hdiutil verify "$artifact"
             dmg_count=$((dmg_count + 1))
           done
-          test "$dmg_count" -eq 2
+          test "$dmg_count" -eq 1
 
           zip_count=0
-          for artifact in apps/desktop/release/*-mac.zip; do
+          for artifact in apps/desktop/release/*-macos-arm64.zip; do
             unzip -t "$artifact"
             zip_count=$((zip_count + 1))
           done
-          test "$zip_count" -eq 2
+          test "$zip_count" -eq 1
 
           (
             cd apps/desktop/release
-            shasum -a 256 *.dmg *-mac.zip > SHA256SUMS-macos.txt
-            shasum -a 256 -c SHA256SUMS-macos.txt
+            shasum -a 256 Ling-Stack-*-macos-arm64.dmg > checksums-macos.txt
+            shasum -a 256 -c checksums-macos.txt
           )
 
       - name: Run arm64 packaged fake smoke
@@ -548,17 +591,7 @@ jobs:
             LING_DESKTOP_SMOKE_TIMEOUT_MS=50000 \
             node apps/desktop/tests/run-computer-use-smoke.mjs
 
-      - name: Run x64 packaged fake smoke
-        shell: bash
-        run: |
-          set -euo pipefail
-          executable="${GITHUB_WORKSPACE}/apps/desktop/release/mac/Ling Stack.app/Contents/MacOS/Ling Stack"
-          test -x "$executable"
-          LING_DESKTOP_SMOKE_EXECUTABLE="$executable" \
-            LING_DESKTOP_SMOKE_TIMEOUT_MS=180000 \
-            node apps/desktop/tests/run-computer-use-smoke.mjs
-
-      - name: Run mounted-DMG fake smokes
+      - name: Run mounted-DMG fake smoke
         shell: bash
         run: |
           set -euo pipefail
@@ -586,18 +619,14 @@ jobs:
           trap cleanup_on_exit EXIT
 
           dmg_count=0
-          for artifact in apps/desktop/release/*.dmg; do
+          for artifact in apps/desktop/release/Ling-Stack-*-macos-arm64.dmg; do
             mount_point="$(mktemp -d "${RUNNER_TEMP}/ling-desktop-dmg.XXXXXX")"
             mounted=1
             hdiutil attach -nobrowse -readonly -mountpoint "$mount_point" "$artifact" >/dev/null
             executable="$mount_point/Ling Stack.app/Contents/MacOS/Ling Stack"
             test -x "$executable"
-            smoke_timeout_ms=50000
-            if [[ "$(lipo -archs "$executable")" == "x86_64" ]]; then
-              smoke_timeout_ms=180000
-            fi
             LING_DESKTOP_SMOKE_EXECUTABLE="$executable" \
-              LING_DESKTOP_SMOKE_TIMEOUT_MS="$smoke_timeout_ms" \
+              LING_DESKTOP_SMOKE_TIMEOUT_MS=50000 \
               node apps/desktop/tests/run-computer-use-smoke.mjs
             hdiutil detach "$mount_point" >/dev/null
             mounted=0
@@ -605,7 +634,7 @@ jobs:
             mount_point=""
             dmg_count=$((dmg_count + 1))
           done
-          test "$dmg_count" -eq 2
+          test "$dmg_count" -eq 1
           trap - EXIT
 
       - name: Check tracked-file whitespace
@@ -624,13 +653,14 @@ jobs:
           if-no-files-found: error
           retention-days: 14
           path: |
-            apps/desktop/release/*.dmg
-            apps/desktop/release/*-mac.zip
-            apps/desktop/release/SHA256SUMS-macos.txt
+            apps/desktop/release/Ling-Stack-*-macos-arm64.dmg
+            apps/desktop/release/*-macos-arm64.zip
+            apps/desktop/release/checksums-macos.txt
             apps/desktop/release/UNSIGNED-CODESIGN-STATUS.txt
             apps/desktop/test-results/computer-use-performance-macos.json
 
   windows-unsigned:
+    if: github.event_name == 'workflow_dispatch' && inputs.execution_mode == 'github-hosted'
     name: Windows unsigned x64
     runs-on: windows-2022
     timeout-minutes: 60
@@ -756,15 +786,16 @@ jobs:
           if ($installers.Count -ne 1) {
             throw ("Expected exactly one NSIS installer, found {0}" -f $installers.Count)
           }
+          if ($installers[0].Name -notmatch '^Ling-Stack-.+-windows-x64-setup\.exe$') {
+            throw ("Unexpected Windows installer name: {0}" -f $installers[0].Name)
+          }
           $installerPath = $installers[0].FullName
           node apps/desktop/tests/verify-windows-app-icons.mjs apps/desktop/build/icon.ico $unpackedExe $installerPath
           if ($LASTEXITCODE -ne 0) {
             exit $LASTEXITCODE
           }
 
-          $checksumTargets = @(
-            [PSCustomObject]@{ Path = $unpackedExe; Name = "win-unpacked/Ling Stack.exe" }
-          )
+          $checksumTargets = @()
           foreach ($artifact in $installers) {
             $checksumTargets += [PSCustomObject]@{ Path = $artifact.FullName; Name = $artifact.Name }
           }
@@ -772,7 +803,7 @@ jobs:
             $hash = Get-FileHash -Path $artifact.Path -Algorithm SHA256
             "{0}  {1}" -f $hash.Hash.ToLowerInvariant(), $artifact.Name
           }
-          $checksumLines | Set-Content -Encoding ascii (Join-Path $release "SHA256SUMS-windows.txt")
+          $checksumLines | Set-Content -Encoding ascii (Join-Path $release "checksums-windows.txt")
 
           $signatureTargets = @($unpackedExe) + @($installers | ForEach-Object { $_.FullName })
           $signatures = foreach ($artifactPath in $signatureTargets) {
@@ -993,6 +1024,55 @@ jobs:
             apps/desktop/release/*.exe
             apps/desktop/release/win-unpacked/Ling Stack.exe
             apps/desktop/release/*.blockmap
-            apps/desktop/release/SHA256SUMS-windows.txt
+            apps/desktop/release/checksums-windows.txt
             apps/desktop/release/AUTHENTICODE-STATUS.json
             apps/desktop/test-results/computer-use-performance-windows.json
+
+  desktop-checksums:
+    if: github.event_name == 'workflow_dispatch' && inputs.execution_mode == 'github-hosted'
+    name: Desktop installer checksums
+    needs:
+      - macos-unsigned
+      - windows-unsigned
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Download macOS artifacts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: ling-stack-desktop-macos-unsigned
+          path: inputs/macos
+
+      - name: Download Windows artifacts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: ling-stack-desktop-windows-x64-unsigned
+          path: inputs/windows
+
+      - name: Generate installer checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p output
+          mapfile -t installers < <(
+            find inputs -type f \
+              \( -name 'Ling-Stack-*-macos-arm64.dmg' -o -name 'Ling-Stack-*-windows-x64-setup.exe' \) \
+              | sort
+          )
+          test "${#installers[@]}" -eq 2
+          for installer in "${installers[@]}"; do
+            cp "$installer" output/
+          done
+          (
+            cd output
+            sha256sum Ling-Stack-*-macos-arm64.dmg Ling-Stack-*-windows-x64-setup.exe > checksums.txt
+            sha256sum --check checksums.txt
+          )
+
+      - name: Upload unified checksums
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: ling-stack-desktop-checksums
+          if-no-files-found: error
+          retention-days: 14
+          path: output/checksums.txt

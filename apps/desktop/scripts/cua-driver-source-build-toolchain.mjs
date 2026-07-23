@@ -18,7 +18,7 @@ export async function verifyToolchain(platform, lock) {
   if (platform === "darwin") {
     assert(process.platform === "darwin", "darwin provider must be built on macOS");
     const pin = lock.toolchain.darwin;
-    const developerDir = `/Applications/Xcode_${pin.xcodeVersion}.app/Contents/Developer`;
+    const developerDir = pin.developerDir;
     const env = { ...process.env, DEVELOPER_DIR: developerDir };
     const xcode = await runText("xcodebuild", ["-version"], { env });
     assert(
@@ -30,6 +30,8 @@ export async function verifyToolchain(platform, lock) {
     const sdkPath = await runText("xcrun", ["--sdk", "macosx", "--show-sdk-path"], { env });
     const clangPath = await runText("xcrun", ["--sdk", "macosx", "--find", "clang"], { env });
     const lipoPath = await runText("xcrun", ["--find", "lipo"], { env });
+    const codesignPath = pin.postLinkIdentityNormalization.codesignPath;
+    assert((await stat(codesignPath)).isFile(), `codesign tool not found: ${codesignPath}`);
     return {
       env: { DEVELOPER_DIR: developerDir },
       evidence: {
@@ -39,6 +41,7 @@ export async function verifyToolchain(platform, lock) {
         developerDir,
         sdkPath,
         clangPath,
+        codesignPath,
         lipoPath,
       },
     };

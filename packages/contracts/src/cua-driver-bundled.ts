@@ -338,10 +338,9 @@ export interface DarwinBundledProviderSealV1 {
   readonly distributionRevision: "ling.1";
   readonly executableRelativePath: "cua-driver";
   readonly executableSha256: string;
-  readonly architectures: readonly ["arm64", "x86_64"];
+  readonly architectures: readonly ["arm64"];
   readonly cdhashes: {
     readonly arm64: string;
-    readonly x86_64: string;
   };
   readonly codeIdentifier: string;
   readonly teamId: string;
@@ -403,16 +402,16 @@ export interface DarwinBundledCuaDriverLockV1 {
     readonly cargoVersion: string;
     readonly xcodeBuildVersion: string;
     readonly macOSSDKVersion: string;
-    readonly targets: readonly ["aarch64-apple-darwin", "x86_64-apple-darwin"];
+    readonly targets: readonly ["aarch64-apple-darwin"];
     readonly patchSet: LingManagedEmbeddedPatchSetV1;
-    readonly universalBinarySha256BeforeSigning: string;
+    readonly binarySha256BeforeSigning: string;
   };
   readonly binary: {
-    readonly architectures: readonly ["arm64", "x86_64"];
+    readonly architectures: readonly ["arm64"];
     readonly minimumMacOS: "13.0";
     readonly supportedMacOSCells: readonly {
       readonly major: "13" | "14" | "15" | "26";
-      readonly architectures: readonly ("arm64" | "x86_64")[];
+      readonly architectures: readonly ["arm64"];
     }[];
     readonly expectedUpstreamVersion: "0.8.3";
     readonly lingBuild: 1;
@@ -607,8 +606,11 @@ export function isDesktopCuaDriverLeaseV1(value: unknown): value is DesktopCuaDr
     return false;
   }
   const platformArchitectureValid = value.platform === "darwin"
-    ? value.architecture === "arm64" || value.architecture === "x86_64"
+    ? value.architecture === "arm64"
     : value.platform === "win32" && value.architecture === "x86_64";
+  const platformIntegrityValid = value.platform === "darwin"
+    ? value.integrityCoverage === undefined
+    : value.platform === "win32" && value.integrityCoverage === "standard";
   return value.schemaVersion === 1
     && value.providerId === "cua-driver"
     && hasText(value.desktopInstanceId)
@@ -626,11 +628,7 @@ export function isDesktopCuaDriverLeaseV1(value: unknown): value is DesktopCuaDr
     && isSha256(value.providerSealDigest)
     && (value.providerCatalogDigest === undefined || isSha256(value.providerCatalogDigest))
     && platformArchitectureValid
-    && (
-      value.integrityCoverage === undefined
-      || value.integrityCoverage === "standard"
-      || value.integrityCoverage === "uiaccess"
-    );
+    && platformIntegrityValid;
 }
 
 export const CUA_DRIVER_DESKTOP_AVAILABILITY_STATES = [

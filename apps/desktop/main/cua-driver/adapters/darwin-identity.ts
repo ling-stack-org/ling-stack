@@ -195,8 +195,8 @@ export class DarwinCuaDriverIdentityVerifier implements CuaDriverPlatformIdentit
       args: ["-archs", input.paths.executablePath],
     });
     const architectures = parseArchitectures(architectureResult.stdout);
-    if (architectures.join(",") !== "arm64,x86_64"
-      || seal.architectures.join(",") !== "arm64,x86_64") {
+    if (architectures.join(",") !== "arm64"
+      || seal.architectures.join(",") !== "arm64") {
       throw new Error("darwin_cua_driver_architectures_mismatch");
     }
 
@@ -271,12 +271,12 @@ export class DarwinCuaDriverIdentityVerifier implements CuaDriverPlatformIdentit
   }
 }
 
-function parseArchitectures(output: string): readonly ["arm64", "x86_64"] {
+function parseArchitectures(output: string): readonly ["arm64"] {
   const values = [...new Set(output.trim().split(/\s+/u).filter(Boolean))].sort();
-  if (values.length !== 2 || values[0] !== "arm64" || values[1] !== "x86_64") {
+  if (values.length !== 1 || values[0] !== "arm64") {
     throw new Error("darwin_cua_driver_architectures_invalid");
   }
-  return values as ["arm64", "x86_64"];
+  return values as ["arm64"];
 }
 
 function parseMinimumMacOS(output: string): string {

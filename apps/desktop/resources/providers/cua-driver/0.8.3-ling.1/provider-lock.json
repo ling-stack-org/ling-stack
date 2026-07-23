@@ -12,6 +12,153 @@
     "license": "MIT",
     "licenseSha256": "c0779290c1d4783169aa3dbfb55feb505e563ef8a004bbf55298ceffcfbda8d9"
   },
-  "enabledPlatforms": [],
-  "platforms": {}
+  "enabledPlatforms": [
+    "darwin"
+  ],
+  "platforms": {
+    "darwin": {
+      "schemaVersion": 1,
+      "componentId": "cua-driver-darwin",
+      "integrationMode": "embedded-stdio",
+      "distributionRevision": "ling.1",
+      "productVersionLabel": "0.8.3 (Ling build 1)",
+      "referenceReleaseArtifact": {
+        "filename": "cua-driver-rs-0.8.3-darwin-universal-binary.tar.gz",
+        "sizeBytes": 15320898,
+        "sha256": "a2a29f3ccbd45989819df639d60fa68ac6f28b844f74d7d2b0a1495e4359c6a1",
+        "binaryArchivePath": "cua-driver",
+        "teamId": "YCK386LBJ7",
+        "authority": "Developer ID Application: Cua AI, Inc. (YCK386LBJ7)",
+        "hardenedRuntime": true,
+        "entitlementsCanonicalSha256": "5c301f02f6b64d3feb13c1b0f29f4135174132b33a828b85264aee8b8a5ac7ac"
+      },
+      "sourceBuild": {
+        "cargoLockSha256": "098b0527c35def4fdd1d08e5dd3d1b0d5f5dda9a04b1888ec1bf15b52311c51b",
+        "rustcVersion": "1.97.1",
+        "cargoVersion": "1.97.1",
+        "xcodeBuildVersion": "17F113",
+        "macOSSDKVersion": "26.5",
+        "targets": [
+          "aarch64-apple-darwin"
+        ],
+        "patchSet": {
+          "id": "ling-managed-embedded-v1",
+          "sha256": "87b6b71942bc93d33ba293ffcc67e245aefd43a416bbf9e5516e2dbc1de43936",
+          "patches": [
+            {
+              "id": "ling-embedded-state-home-v1",
+              "sha256": "4118ad773e5dd544da2e91ce3ac2959494a23630388546ebb230bdb2c00d9851"
+            },
+            {
+              "id": "ling-managed-readiness-v1",
+              "sha256": "38087c8c36f44bd1f9680fb052e6a50c44d0519f0977652dea21f3ee0bc30e34"
+            },
+            {
+              "id": "ling-managed-lifetime-v1",
+              "sha256": "dc85b2089da4a943521dbb1a8f866274a02ee839714c3d491e0f841efa3094a5"
+            },
+            {
+              "id": "ling-windows-capability-errors-v1",
+              "sha256": "2184241e1612f411f6d4db7a9edcf451fe8d85298c0130de2c71cc4cabc945e8"
+            }
+          ],
+          "touchedPaths": [
+            "libs/cua-driver/rust/crates/cua-driver-core/Cargo.toml",
+            "libs/cua-driver/rust/crates/cua-driver-core/src/lib.rs",
+            "libs/cua-driver/rust/crates/cua-driver-core/src/ling_managed.rs",
+            "libs/cua-driver/rust/crates/cua-driver-core/src/ling_managed_readiness.rs",
+            "libs/cua-driver/rust/crates/cua-driver-core/src/protocol.rs",
+            "libs/cua-driver/rust/crates/cua-driver-core/src/server.rs",
+            "libs/cua-driver/rust/crates/cua-driver/src/cli.rs",
+            "libs/cua-driver/rust/crates/cua-driver/src/ling_managed_lifetime.rs",
+            "libs/cua-driver/rust/crates/cua-driver/src/main.rs",
+            "libs/cua-driver/rust/crates/cua-driver/src/serve.rs",
+            "libs/cua-driver/rust/crates/cua-driver/src/telemetry.rs",
+            "libs/cua-driver/rust/crates/cua-driver/src/version_check.rs",
+            "libs/cua-driver/rust/crates/cua-driver/tests/ling_managed_native.rs",
+            "libs/cua-driver/rust/crates/pip-preview/src/lib.rs",
+            "libs/cua-driver/rust/crates/platform-macos/src/tools/mod.rs",
+            "libs/cua-driver/rust/crates/platform-macos/src/tools/set_config.rs",
+            "libs/cua-driver/rust/crates/platform-windows/Cargo.toml",
+            "libs/cua-driver/rust/crates/platform-windows/src/health_report.rs",
+            "libs/cua-driver/rust/crates/platform-windows/src/input/delivery.rs",
+            "libs/cua-driver/rust/crates/platform-windows/src/input/inject.rs",
+            "libs/cua-driver/rust/crates/platform-windows/src/input/keyboard.rs",
+            "libs/cua-driver/rust/crates/platform-windows/src/input/mod.rs",
+            "libs/cua-driver/rust/crates/platform-windows/src/input/mouse.rs",
+            "libs/cua-driver/rust/crates/platform-windows/src/lib.rs",
+            "libs/cua-driver/rust/crates/platform-windows/src/ling_managed_capability.rs",
+            "libs/cua-driver/rust/crates/platform-windows/src/managed_lifetime.rs",
+            "libs/cua-driver/rust/crates/platform-windows/src/managed_readiness.rs",
+            "libs/cua-driver/rust/crates/platform-windows/src/tools/impl_.rs"
+          ]
+        },
+        "binarySha256BeforeSigning": "12ca08fec08c9540e6ec6a9de5ab079f27e09de55a6f0b8184279fb003cdddb0"
+      },
+      "binary": {
+        "architectures": [
+          "arm64"
+        ],
+        "minimumMacOS": "13.0",
+        "supportedMacOSCells": [
+          {
+            "major": "13",
+            "architectures": [
+              "arm64"
+            ]
+          },
+          {
+            "major": "14",
+            "architectures": [
+              "arm64"
+            ]
+          },
+          {
+            "major": "15",
+            "architectures": [
+              "arm64"
+            ]
+          },
+          {
+            "major": "26",
+            "architectures": [
+              "arm64"
+            ]
+          }
+        ],
+        "expectedUpstreamVersion": "0.8.3",
+        "lingBuild": 1,
+        "hardenedRuntime": true,
+        "requiredEntitlements": {
+          "com.apple.security.automation.apple-events": true,
+          "com.apple.security.device.screen-capture": true
+        },
+        "requiredEntitlementsCanonicalSha256": "5c301f02f6b64d3feb13c1b0f29f4135174132b33a828b85264aee8b8a5ac7ac"
+      },
+      "runtime": {
+        "args": [
+          "mcp",
+          "--embedded",
+          "--host-bundle-id",
+          "com.lingstack.desktop"
+        ],
+        "stateHomeEnvironmentVariable": "CUA_DRIVER_STATE_HOME",
+        "stateSchemaVersion": 1,
+        "stateHomeRequiredInEmbeddedMode": true,
+        "telemetryEnabled": false,
+        "startupUpdateCheckEnabled": false,
+        "managedUpdaterToolsAllowed": false
+      },
+      "compatibility": {
+        "mcpClientSdk": "@modelcontextprotocol/sdk@1.29.0",
+        "clientInitializeProtocolVersion": "2025-11-25",
+        "serverInitializeProtocolVersion": "2025-06-18",
+        "healthSchemaVersion": "1",
+        "toolsListSha256": "1b6ad4f656b43b8f864ba8eb025ef79323f001014545799b087691ef8cc3313b",
+        "embeddedHealthSkipChecks": [
+          "bundle_identity"
+        ]
+      }
+    }
+  }
 }

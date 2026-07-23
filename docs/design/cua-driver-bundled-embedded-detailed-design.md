@@ -103,7 +103,7 @@ The staged delivery plan is
 | Provider distribution | The Ling-carried platform binaries built from upstream `cua-driver-rs-v0.8.3` plus the locked managed-embedding patch series |
 | Embedded host | The Electron main process inside the tier-appropriate Ling Desktop package |
 | Provider host | Desktop module that owns the platform process group and stdio MCP connection |
-| macOS provider | Universal Mach-O `cua-driver` launched directly in upstream embedded mode |
+| macOS provider | Thin arm64 Mach-O `cua-driver` launched directly in upstream embedded mode |
 | Windows main provider | x64 `cua-driver.exe` launched directly in upstream embedded mode in the Desktop session |
 | Windows UIAccess helper | Future x64 `cua-driver-uia.exe` secure-path artifact; audit-only in V1 and unusable unless signing, installer, ShellExecute, PID, routing and live UIAccess gates pass |
 | Private helper payload | The versioned provider resource carried and installed only by Ling Setup; it is not a second Windows product, service, PATH command, Start-menu app or independently updated component |
@@ -270,18 +270,18 @@ interface DarwinBundledCuaDriverLockV1 {
     readonly cargoVersion: string;
     readonly xcodeBuildVersion: string;
     readonly macOSSDKVersion: string;
-    readonly targets: readonly ["aarch64-apple-darwin", "x86_64-apple-darwin"];
+    readonly targets: readonly ["aarch64-apple-darwin"];
     readonly patchSet: LingManagedEmbeddedPatchSetV1;
-    readonly universalBinarySha256BeforeSigning: string;
+    readonly binarySha256BeforeSigning: string;
   };
   readonly binary: {
-    readonly architectures: readonly ["arm64", "x86_64"];
+    readonly architectures: readonly ["arm64"];
     readonly minimumMacOS: "13.0";
     readonly supportedMacOSCells: readonly [
-      { readonly major: "13"; readonly architectures: readonly ["arm64", "x86_64"] },
-      { readonly major: "14"; readonly architectures: readonly ["arm64", "x86_64"] },
-      { readonly major: "15"; readonly architectures: readonly ["arm64", "x86_64"] },
-      { readonly major: "26"; readonly architectures: readonly ["arm64", "x86_64"] },
+      { readonly major: "13"; readonly architectures: readonly ["arm64"] },
+      { readonly major: "14"; readonly architectures: readonly ["arm64"] },
+      { readonly major: "15"; readonly architectures: readonly ["arm64"] },
+      { readonly major: "26"; readonly architectures: readonly ["arm64"] },
     ];
     readonly expectedUpstreamVersion: "0.8.3";
     readonly lingBuild: 1;
@@ -482,13 +482,13 @@ not wait for macOS output:
    Windows verify zip size, binary hashes, PE32+ x64 headers, manifests and
    unsigned-reference status. Reference binaries are never copied into the Ling package.
 4. Apply the exact `ling-managed-embedded-v1` patch series, then build `cua-driver` for
-   the enabled platform targets: both `aarch64-apple-darwin` and
-   `x86_64-apple-darwin` for macOS, or `x86_64-pc-windows-msvc` for Windows. The Windows
+   the enabled platform target: `aarch64-apple-darwin` for macOS, or
+   `x86_64-pc-windows-msvc` for Windows. The Windows
    workflow also builds `cua-driver-uia` as a CI audit output. The audit output is verified
    against the reference manifest but is not staged into the V1 user package. Use the
    platform's exact locked Rust/Cargo and native SDK toolchain with Cargo locked dependency
    mode.
-5. Combine the macOS slices with `lipo`. Verify every output architecture, deployment or
+5. Copy the thin macOS arm64 executable directly, without combining architectures. Verify the output architecture, deployment or
    subsystem target, PE manifests, upstream `--version`, initialize response, health
    schema, per-platform tool digest, and embedded state-isolation contract.
 6. Copy the exact upstream MIT license from the locked tag and verify its digest.
@@ -595,10 +595,9 @@ interface BundledProviderSealV1 {
   readonly distributionRevision: "ling.1";
   readonly executableRelativePath: "cua-driver";
   readonly executableSha256: string;
-  readonly architectures: readonly ["arm64", "x86_64"];
+  readonly architectures: readonly ["arm64"];
   readonly cdhashes: {
     readonly arm64: string;
-    readonly x86_64: string;
   };
   readonly codeIdentifier: string;
   readonly teamId: string;
@@ -787,7 +786,7 @@ spikes before the release pipeline relies on it. The implementation contract is:
 
 The CI spike enters through the production `package:mac` / `package:win` wrapper with one
 verified source-build output. It must not call `electron-builder` directly. The macOS spike
-packages arm64 and x64 together; the Windows trace must prove the exact outer role set of
+packages the arm64 target only; the Windows trace must prove the exact outer role set of
 app, uninstaller and NSIS. At `afterSign` and final-artifact reopen, provider, seal, lock,
 catalog, capabilities and runtime-policy paths are re-`lstat`ed, canonically contained,
 single-linked regular files. Test signer identities must also report the exact selected
@@ -811,7 +810,7 @@ or pre-sign SHA match cannot make installed loose resources trusted. The V1 thre
 unauthorized resource replacement; it does not claim protection after the same user has
 fully replaced both the Desktop runtime and its verification code.
 For macOS, the designated requirement is stored as normalized UTF-8 text with normalized line
-endings and its digest; CDHashes are collected separately for both universal slices.
+endings and its digest; the CDHash is collected for the arm64 executable.
 
 ## Pre-Sign Package-Staging Security Boundary
 
@@ -859,6 +858,65 @@ system downloads that artifact into a fresh root and invokes the production prom
 The proposal therefore proves the uploaded bytes survive serialization, download and a
 separate verifier invocation; it still does not prove that A and B came from independent
 runners, so build-invocation provenance remains a manual review blocker.
+
+When GitHub-hosted minutes are unavailable, the same boundary may execute on two
+repository-scoped self-hosted profiles. The caller must already exist on the default
+branch, accept only manual dispatch, and bind an owner-supplied full commit SHA before any
+checkout. Each native runner has one custom label and no generic default labels; the
+checked-in profile fixes repository, actor, runner name/root/work root, runner binary
+version, OS/architecture and native toolchain. Checkout never persists credentials.
+The macOS profile additionally requires an interactive logged-in Aqua launch. The Windows
+profile likewise requires a logged-in interactive user launch and cannot run in Session 0.
+Both profiles reject `ACTIONS_RUNNER_SVC=1`. This is part of the native evidence contract:
+the upstream macOS cursor integration tests and the Windows GUI provider readiness path both
+require an interactive desktop and cannot produce acceptance evidence from service mode.
+Run-specific temp roots and one-day artifacts prevent persistent work directories from
+becoming implicit evidence. Before upload, each native source-build job resolves package
+authority from the independently anchored committed lock. The initial closed-gate run skips
+Desktop dependency installation, the package wrapper and its trace upload, but still uploads
+A/B evidence for the review-only proposal. After the proposed lock and independent anchor are
+reviewed and committed, the mandatory second A/B run invokes the same production
+`package:mac` or `package:win` wrapper used by the hosted lane against fresh candidate A. The
+macOS call covers arm64 DMG and ZIP in one invocation; Windows covers x64 NSIS and
+requires the exact outer app, uninstaller and NSIS roles. Its hook trace is uploaded with
+one-day retention. This changes runner ownership only: upload/download,
+review-only proposal, independent lock anchor, second A/B build and Windows VM sign-off
+remain mandatory.
+
+The macOS final link keeps a valid `LC_UUID` load command. Swift 6.3 emits a non-runtime
+16-byte `__LLVM,__swift_modhash` and embeds the SwiftPM scratch root in `__DWARF` inside
+otherwise identical `apple-cf` and `screencapturekit` archive members. Because those inputs
+change clean-build stub ordering, the builder first primes each target, verifies the exact
+two locked archive/member inventories, and zeroes both the module hash and non-runtime
+DWARF contents only in Mach-O members carrying the Swift module-hash marker. It then forces
+a final-only relink with fixed Rust metadata and Apple ld `-reproducible`. Before that relink,
+the builder runs the locked `cargo clean --package cua-driver` against only the current target;
+this removes the prime executable and its root-package fingerprint while preserving the already
+normalized dependency archives, so Cargo cannot incorrectly reuse the prime link. Default linker
+deduplication remains enabled: disabling it leaves two equivalent `_objc_msgSend` GOT slots,
+and arm64 may select different slots across repeated links even when every archive byte is
+identical. This archive normalization does not change runtime sections or Rust release
+optimization. A later self-hosted replay showed that Apple ld's arm64 parallel stub layout
+can still produce two runtime-byte identities across clean invocations even when load
+commands and normalized Swift archives are identical. The source-build contract therefore
+pins the reviewed canonical arm64 identity
+`af7a2f9bfabe98704bafca0f2c7f6e2ae4e9f53fe6653d5cd8cea44fc25e103d`
+and permits at most 32 clean root-package relinks. Each rejected candidate is discarded before any write or
+codesign operation. Exhaustion fails the source build and therefore cannot upload,
+promote, sign or package a candidate. Changing the identity or attempt bound requires a
+reviewed source-input and independent anchor change; A/B byte equality remains mandatory.
+
+After the selector accepts a thin binary, the builder zeroes only the derived `LC_UUID`
+and existing linker-signature region in an in-memory copy, hashes the remaining thin Mach-O
+bytes with SHA-256, writes an RFC 4122 variant/version-3 UUID from that digest, and applies the fixed
+`ling-cua-driver-presign` ad-hoc identity with `/usr/bin/codesign`. The builder immediately
+verifies that signature and UUID before copying the thin arm64 output; actual runtime bytes remain part of the
+digest, so instruction or data drift still fails A/B comparison. This ad-hoc identity only
+makes the arm64 pre-sign candidate executable for probes and is replaced by product signing
+after promotion during packaging. `-no_uuid` is forbidden
+because current dyld refuses to execute a binary without `LC_UUID`; `-random_uuid` is
+forbidden because it would defeat the byte-for-byte A/B comparison. Host build scripts
+never receive final-only linker flags or archive normalization.
 
 The generator preserves an already promoted other-platform record byte-for-byte, refuses
 to overwrite the target platform and atomically publishes a fresh proposal directory containing only
@@ -1062,23 +1120,25 @@ must remain deterministic.
 artifact tree so `provider-lock.json`, the seal and candidate/release manifests cannot
 select their own trust anchor. Darwin policy contains only the expected Ling Team ID.
 Windows policy contains the build-bound signing tier/channel and exact provider/catalog
-signer identities. The Windows system root remains a separately injected host platform
-fact. Gate-off startup never reads this file; a gate-on missing, symlinked, oversized,
+signer identities. Packaged Windows composition resolves in-box tools through the
+kernel-owned `\\?\GLOBALROOT\SystemRoot` alias; neither the caller nor the process
+environment injects that trust root. Gate-off startup never reads this file; a gate-on missing, symlinked, oversized,
 cross-platform, mixed-tier or extra-field policy fails closed without starting a provider.
 
 Packaged path resolution rules:
 
 1. Build the absolute platform path from the compile-time distribution id and
    `process.resourcesPath`; do not trust a path read from the lock itself.
-2. Reject symlinks, reparse points, junctions and any canonical path outside the expected
-   provider root.
+2. Reject symlinks, reparse points, junctions, any regular trust-tuple file whose link
+   count is not exactly one, and any canonical path outside the expected provider root.
 3. On Windows, enforce the compile-time distribution channel before reading candidate
    evidence. `unsigned_dev` is accepted only by the development build gate and requires an
    absent catalog plus explicit `NotSigned` identity. Signed tiers verify the installed
    Ling executable and provider catalog with the absolute in-box Windows PowerShell path,
    `-NoProfile -NonInteractive`, fixed UTF-8 locale-independent JSON and bounded
-   stdout/stderr. The Windows system root is a required trusted platform fact; verifier
-   code never falls back to caller-controlled `SystemRoot` or `WINDIR` environment values.
+   stdout/stderr. The executable path is rooted at the kernel-owned SystemRoot alias;
+   verifier code never falls back to caller-controlled `SystemRoot` or `WINDIR`
+   environment values.
    Require the matching internal or production policy signer identity and
    run `Test-FileCatalog` against only the dedicated two-file payload directory. Missing
    PowerShell, process-launch denial, WDAC/AppLocker blocking, unavailable catalog cmdlets,
@@ -1091,7 +1151,10 @@ Packaged path resolution rules:
    match it, then validate both records. Signed tiers additionally require the seal to be a
    catalog member; the development-only unsigned tier has no catalog trust claim.
 5. Require the main provider to be an executable regular file with exact platform
-   identity before starting the proxy lease.
+   identity before starting the proxy lease. On Darwin, hold the verified fd, re-hash it,
+   and spawn through `/.vol/<dev>/<ino>`. On Windows, a trusted in-box PowerShell lease
+   opens the verified PE with read-only sharing, re-hashes that held handle, requires one
+   NTFS hardlink, and retains it until direct `CreateProcess` has mapped the child.
 6. Never consult `PATH`, Homebrew, user install junctions, `~/.local/bin`,
    `/Applications/CuaDriver.app`, or `%LOCALAPPDATA%\Programs\Cua` in
    `bundled_embedded` mode.
@@ -1356,7 +1419,9 @@ stdout/protocol closure, host-process death or main-process termination closes t
 Object and removes every provider descendant within the locked managed-exit deadline.
 Child-created workers must not inherit host/provider stdio or Job Object handles.
 Path/reparse validation remains in TypeScript through `lstat` plus canonical `realpath`;
-ACL evidence may use the absolute trusted `%SystemRoot%\System32\icacls.exe`.
+ACL evidence uses the kernel-rooted in-box `System32\icacls.exe`. The pre-spawn PE lease
+is separate from the provider-owned Job Object: it binds verified bytes to `CreateProcess`,
+while the Rust Job Object continues to own the long-lived provider tree.
 
 ## Embedded Provider Host
 
@@ -1426,6 +1491,8 @@ Proxy rules:
   traffic remains transparent;
 - cap request, response, image, and stderr sizes using the same or stricter limits as the
   daemon MCP broker;
+- serialize SSE writes, stop after `write()` reports backpressure, and bound the queued
+  notification bytes. Queue overflow revokes the session and stops the generation;
 - close the stdio child when the accepted session is released for disable or Desktop quit;
 - on unexpected HTTP/MCP session loss, terminate the old child, invalidate the lease,
   increment generation, bind a fresh proxy session, and republish before accepting a new
@@ -1600,6 +1667,8 @@ Each entry owns:
 `checkServer`, `listTools`, health calls, and normal tool calls acquire the same entry and
 may run concurrently through the SDK after initialization. The bundled path must not use
 the raw HTTP list fallback because that would create an uninitialized side channel.
+`listTools` additionally has one total deadline, a seen-cursor set, and fixed page/tool
+ceilings; a repeated cursor or any limit breach discards the entire partial catalog.
 
 The pool closes an entry on lease replacement or expiry, plugin disable, distribution-mode
 switch, Desktop quit, protocol failure, or daemon shutdown. A stale generation can never
@@ -1869,10 +1938,10 @@ For the 2026-07-17 internal-alpha baseline, the required GA matrix is:
 
 | macOS major | Architectures | Required status before declaring support |
 | --- | --- | --- |
-| 13 Ventura | arm64 and supported x86_64 hardware | Signed installed-app acceptance |
-| 14 Sonoma | arm64 and supported x86_64 hardware | Signed installed-app acceptance |
-| 15 Sequoia | arm64 and supported x86_64 hardware | Signed installed-app acceptance |
-| 26 Tahoe | arm64 and supported x86_64 hardware | Signed installed-app acceptance |
+| 13 Ventura | arm64 hardware | Signed installed-app acceptance |
+| 14 Sonoma | arm64 hardware | Signed installed-app acceptance |
+| 15 Sequoia | arm64 hardware | Signed installed-app acceptance |
+| 26 Tahoe | arm64 hardware | Signed installed-app acceptance |
 
 Because this matrix claims Ventura support, the outer app must declare
 `LSMinimumSystemVersion=13.0` exactly. The bundled provider must retain
@@ -1899,8 +1968,8 @@ provider report records both full `host.macosVersion` and normalized `host.macos
 the schema constrains the major to its manifest cell, and the finalizer recomputes the
 major from `sw_vers` output before acceptance.
 
-For the initial four-major, two-architecture matrix, denied/prompt/granted/revoked means
-32 distinct TCC reports. Each revoked report is an ordered recovery record for the same
+For the initial four-major, one-architecture matrix, denied/prompt/granted/revoked means
+16 distinct TCC reports. Each revoked report is an ordered recovery record for the same
 cell and candidate: active capture -> manual revoke -> observed capability loss -> manual
 re-grant -> child restart -> health/capture/input recovery. The granted report for each
 cell also binds AX, live capture, AppKit input, Chromium/Electron background input,
@@ -2296,7 +2365,7 @@ stderr, or signature internals. Those details belong in redacted release/support
 - exact `Cargo.lock`, Rust/Cargo, Xcode/macOS SDK, MSVC/Windows SDK versions, patch digest,
   and touched-path allowlist;
 - clean patch-series application and every platform binary SHA before signing;
-- macOS arm64/x86_64 slices plus Windows PE32+ x86_64 main and audit-only UIAccess output;
+- macOS arm64 Mach-O plus Windows PE32+ x86_64 main and audit-only UIAccess output;
 - minimum macOS, Windows product policy, upstream `0.8.3`, and Ling revision `ling.1`;
 - macOS reference signer/runtime/entitlements, Windows unsigned-reference status, and
   final platform signing identities;
@@ -2306,11 +2375,11 @@ stderr, or signature internals. Those details belong in redacted release/support
 
 ### Package
 
-- macOS arm64/x64 and Windows x64 Ling artifacts contain the locked platform provider
+- macOS arm64 and Windows x64 Ling artifacts contain the locked platform provider
   outside `app.asar`;
 - no standalone `CuaDriver.app`, installer, updater script, or PATH shim is packaged;
 - nested helper and outer app pass `codesign --verify --deep --strict`;
-- final helper bytes, per-slice CDHashes, Team ID, designated requirement, hardened
+- final helper bytes, arm64 CDHash, Team ID, designated requirement, hardened
   runtime, and canonical entitlements match `provider-seal.json`;
 - the outer app code-resource seal covers both the final helper and provider seal;
 - DMG and ZIP contents bind to the same provider identity;
@@ -2402,7 +2471,7 @@ stderr, or signature internals. Those details belong in redacted release/support
 - signed installed-app acceptance passes for every declared macOS 13, 14, 15, and 26
   architecture cell;
 - evidence schemas, manifests, and the finalizer key coverage by normalized macOS major
-  plus execution architecture, reject cross-cell report reuse, and require all 32 TCC
+  plus execution architecture, reject cross-cell report reuse, and require all 16 TCC
   case reports for the initial matrix;
 - each cell covers AX, live capture, AppKit and Chromium/Electron background input,
   cursor overlay, restart, and cleanup;

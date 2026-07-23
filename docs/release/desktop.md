@@ -4,6 +4,11 @@
 “真实平台发布证据”分开，避免把 fake source、unsigned 包或 provider 下载校验误报为
 跨平台完成。
 
+GitHub-hosted native minutes 不可用时，使用
+[Cua Driver Self-Hosted Native Runners](./cua-driver-self-hosted-runners.md) 中的仓库专用、
+手工 dispatch 路径。self-hosted 路径保留相同的 lock、A/B 对比、artifact round trip 和
+review-only promotion 边界，不是 release-readiness 绕过。
+
 Windows provider、签名、安装范围和回滚决策见
 [Desktop Windows 发布决策记录](./desktop-windows-release-decisions.md)。
 
@@ -21,9 +26,28 @@ Windows bundled target 使用两条独立判定轴：`bundled_embedded` 表示 h
 
 | 平台 | 目标 | 当前证据边界 |
 | --- | --- | --- |
-| macOS | arm64、x86_64 | 当前 unsigned baseline 仍是 external provider；目标改为从锁定 tag/Cargo.lock 加 `ling-managed-embedded-v1` patch series 构建 `0.8.3 (Ling build 1)` 并由 Desktop embedded 托管，post-sign seal、Developer ID、单一 Ling TCC、macOS 13/14/15/26、clean machine、升级回滚尚未闭合 |
+| macOS | Apple Silicon arm64 | Intel Mac 不支持；当前 unsigned baseline 仍是 external provider；目标改为从锁定 tag/Cargo.lock 加 `ling-managed-embedded-v1` patch series 构建 thin arm64 `0.8.3 (Ling build 1)` 并由 Desktop embedded 托管，post-sign seal、Developer ID、单一 Ling TCC、macOS 13/14/15/26、clean machine、升级回滚尚未闭合 |
 | Windows | x86_64 | Win32 standard adapter 已实现但仍在关闭的 packaged gate 后，当前 runtime 仍是 external baseline；目标从锁定 tag/Cargo.lock/patch series 构建 bundled `0.8.3 (Ling build 1)`，由 Desktop 在 interactive session 托管并声明 standard integrity tier；真实 Authenticode/catalog/ACL/WTS、test-signed Setup/internal VM 功能验收与 production Publisher/SmartScreen/WDAC/release matrix 均尚未闭合 |
+| Windows ARM64 | 不支持 | 不生成安装包或 provider payload |
 | Linux | 不支持 | provider gate 必须 fail closed |
+
+开发阶段仓库为 private，不启用应用自动更新。公开后使用 GitHub Releases；无需改变安装包
+身份，只需在 release workflow 发布现已保留的 updater companion assets。最终用户可见文件：
+
+```text
+Ling-Stack-<version>-macos-arm64.dmg
+Ling-Stack-<version>-windows-x64-setup.exe
+checksums.txt
+```
+
+未来 updater companion assets：
+
+```text
+Ling-Stack-<version>-macos-arm64.zip
+latest-mac.yml
+Ling-Stack-<version>-windows-x64-setup.exe.blockmap
+latest.yml
+```
 
 当前已验证 artifact 只发布 Cua Driver plugin shell metadata。批准后的 macOS 和 Windows
 target 将打包锁定的 Ling source build 和 version-isolated provider state contract，但
@@ -117,53 +141,31 @@ raw listener residue 均为 **0**。这是当前机器 development runtime 的�
 
 ```bash
 corepack pnpm --filter @ling-stack/desktop package:mac
-hdiutil verify 'apps/desktop/release/Ling Stack-0.0.0-arm64.dmg'
-hdiutil verify 'apps/desktop/release/Ling Stack-0.0.0.dmg'
-unzip -t 'apps/desktop/release/Ling Stack-0.0.0-arm64-mac.zip'
-unzip -t 'apps/desktop/release/Ling Stack-0.0.0-mac.zip'
+hdiutil verify 'apps/desktop/release/Ling-Stack-0.0.0-macos-arm64.dmg'
+unzip -t 'apps/desktop/release/Ling-Stack-0.0.0-macos-arm64.zip'
 ```
 
 unsigned job 必须验证：
 
 - `CFBundleIdentifier=com.lingstack.desktop`；
-- `CFBundleIconFile=icon.icns`，且 arm64/x64 bundle 内图标与提交的 Ling icon 字节一致；
-- arm64/x86_64 Mach-O 架构正确；
+- `CFBundleIconFile=icon.icns`，且 arm64 bundle 内图标与提交的 Ling icon 字节一致；
+- main executable 和 embedded provider 都只能是 arm64 Mach-O；
 - 当前 baseline 的 bundled Cua Driver 只有 manifest、MCP metadata、README；切换到
   embedded macOS target 前，workflow 必须改为验证 exact source/patch/toolchain lock、
   post-sign provider seal、binary、license、架构、exact entitlements、state isolation 和
   无 standalone app/updater script，而不能继续沿用本断言；
 - 不存在 Developer ID Authority 或 Team ID；
-- fake、real-window、primary-display packaged provenance smoke 在 arm64 和 x86_64
-  两个 `.app` 以及挂载后的两个 DMG 中都通过；
-- Cua native-window handoff 在 dev Electron 和 arm64/x86_64 packaged `.app` 中通过：
+- fake、real-window、primary-display packaged provenance smoke 在 arm64 `.app` 以及挂载后的
+  DMG 中通过；
+- Cua native-window handoff 在 dev Electron 和 arm64 packaged `.app` 中通过：
   Electron source ID 只作为测试 oracle，交给 Ling descriptor 的只有 Cua provider
   PID 和 `nativeWindowId`，不得按标题、前台窗口或 z-order 选择。
 
 这类包只能作为工程候选包，不能作为 Gatekeeper 或 TCC 发布证据。
 
-### `e20777f5` baseline unsigned 产物（非当前候选）
-
-| 产物 | SHA-256 |
-| --- | --- |
-| `Ling Stack-0.0.0-arm64.dmg` | `e42b944b84bf67174d18dec422637cbde6988c4d2283f503597b09aae50727fb` |
-| `Ling Stack-0.0.0.dmg` | `a9e8aa208af6dc9baff96b9550166095660adc1b596c4f86544287ac0ca19258` |
-| `Ling Stack-0.0.0-arm64-mac.zip` | `6c9ac51d212a7a4b930cf8bcb8c93f7e4b4f07bb17b93d1205f01b2ff99face5` |
-| `Ling Stack-0.0.0-mac.zip` | `49a8bc3d5dce9def59c49b7a53f9fb31fea72e960dd9e99f806809d995bb695e` |
-| `win-unpacked/Ling Stack.exe` | `3f6ad1bbb45816bb46b15d2e23eb7a60843eb2a8fbc25ae0e541fb29af1d596e` |
-| `Ling Stack Setup 0.0.0.exe` | `52b115f2ef02394ed0e352c28f60052ec572eec02f708c2a942bd64d9b4de5e2` |
-
-两个 DMG 均通过 `hdiutil verify`，两个 ZIP 均通过 `unzip -t`。Vite preview build
-现会先清空 `outDir`；最终 `app.asar` 的 preview subtree 只有本次构建的 **7 个条目**
-（2 个目录和 5 个文件），不存在上一轮 hash asset 残留。Windows unpacked application 是 PE32+ x86_64；
-NSIS 使用常规 PE32 x86 bootstrap stub 承载该 x64 application。两者的 PE
-certificate-table size 均为 **0**，因此没有嵌入 Authenticode 签名。当前机器也没有
-Apple Developer ID identity；上述哈希和完整性检查都不能写成签名或 notarization
-结论。
-
-工程候选已替换默认 Electron 图标：两个 macOS bundle 的 `icon.icns` 与提交资源完全
-一致；Windows app 和 NSIS 的 9 个 icon frame 与 `icon.ico` 一致。Windows NSIS 明确为
-one-click、per-user、`asInvoker`，`packElevateHelper=false`；当前 unpacked 和 installer
-payload 都不存在 `elevate.exe`。
+历史 universal/x64 baseline hash 不再是候选依据。每次 workflow 都必须从最终 DMG 与
+Setup.exe 重新生成统一 `checksums.txt`；不能复用旧文件名或旧 SHA-256。unsigned 包只用于
+工程验证，不能写成签名、notarization、SmartScreen 或发布结论。
 
 ## macOS signed release
 
@@ -171,9 +173,7 @@ payload 都不存在 `elevate.exe`。
 
 ```bash
 codesign --verify --deep --strict 'apps/desktop/release/mac-arm64/Ling Stack.app'
-codesign --verify --deep --strict 'apps/desktop/release/mac/Ling Stack.app'
 spctl -a -vv 'apps/desktop/release/mac-arm64/Ling Stack.app'
-spctl -a -vv 'apps/desktop/release/mac/Ling Stack.app'
 xcrun notarytool submit <artifact> --wait
 xcrun stapler validate 'apps/desktop/release/mac-arm64/Ling Stack.app'
 
@@ -181,17 +181,15 @@ node apps/desktop/tests/verify-macos-signed-candidate.mjs \
   --team-id <TEAM_ID> \
   --bundle-id com.lingstack.desktop \
   --app 'apps/desktop/release/mac-arm64/Ling Stack.app' \
-  --app 'apps/desktop/release/mac/Ling Stack.app' \
-  --dmg 'apps/desktop/release/Ling Stack-<version>-arm64.dmg' \
-  --dmg 'apps/desktop/release/Ling Stack-<version>.dmg' \
-  --zip 'apps/desktop/release/Ling Stack-<version>-arm64-mac.zip' \
-  --zip 'apps/desktop/release/Ling Stack-<version>-mac.zip' \
+  --dmg 'apps/desktop/release/Ling-Stack-<version>-macos-arm64.dmg' \
+  --zip 'apps/desktop/release/Ling-Stack-<version>-macos-arm64.zip' \
   --output apps/desktop/test-results/macos-signed-candidate.json
 ```
 
 verifier 会逐 Mach-O 检查 Developer ID、Team ID 和 hardened runtime，并只读挂载/解包
-DMG、ZIP，重新验证其中唯一 Ling app，再把 arm64/x86_64 的 main executable、bundle
-tree fingerprint 和 CDHash 绑定到 standalone app。缺任一架构、DMG、ZIP，或归档内 app 不一致时不得产生
+DMG、ZIP，重新验证其中唯一 Ling app，再把 arm64 main executable、bundle
+tree fingerprint 和 CDHash 绑定到 standalone app。缺 arm64 app、DMG、ZIP，出现额外
+Intel-only/universal 候选，或归档内 app 不一致时不得产生
 `signedCandidateEvidence=true`。报告中的 artifact path 一律相对 candidate report 所在
 目录；复制到 clean host 时必须保留 report 与 `release/` 树的相对布局，不能依赖 signing
 host 的绝对路径。
@@ -203,11 +201,11 @@ revoked 后 re-granted，
 结束前恢复到 granted，并记录完整转换顺序。
 
 每个 TCC case 使用 `run-macos-tcc-acceptance.mjs` 生成独立 JSON。provider lock 中的
-macOS 13/14/15/26 × arm64/x86_64 每个 cell 都必须生成
-denied/prompt/granted/revoked 四份，初始矩阵共 32 份。report 必须同时记录完整
+macOS 13/14/15/26 × arm64 每个 cell 都必须生成
+denied/prompt/granted/revoked 四份，初始矩阵共 16 份。report 必须同时记录完整
 `host.macosVersion` 和规范化 `host.macosMajor`；finalizer 从实际 `sw_vers` 结果重算 major，
-并校验 major、host architecture、实际执行架构和 candidate executable SHA。universal
-binary 不能在单一 host 或单一 OS 上替另一架构/major 关门。脚本会在目标 host
+并校验 major、host architecture、实际执行架构和 candidate executable SHA。单一 host
+或单一 OS 不能替另一 major 关门。脚本会在目标 host
 重新执行完整 signed-candidate verifier，而不是信任可编辑报告中的 PASS。`granted`
 必须带该 cell 独立的 window/display capture-indicator、AX、AppKit input、
 Chromium/Electron background input、cursor 和 SkyLight behavior 证据，运行两个真实
@@ -238,7 +236,7 @@ setup/probe/smoke 异常仍须原子写出 `verdict=FAIL` 报告。
 node apps/desktop/tests/run-macos-signed-performance.mjs \
   --executable '<Ling Stack executable>' \
   --signed-candidate-report '<candidate.json>' \
-  --output '<signed-performance-arm64-or-x86_64.json>'
+  --output '<signed-performance-arm64.json>'
 ```
 
 producer 在同一 signed executable 上交替运行 fake baseline 与 real capture，读取本地
@@ -254,7 +252,7 @@ node apps/desktop/tests/finalize-macos-signed-acceptance.mjs \
 ```
 
 finalizer 会重新运行完整 candidate verifier，读取并重算所有 nested SHA-256，按
-`macOS major + execution architecture` 验证 32 份 TCC 的 permission semantics、
+`macOS major + execution architecture` 验证 16 份 TCC 的 permission semantics、
 host/execution cell、smoke/restart/revocation/provider logs，并把 capture-indicator refs
 绑定到每个 cell 的 granted case。manifest、schema 和 finalizer 必须拒绝 report
 path/digest 跨 cell 复用、major 缺失/不匹配和 coverage 缺口。当前仅按 architecture
@@ -262,7 +260,7 @@ path/digest 跨 cell 复用、major 缺失/不匹配和 coverage 缺口。当前
 还必须验证每个 cell 的 revoked -> re-granted 顺序、child restart 和 recovered
 capability。每个 DMG/ZIP 都必须有
 `notarytool` `Accepted` JSON log，其 job id 与 artifact SHA 绑定；signed performance 也须
-在两个架构上分别绑定 candidate executable、producer 和 raw cycle logs。最终报告结构见
+在 arm64 候选上绑定 candidate executable、producer 和 raw cycle logs。最终报告结构见
 [macOS signed acceptance schema](./evidence/macos-signed-acceptance.schema.json)。本地
 finalizer 固定输出 `MANUAL_REVIEW_REQUIRED`，即使调用方传入一个声称 trusted 的 callback
 也不能升级为 PASS，且本地输出不得携带未验证 attestation。最终 promotion 必须由独立进程

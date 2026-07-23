@@ -82,15 +82,22 @@ export class Win32CuaDriverStateRootProtector implements CuaDriverStateRootPlatf
     readonly userDataPath: string;
     readonly stateRootPath: string;
     readonly createdPaths: readonly string[];
+    readonly signal?: AbortSignal;
   }): Promise<void> {
+    input.signal?.throwIfAborted();
     const paths = collectProtectedPaths(input);
     await this.assertTopology(input.userDataPath, paths);
+    input.signal?.throwIfAborted();
     const executables = this.resolveExecutables();
-    await this.assertNoReparsePoints(executables, paths);
-    await this.applyAndVerifyAcl(executables, input.stateRootPath);
+    await this.assertNoReparsePoints(executables, paths, input.signal);
+    input.signal?.throwIfAborted();
+    await this.applyAndVerifyAcl(executables, input.stateRootPath, input.signal);
+    input.signal?.throwIfAborted();
     // A junction swap while ACL work was in flight must not survive pre-spawn.
     await this.assertTopology(input.userDataPath, paths);
-    await this.assertNoReparsePoints(executables, paths);
+    input.signal?.throwIfAborted();
+    await this.assertNoReparsePoints(executables, paths, input.signal);
+    input.signal?.throwIfAborted();
   }
 
   private resolveExecutables(): ReturnType<typeof resolveWin32SystemExecutables> {
@@ -144,6 +151,7 @@ export class Win32CuaDriverStateRootProtector implements CuaDriverStateRootPlatf
   private async assertNoReparsePoints(
     executables: ReturnType<typeof resolveWin32SystemExecutables>,
     paths: readonly string[],
+    signal?: AbortSignal,
   ): Promise<void> {
     const result = await this.runPowerShell(
       executables.powershellPath,
@@ -153,6 +161,7 @@ export class Win32CuaDriverStateRootProtector implements CuaDriverStateRootPlatf
         WINDIR: executables.systemRoot,
         LING_CUA_STATE_PATHS_BASE64: Buffer.from(JSON.stringify(paths), "utf8").toString("base64"),
       },
+      signal,
     );
     const evidence = parseReparseEvidence(result);
     if (evidence.verdict === "unavailable") {
@@ -175,6 +184,7 @@ export class Win32CuaDriverStateRootProtector implements CuaDriverStateRootPlatf
   private async applyAndVerifyAcl(
     executables: ReturnType<typeof resolveWin32SystemExecutables>,
     stateRootPath: string,
+    signal?: AbortSignal,
   ): Promise<void> {
     const result = await this.runPowerShell(
       executables.powershellPath,
@@ -185,6 +195,7 @@ export class Win32CuaDriverStateRootProtector implements CuaDriverStateRootPlatf
         LING_CUA_STATE_ROOT: stateRootPath,
         LING_CUA_ICACLS_PATH: executables.icaclsPath,
       },
+      signal,
     );
     const evidence = parseAclEvidence(result);
     if (evidence.verdict === "unavailable") {
@@ -214,6 +225,7 @@ export class Win32CuaDriverStateRootProtector implements CuaDriverStateRootPlatf
     powershellPath: string,
     script: string,
     values: Readonly<Record<string, string>>,
+    signal?: AbortSignal,
   ): Promise<unknown> {
     try {
       return await this.runner.run({
@@ -223,6 +235,7 @@ export class Win32CuaDriverStateRootProtector implements CuaDriverStateRootPlatf
         timeoutMs: this.options.timeoutMs ?? WIN32_CUA_DRIVER_COMMAND_TIMEOUT_MS,
         maxStdoutBytes: this.options.maxStdoutBytes ?? WIN32_CUA_DRIVER_STDOUT_MAX_BYTES,
         maxStderrBytes: this.options.maxStderrBytes ?? WIN32_CUA_DRIVER_STDERR_MAX_BYTES,
+        ...(signal ? { abortSignal: signal } : {}),
       });
     } catch {
       return undefined;

@@ -144,7 +144,6 @@ function macosSignedAcceptanceFixture({ reviewStatus, verdictStatus }) {
   });
   const architectureEvidence = (name) => ({
     arm64: reference(`${name}-arm64`),
-    x86_64: reference(`${name}-x86_64`),
   });
   const captureIndicator = (architecture) => ({
     window: reference(`${architecture}-window-indicator`),
@@ -158,7 +157,7 @@ function macosSignedAcceptanceFixture({ reviewStatus, verdictStatus }) {
     kind: "ling-desktop-macos-signed-acceptance",
     candidate: reference("candidate"),
     notarization: {
-      submissions: Array.from({ length: 4 }, (_, index) => ({
+      submissions: Array.from({ length: 2 }, (_, index) => ({
         submissionId: `submission-${index + 1}`,
         artifactSha256: "b".repeat(64),
         log: reference(`notary-${index + 1}`),
@@ -173,7 +172,6 @@ function macosSignedAcceptanceFixture({ reviewStatus, verdictStatus }) {
     },
     captureIndicator: {
       arm64: captureIndicator("arm64"),
-      x86_64: captureIndicator("x86_64"),
     },
     voiceOver: {
       operator: "release-owner",

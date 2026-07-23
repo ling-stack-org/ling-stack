@@ -8,6 +8,7 @@ import {
   createBoundedWin32CommandRunner,
   encodeWin32PowerShell,
   resolveWin32SystemExecutables,
+  WIN32_KERNEL_SYSTEM_ROOT,
 } from "../dist/main/cua-driver/adapters/win32-command.js";
 import {
   createWin32CuaDriverIdentityVerifier,
@@ -16,6 +17,9 @@ import {
   createWin32CuaDriverProcessLifecycle,
   Win32CuaDriverLifecycleError,
 } from "../dist/main/cua-driver/adapters/win32-lifecycle.js";
+import {
+  createWin32ExecutableSpawnLeaseAcquirer,
+} from "../dist/main/cua-driver/adapters/win32-executable-lease.js";
 import {
   createWin32CuaDriverSessionRecoveryObserver,
   Win32CuaDriverSessionObserverError,
@@ -253,11 +257,37 @@ test("bounded Win32 commands terminate the retained child on deadline", async ()
   assert.deepEqual(child.killSignals, ["SIGTERM"]);
 });
 
+test("bounded Win32 commands never settle until the retained process closes", async () => {
+  const child = fakeChild({ autoCloseOnKill: false, killResult: false });
+  const runner = createBoundedWin32CommandRunner({ spawnCommand() { return child; } });
+  let settled = false;
+  const pending = runner.run({
+    executablePath: "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+    args: ["-NoProfile"],
+    environment: { SystemRoot: "C:\\Windows" },
+    timeoutMs: 1,
+  }).finally(() => {
+    settled = true;
+  });
+  await new Promise((resolve) => setTimeout(resolve, 1_050));
+  assert.equal(settled, false);
+  assert.deepEqual(child.killSignals, ["SIGTERM"]);
+  child.signalCode = "SIGTERM";
+  child.emit("close", null, "SIGTERM");
+  const result = await pending;
+  assert.equal(result.timedOut, true);
+});
+
 test("Win32 command helpers reject relative, UNC and whitespace-altered system roots", async () => {
   assert.deepEqual(resolveWin32SystemExecutables("C:\\Windows"), {
     systemRoot: "C:\\Windows",
     powershellPath: "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
     icaclsPath: "C:\\Windows\\System32\\icacls.exe",
+  });
+  assert.deepEqual(resolveWin32SystemExecutables(WIN32_KERNEL_SYSTEM_ROOT), {
+    systemRoot: "\\\\?\\GLOBALROOT\\SystemRoot",
+    powershellPath: "\\\\?\\GLOBALROOT\\SystemRoot\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+    icaclsPath: "\\\\?\\GLOBALROOT\\SystemRoot\\System32\\icacls.exe",
   });
   for (const value of ["Windows", "\\\\server\\Windows", "C:\\Windows "]) {
     assert.throws(() => resolveWin32SystemExecutables(value));
@@ -372,14 +402,30 @@ test("Win32 state root never derives trusted tools from the process environment"
 test("Win32 lifecycle uses direct spawn and only the retained child handle", async () => {
   const child = fakeChild({ autoCloseOnKill: false });
   let captured;
+  let releases = 0;
   const lifecycle = createWin32CuaDriverProcessLifecycle({
+    async acquireSpawnLease(input) {
+      return {
+        executablePath: input.executablePath,
+        executableDigest: input.executableDigest,
+        async release() { releases += 1; },
+        async abort() {},
+      };
+    },
     spawn(executablePath, args, options) {
       captured = { executablePath, args, options };
       return child;
     },
   });
+  const preparedSpawn = await lifecycle.prepareSpawn({
+    executablePath: PROVIDER_PATH,
+    executableDigest: SHA_A,
+    signal: new AbortController().signal,
+  });
   const spawned = lifecycle.spawn({
     executablePath: PROVIDER_PATH,
+    executableDigest: SHA_A,
+    preparedSpawn,
     args: ["mcp", "--stdio"],
     cwd: "C:\\Users\\ling\\AppData\\Roaming\\Ling\\providers\\cua-driver\\state",
     environment: { SystemRoot: "C:\\Windows" },
@@ -390,6 +436,19 @@ test("Win32 lifecycle uses direct spawn and only the retained child handle", asy
   assert.equal(captured.options.shell, false);
   assert.equal(captured.options.detached, false);
   assert.deepEqual(captured.options.stdio, ["pipe", "pipe", "pipe"]);
+  await preparedSpawn.release();
+  assert.equal(releases, 1);
+  assert.throws(
+    () => lifecycle.spawn({
+      executablePath: PROVIDER_PATH,
+      executableDigest: SHA_A,
+      preparedSpawn,
+      args: ["mcp"],
+      cwd: "C:\\state",
+      environment: {},
+    }),
+    (error) => error instanceof Win32CuaDriverLifecycleError && error.lifecycleCode === "spawn_invalid",
+  );
 
   await lifecycle.terminate(child);
   assert.deepEqual(child.killSignals, ["SIGTERM"]);
@@ -419,6 +478,81 @@ test("Win32 lifecycle uses direct spawn and only the retained child handle", asy
     }),
     (error) => error instanceof Win32CuaDriverLifecycleError && error.lifecycleCode === "spawn_invalid",
   );
+});
+
+test("Win32 spawn lease holds the exact digest until direct CreateProcess returns", async () => {
+  const child = fakeChild({ autoCloseOnKill: false });
+  let invocation;
+  child.stdin.on("data", (chunk) => {
+    if (String(chunk) === "release\n") {
+      queueMicrotask(() => {
+        child.exitCode = 0;
+        child.emit("close", 0, null);
+      });
+    }
+  });
+  const acquire = createWin32ExecutableSpawnLeaseAcquirer({
+    systemRoot: "C:\\Windows",
+    spawnProcess(executablePath, args, options) {
+      invocation = { executablePath, args, options };
+      queueMicrotask(() => child.stdout.write("LING_CUA_SPAWN_LEASE_READY_V1\r\n"));
+      return child;
+    },
+  });
+  const lease = await acquire({
+    executablePath: PROVIDER_PATH,
+    executableDigest: SHA_A,
+    signal: new AbortController().signal,
+  });
+
+  assert.equal(lease.executablePath, PROVIDER_PATH);
+  assert.equal(lease.executableDigest, SHA_A);
+  assert.equal(invocation.executablePath, "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe");
+  assert.equal(invocation.options.env.LING_CUA_PROVIDER_PATH, PROVIDER_PATH);
+  assert.equal(invocation.options.env.LING_CUA_PROVIDER_SHA256, SHA_A);
+  assert.equal(invocation.options.env.PATH, undefined);
+  await lease.release();
+});
+
+test("Win32 spawn lease fails closed on malformed protocol and abort", async (t) => {
+  await t.test("malformed", async () => {
+    const child = fakeChild({ autoCloseOnKill: true });
+    const acquire = createWin32ExecutableSpawnLeaseAcquirer({
+      systemRoot: "C:\\Windows",
+      spawnProcess() {
+        queueMicrotask(() => {
+          child.stdout.write("forged-ready\n");
+          child.kill("SIGKILL");
+        });
+        return child;
+      },
+    });
+    await assert.rejects(
+      acquire({
+        executablePath: PROVIDER_PATH,
+        executableDigest: SHA_A,
+        signal: new AbortController().signal,
+      }),
+      /spawn_lease_/,
+    );
+  });
+
+  await t.test("abort", async () => {
+    const child = fakeChild({ autoCloseOnKill: true });
+    const controller = new AbortController();
+    const acquire = createWin32ExecutableSpawnLeaseAcquirer({
+      systemRoot: "C:\\Windows",
+      spawnProcess() { return child; },
+    });
+    const pending = acquire({
+      executablePath: PROVIDER_PATH,
+      executableDigest: SHA_A,
+      signal: controller.signal,
+    });
+    controller.abort();
+    await assert.rejects(pending, /spawn_lease_/);
+    assert.deepEqual(child.killSignals, ["SIGKILL"]);
+  });
 });
 
 test("Windows powerMonitor maps only its supported unlock recovery hint", () => {

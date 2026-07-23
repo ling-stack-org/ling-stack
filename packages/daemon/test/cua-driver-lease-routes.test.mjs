@@ -420,6 +420,33 @@ test("lease routes require local Desktop bridge authentication and a completed h
     assert.equal((await invalid.json()).error, "invalid_cua_driver_lease_request");
     assert.equal(invalid.headers.get("access-control-allow-origin"), null);
     assert.equal(invalid.headers.get("cache-control"), "no-store");
+
+    for (const invalidLease of [
+      lease(current, { integrityCoverage: "standard" }),
+      lease(current, {
+        platform: "win32",
+        architecture: "x86_64",
+        providerCatalogDigest: "c".repeat(64),
+        integrityCoverage: undefined,
+      }),
+      lease(current, {
+        platform: "win32",
+        architecture: "x86_64",
+        providerCatalogDigest: "c".repeat(64),
+        integrityCoverage: "uiaccess",
+      }),
+    ]) {
+      const response = await fetch(currentUrl, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          [BRIDGE_TOKEN_HEADER]: DESKTOP_TOKEN,
+        },
+        body: JSON.stringify(invalidLease),
+      });
+      assert.equal(response.status, 400);
+      assert.equal((await response.json()).error, "invalid_cua_driver_lease_request");
+    }
   } finally {
     await daemon.stop();
   }
@@ -486,7 +513,6 @@ function lease(handshakeAuthority, overrides = {}) {
     providerCatalogDigest: "c".repeat(64),
     platform: "darwin",
     architecture: "arm64",
-    integrityCoverage: "standard",
     ...overrides,
   };
 }

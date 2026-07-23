@@ -167,6 +167,21 @@ Authenticode-signed `test_signed_internal` candidate and a non-promotable
 
 Decision date: 2026-07-17.
 
+Delivery matrix decision update: 2026-07-23.
+
+- macOS ships Apple Silicon `arm64` only. Intel Mac and a universal application/provider
+  binary are out of scope.
+- Windows ships `x64` only. Windows ARM64 is out of scope; Windows implementation remains
+  in Ling scope, while real-machine acceptance is owned by the Windows team.
+- Linux is unsupported and must continue to fail closed.
+- The private development repository does not enable application auto-update. The package
+  layout nevertheless keeps the macOS ZIP and Windows blockmap/update-metadata contract so
+  a future public repository can use GitHub Releases without changing installer identity.
+- User-facing release files are `Ling-Stack-<version>-macos-arm64.dmg`,
+  `Ling-Stack-<version>-windows-x64-setup.exe`, and `checksums.txt`. The macOS ZIP,
+  `latest-mac.yml`, Windows blockmap, and `latest.yml` are updater assets rather than a
+  second user-facing platform matrix.
+
 The first internal pin is upstream `cua-driver-rs-v0.8.3`. That release is a prerelease,
 so it is allowed for internal alpha validation only. Public release remains blocked until
 either a stable upstream release passes the same acceptance matrix or the release owner
@@ -662,7 +677,7 @@ Desktop plus its reviewed provider.
 - Disabling the plugin or quitting Desktop stops the provider process group and invalidates its bridge
   lease without stopping unrelated daemon work.
 - All Cua Driver tool calls retain the existing approval and audit semantics.
-- macOS arm64/x64 and Windows x64 Desktop artifacts contain the locked provider, MIT
+- macOS arm64 and Windows x64 Desktop artifacts contain the locked provider, MIT
   notice and platform release-identity evidence; each passes its applicable signing and
   packaging checks.
 - Every claimed macOS 13, 14, 15, and 26 architecture cell passes signed installed-app

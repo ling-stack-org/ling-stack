@@ -1,5 +1,4 @@
 import electronPath from "electron";
-import { spawn } from "node:child_process";
 import { mkdtemp, rm } from "node:fs/promises";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
@@ -12,6 +11,7 @@ import {
   parseWindowsBundledProviderRuntimeProof,
   parseWindowsProviderHealthReport,
 } from "./windows-provider-smoke-support.mjs";
+import { spawnOwnedWindowsProcess } from "../scripts/cua-driver-package-atomic-publish.mjs";
 
 const TARGET_CLOSE_REQUEST_MARKER = "Ling Stack Desktop Windows provider current target close requested";
 const DESKTOP_REVISION_A_LIVE_MARKER = "Ling Stack Desktop Windows provider descriptor A live";
@@ -76,8 +76,8 @@ async function runWindowsProviderSmoke() {
     targetA = await startTarget("A", targetAUserDataDirectory);
     targetB = await startTarget("B", targetBUserDataDirectory);
     const [targetAIdentity, targetBIdentity] = await Promise.all([
-      waitForExactProviderTarget(providerCommand, targetA.child.pid, 15_000),
-      waitForExactProviderTarget(providerCommand, targetB.child.pid, 15_000),
+      waitForExactProviderTarget(providerCommand, targetA.providerTargetPid, 15_000),
+      waitForExactProviderTarget(providerCommand, targetB.providerTargetPid, 15_000),
     ]);
     assertIndependentProviderTargets(targetAIdentity, targetBIdentity);
     const daemonPort = await availablePort();
@@ -85,7 +85,7 @@ async function runWindowsProviderSmoke() {
     const desktopEnvironment = { ...process.env };
     delete desktopEnvironment.LING_CUA_DRIVER_COMMAND;
     delete desktopEnvironment.LING_CUA_DRIVER_SMOKE_EXPECTED_COMMAND;
-    const startDesktop = (descriptor, restartPhase = false) => observeChild(spawn(
+    const startDesktop = async (descriptor, restartPhase = false) => observeChild(await spawnOwnedWindowsProcess(
       packagedExecutable,
       [
         "--ling-desktop-smoke-headless",
@@ -106,7 +106,7 @@ async function runWindowsProviderSmoke() {
         stdio: ["pipe", "pipe", "pipe"],
       },
     ));
-    desktop = startDesktop(targetAIdentity);
+    desktop = await startDesktop(targetAIdentity);
     const firstBundledActivation = await waitForBundledProviderActivation({
       daemonPort,
       workspaceCwd,
@@ -138,7 +138,7 @@ async function runWindowsProviderSmoke() {
       throw new Error(`desktop_restart_exit:${firstResult.exitCode ?? firstResult.signal ?? "unknown"}\n${firstOutput}`);
     }
     await waitForWindowsProcessExit(firstRuntimeProof.providerProcessId, 5_000);
-    desktop = startDesktop({ ...targetBIdentity, revision: 2 }, true);
+    desktop = await startDesktop({ ...targetBIdentity, revision: 2 }, true);
     const restartedBundledActivation = await waitForBundledProviderActivation({
       daemonPort,
       workspaceCwd,
@@ -311,7 +311,7 @@ async function readProviderHealth(command) {
 }
 
 async function startTarget(label, userDataDirectory) {
-  const target = observeChild(spawn(electronPath, [
+  const target = observeChild(await spawnOwnedWindowsProcess(electronPath, [
     join(desktopRoot, "tests", "windows-provider-target"),
     `--user-data-dir=${userDataDirectory}`,
     `--ling-windows-provider-target-label=${label}`,
@@ -324,6 +324,12 @@ async function startTarget(label, userDataDirectory) {
     throw new Error(`windows_provider_smoke_target_${label.toLowerCase()}_pid_missing`);
   }
   await waitForMarker(target, `Ling Windows provider smoke target ${label} ready`, 15_000);
+  const match = target.stdout.match(new RegExp(`Ling Windows provider smoke target ${label} ready pid=(\\d+)`, "u"));
+  const providerTargetPid = Number(match?.[1]);
+  if (!Number.isSafeInteger(providerTargetPid) || providerTargetPid <= 0) {
+    throw new Error(`windows_provider_smoke_target_${label.toLowerCase()}_pid_marker_missing`);
+  }
+  target.providerTargetPid = providerTargetPid;
   return target;
 }
 
@@ -462,19 +468,27 @@ async function terminateObservedChild(observed, requestGracefulClose = false) {
       await waitForExit(observed, 1_000);
       return;
     } catch {
-      // Fall through to process termination for failed smoke cleanup.
+      // Fall through to the native Job Object owner.
     }
   }
-  observed.child.kill();
+  let killError;
   try {
-    await waitForExit(observed, 2_000);
-  } catch {
-    // The parent process is already terminating; keep cleanup bounded.
+    observed.child.kill("SIGKILL");
+  } catch (error) {
+    killError = error;
+  }
+  try {
+    await waitForExit(observed, 5_000);
+  } catch (error) {
+    throw new AggregateError(
+      [error, ...(killError ? [killError] : [])],
+      `windows_provider_smoke_cleanup_failed:${observed.child.pid ?? "unknown"}\n${observed.stdout}\n${observed.stderr}`,
+    );
   }
 }
 
 async function runFiniteProcess(executable, args, timeoutMs) {
-  const observed = observeChild(spawn(executable, args, {
+  const observed = observeChild(await spawnOwnedWindowsProcess(executable, args, {
     cwd: desktopRoot,
     env: {
       ...process.env,
@@ -486,7 +500,16 @@ async function runFiniteProcess(executable, args, timeoutMs) {
     const result = await waitForExit(observed, timeoutMs);
     return { ...result, stdout: observed.stdout, stderr: observed.stderr };
   } catch (error) {
-    observed.child.kill();
+    let cleanupError;
+    try {
+      observed.child.kill("SIGKILL");
+      await waitForExit(observed, 5_000);
+    } catch (failure) {
+      cleanupError = failure;
+    }
+    if (cleanupError) {
+      throw new AggregateError([error, cleanupError], "windows_provider_smoke_finite_process_cleanup_failed");
+    }
     throw error;
   }
 }

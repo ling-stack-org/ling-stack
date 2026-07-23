@@ -53,7 +53,7 @@ The branch now contains a Desktop alpha application, first-class Computer Use pr
 contracts, authenticated daemon compatibility with fixed-port Retry/Quit recovery,
 shared-UI ownership/layout reports,
 requester-bound single-use capture grants, typed obstacle transport, bounded first-frame
-recovery, and fresh unsigned macOS arm64/x64 package smokes. It is not release-complete:
+recovery, and fresh unsigned macOS arm64 package smokes. It is not release-complete:
 Apple Developer ID signing/notarization/Gatekeeper and the signed macOS clean-host
 TCC/capture-indicator matrix, Windows interactive provider/real-source/DPI/dual-screen VM
 evidence, Authenticode/SmartScreen/signed NSIS, hosted signed CI, clean-machine
@@ -135,7 +135,7 @@ Local engineering evidence recorded across 2026-07-16 and 2026-07-17:
   the normal path completed through acknowledgement rather than forced teardown. The real
   lane additionally verifies a live renderer MediaStream track before Hide, zero live tracks
   after the release acknowledgement, and a newly live track after Show.
-- Fresh arm64/x64 `.app` and mounted-DMG fake, real-window, and primary-display lifecycle
+- Fresh arm64 `.app` and mounted-DMG fake, real-window, and primary-display lifecycle
   plus packaged provenance smokes pass. The provenance matrix rejects wrong URL, wrong
   partition, a foreign renderer, audio, a subframe or CSP-blocked request, main-document
   reload/navigation, release interruption, expired grants, and replay while allowing one
@@ -1150,7 +1150,7 @@ it stores the requester webContents id and validates the request frame against t
 webContents' current `mainFrame` at consumption time.
 
 Implementation status: the shared boundary and fake/macOS path are implemented and pass
-the current dev plus unsigned arm64/x64 `.app` and mounted-DMG smoke matrix. The
+the current dev plus unsigned arm64 `.app` and mounted-DMG smoke matrix. The
 display-media grant is exact-document-bound, generation-guarded, single-use, and disposed
 with the adapter. The negative matrix covers subframes, foreign/missing webContents, wrong
 URL/query/origin/Session, audio requests, detached/destroyed/navigated frames, expiry,
@@ -1369,11 +1369,11 @@ capture-indicator results remain separate G2/G3/G6 evidence.
 | A terminal/source-error linger fires while route or source replacement is in progress | Enqueue cleanup on the coordinator operation queue and bind it to the exact window, session, descriptor revision, and source generation captured when the timer was armed. | An expired old linger cannot destroy or clear the newly selected preview. | Timer-fired-then-switch regression with delayed renderer release ACK. |
 | Display is disconnected | Clamp to remaining work area. | Preview remains reachable. | Display topology simulation. |
 | Renderer crashes | Release the dead renderer's media, detach the old window listener, destroy the old BrowserWindow, and recreate once per still-eligible active session. A second crash blocks automatic looping and waits for explicit Show. | Preview briefly reconnects; after the bounded retry the runtime remains active but the preview stays hidden until the user asks to show it. | Fake renderer-crash lifecycle test covering media-send failure, listener cleanup, first recreation, second-crash bound, and explicit Show recovery. |
-| Hidden renderer throttles the first-frame callback | Disable BrowserWindow background throttling and use the 16 ms identity-bounded decoded-ready poll. The poll still requires `HAVE_CURRENT_DATA` and ends on Hide/revision/reconnect/teardown; Hide releases the source, so no hidden capture remains active. Fake sources acknowledge with a timer rather than a paint-dependent animation frame. | Hide -> Show can reopen without flashing an empty window, including macOS x64 under Rosetta. | Packaged arm64/x64 first-frame -> Hide -> Show -> Stop smoke plus real first-frame performance lane. |
+| Hidden renderer throttles the first-frame callback | Disable BrowserWindow background throttling and use the 16 ms identity-bounded decoded-ready poll. The poll still requires `HAVE_CURRENT_DATA` and ends on Hide/revision/reconnect/teardown; Hide releases the source, so no hidden capture remains active. Fake sources acknowledge with a timer rather than a paint-dependent animation frame. | Hide -> Show can reopen without flashing an empty window on the supported arm64 build. | Packaged arm64 first-frame -> Hide -> Show -> Stop smoke plus real first-frame performance lane. |
 | Reconnect callback races Hide or descriptor replacement | Cancel pending retries before preference I/O, serialize retry work with projection reconciliation, and revalidate selection, suppression, terminal status, descriptor id, and revision after each async permission/prepare boundary. | A hidden preview stays hidden and an old source cannot overwrite a newer revision. | Slow preference, delayed permission, and delayed old-revision prepare regressions. |
 | Shutdown cleanup throws or a late source event arrives while disposal awaits release | Mark the coordinator quiescing before any await; reject new projection/renderer/display events; run every fallible cleanup inside an outer fail-safe envelope; dispose the adapter exactly once; clear timers again after queue/window drain. | App exit completes without a hidden capture grant, timer, listener, or queued reopen. | Throwing subscription/unsubscribe plus deferred release with late `sourceEnded`/`sourceFailed`. |
 | Renderer does not process the release-media IPC | Require a release identity acknowledgement after all renderer tracks are ended. Hide may update UI immediately, but timeout force-destroys the renderer/window before cleanup is considered complete. | Preview disappears and capture is guaranteed to stop even if the renderer hangs; runtime continues. | Real MediaStream Hide/stall/revision/shutdown plus injected lost-IPC/hung-renderer timeout. |
-| Bundled daemon cold-starts near the readiness deadline | Keep health probing bounded but allow 20 seconds for packaged cold start. The observed x64/Rosetta mounted-DMG daemon needed about 7.98 seconds, making the prior 8-second boundary flaky. | Cold packaged launch succeeds instead of randomly showing a startup failure. | x64 mounted-DMG fake and real lifecycle smoke. |
+| Bundled daemon cold-starts near the readiness deadline | Keep health probing bounded but allow 20 seconds for packaged cold start. Historical Rosetta validation exposed that the prior 8-second boundary was flaky; Rosetta is no longer a supported release target. | Cold packaged launch succeeds instead of randomly showing a startup failure. | arm64 mounted-DMG fake and real lifecycle smoke. |
 | Stop request fails or is accepted without acknowledgement | Reconcile any returned projection, keep the authoritative active status and preview, clear pending state, and do not claim it stopped. | Error toast/overlay with an enabled retry action. | Rejected, transport-failed, timeout, and accepted-but-unacknowledged Stop regressions. |
 | Producer has no authoritative pause event | Preserve the real starting/running/approval state; never synthesize `paused` from silence, capture state, or local UI inactivity. | No false `Paused` label. | Producer and run-integration histories assert approval and Stop never emit synthetic `paused`. |
 | A stale drag-end snap fires after Hide, Reset, Close, replacement, or disposal | Replace the timer on every move and clear it on all lifecycle/reset paths before window state changes. | Hidden or replacement PiP is not moved and stale placement is not persisted. | Virtual-timer last-move-wins, corner persistence, and teardown/reset cancellation regressions. |

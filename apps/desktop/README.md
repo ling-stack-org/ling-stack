@@ -78,8 +78,8 @@ copies only its verified platform output into a private temporary resource root,
 `runtime-trust-policy.json` plus `packaged-provider-capabilities.json`, and passes only that
 root and the verified pre-sign digest to Electron Builder. `afterPack` signs/seals the
 provider, platform signing preserves the sealed tuple, and `afterSign`/final-artifact hooks
-reverify it. Signing state is bound per packager output and architecture, so concurrent
-macOS arm64/x64 work cannot reuse the wrong state directory. The package intent lives in
+reverify it. Signing state is bound per packager output and architecture. macOS packaging
+has one arm64 output; Windows retains one x64 output. The package intent lives in
 the packaged `package.json` inside signed `app.asar`; Electron's embedded ASAR-integrity
 validation binds those bytes to the host executable. Both provider-bearing and external-only
 packages set `asar: true`, `enableEmbeddedAsarIntegrityValidation: true` and
@@ -297,9 +297,9 @@ Latest confirmed final pre-commit local evidence (2026-07-17, current worktree):
   typecheck/lint, and actionlint all pass. `docs/release/evidence/**` is included in the Desktop
   artifact workflow path filters, so a schema-only pull request or `main` push runs the schema
   gate;
-- packaged arm64/x64 `.app` bundles and both mounted DMGs pass fake, real-window, and
+- the packaged arm64 `.app` bundle and mounted DMG pass fake, real-window, and
   primary-display provenance smokes;
-- Cua native-window handoff passes in dev Electron and both packaged `.app` bundles.
+- Cua native-window handoff passes in dev Electron and the packaged arm64 `.app` bundle.
   Electron source ID is used only as the test oracle; the Ling descriptor carries only
   the Cua provider PID and `nativeWindowId`, with no title, foreground-window, or z-order
   fallback;
@@ -320,28 +320,19 @@ Latest confirmed final pre-commit local evidence (2026-07-17, current worktree):
   default icon. The Windows installer is explicitly one-click, per-user, `asInvoker`, and
   contains no elevation helper.
 
-Historical unsigned artifact SHA-256 baseline at `e20777f5` (not hashes of the current diff):
-
-| Artifact | SHA-256 |
-| --- | --- |
-| arm64 DMG | `e42b944b84bf67174d18dec422637cbde6988c4d2283f503597b09aae50727fb` |
-| x64 DMG | `a9e8aa208af6dc9baff96b9550166095660adc1b596c4f86544287ac0ca19258` |
-| arm64 ZIP | `6c9ac51d212a7a4b930cf8bcb8c93f7e4b4f07bb17b93d1205f01b2ff99face5` |
-| x64 ZIP | `49a8bc3d5dce9def59c49b7a53f9fb31fea72e960dd9e99f806809d995bb695e` |
-| Windows x64 unpacked app | `3f6ad1bbb45816bb46b15d2e23eb7a60843eb2a8fbc25ae0e541fb29af1d596e` |
-| Windows x64 NSIS | `52b115f2ef02394ed0e352c28f60052ec572eec02f708c2a942bd64d9b4de5e2` |
-
-Both DMGs and ZIPs pass their integrity checks. The unpacked Windows application and NSIS
-PE certificate-table sizes are both **0**, and no Apple Developer ID identity is installed.
+Historical universal/x64 macOS artifact hashes are no longer release inputs. The supported
+distribution matrix is `macOS arm64` plus `Windows x64`; every run regenerates installer
+checksums under the canonical `Ling-Stack-*` filenames. The unpacked Windows application and
+NSIS PE certificate-table sizes are both **0**, and no Apple Developer ID identity is installed.
 Developer ID signing/notarization/Gatekeeper, clean-host TCC/capture-indicator evidence,
 Windows interactive provider/DPI/dual-display execution,
 Authenticode/SmartScreen/signed NSIS, hosted signed CI execution, clean-machine install/update/uninstall,
 and VoiceOver/Narrator/NVDA evidence are still open release gates.
 
 Local release tooling is present but deliberately cannot close those gates by itself:
-`verify-macos-signed-candidate.mjs` requires a content-bound arm64/x86_64 app+DMG+ZIP matrix,
-`run-macos-tcc-acceptance.mjs` live-reverifies that candidate and writes eight architecture-
-specific case reports, `run-macos-tcc-revocation.mjs` derives the interactive revoke transition,
+`verify-macos-signed-candidate.mjs` requires a content-bound arm64 app+DMG+ZIP matrix,
+`run-macos-tcc-acceptance.mjs` live-reverifies that candidate and writes four arm64 case
+reports, `run-macos-tcc-revocation.mjs` derives the interactive revoke transition,
 `run-macos-signed-performance.mjs` profiles the packaged signed executable, and
 `finalize-macos-signed-acceptance.mjs` rehashes, live-reverifies, and cross-binds final evidence
 while deliberately stopping at `MANUAL_REVIEW_REQUIRED`.

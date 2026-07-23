@@ -252,7 +252,7 @@ function isBuilderConfigOverride(value) {
 function assertGovernedBuilderArgs(platform, values) {
   const platformFlag = platform === "darwin" ? "--mac" : "--win";
   const allowedTargets = new Set(platform === "darwin" ? ["dir", "dmg", "zip"] : ["dir", "nsis"]);
-  const allowedArchitectures = new Set(platform === "darwin" ? ["--arm64", "--x64"] : ["--x64"]);
+  const allowedArchitectures = new Set(platform === "darwin" ? ["--arm64"] : ["--x64"]);
   let platformCount = 0;
   let targetCount = 0;
   let architectureCount = 0;

@@ -453,23 +453,50 @@ function verifySourceBuildInputs(value) {
   assert(value.patchSet.implementationStatus === "runtime_integrated", "source-build patch status changed");
   assertSha(value.patchSet.sha256, "source-build patch digest");
   assertExactKeys(value.toolchain, ["cargoVersion", "darwin", "rustToolchainFile", "rustcVersion", "win32X64"], "source-build toolchain");
-  assertExactKeys(value.toolchain.darwin, ["deploymentTarget", "macOSSDKVersion", "runner", "targets", "xcodeBuildVersion", "xcodeVersion"], "darwin toolchain");
+  assertExactKeys(value.toolchain.darwin, ["deploymentTarget", "developerDir", "macOSSDKVersion", "postLinkIdentityNormalization", "runner", "swiftArchiveNormalization", "targets", "xcodeBuildVersion", "xcodeVersion"], "darwin toolchain");
   assertExactKeys(value.toolchain.win32X64, ["msvcToolsetVersion", "runner", "target", "visualStudioVersion", "windowsSdkVersion"], "Windows toolchain");
   assert(value.toolchain.rustcVersion === "1.97.1" && value.toolchain.cargoVersion === "1.97.1", "Rust toolchain version changed");
-  assert(value.toolchain.darwin.runner === "macos-26", "darwin runner changed");
-  assert(value.toolchain.darwin.xcodeVersion === "26.5" && value.toolchain.darwin.xcodeBuildVersion === "17F42", "Xcode pin changed");
+  assert(value.toolchain.darwin.runner === "ling-cua-driver-macos-arm64-v1", "darwin runner changed");
+  assert(value.toolchain.darwin.developerDir === "/Applications/Xcode.app/Contents/Developer", "Xcode developer directory changed");
+  assert(value.toolchain.darwin.xcodeVersion === "26.6" && value.toolchain.darwin.xcodeBuildVersion === "17F113", "Xcode pin changed");
   assert(value.toolchain.darwin.macOSSDKVersion === "26.5" && value.toolchain.darwin.deploymentTarget === "13.0", "macOS SDK pin changed");
-  assertDeepEqual(value.toolchain.darwin.targets, ["aarch64-apple-darwin", "x86_64-apple-darwin"], "darwin Rust targets");
-  assert(value.toolchain.win32X64.runner === "windows-2025", "Windows runner changed");
+  assertDeepEqual(value.toolchain.darwin.targets, ["aarch64-apple-darwin"], "darwin Rust targets");
+  assertDeepEqual(value.toolchain.darwin.swiftArchiveNormalization, {
+    section: "__LLVM,__swift_modhash",
+    dwarfSegment: "__DWARF",
+    finalMetadata: "ling-cua-final-v1",
+    finalRelink: {
+      strategy: "bounded-canonical-source-identity-v1",
+      cleanPackage: "cua-driver",
+      targets: {
+        "aarch64-apple-darwin": {
+          expectedSourceSha256: "af7a2f9bfabe98704bafca0f2c7f6e2ae4e9f53fe6653d5cd8cea44fc25e103d",
+          maxAttempts: 32,
+        },
+      },
+    },
+    linkerFlags: ["-reproducible"],
+    archives: [
+      { archive: "libapple_cf.rlib", machoMembers: 19, normalizedSections: 13, normalizedDwarfSections: 130 },
+      { archive: "libscreencapturekit.rlib", machoMembers: 21, normalizedSections: 10, normalizedDwarfSections: 100 },
+    ],
+  }, "darwin Swift archive normalization");
+  assertDeepEqual(value.toolchain.darwin.postLinkIdentityNormalization, {
+    algorithm: "sha256-zeroed-lc-uuid-and-code-signature-v1",
+    adHocIdentifier: "ling-cua-driver-presign",
+    codesignPath: "/usr/bin/codesign",
+  }, "darwin post-link identity normalization");
+  assert(value.toolchain.win32X64.runner === "ling-cua-driver-windows-x64-v1", "Windows runner changed");
   assert(value.toolchain.win32X64.visualStudioVersion === "17.14.37502.11", "Visual Studio pin changed");
   assert(value.toolchain.win32X64.msvcToolsetVersion === "14.44.35211", "MSVC toolset pin changed");
   assert(value.toolchain.win32X64.windowsSdkVersion === "10.0.26100.0", "Windows SDK pin changed");
   assert(value.toolchain.win32X64.target === "x86_64-pc-windows-msvc", "Windows Rust target changed");
   assertDeepEqual(value.sourceBuildPlatforms, ["darwin", "win32-x64"], "source-build platforms");
   assertExactKeys(value.platformOutputs, ["darwin", "win32X64"], "source-build platform outputs");
-  assertExactKeys(value.platformOutputs.darwin, ["architectures", "artifactRelativePath", "status", "universalBinarySha256BeforeSigning"], "darwin platform output");
+  assertExactKeys(value.platformOutputs.darwin, ["architectures", "artifactRelativePath", "binarySha256BeforeSigning", "status"], "darwin platform output");
   assertExactKeys(value.platformOutputs.win32X64, ["architecture", "artifactRelativePath", "auditArtifactRelativePath", "mainSha256BeforeSigning", "status", "uiaAuditSha256BeforeSigning", "uiaPackaged"], "Windows platform output");
-  assert(value.platformOutputs.darwin.universalBinarySha256BeforeSigning === null, "darwin digest must remain unset before native evidence");
+  assertDeepEqual(value.platformOutputs.darwin.architectures, ["arm64"], "darwin platform architectures");
+  assert(value.platformOutputs.darwin.binarySha256BeforeSigning === null, "darwin digest must remain unset before native evidence");
   assert(value.platformOutputs.win32X64.mainSha256BeforeSigning === null, "Windows main digest must remain unset before native evidence");
   assert(value.platformOutputs.win32X64.uiaAuditSha256BeforeSigning === null, "Windows audit digest must remain unset before native evidence");
   assert(value.platformOutputs.win32X64.uiaPackaged === false, "UIAccess helper cannot enter the packaged payload");

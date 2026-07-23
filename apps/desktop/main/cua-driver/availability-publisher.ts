@@ -7,6 +7,7 @@ import type {
 } from "@ling-stack/contracts";
 import { isDesktopCuaDriverAvailabilityV1 } from "@ling-stack/contracts";
 import type { CuaDriverCoordinatorSnapshot } from "./coordinator.js";
+import { consumeBoundedResponseBody } from "./http-response.js";
 import { CUA_DRIVER_BRIDGE_TOKEN_HEADER } from "./lease-publisher.js";
 
 export const CUA_DRIVER_AVAILABILITY_ROUTE =
@@ -81,6 +82,11 @@ export class HttpCuaDriverAvailabilityClient implements CuaDriverAvailabilityCli
       });
     } catch {
       throw new CuaDriverAvailabilityPublisherError("availability_daemon_unavailable");
+    }
+    try {
+      await consumeBoundedResponseBody(response);
+    } catch {
+      throw new CuaDriverAvailabilityPublisherError("availability_response_body_invalid");
     }
     if (!response.ok) {
       throw new CuaDriverAvailabilityPublisherError(`availability_http_${response.status}`);

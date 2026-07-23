@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { chmod, lstat, mkdir, mkdtemp, readFile, rename, symlink, writeFile } from "node:fs/promises";
+import { chmod, link, lstat, mkdir, mkdtemp, readFile, rename, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -43,6 +43,10 @@ test("bundled resource resolution is fixed under resourcesPath and never consult
   assert.throws(
     () => resolveCuaDriverResourcePaths({ resourcesPath, platform: "win32", architecture: "arm64" }),
     /windows_architecture_unsupported/,
+  );
+  assert.throws(
+    () => resolveCuaDriverResourcePaths({ resourcesPath, platform: "darwin", architecture: "x86_64" }),
+    /darwin_architecture_unsupported/,
   );
 });
 
@@ -98,6 +102,19 @@ test("missing provider payload and symlink escapes fail closed", async (t) => {
     architecture: "arm64",
   });
   await assert.rejects(assertCuaDriverResourceTree(missing), /provider_root_missing/);
+});
+
+test("provider trust tuple rejects hard-linked executable, seal, lock, catalog, and notices", async (t) => {
+  for (const field of ["executablePath", "sealPath", "lockPath", "licensePath", "noticesPath"]) {
+    await t.test(field, async () => {
+      const fixture = await createDarwinArtifactFixture(t);
+      await link(fixture.paths[field], `${fixture.paths[field]}.hardlink`);
+      await assert.rejects(
+        assertCuaDriverResourceTree(fixture.paths),
+        /_hardlink_forbidden/,
+      );
+    });
+  }
 });
 
 test("provider resource layout rejects UIAccess helpers, downloaders and extra payload executables", async (t) => {
@@ -236,6 +253,45 @@ test("Windows lazy-spawn reverify reruns the ACL and reparse protector", async (
   assert.equal(protectorCalls, 2);
 });
 
+test("lazy-spawn reverify propagates abort before late ACL side effects", async (t) => {
+  const temp = await mkdtemp(join(tmpdir(), "ling-cua-state-win-abort-"));
+  t.after(async () => {
+    const { rm } = await import("node:fs/promises");
+    await rm(temp, { recursive: true, force: true });
+  });
+  const userData = join(temp, "user-data");
+  await mkdir(userData);
+  const state = await createCuaDriverStateRoot({
+    userDataPath: userData,
+    platform: "win32",
+    platformProtector: { async protect() {} },
+  });
+  let release;
+  let entered;
+  const enteredPromise = new Promise((resolve) => { entered = resolve; });
+  const gate = new Promise((resolve) => { release = resolve; });
+  let mutations = 0;
+  const controller = new AbortController();
+  const pending = reverifyCuaDriverStateRoot({
+    stateRoot: state,
+    platform: "win32",
+    signal: controller.signal,
+    platformProtector: {
+      async protect(input) {
+        entered();
+        await gate;
+        input.signal?.throwIfAborted();
+        mutations += 1;
+      },
+    },
+  });
+  await enteredPromise;
+  controller.abort();
+  release();
+  await assert.rejects(pending, /AbortError|aborted/u);
+  assert.equal(mutations, 0);
+});
+
 async function createDarwinArtifactFixture(t) {
   const temp = await mkdtemp(join(tmpdir(), "ling-cua-artifact-"));
   t.after(async () => {
@@ -263,8 +319,8 @@ async function createDarwinArtifactFixture(t) {
     distributionRevision: "ling.1",
     executableRelativePath: "cua-driver",
     executableSha256: executableDigest,
-    architectures: ["arm64", "x86_64"],
-    cdhashes: { arm64: "abc", x86_64: "def" },
+    architectures: ["arm64"],
+    cdhashes: { arm64: "abc" },
     codeIdentifier: "com.lingstack.desktop.cua-driver",
     teamId: "LINGTEAM01",
     designatedRequirement: "identifier com.lingstack.desktop.cua-driver",
@@ -320,14 +376,14 @@ function createDarwinLock() {
           cargoVersion: "cargo 1.88.0",
           xcodeBuildVersion: "17A400",
           macOSSDKVersion: "26.0",
-          targets: ["aarch64-apple-darwin", "x86_64-apple-darwin"],
+          targets: ["aarch64-apple-darwin"],
           patchSet: createPatchSet(),
-          universalBinarySha256BeforeSigning: "4".repeat(64),
+          binarySha256BeforeSigning: "4".repeat(64),
         },
         binary: {
-          architectures: ["arm64", "x86_64"],
+          architectures: ["arm64"],
           minimumMacOS: "13.0",
-          supportedMacOSCells: [{ major: "13", architectures: ["arm64", "x86_64"] }],
+          supportedMacOSCells: [{ major: "13", architectures: ["arm64"] }],
           expectedUpstreamVersion: "0.8.3",
           lingBuild: 1,
           hardenedRuntime: true,

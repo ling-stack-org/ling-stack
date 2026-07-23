@@ -119,6 +119,23 @@ Current implementation baseline:
   Cross-platform Node/schema tests are green locally; PowerShell parser/runtime and real
   test-signed Windows candidate evidence remain hosted/Windows-owner exit gates.
 
+- A repository-scoped self-hosted native evidence lane is defined for accounts whose
+  GitHub-hosted Actions allowance is exhausted. It is manual-dispatch only, binds the
+  repository owner plus an exact caller-supplied commit, uses one custom runner label per
+  platform with no generic self-hosted labels, and keeps the A/B upload/download promotion
+  boundary. The current Mac profile pins Xcode 26.6 build 17F113 with SDK 26.5; the Windows
+  profile pins the existing VS/MSVC/SDK tuple. This lane changes execution ownership, not
+  the promotion verdict or feature-gate boundary. Each native source-build job also runs
+  the production Desktop package wrapper against fresh candidate A only when the
+  independently anchored committed lock already authorizes that platform, and uploads its
+  final-artifact/signing trace with one-day retention. The initial closed-gate run still
+  uploads A/B evidence and emits the review-only proposal; the mandatory post-promotion
+  second A/B run exercises packaging. macOS covers arm64 DMG+ZIP; Windows covers the x64
+  app, uninstaller and NSIS roles. Both profiles run as a logged-in interactive user and
+  reject `ACTIONS_RUNNER_SVC=1` before source acquisition. macOS additionally requires the
+  Aqua session; Windows rejects Session 0, a locked desktop, or a non-interactive input
+  desktop because those environments cannot satisfy provider readiness.
+
 Both Darwin and Win32 packaged-provider production gates remain off. This status records
 staged progress only and does not claim `bundled_embedded` runtime completion. The current
 `external_local` path, including `/Applications/CuaDriver.app` when configured, must remain
@@ -316,7 +333,7 @@ Changes:
 - retain the ordered hook trace and every digest transition as CI evidence.
 - run the real provider-bearing `package:mac` / `package:win` wrappers from verified
   source-build output rather than invoking Electron Builder directly; macOS must exercise
-  both arm64 and x64 in the same governed wrapper invocation;
+  the arm64 DMG and ZIP targets in the same governed wrapper invocation;
 - bind every provider, seal, lock, catalog and package-authority document to a regular,
   single-link path beneath the reopened app root, and bind every test signer identity to
   the selected `ephemeral-ci` or `managed-internal` authority kind;
@@ -390,7 +407,7 @@ Changes:
   `KILL_ON_JOB_CLOSE` lifetime ownership, WTS/input-desktop invalidation and structured
   UIAccess capability errors;
 - lock Rust/Cargo, Xcode/macOS SDK and MSVC/Windows SDK inputs;
-- build macOS universal `cua-driver` and Windows x64 `cua-driver.exe` for shipped
+- build a thin macOS arm64 `cua-driver` and Windows x64 `cua-driver.exe` for shipped
   packages;
 - emit the Windows clean pre-sign payload digest separately from every tier-specific final
   artifact digest so test and production signatures never share a candidate identity;
@@ -976,6 +993,16 @@ Exit criteria for our team:
   grandchild cleanup, PowerShell verifier failures, package allowlist, silent
   install/uninstall, and test-owned Win32 plus installable/removable MSIX/UWP targets;
 - the cell handoff command, matrix finalizer and schemas are versioned and reproducible;
+- macOS clean builds normalize the locked Swift bridge `__swift_modhash` and non-runtime
+  `__DWARF` contents, remove only the primed `cua-driver` package outputs with locked Cargo,
+  then relink with fixed final metadata and Apple ld reproducible mode.
+  The arm64 relink may retry at most 32 times but accepts only the reviewed canonical
+  runtime identity. Every mismatch is rejected before codesign, and exhaustion blocks
+  upload, promotion and packaging without weakening the A/B equality gate.
+  The thin arm64 output then derives a stable `LC_UUID` from runtime bytes with the prior
+  UUID and linker signature excluded, applies the fixed ad-hoc pre-sign identifier, and
+  verifies that identity before A/B comparison. No architecture merge or macOS x64
+  candidate is part of the supported release path; default linker deduplication remains enabled;
 - no report can promote itself from local evidence to release PASS;
 - test-signed success is capped at `INTERNAL_TEST_PASS` and the production workflow rejects
   any test root, mismatched channel or reused test-signed bytes;
@@ -1334,7 +1361,9 @@ elevated/UWP pixel-input parity.
   adapter, content-free active-child readiness, Job Object lifecycle, structured
   limitations and global-pipe regression.
   - Adapter code and non-Windows automated contract coverage are complete behind the gate;
-    the process-wide owner now injects policy, trusted SystemRoot and Electron powerMonitor.
+    the process-wide owner now injects policy and Electron powerMonitor, while in-box tools
+    are rooted at kernel `GLOBALROOT\SystemRoot`. A held-handle SHA-256/single-link lease
+    binds the verified PE to direct `CreateProcess` without changing the provider PID.
     Real packaged policy/payload, Windows Authenticode/catalog/ACL/WTS/global-pipe and VM
     acceptance remain open.
 - [ ] **T8 (P1, human: ~4–7 days / Codex: ~1–2 days)** — Add private-helper Setup staging,

@@ -133,6 +133,17 @@ export function inspectUniversalMachO(buffer, label = "macOS provider binary") {
   };
 }
 
+export function inspectArm64MachO(buffer, label = "macOS provider binary") {
+  assert(Buffer.isBuffer(buffer) && buffer.length >= 32, `${label} is too small to be a Mach-O 64-bit executable`);
+  const slice = inspectMachOSlice(buffer, "arm64", 0x0100000c, label);
+  return {
+    format: "Mach-O 64-bit",
+    architecture: "arm64",
+    minimumOSVersion: slice.minimumOSVersion,
+    sdkVersion: slice.sdkVersion,
+  };
+}
+
 export function verifyVersionOutput(output, expectedVersion = "0.8.3") {
   const normalized = String(output).trim();
   assert(normalized === `cua-driver ${expectedVersion}`, `provider version output mismatch: ${normalized || "<empty>"}`);

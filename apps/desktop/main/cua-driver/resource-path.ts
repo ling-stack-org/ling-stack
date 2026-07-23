@@ -53,7 +53,7 @@ export function resolveCuaDriverResourcePaths(
   if (input.platform === "win32" && input.architecture !== "x86_64") {
     throw new CuaDriverResourcePathError("windows_architecture_unsupported");
   }
-  if (input.platform === "darwin" && input.architecture !== "arm64" && input.architecture !== "x86_64") {
+  if (input.platform === "darwin" && input.architecture !== "arm64") {
     throw new CuaDriverResourcePathError("darwin_architecture_unsupported");
   }
 
@@ -200,6 +200,9 @@ async function assertRegularNonSymlinkPath(path: string, label: string): Promise
   }
   if (!stat.isFile()) {
     throw new CuaDriverResourcePathError(`${label}_not_regular`, path);
+  }
+  if (stat.nlink !== 1) {
+    throw new CuaDriverResourcePathError(`${label}_hardlink_forbidden`, path);
   }
 }
 
