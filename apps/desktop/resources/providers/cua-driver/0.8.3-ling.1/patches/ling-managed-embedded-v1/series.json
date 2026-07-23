@@ -4,12 +4,12 @@
   "implementationStatus": "runtime_integrated",
   "upstreamCommit": "0612c26b2c7b8556f6de7f6b4f3927ecac914e4f",
   "seriesDigestAlgorithm": "sha256(id:patchSha256 followed by LF, in manifest order)",
-  "seriesSha256": "87b6b71942bc93d33ba293ffcc67e245aefd43a416bbf9e5516e2dbc1de43936",
+  "seriesSha256": "8e4a10b22fc94efe5edb113a88106e0b5e9aa19c4db6ce682d7da5ad493fea10",
   "patches": [
     {
       "id": "ling-embedded-state-home-v1",
       "file": "0001-ling-embedded-state-home-v1.patch",
-      "sha256": "4118ad773e5dd544da2e91ce3ac2959494a23630388546ebb230bdb2c00d9851"
+      "sha256": "71fdf988f44ea1bda63e0889b36fb5d4d1d6ca0bed10e984f65d0b529471bcc9"
     },
     {
       "id": "ling-managed-readiness-v1",

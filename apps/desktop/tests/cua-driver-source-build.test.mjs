@@ -106,6 +106,25 @@ test("source-lock text resources have checkout-stable LF bytes", async () => {
   }
 });
 
+test("Windows managed-state patch assigns TokenUser ownership with its protected DACL", async () => {
+  const patch = await readFile(join(
+    PROVIDER_RESOURCE_ROOT,
+    "patches/ling-managed-embedded-v1/0001-ling-embedded-state-home-v1.patch",
+  ), "utf8");
+  assert.match(
+    patch,
+    /open_existing_path_handle\(path, \(FILE_GENERIC_READ \| WRITE_DAC \| WRITE_OWNER\)\.0\)/u,
+  );
+  assert.match(
+    patch,
+    /FILE_GENERIC_READ \| FILE_GENERIC_WRITE \| WRITE_DAC \| WRITE_OWNER/u,
+  );
+  assert.match(
+    patch,
+    /SetSecurityInfo\([\s\S]+OWNER_SECURITY_INFORMATION[\s\S]+DACL_SECURITY_INFORMATION[\s\S]+PROTECTED_DACL_SECURITY_INFORMATION,[\s\S]+sid,[\s\S]+Some\(dacl\)/u,
+  );
+});
+
 test("provider lock is the exact V2 contract and remains fail-closed", async () => {
   const lock = JSON.parse(await readFile(join(PROVIDER_RESOURCE_ROOT, "provider-lock.json"), "utf8"));
   assert.deepEqual(Object.keys(lock).sort(), [

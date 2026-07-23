@@ -32,7 +32,7 @@ new file mode 100644
 index 0000000..a11296f
 --- /dev/null
 +++ b/libs/cua-driver/rust/crates/cua-driver-core/src/ling_managed.rs
-@@ -0,0 +1,1411 @@
+@@ -0,0 +1,1413 @@
 +//! Ling-owned managed-embedding environment and capability-root state access.
 +//!
 +//! Managed mode intentionally keeps the user's real HOME/USERPROFILE intact.
@@ -794,7 +794,7 @@ index 0000000..a11296f
 +        FILE_ATTRIBUTE_REPARSE_POINT, FILE_ATTRIBUTE_TAG_INFO, FILE_FLAG_BACKUP_SEMANTICS,
 +        FILE_FLAG_OPEN_REPARSE_POINT, FILE_GENERIC_READ, FILE_GENERIC_WRITE, FILE_SHARE_DELETE,
 +        FILE_SHARE_READ, FILE_SHARE_WRITE, MOVEFILE_WRITE_THROUGH, OPEN_EXISTING,
-+        REPLACEFILE_WRITE_THROUGH, WRITE_DAC,
++        REPLACEFILE_WRITE_THROUGH, WRITE_DAC, WRITE_OWNER,
 +    };
 +    use windows::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
 +
@@ -985,7 +985,7 @@ index 0000000..a11296f
 +    }
 +
 +    fn open_path_handle_for_dacl(path: &Path) -> Result<File, String> {
-+        open_existing_path_handle(path, (FILE_GENERIC_READ | WRITE_DAC).0)
++        open_existing_path_handle(path, (FILE_GENERIC_READ | WRITE_DAC | WRITE_OWNER).0)
 +    }
 +
 +    fn open_existing_path_handle(path: &Path, access: u32) -> Result<File, String> {
@@ -1010,7 +1010,7 @@ index 0000000..a11296f
 +        let handle = unsafe {
 +            CreateFileW(
 +                PCWSTR(wide.as_ptr()),
-+                (FILE_GENERIC_READ | FILE_GENERIC_WRITE | WRITE_DAC).0,
++                (FILE_GENERIC_READ | FILE_GENERIC_WRITE | WRITE_DAC | WRITE_OWNER).0,
 +                FILE_SHARE_READ | FILE_SHARE_DELETE,
 +                None,
 +                CREATE_NEW,
@@ -1165,8 +1165,10 @@ index 0000000..a11296f
 +                SetSecurityInfo(
 +                    HANDLE(file.as_raw_handle()),
 +                    SE_FILE_OBJECT,
-+                    DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
-+                    None,
++                    OWNER_SECURITY_INFORMATION
++                        | DACL_SECURITY_INFORMATION
++                        | PROTECTED_DACL_SECURITY_INFORMATION,
++                    sid,
 +                    None,
 +                    Some(dacl),
 +                    None,
