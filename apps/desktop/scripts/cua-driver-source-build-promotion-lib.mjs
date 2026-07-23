@@ -83,16 +83,31 @@ export async function promoteCuaDriverSourceBuild(input) {
     candidateB,
     outputDir,
     resourceRoot,
+    expectedProviderLockSha256: CUA_DRIVER_COMMITTED_LOCK_SHA256,
+    expectedSourceBuildInputsSha256:
+      CUA_DRIVER_COMMITTED_SOURCE_BUILD_INPUTS_SHA256,
     verifyCandidate: verifyCandidateWithCommittedVerifier,
   });
 }
 
 /** Test-only factory; production callers cannot replace the verifier. */
-export function createCuaDriverSourceBuildPromoterForTest(verifyCandidate) {
+export function createCuaDriverSourceBuildPromoterForTest(
+  verifyCandidate,
+  {
+    expectedProviderLockSha256 = CUA_DRIVER_COMMITTED_LOCK_SHA256,
+    expectedSourceBuildInputsSha256 =
+      CUA_DRIVER_COMMITTED_SOURCE_BUILD_INPUTS_SHA256,
+  } = {},
+) {
   if (typeof verifyCandidate !== "function") {
     throw new TypeError("source-build promotion verifier test seam must be callable");
   }
-  return (input) => promoteCuaDriverSourceBuildInternal({ ...input, verifyCandidate });
+  return (input) => promoteCuaDriverSourceBuildInternal({
+    ...input,
+    expectedProviderLockSha256,
+    expectedSourceBuildInputsSha256,
+    verifyCandidate,
+  });
 }
 
 async function promoteCuaDriverSourceBuildInternal({
@@ -101,6 +116,8 @@ async function promoteCuaDriverSourceBuildInternal({
   candidateB,
   outputDir,
   resourceRoot,
+  expectedProviderLockSha256,
+  expectedSourceBuildInputsSha256,
   verifyCandidate,
 }) {
   const normalizedPlatform = normalizePlatform(platform);
@@ -127,7 +144,13 @@ async function promoteCuaDriverSourceBuildInternal({
     JSON_MAX_BYTES,
     "promotion_source_build_inputs",
   );
-  bindCommittedInputs({ committedLock, committedSourceInputs, verifiedInputs });
+  bindCommittedInputs({
+    committedLock,
+    committedSourceInputs,
+    expectedProviderLockSha256,
+    expectedSourceBuildInputsSha256,
+    verifiedInputs,
+  });
   validateEnabledPlatformRecords(committedLock.value);
 
   // These are deliberately two separate owned child invocations. Directory
@@ -462,11 +485,17 @@ function bindCandidateMetadata({
   }
 }
 
-function bindCommittedInputs({ committedLock, committedSourceInputs, verifiedInputs }) {
-  if (committedLock.sha256 !== CUA_DRIVER_COMMITTED_LOCK_SHA256) {
+function bindCommittedInputs({
+  committedLock,
+  committedSourceInputs,
+  expectedProviderLockSha256,
+  expectedSourceBuildInputsSha256,
+  verifiedInputs,
+}) {
+  if (committedLock.sha256 !== expectedProviderLockSha256) {
     fail("provider_lock_anchor_mismatch", "provider lock does not match the independent committed digest");
   }
-  if (committedSourceInputs.sha256 !== CUA_DRIVER_COMMITTED_SOURCE_BUILD_INPUTS_SHA256) {
+  if (committedSourceInputs.sha256 !== expectedSourceBuildInputsSha256) {
     fail("source_build_inputs_anchor_mismatch", "source-build inputs do not match the independent committed digest");
   }
   if (canonicalJson(committedLock.value) !== canonicalJson(verifiedInputs.providerLock)

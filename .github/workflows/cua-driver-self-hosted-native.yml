@@ -46,6 +46,8 @@ jobs:
     runs-on:
       - ling-cua-driver-macos-arm64-v1
     timeout-minutes: 150
+    outputs:
+      package-authorized: ${{ steps.package-authorization.outputs.authorized }}
     steps:
       - name: Authorize the immutable manual dispatch
         shell: bash
@@ -177,7 +179,9 @@ jobs:
             ${{ env.LING_CUA_BUILD_ROOT }}/b/output
 
   macos-promotion-proposal:
-    if: inputs.platform == 'macos' || inputs.platform == 'both'
+    if: >-
+      (inputs.platform == 'macos' || inputs.platform == 'both') &&
+      needs.macos-source-build.outputs.package-authorized != 'true'
     name: Self-hosted Cua Driver promotion proposal (macOS arm64)
     needs: macos-source-build
     runs-on:
@@ -249,6 +253,8 @@ jobs:
     runs-on:
       - ling-cua-driver-windows-x64-v1
     timeout-minutes: 150
+    outputs:
+      package-authorized: ${{ steps.package-authorization.outputs.authorized }}
     steps:
       - name: Authorize the immutable manual dispatch
         shell: pwsh
@@ -361,7 +367,9 @@ jobs:
             ${{ env.LING_CUA_BUILD_ROOT }}\b\output
 
   windows-promotion-proposal:
-    if: inputs.platform == 'windows' || inputs.platform == 'both'
+    if: >-
+      (inputs.platform == 'windows' || inputs.platform == 'both') &&
+      needs.windows-source-build.outputs.package-authorized != 'true'
     name: Self-hosted Cua Driver promotion proposal (Windows x64)
     needs: windows-source-build
     runs-on:

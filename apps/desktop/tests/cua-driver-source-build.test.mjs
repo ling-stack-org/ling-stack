@@ -92,8 +92,13 @@ test("provider lock is the exact V2 contract and remains fail-closed", async () 
     "tree",
     "version",
   ]);
-  assert.deepEqual(lock.enabledPlatforms, []);
-  assert.deepEqual(lock.platforms, {});
+  assert.deepEqual(lock.enabledPlatforms, ["darwin"]);
+  assert.deepEqual(Object.keys(lock.platforms), ["darwin"]);
+  assert.equal(lock.platforms.darwin.componentId, "cua-driver-darwin");
+  assert.equal(
+    lock.platforms.darwin.sourceBuild.binarySha256BeforeSigning,
+    "12ca08fec08c9540e6ec6a9de5ab079f27e09de55a6f0b8184279fb003cdddb0",
+  );
   const inputs = JSON.parse(await readFile(join(PROVIDER_RESOURCE_ROOT, "source-build-inputs.json"), "utf8"));
   assert.deepEqual(Object.keys(inputs).sort(), [
     "compatibility",
@@ -133,37 +138,37 @@ test("package authorization follows only the independently anchored committed lo
     await readFile(join(PROVIDER_RESOURCE_ROOT, "provider-lock.json"), "utf8"),
   );
   const digest = "a".repeat(64);
+  const closedProviderLock = {
+    ...providerLock,
+    enabledPlatforms: [],
+    platforms: {},
+  };
   const closed = resolveCuaDriverPackageAuthorization({
     actualLockSha256: digest,
     expectedLockSha256: digest,
     platform: "darwin",
-    providerLock,
+    providerLock: closedProviderLock,
   });
   assert.equal(closed.authorized, false);
 
-  const promoted = {
-    ...providerLock,
-    enabledPlatforms: ["darwin"],
-    platforms: { darwin: {} },
-  };
   assert.equal(resolveCuaDriverPackageAuthorization({
     actualLockSha256: digest,
     expectedLockSha256: digest,
     platform: "darwin",
-    providerLock: promoted,
+    providerLock,
   }).authorized, true);
   assert.equal(resolveCuaDriverPackageAuthorization({
     actualLockSha256: digest,
     expectedLockSha256: digest,
     platform: "win32-x64",
-    providerLock: promoted,
+    providerLock,
   }).authorized, false);
   assert.throws(
     () => resolveCuaDriverPackageAuthorization({
       actualLockSha256: digest,
       expectedLockSha256: "b".repeat(64),
       platform: "darwin",
-      providerLock: promoted,
+      providerLock,
     }),
     /provider_lock_anchor_mismatch/u,
   );
@@ -302,6 +307,13 @@ test("self-hosted native workflow is manual, identity-bound, and uses only dedic
     workflow.indexOf("  windows-source-build:"),
     workflow.indexOf("  windows-promotion-proposal:"),
   );
+  const macosPromotionJob = workflow.slice(
+    workflow.indexOf("  macos-promotion-proposal:"),
+    workflow.indexOf("  windows-source-build:"),
+  );
+  const windowsPromotionJob = workflow.slice(
+    workflow.indexOf("  windows-promotion-proposal:"),
+  );
   assert.match(workflow, /^  workflow_call:/mu);
   assert.match(workflow, /^  workflow_dispatch:/mu);
   assert.doesNotMatch(workflow, /^  (?:pull_request|push):/mu);
@@ -320,6 +332,22 @@ test("self-hosted native workflow is manual, identity-bound, and uses only dedic
   assert.match(workflow, /LING_CUA_PROMOTION_ROOT=\$env:RUNNER_TEMP\\/u);
   assert.match(workflow, /verify-cua-driver-self-hosted-runner\.mjs --platform darwin/u);
   assert.match(workflow, /verify-cua-driver-self-hosted-runner\.mjs --platform win32-x64/u);
+  assert.match(
+    macosBuildJob,
+    /outputs:\n\s+package-authorized: \$\{\{ steps\.package-authorization\.outputs\.authorized \}\}/u,
+  );
+  assert.match(
+    windowsBuildJob,
+    /outputs:\n\s+package-authorized: \$\{\{ steps\.package-authorization\.outputs\.authorized \}\}/u,
+  );
+  assert.match(
+    macosPromotionJob,
+    /needs\.macos-source-build\.outputs\.package-authorized != 'true'/u,
+  );
+  assert.match(
+    windowsPromotionJob,
+    /needs\.windows-source-build\.outputs\.package-authorized != 'true'/u,
+  );
   assert.match(
     macosBuildJob,
     /Resolve committed macOS package authorization[\s\S]+id: package-authorization[\s\S]+--platform darwin[\s\S]+Run production macOS arm64 package wrapper\n\s+if: steps\.package-authorization\.outputs\.authorized == 'true'[\s\S]+run-cua-driver-signing-builder-fixture\.mjs[\s\S]+LING_CUA_BUILD_ROOT\/a\/output/u,
@@ -559,7 +587,7 @@ test("provider resources reject extra lock fields, missing platform output and e
   const missingLockRecord = await copyResources();
   try {
     const lock = await readJson(join(missingLockRecord, "provider-lock.json"));
-    lock.enabledPlatforms = ["darwin"];
+    delete lock.platforms.darwin;
     await writeJson(join(missingLockRecord, "provider-lock.json"), lock);
     await assert.rejects(verifyProviderInputs(missingLockRecord), /missing its lock record/);
   } finally {

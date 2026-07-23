@@ -16,7 +16,7 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import test from "node:test";
+import test, { after } from "node:test";
 import { fileURLToPath } from "node:url";
 
 import { createDarwinCandidateExecutableRestorerForTest } from "../scripts/cua-driver-source-build-darwin-executable.mjs";
@@ -32,11 +32,36 @@ import {
 } from "../scripts/cua-driver-source-build-promotion-publish.mjs";
 import { parsePromotionArgs } from "../scripts/promote-cua-driver-source-build.mjs";
 
-const RESOURCE_ROOT = resolve(
+const COMMITTED_RESOURCE_ROOT = resolve(
   dirname(fileURLToPath(import.meta.url)),
   "../resources/providers/cua-driver/0.8.3-ling.1",
 );
+const RESOURCE_FIXTURE_PARENT = await mkdtemp(
+  join(tmpdir(), "ling-cua-promotion-resources-"),
+);
+after(() => rm(RESOURCE_FIXTURE_PARENT, { recursive: true, force: true }));
+const RESOURCE_ROOT = join(RESOURCE_FIXTURE_PARENT, "unpromoted");
+await cp(COMMITTED_RESOURCE_ROOT, RESOURCE_ROOT, { recursive: true });
+const unpromotedProviderLockPath = join(RESOURCE_ROOT, "provider-lock.json");
+const unpromotedProviderLock = JSON.parse(
+  await readFile(unpromotedProviderLockPath, "utf8"),
+);
+unpromotedProviderLock.enabledPlatforms = [];
+unpromotedProviderLock.platforms = {};
+await writeFile(
+  unpromotedProviderLockPath,
+  `${JSON.stringify(unpromotedProviderLock, null, 2)}\n`,
+);
+const UNPROMOTED_PROVIDER_LOCK_SHA256 = sha256(
+  await readFile(unpromotedProviderLockPath),
+);
 const DIGEST = "d".repeat(64);
+
+function createFixturePromoter(verifyCandidate) {
+  return createCuaDriverSourceBuildPromoterForTest(verifyCandidate, {
+    expectedProviderLockSha256: UNPROMOTED_PROVIDER_LOCK_SHA256,
+  });
+}
 
 test("promotion CLI requires two candidates and rejects unknown or duplicate options", () => {
   assert.deepEqual(
@@ -119,7 +144,7 @@ test("Darwin promotion safely restores or preserves execute permission at the ar
   await chmod(binaryB, 0o644);
 
   let verifierCalls = 0;
-  const promoter = createCuaDriverSourceBuildPromoterForTest(async (input) => {
+  const promoter = createFixturePromoter(async (input) => {
     const metadata = await lstat(join(input.candidateRoot, "darwin/cua-driver"));
     assert.equal(metadata.mode & 0o100, 0o100);
     verifierCalls += 1;
@@ -227,7 +252,7 @@ test("Darwin execute permission repair rejects unsafe candidate entries", async 
       await fixture.replace?.(join(candidateA.root, "darwin/cua-driver"), outside);
       let verifierCalls = 0;
       await assert.rejects(
-        createCuaDriverSourceBuildPromoterForTest(async (input) => {
+        createFixturePromoter(async (input) => {
           verifierCalls += 1;
           return fixtureVerifier(input);
         })({
@@ -388,7 +413,7 @@ test("Darwin promotion emits a review-only lock proposal and incremental Windows
   const resourcesBefore = await snapshotTree(RESOURCE_ROOT);
   const candidateABefore = await snapshotTree(darwinA.root);
   const candidateBBefore = await snapshotTree(darwinB.root);
-  const promoter = createCuaDriverSourceBuildPromoterForTest(fixtureVerifier);
+  const promoter = createFixturePromoter(fixtureVerifier);
   const darwinOutput = join(root, "darwin-promotion");
   const result = await promoter({
     platform: "darwin",
@@ -494,7 +519,7 @@ test("Windows promotion records standard payload and keeps UIAccess audit-only",
   t.after(() => rm(root, { recursive: true, force: true }));
   const candidateA = await createCandidate(join(root, "a"), "win32-x64");
   const candidateB = await createCandidate(join(root, "b"), "win32-x64");
-  const result = await createCuaDriverSourceBuildPromoterForTest(fixtureVerifier)({
+  const result = await createFixturePromoter(fixtureVerifier)({
     platform: "win32-x64",
     candidateA: candidateA.root,
     candidateB: candidateB.root,
@@ -518,10 +543,31 @@ test("Windows promotion records standard payload and keeps UIAccess audit-only",
   );
 });
 
+test("committed Darwin promotion cannot overwrite its reviewed platform record", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "ling-cua-promotion-committed-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const candidateA = await createCandidate(join(root, "a"), "darwin", {
+    resourceRoot: COMMITTED_RESOURCE_ROOT,
+  });
+  const candidateB = await createCandidate(join(root, "b"), "darwin", {
+    resourceRoot: COMMITTED_RESOURCE_ROOT,
+  });
+  await assert.rejects(
+    createCuaDriverSourceBuildPromoterForTest(fixtureVerifier)({
+      platform: "darwin",
+      candidateA: candidateA.root,
+      candidateB: candidateB.root,
+      outputDir: join(root, "promotion"),
+      resourceRoot: COMMITTED_RESOURCE_ROOT,
+    }),
+    /platform_already_promoted/u,
+  );
+});
+
 test("promotion fails closed for mismatched, mixed, extra, cross-platform, UIAccess and final-identity evidence", async (t) => {
   const root = await mkdtemp(join(tmpdir(), "ling-cua-promotion-failures-"));
   t.after(() => rm(root, { recursive: true, force: true }));
-  const promoter = createCuaDriverSourceBuildPromoterForTest(fixtureVerifier);
+  const promoter = createFixturePromoter(fixtureVerifier);
 
   await t.test("same or nested candidate roots", async () => {
     const candidate = await createCandidate(join(root, "same"), "darwin");
@@ -719,7 +765,7 @@ test("promotion fails closed for mismatched, mixed, extra, cross-platform, UIAcc
     const candidateA = await createCandidate(join(root, "race-a"), "darwin");
     const candidateB = await createCandidate(join(root, "race-b"), "darwin");
     let calls = 0;
-    const mutatingPromoter = createCuaDriverSourceBuildPromoterForTest(async (input) => {
+    const mutatingPromoter = createFixturePromoter(async (input) => {
       const receipt = await fixtureVerifier(input);
       calls += 1;
       if (calls === 1) {
@@ -749,7 +795,7 @@ test("promotion fails closed for mismatched, mixed, extra, cross-platform, UIAcc
     const movedParent = join(root, "parent-swap-output-moved");
     await mkdir(outputParent);
     let calls = 0;
-    const parentReplacingPromoter = createCuaDriverSourceBuildPromoterForTest(async (input) => {
+    const parentReplacingPromoter = createFixturePromoter(async (input) => {
       const receipt = await fixtureVerifier(input);
       calls += 1;
       if (calls === 2) {
@@ -775,7 +821,7 @@ test("promotion fails closed for mismatched, mixed, extra, cross-platform, UIAcc
   await t.test("verifier receipt points at a foreign attestation", async () => {
     const candidateA = await createCandidate(join(root, "foreign-a"), "darwin");
     const candidateB = await createCandidate(join(root, "foreign-b"), "darwin");
-    const foreignPathPromoter = createCuaDriverSourceBuildPromoterForTest(async (input) => ({
+    const foreignPathPromoter = createFixturePromoter(async (input) => ({
       ...await fixtureVerifier(input),
       attestation: join(root, "foreign-attestation.json"),
     }));
@@ -802,7 +848,7 @@ test("source-build input anchor rejects a self-consistent custom resource root",
   const candidateA = await createCandidate(join(root, "a"), "darwin");
   const candidateB = await createCandidate(join(root, "b"), "darwin");
   await assert.rejects(
-    createCuaDriverSourceBuildPromoterForTest(fixtureVerifier)({
+    createFixturePromoter(fixtureVerifier)({
       platform: "darwin",
       candidateA: candidateA.root,
       candidateB: candidateB.root,
@@ -814,15 +860,16 @@ test("source-build input anchor rejects a self-consistent custom resource root",
 });
 
 async function createCandidate(root, platform, options = {}) {
-  const sourceInputs = JSON.parse(await readFile(join(RESOURCE_ROOT, "source-build-inputs.json"), "utf8"));
-  const providerLockValue = JSON.parse(await readFile(join(RESOURCE_ROOT, "provider-lock.json"), "utf8"));
+  const resourceRoot = options.resourceRoot ?? RESOURCE_ROOT;
+  const sourceInputs = JSON.parse(await readFile(join(resourceRoot, "source-build-inputs.json"), "utf8"));
+  const providerLockValue = JSON.parse(await readFile(join(resourceRoot, "provider-lock.json"), "utf8"));
   if (options.mutateProviderLock) providerLockValue.upstream.licenseSha256 = "f".repeat(64);
   await mkdir(root, { recursive: true });
   const providerLockBytes = `${JSON.stringify(providerLockValue, null, 2)}\n`;
-  const sourceInputsBytes = await readFile(join(RESOURCE_ROOT, "source-build-inputs.json"));
+  const sourceInputsBytes = await readFile(join(resourceRoot, "source-build-inputs.json"));
   await writeFile(join(root, "provider-lock.json"), providerLockBytes);
   await writeFile(join(root, "source-build-inputs.json"), sourceInputsBytes);
-  await cp(join(RESOURCE_ROOT, "LICENSE.md"), join(root, "LICENSE.md"));
+  await cp(join(resourceRoot, "LICENSE.md"), join(root, "LICENSE.md"));
   await writeFile(join(root, "THIRD_PARTY_NOTICES.md"), "fixture notices\n");
   await writeFile(join(root, "cua-driver.spdx.json"), "{\"fixture\":true}\n");
 
@@ -846,7 +893,7 @@ async function createCandidate(root, platform, options = {}) {
     binaryDigests[binary.role] = binary.sha256BeforeSigning;
   }
   const series = JSON.parse(await readFile(
-    join(RESOURCE_ROOT, "patches/ling-managed-embedded-v1/series.json"),
+    join(resourceRoot, "patches/ling-managed-embedded-v1/series.json"),
     "utf8",
   ));
   const binaryIdentity = platform === "darwin"

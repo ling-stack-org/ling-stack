@@ -6,7 +6,7 @@ export const CUA_DRIVER_PACKAGE_DESTINATION =
 // Independent review anchor for the checked-in provider-lock.json. Opening a
 // platform requires updating both the lock and this digest in the same change.
 export const CUA_DRIVER_COMMITTED_LOCK_SHA256 =
-  "7e66687842849189ab35f2e29391e57c0d32d6e56cf75b97ee3d1a8854c430f4";
+  "6bdeb8d8a8ba260c3abf3235e08c34a74395566776b320d0e5a11eea71069a7c";
 // The non-promoting source-build contract is a second independent input to
 // promotion. A custom --resource-root must carry these exact reviewed bytes;
 // self-consistent replacement inputs cannot authorize their own lock record.
