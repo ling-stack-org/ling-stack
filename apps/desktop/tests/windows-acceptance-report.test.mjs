@@ -10,6 +10,9 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+
+import Ajv2020 from "ajv/dist/2020.js";
+import addFormats from "ajv-formats";
 import {
   buildWindowsAcceptanceReport,
   canonicalJson,
@@ -27,14 +30,32 @@ import {
   windowsCandidateBuildAttestationPayload,
   windowsReviewerAttestationPayload,
 } from "./verify-windows-release-attestations.mjs";
+import { verifyWindowsInternalAttestations } from "./verify-windows-internal-attestations.mjs";
+import { windowsAcceptanceMatrixEvidenceSha256 } from "./finalize-windows-signed-acceptance.mjs";
 import { WINDOWS_CUA_DRIVER_RELEASE } from "./verify-windows-cua-driver-provider.mjs";
+import { createInstalledProviderFixture } from "./windows-installed-provider-fixture.mjs";
+import {
+  WINDOWS_TEST_BUILD,
+  WINDOWS_TEST_CATALOG_CERTIFICATE_SHA256,
+  WINDOWS_TEST_PROVIDER_CATALOG_SHA256,
+  WINDOWS_TEST_PROVIDER_CERTIFICATE_SHA256,
+  WINDOWS_TEST_PROVIDER_SEAL_SHA256,
+  WINDOWS_TEST_PROVIDER_SHA256,
+  windowsAcceptanceCellFixture,
+  windowsCandidateManifestFixture,
+  windowsCandidateManifestReferenceFixture,
+  windowsProviderVerificationReportFixture,
+  windowsReleasePolicyFixture,
+  windowsReleasePolicyReferenceFixture,
+} from "./windows-release-evidence-fixtures.mjs";
 
 const SHA_A = "a".repeat(64);
 const SHA_B = "b".repeat(64);
-const SHA_C = WINDOWS_CUA_DRIVER_RELEASE.binaries["cua-driver.exe"].sha256;
-const SHA_D = WINDOWS_CUA_DRIVER_RELEASE.binaries["cua-driver-uia.exe"].sha256;
+const SHA_C = WINDOWS_TEST_PROVIDER_SHA256;
+const SHA_D = WINDOWS_TEST_PROVIDER_SEAL_SHA256;
 const CERT_LING = "c".repeat(64);
-const CERT_PROVIDER = "d".repeat(64);
+const CERT_PROVIDER = WINDOWS_TEST_PROVIDER_CERTIFICATE_SHA256;
+const CERT_CATALOG = WINDOWS_TEST_CATALOG_CERTIFICATE_SHA256;
 const REVIEW_KEY_SHA = "e".repeat(64);
 const BUILD_KEY_SHA = "9".repeat(64);
 const COMMIT = "d".repeat(40);
@@ -58,7 +79,7 @@ const MANUAL_EVIDENCE_KINDS = {
 test("complete Full evidence passes every Windows acceptance gate", () => {
   const report = buildWindowsAcceptanceReport(completeEvidence());
 
-  assert.equal(report.summary.status, "PASS");
+  assert.equal(report.summary.status, "PASS", JSON.stringify(report.gates));
   assert.equal(report.summary.fullAcceptanceStatus, "PASS");
   assert.equal(report.summary.releaseStatus, "MANUAL_REVIEW_REQUIRED");
   assert.equal(report.summary.releaseReady, false);
@@ -78,7 +99,7 @@ test("only policy-pinned detached reviewer and candidate-build signatures promot
     { now: "2026-07-17T12:10:00.000Z" },
   );
 
-  assert.equal(verification.verdict.status, "PASS");
+  assert.equal(verification.verdict.status, "RELEASE_PASS");
   assert.equal(verification.verdict.releaseReady, true);
   assert.equal(verification.verifier.harnessCommit, COMMIT);
   assert.deepEqual(verification.verdict.releaseBlockers, []);
@@ -92,6 +113,66 @@ test("only policy-pinned detached reviewer and candidate-build signatures promot
   );
 });
 
+test("test-signed internal attestations stop at INTERNAL_TEST_PASS", async () => {
+  const fixture = signedReleaseAttestationFixture({ production: false });
+  const verification = await verifyWindowsInternalAttestations(fixture.input, {
+    now: "2026-07-17T12:10:00.000Z",
+  });
+
+  assert.equal(verification.kind, "ling.windows.internal-verification");
+  assert.equal(verification.signingTier, "test_signed_internal");
+  assert.equal(verification.distributionChannel, "internal");
+  assert.equal(verification.productionEligible, false);
+  assert.equal(verification.verdict.status, "INTERNAL_TEST_PASS");
+  assert.equal(verification.verdict.releaseReady, false);
+  assert.deepEqual(verification.verdict.releaseBlockers, [
+    "production_signing_required",
+  ]);
+  await assert.rejects(
+    verifyWindowsReleaseAttestations(fixture.input, {
+      now: "2026-07-17T12:10:00.000Z",
+    }),
+    /windows_release_attestation_profile_mismatch/u,
+  );
+
+  const productionFixture = signedReleaseAttestationFixture();
+  await assert.rejects(
+    verifyWindowsInternalAttestations(productionFixture.input, {
+      now: "2026-07-17T12:10:00.000Z",
+    }),
+    /windows_release_attestation_profile_mismatch/u,
+  );
+});
+
+test("cell and verification JSON Schemas accept actual outputs and reject self-promotion", async () => {
+  const report = buildWindowsAcceptanceReport(completeEvidence());
+  const productionFixture = signedReleaseAttestationFixture();
+  const productionVerification = await verifyWindowsReleaseAttestations(
+    productionFixture.input,
+    { now: "2026-07-17T12:10:00.000Z" },
+  );
+  const internalFixture = signedReleaseAttestationFixture({ production: false });
+  const internalVerification = await verifyWindowsInternalAttestations(
+    internalFixture.input,
+    { now: "2026-07-17T12:10:00.000Z" },
+  );
+  for (const [name, value] of [
+    ["windows-cell-acceptance-report.schema.json", report],
+    ["windows-release-verification.schema.json", productionVerification],
+    ["windows-internal-verification.schema.json", internalVerification],
+  ]) {
+    const validate = await releaseEvidenceSchemaValidator(name);
+    assert.equal(validate(value), true, `${name}: ${JSON.stringify(validate.errors)}`);
+  }
+
+  const validateInternal = await releaseEvidenceSchemaValidator(
+    "windows-internal-verification.schema.json",
+  );
+  const selfPromoted = structuredClone(internalVerification);
+  selfPromoted.verdict.releaseReady = true;
+  assert.equal(validateInternal(selfPromoted), false);
+});
+
 test("different release roles cannot reuse the same RSA key even with two valid signatures", async () => {
   const fixture = signedReleaseAttestationFixture({
     reuseReviewerKeyForBuild: true,
@@ -101,7 +182,7 @@ test("different release roles cannot reuse the same RSA key even with two valid 
     verifyWindowsReleaseAttestations(fixture.input, {
       now: "2026-07-17T12:10:00.000Z",
     }),
-    /windows_release_attestation_roles_not_independent/u,
+    /windows_release_(?:policy_attestor_roles_invalid|attestation_roles_not_independent)/u,
   );
   assert.equal(fixture.input.report.summary.releaseReady, false);
 });
@@ -211,6 +292,17 @@ test("unsigned Ling or provider artifacts remain BLOCKED", () => {
   assert.equal(report.summary.status, "BLOCKED");
 });
 
+test("Full evidence rejects installed vendor native inventory drift", () => {
+  const evidence = completeEvidence();
+  evidence.probes.installerPayload.report.installedVendorNativeInventory[0]
+    .sha256 = "1".repeat(64);
+
+  const report = buildWindowsAcceptanceReport(evidence);
+
+  assert.equal(gateStatus(report, "installer-payload"), "FAIL");
+  assert.equal(report.summary.status, "FAIL");
+});
+
 test("missing NVDA leaves accessibility readiness BLOCKED", () => {
   const evidence = completeEvidence();
   evidence.host.accessibility.nvda = {
@@ -249,6 +341,140 @@ test("inconsistent successful probe evidence is a FAIL", () => {
   assert.equal(report.summary.releaseReady, false);
 });
 
+test("provider verification gate rejects shallow or cross-tuple Windows reports", () => {
+  const cases = [
+    ["missing provider lock", (evidence) => {
+      delete evidence.probes.providerVerification.report.providerLock;
+    }],
+    ["pre-sign digest detached from source lock", (evidence) => {
+      evidence.probes.providerVerification.report.providerLock.sourceBuild
+        .binariesSha256BeforeSigning.main = "0".repeat(64);
+    }],
+    ["seal tier drift", (evidence) => {
+      evidence.probes.providerVerification.report.providerSeal.signingTier =
+        "test_signed_internal";
+    }],
+    ["seal lock drift", (evidence) => {
+      evidence.probes.providerVerification.report.providerSeal.lockSha256 =
+        "2".repeat(64);
+    }],
+    ["seal main digest drift", (evidence) => {
+      evidence.probes.providerVerification.report.providerSeal.main.sha256 =
+        "2".repeat(64);
+    }],
+    ["provider Authenticode drift", (evidence) => {
+      evidence.probes.providerVerification.report.authenticode.files[0]
+        .certificateSha256 = "2".repeat(64);
+    }],
+    ["catalog membership drift", (evidence) => {
+      evidence.probes.providerVerification.report.providerCatalog.membership
+        .members.push({ relativePath: "payload/extra.dll", sha256: "2".repeat(64) });
+    }],
+    ["legacy shallow payload inventory", (evidence) => {
+      evidence.probes.providerVerification.report.packageLayout = {
+        unexpectedExecutablePaths: [],
+      };
+    }],
+  ];
+
+  for (const [label, mutate] of cases) {
+    const evidence = completeEvidence();
+    mutate(evidence);
+    const report = buildWindowsAcceptanceReport(evidence);
+    assert.equal(
+      gateStatus(report, "provider-verification"),
+      "FAIL",
+      label,
+    );
+    assert.equal(report.summary.releaseReady, false, label);
+  }
+});
+
+test("real installed-provider verifier output passes the report gate and every identity layer fails closed on drift", async () => {
+  const fixture = await createInstalledProviderFixture();
+  try {
+    const evidence = completeEvidence({ production: false });
+    const policy = evidence.bindings.releasePolicy;
+    fixture.seal.main.signerSubject = policy.providerSignerSubject;
+    fixture.seal.main.certificateSha256 =
+      policy.providerSignerCertificateSha256;
+    fixture.identity.authenticode.files[0].signerSubject =
+      policy.providerSignerSubject;
+    fixture.identity.authenticode.files[0].certificateSha256 =
+      policy.providerSignerCertificateSha256;
+    fixture.identity.authenticode.files[1].signerSubject =
+      policy.catalogSignerSubject;
+    fixture.identity.authenticode.files[1].certificateSha256 =
+      policy.catalogSignerCertificateSha256;
+    await fixture.writeSeal();
+
+    const verifierReport = await fixture.verify();
+    const providerSignature = verifierReport.authenticode.files[0];
+    const catalogSignature = verifierReport.authenticode.files[1];
+    evidence.bindings.provider = verifierArtifact(
+      verifierReport.provider,
+      providerSignature,
+      { version: "0.8.3" },
+    );
+    evidence.bindings.providerSeal = {
+      path: verifierReport.providerSeal.path,
+      exists: true,
+      sha256: verifierReport.providerSeal.sha256,
+    };
+    evidence.bindings.providerCatalog = verifierArtifact(
+      verifierReport.providerCatalog,
+      catalogSignature,
+    );
+    const candidate = windowsCandidateManifestFixture({
+      policy,
+      bindings: evidence.bindings,
+      commit: COMMIT,
+      releasePolicySha256: evidence.bindings.releasePolicy.sha256,
+      production: false,
+    });
+    candidate.preSignPayloadSha256 =
+      verifierReport.providerLock.sourceBuild.binariesSha256BeforeSigning.main;
+    evidence.bindings.candidateManifest =
+      windowsCandidateManifestReferenceFixture(candidate);
+    evidence.probes.providerVerification = passedProbe(
+      verifierReport,
+      "real installed provider verifier passed",
+    );
+
+    const accepted = buildWindowsAcceptanceReport(evidence);
+    assert.equal(
+      gateStatus(accepted, "provider-verification"),
+      "PASS",
+      JSON.stringify(accepted.gates),
+    );
+
+    const cases = [
+      ["version output", (report) => { report.versionProbe.output = "cua-driver 0.8.2"; }],
+      ["empty version output", (report) => { report.versionProbe.output = ""; }],
+      ["source lock", (report) => {
+        report.providerLock.sourceBuild.binariesSha256BeforeSigning.main =
+          "0".repeat(64);
+      }],
+      ["provider seal", (report) => { report.providerSeal.lockSha256 = "0".repeat(64); }],
+      ["catalog membership", (report) => { report.providerCatalog.membership.members.pop(); }],
+      ["Authenticode identity", (report) => {
+        report.authenticode.files[0].certificateSha256 = "0".repeat(64);
+      }],
+    ];
+    for (const [label, mutate] of cases) {
+      const drifted = structuredClone(evidence);
+      mutate(drifted.probes.providerVerification.report);
+      assert.equal(
+        gateStatus(buildWindowsAcceptanceReport(drifted), "provider-verification"),
+        "FAIL",
+        label,
+      );
+    }
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
 test("manual acceptance cannot PASS while carrying an error", () => {
   const evidence = completeEvidence();
   evidence.acceptance.display.error = "forged_manual_error";
@@ -259,14 +485,17 @@ test("manual acceptance cannot PASS while carrying an error", () => {
   assert.equal(report.summary.releaseReady, false);
 });
 
-test("candidate binding rejects same-version provider binaries outside the fixed hash allowlist", () => {
+test("candidate binding rejects a provider hash outside the signed candidate tuple", () => {
   const evidence = completeEvidence();
   evidence.bindings.provider.sha256 = "7".repeat(64);
 
   const report = buildWindowsAcceptanceReport(evidence);
 
   assert.equal(gateStatus(report, "candidate-binding"), "BLOCKED");
-  assert.match(gateReason(report, "candidate-binding"), /provider_allowlist/u);
+  assert.match(
+    gateReason(report, "candidate-binding"),
+    /candidate_artifact_tuple/u,
+  );
   assert.equal(report.summary.releaseReady, false);
 });
 
@@ -440,7 +669,7 @@ test("Preflight explicitly SKIPs real provider smoke and cannot claim full accep
 
   assert.equal(gateStatus(report, "provider-smoke"), "SKIP");
   assert.equal(gateStatus(report, "installer-payload"), "SKIP");
-  assert.equal(report.summary.status, "PASS");
+  assert.equal(report.summary.status, "PASS", JSON.stringify(report.gates));
   assert.equal(report.summary.fullAcceptanceStatus, "BLOCKED");
   assert.equal(report.summary.releaseReady, false);
 });
@@ -674,6 +903,7 @@ test("Full manual evidence is kind-specific, host-bound, attachment-bound, and n
     ],
   };
   const generatedAt = "2026-07-17T12:10:00.000Z";
+  const cell = windowsAcceptanceCellFixture();
   const releasePolicy = {
     approvedAt: "2026-07-17T11:00:00.000Z",
     manualEvidenceReviewers: ["manual-reviewer"],
@@ -685,7 +915,7 @@ test("Full manual evidence is kind-specific, host-bound, attachment-bound, and n
       const attachmentBytes = Buffer.from(`${label} retained evidence`, "utf8");
       await writeFile(attachmentPath, attachmentBytes);
       const document = {
-        schemaVersion: 2,
+        schemaVersion: 3,
         kind: MANUAL_EVIDENCE_KINDS[label],
         candidateManifestSha256,
         host: {
@@ -744,6 +974,7 @@ test("Full manual evidence is kind-specific, host-bound, attachment-bound, and n
       candidateManifestSha256,
       host,
       releasePolicy,
+      cell,
       generatedAt,
     });
 
@@ -775,6 +1006,7 @@ test("Full manual evidence is kind-specific, host-bound, attachment-bound, and n
         candidateManifestSha256,
         host,
         releasePolicy,
+        cell,
         generatedAt,
       }),
       /manual_pass_details_invalid:smartScreen/u,
@@ -786,6 +1018,7 @@ test("Full manual evidence is kind-specific, host-bound, attachment-bound, and n
         candidateManifestSha256,
         host,
         releasePolicy: { ...releasePolicy, manualEvidenceReviewers: ["someone-else"] },
+        cell,
         generatedAt,
       }),
       /manual_evidence_invalid:windowsVersion/u,
@@ -803,6 +1036,7 @@ test("Full manual evidence is kind-specific, host-bound, attachment-bound, and n
           ],
         },
         releasePolicy,
+        cell,
         generatedAt,
       }),
       /manual_pass_details_invalid:display/u,
@@ -816,6 +1050,7 @@ test("Full manual evidence is kind-specific, host-bound, attachment-bound, and n
         candidateManifestSha256,
         host,
         releasePolicy,
+        cell,
         generatedAt,
       }),
       /manual_evidence_reused:nvda/u,
@@ -838,6 +1073,7 @@ test("Full manual evidence is kind-specific, host-bound, attachment-bound, and n
         candidateManifestSha256,
         host,
         releasePolicy,
+        cell,
         generatedAt,
       }),
       /manual_attachment_path_invalid/u,
@@ -914,53 +1150,42 @@ test("release policy rejects reviewer and candidate-build roles that reuse an SP
 test("candidate manifest binds the approved policy and exact reviewed provider release tuple", async () => {
   const root = await mkdtemp(join(tmpdir(), "ling-windows-candidate-manifest-test-"));
   try {
-    const policy = {
-      schemaVersion: 2,
-      kind: "ling.windows.release-policy",
-      policyVersion: 2,
-      status: "approved",
-      approvedBy: "release-owner",
-      approvedAt: "2026-07-17T11:00:00.000Z",
-      lingSignerSubject: "CN=Ling Stack Test Publisher",
-      providerSignerSubject: "CN=TryCua Test Publisher",
-      lingSignerCertificateSha256: CERT_LING,
-      providerSignerCertificateSha256: CERT_PROVIDER,
-      supportedWindowsBuilds: ["Windows 11 24H2 build 26100.4652"],
-      manualEvidenceReviewers: ["manual-reviewer"],
+    const policy = windowsReleasePolicyFixture({
       reviewerKeys: [policyKey("manual-reviewer", "review-key", REVIEW_KEY_SHA)],
       candidateBuildAttestors: [
         policyKey("build-service", "build-key", BUILD_KEY_SHA),
       ],
-    };
-    const policyReference = await writeJsonReference(root, "release-policy.json", policy);
-    Object.assign(policyReference, {
-      verified: true,
-      kind: policy.kind,
-      policyVersion: policy.policyVersion,
-      approvedBy: policy.approvedBy,
-      approvedAt: policy.approvedAt,
-      lingSignerSubject: policy.lingSignerSubject,
-      providerSignerSubject: policy.providerSignerSubject,
-      lingSignerCertificateSha256: policy.lingSignerCertificateSha256,
-      providerSignerCertificateSha256: policy.providerSignerCertificateSha256,
-      supportedWindowsBuilds: policy.supportedWindowsBuilds,
-      manualEvidenceReviewers: policy.manualEvidenceReviewers,
-      reviewerKeys: policy.reviewerKeys,
-      candidateBuildAttestors: policy.candidateBuildAttestors,
-      error: null,
     });
+    const policyReference = await writeJsonReference(root, "release-policy.json", policy);
+    Object.assign(
+      policyReference,
+      windowsReleasePolicyReferenceFixture(policy, policyReference),
+    );
     const parsedPolicy = await verifyWindowsReleasePolicyReference(policyReference);
     const bindings = {
       commit: COMMIT,
       lingApp: { sha256: SHA_A },
       lingInstaller: { sha256: SHA_B },
-      provider: { sha256: SHA_C },
-      providerHelper: { sha256: SHA_D },
+      provider: {
+        path: "C:\\candidate\\resources\\providers\\cua-driver\\0.8.3-ling.1\\win32-x64\\payload\\cua-driver.exe",
+        sha256: SHA_C,
+      },
+      providerSeal: {
+        path: "C:\\candidate\\resources\\providers\\cua-driver\\0.8.3-ling.1\\win32-x64\\payload\\provider-seal.json",
+        sha256: SHA_D,
+      },
+      providerCatalog: {
+        path: "C:\\candidate\\resources\\providers\\cua-driver\\0.8.3-ling.1\\win32-x64\\provider-integrity.cat",
+        sha256: WINDOWS_TEST_PROVIDER_CATALOG_SHA256,
+      },
       releasePolicy: policyReference,
     };
     const manifest = candidateManifestDocument(bindings);
     const manifestReference = await writeJsonReference(root, "candidate-manifest.json", manifest);
-    Object.assign(manifestReference, { verified: true, error: null });
+    Object.assign(
+      manifestReference,
+      windowsCandidateManifestReferenceFixture(manifest, manifestReference),
+    );
 
     await verifyWindowsCandidateManifestReference(
       manifestReference,
@@ -975,7 +1200,13 @@ test("candidate manifest binds the approved policy and exact reviewed provider r
       "candidate-manifest-unreviewed.json",
       unreviewed,
     );
-    Object.assign(unreviewedReference, { verified: true, error: null });
+    Object.assign(
+      unreviewedReference,
+      windowsCandidateManifestReferenceFixture(
+        unreviewed,
+        unreviewedReference,
+      ),
+    );
     await assert.rejects(
       verifyWindowsCandidateManifestReference(
         unreviewedReference,
@@ -992,7 +1223,13 @@ test("candidate manifest binds the approved policy and exact reviewed provider r
       "candidate-manifest-without-daemon-provenance.json",
       missingDaemonProvenance,
     );
-    Object.assign(missingDaemonReference, { verified: true, error: null });
+    Object.assign(
+      missingDaemonReference,
+      windowsCandidateManifestReferenceFixture(
+        missingDaemonProvenance,
+        missingDaemonReference,
+      ),
+    );
     await assert.rejects(
       verifyWindowsCandidateManifestReference(
         missingDaemonReference,
@@ -1053,16 +1290,20 @@ test("Windows release evidence schemas pin policy, provider tuple, and six manua
     ),
   );
 
-  assert.equal(candidateSchema.properties.schemaVersion.const, 3);
+  assert.equal(candidateSchema.properties.schemaVersion.const, 4);
   assert.equal(
-    candidateSchema.properties.providerRelease.properties.archiveSha256.const,
+    candidateSchema.$defs.providerRelease.properties.archiveSha256.const,
     WINDOWS_CUA_DRIVER_RELEASE.sha256,
   );
   assert.equal(
-    candidateSchema.properties.artifacts.properties.providerSha256.const,
-    SHA_C,
+    candidateSchema.$defs.packagedProvider.properties.providerRelativePath
+      .const,
+    "resources/providers/cua-driver/0.8.3-ling.1/win32-x64/payload/cua-driver.exe",
   );
+  assert.ok(candidateSchema.required.includes("tierGovernedArtifacts"));
+  assert.ok(candidateSchema.required.includes("vendorNativeInventory"));
   assert.equal(policySchema.properties.kind.const, "ling.windows.release-policy");
+  assert.equal(policySchema.properties.schemaVersion.const, 3);
   assert.equal(
     policySchema.properties.supportedWindowsBuilds.minItems,
     1,
@@ -1070,7 +1311,8 @@ test("Windows release evidence schemas pin policy, provider tuple, and six manua
   assert.ok(policySchema.required.includes("manualEvidenceReviewers"));
   assert.ok(policySchema.required.includes("reviewerKeys"));
   assert.ok(policySchema.required.includes("candidateBuildAttestors"));
-  assert.equal(manualSchema.properties.schemaVersion.const, 2);
+  assert.ok(policySchema.required.includes("requiredAcceptanceCells"));
+  assert.equal(manualSchema.properties.schemaVersion.const, 3);
   assert.equal(
     manualSchema.$defs.reviewer.properties.status.const,
     "review_claimed_unverified",
@@ -1089,17 +1331,35 @@ test("Windows release evidence schemas pin policy, provider tuple, and six manua
     reviewAttestationSchema.properties.signature.$ref,
     "#/$defs/signature",
   );
+  assert.equal(reviewAttestationSchema.properties.schemaVersion.const, 2);
   assert.ok(buildAttestationSchema.required.includes("daemonPayload"));
+  assert.equal(buildAttestationSchema.properties.schemaVersion.const, 2);
   assert.equal(
     releaseVerificationSchema.properties.verdict.properties.releaseReady.const,
     true,
   );
 });
 
-function completeEvidence() {
-  return {
+function completeEvidence({ production = true } = {}) {
+  const cell = windowsAcceptanceCellFixture();
+  const policy = windowsReleasePolicyFixture({
+    production,
+    reviewerKeys: [
+      policyKey("manual-reviewer", "review-key", REVIEW_KEY_SHA),
+    ],
+    candidateBuildAttestors: [
+      policyKey("build-service", "build-key", BUILD_KEY_SHA),
+    ],
+  });
+  const evidence = {
     mode: "Full",
     generatedAt: "2026-07-17T12:00:00.000Z",
+    handoff: {
+      runId: "4a43ddcb-df07-4bf0-8749-88c0b7bf76f3",
+      handoffIndexSha256: "6".repeat(64),
+      cellManifestSha256: "7".repeat(64),
+    },
+    cell,
     bindings: {
       commit: COMMIT,
       harness: releaseHarnessFixture(),
@@ -1115,49 +1375,30 @@ function completeEvidence() {
       ),
       provider: {
         ...artifact(
-          "C:\\provider\\cua-driver.exe",
+          "C:\\candidate\\resources\\providers\\cua-driver\\0.8.3-ling.1\\win32-x64\\payload\\cua-driver.exe",
           SHA_C,
-          "CN=TryCua Test Publisher",
+          policy.providerSignerSubject,
         ),
         version: "0.8.3",
       },
-      providerHelper: artifact(
-        "C:\\provider\\cua-driver-uia.exe",
-        SHA_D,
-        "CN=TryCua Test Publisher",
+      providerSeal: {
+        path: "C:\\candidate\\resources\\providers\\cua-driver\\0.8.3-ling.1\\win32-x64\\payload\\provider-seal.json",
+        exists: true,
+        sha256: SHA_D,
+      },
+      providerCatalog: artifact(
+        "C:\\candidate\\resources\\providers\\cua-driver\\0.8.3-ling.1\\win32-x64\\provider-integrity.cat",
+        WINDOWS_TEST_PROVIDER_CATALOG_SHA256,
+        policy.catalogSignerSubject,
       ),
-      releasePolicy: {
-        path: "C:\\candidate\\windows-release-policy.json",
-        sha256: "8".repeat(64),
-        verified: true,
-        kind: "ling.windows.release-policy",
-        policyVersion: 2,
-        approvedBy: "release-owner",
-        approvedAt: "2026-07-17T11:00:00.000Z",
-      lingSignerSubject: "CN=Ling Stack Test Publisher",
-      providerSignerSubject: "CN=TryCua Test Publisher",
-      lingSignerCertificateSha256: CERT_LING,
-      providerSignerCertificateSha256: CERT_PROVIDER,
-      supportedWindowsBuilds: ["Windows 11 24H2 build 26100.4652"],
-      manualEvidenceReviewers: ["manual-reviewer"],
-      reviewerKeys: [policyKey("manual-reviewer", "review-key", REVIEW_KEY_SHA)],
-      candidateBuildAttestors: [
-        policyKey("build-service", "build-key", BUILD_KEY_SHA),
-      ],
-        error: null,
-      },
-      candidateManifest: {
-        path: "C:\\candidate\\candidate-manifest.json",
-        sha256: "f".repeat(64),
-        verified: true,
-        error: null,
-      },
+      releasePolicy: windowsReleasePolicyReferenceFixture(policy),
+      candidateManifest: null,
     },
     host: {
       platform: "win32",
       architecture: "x64",
       machineName: "WIN-ACCEPTANCE-01",
-      windowsBuild: "Windows 11 24H2 build 26100.4652",
+      windowsBuild: WINDOWS_TEST_BUILD,
       session: {
         id: 2,
         name: "Console",
@@ -1193,27 +1434,7 @@ function completeEvidence() {
       errors: [],
     },
     probes: {
-      providerVerification: passedProbe(
-        {
-          schemaVersion: 1,
-          mode: "installed_binary_read_only",
-          expectedRelease: WINDOWS_CUA_DRIVER_RELEASE,
-          versionProbe: { checked: true, expectedVersion: "0.8.3" },
-          binaries: [
-            {
-              name: "cua-driver.exe",
-              path: "C:\\provider\\cua-driver.exe",
-              sha256: SHA_C,
-            },
-            {
-              name: "cua-driver-uia.exe",
-              path: "C:\\provider\\cua-driver-uia.exe",
-              sha256: SHA_D,
-            },
-          ],
-        },
-        "provider verifier passed",
-      ),
+      providerVerification: passedProbe(null, "provider verifier passed"),
       providerSmoke: passedProbe(null, "capture lifecycle passed"),
       installerPayload: passedProbe(
         {
@@ -1228,7 +1449,7 @@ function completeEvidence() {
           ),
           uninstaller: artifact(
             "C:\\Users\\test\\AppData\\Local\\Programs\\Ling Stack\\Uninstall Ling Stack.exe",
-            "e".repeat(64),
+            "9".repeat(64),
             "CN=Ling Stack Test Publisher",
           ),
         },
@@ -1251,6 +1472,37 @@ function completeEvidence() {
       },
     },
   };
+  const candidate = windowsCandidateManifestFixture({
+    policy,
+    bindings: evidence.bindings,
+    commit: COMMIT,
+    releasePolicySha256: evidence.bindings.releasePolicy.sha256,
+    production,
+  });
+  evidence.probes.installerPayload.report.installedVendorNativeInventory =
+    candidate.vendorNativeInventory.map((entry) => ({
+      relativePath: entry.relativePath,
+      path: `C:\\Users\\test\\AppData\\Local\\Programs\\Ling Stack\\${entry.relativePath.replaceAll("/", "\\")}`,
+      exists: true,
+      sha256: entry.sha256,
+      signature: {
+        checked: true,
+        status: entry.authenticodeStatus,
+        signerSubject: entry.signerSubject,
+        certificateSha256: entry.certificateSha256,
+        error: null,
+      },
+    }));
+  evidence.bindings.candidateManifest =
+    windowsCandidateManifestReferenceFixture(candidate);
+  evidence.probes.providerVerification.report =
+    windowsProviderVerificationReportFixture({
+      candidate,
+      provider: evidence.bindings.provider,
+      providerSeal: evidence.bindings.providerSeal,
+      providerCatalog: evidence.bindings.providerCatalog,
+    });
+  return evidence;
 }
 
 function releaseHarnessFixture() {
@@ -1263,7 +1515,7 @@ function releaseHarnessFixture() {
     files: WINDOWS_RELEASE_HARNESS_FILES.map((name, index) => ({
       name,
       path: `${repositoryRoot}\\${name.replaceAll("/", "\\")}`,
-      sha256: String(index + 1).repeat(64),
+      sha256: ((index + 1) % 16).toString(16).repeat(64),
     })),
   };
 }
@@ -1274,6 +1526,23 @@ function artifact(path, sha256, signerSubject) {
     exists: true,
     sha256,
     signature: signature("Valid", signerSubject),
+  };
+}
+
+function verifierArtifact(reportArtifact, verifierSignature, extra = {}) {
+  return {
+    path: reportArtifact.path,
+    exists: true,
+    sha256: reportArtifact.sha256,
+    signature: {
+      checked: true,
+      status: verifierSignature.status,
+      signerSubject: verifierSignature.signerSubject,
+      certificateSha256: verifierSignature.certificateSha256,
+      timestampStatus: verifierSignature.timestampStatus,
+      error: null,
+    },
+    ...extra,
   };
 }
 
@@ -1300,9 +1569,12 @@ function signature(status, signerSubject = "CN=Ling Stack Test Publisher") {
     signerSubject: status === "Valid" ? signerSubject : null,
     certificateSha256:
       status === "Valid"
-        ? signerSubject.includes("TryCua")
-          ? CERT_PROVIDER
-          : CERT_LING
+        ? signerSubject.includes("Catalog")
+          ? CERT_CATALOG
+          : signerSubject.includes("Cua Driver") ||
+              signerSubject.includes("TryCua")
+            ? CERT_PROVIDER
+            : CERT_LING
         : null,
     error: null,
   };
@@ -1368,6 +1640,7 @@ function manualEvidenceDetails(label) {
   }
   if (label === "display") {
     return {
+      displayTopology: "dual",
       displayIds: ["DISPLAY1", "DISPLAY2"],
       dpiProfiles: [100, 150],
       crossDisplayCapturePassed: true,
@@ -1412,34 +1685,15 @@ async function writeJsonReference(root, name, value) {
 }
 
 function candidateManifestDocument(bindings) {
-  return {
-    schemaVersion: 3,
-    kind: "ling.windows.candidate-manifest",
+  const policy = bindings.releasePolicy;
+  return windowsCandidateManifestFixture({
+    policy,
+    bindings,
     commit: bindings.commit,
     releasePolicySha256: bindings.releasePolicy.sha256,
-    providerRelease: {
-      repository: WINDOWS_CUA_DRIVER_RELEASE.repository,
-      component: WINDOWS_CUA_DRIVER_RELEASE.component,
-      version: WINDOWS_CUA_DRIVER_RELEASE.version,
-      tag: WINDOWS_CUA_DRIVER_RELEASE.tag,
-      assetName: WINDOWS_CUA_DRIVER_RELEASE.assetName,
-      assetBytes: WINDOWS_CUA_DRIVER_RELEASE.assetBytes,
-      archiveSha256: WINDOWS_CUA_DRIVER_RELEASE.sha256,
-      providerSha256: SHA_C,
-      providerHelperSha256: SHA_D,
-    },
-    daemonPayload: {
-      sourceCommit: bindings.commit,
-      strategy: "deterministic-rebuild",
-      treeSha256: "7".repeat(64),
-    },
-    artifacts: {
-      lingAppSha256: bindings.lingApp.sha256,
-      lingInstallerSha256: bindings.lingInstaller.sha256,
-      providerSha256: bindings.provider.sha256,
-      providerHelperSha256: bindings.providerHelper.sha256,
-    },
-  };
+    production:
+      bindings.releasePolicy.requiredSigningTier === "production_signed",
+  });
 }
 
 function policyKey(id, keyId, publicKeySpkiSha256) {
@@ -1447,11 +1701,12 @@ function policyKey(id, keyId, publicKeySpkiSha256) {
 }
 
 function signedReleaseAttestationFixture(options = {}) {
+  const production = options.production !== false;
   const reviewer = generateKeyPairSync("rsa", { modulusLength: 2048 });
   const build = options.reuseReviewerKeyForBuild
     ? reviewer
     : generateKeyPairSync("rsa", { modulusLength: 2048 });
-  const evidence = completeEvidence();
+  const evidence = completeEvidence({ production });
   evidence.bindings.releasePolicy.reviewerKeys = [
     policyKey(
       "manual-reviewer",
@@ -1468,17 +1723,21 @@ function signedReleaseAttestationFixture(options = {}) {
   ];
   const report = buildWindowsAcceptanceReport(evidence);
   const candidateManifest = candidateManifestDocument(evidence.bindings);
+  const matrix = signedAcceptanceMatrixFixture(report, candidateManifest);
   const reviewAttestation = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     kind: "ling.windows.review-attestation",
-    scope: "windows-full-acceptance",
-    evidenceSha256: report.summary.evidenceSha256,
+    scope: "windows-signed-acceptance",
+    evidenceSha256: matrix.evidenceSha256,
     candidateManifestSha256: report.bindings.candidateManifest.sha256,
     releasePolicySha256: report.bindings.releasePolicy.sha256,
+    signingTier: candidateManifest.signingTier,
+    distributionChannel: candidateManifest.distributionChannel,
+    productionEligible: candidateManifest.productionEligible,
     reviewerId: "manual-reviewer",
     keyId: "review-key",
     reviewedAt: "2026-07-17T12:05:00.000Z",
-    verdict: "PASS",
+    verdict: production ? "RELEASE_PASS" : "INTERNAL_TEST_PASS",
     signature: { algorithm: "RSA-SHA256", valueBase64: "pending" },
   };
   reviewAttestation.signature.valueBase64 = signDetached(
@@ -1486,12 +1745,16 @@ function signedReleaseAttestationFixture(options = {}) {
     reviewer.privateKey,
   );
   const candidateBuildAttestation = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     kind: "ling.windows.candidate-build-attestation",
-    scope: "windows-candidate-build",
+    scope: "windows-signed-candidate-build",
     candidateManifestSha256: report.bindings.candidateManifest.sha256,
     candidateCommit: report.bindings.commit,
     releasePolicySha256: report.bindings.releasePolicy.sha256,
+    signingTier: candidateManifest.signingTier,
+    distributionChannel: candidateManifest.distributionChannel,
+    productionEligible: candidateManifest.productionEligible,
+    verdict: production ? "RELEASE_PASS" : "INTERNAL_TEST_PASS",
     daemonPayload: structuredClone(candidateManifest.daemonPayload),
     attestorId: "build-service",
     keyId: "build-key",
@@ -1505,20 +1768,14 @@ function signedReleaseAttestationFixture(options = {}) {
   return {
     input: {
       report,
+      matrix,
       context: {
-        releasePolicy: {
-          schemaVersion: 2,
-          kind: "ling.windows.release-policy",
-          policyVersion: 2,
-          status: "approved",
-          approvedAt: report.bindings.releasePolicy.approvedAt,
-          reviewerKeys: report.bindings.releasePolicy.reviewerKeys,
-          candidateBuildAttestors:
-            report.bindings.releasePolicy.candidateBuildAttestors,
-        },
+        releasePolicy: stripReferenceFields(report.bindings.releasePolicy),
         candidateManifest,
         manualEvidence: { reviewerIds: ["manual-reviewer"] },
       },
+      candidateManifestSha256: report.bindings.candidateManifest.sha256,
+      releasePolicySha256: report.bindings.releasePolicy.sha256,
       reviewAttestation,
       reviewerPublicKey: reviewer.publicKey,
       candidateBuildAttestation,
@@ -1527,6 +1784,69 @@ function signedReleaseAttestationFixture(options = {}) {
     reviewerPrivateKey: reviewer.privateKey,
     buildPrivateKey: build.privateKey,
   };
+}
+
+function signedAcceptanceMatrixFixture(report, candidateManifest) {
+  const artifacts = {
+    lingApp: candidateManifest.tierGovernedArtifacts.lingApp.sha256,
+    lingInstaller:
+      candidateManifest.tierGovernedArtifacts.lingInstaller.sha256,
+    lingUninstaller:
+      candidateManifest.tierGovernedArtifacts.lingUninstaller.sha256,
+    provider: candidateManifest.tierGovernedArtifacts.provider.sha256,
+    providerSeal: candidateManifest.packagedProvider.providerSealSha256,
+    providerCatalog:
+      candidateManifest.tierGovernedArtifacts.providerCatalog.sha256,
+  };
+  const matrix = {
+    schemaVersion: 1,
+    kind: "ling.windows.signed-acceptance-matrix",
+    finalizedAt: "2026-07-17T12:00:00.000Z",
+    handoffIndexSha256: report.handoff.handoffIndexSha256,
+    candidateManifestSha256: report.bindings.candidateManifest.sha256,
+    releasePolicySha256: report.bindings.releasePolicy.sha256,
+    candidateCommit: report.bindings.commit,
+    signingTier: candidateManifest.signingTier,
+    distributionChannel: candidateManifest.distributionChannel,
+    productionEligible: candidateManifest.productionEligible,
+    testAuthorityKind: candidateManifest.testAuthorityKind,
+    artifacts,
+    harness: {
+      commit: report.bindings.harness.commit,
+      files: report.bindings.harness.files.map(({ name, sha256 }) => ({
+        name,
+        sha256,
+      })),
+    },
+    cells: report.bindings.releasePolicy.requiredAcceptanceCells.map(
+      (cell, index) => ({
+        cellId: cell.id,
+        runId:
+          index === 0
+            ? "4a43ddcb-df07-4bf0-8749-88c0b7bf76f3"
+            : "5a43ddcb-df07-4bf0-8749-88c0b7bf76f4",
+        cellManifestSha256: String(index + 1).repeat(64),
+        reportPath: `reports/${cell.id}.json`,
+        reportSha256: String(index + 3).repeat(64),
+        reportEvidenceSha256: String(index + 5).repeat(64),
+        fullAcceptanceStatus: "PASS",
+      }),
+    ),
+    manualReviewerIds: ["manual-reviewer"],
+    evidenceSha256: null,
+    verdict: {
+      status: "MANUAL_REVIEW_REQUIRED",
+      fullAcceptanceStatus: "PASS",
+      promotionStatus: "ATTESTATION_REQUIRED",
+      releaseReady: false,
+      releaseBlockers: [
+        "external_reviewer_attestation_unverified",
+        "candidate_build_provenance_unverified",
+      ],
+    },
+  };
+  matrix.evidenceSha256 = windowsAcceptanceMatrixEvidenceSha256(matrix);
+  return matrix;
 }
 
 function publicKeySpkiSha256(publicKey) {
@@ -1543,10 +1863,31 @@ function signDetached(payload, privateKey) {
   ).toString("base64");
 }
 
+function stripReferenceFields(value) {
+  const cloned = structuredClone(value);
+  delete cloned.path;
+  delete cloned.sha256;
+  delete cloned.verified;
+  delete cloned.error;
+  return cloned;
+}
+
 function gateStatus(report, id) {
   return report.gates.find((gate) => gate.id === id)?.status;
 }
 
 function gateReason(report, id) {
   return report.gates.find((gate) => gate.id === id)?.reason ?? "";
+}
+
+async function releaseEvidenceSchemaValidator(name) {
+  const schema = JSON.parse(
+    await readFile(
+      new URL(`../../../docs/release/evidence/${name}`, import.meta.url),
+      "utf8",
+    ),
+  );
+  const ajv = new Ajv2020({ strict: true, allErrors: true });
+  addFormats(ajv);
+  return ajv.compile(schema);
 }

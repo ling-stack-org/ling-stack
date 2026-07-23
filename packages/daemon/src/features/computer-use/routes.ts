@@ -31,6 +31,7 @@ import {
 
 const STOP_ACK_TIMEOUT_MS = 10_000;
 const PRIVATE_SOURCE_OWNERSHIP_TIMEOUT_MS = 1_500;
+const PROVIDER_TARGET_VERIFY_PATH = "/computer-use/provider-target/verify";
 const stopRequestsInFlight = new WeakMap<DaemonContext, Map<string, Set<string>>>();
 
 export async function handleComputerUseRoute(
@@ -88,6 +89,11 @@ export async function handleComputerUseRoute(
         ...authority,
       };
       writePrivateJson(response, 200, handshake);
+      return true;
+    }
+
+    if (url.pathname === PROVIDER_TARGET_VERIFY_PATH) {
+      await handleProviderTargetVerification(request, response, url, context);
       return true;
     }
 
@@ -223,6 +229,124 @@ export async function handleComputerUseRoute(
     });
     return true;
   }
+}
+
+async function handleProviderTargetVerification(
+  request: IncomingMessage,
+  response: ServerResponse,
+  url: URL,
+  context: DaemonContext,
+): Promise<void> {
+  if (request.method !== "POST") {
+    writePrivateJson(response, 405, {
+      error: "method_not_allowed",
+      message: "Computer Use provider target verification supports POST only.",
+    });
+    return;
+  }
+  const tokenStatus = desktopBridgeTokenStatus(request, context.desktopBridgeToken);
+  if (tokenStatus === "unavailable") {
+    writePrivateJson(response, 503, {
+      error: "desktop_bridge_unavailable",
+      message: "The daemon was not started with a Desktop bridge token.",
+    });
+    return;
+  }
+  if (tokenStatus === "forbidden") {
+    writePrivateJson(response, 403, {
+      error: "desktop_bridge_forbidden",
+      message: "Desktop bridge authentication failed.",
+    });
+    return;
+  }
+
+  const cwd = readCwd(url);
+  const target = readProviderTargetVerificationRequest(
+    await readOptionalJsonBody(request, context.config.maxBodyBytes),
+  );
+  const now = new Date().toISOString();
+  const store = context.storeRegistry.getStore(cwd);
+  const provider = resolveManagedCuaDriverProvider({
+    store,
+    descriptors: listBundledPackageDescriptors(),
+    now,
+    platform: target.platform === "windows" ? "win32" : "darwin",
+    cuaDriverRuntimeAuthority: context.mcpBroker.cuaDriverRuntimeAuthority,
+  });
+  const capturedProvider = provider
+    ? captureMcpServerResultAuthority(store, provider.server.id)
+    : undefined;
+  const lease = context.cuaDriverDesktopBridgeAuthority.leaseRegistry.getCurrent();
+  if (!capturedProvider || !lease || lease.workspaceCwd !== resolve(cwd)) {
+    writePrivateJson(response, 409, {
+      verified: false,
+      error: "computer_use_provider_not_ready",
+      message: "The current bundled Cua Driver generation is unavailable.",
+    });
+    return;
+  }
+
+  const ownershipAbort = createPrivateSourceOwnershipAbort(
+    request,
+    response,
+    context.computerUseTargetOwnershipTimeoutMs ?? PRIVATE_SOURCE_OWNERSHIP_TIMEOUT_MS,
+  );
+  let targetOwned = false;
+  try {
+    targetOwned = await validateProviderTargetOwnership({
+      platform: target.platform,
+      server: capturedProvider.server,
+      mcpBroker: context.mcpBroker,
+      secretResolver: context.secretResolver,
+      processId: target.processId,
+      nativeWindowId: target.nativeWindowId,
+      now,
+      workspaceCwd: cwd,
+      signal: ownershipAbort.signal,
+      assertResultCurrent: () => {
+        assertMcpResultAuthorityCurrent(store, capturedProvider.authority);
+        if (!context.cuaDriverDesktopBridgeAuthority.leaseRegistry.isCurrent(lease)) {
+          throw new Error("computer_use_provider_generation_stale");
+        }
+      },
+    });
+  } catch (error) {
+    if (!ownershipAbort.signal.aborted) {
+      throw error;
+    }
+    if (ownershipAbort.timedOut() && !response.destroyed && !response.writableEnded) {
+      writePrivateJson(response, 504, {
+        verified: false,
+        error: "computer_use_provider_target_validation_timeout",
+        message: "The bundled provider did not validate the target before the deadline.",
+      });
+    }
+    return;
+  } finally {
+    ownershipAbort.close();
+  }
+  if (!targetOwned || !context.cuaDriverDesktopBridgeAuthority.leaseRegistry.isCurrent(lease)) {
+    writePrivateJson(response, 409, {
+      verified: false,
+      error: "computer_use_provider_target_owner_mismatch",
+      message: "The bundled provider did not return the exact requested PID and native window id.",
+    });
+    return;
+  }
+
+  writePrivateJson(response, 200, {
+    verified: true,
+    target,
+    runtime: {
+      desktopInstanceId: lease.desktopInstanceId,
+      desktopInstanceEpoch: lease.desktopInstanceEpoch,
+      generation: lease.generation,
+      providerVersion: lease.providerVersion,
+      lockDigest: lease.lockDigest,
+      providerSealDigest: lease.providerSealDigest,
+      providerCatalogDigest: lease.providerCatalogDigest,
+    },
+  });
 }
 
 async function handlePrivatePreviewSource(
@@ -652,6 +776,33 @@ function readStopRequest(value: unknown): StopComputerUseRequest {
     throw new Error("Computer Use stop reason must be a string");
   }
   return typeof value.reason === "string" && value.reason.trim() ? { reason: value.reason.trim() } : {};
+}
+
+function readProviderTargetVerificationRequest(value: unknown): {
+  readonly platform: "macos" | "windows";
+  readonly processId: number;
+  readonly nativeWindowId: string;
+} {
+  if (!isRecord(value)) {
+    throw new Error("Computer Use provider target verification body must be a JSON object");
+  }
+  const platform = value.platform;
+  const processId = value.processId;
+  const nativeWindowId = value.nativeWindowId;
+  if (platform !== "macos" && platform !== "windows") {
+    throw new Error("Computer Use provider target platform must be macos or windows");
+  }
+  if (!Number.isSafeInteger(processId) || (processId as number) <= 0 || (processId as number) > 0xffff_ffff) {
+    throw new Error("Computer Use provider target processId must be a positive 32-bit integer");
+  }
+  if (typeof nativeWindowId !== "string" || !/^[1-9][0-9]*$/u.test(nativeWindowId)) {
+    throw new Error("Computer Use provider target nativeWindowId must be a canonical positive integer string");
+  }
+  const maximumWindowId = platform === "windows" ? 0xffff_ffff_ffff_ffffn : 0xffff_ffffn;
+  if (BigInt(nativeWindowId) > maximumWindowId) {
+    throw new Error("Computer Use provider target nativeWindowId exceeds the platform boundary");
+  }
+  return { platform, processId: processId as number, nativeWindowId };
 }
 
 function parseStopRoute(pathname: string): { readonly sessionId: string } | undefined {

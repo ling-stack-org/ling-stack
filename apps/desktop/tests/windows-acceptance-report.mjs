@@ -1,6 +1,13 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
-import { readFile, writeFile, mkdir, realpath } from "node:fs/promises";
+import {
+  mkdir,
+  readFile,
+  realpath,
+  rename,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import {
   dirname,
   isAbsolute,
@@ -11,6 +18,19 @@ import {
 import { pathToFileURL } from "node:url";
 import { parseArgs, isDeepStrictEqual, promisify } from "node:util";
 import { WINDOWS_CUA_DRIVER_RELEASE } from "./verify-windows-cua-driver-provider.mjs";
+import {
+  WINDOWS_CANDIDATE_MANIFEST_KIND,
+  WINDOWS_CANDIDATE_MANIFEST_VERSION,
+  WINDOWS_RELEASE_POLICY_KIND,
+  WINDOWS_RELEASE_POLICY_SCHEMA_VERSION,
+  WINDOWS_RELEASE_POLICY_VERSION,
+  WINDOWS_PROVIDER_CATALOG_RELATIVE_PATH,
+  WINDOWS_PROVIDER_LOCK_RELATIVE_PATH,
+  WINDOWS_PROVIDER_RELATIVE_PATH,
+  WINDOWS_PROVIDER_SEAL_RELATIVE_PATH,
+  validateWindowsCandidateManifestDocument,
+  validateWindowsReleasePolicyDocument,
+} from "./windows-release-evidence-contracts.mjs";
 
 export const WINDOWS_ACCEPTANCE_SCHEMA_VERSION = 1;
 export const WINDOWS_ACCEPTANCE_REPORT_KIND = "ling.windows.acceptance";
@@ -38,12 +58,18 @@ export const WINDOWS_ACCEPTANCE_GATE_IDS = Object.freeze([
   "provider-smoke",
 ]);
 export const WINDOWS_RELEASE_HARNESS_FILES = Object.freeze([
+  "apps/desktop/tests/finalize-windows-signed-acceptance.mjs",
+  "apps/desktop/tests/load-windows-cell-handoff.mjs",
+  "apps/desktop/tests/produce-windows-acceptance-handoff.mjs",
   "apps/desktop/tests/run-windows-acceptance.ps1",
   "apps/desktop/tests/run-windows-provider-smoke.mjs",
   "apps/desktop/tests/verify-windows-cua-driver-provider.mjs",
+  "apps/desktop/tests/verify-windows-internal-attestations.mjs",
   "apps/desktop/tests/verify-windows-release-attestations.mjs",
   "apps/desktop/tests/windows-acceptance-report.mjs",
+  "apps/desktop/tests/windows-handoff-contracts.mjs",
   "apps/desktop/tests/windows-provider-smoke-support.mjs",
+  "apps/desktop/tests/windows-release-evidence-contracts.mjs",
 ]);
 
 const STATUS_SET = new Set(WINDOWS_ACCEPTANCE_STATUSES);
@@ -53,12 +79,7 @@ const GIT_COMMIT_PATTERN = /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/u;
 const REQUIRED_PROVIDER_VERSION = "0.8.3";
 const REQUIRED_SIGNATURE_STATUS = "Valid";
 const OUTPUT_LIMIT = 65_536;
-const WINDOWS_CANDIDATE_MANIFEST_KIND = "ling.windows.candidate-manifest";
-const WINDOWS_CANDIDATE_MANIFEST_VERSION = 3;
-const WINDOWS_RELEASE_POLICY_KIND = "ling.windows.release-policy";
-const WINDOWS_RELEASE_POLICY_SCHEMA_VERSION = 2;
-const WINDOWS_RELEASE_POLICY_VERSION = 2;
-const WINDOWS_FULL_EVIDENCE_SCHEMA_VERSION = 2;
+const WINDOWS_FULL_EVIDENCE_SCHEMA_VERSION = 3;
 const WINDOWS_FULL_EVIDENCE_KIND_PREFIX = "ling.windows.full-evidence.";
 const WINDOWS_FULL_EVIDENCE_LABELS = Object.freeze([
   "windowsVersion",
@@ -88,6 +109,8 @@ const execFileAsync = promisify(execFile);
 export function buildWindowsAcceptanceReport(input = {}) {
   const mode = normalizeMode(input.mode);
   const generatedAt = normalizeGeneratedAt(input.generatedAt);
+  const handoff = normalizeHandoff(input.handoff);
+  const cell = normalizeAcceptanceCell(input.cell);
   const bindings = normalizeBindings(input.bindings);
   const host = normalizeHost(input.host);
   const installation = normalizeInstallation(input.installation);
@@ -95,8 +118,14 @@ export function buildWindowsAcceptanceReport(input = {}) {
   const acceptance = normalizeAcceptance(input.acceptance);
   const requirements = Object.freeze({
     requiredPlatform: "win32",
-    minimumDisplayCount: 2,
-    minimumDpiProfiles: mode === "Full" ? 2 : 1,
+    minimumDisplayCount:
+      mode === "Full" && cell.displayTopology === "single" ? 1 : 2,
+    minimumDpiProfiles:
+      mode === "Full" && cell.displayScalePercents.length > 0
+        ? cell.displayScalePercents.length
+        : mode === "Full"
+          ? 2
+          : 1,
     requireNarrator: true,
     requireNvda: true,
     requiredSignatureStatus: REQUIRED_SIGNATURE_STATUS,
@@ -106,11 +135,23 @@ export function buildWindowsAcceptanceReport(input = {}) {
     requireSupportedWindowsEvidence: mode === "Full",
     requireVisualEvidence: mode === "Full",
     requireAccessibilityAcceptance: mode === "Full",
-    requireSmartScreenEvidence: mode === "Full",
+    requireSmartScreenEvidence:
+      mode === "Full" &&
+      bindings.candidateManifest.distributionChannel === "production",
     requireInstallerPayload: mode === "Full",
     requireInstallLifecycle: mode === "Full",
+    requireHandoffBinding: mode === "Full",
+    requireAcceptanceCell: mode === "Full",
   });
-  const evidence = { bindings, host, installation, probes, acceptance };
+  const evidence = {
+    handoff,
+    cell,
+    bindings,
+    host,
+    installation,
+    probes,
+    acceptance,
+  };
   const gates = deriveGates(mode, requirements, evidence);
   const status = aggregateGateStatus(gates);
   const fullAcceptanceStatus =
@@ -168,6 +209,8 @@ export function windowsAcceptanceEvidenceSha256(report) {
     mode: report?.mode,
     generatedAt: report?.generatedAt,
     requirements: report?.requirements,
+    handoff: report?.handoff,
+    cell: report?.cell,
     bindings: report?.bindings,
     host: report?.host,
     installation: report?.installation,
@@ -228,6 +271,8 @@ export function validateWindowsAcceptanceReportShape(report) {
   const rebuilt = buildWindowsAcceptanceReport({
     mode: report.mode,
     generatedAt: report.generatedAt,
+    handoff: report.handoff,
+    cell: report.cell,
     bindings: report.bindings,
     host: report.host,
     installation: report.installation,
@@ -267,7 +312,8 @@ export async function verifyWindowsAcceptanceEvidenceFiles(input, options = {}) 
     ["lingApp", bindings.lingApp],
     ["lingInstaller", bindings.lingInstaller],
     ["provider", bindings.provider],
-    ["providerHelper", bindings.providerHelper],
+    ["providerSeal", bindings.providerSeal],
+    ["providerCatalog", bindings.providerCatalog],
   ]) {
     if (artifact?.exists === true) {
       await verifyFileHash(artifact, `bindings.${label}`);
@@ -288,9 +334,12 @@ export async function verifyWindowsAcceptanceEvidenceFiles(input, options = {}) 
     const manualEvidence = await verifyWindowsFullManualEvidenceFiles({
       acceptance: input?.acceptance,
       candidateManifestSha256: bindings.candidateManifest?.sha256,
+      cell: input?.cell,
       host: input?.host,
       releasePolicy,
       generatedAt: input?.generatedAt,
+      requireSmartScreen:
+        candidateManifest.distributionChannel === "production",
     });
     return { externalAnchors, releasePolicy, candidateManifest, manualEvidence };
   }
@@ -415,91 +464,22 @@ export async function verifyWindowsReleasePolicyReference(reference, required = 
     return null;
   }
   const parsed = await readJsonReference(reference, "bindings.releasePolicy");
-  if (
-    !hasExactKeys(parsed, [
-      "schemaVersion",
-      "kind",
-      "policyVersion",
-      "status",
-      "approvedBy",
-      "approvedAt",
-      "lingSignerSubject",
-      "providerSignerSubject",
-      "lingSignerCertificateSha256",
-      "providerSignerCertificateSha256",
-      "supportedWindowsBuilds",
-      "manualEvidenceReviewers",
-      "reviewerKeys",
-      "candidateBuildAttestors",
-    ]) ||
-    parsed?.schemaVersion !== WINDOWS_RELEASE_POLICY_SCHEMA_VERSION ||
-    parsed?.kind !== WINDOWS_RELEASE_POLICY_KIND ||
-    parsed?.policyVersion !== WINDOWS_RELEASE_POLICY_VERSION ||
-    parsed?.status !== "approved" ||
-    !nullableString(parsed?.approvedBy) ||
-    !isIsoTimestamp(parsed?.approvedAt) ||
-    !nullableString(parsed?.lingSignerSubject) ||
-    !nullableString(parsed?.providerSignerSubject) ||
-    !SHA256_PATTERN.test(parsed?.lingSignerCertificateSha256 ?? "") ||
-    !SHA256_PATTERN.test(parsed?.providerSignerCertificateSha256 ?? "") ||
-    !hasUniqueNonEmptyStrings(parsed?.supportedWindowsBuilds) ||
-    !hasUniqueNonEmptyStrings(parsed?.manualEvidenceReviewers) ||
-    !hasValidAttestorKeys(parsed?.reviewerKeys) ||
-    !hasValidAttestorKeys(parsed?.candidateBuildAttestors) ||
-    !hasIndependentAttestorRoles(
-      parsed?.reviewerKeys,
-      parsed?.candidateBuildAttestors,
-    ) ||
-    !isDeepStrictEqual(
-      normalizeStringArray(parsed.manualEvidenceReviewers),
-      normalizeAttestorKeys(parsed.reviewerKeys).map((entry) => entry.id),
-    )
-  ) {
+  try {
+    validateWindowsReleasePolicyDocument(parsed);
+  } catch {
     throw new TypeError("windows_acceptance_release_policy_invalid");
   }
-  if (
-    reference?.verified !== true ||
-    reference?.error != null ||
-    reference?.kind !== parsed.kind ||
-    reference?.policyVersion !== parsed.policyVersion ||
-    reference?.approvedBy !== parsed.approvedBy ||
-    reference?.approvedAt !== parsed.approvedAt ||
-    reference?.lingSignerSubject !== parsed.lingSignerSubject ||
-    reference?.providerSignerSubject !== parsed.providerSignerSubject ||
-    reference?.lingSignerCertificateSha256 !==
-      parsed.lingSignerCertificateSha256 ||
-    reference?.providerSignerCertificateSha256 !==
-      parsed.providerSignerCertificateSha256 ||
-    !isDeepStrictEqual(
-      reference?.supportedWindowsBuilds,
-      normalizeStringArray(parsed.supportedWindowsBuilds),
-    ) ||
-    !isDeepStrictEqual(
-      reference?.manualEvidenceReviewers,
-      normalizeStringArray(parsed.manualEvidenceReviewers),
-    ) ||
-    !isDeepStrictEqual(
-      reference?.reviewerKeys,
-      normalizeAttestorKeys(parsed.reviewerKeys),
-    ) ||
-    !isDeepStrictEqual(
-      reference?.candidateBuildAttestors,
-      normalizeAttestorKeys(parsed.candidateBuildAttestors),
-    )
-  ) {
+  const projected = normalizeReleasePolicy({
+    ...parsed,
+    path: reference.path,
+    sha256: reference.sha256,
+    verified: true,
+    error: null,
+  });
+  if (!isDeepStrictEqual(normalizeReleasePolicy(reference), projected)) {
     throw new TypeError("windows_acceptance_release_policy_binding_invalid");
   }
-  return {
-    ...parsed,
-    supportedWindowsBuilds: normalizeStringArray(parsed.supportedWindowsBuilds),
-    manualEvidenceReviewers: normalizeStringArray(
-      parsed.manualEvidenceReviewers,
-    ),
-    reviewerKeys: normalizeAttestorKeys(parsed.reviewerKeys),
-    candidateBuildAttestors: normalizeAttestorKeys(
-      parsed.candidateBuildAttestors,
-    ),
-  };
+  return parsed;
 }
 
 export async function verifyWindowsCandidateManifestReference(
@@ -515,63 +495,50 @@ export async function verifyWindowsCandidateManifestReference(
     return null;
   }
   const parsed = await readJsonReference(reference, "bindings.candidateManifest");
-  const release = parsed?.providerRelease;
-  const artifacts = parsed?.artifacts;
-  if (
-    !hasExactKeys(parsed, [
-      "schemaVersion",
-      "kind",
-      "commit",
-      "releasePolicySha256",
-      "providerRelease",
-      "daemonPayload",
-      "artifacts",
-    ]) ||
-    !hasExactKeys(release, [
-      "repository",
-      "component",
-      "version",
-      "tag",
-      "assetName",
-      "assetBytes",
-      "archiveSha256",
-      "providerSha256",
-      "providerHelperSha256",
-    ]) ||
-    !hasExactKeys(artifacts, [
-      "lingAppSha256",
-      "lingInstallerSha256",
-      "providerSha256",
-      "providerHelperSha256",
-    ]) ||
-    !hasExactKeys(parsed?.daemonPayload, [
-      "sourceCommit",
-      "strategy",
-      "treeSha256",
-    ]) ||
-    parsed?.schemaVersion !== WINDOWS_CANDIDATE_MANIFEST_VERSION ||
-    parsed?.kind !== WINDOWS_CANDIDATE_MANIFEST_KIND ||
-    parsed?.commit !== bindings?.commit ||
-    parsed?.releasePolicySha256 !== bindings?.releasePolicy?.sha256 ||
-    parsed?.daemonPayload?.sourceCommit !== parsed?.commit ||
-    ![
-      "deterministic-rebuild",
-      "signed-candidate-embedded-daemon",
-    ].includes(parsed?.daemonPayload?.strategy) ||
-    !SHA256_PATTERN.test(parsed?.daemonPayload?.treeSha256 ?? "") ||
-    !releasePolicy ||
-    !matchesPinnedProviderRelease(release) ||
-    artifacts?.lingAppSha256 !== bindings?.lingApp?.sha256 ||
-    artifacts?.lingInstallerSha256 !== bindings?.lingInstaller?.sha256 ||
-    artifacts?.providerSha256 !== bindings?.provider?.sha256 ||
-    artifacts?.providerHelperSha256 !== bindings?.providerHelper?.sha256 ||
-    artifacts?.providerSha256 !== WINDOWS_CUA_DRIVER_RELEASE.binaries["cua-driver.exe"].sha256 ||
-    artifacts?.providerHelperSha256 !== WINDOWS_CUA_DRIVER_RELEASE.binaries["cua-driver-uia.exe"].sha256
-  ) {
+  if (!releasePolicy) {
     throw new TypeError("windows_acceptance_candidate_manifest_tuple_invalid");
   }
-  if (reference?.verified !== true || reference?.error != null) {
+  try {
+    validateWindowsCandidateManifestDocument(parsed, {
+      policy: releasePolicy,
+      expectedCommit: bindings?.commit,
+      expectedReleasePolicySha256: bindings?.releasePolicy?.sha256,
+    });
+  } catch {
+    throw new TypeError("windows_acceptance_candidate_manifest_tuple_invalid");
+  }
+  const projected = normalizeCandidateManifest({
+    ...parsed,
+    path: reference.path,
+    sha256: reference.sha256,
+    verified: true,
+    error: null,
+  });
+  if (!isDeepStrictEqual(normalizeCandidateManifest(reference), projected)) {
     throw new TypeError("windows_acceptance_candidate_manifest_binding_invalid");
+  }
+  const governed = parsed.tierGovernedArtifacts;
+  const packaged = parsed.packagedProvider;
+  if (
+    governed.lingApp.sha256 !== bindings?.lingApp?.sha256 ||
+    governed.lingInstaller.sha256 !== bindings?.lingInstaller?.sha256 ||
+    governed.provider.sha256 !== bindings?.provider?.sha256 ||
+    governed.providerCatalog?.sha256 !== bindings?.providerCatalog?.sha256 ||
+    packaged.providerSealSha256 !== bindings?.providerSeal?.sha256 ||
+    !pathEndsWithPortableRelativePath(
+      bindings?.provider?.path,
+      WINDOWS_PROVIDER_RELATIVE_PATH,
+    ) ||
+    !pathEndsWithPortableRelativePath(
+      bindings?.providerSeal?.path,
+      WINDOWS_PROVIDER_SEAL_RELATIVE_PATH,
+    ) ||
+    !pathEndsWithPortableRelativePath(
+      bindings?.providerCatalog?.path,
+      WINDOWS_PROVIDER_CATALOG_RELATIVE_PATH,
+    )
+  ) {
+    throw new TypeError("windows_acceptance_candidate_manifest_artifact_mismatch");
   }
   return parsed;
 }
@@ -579,9 +546,11 @@ export async function verifyWindowsCandidateManifestReference(
 export async function verifyWindowsFullManualEvidenceFiles({
   acceptance,
   candidateManifestSha256,
+  cell,
   host,
   releasePolicy,
   generatedAt,
+  requireSmartScreen = true,
 }) {
   if (!SHA256_PATTERN.test(candidateManifestSha256 ?? "")) {
     throw new TypeError("windows_acceptance_manual_candidate_binding_invalid");
@@ -591,7 +560,10 @@ export async function verifyWindowsFullManualEvidenceFiles({
   const usedAttachmentPaths = new Set();
   const usedAttachmentHashes = new Set();
   const reviewerIds = new Set();
-  for (const label of WINDOWS_FULL_EVIDENCE_LABELS) {
+  const requiredLabels = WINDOWS_FULL_EVIDENCE_LABELS.filter(
+    (label) => requireSmartScreen || label !== "smartScreen",
+  );
+  for (const label of requiredLabels) {
     const probe = acceptance?.[label];
     const reference = probe?.evidence;
     if (!hasFileReference(reference)) {
@@ -614,6 +586,7 @@ export async function verifyWindowsFullManualEvidenceFiles({
       candidateManifestSha256,
       host,
       releasePolicy,
+      cell,
       generatedAt,
     });
     reviewerIds.add(document.reviewer.id);
@@ -651,6 +624,7 @@ function validateWindowsFullManualEvidenceDocument({
   candidateManifestSha256,
   host,
   releasePolicy,
+  cell,
   generatedAt,
 }) {
   const expectedKind = WINDOWS_FULL_EVIDENCE_KIND_BY_LABEL[label];
@@ -697,6 +671,8 @@ function validateWindowsFullManualEvidenceDocument({
     document?.schemaVersion !== WINDOWS_FULL_EVIDENCE_SCHEMA_VERSION ||
     document?.kind !== expectedKind ||
     document?.candidateManifestSha256 !== candidateManifestSha256 ||
+    document?.host?.windowsBuild !== cell?.windowsBuild ||
+    document?.host?.architecture !== cell?.architecture ||
     !matchesManualEvidenceHost(document?.host, host) ||
     !nullableString(document?.operator?.id) ||
     !nullableString(document?.reviewer?.id) ||
@@ -729,10 +705,24 @@ function validateWindowsFullManualEvidenceDocument({
   ) {
     throw new TypeError(`windows_acceptance_manual_evidence_invalid:${label}`);
   }
-  validateManualEvidenceDetails(label, document.details, passed, probe, host);
+  validateManualEvidenceDetails(
+    label,
+    document.details,
+    passed,
+    probe,
+    host,
+    cell,
+  );
 }
 
-function validateManualEvidenceDetails(label, details, passed, probe, host) {
+function validateManualEvidenceDetails(
+  label,
+  details,
+  passed,
+  probe,
+  host,
+  cell,
+) {
   if (!isRecord(details)) {
     throw new TypeError(`windows_acceptance_manual_details_invalid:${label}`);
   }
@@ -747,28 +737,37 @@ function validateManualEvidenceDetails(label, details, passed, probe, host) {
   } else if (label === "display") {
     shapeValid =
       hasExactKeys(details, [
+        "displayTopology",
         "displayIds",
         "dpiProfiles",
         "crossDisplayCapturePassed",
         "visualReviewPassed",
       ]) &&
+      details.displayTopology === cell?.displayTopology &&
       hasTypedArray(details.displayIds, (value) => Boolean(nullableString(value))) &&
       hasTypedArray(
         details.dpiProfiles,
         (value) => typeof value === "number" && Number.isFinite(value) && value > 0,
       ) &&
-      typeof details.crossDisplayCapturePassed === "boolean" &&
+      (typeof details.crossDisplayCapturePassed === "boolean" ||
+        details.crossDisplayCapturePassed === null) &&
       typeof details.visualReviewPassed === "boolean";
     passDetails =
-      hasAtLeastDistinctValues(details.displayIds, 2) &&
-      hasAtLeastDistinctValues(details.dpiProfiles, 2) &&
+      details.displayIds.length ===
+        (cell?.displayTopology === "single" ? 1 : 2) &&
+      isDeepStrictEqual(
+        [...new Set(details.dpiProfiles)].sort((left, right) => left - right),
+        cell?.displayScalePercents,
+      ) &&
       details.displayIds.every((displayId) =>
         hostDisplays.some((display) => display.id === displayId),
       ) &&
       details.dpiProfiles.every((dpiProfile) =>
         hostDisplays.some((display) => display.scalePercent === dpiProfile),
       ) &&
-      details.crossDisplayCapturePassed === true &&
+      (cell?.displayTopology === "single"
+        ? details.crossDisplayCapturePassed === null
+        : details.crossDisplayCapturePassed === true) &&
       details.visualReviewPassed === true;
   } else if (label === "narrator" || label === "nvda") {
     const outcomes = [
@@ -1020,6 +1019,18 @@ function sameCanonicalPath(left, right) {
   return left === right;
 }
 
+function pathEndsWithPortableRelativePath(absolutePath, relativePathValue) {
+  if (!absolutePath || !relativePathValue) {
+    return false;
+  }
+  const candidate = String(absolutePath).replaceAll("/", "\\").toLowerCase();
+  const suffix = String(relativePathValue)
+    .replaceAll("/", "\\")
+    .replace(/^\\+/u, "")
+    .toLowerCase();
+  return candidate === suffix || candidate.endsWith(`\\${suffix}`);
+}
+
 function releaseHarnessIsEmpty(harness) {
   return (
     harness.schemaVersion === null &&
@@ -1179,8 +1190,27 @@ async function verifyFileHash(reference, label) {
 }
 
 function deriveGates(mode, requirements, evidence) {
-  const { bindings, host, installation, probes, acceptance } = evidence;
+  const { handoff, cell, bindings, host, installation, probes, acceptance } =
+    evidence;
   const bindingMissing = [];
+  if (
+    requirements.requireHandoffBinding &&
+    (!handoff.runId ||
+      !SHA256_PATTERN.test(handoff.handoffIndexSha256 ?? "") ||
+      !SHA256_PATTERN.test(handoff.cellManifestSha256 ?? ""))
+  ) {
+    bindingMissing.push("handoff");
+  }
+  if (
+    requirements.requireAcceptanceCell &&
+    (!cell.id ||
+      !cell.windowsBuild ||
+      cell.architecture !== "x64" ||
+      !["single", "dual"].includes(cell.displayTopology) ||
+      cell.displayScalePercents.length === 0)
+  ) {
+    bindingMissing.push("acceptance_cell");
+  }
   if (!GIT_COMMIT_PATTERN.test(bindings.commit ?? "")) {
     bindingMissing.push("commit");
   }
@@ -1191,7 +1221,6 @@ function deriveGates(mode, requirements, evidence) {
     ["ling_app_sha256", bindings.lingApp],
     ["ling_installer_sha256", bindings.lingInstaller],
     ["provider_sha256", bindings.provider],
-    ["provider_helper_sha256", bindings.providerHelper],
   ]) {
     if (
       !artifact.path ||
@@ -1201,24 +1230,32 @@ function deriveGates(mode, requirements, evidence) {
       bindingMissing.push(label);
     }
   }
+  if (mode === "Full") {
+    for (const [label, artifact] of [
+      ["provider_seal_sha256", bindings.providerSeal],
+      ["provider_catalog_sha256", bindings.providerCatalog],
+    ]) {
+      if (
+        !artifact.path ||
+        !artifact.exists ||
+        !SHA256_PATTERN.test(artifact.sha256 ?? "")
+      ) {
+        bindingMissing.push(label);
+      }
+    }
+  }
   if (bindings.provider.version !== requirements.requiredProviderVersion) {
     bindingMissing.push("provider_version");
   }
   if (
-    bindings.provider.sha256 !==
-    WINDOWS_CUA_DRIVER_RELEASE.binaries["cua-driver.exe"].sha256
-  ) {
-    bindingMissing.push("provider_allowlist");
-  }
-  if (
-    bindings.providerHelper.sha256 !==
-    WINDOWS_CUA_DRIVER_RELEASE.binaries["cua-driver-uia.exe"].sha256
-  ) {
-    bindingMissing.push("provider_helper_allowlist");
-  }
-  if (
     requirements.requireCandidateManifest &&
     (bindings.candidateManifest.verified !== true ||
+      bindings.candidateManifest.schemaVersion !==
+        WINDOWS_CANDIDATE_MANIFEST_VERSION ||
+      bindings.candidateManifest.kind !== WINDOWS_CANDIDATE_MANIFEST_KIND ||
+      bindings.candidateManifest.commit !== bindings.commit ||
+      bindings.candidateManifest.releasePolicySha256 !==
+        bindings.releasePolicy.sha256 ||
       !bindings.candidateManifest.path ||
       !SHA256_PATTERN.test(bindings.candidateManifest.sha256 ?? ""))
   ) {
@@ -1227,17 +1264,56 @@ function deriveGates(mode, requirements, evidence) {
   if (
     requirements.requireApprovedReleasePolicy &&
     (bindings.releasePolicy.verified !== true ||
+      bindings.releasePolicy.schemaVersion !==
+        WINDOWS_RELEASE_POLICY_SCHEMA_VERSION ||
       bindings.releasePolicy.kind !== WINDOWS_RELEASE_POLICY_KIND ||
       bindings.releasePolicy.policyVersion !== WINDOWS_RELEASE_POLICY_VERSION ||
       !bindings.releasePolicy.path ||
       !SHA256_PATTERN.test(bindings.releasePolicy.sha256 ?? "") ||
+      !bindings.releasePolicy.windowsAcceptanceOwner ||
       bindings.releasePolicy.supportedWindowsBuilds.length === 0 ||
+      bindings.releasePolicy.requiredAcceptanceCells.length === 0 ||
       bindings.releasePolicy.manualEvidenceReviewers.length === 0 ||
       bindings.releasePolicy.reviewerKeys.length === 0 ||
       bindings.releasePolicy.candidateBuildAttestors.length === 0 ||
       bindings.releasePolicy.error !== null)
   ) {
     bindingMissing.push("release_policy");
+  }
+  if (
+    mode === "Full" &&
+    bindings.releasePolicy.verified === true &&
+    (!isDeepStrictEqual(
+      bindings.releasePolicy.requiredAcceptanceCells.find(
+        (candidate) => candidate.id === cell.id,
+      ),
+      cell,
+    ) ||
+      bindings.releasePolicy.requiredSigningTier !==
+        bindings.candidateManifest.signingTier ||
+      bindings.releasePolicy.requiredDistributionChannel !==
+        bindings.candidateManifest.distributionChannel ||
+      bindings.releasePolicy.requiredProductionEligible !==
+        bindings.candidateManifest.productionEligible ||
+      bindings.releasePolicy.requiredTestAuthorityKind !==
+        bindings.candidateManifest.testAuthorityKind)
+  ) {
+    bindingMissing.push("policy_candidate_cell_tuple");
+  }
+  if (
+    mode === "Full" &&
+    (bindings.candidateManifest.tierGovernedArtifacts.lingApp.sha256 !==
+      bindings.lingApp.sha256 ||
+      bindings.candidateManifest.tierGovernedArtifacts.lingInstaller.sha256 !==
+        bindings.lingInstaller.sha256 ||
+      bindings.candidateManifest.tierGovernedArtifacts.provider.sha256 !==
+        bindings.provider.sha256 ||
+      bindings.candidateManifest.tierGovernedArtifacts.providerCatalog?.sha256 !==
+        bindings.providerCatalog.sha256 ||
+      bindings.candidateManifest.packagedProvider.providerSealSha256 !==
+        bindings.providerSeal.sha256)
+  ) {
+    bindingMissing.push("candidate_artifact_tuple");
   }
 
   const gates = [
@@ -1266,7 +1342,9 @@ function deriveGates(mode, requirements, evidence) {
   const hostBuildApproved =
     !requirements.requireApprovedReleasePolicy ||
     (!hostPolicyUnavailable &&
-      bindings.releasePolicy.supportedWindowsBuilds.includes(host.windowsBuild));
+      bindings.releasePolicy.supportedWindowsBuilds.includes(host.windowsBuild) &&
+      host.windowsBuild === cell.windowsBuild &&
+      host.architecture === cell.architecture);
   const hostReady =
     hostInventoryReady &&
     hostBuildApproved &&
@@ -1305,7 +1383,7 @@ function deriveGates(mode, requirements, evidence) {
   );
 
   const displayInventoryReady =
-    host.displays.length >= requirements.minimumDisplayCount;
+    host.displays.length === requirements.minimumDisplayCount;
   const displayAcceptance = deriveAcceptanceProbe(
     acceptance.display,
     requirements.requireVisualEvidence,
@@ -1333,7 +1411,12 @@ function deriveGates(mode, requirements, evidence) {
       .map((display) => display.scalePercent)
       .filter((value) => Number.isFinite(value) && value > 0),
   );
-  const dpiInventoryReady = dpiProfiles.size >= requirements.minimumDpiProfiles;
+  const observedScales = [...dpiProfiles].sort((left, right) => left - right);
+  const dpiInventoryReady =
+    (requirements.requireAcceptanceCell
+      ? dpiProfiles.size === requirements.minimumDpiProfiles &&
+        isDeepStrictEqual(observedScales, cell.displayScalePercents)
+      : dpiProfiles.size >= requirements.minimumDpiProfiles);
   const dpiReady = dpiInventoryReady && displayAcceptance.status === "PASS";
   gates.push(
     gate(
@@ -1344,7 +1427,7 @@ function deriveGates(mode, requirements, evidence) {
           ? "FAIL"
           : "BLOCKED",
       dpiReady
-        ? `dpi_profiles:${[...dpiProfiles].sort((left, right) => left - right).join(",")}`
+        ? `dpi_profiles:${observedScales.join(",")}`
         : !dpiInventoryReady
           ? `requires_${requirements.minimumDpiProfiles}_dpi_profiles:found_${dpiProfiles.size}`
           : displayAcceptance.reason,
@@ -1466,7 +1549,7 @@ function deriveSignatureGate(mode, bindings, smartScreen) {
     bindings.lingApp,
     bindings.lingInstaller,
     bindings.provider,
-    bindings.providerHelper,
+    ...(mode === "Full" ? [bindings.providerCatalog] : []),
   ];
   if (
     artifacts.some(
@@ -1491,8 +1574,10 @@ function deriveSignatureGate(mode, bindings, smartScreen) {
     bindings.releasePolicy.policyVersion !== WINDOWS_RELEASE_POLICY_VERSION ||
     !bindings.releasePolicy.lingSignerSubject ||
     !bindings.releasePolicy.providerSignerSubject ||
+    !bindings.releasePolicy.catalogSignerSubject ||
     !SHA256_PATTERN.test(bindings.releasePolicy.lingSignerCertificateSha256 ?? "") ||
-    !SHA256_PATTERN.test(bindings.releasePolicy.providerSignerCertificateSha256 ?? "")
+    !SHA256_PATTERN.test(bindings.releasePolicy.providerSignerCertificateSha256 ?? "") ||
+    !SHA256_PATTERN.test(bindings.releasePolicy.catalogSignerCertificateSha256 ?? "")
   ) {
     return { status: "BLOCKED", reason: "approved_release_policy_missing" };
   }
@@ -1511,18 +1596,24 @@ function deriveSignatureGate(mode, bindings, smartScreen) {
   if (
     bindings.provider.signature.signerSubject !==
       bindings.releasePolicy.providerSignerSubject ||
-    bindings.providerHelper.signature.signerSubject !==
-      bindings.releasePolicy.providerSignerSubject ||
     bindings.provider.signature.certificateSha256 !==
-      bindings.releasePolicy.providerSignerCertificateSha256 ||
-    bindings.providerHelper.signature.certificateSha256 !==
       bindings.releasePolicy.providerSignerCertificateSha256
   ) {
     return { status: "FAIL", reason: "provider_publisher_mismatch" };
   }
+  if (
+    mode === "Full" &&
+    (bindings.providerCatalog.signature.signerSubject !==
+      bindings.releasePolicy.catalogSignerSubject ||
+      bindings.providerCatalog.signature.certificateSha256 !==
+        bindings.releasePolicy.catalogSignerCertificateSha256)
+  ) {
+    return { status: "FAIL", reason: "provider_catalog_publisher_mismatch" };
+  }
   const smartScreenAcceptance = deriveAcceptanceProbe(
     smartScreen,
-    mode === "Full",
+    mode === "Full" &&
+      bindings.candidateManifest.distributionChannel === "production",
   );
   if (smartScreenAcceptance.status !== "PASS") {
     return smartScreenAcceptance;
@@ -1586,6 +1677,9 @@ function deriveInstallerPayloadGate(probe, bindings, required) {
   const installedApp = report?.installedApp;
   const uninstaller = report?.uninstaller;
   const policy = bindings.releasePolicy;
+  const governed = bindings.candidateManifest.tierGovernedArtifacts;
+  const expectedVendorNativeInventory =
+    bindings.candidateManifest.vendorNativeInventory;
   if (
     report?.schemaVersion !== 1 ||
     report?.mode !== "signed_installer_payload_roundtrip" ||
@@ -1599,19 +1693,47 @@ function deriveInstallerPayloadGate(probe, bindings, required) {
     installedApp?.signature?.certificateSha256 !==
       policy.lingSignerCertificateSha256 ||
     uninstaller?.exists !== true ||
-    !SHA256_PATTERN.test(uninstaller?.sha256 ?? "") ||
+    uninstaller?.sha256 !== governed.lingUninstaller.sha256 ||
     uninstaller?.signature?.checked !== true ||
     uninstaller?.signature?.status !== REQUIRED_SIGNATURE_STATUS ||
     uninstaller?.signature?.signerSubject !== policy.lingSignerSubject ||
     uninstaller?.signature?.certificateSha256 !==
-      policy.lingSignerCertificateSha256
+      policy.lingSignerCertificateSha256 ||
+    !matchesInstalledVendorNativeInventory(
+      report?.installedVendorNativeInventory,
+      expectedVendorNativeInventory,
+    )
   ) {
     return { status: "FAIL", reason: "installer_payload_binding_invalid" };
   }
   return {
     status: "PASS",
-    reason: "installed_app_matches_manifest_and_uninstaller_signature_valid",
+    reason:
+      "installed_app_uninstaller_and_vendor_native_inventory_match_manifest",
   };
+}
+
+function matchesInstalledVendorNativeInventory(observed, expected) {
+  if (
+    !Array.isArray(observed) ||
+    !Array.isArray(expected) ||
+    observed.length !== expected.length
+  ) {
+    return false;
+  }
+  return expected.every((expectedEntry, index) => {
+    const observedEntry = observed[index];
+    return (
+      observedEntry?.relativePath === expectedEntry.relativePath &&
+      observedEntry?.exists === true &&
+      observedEntry?.sha256 === expectedEntry.sha256 &&
+      observedEntry?.signature?.checked === true &&
+      observedEntry.signature.status === expectedEntry.authenticodeStatus &&
+      observedEntry.signature.signerSubject === expectedEntry.signerSubject &&
+      observedEntry.signature.certificateSha256 ===
+        expectedEntry.certificateSha256
+    );
+  });
 }
 
 function deriveProbeGate(probe, label) {
@@ -1635,48 +1757,177 @@ function deriveProviderVerificationGate(probe, bindings) {
     return base;
   }
   const report = probe.report;
-  const binaryNames = Array.isArray(report?.binaries)
-    ? report.binaries.map((binary) => binary?.name).sort()
-    : [];
-  const binaryPaths = new Map(
-    Array.isArray(report?.binaries)
-      ? report.binaries.map((binary) => [binary?.name, binary?.path])
-      : [],
+  const providerLock = report?.providerLock;
+  const providerSeal = report?.providerSeal;
+  const providerCatalog = report?.providerCatalog;
+  const candidate = bindings.candidateManifest;
+  const governedProvider = candidate.tierGovernedArtifacts.provider;
+  const governedCatalog = candidate.tierGovernedArtifacts.providerCatalog;
+  const authenticode = report?.authenticode;
+  const providerSignature = findProviderVerifierSignature(
+    authenticode?.files,
+    WINDOWS_PROVIDER_RELATIVE_PATH,
   );
-  const binaryHashes = new Map(
-    Array.isArray(report?.binaries)
-      ? report.binaries.map((binary) => [binary?.name, binary?.sha256])
-      : [],
+  const catalogSignature = findProviderVerifierSignature(
+    authenticode?.files,
+    WINDOWS_PROVIDER_CATALOG_RELATIVE_PATH,
   );
+  const expectedCatalogMembers = [
+    {
+      relativePath: "payload/cua-driver.exe",
+      sha256: bindings.provider.sha256,
+    },
+    {
+      relativePath: "payload/provider-seal.json",
+      sha256: bindings.providerSeal.sha256,
+    },
+  ];
   if (
-    report?.schemaVersion !== 1 ||
-    report?.mode !== "installed_binary_read_only" ||
-    !matchesPinnedProviderRelease({
-      repository: report?.expectedRelease?.repository,
-      component: report?.expectedRelease?.component,
-      version: report?.expectedRelease?.version,
-      tag: report?.expectedRelease?.tag,
-      assetName: report?.expectedRelease?.assetName,
-      assetBytes: report?.expectedRelease?.assetBytes,
-      archiveSha256: report?.expectedRelease?.sha256,
-      providerSha256:
-        report?.expectedRelease?.binaries?.["cua-driver.exe"]?.sha256,
-      providerHelperSha256:
-        report?.expectedRelease?.binaries?.["cua-driver-uia.exe"]?.sha256,
-    }) ||
+    report?.schemaVersion !== 2 ||
+    report?.mode !== "installed_bundled_provider_read_only" ||
     report?.versionProbe?.checked !== true ||
     report?.versionProbe?.expectedVersion !== REQUIRED_PROVIDER_VERSION ||
-    binaryNames.length !== 2 ||
-    binaryNames[0] !== "cua-driver-uia.exe" ||
-    binaryNames[1] !== "cua-driver.exe" ||
-    binaryPaths.get("cua-driver.exe") !== bindings.provider.path ||
-    binaryPaths.get("cua-driver-uia.exe") !== bindings.providerHelper.path ||
-    binaryHashes.get("cua-driver.exe") !== bindings.provider.sha256 ||
-    binaryHashes.get("cua-driver-uia.exe") !== bindings.providerHelper.sha256
+    !matchesRequiredProviderVersionOutput(report?.versionProbe?.output) ||
+    report?.provider?.name !== "cua-driver.exe" ||
+    report?.provider?.sha256 !== bindings.provider.sha256 ||
+    providerSeal?.sha256 !== bindings.providerSeal.sha256 ||
+    providerCatalog?.sha256 !== bindings.providerCatalog.sha256 ||
+    !pathEndsWithPortableRelativePath(
+      report?.provider?.path,
+      WINDOWS_PROVIDER_RELATIVE_PATH,
+    ) ||
+    !pathEndsWithPortableRelativePath(
+      providerSeal?.path,
+      WINDOWS_PROVIDER_SEAL_RELATIVE_PATH,
+    ) ||
+    !pathEndsWithPortableRelativePath(
+      providerCatalog?.path,
+      WINDOWS_PROVIDER_CATALOG_RELATIVE_PATH,
+    ) ||
+    report?.uiAccessHelper?.packaged !== false ||
+    report?.uiAccessHelper?.exists !== false ||
+    !isDeepStrictEqual(
+      report?.packageLayout?.distributionRootEntryNames,
+      ["provider-lock.json", "win32-x64"],
+    ) ||
+    !isDeepStrictEqual(
+      report?.packageLayout?.platformRootEntryNames,
+      ["payload", "provider-integrity.cat"],
+    ) ||
+    !isDeepStrictEqual(
+      report?.packageLayout?.payloadFileNames,
+      ["cua-driver.exe", "provider-seal.json"],
+    ) ||
+    !isDeepStrictEqual(report?.packageLayout?.unexpectedPaths, [])
   ) {
     return { status: "FAIL", reason: "provider_verifier_report_invalid" };
   }
+  if (
+    !pathEndsWithPortableRelativePath(
+      providerLock?.path,
+      WINDOWS_PROVIDER_LOCK_RELATIVE_PATH,
+    ) ||
+    !SHA256_PATTERN.test(providerLock?.sha256 ?? "") ||
+    providerLock?.componentId !== "cua-driver-win32-x64" ||
+    providerLock?.sourceTarget !== "x86_64-pc-windows-msvc" ||
+    providerLock?.sourceBuild?.target !== providerLock.sourceTarget ||
+    providerLock?.sourceBuild?.binariesSha256BeforeSigning?.main !==
+      candidate.preSignPayloadSha256
+  ) {
+    return { status: "FAIL", reason: "provider_verifier_lock_binding_invalid" };
+  }
+  const observedTestAuthorityKind = Object.hasOwn(
+    providerSeal ?? {},
+    "testAuthorityKind",
+  )
+    ? providerSeal.testAuthorityKind
+    : null;
+  if (
+    providerSeal.schemaVersion !== 2 ||
+    providerSeal.componentId !== providerLock.componentId ||
+    providerSeal.lockSha256 !== providerLock.sha256 ||
+    providerSeal.signingTier !== candidate.signingTier ||
+    providerSeal.distributionChannel !== candidate.distributionChannel ||
+    providerSeal.productionEligible !== candidate.productionEligible ||
+    observedTestAuthorityKind !== candidate.testAuthorityKind ||
+    providerSeal.main?.relativePath !== "payload/cua-driver.exe" ||
+    providerSeal.main?.architecture !== "x86_64" ||
+    providerSeal.main?.sha256 !== bindings.provider.sha256 ||
+    providerSeal.main?.authenticodeStatus !==
+      governedProvider.authenticodeStatus ||
+    providerSeal.main?.signerSubject !== governedProvider.signerSubject ||
+    providerSeal.main?.certificateSha256 !== governedProvider.certificateSha256 ||
+    providerSeal.main?.timestampPolicy !== governedProvider.timestampPolicy ||
+    providerSeal.main?.timestampStatus !== governedProvider.timestampStatus
+  ) {
+    return { status: "FAIL", reason: "provider_verifier_seal_binding_invalid" };
+  }
+  if (
+    authenticode?.checked !== true ||
+    authenticode?.trustRequired !== true ||
+    authenticode.files?.length !== 2 ||
+    !matchesProviderVerifierSignature(providerSignature, {
+      status: governedProvider.authenticodeStatus,
+      signerSubject: governedProvider.signerSubject,
+      certificateSha256: governedProvider.certificateSha256,
+      timestampStatus: governedProvider.timestampStatus,
+    }) ||
+    !matchesProviderVerifierSignature(catalogSignature, {
+      status: governedCatalog?.authenticodeStatus,
+      signerSubject: governedCatalog?.signerSubject,
+      certificateSha256: governedCatalog?.certificateSha256,
+      timestampStatus: governedCatalog?.timestampStatus,
+    })
+  ) {
+    return {
+      status: "FAIL",
+      reason: "provider_verifier_authenticode_binding_invalid",
+    };
+  }
+  if (
+    providerCatalog.membership?.checked !== true ||
+    providerCatalog.membership?.validationStatus !== "Valid" ||
+    !isDeepStrictEqual(
+      providerCatalog.membership?.members,
+      expectedCatalogMembers,
+    )
+  ) {
+    return {
+      status: "FAIL",
+      reason: "provider_verifier_catalog_membership_invalid",
+    };
+  }
   return { status: "PASS", reason: "provider_verifier_passed" };
+}
+
+function matchesRequiredProviderVersionOutput(value) {
+  if (typeof value !== "string" || value.trim().length === 0) {
+    return false;
+  }
+  const escapedVersion = REQUIRED_PROVIDER_VERSION.replaceAll(".", "\\.");
+  return new RegExp(
+    `(^|[^0-9A-Za-z.+-])v?${escapedVersion}($|[^0-9A-Za-z.+-])`,
+    "u",
+  ).test(value);
+}
+
+function findProviderVerifierSignature(files, relativePath) {
+  if (!Array.isArray(files)) {
+    return undefined;
+  }
+  const matches = files.filter((entry) =>
+    pathEndsWithPortableRelativePath(entry?.path, relativePath),
+  );
+  return matches.length === 1 ? matches[0] : undefined;
+}
+
+function matchesProviderVerifierSignature(observed, expected) {
+  return (
+    observed?.status === expected.status &&
+    observed?.signerSubject === expected.signerSubject &&
+    observed?.certificateSha256 === expected.certificateSha256 &&
+    observed?.timestampStatus === expected.timestampStatus
+  );
 }
 
 function aggregateGateStatus(gates) {
@@ -1692,6 +1943,43 @@ function aggregateGateStatus(gates) {
   return "PASS";
 }
 
+function normalizeHandoff(value) {
+  const candidate = isRecord(value) ? value : {};
+  return {
+    runId: nullableString(candidate.runId),
+    handoffIndexSha256: normalizeSha256(candidate.handoffIndexSha256),
+    cellManifestSha256: normalizeSha256(candidate.cellManifestSha256),
+  };
+}
+
+function normalizeAcceptanceCell(value) {
+  const candidate = isRecord(value) ? value : {};
+  return {
+    id: nullableString(candidate.id),
+    windowsBuild: nullableString(candidate.windowsBuild),
+    architecture: nullableString(candidate.architecture),
+    displayTopology: nullableString(candidate.displayTopology),
+    displayScalePercents: Array.isArray(candidate.displayScalePercents)
+      ? [...new Set(candidate.displayScalePercents.filter((scale) =>
+          Number.isSafeInteger(scale) && scale > 0))].sort(
+          (left, right) => left - right,
+        )
+      : [],
+    requiredEvidenceKinds: normalizeStringArray(
+      candidate.requiredEvidenceKinds,
+    ),
+  };
+}
+
+function normalizeAcceptanceCells(value) {
+  return Array.isArray(value)
+    ? value
+        .filter(isRecord)
+        .map(normalizeAcceptanceCell)
+        .sort((left, right) => (left.id ?? "").localeCompare(right.id ?? ""))
+    : [];
+}
+
 function normalizeBindings(value) {
   const candidate = isRecord(value) ? value : {};
   return {
@@ -1703,7 +1991,8 @@ function normalizeBindings(value) {
       ...normalizeArtifact(candidate.provider),
       version: nullableString(candidate.provider?.version),
     },
-    providerHelper: normalizeArtifact(candidate.providerHelper),
+    providerSeal: normalizeFileArtifact(candidate.providerSeal),
+    providerCatalog: normalizeArtifact(candidate.providerCatalog),
     releasePolicy: normalizeReleasePolicy(candidate.releasePolicy),
     candidateManifest: normalizeCandidateManifest(candidate.candidateManifest),
   };
@@ -1737,20 +2026,41 @@ function normalizeReleasePolicy(value) {
     path: nullableString(candidate.path),
     sha256: normalizeSha256(candidate.sha256),
     verified: candidate.verified === true,
+    schemaVersion: safePositiveInteger(candidate.schemaVersion),
     kind: nullableString(candidate.kind),
     policyVersion: safePositiveInteger(candidate.policyVersion),
+    status: nullableString(candidate.status),
     approvedBy: nullableString(candidate.approvedBy),
     approvedAt: nullableString(candidate.approvedAt),
+    windowsAcceptanceOwner: nullableString(candidate.windowsAcceptanceOwner),
+    requiredSigningTier: nullableString(candidate.requiredSigningTier),
+    requiredDistributionChannel: nullableString(
+      candidate.requiredDistributionChannel,
+    ),
+    requiredProductionEligible: nullableBoolean(
+      candidate.requiredProductionEligible,
+    ),
+    requiredTestAuthorityKind:
+      candidate.requiredTestAuthorityKind === null
+        ? null
+        : nullableString(candidate.requiredTestAuthorityKind),
     lingSignerSubject: nullableString(candidate.lingSignerSubject),
     providerSignerSubject: nullableString(candidate.providerSignerSubject),
+    catalogSignerSubject: nullableString(candidate.catalogSignerSubject),
     lingSignerCertificateSha256: normalizeSha256(
       candidate.lingSignerCertificateSha256,
     ),
     providerSignerCertificateSha256: normalizeSha256(
       candidate.providerSignerCertificateSha256,
     ),
+    catalogSignerCertificateSha256: normalizeSha256(
+      candidate.catalogSignerCertificateSha256,
+    ),
     supportedWindowsBuilds: normalizeStringArray(
       candidate.supportedWindowsBuilds,
+    ),
+    requiredAcceptanceCells: normalizeAcceptanceCells(
+      candidate.requiredAcceptanceCells,
     ),
     manualEvidenceReviewers: normalizeStringArray(
       candidate.manualEvidenceReviewers,
@@ -1784,11 +2094,109 @@ function normalizeAttestorKeys(value) {
 
 function normalizeCandidateManifest(value) {
   const candidate = isRecord(value) ? value : {};
+  const packagedProvider = isRecord(candidate.packagedProvider)
+    ? candidate.packagedProvider
+    : {};
   return {
     path: nullableString(candidate.path),
     sha256: normalizeSha256(candidate.sha256),
     verified: candidate.verified === true,
+    schemaVersion: safePositiveInteger(candidate.schemaVersion),
+    kind: nullableString(candidate.kind),
+    commit: nullableLowercase(candidate.commit),
+    releasePolicySha256: normalizeSha256(candidate.releasePolicySha256),
+    signingTier: nullableString(candidate.signingTier),
+    distributionChannel: nullableString(candidate.distributionChannel),
+    productionEligible: nullableBoolean(candidate.productionEligible),
+    testAuthorityKind:
+      candidate.testAuthorityKind === null
+        ? null
+        : nullableString(candidate.testAuthorityKind),
+    preSignPayloadSha256: normalizeSha256(candidate.preSignPayloadSha256),
+    packagedProvider: {
+      providerRelativePath: normalizePortableRelativePath(
+        packagedProvider.providerRelativePath,
+      ),
+      providerSealRelativePath: normalizePortableRelativePath(
+        packagedProvider.providerSealRelativePath,
+      ),
+      providerSealSha256: normalizeSha256(
+        packagedProvider.providerSealSha256,
+      ),
+      providerCatalogRelativePath:
+        packagedProvider.providerCatalogRelativePath === null
+          ? null
+          : normalizePortableRelativePath(
+              packagedProvider.providerCatalogRelativePath,
+            ),
+      providerCatalogSha256: normalizeSha256(
+        packagedProvider.providerCatalogSha256,
+      ),
+      auditOnlyUiAccessSha256: normalizeSha256(
+        packagedProvider.auditOnlyUiAccessSha256,
+      ),
+      providerAuthenticodeSignerSubject: nullableString(
+        packagedProvider.providerAuthenticodeSignerSubject,
+      ),
+      providerAuthenticodeCertificateSha256: normalizeSha256(
+        packagedProvider.providerAuthenticodeCertificateSha256,
+      ),
+    },
+    tierGovernedArtifacts: normalizeGovernedArtifacts(
+      candidate.tierGovernedArtifacts,
+    ),
+    vendorNativeInventory: normalizeVendorNativeInventory(
+      candidate.vendorNativeInventory,
+    ),
     error: nullableString(candidate.error),
+  };
+}
+
+function normalizeGovernedArtifacts(value) {
+  const candidate = isRecord(value) ? value : {};
+  return {
+    lingApp: normalizeGovernedArtifact(candidate.lingApp),
+    lingInstaller: normalizeGovernedArtifact(candidate.lingInstaller),
+    lingUninstaller: normalizeGovernedArtifact(candidate.lingUninstaller),
+    provider: normalizeGovernedArtifact(candidate.provider),
+    providerCatalog:
+      candidate.providerCatalog === null
+        ? null
+        : normalizeGovernedArtifact(candidate.providerCatalog),
+  };
+}
+
+function normalizeGovernedArtifact(value) {
+  const candidate = isRecord(value) ? value : {};
+  return {
+    relativePath: normalizePortableRelativePath(candidate.relativePath),
+    sha256: normalizeSha256(candidate.sha256),
+    authenticodeStatus: nullableString(candidate.authenticodeStatus),
+    signerSubject: nullableString(candidate.signerSubject),
+    certificateSha256: normalizeSha256(candidate.certificateSha256),
+    timestampPolicy: nullableString(candidate.timestampPolicy),
+    timestampStatus: nullableString(candidate.timestampStatus),
+  };
+}
+
+function normalizeVendorNativeInventory(value) {
+  return Array.isArray(value)
+    ? value.filter(isRecord).map((entry) => ({
+        relativePath: normalizePortableRelativePath(entry.relativePath),
+        sha256: normalizeSha256(entry.sha256),
+        authenticodeStatus: nullableString(entry.authenticodeStatus),
+        signerSubject: nullableString(entry.signerSubject),
+        certificateSha256: normalizeSha256(entry.certificateSha256),
+      }))
+    : [];
+}
+
+function normalizeFileArtifact(value) {
+  const candidate = isRecord(value) ? value : {};
+  return {
+    path: nullableString(candidate.path),
+    exists: candidate.exists === true,
+    sha256: normalizeSha256(candidate.sha256),
   };
 }
 
@@ -1963,6 +2371,11 @@ function normalizeSha256(value) {
   return candidate && SHA256_PATTERN.test(candidate) ? candidate : null;
 }
 
+function normalizePortableRelativePath(value) {
+  const candidate = nullableString(value);
+  return candidate?.replaceAll("\\", "/") ?? null;
+}
+
 function normalizeStringArray(value) {
   if (!Array.isArray(value)) {
     return [];
@@ -2090,7 +2503,10 @@ async function main() {
   if (values.output) {
     const outputPath = resolve(values.output);
     await mkdir(dirname(outputPath), { recursive: true });
-    await writeFile(outputPath, serialized, "utf8");
+    await writeFile(outputPath, serialized, {
+      encoding: "utf8",
+      flag: report.mode === "Full" ? "wx" : "w",
+    });
   } else {
     process.stdout.write(serialized);
   }

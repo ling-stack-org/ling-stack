@@ -339,128 +339,126 @@ closed；development tuple 必须让所有预期 governed PE 派生为 `unsigned
 policy，并进入独立 normalized hash/signer inventory；本设计不静默启用 `signDlls`。
 Authenticode `Status=Valid` 不等于 SmartScreen reputation 或 WDAC/App Control 放行。
 
-### 当前 Full evidence contract（迁移前）
+### Bundled Full evidence 与 handoff contract
 
-以下 `Full` runner/policy/candidate-manifest 细节描述当前已实现的 external-provider
-baseline。Bundled implementation plan 的 Slice 8 必须把 upstream signer、archive hash 和
-`-ProviderBinary` 输入迁移为 Ling source-build lock、main-PE post-sign seal、signed
-resource catalog 和 packaged provider path；迁移前这段不能作为 bundled target
-contract。
+Slice 8 已将 live contract 原子迁移到 candidate manifest v4、release policy v3、
+review/build attestation v2、release verification v2、internal verification v1 和 immutable
+cell/matrix schemas。TryCua release tuple 只保留 source provenance；运行时信任绑定最终
+private main PE、provider seal、signed catalog、Setup/app/uninstaller 和实际观察到的
+Authenticode signer。standard 包不得包含 `cua-driver-uia.exe` 或任何额外 provider
+executable。
 
-Windows `Full` 当前必须通过 `run-windows-acceptance.ps1 -Mode Full`，并额外提供：
-
-- 经负责人批准的 release policy，包含固定 policy version、approver、approval time、Ling
-  Publisher subject、provider upstream signer subject、双方签名证书 SHA-256 和支持的
-  Windows build allowlist，以及 reviewer/build-attestor identity、key id、算法和 canonical
-  SPKI SHA-256 指纹；两类角色的 identity、key id 和 SPKI 必须跨角色互斥，结构见
-  [Windows release policy schema](./evidence/windows-release-policy.schema.json)；
-- 与当前 commit、policy hash、Ling app/installer、固定 upstream archive tuple，以及
-  `cua-driver.exe`、`cua-driver-uia.exe` 两个固定 hash 一致的 content-addressed candidate
-  manifest；manifest v3 还必须记录 clean candidate commit 对应的 daemon payload strategy
-  和 tree SHA-256，结构见
-  [Windows candidate manifest schema](./evidence/windows-candidate-manifest.schema.json)；
-- 六份符合
-  [Windows Full manual evidence schema](./evidence/windows-full-manual-evidence.schema.json)
-  的独立 JSON：supported build、跨双屏/两档 DPI、Narrator、NVDA、SmartScreen，以及
-  clean baseline/install/installed smoke/update/uninstall/零残留。每份 evidence 都必须
-  绑定 candidate manifest SHA、当前 host/session/build、case outcome、与 operator 不同的
-  reviewer routing claim，以及 report-relative retained attachment hash，禁止跨 kind 复用
-  同一 evidence 文件。该 reviewer JSON 只是未验证的路由元数据，不能关闭发布门禁。
-
-Full runner 在执行 NSIS 前先校验 installer 和 standalone app 的 Authenticode status、
-Publisher subject 与 certificate SHA；安装后再次校验 installed app/uninstaller，并要求
-installed app hash 等于 candidate manifest。签名不可信的 uninstaller 即使处于失败清理
-路径也不得执行。runner 同时记录自身及 provider/report scripts 的 SHA，并由异步 verifier
-按 candidate commit 的 Git blob 重新验证；report 自带路径或 Git 可执行文件不能成为信任锚。
-Full 调用方还必须从 release orchestrator 独立传入 expected candidate commit、expected clean
-repository root 和 expected release-policy SHA-256。Node file validator 会把三项外部锚分别与
-report binding、harness commit/root、已重算 hash 的 policy reference 交叉比对；Preflight
-不要求这三项外部参数，但仍然不能产生 Full PASS。这三个 caller-fixed 外部信任锚的本地
-实现和定向测试已完成；它们防止 report 自己指定信任根，但不构成 Windows VM 发布证据。
-三锚也不验证 manual evidence JSON 内自报的 reviewer 身份；仅命中 policy reviewer
-allowlist 不能作为信任证明。Windows Full 必须在独立信任边界验证 detached reviewer
-attestation，缺失或不匹配时 fail closed。报告生成器即使得到
-`fullAcceptanceStatus=PASS`，仍固定输出 `releaseReady=false` 和两个 blocker：
-`external_reviewer_attestation_unverified`、`candidate_build_provenance_unverified`。
-此时 `releaseStatus=MANUAL_REVIEW_REQUIRED`，不能把 Full gates PASS 当成发布 PASS。
-第二个 blocker 只有 policy-pinned build attestor 对 candidate manifest v3 中的 commit、
-daemon strategy/tree SHA 和 artifact tuple 进行 detached signature 后才能关闭；这覆盖从
-clean candidate commit 确定性重建 ignored `packages/daemon/dist`，或只运行 signed
-candidate 内嵌 daemon 的两种策略。
+受保护的 release workflow 分两步生成交接包。第一步从干净 candidate commit、批准的
+policy、签名前 provider、最终 artifacts、实际签名 observation 和 vendor native inventory
+生成不可覆盖的 candidate v4：
 
 ```powershell
-& apps/desktop/tests/run-windows-acceptance.ps1 `
-  -Mode Full `
-  -Output apps/desktop/test-results/windows-full-acceptance.json `
-  -LingAppPath <signed-unpacked-exe> `
-  -LingInstallerPath <signed-nsis-exe> `
-  -ProviderBinary <pinned-cua-driver.exe> `
-  -ReleasePolicy <approved-windows-release-policy.json> `
-  -CandidateManifest <windows-candidate-manifest-v3.json> `
-  -ExpectedCandidateCommit <candidate-commit> `
-  -ExpectedRepositoryRoot <absolute-clean-repository-root> `
-  -ExpectedReleasePolicySha256 <approved-policy-sha256> `
-  -WindowsVersionEvidence <windows-version.json> `
-  -DisplayEvidence <dual-display-dpi.json> `
-  -NarratorEvidence <narrator.json> `
-  -NvdaEvidence <nvda.json> `
-  -SmartScreenEvidence <smartscreen.json> `
-  -InstallLifecycleEvidence <install-lifecycle.json>
+node apps/desktop/tests/produce-windows-acceptance-handoff.mjs `
+  --candidate-source <candidate-production-input.json> `
+  --release-policy <windows-release-policy-v3.json> `
+  --repository-root <clean-candidate-repository> `
+  --git-executable <absolute-trusted-git.exe> `
+  --candidate-output <windows-candidate-manifest-v4.json>
 ```
 
-该 Full producer 在 gates PASS 时仍以 code 2 返回，表示证据包已生成但发布人工复核/构建
-证明尚未完成；只有下面的独立 verifier 成功后才有 release PASS。
+`candidate-production-input.json` 使用 `schemaVersion=1`、
+`kind="ling.windows.candidate-production-input"`，并包含：
 
-两个 detached signature 必须由独立 verifier 复算 canonical evidence digest、SPKI 指纹和
-签名，并拒绝 reviewer/build 角色复用 identity、key id 或同一真实 RSA key，之后才生成
-单独的 release verification；builder/PowerShell runner 本身没有
-`releaseReady=true` 路径：
+- `preSignProvider.path` 与 `auditOnlyUiAccess.path`；
+- `daemonPayload.strategy/treeSha256`；
+- `artifacts` 的 `lingApp`、`lingInstaller`、`lingUninstaller`、`provider`、
+  `providerSeal`、`providerCatalog`。除 seal 外，每项包含 source-relative `path`、最终包内
+  `relativePath` 和实际观察到的 `authenticodeStatus/signerSubject/certificateSha256/
+  timestampStatus`；
+- 排序后的 `vendorNativeInventory`，每项包含 source-relative `path`、包内
+  `relativePath` 和 observed signature。未签 vendor 文件必须显式使用 `NotSigned + null`
+  signer，而不是省略。
+
+`requiredEvidenceKinds` 当前是固定的 standard 集合：`accessibility`、`display`、
+`install-lifecycle`、`provider-runtime`；未知值、漏项或拼写漂移都失败。producer 把每个
+vendor native 文件复制到 handoff 的 candidate app tree 并复算 digest，不能只复制清单。
+
+所有 path 都相对该 JSON 文件解析，禁止绝对路径、`..`、symlink 和非普通文件。producer
+复算每个 SHA，并要求 governed signer 与 policy 完全一致；这些 input observations 后续仍
+会由 Windows Full runner 对 installed candidate 独立复验。
+
+Windows evidence documents 必须绑定该 candidate 文件的实际 SHA-256。收齐 policy 的每个
+cell 后，第二步复算 candidate、拒绝 artifact drift，复制 exact candidate/policy/artifacts/
+attachments、克隆 exact clean commit，并原子发布新的 handoff root：
+
+`windows-acceptance-evidence-map.json` 使用 `schemaVersion=1`、
+`kind="ling.windows.acceptance-evidence-map"`，`cells` 必须与 policy 顺序及集合完全一致。
+每个 cell 的 `manualEvidence` 精确列出 `windowsVersion/display/narrator/nvda/
+smartScreen/installLifecycle` 的 map-relative JSON 路径；internal profile 的 SmartScreen
+固定为 `null`，production profile 必须提供。producer 同时复制并重哈希每份 evidence 的
+report-relative attachments，禁止文件或 digest 跨 kind/cell 复用。
 
 ```powershell
-node apps/desktop/tests/verify-windows-release-attestations.mjs `
-  --report apps/desktop/test-results/windows-full-acceptance.json `
-  --review-attestation <detached-review.json> `
-  --reviewer-public-key <reviewer-public-key.pem> `
-  --candidate-build-attestation <detached-build.json> `
-  --candidate-build-public-key <build-attestor-public-key.pem> `
-  --git-executable <trusted-git.exe> `
-  --expected-candidate-commit <candidate-commit> `
-  --expected-repository-root <absolute-clean-repository-root> `
-  --expected-release-policy-sha256 <approved-policy-sha256> `
-  --output apps/desktop/test-results/windows-release-verification.json
+node apps/desktop/tests/produce-windows-acceptance-handoff.mjs `
+  --candidate-source <candidate-production-input.json> `
+  --release-policy <windows-release-policy-v3.json> `
+  --repository-root <clean-candidate-repository> `
+  --git-executable <absolute-trusted-git.exe> `
+  --candidate-manifest <windows-candidate-manifest-v4.json> `
+  --evidence-map <windows-acceptance-evidence-map.json> `
+  --output-root <new-handoff-root>
 ```
 
-仅检测到读屏程序已安装、当前存在两个 display、或 Authenticode `Status=Valid` 不足以
-关闭门禁。Full runner 还会拒绝非 x64 host、未批准 policy、未知 Publisher、未签名
-provider helper、非固定 upstream archive/binary hash、exitCode/error 与 `passed=true`
-冲突的 probe，以及没有显式绝对路径的 provider。Preflight 同样不再从 PATH
-发现 provider；只有调用者显式提供并通过两个固定 binary SHA 校验后，verifier 才会
-执行 `--version`。provider verifier 的 PowerShell、解压和超时清理工具使用系统绝对路径；
-PowerShell runner 对 Node/Git/provider smoke 均有有限时长和进程树清理，超时不会遗留旧的
-PASS 报告。当前 macOS 主机没有 `pwsh`，也没有 Windows PowerShell；上述 PowerShell
-runner 只经过 Node 静态契约验证，PowerShell parser/runtime 和真实 Windows 执行尚未验证。
+handoff 发布先用不可替换的 `mkdir` 原子 claim 最终 root，逐项移动内容，并最后移动
+`handoff-index.json` 作为 ready boundary。并发创建的空目录或崩溃残留不会被覆盖；重跑必须
+选择新路径。
 
-首个 installer 固定为当前用户安装。企业级 all-users/per-machine 包若需要，应作为
-独立 artifact 和验收通道，不能在当前候选中临时切换安装范围。
-
-### Bundled target handoff
-
-Bundled target 不再让操作员手工拼接当前 baseline 参数。Slice 8 产出 internal 与
-production profile 各自的 common `handoff-index.json` 和每个 immutable cell 的
-`windows-cell-handoff.json`；两种 profile 的 candidate/hash/evidence 不能复用。Windows
-同事只运行：
+producer 固定最低 Node 22.0.0、PowerShell 7.4.0 和 Git 2.45.0；Full runner 在执行任何
+candidate 操作前验证这些版本。输出 root、candidate、cell report、matrix 和 verification
+均使用 exclusive-create，重跑必须使用新路径和新 `runId`。Windows 同事每个 cell 只运行：
 
 ```powershell
-& apps/desktop/tests/run-windows-acceptance.ps1 `
-  -HandoffManifest <windows-cell-handoff.json>
+& <handoff-root>/repository/apps/desktop/tests/run-windows-acceptance.ps1 `
+  -HandoffManifest <handoff-root>/cells/<cell-id>.json
 ```
 
-每次运行 exclusive-create 一个 cell report。每个报告同时绑定共同
-`handoffIndexSha256` 和独立 `cellManifestSha256`。profile-aware finalizer 必须验证 policy
-的全部 `requiredAcceptanceCells`、相同 candidate/tier/channel/seal/catalog/policy/harness
-closure，并拒绝 missing/extra/duplicate/cross-cell evidence。producer/finalizer 不能
-self-promote；独立 verifier 对 test-signed profile 最多输出 `INTERNAL_TEST_PASS`，对
-production profile 完整验签和生产门禁后才可输出 `RELEASE_PASS`。
+runner 安装 Setup 后只从 Ling 私有 resource path 读取 provider/lock/seal/catalog，拒绝 PATH、
+旧 CuaDriver 安装、UIAccess helper、任何额外 distribution/platform/payload member（包括
+EXE、DLL、数据文件、目录、symlink）、
+错误 signer/hash 和不可信 uninstaller；
+installed verifier 解析 source lock/seal tuple，并通过可信 Windows `Test-FileCatalog` 与
+Authenticode 验证当前 payload 精确成员，并要求 candidate pre-sign SHA 与 source lock 主
+二进制 SHA 相同。packaged Desktop smoke 启动前移除 legacy provider command override，
+随后通过 daemon `enable` 链初始化 Desktop 发布的 generation lease；daemon 必须返回
+`bundled_embedded + ready`、seal/catalog digest 与非空工具表，同时 Desktop 主进程必须观察
+runtime-eligible package authority、Win32 platform owner、ready child，并断言 child 的绝对
+路径就是安装目录内的 `resources/providers/.../payload/cua-driver.exe`。activation 后，
+Desktop 使用 bridge token 请求 daemon 的 provider-target verification；daemon 必须经当前
+generation client 调 bundled child 的 `list_windows`，并精确匹配 test-owned PID/HWND。
+结构化 runtime proof 必须与 activation 的 Desktop instance/epoch、generation、seal/catalog
+digest 一致，同时绑定 child PID、child nonce digest、绝对路径和 target。该证明在 Desktop
+重启后重复一次；runner 必须先观察旧 child PID 退出，再要求新的 Desktop instance 与 child
+PID/nonce。新 Desktop 的数值 generation 可以重新从 `1` 开始，轮换判据是完整 authority
+tuple，而不是跨进程单调数字。helper 注入的 descriptor 只用于指定 capture target，不能
+替代 bundled resolver、daemon tool exchange、child/readiness 证据。runner 还逐项复验 candidate
+记录的 installed vendor native hash/Authenticode observation，且
+任何主流程失败后的清理卸载也必须同时匹配 policy signer 和 candidate uninstaller hash。
+它在卸载前完成 read-only provider verifier 与 smoke，并在清理后写出仍固定
+`MANUAL_REVIEW_REQUIRED + releaseReady=false` 的 immutable report。
+
+所有 cell 完成后，由受保护 workflow 将 index/candidate/policy digest 和 candidate commit
+作为外部锚传给 `finalize-windows-signed-acceptance.mjs`。finalizer 要求 policy cell 恰好各一
+份，重新哈希每个 manifest/report/attachment，拒绝 missing/extra/duplicate/cross-cell、
+symlink/reparse escape 和 tuple/harness drift。matrix 仍不能 self-promote。最后由两个
+policy-pinned、角色互斥的 detached signatures 驱动 profile-aware verifier：
+
+- `verify-windows-internal-attestations.mjs` 只接受
+  `test_signed_internal + internal`，最高输出 `INTERNAL_TEST_PASS`，固定
+  `releaseReady=false` 与 `production_signing_required`；
+- `verify-windows-release-attestations.mjs` 只接受
+  `production_signed + production`，完成生产门禁后才可输出 `RELEASE_PASS` 和
+  `releaseReady=true`。
+
+仅检测到读屏程序已安装、当前存在两个 display 或 Authenticode `Status=Valid` 都不足以
+关闭门禁。当前 macOS 开发机没有 `pwsh`，所以 PowerShell runner 仅通过 Node 静态契约；
+PowerShell parser/runtime、真实 test-signed Setup 和 Windows VM matrix 仍由 hosted/managed
+Windows lane 与 Windows 同事验收。首个 installer 固定为当前用户安装；all-users 包仍是
+独立 artifact/验收通道。
 
 ## Clean-machine 顺序
 

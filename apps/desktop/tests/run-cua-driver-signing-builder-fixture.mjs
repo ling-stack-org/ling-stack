@@ -62,17 +62,21 @@ try {
     outputRoot,
     platform === "win32" ? "cua-driver.exe" : "cua-driver",
   );
+  const packagedUiAccessProviders = platform === "win32"
+    ? await findNamedFiles(outputRoot, "cua-driver-uia.exe")
+    : [];
   const packagedSeals = await findNamedFiles(outputRoot, "provider-seal.json");
   const packagedCatalogs = await findNamedFiles(outputRoot, "provider-integrity.cat");
   if (
     packagedCapabilities.length !== expectedCopies
     || packagedPolicies.length !== expectedCopies
     || packagedProviders.length !== expectedCopies
+    || packagedUiAccessProviders.length !== 0
     || packagedSeals.length !== expectedCopies
     || packagedCatalogs.length !== (platform === "win32" ? expectedCopies : 0)
   ) {
     throw new Error(
-      `electron_builder_fixture_private_resources_invalid:${packagedCapabilities.length}:${packagedPolicies.length}:${packagedProviders.length}:${packagedSeals.length}:${packagedCatalogs.length}`,
+      `electron_builder_fixture_private_resources_invalid:${packagedCapabilities.length}:${packagedPolicies.length}:${packagedProviders.length}:${packagedUiAccessProviders.length}:${packagedSeals.length}:${packagedCatalogs.length}`,
     );
   }
   for (const path of packagedCapabilities) {

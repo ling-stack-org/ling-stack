@@ -1,0 +1,126 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ling-stack.dev/schemas/windows-signed-acceptance-matrix-v1.json",
+  "title": "Ling finalized Windows signed acceptance matrix",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "kind",
+    "finalizedAt",
+    "handoffIndexSha256",
+    "candidateManifestSha256",
+    "releasePolicySha256",
+    "candidateCommit",
+    "signingTier",
+    "distributionChannel",
+    "productionEligible",
+    "testAuthorityKind",
+    "artifacts",
+    "harness",
+    "manualReviewerIds",
+    "cells",
+    "evidenceSha256",
+    "verdict"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "kind": { "const": "ling.windows.signed-acceptance-matrix" },
+    "finalizedAt": { "type": "string", "format": "date-time" },
+    "handoffIndexSha256": { "$ref": "#/$defs/sha256" },
+    "candidateManifestSha256": { "$ref": "#/$defs/sha256" },
+    "releasePolicySha256": { "$ref": "#/$defs/sha256" },
+    "candidateCommit": { "$ref": "#/$defs/commit" },
+    "signingTier": { "enum": ["test_signed_internal", "production_signed"] },
+    "distributionChannel": { "enum": ["internal", "production"] },
+    "productionEligible": { "type": "boolean" },
+    "testAuthorityKind": { "type": ["string", "null"], "enum": ["ephemeral-ci", "managed-internal", null] },
+    "artifacts": { "$ref": "#/$defs/artifactDigests" },
+    "harness": { "$ref": "#/$defs/harness" },
+    "manualReviewerIds": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "cells": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/cellResult" }
+    },
+    "evidenceSha256": { "$ref": "#/$defs/sha256" },
+    "verdict": { "$ref": "#/$defs/verdict" }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "signingTier": { "const": "test_signed_internal" } } },
+      "then": { "properties": { "distributionChannel": { "const": "internal" }, "productionEligible": { "const": false }, "testAuthorityKind": { "enum": ["ephemeral-ci", "managed-internal"] } } }
+    },
+    {
+      "if": { "properties": { "signingTier": { "const": "production_signed" } } },
+      "then": { "properties": { "distributionChannel": { "const": "production" }, "productionEligible": { "const": true }, "testAuthorityKind": { "const": null } } }
+    }
+  ],
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "commit": { "type": "string", "pattern": "^[0-9a-f]{40}([0-9a-f]{24})?$" },
+    "safeRelativePath": { "type": "string", "minLength": 1, "pattern": "^(?![A-Za-z]:|[/\\\\]|.*(?:^|[/\\\\])\\.\\.(?:[/\\\\]|$)).+$" },
+    "artifactDigests": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["lingApp", "lingInstaller", "lingUninstaller", "provider", "providerSeal", "providerCatalog"],
+      "properties": {
+        "lingApp": { "$ref": "#/$defs/sha256" },
+        "lingInstaller": { "$ref": "#/$defs/sha256" },
+        "lingUninstaller": { "$ref": "#/$defs/sha256" },
+        "provider": { "$ref": "#/$defs/sha256" },
+        "providerSeal": { "$ref": "#/$defs/sha256" },
+        "providerCatalog": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "harnessFile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "sha256"],
+      "properties": { "name": { "$ref": "#/$defs/safeRelativePath" }, "sha256": { "$ref": "#/$defs/sha256" } }
+    },
+    "harness": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["commit", "files"],
+      "properties": {
+        "commit": { "$ref": "#/$defs/commit" },
+        "files": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "$ref": "#/$defs/harnessFile" } }
+      }
+    },
+    "cellResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["cellId", "runId", "cellManifestSha256", "reportPath", "reportSha256", "reportEvidenceSha256", "fullAcceptanceStatus"],
+      "properties": {
+        "cellId": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$" },
+        "runId": { "type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$" },
+        "cellManifestSha256": { "$ref": "#/$defs/sha256" },
+        "reportPath": { "$ref": "#/$defs/safeRelativePath" },
+        "reportSha256": { "$ref": "#/$defs/sha256" },
+        "reportEvidenceSha256": { "$ref": "#/$defs/sha256" },
+        "fullAcceptanceStatus": { "const": "PASS" }
+      }
+    },
+    "verdict": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "fullAcceptanceStatus", "promotionStatus", "releaseReady", "releaseBlockers"],
+      "properties": {
+        "status": { "const": "MANUAL_REVIEW_REQUIRED" },
+        "fullAcceptanceStatus": { "const": "PASS" },
+        "promotionStatus": { "const": "ATTESTATION_REQUIRED" },
+        "releaseReady": { "const": false },
+        "releaseBlockers": {
+          "const": ["external_reviewer_attestation_unverified", "candidate_build_provenance_unverified"]
+        }
+      }
+    }
+  }
+}

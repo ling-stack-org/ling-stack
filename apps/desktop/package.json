@@ -22,6 +22,7 @@
     "smoke:computer-use:windows-provider": "corepack pnpm build && node tests/run-windows-provider-smoke.mjs",
     "verify:release-schemas": "node tests/validate-release-evidence-schemas.mjs",
     "verify:windows-provider": "node tests/verify-windows-cua-driver-provider.mjs",
+    "produce:windows-acceptance-handoff": "node tests/produce-windows-acceptance-handoff.mjs",
     "test:cua-driver-source-build": "node --test tests/cua-driver-source-build.test.mjs tests/cua-driver-source-build-promotion.test.mjs",
     "verify:cua-driver-source-build": "node scripts/verify-cua-driver-source-build.mjs",
     "promote:cua-driver-source-build": "node scripts/promote-cua-driver-source-build.mjs",

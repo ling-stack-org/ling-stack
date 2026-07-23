@@ -136,6 +136,21 @@ Computer Use file allowlist, but hosted evidence still must complete. In particu
 this slice has no successful Windows hosted native-helper compile, `Global` parent-mutex/
 private-DACL/`WAIT_ABANDONED`, or owned-process runtime execution evidence.
 
+The Windows release-evidence implementation now uses candidate manifest v4, release policy
+v3, review/build attestation v2, internal verification v1 and release verification v2.
+`produce-windows-acceptance-handoff.mjs` freezes a candidate from clean source and exact
+artifact bytes, then atomically emits the policy-bound index, cloned harness repository and
+one immutable manifest per required cell. The Full runner accepts only that manifest,
+validates pinned Node/PowerShell/Git minimums, installs and verifies the private
+provider/seal/catalog tuple plus every vendor-native hash/signature observation, and can end
+only at `MANUAL_REVIEW_REQUIRED`. Producer paths fail closed on parent-symlink escape, copied
+inventory bytes are rehashed, the standard evidence-kind set is exact, and even failure cleanup
+cannot execute an uninstaller whose candidate hash drifted. The matrix
+finalizer and profile-aware detached verifiers cap internal evidence at
+`INTERNAL_TEST_PASS + releaseReady=false`; production is a separate tuple and candidate.
+Hosted PowerShell/runtime execution and Windows-team VM sign-off remain open evidence, not
+an architecture or schema gap.
+
 Both Darwin and Win32 packaged-provider production gates remain off. Packaged Desktop
 therefore still uses the external provider path until its platform-specific runtime and
 signed package satisfy the completion gates in the implementation plan.
@@ -384,7 +399,7 @@ self-assertions. An independent verifier derives the effective tier from the exa
 tier-governed tuple—installer, installed Ling main PE, trusted uninstaller, private
 `cua-driver.exe`, and signed-tier catalog—and the channel policy. Internal/production
 tuples fail closed on mixed/double signatures, a test root in production, an unsigned
-governed member, or an unexpected executable in the private provider payload. A
+governed member, or any unexpected member in the private provider payload. A
 development tuple is valid only when every expected governed PE is derived as
 `unsigned_dev`, the catalog is absent, and the compile-time dev gate is active. Electron
 vendor DLLs outside the private provider payload retain the existing package/signing policy

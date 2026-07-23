@@ -1,0 +1,148 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ling-stack.dev/schemas/windows-cell-handoff-v1.json",
+  "title": "Ling Windows acceptance cell handoff",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "kind",
+    "runId",
+    "handoffIndex",
+    "cell",
+    "expected",
+    "inputs",
+    "outputReport",
+    "requiredToolVersions"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "kind": { "const": "ling.windows.cell-handoff" },
+    "runId": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+    },
+    "handoffIndex": { "$ref": "#/$defs/fileReference" },
+    "cell": { "$ref": "#/$defs/acceptanceCell" },
+    "expected": { "$ref": "#/$defs/expected" },
+    "inputs": { "$ref": "#/$defs/inputs" },
+    "outputReport": { "$ref": "#/$defs/pathReference" },
+    "requiredToolVersions": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["node", "powershell", "git"],
+      "properties": {
+        "node": { "type": "string", "pattern": "^>=(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$" },
+        "powershell": { "type": "string", "pattern": "^>=(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$" },
+        "git": { "type": "string", "pattern": "^>=(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$" }
+      }
+    }
+  },
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "commit": { "type": "string", "pattern": "^[0-9a-f]{40}([0-9a-f]{24})?$" },
+    "manifestRelativePath": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?![A-Za-z]:|[/\\\\]).+$"
+    },
+    "pathReference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path"],
+      "properties": { "path": { "$ref": "#/$defs/manifestRelativePath" } }
+    },
+    "fileReference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256"],
+      "properties": {
+        "path": { "$ref": "#/$defs/manifestRelativePath" },
+        "sha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "artifactDigests": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["lingApp", "lingInstaller", "lingUninstaller", "provider", "providerSeal", "providerCatalog"],
+      "properties": {
+        "lingApp": { "$ref": "#/$defs/sha256" },
+        "lingInstaller": { "$ref": "#/$defs/sha256" },
+        "lingUninstaller": { "$ref": "#/$defs/sha256" },
+        "provider": { "$ref": "#/$defs/sha256" },
+        "providerSeal": { "$ref": "#/$defs/sha256" },
+        "providerCatalog": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "expected": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["candidateCommit", "candidateManifestSha256", "releasePolicySha256", "handoffIndexSha256", "signingTier", "distributionChannel", "productionEligible", "testAuthorityKind", "artifacts", "harnessCommit"],
+      "properties": {
+        "candidateCommit": { "$ref": "#/$defs/commit" },
+        "candidateManifestSha256": { "$ref": "#/$defs/sha256" },
+        "releasePolicySha256": { "$ref": "#/$defs/sha256" },
+        "handoffIndexSha256": { "$ref": "#/$defs/sha256" },
+        "signingTier": { "enum": ["test_signed_internal", "production_signed"] },
+        "distributionChannel": { "enum": ["internal", "production"] },
+        "productionEligible": { "type": "boolean" },
+        "testAuthorityKind": { "type": ["string", "null"], "enum": ["ephemeral-ci", "managed-internal", null] },
+        "artifacts": { "$ref": "#/$defs/artifactDigests" },
+        "harnessCommit": { "$ref": "#/$defs/commit" }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "signingTier": { "const": "test_signed_internal" } } },
+          "then": { "properties": { "distributionChannel": { "const": "internal" }, "productionEligible": { "const": false }, "testAuthorityKind": { "enum": ["ephemeral-ci", "managed-internal"] } } }
+        },
+        {
+          "if": { "properties": { "signingTier": { "const": "production_signed" } } },
+          "then": { "properties": { "distributionChannel": { "const": "production" }, "productionEligible": { "const": true }, "testAuthorityKind": { "const": null } } }
+        }
+      ]
+    },
+    "manualEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["windowsVersion", "display", "narrator", "nvda", "smartScreen", "installLifecycle"],
+      "properties": {
+        "windowsVersion": { "$ref": "#/$defs/fileReference" },
+        "display": { "$ref": "#/$defs/fileReference" },
+        "narrator": { "$ref": "#/$defs/fileReference" },
+        "nvda": { "$ref": "#/$defs/fileReference" },
+        "smartScreen": { "anyOf": [{ "$ref": "#/$defs/fileReference" }, { "type": "null" }] },
+        "installLifecycle": { "$ref": "#/$defs/fileReference" }
+      }
+    },
+    "inputs": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repositoryRoot", "candidateManifest", "releasePolicy", "lingApp", "lingInstaller", "lingUninstaller", "provider", "providerSeal", "providerCatalog", "manualEvidence"],
+      "properties": {
+        "repositoryRoot": { "$ref": "#/$defs/manifestRelativePath" },
+        "candidateManifest": { "$ref": "#/$defs/fileReference" },
+        "releasePolicy": { "$ref": "#/$defs/fileReference" },
+        "lingApp": { "$ref": "#/$defs/fileReference" },
+        "lingInstaller": { "$ref": "#/$defs/fileReference" },
+        "lingUninstaller": { "$ref": "#/$defs/fileReference" },
+        "provider": { "$ref": "#/$defs/fileReference" },
+        "providerSeal": { "$ref": "#/$defs/fileReference" },
+        "providerCatalog": { "$ref": "#/$defs/fileReference" },
+        "manualEvidence": { "$ref": "#/$defs/manualEvidence" }
+      }
+    },
+    "acceptanceCell": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "windowsBuild", "architecture", "displayTopology", "displayScalePercents", "requiredEvidenceKinds"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$" },
+        "windowsBuild": { "type": "string", "minLength": 1 },
+        "architecture": { "const": "x64" },
+        "displayTopology": { "enum": ["single", "dual"] },
+        "displayScalePercents": { "type": "array", "minItems": 1, "maxItems": 2, "uniqueItems": true, "items": { "enum": [100, 150, 200] } },
+        "requiredEvidenceKinds": { "const": ["accessibility", "display", "install-lifecycle", "provider-runtime"] }
+      }
+    }
+  }
+}

@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  assertWindowsBundledRuntimeProof,
   parseExactWindowsProviderTarget,
+  parseWindowsBundledProviderActivation,
+  parseWindowsBundledProviderRuntimeProof,
   parseWindowsProviderHealthReport,
 } from "./windows-provider-smoke-support.mjs";
 
@@ -17,6 +20,168 @@ test("Windows provider smoke selects one exact PID/HWND pair without title or z-
     processId: 42,
     nativeWindowId: "1002",
   });
+});
+
+test("Windows smoke accepts only a daemon-ready bundled lease/child projection", () => {
+  const activation = parseWindowsBundledProviderActivation({
+    plugin: {
+      id: "trusted-local:cua-driver",
+      setup: {
+        distribution: "bundled_embedded",
+        providerState: "ready",
+      },
+    },
+    health: {
+      status: "ready",
+      details: {
+        providerState: "ready",
+        platform: "win32",
+        providerVersion: "0.8.3",
+        providerDistributionRevision: "ling.1",
+        integrityCoverage: "standard",
+        desktopInstanceId: "desktop-fixture",
+        desktopInstanceEpoch: 2,
+        generation: 3,
+        providerSealDigest: "a".repeat(64),
+        providerCatalogDigest: "b".repeat(64),
+      },
+    },
+    statusSnapshot: { status: "ready" },
+    tools: [bundledTool("list_windows")],
+  });
+
+  assert.deepEqual(activation, {
+    desktopInstanceId: "desktop-fixture",
+    desktopInstanceEpoch: 2,
+    generation: 3,
+    providerVersion: "0.8.3",
+    providerSealDigest: "a".repeat(64),
+    providerCatalogDigest: "b".repeat(64),
+    toolCount: 1,
+    toolIds: ["mcp_cua_driver:list_windows"],
+  });
+});
+
+test("Windows smoke rejects fake, external, or incomplete bundled activation evidence", () => {
+  const ready = {
+    plugin: {
+      id: "trusted-local:cua-driver",
+      setup: {
+        distribution: "bundled_embedded",
+        providerState: "ready",
+      },
+    },
+    health: {
+      status: "ready",
+      details: {
+        providerState: "ready",
+        platform: "win32",
+        providerVersion: "0.8.3",
+        providerDistributionRevision: "ling.1",
+        integrityCoverage: "standard",
+        desktopInstanceId: "desktop-fixture",
+        desktopInstanceEpoch: 2,
+        generation: 3,
+        providerSealDigest: "a".repeat(64),
+        providerCatalogDigest: "b".repeat(64),
+      },
+    },
+    statusSnapshot: { status: "ready" },
+    tools: [bundledTool("list_windows")],
+  };
+  const cases = [
+    ["external projection", (value) => { value.plugin.setup.distribution = "external_local"; }],
+    ["not ready", (value) => { value.health.status = "failed"; }],
+    ["missing provider seal", (value) => { delete value.health.details.providerSealDigest; }],
+    ["missing catalog", (value) => { delete value.health.details.providerCatalogDigest; }],
+    ["no tools", (value) => { value.tools = []; }],
+    ["wrong tool", (value) => { value.tools = [bundledTool("click")]; }],
+    ["duplicate tool", (value) => { value.tools.push(bundledTool("list_windows")); }],
+  ];
+  for (const [label, mutate] of cases) {
+    const value = structuredClone(ready);
+    mutate(value);
+    assert.throws(
+      () => parseWindowsBundledProviderActivation(value),
+      /windows_bundled_provider_activation_not_ready/u,
+      label,
+    );
+  }
+});
+
+test("Windows smoke binds one structured packaged runtime proof to the daemon activation and exact target", () => {
+  const activation = {
+    desktopInstanceId: "desktop-fixture",
+    desktopInstanceEpoch: 2,
+    generation: 3,
+    providerSealDigest: "a".repeat(64),
+    providerCatalogDigest: "b".repeat(64),
+  };
+  const output = `noise\nLing Stack Desktop Windows bundled provider runtime ready ${JSON.stringify({
+    schemaVersion: 1,
+    desktopInstanceId: activation.desktopInstanceId,
+    desktopInstanceEpoch: activation.desktopInstanceEpoch,
+    generation: activation.generation,
+    providerProcessId: 4321,
+    executablePath: "C:\\Program Files\\Ling Stack\\resources\\providers\\cua-driver.exe",
+    providerChildInstanceNonceSha256: "c".repeat(64),
+    lockDigest: "d".repeat(64),
+    providerSealDigest: activation.providerSealDigest,
+    providerCatalogDigest: activation.providerCatalogDigest,
+    target: {
+      platform: "windows",
+      processId: 8765,
+      nativeWindowId: "9988",
+    },
+  })}\n`;
+  const proof = parseWindowsBundledProviderRuntimeProof(output);
+
+  assert.equal(proof.providerProcessId, 4321);
+  assert.equal(
+    assertWindowsBundledRuntimeProof({
+      activation,
+      proof,
+      target: { processId: 8765, nativeWindowId: "9988" },
+      expectedExecutablePath: "c:/program files/ling stack/resources/providers/cua-driver.exe",
+    }),
+    proof,
+  );
+});
+
+test("Windows smoke fails closed on malformed, duplicated, or cross-generation runtime proof", () => {
+  const line = `Ling Stack Desktop Windows bundled provider runtime ready ${JSON.stringify({
+    schemaVersion: 1,
+    desktopInstanceId: "desktop-fixture",
+    desktopInstanceEpoch: 2,
+    generation: 3,
+    providerProcessId: 4321,
+    executablePath: "C:\\Ling\\cua-driver.exe",
+    providerChildInstanceNonceSha256: "c".repeat(64),
+    lockDigest: "d".repeat(64),
+    providerSealDigest: "a".repeat(64),
+    providerCatalogDigest: "b".repeat(64),
+    target: { platform: "windows", processId: 8765, nativeWindowId: "9988" },
+  })}`;
+  assert.throws(
+    () => parseWindowsBundledProviderRuntimeProof(`${line}\n${line}\n`),
+    /runtime_proof_count_invalid:2/u,
+  );
+  const proof = parseWindowsBundledProviderRuntimeProof(`${line}\n`);
+  assert.throws(
+    () => assertWindowsBundledRuntimeProof({
+      activation: {
+        desktopInstanceId: "desktop-fixture",
+        desktopInstanceEpoch: 2,
+        generation: 4,
+        providerSealDigest: "a".repeat(64),
+        providerCatalogDigest: "b".repeat(64),
+      },
+      proof,
+      target: { processId: 8765, nativeWindowId: "9988" },
+      expectedExecutablePath: "C:\\Ling\\cua-driver.exe",
+    }),
+    /runtime_proof_activation_mismatch/u,
+  );
 });
 
 test("Windows provider smoke rejects multiple HWNDs owned by the exact target PID", () => {
@@ -118,3 +283,13 @@ test("Windows provider smoke rejects unreviewed, degraded, and Session-0-like re
     /windows_provider_smoke_health_capability_failed/u,
   );
 });
+
+function bundledTool(rawName) {
+  return {
+    serverId: "mcp_cua_driver",
+    rawName,
+    callableNamespace: "mcp_cua_driver",
+    callableName: rawName,
+    enabled: true,
+  };
+}
