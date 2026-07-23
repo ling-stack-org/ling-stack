@@ -228,6 +228,9 @@ test("source-build workflow actions use immutable full commit SHAs", async () =>
     sourceJobs.indexOf("  cua-driver-source-build-windows:"),
     sourceJobs.indexOf("  cua-driver-source-build-promotion-macos:"),
   );
+  assert.match(windowsBuildJob, /runs-on: windows-2022/u);
+  assert.match(windowsBuildJob, /toolset: 14\.44\.35211/u);
+  assert.match(windowsBuildJob, /vsversion: 2022/u);
   const macosPromotionJob = sourceJobs.slice(
     sourceJobs.indexOf("  cua-driver-source-build-promotion-macos:"),
     sourceJobs.indexOf("  cua-driver-source-build-promotion-windows:"),
@@ -435,9 +438,10 @@ test("self-hosted native workflow is manual, identity-bound, and uses only dedic
     hostedSigningJob,
     /Run source-build promotion contract fixtures\n\s+if: runner\.os != 'Windows'/u,
   );
-  assert.equal([...caller.matchAll(/toolset: 14\.44/gu)].length, 2);
+  assert.equal([...caller.matchAll(/toolset: 14\.44(?:\.35211)?/gu)].length, 2);
+  assert.equal([...caller.matchAll(/toolset: 14\.44\.35211/gu)].length, 1);
   assert.equal([...caller.matchAll(/sdk: 10\.0\.26100\.0/gu)].length, 2);
-  assert.doesNotMatch(caller, /vsversion:/u);
+  assert.equal([...caller.matchAll(/vsversion: 2022/gu)].length, 1);
   assert.equal(
     [...caller.matchAll(/if: github\.event_name == 'workflow_dispatch' && inputs\.execution_mode == 'self-hosted-native'/gu)].length,
     1,
@@ -1744,22 +1748,22 @@ test("Windows developer-shell environment replaces case-insensitive PATH aliases
 test("Windows toolchain selects the exact locked Visual Studio beside newer installs", () => {
   const expected = {
     installationPath: "C:\\Program Files\\Microsoft Visual Studio\\2022\\Enterprise",
-    catalog: { productDisplayVersion: "17.14.37502.11" },
+    installationVersion: "17.14.37411.7",
   };
   const newer = {
     installationPath: "C:\\Program Files\\Microsoft Visual Studio\\18\\Enterprise",
-    catalog: { productDisplayVersion: "18.7.3" },
+    installationVersion: "18.7.11925.98",
   };
   assert.equal(
-    selectVisualStudioInstallation([newer, expected], "17.14.37502.11"),
+    selectVisualStudioInstallation([newer, expected], "17.14.37411.7"),
     expected,
   );
   assert.throws(
-    () => selectVisualStudioInstallation([newer], "17.14.37502.11"),
+    () => selectVisualStudioInstallation([newer], "17.14.37411.7"),
     /installation was not found/u,
   );
   assert.throws(
-    () => selectVisualStudioInstallation([expected, structuredClone(expected)], "17.14.37502.11"),
+    () => selectVisualStudioInstallation([expected, structuredClone(expected)], "17.14.37411.7"),
     /multiple Visual Studio/u,
   );
 });

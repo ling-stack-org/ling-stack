@@ -148,7 +148,7 @@ export function selectVisualStudioInstallation(installations, expectedVersion) {
   const matches = installations.filter((installation) => (
     typeof installation?.installationPath === "string"
     && installation.installationPath.length > 0
-    && installation.catalog?.productDisplayVersion === expectedVersion
+    && installation.installationVersion === expectedVersion
   ));
   assert(
     matches.length > 0,

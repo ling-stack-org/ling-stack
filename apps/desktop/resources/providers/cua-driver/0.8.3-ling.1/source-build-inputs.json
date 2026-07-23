@@ -91,7 +91,7 @@
     },
     "win32X64": {
       "runner": "ling-cua-driver-windows-x64-v1",
-      "visualStudioVersion": "17.14.37502.11",
+      "visualStudioVersion": "17.14.37411.7",
       "msvcToolsetVersion": "14.44.35211",
       "windowsSdkVersion": "10.0.26100.0",
       "target": "x86_64-pc-windows-msvc"
