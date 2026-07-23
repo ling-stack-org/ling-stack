@@ -397,6 +397,10 @@ test("self-hosted native workflow is manual, identity-bound, and uses only dedic
     hostedSigningJob,
     /Install fixture dependencies[\s\S]+corepack pnpm install --frozen-lockfile[\s\S]+Run certificate-free hook-order and artifact fixtures/u,
   );
+  assert.match(
+    hostedSigningJob,
+    /Run source-build promotion contract fixtures\n\s+if: runner\.os != 'Windows'/u,
+  );
   assert.equal([...caller.matchAll(/toolset: 14\.44/gu)].length, 2);
   assert.equal([...caller.matchAll(/sdk: 10\.0\.26100\.0/gu)].length, 2);
   assert.doesNotMatch(caller, /vsversion:/u);

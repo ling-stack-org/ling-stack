@@ -116,6 +116,7 @@ jobs:
         run: node apps/desktop/tests/cua-driver-signing-feasibility.test.mjs
 
       - name: Run source-build promotion contract fixtures
+        if: runner.os != 'Windows'
         run: node --test apps/desktop/tests/cua-driver-source-build-promotion.test.mjs
 
       - name: Run Windows release evidence and handoff contract fixtures

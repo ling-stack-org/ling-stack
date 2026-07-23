@@ -3767,8 +3767,8 @@ bool RenameHandleNoReplace(HANDLE source, HANDLE parent,
   const DWORD destination_bytes =
       static_cast<DWORD>(destination_name.size() * sizeof(wchar_t));
   const std::size_t rename_info_bytes =
-      offsetof(FILE_RENAME_INFO, FileName) + destination_bytes;
-  std::vector<std::byte> rename_buffer(rename_info_bytes);
+      offsetof(FILE_RENAME_INFO, FileName) + destination_bytes + sizeof(wchar_t);
+  std::vector<std::byte> rename_buffer(rename_info_bytes, std::byte{0});
   auto* rename_info = reinterpret_cast<FILE_RENAME_INFO*>(rename_buffer.data());
   rename_info->ReplaceIfExists = FALSE;
   rename_info->RootDirectory = parent;
