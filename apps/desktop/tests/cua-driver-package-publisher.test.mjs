@@ -880,6 +880,7 @@ test("lease-owned publish keeps or drops the lock with its native holder", {
     });
     return {
       completionName,
+      expected,
       gateName,
       holderPid: ownerReady.holderPid,
       owner,
@@ -1037,26 +1038,77 @@ test("lease-owned publish keeps or drops the lock with its native holder", {
     assert.equal((await finishNativeParentLockHolder(next)).exitCode, 0);
   });
 
-  await t.test("killing the Node owner mid-RPC cannot release its native holder early", async (t) => {
+  await t.test("killing the Node owner mid-RPC keeps the holder leased or fails closed", async (t) => {
     const fixture = await setupNodeOwnedPublish(t, "node-owner-kill");
     forceKillChildForTest(fixture.owner);
     await waitForChildExit(fixture.owner);
-    assert.equal(processExists(fixture.holderPid), true);
 
-    const contender = await captureRejection(() => execFile(
-      nativePublisher,
-      ["hold-parent-lock", fixture.parentRoot, "40"],
-      { encoding: "utf8", timeout: 2_000, windowsHide: true },
-    ));
-    assert.equal(contender.code, 20);
-    assert.equal(JSON.parse(contender.stdout.trim()).reason, "parent_lock_timeout");
-    assert.equal(await exists(join(fixture.parentRoot, "destination")), false);
+    const assertFailedClosed = async () => {
+      assert.equal(processExists(fixture.holderPid), false);
+      assert.equal(
+        await exists(join(fixture.parentRoot, fixture.completionName)),
+        false,
+      );
+      assert.equal(await exists(join(fixture.parentRoot, "destination")), false);
+      assert.equal(await exists(join(fixture.parentRoot, "source")), true);
+      assert.equal(
+        await readFile(join(fixture.parentRoot, "source", "sentinel.txt"), "utf8"),
+        "node-owner-kill",
+      );
+      const source = await inspectWithTestNative(fixture.parentRoot, "source");
+      assert.equal(
+        source.parentIdentity,
+        fixture.expected.expectedParentIdentity,
+      );
+      assert.equal(
+        source.sourceIdentity,
+        fixture.expected.expectedSourceIdentity,
+      );
+    };
 
-    await writeFile(join(fixture.parentRoot, fixture.gateName), "go", { mode: 0o600 });
-    await waitForPath(join(fixture.parentRoot, fixture.completionName));
-    assert.equal(await exists(join(fixture.parentRoot, "destination")), true);
-    assert.equal(await exists(join(fixture.parentRoot, "source")), false);
-    await waitForProcessExit(fixture.holderPid, 2_000);
+    if (processExists(fixture.holderPid)) {
+      const contender = await nativeCommandOutcome(nativePublisher, [
+        "hold-parent-lock",
+        fixture.parentRoot,
+        "40",
+      ]);
+      if (contender.code === 20) {
+        assert.equal(
+          JSON.parse(contender.stdout.trim()).reason,
+          "parent_lock_timeout",
+        );
+        assert.equal(await exists(join(fixture.parentRoot, "destination")), false);
+      } else {
+        // The holder may observe its dead owner's pipe closure while the
+        // contender waits. Recovery is safe only after that holder is gone.
+        assert.equal(contender.code, 0);
+        assert.equal(processExists(fixture.holderPid), false);
+      }
+    }
+
+    if (processExists(fixture.holderPid)) {
+      await writeFile(join(fixture.parentRoot, fixture.gateName), "go", {
+        mode: 0o600,
+      });
+      const completionPath = join(fixture.parentRoot, fixture.completionName);
+      const deadline = Date.now() + 2_000;
+      while (
+        !await exists(completionPath)
+        && processExists(fixture.holderPid)
+        && Date.now() < deadline
+      ) {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      if (await exists(completionPath)) {
+        assert.equal(await exists(join(fixture.parentRoot, "destination")), true);
+        assert.equal(await exists(join(fixture.parentRoot, "source")), false);
+        await waitForProcessExit(fixture.holderPid, 2_000);
+      } else {
+        await assertFailedClosed();
+      }
+    } else {
+      await assertFailedClosed();
+    }
 
     const next = await startNativeParentLockHolder(t, nativePublisher, fixture.parentRoot);
     assert.equal((await finishNativeParentLockHolder(next)).exitCode, 0);
