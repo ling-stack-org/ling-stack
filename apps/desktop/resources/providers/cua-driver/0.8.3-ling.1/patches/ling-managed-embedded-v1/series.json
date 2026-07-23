@@ -4,7 +4,7 @@
   "implementationStatus": "runtime_integrated",
   "upstreamCommit": "0612c26b2c7b8556f6de7f6b4f3927ecac914e4f",
   "seriesDigestAlgorithm": "sha256(id:patchSha256 followed by LF, in manifest order)",
-  "seriesSha256": "eb37d4bd378e49fdb98b0e51e6da1f13acc1c1818f5b5a0c4c237fcf977409ae",
+  "seriesSha256": "10e233e4c76d17177c6bf1c659a64332af787a441deb231b8ae52a7c9d4ecf6d",
   "patches": [
     {
       "id": "ling-embedded-state-home-v1",
@@ -35,6 +35,11 @@
       "id": "ling-windows-zoom-test-identity-v1",
       "file": "0006-ling-windows-zoom-test-identity-v1.patch",
       "sha256": "1f46cc4391877e861e265cf14d23e694c207023aaab631fb370d85a1c1f17360"
+    },
+    {
+      "id": "ling-windows-atomic-replace-handle-v1",
+      "file": "0007-ling-windows-atomic-replace-handle-v1.patch",
+      "sha256": "a2d09f3ad5d25c6ab82a1b735e692e9c3a35c78a2f4d644e46f5fa9246b777a6"
     }
   ],
   "rustfmtPaths": [

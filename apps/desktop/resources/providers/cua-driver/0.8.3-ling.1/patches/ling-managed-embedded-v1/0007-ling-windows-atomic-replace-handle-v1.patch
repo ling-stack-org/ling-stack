@@ -1,0 +1,15 @@
+diff --git a/libs/cua-driver/rust/crates/cua-driver-core/src/ling_managed.rs b/libs/cua-driver/rust/crates/cua-driver-core/src/ling_managed.rs
+index 62bd0c7..f80981c 100644
+--- a/libs/cua-driver/rust/crates/cua-driver-core/src/ling_managed.rs
++++ b/libs/cua-driver/rust/crates/cua-driver-core/src/ling_managed.rs
+@@ -851,7 +851,10 @@ mod platform {
+             file.write_all(bytes)
+                 .map_err(|error| format!("failed to write managed file: {error}"))?;
+             file.sync_all()
+                 .map_err(|error| format!("failed to sync managed file: {error}"))?;
++            // Windows can reject ReplaceFileW while this process still owns the
++            // temporary file's write handle, even when delete sharing is enabled.
++            drop(file);
+             let temp_handle = open_path_handle(&temporary)?;
+             validate_handle(&temp_handle, false, true)?;
+             drop(temp_handle);

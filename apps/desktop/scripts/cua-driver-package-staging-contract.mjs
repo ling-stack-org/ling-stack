@@ -11,7 +11,7 @@ export const CUA_DRIVER_COMMITTED_LOCK_SHA256 =
 // promotion. A custom --resource-root must carry these exact reviewed bytes;
 // self-consistent replacement inputs cannot authorize their own lock record.
 export const CUA_DRIVER_COMMITTED_SOURCE_BUILD_INPUTS_SHA256 =
-  "65a4ea14ece243951b8163e08e6da79b9a27050fc86817e6e2c33dbcc9462178";
+  "0ab9622da5764df89ef5847521ccca4c43566bbdbbdd7ad9e50bede5eae21c6b";
 
 const SUPPORTED_PLATFORMS = new Set(["darwin", "win32-x64"]);
 

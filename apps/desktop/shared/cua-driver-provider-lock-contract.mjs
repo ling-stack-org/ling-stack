@@ -275,6 +275,7 @@ function validatePatchSet(value) {
     "ling-windows-capability-errors-v1",
     "ling-windows-hosted-acceptance-v1",
     "ling-windows-zoom-test-identity-v1",
+    "ling-windows-atomic-replace-handle-v1",
   ];
   if (!isRecord(value)
     || value.id !== "ling-managed-embedded-v1"
