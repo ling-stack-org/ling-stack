@@ -4,7 +4,7 @@
   "implementationStatus": "runtime_integrated",
   "upstreamCommit": "0612c26b2c7b8556f6de7f6b4f3927ecac914e4f",
   "seriesDigestAlgorithm": "sha256(id:patchSha256 followed by LF, in manifest order)",
-  "seriesSha256": "22ed5e5c2e8a365c143bd98c905c97d1527b868bc6a38cf7ab5430b13e1087cf",
+  "seriesSha256": "eb37d4bd378e49fdb98b0e51e6da1f13acc1c1818f5b5a0c4c237fcf977409ae",
   "patches": [
     {
       "id": "ling-embedded-state-home-v1",
@@ -30,6 +30,11 @@
       "id": "ling-windows-hosted-acceptance-v1",
       "file": "0005-ling-windows-hosted-acceptance-v1.patch",
       "sha256": "88df752ef740fae58c97237b6d95f66513674522fa1b87f48d91c98ab3326d1c"
+    },
+    {
+      "id": "ling-windows-zoom-test-identity-v1",
+      "file": "0006-ling-windows-zoom-test-identity-v1.patch",
+      "sha256": "1f46cc4391877e861e265cf14d23e694c207023aaab631fb370d85a1c1f17360"
     }
   ],
   "rustfmtPaths": [
@@ -55,6 +60,7 @@
     "libs/cua-driver/rust/crates/cua-driver/src/telemetry.rs",
     "libs/cua-driver/rust/crates/cua-driver/src/version_check.rs",
     "libs/cua-driver/rust/crates/cua-driver/tests/ling_managed_native.rs",
+    "libs/cua-driver/rust/crates/cua-driver/tests/protocol_media_test.rs",
     "libs/cua-driver/rust/crates/pip-preview/src/lib.rs",
     "libs/cua-driver/rust/crates/platform-macos/src/tools/mod.rs",
     "libs/cua-driver/rust/crates/platform-macos/src/tools/set_config.rs",

@@ -279,7 +279,7 @@ export async function verifyProviderInputs(resourceRoot = PROVIDER_RESOURCE_ROOT
     Array.isArray(series.remainingRuntimeWork) && series.remainingRuntimeWork.length === 0,
     "runtime-integrated patch series cannot leave runtime work unlisted",
   );
-  assert(Array.isArray(series.patches) && series.patches.length === 5, "expected five patches");
+  assert(Array.isArray(series.patches) && series.patches.length === 6, "expected six patches");
   assertDeepEqual(
     series.patches.map(({ id, file }) => ({ id, file })),
     [
@@ -288,6 +288,7 @@ export async function verifyProviderInputs(resourceRoot = PROVIDER_RESOURCE_ROOT
       { id: "ling-managed-lifetime-v1", file: "0003-ling-managed-lifetime-v1.patch" },
       { id: "ling-windows-capability-errors-v1", file: "0004-ling-windows-capability-errors-v1.patch" },
       { id: "ling-windows-hosted-acceptance-v1", file: "0005-ling-windows-hosted-acceptance-v1.patch" },
+      { id: "ling-windows-zoom-test-identity-v1", file: "0006-ling-windows-zoom-test-identity-v1.patch" },
     ],
     "patch order and identity",
   );
