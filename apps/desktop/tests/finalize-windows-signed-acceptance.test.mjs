@@ -85,7 +85,14 @@ test("cell loader resolves the one-input handoff beneath its anchored root", asy
     assert.equal(resolved.cell.id, "win11-24h2-dual-100-150");
     assert.equal(resolved.releasePolicy.verified, true);
     assert.equal(resolved.candidateManifest.verified, true);
-    assert.match(resolved.outputReport, /reports\/win11-24h2-dual-100-150\.json$/u);
+    assert.equal(
+      resolved.outputReport,
+      join(
+        await realpath(fixture.root),
+        "reports",
+        "win11-24h2-dual-100-150.json",
+      ),
+    );
   } finally {
     await fixture.cleanup();
   }
