@@ -7,6 +7,11 @@ export const CUA_DRIVER_PACKAGE_DESTINATION =
 // platform requires updating both the lock and this digest in the same change.
 export const CUA_DRIVER_COMMITTED_LOCK_SHA256 =
   "7e66687842849189ab35f2e29391e57c0d32d6e56cf75b97ee3d1a8854c430f4";
+// The non-promoting source-build contract is a second independent input to
+// promotion. A custom --resource-root must carry these exact reviewed bytes;
+// self-consistent replacement inputs cannot authorize their own lock record.
+export const CUA_DRIVER_COMMITTED_SOURCE_BUILD_INPUTS_SHA256 =
+  "0ad1d2d77f12124a63ac60a5397665beeea5f735b8bafbd7d095f84831e406fe";
 
 const SUPPORTED_PLATFORMS = new Set(["darwin", "win32-x64"]);
 

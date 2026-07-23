@@ -269,6 +269,103 @@ test("source staging rejects a self-consistent lock that differs from committed 
   );
 });
 
+test("a promoted provider lock requires a fresh second source build attestation", async (t) => {
+  const root = await testRoot(t);
+  const firstBuildRoot = join(root, "first-build");
+  await createSourceFixture(firstBuildRoot, "darwin");
+  const firstLockBytes = await readFile(join(firstBuildRoot, "provider-lock.json"));
+  const firstLockSha256 = sha256(firstLockBytes);
+  const firstAttestationBytes = Buffer.from(`${JSON.stringify({
+    providerLockSha256: firstLockSha256,
+  }, null, 2)}\n`);
+  await writeFile(
+    join(firstBuildRoot, "source-build-attestation.json"),
+    firstAttestationBytes,
+  );
+
+  const promotedLock = JSON.parse(firstLockBytes.toString("utf8"));
+  promotedLock.platforms.darwin.referenceReleaseArtifact.sizeBytes += 1;
+  const promotedLockBytes = Buffer.from(`${JSON.stringify(promotedLock, null, 2)}\n`);
+  const promotedLockSha256 = sha256(promotedLockBytes);
+  assert.notEqual(promotedLockSha256, firstLockSha256);
+
+  const trustedResourceRoot = join(root, "promoted-resources");
+  await mkdir(trustedResourceRoot);
+  await writeFile(join(trustedResourceRoot, "provider-lock.json"), promotedLockBytes);
+
+  let verifierInvocations = 0;
+  const sourceBuildVerifier = createCuaDriverSourceBuildVerifierForTest(
+    async (_executable, args) => {
+      verifierInvocations += 1;
+      const resourceRoot = optionArgument(args, "--resource-root");
+      const attestationPath = optionArgument(args, "--attestation");
+      const outputRoot = optionArgument(args, "--output-root");
+      const attestation = JSON.parse(await readFile(attestationPath, "utf8"));
+      const trustedLockSha256 = sha256(await readFile(join(resourceRoot, "provider-lock.json")));
+      if (attestation.providerLockSha256 !== trustedLockSha256) {
+        const error = new Error("source-build verifier rejected stale attestation");
+        error.stderr = "attestation provider lock digest mismatch";
+        throw error;
+      }
+      return {
+        stdout: JSON.stringify({
+          ok: true,
+          platform: "darwin",
+          files: await packageDigestMap(outputRoot, "darwin"),
+        }),
+      };
+    },
+  );
+  const stager = createCuaDriverPackageStagerForTest({
+    sourceBuildVerifier,
+    trustedResourceRoot,
+  });
+
+  await assert.rejects(
+    stager.verifySourceInput({ sourceRoot: firstBuildRoot, platform: "darwin" }),
+    /provider_lock_anchor_mismatch/u,
+  );
+  assert.equal(verifierInvocations, 0);
+
+  const rewrittenFirstBuildRoot = join(root, "rewritten-first-build");
+  await createSourceFixture(rewrittenFirstBuildRoot, "darwin");
+  await writeFile(join(rewrittenFirstBuildRoot, "provider-lock.json"), promotedLockBytes);
+  await writeFile(
+    join(rewrittenFirstBuildRoot, "source-build-attestation.json"),
+    firstAttestationBytes,
+  );
+  await assert.rejects(
+    stager.verifySourceInput({
+      sourceRoot: rewrittenFirstBuildRoot,
+      platform: "darwin",
+    }),
+    /provider_source_build_verification_failed:attestation provider lock digest mismatch/u,
+  );
+  assert.equal(verifierInvocations, 1);
+
+  const secondBuildRoot = join(root, "second-build");
+  await createSourceFixture(secondBuildRoot, "darwin");
+  await writeFile(join(secondBuildRoot, "provider-lock.json"), promotedLockBytes);
+  await writeFile(
+    join(secondBuildRoot, "source-build-attestation.json"),
+    `${JSON.stringify({ providerLockSha256: promotedLockSha256 }, null, 2)}\n`,
+  );
+  const verified = await stager.verifySourceInput({
+    sourceRoot: secondBuildRoot,
+    platform: "darwin",
+  });
+  assert.equal(verified.sourceBuildVerified, true);
+  assert.equal(verifierInvocations, 2);
+  assert.equal(
+    await readFile(join(firstBuildRoot, "provider-lock.json"), "utf8"),
+    firstLockBytes.toString("utf8"),
+  );
+  assert.equal(
+    await readFile(join(firstBuildRoot, "source-build-attestation.json"), "utf8"),
+    firstAttestationBytes.toString("utf8"),
+  );
+});
+
 test("source staging rejects canonical root aliases and hard-linked inputs", async (t) => {
   await t.test("output aliases inside source", async (t) => {
     const root = await testRoot(t);
@@ -2072,6 +2169,13 @@ async function packageDigestMap(root, platform) {
     relativePath,
     sha256(await readFile(join(root, relativePath))),
   ])));
+}
+
+function optionArgument(args, option) {
+  const index = args.indexOf(option);
+  assert.notEqual(index, -1, `missing ${option}`);
+  assert.ok(args[index + 1], `missing value for ${option}`);
+  return args[index + 1];
 }
 
 async function packageByteTotal(root, platform) {
