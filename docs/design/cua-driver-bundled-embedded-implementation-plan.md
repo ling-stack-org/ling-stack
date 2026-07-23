@@ -131,9 +131,10 @@ Current implementation baseline:
   final-artifact/signing trace with one-day retention. The initial closed-gate run still
   uploads A/B evidence and emits the review-only proposal; the mandatory post-promotion
   second A/B run exercises packaging. macOS covers arm64 DMG+ZIP; Windows covers the x64
-  app, uninstaller and NSIS roles. macOS runs interactively in the logged-in
-  Aqua session and rejects GitHub LaunchAgent service mode before source acquisition;
-  Windows retains the reviewed service mode.
+  app, uninstaller and NSIS roles. Both profiles run as a logged-in interactive user and
+  reject `ACTIONS_RUNNER_SVC=1` before source acquisition. macOS additionally requires the
+  Aqua session; Windows rejects Session 0, a locked desktop, or a non-interactive input
+  desktop because those environments cannot satisfy provider readiness.
 
 Both Darwin and Win32 packaged-provider production gates remain off. This status records
 staged progress only and does not claim `bundled_embedded` runtime completion. The current
@@ -996,12 +997,12 @@ Exit criteria for our team:
   `__DWARF` contents, remove only the primed `cua-driver` package outputs with locked Cargo,
   then relink with fixed final metadata and Apple ld reproducible mode.
   The arm64 relink may retry at most 32 times but accepts only the reviewed canonical
-  runtime identity; x64 must match its reviewed identity on the first attempt. Every
-  mismatch is rejected before codesign, and exhaustion blocks upload, promotion and
-  packaging without weakening the A/B equality gate.
-  Each thin output then derives a stable `LC_UUID` from runtime bytes with the prior UUID and
-  linker signature excluded, applies the fixed ad-hoc pre-sign identifier, and verifies that
-  identity before `lipo` and A/B compare; default linker deduplication remains enabled;
+  runtime identity. Every mismatch is rejected before codesign, and exhaustion blocks
+  upload, promotion and packaging without weakening the A/B equality gate.
+  The thin arm64 output then derives a stable `LC_UUID` from runtime bytes with the prior
+  UUID and linker signature excluded, applies the fixed ad-hoc pre-sign identifier, and
+  verifies that identity before A/B comparison. No architecture merge or macOS x64
+  candidate is part of the supported release path; default linker deduplication remains enabled;
 - no report can promote itself from local evidence to release PASS;
 - test-signed success is capped at `INTERNAL_TEST_PASS` and the production workflow rejects
   any test root, mismatched channel or reused test-signed bytes;

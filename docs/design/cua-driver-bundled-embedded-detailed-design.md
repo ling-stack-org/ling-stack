@@ -488,7 +488,7 @@ not wait for macOS output:
    against the reference manifest but is not staged into the V1 user package. Use the
    platform's exact locked Rust/Cargo and native SDK toolchain with Cargo locked dependency
    mode.
-5. Copy the thin macOS arm64 executable without a `lipo` merge. Verify the output architecture, deployment or
+5. Copy the thin macOS arm64 executable directly, without combining architectures. Verify the output architecture, deployment or
    subsystem target, PE manifests, upstream `--version`, initialize response, health
    schema, per-platform tool digest, and embedded state-isolation contract.
 6. Copy the exact upstream MIT license from the locked tag and verify its digest.
@@ -865,10 +865,11 @@ branch, accept only manual dispatch, and bind an owner-supplied full commit SHA 
 checkout. Each native runner has one custom label and no generic default labels; the
 checked-in profile fixes repository, actor, runner name/root/work root, runner binary
 version, OS/architecture and native toolchain. Checkout never persists credentials.
-The macOS profile additionally requires an interactive logged-in Aqua launch and rejects
-`ACTIONS_RUNNER_SVC=1`; the Windows profile requires the reviewed service launch. This is
-part of the native evidence contract because the upstream macOS cursor integration tests
-need graphic-session access and otherwise wait forever in their headless overlay path.
+The macOS profile additionally requires an interactive logged-in Aqua launch. The Windows
+profile likewise requires a logged-in interactive user launch and cannot run in Session 0.
+Both profiles reject `ACTIONS_RUNNER_SVC=1`. This is part of the native evidence contract:
+the upstream macOS cursor integration tests and the Windows GUI provider readiness path both
+require an interactive desktop and cannot produce acceptance evidence from service mode.
 Run-specific temp roots and one-day artifacts prevent persistent work directories from
 becoming implicit evidence. Before upload, each native source-build job resolves package
 authority from the independently anchored committed lock. The initial closed-gate run skips
