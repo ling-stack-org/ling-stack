@@ -28,7 +28,7 @@ The reviewed identities live in `.github/cua-driver-self-hosted-runners.json`.
 | Platform | Runner name and only custom label | Runner root | Launch mode | Locked native tools |
 | --- | --- | --- | --- | --- |
 | macOS ARM64 | `ling-cua-driver-macos-arm64-v1` | `/Users/tianxiao/.github-actions/ling-cua-driver-macos-arm64-v1` | interactive Aqua login session | actions/runner 2.336.0, Xcode 26.6 build 17F113, macOS SDK 26.5, Rust 1.97.1, arm64 target |
-| Windows x64 | `ling-cua-driver-windows-x64-v1` | `C:\actions-runner` | interactive unlocked Windows login session | actions/runner 2.336.0, VS 17.14.37411.7, MSVC 14.44.35207, Windows SDK 10.0.26100.0, Rust 1.97.1 |
+| Windows x64 | `ling-cua-driver-windows-x64-v1` | `C:\actions-runner` | interactive unlocked Windows login session | actions/runner 2.336.0, VS command family 17.14, MSVC 14.44.35207, Windows SDK 10.0.26100.0, Rust 1.97.1 |
 
 Both runners use `--no-default-labels`. A generic `self-hosted`, `macOS`, `Windows`,
 `ARM64`, or `X64` job therefore cannot select them. They are repository-scoped and must
@@ -77,7 +77,10 @@ integrity interactive session. Obtain the one-hour registration token from repos
 **Settings → Actions → Runners → New self-hosted runner** immediately before configuration.
 Never put that token in a script, evidence bundle, issue, or chat.
 
-1. Install the locked Visual Studio, MSVC, Windows SDK and Rust versions shown above.
+1. Install Visual Studio 2022 17.14 with the exact MSVC and Windows SDK versions shown
+   above. Both Windows jobs enter the reviewed developer environment before the runner
+   verifier executes; the verifier rejects another VS command family, toolset, SDK, or
+   `cl.exe`/`link.exe`/`rc.exe` resolved outside those locked roots.
 2. Download `actions-runner-win-x64-2.336.0.zip` from the official `actions/runner`
    release and require this SHA-256 before extraction:
 

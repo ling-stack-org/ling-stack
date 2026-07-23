@@ -20,7 +20,7 @@ import {
 import {
   mergeEnvironment,
   parseWindowsEnvironment,
-  selectVisualStudioInstallation,
+  resolveConfiguredVisualStudioEnvironment,
 } from "../scripts/cua-driver-source-build-toolchain.mjs";
 import { generateSupplyChainMetadata } from "../scripts/cua-driver-source-build-supply-chain.mjs";
 import {
@@ -369,6 +369,12 @@ test("self-hosted native workflow is manual, identity-bound, and uses only dedic
   assert.match(workflow, /LING_CUA_PROMOTION_ROOT=\$env:RUNNER_TEMP\\/u);
   assert.match(workflow, /verify-cua-driver-self-hosted-runner\.mjs --platform darwin/u);
   assert.match(workflow, /verify-cua-driver-self-hosted-runner\.mjs --platform win32-x64/u);
+  for (const job of [windowsBuildJob, windowsPromotionJob]) {
+    assert.match(
+      job,
+      /uses: ilammy\/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756[\s\S]+sdk: 10\.0\.26100\.0[\s\S]+toolset: 14\.44\.35207[\s\S]+vsversion: 2022/u,
+    );
+  }
   assert.match(
     macosBuildJob,
     /outputs:\n\s+package-authorized: \$\{\{ steps\.package-authorization\.outputs\.authorized \}\}/u,
@@ -1745,26 +1751,34 @@ test("Windows developer-shell environment replaces case-insensitive PATH aliases
   assert.equal(merged.HOME, "home");
 });
 
-test("Windows toolchain selects the exact locked Visual Studio beside newer installs", () => {
-  const expected = {
-    installationPath: "C:\\Program Files\\Microsoft Visual Studio\\2022\\Enterprise",
-    installationVersion: "17.14.37411.7",
-  };
-  const newer = {
-    installationPath: "C:\\Program Files\\Microsoft Visual Studio\\18\\Enterprise",
-    installationVersion: "18.7.11925.98",
-  };
-  assert.equal(
-    selectVisualStudioInstallation([newer, expected], "17.14.37411.7"),
-    expected,
+test("Windows toolchain trusts only the activated locked Visual Studio family", () => {
+  assert.deepEqual(
+    resolveConfiguredVisualStudioEnvironment({
+      vscmd_ver: "17.14.36",
+      vsinstalldir: "C:\\Program Files\\Microsoft Visual Studio\\2022\\Enterprise\\",
+    }, "17.14"),
+    {
+      commandVersion: "17.14.36",
+      installationPath: "C:\\Program Files\\Microsoft Visual Studio\\2022\\Enterprise",
+    },
   );
   assert.throws(
-    () => selectVisualStudioInstallation([newer], "17.14.37411.7"),
-    /installation was not found/u,
+    () => resolveConfiguredVisualStudioEnvironment({
+      VSCMD_VER: "18.0.1",
+      VSINSTALLDIR: "C:\\Program Files\\Microsoft Visual Studio\\18\\Enterprise\\",
+    }, "17.14"),
+    /command version mismatch/u,
   );
   assert.throws(
-    () => selectVisualStudioInstallation([expected, structuredClone(expected)], "17.14.37411.7"),
-    /multiple Visual Studio/u,
+    () => resolveConfiguredVisualStudioEnvironment({ VSCMD_VER: "17.14.36" }, "17.14"),
+    /VSINSTALLDIR is missing/u,
+  );
+  assert.throws(
+    () => resolveConfiguredVisualStudioEnvironment({
+      VSCMD_VER: "17.140.1",
+      VSINSTALLDIR: "C:\\VS\\",
+    }, "17.14"),
+    /command version mismatch/u,
   );
 });
 

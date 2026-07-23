@@ -282,6 +282,14 @@ jobs:
         with:
           node-version: 22.15.0
 
+      - name: Enter locked MSVC developer environment
+        uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756
+        with:
+          arch: x64
+          sdk: 10.0.26100.0
+          toolset: 14.44.35207
+          vsversion: 2022
+
       - name: Install the locked Rust toolchain and target
         shell: pwsh
         run: |
@@ -401,6 +409,14 @@ jobs:
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: 22.15.0
+
+      - name: Enter locked MSVC developer environment
+        uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756
+        with:
+          arch: x64
+          sdk: 10.0.26100.0
+          toolset: 14.44.35207
+          vsversion: 2022
 
       - name: Add the locked Rust toolchain to PATH
         shell: pwsh

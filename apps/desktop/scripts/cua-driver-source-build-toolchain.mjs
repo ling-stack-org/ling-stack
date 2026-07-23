@@ -50,23 +50,17 @@ export async function verifyToolchain(platform, lock) {
   assert(platform === "win32-x64", `unsupported platform: ${platform}`);
   assert(process.platform === "win32", "win32-x64 provider must be built on Windows");
   const pin = lock.toolchain.win32X64;
-  const programFilesX86 = process.env["ProgramFiles(x86)"];
+  const environment = { ...process.env };
+  const programFilesX86 = getEnvironmentValue(environment, "ProgramFiles(x86)");
   assert(programFilesX86, "ProgramFiles(x86) is not set");
-  const vswhere = join(programFilesX86, "Microsoft Visual Studio", "Installer", "vswhere.exe");
-  const installation = selectVisualStudioInstallation(
-    JSON.parse(await runText(vswhere, [
-      "-all",
-      "-products",
-      "*",
-      "-requires",
-      "Microsoft.VisualStudio.Component.VC.Tools.x86.x64",
-      "-format",
-      "json",
-      "-utf8",
-    ])),
+  const { installationPath } = resolveConfiguredVisualStudioEnvironment(
+    environment,
     pin.visualStudioVersion,
   );
-  const { installationPath } = installation;
+  assert(
+    (await stat(installationPath)).isDirectory(),
+    `Visual Studio installation was not found: ${installationPath}`,
+  );
   const toolsetFile = join(
     installationPath,
     "VC",
@@ -80,27 +74,12 @@ export async function verifyToolchain(platform, lock) {
   assert((await stat(sdkLib)).isDirectory(), `Windows SDK not found: ${sdkLib}`);
   const vsDevCmd = join(installationPath, "Common7", "Tools", "VsDevCmd.bat");
   assert((await stat(vsDevCmd)).isFile(), `Visual Studio developer shell not found: ${vsDevCmd}`);
-  const commandInterpreter = process.env.ComSpec
-    ?? join(process.env.SystemRoot ?? "C:\\Windows", "System32", "cmd.exe");
-  const vcvarsVersion = pin.msvcToolsetVersion.split(".").slice(0, 2).join(".");
-  const developerEnvironment = parseWindowsEnvironment(
-    await runText(
-      commandInterpreter,
-      [
-        "/d",
-        "/s",
-        "/c",
-        `call "${vsDevCmd}" -no_logo -arch=x64 -host_arch=x64 -vcvars_ver=${vcvarsVersion} -winsdk=${pin.windowsSdkVersion} && set`,
-      ],
-    ),
-  );
-  const environment = mergeEnvironment(process.env, developerEnvironment, true);
   const toolsInstallDirectory = getEnvironmentValue(environment, "VCToolsInstallDir");
+  const selectedToolsetVersion = getEnvironmentValue(environment, "VCToolsVersion")
+    ?.replace(/[\\/]$/u, "");
   assert(
-    normalizeWindowsPath(toolsInstallDirectory).endsWith(
-      normalizeWindowsPath(join("VC", "Tools", "MSVC", pin.msvcToolsetVersion)),
-    ),
-    `developer shell selected the wrong MSVC toolset: ${toolsInstallDirectory ?? "missing"}`,
+    selectedToolsetVersion === pin.msvcToolsetVersion,
+    `developer shell selected the wrong MSVC toolset version: ${selectedToolsetVersion ?? "missing"}`,
   );
   const selectedSdkVersion = getEnvironmentValue(environment, "WindowsSDKVersion")
     ?.replace(/[\\/]$/u, "");
@@ -118,6 +97,7 @@ export async function verifyToolchain(platform, lock) {
     "MSVC",
     pin.msvcToolsetVersion,
   );
+  assertPathInside(toolsInstallDirectory, expectedToolsetRoot, "VCToolsInstallDir");
   const expectedSdkBin = join(
     programFilesX86,
     "Windows Kits",
@@ -143,22 +123,23 @@ export async function verifyToolchain(platform, lock) {
   };
 }
 
-export function selectVisualStudioInstallation(installations, expectedVersion) {
-  assert(Array.isArray(installations), "Visual Studio installation list is invalid");
-  const matches = installations.filter((installation) => (
-    typeof installation?.installationPath === "string"
-    && installation.installationPath.length > 0
-    && installation.installationVersion === expectedVersion
-  ));
+export function resolveConfiguredVisualStudioEnvironment(environment, expectedVersion) {
   assert(
-    matches.length > 0,
-    `Visual Studio ${expectedVersion} installation was not found`,
+    environment && typeof environment === "object" && !Array.isArray(environment),
+    "Visual Studio environment is invalid",
   );
+  const installationPath = getEnvironmentValue(environment, "VSINSTALLDIR")
+    ?.replace(/[\\/]+$/u, "");
   assert(
-    matches.length === 1,
-    `multiple Visual Studio ${expectedVersion} installations were found`,
+    /^[A-Za-z]:[\\/]/u.test(installationPath ?? ""),
+    `VSINSTALLDIR is missing or not absolute: ${installationPath ?? "missing"}`,
   );
-  return matches[0];
+  const commandVersion = getEnvironmentValue(environment, "VSCMD_VER")?.trim();
+  assert(
+    commandVersion === expectedVersion || commandVersion?.startsWith(`${expectedVersion}.`),
+    `Visual Studio command version mismatch: ${commandVersion ?? "missing"}`,
+  );
+  return { commandVersion, installationPath };
 }
 
 export function parseWindowsEnvironment(value) {
