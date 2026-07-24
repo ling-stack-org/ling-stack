@@ -1528,6 +1528,32 @@ test("Windows runtime probe requires exact live readiness identity and capabilit
     assert.equal(accepted.managedReadiness.activeChildPidBound, true);
     assert.equal(accepted.managedReadiness.childInstanceNonceBound, true);
     assert.equal(accepted.managedReadiness.sameInteractiveSession, true);
+    assert.deepEqual(requests.map((request) => request.method), [
+      "initialize",
+      "notifications/initialized",
+      "ling/managed_readiness",
+      "tools/list",
+      "tools/call",
+    ]);
+
+    const gatedRequests = [];
+    await assert.rejects(probeCuaDriverProvider({
+      binaryPath: "fake-provider.exe",
+      platform: "win32-x64",
+      stateHome: join(root, "readiness-gated"),
+      hostPid,
+      timeoutMs: 20,
+      spawnProcess: createFakeProviderSpawner(gatedRequests, {
+        readiness: (request, child) => validReadiness(request, child),
+        suppressResponseIds: new Set([4]),
+      }),
+      performStateAcceptance: false,
+    }), /timed out after 20ms/);
+    assert.deepEqual(gatedRequests.map((request) => request.method), [
+      "initialize",
+      "notifications/initialized",
+      "ling/managed_readiness",
+    ]);
 
     for (const [label, overrides] of [
       ["child nonce", { childInstanceNonce: "wrong" }],

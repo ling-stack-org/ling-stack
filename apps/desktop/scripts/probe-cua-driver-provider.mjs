@@ -269,12 +269,32 @@ async function runProviderSession({
   if (configRequest) expectedResponseIds.add(5);
 
   const result = await new Promise((resolve, reject) => {
+    let toolRequestsSent = false;
     const fail = (error) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
       try { child.kill(); } catch { /* best effort */ }
       reject(error instanceof Error ? error : new Error(String(error)));
+    };
+    const sendToolRequests = () => {
+      if (toolRequestsSent) return;
+      toolRequestsSent = true;
+      send(child, { jsonrpc: "2.0", id: 2, method: "tools/list", params: {} });
+      send(child, {
+        jsonrpc: "2.0",
+        id: 3,
+        method: "tools/call",
+        params: { name: "health_report", arguments: { skip: healthSkip } },
+      });
+      if (configRequest) {
+        send(child, {
+          jsonrpc: "2.0",
+          id: 5,
+          method: "tools/call",
+          params: configRequest,
+        });
+      }
     };
     const finishIfReady = () => {
       const required = platform === "win32-x64" ? [1, 2, 3, 4] : [1, 2, 3];
@@ -407,15 +427,8 @@ async function runProviderSession({
             return;
           }
           responses.set(message.id, message);
-          if (message.id === 1 && !responses.has(2)) {
+          if (message.id === 1 && !toolRequestsSent) {
             send(child, { jsonrpc: "2.0", method: "notifications/initialized", params: {} });
-            send(child, { jsonrpc: "2.0", id: 2, method: "tools/list", params: {} });
-            send(child, {
-              jsonrpc: "2.0",
-              id: 3,
-              method: "tools/call",
-              params: { name: "health_report", arguments: { skip: healthSkip } },
-            });
             if (platform === "win32-x64") {
               send(child, {
                 jsonrpc: "2.0",
@@ -423,15 +436,26 @@ async function runProviderSession({
                 method: "ling/managed_readiness",
                 params: { schemaVersion: 1, childInstanceNonce: nonce, leaseGeneration: 1 },
               });
+            } else {
+              sendToolRequests();
             }
-            if (configRequest) {
-              send(child, {
-                jsonrpc: "2.0",
-                id: 5,
-                method: "tools/call",
-                params: configRequest,
+          }
+          if (message.id === 4 && platform === "win32-x64") {
+            if (message.error) {
+              fail(new Error("provider readiness probe returned a JSON-RPC error"));
+              return;
+            }
+            try {
+              validateManagedReadiness(message.result, {
+                childPid: child.pid,
+                hostPid,
+                nonce,
               });
+            } catch (error) {
+              fail(error);
+              return;
             }
+            sendToolRequests();
           }
           finishIfReady();
         } else if (typeof message.method !== "string" || Object.hasOwn(message, "result") || Object.hasOwn(message, "error")) {
