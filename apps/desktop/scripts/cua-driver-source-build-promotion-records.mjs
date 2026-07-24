@@ -154,7 +154,7 @@ export function createPlatformRecord({ evidence, platform, sourceInputs }) {
       architecture: "x86_64",
       expectedUpstreamVersion: "0.8.3",
       lingBuild: 1,
-      mainRelativePath: "payload/cua-driver.exe",
+      mainRelativePath: "payload/ling-cua-driver.exe",
       providerSealRelativePath: "payload/provider-seal.json",
       mainManifestCanonicalSha256: mainIdentity.manifest.sha256,
       integrityCatalogRelativePathBySigningTier: {
@@ -163,15 +163,15 @@ export function createPlatformRecord({ evidence, platform, sourceInputs }) {
         production_signed: "provider-integrity.cat",
       },
       packagedFilesBySigningTier: {
-        unsigned_dev: ["payload/cua-driver.exe", "payload/provider-seal.json"],
+        unsigned_dev: ["payload/ling-cua-driver.exe", "payload/provider-seal.json"],
         test_signed_internal: [
           "provider-integrity.cat",
-          "payload/cua-driver.exe",
+          "payload/ling-cua-driver.exe",
           "payload/provider-seal.json",
         ],
         production_signed: [
           "provider-integrity.cat",
-          "payload/cua-driver.exe",
+          "payload/ling-cua-driver.exe",
           "payload/provider-seal.json",
         ],
       },

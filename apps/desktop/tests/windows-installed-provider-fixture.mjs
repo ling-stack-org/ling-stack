@@ -20,7 +20,7 @@ export async function createInstalledProviderFixture() {
   const platformRoot = join(distributionRoot, "win32-x64");
   const payload = join(platformRoot, "payload");
   await mkdir(payload, { recursive: true });
-  const providerPath = join(payload, "cua-driver.exe");
+  const providerPath = join(payload, "ling-cua-driver.exe");
   const sealPath = join(payload, "provider-seal.json");
   const catalogPath = join(platformRoot, "provider-integrity.cat");
   const lockPath = join(distributionRoot, "provider-lock.json");
@@ -54,7 +54,7 @@ export async function createInstalledProviderFixture() {
     providerSealSha256 = sha256(bytes);
     await writeFile(sealPath, bytes);
     identity.catalogMembership.members = [
-      { relativePath: "payload/cua-driver.exe", sha256: providerSha256 },
+      { relativePath: "payload/ling-cua-driver.exe", sha256: providerSha256 },
       { relativePath: "payload/provider-seal.json", sha256: providerSealSha256 },
     ];
   };
@@ -111,7 +111,7 @@ function windowsProviderSeal({ providerSha256, providerLockSha256, lock }) {
     productionEligible: false,
     testAuthorityKind: "ephemeral-ci",
     main: {
-      relativePath: "payload/cua-driver.exe",
+      relativePath: "payload/ling-cua-driver.exe",
       sha256: providerSha256,
       architecture: "x86_64",
       peManifestCanonicalSha256:
@@ -187,7 +187,7 @@ function windowsProviderLock() {
           architecture: "x86_64",
           expectedUpstreamVersion: "0.8.3",
           lingBuild: 1,
-          mainRelativePath: "payload/cua-driver.exe",
+          mainRelativePath: "payload/ling-cua-driver.exe",
           providerSealRelativePath: "payload/provider-seal.json",
           mainManifestCanonicalSha256: digest("d"),
           integrityCatalogRelativePathBySigningTier: {
@@ -196,9 +196,9 @@ function windowsProviderLock() {
             production_signed: "provider-integrity.cat",
           },
           packagedFilesBySigningTier: {
-            unsigned_dev: ["payload/cua-driver.exe", "payload/provider-seal.json"],
-            test_signed_internal: ["provider-integrity.cat", "payload/cua-driver.exe", "payload/provider-seal.json"],
-            production_signed: ["provider-integrity.cat", "payload/cua-driver.exe", "payload/provider-seal.json"],
+            unsigned_dev: ["payload/ling-cua-driver.exe", "payload/provider-seal.json"],
+            test_signed_internal: ["provider-integrity.cat", "payload/ling-cua-driver.exe", "payload/provider-seal.json"],
+            production_signed: ["provider-integrity.cat", "payload/ling-cua-driver.exe", "payload/provider-seal.json"],
           },
           uiaAuditArtifact: {
             packaged: false,

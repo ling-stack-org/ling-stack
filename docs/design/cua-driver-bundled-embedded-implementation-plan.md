@@ -4,6 +4,30 @@
 
 Implementation in progress.
 
+### Active execution plan (2026-07-24)
+
+This plan replaces the audit-grade promotion/evidence path for the internal alpha:
+
+1. keep the reviewed upstream commit, Cargo lock, patches 1-4 and pinned Rust/toolchain;
+2. gate Windows tools/health calls on successful managed readiness;
+3. add one shared artifact-layout contract and emit `ling-cua-driver` /
+   `ling-cua-driver.exe` as the Ling distribution output;
+4. update staging, lock/seal/catalog paths, signing hooks, runtime resolution and tests;
+5. keep pull-request checks portable and cheap; run native macOS/Windows candidate lanes
+   manually and individually, never as an edit-test matrix;
+6. build the macOS arm64 DMG locally, then run no-external and coexistence smoke;
+7. use the first Windows-native build to record the reviewed Windows pre-sign SHA-256,
+   manifest/tool digest and platform metadata, then build the x64 Setup and hand it to the
+   Windows owner for installed coexistence/uninstall acceptance;
+8. merge the clean replacement path, then close PR #396 without importing patches 5-9 or
+   its promotion/finalizer/fixture-retention scope.
+
+Internal completion is a real provider-bearing DMG and Setup plus final binary SHA-256 and
+smoke results. Production Developer ID/notary, Windows Publisher/SmartScreen/WDAC and full
+release evidence remain public-release work. The historical slices below remain useful
+implementation reference but are not additional completion gates when they conflict with
+this active plan.
+
 Current implementation baseline:
 
 - Slice -1 signing feasibility, Slice 0 contracts/gates and Slice 1 source build are
@@ -425,8 +449,8 @@ apps/desktop/resources/providers/cua-driver/0.8.3-ling.1/
   provider-lock.json
   LICENSE.md
   THIRD_PARTY_NOTICES.md
-  darwin/cua-driver
-  win32-x64/payload/cua-driver.exe
+  darwin/ling-cua-driver
+  win32-x64/payload/ling-cua-driver.exe
 ```
 
 Exit criteria:
@@ -826,7 +850,7 @@ Changes:
   Builder to sign the outer app;
 - on Windows, enforce one allowed tier/channel pair. `unsigned_dev` writes an explicit
   `NotSigned` final seal and omits the catalog; signed tiers sign
-  `payload/cua-driver.exe`, generate the seal from the final PE, generate/sign the outer
+  `payload/ling-cua-driver.exe`, generate the seal from the final PE, generate/sign the outer
   `provider-integrity.cat`, then prevent the generic signer from touching the sealed
   provider;
 - make the custom signing hook fail on any unexpected member under the provider
@@ -855,7 +879,7 @@ Windows signing contract:
   include final main-PE SHA, manifest digest, derived tier/channel, actual Authenticode
   subject, certificate SHA and timestamp policy/status without creating a seal/catalog
   self-reference;
-- the catalog sits outside and covers only `payload/cua-driver.exe` plus
+- the catalog sits outside and covers only `payload/ling-cua-driver.exe` plus
   `payload/provider-seal.json`; the covered seal anchors the root provider-lock digest;
 - the unsigned upstream zip remains reference evidence only.
 

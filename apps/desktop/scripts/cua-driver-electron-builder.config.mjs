@@ -67,7 +67,10 @@ export default {
     ...(packageProvider
       ? {
           sign: "./scripts/cua-driver-signing/electron-builder-mac-sign.mjs",
-          identity: "-",
+          identity: process.env.LING_CUA_DARWIN_SIGNING_IDENTITY ?? "-",
+          ...(signingProfile.signingTier === "test_signed_internal"
+            ? { type: "development" }
+            : {}),
           hardenedRuntime: signingProfile.signingTier !== "unsigned_dev",
         }
       : {}),
@@ -81,8 +84,8 @@ export default {
             signingHashAlgorithms: ["sha256"],
           },
           signExts: [
-            "!resources/providers/cua-driver/0.8.3-ling.1/win32-x64/payload/cua-driver.exe",
-            "!resources\\providers\\cua-driver\\0.8.3-ling.1\\win32-x64\\payload\\cua-driver.exe",
+            "!resources/providers/cua-driver/0.8.3-ling.1/win32-x64/payload/ling-cua-driver.exe",
+            "!resources\\providers\\cua-driver\\0.8.3-ling.1\\win32-x64\\payload\\ling-cua-driver.exe",
           ],
         }
       : {}),

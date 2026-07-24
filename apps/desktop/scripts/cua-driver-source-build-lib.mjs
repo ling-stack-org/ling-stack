@@ -638,10 +638,10 @@ export function verifySourceBuildArtifactInventory({
   promotionBinaries,
 }) {
   const expectedBinaries = platform === "darwin"
-    ? [{ relativePath: "darwin/cua-driver", role: "main", packaged: true }]
+    ? [{ relativePath: "darwin/ling-cua-driver", role: "main", packaged: true }]
     : platform === "win32-x64"
       ? [
-          { relativePath: "win32-x64/payload/cua-driver.exe", role: "main", packaged: true },
+          { relativePath: "win32-x64/payload/ling-cua-driver.exe", role: "main", packaged: true },
           { relativePath: "audit/win32-x64/cua-driver-uia.exe", role: "uia-audit", packaged: false },
         ]
       : undefined;

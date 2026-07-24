@@ -101,13 +101,13 @@
   "platformOutputs": {
     "darwin": {
       "status": "awaiting_native_reproducibility_evidence",
-      "artifactRelativePath": "darwin/cua-driver",
+      "artifactRelativePath": "darwin/ling-cua-driver",
       "architectures": ["arm64"],
       "binarySha256BeforeSigning": null
     },
     "win32X64": {
       "status": "awaiting_native_reproducibility_evidence",
-      "artifactRelativePath": "win32-x64/payload/cua-driver.exe",
+      "artifactRelativePath": "win32-x64/payload/ling-cua-driver.exe",
       "auditArtifactRelativePath": "audit/win32-x64/cua-driver-uia.exe",
       "architecture": "x86_64",
       "mainSha256BeforeSigning": null,

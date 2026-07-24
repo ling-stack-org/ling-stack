@@ -1,6 +1,7 @@
 import { lstat, readdir } from "node:fs/promises";
 import { basename, dirname, join, relative, resolve } from "node:path";
 
+import { cuaDriverArtifactLayoutFor } from "../../shared/cua-driver-artifact-layout.mjs";
 import { SigningContractError, normalizeSigningPlatform } from "./signing-contract.mjs";
 
 export const DEFAULT_PROVIDER_REVISION = "0.8.3-ling.1";
@@ -101,13 +102,31 @@ function candidateExecutablePaths({ appOutDir, platform, revision, appBundleReso
     join(appOutDir, "Contents", "Resources"),
     appOutDir,
   ];
+  const artifactLayout = cuaDriverArtifactLayoutFor(
+    platform === "win32" ? "win32-x64" : "darwin",
+  );
   if (platform === "win32") {
     return resourceRoots.map((root) =>
-      join(root, "providers", "cua-driver", revision, "win32-x64", "payload", "cua-driver.exe"),
+      join(
+        root,
+        "providers",
+        "cua-driver",
+        revision,
+        "win32-x64",
+        "payload",
+        artifactLayout.packagedExecutableName,
+      ),
     );
   }
   return resourceRoots.map((root) =>
-    join(root, "providers", "cua-driver", revision, "darwin", "cua-driver"),
+    join(
+      root,
+      "providers",
+      "cua-driver",
+      revision,
+      "darwin",
+      artifactLayout.packagedExecutableName,
+    ),
   );
 }
 

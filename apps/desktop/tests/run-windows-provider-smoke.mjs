@@ -62,7 +62,7 @@ async function runWindowsProviderSmoke() {
       "0.8.3-ling.1",
       "win32-x64",
       "payload",
-      "cua-driver.exe",
+      "ling-cua-driver.exe",
     );
     if (
       normalizeWindowsPath(providerCommand) !==

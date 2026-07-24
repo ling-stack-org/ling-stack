@@ -957,7 +957,7 @@ function Invoke-InstallerPayloadVerification {
     if ($uninstallerEvidence.sha256 -ne $ExpectedUninstallerSha256) {
       throw "signed_installer_payload_uninstaller_hash_mismatch"
     }
-    $installedProviderPath = Join-Path $installRoots[0] "resources\providers\cua-driver\0.8.3-ling.1\win32-x64\payload\cua-driver.exe"
+    $installedProviderPath = Join-Path $installRoots[0] "resources\providers\cua-driver\0.8.3-ling.1\win32-x64\payload\ling-cua-driver.exe"
     $installedProviderSealPath = Join-Path $installRoots[0] "resources\providers\cua-driver\0.8.3-ling.1\win32-x64\payload\provider-seal.json"
     $installedProviderCatalogPath = Join-Path $installRoots[0] "resources\providers\cua-driver\0.8.3-ling.1\win32-x64\provider-integrity.cat"
     $unexpectedUiAccessPath = Join-Path $installRoots[0] "resources\providers\cua-driver\0.8.3-ling.1\win32-x64\payload\cua-driver-uia.exe"

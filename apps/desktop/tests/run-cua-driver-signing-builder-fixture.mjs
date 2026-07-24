@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { cuaDriverArtifactLayoutFor } from "../shared/cua-driver-artifact-layout.mjs";
 import { sha256File } from "../scripts/cua-driver-signing/signing-contract.mjs";
 
 const desktopRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -22,8 +23,8 @@ const root = await mkdtemp(join(tmpdir(), `ling-cua-electron-builder-${platform}
 try {
   const outputRoot = join(root, "builder-output");
   const sourceProviderPath = platform === "win32"
-    ? join(sourceRoot, "win32-x64", "payload", "cua-driver.exe")
-    : join(sourceRoot, "darwin", "cua-driver");
+    ? join(sourceRoot, "win32-x64", "payload", "ling-cua-driver.exe")
+    : join(sourceRoot, "darwin", "ling-cua-driver");
   await access(join(sourceRoot, "source-build-attestation.json"));
   await access(sourceProviderPath);
   const expectedPreSignPayloadSha256 = await sha256File(sourceProviderPath);
@@ -60,7 +61,9 @@ try {
   const packagedPolicies = await findNamedFiles(outputRoot, "runtime-trust-policy.json");
   const packagedProviders = await findNamedFiles(
     outputRoot,
-    platform === "win32" ? "cua-driver.exe" : "cua-driver",
+    cuaDriverArtifactLayoutFor(
+      platform === "win32" ? "win32-x64" : "darwin",
+    ).packagedExecutableName,
   );
   const packagedUiAccessProviders = platform === "win32"
     ? await findNamedFiles(outputRoot, "cua-driver-uia.exe")

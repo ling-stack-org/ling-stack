@@ -4,6 +4,7 @@ import type {
   WindowsDistributionChannel,
   WindowsSigningTier,
 } from "@ling-stack/contracts";
+import { cuaDriverArtifactLayoutFor } from "../../../shared/cua-driver-artifact-layout.mjs";
 import {
   CuaDriverPlatformIdentityVerificationError,
   type CuaDriverPlatformIdentityVerificationInput,
@@ -300,7 +301,10 @@ function assertObservedIdentity(
     throw invalidIdentity();
   }
   const expectedMembers = [
-    { relativePath: "payload/cua-driver.exe", sha256: input.executableDigest },
+    {
+      relativePath: `payload/${cuaDriverArtifactLayoutFor("win32-x64").packagedExecutableName}`,
+      sha256: input.executableDigest,
+    },
     { relativePath: "payload/provider-seal.json", sha256: input.sealDigest },
   ];
   const actualMembers = [...catalog.members]

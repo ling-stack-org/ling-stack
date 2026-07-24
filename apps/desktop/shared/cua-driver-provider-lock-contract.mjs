@@ -1,3 +1,5 @@
+import { cuaDriverArtifactLayoutFor } from "./cua-driver-artifact-layout.mjs";
+
 /**
  * @typedef {import("@ling-stack/contracts").BundledCuaDriverDistributionLockV2} BundledCuaDriverDistributionLockV2
  * @typedef {"darwin" | "win32"} CuaDriverProviderLockPlatform
@@ -139,7 +141,8 @@ function validatePlatformLock(value, platform, architecture, requireReleaseEvide
     || value.binary.architecture !== "x86_64") {
     fail("provider_lock_windows_identity_mismatch");
   }
-  if (value.binary.mainRelativePath !== "payload/cua-driver.exe"
+  if (value.binary.mainRelativePath
+      !== `payload/${cuaDriverArtifactLayoutFor("win32-x64").packagedExecutableName}`
     || value.binary.providerSealRelativePath !== "payload/provider-seal.json") {
     fail("provider_lock_windows_payload_layout_mismatch");
   }
@@ -241,7 +244,7 @@ function validateWindowsEvidence(value, _requireReleaseEvidence) {
     || !isRecord(binary.packagedFilesBySigningTier)
     || !Array.isArray(binary.packagedFilesBySigningTier.unsigned_dev)
     || binary.packagedFilesBySigningTier.unsigned_dev.join(",")
-      !== "payload/cua-driver.exe,payload/provider-seal.json"
+      !== `payload/${cuaDriverArtifactLayoutFor("win32-x64").packagedExecutableName},payload/provider-seal.json`
     || !isRecord(binary.uiaAuditArtifact)
     || binary.uiaAuditArtifact.packaged !== false
     || binary.uiaAuditArtifact.relativeBuildOutput !== "cua-driver-uia.exe"

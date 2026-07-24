@@ -129,8 +129,8 @@ if (args["attestation"]) {
     fail(error instanceof Error ? error.message : String(error));
   }
   const mainRelativePath = attestation.platform === "darwin"
-    ? "darwin/cua-driver"
-    : "win32-x64/payload/cua-driver.exe";
+    ? "darwin/ling-cua-driver"
+    : "win32-x64/payload/ling-cua-driver.exe";
   const binarySnapshots = await readBuiltBinarySnapshots({
     actual,
     platform: attestation.platform,
@@ -644,9 +644,9 @@ function assertExactKeys(value, keys, label) {
 
 async function readBuiltBinarySnapshots({ actual, outputRoot, platform }) {
   const relativePaths = platform === "darwin"
-    ? ["darwin/cua-driver"]
+    ? ["darwin/ling-cua-driver"]
     : [
-        "win32-x64/payload/cua-driver.exe",
+        "win32-x64/payload/ling-cua-driver.exe",
         "audit/win32-x64/cua-driver-uia.exe",
       ];
   const values = {};
@@ -708,7 +708,7 @@ export function createObservedProviderVersionResolverForTest(runVersion) {
 function inspectBuiltBinaryIdentity({ binarySnapshots, platform, lock }) {
   if (platform === "darwin") {
     const identity = inspectArm64MachO(
-      binarySnapshots["darwin/cua-driver"].bytes,
+      binarySnapshots["darwin/ling-cua-driver"].bytes,
       "verified darwin provider",
     );
     if (identity.minimumOSVersion !== lock.toolchain.darwin.deploymentTarget) {
@@ -721,7 +721,7 @@ function inspectBuiltBinaryIdentity({ binarySnapshots, platform, lock }) {
   }
   const values = [];
   for (const [role, relativePath, uiAccess] of [
-    ["main", "win32-x64/payload/cua-driver.exe", false],
+    ["main", "win32-x64/payload/ling-cua-driver.exe", false],
     ["uia-audit", "audit/win32-x64/cua-driver-uia.exe", true],
   ]) {
     const identity = inspectWindowsPe(

@@ -1,4 +1,8 @@
 import { isAbsolute, relative, resolve, sep } from "node:path";
+import {
+  cuaDriverArtifactLayoutFor,
+  normalizeCuaDriverArtifactPlatform,
+} from "../shared/cua-driver-artifact-layout.mjs";
 
 export const CUA_DRIVER_PACKAGE_REVISION = "0.8.3-ling.1";
 export const CUA_DRIVER_PACKAGE_DESTINATION =
@@ -11,7 +15,7 @@ export const CUA_DRIVER_COMMITTED_LOCK_SHA256 =
 // promotion. A custom --resource-root must carry these exact reviewed bytes;
 // self-consistent replacement inputs cannot authorize their own lock record.
 export const CUA_DRIVER_COMMITTED_SOURCE_BUILD_INPUTS_SHA256 =
-  "c54070fce8632b688d391f8ca558950aa90cb3194380a45e9cc5c3639363f0b3";
+  "1897ab501cc1c8d57deea359211af89a3a1fc757f90a39133003d0bf580f2fc8";
 
 const SUPPORTED_PLATFORMS = new Set(["darwin", "win32-x64"]);
 
@@ -29,7 +33,7 @@ export function normalizePackagePlatform(value) {
   if (!SUPPORTED_PLATFORMS.has(platform)) {
     fail("provider_platform_unsupported", `unsupported provider package platform: ${platform}`);
   }
-  return platform;
+  return normalizeCuaDriverArtifactPlatform(platform);
 }
 
 export function requireAbsoluteRoot(value, code) {
@@ -49,9 +53,9 @@ export function providerRootFor(resourcesRoot) {
 }
 
 export function providerRelativePath(platform) {
-  return normalizePackagePlatform(platform) === "darwin"
-    ? "darwin/cua-driver"
-    : "win32-x64/payload/cua-driver.exe";
+  return cuaDriverArtifactLayoutFor(
+    normalizePackagePlatform(platform),
+  ).packagedExecutableRelativePath;
 }
 
 export function preSignProviderFiles(platform) {

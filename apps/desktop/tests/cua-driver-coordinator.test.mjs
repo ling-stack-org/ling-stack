@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   CuaDriverDesktopCoordinator,
+  classifyCuaDriverInitialReadiness,
   classifyCuaDriverPreSpawnFailure,
 } from "../dist/main/cua-driver/coordinator.js";
 import {
@@ -67,6 +68,28 @@ test("pre-spawn failure classification separates unavailable verification from i
   assert.equal(
     classifyCuaDriverPreSpawnFailure(new CuaDriverProviderSealError("platform_identity_verifier_required")),
     "platform_unavailable",
+  );
+});
+
+test("initial readiness retains only an expected host-permission wait", () => {
+  assert.equal(
+    classifyCuaDriverInitialReadiness({ ready: true, providerState: "ready" }),
+    "open_call_gate",
+  );
+  assert.equal(
+    classifyCuaDriverInitialReadiness({ ready: false, providerState: "permission_required" }),
+    "retain_gated_session",
+  );
+  for (const providerState of ["interactive_session_required", "platform_unavailable"]) {
+    assert.equal(
+      classifyCuaDriverInitialReadiness({ ready: false, providerState }),
+      "reject_initialize",
+    );
+  }
+  assert.equal(
+    classifyCuaDriverInitialReadiness({ ready: true, providerState: "permission_required" }),
+    "reject_initialize",
+    "an internally inconsistent readiness result must fail closed",
   );
 });
 

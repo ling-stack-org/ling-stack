@@ -29,7 +29,6 @@ export class DarwinCuaDriverLifecycleError extends Error {
 }
 
 interface DarwinPinnedExecutable {
-  readonly identityPath: string;
   release(): void;
 }
 
@@ -64,7 +63,10 @@ export function createDarwinCuaDriverProcessLifecycle(options: {
         throw new DarwinCuaDriverLifecycleError("spawn_invalid");
       }
       try {
-        return spawn(pinned.identityPath, [...input.args], {
+        // Keep the verified vnode open until posix_spawn has mapped the child,
+        // but launch through the signed app-contained path. AppKit-backed
+        // providers crash when current_exe/NSBundle sees a `/.vol` identity.
+        return spawn(input.executablePath, [...input.args], {
           cwd: input.cwd,
           env: input.environment,
           stdio: ["pipe", "pipe", "pipe"],
@@ -87,7 +89,7 @@ export function createDarwinCuaDriverProcessLifecycle(options: {
   });
 }
 
-/** Pin the exact APFS vnode and execute through its stable `/.vol` identity path. */
+/** Pin and re-hash the exact regular file until direct child spawn returns. */
 function pinDarwinExecutable(
   executablePath: string,
   expectedDigest?: string,
@@ -126,7 +128,6 @@ function pinDarwinExecutable(
       }
     }
     return {
-      identityPath: `/.vol/${metadata.dev}/${metadata.ino}`,
       release,
     };
   } catch (error) {

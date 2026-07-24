@@ -4,10 +4,13 @@
 “真实平台发布证据”分开，避免把 fake source、unsigned 包或 provider 下载校验误报为
 跨平台完成。
 
-GitHub-hosted native minutes 不可用时，使用
+当前内部产品包使用
 [Cua Driver Self-Hosted Native Runners](./cua-driver-self-hosted-runners.md) 中的仓库专用、
-手工 dispatch 路径。self-hosted 路径保留相同的 lock、A/B 对比、artifact round trip 和
-review-only promotion 边界，不是 release-readiness 绕过。
+手工 dispatch 路径。`Desktop product artifacts` 每次只能选择 `macos-arm64` 或
+`windows-x64`，同平台只执行一次锁定源码构建，随后直接进入 Ling 产品打包。它不再运行
+A/B、promotion/finalizer、fixture-retention 或跨 job artifact 中转；最终 artifact 只含该
+平台安装包和 `checksums.txt`。这条内部工程路径不替代公测前的 notarization、
+SmartScreen/WDAC 或 Windows 真机验收。
 
 Windows provider、签名、安装范围和回滚决策见
 [Desktop Windows 发布决策记录](./desktop-windows-release-decisions.md)。
@@ -26,8 +29,8 @@ Windows bundled target 使用两条独立判定轴：`bundled_embedded` 表示 h
 
 | 平台 | 目标 | 当前证据边界 |
 | --- | --- | --- |
-| macOS | Apple Silicon arm64 | Intel Mac 不支持；当前 unsigned baseline 仍是 external provider；目标改为从锁定 tag/Cargo.lock 加 `ling-managed-embedded-v1` patch series 构建 thin arm64 `0.8.3 (Ling build 1)` 并由 Desktop embedded 托管，post-sign seal、Developer ID、单一 Ling TCC、macOS 13/14/15/26、clean machine、升级回滚尚未闭合 |
-| Windows | x86_64 | Win32 standard adapter 已实现但仍在关闭的 packaged gate 后，当前 runtime 仍是 external baseline；目标从锁定 tag/Cargo.lock/patch series 构建 bundled `0.8.3 (Ling build 1)`，由 Desktop 在 interactive session 托管并声明 standard integrity tier；真实 Authenticode/catalog/ACL/WTS、test-signed Setup/internal VM 功能验收与 production Publisher/SmartScreen/WDAC/release matrix 均尚未闭合 |
+| macOS | Apple Silicon arm64 | Intel Mac 不支持；本地 provider-bearing DMG 已用锁定 tag/Cargo.lock、patches 1-4 和 Apple Development 身份构建并通过 bundled/coexistence smoke。Developer ID、notarization、clean-machine TCC、升级回滚仍是公开发布门禁 |
+| Windows | x86_64 | source build、私有 `ling-cua-driver.exe` 布局、Setup 打包和跨平台契约已实现；当前产品 workflow 生成 `unsigned_dev + development` Setup，Windows 同事负责真机安装/共存/卸载验收。正式 Authenticode、Publisher、SmartScreen/WDAC 仍是公开发布门禁 |
 | Windows ARM64 | 不支持 | 不生成安装包或 provider payload |
 | Linux | 不支持 | provider gate 必须 fail closed |
 
@@ -49,10 +52,9 @@ Ling-Stack-<version>-windows-x64-setup.exe.blockmap
 latest.yml
 ```
 
-当前已验证 artifact 只发布 Cua Driver plugin shell metadata。批准后的 macOS 和 Windows
-target 将打包锁定的 Ling source build 和 version-isolated provider state contract，但
-仍不打包权限或验收状态；在各自 embedded release gate 完成前不能写成已交付能力。
-上述签名等级是目标设计，不改变这个当前事实。
+产品 workflow 已要求 macOS 和 Windows 包携带锁定的 Ling source build 和
+version-isolated provider state contract；权限与验收状态不会写入安装包。macOS 本地验收
+已完成，Windows 真机验收仍未完成，因此不能把 Windows 写成已验收能力。
 Windows 上游参考基线为：
 
 ```text
@@ -110,8 +112,8 @@ full daemon **629/629**、macOS release-focused **28/28**、Windows
 acceptance/provider/release focused **57/57**。严格 Ajv Draft 2020-12 校验器通过当前固定
 集合的 **11/11** release-evidence schemas，并执行 macOS verdict/performance 正负实例。
 Desktop production build、Web production build/typecheck/lint/i18n、workspace typecheck/lint
-和 actionlint 也全部通过。`docs/release/evidence/**` 已进入 Desktop artifact workflow 的
-pull request 和 `main` push 路径过滤，因此只改 schema 也会触发该门禁。
+和 actionlint 也全部通过。当前 Desktop product artifact workflow 仅允许手工 dispatch；
+PR 和 `main` push 不会自动消耗 native runner 或 artifact 配额。
 
 这组数字是最终提交前当前 diff 的本地工程证据，不是 candidate 或跨平台 release closure。
 下方固定 unsigned artifact hash 仍明确标为 `baseline @ e20777f5`，最终候选必须重新生成
@@ -425,7 +427,7 @@ Authenticode 验证当前 payload 精确成员，并要求 candidate pre-sign SH
 随后通过 daemon `enable` 链初始化 Desktop 发布的 generation lease；daemon 必须返回
 `bundled_embedded + ready`、seal/catalog digest 与非空工具表，同时 Desktop 主进程必须观察
 runtime-eligible package authority、Win32 platform owner、ready child，并断言 child 的绝对
-路径就是安装目录内的 `resources/providers/.../payload/cua-driver.exe`。activation 后，
+路径就是安装目录内的 `resources/providers/.../payload/ling-cua-driver.exe`。activation 后，
 Desktop 使用 bridge token 请求 daemon 的 provider-target verification；daemon 必须经当前
 generation client 调 bundled child 的 `list_windows`，并精确匹配 test-owned PID/HWND。
 结构化 runtime proof 必须与 activation 的 Desktop instance/epoch、generation、seal/catalog

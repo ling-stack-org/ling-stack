@@ -210,7 +210,7 @@ test("installed bundled provider binds the final PE, source lock, seal tuple, an
     assert.equal(report.providerSeal.main.architecture, "x86_64");
     assert.deepEqual(report.providerCatalog.membership.members, [
       {
-        relativePath: "payload/cua-driver.exe",
+        relativePath: "payload/ling-cua-driver.exe",
         sha256: fixture.providerSha256,
       },
       {
@@ -222,7 +222,7 @@ test("installed bundled provider binds the final PE, source lock, seal tuple, an
     assert.deepEqual(report.packageLayout, {
       distributionRootEntryNames: ["provider-lock.json", "win32-x64"],
       platformRootEntryNames: ["payload", "provider-integrity.cat"],
-      payloadFileNames: ["cua-driver.exe", "provider-seal.json"],
+      payloadFileNames: ["ling-cua-driver.exe", "provider-seal.json"],
       unexpectedPaths: [],
     });
   } finally {

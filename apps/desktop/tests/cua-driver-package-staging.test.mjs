@@ -77,7 +77,7 @@ test("stages only the current Darwin provider allowlist outside app.asar", async
   assert.deepEqual(result.files, [
     "LICENSE.md",
     "THIRD_PARTY_NOTICES.md",
-    "darwin/cua-driver",
+    "darwin/ling-cua-driver",
     "provider-lock.json",
   ]);
   assert.deepEqual(result.electronBuilderExtraResource, {
@@ -116,7 +116,7 @@ test("Windows staging keeps UIAccess audit bytes out of the standard payload", a
     "LICENSE.md",
     "THIRD_PARTY_NOTICES.md",
     "provider-lock.json",
-    "win32-x64/payload/cua-driver.exe",
+    "win32-x64/payload/ling-cua-driver.exe",
   ]);
   assert.equal(
     await exists(join(result.providerRoot, "audit/win32-x64/cua-driver-uia.exe")),
@@ -204,10 +204,10 @@ test("production staging APIs reject caller-controlled trust before use", async 
 test("source staging rejects digest, architecture, license and extra executable drift", async (t) => {
   const cases = [
     ["digest", async (root) => {
-      await writeFile(join(root, "darwin/cua-driver"), makeArm64MachO({ sdkVersion: [26, 4, 0] }));
+      await writeFile(join(root, "darwin/ling-cua-driver"), makeArm64MachO({ sdkVersion: [26, 4, 0] }));
     }, /provider_pre_sign_digest_mismatch/u],
     ["architecture", async (root) => {
-      const path = join(root, "win32-x64/payload/cua-driver.exe");
+      const path = join(root, "win32-x64/payload/ling-cua-driver.exe");
       const bytes = await readFile(path);
       bytes.writeUInt16LE(0xaa64, 0x80 + 4);
       await writeFile(path, bytes);
@@ -217,7 +217,7 @@ test("source staging rejects digest, architecture, license and extra executable 
       await writeFile(join(root, "LICENSE.md"), "changed license\n");
     }, /provider_license_digest_mismatch/u],
     ["mode", async (root) => {
-      await chmod(join(root, "darwin/cua-driver"), 0o644);
+      await chmod(join(root, "darwin/ling-cua-driver"), 0o644);
     }, /provider_darwin_not_executable/u],
     ["extra", async (root) => {
       const path = join(root, "win32-x64/payload/other.exe");
@@ -260,7 +260,7 @@ test("source staging rejects a self-consistent lock that differs from committed 
     minimumOSVersion: [13, 0, 0],
     sdkVersion: [26, 4, 0],
   });
-  await writeFile(join(sourceRoot, "darwin/cua-driver"), provider);
+  await writeFile(join(sourceRoot, "darwin/ling-cua-driver"), provider);
   await rewriteLockDigest(sourceRoot, "darwin", sha256(provider));
 
   await assert.rejects(
@@ -509,7 +509,7 @@ test("source-build receipt closes mutation between snapshot and staging", async 
         minimumOSVersion: [13, 0, 0],
         sdkVersion: [26, 4, 0],
       });
-      await writeFile(join(sourceRoot, "darwin/cua-driver"), provider);
+      await writeFile(join(sourceRoot, "darwin/ling-cua-driver"), provider);
       await rewriteLockDigest(sourceRoot, "darwin", sha256(provider));
       return { platform: "darwin", files: await packageDigestMap(sourceRoot, "darwin") };
     },
@@ -531,7 +531,7 @@ test("default stage path passes the trusted provider snapshot to the source-buil
   const outputRoot = join(root, "stage");
   await createSourceFixture(sourceRoot, "darwin");
   const expectedProviderSha256 = sha256(
-    await readFile(join(sourceRoot, "darwin/cua-driver")),
+    await readFile(join(sourceRoot, "darwin/ling-cua-driver")),
   );
   let invocation;
   const sourceBuildVerifier = createCuaDriverSourceBuildVerifierForTest(
@@ -574,7 +574,7 @@ test("source-build verifier wrapper validates child failures and receipt protoco
   const files = Object.fromEntries([
     "LICENSE.md",
     "THIRD_PARTY_NOTICES.md",
-    "darwin/cua-driver",
+    "darwin/ling-cua-driver",
     "provider-lock.json",
   ].map((path, index) => [path, String(index + 1).repeat(64)]));
   const input = {
@@ -614,12 +614,12 @@ test("source-build verifier wrapper validates child failures and receipt protoco
     ["wrong platform", JSON.stringify({ files, ok: true, platform: "win32-x64" })],
     ["missing files", JSON.stringify({ ok: true, platform: "darwin" })],
     ["missing required file", JSON.stringify({
-      files: Object.fromEntries(Object.entries(files).filter(([path]) => path !== "darwin/cua-driver")),
+      files: Object.fromEntries(Object.entries(files).filter(([path]) => path !== "darwin/ling-cua-driver")),
       ok: true,
       platform: "darwin",
     })],
     ["invalid digest", JSON.stringify({
-      files: { ...files, "darwin/cua-driver": "invalid" },
+      files: { ...files, "darwin/ling-cua-driver": "invalid" },
       ok: true,
       platform: "darwin",
     })],
@@ -656,7 +656,7 @@ test("Darwin staging rejects malformed arm64 Mach-O and load-command boundaries"
       const root = await testRoot(t);
       const sourceRoot = join(root, "source");
       await createSourceFixture(sourceRoot, "darwin");
-      const providerPath = join(sourceRoot, "darwin/cua-driver");
+      const providerPath = join(sourceRoot, "darwin/ling-cua-driver");
       let provider = await readFile(providerPath);
       const replacement = mutate(provider);
       if (Buffer.isBuffer(replacement)) provider = replacement;
@@ -675,7 +675,7 @@ test("pre-sign Windows staging rejects certificate-table claims", async (t) => {
   const root = await testRoot(t);
   const sourceRoot = join(root, "source");
   await createSourceFixture(sourceRoot, "win32-x64");
-  const providerPath = join(sourceRoot, "win32-x64/payload/cua-driver.exe");
+  const providerPath = join(sourceRoot, "win32-x64/payload/ling-cua-driver.exe");
   const provider = await readFile(providerPath);
   setPeCertificateTable(provider, true);
   await writeFile(providerPath, provider);
@@ -2048,7 +2048,7 @@ test("stage verification rejects missing, extra, UIAccess and symlinked entries"
   await t.test("symlinked provider", async (t) => {
     const root = await testRoot(t);
     const { outputRoot, providerRoot } = await stagedFixture(t, "darwin", root);
-    const providerPath = join(providerRoot, "darwin/cua-driver");
+    const providerPath = join(providerRoot, "darwin/ling-cua-driver");
     const outside = join(root, "outside-provider");
     await rename(providerPath, outside);
     await symlink(outside, providerPath);
@@ -2162,7 +2162,7 @@ async function packageDigestMap(root, platform) {
     "LICENSE.md",
     "THIRD_PARTY_NOTICES.md",
     "provider-lock.json",
-    platform === "darwin" ? "darwin/cua-driver" : "win32-x64/payload/cua-driver.exe",
+    platform === "darwin" ? "darwin/ling-cua-driver" : "win32-x64/payload/ling-cua-driver.exe",
   ];
   return Object.fromEntries(await Promise.all(paths.map(async (relativePath) => [
     relativePath,
@@ -2182,7 +2182,7 @@ async function packageByteTotal(root, platform) {
     "LICENSE.md",
     "THIRD_PARTY_NOTICES.md",
     "provider-lock.json",
-    platform === "darwin" ? "darwin/cua-driver" : "win32-x64/payload/cua-driver.exe",
+    platform === "darwin" ? "darwin/ling-cua-driver" : "win32-x64/payload/ling-cua-driver.exe",
   ];
   const values = await Promise.all(paths.map((path) => readFile(join(root, path))));
   return values.reduce((total, value) => total + value.byteLength, 0);
@@ -2210,7 +2210,7 @@ async function createSourceFixture(root, platform, options = {}) {
     : makeWindowsPe();
   const providerPath = join(
     root,
-    platform === "darwin" ? "darwin/cua-driver" : "win32-x64/payload/cua-driver.exe",
+    platform === "darwin" ? "darwin/ling-cua-driver" : "win32-x64/payload/ling-cua-driver.exe",
   );
   await mkdir(dirname(providerPath), { recursive: true });
   await writeFile(providerPath, provider);
@@ -2316,7 +2316,7 @@ function packageLock(platform, provider, licenseSha256) {
           architecture: "x86_64",
           expectedUpstreamVersion: "0.8.3",
           lingBuild: 1,
-          mainRelativePath: "payload/cua-driver.exe",
+          mainRelativePath: "payload/ling-cua-driver.exe",
           providerSealRelativePath: "payload/provider-seal.json",
           mainManifestCanonicalSha256: inspectWindowsPe(provider).manifest.sha256,
           integrityCatalogRelativePathBySigningTier: {
@@ -2325,15 +2325,15 @@ function packageLock(platform, provider, licenseSha256) {
             production_signed: "provider-integrity.cat",
           },
           packagedFilesBySigningTier: {
-            unsigned_dev: ["payload/cua-driver.exe", "payload/provider-seal.json"],
+            unsigned_dev: ["payload/ling-cua-driver.exe", "payload/provider-seal.json"],
             test_signed_internal: [
               "provider-integrity.cat",
-              "payload/cua-driver.exe",
+              "payload/ling-cua-driver.exe",
               "payload/provider-seal.json",
             ],
             production_signed: [
               "provider-integrity.cat",
-              "payload/cua-driver.exe",
+              "payload/ling-cua-driver.exe",
               "payload/provider-seal.json",
             ],
           },

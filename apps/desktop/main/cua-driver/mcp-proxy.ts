@@ -41,7 +41,15 @@ export interface CuaDriverMcpProxyOptions {
   readonly onSessionClosed?: (reason: string) => void;
   readonly onManagedReadinessChanged?: (message: unknown) => void;
   /** Runs after initialize is validated and before the response is exposed. */
-  readonly onInitialized?: () => void | Promise<void>;
+  readonly onInitialized?: () =>
+    | void
+    | CuaDriverMcpInitializeDisposition
+    | Promise<void | CuaDriverMcpInitializeDisposition>;
+}
+
+export interface CuaDriverMcpInitializeDisposition {
+  /** A closed gate retains the healthy MCP session but rejects ordinary calls. */
+  readonly callGate: "open" | "closed";
 }
 
 export interface CuaDriverMcpProxyEndpoint {
@@ -106,6 +114,8 @@ export class CuaDriverMcpProxy {
   private closePromise: Promise<void> | undefined;
   private sessionId: string | undefined;
   private sessionInitialized = false;
+  private initializeResult: unknown;
+  private retainGatedSession = false;
   private sseResponse: ServerResponse | undefined;
   private readonly sseQueue: Array<Readonly<{ frame: string; bytes: number }>> = [];
   private sseQueueBytes = 0;
@@ -283,7 +293,7 @@ export class CuaDriverMcpProxy {
     if (isInitialize) {
       const initializeEpoch = this.closingEpoch;
       this.assertOpenEpoch(initializeEpoch);
-      if (requestSessionId || this.sessionId || this.sessionInitialized) {
+      if (requestSessionId) {
         this.writeJson(response, 409, { error: "mcp_second_initialize_forbidden" });
         return;
       }
@@ -291,13 +301,40 @@ export class CuaDriverMcpProxy {
         this.writeJson(response, 400, { error: "mcp_initialize_requires_id" });
         return;
       }
+      const canReattachInitializedHost = this.initializeResult !== undefined
+        && (this.retainGatedSession || this.sseResponse === undefined);
+      if (canReattachInitializedHost) {
+        if (this.sessionId || this.sessionInitialized) {
+          this.detachGatedSession();
+        }
+        this.sessionId = randomBytes(24).toString("base64url");
+        this.sessionInitialized = true;
+        this.telemetry.emit("info", "cua_driver.proxy.session_reattached", {
+          generation: this.options.context.generation,
+          gated: this.retainGatedSession,
+        });
+        this.writeJson(response, 200, {
+          jsonrpc: "2.0",
+          id: message.id,
+          result: this.initializeResult,
+        }, {
+          "mcp-session-id": this.sessionId,
+          "cache-control": "no-store",
+        });
+        return;
+      }
+      if (this.sessionId || this.sessionInitialized) {
+        this.writeJson(response, 409, { error: "mcp_second_initialize_forbidden" });
+        return;
+      }
       const responseValue = await this.options.host.exchange(message);
       this.assertOpenEpoch(initializeEpoch);
       if (!responseValue) {
         throw new CuaDriverMcpProxyError("mcp_initialize_response_missing");
       }
+      let disposition: void | CuaDriverMcpInitializeDisposition;
       try {
-        await this.options.onInitialized?.();
+        disposition = await this.options.onInitialized?.();
       } catch (error) {
         await this.options.host.stop("readiness_failed").catch(() => undefined);
         throw error;
@@ -305,21 +342,40 @@ export class CuaDriverMcpProxy {
       // Final async-boundary fence before the session and authorization
       // response become visible to the daemon.
       this.assertOpenEpoch(initializeEpoch);
-      this.callGateOpen = true;
+      this.callGateOpen = disposition?.callGate !== "closed";
+      this.retainGatedSession = disposition?.callGate === "closed";
       this.sessionId = randomBytes(24).toString("base64url");
       this.sessionInitialized = true;
+      this.initializeResult = "result" in responseValue
+        ? responseValue.result
+        : undefined;
       this.writeJson(response, 200, responseValue, {
         "mcp-session-id": this.sessionId,
         "cache-control": "no-store",
       });
       return;
     }
-    if (!this.callGateOpen) {
-      this.writeJson(response, 503, { error: "mcp_call_gate_closed" });
-      return;
-    }
+    const isInitializedNotification = "method" in message
+      && message.method === "notifications/initialized"
+      && !("id" in message);
     if (!this.sessionId || !this.sessionInitialized || requestSessionId !== this.sessionId) {
       this.writeJson(response, 409, { error: "mcp_session_required" });
+      return;
+    }
+    if (!this.callGateOpen && !isInitializedNotification) {
+      if ("id" in message) {
+        this.writeJson(response, 200, {
+          jsonrpc: "2.0",
+          id: message.id,
+          error: { code: -32003, message: "mcp_call_gate_closed" },
+        }, { "mcp-session-id": this.sessionId });
+      } else {
+        response.writeHead(202, {
+          "mcp-session-id": this.sessionId,
+          "cache-control": "no-store",
+        });
+        response.end();
+      }
       return;
     }
     const responseValue = await this.options.host.exchange(message);
@@ -332,10 +388,6 @@ export class CuaDriverMcpProxy {
   }
 
   private handleGet(request: IncomingMessage, response: ServerResponse): void {
-    if (!this.callGateOpen) {
-      this.writeJson(response, 503, { error: "mcp_call_gate_closed" });
-      return;
-    }
     if (!this.sessionId || !this.sessionInitialized || readSessionId(request) !== this.sessionId) {
       this.writeJson(response, 409, { error: "mcp_session_required" });
       return;
@@ -354,6 +406,14 @@ export class CuaDriverMcpProxy {
     this.enqueueSseFrame(": ling-cua-driver\n\n");
     response.once("close", () => {
       if (this.sseResponse === response) {
+        if (this.retainGatedSession && this.initializeResult !== undefined) {
+          this.detachGatedSession();
+          this.telemetry.emit("info", "cua_driver.proxy.gated_session_detached", {
+            generation: this.options.context.generation,
+            reason: "mcp_stream_closed",
+          });
+          return;
+        }
         this.clearSseQueue();
         this.sseResponse = undefined;
         if (!this.closed) {
@@ -367,6 +427,16 @@ export class CuaDriverMcpProxy {
   private async handleDelete(request: IncomingMessage, response: ServerResponse): Promise<void> {
     if (!this.sessionId || readSessionId(request) !== this.sessionId) {
       this.writeJson(response, 409, { error: "mcp_session_required" });
+      return;
+    }
+    if (this.retainGatedSession && this.initializeResult !== undefined) {
+      this.detachGatedSession();
+      response.writeHead(204, { "cache-control": "no-store" });
+      response.end();
+      this.telemetry.emit("info", "cua_driver.proxy.gated_session_detached", {
+        generation: this.options.context.generation,
+        reason: "mcp_session_released",
+      });
       return;
     }
     this.invalidateSession("mcp_session_released");
@@ -493,6 +563,8 @@ export class CuaDriverMcpProxy {
     const hadSession = this.sessionId !== undefined;
     this.sessionId = undefined;
     this.sessionInitialized = false;
+    this.initializeResult = undefined;
+    this.retainGatedSession = false;
     this.closeCallGate(reason);
     this.clearSseQueue();
     if (this.sseResponse && !this.sseResponse.destroyed) {
@@ -506,6 +578,17 @@ export class CuaDriverMcpProxy {
       } catch {
         // Do not let a callback break auth/session fencing.
       }
+    }
+  }
+
+  private detachGatedSession(): void {
+    const response = this.sseResponse;
+    this.clearSseQueue();
+    this.sseResponse = undefined;
+    this.sessionId = undefined;
+    this.sessionInitialized = false;
+    if (response && !response.destroyed) {
+      response.end();
     }
   }
 

@@ -57,10 +57,11 @@ export async function createProviderSeal(input = {}) {
       }),
       integrityCatalogRelativePath:
         profile.signingTier === "unsigned_dev" ? null : "provider-integrity.cat",
-      evidenceKind: signerIdentity?.testOnly ? "disposable-fixture" : "platform-signer",
+      evidenceKind: evidenceKindForSigner(signerIdentity),
     });
   }
 
+  const darwinIdentity = darwinSealIdentity(profile, signerIdentity, executableSha256);
   return Object.freeze({
     schemaVersion: 1,
     componentId: "cua-driver-darwin",
@@ -70,17 +71,13 @@ export async function createProviderSeal(input = {}) {
     executableRelativePath: relativeExecutablePath,
     executableSha256,
     architectures: ["arm64"],
-    cdhashes: {
-      arm64: sha256Bytes(`${executableSha256}:arm64`).slice(0, 40),
-    },
-    codeIdentifier: "ling-cua-driver-fixture",
-    teamId: signerIdentity?.teamId ?? signerIdentity?.signerSubject ?? "NotSigned",
-    designatedRequirement: "fixture-only; replaced by platform identity in release build",
-    designatedRequirementSha256: sha256Bytes(
-      "fixture-only; replaced by platform identity in release build",
-    ),
-    hardenedRuntime: profile.signingTier !== "unsigned_dev",
-    entitlementsCanonicalSha256: sha256Bytes("fixture-entitlements-pending"),
+    cdhashes: { arm64: darwinIdentity.cdhash },
+    codeIdentifier: darwinIdentity.codeIdentifier,
+    teamId: darwinIdentity.teamId,
+    designatedRequirement: darwinIdentity.designatedRequirement,
+    designatedRequirementSha256: darwinIdentity.designatedRequirementSha256,
+    hardenedRuntime: darwinIdentity.hardenedRuntime,
+    entitlementsCanonicalSha256: darwinIdentity.entitlementsCanonicalSha256,
     providerVersion: PROVIDER_VERSION,
     serverInitializeProtocolVersion: INITIALIZE_PROTOCOL_VERSION,
     healthSchemaVersion: HEALTH_SCHEMA_VERSION,
@@ -92,7 +89,7 @@ export async function createProviderSeal(input = {}) {
     ...(profile.signingTier === "test_signed_internal"
       ? { testAuthorityKind: profile.testAuthorityKind }
       : {}),
-    evidenceKind: signerIdentity?.testOnly ? "disposable-fixture" : "platform-signer",
+    evidenceKind: evidenceKindForSigner(signerIdentity),
     identity: buildMacIdentity({ profile, signerIdentity }),
   });
 }
@@ -190,7 +187,7 @@ export async function verifyProviderTuple(input = {}) {
       });
       const members = catalog.document.members;
       const expectedMembers = [
-        { relativePath: "payload/cua-driver.exe", sha256: actualProviderSha256 },
+        { relativePath: "payload/ling-cua-driver.exe", sha256: actualProviderSha256 },
         { relativePath: "payload/provider-seal.json", sha256: await sha256File(sealPath) },
       ];
       if (canonicalJson(members) !== canonicalJson(expectedMembers)) {
@@ -287,6 +284,66 @@ function buildWindowsMainIdentity({ relativeExecutablePath, executableSha256, pr
     timestampPolicy: "fixture-no-timestamp",
     timestampStatus: "NotRequired",
   };
+}
+
+function evidenceKindForSigner(signerIdentity) {
+  return signerIdentity?.scheme === "ling-disposable-signing-fixture-v1"
+    ? "disposable-fixture"
+    : "platform-signer";
+}
+
+function darwinSealIdentity(profile, signerIdentity, executableSha256) {
+  if (
+    signerIdentity
+    && typeof signerIdentity.codeIdentifier === "string"
+    && typeof signerIdentity.teamId === "string"
+    && typeof signerIdentity.cdhash === "string"
+    && /^[0-9a-f]{40}$/u.test(signerIdentity.cdhash)
+    && typeof signerIdentity.designatedRequirement === "string"
+    && /^[0-9a-f]{64}$/u.test(signerIdentity.designatedRequirementSha256)
+    && /^[0-9a-f]{64}$/u.test(signerIdentity.entitlementsCanonicalSha256)
+    && signerIdentity.hardenedRuntime === true
+  ) {
+    return Object.freeze({
+      codeIdentifier: signerIdentity.codeIdentifier,
+      teamId: signerIdentity.teamId,
+      cdhash: signerIdentity.cdhash,
+      designatedRequirement: signerIdentity.designatedRequirement,
+      designatedRequirementSha256: signerIdentity.designatedRequirementSha256,
+      hardenedRuntime: true,
+      entitlementsCanonicalSha256: signerIdentity.entitlementsCanonicalSha256,
+    });
+  }
+  if (profile.signingTier === "unsigned_dev") {
+    const designatedRequirement =
+      "unsigned-development-only; not accepted by packaged Darwin runtime";
+    return Object.freeze({
+      codeIdentifier: "ling-cua-driver-unsigned-dev",
+      teamId: "NotSigned",
+      cdhash: sha256Bytes(`${executableSha256}:arm64`).slice(0, 40),
+      designatedRequirement,
+      designatedRequirementSha256: sha256Bytes(designatedRequirement),
+      hardenedRuntime: false,
+      entitlementsCanonicalSha256: sha256Bytes("unsigned-development-entitlements"),
+    });
+  }
+  if (profile.signingTier !== "test_signed_internal" || signerIdentity?.testOnly !== true) {
+    throw new SigningContractError(
+      "darwin_final_identity_missing",
+      "Signed Darwin packages require a codesign-derived provider identity",
+    );
+  }
+  const designatedRequirement =
+    "fixture-only; replaced by platform identity in release build";
+  return Object.freeze({
+    codeIdentifier: "ling-cua-driver-fixture",
+    teamId: signerIdentity.teamId ?? signerIdentity.signerSubject,
+    cdhash: sha256Bytes(`${executableSha256}:arm64`).slice(0, 40),
+    designatedRequirement,
+    designatedRequirementSha256: sha256Bytes(designatedRequirement),
+    hardenedRuntime: true,
+    entitlementsCanonicalSha256: sha256Bytes("fixture-entitlements-pending"),
+  });
 }
 
 function buildMacIdentity({ profile, signerIdentity }) {

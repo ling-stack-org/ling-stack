@@ -33,7 +33,7 @@ const SHA_B = "b".repeat(64);
 const SHA_C = "c".repeat(64);
 const SHA_D = "d".repeat(64);
 const SHA_E = "e".repeat(64);
-const PROVIDER_PATH = "C:\\Ling\\resources\\providers\\cua-driver\\0.8.3-ling.1\\win32-x64\\payload\\cua-driver.exe";
+const PROVIDER_PATH = "C:\\Ling\\resources\\providers\\cua-driver\\0.8.3-ling.1\\win32-x64\\payload\\ling-cua-driver.exe";
 const SEAL_PATH = "C:\\Ling\\resources\\providers\\cua-driver\\0.8.3-ling.1\\win32-x64\\payload\\provider-seal.json";
 const CATALOG_PATH = "C:\\Ling\\resources\\providers\\cua-driver\\0.8.3-ling.1\\win32-x64\\provider-integrity.cat";
 const PROVIDER_SIGNER = Object.freeze({ subject: "CN=Ling Provider", certificateSha256: SHA_D });
@@ -471,7 +471,7 @@ test("Win32 lifecycle uses direct spawn and only the retained child handle", asy
   );
   assert.throws(
     () => lifecycle.spawn({
-      executablePath: PROVIDER_PATH.replace("cua-driver.exe", "cua-driver-uia.exe"),
+      executablePath: PROVIDER_PATH.replace("ling-cua-driver.exe", "cua-driver-uia.exe"),
       args: ["mcp"],
       cwd: "C:\\state",
       environment: {},
@@ -662,7 +662,7 @@ function identityFixture(tier) {
     : production ? "production" : "internal";
   const main = signed
     ? {
-        relativePath: "payload/cua-driver.exe",
+        relativePath: "payload/ling-cua-driver.exe",
         sha256: SHA_A,
         architecture: "x86_64",
         peManifestCanonicalSha256: SHA_C,
@@ -673,7 +673,7 @@ function identityFixture(tier) {
         timestampStatus: production ? "Valid" : "NotRequired",
       }
     : {
-        relativePath: "payload/cua-driver.exe",
+        relativePath: "payload/ling-cua-driver.exe",
         sha256: SHA_A,
         architecture: "x86_64",
         peManifestCanonicalSha256: SHA_C,
@@ -726,7 +726,7 @@ function identityFixture(tier) {
         timestampStatus: production ? "Valid" : "NotRequired",
         validationStatus: "Valid",
         members: [
-          { relativePath: "payload/cua-driver.exe", sha256: SHA_A },
+          { relativePath: "payload/ling-cua-driver.exe", sha256: SHA_A },
           { relativePath: "payload/provider-seal.json", sha256: SHA_C },
         ],
       }

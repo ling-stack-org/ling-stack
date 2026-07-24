@@ -6,6 +6,7 @@ import {
 } from "node:fs/promises";
 import { join, resolve } from "node:path";
 
+import { cuaDriverArtifactLayoutFor } from "../shared/cua-driver-artifact-layout.mjs";
 import { fail } from "./cua-driver-source-build-promotion-records.mjs";
 
 /**
@@ -35,10 +36,11 @@ async function restoreDarwinCandidateExecutableInternal(candidateRoot, hooks) {
   await hooks.afterRootLstat?.({ candidateRootPath });
   const rootCanonicalPath = await realpath(candidateRootPath);
   await assertBoundCandidateRoot(candidateRootPath, rootCanonicalPath, rootBefore);
-  const executablePath = join(candidateRootPath, "darwin", "cua-driver");
+  const executableName = cuaDriverArtifactLayoutFor("darwin").packagedExecutableName;
+  const executablePath = join(candidateRootPath, "darwin", executableName);
   const namedBefore = await lstatCandidateExecutable(executablePath);
   assertSafeCandidateExecutable(namedBefore);
-  const expectedCanonicalPath = join(rootCanonicalPath, "darwin", "cua-driver");
+  const expectedCanonicalPath = join(rootCanonicalPath, "darwin", executableName);
   await assertCanonicalExecutablePath(executablePath, expectedCanonicalPath);
 
   let handle;

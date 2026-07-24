@@ -228,6 +228,8 @@ export function configureSqliteRunStoreDatabase(database: DatabaseSync): void {
 
 export function applySqliteRunStoreMigrations(context: SqliteRunStoreMigrationContext): void {
   const { database } = context;
+  database.exec("BEGIN IMMEDIATE;");
+  try {
     database.exec(`
       CREATE TABLE IF NOT EXISTS schema_migrations (
         version INTEGER PRIMARY KEY,
@@ -5089,5 +5091,13 @@ export function applySqliteRunStoreMigrations(context: SqliteRunStoreMigrationCo
           tools_revision = tools_revision + 1;
       END;
     `);
-
+    database.exec("COMMIT;");
+  } catch (error) {
+    try {
+      database.exec("ROLLBACK;");
+    } catch {
+      // Preserve the migration failure when SQLite already ended the transaction.
+    }
+    throw error;
+  }
 }

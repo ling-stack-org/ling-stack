@@ -7,6 +7,7 @@ import type {
   DarwinBundledProviderSealV1,
   WindowsBundledProviderSealV2,
 } from "@ling-stack/contracts";
+import { cuaDriverArtifactLayoutFor } from "../../shared/cua-driver-artifact-layout.mjs";
 import { sha256Bytes } from "./artifact-lock.js";
 import type { CuaDriverResourcePaths } from "./resource-path.js";
 import { assertCuaDriverResourceTree } from "./resource-path.js";
@@ -146,11 +147,16 @@ export async function verifyCuaDriverProviderArtifacts(
   }
   if (input.platform === "darwin") {
     const darwinSeal = seal as DarwinBundledProviderSealV1;
-    if (darwinSeal.executableSha256 !== executableDigest || darwinSeal.executableRelativePath !== "cua-driver") {
+    if (darwinSeal.executableSha256 !== executableDigest
+      || darwinSeal.executableRelativePath
+        !== cuaDriverArtifactLayoutFor("darwin").packagedExecutableName) {
       throw new CuaDriverProviderSealError("provider_seal_executable_digest_mismatch", input.paths.executablePath);
     }
   } else {
-    if (!windowsSeal || windowsSeal.main.sha256 !== executableDigest || windowsSeal.main.relativePath !== "payload/cua-driver.exe") {
+    if (!windowsSeal
+      || windowsSeal.main.sha256 !== executableDigest
+      || windowsSeal.main.relativePath
+        !== `payload/${cuaDriverArtifactLayoutFor("win32-x64").packagedExecutableName}`) {
       throw new CuaDriverProviderSealError("provider_seal_executable_digest_mismatch", input.paths.executablePath);
     }
   }
@@ -190,7 +196,10 @@ function assertCommonSeal(value: Readonly<Record<string, unknown>>): void {
 }
 
 function assertDarwinSeal(value: Readonly<Record<string, any>>): void {
-  if (value.schemaVersion !== 1 || value.componentId !== "cua-driver-darwin" || value.executableRelativePath !== "cua-driver") {
+  if (value.schemaVersion !== 1
+    || value.componentId !== "cua-driver-darwin"
+    || value.executableRelativePath
+      !== cuaDriverArtifactLayoutFor("darwin").packagedExecutableName) {
     throw new CuaDriverProviderSealError("provider_seal_darwin_identity_mismatch");
   }
   if (!isSha256(value.executableSha256) || !Array.isArray(value.architectures) || value.architectures.join(",") !== "arm64") {
@@ -211,7 +220,12 @@ function assertWindowsSeal(value: Readonly<Record<string, any>>): void {
   if (!Array.isArray(value.limitations) || value.limitations.join(",") !== "elevated_pixel_input,uwp_send_input") {
     throw new CuaDriverProviderSealError("provider_seal_windows_limitations_mismatch");
   }
-  if (!isRecord(value.main) || value.main.relativePath !== "payload/cua-driver.exe" || value.main.architecture !== "x86_64" || !isSha256(value.main.sha256) || !isSha256(value.main.peManifestCanonicalSha256)) {
+  if (!isRecord(value.main)
+    || value.main.relativePath
+      !== `payload/${cuaDriverArtifactLayoutFor("win32-x64").packagedExecutableName}`
+    || value.main.architecture !== "x86_64"
+    || !isSha256(value.main.sha256)
+    || !isSha256(value.main.peManifestCanonicalSha256)) {
     throw new CuaDriverProviderSealError("provider_seal_windows_binary_mismatch");
   }
   if (value.signingTier === "unsigned_dev") {

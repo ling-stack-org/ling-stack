@@ -28,7 +28,7 @@
 - 最终 packaged provider 必须从固定 tag commit/tree、`Cargo.lock`、
   `ling-managed-embedded-v1` patch series 和锁定 MSVC/Windows SDK 工具链构建。
 - standard 用户包只包含最终 `cua-driver.exe`；它使用 post-sign seal，且 Ling 签名
-  catalog 位于 payload 外并覆盖 `payload/cua-driver.exe` 与
+  catalog 位于 payload 外并覆盖 `payload/ling-cua-driver.exe` 与
   `payload/provider-seal.json`；被覆盖的 seal 再锚定 provider lock digest，避免
   catalog 自引用。不得用参考 asset SHA 或 candidate manifest 代替 installed runtime
   身份。

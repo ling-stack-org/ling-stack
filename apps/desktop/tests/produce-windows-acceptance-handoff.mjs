@@ -80,7 +80,7 @@ const HANDOFF_ARTIFACT_DESTINATIONS = Object.freeze({
   lingUninstaller:
     `candidate/artifacts/${WINDOWS_LING_UNINSTALLER_RELATIVE_PATH}`,
   provider:
-    "candidate/artifacts/provider/0.8.3-ling.1/win32-x64/payload/cua-driver.exe",
+    "candidate/artifacts/provider/0.8.3-ling.1/win32-x64/payload/ling-cua-driver.exe",
   providerSeal:
     "candidate/artifacts/provider/0.8.3-ling.1/win32-x64/payload/provider-seal.json",
   providerCatalog:

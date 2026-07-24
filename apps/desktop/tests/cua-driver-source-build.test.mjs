@@ -70,7 +70,6 @@ const VERIFY_SCRIPT = new URL("../scripts/verify-cua-driver-source-build.mjs", i
 const DESKTOP_ARTIFACTS_WORKFLOW = new URL("../../../.github/workflows/desktop-artifacts.yml", import.meta.url).pathname;
 const SELF_HOSTED_NATIVE_WORKFLOW = new URL("../../../.github/workflows/cua-driver-self-hosted-native.yml", import.meta.url).pathname;
 const DARWIN_REPRODUCIBILITY_DIAGNOSTIC = new URL("../scripts/diagnose-cua-driver-darwin-reproducibility.mjs", import.meta.url).pathname;
-const SIGNING_BUILDER_FIXTURE = new URL("run-cua-driver-signing-builder-fixture.mjs", import.meta.url).pathname;
 
 test("provider lock is the exact V2 contract and remains fail-closed", async () => {
   const lock = JSON.parse(await readFile(join(PROVIDER_RESOURCE_ROOT, "provider-lock.json"), "utf8"));
@@ -174,87 +173,39 @@ test("package authorization follows only the independently anchored committed lo
   );
 });
 
-test("source-build workflow actions use immutable full commit SHAs", async () => {
-  const [workflow, signingBuilderFixture] = await Promise.all([
-    readFile(DESKTOP_ARTIFACTS_WORKFLOW, "utf8"),
-    readFile(SIGNING_BUILDER_FIXTURE, "utf8"),
-  ]);
-  const sourceJobs = workflow.slice(
-    workflow.indexOf("  cua-driver-source-build-macos:"),
-    workflow.indexOf("  macos-unsigned:"),
+test("product artifact workflow is manual, single-build, and uploads only release products", async () => {
+  const workflow = await readFile(DESKTOP_ARTIFACTS_WORKFLOW, "utf8");
+  assert.match(workflow, /^  workflow_dispatch:/mu);
+  assert.doesNotMatch(workflow, /^  (?:pull_request|push):/mu);
+  assert.match(workflow, /default: macos-arm64/u);
+  assert.match(workflow, /- windows-x64/u);
+  assert.doesNotMatch(workflow, /- both/u);
+
+  const macosBuildJob = workflow.slice(
+    workflow.indexOf("  macos-arm64:"),
+    workflow.indexOf("  windows-x64:"),
   );
-  const uses = [...sourceJobs.matchAll(/^\s+uses:\s+([^\s]+)$/gmu)].map((match) => match[1]);
-  assert.deepEqual(uses.length, 17);
+  const windowsBuildJob = workflow.slice(workflow.indexOf("  windows-x64:"));
+  for (const [platform, job] of [["darwin", macosBuildJob], ["win32-x64", windowsBuildJob]]) {
+    assert.equal(job.match(/build-cua-driver-provider\.mjs/gu)?.length, 1);
+    assert.match(job, new RegExp(`--platform ${platform}`, "u"));
+    assert.match(job, /verify-cua-driver-source-build\.mjs/u);
+    assert.match(job, /LING_CUA_DRIVER_PACKAGE_PROVIDER: "1"/u);
+    assert.doesNotMatch(job, /candidate-[ab]|promote-cua-driver|download-artifact/u);
+  }
+
+  const uses = [...workflow.matchAll(/^\s+uses:\s+([^\s]+)$/gmu)].map((match) => match[1]);
+  assert.equal(uses.length, 7);
   for (const action of uses) assert.match(action, /^[^@]+@[0-9a-f]{40}$/u);
-  const macosBuildJob = sourceJobs.slice(
-    sourceJobs.indexOf("  cua-driver-source-build-macos:"),
-    sourceJobs.indexOf("  cua-driver-source-build-windows:"),
-  );
-  const windowsBuildJob = sourceJobs.slice(
-    sourceJobs.indexOf("  cua-driver-source-build-windows:"),
-    sourceJobs.indexOf("  cua-driver-source-build-promotion-macos:"),
-  );
-  const macosPromotionJob = sourceJobs.slice(
-    sourceJobs.indexOf("  cua-driver-source-build-promotion-macos:"),
-    sourceJobs.indexOf("  cua-driver-source-build-promotion-windows:"),
-  );
-  const windowsPromotionJob = sourceJobs.slice(
-    sourceJobs.indexOf("  cua-driver-source-build-promotion-windows:"),
-  );
-  assert.doesNotMatch(macosBuildJob, /promote-cua-driver-source-build\.mjs/u);
-  assert.doesNotMatch(windowsBuildJob, /promote-cua-driver-source-build\.mjs/u);
-  assert.match(
-    macosPromotionJob,
-    /needs: cua-driver-source-build-macos[\s\S]+actions\/download-artifact@[0-9a-f]{40}[\s\S]+name: cua-driver-source-build-macos-arm64/u,
-  );
-  assert.match(
-    windowsPromotionJob,
-    /needs: cua-driver-source-build-windows[\s\S]+actions\/download-artifact@[0-9a-f]{40}[\s\S]+name: cua-driver-source-build-windows-x64/u,
-  );
-  assert.match(
-    macosPromotionJob,
-    /promote-cua-driver-source-build\.mjs[\s\S]+--platform darwin[\s\S]+--candidate-a[\s\S]+--candidate-b[\s\S]+--output-dir/u,
-  );
-  assert.match(
-    windowsPromotionJob,
-    /promote-cua-driver-source-build\.mjs --platform win32-x64 --candidate-a[\s\S]+--candidate-b[\s\S]+--output-dir/u,
-  );
-  assert.match(sourceJobs, /name: cua-driver-source-build-promotion-macos-arm64/u);
-  assert.match(sourceJobs, /name: cua-driver-source-build-promotion-windows-x64/u);
-  assert.match(sourceJobs, /name: cua-driver-source-build-macos-arm64/u);
-  assert.match(sourceJobs, /name: cua-driver-source-build-windows-x64/u);
-  for (const artifactName of [
-    "cua-driver-source-build-promotion-macos-arm64",
-    "cua-driver-source-build-promotion-windows-x64",
-  ]) {
-    const start = sourceJobs.indexOf(`          name: ${artifactName}`);
-    const end = sourceJobs.indexOf("\n\n", start);
-    const upload = sourceJobs.slice(start, end);
-    assert.match(
-      upload,
-      /path: \$\{\{ runner\.temp \}\}\/ling-cua-driver-source-build-download\/promotion\/\*\*/u,
-    );
-    assert.doesNotMatch(upload, /path:\s*\|/u);
-  }
-  for (const [job, artifactName] of [
-    [macosPromotionJob, "cua-driver-source-build-macos-arm64"],
-    [windowsPromotionJob, "cua-driver-source-build-windows-x64"],
-  ]) {
-    assert.match(job, new RegExp(
-      `name: ${artifactName}[\\s\\S]+path: \\$\\{\\{ runner\\.temp \\}\\}/ling-cua-driver-source-build-download`,
-      "u",
-    ));
-    assert.match(job, /candidate-a[^\n]+a\/output/u);
-    assert.match(job, /candidate-b[^\n]+b\/output/u);
-  }
-  assert.match(
-    macosBuildJob,
-    /Resolve committed macOS package authorization[\s\S]+id: package-authorization[\s\S]+--platform darwin[\s\S]+Run production macOS arm64 package wrapper\n\s+if: steps\.package-authorization\.outputs\.authorized == 'true'[\s\S]+run-cua-driver-signing-builder-fixture\.mjs[\s\S]+a\/output/u,
-  );
+  assert.equal(workflow.match(/actions\/upload-artifact@/gu)?.length, 2);
+  assert.match(macosBuildJob, /Ling-Stack-\*-macos-arm64\.dmg[\s\S]+checksums\.txt/u);
+  assert.doesNotMatch(macosBuildJob, /release\/\*-macos-arm64\.zip\n\s+apps/u);
+  assert.match(windowsBuildJob, /Ling-Stack-\*-windows-x64-setup\.exe[\s\S]+checksums\.txt/u);
   assert.match(
     windowsBuildJob,
-    /Resolve committed Windows package authorization[\s\S]+id: package-authorization[\s\S]+--platform win32-x64[\s\S]+Run production Windows package wrapper\n\s+if: steps\.package-authorization\.outputs\.authorized == 'true'[\s\S]+run-cua-driver-signing-builder-fixture\.mjs --source-root/u,
+    /check-cua-driver-package-authorization\.mjs --platform win32-x64[\s\S]+Windows packaging is not authorized yet/u,
   );
+
   const desktopPackage = JSON.parse(await readFile(
     new URL("../package.json", import.meta.url),
     "utf8",
@@ -267,19 +218,6 @@ test("source-build workflow actions use immutable full commit SHAs", async () =>
   assert.equal(desktopPackage.dependencies?.["electron-updater"], undefined);
   assert.equal(desktopPackage.devDependencies?.["electron-updater"], undefined);
   assert.equal(desktopPackage.build.publish, undefined);
-  assert.match(signingBuilderFixture, /const expectedCopies = 1;/u);
-  assert.doesNotMatch(signingBuilderFixture, /platform === "darwin" \? 2 : 1/u);
-
-  const checksumJob = workflow.slice(workflow.indexOf("  desktop-checksums:"));
-  assert.match(checksumJob, /needs:\n\s+- macos-unsigned\n\s+- windows-unsigned/u);
-  assert.match(checksumJob, /Ling-Stack-\*-macos-arm64\.dmg/u);
-  assert.match(checksumJob, /Ling-Stack-\*-windows-x64-setup\.exe/u);
-  assert.match(checksumJob, /test "\$\{#installers\[@\]\}" -eq 2/u);
-  assert.match(checksumJob, /sha256sum --check checksums\.txt/u);
-  assert.match(checksumJob, /path: output\/checksums\.txt/u);
-  for (const action of checksumJob.matchAll(/^\s+uses:\s+([^\s]+)$/gmu)) {
-    assert.match(action[1], /^[^@]+@[0-9a-f]{40}$/u);
-  }
 });
 
 test("self-hosted macOS A/B failures emit bounded reproducibility diagnostics", async () => {
@@ -365,50 +303,17 @@ test("self-hosted native workflow is manual, identity-bound, and uses only dedic
   }
 
   const caller = await readFile(DESKTOP_ARTIFACTS_WORKFLOW, "utf8");
-  assert.match(caller, /execution_mode:[\s\S]+self-hosted-native/u);
-  assert.match(caller, /execution_mode:[\s\S]+default: self-hosted-native/u);
-  assert.match(caller, /uses: \.\/\.github\/workflows\/cua-driver-self-hosted-native\.yml/u);
-  assert.match(caller, /expected_commit: \$\{\{ inputs\.expected_commit \}\}/u);
-  assert.equal(
-    [...caller.matchAll(/if: github\.event_name == 'workflow_dispatch' && inputs\.execution_mode == 'github-hosted'/gu)].length,
-    8,
-  );
-  assert.equal(
-    [...caller.matchAll(/if: github\.event_name == 'workflow_dispatch' && inputs\.execution_mode == 'github-hosted' && inputs\.native_platform != 'windows'/gu)].length,
-    3,
-  );
-  assert.equal(
-    [...caller.matchAll(/if: github\.event_name == 'workflow_dispatch' && inputs\.execution_mode == 'github-hosted' && inputs\.native_platform != 'macos'/gu)].length,
-    3,
-  );
-  assert.equal(
-    [...caller.matchAll(/if: github\.event_name == 'workflow_dispatch' && inputs\.execution_mode == 'github-hosted' && inputs\.native_platform == 'both'/gu)].length,
-    1,
-  );
-  assert.match(
-    caller,
-    /os: \$\{\{ fromJSON\(inputs\.native_platform == 'windows' && '\["windows-2022"\]' \|\| inputs\.native_platform == 'macos' && '\["macos-15"\]' \|\| '\["ubuntu-24\.04","macos-15","windows-2022"\]'\) \}\}/u,
-  );
-  const hostedSigningJob = caller.slice(
-    caller.indexOf("  cua-driver-signing-feasibility:"),
-    caller.indexOf("  cua-driver-source-build-macos:"),
-  );
-  assert.match(
-    hostedSigningJob,
-    /Install fixture dependencies[\s\S]+corepack pnpm install --frozen-lockfile[\s\S]+Run certificate-free hook-order and artifact fixtures/u,
-  );
-  assert.match(
-    hostedSigningJob,
-    /Run source-build promotion contract fixtures\n\s+if: runner\.os != 'Windows'/u,
-  );
-  assert.equal([...caller.matchAll(/toolset: 14\.44/gu)].length, 2);
-  assert.equal([...caller.matchAll(/sdk: 10\.0\.26100\.0/gu)].length, 2);
+  assert.match(caller, /^  workflow_dispatch:/mu);
+  assert.doesNotMatch(caller, /^  (?:workflow_call|pull_request|push):/mu);
+  assert.match(caller, /runs-on:\n      - ling-cua-driver-macos-arm64-v1/u);
+  assert.match(caller, /runs-on:\n      - ling-cua-driver-windows-x64-v1/u);
+  assert.doesNotMatch(caller, /cua-driver-self-hosted-native\.yml/u);
+  assert.doesNotMatch(caller, /execution_mode|native_platform|expected_commit/u);
+  assert.equal([...caller.matchAll(/toolset: 14\.44/gu)].length, 1);
+  assert.equal([...caller.matchAll(/sdk: 10\.0\.26100\.0/gu)].length, 1);
   assert.doesNotMatch(caller, /vsversion:/u);
-  assert.equal(
-    [...caller.matchAll(/if: github\.event_name == 'workflow_dispatch' && inputs\.execution_mode == 'self-hosted-native'/gu)].length,
-    1,
-  );
-  assert.doesNotMatch(caller, /if: inputs\.execution_mode != 'self-hosted-native'/u);
+  assert.equal([...caller.matchAll(/actions\/upload-artifact@/gu)].length, 2);
+  assert.doesNotMatch(caller, /actions\/download-artifact@/u);
 });
 
 test("reproducible final linker flags never poison executable host build scripts", async () => {
@@ -489,19 +394,19 @@ test("canonical Mach-O relink selector accepts only the reviewed identity and fa
   assert.equal(attempts, 3);
 });
 
-test("macOS and Windows artifact jobs run complete core, daemon and Pi runner suites", async () => {
+test("macOS and Windows product jobs keep package checks focused", async () => {
   const workflow = await readFile(DESKTOP_ARTIFACTS_WORKFLOW, "utf8");
   const macosJob = workflow.slice(
-    workflow.indexOf("  macos-unsigned:"),
-    workflow.indexOf("  windows-unsigned:"),
+    workflow.indexOf("  macos-arm64:"),
+    workflow.indexOf("  windows-x64:"),
   );
-  const windowsJob = workflow.slice(workflow.indexOf("  windows-unsigned:"));
+  const windowsJob = workflow.slice(workflow.indexOf("  windows-x64:"));
 
   for (const [name, job] of [["macOS", macosJob], ["Windows", windowsJob]]) {
-    assert.match(job, /- name: Run Computer Use contract tests\s+run: node --test packages\/contracts\/test\/computer-use\.test\.mjs packages\/api-client\/test\/computer-use\.test\.mjs/u, name);
-    assert.match(job, /- name: Run complete core suite\s+run: corepack pnpm --filter @ling-stack\/core test/u, name);
-    assert.match(job, /- name: Run complete daemon suite\s+run: corepack pnpm --filter @ling-stack\/daemon test/u, name);
-    assert.match(job, /- name: Run complete Pi runner suite\s+run: corepack pnpm --filter @ling-stack\/runner-pi test/u, name);
+    assert.match(job, /- name: Run focused package contracts/u, name);
+    assert.match(job, /- name: Run packaged Desktop smoke/u, name);
+    assert.doesNotMatch(job, /Run complete (?:core|daemon|Pi runner) suite/u, name);
+    assert.doesNotMatch(job, /Install Chromium for Web E2E|playwright test/u, name);
   }
 });
 
@@ -948,7 +853,7 @@ test("staging expectation binds verification to the exact child snapshot", () =>
   assert.strictEqual(
     bindExpectedProviderSnapshot({
       expectedProviderSha256: snapshot.sha256,
-      relativePath: "darwin/cua-driver",
+      relativePath: "darwin/ling-cua-driver",
       snapshot,
     }),
     snapshot,
@@ -956,7 +861,7 @@ test("staging expectation binds verification to the exact child snapshot", () =>
   assert.throws(
     () => bindExpectedProviderSnapshot({
       expectedProviderSha256: "b".repeat(64),
-      relativePath: "darwin/cua-driver",
+      relativePath: "darwin/ling-cua-driver",
       snapshot,
     }),
     /provider changed after staging snapshot/u,
@@ -1240,7 +1145,7 @@ test("runtime and promotion evidence bindings fail closed field by field", async
   assert.equal("readinessSequence" in stableRuntimeProbe(windowsRuntime, "win32-x64").managedReadiness, false);
 
   const binaries = [{
-    relativePath: "darwin/cua-driver",
+    relativePath: "darwin/ling-cua-driver",
     role: "main",
     packaged: true,
     sha256BeforeSigning: "2".repeat(64),
@@ -1673,7 +1578,7 @@ test("source-build inventory rejects extra or relabeled Windows executables", ()
   const digest = "0".repeat(64);
   const binaries = [
     {
-      relativePath: "win32-x64/payload/cua-driver.exe",
+      relativePath: "win32-x64/payload/ling-cua-driver.exe",
       role: "main",
       packaged: true,
       sha256BeforeSigning: digest,

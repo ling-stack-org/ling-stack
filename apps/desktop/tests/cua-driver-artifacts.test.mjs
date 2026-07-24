@@ -32,7 +32,7 @@ test("bundled resource resolution is fixed under resourcesPath and never consult
   });
   assert.equal(
     resolved.executablePath,
-    "/opt/Ling Stack/resources/providers/cua-driver/0.8.3-ling.1/win32-x64/payload/cua-driver.exe",
+    "/opt/Ling Stack/resources/providers/cua-driver/0.8.3-ling.1/win32-x64/payload/ling-cua-driver.exe",
   );
   assert.equal(resolved.executablePath.includes("CuaDriver.app"), false);
   assert.equal(resolved.executablePath.includes(".local/bin"), false);
@@ -317,7 +317,7 @@ async function createDarwinArtifactFixture(t) {
     componentId: "cua-driver-darwin",
     lockSha256: lockDigest,
     distributionRevision: "ling.1",
-    executableRelativePath: "cua-driver",
+    executableRelativePath: "ling-cua-driver",
     executableSha256: executableDigest,
     architectures: ["arm64"],
     cdhashes: { arm64: "abc" },
