@@ -457,34 +457,7 @@ jobs:
           corepack pnpm --filter @ling-stack/web check:i18n
 
       - name: Run Desktop Node tests
-        shell: pwsh
-        run: |
-          # The full macOS suite contains host-filesystem contracts for Darwin
-          # mode bits and symlink topology that NTFS cannot represent. Keep the
-          # Windows product surface in this job, and run the two mixed-platform
-          # files again with their explicit Windows cases selected below.
-          $hostSpecific = @(
-            "cua-driver-package-staging.test.mjs",
-            "cua-driver-source-build-promotion.test.mjs"
-          )
-          $portableTests = @(
-            Get-ChildItem -LiteralPath apps/desktop/tests -Filter "*.test.mjs" -File |
-              Where-Object { $_.Name -notin $hostSpecific } |
-              Sort-Object Name |
-              ForEach-Object { $_.FullName }
-          )
-          node --test --test-concurrency=1 $portableTests
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-
-          node --test --test-concurrency=1 `
-            --test-name-pattern="Windows|win32|production staging APIs reject caller-controlled trust|checked-in fail-closed scaffold|staging CLI exposes no final phase|invalid staging test hooks|provider tree scans" `
-            apps/desktop/tests/cua-driver-package-staging.test.mjs
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-
-          node --test --test-concurrency=1 `
-            --test-name-pattern="promotion CLI requires|production promotion API|Windows promotion" `
-            apps/desktop/tests/cua-driver-source-build-promotion.test.mjs
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        run: node --test apps/desktop/tests/*.test.mjs
 
       - name: Run Computer Use contract tests
         run: node --test packages/contracts/test/computer-use.test.mjs packages/api-client/test/computer-use.test.mjs
@@ -738,7 +711,42 @@ jobs:
           corepack pnpm --filter @ling-stack/web check:i18n
 
       - name: Run Desktop Node tests
-        run: node --test apps/desktop/tests/*.test.mjs
+        shell: pwsh
+        run: |
+          # The full macOS suite contains host-filesystem contracts for Darwin
+          # mode bits and symlink topology that NTFS cannot represent. Keep the
+          # Windows product surface in this job, and run the two mixed-platform
+          # files again with their explicit Windows cases selected below.
+          $hostSpecific = @(
+            "cua-driver-package-staging.test.mjs",
+            "cua-driver-source-build-promotion.test.mjs"
+          )
+          foreach ($testName in $hostSpecific) {
+            if (!(Test-Path -LiteralPath (Join-Path "apps/desktop/tests" $testName) -PathType Leaf)) {
+              throw "Windows host-specific Desktop test is missing: $testName"
+            }
+          }
+          $portableTests = @(
+            Get-ChildItem -LiteralPath apps/desktop/tests -Filter "*.test.mjs" -File |
+              Where-Object { $_.Name -notin $hostSpecific } |
+              Sort-Object Name |
+              ForEach-Object { $_.FullName }
+          )
+          if ($portableTests.Count -eq 0) {
+            throw "Windows portable Desktop test inventory is empty"
+          }
+          node --test --test-concurrency=1 $portableTests
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+          node --test --test-concurrency=1 `
+            --test-name-pattern="Windows|win32|production staging APIs reject caller-controlled trust|checked-in fail-closed scaffold|staging CLI exposes no final phase|invalid staging test hooks|provider tree scans" `
+            apps/desktop/tests/cua-driver-package-staging.test.mjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+          node --test --test-concurrency=1 `
+            --test-name-pattern="promotion CLI requires|production promotion API|Windows promotion" `
+            apps/desktop/tests/cua-driver-source-build-promotion.test.mjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Run Computer Use contract tests
         run: node --test packages/contracts/test/computer-use.test.mjs packages/api-client/test/computer-use.test.mjs

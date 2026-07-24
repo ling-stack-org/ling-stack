@@ -3,6 +3,7 @@ apps/desktop/resources/providers/cua-driver/**/*.json text eol=lf
 apps/desktop/resources/providers/cua-driver/**/*.md text eol=lf
 apps/desktop/resources/providers/cua-driver/**/*.patch text eol=lf
 apps/desktop/resources/providers/cua-driver/**/*.toml text eol=lf
+.github/workflows/*.yml text eol=lf
 
 # Unified diffs require a single-space line to preserve blank context lines.
 apps/desktop/resources/providers/cua-driver/*/patches/*/*.patch whitespace=-blank-at-eol
