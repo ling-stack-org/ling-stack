@@ -1,0 +1,17 @@
+diff --git a/libs/cua-driver/rust/crates/cua-driver-core/src/ling_managed.rs b/libs/cua-driver/rust/crates/cua-driver-core/src/ling_managed.rs
+index a722ef6..21a79f5 100644
+--- a/libs/cua-driver/rust/crates/cua-driver-core/src/ling_managed.rs
++++ b/libs/cua-driver/rust/crates/cua-driver-core/src/ling_managed.rs
+@@ -1412,9 +1412,7 @@ mod tests {
+-        let command = format!(
+-            "mklink /J \"{}\" \"{}\"",
+-            junction_argument, outside_argument
+-        );
+         let status = std::process::Command::new("cmd.exe")
+-            .args(["/d", "/s", "/c", &command])
++            .args(["/d", "/c", "mklink", "/J"])
++            .arg(junction_argument)
++            .arg(outside_argument)
+             .status()
+             .unwrap();
+         assert!(status.success(), "failed to create junction fixture");
