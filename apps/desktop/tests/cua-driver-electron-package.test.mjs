@@ -125,7 +125,7 @@ test("package preparation stages one platform and writes build-authority files",
           "0.8.3-ling.1",
         );
         await mkdir(join(providerRoot, "win32-x64", "payload"), { recursive: true });
-        await writeFile(join(providerRoot, "win32-x64", "payload", "cua-driver.exe"), "fixture");
+        await writeFile(join(providerRoot, "win32-x64", "payload", "ling-cua-driver.exe"), "fixture");
         return { providerRoot, providerSha256: "a".repeat(64), stageIdentity: "1:1" };
       },
       async cleanupPublishedStage({ outputRoot }) {
@@ -177,7 +177,7 @@ test("package preparation cleanup coalesces callers and remains retryable after 
           );
           await mkdir(join(providerRoot, "win32-x64", "payload"), { recursive: true });
           await writeFile(
-            join(providerRoot, "win32-x64", "payload", "cua-driver.exe"),
+            join(providerRoot, "win32-x64", "payload", "ling-cua-driver.exe"),
             "fixture",
           );
           return { providerRoot, providerSha256: "d".repeat(64), stageIdentity: "1:1" };
@@ -240,7 +240,7 @@ test("package CLI passes only its verified temporary root and digest to Builder"
             "0.8.3-ling.1",
           );
           await mkdir(join(providerRoot, "win32-x64", "payload"), { recursive: true });
-          await writeFile(join(providerRoot, "win32-x64", "payload", "cua-driver.exe"), "fixture");
+          await writeFile(join(providerRoot, "win32-x64", "payload", "ling-cua-driver.exe"), "fixture");
           return { providerRoot, providerSha256: "b".repeat(64), stageIdentity: "1:1" };
         },
         async cleanupPublishedStage({ outputRoot }) {
@@ -298,7 +298,7 @@ test("package CLI rejects a second Builder config and cleans staging after Build
             );
             await mkdir(join(providerRoot, "win32-x64", "payload"), { recursive: true });
             await writeFile(
-              join(providerRoot, "win32-x64", "payload", "cua-driver.exe"),
+              join(providerRoot, "win32-x64", "payload", "ling-cua-driver.exe"),
               "fixture",
             );
             return { providerRoot, providerSha256: "c".repeat(64), stageIdentity: "1:1" };
@@ -344,7 +344,7 @@ test("package CLI preserves both Builder and staging cleanup failures", async ()
             );
             await mkdir(join(providerRoot, "win32-x64", "payload"), { recursive: true });
             await writeFile(
-              join(providerRoot, "win32-x64", "payload", "cua-driver.exe"),
+              join(providerRoot, "win32-x64", "payload", "ling-cua-driver.exe"),
               "fixture",
             );
             return { providerRoot, providerSha256: "e".repeat(64), stageIdentity: "1:1" };

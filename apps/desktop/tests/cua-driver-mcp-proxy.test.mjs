@@ -94,7 +94,17 @@ test("loopback proxy authenticates one generation and rejects wrong token/origin
     headers: { ...baseHeaders, "mcp-session-id": sessionId },
     body: JSON.stringify({ jsonrpc: "2.0", id: "call-2", method: "tools/list" }),
   });
-  assert.equal(fencedCall.status, 503);
+  assert.equal(fencedCall.status, 200);
+  assert.equal((await fencedCall.json()).error.message, "mcp_call_gate_closed");
+
+  proxy.openCallGate();
+  const recoveredCall = await fetch(endpoint.url, {
+    method: "POST",
+    headers: { ...baseHeaders, "mcp-session-id": sessionId },
+    body: JSON.stringify({ jsonrpc: "2.0", id: "call-3", method: "tools/list" }),
+  });
+  assert.equal(recoveredCall.status, 200);
+  assert.deepEqual((await recoveredCall.json()).result, {});
 
   const released = await fetch(endpoint.url, {
     method: "DELETE",
@@ -103,6 +113,35 @@ test("loopback proxy authenticates one generation and rejects wrong token/origin
   assert.equal(released.status, 204);
   assert.equal(fixture.stopCount, 1);
   await proxy.close("test_complete");
+});
+
+test("an initialized host can reattach after a daemon client disappears before opening SSE", async () => {
+  const fixture = createHostFixture();
+  const context = createContext();
+  const proxy = new CuaDriverMcpProxy({ host: fixture.host, context });
+  const endpoint = await proxy.start();
+  const baseHeaders = headers(context, endpoint.authorizationToken);
+
+  const first = await fetch(endpoint.url, {
+    method: "POST",
+    headers: baseHeaders,
+    body: JSON.stringify(initialize(1)),
+  });
+  assert.equal(first.status, 200);
+  const firstSessionId = first.headers.get("mcp-session-id");
+
+  const second = await fetch(endpoint.url, {
+    method: "POST",
+    headers: baseHeaders,
+    body: JSON.stringify(initialize(2)),
+  });
+  assert.equal(second.status, 200);
+  assert.notEqual(second.headers.get("mcp-session-id"), firstSessionId);
+  assert.equal((await second.json()).id, 2);
+  assert.equal(fixture.stopCount, 0);
+
+  await proxy.close("test_complete");
+  assert.equal(fixture.stopCount, 1);
 });
 
 test("proxy does not expose endpoint secret through the lease identity and token is generation-fenced", () => {
@@ -119,6 +158,100 @@ test("proxy does not expose endpoint secret through the lease identity and token
   }), {
     generation: 2,
   });
+});
+
+test("initialize can retain one healthy provider session while the call gate stays closed", async () => {
+  const fixture = createHostFixture();
+  const context = createContext();
+  const proxy = new CuaDriverMcpProxy({
+    host: fixture.host,
+    context,
+    onInitialized: async () => ({ callGate: "closed" }),
+  });
+  const endpoint = await proxy.start();
+  const baseHeaders = headers(context, endpoint.authorizationToken);
+
+  const initialized = await fetch(endpoint.url, {
+    method: "POST",
+    headers: baseHeaders,
+    body: JSON.stringify(initialize(1)),
+  });
+  assert.equal(initialized.status, 200);
+  const sessionId = initialized.headers.get("mcp-session-id");
+  assert.match(sessionId, /^[A-Za-z0-9_-]{16,128}$/u);
+  assert.equal(fixture.stopCount, 0, "permission gating must retain the initialized child");
+
+  const initializedNotification = await fetch(endpoint.url, {
+    method: "POST",
+    headers: { ...baseHeaders, "mcp-session-id": sessionId },
+    body: JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" }),
+  });
+  assert.equal(initializedNotification.status, 202, "the MCP handshake must finish behind a closed call gate");
+
+  const streamResponse = await fetch(endpoint.url, {
+    headers: { ...baseHeaders, "mcp-session-id": sessionId, accept: "text/event-stream" },
+  });
+  assert.equal(streamResponse.status, 200, "the retained session keeps its transport stream alive");
+
+  const fencedCall = await fetch(endpoint.url, {
+    method: "POST",
+    headers: { ...baseHeaders, "mcp-session-id": sessionId },
+    body: JSON.stringify({ jsonrpc: "2.0", id: "call-1", method: "tools/list" }),
+  });
+  assert.equal(fencedCall.status, 200, "readiness gating must not make the MCP transport look disconnected");
+  assert.deepEqual(await fencedCall.json(), {
+    jsonrpc: "2.0",
+    id: "call-1",
+    error: { code: -32003, message: "mcp_call_gate_closed" },
+  });
+  assert.equal(fixture.stopCount, 0);
+
+  const secondFencedCall = await fetch(endpoint.url, {
+    method: "POST",
+    headers: { ...baseHeaders, "mcp-session-id": sessionId },
+    body: JSON.stringify({ jsonrpc: "2.0", id: "call-2", method: "ping" }),
+  });
+  assert.equal(secondFencedCall.status, 200);
+  assert.equal((await secondFencedCall.json()).error.message, "mcp_call_gate_closed");
+  assert.equal(fixture.stopCount, 0, "repeated gated calls must reuse the retained session");
+
+  const reinitialized = await fetch(endpoint.url, {
+    method: "POST",
+    headers: baseHeaders,
+    body: JSON.stringify(initialize(2)),
+  });
+  assert.equal(reinitialized.status, 200, "a new daemon client can replace a dormant gated session");
+  const replacementSessionId = reinitialized.headers.get("mcp-session-id");
+  assert.match(replacementSessionId, /^[A-Za-z0-9_-]{16,128}$/u);
+  assert.notEqual(replacementSessionId, sessionId);
+  assert.equal((await reinitialized.json()).id, 2);
+  assert.equal(fixture.stopCount, 0, "gated reattachment must not initialize or stop the child again");
+
+  const replacementNotification = await fetch(endpoint.url, {
+    method: "POST",
+    headers: { ...baseHeaders, "mcp-session-id": replacementSessionId },
+    body: JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" }),
+  });
+  assert.equal(replacementNotification.status, 202);
+  const replacementStream = await fetch(endpoint.url, {
+    headers: { ...baseHeaders, "mcp-session-id": replacementSessionId, accept: "text/event-stream" },
+  });
+  assert.equal(replacementStream.status, 200);
+  await replacementStream.body?.cancel();
+  await waitFor(() => proxy.activeSessionId === undefined);
+  assert.equal(fixture.stopCount, 0, "a gated daemon disconnect must retain the child for permission recovery");
+
+  const thirdInitialize = await fetch(endpoint.url, {
+    method: "POST",
+    headers: baseHeaders,
+    body: JSON.stringify(initialize(3)),
+  });
+  assert.equal(thirdInitialize.status, 200);
+  assert.equal(fixture.stopCount, 0);
+
+  await proxy.close("test_complete");
+  await streamResponse.body?.cancel().catch(() => undefined);
+  assert.equal(fixture.stopCount, 1);
 });
 
 test("close during bind rejects the pending start and leaves no listening proxy", async () => {

@@ -58,6 +58,7 @@ import {
   GenerationFencedCuaDriverReadiness,
   WindowsActiveChildReadinessController,
   type CuaDriverReadinessController,
+  type CuaDriverReadinessResult,
   type CuaDriverWindowsSessionRecoveryHint,
   type CuaDriverWindowsSessionRecoveryObserver,
 } from "./readiness-controller.js";
@@ -559,6 +560,7 @@ export class CuaDriverDesktopCoordinator {
           if (!readiness.ready) {
             proxy.closeCallGate(readiness.reason ?? "readiness_revoked");
           } else {
+            proxy.openCallGate();
             this.resetRecoveryBudget(generation);
           }
           this.publishSnapshot({
@@ -566,6 +568,7 @@ export class CuaDriverDesktopCoordinator {
             providerState: readiness.providerState,
             generation,
             endpoint: publicCuaDriverMcpProxyEndpoint(endpoint),
+            ...(host.pid ? { pid: host.pid } : {}),
             ...(this.artifacts ? {
               artifacts: {
                 lockDigest: this.artifacts.lockDigest,
@@ -588,17 +591,29 @@ export class CuaDriverDesktopCoordinator {
           if (this.host?.generation !== generation) {
             throw new Error("cua_driver_readiness_generation_stale");
           }
-          if (!readiness.ready) {
+          const readinessAction = classifyCuaDriverInitialReadiness(readiness);
+          if (readinessAction !== "open_call_gate") {
             proxy.closeCallGate(readiness.reason ?? "readiness_failed");
             this.publishSnapshot({
               lifecycle: "active",
               providerState: readiness.providerState,
               generation,
               endpoint: publicCuaDriverMcpProxyEndpoint(proxy.endpoint),
+              ...(host.pid ? { pid: host.pid } : {}),
+              ...(this.artifacts ? {
+                artifacts: {
+                  lockDigest: this.artifacts.lockDigest,
+                  providerSealDigest: this.artifacts.sealDigest,
+                  ...(this.artifacts.catalogDigest ? { providerCatalogDigest: this.artifacts.catalogDigest } : {}),
+                },
+              } : {}),
               ...(readiness.reason ? { reason: readiness.reason } : {}),
             });
             if (readiness.providerState === "interactive_session_required") {
               this.scheduleWindowsSessionSuspension(readiness.reason ?? "windows_interactive_session_required", generation);
+            }
+            if (readinessAction === "retain_gated_session") {
+              return { callGate: "closed" as const };
             }
             throw new Error(readiness.reason ?? "cua_driver_readiness_failed");
           }
@@ -608,6 +623,7 @@ export class CuaDriverDesktopCoordinator {
             providerState: "ready",
             generation,
             endpoint: publicCuaDriverMcpProxyEndpoint(proxy.endpoint),
+            ...(host.pid ? { pid: host.pid } : {}),
             ...(this.artifacts ? {
               artifacts: {
                 lockDigest: this.artifacts.lockDigest,
@@ -616,6 +632,7 @@ export class CuaDriverDesktopCoordinator {
               },
             } : {}),
           });
+          return { callGate: "open" as const };
         },
       });
       this.proxy = proxy;
@@ -1112,6 +1129,24 @@ export class CuaDriverDesktopCoordinator {
     });
     return snapshot;
   }
+}
+
+export type CuaDriverInitialReadinessAction =
+  | "open_call_gate"
+  | "retain_gated_session"
+  | "reject_initialize";
+
+/** Keep expected host-permission waits out of crash recovery. */
+export function classifyCuaDriverInitialReadiness(
+  readiness: Pick<CuaDriverReadinessResult, "ready" | "providerState">,
+): CuaDriverInitialReadinessAction {
+  if (readiness.ready && readiness.providerState === "ready") {
+    return "open_call_gate";
+  }
+  if (!readiness.ready && readiness.providerState === "permission_required") {
+    return "retain_gated_session";
+  }
+  return "reject_initialize";
 }
 
 async function waitForRecovery(milliseconds: number): Promise<void> {

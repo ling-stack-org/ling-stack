@@ -4,6 +4,7 @@ import {
   type SpawnOptions,
 } from "node:child_process";
 import { win32 } from "node:path";
+import { cuaDriverArtifactLayoutFor } from "../../../shared/cua-driver-artifact-layout.mjs";
 import type {
   CuaDriverPreparedProviderSpawn,
   CuaDriverProviderProcessLifecycle,
@@ -68,7 +69,8 @@ export function createWin32CuaDriverProcessLifecycle(options: {
     },
     spawn(input: Parameters<CuaDriverProviderProcessLifecycle["spawn"]>[0]) {
       if (!win32.isAbsolute(input.executablePath)
-        || win32.basename(input.executablePath).toLowerCase() !== "cua-driver.exe"
+        || win32.basename(input.executablePath).toLowerCase()
+          !== cuaDriverArtifactLayoutFor("win32-x64").packagedExecutableName
         || !input.executableDigest
         || !input.preparedSpawn
         || !preparedSpawns.has(input.preparedSpawn)

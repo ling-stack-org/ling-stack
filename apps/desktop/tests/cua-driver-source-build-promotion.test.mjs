@@ -136,8 +136,8 @@ test("Darwin promotion safely restores or preserves execute permission at the ar
   t.after(() => rm(root, { recursive: true, force: true }));
   const candidateA = await createCandidate(join(root, "a"), "darwin");
   const candidateB = await createCandidate(join(root, "b"), "darwin");
-  const binaryA = join(candidateA.root, "darwin/cua-driver");
-  const binaryB = join(candidateB.root, "darwin/cua-driver");
+  const binaryA = join(candidateA.root, "darwin/ling-cua-driver");
+  const binaryB = join(candidateB.root, "darwin/ling-cua-driver");
   const bytesA = await readFile(binaryA);
   const bytesB = await readFile(binaryB);
   await chmod(binaryA, 0o644);
@@ -145,7 +145,7 @@ test("Darwin promotion safely restores or preserves execute permission at the ar
 
   let verifierCalls = 0;
   const promoter = createFixturePromoter(async (input) => {
-    const metadata = await lstat(join(input.candidateRoot, "darwin/cua-driver"));
+    const metadata = await lstat(join(input.candidateRoot, "darwin/ling-cua-driver"));
     assert.equal(metadata.mode & 0o100, 0o100);
     verifierCalls += 1;
     return fixtureVerifier(input);
@@ -249,7 +249,7 @@ test("Darwin execute permission repair rejects unsafe candidate entries", async 
         candidateA.root,
         fixtureRoot,
       ) ?? candidateA.root;
-      await fixture.replace?.(join(candidateA.root, "darwin/cua-driver"), outside);
+      await fixture.replace?.(join(candidateA.root, "darwin/ling-cua-driver"), outside);
       let verifierCalls = 0;
       await assert.rejects(
         createFixturePromoter(async (input) => {
@@ -277,8 +277,8 @@ test("Darwin execute permission repair rejects deterministic path replacement ra
     await t.test(hookName, async () => {
       const candidateRoot = join(root, hookName);
       const movedRoot = `${candidateRoot}-opened`;
-      const executablePath = join(candidateRoot, "darwin/cua-driver");
-      const displacedPath = join(candidateRoot, "darwin/cua-driver-opened");
+      const executablePath = join(candidateRoot, "darwin/ling-cua-driver");
+      const displacedPath = join(candidateRoot, "darwin/ling-cua-driver-opened");
       await mkdir(dirname(executablePath), { recursive: true });
       await writeFile(executablePath, "original", { mode: 0o644 });
       const restore = createDarwinCandidateExecutableRestorerForTest({
@@ -300,7 +300,7 @@ test("Darwin execute permission repair rejects deterministic path replacement ra
           : /promotion_candidate_executable_changed/u,
       );
       const originalPath = hookName === "afterRootLstat"
-        ? join(movedRoot, "darwin/cua-driver")
+        ? join(movedRoot, "darwin/ling-cua-driver")
         : displacedPath;
       assert.equal(
         (await lstat(originalPath)).mode & 0o777,
@@ -532,7 +532,7 @@ test("Windows promotion records standard payload and keeps UIAccess audit-only",
     lock.platforms.win32X64.binary.packagedFilesBySigningTier.test_signed_internal,
     [
       "provider-integrity.cat",
-      "payload/cua-driver.exe",
+      "payload/ling-cua-driver.exe",
       "payload/provider-seal.json",
     ],
   );
@@ -874,9 +874,9 @@ async function createCandidate(root, platform, options = {}) {
   await writeFile(join(root, "cua-driver.spdx.json"), "{\"fixture\":true}\n");
 
   const binaries = platform === "darwin"
-    ? [{ relativePath: "darwin/cua-driver", role: "main", packaged: true }]
+    ? [{ relativePath: "darwin/ling-cua-driver", role: "main", packaged: true }]
     : [
-        { relativePath: "win32-x64/payload/cua-driver.exe", role: "main", packaged: true },
+        { relativePath: "win32-x64/payload/ling-cua-driver.exe", role: "main", packaged: true },
         {
           relativePath: "audit/win32-x64/cua-driver-uia.exe",
           role: "uia-audit",

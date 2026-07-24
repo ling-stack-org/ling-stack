@@ -40,3 +40,34 @@
 @import "./styles/action-menus.css";
 @import "./styles/model-workbench.css";
 @import "./styles/select-controls.css";
+
+.app-shell.desktop-macos {
+  --desktop-window-titlebar-height: 28px;
+  position: relative;
+  height: 100dvh;
+  min-height: 0;
+  padding-top: var(--desktop-window-titlebar-height);
+}
+
+.desktop-window-drag-region {
+  position: absolute;
+  inset: 0 0 auto 76px;
+  z-index: 1000;
+  height: var(--desktop-window-titlebar-height);
+  background: var(--app-bg);
+  -webkit-app-region: drag;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.app-shell.desktop-macos > .channel-left-drawer,
+.app-shell.desktop-macos > .workspace,
+.app-shell.desktop-macos > .right-panel {
+  height: 100%;
+  min-height: 0;
+  max-height: 100%;
+}
+
+.app-shell.desktop-macos > .workspace > * {
+  max-height: 100%;
+}

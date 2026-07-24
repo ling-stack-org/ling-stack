@@ -1,6 +1,10 @@
 import { lstat, readdir, realpath } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import type { CuaDriverArchitecture, CuaDriverPlatform } from "@ling-stack/contracts";
+import {
+  cuaDriverArtifactLayoutFor,
+  cuaDriverArtifactPlatformForRuntime,
+} from "../../shared/cua-driver-artifact-layout.mjs";
 
 export const CUA_DRIVER_DISTRIBUTION_REVISION = "0.8.3-ling.1" as const;
 export const CUA_DRIVER_RESOURCE_ROOT_SEGMENTS = [
@@ -59,10 +63,13 @@ export function resolveCuaDriverResourcePaths(
 
   const resourcesPath = resolve(input.resourcesPath);
   const providerRoot = join(resourcesPath, ...CUA_DRIVER_RESOURCE_ROOT_SEGMENTS);
-  const platformRoot = join(providerRoot, input.platform === "darwin" ? "darwin" : "win32-x64");
+  const layout = cuaDriverArtifactLayoutFor(
+    cuaDriverArtifactPlatformForRuntime(input.platform),
+  );
+  const platformRoot = join(providerRoot, layout.platformDirectory);
   const isWindows = input.platform === "win32";
   const payloadRoot = isWindows ? join(platformRoot, "payload") : platformRoot;
-  const executablePath = join(payloadRoot, isWindows ? "cua-driver.exe" : "cua-driver");
+  const executablePath = join(payloadRoot, layout.packagedExecutableName);
   const sealPath = join(payloadRoot, "provider-seal.json");
   const catalogPath = isWindows ? join(platformRoot, "provider-integrity.cat") : undefined;
   return {
@@ -140,7 +147,10 @@ async function assertExactProviderLayout(paths: CuaDriverResourcePaths, requireC
   const platformEntries = await readDirectoryNames(paths.platformRoot, "platform_root");
   const platformName = paths.platformRoot.split(sep).at(-1);
   if (platformName === "darwin") {
-    const allowed = new Set(["cua-driver", "provider-seal.json"]);
+    const allowed = new Set([
+      cuaDriverArtifactLayoutFor("darwin").packagedExecutableName,
+      "provider-seal.json",
+    ]);
     for (const name of platformEntries) {
       if (!allowed.has(name)) {
         throw new CuaDriverResourcePathError("darwin_provider_extra_entry", join(paths.platformRoot, name));
@@ -159,7 +169,10 @@ async function assertExactProviderLayout(paths: CuaDriverResourcePaths, requireC
   }
   const payloadRoot = join(paths.platformRoot, "payload");
   const payloadEntries = await readDirectoryNames(payloadRoot, "provider_payload");
-  const allowedPayload = new Set(["cua-driver.exe", "provider-seal.json"]);
+  const allowedPayload = new Set([
+    cuaDriverArtifactLayoutFor("win32-x64").packagedExecutableName,
+    "provider-seal.json",
+  ]);
   for (const name of payloadEntries) {
     if (!allowedPayload.has(name)) {
       throw new CuaDriverResourcePathError("windows_provider_payload_extra_entry", join(payloadRoot, name));

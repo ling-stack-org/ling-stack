@@ -473,7 +473,7 @@ test("provider mutation after seal fails closed in afterSign and artifact verifi
       destinationRoot: fixture.artifactRoot,
       expectedKind: "zip",
     });
-    await writeFile(join(fixture.artifactRoot, "resources/providers/cua-driver/0.8.3-ling.1/win32-x64/payload/cua-driver.exe"), Buffer.from("artifact mutation"), { flag: "a" });
+    await writeFile(join(fixture.artifactRoot, "resources/providers/cua-driver/0.8.3-ling.1/win32-x64/payload/ling-cua-driver.exe"), Buffer.from("artifact mutation"), { flag: "a" });
     await assert.rejects(
       runArtifactBuildCompleted(
         { ...context, artifactPath },
@@ -786,7 +786,7 @@ test("production hook rejects a reused internal signed payload even with a match
     await cp(fixture.appOutDir, productionRoot, { recursive: true });
     await rm(join(productionRoot, "resources/providers/cua-driver/0.8.3-ling.1/win32-x64/payload/provider-seal.json"), { force: true });
     await rm(join(productionRoot, "resources/providers/cua-driver/0.8.3-ling.1/win32-x64/provider-integrity.cat"), { force: true });
-    const reusedProviderPath = join(productionRoot, "resources/providers/cua-driver/0.8.3-ling.1/win32-x64/payload/cua-driver.exe");
+    const reusedProviderPath = join(productionRoot, "resources/providers/cua-driver/0.8.3-ling.1/win32-x64/payload/ling-cua-driver.exe");
     const productionStateDirectory = join(fixture.root, "production-evidence");
     await assert.rejects(
       runAfterPack({ appOutDir: productionRoot, electronPlatformName: "win32" }, {
@@ -983,7 +983,10 @@ async function createFixture(platform, profile) {
   await mkdir(payloadRoot, { recursive: true });
   const lockPath = join(platformRoot, "..", "provider-lock.json");
   await writeFile(lockPath, `${platform}-fixture-lock-v1\n`);
-  const providerPath = join(payloadRoot, platform === "win32" ? "cua-driver.exe" : "cua-driver");
+  const providerPath = join(
+    payloadRoot,
+    platform === "win32" ? "ling-cua-driver.exe" : "ling-cua-driver",
+  );
   await writeFile(providerPath, Buffer.from(`MZ-or-MACHO-fixture:${platform}`));
   return {
     root,

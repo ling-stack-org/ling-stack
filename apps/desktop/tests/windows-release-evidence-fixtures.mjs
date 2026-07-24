@@ -256,7 +256,7 @@ export function windowsProviderVerificationReportFixture({
   const providerLockPath = provider.path
     .replaceAll("\\", "/")
     .replace(
-      /\/win32-x64\/payload\/cua-driver\.exe$/u,
+      /\/win32-x64\/payload\/ling-cua-driver\.exe$/u,
       "/provider-lock.json",
     );
   return {
@@ -268,7 +268,7 @@ export function windowsProviderVerificationReportFixture({
       output: "cua-driver 0.8.3",
     },
     provider: {
-      name: "cua-driver.exe",
+      name: "ling-cua-driver.exe",
       path: provider.path,
       sha256: provider.sha256,
     },
@@ -297,7 +297,7 @@ export function windowsProviderVerificationReportFixture({
         ? {}
         : { testAuthorityKind: candidate.testAuthorityKind }),
       main: {
-        relativePath: "payload/cua-driver.exe",
+        relativePath: "payload/ling-cua-driver.exe",
         architecture: "x86_64",
         sha256: provider.sha256,
         peManifestCanonicalSha256: "a".repeat(64),
@@ -316,7 +316,7 @@ export function windowsProviderVerificationReportFixture({
         validationStatus: "Valid",
         members: [
           {
-            relativePath: "payload/cua-driver.exe",
+            relativePath: "payload/ling-cua-driver.exe",
             sha256: provider.sha256,
           },
           {
@@ -327,14 +327,14 @@ export function windowsProviderVerificationReportFixture({
       },
     },
     uiAccessHelper: {
-      path: provider.path.replace(/cua-driver\.exe$/u, "cua-driver-uia.exe"),
+      path: provider.path.replace(/ling-cua-driver\.exe$/u, "cua-driver-uia.exe"),
       packaged: false,
       exists: false,
     },
     packageLayout: {
       distributionRootEntryNames: ["provider-lock.json", "win32-x64"],
       platformRootEntryNames: ["payload", "provider-integrity.cat"],
-      payloadFileNames: ["cua-driver.exe", "provider-seal.json"],
+      payloadFileNames: ["ling-cua-driver.exe", "provider-seal.json"],
       unexpectedPaths: [],
     },
     authenticode: {

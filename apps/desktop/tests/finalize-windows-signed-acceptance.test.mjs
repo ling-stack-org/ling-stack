@@ -357,7 +357,7 @@ async function createFinalizerFixture() {
     lingApp: join(appRoot, "Ling Stack.exe"),
     lingInstaller: join(root, "candidate", "Ling Stack Setup.exe"),
     lingUninstaller: join(root, "candidate", "Uninstall Ling Stack.exe"),
-    provider: join(providerDirectory, "cua-driver.exe"),
+    provider: join(providerDirectory, "ling-cua-driver.exe"),
     providerSeal: join(providerDirectory, "provider-seal.json"),
     providerCatalog: join(providerRoot, "provider-integrity.cat"),
   };

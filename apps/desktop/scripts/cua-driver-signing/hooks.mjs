@@ -1,8 +1,11 @@
 import { lstat, mkdir, readFile, realpath, writeFile } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { fileURLToPath } from "node:url";
 
+import { cuaDriverArtifactLayoutFor } from "../../shared/cua-driver-artifact-layout.mjs";
 import { validateCuaDriverPackageAuthority } from "../../shared/cua-driver-package-authority-contract.mjs";
 import { verifyCuaDriverPackagedHostAuthority } from "../cua-driver-package-host-authority.mjs";
+import { createDarwinPlatformSigner } from "./darwin-platform-signer.mjs";
 import {
   createDisposableFixtureSigner,
   readFixtureFileSignature,
@@ -48,6 +51,7 @@ const PACKAGER_SIGNING_CONTEXTS_PROPERTY = "__lingSigningContexts";
 let processRuntimeOptions = Object.freeze({});
 const activeSigningOutputs = new Map();
 let environmentFixtureSigner;
+let environmentDarwinSigner;
 
 /** Configure an injected signer or extractor for the current Node process. */
 export function configureProviderSigningHooks(options = {}) {
@@ -58,6 +62,7 @@ export function resetProviderSigningHooks() {
   processRuntimeOptions = Object.freeze({});
   activeSigningOutputs.clear();
   environmentFixtureSigner = undefined;
+  environmentDarwinSigner = undefined;
 }
 
 export async function runAfterPack(context, callOptions = {}) {
@@ -214,7 +219,7 @@ export async function runAfterPack(context, callOptions = {}) {
         );
       }
       const members = [
-        { relativePath: "payload/cua-driver.exe", sha256: sealedProviderSha256 },
+        { relativePath: "payload/ling-cua-driver.exe", sha256: sealedProviderSha256 },
         { relativePath: "payload/provider-seal.json", sha256: sealEvidence.sha256 },
       ];
       const catalogIdentity = await options.signer.signCatalog({
@@ -1167,6 +1172,19 @@ function mergeOptions(callOptions) {
     options.signer ??= environmentFixtureSigner;
     options.outerSigner ??= environmentFixtureSigner;
     options.requireProvider ??= true;
+  } else if (
+    process.platform === "darwin"
+    && process.env.LING_CUA_DARWIN_SIGNING_IDENTITY
+  ) {
+    environmentDarwinSigner ??= createDarwinPlatformSigner({
+      identity: process.env.LING_CUA_DARWIN_SIGNING_IDENTITY,
+      expectedTeamId: process.env.LING_CUA_DARWIN_EXPECTED_TEAM_ID,
+      entitlementsPath: fileURLToPath(
+        new URL("../../build/entitlements.cua-driver.plist", import.meta.url),
+      ),
+    });
+    options.signer ??= environmentDarwinSigner;
+    options.requireProvider ??= true;
   }
   return options;
 }
@@ -1174,7 +1192,8 @@ function mergeOptions(callOptions) {
 function looksExecutable(filePath) {
   const normalized = filePath.toLowerCase();
   return (
-    basename(normalized) === "cua-driver" ||
+    basename(normalized) === cuaDriverArtifactLayoutFor("darwin").packagedExecutableName
+    ||
     PROVIDER_EXECUTABLE_SUFFIXES.some((suffix) => normalized.endsWith(suffix))
   );
 }
@@ -1198,9 +1217,9 @@ function inferOuterRole(filePath, platform) {
 
 function looksLikeCanonicalProviderPath(filePath, platform) {
   const normalized = filePath.replaceAll("\\", "/").toLowerCase();
-  return platform === "win32"
-    ? /\/providers\/cua-driver\/[^/]+\/win32-x64\/payload\/cua-driver\.exe$/u.test(normalized)
-    : /\/providers\/cua-driver\/[^/]+\/darwin\/cua-driver$/u.test(normalized);
+  const layout = cuaDriverArtifactLayoutFor(platform === "win32" ? "win32-x64" : "darwin");
+  return normalized.includes("/providers/cua-driver/")
+    && normalized.endsWith(`/${layout.packagedExecutableRelativePath}`);
 }
 
 function isWithin(candidate, root) {

@@ -253,15 +253,22 @@ test("provider verifier does not resolve PowerShell or unzip through PATH", asyn
   assert.match(source, /detached: process\.platform !== "win32"/u);
 });
 
-test("hosted Windows preflight requires the diagnostic gates that prove its own lifecycle", async () => {
+test("manual product workflow builds one selected platform without audit artifact fan-out", async () => {
   const source = await readFile(workflowPath, "utf8");
-  assert.match(source, /candidate-binding/u);
-  assert.match(source, /install-cleanliness/u);
-  assert.match(source, /provider-verification/u);
-  assert.match(source, /provider-smoke/u);
-  assert.match(source, /did not prove \{0\}/u);
-  assert.match(source, /function Invoke-BoundedProcess/u);
-  assert.match(source, /System32\/taskkill\.exe/u);
+  assert.match(source, /^  workflow_dispatch:/mu);
+  assert.doesNotMatch(source, /^  (?:pull_request|push):/mu);
+  assert.match(source, /- macos-arm64/u);
+  assert.match(source, /- windows-x64/u);
+  assert.doesNotMatch(source, /- both/u);
+  assert.equal(source.match(/build-cua-driver-provider\.mjs/gu)?.length, 2);
+  assert.equal(source.match(/actions\/upload-artifact@/gu)?.length, 2);
+  assert.match(source, /LING_CUA_DRIVER_PACKAGE_PROVIDER: "1"/u);
+  assert.match(source, /Ling-Stack-\*-macos-arm64\.dmg/u);
+  assert.match(source, /Ling-Stack-\*-windows-x64-setup\.exe/u);
+  assert.match(source, /ling-cua-driver\.exe/u);
+  assert.match(source, /check-cua-driver-package-authorization\.mjs --platform win32-x64/u);
+  assert.match(source, /Windows packaging is not authorized yet/u);
+  assert.doesNotMatch(source, /candidate-binding|promotion proposal|fixture retention|finalizer/iu);
 });
 
 test("release policy cannot omit the supported build and signer certificate bindings", async () => {

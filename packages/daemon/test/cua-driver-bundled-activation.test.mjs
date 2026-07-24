@@ -230,6 +230,7 @@ test("lease MCP client initializes once and supports pooled check/list/call/clos
   const called = await client.callTool(server, "list_windows", { includeHidden: false });
 
   assert.equal(calls.filter(([kind]) => kind === "connect").length, 1);
+  assert.equal(calls.filter(([kind]) => kind === "ping").length, 0);
   assert.equal(checked.statusSnapshot.status, "ready");
   assert.deepEqual(checked.statusSnapshot.serverInfo, { name: "cua-driver", version: "0.8.3" });
   assert.equal(health.statusSnapshot.status, "ready");
@@ -343,12 +344,16 @@ test("pooled lease client closes once when initialization completes after bounde
   assert.equal(closeCalls, 1);
 });
 
-test("lease MCP check maps ping failures to the canonical check error", async () => {
+test("lease MCP check does not require the optional ping method from Cua Driver 0.8.3", async () => {
+  let pingCalls = 0;
   const factory = new DefaultCuaDriverLeaseMcpClientFactory({
     bridgeToken,
     createClient: () => ({
       async connect() {},
-      async ping() { throw new Error("proxy ping failed"); },
+      async ping() {
+        pingCalls += 1;
+        throw new Error("Cua Driver 0.8.3 does not implement ping");
+      },
       getServerVersion: () => ({ name: "cua-driver", version: "0.8.3" }),
       async listTools() { return { tools: [] }; },
       async callTool() { return { content: [] }; },
@@ -360,9 +365,9 @@ test("lease MCP check maps ping failures to the canonical check error", async ()
 
   const checked = await client.check(activationServer(), now);
 
-  assert.equal(checked.statusSnapshot.status, "failed");
-  assert.equal(checked.statusSnapshot.errorCode, "cua_driver_check_failed");
-  assert.match(checked.statusSnapshot.message, /proxy ping failed/);
+  assert.equal(checked.statusSnapshot.status, "ready");
+  assert.equal(checked.statusSnapshot.errorCode, undefined);
+  assert.equal(pingCalls, 0);
   await client.close();
 });
 
@@ -902,6 +907,30 @@ test("enable without a lease reuses the latest authenticated Desktop repair stat
     assert.equal(result.health.details.providerState, "permission_required");
     assert.equal(result.health.details.errorCode, "cua_embedded_permission_required");
     assert.equal(fixture.store.getMcpStatusSnapshot(serverId).errorCode, "cua_embedded_permission_required");
+    assert.equal(fixture.store.getManagedPlugin(pluginId).enabled, false);
+    assert.deepEqual(fixture.store.listMcpTools({ serverId }), []);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("a current Desktop permission wait bypasses MCP checks even when a lease exists", async () => {
+  const fixture = await activationFixture({
+    desktopAvailability: availability({ providerState: "permission_required" }),
+  });
+  try {
+    assert.equal(fixture.registry.publish(lease()).accepted, true);
+
+    const result = await fixture.service.enable({ store: fixture.store, descriptor, now });
+
+    assert.equal(result.statusCode, 202);
+    assert.equal(result.error, "cua_embedded_permission_required");
+    assert.equal(result.health.details.providerState, "permission_required");
+    assert.equal(result.health.details.errorCode, "cua_embedded_permission_required");
+    assert.equal(fixture.connects.length, 0, "permission repair state must not open a gated MCP session");
+    assert.equal(fixture.checkCalls, 0);
+    assert.equal(fixture.healthCalls, 0);
+    assert.equal(fixture.listCalls, 0);
     assert.equal(fixture.store.getManagedPlugin(pluginId).enabled, false);
     assert.deepEqual(fixture.store.listMcpTools({ serverId }), []);
   } finally {

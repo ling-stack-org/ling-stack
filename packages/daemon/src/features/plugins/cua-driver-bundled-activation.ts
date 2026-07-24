@@ -236,6 +236,31 @@ export class BundledCuaDriverActivationService {
       return staleResult(input, server, "A newer Cua Driver intent won before activation started.");
     }
 
+    const desktopAvailability = this.options.getDesktopAvailability?.();
+    if (desktopAvailability && isDesktopAvailabilityWaitState(desktopAvailability.providerState)) {
+      const projection = desktopAvailabilityProjection(true, desktopAvailability);
+      const health = input.store.getManagedPluginHealthSnapshot(input.descriptor.id)
+        ?? activationHealth({
+          pluginId: input.descriptor.id,
+          now: input.now,
+          status: "failed",
+          message: projection.message,
+          providerState: projection.providerState,
+          errorCode: projection.errorCode,
+          ...(projection.details ? { details: projection.details } : {}),
+        });
+      return {
+        statusCode: 202,
+        committed: true,
+        ...(projection.errorCode ? { error: projection.errorCode } : {}),
+        message: projection.message,
+        linkedMcpServerId: server.id,
+        statusSnapshot: input.store.getMcpStatusSnapshot(server.id),
+        tools: [],
+        health,
+      };
+    }
+
     const lease = this.options.leaseRegistry.getCurrent();
     if (!lease) {
       const health = input.store.getManagedPluginHealthSnapshot(input.descriptor.id)
@@ -653,6 +678,16 @@ export class BundledCuaDriverActivationService {
       activationEpoch: observed.state.activationEpoch,
     };
   }
+}
+
+function isDesktopAvailabilityWaitState(
+  state: DesktopCuaDriverAvailabilityV1["providerState"],
+): boolean {
+  return state === "permission_required"
+    || state === "interactive_session_required"
+    || state === "platform_unavailable"
+    || state === "incompatible"
+    || state === "corrupt";
 }
 
 function ensureActivationPrerequisites(input: {

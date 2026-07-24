@@ -9,7 +9,7 @@ export const WINDOWS_RELEASE_POLICY_SCHEMA_VERSION = 3;
 export const WINDOWS_RELEASE_POLICY_VERSION = 3;
 
 export const WINDOWS_PROVIDER_RELATIVE_PATH =
-  "resources/providers/cua-driver/0.8.3-ling.1/win32-x64/payload/cua-driver.exe";
+  "resources/providers/cua-driver/0.8.3-ling.1/win32-x64/payload/ling-cua-driver.exe";
 export const WINDOWS_PROVIDER_SEAL_RELATIVE_PATH =
   "resources/providers/cua-driver/0.8.3-ling.1/win32-x64/payload/provider-seal.json";
 export const WINDOWS_PROVIDER_CATALOG_RELATIVE_PATH =

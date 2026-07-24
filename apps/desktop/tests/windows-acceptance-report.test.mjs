@@ -1167,7 +1167,7 @@ test("candidate manifest binds the approved policy and exact reviewed provider r
       lingApp: { sha256: SHA_A },
       lingInstaller: { sha256: SHA_B },
       provider: {
-        path: "C:\\candidate\\resources\\providers\\cua-driver\\0.8.3-ling.1\\win32-x64\\payload\\cua-driver.exe",
+        path: "C:\\candidate\\resources\\providers\\cua-driver\\0.8.3-ling.1\\win32-x64\\payload\\ling-cua-driver.exe",
         sha256: SHA_C,
       },
       providerSeal: {
@@ -1298,7 +1298,7 @@ test("Windows release evidence schemas pin policy, provider tuple, and six manua
   assert.equal(
     candidateSchema.$defs.packagedProvider.properties.providerRelativePath
       .const,
-    "resources/providers/cua-driver/0.8.3-ling.1/win32-x64/payload/cua-driver.exe",
+    "resources/providers/cua-driver/0.8.3-ling.1/win32-x64/payload/ling-cua-driver.exe",
   );
   assert.ok(candidateSchema.required.includes("tierGovernedArtifacts"));
   assert.ok(candidateSchema.required.includes("vendorNativeInventory"));
@@ -1375,7 +1375,7 @@ function completeEvidence({ production = true } = {}) {
       ),
       provider: {
         ...artifact(
-          "C:\\candidate\\resources\\providers\\cua-driver\\0.8.3-ling.1\\win32-x64\\payload\\cua-driver.exe",
+          "C:\\candidate\\resources\\providers\\cua-driver\\0.8.3-ling.1\\win32-x64\\payload\\ling-cua-driver.exe",
           SHA_C,
           policy.providerSignerSubject,
         ),

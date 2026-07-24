@@ -1774,7 +1774,7 @@ function deriveProviderVerificationGate(probe, bindings) {
   );
   const expectedCatalogMembers = [
     {
-      relativePath: "payload/cua-driver.exe",
+      relativePath: "payload/ling-cua-driver.exe",
       sha256: bindings.provider.sha256,
     },
     {
@@ -1788,7 +1788,7 @@ function deriveProviderVerificationGate(probe, bindings) {
     report?.versionProbe?.checked !== true ||
     report?.versionProbe?.expectedVersion !== REQUIRED_PROVIDER_VERSION ||
     !matchesRequiredProviderVersionOutput(report?.versionProbe?.output) ||
-    report?.provider?.name !== "cua-driver.exe" ||
+    report?.provider?.name !== "ling-cua-driver.exe" ||
     report?.provider?.sha256 !== bindings.provider.sha256 ||
     providerSeal?.sha256 !== bindings.providerSeal.sha256 ||
     providerCatalog?.sha256 !== bindings.providerCatalog.sha256 ||
@@ -1816,7 +1816,7 @@ function deriveProviderVerificationGate(probe, bindings) {
     ) ||
     !isDeepStrictEqual(
       report?.packageLayout?.payloadFileNames,
-      ["cua-driver.exe", "provider-seal.json"],
+      ["ling-cua-driver.exe", "provider-seal.json"],
     ) ||
     !isDeepStrictEqual(report?.packageLayout?.unexpectedPaths, [])
   ) {
@@ -1850,7 +1850,7 @@ function deriveProviderVerificationGate(probe, bindings) {
     providerSeal.distributionChannel !== candidate.distributionChannel ||
     providerSeal.productionEligible !== candidate.productionEligible ||
     observedTestAuthorityKind !== candidate.testAuthorityKind ||
-    providerSeal.main?.relativePath !== "payload/cua-driver.exe" ||
+    providerSeal.main?.relativePath !== "payload/ling-cua-driver.exe" ||
     providerSeal.main?.architecture !== "x86_64" ||
     providerSeal.main?.sha256 !== bindings.provider.sha256 ||
     providerSeal.main?.authenticodeStatus !==

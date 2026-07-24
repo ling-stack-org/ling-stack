@@ -297,7 +297,7 @@ export async function verifyInstalledWindowsProvider(mainBinaryPath, options = {
     },
     "Standard bundled provider platform root",
   );
-  const expectedPayloadFileNames = ["cua-driver.exe", "provider-seal.json"];
+  const expectedPayloadFileNames = ["ling-cua-driver.exe", "provider-seal.json"];
   const payloadFileNames = payloadEntries
     .map((entry) => entry.name)
     .sort();
@@ -318,11 +318,11 @@ export async function verifyInstalledWindowsProvider(mainBinaryPath, options = {
       readFile(providerLockPath),
     ]);
   const provider = {
-    name: "cua-driver.exe",
+    name: "ling-cua-driver.exe",
     path: resolvedMainBinaryPath,
     bytes: providerBytes.length,
     sha256: createHash("sha256").update(providerBytes).digest("hex"),
-    ...inspectWindowsX64Pe(providerBytes, "cua-driver.exe"),
+    ...inspectWindowsX64Pe(providerBytes, "ling-cua-driver.exe"),
   };
   const providerSeal = {
     path: resolve(providerSealPath),
@@ -484,7 +484,7 @@ export function validateInstalledProviderSeal(bytes, {
     !Array.isArray(value.limitations) ||
     value.limitations.join(",") !== "elevated_pixel_input,uwp_send_input" ||
     !isRecord(value.main) ||
-    value.main.relativePath !== "payload/cua-driver.exe" ||
+    value.main.relativePath !== "payload/ling-cua-driver.exe" ||
     value.main.architecture !== "x86_64" ||
     !isSha256(value.main.sha256) ||
     value.main.sha256 !== providerSha256 ||
@@ -535,7 +535,7 @@ export function validateInstalledProviderSeal(bytes, {
       value.signingTier
     ] !== value.integrityCatalogRelativePath ||
     platformLock.binary.packagedFilesBySigningTier?.[value.signingTier]?.join(",") !==
-      "provider-integrity.cat,payload/cua-driver.exe,payload/provider-seal.json" ||
+      "provider-integrity.cat,payload/ling-cua-driver.exe,payload/provider-seal.json" ||
     (value.signingTier === "test_signed_internal" &&
       !["ephemeral-ci", "managed-internal"].includes(value.testAuthorityKind)) ||
     (value.signingTier === "production_signed" &&
@@ -594,7 +594,7 @@ export function validateInstalledWindowsProviderIdentity(value, expected) {
     .sort((left, right) => left.relativePath.localeCompare(right.relativePath));
   const expectedMembers = [
     {
-      relativePath: "payload/cua-driver.exe",
+      relativePath: "payload/ling-cua-driver.exe",
       sha256: expected.providerSha256,
     },
     {

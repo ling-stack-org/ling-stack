@@ -17,6 +17,7 @@ import {
 import { pathToFileURL } from "node:url";
 import { isDeepStrictEqual, parseArgs } from "node:util";
 
+import { CUA_DRIVER_ARTIFACT_LAYOUT } from "../shared/cua-driver-artifact-layout.mjs";
 import {
   WINDOWS_ACCEPTANCE_RELEASE_BLOCKERS,
   WINDOWS_RELEASE_HARNESS_FILES,
@@ -462,7 +463,8 @@ async function verifyCandidateArtifactTuple(
     (entry) =>
       entry.isFile() &&
       entry.name.toLowerCase().endsWith(".exe") &&
-      entry.name.toLowerCase() !== "cua-driver.exe",
+      entry.name.toLowerCase() !==
+        CUA_DRIVER_ARTIFACT_LAYOUT["win32-x64"].packagedExecutableName,
   );
   if (extraExecutables.length > 0) {
     throw new TypeError("windows_finalizer_standard_payload_executable_extra");

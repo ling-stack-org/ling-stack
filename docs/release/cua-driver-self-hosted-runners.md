@@ -1,25 +1,18 @@
 # Cua Driver Self-Hosted Native Runners
 
-This path exists for locked native evidence when GitHub-hosted macOS or Windows minutes
-are unavailable. It does not weaken the provider lock, replace Windows VM acceptance, or
-turn a local build into release evidence.
+This path builds internal Desktop products without consuming GitHub-hosted macOS or Windows
+minutes. It does not weaken the provider lock, replace Windows real-machine acceptance, or
+turn an internal package into a public release.
 
-The entrypoint is the existing `Desktop artifacts` workflow. Dispatch it with:
+The entrypoint is the `Desktop product artifacts` workflow. Dispatch exactly one target:
 
-- `execution_mode=self-hosted-native`;
-- `native_platform=macos`, `windows`, or `both`;
-- `expected_commit=<the exact 40-character commit selected as the workflow ref>`.
+- `target=macos-arm64`; or
+- `target=windows-x64`.
 
-`self-hosted-native` is the manual form default. Pull-request and push events leave all
-native artifact jobs skipped, so an exhausted GitHub-hosted billing account cannot create
-an immediate failed hosted matrix. `github-hosted` remains an explicit manual fallback
-after hosted billing is restored.
-
-The caller skips every GitHub-hosted job in this mode and invokes
-`cua-driver-self-hosted-native.yml` from the same immutable commit. Pull requests and
-pushes cannot select self-hosted mode. The called workflow also rejects any event other
-than `workflow_dispatch`, a different repository, a different actor/triggering actor,
-or a commit that differs from `expected_commit`.
+There is no `both` option and no pull-request or push trigger. Each job checks out the
+selected workflow ref without retaining credentials, verifies its dedicated runner profile,
+builds the locked provider once and packages it in the same job. The historical
+`cua-driver-self-hosted-native.yml` evidence workflow is not part of this product path.
 
 ## Runner identities
 
@@ -63,9 +56,11 @@ cd ~/.github-actions/ling-cua-driver-macos-arm64-v1
 ./run.sh
 ```
 
-Keep that terminal and the logged-in Aqua session alive until the build and promotion jobs
-finish. Stop the interactive runner with `Ctrl-C`; do not restart the LaunchAgent for native
-evidence.
+Keep that terminal and the logged-in Aqua session alive until the product job finishes.
+Stop the interactive runner with `Ctrl-C`; do not restart the LaunchAgent for this build.
+The product job selects the available Apple Development identity, derives its Team ID with a
+temporary signed probe, signs both the embedded provider and Ling app, verifies the app,
+provider, DMG and generated ZIP, and uploads only the DMG plus `checksums.txt`.
 
 ## Windows registration handoff
 
@@ -103,30 +98,27 @@ Never put that token in a script, evidence bundle, issue, or chat.
 4. Remove `LING_GITHUB_RUNNER_REGISTRATION_TOKEN` from the process environment and
    confirm GitHub lists exactly one online runner with only the reviewed custom label.
 5. From the logged-in, unlocked desktop session, start `C:\actions-runner\run.cmd` and keep
-   that console and session alive until the source-build and promotion jobs finish. Stop it
+   that console and session alive until the product job finishes. Stop it
    with `Ctrl-C` after the jobs complete.
 
 The Windows colleague performs this runner provisioning and later real-VM acceptance.
-The workflow, locked build, test signing, Setup construction, verifiers, and handoff remain
-Ling implementation scope.
+The workflow, locked build, unsigned development Setup construction and contract verifiers
+remain Ling implementation scope. Real Authenticode is added when the Windows signing
+identity is available; the current `unsigned_dev + development` package is not a release
+candidate.
 
 ## Evidence and cleanup
 
-Every build uses a run-id/run-attempt-specific tree below `RUNNER_TEMP`; it never reuses a
-previous output root. Candidate A and B are uploaded under a run-specific artifact name,
-downloaded by a separate promotion job, reverified, and reduced to a review-only proposal.
-The source-build job resolves package authority only from the independently anchored
-committed lock. On the initial closed-gate run it skips Desktop dependency installation,
-the production package wrapper and its trace upload, while still uploading A/B evidence for
-the proposal. After review commits the proposed lock and matching independent anchor, the
-mandatory second A/B run executes the production wrapper against fresh candidate A. macOS
-covers the arm64 DMG+ZIP pair in one wrapper call; Windows covers the x64 app,
-uninstaller and NSIS signing roles. The resulting Electron Builder hook/final-artifact trace
-is uploaded separately. All self-hosted artifacts use one-day retention.
+Every product build uses a fresh tree below `RUNNER_TEMP`; it never reuses a previous source
+output. The same platform job verifies that one output and passes its absolute path into the
+governed Electron Builder wrapper. No source-build output, signing fixture, promotion
+proposal, handoff or finalizer artifact is uploaded. macOS uploads exactly one DMG and
+`checksums.txt`; Windows uploads exactly one Setup executable and `checksums.txt`. Product
+artifacts have three-day retention to limit storage use.
 
 GitHub artifact storage must have enough capacity before dispatch. Deleting old CI
 artifacts is an explicit release-owner action. Do not silently delete release evidence or
 replace the upload/download boundary with a persistent local directory.
 
-Self-hosted success does not open either feature gate. The reviewed proposal still needs
-the normal lock-and-anchor commit followed by a second native A/B build.
+Self-hosted success proves that the selected internal product was built. It does not provide
+notarization, SmartScreen/WDAC, production certificate or Windows real-machine acceptance.

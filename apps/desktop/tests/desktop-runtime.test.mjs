@@ -44,6 +44,43 @@ test("DesktopRuntime composes once for one cached tuple and keeps a stable Deskt
   }]);
   const diagnosticJson = JSON.stringify(diagnostics);
   assert.doesNotMatch(diagnosticJson, /bridge-token|authority-a|connection-a|desktopInstanceEpoch/);
+
+  coordinatorOptions[0].telemetry.emit("info", "cua_driver.host.spawned", {
+    generation: 1,
+    pid: 4321,
+    authorizationToken: "must-not-leak",
+  });
+  coordinatorOptions[0].onStateChanged({
+    lifecycle: "active",
+    providerState: "permission_required",
+    generation: 1,
+    pid: 4321,
+    reason: "darwin_accessibility_permission_required",
+  });
+  assert.deepEqual(diagnostics.slice(1), [
+    {
+      event: "desktop_runtime.cua_driver_telemetry",
+      details: {
+        platform: "darwin",
+        level: "info",
+        providerEvent: "cua_driver.host.spawned",
+        generation: 1,
+        pid: 4321,
+      },
+    },
+    {
+      event: "desktop_runtime.cua_driver_state_changed",
+      details: {
+        platform: "darwin",
+        lifecycle: "active",
+        providerState: "permission_required",
+        generation: 1,
+        pid: 4321,
+        reason: "darwin_accessibility_permission_required",
+      },
+    },
+  ]);
+  assert.doesNotMatch(JSON.stringify(diagnostics), /must-not-leak/);
 });
 
 test("DesktopRuntime sequential ensure reuses the coordinator for the same authority tuple", async () => {

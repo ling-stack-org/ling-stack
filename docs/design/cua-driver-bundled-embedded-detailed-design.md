@@ -2,6 +2,35 @@
 
 ## Status
 
+### Active internal package profile (2026-07-24)
+
+The internal package uses one shared artifact-layout contract:
+
+```text
+upstream Cargo/release output       Ling distribution and installed payload
+darwin:     cua-driver          ->  darwin/ling-cua-driver
+win32-x64:  cua-driver.exe      ->  win32-x64/payload/ling-cua-driver.exe
+```
+
+Renaming happens when the source builder creates the Ling distribution output. Every later
+stage uses the Ling name: attestation manifest, package staging, provider seal, Windows
+catalog membership, Electron Builder hooks, installed-package verification and runtime
+spawn. The MCP `serverInfo.name`, provider ID, upstream crate/package names and external
+compatibility preset remain `cua-driver`.
+
+The internal threat model protects package integrity, absolute-path selection, private
+state, readiness ordering and child lifetime. It does not require audit-grade A/B
+reproducibility, promotion/finalizer chains, retained signing fixtures, SmartScreen/WDAC
+evidence or a separately signed Windows acceptance matrix. A platform does still require
+one reviewed native lock record before its product package is authorized. macOS has that
+record; Windows Setup remains blocked until its first Windows-native build supplies the
+pre-sign SHA-256, manifest/tool digest and platform metadata. The remaining sections are
+deferred public-release hardening and do not add per-build gates after that record exists.
+
+Both platforms must pass a coexistence smoke with an upstream Driver already installed.
+Ling shutdown/update/uninstall owns only the child handle and files beneath the Ling
+installation and Ling state root.
+
 Detailed design for the approved internal macOS and Windows Desktop alpha direction.
 The shared contracts, feature gates, signing feasibility, activation fences, Desktop
 supervisor, source-build pipeline and process-wide Desktop runtime composition are
@@ -352,7 +381,7 @@ interface WindowsBundledCuaDriverLockV1 {
     readonly architecture: "x86_64";
     readonly expectedUpstreamVersion: "0.8.3";
     readonly lingBuild: 1;
-    readonly mainRelativePath: "payload/cua-driver.exe";
+    readonly mainRelativePath: "payload/ling-cua-driver.exe";
     readonly providerSealRelativePath: "payload/provider-seal.json";
     readonly mainManifestCanonicalSha256: string;
     readonly integrityCatalogRelativePathBySigningTier: {
@@ -362,17 +391,17 @@ interface WindowsBundledCuaDriverLockV1 {
     };
     readonly packagedFilesBySigningTier: {
       readonly unsigned_dev: readonly [
-        "payload/cua-driver.exe",
+        "payload/ling-cua-driver.exe",
         "payload/provider-seal.json",
       ];
       readonly test_signed_internal: readonly [
         "provider-integrity.cat",
-        "payload/cua-driver.exe",
+        "payload/ling-cua-driver.exe",
         "payload/provider-seal.json",
       ];
       readonly production_signed: readonly [
         "provider-integrity.cat",
-        "payload/cua-driver.exe",
+        "payload/ling-cua-driver.exe",
         "payload/provider-seal.json",
       ];
     };
@@ -506,7 +535,7 @@ not wait for macOS output:
    `Valid` status.
 10. For Windows signed tiers, generate and sign `provider-integrity.cat` outside the
     covered `win32-x64/payload` directory. The catalog covers exactly
-    `payload/cua-driver.exe` and `payload/provider-seal.json`; the covered seal contains
+    `payload/ling-cua-driver.exe` and `payload/provider-seal.json`; the covered seal contains
     the exact provider-lock digest. `unsigned_dev` omits the catalog and remains gated to
     development. License/notices remain package-asserted release material, not executable
     trust anchors. Candidate-manifest JSON is evidence and is not a runtime integrity anchor.
@@ -593,7 +622,7 @@ interface BundledProviderSealV1 {
   readonly componentId: "cua-driver-darwin";
   readonly lockSha256: string;
   readonly distributionRevision: "ling.1";
-  readonly executableRelativePath: "cua-driver";
+  readonly executableRelativePath: "ling-cua-driver";
   readonly executableSha256: string;
   readonly architectures: readonly ["arm64"];
   readonly cdhashes: {
@@ -809,6 +838,17 @@ without a catalog and cannot exist in an internal or production build. A candida
 or pre-sign SHA match cannot make installed loose resources trusted. The V1 threat model detects accidental or
 unauthorized resource replacement; it does not claim protection after the same user has
 fully replaced both the Desktop runtime and its verification code.
+The macOS internal-alpha spawn boundary also does not claim atomic defense against a
+hostile same-user ABA replacement in the few instructions between the final pathname
+identity check and `posix_spawn`. Darwin exposes no `fexecve`/`execveat` equivalent to
+Node, while executing the AppKit-backed provider through its stable `/.vol` vnode makes
+ScreenCaptureKit startup exit with signal 11. The runtime therefore keeps the verified fd
+open, requires the app-contained path to identify that exact single-link vnode immediately
+before and after synchronous spawn, and kills the child if the post-spawn check differs.
+This closes ordinary installer/update races. A future public-release hardening slice must
+use a signed native `POSIX_SPAWN_START_SUSPENDED` launcher with child-identity verification,
+or an upstream provider fix that makes vnode-identity execution AppKit-safe, before claiming
+hostile same-user atomic spawn protection.
 For macOS, the designated requirement is stored as normalized UTF-8 text with normalized line
 endings and its digest; the CDHash is collected for the arm64 executable.
 
@@ -1152,7 +1192,14 @@ Packaged path resolution rules:
    catalog member; the development-only unsigned tier has no catalog trust claim.
 5. Require the main provider to be an executable regular file with exact platform
    identity before starting the proxy lease. On Darwin, hold the verified fd, re-hash it,
-   and spawn through `/.vol/<dev>/<ino>`. On Windows, a trusted in-box PowerShell lease
+   and keep that fd pinned until direct spawn through the signed app-contained absolute
+   path returns. Require that path to identify the held single-link vnode immediately
+   before and after synchronous spawn; kill and reject the child on any mismatch. Do not
+   execute the AppKit-backed provider through `/.vol/<dev>/<ino>`:
+   macOS resolves that identity poorly for AppKit/ScreenCaptureKit startup and the provider
+   exits with signal 11 even though the same signed vnode is valid. These checks detect
+   ordinary package-update races but retain the internal-alpha hostile same-user ABA
+   limitation documented in the threat model. On Windows, a trusted in-box PowerShell lease
    opens the verified PE with read-only sharing, re-hashes that held handle, requires one
    NTFS hardlink, and retains it until direct `CreateProcess` has mapped the child.
 6. Never consult `PATH`, Homebrew, user install junctions, `~/.local/bin`,
@@ -2400,7 +2447,7 @@ stderr, or signature internals. Those details belong in redacted release/support
   roots in production, mixed/double signatures, PE/seal/catalog mutation and post-seal
   resigning;
 - an installed Setup smoke proves Electron spawns the exact private
-  `resources/providers/.../payload/cua-driver.exe` path; a runner-temp PE is not accepted as
+  `resources/providers/.../payload/ling-cua-driver.exe` path; a runner-temp PE is not accepted as
   bundled evidence.
 
 ### Runtime and bridge

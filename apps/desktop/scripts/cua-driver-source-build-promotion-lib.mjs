@@ -316,9 +316,9 @@ async function readVerifiedCandidate({
     fail("candidate_verifier_path_mismatch", "verifier result names a different attestation path");
   }
   const binaryPaths = expectedPlatform === "darwin"
-    ? ["darwin/cua-driver"]
+    ? ["darwin/ling-cua-driver"]
     : [
-        "win32-x64/payload/cua-driver.exe",
+        "win32-x64/payload/ling-cua-driver.exe",
         "audit/win32-x64/cua-driver-uia.exe",
       ];
   const stablePaths = [

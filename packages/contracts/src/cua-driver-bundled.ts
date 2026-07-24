@@ -336,7 +336,7 @@ export interface DarwinBundledProviderSealV1 {
   readonly componentId: "cua-driver-darwin";
   readonly lockSha256: string;
   readonly distributionRevision: "ling.1";
-  readonly executableRelativePath: "cua-driver";
+  readonly executableRelativePath: "ling-cua-driver";
   readonly executableSha256: string;
   readonly architectures: readonly ["arm64"];
   readonly cdhashes: {
@@ -469,7 +469,7 @@ export interface WindowsBundledCuaDriverLockV1 {
     readonly architecture: "x86_64";
     readonly expectedUpstreamVersion: "0.8.3";
     readonly lingBuild: 1;
-    readonly mainRelativePath: "payload/cua-driver.exe";
+    readonly mainRelativePath: "payload/ling-cua-driver.exe";
     readonly providerSealRelativePath: "payload/provider-seal.json";
     readonly mainManifestCanonicalSha256: string;
     readonly integrityCatalogRelativePathBySigningTier: {
@@ -478,9 +478,9 @@ export interface WindowsBundledCuaDriverLockV1 {
       readonly production_signed: "provider-integrity.cat";
     };
     readonly packagedFilesBySigningTier: {
-      readonly unsigned_dev: readonly ["payload/cua-driver.exe", "payload/provider-seal.json"];
-      readonly test_signed_internal: readonly ["provider-integrity.cat", "payload/cua-driver.exe", "payload/provider-seal.json"];
-      readonly production_signed: readonly ["provider-integrity.cat", "payload/cua-driver.exe", "payload/provider-seal.json"];
+      readonly unsigned_dev: readonly ["payload/ling-cua-driver.exe", "payload/provider-seal.json"];
+      readonly test_signed_internal: readonly ["provider-integrity.cat", "payload/ling-cua-driver.exe", "payload/provider-seal.json"];
+      readonly production_signed: readonly ["provider-integrity.cat", "payload/ling-cua-driver.exe", "payload/provider-seal.json"];
     };
     readonly uiaAuditArtifact: {
       readonly packaged: false;

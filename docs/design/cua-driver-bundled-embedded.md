@@ -2,6 +2,32 @@
 
 ## Status
 
+### Product-build simplification (2026-07-24)
+
+This update supersedes the earlier audit-grade source-build promotion and Windows evidence
+requirements for the internal alpha milestone. Ling keeps a pinned, source-built provider,
+but the normal product build is now the authority for internal packaging:
+
+- Cargo and upstream archives retain `cua-driver` / `cua-driver.exe` as provenance names;
+- the first Ling-owned distribution copy is renamed to `ling-cua-driver` on macOS and
+  `ling-cua-driver.exe` on Windows before final hashing, sealing, signing and packaging;
+- packaged runtime resolves only that absolute in-app path and never consults `PATH`,
+  Homebrew, `/Applications/CuaDriver.app` or a separately installed Windows provider;
+- the source lock retains the upstream commit, Cargo lock, patches 1-4, toolchain versions,
+  final SHA-256, License/NOTICE and the existing supervisor/readiness/lifetime contracts;
+- A/B reproducibility, promotion proposals/receipts, fixture retention, the Windows matrix
+  finalizer and production SmartScreen/WDAC/notary evidence are deferred and are not repeated
+  product-build gates. Each platform still needs one reviewed native lock record containing
+  its exact pre-sign SHA-256, manifest/tool digest and platform metadata before that platform
+  can package; macOS has this record and Windows does not yet;
+- macOS arm64 is built and accepted locally first. Windows x64 remains an implementation
+  target, while final real-machine acceptance is owned by the Windows team;
+- a coexistence smoke is required on both platforms: Ling must start only its private
+  provider and must not modify, stop or uninstall a user-managed upstream provider.
+
+The older promotion/evidence material below records prior hardening work. Where it conflicts
+with this section, this section is authoritative for the internal product build.
+
 Approved cross-platform design direction for the internal Desktop alpha. Implementation
 is in progress. Cross-platform contracts and feature gates, signing feasibility,
 activation fencing, the shared Desktop supervisor and the deterministic source-build

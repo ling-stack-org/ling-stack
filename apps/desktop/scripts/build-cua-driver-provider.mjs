@@ -2,6 +2,7 @@
 
 import { cp, lstat, mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join, parse, resolve, sep } from "node:path";
+import { cuaDriverArtifactLayoutFor } from "../shared/cua-driver-artifact-layout.mjs";
 import {
   PROVIDER_RESOURCE_ROOT,
   acquireSource,
@@ -41,6 +42,7 @@ if (!args["output-dir"]) usage("--output-dir is required; generated binaries mus
 if (!args["verify-only"] && !args["work-dir"]) {
   usage("--work-dir is required for a native build; build state must have an explicit owner");
 }
+const artifactLayout = cuaDriverArtifactLayoutFor(platform);
 
 const outputRoot = resolve(args["output-dir"]);
 const workRoot = args["work-dir"]
@@ -263,16 +265,32 @@ for (const target of buildTarget) {
 // typo in --output-dir from turning a reproducibility command into a recursive delete.
 await mkdir(outputRoot);
 if (platform === "darwin") {
-  const arm = join(targetDirectory, "aarch64-apple-darwin", "release", "cua-driver");
-  const output = join(outputRoot, "darwin", "cua-driver");
+  const arm = join(
+    targetDirectory,
+    "aarch64-apple-darwin",
+    "release",
+    artifactLayout.upstreamExecutableName,
+  );
+  const output = join(
+    outputRoot,
+    ...artifactLayout.packagedExecutableRelativePath.split("/"),
+  );
   await mkdir(join(outputRoot, "darwin"), { recursive: true });
   await cp(arm, output);
 } else {
-  const main = join(targetDirectory, "x86_64-pc-windows-msvc", "release", "cua-driver.exe");
+  const main = join(
+    targetDirectory,
+    "x86_64-pc-windows-msvc",
+    "release",
+    artifactLayout.upstreamExecutableName,
+  );
   const uia = join(targetDirectory, "x86_64-pc-windows-msvc", "release", "cua-driver-uia.exe");
   await mkdir(join(outputRoot, "win32-x64", "payload"), { recursive: true });
   await mkdir(join(outputRoot, "audit", "win32-x64"), { recursive: true });
-  await cp(main, join(outputRoot, "win32-x64", "payload", "cua-driver.exe"));
+  await cp(
+    main,
+    join(outputRoot, ...artifactLayout.packagedExecutableRelativePath.split("/")),
+  );
   await cp(uia, join(outputRoot, "audit", "win32-x64", "cua-driver-uia.exe"));
 }
 
@@ -287,9 +305,17 @@ const supplyChain = await generateSupplyChainMetadata({
 });
 
 const binaries = platform === "darwin"
-  ? [{ relativePath: "darwin/cua-driver", role: "main", packaged: true }]
+  ? [{
+      relativePath: artifactLayout.packagedExecutableRelativePath,
+      role: "main",
+      packaged: true,
+    }]
   : [
-      { relativePath: "win32-x64/payload/cua-driver.exe", role: "main", packaged: true },
+      {
+        relativePath: artifactLayout.packagedExecutableRelativePath,
+        role: "main",
+        packaged: true,
+      },
       { relativePath: "audit/win32-x64/cua-driver-uia.exe", role: "uia-audit", packaged: false },
     ];
 const binaryEvidence = [];
@@ -302,7 +328,7 @@ for (const binary of binaries) {
 }
 const mainBinaryPath = join(
   outputRoot,
-  platform === "darwin" ? "darwin/cua-driver" : "win32-x64/payload/cua-driver.exe",
+  ...artifactLayout.packagedExecutableRelativePath.split("/"),
 );
 const versionOutput = verifyVersionOutput(
   await runText(mainBinaryPath, ["--version"], { env: buildEnvValue.env }),
@@ -477,8 +503,12 @@ process.stdout.write(`${JSON.stringify(attestation, null, 2)}\n`);
 
 async function inspectBuiltBinaryIdentity({ binaries: binariesValue, lock: lockValue, outputRoot: outputRootValue, platform: platformValue }) {
   if (platformValue === "darwin") {
+    const builtLayout = cuaDriverArtifactLayoutFor("darwin");
     const identity = inspectArm64MachO(
-      await readFile(join(outputRootValue, "darwin", "cua-driver")),
+      await readFile(join(
+        outputRootValue,
+        ...builtLayout.packagedExecutableRelativePath.split("/"),
+      )),
       "built darwin provider",
     );
     if (identity.minimumOSVersion !== lockValue.toolchain.darwin.deploymentTarget) {

@@ -38,7 +38,7 @@ const BUNDLED_HEALTH_REQUIRED_CHECKS = Object.freeze([
 
 type McpClientPort = Pick<
   McpClient,
-  "callTool" | "close" | "connect" | "getServerVersion" | "listTools" | "ping"
+  "callTool" | "close" | "connect" | "getServerVersion" | "listTools"
 >;
 
 export interface CuaDriverLeaseClientCheckResult {
@@ -174,10 +174,10 @@ class DefaultCuaDriverLeaseMcpClient implements CuaDriverLeaseMcpClient {
   ): Promise<CuaDriverLeaseClientCheckResult> {
     this.assertUsable();
     const startedAt = Date.now();
-    const timeout = operationTimeout(server.startupTimeoutSec);
     try {
-      await this.options.client.ping({ timeout, signal });
+      signal?.throwIfAborted();
       const serverInfo = this.options.client.getServerVersion();
+      validateInitializeServerInfo(serverInfo, this.options.lease);
       return {
         statusSnapshot: createMcpStatusSnapshot({
           server,

@@ -1393,7 +1393,7 @@ export function ConversationHome({
     <section className="conversation-home" aria-label={t("Conversation home")}>
       <div className="conversation-home-center">
         <div className="conversation-home-mark" aria-hidden="true">
-          <img src="/icons/ling-stack-gpt-image-2-icon.png" alt="" />
+          <img src={`${import.meta.env.BASE_URL}icons/ling-stack-gpt-image-2-icon.png`} alt="" />
         </div>
         <h1>{t("Ling Stack, make work easier.")}</h1>
 

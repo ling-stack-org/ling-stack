@@ -1,6 +1,7 @@
 import { spawn as nodeSpawn, type ChildProcess } from "node:child_process";
 import { Buffer } from "node:buffer";
 import { win32 } from "node:path";
+import { cuaDriverArtifactLayoutFor } from "../../../shared/cua-driver-artifact-layout.mjs";
 import type { CuaDriverPreparedProviderSpawn } from "../provider-host.js";
 import {
   createWin32VerifierEnvironment,
@@ -68,7 +69,8 @@ export function createWin32ExecutableSpawnLeaseAcquirer(
 
   return async (input) => {
     if (!win32.isAbsolute(input.executablePath)
-      || win32.basename(input.executablePath).toLowerCase() !== "cua-driver.exe"
+      || win32.basename(input.executablePath).toLowerCase()
+        !== cuaDriverArtifactLayoutFor("win32-x64").packagedExecutableName
       || !/^[a-f0-9]{64}$/u.test(input.executableDigest)
       || input.signal.aborted) {
       throw new Win32ExecutableSpawnLeaseError("input_invalid");

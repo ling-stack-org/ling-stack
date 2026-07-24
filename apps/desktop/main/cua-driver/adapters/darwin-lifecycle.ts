@@ -29,7 +29,7 @@ export class DarwinCuaDriverLifecycleError extends Error {
 }
 
 interface DarwinPinnedExecutable {
-  readonly identityPath: string;
+  assertCurrentPath?(): void;
   release(): void;
 }
 
@@ -64,7 +64,12 @@ export function createDarwinCuaDriverProcessLifecycle(options: {
         throw new DarwinCuaDriverLifecycleError("spawn_invalid");
       }
       try {
-        return spawn(pinned.identityPath, [...input.args], {
+        // AppKit-backed providers crash when current_exe/NSBundle sees a
+        // `/.vol` identity, so launch through the signed app-contained path.
+        // Rechecking the held vnode on both sides catches installer/update
+        // replacement races around the synchronous posix_spawn call.
+        pinned.assertCurrentPath?.();
+        const child = spawn(input.executablePath, [...input.args], {
           cwd: input.cwd,
           env: input.environment,
           stdio: ["pipe", "pipe", "pipe"],
@@ -72,6 +77,13 @@ export function createDarwinCuaDriverProcessLifecycle(options: {
           detached: false,
           windowsHide: true,
         });
+        try {
+          pinned.assertCurrentPath?.();
+        } catch {
+          child.kill("SIGKILL");
+          throw new DarwinCuaDriverLifecycleError("spawn_invalid");
+        }
+        return child;
       } finally {
         pinned.release();
       }
@@ -87,7 +99,7 @@ export function createDarwinCuaDriverProcessLifecycle(options: {
   });
 }
 
-/** Pin the exact APFS vnode and execute through its stable `/.vol` identity path. */
+/** Pin and re-hash the exact regular file until direct child spawn returns. */
 function pinDarwinExecutable(
   executablePath: string,
   expectedDigest?: string,
@@ -126,7 +138,22 @@ function pinDarwinExecutable(
       }
     }
     return {
-      identityPath: `/.vol/${metadata.dev}/${metadata.ino}`,
+      assertCurrentPath() {
+        const currentDescriptor = openSync(executablePath, constants.O_RDONLY | noFollow);
+        try {
+          const current = fstatSync(currentDescriptor, { bigint: true });
+          if (
+            !current.isFile()
+            || current.nlink !== 1n
+            || current.dev !== metadata.dev
+            || current.ino !== metadata.ino
+          ) {
+            throw new DarwinCuaDriverLifecycleError("spawn_invalid");
+          }
+        } finally {
+          closeSync(currentDescriptor);
+        }
+      },
       release,
     };
   } catch (error) {

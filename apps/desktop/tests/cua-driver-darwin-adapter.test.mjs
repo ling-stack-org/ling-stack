@@ -15,7 +15,7 @@ import {
 const TEAM_ID = "LINGTEAM01";
 const IDENTIFIER = "com.lingstack.desktop.cua-driver";
 const REQUIREMENT = `identifier "${IDENTIFIER}" and anchor apple generic`;
-const EXECUTABLE_PATH = "/Applications/Ling Stack.app/Contents/Resources/providers/cua-driver/0.8.3-ling.1/darwin/cua-driver";
+const EXECUTABLE_PATH = "/Applications/Ling Stack.app/Contents/Resources/providers/cua-driver/0.8.3-ling.1/darwin/ling-cua-driver";
 const ENTITLEMENTS = Object.freeze({
   "com.apple.security.automation.apple-events": true,
   "com.apple.security.device.screen-capture": true,
@@ -218,10 +218,14 @@ test("Darwin native command runner maps ENOENT, timeout and nonzero exit fail cl
 
 test("Darwin lifecycle directly spawns and terminates the retained child without a shell", async () => {
   const spawnCalls = [];
+  let identityChecks = 0;
   const child = createChildFixture();
   const lifecycle = createDarwinCuaDriverProcessLifecycle({
     pinExecutable(executablePath) {
-      return { identityPath: executablePath, release() {} };
+      return {
+        assertCurrentPath() { identityChecks += 1; },
+        release() {},
+      };
     },
     spawn(executablePath, args, options) {
       spawnCalls.push({ executablePath, args, options });
@@ -238,6 +242,7 @@ test("Darwin lifecycle directly spawns and terminates the retained child without
   });
 
   assert.equal(returned, child);
+  assert.equal(identityChecks, 2);
   assert.equal(lifecycle.lifetimeBoundary, "darwin-direct-child");
   assert.deepEqual(spawnCalls, [{
     executablePath: EXECUTABLE_PATH,
@@ -262,6 +267,61 @@ test("Darwin lifecycle directly spawns and terminates the retained child without
     () => lifecycle.spawn({ executablePath: EXECUTABLE_PATH, args: [], cwd: "/tmp", environment: {} }),
     /spawn_invalid/,
   );
+});
+
+test("Darwin lifecycle kills a child when the app-contained path changes during spawn", () => {
+  let identityChecks = 0;
+  const child = createChildFixture();
+  const lifecycle = createDarwinCuaDriverProcessLifecycle({
+    pinExecutable() {
+      return {
+        assertCurrentPath() {
+          identityChecks += 1;
+          if (identityChecks === 2) {
+            throw new Error("provider replaced");
+          }
+        },
+        release() {},
+      };
+    },
+    spawn() {
+      return child;
+    },
+  });
+
+  assert.throws(
+    () => lifecycle.spawn({
+      executablePath: EXECUTABLE_PATH,
+      args: ["mcp", "--embedded"],
+      cwd: "/tmp/ling-cua",
+      environment: {},
+    }),
+    /spawn_invalid/,
+  );
+  assert.deepEqual(child.killSignals, ["SIGKILL"]);
+});
+
+test("Darwin lifecycle keeps the verified fd pinned but never launches AppKit through /.vol", {
+  skip: process.platform !== "darwin",
+}, () => {
+  const spawnCalls = [];
+  const child = createChildFixture();
+  const lifecycle = createDarwinCuaDriverProcessLifecycle({
+    spawn(executablePath) {
+      spawnCalls.push(executablePath);
+      return child;
+    },
+  });
+
+  lifecycle.spawn({
+    executablePath: process.execPath,
+    args: ["mcp"],
+    cwd: "/tmp",
+    environment: {},
+  });
+
+  assert.deepEqual(spawnCalls, [process.execPath]);
+  assert.doesNotMatch(spawnCalls[0], /^\/\.vol\//u);
 });
 
 test("Darwin lifecycle reports retained-child termination failure and ignores an exited child", async () => {

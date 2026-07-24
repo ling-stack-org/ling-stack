@@ -26,6 +26,7 @@ import {
   type CuaDriverPlatformBinding,
 } from "./cua-driver/platform-binding.js";
 import type { CuaDriverDesktopPlatformOwner } from "./cua-driver/platform-owner.js";
+import { createCuaDriverTelemetry } from "./cua-driver/telemetry.js";
 import type {
   DesktopDaemonCuaDriverAuthorityTuple,
   DesktopDaemonLifecycle,
@@ -391,6 +392,26 @@ export class DesktopRuntime {
       requireReleaseEvidence: this.options.requireReleaseEvidence,
       platformBinding,
       availabilityPublisher,
+      telemetry: createCuaDriverTelemetry({
+        onEvent: ({ level, event, details }) => {
+          this.options.onDiagnostic?.("desktop_runtime.cua_driver_telemetry", {
+            platform,
+            level,
+            providerEvent: event,
+            ...details,
+          });
+        },
+      }),
+      onStateChanged: (snapshot) => {
+        this.options.onDiagnostic?.("desktop_runtime.cua_driver_state_changed", {
+          platform,
+          lifecycle: snapshot.lifecycle,
+          providerState: snapshot.providerState,
+          generation: snapshot.generation,
+          pid: snapshot.pid ?? null,
+          ...(snapshot.reason ? { reason: snapshot.reason } : {}),
+        });
+      },
     });
     this.coordinatorValue = coordinator;
     this.coordinatorAuthority = authority;
