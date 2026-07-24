@@ -124,6 +124,7 @@ export class CuaDriverMcpProxy {
   private removeHostListener: (() => void) | undefined;
   private closed = false;
   private callGateOpen = false;
+  private callGateClosedReason: string | undefined;
   private closingEpoch = 0;
 
   constructor(private readonly options: CuaDriverMcpProxyOptions) {
@@ -155,14 +156,33 @@ export class CuaDriverMcpProxy {
 
   /** Close synchronously before async lease/client/child revocation begins. */
   closeCallGate(reason = "revoked"): void {
-    if (!this.callGateOpen) {
+    const wasOpen = this.callGateOpen;
+    const reasonChanged = this.callGateClosedReason !== reason;
+    this.callGateOpen = false;
+    this.callGateClosedReason = reason;
+    if (!wasOpen && !reasonChanged) {
       return;
     }
-    this.callGateOpen = false;
     this.telemetry.emit("info", "cua_driver.proxy.call_gate_closed", {
       generation: this.options.context.generation,
       reason,
     });
+  }
+
+  /** Re-open one retained same-generation session after readiness recovers. */
+  openCallGate(): void {
+    if (this.closed) {
+      return;
+    }
+    const wasOpen = this.callGateOpen;
+    this.callGateOpen = true;
+    this.callGateClosedReason = undefined;
+    this.retainGatedSession = false;
+    if (!wasOpen) {
+      this.telemetry.emit("info", "cua_driver.proxy.call_gate_opened", {
+        generation: this.options.context.generation,
+      });
+    }
   }
 
   start(): Promise<CuaDriverMcpProxyEndpoint> {
@@ -343,6 +363,9 @@ export class CuaDriverMcpProxy {
       // response become visible to the daemon.
       this.assertOpenEpoch(initializeEpoch);
       this.callGateOpen = disposition?.callGate !== "closed";
+      this.callGateClosedReason = this.callGateOpen
+        ? undefined
+        : this.callGateClosedReason ?? "readiness_pending";
       this.retainGatedSession = disposition?.callGate === "closed";
       this.sessionId = randomBytes(24).toString("base64url");
       this.sessionInitialized = true;

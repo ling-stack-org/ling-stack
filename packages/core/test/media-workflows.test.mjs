@@ -92,7 +92,44 @@ test("media workflow storage preserves direct jobs and immutable workflow versio
   try {
     assert.ok(database.prepare("SELECT version FROM schema_migrations WHERE version = 104 AND name = 'create_media_external_workflows'").get());
     assert.deepEqual(database.prepare("PRAGMA foreign_key_check").all(), []);
-    database.prepare("DELETE FROM schema_migrations WHERE version = 104").run();
+    const directJob = database.prepare("SELECT id FROM media_jobs WHERE source_kind = 'provider' LIMIT 1").get();
+    database.prepare(`
+      INSERT INTO media_job_execution_handles (
+        media_job_id, adapter_kind, external_operation_id, recovery_json, created_at, updated_at
+      ) VALUES (?, 'fixture', 'operation-1', '{}', ?, ?)
+    `).run(directJob.id, createdAt, createdAt);
+    database.exec(`
+      PRAGMA foreign_keys = OFF;
+
+      CREATE TABLE media_jobs_legacy_fixture (
+        id TEXT PRIMARY KEY,
+        workspace_id TEXT NOT NULL,
+        provider_preset_id TEXT NOT NULL,
+        operation TEXT NOT NULL,
+        prompt TEXT NOT NULL,
+        input_json TEXT NOT NULL,
+        artifact_ids_json TEXT NOT NULL,
+        status TEXT NOT NULL,
+        error_message TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        FOREIGN KEY(workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE
+      );
+
+      INSERT INTO media_jobs_legacy_fixture (
+        id, workspace_id, provider_preset_id, operation, prompt, input_json,
+        artifact_ids_json, status, error_message, created_at, updated_at
+      )
+      SELECT id, workspace_id, provider_preset_id, operation, prompt, input_json,
+             artifact_ids_json, status, error_message, created_at, updated_at
+      FROM media_jobs
+      WHERE source_kind = 'provider';
+
+      DROP TABLE media_jobs;
+      ALTER TABLE media_jobs_legacy_fixture RENAME TO media_jobs;
+      DELETE FROM schema_migrations WHERE version = 104;
+      PRAGMA foreign_keys = ON;
+    `);
   } finally {
     database.close();
   }
@@ -103,6 +140,7 @@ test("media workflow storage preserves direct jobs and immutable workflow versio
   try {
     assert.deepEqual(reopened.prepare("PRAGMA foreign_key_check").all(), []);
     assert.equal(reopened.prepare("SELECT COUNT(*) AS count FROM media_workflow_versions").get().count, 2);
+    assert.equal(reopened.prepare("SELECT COUNT(*) AS count FROM media_job_execution_handles").get().count, 1);
     assert.ok(reopened.prepare("SELECT version FROM schema_migrations WHERE version = 104").get());
   } finally {
     reopened.close();

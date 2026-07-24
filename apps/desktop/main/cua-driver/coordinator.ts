@@ -560,6 +560,7 @@ export class CuaDriverDesktopCoordinator {
           if (!readiness.ready) {
             proxy.closeCallGate(readiness.reason ?? "readiness_revoked");
           } else {
+            proxy.openCallGate();
             this.resetRecoveryBudget(generation);
           }
           this.publishSnapshot({

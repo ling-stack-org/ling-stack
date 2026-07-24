@@ -218,10 +218,14 @@ test("Darwin native command runner maps ENOENT, timeout and nonzero exit fail cl
 
 test("Darwin lifecycle directly spawns and terminates the retained child without a shell", async () => {
   const spawnCalls = [];
+  let identityChecks = 0;
   const child = createChildFixture();
   const lifecycle = createDarwinCuaDriverProcessLifecycle({
     pinExecutable(executablePath) {
-      return { release() {} };
+      return {
+        assertCurrentPath() { identityChecks += 1; },
+        release() {},
+      };
     },
     spawn(executablePath, args, options) {
       spawnCalls.push({ executablePath, args, options });
@@ -238,6 +242,7 @@ test("Darwin lifecycle directly spawns and terminates the retained child without
   });
 
   assert.equal(returned, child);
+  assert.equal(identityChecks, 2);
   assert.equal(lifecycle.lifetimeBoundary, "darwin-direct-child");
   assert.deepEqual(spawnCalls, [{
     executablePath: EXECUTABLE_PATH,
@@ -262,6 +267,38 @@ test("Darwin lifecycle directly spawns and terminates the retained child without
     () => lifecycle.spawn({ executablePath: EXECUTABLE_PATH, args: [], cwd: "/tmp", environment: {} }),
     /spawn_invalid/,
   );
+});
+
+test("Darwin lifecycle kills a child when the app-contained path changes during spawn", () => {
+  let identityChecks = 0;
+  const child = createChildFixture();
+  const lifecycle = createDarwinCuaDriverProcessLifecycle({
+    pinExecutable() {
+      return {
+        assertCurrentPath() {
+          identityChecks += 1;
+          if (identityChecks === 2) {
+            throw new Error("provider replaced");
+          }
+        },
+        release() {},
+      };
+    },
+    spawn() {
+      return child;
+    },
+  });
+
+  assert.throws(
+    () => lifecycle.spawn({
+      executablePath: EXECUTABLE_PATH,
+      args: ["mcp", "--embedded"],
+      cwd: "/tmp/ling-cua",
+      environment: {},
+    }),
+    /spawn_invalid/,
+  );
+  assert.deepEqual(child.killSignals, ["SIGKILL"]);
 });
 
 test("Darwin lifecycle keeps the verified fd pinned but never launches AppKit through /.vol", {

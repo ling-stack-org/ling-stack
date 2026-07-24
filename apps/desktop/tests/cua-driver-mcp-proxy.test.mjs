@@ -97,6 +97,15 @@ test("loopback proxy authenticates one generation and rejects wrong token/origin
   assert.equal(fencedCall.status, 200);
   assert.equal((await fencedCall.json()).error.message, "mcp_call_gate_closed");
 
+  proxy.openCallGate();
+  const recoveredCall = await fetch(endpoint.url, {
+    method: "POST",
+    headers: { ...baseHeaders, "mcp-session-id": sessionId },
+    body: JSON.stringify({ jsonrpc: "2.0", id: "call-3", method: "tools/list" }),
+  });
+  assert.equal(recoveredCall.status, 200);
+  assert.deepEqual((await recoveredCall.json()).result, {});
+
   const released = await fetch(endpoint.url, {
     method: "DELETE",
     headers: { ...baseHeaders, "mcp-session-id": sessionId },

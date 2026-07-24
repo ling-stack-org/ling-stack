@@ -838,6 +838,17 @@ without a catalog and cannot exist in an internal or production build. A candida
 or pre-sign SHA match cannot make installed loose resources trusted. The V1 threat model detects accidental or
 unauthorized resource replacement; it does not claim protection after the same user has
 fully replaced both the Desktop runtime and its verification code.
+The macOS internal-alpha spawn boundary also does not claim atomic defense against a
+hostile same-user ABA replacement in the few instructions between the final pathname
+identity check and `posix_spawn`. Darwin exposes no `fexecve`/`execveat` equivalent to
+Node, while executing the AppKit-backed provider through its stable `/.vol` vnode makes
+ScreenCaptureKit startup exit with signal 11. The runtime therefore keeps the verified fd
+open, requires the app-contained path to identify that exact single-link vnode immediately
+before and after synchronous spawn, and kills the child if the post-spawn check differs.
+This closes ordinary installer/update races. A future public-release hardening slice must
+use a signed native `POSIX_SPAWN_START_SUSPENDED` launcher with child-identity verification,
+or an upstream provider fix that makes vnode-identity execution AppKit-safe, before claiming
+hostile same-user atomic spawn protection.
 For macOS, the designated requirement is stored as normalized UTF-8 text with normalized line
 endings and its digest; the CDHash is collected for the arm64 executable.
 
@@ -1182,9 +1193,13 @@ Packaged path resolution rules:
 5. Require the main provider to be an executable regular file with exact platform
    identity before starting the proxy lease. On Darwin, hold the verified fd, re-hash it,
    and keep that fd pinned until direct spawn through the signed app-contained absolute
-   path returns. Do not execute the AppKit-backed provider through `/.vol/<dev>/<ino>`:
+   path returns. Require that path to identify the held single-link vnode immediately
+   before and after synchronous spawn; kill and reject the child on any mismatch. Do not
+   execute the AppKit-backed provider through `/.vol/<dev>/<ino>`:
    macOS resolves that identity poorly for AppKit/ScreenCaptureKit startup and the provider
-   exits with signal 11 even though the same signed vnode is valid. On Windows, a trusted in-box PowerShell lease
+   exits with signal 11 even though the same signed vnode is valid. These checks detect
+   ordinary package-update races but retain the internal-alpha hostile same-user ABA
+   limitation documented in the threat model. On Windows, a trusted in-box PowerShell lease
    opens the verified PE with read-only sharing, re-hashes that held handle, requires one
    NTFS hardlink, and retains it until direct `CreateProcess` has mapped the child.
 6. Never consult `PATH`, Homebrew, user install junctions, `~/.local/bin`,
