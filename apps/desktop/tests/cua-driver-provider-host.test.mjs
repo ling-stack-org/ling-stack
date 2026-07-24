@@ -305,7 +305,7 @@ test("a matching real exit resolves cleanup before terminal-event deduplication"
       spawn(input) {
         const child = spawn(process.execPath, [
           "-e",
-          "process.stdout.end(); process.stdin.resume(); setInterval(() => {}, 1000)",
+          "require('node:fs').closeSync(1); process.stdin.resume(); setInterval(() => {}, 1000)",
         ], {
           stdio: ["pipe", "pipe", "pipe"],
           env: input.environment,
@@ -530,7 +530,7 @@ input.on("line", (line) => {
     return;
   }
   if (message.method === "fixture/eof") {
-    process.stdout.end();
+    require("node:fs").closeSync(1);
     return;
   }
   if (Object.prototype.hasOwnProperty.call(message, "id")) {

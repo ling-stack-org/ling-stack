@@ -51,7 +51,7 @@ const NESTED_OWNER_SCRIPT = `
     await runOwnedProcess(
       process.execPath,
       ["-e", process.argv[2], process.argv[3]],
-      { encoding: "utf8", maxBuffer: 64 * 1_024, timeout: 10_000 },
+      { encoding: "utf8", maxBuffer: 64 * 1_024, timeout: 30_000 },
     );
   })().catch((error) => {
     process.stderr.write(String(error?.stack || error));
@@ -103,7 +103,7 @@ test("owned runner timeout terminates the entire process tree", async (t) => {
 
   const grandchildPid = Number(await readFile(pidPath, "utf8"));
   assert.equal(Number.isSafeInteger(grandchildPid), true);
-  assert.equal(processExists(grandchildPid), false);
+  await assertProcessNotRunning(grandchildPid);
   fixture.markReaped();
 });
 
@@ -126,7 +126,7 @@ test("owned runner maxBuffer failure terminates the entire process tree", async 
   );
 
   const grandchildPid = Number(await readFile(pidPath, "utf8"));
-  assert.equal(processExists(grandchildPid), false);
+  await assertProcessNotRunning(grandchildPid);
   fixture.markReaped();
 });
 
@@ -155,7 +155,7 @@ test("owned runner abort terminates the entire process tree", async (t) => {
   });
 
   const grandchildPid = Number(await readFile(pidPath, "utf8"));
-  assert.equal(processExists(grandchildPid), false);
+  await assertProcessNotRunning(grandchildPid);
   fixture.markReaped();
 });
 
@@ -230,7 +230,7 @@ test("owned runner stderr maxBuffer failure terminates the entire process tree",
   );
 
   const grandchildPid = Number(await readFile(pidPath, "utf8"));
-  assert.equal(processExists(grandchildPid), false);
+  await assertProcessNotRunning(grandchildPid);
   fixture.markReaped();
 });
 
@@ -248,7 +248,7 @@ test("owned runner reaps a lingering grandchild after a successful parent", asyn
   assert.equal(result.stderr, "");
   const grandchildPid = Number(await readFile(pidPath, "utf8"));
   assert.equal(Number.isSafeInteger(grandchildPid), true);
-  assert.equal(processExists(grandchildPid), false);
+  await assertProcessNotRunning(grandchildPid);
   fixture.markReaped();
 });
 
@@ -264,7 +264,7 @@ test("owned runner resolves only after a silent grandchild is gone", async (t) =
 
   assert.equal(result.stdout, "parent-complete\n");
   const grandchildPid = Number(await readFile(pidPath, "utf8"));
-  assert.equal(processExists(grandchildPid), false);
+  await assertProcessNotRunning(grandchildPid);
   fixture.markReaped();
 });
 
@@ -285,7 +285,7 @@ test("source-build runner supports an explicit owned process-tree boundary", asy
 
   assert.equal(result.stdout, "parent-complete\n");
   const grandchildPid = Number(await readFile(pidPath, "utf8"));
-  assert.equal(processExists(grandchildPid), false);
+  await assertProcessNotRunning(grandchildPid);
   fixture.markReaped();
 });
 
@@ -321,7 +321,14 @@ test("outer timeout reaps a grandchild created by a nested owned runner", async 
         NESTED_PROCESS_TREE_SCRIPT,
         pidPath,
       ],
-      { encoding: "utf8", maxBuffer: 64 * 1_024, timeout: 1_000 },
+      {
+        encoding: "utf8",
+        maxBuffer: 64 * 1_024,
+        // A fresh nested Windows process must first compile and attest the
+        // native Job Object helper. Keep the outer deadline below the nested
+        // 30-second deadline without racing that one-time compilation.
+        timeout: process.platform === "win32" ? 15_000 : 1_000,
+      },
     ),
     (error) => {
       assert.equal(error?.code, "ETIMEDOUT");
@@ -331,7 +338,7 @@ test("outer timeout reaps a grandchild created by a nested owned runner", async 
   );
 
   const grandchildPid = Number(await readFile(pidPath, "utf8"));
-  assert.equal(processExists(grandchildPid), false);
+  await assertProcessNotRunning(grandchildPid);
   fixture.markReaped();
 });
 
@@ -354,7 +361,7 @@ test("nested owned success returns output and leaves cleanup to the outer owner"
   assert.equal(result.stdout, "nested:parent-complete\n");
   assert.equal(result.stderr, "");
   const grandchildPid = Number(await readFile(pidPath, "utf8"));
-  assert.equal(processExists(grandchildPid), false);
+  await assertProcessNotRunning(grandchildPid);
   fixture.markReaped();
 });
 
@@ -397,6 +404,17 @@ function processExists(pid) {
     if (error?.code === "EPERM") return true;
     throw error;
   }
+}
+
+async function assertProcessNotRunning(pid) {
+  // Windows can retain a terminated process object briefly after a Job Object
+  // reaches zero active processes. `kill(pid, 0)` observes that object, not
+  // whether the process can still execute, so allow the kernel to reap it.
+  const deadline = Date.now() + (process.platform === "win32" ? 5_000 : 0);
+  while (processExists(pid) && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  assert.equal(processExists(pid), false);
 }
 
 async function terminateFixtureProcess(pidPath) {
