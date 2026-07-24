@@ -1784,7 +1784,19 @@ PublishResult DispatchParentLockOperationOnDarwin(
         arguments.size() == 3 ? arguments[1] : "",
         arguments.size() == 3 ? arguments[2] : "", held_parent_fd);
   }
+  if (operation == "secure-managed-state" &&
+      (arguments.size() == 1 || arguments.size() == 3)) {
+    return PrivateDirectoryOnDarwin(
+        parent_root, arguments[0], true,
+        arguments.size() == 3 ? arguments[1] : "",
+        arguments.size() == 3 ? arguments[2] : "", held_parent_fd);
+  }
   if (operation == "verify-private" && arguments.size() == 3) {
+    return PrivateDirectoryOnDarwin(
+        parent_root, arguments[0], false, arguments[1], arguments[2],
+        held_parent_fd);
+  }
+  if (operation == "verify-managed-state" && arguments.size() == 3) {
     return PrivateDirectoryOnDarwin(
         parent_root, arguments[0], false, arguments[1], arguments[2],
         held_parent_fd);
@@ -2383,13 +2395,21 @@ bool SidToAsciiString(PSID sid, std::string* value, DWORD* error_code) {
   return true;
 }
 
-bool ApplyPrivateDirectorySecurityOnWindows(
+enum class WindowsDirectorySecurityProfile {
+  kPrivateStaging,
+  kManagedState,
+};
+
+bool ApplyDirectorySecurityOnWindows(
     HANDLE directory, PSID current_user_sid, PSID system_sid,
-    PSID administrators_sid, DWORD* error_code) {
+    PSID administrators_sid, WindowsDirectorySecurityProfile profile,
+    DWORD* error_code) {
   std::vector<PSID> allowed_sids;
   AppendUniqueSid(&allowed_sids, current_user_sid);
-  AppendUniqueSid(&allowed_sids, system_sid);
-  AppendUniqueSid(&allowed_sids, administrators_sid);
+  if (profile == WindowsDirectorySecurityProfile::kPrivateStaging) {
+    AppendUniqueSid(&allowed_sids, system_sid);
+    AppendUniqueSid(&allowed_sids, administrators_sid);
+  }
 
   std::vector<EXPLICIT_ACCESSW> entries(allowed_sids.size());
   for (std::size_t index = 0; index < allowed_sids.size(); ++index) {
@@ -2422,10 +2442,10 @@ bool ApplyPrivateDirectorySecurityOnWindows(
   return true;
 }
 
-bool VerifyPrivateDirectorySecurityOnWindows(
+bool VerifyDirectorySecurityOnWindows(
     HANDLE directory, PSID current_user_sid, PSID system_sid,
-    PSID administrators_sid, std::string* owner_identity,
-    DWORD* error_code) {
+    PSID administrators_sid, WindowsDirectorySecurityProfile profile,
+    std::string* owner_identity, DWORD* error_code) {
   PSID owner_sid = nullptr;
   PACL dacl = nullptr;
   PSECURITY_DESCRIPTOR raw_descriptor = nullptr;
@@ -2462,8 +2482,10 @@ bool VerifyPrivateDirectorySecurityOnWindows(
 
   std::vector<PSID> allowed_sids;
   AppendUniqueSid(&allowed_sids, current_user_sid);
-  AppendUniqueSid(&allowed_sids, system_sid);
-  AppendUniqueSid(&allowed_sids, administrators_sid);
+  if (profile == WindowsDirectorySecurityProfile::kPrivateStaging) {
+    AppendUniqueSid(&allowed_sids, system_sid);
+    AppendUniqueSid(&allowed_sids, administrators_sid);
+  }
   if (static_cast<std::size_t>(dacl->AceCount) != allowed_sids.size()) {
     *error_code = ERROR_INVALID_ACL;
     return false;
@@ -2835,7 +2857,8 @@ int HoldParentLockOnWindows(const std::wstring& parent_root,
 
 PublishResult PrivateDirectoryOnWindows(
     const std::wstring& parent_root, const std::wstring& directory_name,
-    bool apply_security, const std::string& expected_parent_identity,
+    bool apply_security, WindowsDirectorySecurityProfile security_profile,
+    const std::string& expected_parent_identity,
     const std::string& expected_directory_identity,
     HANDLE held_parent = INVALID_HANDLE_VALUE) {
   if (parent_root.empty() || !IsValidLeafName(directory_name)) {
@@ -2912,24 +2935,26 @@ PublishResult PrivateDirectoryOnWindows(
   DWORD security_error = ERROR_SUCCESS;
   if (!ReadCurrentUserSid(&token_buffer, &current_user_sid,
                           &security_error) ||
-      !CreatePinnedWellKnownSid(WinLocalSystemSid, &system_sid_buffer,
-                                &system_sid, &security_error) ||
-      !CreatePinnedWellKnownSid(WinBuiltinAdministratorsSid,
-                                &administrators_sid_buffer,
-                                &administrators_sid, &security_error)) {
+      (security_profile == WindowsDirectorySecurityProfile::kPrivateStaging &&
+       (!CreatePinnedWellKnownSid(WinLocalSystemSid, &system_sid_buffer,
+                                  &system_sid, &security_error) ||
+        !CreatePinnedWellKnownSid(WinBuiltinAdministratorsSid,
+                                  &administrators_sid_buffer,
+                                  &administrators_sid, &security_error)))) {
     return NotCommitted("directory_security_unavailable",
                         static_cast<std::uint64_t>(security_error));
   }
-  if (apply_security && !ApplyPrivateDirectorySecurityOnWindows(
+  if (apply_security && !ApplyDirectorySecurityOnWindows(
                             directory.get(), current_user_sid, system_sid,
-                            administrators_sid, &security_error)) {
+                            administrators_sid, security_profile,
+                            &security_error)) {
     return NotCommitted("directory_security_set_failed",
                         static_cast<std::uint64_t>(security_error));
   }
   std::string owner_identity;
-  if (!VerifyPrivateDirectorySecurityOnWindows(
+  if (!VerifyDirectorySecurityOnWindows(
           directory.get(), current_user_sid, system_sid, administrators_sid,
-          &owner_identity, &security_error)) {
+          security_profile, &owner_identity, &security_error)) {
     return NotCommitted("directory_security_invalid",
                         static_cast<std::uint64_t>(security_error));
   }
@@ -2987,7 +3012,10 @@ PublishResult PrivateDirectoryOnWindows(
   return PrivateDirectorySuccess(
       apply_security ? "secured" : "verified", parent_identity,
       directory_identity, owner_identity,
-      "protected-dacl-current-user-system-administrators", true);
+      security_profile == WindowsDirectorySecurityProfile::kManagedState
+          ? "protected-dacl-current-user"
+          : "protected-dacl-current-user-system-administrators",
+      true);
 }
 
 struct RemovalEntryWindows {
@@ -3513,9 +3541,10 @@ PublishResult RemoveTreeOnWindows(
       !CreatePinnedWellKnownSid(WinBuiltinAdministratorsSid,
                                 &administrators_sid_buffer,
                                 &administrators_sid, &security_error) ||
-      !VerifyPrivateDirectorySecurityOnWindows(
+      !VerifyDirectorySecurityOnWindows(
           source.get(), current_user_sid, system_sid, administrators_sid,
-          &owner_identity, &security_error)) {
+          WindowsDirectorySecurityProfile::kPrivateStaging, &owner_identity,
+          &security_error)) {
     return NotCommitted("directory_security_invalid",
                         static_cast<std::uint64_t>(security_error));
   }
@@ -4129,6 +4158,22 @@ PublishResult DispatchParentLockOperationOnWindows(
     }
     return PrivateDirectoryOnWindows(
         parent_root, directory_name, true,
+        WindowsDirectorySecurityProfile::kPrivateStaging,
+        arguments.size() == 3 ? arguments[1] : "",
+        arguments.size() == 3 ? arguments[2] : "", held_parent);
+  }
+  if (operation == "secure-managed-state" &&
+      (arguments.size() == 1 || arguments.size() == 3)) {
+    std::wstring directory_name;
+    if (!ProtocolUtf8ToWide(arguments[0], &directory_name) ||
+        (arguments.size() == 3 &&
+         (!ProtocolValueIsAscii(arguments[1]) ||
+          !ProtocolValueIsAscii(arguments[2])))) {
+      return InvalidInput();
+    }
+    return PrivateDirectoryOnWindows(
+        parent_root, directory_name, true,
+        WindowsDirectorySecurityProfile::kManagedState,
         arguments.size() == 3 ? arguments[1] : "",
         arguments.size() == 3 ? arguments[2] : "", held_parent);
   }
@@ -4140,8 +4185,21 @@ PublishResult DispatchParentLockOperationOnWindows(
       return InvalidInput();
     }
     return PrivateDirectoryOnWindows(
-        parent_root, directory_name, false, arguments[1], arguments[2],
-        held_parent);
+        parent_root, directory_name, false,
+        WindowsDirectorySecurityProfile::kPrivateStaging, arguments[1],
+        arguments[2], held_parent);
+  }
+  if (operation == "verify-managed-state" && arguments.size() == 3) {
+    std::wstring directory_name;
+    if (!ProtocolUtf8ToWide(arguments[0], &directory_name) ||
+        !ProtocolValueIsAscii(arguments[1]) ||
+        !ProtocolValueIsAscii(arguments[2])) {
+      return InvalidInput();
+    }
+    return PrivateDirectoryOnWindows(
+        parent_root, directory_name, false,
+        WindowsDirectorySecurityProfile::kManagedState, arguments[1],
+        arguments[2], held_parent);
   }
   if (operation == "publish" && arguments.size() == 4) {
     std::wstring source_name;
@@ -4360,7 +4418,9 @@ int wmain(int argc, wchar_t* argv[]) {
       return EmitResult(InvalidInput());
     }
     return EmitResult(PrivateDirectoryOnWindows(
-        argv[2], argv[3], false, expected_parent_identity,
+        argv[2], argv[3], false,
+        WindowsDirectorySecurityProfile::kPrivateStaging,
+        expected_parent_identity,
         expected_directory_identity));
   }
   return EmitResult(InvalidInput());

@@ -35,8 +35,10 @@ import {
   removeAtomicPublishUnsecuredEmptyDirectory as removeAtomicPublishUnsecuredEmptyDirectoryWithLease,
   runDarwinIdentityBoundExecutableForTest,
   runOwnedWindowsProcess,
+  secureManagedStateDirectory as secureManagedStateDirectoryWithLease,
   spawnOwnedWindowsProcess,
   securePrivateStagingDirectory as securePrivateStagingDirectoryWithLease,
+  verifyManagedStateDirectorySecurity,
   verifyPrivateStagingDirectorySecurity,
   withAtomicPublishParentLease,
   withAtomicPublishParentLeaseForTest,
@@ -87,6 +89,12 @@ function securePrivateStagingDirectory(input) {
   ));
 }
 
+function secureManagedStateDirectory(input) {
+  return withTestParentLease(input.parentRoot, (lease) => (
+    secureManagedStateDirectoryWithLease(input, lease)
+  ));
+}
+
 function removeAtomicPublishDirectoryTree(input) {
   return withTestParentLease(input.parentRoot, (lease) => (
     removeAtomicPublishDirectoryTreeWithLease(input, lease)
@@ -116,6 +124,7 @@ test("production native helper rejects every standalone mutating verb", {
   );
   await buildNativePublisher(nativePublisher);
   for (const operation of [
+    "secure-managed-state",
     "secure-private",
     "publish",
     "remove-tree",
@@ -258,6 +267,18 @@ test("mutating publisher APIs fail closed without an active parent-lease capabil
       ...expected,
     }),
     () => securePrivateStagingDirectoryWithLease({
+      parentRoot,
+      directoryName: sourceName,
+      expectedParentIdentity: expected.expectedParentIdentity,
+      expectedDirectoryIdentity: expected.expectedSourceIdentity,
+    }),
+    () => secureManagedStateDirectoryWithLease({
+      parentRoot,
+      directoryName: sourceName,
+      expectedParentIdentity: expected.expectedParentIdentity,
+      expectedDirectoryIdentity: expected.expectedSourceIdentity,
+    }),
+    () => verifyManagedStateDirectorySecurity({
       parentRoot,
       directoryName: sourceName,
       expectedParentIdentity: expected.expectedParentIdentity,
@@ -1341,6 +1362,120 @@ test("secures, verifies and idempotently re-secures a private staging directory"
       expectedDirectoryIdentity: expectedIdentities.sourceIdentity,
     });
   }
+});
+
+test("managed-state security is identity-bound and matches the provider contract", async (t) => {
+  const parentRoot = await testRoot(t);
+  const directoryName = "managed-state";
+  const directoryPath = join(parentRoot, directoryName);
+  await mkdir(directoryPath, { mode: 0o755 });
+  const expected = await readAtomicPublishDirectoryIdentities({
+    parentRoot,
+    sourceName: directoryName,
+  });
+
+  const secured = await secureManagedStateDirectory({
+    parentRoot,
+    directoryName,
+    expectedParentIdentity: expected.parentIdentity,
+    expectedDirectoryIdentity: expected.sourceIdentity,
+  });
+  assert.equal(secured.outcome, "secured");
+  assert.equal(secured.parentIdentity, expected.parentIdentity);
+  assert.equal(secured.directoryIdentity, expected.sourceIdentity);
+  if (process.platform === "darwin") {
+    assert.equal(secured.ownerIdentity, `euid:${process.geteuid()}`);
+    assert.equal(secured.securityProfile, "current-euid-mode-0700");
+    assert.equal(secured.childrenInheritProtection, false);
+    const metadata = await lstat(directoryPath);
+    assert.equal(metadata.uid, process.geteuid());
+    assert.equal(metadata.mode & 0o7777, 0o700);
+  } else {
+    assert.match(secured.ownerIdentity, /^S-(?:[0-9]+-)+[0-9]+$/u);
+    assert.equal(secured.securityProfile, "protected-dacl-current-user");
+    assert.equal(secured.childrenInheritProtection, true);
+    const acl = await inspectManagedStateAclOnWindows(directoryPath);
+    assert.equal(acl.ownerSid, acl.currentSid);
+    assert.equal(acl.protected, true);
+    assert.deepEqual(acl.rules, [{
+      sid: acl.currentSid,
+      type: "Allow",
+      rights: 2_032_127,
+      inherited: false,
+      inheritanceFlags: 3,
+      propagationFlags: 0,
+    }]);
+  }
+
+  const verified = await withTestParentLease(parentRoot, (lease) => (
+    verifyManagedStateDirectorySecurity({
+      parentRoot,
+      directoryName,
+      expectedParentIdentity: secured.parentIdentity,
+      expectedDirectoryIdentity: secured.directoryIdentity,
+    }, lease)
+  ));
+  assert.deepEqual(verified, { ...secured, outcome: "verified" });
+
+  const securedAgain = await secureManagedStateDirectory({
+    parentRoot,
+    directoryName,
+    expectedParentIdentity: secured.parentIdentity,
+    expectedDirectoryIdentity: secured.directoryIdentity,
+  });
+  assert.deepEqual(securedAgain, secured);
+});
+
+test("managed-state security rejects replacement and reparse roots without mutation", async (t) => {
+  await t.test("replacement", async (t) => {
+    const parentRoot = await testRoot(t);
+    const directoryName = "managed-state";
+    const directoryPath = join(parentRoot, directoryName);
+    const displacedPath = join(parentRoot, "managed-state-original");
+    await mkdir(directoryPath, { mode: 0o755 });
+    const expected = await readAtomicPublishDirectoryIdentities({
+      parentRoot,
+      sourceName: directoryName,
+    });
+    await rename(directoryPath, displacedPath);
+    await mkdir(directoryPath, { mode: 0o755 });
+    await writeFile(join(directoryPath, "valuable.txt"), "replacement-value");
+
+    const error = await captureRejection(() => secureManagedStateDirectory({
+      parentRoot,
+      directoryName,
+      expectedParentIdentity: expected.parentIdentity,
+      expectedDirectoryIdentity: expected.sourceIdentity,
+    }));
+
+    assert.ok(error instanceof CuaDriverAtomicPublishError);
+    assert.equal(error.outcome, "not_committed");
+    assert.equal(error.nativeReason, "directory_identity_mismatch");
+    assert.equal(await readFile(join(directoryPath, "valuable.txt"), "utf8"), "replacement-value");
+    assert.equal(await exists(displacedPath), true);
+  });
+
+  await t.test("reparse", async (t) => {
+    const parentRoot = await testRoot(t);
+    const externalRoot = join(parentRoot, "external-state");
+    const directoryName = "managed-state-link";
+    await mkdir(externalRoot, { mode: 0o755 });
+    await writeFile(join(externalRoot, "valuable.txt"), "external-value");
+    await symlink(
+      externalRoot,
+      join(parentRoot, directoryName),
+      process.platform === "win32" ? "junction" : "dir",
+    );
+
+    const error = await captureRejection(() => secureManagedStateDirectory({
+      parentRoot,
+      directoryName,
+    }));
+
+    assert.ok(error instanceof CuaDriverAtomicPublishError);
+    assert.equal(error.nativeReason, "directory_reparse_forbidden");
+    assert.equal(await readFile(join(externalRoot, "valuable.txt"), "utf8"), "external-value");
+  });
 });
 
 test("identity-bound private security rejects a replaced parent or directory before mutation", async (t) => {
@@ -2514,6 +2649,59 @@ async function nativeCommandOutcome(executable, args) {
       stdout: error.stdout,
     });
   }
+}
+
+async function inspectManagedStateAclOnWindows(directoryPath) {
+  const systemRoot = process.env.SystemRoot ?? process.env.WINDIR;
+  assert.ok(systemRoot, "Windows system root is required for ACL inspection");
+  const powershell = join(
+    systemRoot,
+    "System32",
+    "WindowsPowerShell",
+    "v1.0",
+    "powershell.exe",
+  );
+  const script = String.raw`
+$ErrorActionPreference = 'Stop'
+$sid = [Security.Principal.WindowsIdentity]::GetCurrent().User
+$acl = Microsoft.PowerShell.Security\Get-Acl -LiteralPath $env:LING_TEST_MANAGED_STATE
+$rules = @(
+  $acl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier]) |
+    Microsoft.PowerShell.Core\ForEach-Object {
+      [ordered]@{
+        sid = [string]$_.IdentityReference.Value
+        type = [string]$_.AccessControlType
+        rights = [int]$_.FileSystemRights
+        inherited = [bool]$_.IsInherited
+        inheritanceFlags = [int]$_.InheritanceFlags
+        propagationFlags = [int]$_.PropagationFlags
+      }
+    }
+)
+[ordered]@{
+  currentSid = [string]$sid.Value
+  ownerSid = [string]($acl.GetOwner([Security.Principal.SecurityIdentifier]).Value)
+  protected = [bool]$acl.AreAccessRulesProtected
+  rules = $rules
+} | Microsoft.PowerShell.Utility\ConvertTo-Json -Compress -Depth 5
+`;
+  const result = await execFile(
+    powershell,
+    [
+      "-NoLogo",
+      "-NoProfile",
+      "-NonInteractive",
+      "-EncodedCommand",
+      Buffer.from(script, "utf16le").toString("base64"),
+    ],
+    {
+      encoding: "utf8",
+      env: { ...process.env, LING_TEST_MANAGED_STATE: directoryPath },
+      timeout: 10_000,
+      windowsHide: true,
+    },
+  );
+  return JSON.parse(result.stdout.trim());
 }
 
 async function fileIdentity(path) {

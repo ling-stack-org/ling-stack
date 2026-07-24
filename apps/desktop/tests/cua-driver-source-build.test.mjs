@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { execFile as execFileCallback } from "node:child_process";
 import { EventEmitter } from "node:events";
-import { chmod, cp, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, cp, lstat, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PassThrough, Writable } from "node:stream";
@@ -28,6 +28,7 @@ import {
   canonicalizeToolsList,
   FROZEN_DENIED_TOOLS,
   FROZEN_HEALTH_SKIP,
+  prepareManagedProbeStateHome,
   probeCuaDriverProvider,
   sanitizeProviderDiagnosticForTest,
   sha256Text,
@@ -1718,6 +1719,35 @@ test("managed-state permission evidence is recursive, no-follow and exact", asyn
     ]) {
       assert.throws(() => validateManagedWindowsAcl(invalid), /ACL .* invariant failed/);
     }
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("managed probe state preparation applies the provider profile and removes failed setup", async () => {
+  const root = await mkdtemp(join(await realpath(tmpdir()), "ling-cua-managed-prepare-"));
+  const acceptedState = join(root, "accepted");
+  const rejectedState = join(root, "rejected");
+  try {
+    const secured = await prepareManagedProbeStateHome(acceptedState);
+    assert.equal(secured.outcome, "secured");
+    assert.equal(
+      secured.securityProfile,
+      process.platform === "win32"
+        ? "protected-dacl-current-user"
+        : "current-euid-mode-0700",
+    );
+
+    const setupFailure = new Error("injected managed-state verification failure");
+    await assert.rejects(
+      prepareManagedProbeStateHome(rejectedState, {
+        verifyManagedStateDirectorySecurity: async () => {
+          throw setupFailure;
+        },
+      }),
+      (error) => error === setupFailure,
+    );
+    await assert.rejects(lstat(rejectedState), { code: "ENOENT" });
   } finally {
     await rm(root, { recursive: true, force: true });
   }

@@ -15,8 +15,9 @@ import { StringDecoder } from "node:string_decoder";
 import { promisify } from "node:util";
 import {
   readAtomicPublishDirectoryIdentities,
-  securePrivateStagingDirectory,
-  verifyPrivateStagingDirectorySecurity,
+  removeAtomicPublishUnsecuredEmptyDirectory,
+  secureManagedStateDirectory,
+  verifyManagedStateDirectorySecurity,
   withAtomicPublishParentLease,
 } from "./cua-driver-package-atomic-publish.mjs";
 
@@ -194,34 +195,83 @@ export async function probeCuaDriverProvider({
  * managed provider starts. The native helper supplies 0700/current-euid on
  * Darwin and a protected current-user ACL plus reparse fencing on Windows.
  */
-export async function prepareManagedProbeStateHome(stateHome) {
+export async function prepareManagedProbeStateHome(stateHome, dependencies = {}) {
   const parentRoot = dirname(stateHome);
   const directoryName = basename(stateHome);
+  const acquireParentLease = dependencies.withAtomicPublishParentLease
+    ?? withAtomicPublishParentLease;
+  const readIdentities = dependencies.readAtomicPublishDirectoryIdentities
+    ?? readAtomicPublishDirectoryIdentities;
+  const secureDirectory = dependencies.secureManagedStateDirectory
+    ?? secureManagedStateDirectory;
+  const verifyDirectory = dependencies.verifyManagedStateDirectorySecurity
+    ?? verifyManagedStateDirectorySecurity;
+  const removeEmptyDirectory = dependencies.removeAtomicPublishUnsecuredEmptyDirectory
+    ?? removeAtomicPublishUnsecuredEmptyDirectory;
   await mkdir(parentRoot, { recursive: true, mode: 0o700 });
-  return withAtomicPublishParentLease({ parentRoot }, async (lease) => {
-    await lease.guard(() => mkdir(stateHome, { mode: 0o700 }));
-    lease.assertHeld();
-    const identities = await readAtomicPublishDirectoryIdentities({
-      parentRoot,
-      sourceName: directoryName,
-    }, lease);
-    lease.assertHeld();
-    const secured = await securePrivateStagingDirectory({
-      directoryName,
-      expectedDirectoryIdentity: identities.sourceIdentity,
-      expectedParentIdentity: identities.parentIdentity,
-      parentRoot,
-    }, lease);
-    lease.assertHeld();
-    await verifyPrivateStagingDirectorySecurity({
-      directoryName,
-      expectedDirectoryIdentity: secured.directoryIdentity,
-      expectedParentIdentity: secured.parentIdentity,
-      parentRoot,
-    }, lease);
-    lease.assertHeld();
-    return secured;
+  return acquireParentLease({ parentRoot }, async (lease) => {
+    let created = false;
+    let identities;
+    try {
+      await lease.guard(() => mkdir(stateHome, { mode: 0o700 }));
+      created = true;
+      lease.assertHeld();
+      identities = await readIdentities({
+        parentRoot,
+        sourceName: directoryName,
+      }, lease);
+      lease.assertHeld();
+      const secured = await secureDirectory({
+        directoryName,
+        expectedDirectoryIdentity: identities.sourceIdentity,
+        expectedParentIdentity: identities.parentIdentity,
+        parentRoot,
+      }, lease);
+      lease.assertHeld();
+      await verifyDirectory({
+        directoryName,
+        expectedDirectoryIdentity: secured.directoryIdentity,
+        expectedParentIdentity: secured.parentIdentity,
+        parentRoot,
+      }, lease);
+      lease.assertHeld();
+      return secured;
+    } catch (error) {
+      if (created && identities !== undefined) {
+        try {
+          await lease.guard(() => removeEmptyDirectory({
+            expectedParentIdentity: identities.parentIdentity,
+            expectedSourceIdentity: identities.sourceIdentity,
+            parentRoot,
+            sourceName: directoryName,
+          }, lease));
+        } catch (cleanupError) {
+          attachManagedStatePreparationCleanupError(error, cleanupError, stateHome);
+        }
+      }
+      throw error;
+    }
   });
+}
+
+function attachManagedStatePreparationCleanupError(error, cleanupError, stateHome) {
+  if (!(error instanceof Error) || !Object.isExtensible(error)) return;
+  try {
+    Object.defineProperties(error, {
+      managedStateCleanupError: {
+        configurable: true,
+        enumerable: false,
+        value: cleanupError,
+      },
+      managedStateResiduePath: {
+        configurable: true,
+        enumerable: false,
+        value: stateHome,
+      },
+    });
+  } catch {
+    // Preserve the preparation failure if diagnostic metadata is immutable.
+  }
 }
 
 async function runProviderSession({

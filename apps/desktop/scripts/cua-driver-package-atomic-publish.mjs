@@ -68,7 +68,9 @@ const NATIVE_PARENT_LEASE_OPERATIONS = new Set([
   "remove-artifact-tree",
   "remove-tree",
   "remove-unsecured-empty",
+  "secure-managed-state",
   "secure-private",
+  "verify-managed-state",
   "verify-private",
 ]);
 const STRICT_UTF8_DECODER = new TextDecoder("utf-8", { fatal: true });
@@ -312,6 +314,52 @@ export async function verifyPrivateStagingDirectorySecurity(input, parentLease) 
         args,
       );
   return privateDirectoryReceipt(receipt, "verified");
+}
+
+/**
+ * Apply the provider managed-state contract to one existing directory. On
+ * Windows this is a protected, current-user-only inheritable DACL; on Darwin
+ * it is the same current-euid 0700 profile used by private staging.
+ */
+export async function secureManagedStateDirectory(input, parentLease) {
+  const parentRoot = await requireCanonicalParent(input?.parentRoot);
+  const directoryName = requireLeafName(input?.directoryName);
+  const expectedIdentities = optionalExpectedDirectoryIdentities(input);
+  const capability = requireNativeParentLeaseCapability(parentLease, parentRoot);
+  const receipt = await invokeNativeParentLeaseOperation(
+    capability,
+    "secure-managed-state",
+    [
+      directoryName,
+      ...(expectedIdentities === undefined
+        ? []
+        : [
+            expectedIdentities.parentIdentity,
+            expectedIdentities.directoryIdentity,
+          ]),
+    ],
+  );
+  return managedStateDirectoryReceipt(receipt, "secured", expectedIdentities);
+}
+
+/** Reopen and verify the exact managed-state directory under the same lease. */
+export async function verifyManagedStateDirectorySecurity(input, parentLease) {
+  const parentRoot = await requireCanonicalParent(input?.parentRoot);
+  const directoryName = requireLeafName(input?.directoryName);
+  const expectedParentIdentity = requireNativeIdentity(
+    input?.expectedParentIdentity,
+    "expectedParentIdentity",
+  );
+  const expectedDirectoryIdentity = requireNativeIdentity(
+    input?.expectedDirectoryIdentity,
+    "expectedDirectoryIdentity",
+  );
+  const receipt = await invokeNativeParentLeaseOperation(
+    requireNativeParentLeaseCapability(parentLease, parentRoot),
+    "verify-managed-state",
+    [directoryName, expectedParentIdentity, expectedDirectoryIdentity],
+  );
+  return managedStateDirectoryReceipt(receipt, "verified");
 }
 
 /**
@@ -1270,7 +1318,9 @@ function assertNativeParentLeaseOperationReceipt(receipt, operation, args) {
     "remove-artifact-tree": "removed",
     "remove-tree": "removed",
     "remove-unsecured-empty": "removed",
+    "secure-managed-state": "secured",
     "secure-private": "secured",
+    "verify-managed-state": "verified",
     "verify-private": "verified",
   }[operation];
   if (receipt.outcome !== expectedOutcome) {
@@ -1300,7 +1350,10 @@ function assertNativeParentLeaseOperationReceipt(receipt, operation, args) {
     }
     return;
   }
-  if (operation === "secure-private" || operation === "verify-private") {
+  if (operation === "secure-private"
+    || operation === "verify-private"
+    || operation === "secure-managed-state"
+    || operation === "verify-managed-state") {
     const expectedIdentities = args.length === 3
       ? Object.freeze({
           directoryIdentity: args[2],
@@ -1308,9 +1361,12 @@ function assertNativeParentLeaseOperationReceipt(receipt, operation, args) {
         })
       : undefined;
     try {
-      privateDirectoryReceipt(
+      const parseReceipt = operation.endsWith("managed-state")
+        ? managedStateDirectoryReceipt
+        : privateDirectoryReceipt;
+      parseReceipt(
         receipt,
-        operation === "secure-private" ? "secured" : "verified",
+        operation.startsWith("secure-") ? "secured" : "verified",
         expectedIdentities,
       );
     } catch (cause) {
@@ -1737,13 +1793,39 @@ function hasCompleteNativeParentLeaseReceiptContext(value) {
 }
 
 function privateDirectoryReceipt(receipt, expectedOutcome, expectedIdentities) {
+  return directorySecurityReceipt(
+    receipt,
+    expectedOutcome,
+    expectedIdentities,
+    process.platform === "darwin"
+      ? "current-euid-mode-0700"
+      : "protected-dacl-current-user-system-administrators",
+    process.platform === "win32",
+  );
+}
+
+function managedStateDirectoryReceipt(receipt, expectedOutcome, expectedIdentities) {
+  return directorySecurityReceipt(
+    receipt,
+    expectedOutcome,
+    expectedIdentities,
+    process.platform === "darwin"
+      ? "current-euid-mode-0700"
+      : "protected-dacl-current-user",
+    process.platform === "win32",
+  );
+}
+
+function directorySecurityReceipt(
+  receipt,
+  expectedOutcome,
+  expectedIdentities,
+  expectedProfile,
+  expectedInheritance,
+) {
   if (receipt.outcome !== expectedOutcome) {
     throw nativeReceiptError(receipt);
   }
-  const expectedProfile = process.platform === "darwin"
-    ? "current-euid-mode-0700"
-    : "protected-dacl-current-user-system-administrators";
-  const expectedInheritance = process.platform === "win32";
   if (receipt.reason !== expectedOutcome
     || receipt.parentIdentity === undefined
     || receipt.directoryIdentity === undefined
@@ -1931,6 +2013,7 @@ function isOptionalOwnerIdentity(value) {
 function isOptionalSecurityProfile(value) {
   return value === undefined
     || value === "current-euid-mode-0700"
+    || value === "protected-dacl-current-user"
     || value === "protected-dacl-current-user-system-administrators";
 }
 
