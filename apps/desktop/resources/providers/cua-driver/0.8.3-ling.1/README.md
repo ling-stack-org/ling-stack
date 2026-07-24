@@ -9,7 +9,7 @@ commit, tree, Cargo lock, license, patch hashes and native toolchain before it
 creates an output directory. Only native CI may later supply repeated-build
 pre-sign digests and promote a platform record in a separate reviewed change.
 
-The seven committed patches route managed state, expose content-free live
+The eight committed patches route managed state, expose content-free live
 readiness, own host/stdio/Job Object lifetime and return structured standard-tier
 capability errors. Native repeated-build and behavioral evidence is still
 required; until that evidence is attached, the output is an audit candidate,

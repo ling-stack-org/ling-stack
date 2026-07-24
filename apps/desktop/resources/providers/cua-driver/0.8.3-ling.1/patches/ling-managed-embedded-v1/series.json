@@ -4,7 +4,7 @@
   "implementationStatus": "runtime_integrated",
   "upstreamCommit": "0612c26b2c7b8556f6de7f6b4f3927ecac914e4f",
   "seriesDigestAlgorithm": "sha256(id:patchSha256 followed by LF, in manifest order)",
-  "seriesSha256": "10e233e4c76d17177c6bf1c659a64332af787a441deb231b8ae52a7c9d4ecf6d",
+  "seriesSha256": "641e185f060b78dfec0c2be487977ca8c8a289de06f33843b026bd1310ad8e2b",
   "patches": [
     {
       "id": "ling-embedded-state-home-v1",
@@ -40,6 +40,11 @@
       "id": "ling-windows-atomic-replace-handle-v1",
       "file": "0007-ling-windows-atomic-replace-handle-v1.patch",
       "sha256": "a2d09f3ad5d25c6ab82a1b735e692e9c3a35c78a2f4d644e46f5fa9246b777a6"
+    },
+    {
+      "id": "ling-windows-junction-fixture-path-v1",
+      "file": "0008-ling-windows-junction-fixture-path-v1.patch",
+      "sha256": "236acbea0e2e9dccd354e83cde5274a57f2401eb33e65304d74ae881fa8ee95c"
     }
   ],
   "rustfmtPaths": [

@@ -1,0 +1,23 @@
+diff --git a/libs/cua-driver/rust/crates/cua-driver-core/src/ling_managed.rs b/libs/cua-driver/rust/crates/cua-driver-core/src/ling_managed.rs
+index f80981c..a722ef6 100644
+--- a/libs/cua-driver/rust/crates/cua-driver-core/src/ling_managed.rs
++++ b/libs/cua-driver/rust/crates/cua-driver-core/src/ling_managed.rs
+@@ -1402,9 +1402,16 @@ mod tests {
+         let junction = good.join("version-check");
+         std::fs::remove_dir(&junction).unwrap();
++        let junction_argument = junction.to_string_lossy();
++        let junction_argument = junction_argument
++            .strip_prefix(r"\\?\")
++            .unwrap_or(junction_argument.as_ref());
++        let outside_argument = outside.to_string_lossy();
++        let outside_argument = outside_argument
++            .strip_prefix(r"\\?\")
++            .unwrap_or(outside_argument.as_ref());
+         let command = format!(
+             "mklink /J \"{}\" \"{}\"",
+-            junction.display(),
+-            outside.display()
++            junction_argument, outside_argument
+         );
+         let status = std::process::Command::new("cmd.exe")
+             .args(["/d", "/s", "/c", &command])
