@@ -2663,6 +2663,10 @@ async function inspectManagedStateAclOnWindows(directoryPath) {
   );
   const script = String.raw`
 $ErrorActionPreference = 'Stop'
+$securityModule = [IO.Path]::Combine($PSHOME, 'Modules', 'Microsoft.PowerShell.Security', 'Microsoft.PowerShell.Security.psd1')
+$utilityModule = [IO.Path]::Combine($PSHOME, 'Modules', 'Microsoft.PowerShell.Utility', 'Microsoft.PowerShell.Utility.psd1')
+Microsoft.PowerShell.Core\Import-Module -Name $securityModule -Force -ErrorAction Stop
+Microsoft.PowerShell.Core\Import-Module -Name $utilityModule -Force -ErrorAction Stop
 $sid = [Security.Principal.WindowsIdentity]::GetCurrent().User
 $acl = Microsoft.PowerShell.Security\Get-Acl -LiteralPath $env:LING_TEST_MANAGED_STATE
 $rules = @(
