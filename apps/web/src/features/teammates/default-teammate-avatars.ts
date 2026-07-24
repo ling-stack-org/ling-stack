@@ -1,6 +1,6 @@
 import type { AiTeammate } from "../../types.js";
 
-const AVATAR_BASE_PATH = "/avatars/teammates";
+const AVATAR_BASE_PATH = `${import.meta.env.BASE_URL}avatars/teammates`;
 
 const templateAvatarById: Readonly<Record<string, string>> = {
   ling_agent: "ling-agent.png",

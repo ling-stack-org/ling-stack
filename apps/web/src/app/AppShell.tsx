@@ -195,6 +195,7 @@ export function AppShell(): JSX.Element {
   const { locale, setLocale, t } = useI18n();
   const { preference: themePreference, setPreference: setThemePreference } = useTheme();
   const { showToast } = useLingToast();
+  const desktopPlatform = typeof window === "undefined" ? undefined : window.lingDesktop?.platform;
   const desktopHosted = typeof window !== "undefined" && Boolean(window.lingDesktop);
   const initialWorkspaceCwd = desktopHosted ? "" : readInitialWorkspaceCwd();
   const [form, setForm] = useState<RunFormState>(() => ({
@@ -2088,6 +2089,7 @@ export function AppShell(): JSX.Element {
     !channelSidebarOpen ? "channel-sidebar-collapsed" : "",
     showInspector && inspectorCollapsed ? "inspector-collapsed" : "",
     showInspector ? "" : "inspector-hidden",
+    desktopPlatform === "macos" ? "desktop-macos" : "",
   ].filter(Boolean).join(" ");
   const workspaceSurfaceRef = useRef<HTMLElement>(null);
   const desktopSelectedConversationId = selectDesktopComputerUseConversation({
@@ -2108,6 +2110,9 @@ export function AppShell(): JSX.Element {
 
   return (
     <main className={shellClassName}>
+      {desktopPlatform === "macos" ? (
+        <div className="desktop-window-drag-region" aria-hidden="true" />
+      ) : null}
       {!settingsFullscreen ? (
       <SidebarNavigation
         activeSidebarTarget={navigationActiveSidebarTarget}
