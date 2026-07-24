@@ -29,6 +29,7 @@ import {
   FROZEN_DENIED_TOOLS,
   FROZEN_HEALTH_SKIP,
   probeCuaDriverProvider,
+  sanitizeProviderDiagnosticForTest,
   sha256Text,
   validateManagedWindowsAcl,
   verifyLinkUnchanged,
@@ -68,12 +69,12 @@ import {
 
 const execFile = promisify(execFileCallback);
 const REPOSITORY_ROOT = fileURLToPath(new URL("../../../", import.meta.url));
-const BUILD_SCRIPT = new URL("../scripts/build-cua-driver-provider.mjs", import.meta.url).pathname;
-const VERIFY_SCRIPT = new URL("../scripts/verify-cua-driver-source-build.mjs", import.meta.url).pathname;
-const DESKTOP_ARTIFACTS_WORKFLOW = new URL("../../../.github/workflows/desktop-artifacts.yml", import.meta.url).pathname;
-const SELF_HOSTED_NATIVE_WORKFLOW = new URL("../../../.github/workflows/cua-driver-self-hosted-native.yml", import.meta.url).pathname;
-const DARWIN_REPRODUCIBILITY_DIAGNOSTIC = new URL("../scripts/diagnose-cua-driver-darwin-reproducibility.mjs", import.meta.url).pathname;
-const SIGNING_BUILDER_FIXTURE = new URL("run-cua-driver-signing-builder-fixture.mjs", import.meta.url).pathname;
+const BUILD_SCRIPT = fileURLToPath(new URL("../scripts/build-cua-driver-provider.mjs", import.meta.url));
+const VERIFY_SCRIPT = fileURLToPath(new URL("../scripts/verify-cua-driver-source-build.mjs", import.meta.url));
+const DESKTOP_ARTIFACTS_WORKFLOW = fileURLToPath(new URL("../../../.github/workflows/desktop-artifacts.yml", import.meta.url));
+const SELF_HOSTED_NATIVE_WORKFLOW = fileURLToPath(new URL("../../../.github/workflows/cua-driver-self-hosted-native.yml", import.meta.url));
+const DARWIN_REPRODUCIBILITY_DIAGNOSTIC = fileURLToPath(new URL("../scripts/diagnose-cua-driver-darwin-reproducibility.mjs", import.meta.url));
+const SIGNING_BUILDER_FIXTURE = fileURLToPath(new URL("run-cua-driver-signing-builder-fixture.mjs", import.meta.url));
 
 test("source-lock text resources have checkout-stable LF bytes", async () => {
   const resourcePrefix = "apps/desktop/resources/providers/cua-driver/";
@@ -1540,6 +1541,20 @@ test("runtime probe rejects server, health, updater, RPC, size, timeout and sign
       mutateResponse: (response) => response.id === 1 ? { ...response, error: { code: -1 } } : response,
     }), /exactly one of result or error/);
     await assert.rejects(probe({ closeSignal: "SIGTERM" }), /signal=SIGTERM/);
+    await assert.rejects(
+      probe({
+        closeCode: 78,
+        exitOnSpawn: true,
+        stderrOnSpawn: "cua-driver: invalid Ling-managed lifetime: cua_windows_lifecycle_unavailable:Access denied\nC:\\runner\\private\\state\n",
+        suppressResponseIds: new Set([1]),
+      }),
+      (error) => {
+        assert.match(error?.message ?? "", /code=78/u);
+        assert.match(error?.message ?? "", /cua_windows_lifecycle_unavailable:Access denied/u);
+        assert.doesNotMatch(error?.message ?? "", /runner\\private/u);
+        return true;
+      },
+    );
     await assert.rejects(probe({ suppressResponseIds: new Set([1]) }, 20), /timed out after 20ms/);
     await assert.rejects(probe({
       rawStdoutOnInitialize: "x".repeat(4 * 1024 * 1024 + 1),
@@ -1641,29 +1656,31 @@ test("managed-state permission evidence is recursive, no-follow and exact", asyn
     await chmod(telemetry, 0o700);
     await chmod(config, 0o600);
     await chmod(telemetryFile, 0o600);
-    assert.deepEqual(await verifyManagedStatePermissions({ platform: "darwin", stateHome }), {
-      root: "0700",
-      directories: "0700",
-      files: "0600",
-    });
+    if (process.platform !== "win32") {
+      assert.deepEqual(await verifyManagedStatePermissions({ platform: "darwin", stateHome }), {
+        root: "0700",
+        directories: "0700",
+        files: "0600",
+      });
 
-    await chmod(telemetryFile, 0o644);
-    await assert.rejects(
-      verifyManagedStatePermissions({ platform: "darwin", stateHome }),
-      /telemetry\/id=644 expected=600/,
-    );
-    await chmod(telemetryFile, 0o600);
-    const link = join(stateHome, "escape-link");
-    await symlink(config, link);
-    await verifyLinkUnchanged(link, config, "test link");
-    await assert.rejects(
-      verifyManagedStatePermissions({ platform: "darwin", stateHome }),
-      /contains a link or reparse point/,
-    );
-    await rm(link);
-    await writeFile(link, "replacement", { mode: 0o600 });
-    await assert.rejects(verifyLinkUnchanged(link, config, "test link"), /replaced or retargeted/);
-    await rm(link);
+      await chmod(telemetryFile, 0o644);
+      await assert.rejects(
+        verifyManagedStatePermissions({ platform: "darwin", stateHome }),
+        /telemetry\/id=644 expected=600/,
+      );
+      await chmod(telemetryFile, 0o600);
+      const link = join(stateHome, "escape-link");
+      await symlink(config, link);
+      await verifyLinkUnchanged(link, config, "test link");
+      await assert.rejects(
+        verifyManagedStatePermissions({ platform: "darwin", stateHome }),
+        /contains a link or reparse point/,
+      );
+      await rm(link);
+      await writeFile(link, "replacement", { mode: 0o600 });
+      await assert.rejects(verifyLinkUnchanged(link, config, "test link"), /replaced or retargeted/);
+      await rm(link);
+    }
 
     const sid = "S-1-5-21-1-2-3-1001";
     const acl = {
@@ -2014,9 +2031,27 @@ function createFakeProviderSpawner(requests, options = {}) {
       },
     });
     child.kill = () => true;
+    if (options.exitOnSpawn) {
+      queueMicrotask(() => {
+        if (options.stderrOnSpawn) child.stderr.write(options.stderrOnSpawn);
+        child.stderr.end();
+        child.stdout.end();
+        child.emit("exit", options.closeCode ?? 1, options.closeSignal ?? null);
+        child.emit("close", options.closeCode ?? 1, options.closeSignal ?? null);
+      });
+    }
     return child;
   };
 }
+
+test("provider startup diagnostics are bounded and redact runner paths and process ids", () => {
+  const diagnostic = sanitizeProviderDiagnosticForTest(
+    `ignored\nC:\\runner\\secret\\state\nhost_pid=424242\n${"x".repeat(4_096)}`,
+  );
+  assert.doesNotMatch(diagnostic, /runner\\secret|424242/u);
+  assert.match(diagnostic, /<windows-path>|host_pid=<redacted>/u);
+  assert.ok(diagnostic.length <= 2_048);
+});
 
 async function copyResources() {
   const root = await mkdtemp(join(tmpdir(), "ling-cua-resource-fixture-"));

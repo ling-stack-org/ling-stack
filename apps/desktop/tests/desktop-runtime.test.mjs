@@ -1,8 +1,13 @@
 import assert from "node:assert/strict";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 import { DesktopRuntime, DesktopRuntimeError } from "../dist/main/desktop-runtime.js";
 
-const workspaceCwd = "/tmp/ling-desktop-runtime-workspace";
+const workspaceCwd = join(tmpdir(), "ling-desktop-runtime-workspace");
+const otherWorkspaceCwd = join(tmpdir(), "ling-desktop-runtime-other-workspace");
+const resourcesRoot = join(tmpdir(), "ling-desktop-runtime-resources");
+const userDataPath = join(tmpdir(), "ling-desktop-runtime-user-data");
 
 test("DesktopRuntime composes once for one cached tuple and keeps a stable Desktop id", async () => {
   const daemon = fakeDaemon(authority("connection-a", 1));
@@ -27,7 +32,7 @@ test("DesktopRuntime composes once for one cached tuple and keeps a stable Deskt
   assert.equal(coordinatorOptions.length, 1);
   assert.equal(runtime.desktopInstanceId, "desktop-stable");
   assert.equal(coordinatorOptions[0].desktopInstanceId, "desktop-stable");
-  assert.equal(coordinatorOptions[0].resourcesPath, "/tmp/ling-desktop-runtime-resources");
+  assert.equal(coordinatorOptions[0].resourcesPath, resourcesRoot);
   assert.deepEqual(coordinatorOptions[0].bridgeContext, {
     bridgeToken: "bridge-token",
     daemonAuthorityEpoch: "authority-a",
@@ -588,7 +593,7 @@ test("open bundled gate fails closed when daemon authority is missing", async ()
 test("open bundled gate rejects authority issued for a different workspace", async () => {
   const daemon = fakeDaemon(Object.freeze({
     ...authority("connection-wrong-workspace", 1),
-    workspaceCwd: "/tmp/ling-desktop-runtime-other-workspace",
+    workspaceCwd: otherWorkspaceCwd,
   }));
   let factoryCalls = 0;
   const runtime = createRuntime(daemon, {
@@ -897,8 +902,8 @@ function createRuntime(daemon, overrides = {}) {
     daemonBaseUrl: "http://127.0.0.1:17891",
     bridgeToken: "bridge-token",
     workspaceCwd,
-    resourcesRoot: "/tmp/ling-desktop-runtime-resources",
-    userDataPath: "/tmp/ling-desktop-runtime-user-data",
+    resourcesRoot,
+    userDataPath,
     platform: "darwin",
     architecture: "arm64",
     featureFlags: bundledDarwinFeatureFlags(),

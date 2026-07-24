@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { PassThrough } from "node:stream";
 import test from "node:test";
 import { DEFAULT_CUA_DRIVER_FEATURE_FLAGS } from "@ling-stack/contracts";
@@ -798,8 +800,8 @@ function fakeChild({ autoCloseOnKill = true, killResult = true, killThrows = fal
 }
 
 function stateRootPaths() {
-  const userData = "/tmp/ling-win32-user-data";
-  const root = `${userData}/providers/cua-driver/state/v1/0.8.3-ling.1`;
+  const userData = join(tmpdir(), "ling-win32-user-data");
+  const root = join(userData, "providers", "cua-driver", "state", "v1", "0.8.3-ling.1");
   return { userData, root };
 }
 
@@ -821,7 +823,9 @@ function stateRootFixture({
       };
     },
     async realpath(path) {
-      return path === canonicalEscapePath ? "/tmp/outside-canonical-root" : path;
+      return path === canonicalEscapePath
+        ? join(tmpdir(), "outside-canonical-root")
+        : path;
     },
   };
   const commandRunner = {

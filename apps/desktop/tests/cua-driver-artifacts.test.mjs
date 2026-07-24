@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { chmod, link, lstat, mkdir, mkdtemp, readFile, rename, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import test from "node:test";
 import {
   CuaDriverArtifactLockError,
@@ -24,7 +24,7 @@ import {
 } from "../dist/main/cua-driver/state-root.js";
 
 test("bundled resource resolution is fixed under resourcesPath and never consults PATH", () => {
-  const resourcesPath = "/opt/Ling Stack/resources";
+  const resourcesPath = resolve("/opt/Ling Stack/resources");
   const resolved = resolveCuaDriverResourcePaths({
     resourcesPath,
     platform: "win32",
@@ -32,7 +32,10 @@ test("bundled resource resolution is fixed under resourcesPath and never consult
   });
   assert.equal(
     resolved.executablePath,
-    "/opt/Ling Stack/resources/providers/cua-driver/0.8.3-ling.1/win32-x64/payload/cua-driver.exe",
+    join(
+      resourcesPath,
+      "providers/cua-driver/0.8.3-ling.1/win32-x64/payload/cua-driver.exe",
+    ),
   );
   assert.equal(resolved.executablePath.includes("CuaDriver.app"), false);
   assert.equal(resolved.executablePath.includes(".local/bin"), false);
@@ -164,7 +167,9 @@ test("runtime provider-lock wrapper preserves shared error codes and clone isola
   );
 });
 
-test("state root is version isolated, private and rejects symlinked ancestors", async (t) => {
+test("state root is version isolated, private and rejects symlinked ancestors", {
+  skip: process.platform === "win32" && "Darwin mode bits are not representable on NTFS",
+}, async (t) => {
   const temp = await mkdtemp(join(tmpdir(), "ling-cua-state-"));
   t.after(async () => {
     const { rm } = await import("node:fs/promises");

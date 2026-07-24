@@ -501,14 +501,18 @@ export async function runOwnedWindowsProcess(command, args, options = {}) {
   const nativePublisher = await getNativePublisher();
   await assertNativePublisherIdentity(nativePublisher);
   try {
-    return await execFile(
-      nativePublisher.path,
-      ["run-owned", command, ...args],
-      {
-        ...execOptions,
-        windowsHide: true,
-      },
-    );
+    try {
+      return await execFile(
+        nativePublisher.path,
+        ["run-owned", command, ...args],
+        {
+          ...execOptions,
+          windowsHide: true,
+        },
+      );
+    } catch (error) {
+      throw normalizeOwnedWindowsProcessError(error, execOptions);
+    }
   } finally {
     try {
       await assertNativePublisherIdentity(nativePublisher);
@@ -520,6 +524,27 @@ export async function runOwnedWindowsProcess(command, args, options = {}) {
       );
     }
   }
+}
+
+function normalizeOwnedWindowsProcessError(error, options) {
+  if (!(error instanceof Error)) return error;
+  if (options.signal?.aborted && error.code === "ABORT_ERR") {
+    error.killed = true;
+    return error;
+  }
+  if (error.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER") {
+    error.killed = true;
+    if (error.stream === undefined) {
+      if (/stdout maxBuffer/u.test(error.message)) error.stream = "stdout";
+      if (/stderr maxBuffer/u.test(error.message)) error.stream = "stderr";
+    }
+    return error;
+  }
+  if (options.timeout > 0 && error.code === null && error.signal !== null) {
+    error.code = "ETIMEDOUT";
+    error.killed = true;
+  }
+  return error;
 }
 
 /** Spawn an interactive Windows root under the same native Job Object owner. */

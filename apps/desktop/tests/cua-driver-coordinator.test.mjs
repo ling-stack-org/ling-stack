@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import test from "node:test";
+import test, { after } from "node:test";
 import {
   CuaDriverDesktopCoordinator,
   classifyCuaDriverPreSpawnFailure,
@@ -9,6 +9,16 @@ import {
   CuaDriverProviderSealError,
 } from "../dist/main/cua-driver/provider-seal.js";
 import { DEFAULT_CUA_DRIVER_FEATURE_FLAGS } from "@ling-stack/contracts";
+
+// Recovery deliberately uses unref'd timers so it cannot keep the Electron
+// process alive during shutdown. A Windows node:test worker has no other
+// referenced handle while awaiting that timer, so retain one for this fixture.
+const windowsTestKeepAlive = process.platform === "win32"
+  ? setInterval(() => {}, 1_000)
+  : undefined;
+after(() => {
+  if (windowsTestKeepAlive) clearInterval(windowsTestKeepAlive);
+});
 
 test("coordinator keeps bundled gate closed and never falls through to PATH/external provider", async () => {
   let spawnCount = 0;

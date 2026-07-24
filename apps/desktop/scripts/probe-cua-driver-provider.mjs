@@ -28,6 +28,7 @@ const HEALTH_SCHEMA_VERSION = "1";
 const PROVIDER_VERSION = "0.8.3";
 const MAX_MCP_LINE_BYTES = 4 * 1024 * 1024;
 const MAX_MCP_STDOUT_BYTES = 16 * 1024 * 1024;
+const MAX_PROVIDER_DIAGNOSTIC_BYTES = 16 * 1024;
 const WINDOWS_FULL_CONTROL_MASK = 2_032_127;
 
 export const FROZEN_HEALTH_SKIP = Object.freeze([
@@ -261,6 +262,9 @@ async function runProviderSession({
   let stdoutBytes = 0;
   const stdoutDecoder = new StringDecoder("utf8");
   let stdoutDecoderFlushed = false;
+  const stderrChunks = [];
+  let stderrBytes = 0;
+  let stderrTruncated = false;
   let stdinClosed = false;
   let settled = false;
   let timer;
@@ -286,7 +290,7 @@ async function runProviderSession({
     child.on("error", fail);
     child.on("exit", (code, signal) => {
       if (!settled && !stdinClosed) {
-        fail(new Error(`provider exited before probe completed: code=${code} signal=${signal ?? "none"}`));
+        fail(providerExitError({ code, signal, stderrChunks, stderrTruncated }));
       }
     });
     child.on("close", (code, signal) => {
@@ -443,9 +447,17 @@ async function runProviderSession({
         fail(new Error(`provider MCP response exceeded ${MAX_MCP_LINE_BYTES} bytes without a delimiter`));
       }
     });
-    child.stderr.on("data", () => {
-      // Provider diagnostics are intentionally not part of the attestation;
-      // they may contain runner-specific paths and process ids.
+    child.stderr.on("data", (chunk) => {
+      // Diagnostics never enter the attestation. Retain only a bounded buffer
+      // so an early native startup failure can be classified after redaction.
+      const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      const remaining = Math.max(0, MAX_PROVIDER_DIAGNOSTIC_BYTES - stderrBytes);
+      if (remaining > 0) {
+        const accepted = bytes.subarray(0, remaining);
+        stderrChunks.push(accepted);
+        stderrBytes += accepted.length;
+      }
+      if (bytes.length > remaining) stderrTruncated = true;
     });
     child.stdin.on("error", (error) => {
       if (error.code !== "EPIPE") fail(error);
@@ -463,6 +475,32 @@ async function runProviderSession({
     });
   });
   return result;
+}
+
+function providerExitError({ code, signal, stderrChunks, stderrTruncated }) {
+  const diagnostic = sanitizeProviderDiagnostic(Buffer.concat(stderrChunks).toString("utf8"));
+  return new Error([
+    `provider exited before probe completed: code=${code} signal=${signal ?? "none"}`,
+    diagnostic ? `diagnostic=${diagnostic}${stderrTruncated ? " [truncated]" : ""}` : "",
+  ].filter(Boolean).join(" "));
+}
+
+export function sanitizeProviderDiagnosticForTest(value) {
+  return sanitizeProviderDiagnostic(value);
+}
+
+function sanitizeProviderDiagnostic(value) {
+  return String(value ?? "")
+    .replaceAll("\0", "")
+    .split(/\r?\n/u)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .slice(-4)
+    .join(" | ")
+    .replace(/[A-Za-z]:\\[^|\r\n]*/gu, "<windows-path>")
+    .replace(/\/(?:Users|home|tmp|var)\/[^|\s]*/gu, "<path>")
+    .replace(/\b((?:host|provider|child|process)[ _-]?pid)\s*[=:]\s*\d+\b/giu, "$1=<redacted>")
+    .slice(0, 2_048);
 }
 
 async function createConfigEscapeFixture({ externalHome, platform, stateHome }) {
