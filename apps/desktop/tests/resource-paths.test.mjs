@@ -47,7 +47,10 @@ test("packaged Web entry keeps public assets relative and exposes macOS drag chr
   assert.match(script, /\.\/avatars\/teammates/u);
   assert.match(script, /desktop-window-drag-region/u);
   assert.match(stylesheet, /\.desktop-window-drag-region/u);
+  assert.match(stylesheet, /\.app-shell\.desktop-macos/u);
+  assert.match(stylesheet, /\.teammate-chat-header/u);
   assert.match(stylesheet, /-webkit-app-region:\s*drag/u);
+  assert.match(stylesheet, /-webkit-app-region:\s*no-drag/u);
 });
 
 async function createFixture(t) {

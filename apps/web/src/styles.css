@@ -46,18 +46,44 @@
   position: relative;
   height: 100dvh;
   min-height: 0;
-  padding-top: var(--desktop-window-titlebar-height);
 }
 
 .desktop-window-drag-region {
   position: absolute;
-  inset: 0 0 auto 76px;
+  inset: 0 auto auto 76px;
   z-index: 1000;
+  width: calc(var(--sidebar-expanded-width) - 76px);
   height: var(--desktop-window-titlebar-height);
-  background: var(--app-bg);
+  background: transparent;
   -webkit-app-region: drag;
   -webkit-user-select: none;
   user-select: none;
+}
+
+.app-shell.desktop-macos.channel-sidebar-collapsed > .desktop-window-drag-region {
+  display: none;
+}
+
+.app-shell.desktop-macos .sidebar-fixed-top {
+  margin-top: var(--desktop-window-titlebar-height);
+}
+
+.app-shell.desktop-macos :is(
+  .normal-conversation-header,
+  .teammate-chat-header,
+  .teammate-settings-header
+) {
+  -webkit-app-region: drag;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.app-shell.desktop-macos :is(
+  .normal-conversation-header,
+  .teammate-chat-header,
+  .teammate-settings-header
+) :is(button, a, input, textarea, select, [role="button"], [role="link"]) {
+  -webkit-app-region: no-drag;
 }
 
 .app-shell.desktop-macos > .channel-left-drawer,
