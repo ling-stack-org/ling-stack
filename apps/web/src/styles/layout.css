@@ -548,7 +548,7 @@ textarea {
   background: var(--surface-panel);
 }
 
-.workspace:not(.workspace-client-surface):not(.workspace-plugins-surface) {
+.workspace:not(.workspace-client-surface):not(.workspace-plugins-surface):not(.workspace-teammate-private-surface) {
   padding: 20px;
 }
 
