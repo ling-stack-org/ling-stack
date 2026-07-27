@@ -1,5 +1,6 @@
 import { useMemo } from "react";
 import { useI18n } from "../../i18n.js";
+import { PLUGIN_DRAFT_ID } from "../../domains/plugins/use-plugins-domain.js";
 import { CuaDriverInstallDrawer } from "./CuaDriverInstallDrawer.js";
 import { PluginCreateDialog } from "./PluginCreateDialog.js";
 import { PluginDetailDrawer } from "./PluginDetailDrawer.js";
@@ -18,8 +19,10 @@ export function PluginManagerPage(props: PluginManagerPageProps): JSX.Element {
   const controller = usePluginManagerController({
     plugins: props.plugins,
     isLoading: props.isLoading,
-    busyPluginId: props.busyPluginId,
-    busyAction: props.busyAction,
+    loadError: props.loadError,
+    pendingActions: props.pendingActions,
+    actionErrors: props.actionErrors,
+    clearActionErrors: props.onClearActionErrors,
     t,
   });
   const buildHandlers = (owner: "row" | "detail"): PluginActionHandlers => ({
@@ -27,7 +30,7 @@ export function PluginManagerPage(props: PluginManagerPageProps): JSX.Element {
       pluginId,
       action: "apply",
       owner,
-      mutate: () => props.onApplyPreset(pluginId),
+      mutate: (request) => props.onApplyPreset(pluginId, request),
     }),
     onOpenInstallGuide: controller.openGuide,
     onOpenDetails: controller.openDetails,
@@ -35,39 +38,44 @@ export function PluginManagerPage(props: PluginManagerPageProps): JSX.Element {
       pluginId,
       action: "check",
       owner,
-      mutate: () => props.onCheck(pluginId),
+      mutate: (request) => props.onCheck(pluginId, request),
     }),
-    onValidatePackage: props.onValidatePackage,
+    onValidatePackage: (pluginId) => void controller.runMutation({
+      pluginId,
+      action: "validate",
+      owner,
+      mutate: (request) => props.onValidatePackage(pluginId, request),
+    }),
     onInstall: (pluginId) => controller.runMutation({
       pluginId,
       action: "install",
       owner,
-      mutate: () => props.onInstall(pluginId),
+      mutate: (request) => props.onInstall(pluginId, request),
     }),
     onRequestUninstall: controller.requestUninstall,
     onRefreshPackage: (pluginId) => controller.runMutation({
       pluginId,
       action: "refresh-package",
       owner,
-      mutate: () => props.onRefreshPackage(pluginId),
+      mutate: (request) => props.onRefreshPackage(pluginId, request),
     }),
     onRuntimePreview: (pluginId) => controller.runMutation({
       pluginId,
       action: "runtime-preview",
       owner,
-      mutate: () => props.onRuntimePreview(pluginId),
+      mutate: (request) => props.onRuntimePreview(pluginId, request),
     }),
     onEnable: (pluginId) => controller.runMutation({
       pluginId,
       action: "enable",
       owner,
-      mutate: () => props.onEnable(pluginId),
+      mutate: (request) => props.onEnable(pluginId, request),
     }),
     onDisable: (pluginId) => controller.runMutation({
       pluginId,
       action: "disable",
       owner,
-      mutate: () => props.onDisable(pluginId),
+      mutate: (request) => props.onDisable(pluginId, request),
     }),
   });
   const rowHandlers = buildHandlers("row");
@@ -76,6 +84,11 @@ export function PluginManagerPage(props: PluginManagerPageProps): JSX.Element {
   const detailRow = controller.rows.find((row) => row.id === controller.detailPluginId);
   const guidePlugin = props.plugins.find((plugin) => plugin.id === controller.guidePluginId);
   const uninstallPlugin = props.plugins.find((plugin) => plugin.id === controller.uninstallPluginId);
+  const detailPending = detailPlugin ? controller.pendingActionFor(detailPlugin.id, "detail") : undefined;
+  const guidePending = guidePlugin ? controller.pendingActionFor(guidePlugin.id, "guide", "connect") : undefined;
+  const uninstallPending = uninstallPlugin
+    ? controller.pendingActionFor(uninstallPlugin.id, "uninstall", "uninstall")
+    : undefined;
 
   return (
     <div className="plugin-manager-page">
@@ -85,7 +98,7 @@ export function PluginManagerPage(props: PluginManagerPageProps): JSX.Element {
         data-retained-refresh={controller.retainedRefreshError ? "true" : undefined}
       >
         <PluginManagerHeader
-          busyCreating={props.busyAction === "create"}
+          busyCreating={Boolean(controller.pendingActionFor(PLUGIN_DRAFT_ID, "create", "create"))}
           controller={controller}
           copy={copy}
           isLoading={props.isLoading}
@@ -105,8 +118,8 @@ export function PluginManagerPage(props: PluginManagerPageProps): JSX.Element {
         />
       </section>
       <PluginDetailDrawer
-        busyAction={props.busyAction}
-        busyPluginId={props.busyPluginId}
+        busyAction={detailPending?.action}
+        busyPluginId={detailPending?.pluginId ?? ""}
         copy={copy}
         actionFailure={detailPlugin ? controller.actionFailureFor(detailPlugin.id, "detail") : undefined}
         handlers={detailHandlers}
@@ -116,24 +129,48 @@ export function PluginManagerPage(props: PluginManagerPageProps): JSX.Element {
         row={detailRow}
       />
       <PluginCreateDialog
-        busy={props.busyAction === "create"}
+        actionFailure={controller.actionFailureFor(PLUGIN_DRAFT_ID, "create", "create")}
+        busy={Boolean(controller.pendingActionFor(PLUGIN_DRAFT_ID, "create", "create"))}
         onClose={controller.closeCreate}
-        onCreate={props.onCreate}
+        onCreate={(createInput) => controller.runMutation({
+          pluginId: PLUGIN_DRAFT_ID,
+          action: "create",
+          owner: "create",
+          mutate: (request) => props.onCreate(createInput, request),
+        })}
+        onDismissFailure={() => props.onClearActionErrors({
+          pluginId: PLUGIN_DRAFT_ID,
+          action: "create",
+          owner: "create",
+        })}
         open={controller.createOpen}
       />
       <CuaDriverInstallDrawer
-        busy={props.busyPluginId === controller.guidePluginId && props.busyAction === "connect"}
+        actionFailure={guidePlugin ? controller.actionFailureFor(guidePlugin.id, "guide", "connect") : undefined}
+        busy={Boolean(guidePending)}
         onClose={controller.closeGuide}
-        onConnect={props.onConnect}
+        onConnect={(pluginId, command) => controller.runMutation({
+          pluginId,
+          action: "connect",
+          owner: "guide",
+          mutate: (request) => props.onConnect(pluginId, request, command),
+        })}
+        onDismissFailure={(pluginId) => props.onClearActionErrors({ pluginId, action: "connect", owner: "guide" })}
         open={Boolean(controller.guidePluginId)}
         plugin={guidePlugin}
       />
       <PluginUninstallDialog
-        busy={props.busyPluginId === controller.uninstallPluginId && props.busyAction === "uninstall"}
+        actionFailure={uninstallPlugin ? controller.actionFailureFor(uninstallPlugin.id, "uninstall", "uninstall") : undefined}
+        busy={Boolean(uninstallPending)}
         copy={copy}
         onCancel={controller.cancelUninstall}
         onComplete={controller.completeUninstall}
-        onUninstall={props.onUninstall}
+        onUninstall={(pluginId) => void controller.runMutation({
+          pluginId,
+          action: "uninstall",
+          owner: "uninstall",
+          mutate: (request) => props.onUninstall(pluginId, request),
+        })}
         plugin={uninstallPlugin}
       />
     </div>

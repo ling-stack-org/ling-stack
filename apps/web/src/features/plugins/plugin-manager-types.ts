@@ -1,5 +1,12 @@
 import type { ManagedPluginCreateRequest, ManagedPluginView } from "../../types.js";
-import type { PluginBusyAction } from "../../domains/plugins/use-plugins-domain.js";
+import type {
+  PluginActionError,
+  PluginActionErrorFilter,
+  PluginActionOwner as DomainPluginActionOwner,
+  PluginActionRequest,
+  PluginBusyAction,
+  PluginPendingAction,
+} from "../../domains/plugins/use-plugins-domain.js";
 import type { StatusTone } from "../../shared/ui/index.js";
 
 export type PluginSourceFilter = "all" | ManagedPluginView["sourceKind"];
@@ -46,13 +53,15 @@ export type PluginActionId =
   | "validate"
   | "uninstall";
 
-export type PluginActionOwner = "row" | "detail";
+export type PluginActionOwner = DomainPluginActionOwner;
 
 export interface PluginActionFailure {
   readonly pluginId: string;
-  readonly action: PluginActionId;
+  readonly action: PluginBusyAction;
   readonly owner: PluginActionOwner;
   readonly message: string;
+  readonly detail: string;
+  readonly retryAction?: PluginActionId;
 }
 
 export interface PluginActionView {
@@ -138,19 +147,21 @@ export interface PluginActionHandlers {
 export interface PluginManagerPageProps {
   readonly plugins: readonly ManagedPluginView[];
   readonly isLoading: boolean;
-  readonly busyPluginId: string;
-  readonly busyAction: PluginBusyAction | undefined;
+  readonly loadError: string;
+  readonly pendingActions: readonly PluginPendingAction[];
+  readonly actionErrors: readonly PluginActionError[];
   readonly onRefresh: () => void;
-  readonly onCreate: (input: ManagedPluginCreateRequest) => Promise<ManagedPluginView | undefined>;
-  readonly onApplyPreset: (pluginId: string) => void;
-  readonly onConnect: (pluginId: string, command?: string) => Promise<ManagedPluginView | undefined>;
-  readonly onCheck: (pluginId: string) => void;
-  readonly onValidatePackage: (pluginId: string) => void;
-  readonly onInstall: (pluginId: string) => void;
-  readonly onUninstall: (pluginId: string) => void;
-  readonly onRefreshPackage: (pluginId: string) => void;
-  readonly onRuntimePreview: (pluginId: string) => void;
-  readonly onEnable: (pluginId: string) => void;
-  readonly onDisable: (pluginId: string) => void;
+  readonly onCreate: (input: ManagedPluginCreateRequest, request: PluginActionRequest) => Promise<ManagedPluginView | undefined>;
+  readonly onApplyPreset: (pluginId: string, request: PluginActionRequest) => Promise<void>;
+  readonly onConnect: (pluginId: string, request: PluginActionRequest, command?: string) => Promise<ManagedPluginView | undefined>;
+  readonly onCheck: (pluginId: string, request: PluginActionRequest) => Promise<void>;
+  readonly onValidatePackage: (pluginId: string, request: PluginActionRequest) => Promise<void>;
+  readonly onInstall: (pluginId: string, request: PluginActionRequest) => Promise<void>;
+  readonly onUninstall: (pluginId: string, request: PluginActionRequest) => Promise<void>;
+  readonly onRefreshPackage: (pluginId: string, request: PluginActionRequest) => Promise<void>;
+  readonly onRuntimePreview: (pluginId: string, request: PluginActionRequest) => Promise<void>;
+  readonly onEnable: (pluginId: string, request: PluginActionRequest) => Promise<void>;
+  readonly onDisable: (pluginId: string, request: PluginActionRequest) => Promise<void>;
+  readonly onClearActionErrors: (filter: PluginActionErrorFilter) => void;
   readonly onOpenMcpSettings: () => void;
 }

@@ -15,6 +15,7 @@ import {
 } from "../../shared/ui/index.js";
 import { useI18n } from "../../i18n.js";
 import type { ManagedPluginCreateRequest, ManagedPluginView } from "../../types.js";
+import type { PluginActionFailure } from "./plugin-manager-types.js";
 
 type TransportChoice = "stdio" | "streamable-http";
 type FieldId = "displayName" | "description" | "command" | "url";
@@ -22,13 +23,17 @@ type FieldId = "displayName" | "description" | "command" | "url";
 export function PluginCreateDialog({
   open,
   busy,
+  actionFailure,
   onCreate,
   onClose,
+  onDismissFailure,
 }: {
   readonly open: boolean;
   readonly busy: boolean;
+  readonly actionFailure?: PluginActionFailure;
   readonly onCreate: (input: ManagedPluginCreateRequest) => Promise<ManagedPluginView | undefined>;
   readonly onClose: () => void;
+  readonly onDismissFailure: () => void;
 }): JSX.Element {
   const { t } = useI18n();
   const [displayName, setDisplayName] = useState("");
@@ -105,7 +110,11 @@ export function PluginCreateDialog({
                 ref={refs.displayName}
                 autoFocus
                 maxLength={80}
-                onChange={(event) => setDisplayName(event.target.value)}
+                onChange={(event) => {
+                  setDisplayName(event.target.value);
+                  setSubmitError("");
+                  onDismissFailure();
+                }}
                 value={displayName}
               />
             </Field>
@@ -113,13 +122,24 @@ export function PluginCreateDialog({
               <Textarea
                 ref={refs.description}
                 maxLength={180}
-                onChange={(event) => setDescription(event.target.value)}
+                onChange={(event) => {
+                  setDescription(event.target.value);
+                  setSubmitError("");
+                  onDismissFailure();
+                }}
                 rows={3}
                 value={description}
               />
             </Field>
             <Field label={t("Connection type")}>
-              <Select onChange={(event) => setTransportType(event.target.value as TransportChoice)} value={transportType}>
+              <Select
+                onChange={(event) => {
+                  setTransportType(event.target.value as TransportChoice);
+                  setSubmitError("");
+                  onDismissFailure();
+                }}
+                value={transportType}
+              >
                 <option value="stdio">{t("Local command")}</option>
                 <option value="streamable-http">{t("HTTP endpoint")}</option>
               </Select>
@@ -127,18 +147,50 @@ export function PluginCreateDialog({
             {transportType === "stdio" ? (
               <>
                 <Field error={fieldError(errors.command)} label={t("Command")} required>
-                  <Input ref={refs.command} onChange={(event) => setCommand(event.target.value)} value={command} />
+                  <Input
+                    ref={refs.command}
+                    onChange={(event) => {
+                      setCommand(event.target.value);
+                      setSubmitError("");
+                      onDismissFailure();
+                    }}
+                    value={command}
+                  />
                 </Field>
                 <Field label={t("Arguments (one per line)")}>
-                  <Textarea onChange={(event) => setArgsText(event.target.value)} rows={4} value={argsText} />
+                  <Textarea
+                    onChange={(event) => {
+                      setArgsText(event.target.value);
+                      setSubmitError("");
+                      onDismissFailure();
+                    }}
+                    rows={4}
+                    value={argsText}
+                  />
                 </Field>
               </>
             ) : (
               <Field error={fieldError(errors.url)} label={t("Endpoint URL")} required>
-                <Input ref={refs.url} onChange={(event) => setUrl(event.target.value)} value={url} />
+                <Input
+                  ref={refs.url}
+                  onChange={(event) => {
+                    setUrl(event.target.value);
+                    setSubmitError("");
+                    onDismissFailure();
+                  }}
+                  value={url}
+                />
               </Field>
             )}
-            {submitError ? <InlineFeedback tone="danger">{submitError}</InlineFeedback> : null}
+            {actionFailure || submitError ? (
+              <InlineFeedback
+                data-plugin-action-failure={actionFailure?.action}
+                title={actionFailure?.message}
+                tone="danger"
+              >
+                {actionFailure?.detail ?? submitError}
+              </InlineFeedback>
+            ) : null}
           </DialogBody>
           <DialogFooter>
             <Button disabled={busy} onClick={onClose}>{t("Cancel")}</Button>

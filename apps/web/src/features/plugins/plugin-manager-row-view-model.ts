@@ -94,8 +94,8 @@ function deriveActions(
 ): { readonly primaryAction?: PluginActionView; readonly menuActions: readonly PluginActionView[] } {
   const cuaHealth = buildCuaHealthView(plugin, t);
   let primaryAction: PluginActionView | undefined;
-  if (actionFailure) {
-    primaryAction = action(actionFailure.action, t("Retry"), "primary");
+  if (actionFailure?.retryAction) {
+    primaryAction = action(actionFailure.retryAction, t("Retry"), "primary");
   } else if (state.id === "setup-missing") {
     primaryAction = action("guide", t("Installation guide"), "primary");
   } else if (state.id === "package-missing" && plugin.actions.canInstall) {
@@ -133,7 +133,7 @@ function deriveActions(
   return {
     primaryAction,
     menuActions: actionFailure
-      ? menuActions.filter((candidate) => candidate.id !== actionFailure.action)
+      ? menuActions.filter((candidate) => candidate.id !== actionFailure.retryAction)
       : menuActions,
   };
 }

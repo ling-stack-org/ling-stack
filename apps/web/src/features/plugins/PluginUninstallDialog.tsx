@@ -11,10 +11,12 @@ import {
 import { useI18n } from "../../i18n.js";
 import type { ManagedPluginView } from "../../types.js";
 import type { PluginManagerCopy } from "./plugin-manager-copy.js";
+import type { PluginActionFailure } from "./plugin-manager-types.js";
 
 export function PluginUninstallDialog({
   plugin,
   busy,
+  actionFailure,
   copy,
   onCancel,
   onComplete,
@@ -22,6 +24,7 @@ export function PluginUninstallDialog({
 }: {
   readonly plugin?: ManagedPluginView;
   readonly busy: boolean;
+  readonly actionFailure?: PluginActionFailure;
   readonly copy: PluginManagerCopy;
   readonly onCancel: () => void;
   readonly onComplete: () => void;
@@ -44,8 +47,8 @@ export function PluginUninstallDialog({
     if (submitted && busy) setSawBusy(true);
     if (!submitted || !sawBusy || busy || !plugin) return;
     if (plugin.package?.status === "uninstalled" || !plugin.actions.canUninstall) onComplete();
-    else setFailure(t("Unknown error"));
-  }, [busy, onComplete, open, plugin, sawBusy, submitted, t]);
+    else if (!actionFailure) setFailure(t("Unknown error"));
+  }, [actionFailure, busy, onComplete, open, plugin, sawBusy, submitted, t]);
 
   return (
     <Dialog busy={busy} onOpenChange={(nextOpen) => { if (!nextOpen) onCancel(); }} open={open}>
@@ -61,7 +64,15 @@ export function PluginUninstallDialog({
         <DialogBody className="plugin-uninstall-body">
           <p>{copy.uninstallConsequence}</p>
           <p>{copy.uninstallRetained}</p>
-          {failure ? <InlineFeedback tone="danger">{failure}</InlineFeedback> : null}
+          {actionFailure || failure ? (
+            <InlineFeedback
+              data-plugin-action-failure={actionFailure?.action}
+              title={actionFailure?.message}
+              tone="danger"
+            >
+              {actionFailure?.detail ?? failure}
+            </InlineFeedback>
+          ) : null}
         </DialogBody>
         <DialogFooter>
           <Button ref={cancelRef} disabled={busy} onClick={onCancel}>{t("Cancel")}</Button>

@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import {
   applyManagedPluginPreset,
   checkManagedPlugin,
@@ -18,9 +18,34 @@ import type { ManagedPluginCreateRequest, ManagedPluginView } from "../../types.
 
 export type PluginBusyAction = "create" | "apply" | "check" | "connect" | "enable" | "disable" | "validate" | "install" | "uninstall" | "refresh-package" | "runtime-preview";
 
+export const PLUGIN_DRAFT_ID = "draft";
+
+export type PluginActionOwner = "create" | "detected-connect" | "row" | "detail" | "guide" | "uninstall";
+
+export interface PluginActionRequest {
+  readonly owner: PluginActionOwner;
+  readonly requestId: string;
+}
+
+export interface PluginPendingAction extends PluginActionRequest {
+  readonly pluginId: string;
+  readonly action: PluginBusyAction;
+}
+
+export interface PluginActionError extends PluginPendingAction {
+  readonly message: string;
+}
+
+export interface PluginActionErrorFilter {
+  readonly pluginId?: string;
+  readonly action?: PluginBusyAction;
+  readonly owner?: PluginActionOwner;
+}
+
 export interface PluginActionNotice {
   readonly pluginId: string;
   readonly action: PluginBusyAction;
+  readonly owner: PluginActionOwner;
   readonly tone: "success" | "error";
   readonly message: string;
 }
@@ -28,23 +53,24 @@ export interface PluginActionNotice {
 export interface PluginsState {
   readonly plugins: readonly ManagedPluginView[];
   readonly pluginsLoading: boolean;
-  readonly pluginBusyId: string;
-  readonly pluginBusyAction: PluginBusyAction | undefined;
+  readonly pluginPendingActions: readonly PluginPendingAction[];
+  readonly pluginActionErrors: readonly PluginActionError[];
 }
 
 export interface PluginsActions {
   readonly refreshPlugins: (cwd?: string) => Promise<void>;
-  readonly createPlugin: (input: ManagedPluginCreateRequest) => Promise<ManagedPluginView | undefined>;
-  readonly applyPluginPreset: (pluginId: string) => Promise<void>;
-  readonly connectPlugin: (pluginId: string, command?: string) => Promise<ManagedPluginView | undefined>;
-  readonly checkPlugin: (pluginId: string) => Promise<void>;
-  readonly validatePackage: (pluginId: string) => Promise<void>;
-  readonly installPlugin: (pluginId: string) => Promise<void>;
-  readonly uninstallPlugin: (pluginId: string) => Promise<void>;
-  readonly refreshPluginPackage: (pluginId: string) => Promise<void>;
-  readonly previewPluginRuntime: (pluginId: string) => Promise<void>;
-  readonly enablePlugin: (pluginId: string) => Promise<void>;
-  readonly disablePlugin: (pluginId: string) => Promise<void>;
+  readonly createPlugin: (input: ManagedPluginCreateRequest, request: PluginActionRequest) => Promise<ManagedPluginView | undefined>;
+  readonly applyPluginPreset: (pluginId: string, request: PluginActionRequest) => Promise<void>;
+  readonly connectPlugin: (pluginId: string, request: PluginActionRequest, command?: string) => Promise<ManagedPluginView | undefined>;
+  readonly checkPlugin: (pluginId: string, request: PluginActionRequest) => Promise<void>;
+  readonly validatePackage: (pluginId: string, request: PluginActionRequest) => Promise<void>;
+  readonly installPlugin: (pluginId: string, request: PluginActionRequest) => Promise<void>;
+  readonly uninstallPlugin: (pluginId: string, request: PluginActionRequest) => Promise<void>;
+  readonly refreshPluginPackage: (pluginId: string, request: PluginActionRequest) => Promise<void>;
+  readonly previewPluginRuntime: (pluginId: string, request: PluginActionRequest) => Promise<void>;
+  readonly enablePlugin: (pluginId: string, request: PluginActionRequest) => Promise<void>;
+  readonly disablePlugin: (pluginId: string, request: PluginActionRequest) => Promise<void>;
+  readonly clearPluginActionErrors: (filter: PluginActionErrorFilter) => void;
   readonly resetForCwd: () => void;
 }
 
@@ -53,275 +79,268 @@ export type PluginsController = DomainController<PluginsState, PluginsActions>;
 export function usePluginsDomain(input: {
   readonly cwd: string;
   readonly translate: (value: string) => string;
-  readonly setErrorMessage: (message: string) => void;
   readonly notify: (notice: PluginActionNotice) => void;
 }): PluginsController {
   const [plugins, setPlugins] = useState<readonly ManagedPluginView[]>([]);
   const [pluginsLoading, setPluginsLoading] = useState(false);
-  const [pluginBusyId, setPluginBusyId] = useState("");
-  const [pluginBusyAction, setPluginBusyAction] = useState<PluginBusyAction | undefined>();
+  const [pluginPendingActions, setPluginPendingActions] = useState<readonly PluginPendingAction[]>([]);
+  const [pluginActionErrors, setPluginActionErrors] = useState<readonly PluginActionError[]>([]);
   const [error, setError] = useState<DomainError | undefined>();
-  const autoConnectInFlightRef = useRef<Promise<ManagedPluginView> | undefined>();
+  const autoConnectInFlightRef = useRef<Promise<ManagedPluginView | undefined> | undefined>();
+  const latestActionRequestsRef = useRef(new Map<string, string>());
+  const loadRequestIdRef = useRef(0);
+  const internalRequestIdRef = useRef(0);
+  const clearPluginActionErrors = useCallback((filter: PluginActionErrorFilter): void => {
+    setPluginActionErrors((current) => current.filter((candidate) => !matchesPluginActionFilter(candidate, filter)));
+  }, []);
 
   async function refreshPlugins(cwd = input.cwd): Promise<void> {
     if (!cwd.trim()) {
       setPlugins([]);
+      setError(undefined);
       return;
     }
+    const loadRequestId = ++loadRequestIdRef.current;
     setPluginsLoading(true);
+    setError(undefined);
     try {
-      input.setErrorMessage("");
-      setError(undefined);
       const response = await listManagedPlugins(cwd);
+      if (loadRequestIdRef.current !== loadRequestId) return;
       setPlugins(response.plugins);
       const detectedCuaDriver = response.plugins.find((plugin) =>
         plugin.id === "trusted-local:cua-driver" && plugin.setup?.state === "detected"
       );
       if (detectedCuaDriver) {
-        setPluginBusyId(detectedCuaDriver.id);
-        setPluginBusyAction("connect");
         const existingRequest = autoConnectInFlightRef.current;
-        const request = existingRequest ?? connectManagedPlugin(cwd, detectedCuaDriver.id).then((result) => result.plugin);
+        const request = existingRequest ?? runPluginOperation(
+          detectedCuaDriver.id,
+          "connect",
+          {
+            owner: "detected-connect",
+            requestId: `detected-connect:${++internalRequestIdRef.current}`,
+          },
+          async (workspaceCwd) => {
+            const connected = (await connectManagedPlugin(workspaceCwd, detectedCuaDriver.id)).plugin;
+            return { plugin: connected, value: connected };
+          },
+          cwd,
+        );
         if (!existingRequest) {
           autoConnectInFlightRef.current = request;
         }
         try {
-          const connected = await request;
-          setPlugins((current) => upsertPlugin(current, connected));
-        } catch (caught) {
-          const message = caught instanceof Error ? caught.message : String(caught);
-          setError({ scope: "mutation", message });
-          input.notify({
-            pluginId: detectedCuaDriver.id,
-            action: "connect",
-            tone: "error",
-            message,
-          });
+          await request;
         } finally {
           if (autoConnectInFlightRef.current === request) {
             autoConnectInFlightRef.current = undefined;
           }
-          setPluginBusyId("");
-          setPluginBusyAction(undefined);
         }
       }
     } catch (caught) {
+      if (loadRequestIdRef.current !== loadRequestId) return;
       const message = caught instanceof Error ? caught.message : String(caught);
       setError({ scope: "load", message });
-      input.setErrorMessage(message);
     } finally {
-      setPluginsLoading(false);
+      if (loadRequestIdRef.current === loadRequestId) setPluginsLoading(false);
     }
   }
 
-  async function applyPluginPreset(pluginId: string): Promise<void> {
-    await mutatePlugin(pluginId, "apply", async (cwd) => {
+  async function applyPluginPreset(pluginId: string, request: PluginActionRequest): Promise<void> {
+    await runPluginOperation(pluginId, "apply", request, async (cwd) => {
       const response = await applyManagedPluginPreset(cwd, pluginId);
-      input.notify({
-        pluginId,
-        action: "apply",
-        tone: "success",
-        message: response.tools.length
+      return {
+        plugin: response.plugin,
+        value: response.plugin,
+        successMessage: response.tools.length
           ? input.translate("Preset applied and tools synced.")
           : input.translate("Preset applied."),
-      });
-      return response.plugin;
+      };
     });
   }
 
-  async function createPlugin(createInput: ManagedPluginCreateRequest): Promise<ManagedPluginView | undefined> {
-    const workspaceCwd = input.cwd.trim();
-    if (!workspaceCwd) {
-      input.setErrorMessage(input.translate("Local workspace is not ready."));
-      return undefined;
-    }
-    setPluginBusyId("__create__");
-    setPluginBusyAction("create");
-    try {
-      input.setErrorMessage("");
-      setError(undefined);
-      const response = await createManagedPlugin(workspaceCwd, createInput);
-      setPlugins((current) => upsertPlugin(current, response.plugin));
-      input.notify({
-        pluginId: response.plugin.id,
-        action: "create",
-        tone: "success",
-        message: input.translate("Plugin added."),
-      });
-      return response.plugin;
-    } catch (caught) {
-      const message = caught instanceof Error ? caught.message : String(caught);
-      setError({ scope: "mutation", message });
-      input.notify({ pluginId: "new", action: "create", tone: "error", message });
-      input.setErrorMessage(message);
-      return undefined;
-    } finally {
-      setPluginBusyId("");
-      setPluginBusyAction(undefined);
-    }
+  async function createPlugin(createInput: ManagedPluginCreateRequest, request: PluginActionRequest): Promise<ManagedPluginView | undefined> {
+    return runPluginOperation(PLUGIN_DRAFT_ID, "create", request, async (cwd) => {
+      const response = await createManagedPlugin(cwd, createInput);
+      return {
+        plugin: response.plugin,
+        value: response.plugin,
+        successMessage: input.translate("Plugin added."),
+        noticePluginId: response.plugin.id,
+      };
+    });
   }
 
-  async function connectPlugin(pluginId: string, command?: string): Promise<ManagedPluginView | undefined> {
-    return mutatePlugin(pluginId, "connect", async (cwd) =>
+  async function connectPlugin(pluginId: string, request: PluginActionRequest, command?: string): Promise<ManagedPluginView | undefined> {
+    return mutatePlugin(pluginId, "connect", request, async (cwd) =>
       (await connectManagedPlugin(cwd, pluginId, command ? { command } : {})).plugin);
   }
 
-  async function checkPlugin(pluginId: string): Promise<void> {
-    await mutatePlugin(pluginId, "check", async (cwd) => (await checkManagedPlugin(cwd, pluginId)).plugin, (plugin) =>
+  async function checkPlugin(pluginId: string, request: PluginActionRequest): Promise<void> {
+    await mutatePlugin(pluginId, "check", request, async (cwd) => (await checkManagedPlugin(cwd, pluginId)).plugin, (plugin) =>
       plugin.health?.message
         ? `${input.translate("Plugin check completed.")} ${plugin.health.message}`
         : input.translate("Plugin check completed."));
   }
 
-  async function validatePackage(pluginId: string): Promise<void> {
-    const workspaceCwd = input.cwd.trim();
-    if (!workspaceCwd) {
-      input.setErrorMessage(input.translate("Local workspace is not ready."));
-      return;
-    }
-    setPluginBusyId(pluginId);
-    setPluginBusyAction("validate");
-    try {
-      input.setErrorMessage("");
-      setError(undefined);
-      const response = await validatePluginPackage(workspaceCwd, pluginId);
-      input.notify({
-        pluginId,
-        action: "validate",
-        tone: response.validation.ok ? "success" : "error",
-        message: response.validation.ok
-          ? input.translate("Package validation passed.")
-          : `${input.translate("Package validation failed.")} ${formatValidationMessage(response.validation.errors[0])}`.trim(),
-      });
-    } catch (caught) {
-      const message = caught instanceof Error ? caught.message : String(caught);
-      setError({ scope: "mutation", message });
-      input.notify({ pluginId, action: "validate", tone: "error", message });
-      input.setErrorMessage(message);
-    } finally {
-      setPluginBusyId("");
-      setPluginBusyAction(undefined);
-    }
+  async function validatePackage(pluginId: string, request: PluginActionRequest): Promise<void> {
+    await runPluginOperation(pluginId, "validate", request, async (cwd) => {
+      const response = await validatePluginPackage(cwd, pluginId);
+      const validationError = response.validation.ok
+        ? undefined
+        : `${input.translate("Package validation failed.")} ${formatValidationMessage(response.validation.errors[0])}`.trim();
+      return {
+        value: undefined,
+        errorMessage: validationError,
+        successMessage: validationError ? undefined : input.translate("Package validation passed."),
+      };
+    });
   }
 
-  async function installPlugin(pluginId: string): Promise<void> {
-    await mutatePlugin(pluginId, "install", async (cwd) => (await installManagedPlugin(cwd, pluginId)).plugin, (plugin) =>
+  async function installPlugin(pluginId: string, request: PluginActionRequest): Promise<void> {
+    await mutatePlugin(pluginId, "install", request, async (cwd) => (await installManagedPlugin(cwd, pluginId)).plugin, (plugin) =>
       plugin.package?.packageHash
         ? `${input.translate("Plugin package installed.")} ${plugin.package.packageHash.slice(0, 12)}`
         : input.translate("Plugin package installed."));
   }
 
-  async function uninstallPlugin(pluginId: string): Promise<void> {
-    await mutatePlugin(pluginId, "uninstall", async (cwd) => (await uninstallManagedPlugin(cwd, pluginId)).plugin, () =>
+  async function uninstallPlugin(pluginId: string, request: PluginActionRequest): Promise<void> {
+    await mutatePlugin(pluginId, "uninstall", request, async (cwd) => (await uninstallManagedPlugin(cwd, pluginId)).plugin, () =>
       input.translate("Plugin package uninstalled."));
   }
 
-  async function refreshPluginPackage(pluginId: string): Promise<void> {
-    await mutatePlugin(pluginId, "refresh-package", async (cwd) => (await refreshManagedPluginPackage(cwd, pluginId)).plugin, () =>
+  async function refreshPluginPackage(pluginId: string, request: PluginActionRequest): Promise<void> {
+    await mutatePlugin(pluginId, "refresh-package", request, async (cwd) => (await refreshManagedPluginPackage(cwd, pluginId)).plugin, () =>
       input.translate("Plugin package refreshed."));
   }
 
-  async function previewPluginRuntime(pluginId: string): Promise<void> {
-    const workspaceCwd = input.cwd.trim();
-    if (!workspaceCwd) {
-      input.setErrorMessage(input.translate("Local workspace is not ready."));
-      return;
-    }
-    setPluginBusyId(pluginId);
-    setPluginBusyAction("runtime-preview");
-    try {
-      input.setErrorMessage("");
-      setError(undefined);
-      const response = await getManagedPluginRuntimePreview(workspaceCwd, pluginId);
-      setPlugins((current) => upsertPlugin(current, response.plugin));
-      input.notify({
-        pluginId,
-        action: "runtime-preview",
-        tone: response.preview.status === "injectable" ? "success" : "error",
-        message: response.preview.blockers.length
+  async function previewPluginRuntime(pluginId: string, request: PluginActionRequest): Promise<void> {
+    await runPluginOperation(pluginId, "runtime-preview", request, async (cwd) => {
+      const response = await getManagedPluginRuntimePreview(cwd, pluginId);
+      const previewError = response.preview.status === "injectable"
+        ? undefined
+        : response.preview.blockers.length
           ? `${input.translate("Runtime preview blocked.")} ${response.preview.blockers[0]}`
-          : input.translate("Runtime preview ready."),
-      });
-    } catch (caught) {
-      const message = caught instanceof Error ? caught.message : String(caught);
-      setError({ scope: "mutation", message });
-      input.notify({ pluginId, action: "runtime-preview", tone: "error", message });
-      input.setErrorMessage(message);
-    } finally {
-      setPluginBusyId("");
-      setPluginBusyAction(undefined);
-    }
+          : input.translate("Runtime preview blocked.");
+      return {
+        plugin: response.plugin,
+        value: undefined,
+        errorMessage: previewError,
+        successMessage: previewError ? undefined : input.translate("Runtime preview ready."),
+      };
+    });
   }
 
-  async function enablePlugin(pluginId: string): Promise<void> {
-    await mutatePlugin(pluginId, "enable", async (cwd) => (await enableManagedPlugin(cwd, pluginId)).plugin, () =>
+  async function enablePlugin(pluginId: string, request: PluginActionRequest): Promise<void> {
+    await mutatePlugin(pluginId, "enable", request, async (cwd) => (await enableManagedPlugin(cwd, pluginId)).plugin, () =>
       input.translate("Plugin enabled."));
   }
 
-  async function disablePlugin(pluginId: string): Promise<void> {
-    await mutatePlugin(pluginId, "disable", async (cwd) => (await disableManagedPlugin(cwd, pluginId)).plugin, () =>
+  async function disablePlugin(pluginId: string, request: PluginActionRequest): Promise<void> {
+    await mutatePlugin(pluginId, "disable", request, async (cwd) => (await disableManagedPlugin(cwd, pluginId)).plugin, () =>
       input.translate("Plugin disabled."));
   }
 
   async function mutatePlugin(
     pluginId: string,
     action: PluginBusyAction,
+    request: PluginActionRequest,
     mutation: (cwd: string) => Promise<ManagedPluginView>,
     successMessage?: (plugin: ManagedPluginView) => string,
   ): Promise<ManagedPluginView | undefined> {
-    const workspaceCwd = input.cwd.trim();
+    return runPluginOperation(pluginId, action, request, async (cwd) => {
+      const plugin = await mutation(cwd);
+      return {
+        plugin,
+        value: plugin,
+        successMessage: successMessage?.(plugin),
+      };
+    });
+  }
+
+  async function runPluginOperation<T>(
+    pluginId: string,
+    action: PluginBusyAction,
+    request: PluginActionRequest,
+    operation: (cwd: string) => Promise<PluginOperationOutcome<T>>,
+    cwdOverride?: string,
+  ): Promise<T | undefined> {
+    const pending = { pluginId, action, ...request } satisfies PluginPendingAction;
+    const key = pluginActionKey(pending);
+    latestActionRequestsRef.current.set(key, request.requestId);
+    setPluginPendingActions((current) => upsertPendingAction(current, pending));
+    clearPluginActionErrors({ pluginId, action, owner: request.owner });
+    const workspaceCwd = (cwdOverride ?? input.cwd).trim();
     if (!workspaceCwd) {
-      input.setErrorMessage(input.translate("Local workspace is not ready."));
+      recordPluginActionError(pending, input.translate("Local workspace is not ready."));
+      finishPluginAction(pending);
       return undefined;
     }
-    setPluginBusyId(pluginId);
-    setPluginBusyAction(action);
     try {
-      input.setErrorMessage("");
-      setError(undefined);
-      const plugin = await mutation(workspaceCwd);
-      setPlugins((current) => upsertPlugin(current, plugin));
-      if (successMessage) {
+      const outcome = await operation(workspaceCwd);
+      if (!isLatestPluginAction(pending)) return outcome.value;
+      if (outcome.plugin) setPlugins((current) => upsertPlugin(current, outcome.plugin as ManagedPluginView));
+      if (outcome.errorMessage) {
+        recordPluginActionError(pending, outcome.errorMessage);
+        input.notify({ ...pending, tone: "error", message: outcome.errorMessage });
+        return undefined;
+      }
+      clearPluginActionErrors({ pluginId, action, owner: request.owner });
+      if (outcome.successMessage) {
         input.notify({
-          pluginId,
-          action,
+          ...pending,
+          pluginId: outcome.noticePluginId ?? pluginId,
           tone: "success",
-          message: successMessage(plugin),
+          message: outcome.successMessage,
         });
       }
-      return plugin;
+      return outcome.value;
     } catch (caught) {
+      if (!isLatestPluginAction(pending)) return undefined;
       const message = caught instanceof Error ? caught.message : String(caught);
-      setError({ scope: "mutation", message });
-      input.notify({
-        pluginId,
-        action,
-        tone: "error",
-        message,
-      });
-      input.setErrorMessage(message);
+      recordPluginActionError(pending, message);
+      input.notify({ ...pending, tone: "error", message });
       return undefined;
     } finally {
-      setPluginBusyId("");
-      setPluginBusyAction(undefined);
+      finishPluginAction(pending);
     }
+  }
+
+  function isLatestPluginAction(action: PluginPendingAction): boolean {
+    return latestActionRequestsRef.current.get(pluginActionKey(action)) === action.requestId;
+  }
+
+  function finishPluginAction(action: PluginPendingAction): void {
+    if (!isLatestPluginAction(action)) return;
+    latestActionRequestsRef.current.delete(pluginActionKey(action));
+    setPluginPendingActions((current) => current.filter((candidate) => candidate.requestId !== action.requestId));
+  }
+
+  function recordPluginActionError(action: PluginPendingAction, message: string): void {
+    if (!isLatestPluginAction(action)) return;
+    const next = { ...action, message } satisfies PluginActionError;
+    setPluginActionErrors((current) => [
+      ...current.filter((candidate) => pluginActionKey(candidate) !== pluginActionKey(next)),
+      next,
+    ]);
   }
 
   function resetForCwd(): void {
     setPlugins([]);
     setPluginsLoading(false);
-    setPluginBusyId("");
-    setPluginBusyAction(undefined);
+    setPluginPendingActions([]);
+    setPluginActionErrors([]);
     setError(undefined);
     autoConnectInFlightRef.current = undefined;
+    latestActionRequestsRef.current.clear();
+    loadRequestIdRef.current += 1;
   }
 
   return {
     state: {
       plugins,
       pluginsLoading,
-      pluginBusyId,
-      pluginBusyAction,
+      pluginPendingActions,
+      pluginActionErrors,
     },
     actions: {
       refreshPlugins,
@@ -336,6 +355,7 @@ export function usePluginsDomain(input: {
       previewPluginRuntime,
       enablePlugin,
       disablePlugin,
+      clearPluginActionErrors,
       resetForCwd,
     },
     refresh: refreshPlugins,
@@ -343,6 +363,34 @@ export function usePluginsDomain(input: {
     error,
     clearError: () => setError(undefined),
   };
+}
+
+interface PluginOperationOutcome<T> {
+  readonly value: T;
+  readonly plugin?: ManagedPluginView;
+  readonly errorMessage?: string;
+  readonly successMessage?: string;
+  readonly noticePluginId?: string;
+}
+
+function pluginActionKey(action: Pick<PluginPendingAction, "pluginId" | "action" | "owner">): string {
+  return `${action.pluginId}:${action.action}:${action.owner}`;
+}
+
+function upsertPendingAction(
+  current: readonly PluginPendingAction[],
+  pending: PluginPendingAction,
+): readonly PluginPendingAction[] {
+  return [
+    ...current.filter((candidate) => pluginActionKey(candidate) !== pluginActionKey(pending)),
+    pending,
+  ];
+}
+
+function matchesPluginActionFilter(action: PluginActionError, filter: PluginActionErrorFilter): boolean {
+  return (filter.pluginId === undefined || action.pluginId === filter.pluginId)
+    && (filter.action === undefined || action.action === filter.action)
+    && (filter.owner === undefined || action.owner === filter.owner);
 }
 
 function formatValidationMessage(value: unknown): string {

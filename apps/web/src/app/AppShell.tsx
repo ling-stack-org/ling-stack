@@ -635,19 +635,19 @@ export function AppShell(): JSX.Element {
   const pluginsDomain = usePluginsDomain({
     cwd: form.cwd.trim(),
     translate: t,
-    setErrorMessage,
     notify: (notice) => showToast({
       message: notice.message,
       tone: notice.tone,
-      scope: `plugin:${notice.pluginId}:${notice.action}`,
+      scope: `plugin:${notice.pluginId}:${notice.action}:${notice.owner}`,
     }),
   });
   const {
     plugins,
     pluginsLoading,
-    pluginBusyId,
-    pluginBusyAction,
+    pluginPendingActions,
+    pluginActionErrors,
   } = pluginsDomain.state;
+  const pluginsLoadError = pluginsDomain.error?.scope === "load" ? pluginsDomain.error.message : "";
   const {
     refreshPlugins,
     createPlugin,
@@ -661,6 +661,7 @@ export function AppShell(): JSX.Element {
     previewPluginRuntime,
     enablePlugin,
     disablePlugin,
+    clearPluginActionErrors,
     resetForCwd: resetPluginsForCwd,
   } = pluginsDomain.actions;
   const externalWorkDomain = useExternalWorkDomain({
@@ -2756,20 +2757,22 @@ export function AppShell(): JSX.Element {
                   <PluginManagerPage
                     plugins={plugins}
                     isLoading={pluginsLoading}
-                    busyPluginId={pluginBusyId}
-                    busyAction={pluginBusyAction}
+                    loadError={pluginsLoadError}
+                    pendingActions={pluginPendingActions}
+                    actionErrors={pluginActionErrors}
                     onRefresh={() => void refreshPlugins()}
                     onCreate={createPlugin}
-                    onApplyPreset={(pluginId) => void applyPluginPreset(pluginId)}
+                    onApplyPreset={applyPluginPreset}
                     onConnect={connectPlugin}
-                    onCheck={(pluginId) => void checkPlugin(pluginId)}
-                    onValidatePackage={(pluginId) => void validatePackage(pluginId)}
-                    onInstall={(pluginId) => void installPlugin(pluginId)}
-                    onUninstall={(pluginId) => void uninstallPlugin(pluginId)}
-                    onRefreshPackage={(pluginId) => void refreshPluginPackage(pluginId)}
-                    onRuntimePreview={(pluginId) => void previewPluginRuntime(pluginId)}
-                    onEnable={(pluginId) => void enablePlugin(pluginId)}
-                    onDisable={(pluginId) => void disablePlugin(pluginId)}
+                    onCheck={checkPlugin}
+                    onValidatePackage={validatePackage}
+                    onInstall={installPlugin}
+                    onUninstall={uninstallPlugin}
+                    onRefreshPackage={refreshPluginPackage}
+                    onRuntimePreview={previewPluginRuntime}
+                    onEnable={enablePlugin}
+                    onDisable={disablePlugin}
+                    onClearActionErrors={clearPluginActionErrors}
                     onOpenMcpSettings={() => {
                       void refreshMcp();
                       openSettingsSection("mcp-tools");

@@ -20,13 +20,12 @@ const feedbackTimerBudgets = new Map([
 ]);
 
 const genericErrorWriterBudgets = new Map([
-  ["apps/web/src/app/AppShell.tsx", 15],
+  ["apps/web/src/app/AppShell.tsx", 14],
   ["apps/web/src/app/use-app-navigation-controller.ts", 3],
   ["apps/web/src/app/use-control-plane-invalidation.ts", 2],
   ["apps/web/src/app/use-workspace-settings-controller.ts", 3],
   ["apps/web/src/domains/conversations/use-conversation-domain.ts", 14],
   ["apps/web/src/domains/external-work/use-external-work-domain.ts", 13],
-  ["apps/web/src/domains/plugins/use-plugins-domain.ts", 15],
   ["apps/web/src/domains/runtime/use-runtime-domain.ts", 3],
   ["apps/web/src/domains/teammates/use-teammates-domain.ts", 19],
 ]);
@@ -37,7 +36,6 @@ const genericErrorCompatibilityBudgets = new Map([
   ["apps/web/src/app/use-workspace-settings-controller.ts", 1],
   ["apps/web/src/domains/conversations/use-conversation-domain.ts", 1],
   ["apps/web/src/domains/external-work/use-external-work-domain.ts", 1],
-  ["apps/web/src/domains/plugins/use-plugins-domain.ts", 1],
   ["apps/web/src/domains/runtime/use-runtime-domain.ts", 1],
   ["apps/web/src/domains/teammates/use-teammates-domain.ts", 1],
 ]);
@@ -52,6 +50,7 @@ const releasedGenericErrorContracts = [
   "apps/web/src/domains/mcp/use-mcp-domain.ts",
   "apps/web/src/domains/media/use-media-domain.ts",
   "apps/web/src/domains/providers/use-providers-domain.ts",
+  "apps/web/src/domains/plugins/use-plugins-domain.ts",
   "apps/web/src/domains/runs/use-runs-domain.ts",
   "apps/web/src/domains/settings/use-settings-domain.ts",
   "apps/web/src/domains/work-items/use-durable-work-items-domain.ts",

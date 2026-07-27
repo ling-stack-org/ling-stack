@@ -16,18 +16,23 @@ import {
 } from "../../shared/ui/index.js";
 import { useI18n } from "../../i18n.js";
 import type { ManagedPluginView } from "../../types.js";
+import type { PluginActionFailure } from "./plugin-manager-types.js";
 
 export function CuaDriverInstallDrawer({
   open,
   plugin,
   busy,
+  actionFailure,
   onConnect,
+  onDismissFailure,
   onClose,
 }: {
   readonly open: boolean;
   readonly plugin?: ManagedPluginView;
   readonly busy: boolean;
+  readonly actionFailure?: PluginActionFailure;
   readonly onConnect: (pluginId: string, command?: string) => Promise<ManagedPluginView | undefined>;
+  readonly onDismissFailure: (pluginId: string) => void;
   readonly onClose: () => void;
 }): JSX.Element {
   const { t } = useI18n();
@@ -94,6 +99,15 @@ export function CuaDriverInstallDrawer({
               title={t("Install Cua Driver")}
             />
             <DrawerBody className="cua-install-body">
+              {actionFailure ? (
+                <InlineFeedback
+                  data-plugin-action-failure={actionFailure.action}
+                  title={actionFailure.message}
+                  tone="danger"
+                >
+                  {actionFailure.detail}
+                </InlineFeedback>
+              ) : null}
               <section className="cua-install-section">
                 <div className="cua-install-section-head">
                   <span>
@@ -128,6 +142,8 @@ export function CuaDriverInstallDrawer({
                       onChange={(event) => {
                         setCustomCommand(event.target.value);
                         setCopyState("idle");
+                        setValidationMessage("");
+                        if (plugin) onDismissFailure(plugin.id);
                       }}
                       placeholder="/opt/homebrew/bin/cua-driver"
                       spellCheck={false}

@@ -1,32 +1,25 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { Translate } from "../../i18n.js";
 import type { ManagedPluginView } from "../../types.js";
-import type { PluginBusyAction } from "../../domains/plugins/use-plugins-domain.js";
+import {
+  PLUGIN_DRAFT_ID,
+  type PluginActionError,
+  type PluginActionErrorFilter,
+  type PluginActionOwner,
+  type PluginActionRequest,
+  type PluginBusyAction,
+  type PluginPendingAction,
+} from "../../domains/plugins/use-plugins-domain.js";
 import { filterPluginRows, hasActivePluginFilters } from "./plugin-manager-filter.js";
-import { buildPluginActionFailure, pluginSnapshotFingerprint } from "./plugin-manager-feedback.js";
+import { buildPluginActionFailure } from "./plugin-manager-feedback.js";
 import { buildPluginRowView } from "./plugin-manager-row-view-model.js";
 import type {
   PluginActionFailure,
-  PluginActionId,
-  PluginActionOwner,
   PluginManagerFilters,
   PluginRowView,
 } from "./plugin-manager-types.js";
 
 const defaultFilters: PluginManagerFilters = { query: "", source: "all", status: "all" };
-
-interface PendingPluginMutation {
-  readonly pluginId: string;
-  readonly action: PluginActionId;
-  readonly owner: PluginActionOwner;
-  readonly baseline: string;
-  readonly sawBusy: boolean;
-}
-
-interface PendingPluginRefresh {
-  readonly baseline: readonly ManagedPluginView[];
-  readonly sawLoading: boolean;
-}
 
 export interface PluginManagerController {
   readonly filters: PluginManagerFilters;
@@ -37,6 +30,7 @@ export interface PluginManagerController {
   readonly detailPluginId: string;
   readonly guidePluginId: string;
   readonly uninstallPluginId: string;
+  readonly loadError: string;
   readonly retainedRefreshError: boolean;
   readonly setQuery: (query: string) => void;
   readonly setSource: (source: PluginManagerFilters["source"]) => void;
@@ -51,21 +45,32 @@ export interface PluginManagerController {
   readonly requestUninstall: (pluginId: string) => void;
   readonly cancelUninstall: () => void;
   readonly completeUninstall: () => void;
-  readonly actionFailureFor: (pluginId: string, owner: PluginActionOwner) => PluginActionFailure | undefined;
+  readonly actionFailureFor: (
+    pluginId: string,
+    owner: PluginActionOwner,
+    action?: PluginBusyAction,
+  ) => PluginActionFailure | undefined;
+  readonly pendingActionFor: (
+    pluginId: string,
+    owner: PluginActionOwner,
+    action?: PluginBusyAction,
+  ) => PluginPendingAction | undefined;
   readonly runRefresh: (refresh: () => void) => void;
-  readonly runMutation: (input: {
+  readonly runMutation: <T>(input: {
     readonly pluginId: string;
-    readonly action: PluginActionId;
+    readonly action: PluginBusyAction;
     readonly owner: PluginActionOwner;
-    readonly mutate: () => void;
-  }) => void;
+    readonly mutate: (request: PluginActionRequest) => Promise<T> | T;
+  }) => Promise<T>;
 }
 
 export function usePluginManagerController(input: {
   readonly plugins: readonly ManagedPluginView[];
   readonly isLoading: boolean;
-  readonly busyPluginId: string;
-  readonly busyAction: PluginBusyAction | undefined;
+  readonly loadError: string;
+  readonly pendingActions: readonly PluginPendingAction[];
+  readonly actionErrors: readonly PluginActionError[];
+  readonly clearActionErrors: (filter: PluginActionErrorFilter) => void;
   readonly t: Translate;
 }): PluginManagerController {
   const [filters, setFilters] = useState<PluginManagerFilters>(defaultFilters);
@@ -74,72 +79,104 @@ export function usePluginManagerController(input: {
   const [guidePluginId, setGuidePluginId] = useState("");
   const [uninstallPluginId, setUninstallPluginId] = useState("");
   const [uninstallReturnPluginId, setUninstallReturnPluginId] = useState("");
-  const [retainedRefreshError, setRetainedRefreshError] = useState(false);
-  const [pendingRefresh, setPendingRefresh] = useState<PendingPluginRefresh>();
-  const [pendingMutation, setPendingMutation] = useState<PendingPluginMutation>();
-  const [actionFailures, setActionFailures] = useState<readonly PluginActionFailure[]>([]);
+  const requestSequenceRef = useRef(0);
+  const actionFailures = useMemo(
+    () => input.actionErrors.map((failure) => buildPluginActionFailure(failure, input.t)),
+    [input.actionErrors, input.t],
+  );
   const now = useMemo(() => new Date().toISOString(), [input.plugins]);
   const rows = useMemo(
-    () => input.plugins.map((plugin) => buildPluginRowView(
-      plugin,
-      input.busyPluginId,
-      input.busyAction,
-      now,
-      input.t,
-      actionFailures.find((failure) => failure.pluginId === plugin.id && failure.owner === "row"),
-    )),
-    [actionFailures, input.busyAction, input.busyPluginId, input.plugins, input.t, now],
+    () => input.plugins.map((plugin) => {
+      const pending = findLatestOwnedAction(input.pendingActions, plugin.id, "row");
+      const failure = findLatestOwnedAction(actionFailures, plugin.id, "row");
+      return buildPluginRowView(
+        plugin,
+        pending?.pluginId ?? "",
+        pending?.action,
+        now,
+        input.t,
+        failure,
+      );
+    }),
+    [actionFailures, input.pendingActions, input.plugins, input.t, now],
   );
   const visibleRows = useMemo(() => filterPluginRows(rows, filters), [filters, rows]);
 
   useEffect(() => {
     const ids = new Set(input.plugins.map((plugin) => plugin.id));
-    if (detailPluginId && !ids.has(detailPluginId)) setDetailPluginId("");
-    if (guidePluginId && !ids.has(guidePluginId)) setGuidePluginId("");
-    if (uninstallPluginId && !ids.has(uninstallPluginId)) setUninstallPluginId("");
-    setActionFailures((current) => current.filter((failure) => ids.has(failure.pluginId)));
-  }, [detailPluginId, guidePluginId, input.plugins, uninstallPluginId]);
+    if (detailPluginId && !ids.has(detailPluginId)) {
+      input.clearActionErrors({ pluginId: detailPluginId, owner: "detail" });
+      setDetailPluginId("");
+    }
+    if (guidePluginId && !ids.has(guidePluginId)) {
+      input.clearActionErrors({ pluginId: guidePluginId, owner: "guide" });
+      setGuidePluginId("");
+    }
+    if (uninstallPluginId && !ids.has(uninstallPluginId)) {
+      input.clearActionErrors({ pluginId: uninstallPluginId, owner: "uninstall" });
+      setUninstallPluginId("");
+    }
+  }, [detailPluginId, guidePluginId, input.clearActionErrors, input.plugins, uninstallPluginId]);
 
-  useEffect(() => {
-    if (!pendingRefresh) return;
-    if (input.isLoading && !pendingRefresh.sawLoading) {
-      setPendingRefresh({ ...pendingRefresh, sawLoading: true });
-      return;
-    }
-    if (!pendingRefresh.sawLoading || input.isLoading) return;
-    setRetainedRefreshError(input.plugins === pendingRefresh.baseline);
-    setPendingRefresh(undefined);
-  }, [input.isLoading, input.plugins, pendingRefresh]);
+  function clearOverlayError(pluginId: string, owner: PluginActionOwner): void {
+    if (pluginId) input.clearActionErrors({ pluginId, owner });
+  }
 
-  useEffect(() => {
-    if (!pendingMutation) return;
-    const matchingBusy = input.busyPluginId === pendingMutation.pluginId
-      && input.busyAction === pendingMutation.action;
-    if (matchingBusy && !pendingMutation.sawBusy) {
-      setPendingMutation({ ...pendingMutation, sawBusy: true });
-      return;
-    }
-    if (!pendingMutation.sawBusy || matchingBusy) return;
-    const currentPlugin = input.plugins.find((plugin) => plugin.id === pendingMutation.pluginId);
-    const changed = pluginSnapshotFingerprint(currentPlugin) !== pendingMutation.baseline;
-    if (changed) {
-      setActionFailures((current) => current.filter((failure) =>
-        failure.pluginId !== pendingMutation.pluginId || failure.owner !== pendingMutation.owner));
-    } else {
-      const failure = buildPluginActionFailure(
-        pendingMutation.pluginId,
-        pendingMutation.action,
-        pendingMutation.owner,
-        input.t,
-      );
-      setActionFailures((current) => [
-        ...current.filter((candidate) =>
-          candidate.pluginId !== failure.pluginId || candidate.owner !== failure.owner),
-        failure,
-      ]);
-    }
-    setPendingMutation(undefined);
-  }, [input.busyAction, input.busyPluginId, input.plugins, input.t, pendingMutation]);
+  function closeCreate(): void {
+    input.clearActionErrors({ pluginId: PLUGIN_DRAFT_ID, owner: "create" });
+    setCreateOpen(false);
+  }
+
+  function closeDetails(): void {
+    clearOverlayError(detailPluginId, "detail");
+    setDetailPluginId("");
+  }
+
+  function closeGuide(): void {
+    clearOverlayError(guidePluginId, "guide");
+    setGuidePluginId("");
+  }
+
+  function cancelUninstall(): void {
+    clearOverlayError(uninstallPluginId, "uninstall");
+    setUninstallPluginId("");
+    if (uninstallReturnPluginId) setDetailPluginId(uninstallReturnPluginId);
+    setUninstallReturnPluginId("");
+  }
+
+  function actionFailureFor(
+    pluginId: string,
+    owner: PluginActionOwner,
+    action?: PluginBusyAction,
+  ): PluginActionFailure | undefined {
+    return findLatestOwnedAction(actionFailures, pluginId, owner, action);
+  }
+
+  function pendingActionFor(
+    pluginId: string,
+    owner: PluginActionOwner,
+    action?: PluginBusyAction,
+  ): PluginPendingAction | undefined {
+    return findLatestOwnedAction(input.pendingActions, pluginId, owner, action);
+  }
+
+  async function runMutation<T>({
+    pluginId,
+    action,
+    owner,
+    mutate,
+  }: {
+    readonly pluginId: string;
+    readonly action: PluginBusyAction;
+    readonly owner: PluginActionOwner;
+    readonly mutate: (request: PluginActionRequest) => Promise<T> | T;
+  }): Promise<T> {
+    const request: PluginActionRequest = {
+      owner,
+      requestId: `plugin:${++requestSequenceRef.current}`,
+    };
+    return await mutate(request);
+  }
 
   return {
     filters,
@@ -150,66 +187,80 @@ export function usePluginManagerController(input: {
     detailPluginId,
     guidePluginId,
     uninstallPluginId,
-    retainedRefreshError,
+    loadError: input.loadError,
+    retainedRefreshError: Boolean(input.loadError),
     setQuery: (query) => setFilters((current) => ({ ...current, query })),
     setSource: (source) => setFilters((current) => ({ ...current, source })),
     setStatus: (status) => setFilters((current) => ({ ...current, status })),
     clearFilters: () => setFilters(defaultFilters),
     openCreate: () => {
-      setDetailPluginId("");
-      setGuidePluginId("");
-      setUninstallPluginId("");
+      closeDetails();
+      closeGuide();
+      cancelUninstall();
+      input.clearActionErrors({ pluginId: PLUGIN_DRAFT_ID, owner: "create" });
       setCreateOpen(true);
     },
-    closeCreate: () => setCreateOpen(false),
+    closeCreate,
     openDetails: (pluginId) => {
-      setCreateOpen(false);
-      setGuidePluginId("");
-      setUninstallPluginId("");
+      closeCreate();
+      closeGuide();
+      cancelUninstall();
+      if (detailPluginId && detailPluginId !== pluginId) clearOverlayError(detailPluginId, "detail");
       setDetailPluginId(pluginId);
     },
-    closeDetails: () => setDetailPluginId(""),
+    closeDetails,
     openGuide: (pluginId) => {
-      setCreateOpen(false);
-      setDetailPluginId("");
-      setUninstallPluginId("");
+      closeCreate();
+      closeDetails();
+      cancelUninstall();
+      if (guidePluginId && guidePluginId !== pluginId) clearOverlayError(guidePluginId, "guide");
       setGuidePluginId(pluginId);
     },
-    closeGuide: () => setGuidePluginId(""),
+    closeGuide,
     requestUninstall: (pluginId) => {
       setUninstallReturnPluginId(detailPluginId === pluginId ? pluginId : "");
+      closeCreate();
+      if (detailPluginId && detailPluginId !== pluginId) closeDetails();
       setDetailPluginId("");
-      setGuidePluginId("");
+      closeGuide();
+      if (uninstallPluginId && uninstallPluginId !== pluginId) clearOverlayError(uninstallPluginId, "uninstall");
       setUninstallPluginId(pluginId);
     },
-    cancelUninstall: () => {
-      setUninstallPluginId("");
-      if (uninstallReturnPluginId) setDetailPluginId(uninstallReturnPluginId);
-      setUninstallReturnPluginId("");
-    },
+    cancelUninstall,
     completeUninstall: () => {
+      clearOverlayError(uninstallPluginId, "uninstall");
       setUninstallPluginId("");
       setUninstallReturnPluginId("");
     },
-    actionFailureFor: (pluginId, owner) => actionFailures.find((failure) =>
-      failure.pluginId === pluginId && failure.owner === owner),
+    actionFailureFor,
+    pendingActionFor,
     runRefresh: (refresh) => {
-      if (input.isLoading || pendingRefresh) return;
-      setPendingRefresh({ baseline: input.plugins, sawLoading: false });
-      refresh();
+      if (!input.isLoading) refresh();
     },
-    runMutation: ({ pluginId, action, owner, mutate }) => {
-      const plugin = input.plugins.find((candidate) => candidate.id === pluginId);
-      setActionFailures((current) => current.filter((failure) =>
-        failure.pluginId !== pluginId || failure.owner !== owner));
-      setPendingMutation({
-        pluginId,
-        action,
-        owner,
-        baseline: pluginSnapshotFingerprint(plugin),
-        sawBusy: false,
-      });
-      mutate();
-    },
+    runMutation,
   };
+}
+
+function findLatestOwnedAction<T extends {
+  readonly pluginId: string;
+  readonly action: PluginBusyAction;
+  readonly owner: PluginActionOwner;
+}>(
+  actions: readonly T[],
+  pluginId: string,
+  owner: PluginActionOwner,
+  action?: PluginBusyAction,
+): T | undefined {
+  for (let index = actions.length - 1; index >= 0; index -= 1) {
+    const candidate = actions[index];
+    if (!candidate || candidate.pluginId !== pluginId) continue;
+    if (!ownerMatches(candidate.owner, owner)) continue;
+    if (action && candidate.action !== action) continue;
+    return candidate;
+  }
+  return undefined;
+}
+
+function ownerMatches(candidate: PluginActionOwner, requested: PluginActionOwner): boolean {
+  return candidate === requested || (requested === "row" && candidate === "detected-connect");
 }

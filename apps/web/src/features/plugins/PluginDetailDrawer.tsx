@@ -90,14 +90,17 @@ export function PluginDetailDrawer({
                   title={actionFailure.message}
                   tone="danger"
                 >
-                  <Button
-                    loading={busy}
-                    loadingLabel={t("Loading")}
-                    onClick={() => runPluginAction(actionFailure.action, plugin.id, handlers)}
-                    size="sm"
-                  >
-                    {t("Retry")}
-                  </Button>
+                  <span>{actionFailure.detail}</span>
+                  {actionFailure.retryAction ? (
+                    <Button
+                      loading={busy}
+                      loadingLabel={t("Loading")}
+                      onClick={() => runPluginAction(actionFailure.retryAction ?? "details", plugin.id, handlers)}
+                      size="sm"
+                    >
+                      {t("Retry")}
+                    </Button>
+                  ) : null}
                 </InlineFeedback>
               ) : null}
               {view.failureReason ? (

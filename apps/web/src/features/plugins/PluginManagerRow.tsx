@@ -20,7 +20,7 @@ export function PluginManagerRow({
         <span className="plugin-table-name-copy">
           <strong title={row.name}>{row.name}</strong>
           {row.actionFailure ? (
-            <small className="plugin-table-action-failure" role="alert" title={row.actionFailure.message}>
+            <small className="plugin-table-action-failure" role="alert" title={row.actionFailure.detail}>
               {row.actionFailure.message}
             </small>
           ) : row.description ? <small title={row.description}>{row.description}</small> : null}

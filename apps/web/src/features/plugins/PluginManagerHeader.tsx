@@ -100,6 +100,7 @@ export function PluginManagerHeader({
       {controller.retainedRefreshError ? (
         <PluginManagerRefreshFeedback
           count={controller.rows.length}
+          errorMessage={controller.loadError}
           loading={isLoading}
           onRetry={() => controller.runRefresh(onRefresh)}
           t={t}

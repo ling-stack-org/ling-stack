@@ -4,11 +4,13 @@ import type { Translate } from "../../i18n.js";
 
 export function PluginManagerRefreshFeedback({
   count,
+  errorMessage,
   loading,
   onRetry,
   t,
 }: {
   readonly count: number;
+  readonly errorMessage: string;
   readonly loading: boolean;
   readonly onRetry: () => void;
   readonly t: Translate;
@@ -21,8 +23,9 @@ export function PluginManagerRefreshFeedback({
       tone="warning"
     >
       <span className="plugin-manager-retained-copy">
-        {t("Stale")} · {t("Showing")} {count} {t("Plugins")}
+        {count > 0 ? `${t("Stale")} · ${t("Showing")} ${count} ${t("Plugins")}` : errorMessage}
       </span>
+      {count > 0 ? <span>{errorMessage}</span> : null}
       <Button
         leadingIcon={<RefreshCw aria-hidden="true" />}
         loading={loading}
