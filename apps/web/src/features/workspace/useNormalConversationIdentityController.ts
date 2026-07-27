@@ -9,12 +9,23 @@ export interface NormalConversationIdentitySnapshot {
   readonly identity: string;
 }
 
+export function normalConversationIdentityOwnerKey(snapshot: NormalConversationIdentitySnapshot): string {
+  return JSON.stringify([
+    snapshot.surface,
+    snapshot.workspaceCwd,
+    snapshot.threadId ?? "",
+    snapshot.draftGeneration ?? null,
+    snapshot.identity,
+  ]);
+}
+
 export function useNormalConversationIdentityController(input: {
   readonly workspaceCwd: string;
   readonly threadId?: string;
   readonly identity: string;
 }): {
   readonly identity: string;
+  readonly ownerKey: string;
   readonly capture: () => NormalConversationIdentitySnapshot;
   readonly isCurrent: (snapshot: NormalConversationIdentitySnapshot) => boolean;
   readonly createCommitGuard: () => (threadId?: string) => boolean;
@@ -55,10 +66,11 @@ export function useNormalConversationIdentityController(input: {
 
   return useMemo(() => ({
     identity: snapshot.identity,
+    ownerKey: normalConversationIdentityOwnerKey(snapshot),
     capture,
     isCurrent,
     createCommitGuard,
-  }), [capture, createCommitGuard, isCurrent, snapshot.identity]);
+  }), [capture, createCommitGuard, isCurrent, snapshot]);
 }
 
 export function createNormalConversationIdentityCommitGuard(input: {

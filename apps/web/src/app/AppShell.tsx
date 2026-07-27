@@ -2541,6 +2541,7 @@ export function AppShell(): JSX.Element {
                         }
                       },
                       onError: (message) => input.failMessage(message),
+                      onThreadBound: input.onThreadBound,
                       shouldCommit: input.shouldCommit,
                     });
                   }}

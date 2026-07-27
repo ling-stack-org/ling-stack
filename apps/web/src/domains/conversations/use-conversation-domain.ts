@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { archiveLingThread, getConversation, listLingThreads, streamConversation } from "../../api.js";
 import { readSseResponse } from "../../sse.js";
 import type {
@@ -25,6 +25,7 @@ import {
   type ConversationErrorOperation,
 } from "./conversation-error-owner.js";
 import { createConversationDraftIdentity } from "./conversation-surface-identity.js";
+import { useConversationStreamBusyOwner } from "./use-conversation-stream-busy-owner.js";
 
 export interface ConversationSendInput {
   readonly message: string;
@@ -47,6 +48,7 @@ export interface ConversationStreamHandlers {
   readonly onDone?: (event: ConversationStreamDoneEvent) => void;
   readonly onBlocked?: (event: ConversationStreamBlockedEvent) => void;
   readonly onError?: (message: string, event?: ConversationStreamBlockedEvent) => void;
+  readonly onThreadBound?: (threadId: string) => void;
   readonly shouldCommit?: (threadId?: string) => boolean;
 }
 
@@ -83,16 +85,17 @@ export function useConversationDomain(input: {
   const [conversationsLoading, setConversationsLoading] = useState(false);
   const [selectedConversationThreadId, setSelectedConversationThreadId] = useState("");
   const [selectedConversationDetail, setSelectedConversationDetail] = useState<ConversationDetailResponse | undefined>();
-  const [conversationStreamBusy, setConversationStreamBusy] = useState(false);
   const [conversationSurfaceIdentity, setConversationSurfaceIdentity] = useState(createConversationDraftIdentity(0));
   const selectedConversationThreadIdRef = useRef("");
   const conversationDraftGenerationRef = useRef(0);
   const conversationSurfaceIdentityRef = useRef(createConversationDraftIdentity(0));
   const currentCwdRef = useRef(input.cwd.trim());
+  const conversationOwnerCwdRef = useRef(input.cwd.trim());
   const selectionSequenceRef = useRef(0);
   const loadingOperationsRef = useRef(0);
   currentCwdRef.current = input.cwd.trim();
   const conversationErrors = useConversationErrorOwner();
+  const conversationStreamBusyOwner = useConversationStreamBusyOwner();
 
   const beginLoading = useCallback((): void => {
     loadingOperationsRef.current += 1;
@@ -113,6 +116,19 @@ export function useConversationDomain(input: {
     conversationSurfaceIdentityRef.current = identity;
     setConversationSurfaceIdentity(identity);
   }, []);
+
+  useEffect(() => {
+    const workspaceCwd = input.cwd.trim();
+    if (conversationOwnerCwdRef.current === workspaceCwd) return;
+    conversationOwnerCwdRef.current = workspaceCwd;
+    selectionSequenceRef.current += 1;
+    const draftGeneration = conversationDraftGenerationRef.current + 1;
+    conversationDraftGenerationRef.current = draftGeneration;
+    commitSelectedConversationThreadId("");
+    setSelectedConversationDetail(undefined);
+    setConversationThreads([]);
+    commitConversationSurfaceIdentity(createConversationDraftIdentity(draftGeneration));
+  }, [commitConversationSurfaceIdentity, commitSelectedConversationThreadId, input.cwd]);
 
   const refreshConversationThreads = useCallback(async (cwd = input.cwd): Promise<void> => {
     const workspaceCwd = cwd.trim();
@@ -344,6 +360,10 @@ export function useConversationDomain(input: {
     const originThreadId = selectedConversationThreadIdRef.current;
     const originSurfaceIdentity = conversationSurfaceIdentityRef.current;
     let activeThreadId = originThreadId;
+    const busyOperation = conversationStreamBusyOwner.begin({
+      workspaceCwd,
+      identity: originSurfaceIdentity,
+    });
     let streamOperation: ConversationErrorOperation = conversationErrors.begin({
       workspaceCwd,
       surface: "composer",
@@ -359,6 +379,7 @@ export function useConversationDomain(input: {
     };
     const retargetStreamOperation = (threadId: string): void => {
       if (!threadId || streamOperation.identity === threadId) return;
+      conversationStreamBusyOwner.bind(busyOperation, threadId);
       conversationErrors.clear(streamOperation);
       streamOperation = conversationErrors.begin({
         workspaceCwd,
@@ -372,10 +393,10 @@ export function useConversationDomain(input: {
       const errorMessage = "Local workspace is not ready.";
       conversationErrors.report(streamOperation, errorMessage);
       if (canCommitToSurface()) handlers.onError?.(errorMessage);
+      conversationStreamBusyOwner.finish(busyOperation);
       return;
     }
 
-    setConversationStreamBusy(true);
     try {
       const response = await streamConversation(workspaceCwd, {
         threadId: originThreadId || undefined,
@@ -440,6 +461,7 @@ export function useConversationDomain(input: {
         if (parsed.event === "ready") {
           const event = JSON.parse(parsed.data) as ConversationStreamReadyEvent;
           activeThreadId = event.thread.id;
+          handlers.onThreadBound?.(activeThreadId);
           retargetStreamOperation(activeThreadId);
           if (canCommitToSurface(activeThreadId)) {
             commitSelectedConversationThreadId(activeThreadId);
@@ -455,6 +477,7 @@ export function useConversationDomain(input: {
         }
         if (parsed.event === "run_event") {
           const event = JSON.parse(parsed.data) as ConversationStreamRunEvent;
+          handlers.onThreadBound?.(event.threadId);
           if (event.assistantMessage && canCommitToSurface(event.threadId)) {
             setSelectedConversationDetail((current) => mergeConversationMessages(current, workspaceCwd, undefined, [event.assistantMessage as ConversationTranscriptMessage]));
           }
@@ -470,6 +493,7 @@ export function useConversationDomain(input: {
         if (parsed.event === "done") {
           const event = JSON.parse(parsed.data) as ConversationStreamDoneEvent;
           activeThreadId = event.thread.id;
+          handlers.onThreadBound?.(activeThreadId);
           retargetStreamOperation(activeThreadId);
           conversationErrors.clear(streamOperation);
           if (canCommitToSurface(activeThreadId)) {
@@ -484,6 +508,7 @@ export function useConversationDomain(input: {
           const event = JSON.parse(parsed.data) as ConversationStreamBlockedEvent;
           if (event.thread) {
             activeThreadId = event.thread.id;
+            handlers.onThreadBound?.(activeThreadId);
             retargetStreamOperation(activeThreadId);
           }
           if (event.error) conversationErrors.report(streamOperation, event.error);
@@ -502,6 +527,7 @@ export function useConversationDomain(input: {
           const messageText = event.error || event.assistantMessage?.content || "Ling Agent run failed.";
           if (event.thread) {
             activeThreadId = event.thread.id;
+            handlers.onThreadBound?.(activeThreadId);
             retargetStreamOperation(activeThreadId);
           }
           conversationErrors.report(streamOperation, messageText);
@@ -538,9 +564,9 @@ export function useConversationDomain(input: {
       conversationErrors.report(streamOperation, messageText);
       if (canCommitToSurface(activeThreadId)) handlers.onError?.(messageText);
     } finally {
-      setConversationStreamBusy(false);
+      conversationStreamBusyOwner.finish(busyOperation);
     }
-  }, [commitConversationSurfaceIdentity, commitSelectedConversationThreadId, conversationErrors, input.cwd, refreshConversationThreads]);
+  }, [commitConversationSurfaceIdentity, commitSelectedConversationThreadId, conversationErrors, conversationStreamBusyOwner, input.cwd, refreshConversationThreads]);
 
   const workspaceCwd = input.cwd.trim();
   const conversationSidebarError = selectConversationError(conversationErrors.entries, {
@@ -560,6 +586,10 @@ export function useConversationDomain(input: {
     identity: conversationSurfaceIdentity,
     scopes: ["stream"],
   })?.message ?? "";
+  const conversationStreamBusy = conversationStreamBusyOwner.isBusy({
+    workspaceCwd,
+    identity: conversationSurfaceIdentity,
+  });
 
   return {
     state: {

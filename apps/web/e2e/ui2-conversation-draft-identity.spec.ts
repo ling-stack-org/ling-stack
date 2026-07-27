@@ -3,12 +3,15 @@ import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { expect, test, type Page } from "@playwright/test";
 import { createConversationDraftIdentity } from "../src/domains/conversations/conversation-surface-identity";
+import { ConversationStreamBusyStore } from "../src/domains/conversations/use-conversation-stream-busy-owner";
 import {
   createNormalConversationIdentityCommitGuard,
+  normalConversationIdentityOwnerKey,
   type NormalConversationIdentitySnapshot,
 } from "../src/features/workspace/useNormalConversationIdentityController";
+import { NormalConversationOperationStore } from "../src/features/workspace/useNormalConversationOperationOwner";
 import { mockDaemon } from "./support/mock-daemon";
-import { createBaseState, createChatProvider, type MockState } from "./support/mock-state";
+import { createBaseState, createChatProvider, cwd, type MockState } from "./support/mock-state";
 
 const appShellSourcePath = fileURLToPath(new URL("../src/app/AppShell.tsx", import.meta.url));
 const conversationHomeSourcePath = fileURLToPath(new URL(
@@ -51,6 +54,51 @@ test("T13-P.9EF.C draft generations bind only their own ready thread without rem
   expect(guard()).toBe(true);
   current = identitySnapshot("draft:2");
   expect(guard()).toBe(false);
+});
+
+test("T13-P.9EF.C workspace and thread transitions rotate the complete conversation owner", async () => {
+  const [conversationHomeSource, domainSource] = await Promise.all([
+    readFile(conversationHomeSourcePath, "utf8"),
+    readFile(conversationDomainSourcePath, "utf8"),
+  ]);
+  const draftA = identitySnapshot("draft:3", { workspaceCwd: "/tmp/workspace-a" });
+  const draftB = identitySnapshot("draft:3", { workspaceCwd: "/tmp/workspace-b" });
+  const loadingThread = identitySnapshot("thread_transition", { threadId: undefined });
+  const readyThread = identitySnapshot("thread_transition", { threadId: "thread_transition" });
+
+  expect(normalConversationIdentityOwnerKey(draftA)).not.toBe(normalConversationIdentityOwnerKey(draftB));
+  expect(normalConversationIdentityOwnerKey(loadingThread)).not.toBe(normalConversationIdentityOwnerKey(readyThread));
+  expect(domainSource).toContain("conversationOwnerCwdRef.current === workspaceCwd");
+  expect(domainSource).toContain("commitConversationSurfaceIdentity(createConversationDraftIdentity(draftGeneration))");
+  expect(conversationHomeSource).toContain("[conversationIdentityController.ownerKey, initialDraft]");
+  expect(conversationHomeSource).toContain("[conversationIdentityController.ownerKey, initialMessages]");
+  expect(conversationHomeSource).toContain("[conversationIdentityController.ownerKey, initialProjectLabel, initialProjectPath]");
+  expect(conversationHomeSource).toContain("[conversationIdentityController.ownerKey, initialProviderPresetId, initialThinkingLevel]");
+  expect(conversationHomeSource).toContain("[conversationIdentityController.ownerKey, initialPermissionMode, initialPermissionPreset, initialWorkspaceAccessMode]");
+});
+
+test("T13-P.9EF.C stream and retry loading finish only their own owner token", () => {
+  const busy = new ConversationStreamBusyStore();
+  const oldDraft = busy.begin({ workspaceCwd: "/tmp/workspace-a", identity: "draft:1" });
+  expect(busy.isBusy({ workspaceCwd: "/tmp/workspace-a", identity: "draft:1" })).toBe(true);
+  expect(busy.isBusy({ workspaceCwd: "/tmp/workspace-a", identity: "draft:2" })).toBe(false);
+  expect(busy.isBusy({ workspaceCwd: "/tmp/workspace-b", identity: "draft:1" })).toBe(false);
+  busy.bind(oldDraft, "thread_bound_from_draft");
+  expect(busy.isBusy({ workspaceCwd: "/tmp/workspace-a", identity: "thread_bound_from_draft" })).toBe(true);
+
+  const nextDraft = busy.begin({ workspaceCwd: "/tmp/workspace-a", identity: "draft:2" });
+  busy.finish(oldDraft);
+  expect(busy.isBusy({ workspaceCwd: "/tmp/workspace-a", identity: "draft:2" })).toBe(true);
+  busy.finish(nextDraft);
+  expect(busy.isBusy({ workspaceCwd: "/tmp/workspace-a", identity: "draft:2" })).toBe(false);
+
+  const retries = new NormalConversationOperationStore<string>();
+  const oldRetry = retries.begin("owner-a", "message-a");
+  const nextRetry = retries.begin("owner-b", "message-b");
+  retries.finish(oldRetry);
+  expect(retries.current("owner-b")).toEqual(nextRetry);
+  retries.finish(nextRetry);
+  expect(retries.current("owner-b")).toBeUndefined();
 });
 
 test("T13-P.9EF.C a late draft success cannot populate the next new conversation", async ({ page }) => {
@@ -199,12 +247,165 @@ test("T13-P.9EF.C a late attachment failure stays with its abandoned draft", asy
   await expect(page.getByText(staleFailure, { exact: true })).toHaveCount(0);
 });
 
-function identitySnapshot(identity: string): NormalConversationIdentitySnapshot {
+test("T13-P.9EF.C thread loading transition removes a late upload row and deletes from its source cwd", async ({ page }) => {
+  await prepareSurface(page, true);
+  const state = createConversationIdentityState();
+  installPersistedThread(state);
+  await mockDaemon(page, state);
+  const detailStarted = createDeferred();
+  const releaseDetail = createDeferred();
+  const uploadStarted = createDeferred();
+  const releaseUpload = createDeferred();
+  const deletionCwds: string[] = [];
+  await page.route(conversationDetailPattern(persistedThread.id), async (route) => {
+    detailStarted.resolve();
+    await releaseDetail.promise;
+    await route.fallback();
+  }, { times: 1 });
+  await page.route(attachmentPattern, async (route) => {
+    uploadStarted.resolve();
+    await releaseUpload.promise;
+    await route.fallback();
+  }, { times: 1 });
+  await page.route(/\/attachments\/[^/]+(?:\?.*)?$/u, async (route) => {
+    if (route.request().method() === "DELETE") {
+      deletionCwds.push(new URL(route.request().url()).searchParams.get("cwd") ?? "");
+    }
+    await route.fallback();
+  });
+
+  await page.goto("/");
+  const navigation = page.getByLabel("Ling Stack navigation");
+  await navigation.getByRole("button", { name: "New conversation" }).click();
+  await conversationRow(navigation, persistedThread.title).click();
+  await detailStarted.promise;
+  const composer = page.getByLabel("New conversation composer");
+  await composer.locator('input[type="file"]').setInputFiles({
+    name: "thread-transition.png",
+    mimeType: "image/png",
+    buffer: onePixelPng(),
+  });
+  await uploadStarted.promise;
+  await expect(composer.getByLabel("Pending message assets")).toContainText("thread-transition.png");
+
+  releaseDetail.resolve();
+  await expect(page.getByRole("heading", { name: persistedThread.title, level: 1 })).toBeVisible();
+  await expect(page.getByLabel("New conversation composer").getByLabel("Pending message assets")).toHaveCount(0);
+  releaseUpload.resolve();
+  await expect.poll(() => state.conversationAttachments.length).toBe(0);
+  await expect.poll(() => deletionCwds).toContain(cwd);
+  await expect.poll(() => revokedPreviewCount(page)).toBe(1);
+});
+
+test("T13-P.9EF.C unmount deletes a ready unsent attachment", async ({ page }) => {
+  await prepareSurface(page, true);
+  const state = createConversationIdentityState();
+  await mockDaemon(page, state);
+  await page.goto("/");
+  const navigation = page.getByLabel("Ling Stack navigation");
+  await navigation.getByRole("button", { name: "New conversation" }).click();
+  const composer = page.getByLabel("New conversation composer");
+  await composer.locator('input[type="file"]').setInputFiles({
+    name: "ready-before-unmount.png",
+    mimeType: "image/png",
+    buffer: onePixelPng(),
+  });
+  await expect.poll(() => state.conversationAttachments.length).toBe(1);
+  await expect(composer.getByLabel("Pending message assets")).toContainText("ready-before-unmount.png");
+
+  await navigation.getByRole("button").filter({ hasText: "Engineering" }).first().click();
+  await expect(page.getByRole("heading", { name: "Engineering", level: 1 })).toBeVisible();
+  await expect.poll(() => state.conversationAttachments.length).toBe(0);
+  await expect.poll(() => revokedPreviewCount(page)).toBe(1);
+});
+
+test("T13-P.9EF.C abandoned send cleans attachments and does not keep the next draft busy", async ({ page }) => {
+  await prepareSurface(page, true);
+  const state = createConversationIdentityState();
+  await mockDaemon(page, state);
+  const streamStarted = createDeferred();
+  const releaseStream = createDeferred();
+  await page.route(streamPattern, async (route) => {
+    streamStarted.resolve();
+    await releaseStream.promise;
+    await route.fulfill({ status: 503, json: { error: "abandoned_send", message: "Old send failed late." } });
+  }, { times: 1 });
+
+  await page.goto("/");
+  const navigation = page.getByLabel("Ling Stack navigation");
+  await navigation.getByRole("button", { name: "New conversation" }).click();
+  const oldComposer = page.getByLabel("New conversation composer");
+  await oldComposer.locator('input[type="file"]').setInputFiles({
+    name: "abandoned-send.png",
+    mimeType: "image/png",
+    buffer: onePixelPng(),
+  });
+  await expect.poll(() => state.conversationAttachments.length).toBe(1);
+  await oldComposer.getByRole("textbox", { name: "Conversation message" }).fill("Abandon this send");
+  await oldComposer.getByRole("button", { name: "Send" }).click();
+  await streamStarted.promise;
+  await expect(oldComposer.getByRole("button", { name: "Send" }).locator(".ling-ui-spinner")).toHaveCount(1);
+
+  await navigation.getByRole("button", { name: "New conversation" }).click();
+  const nextComposer = page.getByLabel("New conversation composer");
+  const nextInput = nextComposer.getByRole("textbox", { name: "Conversation message" });
+  await nextInput.fill("The next draft stays independent");
+  await expect(nextComposer.getByRole("button", { name: "Send" })).toBeEnabled();
+  releaseStream.resolve();
+
+  await expect.poll(() => state.conversationAttachments.length).toBe(0);
+  await expect(nextInput).toHaveAttribute("data-value", "The next draft stays independent");
+  await expect(page.getByText("Old send failed late.", { exact: true })).toHaveCount(0);
+  await expect.poll(() => revokedPreviewCount(page)).toBe(1);
+});
+
+test("T13-P.9EF.C a server-bound late send keeps its attachment after the draft is left", async ({ page }) => {
+  await prepareSurface(page, true);
+  const state = createConversationIdentityState();
+  await mockDaemon(page, state);
+  const streamStarted = createDeferred();
+  const releaseStream = createDeferred();
+  await page.route(streamPattern, async (route) => {
+    streamStarted.resolve();
+    await releaseStream.promise;
+    await route.fallback();
+  }, { times: 1 });
+
+  await page.goto("/");
+  const navigation = page.getByLabel("Ling Stack navigation");
+  await navigation.getByRole("button", { name: "New conversation" }).click();
+  const oldComposer = page.getByLabel("New conversation composer");
+  await oldComposer.locator('input[type="file"]').setInputFiles({
+    name: "bound-late-send.png",
+    mimeType: "image/png",
+    buffer: onePixelPng(),
+  });
+  await expect.poll(() => state.conversationAttachments.length).toBe(1);
+  await oldComposer.getByRole("textbox", { name: "Conversation message" }).fill("Bind this attachment safely");
+  await oldComposer.getByRole("button", { name: "Send" }).click();
+  await streamStarted.promise;
+  await navigation.getByRole("button", { name: "New conversation" }).click();
+
+  releaseStream.resolve();
+  await expect.poll(() => state.conversationAttachments[0]?.threadId).toMatch(/^thread_conversation_/u);
+  await expect.poll(() => state.conversationAttachments.length).toBe(1);
+  await expect.poll(() => revokedPreviewCount(page)).toBe(1);
+  const nextComposer = page.getByLabel("New conversation composer");
+  await expect(nextComposer.getByText("Bind this attachment safely", { exact: true })).toHaveCount(0);
+  await expect(nextComposer.getByRole("textbox", { name: "Conversation message" })).toHaveAttribute("data-value", "");
+});
+
+function identitySnapshot(
+  identity: string,
+  overrides: Partial<NormalConversationIdentitySnapshot> = {},
+): NormalConversationIdentitySnapshot {
   return {
     surface: "normal_conversation",
-    workspaceCwd: "/tmp/ling-stack-ui2",
+    workspaceCwd: cwd,
     threadId: identity.startsWith("thread_") ? identity : undefined,
+    draftGeneration: identity.startsWith("draft:") ? Number(identity.slice("draft:".length)) : undefined,
     identity,
+    ...overrides,
   };
 }
 

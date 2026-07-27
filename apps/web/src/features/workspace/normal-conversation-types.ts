@@ -75,6 +75,7 @@ export interface ConversationHomeSendInput {
   readonly replaceMessages: (messages: readonly ConversationHomeMessage[]) => void;
   readonly upsertMessage: (message: ConversationHomeMessage) => void;
   readonly failMessage: (message: string) => void;
+  readonly onThreadBound: (threadId: string) => void;
   readonly shouldCommit: (threadId?: string) => boolean;
 }
 
