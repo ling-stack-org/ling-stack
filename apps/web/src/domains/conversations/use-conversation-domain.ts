@@ -24,6 +24,7 @@ import {
   useConversationErrorOwner,
   type ConversationErrorOperation,
 } from "./conversation-error-owner.js";
+import { createConversationDraftIdentity } from "./conversation-surface-identity.js";
 
 export interface ConversationSendInput {
   readonly message: string;
@@ -58,6 +59,7 @@ export function useConversationDomain(input: {
     readonly conversationsLoading: boolean;
     readonly selectedConversationThreadId: string;
     readonly selectedConversationDetail?: ConversationDetailResponse;
+    readonly conversationIdentity: string;
     readonly conversationStreamBusy: boolean;
     readonly conversationSidebarError: string;
     readonly conversationSurfaceError: string;
@@ -82,8 +84,10 @@ export function useConversationDomain(input: {
   const [selectedConversationThreadId, setSelectedConversationThreadId] = useState("");
   const [selectedConversationDetail, setSelectedConversationDetail] = useState<ConversationDetailResponse | undefined>();
   const [conversationStreamBusy, setConversationStreamBusy] = useState(false);
-  const [conversationSurfaceIdentity, setConversationSurfaceIdentity] = useState("draft");
+  const [conversationSurfaceIdentity, setConversationSurfaceIdentity] = useState(createConversationDraftIdentity(0));
   const selectedConversationThreadIdRef = useRef("");
+  const conversationDraftGenerationRef = useRef(0);
+  const conversationSurfaceIdentityRef = useRef(createConversationDraftIdentity(0));
   const currentCwdRef = useRef(input.cwd.trim());
   const selectionSequenceRef = useRef(0);
   const loadingOperationsRef = useRef(0);
@@ -103,6 +107,11 @@ export function useConversationDomain(input: {
   const commitSelectedConversationThreadId = useCallback((threadId: string): void => {
     selectedConversationThreadIdRef.current = threadId;
     setSelectedConversationThreadId(threadId);
+  }, []);
+
+  const commitConversationSurfaceIdentity = useCallback((identity: string): void => {
+    conversationSurfaceIdentityRef.current = identity;
+    setConversationSurfaceIdentity(identity);
   }, []);
 
   const refreshConversationThreads = useCallback(async (cwd = input.cwd): Promise<void> => {
@@ -133,10 +142,12 @@ export function useConversationDomain(input: {
 
   const openNewConversation = useCallback((): void => {
     selectionSequenceRef.current += 1;
+    const draftGeneration = conversationDraftGenerationRef.current + 1;
+    conversationDraftGenerationRef.current = draftGeneration;
     commitSelectedConversationThreadId("");
     setSelectedConversationDetail(undefined);
-    setConversationSurfaceIdentity("draft");
-  }, [commitSelectedConversationThreadId]);
+    commitConversationSurfaceIdentity(createConversationDraftIdentity(draftGeneration));
+  }, [commitConversationSurfaceIdentity, commitSelectedConversationThreadId]);
 
   const selectConversationThread = useCallback(async (
     threadId: string,
@@ -154,7 +165,7 @@ export function useConversationDomain(input: {
       return false;
     }
     const selectionSequence = ++selectionSequenceRef.current;
-    setConversationSurfaceIdentity(threadId);
+    commitConversationSurfaceIdentity(threadId);
     const operation = conversationErrors.begin({
       workspaceCwd,
       surface: "thread",
@@ -175,7 +186,7 @@ export function useConversationDomain(input: {
       }
       commitSelectedConversationThreadId(threadId);
       setSelectedConversationDetail(detail);
-      setConversationSurfaceIdentity(threadId);
+      commitConversationSurfaceIdentity(threadId);
       return true;
     } catch (error) {
       conversationErrors.report(operation, error instanceof Error ? error.message : String(error));
@@ -190,7 +201,7 @@ export function useConversationDomain(input: {
     } finally {
       finishLoading();
     }
-  }, [beginLoading, commitSelectedConversationThreadId, conversationErrors, finishLoading, input.cwd, openNewConversation]);
+  }, [beginLoading, commitConversationSurfaceIdentity, commitSelectedConversationThreadId, conversationErrors, finishLoading, input.cwd, openNewConversation]);
 
   const refreshSelectedConversation = useCallback(async (cwd = input.cwd): Promise<void> => {
     const workspaceCwd = cwd.trim();
@@ -331,19 +342,20 @@ export function useConversationDomain(input: {
   ): Promise<void> => {
     const workspaceCwd = input.cwd.trim();
     const originThreadId = selectedConversationThreadIdRef.current;
+    const originSurfaceIdentity = conversationSurfaceIdentityRef.current;
     let activeThreadId = originThreadId;
     let streamOperation: ConversationErrorOperation = conversationErrors.begin({
       workspaceCwd,
       surface: "composer",
-      identity: originThreadId || "draft",
+      identity: originSurfaceIdentity,
       scope: "stream",
     });
     conversationErrors.clear(streamOperation);
     const canCommitToSurface = (threadId = activeThreadId): boolean => {
       if (currentCwdRef.current !== workspaceCwd) return false;
       if (handlers.shouldCommit) return handlers.shouldCommit(threadId || undefined);
-      const selectedThreadId = selectedConversationThreadIdRef.current;
-      return selectedThreadId === originThreadId || Boolean(threadId && selectedThreadId === threadId);
+      return conversationSurfaceIdentityRef.current === originSurfaceIdentity
+        || Boolean(threadId && conversationSurfaceIdentityRef.current === threadId);
     };
     const retargetStreamOperation = (threadId: string): void => {
       if (!threadId || streamOperation.identity === threadId) return;
@@ -431,7 +443,7 @@ export function useConversationDomain(input: {
           retargetStreamOperation(activeThreadId);
           if (canCommitToSurface(activeThreadId)) {
             commitSelectedConversationThreadId(activeThreadId);
-            setConversationSurfaceIdentity(activeThreadId);
+            commitConversationSurfaceIdentity(activeThreadId);
             setSelectedConversationDetail((current) => mergeConversationMessages(current, workspaceCwd, event.thread, [
               event.userMessage,
               event.assistantMessage,
@@ -462,7 +474,7 @@ export function useConversationDomain(input: {
           conversationErrors.clear(streamOperation);
           if (canCommitToSurface(activeThreadId)) {
             commitSelectedConversationThreadId(activeThreadId);
-            setConversationSurfaceIdentity(activeThreadId);
+            commitConversationSurfaceIdentity(activeThreadId);
             setSelectedConversationDetail((current) => mergeConversationMessages(current, workspaceCwd, event.thread, [event.assistantMessage]));
             handlers.onDone?.(event);
           }
@@ -477,7 +489,7 @@ export function useConversationDomain(input: {
           if (event.error) conversationErrors.report(streamOperation, event.error);
           if (event.thread && canCommitToSurface(activeThreadId)) {
             commitSelectedConversationThreadId(activeThreadId);
-            setConversationSurfaceIdentity(activeThreadId);
+            commitConversationSurfaceIdentity(activeThreadId);
           }
           if (event.assistantMessage && canCommitToSurface(activeThreadId)) {
             setSelectedConversationDetail((current) => mergeConversationMessages(current, workspaceCwd, event.thread, [event.assistantMessage as ConversationTranscriptMessage]));
@@ -528,7 +540,7 @@ export function useConversationDomain(input: {
     } finally {
       setConversationStreamBusy(false);
     }
-  }, [commitSelectedConversationThreadId, conversationErrors, input.cwd, refreshConversationThreads]);
+  }, [commitConversationSurfaceIdentity, commitSelectedConversationThreadId, conversationErrors, input.cwd, refreshConversationThreads]);
 
   const workspaceCwd = input.cwd.trim();
   const conversationSidebarError = selectConversationError(conversationErrors.entries, {
@@ -555,6 +567,7 @@ export function useConversationDomain(input: {
       conversationsLoading,
       selectedConversationThreadId,
       selectedConversationDetail,
+      conversationIdentity: conversationSurfaceIdentity,
       conversationStreamBusy,
       conversationSidebarError,
       conversationSurfaceError,

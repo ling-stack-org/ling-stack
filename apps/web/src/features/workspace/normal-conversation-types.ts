@@ -91,6 +91,7 @@ export interface ConversationHomeProps {
   readonly initialPermissionMode?: SessionPermissionMode;
   readonly initialPermissionPreset?: PermissionPreset;
   readonly detailContext?: ConversationHomeDetailContext;
+  readonly conversationIdentity: string;
   readonly defaultProviderLabel: string;
   readonly defaultProviderPresetId: string;
   readonly modelOptions: readonly ConversationHomeModelOption[];

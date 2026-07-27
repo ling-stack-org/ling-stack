@@ -6,19 +6,15 @@ import {
   MessageSquare,
   SquareTerminal,
 } from "lucide-react";
-import { deleteAttachment, editConversationMessage, uploadConversationAttachment } from "../../api.js";
+import { editConversationMessage } from "../../api.js";
 import { useI18n } from "../../i18n.js";
 import type { ConversationAttachment, PermissionConfirmation, PermissionPreset, ProviderThinkingMode } from "../../types.js";
 import {
-  createAttachmentPreviewUrl,
-  createLocalComposerAssetId,
   filterSlashCommandPickerOptions,
   findActiveSlashCommand,
   insertSlashCommandToken,
   parseComposerInputParts,
-  revokePendingAttachmentPreviews,
   type ActiveSlashCommandPicker,
-  type PendingAttachmentItem,
   type TokenizedComposerInputHandle,
 } from "../../shared/components/index.js";
 import { permissionPresetForWorkspaceAccessMode, workspaceAccessModeForPermissionPreset } from "../../lib/session-permissions.js";
@@ -49,7 +45,9 @@ import type {
   ConversationHomeProps,
 } from "./normal-conversation-types.js";
 import { useNormalConversationHeaderController } from "./useNormalConversationHeaderController.js";
-import { createNormalConversationCommitGuard, useNormalConversationActionFeedback } from "./useNormalConversationActionFeedback.js";
+import { useNormalConversationActionFeedback } from "./useNormalConversationActionFeedback.js";
+import { useNormalConversationAttachmentController } from "./useNormalConversationAttachmentController.js";
+import { useNormalConversationIdentityController } from "./useNormalConversationIdentityController.js";
 import { useChannelPlanHistory } from "./useChannelPlanHistory.js";
 import { useWorkspaceTerminalSession } from "./WorkspaceTerminalPanel.js";
 
@@ -75,6 +73,7 @@ export function ConversationHome({
   initialPermissionMode,
   initialPermissionPreset,
   detailContext,
+  conversationIdentity,
   defaultProviderLabel,
   defaultProviderPresetId,
   modelOptions,
@@ -103,7 +102,6 @@ export function ConversationHome({
     initialPermissionMode,
     initialPermissionPreset,
   )));
-  const [pendingAttachments, setPendingAttachments] = useState<readonly PendingAttachmentItem<ConversationAttachment>[]>([]);
   const [messageSearchQuery, setMessageSearchQuery] = useState("");
   const [conversationDockOpen, setConversationDockOpen] = useState(false);
   const [conversationSummaryOpen, setConversationSummaryOpen] = useState(false);
@@ -115,21 +113,34 @@ export function ConversationHome({
     projectPath: initialProjectPath.trim() || undefined,
     projectLabel: initialProjectLabel.trim() || undefined,
   }));
-  const conversationIdentity = detailContext?.threadId ?? "draft";
-  const actionFeedback = useNormalConversationActionFeedback(conversationIdentity);
-  const conversationIdentityRef = useRef(conversationIdentity);
-  const mountedRef = useRef(true);
-  conversationIdentityRef.current = conversationIdentity;
+  const conversationIdentityController = useNormalConversationIdentityController({
+    workspaceCwd,
+    threadId: detailContext?.threadId,
+    identity: conversationIdentity,
+  });
+  const actionFeedback = useNormalConversationActionFeedback(conversationIdentityController.identity);
   const composerInputRef = useRef<TokenizedComposerInputHandle | null>(null);
-  const pendingAttachmentsRef = useRef<readonly PendingAttachmentItem<ConversationAttachment>[]>([]);
+  const sendBusy = sending || localSending;
+  const composerBusy = sendBusy || Boolean(activeRun);
+  const attachmentController = useNormalConversationAttachmentController({
+    composerBusy,
+    identity: conversationIdentity,
+    workspaceCwd,
+    captureIdentity: conversationIdentityController.capture,
+    isCurrentIdentity: conversationIdentityController.isCurrent,
+    report: (message) => actionFeedback.report("attachment", message),
+    clear: () => actionFeedback.clear("attachment"),
+    translate: t,
+  });
+  const { pendingAttachments, readyAttachmentIds } = attachmentController;
   const conversationDockController = useWorkspaceRightDockController({
     initialOpen: false,
     intentOpen: conversationDockOpen,
-    resizeObserverKey: detailContext?.threadId ?? workspaceCwd.trim(),
+    resizeObserverKey: conversationIdentity,
   });
   const conversationBottomPanelResize = useWorkspaceBottomPanelResizeController({
     containerRef: conversationDockController.containerRef,
-    resizeObserverKey: detailContext?.threadId ?? workspaceCwd.trim(),
+    resizeObserverKey: conversationIdentity,
   });
   const conversationTerminalPresence = useConversationPanelPresence(conversationTerminalOpen, false);
   const workspaceTerminalSession = useWorkspaceTerminalSession(workspaceCwd.trim());
@@ -148,17 +159,10 @@ export function ConversationHome({
     await onRefreshConversation?.();
   }, [onRefreshConversation, refreshProposedPlanHistory]);
   const normalConversationHeader = useNormalConversationHeaderController({
-    identityKey: detailContext?.threadId ?? "",
+    identityKey: conversationIdentity,
     onRefresh: canRefreshConversation ? refreshConversationSurface : undefined,
     onSearchChange: setMessageSearchQuery,
   });
-  const readyAttachmentIds = useMemo(
-    () => pendingAttachments
-      .filter((item) => item.state === "ready" && item.attachment)
-      .map((item) => item.attachment?.id)
-      .filter((id): id is string => Boolean(id)),
-    [pendingAttachments],
-  );
   const slashCommandPickerOptions = useMemo(
     () => filterSlashCommandPickerOptions(slashCommands, slashPicker),
     [slashCommands, slashPicker],
@@ -276,10 +280,7 @@ export function ConversationHome({
     if (!threadId || editSaving) {
       return;
     }
-    const operationIdentity = conversationIdentity;
-    const shouldCommit = createNormalConversationCommitGuard({
-      operationIdentity, isMounted: () => mountedRef.current, readCurrentIdentity: () => conversationIdentityRef.current,
-    });
+    const shouldCommit = conversationIdentityController.createCommitGuard();
     setEditSaving(true);
     actionFeedback.clear("edit");
     actionFeedback.clear("replacement");
@@ -324,10 +325,7 @@ export function ConversationHome({
     if (!pending || !threadId || replacementRetryingMessageId) {
       return;
     }
-    const operationIdentity = conversationIdentity;
-    const shouldCommit = createNormalConversationCommitGuard({
-      operationIdentity, isMounted: () => mountedRef.current, readCurrentIdentity: () => conversationIdentityRef.current,
-    });
+    const shouldCommit = conversationIdentityController.createCommitGuard();
     setReplacementRetryingMessageId(message.id);
     actionFeedback.clear("replacement");
     try {
@@ -361,31 +359,39 @@ export function ConversationHome({
     [draft, project.projectPath, slashCommands],
   );
 
-  const sendBusy = sending || localSending;
-  const composerBusy = sendBusy || Boolean(activeRun);
-
   useEffect(() => {
     setDraft(initialDraft);
-  }, [initialDraft]);
+  }, [conversationIdentity, initialDraft]);
 
   useEffect(() => {
     setMessages(initialMessages);
     if (initialMessages.length === 0) {
       setConversationDockOpen(false);
     }
-  }, [initialMessages]);
+  }, [conversationIdentity, initialMessages]);
+
+  useEffect(() => {
+    setLocalSending(false);
+    setMessageSearchQuery("");
+    setConversationSummaryOpen(false);
+    setConversationTerminalOpen(false);
+    setEditingMessageId(undefined);
+    setReplacementRetryingMessageId(undefined);
+    setSlashPicker(undefined);
+    setSlashActiveIndex(0);
+  }, [conversationIdentity]);
 
   useEffect(() => {
     setProject({
       projectPath: initialProjectPath.trim() || undefined,
       projectLabel: initialProjectLabel.trim() || undefined,
     });
-  }, [initialProjectLabel, initialProjectPath]);
+  }, [conversationIdentity, initialProjectLabel, initialProjectPath]);
 
   useEffect(() => {
     setSelectedProviderPresetId(initialProviderPresetId.trim());
     setSelectedThinkingLevel(initialThinkingLevel);
-  }, [initialProviderPresetId, initialThinkingLevel]);
+  }, [conversationIdentity, initialProviderPresetId, initialThinkingLevel]);
 
   useEffect(() => {
     setSelectedPermissionPreset(permissionPresetForWorkspaceAccessMode(resolveWorkspaceAccessMode(
@@ -393,7 +399,7 @@ export function ConversationHome({
       initialPermissionMode,
       initialPermissionPreset,
     )));
-  }, [initialPermissionMode, initialPermissionPreset, initialWorkspaceAccessMode]);
+  }, [conversationIdentity, initialPermissionMode, initialPermissionPreset, initialWorkspaceAccessMode]);
 
   useEffect(() => {
     if (!thinkingEnabled) {
@@ -412,18 +418,6 @@ export function ConversationHome({
     setSlashPicker(undefined);
     setSlashActiveIndex(0);
   }, [composerBusy]);
-
-  useEffect(() => {
-    pendingAttachmentsRef.current = pendingAttachments;
-  }, [pendingAttachments]);
-
-  useEffect(() => {
-    mountedRef.current = true;
-    return () => {
-      mountedRef.current = false;
-      revokePendingAttachmentPreviews(pendingAttachmentsRef.current);
-    };
-  }, []);
 
   async function submitDraft(): Promise<void> {
     const trimmedDraft = draft.trim();
@@ -465,17 +459,15 @@ export function ConversationHome({
       createdAt: now,
       updatedAt: now,
     };
-    const pendingAttachmentsSnapshot = pendingAttachments;
+    const operationIdentity = conversationIdentityController.capture();
+    const pendingAttachmentsSnapshot = attachmentController.consumeForSend();
     const readyAttachmentIdsSnapshot = readyAttachmentIds;
-    const shouldCommit = createNormalConversationCommitGuard({
-      operationIdentity: conversationIdentity, isMounted: () => mountedRef.current, readCurrentIdentity: () => conversationIdentityRef.current,
-    });
+    const shouldCommit = conversationIdentityController.createCommitGuard();
     setMessages((current) => [
       ...current,
       pendingUserMessage,
     ]);
     setDraft("");
-    setPendingAttachments([]);
     setSlashPicker(undefined);
     setSlashActiveIndex(0);
     actionFeedback.clear("validation");
@@ -520,17 +512,17 @@ export function ConversationHome({
         },
         shouldCommit,
       });
-      revokePendingAttachmentPreviews(pendingAttachmentsSnapshot);
+      attachmentController.releasePreviews(pendingAttachmentsSnapshot);
     } catch (error) {
       if (shouldCommit()) {
         setDraft(trimmedDraft);
-        setPendingAttachments(pendingAttachmentsSnapshot);
+        attachmentController.restoreForIdentity(pendingAttachmentsSnapshot, operationIdentity);
         actionFeedback.report("stream", error instanceof Error ? error.message : String(error));
       } else {
-        revokePendingAttachmentPreviews(pendingAttachmentsSnapshot);
+        attachmentController.releasePreviews(pendingAttachmentsSnapshot);
       }
     } finally {
-      setLocalSending(false);
+      if (shouldCommit()) setLocalSending(false);
     }
   }
 
@@ -603,57 +595,6 @@ export function ConversationHome({
     actionFeedback.clear("validation");
   }
 
-  async function attachConversationFiles(files: FileList | readonly File[]): Promise<void> {
-    const fileList = Array.from(files);
-    if (fileList.length === 0 || composerBusy) {
-      return;
-    }
-    const cwd = workspaceCwd.trim();
-    if (!cwd) {
-      actionFeedback.report("attachment", t("Local workspace is not ready."));
-      return;
-    }
-    if (pendingAttachments.length + fileList.length > 10) {
-      actionFeedback.report("attachment", t("A conversation message can attach at most 10 files."));
-      return;
-    }
-    actionFeedback.clear("attachment");
-    await Promise.all(fileList.map(async (file) => {
-      const localId = createLocalComposerAssetId("conversation-attachment");
-      const previewUrl = createAttachmentPreviewUrl(file);
-      setPendingAttachments((current) => [
-        ...current,
-        {
-          localId,
-          fileName: file.name,
-          sizeBytes: file.size,
-          state: "uploading",
-          previewUrl,
-        },
-      ]);
-      try {
-        const response = await uploadConversationAttachment(cwd, file, detailContext?.threadId);
-        setPendingAttachments((current) => current.map((item) => item.localId === localId
-          ? { ...item, state: "ready", attachment: response.attachment, deleteOnRemove: true }
-          : item));
-      } catch (error) {
-        setPendingAttachments((current) => current.map((item) => item.localId === localId
-          ? { ...item, state: "failed", error: error instanceof Error ? error.message : String(error) }
-          : item));
-      }
-    }));
-  }
-
-  function removePendingAttachment(localId: string): void {
-    const item = pendingAttachments.find((candidate) => candidate.localId === localId);
-    setPendingAttachments((current) => current.filter((candidate) => candidate.localId !== localId));
-    revokePendingAttachmentPreviews(item ? [item] : []);
-    const cwd = workspaceCwd.trim();
-    if (cwd && item?.attachment && item.deleteOnRemove) {
-      void deleteAttachment(cwd, item.attachment.id).catch(() => undefined);
-    }
-  }
-
   function selectModel(option: ConversationHomeModelOption): void {
     if (composerBusy) {
       return;
@@ -700,8 +641,8 @@ export function ConversationHome({
       onComposerPaste={handleComposerPaste}
       onComposerSelect={updateSlashPicker}
       onCommitSlashCommand={commitSlashCommand}
-      onAttachFiles={attachConversationFiles}
-      onRemoveAttachment={removePendingAttachment}
+      onAttachFiles={attachmentController.attachFiles}
+      onRemoveAttachment={attachmentController.removeAttachment}
       onPermissionPresetChange={setSelectedPermissionPreset}
       onModelChange={selectModel}
       onThinkingLevelChange={selectThinkingLevel}

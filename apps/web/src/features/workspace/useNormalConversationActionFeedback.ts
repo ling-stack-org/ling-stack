@@ -14,20 +14,6 @@ interface NormalConversationActionFeedbackEntry {
   readonly sequence: number;
 }
 
-export function createNormalConversationCommitGuard(input: {
-  readonly operationIdentity: string;
-  readonly isMounted: () => boolean;
-  readonly readCurrentIdentity: () => string;
-}): (threadId?: string) => boolean {
-  let boundThreadId = input.operationIdentity === "draft" ? "" : input.operationIdentity;
-  return (threadId?: string): boolean => {
-    if (!input.isMounted()) return false;
-    if (threadId && input.operationIdentity === "draft" && !boundThreadId) boundThreadId = threadId;
-    const currentIdentity = input.readCurrentIdentity();
-    return currentIdentity === input.operationIdentity || Boolean(boundThreadId && currentIdentity === boundThreadId);
-  };
-}
-
 export function useNormalConversationActionFeedback(identity: string): {
   readonly message: string;
   readonly messageFor: (scope: NormalConversationActionScope) => string;

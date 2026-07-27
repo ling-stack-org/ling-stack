@@ -409,6 +409,7 @@ export function AppShell(): JSX.Element {
     conversationsLoading,
     selectedConversationThreadId,
     selectedConversationDetail,
+    conversationIdentity,
     conversationStreamBusy,
     conversationSidebarError,
     conversationSurfaceError,
@@ -2486,6 +2487,7 @@ export function AppShell(): JSX.Element {
                     executionActions: selectedConversationDetail.executionActions,
                     terminalReports: selectedConversationDetail.terminalReports,
                   } : undefined}
+                  conversationIdentity={conversationIdentity}
                   defaultProviderLabel={defaultConversationProviderLabel}
                   defaultProviderPresetId={defaultConversationProviderPresetId}
                   modelOptions={conversationModelOptions}
