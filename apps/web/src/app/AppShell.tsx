@@ -85,10 +85,6 @@ import { readDataString } from "../lib/data.js";
 import { getStartupStatus, refreshStartupStatus } from "../api/startup.js";
 import { getUserProfile } from "../api/profile.js";
 import {
-  getChannelCouncilPolicy,
-  updateChannelCouncilPolicy,
-} from "../api/ai-councils.js";
-import {
   clearSavedWorkspaceCwd,
   getViteDefaultWorkspaceCwd,
   readInitialWorkspaceCwd,
@@ -247,7 +243,6 @@ export function AppShell(): JSX.Element {
   const [threadPageTargetId, setThreadPageTargetId] = useState("");
   const [activeTaskRunAction, setActiveTaskRunAction] = useState<TaskRunActionState | undefined>();
   const [inspectorCollapsed, setInspectorCollapsed] = useState(false);
-  const [errorMessage, setErrorMessage] = useState("");
   const channelFeedback = useChannelFeedbackController();
   const [skillLibraryRefreshToken, setSkillLibraryRefreshToken] = useState(0);
   const [teammateCreateOpen, setTeammateCreateOpen] = useState(false);
@@ -929,7 +924,6 @@ export function AppShell(): JSX.Element {
   function openChannelCreatePanel(): void {
     const workspaceCwd = form.cwd.trim();
     const selectedChannel = channels.find((channel) => channel.id === selectedChannelId);
-    setErrorMessage("");
     setChannelForm((current) => ({
       ...defaultChannelCreateForm,
       ...current,
@@ -1911,9 +1905,7 @@ export function AppShell(): JSX.Element {
           refreshUsedMemoryAudit(defaultWorkspaceCwd),
           refreshWorkItems(defaultWorkspaceCwd),
           loadStartupStatus(defaultWorkspaceCwd),
-        ]).catch((error: unknown) => {
-          setErrorMessage(error instanceof Error ? error.message : String(error));
-        });
+        ]).catch(() => undefined);
       }
     } catch {
       setDaemonHealthy(false);
@@ -1954,7 +1946,6 @@ export function AppShell(): JSX.Element {
       return;
     }
 
-    setErrorMessage("");
     try {
       await Promise.all([
         refreshChannels(),
@@ -1973,35 +1964,8 @@ export function AppShell(): JSX.Element {
         refreshUsedMemoryAudit(),
       ]);
       await refreshChannelActivityTransitions(form.cwd.trim(), channelId, channelRunsForArtifacts);
-    } catch (caught) {
-      setErrorMessage(caught instanceof Error ? caught.message : String(caught));
-    }
-  }
-
-  async function importAiCouncilToChannel(councilId: string, channelId: string): Promise<void> {
-    const workspaceCwd = form.cwd.trim();
-    if (!workspaceCwd || !channelId) {
-      return;
-    }
-    try {
-      setErrorMessage("");
-      const policy = channelId === selectedChannelId && channelCouncilPolicy
-        ? channelCouncilPolicy
-        : (await getChannelCouncilPolicy(workspaceCwd, channelId)).policy;
-      const attachedCouncilIds = policy.attachedCouncilIds.includes(councilId)
-        ? policy.attachedCouncilIds
-        : [...policy.attachedCouncilIds, councilId];
-      await updateChannelCouncilPolicy(workspaceCwd, channelId, {
-        attachedCouncilIds,
-        preferredCouncilId: policy.preferredCouncilId ?? councilId,
-      });
-      if (channelId === selectedChannelId) {
-        await refreshSelectedChannelCouncil(channelId);
-      }
-    } catch (caught) {
-      const message = caught instanceof Error ? caught.message : String(caught);
-      setErrorMessage(message);
-      throw caught;
+    } catch {
+      // Each child refresh keeps its failure with its own channel or domain owner.
     }
   }
 
@@ -3056,7 +3020,6 @@ export function AppShell(): JSX.Element {
               events={events}
               artifacts={artifacts}
               assistantText={assistantText}
-              errorMessage={errorMessage}
               isRunning={isRunning}
               pendingApprovals={activePendingApprovals}
               approvalsLoading={approvalsLoading}

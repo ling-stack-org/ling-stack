@@ -284,7 +284,7 @@ export function usePluginsDomain(input: {
         input.notify({ ...pending, tone: "error", message: outcome.errorMessage });
         return undefined;
       }
-      clearPluginActionErrors({ pluginId, action, owner: request.owner });
+      clearPluginActionErrors({ pluginId, action });
       if (outcome.successMessage) {
         input.notify({
           ...pending,

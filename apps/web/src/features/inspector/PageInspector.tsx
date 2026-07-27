@@ -40,7 +40,6 @@ export function PageInspector({
   events,
   artifacts,
   assistantText,
-  errorMessage,
   isRunning,
   pendingApprovals,
   approvalsLoading,
@@ -79,7 +78,6 @@ export function PageInspector({
   readonly events: readonly RunEventEnvelope[];
   readonly artifacts: readonly RunArtifact[];
   readonly assistantText: string;
-  readonly errorMessage: string;
   readonly isRunning: boolean;
   readonly pendingApprovals: readonly ApprovalRequest[];
   readonly approvalsLoading: boolean;
@@ -213,7 +211,7 @@ export function PageInspector({
       <RunTimeline
         events={events}
         assistantText={assistantText}
-        errorMessage={errorMessage}
+        errorMessage={selectedRun?.errorMessage ?? ""}
         isRunning={isRunning}
         pendingApprovals={pendingApprovals}
         approvalsLoading={approvalsLoading}

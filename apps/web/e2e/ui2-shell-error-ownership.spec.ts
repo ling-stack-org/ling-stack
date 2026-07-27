@@ -25,6 +25,7 @@ test("T13-P.9EF.E releases five shell owners from the generic AppShell error con
   ]);
 
   for (const source of releasedOwners) expect(source).not.toContain("setErrorMessage");
+  expect(releasedOwners.join("\n")).not.toContain("latestMutationRef");
   for (const hook of [
     "useAppNavigationController",
     "useControlPlaneInvalidation",
@@ -55,10 +56,10 @@ test("T13-P.9EF.E releases five shell owners from the generic AppShell error con
   ]) {
     expect(guard).toContain(`  "${path}",`);
   }
-  expect(guard).toContain('["apps/web/src/app/AppShell.tsx", 10]');
-
-  // Conversation, Teammate, and Plugin still own this compatibility state until final integration.
-  expect(appShell).toContain('const [errorMessage, setErrorMessage] = useState("");');
+  expect(appShell).not.toContain("setErrorMessage");
+  expect(guard).toContain("const genericErrorWriterBudgets = new Map([\n]);");
+  expect(guard).toContain("const genericErrorCompatibilityBudgets = new Map([\n]);");
+  expect(guard).toContain("const genericErrorConsumerBudgets = new Map([\n]);");
   expect(appShell).toContain('const [startupStatusError, setStartupStatusError] = useState("");');
   expect(appShell).toContain("const [daemonHealthy, setDaemonHealthy] = useState<boolean | undefined>();");
 });

@@ -34,6 +34,7 @@ test("T13-P.9EF.D releases Plugin generic errors and freezes explicit operation 
   expect(domain).toContain("pluginId, action, ...request");
   expect(domain).toContain("latestActionRequestsRef.current.get(pluginActionKey(action)) === action.requestId");
   expect(domain).toContain('`${action.pluginId}:${action.action}:${action.owner}`');
+  expect(domain).toContain("clearPluginActionErrors({ pluginId, action });");
   expect(controller).not.toContain("pluginSnapshotFingerprint");
   expect(controller).toContain("findLatestOwnedAction");
   expect(controller).toContain('requested === "row" && candidate === "detected-connect"');

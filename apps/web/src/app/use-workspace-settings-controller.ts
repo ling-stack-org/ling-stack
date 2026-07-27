@@ -57,7 +57,6 @@ export function useWorkspaceSettingsController(input: {
   const errorOwner = useFocusedDomainErrorOwner<"workspace-settings", WorkspaceSettingsErrorAction>(
     workspaceCwd || "workspace:unavailable",
   );
-  const latestMutationRef = useRef<FocusedErrorRequest<"workspace-settings", WorkspaceSettingsErrorAction>>();
 
   useEffect(() => {
     currentLocaleRef.current = input.locale;
@@ -90,7 +89,6 @@ export function useWorkspaceSettingsController(input: {
     }
     const action = workspaceSettingsPatchAction(patch);
     const request = errorOwner.begin("workspace-settings", workspaceCwd, action);
-    latestMutationRef.current = request;
     if (options?.errorOwner !== "caller") errorOwner.clear(request);
     try {
       const response = await updateWorkspaceSettings(workspaceCwd, patch);
@@ -131,9 +129,7 @@ export function useWorkspaceSettingsController(input: {
   function isCurrentMutation(
     request: FocusedErrorRequest<"workspace-settings", WorkspaceSettingsErrorAction>,
   ): boolean {
-    return errorOwner.isCurrent(request)
-      && latestMutationRef.current?.requestId === request.requestId
-      && latestMutationRef.current.identity === request.identity;
+    return errorOwner.isCurrent(request);
   }
 
   useEffect(() => {
@@ -292,7 +288,6 @@ export function useWorkspaceSettingsController(input: {
     }
     const timeout = globalThis.setTimeout(() => {
       const request = errorOwner.begin("workspace-settings", workspaceCwd, "sync-interface");
-      latestMutationRef.current = request;
       errorOwner.clear(request);
       void updateWorkspaceSettings(workspaceCwd, { theme: input.themePreference, locale: input.locale })
         .then((response) => {

@@ -20,17 +20,16 @@ const feedbackTimerBudgets = new Map([
 ]);
 
 const genericErrorWriterBudgets = new Map([
-  ["apps/web/src/app/AppShell.tsx", 10],
 ]);
 
 const genericErrorCompatibilityBudgets = new Map([
 ]);
 
 const genericErrorConsumerBudgets = new Map([
-  ["apps/web/src/app/AppShell.tsx", 1],
 ]);
 
 const releasedGenericErrorContracts = [
+  "apps/web/src/app/AppShell.tsx",
   "apps/web/src/domains/automations/use-automations-domain.ts",
   "apps/web/src/domains/approvals/use-approvals-domain.ts",
   "apps/web/src/domains/mcp/use-mcp-domain.ts",
