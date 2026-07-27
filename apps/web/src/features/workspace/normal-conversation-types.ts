@@ -75,6 +75,7 @@ export interface ConversationHomeSendInput {
   readonly replaceMessages: (messages: readonly ConversationHomeMessage[]) => void;
   readonly upsertMessage: (message: ConversationHomeMessage) => void;
   readonly failMessage: (message: string) => void;
+  readonly shouldCommit: (threadId?: string) => boolean;
 }
 
 export interface ConversationHomeProps {
@@ -95,6 +96,7 @@ export interface ConversationHomeProps {
   readonly modelOptions: readonly ConversationHomeModelOption[];
   readonly slashCommands: readonly ComposerSlashCommandOption[];
   readonly workspaceCwd: string;
+  readonly conversationErrorMessage?: string;
   readonly sending?: boolean;
   readonly activeRun?: RunSession;
   readonly stopping?: boolean;

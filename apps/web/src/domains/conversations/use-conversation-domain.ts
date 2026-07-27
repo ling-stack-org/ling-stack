@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { archiveLingThread, getConversation, listLingThreads, streamConversation } from "../../api.js";
 import { readSseResponse } from "../../sse.js";
 import type {
@@ -19,6 +19,11 @@ import type {
   SessionPermissionMode,
   WorkspaceAccessMode,
 } from "../../types.js";
+import {
+  selectConversationError,
+  useConversationErrorOwner,
+  type ConversationErrorOperation,
+} from "./conversation-error-owner.js";
 
 export interface ConversationSendInput {
   readonly message: string;
@@ -41,12 +46,12 @@ export interface ConversationStreamHandlers {
   readonly onDone?: (event: ConversationStreamDoneEvent) => void;
   readonly onBlocked?: (event: ConversationStreamBlockedEvent) => void;
   readonly onError?: (message: string, event?: ConversationStreamBlockedEvent) => void;
+  readonly shouldCommit?: (threadId?: string) => boolean;
 }
 
 export function useConversationDomain(input: {
   readonly cwd: string;
   readonly translate: (key: string, values?: Record<string, string | number>) => string;
-  readonly setErrorMessage: (message: string) => void;
 }): {
   readonly state: {
     readonly conversationThreads: readonly LingThread[];
@@ -54,7 +59,9 @@ export function useConversationDomain(input: {
     readonly selectedConversationThreadId: string;
     readonly selectedConversationDetail?: ConversationDetailResponse;
     readonly conversationStreamBusy: boolean;
-    readonly conversationArchiveError: string;
+    readonly conversationSidebarError: string;
+    readonly conversationSurfaceError: string;
+    readonly conversationComposerError: string;
   };
   readonly actions: {
     readonly refreshConversationThreads: (cwd?: string) => Promise<void>;
@@ -75,7 +82,28 @@ export function useConversationDomain(input: {
   const [selectedConversationThreadId, setSelectedConversationThreadId] = useState("");
   const [selectedConversationDetail, setSelectedConversationDetail] = useState<ConversationDetailResponse | undefined>();
   const [conversationStreamBusy, setConversationStreamBusy] = useState(false);
-  const [conversationArchiveError, setConversationArchiveError] = useState("");
+  const [conversationSurfaceIdentity, setConversationSurfaceIdentity] = useState("draft");
+  const selectedConversationThreadIdRef = useRef("");
+  const currentCwdRef = useRef(input.cwd.trim());
+  const selectionSequenceRef = useRef(0);
+  const loadingOperationsRef = useRef(0);
+  currentCwdRef.current = input.cwd.trim();
+  const conversationErrors = useConversationErrorOwner();
+
+  const beginLoading = useCallback((): void => {
+    loadingOperationsRef.current += 1;
+    setConversationsLoading(true);
+  }, []);
+
+  const finishLoading = useCallback((): void => {
+    loadingOperationsRef.current = Math.max(0, loadingOperationsRef.current - 1);
+    if (loadingOperationsRef.current === 0) setConversationsLoading(false);
+  }, []);
+
+  const commitSelectedConversationThreadId = useCallback((threadId: string): void => {
+    selectedConversationThreadIdRef.current = threadId;
+    setSelectedConversationThreadId(threadId);
+  }, []);
 
   const refreshConversationThreads = useCallback(async (cwd = input.cwd): Promise<void> => {
     const workspaceCwd = cwd.trim();
@@ -83,21 +111,32 @@ export function useConversationDomain(input: {
       setConversationThreads([]);
       return;
     }
-    setConversationsLoading(true);
+    const operation = conversationErrors.begin({
+      workspaceCwd,
+      surface: "sidebar",
+      identity: "list",
+      scope: "load",
+    });
+    conversationErrors.clear(operation);
+    beginLoading();
     try {
       const response = await listLingThreads(workspaceCwd, { kind: "conversation", archived: "exclude", limit: 20 });
-      setConversationThreads(response.threads);
+      if (conversationErrors.isCurrent(operation) && currentCwdRef.current === workspaceCwd) {
+        setConversationThreads(response.threads);
+      }
     } catch (error) {
-      input.setErrorMessage(error instanceof Error ? error.message : String(error));
+      conversationErrors.report(operation, error instanceof Error ? error.message : String(error));
     } finally {
-      setConversationsLoading(false);
+      finishLoading();
     }
-  }, [input]);
+  }, [beginLoading, conversationErrors, finishLoading, input.cwd]);
 
   const openNewConversation = useCallback((): void => {
-    setSelectedConversationThreadId("");
+    selectionSequenceRef.current += 1;
+    commitSelectedConversationThreadId("");
     setSelectedConversationDetail(undefined);
-  }, []);
+    setConversationSurfaceIdentity("draft");
+  }, [commitSelectedConversationThreadId]);
 
   const selectConversationThread = useCallback(async (
     threadId: string,
@@ -114,85 +153,134 @@ export function useConversationDomain(input: {
     if (!shouldCommit()) {
       return false;
     }
-    setConversationsLoading(true);
+    const selectionSequence = ++selectionSequenceRef.current;
+    setConversationSurfaceIdentity(threadId);
+    const operation = conversationErrors.begin({
+      workspaceCwd,
+      surface: "thread",
+      identity: threadId,
+      scope: "select",
+    });
+    conversationErrors.clear(operation);
+    beginLoading();
     try {
       const detail = await getConversation(workspaceCwd, threadId);
-      if (!shouldCommit()) {
+      conversationErrors.clear(operation);
+      if (
+        selectionSequence !== selectionSequenceRef.current
+        || currentCwdRef.current !== workspaceCwd
+        || !shouldCommit()
+      ) {
         return false;
       }
-      setSelectedConversationThreadId(threadId);
+      commitSelectedConversationThreadId(threadId);
       setSelectedConversationDetail(detail);
-      input.setErrorMessage("");
+      setConversationSurfaceIdentity(threadId);
       return true;
     } catch (error) {
-      if (!shouldCommit()) {
+      conversationErrors.report(operation, error instanceof Error ? error.message : String(error));
+      if (
+        selectionSequence !== selectionSequenceRef.current
+        || currentCwdRef.current !== workspaceCwd
+        || !shouldCommit()
+      ) {
         return false;
       }
-      input.setErrorMessage(error instanceof Error ? error.message : String(error));
-      setSelectedConversationDetail(undefined);
       return false;
     } finally {
-      if (shouldCommit()) {
-        setConversationsLoading(false);
-      }
+      finishLoading();
     }
-  }, [input, openNewConversation]);
+  }, [beginLoading, commitSelectedConversationThreadId, conversationErrors, finishLoading, input.cwd, openNewConversation]);
 
   const refreshSelectedConversation = useCallback(async (cwd = input.cwd): Promise<void> => {
     const workspaceCwd = cwd.trim();
-    if (!workspaceCwd || !selectedConversationThreadId) {
+    const requestedThreadId = selectedConversationThreadIdRef.current;
+    if (!workspaceCwd || !requestedThreadId) {
       return;
     }
-    setConversationsLoading(true);
+    const operation = conversationErrors.begin({
+      workspaceCwd,
+      surface: "thread",
+      identity: requestedThreadId,
+      scope: "refresh",
+    });
+    conversationErrors.clear(operation);
+    beginLoading();
     try {
-      const detail = await getConversation(workspaceCwd, selectedConversationThreadId);
-      setSelectedConversationDetail(detail);
-      input.setErrorMessage("");
+      const detail = await getConversation(workspaceCwd, requestedThreadId);
+      conversationErrors.clear(operation);
+      if (
+        conversationErrors.isCurrent(operation)
+        && currentCwdRef.current === workspaceCwd
+        && selectedConversationThreadIdRef.current === requestedThreadId
+      ) {
+        setSelectedConversationDetail(detail);
+      }
     } catch (error) {
-      input.setErrorMessage(error instanceof Error ? error.message : String(error));
+      conversationErrors.report(operation, error instanceof Error ? error.message : String(error));
     } finally {
-      setConversationsLoading(false);
+      finishLoading();
     }
-  }, [input, selectedConversationThreadId]);
+  }, [beginLoading, conversationErrors, finishLoading, input.cwd]);
 
   const archiveConversationThread = useCallback(async (threadId: string, cwd = input.cwd): Promise<void> => {
     const workspaceCwd = cwd.trim();
     if (!workspaceCwd || !threadId) {
       return;
     }
-    setConversationsLoading(true);
+    const operation = conversationErrors.begin({
+      workspaceCwd,
+      surface: "sidebar",
+      identity: threadId,
+      scope: "archive",
+    });
+    conversationErrors.clear(operation);
+    beginLoading();
     try {
-      input.setErrorMessage("");
-      setConversationArchiveError("");
       await archiveLingThread(workspaceCwd, threadId, {
         reason: "sidebar_conversation_archived",
         idempotencyKey: `sidebar-conversation-archive:${threadId}`,
       });
-      setConversationThreads((current) => current.filter((thread) => thread.id !== threadId));
-      if (selectedConversationThreadId === threadId) {
+      conversationErrors.clear(operation);
+      if (currentCwdRef.current === workspaceCwd) {
+        setConversationThreads((current) => current.filter((thread) => thread.id !== threadId));
+      }
+      if (selectedConversationThreadIdRef.current === threadId) {
         openNewConversation();
       }
       await refreshConversationThreads(workspaceCwd);
     } catch (error) {
       const message = formatConversationArchiveError(error, input.translate);
-      setConversationArchiveError(message);
-      input.setErrorMessage(message);
+      conversationErrors.report(operation, message);
     } finally {
-      setConversationsLoading(false);
+      finishLoading();
     }
-  }, [input, openNewConversation, refreshConversationThreads, selectedConversationThreadId]);
+  }, [beginLoading, conversationErrors, finishLoading, input.cwd, input.translate, openNewConversation, refreshConversationThreads]);
 
   const archiveAllConversationThreads = useCallback(async (cwd = input.cwd): Promise<void> => {
     const workspaceCwd = cwd.trim();
     const visibleThreads = conversationThreads.filter((thread) => !thread.archivedAt && thread.status !== "archived");
     if (!workspaceCwd || visibleThreads.length === 0) {
-      setConversationArchiveError(input.translate("No conversations to archive"));
+      if (workspaceCwd) {
+        const operation = conversationErrors.begin({
+          workspaceCwd,
+          surface: "sidebar",
+          identity: "all",
+          scope: "archive",
+        });
+        conversationErrors.report(operation, input.translate("No conversations to archive"));
+      }
       return;
     }
-    setConversationsLoading(true);
+    const operation = conversationErrors.begin({
+      workspaceCwd,
+      surface: "sidebar",
+      identity: "all",
+      scope: "archive",
+    });
+    conversationErrors.clear(operation);
+    beginLoading();
     try {
-      input.setErrorMessage("");
-      setConversationArchiveError("");
       const results = await Promise.allSettled(
         visibleThreads.map((thread) => archiveLingThread(workspaceCwd, thread.id, {
           reason: "sidebar_all_conversations_archived",
@@ -225,35 +313,60 @@ export function useConversationDomain(input: {
           : input.translate("Archive conversation failed: {message}", {
             message: failures.map((failure) => failure instanceof Error ? failure.message : String(failure)).join("; "),
           });
-        setConversationArchiveError(message);
-        input.setErrorMessage(message);
+        conversationErrors.report(operation, message);
+      } else {
+        conversationErrors.clear(operation);
       }
     } catch (error) {
       const message = formatConversationArchiveError(error, input.translate);
-      setConversationArchiveError(message);
-      input.setErrorMessage(message);
+      conversationErrors.report(operation, message);
     } finally {
-      setConversationsLoading(false);
+      finishLoading();
     }
-  }, [conversationThreads, input, openNewConversation, refreshConversationThreads, selectedConversationThreadId]);
+  }, [beginLoading, conversationErrors, conversationThreads, finishLoading, input.cwd, input.translate, openNewConversation, refreshConversationThreads, selectedConversationThreadId]);
 
   const sendConversationMessage = useCallback(async (
     message: ConversationSendInput,
     handlers: ConversationStreamHandlers = {},
   ): Promise<void> => {
     const workspaceCwd = input.cwd.trim();
+    const originThreadId = selectedConversationThreadIdRef.current;
+    let activeThreadId = originThreadId;
+    let streamOperation: ConversationErrorOperation = conversationErrors.begin({
+      workspaceCwd,
+      surface: "composer",
+      identity: originThreadId || "draft",
+      scope: "stream",
+    });
+    conversationErrors.clear(streamOperation);
+    const canCommitToSurface = (threadId = activeThreadId): boolean => {
+      if (currentCwdRef.current !== workspaceCwd) return false;
+      if (handlers.shouldCommit) return handlers.shouldCommit(threadId || undefined);
+      const selectedThreadId = selectedConversationThreadIdRef.current;
+      return selectedThreadId === originThreadId || Boolean(threadId && selectedThreadId === threadId);
+    };
+    const retargetStreamOperation = (threadId: string): void => {
+      if (!threadId || streamOperation.identity === threadId) return;
+      conversationErrors.clear(streamOperation);
+      streamOperation = conversationErrors.begin({
+        workspaceCwd,
+        surface: "composer",
+        identity: threadId,
+        scope: "stream",
+      });
+      conversationErrors.clear(streamOperation);
+    };
     if (!workspaceCwd) {
       const errorMessage = "Local workspace is not ready.";
-      input.setErrorMessage(errorMessage);
-      handlers.onError?.(errorMessage);
+      conversationErrors.report(streamOperation, errorMessage);
+      if (canCommitToSurface()) handlers.onError?.(errorMessage);
       return;
     }
 
     setConversationStreamBusy(true);
     try {
-      input.setErrorMessage("");
       const response = await streamConversation(workspaceCwd, {
-        threadId: selectedConversationThreadId || undefined,
+        threadId: originThreadId || undefined,
         message: message.message,
         attachmentIds: message.attachmentIds,
         projectPath: message.projectPath,
@@ -270,7 +383,6 @@ export function useConversationDomain(input: {
       if (!response.ok || !response.body) {
         throw new Error(await readResponseError(response));
       }
-      let activeThreadId = selectedConversationThreadId;
       let evidenceRefreshTimer: ReturnType<typeof setTimeout> | undefined;
       let evidenceRefreshPromise: Promise<void> | undefined;
       let evidenceRefreshRequested = false;
@@ -286,7 +398,7 @@ export function useConversationDomain(input: {
         evidenceRefreshPromise = (async () => {
           try {
             const detail = await getConversation(workspaceCwd, requestedThreadId);
-            if (requestedThreadId === activeThreadId) {
+            if (requestedThreadId === activeThreadId && canCommitToSurface(requestedThreadId)) {
               setSelectedConversationDetail((current) => mergeConversationDetailSnapshot(current, detail));
             }
           } catch {
@@ -316,53 +428,75 @@ export function useConversationDomain(input: {
         if (parsed.event === "ready") {
           const event = JSON.parse(parsed.data) as ConversationStreamReadyEvent;
           activeThreadId = event.thread.id;
-          setSelectedConversationThreadId(event.thread.id);
-          setSelectedConversationDetail((current) => mergeConversationMessages(current, workspaceCwd, event.thread, [
-            event.userMessage,
-            event.assistantMessage,
-          ]));
-          scheduleEvidenceRefresh();
-          handlers.onReady?.(event);
+          retargetStreamOperation(activeThreadId);
+          if (canCommitToSurface(activeThreadId)) {
+            commitSelectedConversationThreadId(activeThreadId);
+            setConversationSurfaceIdentity(activeThreadId);
+            setSelectedConversationDetail((current) => mergeConversationMessages(current, workspaceCwd, event.thread, [
+              event.userMessage,
+              event.assistantMessage,
+            ]));
+            scheduleEvidenceRefresh();
+            handlers.onReady?.(event);
+          }
           return;
         }
         if (parsed.event === "run_event") {
           const event = JSON.parse(parsed.data) as ConversationStreamRunEvent;
-          if (event.assistantMessage) {
+          if (event.assistantMessage && canCommitToSurface(event.threadId)) {
             setSelectedConversationDetail((current) => mergeConversationMessages(current, workspaceCwd, undefined, [event.assistantMessage as ConversationTranscriptMessage]));
           }
-          if (event.event.type === "tool_start" || event.event.type === "tool_update" || event.event.type === "tool_end") {
+          if (
+            canCommitToSurface(event.threadId)
+            && (event.event.type === "tool_start" || event.event.type === "tool_update" || event.event.type === "tool_end")
+          ) {
             scheduleEvidenceRefresh();
           }
-          handlers.onRunEvent?.(event);
+          if (canCommitToSurface(event.threadId)) handlers.onRunEvent?.(event);
           return;
         }
         if (parsed.event === "done") {
           const event = JSON.parse(parsed.data) as ConversationStreamDoneEvent;
           activeThreadId = event.thread.id;
-          setSelectedConversationThreadId(event.thread.id);
-          setSelectedConversationDetail((current) => mergeConversationMessages(current, workspaceCwd, event.thread, [event.assistantMessage]));
-          handlers.onDone?.(event);
+          retargetStreamOperation(activeThreadId);
+          conversationErrors.clear(streamOperation);
+          if (canCommitToSurface(activeThreadId)) {
+            commitSelectedConversationThreadId(activeThreadId);
+            setConversationSurfaceIdentity(activeThreadId);
+            setSelectedConversationDetail((current) => mergeConversationMessages(current, workspaceCwd, event.thread, [event.assistantMessage]));
+            handlers.onDone?.(event);
+          }
           return;
         }
         if (parsed.event === "blocked") {
           const event = JSON.parse(parsed.data) as ConversationStreamBlockedEvent;
           if (event.thread) {
             activeThreadId = event.thread.id;
-            setSelectedConversationThreadId(event.thread.id);
+            retargetStreamOperation(activeThreadId);
           }
-          if (event.assistantMessage) {
+          if (event.error) conversationErrors.report(streamOperation, event.error);
+          if (event.thread && canCommitToSurface(activeThreadId)) {
+            commitSelectedConversationThreadId(activeThreadId);
+            setConversationSurfaceIdentity(activeThreadId);
+          }
+          if (event.assistantMessage && canCommitToSurface(activeThreadId)) {
             setSelectedConversationDetail((current) => mergeConversationMessages(current, workspaceCwd, event.thread, [event.assistantMessage as ConversationTranscriptMessage]));
           }
-          handlers.onBlocked?.(event);
+          if (canCommitToSurface(activeThreadId)) handlers.onBlocked?.(event);
           return;
         }
         if (parsed.event === "error") {
           const event = JSON.parse(parsed.data) as ConversationStreamBlockedEvent;
           const messageText = event.error || event.assistantMessage?.content || "Ling Agent run failed.";
-          if (event.assistantMessage) {
+          if (event.thread) {
+            activeThreadId = event.thread.id;
+            retargetStreamOperation(activeThreadId);
+          }
+          conversationErrors.report(streamOperation, messageText);
+          if (event.assistantMessage && canCommitToSurface(activeThreadId)) {
             setSelectedConversationDetail((current) => mergeConversationMessages(current, workspaceCwd, event.thread, [event.assistantMessage as ConversationTranscriptMessage]));
           }
-          handlers.onError?.(messageText, event);
+          if (canCommitToSurface(activeThreadId)) handlers.onError?.(messageText, event);
         }
       });
       if (evidenceRefreshTimer !== undefined) {
@@ -372,17 +506,48 @@ export function useConversationDomain(input: {
       await evidenceRefreshPromise;
       await refreshConversationThreads(workspaceCwd);
       if (activeThreadId) {
-        const detail = await getConversation(workspaceCwd, activeThreadId);
-        setSelectedConversationDetail(detail);
+        const refreshOperation = conversationErrors.begin({
+          workspaceCwd,
+          surface: "thread",
+          identity: activeThreadId,
+          scope: "refresh",
+        });
+        conversationErrors.clear(refreshOperation);
+        try {
+          const detail = await getConversation(workspaceCwd, activeThreadId);
+          conversationErrors.clear(refreshOperation);
+          if (canCommitToSurface(activeThreadId)) setSelectedConversationDetail(detail);
+        } catch (error) {
+          conversationErrors.report(refreshOperation, error instanceof Error ? error.message : String(error));
+        }
       }
     } catch (error) {
       const messageText = error instanceof Error ? error.message : String(error);
-      input.setErrorMessage(messageText);
-      handlers.onError?.(messageText);
+      conversationErrors.report(streamOperation, messageText);
+      if (canCommitToSurface(activeThreadId)) handlers.onError?.(messageText);
     } finally {
       setConversationStreamBusy(false);
     }
-  }, [input, refreshConversationThreads, selectedConversationThreadId]);
+  }, [commitSelectedConversationThreadId, conversationErrors, input.cwd, refreshConversationThreads]);
+
+  const workspaceCwd = input.cwd.trim();
+  const conversationSidebarError = selectConversationError(conversationErrors.entries, {
+    workspaceCwd,
+    surface: "sidebar",
+    scopes: ["load", "archive"],
+  })?.message ?? "";
+  const conversationSurfaceError = selectConversationError(conversationErrors.entries, {
+    workspaceCwd,
+    surface: "thread",
+    identity: conversationSurfaceIdentity,
+    scopes: ["select", "refresh", "action"],
+  })?.message ?? "";
+  const conversationComposerError = selectConversationError(conversationErrors.entries, {
+    workspaceCwd,
+    surface: "composer",
+    identity: conversationSurfaceIdentity,
+    scopes: ["stream"],
+  })?.message ?? "";
 
   return {
     state: {
@@ -391,7 +556,9 @@ export function useConversationDomain(input: {
       selectedConversationThreadId,
       selectedConversationDetail,
       conversationStreamBusy,
-      conversationArchiveError,
+      conversationSidebarError,
+      conversationSurfaceError,
+      conversationComposerError,
     },
     actions: {
       refreshConversationThreads,

@@ -407,7 +407,6 @@ export function AppShell(): JSX.Element {
   const conversationDomain = useConversationDomain({
     cwd: form.cwd.trim(),
     translate: t,
-    setErrorMessage,
   });
   const {
     conversationThreads,
@@ -415,7 +414,9 @@ export function AppShell(): JSX.Element {
     selectedConversationThreadId,
     selectedConversationDetail,
     conversationStreamBusy,
-    conversationArchiveError,
+    conversationSidebarError,
+    conversationSurfaceError,
+    conversationComposerError,
   } = conversationDomain.state;
   const {
     refreshConversationThreads,
@@ -2180,7 +2181,7 @@ export function AppShell(): JSX.Element {
         teammateNotifications={sidebarTeammateNotifications}
         recentConversations={recentConversations}
         recentConversationsLoading={conversationsLoading}
-        recentConversationActionError={conversationArchiveError}
+        recentConversationActionError={conversationSidebarError}
         selectedRecentConversationId={activeView === "workspace" && !selectedChannelId ? selectedConversationThreadId : ""}
         onOpenView={(view) => {
           if (view === "workspace") {
@@ -2480,6 +2481,7 @@ export function AppShell(): JSX.Element {
                   modelOptions={conversationModelOptions}
                   slashCommands={slashCommands}
                   workspaceCwd={form.cwd}
+                  conversationErrorMessage={conversationSurfaceError || conversationComposerError}
                   sending={conversationStreamBusy}
                   activeRun={activeConversationRun}
                   stopping={Boolean(activeConversationRun && cancellingRunId === activeConversationRun.id)}
@@ -2527,6 +2529,7 @@ export function AppShell(): JSX.Element {
                         }
                       },
                       onError: (message) => input.failMessage(message),
+                      shouldCommit: input.shouldCommit,
                     });
                   }}
                 />

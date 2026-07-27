@@ -38,6 +38,10 @@ import {
   runTaskSnapshotTitle,
 } from "./normal-conversation-dock-projections.js";
 import { normalConversationThinkingOptions } from "./normal-conversation-composer-options.js";
+import {
+  createConversationHomeMessageId,
+  upsertConversationHomeMessage,
+} from "./normal-conversation-message-state.js";
 import type {
   ConversationHomeMessage,
   ConversationHomeModelOption,
@@ -45,6 +49,7 @@ import type {
   ConversationHomeProps,
 } from "./normal-conversation-types.js";
 import { useNormalConversationHeaderController } from "./useNormalConversationHeaderController.js";
+import { createNormalConversationCommitGuard, useNormalConversationActionFeedback } from "./useNormalConversationActionFeedback.js";
 import { useChannelPlanHistory } from "./useChannelPlanHistory.js";
 import { useWorkspaceTerminalSession } from "./WorkspaceTerminalPanel.js";
 
@@ -75,6 +80,7 @@ export function ConversationHome({
   modelOptions,
   slashCommands,
   workspaceCwd,
+  conversationErrorMessage = "",
   sending = false,
   activeRun,
   stopping = false,
@@ -88,7 +94,6 @@ export function ConversationHome({
   const [draft, setDraft] = useState(initialDraft);
   const [messages, setMessages] = useState<readonly ConversationHomeMessage[]>(initialMessages);
   const [localSending, setLocalSending] = useState(false);
-  const [notice, setNotice] = useState("");
   const [slashPicker, setSlashPicker] = useState<ActiveSlashCommandPicker | undefined>();
   const [slashActiveIndex, setSlashActiveIndex] = useState(0);
   const [selectedProviderPresetId, setSelectedProviderPresetId] = useState(initialProviderPresetId.trim());
@@ -106,11 +111,15 @@ export function ConversationHome({
   const [editingMessageId, setEditingMessageId] = useState<string | undefined>();
   const [editSaving, setEditSaving] = useState(false);
   const [replacementRetryingMessageId, setReplacementRetryingMessageId] = useState<string>();
-  const [replacementRetryError, setReplacementRetryError] = useState("");
   const [project, setProject] = useState<ConversationHomeProjectSelection>(() => ({
     projectPath: initialProjectPath.trim() || undefined,
     projectLabel: initialProjectLabel.trim() || undefined,
   }));
+  const conversationIdentity = detailContext?.threadId ?? "draft";
+  const actionFeedback = useNormalConversationActionFeedback(conversationIdentity);
+  const conversationIdentityRef = useRef(conversationIdentity);
+  const mountedRef = useRef(true);
+  conversationIdentityRef.current = conversationIdentity;
   const composerInputRef = useRef<TokenizedComposerInputHandle | null>(null);
   const pendingAttachmentsRef = useRef<readonly PendingAttachmentItem<ConversationAttachment>[]>([]);
   const conversationDockController = useWorkspaceRightDockController({
@@ -267,9 +276,13 @@ export function ConversationHome({
     if (!threadId || editSaving) {
       return;
     }
+    const operationIdentity = conversationIdentity;
+    const shouldCommit = createNormalConversationCommitGuard({
+      operationIdentity, isMounted: () => mountedRef.current, readCurrentIdentity: () => conversationIdentityRef.current,
+    });
     setEditSaving(true);
-    setNotice("");
-    setReplacementRetryError("");
+    actionFeedback.clear("edit");
+    actionFeedback.clear("replacement");
     const idempotencyKey = `conversation-edit:${message.id}:${crypto.randomUUID()}`;
     try {
       const result = await editConversationMessage(workspaceCwd.trim(), {
@@ -283,6 +296,7 @@ export function ConversationHome({
         permissionPreset: selectedPermissionPreset,
         idempotencyKey,
       });
+      if (!shouldCommit()) return;
       setMessages((current) => current.map((item) => item.id === message.id ? {
         ...item,
         content: result.message.body,
@@ -298,7 +312,7 @@ export function ConversationHome({
       setEditingMessageId(undefined);
       await normalConversationHeader.refresh();
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : String(error));
+      actionFeedback.report("edit", error instanceof Error ? error.message : String(error));
     } finally {
       setEditSaving(false);
     }
@@ -310,8 +324,12 @@ export function ConversationHome({
     if (!pending || !threadId || replacementRetryingMessageId) {
       return;
     }
+    const operationIdentity = conversationIdentity;
+    const shouldCommit = createNormalConversationCommitGuard({
+      operationIdentity, isMounted: () => mountedRef.current, readCurrentIdentity: () => conversationIdentityRef.current,
+    });
     setReplacementRetryingMessageId(message.id);
-    setReplacementRetryError("");
+    actionFeedback.clear("replacement");
     try {
       const result = await editConversationMessage(workspaceCwd.trim(), {
         surface: "normal_conversation",
@@ -324,12 +342,13 @@ export function ConversationHome({
         permissionPreset: selectedPermissionPreset,
         idempotencyKey: pending.idempotencyKey,
       });
+      if (!shouldCommit()) return;
       if (result.status === "replacement_pending") {
-        setReplacementRetryError(result.failureReason ?? pending.failureReason ?? "");
+        actionFeedback.report("replacement", result.failureReason ?? pending.failureReason ?? "");
       }
       await normalConversationHeader.refresh();
     } catch (error) {
-      setReplacementRetryError(error instanceof Error ? error.message : String(error));
+      actionFeedback.report("replacement", error instanceof Error ? error.message : String(error));
     } finally {
       setReplacementRetryingMessageId(undefined);
     }
@@ -347,7 +366,6 @@ export function ConversationHome({
 
   useEffect(() => {
     setDraft(initialDraft);
-    setNotice("");
   }, [initialDraft]);
 
   useEffect(() => {
@@ -399,18 +417,22 @@ export function ConversationHome({
     pendingAttachmentsRef.current = pendingAttachments;
   }, [pendingAttachments]);
 
-  useEffect(() => () => {
-    revokePendingAttachmentPreviews(pendingAttachmentsRef.current);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      revokePendingAttachmentPreviews(pendingAttachmentsRef.current);
+    };
   }, []);
 
   async function submitDraft(): Promise<void> {
     const trimmedDraft = draft.trim();
     if (!trimmedDraft && readyAttachmentIds.length === 0) {
-      setNotice(t("Type a message before sending."));
+      actionFeedback.report("validation", t("Type a message before sending."));
       return;
     }
     if (pendingAttachments.some((item) => item.state === "uploading")) {
-      setNotice(t("Wait for attachments to finish uploading."));
+      actionFeedback.report("validation", t("Wait for attachments to finish uploading."));
       return;
     }
     if (composerBusy) {
@@ -418,7 +440,7 @@ export function ConversationHome({
     }
     const providerPresetId = activeProviderPresetId.trim();
     if (!providerPresetId) {
-      setNotice(t("Please configure a chat model before sending."));
+      actionFeedback.report("validation", t("Please configure a chat model before sending."));
       return;
     }
     const authorizationMode = resolveAuthorizationMode(initialAuthorizationMode, initialPermissionMode, initialPermissionPreset);
@@ -445,6 +467,9 @@ export function ConversationHome({
     };
     const pendingAttachmentsSnapshot = pendingAttachments;
     const readyAttachmentIdsSnapshot = readyAttachmentIds;
+    const shouldCommit = createNormalConversationCommitGuard({
+      operationIdentity: conversationIdentity, isMounted: () => mountedRef.current, readCurrentIdentity: () => conversationIdentityRef.current,
+    });
     setMessages((current) => [
       ...current,
       pendingUserMessage,
@@ -453,7 +478,8 @@ export function ConversationHome({
     setPendingAttachments([]);
     setSlashPicker(undefined);
     setSlashActiveIndex(0);
-    setNotice("");
+    actionFeedback.clear("validation");
+    actionFeedback.clear("stream");
     setLocalSending(true);
     try {
       await onSendConversation({
@@ -471,10 +497,17 @@ export function ConversationHome({
           permissionPreset: legacyPermission.permissionPreset,
           permissionConfirmation,
         },
-        replaceMessages: (nextMessages) => setMessages(nextMessages),
-        upsertMessage: (message) => setMessages((current) => upsertConversationHomeMessage(current, message)),
+        replaceMessages: (nextMessages) => {
+          if (shouldCommit()) setMessages(nextMessages);
+        },
+        upsertMessage: (message) => {
+          if (shouldCommit(message.threadId)) {
+            setMessages((current) => upsertConversationHomeMessage(current, message));
+          }
+        },
         failMessage: (message) => {
-          setNotice(message);
+          if (!shouldCommit()) return;
+          actionFeedback.report("stream", message);
           setMessages((current) => upsertConversationHomeMessage(current, {
             id: `conversation-error:${pendingUserMessage.id}`,
             role: "assistant",
@@ -485,12 +518,17 @@ export function ConversationHome({
             updatedAt: new Date().toISOString(),
           }));
         },
+        shouldCommit,
       });
       revokePendingAttachmentPreviews(pendingAttachmentsSnapshot);
     } catch (error) {
-      setDraft(trimmedDraft);
-      setPendingAttachments(pendingAttachmentsSnapshot);
-      setNotice(error instanceof Error ? error.message : String(error));
+      if (shouldCommit()) {
+        setDraft(trimmedDraft);
+        setPendingAttachments(pendingAttachmentsSnapshot);
+        actionFeedback.report("stream", error instanceof Error ? error.message : String(error));
+      } else {
+        revokePendingAttachmentPreviews(pendingAttachmentsSnapshot);
+      }
     } finally {
       setLocalSending(false);
     }
@@ -527,7 +565,7 @@ export function ConversationHome({
   }
 
   function handleComposerPaste(_event: ClipboardEvent<HTMLDivElement>): void {
-    setNotice("");
+    actionFeedback.clear("validation");
   }
 
   function updateSlashPicker(value: string, caret: number): void {
@@ -554,7 +592,7 @@ export function ConversationHome({
     const picker = slashPicker ?? findActiveSlashCommand(liveValue, liveCaret) ?? findActiveSlashCommand(liveValue, liveValue.length);
     const inserted = insertSlashCommandToken(liveValue, picker, option.id);
     setDraft(inserted.value);
-    setNotice("");
+    actionFeedback.clear("validation");
     setSlashPicker(undefined);
     setSlashActiveIndex(0);
     focusComposerAt(inserted.caret);
@@ -562,7 +600,7 @@ export function ConversationHome({
 
   function applyShortcut(prompt: string): void {
     setDraft(prompt);
-    setNotice("");
+    actionFeedback.clear("validation");
   }
 
   async function attachConversationFiles(files: FileList | readonly File[]): Promise<void> {
@@ -572,14 +610,14 @@ export function ConversationHome({
     }
     const cwd = workspaceCwd.trim();
     if (!cwd) {
-      setNotice(t("Local workspace is not ready."));
+      actionFeedback.report("attachment", t("Local workspace is not ready."));
       return;
     }
     if (pendingAttachments.length + fileList.length > 10) {
-      setNotice(t("A conversation message can attach at most 10 files."));
+      actionFeedback.report("attachment", t("A conversation message can attach at most 10 files."));
       return;
     }
-    setNotice("");
+    actionFeedback.clear("attachment");
     await Promise.all(fileList.map(async (file) => {
       const localId = createLocalComposerAssetId("conversation-attachment");
       const previewUrl = createAttachmentPreviewUrl(file);
@@ -622,7 +660,7 @@ export function ConversationHome({
     }
     setSelectedProviderPresetId(option.id);
     setSelectedThinkingLevel("off");
-    setNotice("");
+    actionFeedback.clear("validation");
   }
 
   function selectThinkingLevel(level: ProviderThinkingMode): void {
@@ -630,7 +668,7 @@ export function ConversationHome({
       return;
     }
     setSelectedThinkingLevel(level);
-    setNotice("");
+    actionFeedback.clear("validation");
   }
 
   const composerNode = (
@@ -652,10 +690,10 @@ export function ConversationHome({
       activeRun={Boolean(activeRun)}
       stopping={stopping}
       canSend={Boolean(draft.trim() || readyAttachmentIds.length > 0)}
-      notice={notice}
+      notice={conversationErrorMessage || actionFeedback.message}
       onDraftChange={(value, caret) => {
         setDraft(value);
-        setNotice("");
+        actionFeedback.clear("validation");
         updateSlashPicker(value, caret);
       }}
       onComposerKeyDown={handleComposerKeyDown}
@@ -724,7 +762,7 @@ export function ConversationHome({
           editSaving,
           latestEditableUserMessageId,
           replacementRetryingMessageId,
-          replacementRetryError,
+          replacementRetryError: actionFeedback.messageFor("replacement"),
           onCancelMessageEdit: () => setEditingMessageId(undefined),
           onEditMessage: setEditingMessageId,
           onSaveMessage: saveEditedMessage,
@@ -757,35 +795,4 @@ export function ConversationHome({
   }
 
   return <NormalConversationEmptyState composerNode={composerNode} onApplyShortcut={applyShortcut} />;
-}
-
-function createConversationHomeMessageId(): string {
-  if (typeof globalThis.crypto?.randomUUID === "function") {
-    return `message:${globalThis.crypto.randomUUID()}`;
-  }
-  return `message:${Date.now().toString(36)}:${Math.random().toString(36).slice(2, 8)}`;
-}
-
-function upsertConversationHomeMessage(
-  messages: readonly ConversationHomeMessage[],
-  message: ConversationHomeMessage,
-): readonly ConversationHomeMessage[] {
-  const messageKey = conversationHomeMessageMergeKey(message);
-  const index = messages.findIndex((item) => conversationHomeMessageMergeKey(item) === messageKey);
-  const next = index >= 0
-    ? messages.map((item) => (conversationHomeMessageMergeKey(item) === messageKey ? message : item))
-    : [...messages, message];
-  return [...next].sort((left, right) => left.createdAt.localeCompare(right.createdAt));
-}
-
-function conversationHomeMessageMergeKey(message: ConversationHomeMessage): string {
-  const assistantMatch = /^conversation-assistant:([^:]+)/u.exec(message.id);
-  if (assistantMatch?.[1]) {
-    return `assistant:${assistantMatch[1]}`;
-  }
-  const userMatch = /^conversation-user:([^:]+)/u.exec(message.id);
-  if (userMatch?.[1]) {
-    return `user:${userMatch[1]}`;
-  }
-  return message.id;
 }
