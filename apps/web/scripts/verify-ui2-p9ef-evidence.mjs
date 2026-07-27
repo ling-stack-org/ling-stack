@@ -391,6 +391,7 @@ function verifyCurrentSource(manifestValue) {
   let head;
   let branch;
   let unrelatedStatus;
+  let sourceDrift;
   try {
     head = runGit(["rev-parse", "HEAD"]);
     branch = runGit(["branch", "--show-current"]) || "detached";
@@ -402,11 +403,25 @@ function verifyCurrentSource(manifestValue) {
       ".",
       ":(exclude)docs/design/ui2.0升级/evidence/release/web/p9ef-final-error-ownership",
     ]);
+    if (source.commit !== head) {
+      runGit(["merge-base", "--is-ancestor", source.commit, head]);
+      sourceDrift = runGit([
+        "diff",
+        "--name-only",
+        source.commit,
+        head,
+        "--",
+        ".",
+        ":(exclude)docs/design/ui2.0升级/evidence/release/web/p9ef-final-error-ownership",
+      ]);
+    }
   } catch (error) {
     errors.push(`current source identity cannot be read: ${formatError(error)}`);
     return;
   }
-  if (source.commit !== head) errors.push(`manifest.source.commit ${source.commit} does not match HEAD ${head}`);
+  if (source.commit !== head && sourceDrift?.length > 0) {
+    errors.push(`source changed outside the dedicated evidence directory after ${source.commit}: ${sourceDrift}`);
+  }
   if (source.branch !== branch) errors.push(`manifest.source.branch ${source.branch} does not match current branch ${branch}`);
   if (unrelatedStatus.length > 0) errors.push("worktree has changes outside the dedicated P9-EF evidence directory");
   const cleanStatusHash = createHash("sha256").update("").digest("hex");
