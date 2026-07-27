@@ -229,16 +229,16 @@ export function StoryboardCanvas({
     rightDockOpen,
   ]);
 
-  const edges = useMemo<Edge[]>(() => orderedScenes.slice(1).map((scene, index) => ({
-    id: `sequence:${orderedScenes[index]?.id ?? "start"}:${scene.id}`,
-    source: orderedScenes[index]?.id ?? "",
-    target: scene.id,
+  const edges = useMemo<Edge[]>(() => nodes.slice(1).map((node, index) => ({
+    id: `sequence:${nodes[index]?.id ?? "start"}:${node.id}`,
+    source: nodes[index]?.id ?? "",
+    target: node.id,
     type: "smoothstep",
     animated: false,
     selectable: false,
     focusable: false,
     className: "storyboard-sequence-edge",
-  })), [orderedScenes]);
+  })), [nodes]);
 
   function handleNodesChange(changes: NodeChange<Node<StoryboardNodeData>>[]): void {
     setNodes((current) => applyNodeChanges(changes, current));

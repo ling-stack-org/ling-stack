@@ -29,6 +29,11 @@ test("Saved Views create, rename, and delete use busy-safe shared Dialogs with r
       await route.fallback();
       return;
     }
+    const patch = await route.request().postDataJSON() as Record<string, unknown>;
+    if (!("channelActivityViews" in patch)) {
+      await route.fallback();
+      return;
+    }
     if (holdNextPatch) {
       holdNextPatch = false;
       await new Promise<void>((resolve) => {
