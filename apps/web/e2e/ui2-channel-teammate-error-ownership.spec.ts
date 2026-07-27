@@ -20,17 +20,19 @@ test("T13-P.9EF review 2 freezes visible channel relation ownership and rejectio
     readFile(managerPanelPath, "utf8"),
   ]);
 
-  expect(errorController).toContain("teammateChannelRelationErrorsByChannelId");
-  expect(errorController).toContain("teammateChannelRelationIdentity(channelId: string)");
+  expect(errorController).toContain("latestTeammateChannelRelationErrorByChannelId");
+  expect(errorController).toContain("teammateChannelRelationIdentity(channelId: string, teammateId: string)");
   expect(errorController).toContain("entry.identity === identity && entry.action === action");
-  expect(domain).toContain("teammateChannelRelationIdentity(channelId)");
-  expect(domain).toContain("[cwd, relationshipIdentity, teammateId, action]");
+  expect(errorController).toContain("isTeammateChannelRelationAction(entry.action)");
+  expect(domain).toContain("teammateChannelRelationIdentity(channelId, teammateId)");
+  expect(domain).toContain("[cwd, relationshipIdentity, action]");
   expect(domain).toContain('errorController.clear("channel-relation", relationshipIdentity, action)');
   expect(workspace).toContain("onAddChannelTeammate(teammateId).catch(() => undefined)");
   expect(managerPanel).toContain("onRemoveChannelTeammate(teammate.id).catch(() => undefined)");
-  expect(managerPanel).toContain('data-channel-teammate-error={error.action}');
+  expect(managerPanel).toContain('data-channel-teammate-error={channelTeammateError.action}');
   expect(managerPanel).toContain('<InlineFeedback');
-  expect(appShell).toContain("setDefaultChannelTeammate(selectedChannelId, teammateId).catch(() => undefined)");
+  expect(workspace).not.toContain("onSetDefaultChannelTeammate");
+  expect(appShell).not.toContain("onSetDefaultChannelTeammate");
 });
 
 test("T13-P.9EF review 2 channel teammate failures persist and only same channel action success clears them", async ({ page }) => {

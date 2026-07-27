@@ -470,7 +470,6 @@ export function WorkspaceClientView({
   onProviderSelect,
   onAddChannelTeammate,
   onRemoveChannelTeammate,
-  onSetDefaultChannelTeammate,
   onOpenTeammates,
   onRefreshChannels,
   onSaveChannel,
@@ -634,7 +633,6 @@ export function WorkspaceClientView({
   readonly onProviderSelect: (providerId: string) => void;
   readonly onAddChannelTeammate: (teammateId: string) => Promise<void>;
   readonly onRemoveChannelTeammate: (teammateId: string) => Promise<void>;
-  readonly onSetDefaultChannelTeammate: (teammateId: string) => Promise<void>;
   readonly onOpenTeammates: () => void;
   readonly onRefreshChannels: () => void;
   readonly onSaveChannel: (formOverride?: ChannelFormState) => void | Promise<void>;

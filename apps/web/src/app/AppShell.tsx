@@ -2374,7 +2374,6 @@ export function AppShell(): JSX.Element {
             }}
             onAddChannelTeammate={(teammateId) => addChannelTeammate(selectedChannelId, teammateId)}
             onRemoveChannelTeammate={(teammateId) => removeChannelTeammate(selectedChannelId, teammateId)}
-            onSetDefaultChannelTeammate={(teammateId) => setDefaultChannelTeammate(selectedChannelId, teammateId).catch(() => undefined)}
             onOpenTeammates={() => openSettingsWorkspaceTool("teammates")}
             onRefreshChannels={() => void refreshChannels()}
             onSaveChannel={(formOverride) => selectedChannelId ? saveChannelEdit(selectedChannelId, formOverride) : undefined}

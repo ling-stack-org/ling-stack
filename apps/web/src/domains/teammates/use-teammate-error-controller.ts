@@ -112,19 +112,24 @@ export function latestTeammateChannelRelationErrorByChannelId(
   const errorsByChannelId: Record<string, TeammateChannelRelationError> = {};
   for (const entry of entries) {
     if (entry.surface !== "channel-relation") continue;
+    if (!isTeammateChannelRelationAction(entry.action)) continue;
     const relation = channelRelationFromIdentity(entry.identity);
     if (!relation) continue;
     const current = errorsByChannelId[relation.channelId];
     if (!current || current.revision < entry.revision) {
       errorsByChannelId[relation.channelId] = {
         teammateId: relation.teammateId,
-        action: entry.action as TeammateChannelRelationAction,
+        action: entry.action,
         message: entry.message,
         revision: entry.revision,
       };
     }
   }
   return errorsByChannelId;
+}
+
+function isTeammateChannelRelationAction(action: TeammateErrorAction): action is TeammateChannelRelationAction {
+  return action === "add" || action === "remove" || action === "set-default";
 }
 
 function channelRelationFromIdentity(
