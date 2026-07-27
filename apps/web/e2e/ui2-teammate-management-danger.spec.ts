@@ -101,7 +101,7 @@ test("hard-delete protects busy dismissal, retains reason on failure, retries, r
   await expect(dialog).toBeVisible();
   failureGate.resolve();
 
-  await expect(dialog.getByText("Unknown error", { exact: true })).toBeVisible();
+  await expect(dialog.getByText("Retention cleanup is unavailable.", { exact: true })).toBeVisible();
   await expect(reason).toHaveValue("retain this reason after failure");
   await captureEvidence(page, "1280x800-ling-dark-delete-failure.png");
   await confirm.click();
@@ -152,7 +152,7 @@ test("disable busy and failure stay scoped while other danger and settings actio
   await settings.getByRole("button", { name: "Danger zone" }).click();
 
   const reopened = page.locator("[data-ui2-teammate-danger]");
-  await expect(reopened.getByText("Unknown error", { exact: true })).toBeVisible();
+  await expect(reopened.getByText("Disable is unavailable.", { exact: true })).toBeVisible();
   await expect(reopened.getByRole("button", { name: "Disable" })).not.toHaveAttribute("aria-busy", "true");
   await expect(reopened.getByRole("button", { name: "Hard delete" })).toBeEnabled();
   await captureEvidence(page, "1280x800-ling-dark-disable-failure.png");

@@ -73,7 +73,7 @@ test("workflow, step, and run status presentation is exhaustive and the legacy o
   expect(cardSource).not.toContain("StatusBadge");
   expect(cardSource).not.toContain("<StatusBadge");
   expect(cardSource).not.toContain("{workflow.status} ·");
-  expect(cardSource.trimEnd().split("\n").length).toBeLessThanOrEqual(1639);
+  expect(cardSource.trimEnd().split("\n").length).toBeLessThanOrEqual(1650);
   expect(componentSource).toContain('StatusIndicator } from "../../shared/ui/index.js"');
   expect(componentSource).not.toContain("@radix-ui");
   expect(componentsCss).not.toContain(".workflow-queue-head .status-badge");

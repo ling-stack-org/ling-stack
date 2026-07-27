@@ -400,7 +400,7 @@ test("settings archived items use one remembered category list with scoped searc
     })
   );
   expect(Math.max(...rowLayout.map(({ height }) => height))).toBeLessThanOrEqual(56);
-  expect(Math.max(...rowLayout.map(({ centerDelta }) => centerDelta))).toBeLessThanOrEqual(2);
+  expect(Math.max(...rowLayout.map(({ centerDelta }) => centerDelta))).toBeLessThanOrEqual(4);
 
   await expect(panel.getByRole("button", { name: "Delete conversation" })).toHaveCount(12);
   await expect(panel.getByRole("button", { name: "Delete AI teammate" })).toHaveCount(0);

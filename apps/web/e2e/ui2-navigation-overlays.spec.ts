@@ -1,6 +1,6 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import { mockDaemon } from "./support/mock-daemon";
-import { createBaseState, createChatProvider, cwd } from "./support/mock-state";
+import { createBaseState, cwd } from "./support/mock-state";
 
 test("Settings subnavigation uses shared Tabs with stable keyboard selection", async ({ page }, testInfo) => {
   const browserErrors = captureBrowserErrors(page);
@@ -77,7 +77,7 @@ test("Media Production view switcher keeps one shared segmented selection", asyn
   });
 });
 
-test("Automation lightweight controls use one collision-safe Popover without closing the dialog", async ({ page }, testInfo) => {
+test("Work Board lightweight filters use one collision-safe Popover", async ({ page }, testInfo) => {
   const browserErrors = captureBrowserErrors(page);
   await page.setViewportSize({ width: 1280, height: 800 });
   await page.emulateMedia({ reducedMotion: "reduce" });
@@ -85,20 +85,16 @@ test("Automation lightweight controls use one collision-safe Popover without clo
     localStorage.setItem("ling-stack.locale", "zh-CN");
     localStorage.setItem("ling-stack.themePreference", "dark");
   });
-  const state = createBaseState({ approvalStatus: "expired" });
-  state.providers = [createChatProvider({ id: "provider_ui2", displayName: "中转站", model: "gpt-test" })];
-  await mockDaemon(page, state);
-  await mockAutomationReads(page);
+  await mockDaemon(page, createBaseState({ approvalStatus: "expired" }));
   await mockControlPlaneReads(page);
   await page.goto("/");
 
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "自动化" }).click();
-  await page.locator(".automation-header-actions").getByRole("button", { name: "手动创建" }).click();
-  const dialog = page.getByRole("dialog", { name: "手动创建" });
-  const runtimeTrigger = dialog.getByRole("button", { name: /工作树|本地|对话/ }).first();
-  await runtimeTrigger.click();
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "工作看板" }).click();
+  const board = page.locator(".work-board-page");
+  const filterTrigger = board.getByRole("button", { name: "筛选工作" });
+  await filterTrigger.click();
 
-  let popover = page.locator(".automation-popover-panel");
+  let popover = page.locator(".work-board-filter-popover");
   await expect(popover).toBeVisible();
   await expect(popover).toHaveAttribute("data-ling-overlay", "popover");
   await expect(popover).not.toHaveCSS("position", "absolute");
@@ -107,13 +103,10 @@ test("Automation lightweight controls use one collision-safe Popover without clo
 
   await page.keyboard.press("Escape");
   await expect(popover).toHaveCount(0);
-  await expect(dialog).toBeVisible();
-  await expect(runtimeTrigger).toBeFocused();
+  await expect(filterTrigger).toBeFocused();
 
-  await dialog.getByRole("button", { name: /每天 09:00/ }).click();
-  await expect(page.locator(".automation-popover-panel")).toBeVisible();
-  await dialog.getByRole("button", { name: /选择模型|中转站 · gpt-test/ }).click();
-  popover = page.locator(".automation-popover-panel");
+  await filterTrigger.click();
+  popover = page.locator(".work-board-filter-popover");
   await expect(popover).toHaveCount(1);
   await expect(popover).toBeVisible();
   await expectPopoverInsideViewport(page, popover);
@@ -126,37 +119,13 @@ test("Automation lightweight controls use one collision-safe Popover without clo
   await expectNoPageOverflow(page);
   expect(browserErrors).toEqual([]);
   await page.screenshot({
-    path: testInfo.outputPath("1280x800-ling-dark-automation-popover.png"),
+    path: testInfo.outputPath("1280x800-ling-dark-work-board-popover.png"),
     fullPage: true,
   });
   await page.keyboard.press("Escape");
   await expect(popover).toHaveCount(0);
-  await expect(dialog).toBeVisible();
+  await expect(filterTrigger).toBeFocused();
 });
-
-async function mockAutomationReads(page: Page): Promise<void> {
-  await page.route("http://127.0.0.1:17891/**", async (route) => {
-    const request = route.request();
-    const path = new URL(request.url()).pathname;
-    if (request.method() === "GET" && path === "/automations") {
-      await route.fulfill({ json: { cwd, automations: [], templates: [] } });
-      return;
-    }
-    if (request.method() === "GET" && path === "/automation-drafts") {
-      await route.fulfill({ json: { cwd, drafts: [], templates: [] } });
-      return;
-    }
-    if (request.method() === "GET" && path === "/automation-runs") {
-      await route.fulfill({ json: { cwd, automationRuns: [] } });
-      return;
-    }
-    if (request.method() === "GET" && path === "/automations/scheduler") {
-      await route.fulfill({ json: { cwd, schedulers: [] } });
-      return;
-    }
-    await route.fallback();
-  });
-}
 
 async function mockControlPlaneReads(page: Page): Promise<void> {
   await page.route("http://127.0.0.1:17891/control-plane/**", async (route) => {

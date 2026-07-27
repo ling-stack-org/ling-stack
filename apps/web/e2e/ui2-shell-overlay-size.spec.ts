@@ -1,14 +1,7 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
-import { mkdir } from "node:fs/promises";
-import { fileURLToPath } from "node:url";
 import { resolveAppViewportSize } from "../src/app/use-app-viewport-state.js";
 import { mockDaemon } from "./support/mock-daemon";
-import { createBaseState, createChatProvider, cwd } from "./support/mock-state";
-
-const evidenceDirectory = fileURLToPath(new URL(
-  "../../../docs/design/ui2.0升级/evidence/shell/app-shell-overlay-size/",
-  import.meta.url,
-));
+import { createBaseState, cwd } from "./support/mock-state";
 
 test("viewport resolver keeps Electron minimum, compact, standard, and large sizes deterministic", () => {
   expect(resolveAppViewportSize(980, 680)).toBe("minimum");
@@ -17,7 +10,7 @@ test("viewport resolver keeps Electron minimum, compact, standard, and large siz
   expect(resolveAppViewportSize(2560, 1440)).toBe("large");
 });
 
-test("AppShell owns one portal root for Dialog, Toast, and Tooltip ordering", async ({ page }) => {
+test("AppShell owns one portal root for Dialog and Toast ordering", async ({ page }) => {
   const runtimeErrors = collectRuntimeErrors(page);
   await prepareSurface(page, "light", 1440, 960);
   const state = createBaseState({ approvalStatus: "expired" });
@@ -61,47 +54,35 @@ test("AppShell owns one portal root for Dialog, Toast, and Tooltip ordering", as
   await expect(overlayRoot.locator('[data-ling-overlay-scrim="dialog"]')).toBeVisible();
 
   const close = dialog.getByRole("button", { name: "Cancel" }).first();
-  await close.hover();
-  const tooltip = overlayRoot.locator('[data-ling-overlay="tooltip"]');
-  await expect(tooltip).toBeVisible();
-  await expect(tooltip).toHaveAttribute("data-ling-overlay", "tooltip");
-  await expect(overlayRoot.getByRole("tooltip")).toContainText("Cancel");
+  await expect(close).toHaveAttribute("title", "Cancel");
+  await expect(overlayRoot.locator('[data-ling-overlay="tooltip"]')).toHaveCount(0);
 
   expect(await numericZIndex(dialog)).toBe(61);
   expect(await numericZIndex(toastViewport)).toBe(80);
-  expect(await numericZIndex(tooltip)).toBe(90);
   await expectNoPageOverflow(page);
-  await captureEvidence(page, "1440x960-ling-light-dialog-toast-tooltip.png");
 
-  await page.mouse.move(8, 8);
-  await expect(tooltip).toHaveCount(0);
   await page.keyboard.press("Escape");
   await expect(dialog).toHaveCount(0);
   await expect(dialogTrigger).toBeFocused();
   expect(runtimeErrors).toEqual([]);
 });
 
-test("AppShell keeps nested Popover and active view while viewport size changes", async ({ page }) => {
+test("AppShell keeps Popover and active view while viewport size changes", async ({ page }) => {
   const runtimeErrors = collectRuntimeErrors(page);
   await prepareSurface(page, "dark", 1440, 960);
   await page.emulateMedia({ reducedMotion: "reduce" });
-  const state = createBaseState({ approvalStatus: "expired" });
-  state.providers = [createChatProvider({ id: "provider_shell_size", displayName: "Local model", model: "gpt-test" })];
-  await mockDaemon(page, state);
-  await mockAutomationReads(page);
+  await mockDaemon(page, createBaseState({ approvalStatus: "expired" }));
   await mockControlPlaneReads(page);
   await page.goto("/");
 
   const shell = page.locator("main.app-shell");
   const overlayRoot = page.locator("#ling-ui-overlay-root");
   await shell.evaluate((element) => element.setAttribute("data-ui2-resize-marker", "preserved"));
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Automations" }).click();
-  await page.locator(".automation-header-actions").getByRole("button", { name: "Manual create" }).click();
-
-  const dialog = page.getByRole("dialog", { name: "Manual create" });
-  const runtimeTrigger = dialog.getByRole("button", { name: /Worktree|Local|Conversation/ }).first();
-  await runtimeTrigger.click();
-  const popover = overlayRoot.locator(".automation-popover-panel");
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Work Board" }).click();
+  const board = page.locator(".work-board-page");
+  const filterTrigger = board.getByRole("button", { name: "Filter work" });
+  await filterTrigger.click();
+  const popover = overlayRoot.locator(".work-board-filter-popover");
   await expect(popover).toBeVisible();
   await expect(popover).toHaveAttribute("data-ling-overlay", "popover");
   expect(await numericZIndex(popover)).toBe(70);
@@ -109,25 +90,23 @@ test("AppShell keeps nested Popover and active view while viewport size changes"
   await page.setViewportSize({ width: 1280, height: 800 });
   await expect(shell).toHaveAttribute("data-ui2-viewport-size", "compact");
   await expect(shell).toHaveAttribute("data-ui2-resize-marker", "preserved");
-  await expect(dialog).toBeVisible();
+  await expect(board).toBeVisible();
   await expect(popover).toBeVisible();
   await expectInsideViewport(page, popover);
   await expectNoPageOverflow(page);
-  await captureEvidence(page, "1280x800-ling-dark-dialog-popover.png");
 
   await page.setViewportSize({ width: 980, height: 680 });
   await expect(shell).toHaveAttribute("data-ui2-viewport-size", "minimum");
   await expect(shell).toHaveAttribute("data-ui2-resize-marker", "preserved");
-  await expect(dialog).toBeVisible();
+  await expect(board).toBeVisible();
   await expect(popover).toBeVisible();
-  await expectInsideViewport(page, dialog);
   await expectInsideViewport(page, popover);
   await expectNoPageOverflow(page);
 
   await page.keyboard.press("Escape");
   await expect(popover).toHaveCount(0);
-  await expect(dialog).toBeVisible();
-  await expect(runtimeTrigger).toBeFocused();
+  await expect(board).toBeVisible();
+  await expect(filterTrigger).toBeFocused();
   expect(runtimeErrors).toEqual([]);
 });
 
@@ -141,30 +120,6 @@ async function prepareSurface(page: Page, theme: "dark" | "light", width: number
     localStorage.setItem("ling-stack.themePreference", themeId);
     localStorage.setItem("ling-stack.themeBootstrapPreference", themeId);
   }, theme);
-}
-
-async function mockAutomationReads(page: Page): Promise<void> {
-  await page.route("http://127.0.0.1:17891/**", async (route) => {
-    const request = route.request();
-    const path = new URL(request.url()).pathname;
-    if (request.method() === "GET" && path === "/automations") {
-      await route.fulfill({ json: { cwd, automations: [], templates: [] } });
-      return;
-    }
-    if (request.method() === "GET" && path === "/automation-drafts") {
-      await route.fulfill({ json: { cwd, drafts: [], templates: [] } });
-      return;
-    }
-    if (request.method() === "GET" && path === "/automation-runs") {
-      await route.fulfill({ json: { cwd, automationRuns: [] } });
-      return;
-    }
-    if (request.method() === "GET" && path === "/automations/scheduler") {
-      await route.fulfill({ json: { cwd, schedulers: [] } });
-      return;
-    }
-    await route.fallback();
-  });
 }
 
 async function mockControlPlaneReads(page: Page): Promise<void> {
@@ -205,12 +160,6 @@ async function expectInsideViewport(page: Page, locator: Locator): Promise<void>
 
 async function expectNoPageOverflow(page: Page): Promise<void> {
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
-}
-
-async function captureEvidence(page: Page, filename: string): Promise<void> {
-  if (process.env.LING_CAPTURE_UI2_EVIDENCE !== "1") return;
-  await mkdir(evidenceDirectory, { recursive: true });
-  await page.screenshot({ animations: "disabled", fullPage: true, path: `${evidenceDirectory}${filename}` });
 }
 
 function collectRuntimeErrors(page: Page): string[] {
