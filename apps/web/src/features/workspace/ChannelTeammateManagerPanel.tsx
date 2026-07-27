@@ -6,6 +6,7 @@ import {
   EmptyState,
   Field,
   IconButton,
+  InlineFeedback,
   Select,
   Skeleton,
 } from "../../shared/ui/index.js";
@@ -21,10 +22,16 @@ export interface ChannelTeammateManagerPanelProps {
   readonly availableChannelTeammates: readonly LocalTeammateDraft[];
   readonly pendingChannelTeammateId: string;
   readonly channelTeammateSavingId: string;
+  readonly channelTeammateError: ChannelTeammateRelationFeedback | undefined;
   readonly onPendingChannelTeammateIdChange: (value: string) => void;
   readonly onAddSelectedChannelTeammate: () => void;
-  readonly onRemoveChannelTeammate: (teammateId: string) => void | Promise<void>;
+  readonly onRemoveChannelTeammate: (teammateId: string) => Promise<void>;
   readonly onOpenTeammates: () => void;
+}
+
+export interface ChannelTeammateRelationFeedback {
+  readonly action: "add" | "remove" | "set-default";
+  readonly message: string;
 }
 
 export function ChannelTeammateManagerPanel({
@@ -36,6 +43,7 @@ export function ChannelTeammateManagerPanel({
   availableChannelTeammates,
   pendingChannelTeammateId,
   channelTeammateSavingId,
+  channelTeammateError,
   onPendingChannelTeammateIdChange,
   onAddSelectedChannelTeammate,
   onRemoveChannelTeammate,
@@ -50,6 +58,16 @@ export function ChannelTeammateManagerPanel({
           <small>{t("{count} teammates", { count: channelTeammates.length })}</small>
         </div>
       </div>
+
+      {channelTeammateError ? (
+        <InlineFeedback
+          data-channel-teammate-error={channelTeammateError.action}
+          tone="danger"
+          role="alert"
+        >
+          {channelTeammateError.message}
+        </InlineFeedback>
+      ) : null}
 
       {channelTeammateMembershipsLoading && channelTeammates.length === 0 ? (
         <div className="channel-settings-loading-list" aria-label={t("Loading teammates...")}>
@@ -87,7 +105,7 @@ export function ChannelTeammateManagerPanel({
                     className="channel-teammate-remove-button"
                     icon={X}
                     label={t("Remove from channel")}
-                    onClick={() => void onRemoveChannelTeammate(teammate.id)}
+                    onClick={() => void onRemoveChannelTeammate(teammate.id).catch(() => undefined)}
                     disabled={saving}
                     size="sm"
                   />

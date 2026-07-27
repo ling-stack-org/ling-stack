@@ -237,6 +237,7 @@ import {
   channelWorkspaceModeIcon,
   isLingAgentTeammate,
   type ChannelNotificationLevel,
+  type ChannelTeammateRelationFeedback,
 } from "./ChannelSettingsPanels.js";
 import { ChannelComposer } from "./ChannelComposer.js";
 import { ChannelActivityWorkspace } from "./ChannelActivityWorkspace.js";
@@ -428,6 +429,7 @@ export function WorkspaceClientView({
   channelTeammateMemberships,
   channelTeammateMembershipsLoading,
   channelTeammateSavingId,
+  channelTeammateError,
   taskRunProviderId,
   fallbackProviderId,
   channelsLoading,
@@ -591,6 +593,7 @@ export function WorkspaceClientView({
   readonly channelTeammateMemberships: readonly TeammateChannelMembership[];
   readonly channelTeammateMembershipsLoading: boolean;
   readonly channelTeammateSavingId: string;
+  readonly channelTeammateError: ChannelTeammateRelationFeedback | undefined;
   readonly taskRunProviderId: string;
   readonly fallbackProviderId: string;
   readonly channelsLoading: boolean;
@@ -2294,7 +2297,7 @@ export function WorkspaceClientView({
     }
     const teammateId = pendingChannelTeammateId;
     setPendingChannelTeammateId("");
-    void onAddChannelTeammate(teammateId);
+    void onAddChannelTeammate(teammateId).catch(() => undefined);
   }
 
   function addSelectedChannelCouncil(): void {
@@ -3730,6 +3733,7 @@ export function WorkspaceClientView({
       availableChannelTeammates={availableChannelTeammates}
       pendingChannelTeammateId={pendingChannelTeammateId}
       channelTeammateSavingId={channelTeammateSavingId}
+      channelTeammateError={channelTeammateError}
       onPendingChannelTeammateIdChange={setPendingChannelTeammateId}
       onAddSelectedChannelTeammate={addSelectedChannelTeammate}
       onRemoveChannelTeammate={onRemoveChannelTeammate}
@@ -4233,6 +4237,7 @@ export function WorkspaceClientView({
             availableChannelTeammates={availableChannelTeammates}
             pendingChannelTeammateId={pendingChannelTeammateId}
             channelTeammateSavingId={channelTeammateSavingId}
+            channelTeammateError={channelTeammateError}
             onPendingChannelTeammateIdChange={setPendingChannelTeammateId}
             onAddSelectedChannelTeammate={addSelectedChannelTeammate}
             onRemoveChannelTeammate={onRemoveChannelTeammate}

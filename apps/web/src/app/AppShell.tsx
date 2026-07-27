@@ -549,6 +549,7 @@ export function AppShell(): JSX.Element {
     channelTeammateSavingId,
     listErrorMessage: teammateListErrorMessage,
     actionErrorMessagesByTeammateId: teammateActionErrorMessagesById,
+    channelRelationErrorByChannelId: teammateChannelRelationErrorByChannelId,
   } = teammatesDomain.state;
   const {
     refreshAiTeammates,
@@ -2326,6 +2327,7 @@ export function AppShell(): JSX.Element {
             channelTeammateMemberships={selectedChannelTeammateMemberships}
             channelTeammateMembershipsLoading={teammateChannelMembershipsLoading}
             channelTeammateSavingId={channelTeammateSavingId}
+            channelTeammateError={teammateChannelRelationErrorByChannelId[selectedChannelId]}
             taskRunProviderId={taskRunProviderId}
             fallbackProviderId={workspaceDefaultProviderPresetId}
             channelsLoading={channelsLoading}
@@ -2372,7 +2374,7 @@ export function AppShell(): JSX.Element {
             }}
             onAddChannelTeammate={(teammateId) => addChannelTeammate(selectedChannelId, teammateId)}
             onRemoveChannelTeammate={(teammateId) => removeChannelTeammate(selectedChannelId, teammateId)}
-            onSetDefaultChannelTeammate={(teammateId) => setDefaultChannelTeammate(selectedChannelId, teammateId)}
+            onSetDefaultChannelTeammate={(teammateId) => setDefaultChannelTeammate(selectedChannelId, teammateId).catch(() => undefined)}
             onOpenTeammates={() => openSettingsWorkspaceTool("teammates")}
             onRefreshChannels={() => void refreshChannels()}
             onSaveChannel={(formOverride) => selectedChannelId ? saveChannelEdit(selectedChannelId, formOverride) : undefined}

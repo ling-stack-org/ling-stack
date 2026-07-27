@@ -24,8 +24,10 @@ import type { TeammateCreateProgressEvent, TeammateCreateResult, TeammateCreateS
 import {
   latestTeammateListError,
   teammateActionErrorMessages,
+  latestTeammateChannelRelationErrorByChannelId,
   teammateChannelRelationIdentity,
   useTeammateErrorController,
+  type TeammateChannelRelationError,
   type TeammateChannelRelationAction,
   type TeammateMutationAction,
   type TeammateScopedError,
@@ -68,6 +70,7 @@ export interface TeammatesState {
   readonly errors: readonly TeammateScopedError[];
   readonly listErrorMessage: string;
   readonly actionErrorMessagesByTeammateId: Readonly<Record<string, string>>;
+  readonly channelRelationErrorByChannelId: Readonly<Record<string, TeammateChannelRelationError>>;
 }
 
 export interface TeammatesActions {
@@ -556,6 +559,9 @@ export function useTeammatesDomain(input: {
         [teammateId]: response.memberships,
       }));
       await input.refreshChannels(cwd);
+      if (isCurrentChannelRelationRequest(cwd, workspaceEpoch, requestIdentity, requestToken)) {
+        errorController.clear("channel-relation", relationshipIdentity, action);
+      }
     } catch (caught) {
       if (isCurrentChannelRelationRequest(cwd, workspaceEpoch, requestIdentity, requestToken)) {
         errorController.report({ surface: "channel-relation", identity: relationshipIdentity, action, scope: "mutation" }, caught);
@@ -598,6 +604,7 @@ export function useTeammatesDomain(input: {
 
   const listError = latestTeammateListError(errorController.entries);
   const actionErrorMessagesByTeammateId = teammateActionErrorMessages(errorController.entries);
+  const channelRelationErrorByChannelId = latestTeammateChannelRelationErrorByChannelId(errorController.entries);
   const error: DomainError | undefined = listError ? { scope: "load", message: listError.message } : undefined;
 
   return {
@@ -610,6 +617,7 @@ export function useTeammatesDomain(input: {
       errors: errorController.entries,
       listErrorMessage: listError?.message ?? "",
       actionErrorMessagesByTeammateId,
+      channelRelationErrorByChannelId,
     },
     actions: {
       refreshAiTeammates,

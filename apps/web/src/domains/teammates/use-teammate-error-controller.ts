@@ -30,6 +30,13 @@ export interface TeammateScopedError {
   readonly revision: number;
 }
 
+export interface TeammateChannelRelationError {
+  readonly teammateId: string;
+  readonly action: TeammateChannelRelationAction;
+  readonly message: string;
+  readonly revision: number;
+}
+
 export interface TeammateErrorController {
   readonly entries: readonly TeammateScopedError[];
   readonly report: (input: Omit<TeammateScopedError, "message" | "revision">, caught: unknown) => string;
@@ -97,6 +104,41 @@ export function teammateActionErrorMessages(
 
 export function teammateChannelRelationIdentity(channelId: string, teammateId: string): string {
   return JSON.stringify([channelId, teammateId]);
+}
+
+export function latestTeammateChannelRelationErrorByChannelId(
+  entries: readonly TeammateScopedError[],
+): Readonly<Record<string, TeammateChannelRelationError>> {
+  const errorsByChannelId: Record<string, TeammateChannelRelationError> = {};
+  for (const entry of entries) {
+    if (entry.surface !== "channel-relation") continue;
+    const relation = channelRelationFromIdentity(entry.identity);
+    if (!relation) continue;
+    const current = errorsByChannelId[relation.channelId];
+    if (!current || current.revision < entry.revision) {
+      errorsByChannelId[relation.channelId] = {
+        teammateId: relation.teammateId,
+        action: entry.action as TeammateChannelRelationAction,
+        message: entry.message,
+        revision: entry.revision,
+      };
+    }
+  }
+  return errorsByChannelId;
+}
+
+function channelRelationFromIdentity(
+  identity: string,
+): { readonly channelId: string; readonly teammateId: string } | undefined {
+  try {
+    const parsed: unknown = JSON.parse(identity);
+    if (!Array.isArray(parsed) || typeof parsed[0] !== "string" || typeof parsed[1] !== "string") {
+      return undefined;
+    }
+    return { channelId: parsed[0], teammateId: parsed[1] };
+  } catch {
+    return undefined;
+  }
 }
 
 function sameOwner(

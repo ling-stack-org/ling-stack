@@ -15,11 +15,15 @@ import { ChannelCouncilSettingsPanel } from "./ChannelCouncilSettingsPanel.js";
 import { ChannelSettingsGeneralPanel, type ChannelNotificationLevel } from "./ChannelSettingsGeneralPanel.js";
 import { ChannelSettingsNavigation, type ChannelSettingsSection } from "./ChannelSettingsNavigation.js";
 import { ChannelSettingsWorkspacePanel } from "./ChannelSettingsWorkspacePanel.js";
-import { ChannelTeammateManagerPanel } from "./ChannelTeammateManagerPanel.js";
+import {
+  ChannelTeammateManagerPanel,
+  type ChannelTeammateRelationFeedback,
+} from "./ChannelTeammateManagerPanel.js";
 
 export type { ChannelNotificationLevel } from "./ChannelSettingsGeneralPanel.js";
 export { channelWorkspaceModeIcon, channelWorkspaceModeLabel, shortWorkspacePath } from "./ChannelSettingsWorkspacePanel.js";
 export { ChannelTeammateManagerPanel } from "./ChannelTeammateManagerPanel.js";
+export type { ChannelTeammateRelationFeedback } from "./ChannelTeammateManagerPanel.js";
 export { isLingAgentTeammate } from "./ChannelCouncilSettingsPanel.js";
 
 export function ChannelSettingsPanels({
@@ -33,6 +37,7 @@ export function ChannelSettingsPanels({
   availableChannelTeammates,
   pendingChannelTeammateId,
   channelTeammateSavingId,
+  channelTeammateError,
   onPendingChannelTeammateIdChange,
   onAddSelectedChannelTeammate,
   onRemoveChannelTeammate,
@@ -84,9 +89,10 @@ export function ChannelSettingsPanels({
   readonly availableChannelTeammates: readonly LocalTeammateDraft[];
   readonly pendingChannelTeammateId: string;
   readonly channelTeammateSavingId: string;
+  readonly channelTeammateError: ChannelTeammateRelationFeedback | undefined;
   readonly onPendingChannelTeammateIdChange: (value: string) => void;
   readonly onAddSelectedChannelTeammate: () => void;
-  readonly onRemoveChannelTeammate: (teammateId: string) => void | Promise<void>;
+  readonly onRemoveChannelTeammate: (teammateId: string) => Promise<void>;
   readonly onOpenTeammates: () => void;
   readonly aiCouncils: readonly AiCouncil[];
   readonly aiCouncilsLoading: boolean;
@@ -203,6 +209,7 @@ export function ChannelSettingsPanels({
             availableChannelTeammates={availableChannelTeammates}
             pendingChannelTeammateId={pendingChannelTeammateId}
             channelTeammateSavingId={channelTeammateSavingId}
+            channelTeammateError={channelTeammateError}
             onPendingChannelTeammateIdChange={onPendingChannelTeammateIdChange}
             onAddSelectedChannelTeammate={onAddSelectedChannelTeammate}
             onRemoveChannelTeammate={onRemoveChannelTeammate}
