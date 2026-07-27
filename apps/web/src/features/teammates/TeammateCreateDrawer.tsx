@@ -72,6 +72,9 @@ export function TeammateCreateDrawer({
   const [setupInput, setSetupInput] = useState<LocalTeammateCreateInput | undefined>();
   const closeCommittedRef = useRef(false);
   const returnFocusRef = useRef<HTMLElement | null>(null);
+  const draftSequenceRef = useRef(0);
+  const draftIdentityRef = useRef("");
+  const createRequestRevisionRef = useRef(0);
 
   const selectedTemplate = selectedTemplateId ? templates.find((template) => template.id === selectedTemplateId) : undefined;
   const selectedProvider = providerOptions.find((provider) => provider.id === selectedProviderId);
@@ -88,6 +91,9 @@ export function TeammateCreateDrawer({
     returnFocusRef.current = typeof document !== "undefined" && document.activeElement instanceof HTMLElement
       ? document.activeElement
       : null;
+    draftSequenceRef.current += 1;
+    draftIdentityRef.current = `teammate-draft-${draftSequenceRef.current}`;
+    createRequestRevisionRef.current += 1;
     closeCommittedRef.current = false;
     setDialogOpen(true);
     setMode("role_select");
@@ -150,6 +156,7 @@ export function TeammateCreateDrawer({
 
   function buildCreateInput(): LocalTeammateCreateInput {
     return {
+      draftId: draftIdentityRef.current,
       templateId: selectedTemplate?.id,
       displayName: previewName,
       description: previewDescription,
@@ -164,11 +171,18 @@ export function TeammateCreateDrawer({
   async function createTeammateDraft(): Promise<void> {
     if (!canCreateTeammate || setupBusy) return;
     const createInput = buildCreateInput();
+    const draftIdentity = createInput.draftId ?? "";
+    const requestRevision = ++createRequestRevisionRef.current;
     setSetupInput(createInput);
     setSetupSteps(createInitialStepState());
     setSetupResult(undefined);
     setMode("setup_progress");
-    const result = await onCreate(createInput, handleProgressEvent);
+    const result = await onCreate(createInput, (event) => handleProgressEvent(draftIdentity, requestRevision, event));
+    if (
+      result.stale ||
+      draftIdentityRef.current !== draftIdentity ||
+      createRequestRevisionRef.current !== requestRevision
+    ) return;
     setSetupResult(result);
     if (result.ok) {
       onClose();
@@ -176,7 +190,15 @@ export function TeammateCreateDrawer({
     }
   }
 
-  function handleProgressEvent(event: TeammateCreateProgressEvent): void {
+  function handleProgressEvent(
+    draftIdentity: string,
+    requestRevision: number,
+    event: TeammateCreateProgressEvent,
+  ): void {
+    if (
+      draftIdentityRef.current !== draftIdentity ||
+      createRequestRevisionRef.current !== requestRevision
+    ) return;
     setSetupSteps((current) => ({
       ...current,
       [event.step]: {

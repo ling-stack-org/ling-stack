@@ -119,6 +119,8 @@ import { useTeammateMemoryController } from "./useTeammateMemoryController.js";
 import { useTeammateChannelsController } from "./useTeammateChannelsController.js";
 import { useTeammateDangerController } from "./useTeammateDangerController.js";
 import { useTeammateMcpFeedbackController } from "./useTeammateMcpFeedbackController.js";
+import type { TeammateUpdateAction } from "./types.js";
+import { useTeammateIdentityError } from "./useTeammateIdentityError.js";
 
 type TeammateWorkspaceView = "chat" | "settings";
 type TeammateWorkspaceTab = "profile" | "model" | "permissions" | "channels" | "skills" | "memory" | "mcp" | "danger" | "tasks" | "activity";
@@ -165,7 +167,11 @@ export function TeammateWorkspace({
   readonly channels: readonly Channel[];
   readonly runs: readonly RunSession[];
   readonly skillPack: SkillPack | undefined;
-  readonly onUpdateTeammate: (teammateId: string, input: UpdateAiTeammateRequest) => Promise<AiTeammate>;
+  readonly onUpdateTeammate: (
+    teammateId: string,
+    input: UpdateAiTeammateRequest,
+    action?: TeammateUpdateAction,
+  ) => Promise<AiTeammate>;
   readonly onTeammateUpdated?: (teammate: AiTeammate) => void;
   readonly onDisableTeammate: (teammateId: string) => Promise<void>;
   readonly onHardDeleteTeammate?: (teammateId: string, reason?: string) => Promise<void>;
@@ -238,7 +244,7 @@ export function TeammateWorkspace({
   const [expandedMcpServerIds, setExpandedMcpServerIds] = useState<ReadonlySet<string>>(() => new Set());
   const [mcpToolSearchByServerId, setMcpToolSearchByServerId] = useState<Readonly<Record<string, string>>>({});
   const [mcpToolFilterByServerId, setMcpToolFilterByServerId] = useState<Readonly<Record<string, McpToolFilter>>>({});
-  const [workspaceError, setWorkspaceError] = useState("");
+  const [workspaceError, setWorkspaceError] = useTeammateIdentityError(teammate.id);
   const chatHeaderController = useConversationHeaderController({
     identityKey: teammate.id,
     onRefresh: cwd.trim() ? () => refreshTeammateWorkspace(false) : undefined,

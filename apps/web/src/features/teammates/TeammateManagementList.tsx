@@ -41,6 +41,7 @@ export function TeammateManagementList({
   cwd,
   isLoading,
   loadErrorMessage,
+  actionErrorMessagesByTeammateId,
   onCreate,
   onOpenCouncils,
   onOpenProviders,
@@ -58,6 +59,7 @@ export function TeammateManagementList({
   readonly cwd: string;
   readonly isLoading: boolean;
   readonly loadErrorMessage?: string;
+  readonly actionErrorMessagesByTeammateId: Readonly<Record<string, string>>;
   readonly onCreate: () => void;
   readonly onOpenCouncils?: () => void;
   readonly onOpenProviders: () => void;
@@ -168,6 +170,7 @@ export function TeammateManagementList({
           {controller.visibleRows.map((row) => (
             <TeammateManagementRow
               key={row.draft.id}
+              actionErrorMessage={actionErrorMessagesByTeammateId[row.draft.id]}
               cwd={cwd}
               row={row}
               settingsToolMode={settingsToolMode}
@@ -185,6 +188,7 @@ export function TeammateManagementList({
 }
 
 function TeammateManagementRow({
+  actionErrorMessage,
   cwd,
   onOpenProviders,
   onOpenTeammate,
@@ -194,6 +198,7 @@ function TeammateManagementRow({
   row,
   settingsToolMode,
 }: {
+  readonly actionErrorMessage?: string;
   readonly cwd: string;
   readonly onOpenProviders: () => void;
   readonly onOpenTeammate?: (teammateId: string) => void;
@@ -225,13 +230,20 @@ function TeammateManagementRow({
         </span>
       )}
       summary={(
-        <span className="teammate-management-row-summary">
-          <span className="teammate-model-pill" title={modelLabel}>{modelLabel}</span>
-          <span className="teammate-channel-pill" title={channelLabel}>{channelLabel}</span>
-          <time className="teammate-updated-time" dateTime={row.draft.updatedAt}>
-            {t(relativeTime.key, relativeTime.values)}
-          </time>
-        </span>
+        <>
+          <span className="teammate-management-row-summary">
+            <span className="teammate-model-pill" title={modelLabel}>{modelLabel}</span>
+            <span className="teammate-channel-pill" title={channelLabel}>{channelLabel}</span>
+            <time className="teammate-updated-time" dateTime={row.draft.updatedAt}>
+              {t(relativeTime.key, relativeTime.values)}
+            </time>
+          </span>
+          {actionErrorMessage ? (
+            <InlineFeedback data-teammate-action-error={row.draft.id} tone="danger">
+              {actionErrorMessage}
+            </InlineFeedback>
+          ) : null}
+        </>
       )}
       status={(
         <StatusIndicator

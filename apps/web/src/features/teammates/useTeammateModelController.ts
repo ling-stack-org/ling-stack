@@ -7,6 +7,7 @@ import {
   type TeammateModelViewModel,
 } from "./teammate-model-view-models.js";
 import type { TeammateSettingsForm } from "./teammate-workspace-utils.js";
+import type { TeammateUpdateAction } from "./types.js";
 
 export interface TeammateModelController {
   readonly modelDirty: boolean;
@@ -33,7 +34,11 @@ export function useTeammateModelController({
   readonly settingsForm: TeammateSettingsForm;
   readonly setSettingsForm: Dispatch<SetStateAction<TeammateSettingsForm>>;
   readonly isProtectedSystemTeammate: boolean;
-  readonly onUpdateTeammate: (teammateId: string, input: UpdateAiTeammateRequest) => Promise<AiTeammate>;
+  readonly onUpdateTeammate: (
+    teammateId: string,
+    input: UpdateAiTeammateRequest,
+    action?: TeammateUpdateAction,
+  ) => Promise<AiTeammate>;
   readonly onTeammateUpdated?: (teammate: AiTeammate) => void;
   readonly onRefreshDirectRuntime?: () => Promise<void>;
 }): TeammateModelController {
@@ -77,7 +82,7 @@ export function useTeammateModelController({
     try {
       const updated = await onUpdateTeammate(teammateId, {
         providerPresetId: settingsForm.providerPresetId || null,
-      });
+      }, "model-save");
       if (operationSequenceRef.current !== operationId) return;
       setSettingsForm((current) => ({
         ...current,

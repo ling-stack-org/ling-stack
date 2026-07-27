@@ -537,7 +537,6 @@ export function AppShell(): JSX.Element {
   const teammatesDomain = useTeammatesDomain({
     cwd: form.cwd.trim(),
     builtinTeammateTemplates,
-    setErrorMessage,
     t,
     refreshChannels,
     closeTeammateIfActive: (teammateId) => {
@@ -552,6 +551,8 @@ export function AppShell(): JSX.Element {
     teammateChannelMembershipsByTeammate,
     teammateChannelMembershipsLoading,
     channelTeammateSavingId,
+    listErrorMessage: teammateListErrorMessage,
+    actionErrorMessagesByTeammateId: teammateActionErrorMessagesById,
   } = teammatesDomain.state;
   const {
     refreshAiTeammates,
@@ -2089,12 +2090,13 @@ export function AppShell(): JSX.Element {
         channels={channels}
         localTeammates={localTeammates}
         isLoading={aiTeammatesLoading}
-        loadErrorMessage={teammatesDomain.error?.scope === "load" ? teammatesDomain.error.message : undefined}
+        loadErrorMessage={teammateListErrorMessage || undefined}
+        actionErrorMessagesByTeammateId={teammateActionErrorMessagesById}
         defaultProviderId={workspaceDefaultProviderPresetId}
         onCreateTeammate={addAiTeammate}
-        onRemoveTeammate={(teammateId) => void removeAiTeammate(teammateId)}
-        onToggleTeammatePinned={(teammateId) => void toggleAiTeammatePinned(teammateId)}
-        onToggleTeammateHidden={(teammateId) => void toggleAiTeammateHidden(teammateId)}
+        onRemoveTeammate={(teammateId) => void removeAiTeammate(teammateId).catch(() => undefined)}
+        onToggleTeammatePinned={(teammateId) => void toggleAiTeammatePinned(teammateId).catch(() => undefined)}
+        onToggleTeammateHidden={(teammateId) => void toggleAiTeammateHidden(teammateId).catch(() => undefined)}
         onOpenTeammate={(teammateId) => {
           clearSettingsWorkspaceToolView();
           closeSettingsRunDiagnostics();
@@ -2202,7 +2204,7 @@ export function AppShell(): JSX.Element {
         onCreateChannelBranch={(channelId, name) => void saveChannelBranch(channelId, name)}
         onArchiveChannel={(channelId) => void archiveSidebarChannel(channelId)}
         onArchiveChannelBranch={(channelId, branchId) => void archiveSidebarChannelBranch(channelId, branchId)}
-        onArchiveTeammate={(teammateId) => void archiveAiTeammate(teammateId)}
+        onArchiveTeammate={(teammateId) => void archiveAiTeammate(teammateId).catch(() => undefined)}
         onArchiveRecentConversation={(conversation) => void archiveConversationThread(conversation.id)}
         onArchiveAllRecentConversations={archiveAllConversationThreads}
         onSelectChannel={(channelId) => {
@@ -2593,12 +2595,13 @@ export function AppShell(): JSX.Element {
                     channels={channels}
                     localTeammates={localTeammates}
                     isLoading={aiTeammatesLoading}
-                    loadErrorMessage={teammatesDomain.error?.scope === "load" ? teammatesDomain.error.message : undefined}
+                    loadErrorMessage={teammateListErrorMessage || undefined}
+                    actionErrorMessagesByTeammateId={teammateActionErrorMessagesById}
                     defaultProviderId={workspaceDefaultProviderPresetId}
                     onCreateTeammate={addAiTeammate}
-                    onRemoveTeammate={(teammateId) => void removeAiTeammate(teammateId)}
-                    onToggleTeammatePinned={(teammateId) => void toggleAiTeammatePinned(teammateId)}
-                    onToggleTeammateHidden={(teammateId) => void toggleAiTeammateHidden(teammateId)}
+                    onRemoveTeammate={(teammateId) => void removeAiTeammate(teammateId).catch(() => undefined)}
+                    onToggleTeammatePinned={(teammateId) => void toggleAiTeammatePinned(teammateId).catch(() => undefined)}
+                    onToggleTeammateHidden={(teammateId) => void toggleAiTeammateHidden(teammateId).catch(() => undefined)}
                     onOpenTeammate={selectAiTeammate}
                     onOpenCouncils={() => openSettingsWorkspaceTool("councils")}
                     onOpenProviders={() => openSettingsWorkspaceTool("providers")}

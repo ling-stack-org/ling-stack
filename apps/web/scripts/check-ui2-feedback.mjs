@@ -26,7 +26,6 @@ const genericErrorWriterBudgets = new Map([
   ["apps/web/src/app/use-workspace-settings-controller.ts", 3],
   ["apps/web/src/domains/external-work/use-external-work-domain.ts", 13],
   ["apps/web/src/domains/runtime/use-runtime-domain.ts", 3],
-  ["apps/web/src/domains/teammates/use-teammates-domain.ts", 19],
 ]);
 
 const genericErrorCompatibilityBudgets = new Map([
@@ -35,7 +34,6 @@ const genericErrorCompatibilityBudgets = new Map([
   ["apps/web/src/app/use-workspace-settings-controller.ts", 1],
   ["apps/web/src/domains/external-work/use-external-work-domain.ts", 1],
   ["apps/web/src/domains/runtime/use-runtime-domain.ts", 1],
-  ["apps/web/src/domains/teammates/use-teammates-domain.ts", 1],
 ]);
 
 const genericErrorConsumerBudgets = new Map([
@@ -58,6 +56,7 @@ const releasedGenericErrorContracts = [
   "apps/web/src/app/use-task-run-controller.ts",
   "apps/web/src/domains/workspace/use-workspace-domain.ts",
   "apps/web/src/domains/conversations/use-conversation-domain.ts",
+  "apps/web/src/domains/teammates/use-teammates-domain.ts",
 ];
 
 const sourceFiles = collectFiles(sourceRoot, new Set([".css", ".ts", ".tsx"]));

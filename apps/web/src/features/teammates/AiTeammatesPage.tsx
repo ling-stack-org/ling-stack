@@ -47,6 +47,7 @@ export function AiTeammatesPage({
   localTeammates,
   isLoading = false,
   loadErrorMessage,
+  actionErrorMessagesByTeammateId = {},
   onCreateTeammate,
   onRemoveTeammate,
   onToggleTeammatePinned,
@@ -65,6 +66,7 @@ export function AiTeammatesPage({
   readonly localTeammates: readonly LocalTeammateDraft[];
   readonly isLoading?: boolean;
   readonly loadErrorMessage?: string;
+  readonly actionErrorMessagesByTeammateId?: Readonly<Record<string, string>>;
   readonly onCreateTeammate: (
     teammate: LocalTeammateCreateInput,
     onProgress?: (event: TeammateCreateProgressEvent) => void,
@@ -147,6 +149,7 @@ export function AiTeammatesPage({
           cwd={cwd}
           isLoading={isLoading}
           loadErrorMessage={loadErrorMessage}
+          actionErrorMessagesByTeammateId={actionErrorMessagesByTeammateId}
           providers={providers}
           settingsToolMode={settingsToolMode}
           teammates={localTeammates}
