@@ -1,13 +1,23 @@
 import { expect, test } from "@playwright/test";
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
-import { createFocusedDomainErrorOwner } from "../src/app/use-focused-domain-error-owner.js";
+import {
+  createFocusedDomainErrorOwner,
+  type FocusedDomainError,
+} from "../src/app/use-focused-domain-error-owner.js";
+import {
+  createShellErrorFeedbackCoordinator,
+  SHELL_ERROR_PERSISTENT_DURATION_MS,
+  type ShellErrorFeedbackCommand,
+  type ShellErrorFeedbackItem,
+} from "../src/app/shell-error-feedback-coordinator.js";
 import { mockDaemon } from "./support/mock-daemon";
 import { createBaseState } from "./support/mock-state";
 
 const appShellPath = sourcePath("app/AppShell.tsx");
 const feedbackGuardPath = fileURLToPath(new URL("../scripts/check-ui2-feedback.mjs", import.meta.url));
 const shellFeedbackPath = sourcePath("app/use-shell-error-feedback.ts");
+const shellFeedbackCoordinatorPath = sourcePath("app/shell-error-feedback-coordinator.ts");
 const releasedOwnerPaths = [
   "app/use-app-navigation-controller.ts",
   "app/use-control-plane-invalidation.ts",
@@ -17,10 +27,11 @@ const releasedOwnerPaths = [
 ].map(sourcePath);
 
 test("T13-P.9EF.E releases five shell owners from the generic AppShell error contract", async () => {
-  const [appShell, guard, shellFeedback, ...releasedOwners] = await Promise.all([
+  const [appShell, guard, shellFeedback, shellFeedbackCoordinator, ...releasedOwners] = await Promise.all([
     readFile(appShellPath, "utf8"),
     readFile(feedbackGuardPath, "utf8"),
     readFile(shellFeedbackPath, "utf8"),
+    readFile(shellFeedbackCoordinatorPath, "utf8"),
     ...releasedOwnerPaths.map((path) => readFile(path, "utf8")),
   ]);
 
@@ -42,10 +53,12 @@ test("T13-P.9EF.E releases five shell owners from the generic AppShell error con
   expect(appShell).toContain("const runtimeError = runtimeDomain.error;");
   expect(appShell).toContain("externalWorkError={externalWorkError ? {");
   expect(appShell).toContain("useShellErrorFeedback({ dismissToast, items: shellErrorFeedbackItems, showToast });");
-  expect(shellFeedback).toContain("originSurfaceByRequestRef.current.set(errorKey, item.surface);");
-  expect(shellFeedback).toContain("if (!item.visible || originSurface !== item.surface)");
-  expect(shellFeedback).toContain("seenRequestsRef.current.add(errorKey);");
-  expect(shellFeedback).toContain("if (previousScope) input.dismissToast(previousScope);");
+  expect(shellFeedback).toContain("durationMs: SHELL_ERROR_PERSISTENT_DURATION_MS");
+  expect(shellFeedback).toContain("markExplicitDismiss(scope)");
+  expect(shellFeedback).not.toContain("seenRequestsRef");
+  expect(shellFeedbackCoordinator).toContain("originSurfaceByRequest.set(requestKey, item.surface)");
+  expect(shellFeedbackCoordinator).toContain("active?.requestKey === requestKey");
+  expect(shellFeedbackCoordinator).toContain("dismissedRequests.has(requestKey)");
 
   for (const path of [
     "apps/web/src/app/use-app-navigation-controller.ts",
@@ -118,10 +131,66 @@ test("T13-P.9EF.E unrelated success cannot clear another owner failure", () => {
   expect(owner.latest()?.message).toBe("run repair failed");
 });
 
-test("T13-P.9EF.E dismisses a Settings-owned failure when its surface closes", async ({ page }) => {
+test("T13-P.9EF.F shell feedback preserves origin return without restarting an active request", () => {
+  const coordinator = createShellErrorFeedbackCoordinator();
+  const error = shellError({ action: "refresh", message: "runtime refresh failed", requestId: 1 });
+  const visible = shellItem(error, { surface: "workspace", visible: true });
+
+  expect(commandSummary(coordinator.reconcile([visible]))).toEqual([
+    "show:runtime refresh failed:shell-error:runtime:workspace-a:refresh",
+  ]);
+  expect(coordinator.reconcile([visible])).toEqual([]);
+  expect(commandSummary(coordinator.reconcile([
+    shellItem(error, { surface: "settings", visible: false }),
+  ]))).toEqual(["dismiss:shell-error:runtime:workspace-a:refresh"]);
+  expect(commandSummary(coordinator.reconcile([visible]))).toEqual([
+    "show:runtime refresh failed:shell-error:runtime:workspace-a:refresh",
+  ]);
+  expect(SHELL_ERROR_PERSISTENT_DURATION_MS).toBe(24 * 60 * 60 * 1000);
+});
+
+test("T13-P.9EF.F shell feedback restores fallback errors and replaces same-scope requests", () => {
+  const coordinator = createShellErrorFeedbackCoordinator();
+  const earlier = shellError({ action: "refresh", message: "earlier unresolved", requestId: 1 });
+  const latest = shellError({ action: "cancel", message: "latest unresolved", requestId: 2 });
+  const replacement = shellError({ action: "refresh", message: "replacement request", requestId: 3 });
+
+  coordinator.reconcile([shellItem(earlier)]);
+  expect(commandSummary(coordinator.reconcile([shellItem(latest)]))).toEqual([
+    "dismiss:shell-error:runtime:workspace-a:refresh",
+    "show:latest unresolved:shell-error:runtime:workspace-a:cancel",
+  ]);
+  expect(commandSummary(coordinator.reconcile([shellItem(earlier)]))).toEqual([
+    "dismiss:shell-error:runtime:workspace-a:cancel",
+    "show:earlier unresolved:shell-error:runtime:workspace-a:refresh",
+  ]);
+  expect(commandSummary(coordinator.reconcile([shellItem(replacement)]))).toEqual([
+    "show:replacement request:shell-error:runtime:workspace-a:refresh",
+  ]);
+});
+
+test("T13-P.9EF.F explicit dismiss survives surface return until the request changes", () => {
+  const coordinator = createShellErrorFeedbackCoordinator();
+  const first = shellError({ action: "refresh", message: "dismiss me", requestId: 1 });
+  const next = shellError({ action: "refresh", message: "new request", requestId: 2 });
+  const visible = shellItem(first);
+  const [show] = coordinator.reconcile([visible]);
+
+  expect(show?.type).toBe("show");
+  coordinator.markExplicitDismiss("shell-error:runtime:workspace-a:refresh");
+  expect(coordinator.reconcile([visible])).toEqual([]);
+  expect(coordinator.reconcile([shellItem(first, { surface: "settings", visible: false })])).toEqual([]);
+  expect(coordinator.reconcile([visible])).toEqual([]);
+  expect(commandSummary(coordinator.reconcile([shellItem(next)]))).toEqual([
+    "show:new request:shell-error:runtime:workspace-a:refresh",
+  ]);
+});
+
+test("T13-P.9EF.F keeps Settings failures persistent and restores or replaces them by request", async ({ page }) => {
   await page.addInitScript(() => localStorage.setItem("ling-stack.locale", "en-US"));
   await mockDaemon(page, createBaseState({ approvalStatus: "expired" }));
-  const failureMessage = "Workspace settings save failed.";
+  const failureMessages = ["Workspace settings save failed.", "A newer workspace settings request failed."];
+  let failedRequestCount = 0;
   await page.route(/\/workspace-settings(?:\?.*)?$/u, async (route) => {
     if (route.request().method() !== "PATCH") {
       await route.fallback();
@@ -132,6 +201,8 @@ test("T13-P.9EF.E dismisses a Settings-owned failure when its surface closes", a
       await route.fallback();
       return;
     }
+    const failureMessage = failureMessages[Math.min(failedRequestCount, failureMessages.length - 1)];
+    failedRequestCount += 1;
     await route.fulfill({
       status: 503,
       json: { error: "workspace_settings_save_failed", message: failureMessage },
@@ -147,11 +218,28 @@ test("T13-P.9EF.E dismisses a Settings-owned failure when its surface closes", a
     .click();
 
   const scopedToast = page.locator('.ling-ui-toast[data-scope^="shell-error:workspace-settings:"]');
-  await expect(scopedToast).toContainText(failureMessage);
+  await expect(scopedToast).toContainText(failureMessages[0]);
+  await page.waitForTimeout(6_250);
+  await expect(scopedToast).toContainText(failureMessages[0]);
   await settingsNavigation.getByRole("button", { name: "Back to app" }).click();
   await expect(page.getByLabel("Ling Stack navigation")).toBeVisible();
   await expect(settingsNavigation).toHaveCount(0);
   await expect(scopedToast).toHaveCount(0);
+
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
+  await expect(scopedToast).toContainText(failureMessages[0]);
+  await scopedToast.getByRole("button", { name: "Dismiss notification" }).click();
+  await expect(scopedToast).toHaveCount(0);
+  await page.getByLabel("Settings sections").getByRole("button", { name: "Back to app" }).click();
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
+  await expect(scopedToast).toHaveCount(0);
+
+  const reopenedSettingsNavigation = page.getByLabel("Settings sections");
+  await reopenedSettingsNavigation.getByRole("button", { name: "Default authorization" }).click();
+  await page.getByRole("radiogroup", { name: "Authorization mode" })
+    .getByRole("radio", { name: "Always authorize" })
+    .click();
+  await expect(scopedToast).toContainText(failureMessages[1]);
 });
 
 function sourcePath(path: string): string {
@@ -164,4 +252,38 @@ function readHookCall(source: string, hook: string): string {
   const end = source.indexOf("\n  });", start);
   if (end < 0) throw new Error(`Missing ${hook} call boundary`);
   return source.slice(start, end);
+}
+
+function shellError(input: {
+  readonly action: string;
+  readonly message: string;
+  readonly requestId: number;
+}): FocusedDomainError {
+  return {
+    action: input.action,
+    domain: "runtime",
+    identity: "workspace-a",
+    message: input.message,
+    objectId: "workspace-a",
+    requestId: input.requestId,
+    scope: "mutation",
+  };
+}
+
+function shellItem(
+  error: FocusedDomainError,
+  input: { readonly surface?: string; readonly visible?: boolean } = {},
+): ShellErrorFeedbackItem {
+  return {
+    key: "runtime",
+    error,
+    surface: input.surface ?? "workspace",
+    visible: input.visible ?? true,
+  };
+}
+
+function commandSummary(commands: readonly ShellErrorFeedbackCommand[]): readonly string[] {
+  return commands.map((command) => command.type === "dismiss"
+    ? `dismiss:${command.scope}`
+    : `show:${command.error.message}:${command.scope}`);
 }

@@ -1,60 +1,62 @@
 import { useEffect, useRef } from "react";
 import type { LingToastInput } from "../shared/ui/index.js";
-import type { FocusedDomainError } from "./use-focused-domain-error-owner.js";
+import {
+  createShellErrorFeedbackCoordinator,
+  SHELL_ERROR_PERSISTENT_DURATION_MS,
+  type ShellErrorFeedbackItem,
+} from "./shell-error-feedback-coordinator.js";
 
-export interface ShellErrorFeedbackItem {
-  readonly key: string;
-  readonly error: FocusedDomainError | undefined;
-  readonly surface: string;
-  readonly visible: boolean;
-}
+export type { ShellErrorFeedbackItem } from "./shell-error-feedback-coordinator.js";
 
 export function useShellErrorFeedback(input: {
   readonly items: readonly ShellErrorFeedbackItem[];
   readonly dismissToast: (idOrScope: string) => void;
   readonly showToast: (toast: LingToastInput) => string;
 }): void {
-  const seenRequestsRef = useRef(new Set<string>());
-  const originSurfaceByRequestRef = useRef(new Map<string, string>());
-  const visibleScopesRef = useRef(new Map<string, string>());
+  const coordinatorRef = useRef<ReturnType<typeof createShellErrorFeedbackCoordinator>>();
+  const dismissToastRef = useRef(input.dismissToast);
+  if (!coordinatorRef.current) coordinatorRef.current = createShellErrorFeedbackCoordinator();
+  dismissToastRef.current = input.dismissToast;
 
   useEffect(() => {
-    for (const item of input.items) {
-      const error = item.error;
-      const previousScope = visibleScopesRef.current.get(item.key);
-      if (!error) {
-        if (previousScope) input.dismissToast(previousScope);
-        visibleScopesRef.current.delete(item.key);
-        continue;
+    for (const command of coordinatorRef.current!.reconcile(input.items)) {
+      if (command.type === "dismiss") {
+        input.dismissToast(command.scope);
+      } else {
+        input.showToast({
+          durationMs: SHELL_ERROR_PERSISTENT_DURATION_MS,
+          message: command.error.message,
+          scope: command.scope,
+          tone: "error",
+        });
       }
-      const errorKey = `${error.domain}:${error.identity}:${error.objectId}:${error.action}:${error.requestId}`;
-      const alreadySeen = seenRequestsRef.current.has(errorKey);
-      if (!alreadySeen) {
-        seenRequestsRef.current.add(errorKey);
-        originSurfaceByRequestRef.current.set(errorKey, item.surface);
-      }
-      const originSurface = originSurfaceByRequestRef.current.get(errorKey);
-      if (!item.visible || originSurface !== item.surface) {
-        if (previousScope) input.dismissToast(previousScope);
-        visibleScopesRef.current.delete(item.key);
-        continue;
-      }
-      if (alreadySeen) continue;
-      if (seenRequestsRef.current.size > 128) {
-        const oldest = seenRequestsRef.current.values().next().value;
-        if (oldest) {
-          seenRequestsRef.current.delete(oldest);
-          originSurfaceByRequestRef.current.delete(oldest);
-        }
-      }
-      const scope = `shell-error:${error.domain}:${error.objectId}:${error.action}`;
-      if (previousScope && previousScope !== scope) input.dismissToast(previousScope);
-      input.showToast({
-        message: error.message,
-        scope,
-        tone: "error",
-      });
-      visibleScopesRef.current.set(item.key, scope);
     }
   }, [input.dismissToast, input.items, input.showToast]);
+
+  useEffect(() => {
+    const markDismissed = (target: EventTarget | null): void => {
+      if (!(target instanceof Element)) return;
+      const toast = target.closest<HTMLElement>(".ling-ui-toast[data-scope]");
+      const scope = toast?.dataset.scope;
+      if (scope?.startsWith("shell-error:")) coordinatorRef.current?.markExplicitDismiss(scope);
+    };
+    const handleClick = (event: MouseEvent): void => {
+      if (event.target instanceof Element && event.target.closest(".ling-ui-toast-close")) {
+        markDismissed(event.target);
+      }
+    };
+    const handleKeyDown = (event: KeyboardEvent): void => {
+      if (event.key === "Escape") markDismissed(event.target);
+    };
+    globalThis.document?.addEventListener("click", handleClick, true);
+    globalThis.document?.addEventListener("keydown", handleKeyDown, true);
+    return () => {
+      globalThis.document?.removeEventListener("click", handleClick, true);
+      globalThis.document?.removeEventListener("keydown", handleKeyDown, true);
+    };
+  }, []);
+
+  useEffect(() => () => {
+    for (const scope of coordinatorRef.current?.closeAll() ?? []) dismissToastRef.current(scope);
+  }, []);
 }
