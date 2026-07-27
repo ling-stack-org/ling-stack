@@ -89,7 +89,7 @@ const scenarios = {
     viewport: { width: 1280, height: 800 },
     theme: "ling-dark",
     locale: "en-US",
-    keyboard: { exercised: true, checks: ["Attach files accepts keyboard focus"] },
+    keyboard: { exercised: true, checks: ["New conversation composer accepts keyboard focus"] },
     reducedMotion: "reduce",
   }),
   teammateDesignerClean: scenario({
@@ -297,9 +297,9 @@ test("P9EF-EVIDENCE-03 new draft ignores stale upload", async ({ page }) => {
   await response;
   await expect(home.getByLabel("Pending message assets")).toHaveCount(0);
   await expect(home.getByText("stale-draft.txt", { exact: true })).toHaveCount(0);
-  const attach = home.locator('label[aria-label="Attach files"]');
-  await attach.focus();
-  await expect(attach).toBeFocused();
+  const composer = home.getByRole("textbox", { name: "Conversation message" });
+  await composer.focus();
+  await expect(composer).toBeFocused();
   await finish(page, scenarios.conversationDraftClean, runtime);
 });
 

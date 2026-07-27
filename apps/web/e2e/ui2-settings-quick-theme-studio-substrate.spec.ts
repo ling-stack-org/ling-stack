@@ -399,7 +399,7 @@ async function openSubstratePage(page: Page): Promise<void> {
     "../../../packages/ui-react/dist/styles/index.css",
     import.meta.url,
   ))}`;
-  await page.routeWebSocket(/^ws:\/\/127\.0\.0\.1:4174\//u, (socket) => {
+  await page.routeWebSocket(/^ws:\/\/127\.0\.0\.1:\d+\//u, (socket) => {
     socket.onMessage(() => undefined);
   });
   await page.route("**/__ui2-quick-theme-substrate", async (route) => {
