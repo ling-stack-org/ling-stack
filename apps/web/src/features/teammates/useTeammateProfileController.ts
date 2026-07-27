@@ -22,7 +22,6 @@ import {
 } from "./teammate-workspace-utils.js";
 import type { TeammateUpdateAction } from "./types.js";
 import { useTeammateAsyncRequestOwner } from "./useTeammateAsyncRequestOwner.js";
-import { useTeammateIdentityError } from "./useTeammateIdentityError.js";
 
 export interface PersonaImportForm {
   readonly sourcePath: string;
@@ -77,14 +76,17 @@ export function useTeammateProfileController({
   const { showToast } = useLingToast();
   const avatarTriggerRef = useRef<HTMLButtonElement>(null);
   const avatarFileNameRef = useRef("avatar.png");
-  const requestOwner = useTeammateAsyncRequestOwner<"avatar" | "persona" | "profile">(teammate.id);
+  const requestOwner = useTeammateAsyncRequestOwner<"avatar" | "persona" | "profile">(
+    teammate.id,
+    JSON.stringify([cwd.trim(), teammate.id]),
+  );
   const [avatarCropSource, setAvatarCropSource] = useState<string>();
   const [personaImportForm, setPersonaImportForm] = useState<PersonaImportForm>({ sourcePath: "", content: "" });
   const [personaDraft, setPersonaDraft] = useState<TeammatePersonaDraft>();
   const [importingPersona, setImportingPersona] = useState(false);
   const [savingProfile, setSavingProfile] = useState(false);
   const [uploadingAvatar, setUploadingAvatar] = useState(false);
-  const [profileError, setProfileError] = useTeammateIdentityError(teammate.id);
+  const profileError = requestOwner.latestError?.message ?? "";
   const profileDirty = isProfileDirty(teammate, settingsForm, isProtectedSystemTeammate);
 
   useEffect(() => {
@@ -108,39 +110,39 @@ export function useTeammateProfileController({
   async function selectAvatarFile(file?: File): Promise<void> {
     if (!file || uploadingAvatar) return;
     if (!file.type.startsWith("image/")) {
-      setProfileError(t("Choose an image file"));
+      requestOwner.reportImmediate("avatar", t("Choose an image file"));
       return;
     }
     const operation = requestOwner.begin("avatar");
-    if (!requestOwner.isCurrent(operation)) return;
+    if (!requestOwner.isActionCurrent(operation)) return;
     try {
       avatarFileNameRef.current = file.name;
       const dataUrl = await readImageFileDataUrl(file);
-      if (!requestOwner.isCurrent(operation)) return;
+      if (!requestOwner.isActionCurrent(operation)) return;
       setAvatarCropSource(dataUrl);
-      setProfileError("");
+      requestOwner.clearError(operation);
     } catch {
-      if (requestOwner.isCurrent(operation)) setProfileError(t("The image could not be opened. Choose another file."));
+      requestOwner.reportError(operation, t("The image could not be opened. Choose another file."));
     }
   }
 
   async function confirmAvatarCrop(dataUrl: string): Promise<void> {
     if (uploadingAvatar) return;
     const operation = requestOwner.begin("avatar");
-    if (!requestOwner.isCurrent(operation)) return;
+    if (!requestOwner.isActionCurrent(operation)) return;
     setUploadingAvatar(true);
-    setProfileError("");
     try {
       const response = await uploadTeammateAvatar(
         cwd.trim(),
         teammate.id,
         imageDataUrlToFile(dataUrl, avatarFileNameRef.current),
       );
-      if (!requestOwner.isCurrent(operation)) return;
+      if (!requestOwner.isActionCurrent(operation)) return;
       onTeammateUpdated?.(response.teammate);
       await onRefreshTeammates?.();
-      if (!requestOwner.isCurrent(operation)) return;
+      if (!requestOwner.isActionCurrent(operation)) return;
       setAvatarCropSource(undefined);
+      requestOwner.clearError(operation);
       showToast({
         message: t("Avatar updated"),
         scope: `teammate:profile:${operation.teammateId}:avatar`,
@@ -148,36 +150,36 @@ export function useTeammateProfileController({
       });
       focusAvatarTrigger();
     } catch {
-      if (!requestOwner.isCurrent(operation)) return;
+      if (!requestOwner.isActionCurrent(operation)) return;
       const message = t("Avatar changes were not saved. Try again.");
-      setProfileError(message);
+      requestOwner.reportError(operation, message);
       throw new Error(message);
     } finally {
-      if (requestOwner.isCurrent(operation)) setUploadingAvatar(false);
+      if (requestOwner.isActionCurrent(operation)) setUploadingAvatar(false);
     }
   }
 
   async function removeAvatar(): Promise<void> {
     if (uploadingAvatar || !teammate.avatarImageAttachmentId) return;
     const operation = requestOwner.begin("avatar");
-    if (!requestOwner.isCurrent(operation)) return;
+    if (!requestOwner.isActionCurrent(operation)) return;
     setUploadingAvatar(true);
-    setProfileError("");
     try {
       const response = await deleteTeammateAvatar(cwd.trim(), teammate.id);
-      if (!requestOwner.isCurrent(operation)) return;
+      if (!requestOwner.isActionCurrent(operation)) return;
       onTeammateUpdated?.(response.teammate ?? { ...teammate, avatarImageAttachmentId: undefined });
       await onRefreshTeammates?.();
-      if (!requestOwner.isCurrent(operation)) return;
+      if (!requestOwner.isActionCurrent(operation)) return;
+      requestOwner.clearError(operation);
       showToast({
         message: t("Avatar removed"),
         scope: `teammate:profile:${operation.teammateId}:avatar`,
         tone: "success",
       });
     } catch {
-      if (requestOwner.isCurrent(operation)) setProfileError(t("Avatar changes were not saved. Try again."));
+      requestOwner.reportError(operation, t("Avatar changes were not saved. Try again."));
     } finally {
-      if (requestOwner.isCurrent(operation)) setUploadingAvatar(false);
+      if (requestOwner.isActionCurrent(operation)) setUploadingAvatar(false);
     }
   }
 
@@ -194,69 +196,68 @@ export function useTeammateProfileController({
       appendSystemPromptText: authoritative.appendSystemPromptText,
     }));
     setPersonaDraft(undefined);
-    setProfileError("");
+    requestOwner.clearActionError("profile");
   }
 
   async function saveProfile(): Promise<void> {
     if (!profileDirty || savingProfile) return;
     const operation = requestOwner.begin("profile");
-    if (!requestOwner.isCurrent(operation)) return;
+    if (!requestOwner.isActionCurrent(operation)) return;
     setSavingProfile(true);
-    setProfileError("");
     try {
       const updated = await onUpdateTeammate(teammate.id, profileUpdateInput(
         teammate,
         settingsForm,
         isProtectedSystemTeammate,
       ), "profile-save");
-      if (!requestOwner.isCurrent(operation)) return;
+      if (!requestOwner.isActionCurrent(operation)) return;
       setSettingsForm((current) => ({
         ...teammateToSettingsForm(updated),
         providerPresetId: current.providerPresetId,
       }));
       onTeammateUpdated?.(updated);
+      requestOwner.clearError(operation);
       showToast({
         message: t("Teammate profile saved"),
         scope: `teammate:profile:${operation.teammateId}:save`,
         tone: "success",
       });
     } catch {
-      if (requestOwner.isCurrent(operation)) setProfileError(t("Profile changes were not saved. Try again."));
+      requestOwner.reportError(operation, t("Profile changes were not saved. Try again."));
     } finally {
-      if (requestOwner.isCurrent(operation)) setSavingProfile(false);
+      if (requestOwner.isActionCurrent(operation)) setSavingProfile(false);
     }
   }
 
   async function previewPersonaImport(): Promise<void> {
     if (isProtectedSystemTeammate || importingPersona) return;
     if (!personaImportForm.content.trim()) {
-      setProfileError(t("Paste persona content first"));
+      requestOwner.reportImmediate("persona", t("Paste persona content first"));
       return;
     }
     const operation = requestOwner.begin("persona");
-    if (!requestOwner.isCurrent(operation)) return;
+    if (!requestOwner.isActionCurrent(operation)) return;
     setImportingPersona(true);
-    setProfileError("");
     try {
       const response = await createTeammatePersonaDraft(cwd.trim(), teammate.id, {
         content: personaImportForm.content,
         sourcePath: personaImportForm.sourcePath.trim() || undefined,
       });
-      if (!requestOwner.isCurrent(operation)) return;
+      if (!requestOwner.isActionCurrent(operation)) return;
       setPersonaDraft(response.draft);
+      requestOwner.clearError(operation);
     } catch {
-      if (requestOwner.isCurrent(operation)) setProfileError(t("Persona draft could not be prepared. Try again."));
+      requestOwner.reportError(operation, t("Persona draft could not be prepared. Try again."));
     } finally {
-      if (requestOwner.isCurrent(operation)) setImportingPersona(false);
+      if (requestOwner.isActionCurrent(operation)) setImportingPersona(false);
     }
   }
 
   async function applyPersonaDraft(): Promise<void> {
     if (!personaDraft || importingPersona || isProtectedSystemTeammate) return;
     const operation = requestOwner.begin("persona");
-    if (!requestOwner.isCurrent(operation)) return;
+    if (!requestOwner.isActionCurrent(operation)) return;
     setImportingPersona(true);
-    setProfileError("");
     try {
       const updated = await onUpdateTeammate(teammate.id, {
         displayName: personaDraft.displayName.trim() || teammate.displayName,
@@ -264,7 +265,7 @@ export function useTeammateProfileController({
         systemPrompt: personaDraft.systemPrompt.trim() || null,
         appendSystemPrompt: personaDraft.appendSystemPrompt,
       }, "persona-apply");
-      if (!requestOwner.isCurrent(operation)) return;
+      if (!requestOwner.isActionCurrent(operation)) return;
       setSettingsForm((current) => ({
         ...teammateToSettingsForm(updated),
         providerPresetId: current.providerPresetId,
@@ -272,15 +273,16 @@ export function useTeammateProfileController({
       onTeammateUpdated?.(updated);
       setPersonaDraft(undefined);
       setPersonaImportForm({ sourcePath: "", content: "" });
+      requestOwner.clearError(operation);
       showToast({
         message: t("Persona applied"),
         scope: `teammate:profile:${operation.teammateId}:persona`,
         tone: "success",
       });
     } catch {
-      if (requestOwner.isCurrent(operation)) setProfileError(t("Persona changes were not saved. Try again."));
+      requestOwner.reportError(operation, t("Persona changes were not saved. Try again."));
     } finally {
-      if (requestOwner.isCurrent(operation)) setImportingPersona(false);
+      if (requestOwner.isActionCurrent(operation)) setImportingPersona(false);
     }
   }
 

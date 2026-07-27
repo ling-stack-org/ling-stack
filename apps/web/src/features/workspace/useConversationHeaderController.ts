@@ -26,10 +26,24 @@ export function useConversationHeaderController({
   const [refreshing, setRefreshing] = useState(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const searchTriggerRef = useRef<HTMLButtonElement>(null);
+  const refreshOwnerRef = useRef<{
+    active?: { readonly generation: number; readonly identityRevision: number };
+    generation: number;
+    identityKey: string;
+    identityRevision: number;
+  }>({ generation: 0, identityKey, identityRevision: 1 });
+  if (refreshOwnerRef.current.identityKey !== identityKey) {
+    refreshOwnerRef.current = {
+      generation: 0,
+      identityKey,
+      identityRevision: refreshOwnerRef.current.identityRevision + 1,
+    };
+  }
 
   useEffect(() => {
     setSearchOpen(false);
     onSearchChange("");
+    if (!refreshOwnerRef.current.active) setRefreshing(false);
   }, [identityKey, onSearchChange]);
 
   useEffect(() => {
@@ -57,13 +71,29 @@ export function useConversationHeaderController({
 
   const refresh = useCallback(async (): Promise<void> => {
     if (!onRefresh || refreshing) return;
+    const owner = refreshOwnerRef.current;
+    if (owner.identityKey !== identityKey) return;
+    const request = {
+      generation: owner.generation + 1,
+      identityRevision: owner.identityRevision,
+    };
+    owner.generation = request.generation;
+    owner.active = request;
     setRefreshing(true);
     try {
       await onRefresh();
     } finally {
-      setRefreshing(false);
+      const current = refreshOwnerRef.current;
+      if (
+        current.identityKey === identityKey
+        && current.identityRevision === request.identityRevision
+        && current.active?.generation === request.generation
+      ) {
+        current.active = undefined;
+        setRefreshing(false);
+      }
     }
-  }, [onRefresh, refreshing]);
+  }, [identityKey, onRefresh, refreshing]);
 
   return {
     refreshing,

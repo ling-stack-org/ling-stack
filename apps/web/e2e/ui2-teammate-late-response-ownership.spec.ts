@@ -6,8 +6,80 @@ import {
   createChatProvider,
   createMockTeammate,
 } from "./support/mock-state";
+import { TeammateAsyncRequestStore } from "../src/features/teammates/useTeammateAsyncRequestOwner.js";
 
 const avatarFixturePath = fileURLToPath(new URL("../public/avatars/teammates/engineer.png", import.meta.url));
+
+test("action generations stay independent while the latest request owns shared resources", () => {
+  const store = new TeammateAsyncRequestStore<"attachment-upload" | "workspace" | "runtime", "conversation">(
+    "workspace:/tmp/ling:teammate_engineer",
+    "teammate_engineer",
+  );
+  const workspace = store.beginFor(
+    "workspace:/tmp/ling:teammate_engineer",
+    "teammate_engineer",
+    "workspace",
+    ["conversation"],
+  );
+  const runtime = store.beginFor(
+    "workspace:/tmp/ling:teammate_engineer",
+    "teammate_engineer",
+    "runtime",
+    ["conversation"],
+  );
+
+  expect(store.isActionCurrent(workspace)).toBe(true);
+  expect(store.isActionCurrent(runtime)).toBe(true);
+  expect(store.ownsResource(workspace, "conversation")).toBe(false);
+  expect(store.ownsResource(runtime, "conversation")).toBe(true);
+
+  const upload = store.beginFor(
+    "workspace:/tmp/ling:teammate_engineer",
+    "teammate_engineer",
+    "attachment-upload",
+  );
+  expect(store.claimAndCommit(upload, ["conversation"], () => undefined)).toBe(true);
+  expect(store.ownsResource(runtime, "conversation")).toBe(false);
+  expect(store.ownsResource(upload, "conversation")).toBe(true);
+});
+
+test("action errors persist across unrelated starts and successes", () => {
+  const identity = "workspace:/tmp/ling:teammate_engineer";
+  const store = new TeammateAsyncRequestStore<"avatar" | "persona" | "profile", never>(
+    identity,
+    "teammate_engineer",
+  );
+  const profile = store.beginFor(identity, "teammate_engineer", "profile");
+  expect(store.reportError(profile, "Profile save failed")).toBe(true);
+
+  const avatar = store.beginFor(identity, "teammate_engineer", "avatar");
+  expect(store.clearError(avatar)).toBe(false);
+  expect(store.latestError()?.message).toBe("Profile save failed");
+
+  const persona = store.beginFor(identity, "teammate_engineer", "persona");
+  expect(store.reportError(persona, "Persona preview failed")).toBe(true);
+  expect(store.latestError()?.message).toBe("Persona preview failed");
+  expect(store.clearError(persona)).toBe(true);
+  expect(store.latestError()?.message).toBe("Profile save failed");
+});
+
+test("identity revisions reject old action and finally ownership after switching away and back", () => {
+  const engineerIdentity = "workspace:/tmp/ling:teammate_engineer";
+  const designerIdentity = "workspace:/tmp/ling:teammate_designer";
+  const store = new TeammateAsyncRequestStore<"refresh", "conversation">(
+    engineerIdentity,
+    "teammate_engineer",
+  );
+  const oldEngineer = store.beginFor(engineerIdentity, "teammate_engineer", "refresh", ["conversation"]);
+  store.setIdentity(designerIdentity, "teammate_designer");
+  const designer = store.beginFor(designerIdentity, "teammate_designer", "refresh", ["conversation"]);
+  store.setIdentity(engineerIdentity, "teammate_engineer");
+  const newEngineer = store.beginFor(engineerIdentity, "teammate_engineer", "refresh", ["conversation"]);
+
+  expect(store.isActionCurrent(oldEngineer)).toBe(false);
+  expect(store.isActionCurrent(designer)).toBe(false);
+  expect(store.isActionCurrent(newEngineer)).toBe(true);
+});
 
 test("late teammate workspace success cannot replace the selected teammate or clear its loading state", async ({ page }) => {
   await prepareSurface(page);
@@ -58,6 +130,109 @@ test("late teammate workspace success cannot replace the selected teammate or cl
   await expect(page.getByText("Loading teammate workspace...", { exact: true })).toHaveCount(0);
   await expect(page.getByText("Designer remains authoritative", { exact: true })).toBeVisible();
   await expect(page.getByText("Late Engineer response", { exact: true })).toHaveCount(0);
+  expect(runtimeErrors).toEqual([]);
+});
+
+test("late teammate guidance finally cannot clear the selected teammate guidance busy state", async ({ page }) => {
+  await prepareSurface(page);
+  const runtimeErrors = collectRuntimeErrors(page);
+  const state = createTeammateState();
+  state.teammateDirectMessages = [
+    directMessage("teammate_engineer", "Engineer active reply"),
+    directMessage("teammate_designer", "Designer active reply"),
+  ];
+  state.workUnits = [
+    activeReplyWorkUnit("teammate_engineer"),
+    activeReplyWorkUnit("teammate_designer"),
+  ];
+  await mockDaemon(page, state);
+
+  const engineerStarted = deferred<void>();
+  const releaseEngineer = deferred<void>();
+  const designerStarted = deferred<void>();
+  const releaseDesigner = deferred<void>();
+  await page.route(/\/teammate-direct-replies\/(wu_teammate_engineer|wu_teammate_designer)\/cancel(?:\?.*)?$/u, async (route) => {
+    if (route.request().url().includes("wu_teammate_engineer")) {
+      engineerStarted.resolve();
+      await releaseEngineer.promise;
+    } else {
+      designerStarted.resolve();
+      await releaseDesigner.promise;
+    }
+    await route.fallback();
+  });
+
+  await page.goto("/");
+  await openTeammate(page, "Ling Engineer");
+  const engineerStop = page.getByLabel("Private chat composer").getByRole("button", { name: "Stop reply" });
+  await engineerStop.click();
+  await engineerStarted.promise;
+
+  await openTeammate(page, "Ling Designer");
+  const designerStop = page.getByLabel("Private chat composer").getByRole("button", { name: "Stop reply" });
+  await designerStop.click();
+  await designerStarted.promise;
+  await expect(designerStop).toHaveAttribute("aria-busy", "true");
+
+  const engineerResponse = page.waitForResponse((response) => response.ok() && response.url().includes("wu_teammate_engineer/cancel"));
+  releaseEngineer.resolve();
+  await engineerResponse;
+  await expect(designerStop).toHaveAttribute("aria-busy", "true");
+
+  const designerResponse = page.waitForResponse((response) => response.ok() && response.url().includes("wu_teammate_designer/cancel"));
+  releaseDesigner.resolve();
+  await designerResponse;
+  const designerComposer = page.getByLabel("Private chat composer");
+  await expect(designerStop).toHaveCount(0);
+  const send = designerComposer.getByRole("button", { name: "Send" });
+  await expect(send).not.toHaveAttribute("aria-busy", "true");
+  await designerComposer.getByRole("textbox").fill("Ready for the next message");
+  await expect(send).toBeEnabled();
+  expect(runtimeErrors).toEqual([]);
+});
+
+test("header refresh loading follows identity and rejects the previous teammate finally", async ({ page }) => {
+  await prepareSurface(page);
+  const runtimeErrors = collectRuntimeErrors(page);
+  const state = createTeammateState();
+  await mockDaemon(page, state);
+
+  await page.goto("/");
+  await openTeammate(page, "Ling Engineer");
+  const engineerStarted = deferred<void>();
+  const releaseEngineer = deferred<void>();
+  await page.route(/\/teammates\/teammate_engineer\/direct-messages(?:\?.*)?$/u, async (route) => {
+    engineerStarted.resolve();
+    await releaseEngineer.promise;
+    await route.fallback();
+  }, { times: 1 });
+  const engineerRefresh = page.getByLabel("Private chat actions").getByRole("button", { name: "Refresh" });
+  await engineerRefresh.click();
+  await engineerStarted.promise;
+
+  await openTeammate(page, "Ling Designer");
+  const designerRefresh = page.getByLabel("Private chat actions").getByRole("button", { name: "Refresh" });
+  await expect(designerRefresh).not.toHaveAttribute("aria-busy", "true");
+  const designerStarted = deferred<void>();
+  const releaseDesigner = deferred<void>();
+  await page.route(/\/teammates\/teammate_designer\/direct-messages(?:\?.*)?$/u, async (route) => {
+    designerStarted.resolve();
+    await releaseDesigner.promise;
+    await route.fallback();
+  }, { times: 1 });
+  await designerRefresh.click();
+  await designerStarted.promise;
+  await expect(designerRefresh).toHaveAttribute("aria-busy", "true");
+
+  const engineerResponse = page.waitForResponse((response) => response.ok() && response.url().includes("teammate_engineer/direct-messages"));
+  releaseEngineer.resolve();
+  await engineerResponse;
+  await expect(designerRefresh).toHaveAttribute("aria-busy", "true");
+
+  const designerResponse = page.waitForResponse((response) => response.ok() && response.url().includes("teammate_designer/direct-messages"));
+  releaseDesigner.resolve();
+  await designerResponse;
+  await expect(designerRefresh).not.toHaveAttribute("aria-busy", "true");
   expect(runtimeErrors).toEqual([]);
 });
 
@@ -222,6 +397,31 @@ function directMessage(teammateId: string, body: string): Record<string, unknown
     status: "ready",
     createdAt: timestamp,
     updatedAt: timestamp,
+  };
+}
+
+function activeReplyWorkUnit(
+  teammateId: string,
+): ReturnType<typeof createBaseState>["workUnits"][number] {
+  return {
+    id: `wu_${teammateId}`,
+    workspaceId: "workspace_default",
+    kind: "teammate_direct_reply",
+    ownerType: "teammate",
+    ownerId: teammateId,
+    teammateId,
+    idempotencyKey: `active-reply:${teammateId}`,
+    status: "running",
+    priority: 50,
+    attemptCount: 1,
+    activeAttemptId: `wua_${teammateId}`,
+    createdByActor: "user",
+    request: { sourceMessageId: `message_${teammateId}` },
+    timeoutPolicy: { staleAfterMs: 120_000, timeoutAfterMs: 300_000 },
+    linkedMessageId: `message_${teammateId}`,
+    createdAt: "2026-07-27T09:00:00.000Z",
+    updatedAt: "2026-07-27T09:00:00.000Z",
+    startedAt: "2026-07-27T09:00:00.000Z",
   };
 }
 

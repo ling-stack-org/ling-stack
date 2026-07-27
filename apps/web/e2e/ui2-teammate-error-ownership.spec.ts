@@ -58,8 +58,9 @@ test("T13-P.9EF.C releases the generic writer and freezes keyed teammate owners"
   expect(drawer).toContain("createRequestRevisionRef.current !== requestRevision");
   expect(list).toContain("data-teammate-action-error={row.draft.id}");
   expect(identityError).toContain("errorByIdentity[identity]");
-  expect(profileController).toContain("identityRef.current === operation.identity");
-  expect(profileController).toContain("operationSequenceRef.current === operation.revision");
+  expect(profileController).toContain('requestOwner.begin("profile")');
+  expect(profileController).toContain("requestOwner.isActionCurrent(operation)");
+  expect(profileController).toContain("requestOwner.reportError(operation");
   expect(appShell).toContain("actionErrorMessagesByTeammateId={teammateActionErrorMessagesById}");
 });
 
